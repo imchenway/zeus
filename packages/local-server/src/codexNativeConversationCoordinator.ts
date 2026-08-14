@@ -85,6 +85,7 @@ interface PersistedSubmissionInput {
   text: string;
   attachments?: NativeConversationAttachmentInput[];
   browserComments?: Record<string, unknown>[];
+  conversationContext?: Record<string, unknown>;
   context: ConversationDispatchContext;
   displayText?: string;
   origin?: 'implement_plan';
@@ -556,6 +557,15 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     return value;
   }
 
+  function submissionConversationContext(submission: ZeusConversationSubmissionRecord): Record<string, unknown> | null {
+    const value = parseJsonRecord(submission.inputJson).conversationContext;
+    if (value === undefined) return null;
+    if (!isRecord(value) || !Array.isArray(value.responseAnnotations) || !Array.isArray(value.codeComments)) {
+      throw coordinatorError('ZEUS_NATIVE_CONVERSATION_CONTEXT_INVALID', 'Durable conversation context metadata is invalid.');
+    }
+    return value;
+  }
+
   function submissionProviderInput(submission: ZeusConversationSubmissionRecord, context: ConversationDispatchContext): Array<Record<string, unknown>> {
     const text = volatileSubmissionText.get(submission.id) ?? submissionText(submission);
     const attachments = submissionAttachments(submission);
@@ -624,6 +634,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           status: submission.status as 'queued' | 'paused',
           delivery: input.delivery === 'steer_now' ? ('steer_now' as const) : ('queue' as const),
           attachments: submissionAttachments(submission),
+          ...(submissionConversationContext(submission) ? { conversationContext: submissionConversationContext(submission)! } : {}),
           expectedTurnId: typeof input.expectedTurnId === 'string' ? input.expectedTurnId : null,
           clientUserMessageId: submission.clientMessageId,
           position: submission.queuePosition ?? index + 1,
@@ -646,6 +657,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       clientUserMessageId: string;
       attachments?: NativeConversationAttachmentInput[];
       browserComments?: Record<string, unknown>[];
+      conversationContext?: Record<string, unknown>;
       displayText?: string;
       taskPushLayout?: TaskPushMessageLayout;
       origin?: 'implement_plan';
@@ -659,6 +671,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       text: content,
       ...(input.attachments?.length ? { attachments: input.attachments } : {}),
       ...(input.browserComments?.length ? { browserComments: input.browserComments } : {}),
+      ...(input.conversationContext ? { conversationContext: input.conversationContext } : {}),
       context,
       ...(input.displayText ? { displayText: input.displayText } : {}),
       ...(input.origin ? { origin: input.origin } : {}),
@@ -1001,6 +1014,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       text: input.content,
       ...(input.attachments?.length ? { attachments: input.attachments } : {}),
       ...(input.browserComments?.length ? { browserComments: input.browserComments } : {}),
+      ...(input.conversationContext ? { conversationContext: input.conversationContext } : {}),
       context,
       ...(input.displayText ? { displayText: input.displayText } : {}),
       delivery: 'steer_now',
@@ -1570,6 +1584,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         ...(submission ? { attachments: submissionAttachments(submission) } : {}),
         ...(submission && submissionTaskPushLayout(submission) ? { taskPushLayout: submissionTaskPushLayout(submission) } : {}),
         ...(submission && submissionBrowserComments(submission).length ? { browserComments: submissionBrowserComments(submission) } : {}),
+        ...(submission && submissionConversationContext(submission) ? { conversationContext: submissionConversationContext(submission) } : {}),
         ...(typeof itemPayload.origin === 'string' ? { origin: itemPayload.origin } : {}),
         ...(typeof itemPayload.planItemId === 'string' ? { planItemId: itemPayload.planItemId } : {}),
         ...(submission && typeof parseJsonRecord(submission.inputJson).requestAnswerId === 'string' ? { requestAnswerId: parseJsonRecord(submission.inputJson).requestAnswerId } : {}),
@@ -1642,6 +1657,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       ...(input.origin === 'implement_plan' ? { origin: input.origin } : {}),
       ...(typeof input.planItemId === 'string' ? { planItemId: input.planItemId } : {}),
       ...(typeof input.requestAnswerId === 'string' ? { requestAnswerId: input.requestAnswerId } : {}),
+      ...(isRecord(input.conversationContext) ? { conversationContext: input.conversationContext } : {}),
     };
   }
 

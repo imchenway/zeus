@@ -1,7 +1,7 @@
 import { type KeyboardEvent, type RefObject, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
-import type { ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import type { ConversationContextDraft, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import type { CodexConversationCapabilities, NativeCollaborationMode, NativeConversationAttachment, NativePermissionMode, NativeServiceTierSelection, NativeSessionState, NativeTurnSettingsSelection } from './sessionTypes.js';
 import { ComposerDropdown } from './ComposerDropdown.js';
 import { PermissionModeControl } from './PermissionModeControl.js';
@@ -37,6 +37,7 @@ export interface ConversationComposerProps {
   onAddAttachments?: (attachments: NativeConversationAttachment[]) => void;
   onRemoveAttachment?: (attachment: NativeConversationAttachment) => void;
   onRemoveBrowserSubmission?: () => void;
+  onContextDraftChange?: (draft: ConversationContextDraft) => void;
   runtimeSettings?: ComposerRuntimeSettings | null;
   onRuntimeSettingsChange?: (settings: ComposerRuntimeSettings) => void;
   readOnly?: boolean;
@@ -89,7 +90,8 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const active = props.state.conversationState === 'active_prework' || props.state.conversationState === 'active_final_answer';
   const busy = Boolean(props.state.busyOperation);
   const writable = props.readOnly !== true && props.state.conversationState !== 'legacy_readonly';
-  const hasDraft = props.state.draft.trim().length > 0 || props.state.attachments.length > 0 || Boolean(props.state.browserSubmission);
+  const hasDraft =
+    props.state.draft.trim().length > 0 || props.state.attachments.length > 0 || Boolean(props.state.browserSubmission) || props.state.contextDraft.responseAnnotations.length > 0 || props.state.contextDraft.codeComments.length > 0;
   const selectedCapability = resolveModelCapability(props.capabilities?.models, selectedModel);
   const settingsWritable = props.readOnly !== true && Boolean(selectedCapability);
   const modelOptions = props.capabilities?.models.length
@@ -201,6 +203,9 @@ export function ConversationComposer(props: ConversationComposerProps) {
       onDrop={inputResources.handleDrop}
     >
       {props.state.browserSubmission ? <BrowserSubmissionAttachment submission={props.state.browserSubmission} language={props.language} disabled={!writable || busy} onRemove={props.onRemoveBrowserSubmission} /> : null}
+      {props.state.contextDraft.responseAnnotations.length || props.state.contextDraft.codeComments.length ? (
+        <ContextDraftAttachment draft={props.state.contextDraft} language={props.language} disabled={!writable || busy} onRemove={() => props.onContextDraftChange?.({ responseAnnotations: [], codeComments: [] })} />
+      ) : null}
       {inputResourceError ? (
         <p className="session-composer-resource-error" role="alert">
           {inputResourceError}
@@ -340,6 +345,26 @@ export function ConversationComposer(props: ConversationComposerProps) {
           </span>
         </div>
       </div>
+    </section>
+  );
+}
+
+function ContextDraftAttachment(props: { draft: ConversationContextDraft; language: SessionUiLanguage; disabled: boolean; onRemove?: () => void }) {
+  const annotations = props.draft.responseAnnotations.length;
+  const comments = props.draft.codeComments.length;
+  const zh = props.language === 'zh-CN';
+  const label = zh
+    ? [comments ? `${comments} 个评论` : '', annotations ? `${annotations} 条注释` : ''].filter(Boolean).join('、')
+    : [comments ? `${comments} ${comments === 1 ? 'comment' : 'comments'}` : '', annotations ? `${annotations} ${annotations === 1 ? 'annotation' : 'annotations'}` : ''].filter(Boolean).join(', ');
+  return (
+    <section className="session-composer-context-draft" aria-label={zh ? '待发送评论与注释' : 'Pending comments and annotations'}>
+      <span className="session-context-draft-chip">
+        <ChatCircle aria-hidden="true" weight="regular" />
+        <strong>{label}</strong>
+        <button type="button" aria-label={zh ? '移除评论与注释' : 'Remove comments and annotations'} onClick={props.onRemove} disabled={props.disabled || !props.onRemove}>
+          <span aria-hidden="true">×</span>
+        </button>
+      </span>
     </section>
   );
 }

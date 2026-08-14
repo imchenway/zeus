@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { ArrowCounterClockwiseIcon as ArrowCounterClockwise } from '@phosphor-icons/react/dist/csr/ArrowCounterClockwise';
 import { ArrowsInIcon as ArrowsIn } from '@phosphor-icons/react/dist/csr/ArrowsIn';
@@ -9,8 +9,17 @@ import { FilesIcon as Files } from '@phosphor-icons/react/dist/csr/Files';
 import { GitDiffIcon as GitDiff } from '@phosphor-icons/react/dist/csr/GitDiff';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
-import { historicalTurnChangeUnavailableReason, type TurnChangeFile, type TurnChangeSet, type TurnChangeSetOperationResult } from '@zeus/shared';
+import {
+  historicalTurnChangeUnavailableReason,
+  type ConversationCodeComment,
+  type ConversationCodeCommentPosition,
+  type ConversationCodeCommentSide,
+  type TurnChangeFile,
+  type TurnChangeSet,
+  type TurnChangeSetOperationResult,
+} from '@zeus/shared';
 import type { SessionUiLanguage } from './ThreadItemView.js';
+import { CodeCommentPanel } from './CodeCommentPanel.js';
 
 type ChangeAction = 'undo' | 'reapply';
 const maximumRenderedDiffLines = 2_000;
@@ -128,6 +137,8 @@ export function TurnDiffWorkspace(props: {
   onClose: () => void;
   onOperate?: (changeSet: TurnChangeSet, action: ChangeAction) => Promise<TurnChangeSetOperationResult>;
   onOpenFile?: (file: TurnChangeFile, line?: number) => void | Promise<void>;
+  comments?: ConversationCodeComment[];
+  onCommentsChange?: (comments: ConversationCodeComment[]) => void;
 }) {
   const zh = props.language === 'zh-CN';
   const [activeFileId, setActiveFileId] = useState(props.initialFileId ?? props.changeSet.files[0]?.id ?? null);
@@ -135,10 +146,15 @@ export function TurnDiffWorkspace(props: {
   const [busy, setBusy] = useState<ChangeAction | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [optimisticChangeSet, setOptimisticChangeSet] = useState<TurnChangeSet | null>(null);
+  const [draftPosition, setDraftPosition] = useState<ConversationCodeCommentPosition | null>(null);
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [rangeStart, setRangeStart] = useState<{ line: number; side: ConversationCodeCommentSide } | null>(null);
   const changeSet = optimisticChangeSet && optimisticChangeSet.id === props.changeSet.id && optimisticChangeSet.updatedAt >= props.changeSet.updatedAt ? optimisticChangeSet : props.changeSet;
   const action = availableAction(changeSet);
   const activeFile = changeSet.files.find((file) => file.id === activeFileId) ?? changeSet.files[0] ?? null;
   const diff = useMemo(() => diffLines(activeFile?.unifiedDiff ?? ''), [activeFile?.unifiedDiff]);
+  const activePath = activeFile ? commentPath(activeFile) : null;
+  const comments = (props.comments ?? []).filter((comment) => comment.position.path === activePath);
 
   useEffect(() => {
     titleRef.current?.focus();
@@ -153,6 +169,23 @@ export function TurnDiffWorkspace(props: {
       setActiveFileId(changeSet.files[0]?.id ?? null);
     }
   }, [activeFileId, changeSet.files, props.initialFileId]);
+
+  useEffect(() => {
+    setDraftPosition(null);
+    setEditingCommentId(null);
+    setRangeStart(null);
+  }, [activeFile?.id]);
+
+  function saveComment(position: ConversationCodeCommentPosition, body: string, existingId?: string): void {
+    if (!props.onCommentsChange) return;
+    const diffHunk = activeFile ? nearbyDiffHunk(activeFile.unifiedDiff, position) : undefined;
+    const next = existingId
+      ? (props.comments ?? []).map((comment) => (comment.id === existingId ? { ...comment, body } : comment))
+      : [...(props.comments ?? []), { id: crypto.randomUUID(), body, position, ...(diffHunk ? { diffHunk } : {}) }];
+    props.onCommentsChange(next);
+    setDraftPosition(null);
+    setEditingCommentId(null);
+  }
 
   async function operate(): Promise<void> {
     if (!action || !props.onOperate || busy) return;
@@ -264,28 +297,84 @@ export function TurnDiffWorkspace(props: {
               ) : null}
               <pre>
                 <code>
-                  {diff.lines.map((line, index) => (
-                    <span className="session-diff-line" data-kind={line.kind} key={`${index}:${line.text}`}>
-                      <span className="session-diff-line-sign" aria-hidden="true">
-                        {line.sign}
-                      </span>
-                      {lineNumberForState(line, changeSet.state) && props.onOpenFile ? (
-                        <button
-                          type="button"
-                          className="session-diff-line-number"
-                          aria-label={zh ? `在源码中打开第 ${lineNumberForState(line, changeSet.state)} 行` : `Open source at line ${lineNumberForState(line, changeSet.state)}`}
-                          onClick={() => void openFile(activeFile, lineNumberForState(line, changeSet.state) ?? undefined)}
-                        >
-                          {lineNumberLabel(line)}
-                        </button>
-                      ) : (
-                        <span className="session-diff-line-number" aria-hidden="true">
-                          {lineNumberLabel(line)}
+                  {diff.lines.map((line, index) => {
+                    const position = activePath ? commentPosition(activePath, line) : null;
+                    const lineComments = position ? comments.filter((comment) => comment.position.line === position.line && comment.position.side === position.side) : [];
+                    const draftHere = Boolean(position && draftPosition?.line === position.line && draftPosition.side === position.side);
+                    return (
+                      <Fragment key={`${index}:${line.text}`}>
+                        <span className="session-diff-line" data-kind={line.kind}>
+                          {position && props.onCommentsChange ? (
+                            <button
+                              type="button"
+                              className="session-code-comment-add"
+                              aria-label={zh ? `评论${position.side === 'left' ? '旧' : '新'}文件第 ${position.line} 行` : `Comment on ${position.side === 'left' ? 'old' : 'new'} line ${position.line}`}
+                              onClick={(event) => {
+                                const useRange = event.shiftKey && rangeStart?.side === position.side;
+                                const startLine = useRange ? Math.min(rangeStart.line, position.line) : position.line;
+                                const endLine = useRange ? Math.max(rangeStart.line, position.line) : position.line;
+                                setRangeStart({ line: position.line, side: position.side });
+                                setEditingCommentId(null);
+                                setDraftPosition({ path: position.path, line: endLine, side: position.side, ...(startLine !== endLine ? { startLine, startSide: position.side } : {}) });
+                              }}
+                            >
+                              +
+                            </button>
+                          ) : (
+                            <span className="session-code-comment-spacer" aria-hidden="true" />
+                          )}
+                          <span className="session-diff-line-sign" aria-hidden="true">
+                            {line.sign}
+                          </span>
+                          {lineNumberForState(line, changeSet.state) && props.onOpenFile ? (
+                            <button
+                              type="button"
+                              className="session-diff-line-number"
+                              aria-label={zh ? `在源码中打开第 ${lineNumberForState(line, changeSet.state)} 行` : `Open source at line ${lineNumberForState(line, changeSet.state)}`}
+                              onClick={() => void openFile(activeFile, lineNumberForState(line, changeSet.state) ?? undefined)}
+                            >
+                              {lineNumberLabel(line)}
+                            </button>
+                          ) : (
+                            <span className="session-diff-line-number" aria-hidden="true">
+                              {lineNumberLabel(line)}
+                            </span>
+                          )}
+                          <span>{line.text || '\u00a0'}</span>
                         </span>
-                      )}
-                      <span>{line.text || '\u00a0'}</span>
-                    </span>
-                  ))}
+                        {lineComments.map((comment) =>
+                          editingCommentId === comment.id ? (
+                            <CodeCommentPanel
+                              key={comment.id}
+                              language={props.language}
+                              position={comment.position}
+                              comment={comment}
+                              onCancel={() => setEditingCommentId(null)}
+                              onSave={(body) => saveComment(comment.position, body, comment.id)}
+                              onDelete={() => {
+                                props.onCommentsChange?.((props.comments ?? []).filter((candidate) => candidate.id !== comment.id));
+                                setEditingCommentId(null);
+                              }}
+                            />
+                          ) : (
+                            <span key={comment.id} className="session-saved-code-comment">
+                              <strong>{zh ? '本地评论' : 'Local comment'}</strong>
+                              <span>{comment.body}</span>
+                              <span className="session-saved-code-comment-actions">
+                                <button type="button" onClick={() => setEditingCommentId(comment.id)}>
+                                  {zh ? '编辑' : 'Edit'}
+                                </button>
+                                <button type="button" onClick={() => props.onCommentsChange?.((props.comments ?? []).filter((candidate) => candidate.id !== comment.id))}>
+                                  {zh ? '删除' : 'Delete'}
+                                </button>
+                              </span>
+                            </span>
+                          ),
+                        )}
+                        {draftHere && draftPosition ? <CodeCommentPanel language={props.language} position={draftPosition} onCancel={() => setDraftPosition(null)} onSave={(body) => saveComment(draftPosition, body)} /> : null}
+                      </Fragment>
+                    );
+                  })}
                 </code>
               </pre>
             </>
@@ -296,6 +385,45 @@ export function TurnDiffWorkspace(props: {
       </div>
     </section>
   );
+}
+
+function commentPath(file: TurnChangeFile): string {
+  return file.newPath ?? file.oldPath ?? 'unknown';
+}
+
+function commentPosition(path: string, line: DisplayDiffLine): ConversationCodeCommentPosition | null {
+  if (line.kind === 'deleted' && line.oldLine !== null) return { path, line: line.oldLine, side: 'left' };
+  if (line.newLine !== null) return { path, line: line.newLine, side: 'right' };
+  if (line.oldLine !== null) return { path, line: line.oldLine, side: 'left' };
+  return null;
+}
+
+function nearbyDiffHunk(diff: string, position: ConversationCodeCommentPosition): string | undefined {
+  const lines = diff.split('\n');
+  let oldLine: number | null = null;
+  let newLine: number | null = null;
+  let activeHunk = -1;
+  for (let index = 0; index < lines.length; index += 1) {
+    const raw = lines[index] ?? '';
+    if (raw.startsWith('@@')) {
+      const match = /^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/u.exec(raw);
+      oldLine = match ? Number(match[1]) : null;
+      newLine = match ? Number(match[2]) : null;
+      activeHunk = index;
+      continue;
+    }
+    const current = position.side === 'left' ? oldLine : newLine;
+    if (current === position.line && activeHunk >= 0) {
+      const nextHunk = lines.findIndex((candidate, candidateIndex) => candidateIndex > activeHunk && candidate.startsWith('@@'));
+      return lines
+        .slice(activeHunk, nextHunk < 0 ? lines.length : nextHunk)
+        .join('\n')
+        .slice(0, 8_000);
+    }
+    if (!raw.startsWith('+') && oldLine !== null) oldLine += 1;
+    if (!raw.startsWith('-') && newLine !== null) newLine += 1;
+  }
+  return undefined;
 }
 
 function availableAction(changeSet: TurnChangeSet): ChangeAction | null {

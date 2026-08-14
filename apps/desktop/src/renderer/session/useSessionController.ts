@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
-import type { ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import { emptyConversationContextDraft, hasConversationContext, serializeConversationContext, type ConversationContextDraft, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { createInitialSessionState, sessionReducer } from './sessionReducer.js';
 import {
   type CodexConversationCapabilities,
@@ -55,6 +55,7 @@ export interface SessionControllerClient {
   updateNativeNextTurnSettings(projectId: string, conversationId: string, settings: NativeNextTurnSettings): Promise<NativeNextTurnSettings>;
   connectEvents(onEvent: (event: NativeRealtimeEventEnvelope) => void, options?: { afterEventId?: string }): WebSocket;
   sendNativeMessage(projectId: string, conversationId: string, input: SendNativeMessageRequest): Promise<NativeOperationAcceptance>;
+  askNativeSideChat?(projectId: string, conversationId: string, input: { selectedText: string; question: string }): Promise<{ answer: string; status: 'completed' | 'interrupted' }>;
   editNativeQueuedSubmission(projectId: string, conversationId: string, submissionId: string, content: string): Promise<NativeQueueSnapshot>;
   deleteNativeQueuedSubmission(projectId: string, conversationId: string, submissionId: string): Promise<NativeQueueSnapshot>;
   reorderNativeQueue(projectId: string, conversationId: string, orderedSubmissionIds: string[]): Promise<NativeQueueSnapshot>;
@@ -113,6 +114,7 @@ export interface SessionController {
   setDraft(draft: string): void;
   setAttachments(attachments: NativeConversationAttachment[]): void;
   setBrowserSubmission(browserSubmission: ZeusBrowserPreparedSubmission | null): void;
+  setContextDraft(contextDraft: ConversationContextDraft): void;
 
   send(delivery: 'queue' | 'steer_now', expectedTurnId?: string, settings?: NativeTurnSettingsSelection): Promise<NativeOperationAcceptance | void>;
   editQueuedSubmission(submissionId: string, content: string): Promise<NativeQueueSnapshot>;
@@ -149,6 +151,7 @@ interface PendingSendEnvelope {
   attachments: NativeConversationAttachment[];
   composerAttachments: NativeConversationAttachment[];
   browserSubmission: ZeusBrowserPreparedSubmission | null;
+  contextDraft: ConversationContextDraft;
   delivery: 'queue' | 'steer_now';
   expectedTurnId?: string;
   model?: string;
@@ -172,6 +175,7 @@ interface PersistedDraft {
   draft: string;
   attachments: NativeConversationAttachment[];
   browserSubmission?: ZeusBrowserPreparedSubmission | null;
+  contextDraft?: ConversationContextDraft;
   pendingSend?: PendingSendEnvelope;
   deferredSends?: PendingSendEnvelope[];
   recoveredSubmissionIds?: string[];
@@ -229,6 +233,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     draft: persisted.draft || options.initialOptimisticState?.draft || '',
     attachments: persisted.attachments.length > 0 ? persisted.attachments : (options.initialOptimisticState?.attachments ?? []),
     browserSubmission: persisted.browserSubmission ?? options.initialOptimisticState?.browserSubmission ?? null,
+    contextDraft: persisted.contextDraft ?? options.initialOptimisticState?.contextDraft ?? structuredClone(emptyConversationContextDraft),
     busyOperation: null,
     error: initialCachedState?.error?.recoveryRequired ? null : (initialCachedState?.error ?? null),
   };
@@ -245,6 +250,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       attachments: pendingSend.composerAttachments,
       submittedAttachments: pendingSend.attachments,
       browserSubmission: pendingSend.browserSubmission,
+      contextDraft: pendingSend.contextDraft,
       browserComments: pendingSend.browserSubmission?.comments ?? [],
       delivery: pendingSend.delivery,
       previousConversationState,
@@ -256,6 +262,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       draft: pendingSend.draft,
       attachments: pendingSend.composerAttachments,
       browserSubmission: pendingSend.browserSubmission,
+      contextDraft: pendingSend.contextDraft,
       previousConversationState,
       error: deliveryError,
     });
@@ -264,6 +271,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const currentDraft = state.draft;
     const currentAttachments = state.attachments;
     const currentBrowserSubmission = state.browserSubmission;
+    const currentContextDraft = state.contextDraft;
     for (const envelope of deferredSends) {
       state = sessionReducer(state, {
         type: 'send_started',
@@ -273,6 +281,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         attachments: envelope.composerAttachments,
         submittedAttachments: envelope.attachments,
         browserSubmission: envelope.browserSubmission,
+        contextDraft: envelope.contextDraft,
         browserComments: envelope.browserSubmission?.comments ?? [],
         delivery: envelope.delivery,
         previousConversationState: state.conversationState,
@@ -280,7 +289,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         queuedUntilHydrated: true,
       });
     }
-    state = { ...state, draft: currentDraft, attachments: currentAttachments, browserSubmission: currentBrowserSubmission };
+    state = { ...state, draft: currentDraft, attachments: currentAttachments, browserSubmission: currentBrowserSubmission, contextDraft: currentContextDraft };
   }
   let socket: WebSocket | null = null;
   let socketLifecycle: SocketLifecycle | null = null;
@@ -322,7 +331,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const draft = state.draft;
     const attachments = state.attachments;
     const browserSubmission = state.browserSubmission;
-    if (!draft && attachments.length === 0 && !browserSubmission && !pendingSend && deferredSends.length === 0 && recoveredSubmissionIds.size === 0) {
+    const contextDraft = state.contextDraft;
+    if (!draft && attachments.length === 0 && !browserSubmission && !hasConversationContext(contextDraft) && !pendingSend && deferredSends.length === 0 && recoveredSubmissionIds.size === 0) {
       storage.removeItem(storageKey);
       return;
     }
@@ -332,6 +342,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         draft,
         attachments,
         ...(browserSubmission ? { browserSubmission } : {}),
+        ...(hasConversationContext(contextDraft) ? { contextDraft } : {}),
         ...(pendingSend ? { pendingSend } : {}),
         ...(deferredSends.length > 0 ? { deferredSends } : {}),
         ...(recoveredSubmissionIds.size > 0 ? { recoveredSubmissionIds: [...recoveredSubmissionIds] } : {}),
@@ -340,12 +351,18 @@ export function createSessionController(options: CreateSessionControllerOptions)
   }
 
   function clearDraftIfItStillMatches(envelope: PendingSendEnvelope): void {
-    if (state.draft !== envelope.draft || !sameAttachments(state.attachments, envelope.composerAttachments) || !sameBrowserSubmission(state.browserSubmission, envelope.browserSubmission)) {
+    if (
+      state.draft !== envelope.draft ||
+      !sameAttachments(state.attachments, envelope.composerAttachments) ||
+      !sameBrowserSubmission(state.browserSubmission, envelope.browserSubmission) ||
+      !sameContextDraft(state.contextDraft, envelope.contextDraft)
+    ) {
       return;
     }
     dispatch({ type: 'draft_changed', draft: '' });
     dispatch({ type: 'attachments_changed', attachments: [] });
     dispatch({ type: 'browser_submission_changed', browserSubmission: null });
+    dispatch({ type: 'context_draft_changed', contextDraft: structuredClone(emptyConversationContextDraft) });
     recoveredSubmissionIds.clear();
   }
 
@@ -516,6 +533,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       attachments: envelope.composerAttachments,
       submittedAttachments: envelope.attachments,
       browserSubmission: envelope.browserSubmission,
+      contextDraft: envelope.contextDraft,
       browserComments: envelope.browserSubmission?.comments ?? [],
       delivery: envelope.delivery,
       previousConversationState: state.conversationState,
@@ -907,6 +925,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
           attachments: envelope.composerAttachments,
           submittedAttachments: envelope.attachments,
           browserSubmission: envelope.browserSubmission,
+          contextDraft: envelope.contextDraft,
           browserComments: envelope.browserSubmission?.comments ?? [],
           delivery: envelope.delivery,
           previousConversationState,
@@ -923,6 +942,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
             ...(envelope.displayText ? { displayText: envelope.displayText } : {}),
             attachments: envelope.attachments,
             ...(envelope.browserSubmission?.comments.length ? { browserComments: envelope.browserSubmission.comments } : {}),
+            ...(hasConversationContext(envelope.contextDraft) ? { conversationContext: envelope.contextDraft } : {}),
             delivery: envelope.delivery,
             ...(envelope.expectedTurnId ? { expectedTurnId: envelope.expectedTurnId } : {}),
             ...(envelope.model ? { model: envelope.model } : {}),
@@ -956,6 +976,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
                   draft: envelope.draft,
                   attachments: envelope.composerAttachments,
                   browserSubmission: envelope.browserSubmission,
+                  contextDraft: envelope.contextDraft,
                   previousConversationState,
                   error: sessionError,
                 }
@@ -965,6 +986,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
                   draft: envelope.draft,
                   attachments: envelope.composerAttachments,
                   browserSubmission: envelope.browserSubmission,
+                  contextDraft: envelope.contextDraft,
                   previousConversationState,
                   error: sessionError,
                 },
@@ -1051,6 +1073,11 @@ export function createSessionController(options: CreateSessionControllerOptions)
       });
       persistDraft();
     },
+    setContextDraft(contextDraft) {
+      if (pendingSend && pendingSend.deliveryState !== 'accepted' && !sameContextDraft(pendingSend.contextDraft, contextDraft)) pendingSend = null;
+      dispatch({ type: 'context_draft_changed', contextDraft: structuredClone(contextDraft) });
+      persistDraft();
+    },
     setPermissionMode(permissionMode) {
       if (state.conversationState !== 'native_idle' || state.transportState !== 'ready') return Promise.reject(new Error('Conversation permission mode can change only while the conversation is idle.'));
       return runOperation(
@@ -1102,18 +1129,23 @@ export function createSessionController(options: CreateSessionControllerOptions)
       const draft = state.draft;
       const composerAttachments = [...state.attachments];
       const browserSubmission = state.browserSubmission ? structuredClone(state.browserSubmission) : null;
-      if (!draft.trim() && composerAttachments.length === 0 && !browserSubmission) {
-        return Promise.reject(new Error('Conversation message content, attachments, or browser comments are required.'));
+      const contextDraft = structuredClone(state.contextDraft);
+      if (!draft.trim() && composerAttachments.length === 0 && !browserSubmission && !hasConversationContext(contextDraft)) {
+        return Promise.reject(new Error('Conversation message content, attachments, comments, or annotations are required.'));
       }
       const attachments = mergeAttachments(composerAttachments, browserSubmission?.attachments ?? []);
-      const displayText = draft.trim() || (browserSubmission ? `Browser comments (${browserSubmission.commentIds.length})` : '');
-      const content = browserSubmission ? [draft.trim(), browserSubmission.content.trim()].filter(Boolean).join('\n\n') : draft;
+      const displayText =
+        draft.trim() ||
+        (browserSubmission ? `Browser comments (${browserSubmission.commentIds.length})` : '') ||
+        (contextDraft.codeComments.length ? `Code comments (${contextDraft.codeComments.length})` : `Response annotations (${contextDraft.responseAnnotations.length})`);
+      const content = [draft.trim(), browserSubmission?.content.trim(), serializeConversationContext(contextDraft)].filter(Boolean).join('\n\n');
       const appliedSettings = delivery === 'queue' ? settings : undefined;
       const fingerprint = sendFingerprint({
         content,
         displayText,
         attachments,
         ...(browserSubmission?.comments.length ? { browserComments: browserSubmission.comments } : {}),
+        ...(hasConversationContext(contextDraft) ? { conversationContext: contextDraft } : {}),
         delivery,
         ...(normalizedExpectedTurnId ? { expectedTurnId: normalizedExpectedTurnId } : {}),
         ...(appliedSettings?.model ? { model: appliedSettings.model } : {}),
@@ -1133,6 +1165,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
           sameAttachments(pendingSend.attachments, attachments) &&
           sameAttachments(pendingSend.composerAttachments, composerAttachments) &&
           sameBrowserSubmission(pendingSend.browserSubmission, browserSubmission) &&
+          sameContextDraft(pendingSend.contextDraft, contextDraft) &&
           pendingSend.delivery === delivery &&
           pendingSend.expectedTurnId === normalizedExpectedTurnId &&
           pendingSend.model === appliedSettings?.model &&
@@ -1150,6 +1183,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
           attachments,
           composerAttachments,
           browserSubmission,
+          contextDraft,
           delivery,
           ...(normalizedExpectedTurnId ? { expectedTurnId: normalizedExpectedTurnId } : {}),
           ...(appliedSettings?.model ? { model: appliedSettings.model } : {}),
@@ -1176,6 +1210,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
           attachments: envelope.composerAttachments,
           submittedAttachments: envelope.attachments,
           browserSubmission: envelope.browserSubmission,
+          contextDraft: envelope.contextDraft,
           browserComments: envelope.browserSubmission?.comments ?? [],
           delivery: envelope.delivery,
           previousConversationState: state.conversationState,
@@ -1326,7 +1361,7 @@ function browserStorage(): SessionDraftStorage | undefined {
 }
 
 function readPersistedDraft(storage: SessionDraftStorage | undefined, key: string): PersistedDraft {
-  const empty: PersistedDraft = { draft: '', attachments: [] };
+  const empty: PersistedDraft = { draft: '', attachments: [], contextDraft: structuredClone(emptyConversationContextDraft) };
   if (!storage) return empty;
   try {
     const raw = storage.getItem(key);
@@ -1334,16 +1369,18 @@ function readPersistedDraft(storage: SessionDraftStorage | undefined, key: strin
     const parsed = JSON.parse(raw) as Partial<PersistedDraft>;
     const attachments = Array.isArray(parsed.attachments) ? parsed.attachments.filter(isNativeAttachment) : [];
     const browserSubmission = isBrowserPreparedSubmission(parsed.browserSubmission) ? parsed.browserSubmission : null;
+    const contextDraft = isConversationContextDraft(parsed.contextDraft) ? parsed.contextDraft : structuredClone(emptyConversationContextDraft);
     const pendingCandidate = isPendingSendEnvelope(parsed.pendingSend) ? parsed.pendingSend : undefined;
     const pending = pendingCandidate ? { ...pendingCandidate, collaborationMode: pendingCandidate.collaborationMode ?? 'default' } : undefined;
     const deferredSends = Array.isArray(parsed.deferredSends) ? parsed.deferredSends.filter(isPendingSendEnvelope).map((envelope) => ({ ...envelope, collaborationMode: envelope.collaborationMode ?? 'default' })) : [];
     const recoveredSubmissionIds = Array.isArray(parsed.recoveredSubmissionIds) ? parsed.recoveredSubmissionIds.filter((id): id is string => typeof id === 'string' && Boolean(id)) : [];
     const persistedDraft = typeof parsed.draft === 'string' ? parsed.draft : '';
-    const restorePendingInput = pending && pending.deliveryState !== 'accepted' && !persistedDraft && attachments.length === 0 && !browserSubmission;
+    const restorePendingInput = pending && pending.deliveryState !== 'accepted' && !persistedDraft && attachments.length === 0 && !browserSubmission && !hasConversationContext(contextDraft);
     return {
       draft: restorePendingInput ? pending.draft : persistedDraft || (pending && parsed.draft === undefined ? pending.draft : ''),
       attachments: restorePendingInput ? pending.composerAttachments : attachments,
       browserSubmission: restorePendingInput ? pending.browserSubmission : browserSubmission,
+      contextDraft: restorePendingInput ? pending.contextDraft : contextDraft,
       ...(pending ? { pendingSend: pending } : {}),
       ...(deferredSends.length > 0 ? { deferredSends } : {}),
       ...(recoveredSubmissionIds.length > 0 ? { recoveredSubmissionIds } : {}),
@@ -1366,6 +1403,7 @@ function isPendingSendEnvelope(value: unknown): value is PendingSendEnvelope {
     Array.isArray(pending.composerAttachments) &&
     pending.composerAttachments.every(isNativeAttachment) &&
     (pending.browserSubmission === null || isBrowserPreparedSubmission(pending.browserSubmission)) &&
+    isConversationContextDraft(pending.contextDraft) &&
     (pending.delivery === 'queue' || pending.delivery === 'steer_now') &&
     (pending.expectedTurnId === undefined || typeof pending.expectedTurnId === 'string') &&
     (pending.model === undefined || typeof pending.model === 'string') &&
@@ -1447,6 +1485,16 @@ function sameAttachments(left: NativeConversationAttachment[], right: NativeConv
 
 function sameBrowserSubmission(left: ZeusBrowserPreparedSubmission | null, right: ZeusBrowserPreparedSubmission | null): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function sameContextDraft(left: ConversationContextDraft, right: ConversationContextDraft): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function isConversationContextDraft(value: unknown): value is ConversationContextDraft {
+  if (!value || typeof value !== 'object') return false;
+  const draft = value as Partial<ConversationContextDraft>;
+  return Array.isArray(draft.responseAnnotations) && Array.isArray(draft.codeComments);
 }
 
 function mergeAttachments(left: NativeConversationAttachment[], right: NativeConversationAttachment[]): NativeConversationAttachment[] {

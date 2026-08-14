@@ -1637,6 +1637,7 @@ export interface DashboardClient {
   inspectCodexConfigImport: () => Promise<CodexConfigImportPreview>;
   importCodexConfig: () => Promise<CodexConfigImportResult>;
   sendNativeMessage: (projectId: string, conversationId: string, input: SendNativeMessageRequest) => Promise<NativeOperationAcceptance>;
+  askNativeSideChat: (projectId: string, conversationId: string, input: { selectedText: string; question: string }) => Promise<{ answer: string; status: 'completed' | 'interrupted' }>;
   editNativeQueuedSubmission: (projectId: string, conversationId: string, submissionId: string, content: string) => Promise<NativeQueueSnapshot>;
   deleteNativeQueuedSubmission: (projectId: string, conversationId: string, submissionId: string) => Promise<NativeQueueSnapshot>;
   sendNativeQueuedNow: (projectId: string, conversationId: string, submissionId: string) => Promise<NativeOperationAcceptance>;
@@ -2176,6 +2177,11 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
         body: JSON.stringify(body),
       });
     },
+    askNativeSideChat: (projectId, conversationId, input) =>
+      request<{ answer: string; status: 'completed' | 'interrupted' }>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/side-chat`, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
     editNativeQueuedSubmission: (projectId, conversationId, submissionId, content) =>
       request<NativeQueueSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/queue/${encodeURIComponent(submissionId)}`, {
         method: 'PATCH',

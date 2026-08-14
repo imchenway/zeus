@@ -13,7 +13,7 @@ import type {
   TurnChangeSet,
   TurnChangeSetOperationResult,
 } from './sessionTypes.js';
-import type { ConversationFileLocation, ConversationOpenTarget } from '@zeus/shared';
+import type { ConversationFileLocation, ConversationOpenTarget, ConversationResponseTextAnchor } from '@zeus/shared';
 import { useThreadScrollController } from './useThreadScrollController.js';
 import { TurnChangeCard } from './TurnChanges.js';
 import { visibleQueuedSubmissions } from './QueuedConversationMessages.js';
@@ -34,6 +34,10 @@ export interface ConversationTranscriptProps {
   onOperateTurnChangeSet?: (changeSet: TurnChangeSet, action: 'undo' | 'reapply') => Promise<TurnChangeSetOperationResult>;
   onLatestContentVisibilityChange?: (visible: boolean) => void;
   creationStatus?: SessionCreationStatus;
+  onAddResponseAnnotation?: (anchor: ConversationResponseTextAnchor) => string;
+  onUpdateResponseAnnotation?: (id: string, note: string) => void;
+  onRemoveResponseAnnotation?: (id: string) => void;
+  onOpenSideChat?: (selectedText: string) => void;
 }
 
 export interface SessionCreationStatus {
@@ -563,6 +567,11 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         onOpenResource={options.props.onOpenResource}
         onLoadResourcePreview={options.props.onLoadResourcePreview}
         onVisibleContentChange={options.onVisibleContentChange}
+        responseAnnotations={options.props.state.contextDraft.responseAnnotations.filter((annotation) => annotation.anchor.itemId === row.item.itemId)}
+        onAddResponseAnnotation={options.props.onAddResponseAnnotation}
+        onUpdateResponseAnnotation={options.props.onUpdateResponseAnnotation}
+        onRemoveResponseAnnotation={options.props.onRemoveResponseAnnotation}
+        onOpenSideChat={options.props.onOpenSideChat}
       />
       {showTaskPushDeliveryFeedback ? (
         <PendingMessageDeliveryFeedback item={row.item} stateError={options.props.state.error} language={options.props.language} onReturnToComposer={options.props.onRetryItem ? () => options.props.onRetryItem?.(row.item) : undefined} />

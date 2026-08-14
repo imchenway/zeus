@@ -1,4 +1,5 @@
 import type {
+  ConversationContextDraft,
   ConversationResource,
   NativeTokenUsageSnapshot as SharedNativeTokenUsageSnapshot,
   TaskPushParentContextOption,
@@ -114,6 +115,7 @@ export interface NativeQueuedSubmission {
   status: string;
   delivery?: 'queue' | 'steer_now';
   attachments?: NativeConversationAttachment[];
+  conversationContext?: ConversationContextDraft;
   expectedTurnId?: string | null;
   clientUserMessageId?: string;
   position: number;
@@ -810,6 +812,7 @@ export interface SendNativeMessageRequest {
   displayText?: string;
   attachments: NativeConversationAttachment[];
   browserComments?: ZeusBrowserComment[];
+  conversationContext?: ConversationContextDraft;
   delivery: 'queue' | 'steer_now';
   expectedTurnId?: string;
   model?: string;
@@ -1002,6 +1005,7 @@ export interface NativeSessionState {
   draft: string;
   attachments: NativeConversationAttachment[];
   browserSubmission: ZeusBrowserPreparedSubmission | null;
+  contextDraft: ConversationContextDraft;
   transcriptRevision: number;
   feedbackEpoch: number;
   visibleFeedbackEpoch: number;
