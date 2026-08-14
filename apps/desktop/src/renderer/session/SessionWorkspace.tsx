@@ -3,12 +3,12 @@ import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/di
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import { animate as animateMotion, motion, useMotionValue, useTransform } from 'framer-motion';
-import type { ConversationFileLocation, ConversationOpenTarget, TurnChangeFile, ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import type { ConversationContextDraft, ConversationFileLocation, ConversationOpenTarget, TurnChangeFile, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import type { ProjectGitAction, ProjectGitActionResponse, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
 import { openConversationResourceInMain, openTurnChangeFileInMain } from '../appShellBridge.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { canSteerActiveTurn, type ComposerRuntimeSettings, ConversationComposer, resolveComposerKeyIntent } from './ConversationComposer.js';
-import { ConversationTranscript, type SessionCreationStatus } from './ConversationTranscript.js';
+import { ConversationTranscript, type ConversationTranscriptProps, type SessionCreationStatus } from './ConversationTranscript.js';
 import { QueuedConversationMessages } from './QueuedConversationMessages.js';
 import { SessionPlanProgress } from './SessionActivity.js';
 import { LegacyConversationBanner } from './LegacyConversationBanner.js';
@@ -21,6 +21,7 @@ import { PlanWorkspace } from './PlanWorkspace.js';
 import { BrowserWorkspace } from './BrowserWorkspace.js';
 import { SourceWorkspace } from './SourceWorkspace.js';
 import { TurnDiffWorkspace } from './TurnChanges.js';
+import { SideChatWorkspace } from './SideChatWorkspace.js';
 import { defaultOpenTarget } from './ConversationResources.js';
 import type {
   CodexConversationCapabilities,
@@ -119,6 +120,8 @@ export interface SessionWorkspaceActions {
   onSubmit?: (delivery: 'queue' | 'steer_now', settings?: NativeTurnSettingsSelection) => void | Promise<void>;
   onStageBrowserComments?: (prepared: ZeusBrowserPreparedSubmission) => void | Promise<void>;
   onRemoveBrowserSubmission?: () => void;
+  onContextDraftChange?: (draft: ConversationContextDraft) => void;
+  onAskSideChat?: (selectedText: string, question: string) => Promise<string>;
   onInterrupt?: (turnId: string) => void | Promise<void>;
   onChooseAttachments?: () => void | Promise<void>;
   onChooseStartAttachments?: () => Promise<NativeConversationAttachment[]>;
@@ -300,7 +303,8 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     controller.setDraft(props.localState.draft);
     controller.setAttachments(props.localState.attachments);
     controller.setBrowserSubmission(props.localState.browserSubmission);
-  }, [controller, controllerEnabled, props.localState?.attachments, props.localState?.browserSubmission, props.localState?.draft]);
+    controller.setContextDraft(props.localState.contextDraft);
+  }, [controller, controllerEnabled, props.localState?.attachments, props.localState?.browserSubmission, props.localState?.contextDraft, props.localState?.draft]);
   const displayedConversation = props.stableConversationId ? { ...props.conversation, id: props.stableConversationId } : props.conversation;
   const controllerHasSnapshot = controllerEnabled && state.snapshot?.id === props.conversation.id;
   const controllerFailed = controllerEnabled && state.transportState === 'failed';
@@ -393,6 +397,14 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
                   idempotencyKey: crypto.randomUUID(),
                 });
               },
+              ...(props.client.askNativeSideChat
+                ? {
+                    onAskSideChat: async (selectedText: string, question: string) => {
+                      const result = await props.client.askNativeSideChat!(props.conversation.projectId, props.conversation.id, { selectedText, question });
+                      return result.answer;
+                    },
+                  }
+                : {}),
             }
           : {}),
         onStartConversation: props.onStartConversation,
@@ -455,6 +467,7 @@ export function createConnectedSessionActions(input: { controller: SessionContro
     },
     onStageBrowserComments: (prepared) => input.controller.setBrowserSubmission(prepared),
     onRemoveBrowserSubmission: () => input.controller.setBrowserSubmission(null),
+    onContextDraftChange: (draft) => input.controller.setContextDraft(draft),
     onInterrupt: () => settle(input.controller.interruptActiveTurn()),
     ...(input.onChooseAttachments
       ? {
@@ -1185,7 +1198,13 @@ function TokenUsageValue(props: { count: number; label: TokenUsageLabel; languag
 
 type SessionWorkspaceStatus = { kind: 'ready' | 'busy' | 'warning' | 'error'; label: string };
 
-type SessionContextWorkspace = { kind: 'none' } | { kind: 'browser' } | { kind: 'plan'; itemId: string } | { kind: 'source'; preview: ConversationResourcePreview } | { kind: 'turn_diff'; turnId: string; initialFileId?: string };
+type SessionContextWorkspace =
+  | { kind: 'none' }
+  | { kind: 'browser' }
+  | { kind: 'plan'; itemId: string }
+  | { kind: 'source'; preview: ConversationResourcePreview }
+  | { kind: 'turn_diff'; turnId: string; initialFileId?: string }
+  | { kind: 'side_chat'; selectedText: string };
 
 export interface SessionHeaderSnapshot {
   conversationId: string;
@@ -1708,6 +1727,36 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     });
   }
 
+  function addResponseAnnotation(anchor: Parameters<NonNullable<ConversationTranscriptProps['onAddResponseAnnotation']>>[0]): string {
+    const id = crypto.randomUUID();
+    const current = props.state?.contextDraft;
+    if (!current || !actions.onContextDraftChange) return '';
+    actions.onContextDraftChange({ ...current, responseAnnotations: [...current.responseAnnotations, { id, anchor }] });
+    requestAnimationFrame(() => composerRef.current?.focus());
+    return id;
+  }
+
+  function updateResponseAnnotation(id: string, note: string): void {
+    const current = props.state?.contextDraft;
+    if (!current || !actions.onContextDraftChange) return;
+    actions.onContextDraftChange({
+      ...current,
+      responseAnnotations: current.responseAnnotations.map((annotation) => (annotation.id === id ? { ...annotation, ...(note.trim() ? { note: note.trim() } : { note: undefined }) } : annotation)),
+    });
+  }
+
+  function removeResponseAnnotation(id: string): void {
+    const current = props.state?.contextDraft;
+    if (!current || !actions.onContextDraftChange) return;
+    actions.onContextDraftChange({ ...current, responseAnnotations: current.responseAnnotations.filter((annotation) => annotation.id !== id) });
+  }
+
+  function updateCodeComments(codeComments: NonNullable<NativeSessionState['contextDraft']>['codeComments']): void {
+    const current = props.state?.contextDraft;
+    if (!current || !actions.onContextDraftChange) return;
+    actions.onContextDraftChange({ ...current, codeComments });
+  }
+
   function renderConversationComposer(): ReactNode {
     if (!props.state) return null;
     return (
@@ -1723,6 +1772,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         onAddAttachments={actions.onAddAttachments}
         onRemoveAttachment={actions.onRemoveAttachment}
         onRemoveBrowserSubmission={actions.onRemoveBrowserSubmission}
+        onContextDraftChange={actions.onContextDraftChange}
         runtimeSettings={composerRuntimeSettings}
         onRuntimeSettingsChange={updateComposerRuntimeSettings}
         permissionMode={composerRuntimeSettings?.permissionMode ?? props.state.snapshot?.nextTurnSettings?.permissionMode ?? props.state.snapshot?.permissionMode ?? props.conversation?.permissionMode ?? 'read-only'}
@@ -2014,6 +2064,18 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     });
                   }}
                   onOperateTurnChangeSet={!interactionReadOnly && actions.onOperateTurnChangeSet ? operateTurnChangeSet : undefined}
+                  onAddResponseAnnotation={!interactionReadOnly && actions.onContextDraftChange ? addResponseAnnotation : undefined}
+                  onUpdateResponseAnnotation={!interactionReadOnly && actions.onContextDraftChange ? updateResponseAnnotation : undefined}
+                  onRemoveResponseAnnotation={!interactionReadOnly && actions.onContextDraftChange ? removeResponseAnnotation : undefined}
+                  onOpenSideChat={
+                    !interactionReadOnly && actions.onAskSideChat
+                      ? (selectedText) => {
+                          contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+                          setContextFullWidth(false);
+                          setContextWorkspace({ kind: 'side_chat', selectedText });
+                        }
+                      : undefined
+                  }
                 />
                 {props.suppressComposer || !dockedPlan ? null : <SessionPlanProgress plan={dockedPlan} language={props.language} />}
                 {props.suppressComposer ? null : blockingPendingRequest ? (
@@ -2105,7 +2167,15 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       <PlanWorkspace item={planWorkspaceItem} language={props.language} fullWidth={contextFullWidth} onFullWidthChange={setContextFullWidth} onClose={closeContextWorkspace} />
                     ) : null}
                     {contextWorkspace.kind === 'source' ? (
-                      <SourceWorkspace preview={contextWorkspace.preview} language={props.language} fullWidth={contextFullWidth} onFullWidthChange={setContextFullWidth} onClose={closeContextWorkspace} />
+                      <SourceWorkspace
+                        preview={contextWorkspace.preview}
+                        language={props.language}
+                        fullWidth={contextFullWidth}
+                        onFullWidthChange={setContextFullWidth}
+                        onClose={closeContextWorkspace}
+                        comments={props.state?.contextDraft.codeComments}
+                        onCommentsChange={!interactionReadOnly && actions.onContextDraftChange ? updateCodeComments : undefined}
+                      />
                     ) : null}
                     {contextWorkspace.kind === 'turn_diff' && turnDiffChangeSet ? (
                       <TurnDiffWorkspace
@@ -2117,7 +2187,12 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                         onClose={closeContextWorkspace}
                         onOperate={!interactionReadOnly && actions.onOperateTurnChangeSet ? operateTurnChangeSet : undefined}
                         onOpenFile={(file, line) => openTurnChangeFile(turnDiffChangeSet, file, line)}
+                        comments={props.state?.contextDraft.codeComments}
+                        onCommentsChange={!interactionReadOnly && actions.onContextDraftChange ? updateCodeComments : undefined}
                       />
+                    ) : null}
+                    {contextWorkspace.kind === 'side_chat' && actions.onAskSideChat ? (
+                      <SideChatWorkspace selectedText={contextWorkspace.selectedText} language={props.language} onAsk={(question) => actions.onAskSideChat!(contextWorkspace.selectedText, question)} onClose={closeContextWorkspace} />
                     ) : null}
                   </div>
                 </motion.aside>
@@ -2159,6 +2234,7 @@ function contextWorkspaceLabel(workspace: SessionContextWorkspace, language: Ses
   if (workspace.kind === 'plan') return zh ? '计划工作区' : 'Plan workspace';
   if (workspace.kind === 'source') return zh ? '源码预览' : 'Source preview';
   if (workspace.kind === 'turn_diff') return zh ? '变更审核' : 'Change review';
+  if (workspace.kind === 'side_chat') return zh ? '侧边聊天' : 'Side chat';
   return zh ? '会话上下文工作区' : 'Conversation context workspace';
 }
 

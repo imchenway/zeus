@@ -1616,6 +1616,7 @@ interface CreateConversationMessageBody {
   displayText?: string;
   attachments?: NativeConversationAttachment[];
   browserComments?: unknown;
+  conversationContext?: unknown;
   delivery?: 'queue' | 'steer_now';
   expectedTurnId?: string;
   clientUserMessageId?: string;
@@ -3907,7 +3908,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       }
       const content = typeof request.body?.content === 'string' ? request.body.content.trim() : '';
       const hasNativeResourceInput =
-        conversation.transportKind === 'codex_native' && ((Array.isArray(request.body?.attachments) && request.body.attachments.length > 0) || (Array.isArray(request.body?.browserComments) && request.body.browserComments.length > 0));
+        conversation.transportKind === 'codex_native' &&
+        ((Array.isArray(request.body?.attachments) && request.body.attachments.length > 0) ||
+          (Array.isArray(request.body?.browserComments) && request.body.browserComments.length > 0) ||
+          isNativeApiRecord(request.body?.conversationContext));
       if (!content && !hasNativeResourceInput) {
         return reply.code(400).send({
           error: 'ZEUS_INVALID_CONVERSATION_MESSAGE',
@@ -4057,6 +4061,50 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         ...(runtimeSession ? { runtimeSession } : {}),
         ...(runtimeError ? { runtimeError } : {}),
       });
+    },
+  );
+
+  server.post(
+    '/api/projects/:projectId/conversations/:conversationId/side-chat',
+    async (
+      request: FastifyRequest<{
+        Params: { projectId: string; conversationId: string };
+        Body: { selectedText?: unknown; question?: unknown };
+      }>,
+      reply,
+    ) => {
+      const project = projects.getById(request.params.projectId);
+      const conversation = conversations.getById(request.params.conversationId);
+      if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' });
+      if (!conversation || conversation.projectId !== project.id) return reply.code(404).send({ error: 'ZEUS_CONVERSATION_NOT_FOUND', message: 'Conversation not found' });
+      if (conversation.transportKind !== 'codex_native') return reply.code(409).send({ error: 'ZEUS_SIDE_CHAT_UNAVAILABLE', message: 'Side chat requires a Codex native conversation.' });
+      const selectedText = typeof request.body?.selectedText === 'string' ? request.body.selectedText.trim() : '';
+      const question = typeof request.body?.question === 'string' ? request.body.question.trim() : '';
+      if (!selectedText || selectedText.length > 20_000 || !question || question.length > 100_000) {
+        return reply.code(400).send({ error: 'ZEUS_SIDE_CHAT_INPUT_INVALID', message: 'Selected text and question are required and must stay within the supported size.' });
+      }
+      const cwd = resolveNativeConversationExecutionRoot(conversation) ?? project.localPath;
+      const prompt = ['你是 Zeus 会话中的临时侧边聊天。', '只回答用户围绕所选文字提出的问题；保持简洁，并在信息不足时明确说明。', `主会话：${conversation.title}`, `所选文字：\n${selectedText}`, `用户问题：\n${question}`].join('\n\n');
+      try {
+        const operation = await codexNativeCoordinator.startEphemeralConversation({
+          projectId: project.id,
+          projectLocalPath: cwd,
+          title: `侧边聊天：${question.slice(0, 48)}`,
+          prompt,
+          model: conversation.providerModel ?? (await resolveCodexModel(project)),
+          idempotencyKey: randomUUID(),
+          clientUserMessageId: randomUUID(),
+        });
+        if (operation.status !== 'active' || !operation.providerTurnId) throw nativeApiError('ZEUS_SIDE_CHAT_DISPATCH_FAILED', 'Temporary side chat could not start.');
+        const result = await codexNativeCoordinator.waitForTurnResult({
+          conversationId: operation.conversationId,
+          providerTurnId: operation.providerTurnId,
+          timeoutMs: runtimeSettings.executionTimeoutSeconds * 1_000,
+        });
+        return { answer: result.answer, status: result.status };
+      } catch (error) {
+        return sendNativeConversationApiError(reply, error);
+      }
     },
   );
 
@@ -13521,6 +13569,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       status: submission.status,
       delivery: input.delivery === 'steer_now' ? 'steer_now' : 'queue',
       attachments: Array.isArray(input.attachments) ? input.attachments : [],
+      ...(isNativeApiRecord(input.conversationContext) ? { conversationContext: input.conversationContext } : {}),
       expectedTurnId: typeof input.expectedTurnId === 'string' ? input.expectedTurnId : null,
       clientUserMessageId: submission.clientMessageId,
       position: submission.queuePosition,
@@ -14063,8 +14112,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (!project) throw nativeApiError('ZEUS_PROJECT_NOT_FOUND', 'Conversation project was not found.');
     const attachments = normalizeNativeConversationAttachments(body.attachments, project.localPath);
     const browserComments = normalizeNativeBrowserComments(body.browserComments);
-    if (!content && attachments.length === 0 && browserComments.length === 0) {
-      throw nativeApiError('ZEUS_INVALID_CONVERSATION_MESSAGE', 'Conversation message content, attachments, or browser comments are required.');
+    const conversationContext = normalizeNativeConversationContext(body.conversationContext);
+    if (!content && attachments.length === 0 && browserComments.length === 0 && !conversationContext) {
+      throw nativeApiError('ZEUS_INVALID_CONVERSATION_MESSAGE', 'Conversation message content, attachments, comments, or annotations are required.');
     }
     const displayText =
       body.displayText === undefined
@@ -14161,6 +14211,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
               ...(displayText ? { displayText } : {}),
               attachments,
               browserComments,
+              ...(conversationContext ? { conversationContext } : {}),
               expectedTurnId: expectedTurnId!,
               idempotencyKey,
               clientUserMessageId,
@@ -14172,6 +14223,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
               ...(displayText ? { displayText } : {}),
               attachments,
               browserComments,
+              ...(conversationContext ? { conversationContext } : {}),
               ...(selectedModel ? { model: selectedModel } : {}),
               ...(selectedModel ? { modelSourceId: selectedModelSourceId } : {}),
               ...(selectedEffort ? { effort: selectedEffort } : {}),
@@ -14192,6 +14244,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         delivery,
         attachments,
         browserComments,
+        ...(conversationContext ? { conversationContext } : {}),
         expectedTurnId,
         ...(displayText ? { displayText } : {}),
         ...(selectedModel ? { model: selectedModel } : {}),
@@ -14210,6 +14263,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           delivery,
           attachments,
           browserComments,
+          ...(conversationContext ? { conversationContext } : {}),
           expectedTurnId,
           ...(displayText ? { displayText } : {}),
           ...(selectedModel ? { model: selectedModel } : {}),
@@ -14331,6 +14385,70 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       throw nativeApiError('ZEUS_INVALID_BROWSER_COMMENTS', 'browserComments must be no larger than 1 MB.');
     }
     return JSON.parse(serialized) as Record<string, unknown>[];
+  }
+
+  function normalizeNativeConversationContext(value: unknown): Record<string, unknown> | null {
+    if (value === undefined) return null;
+    if (!isNativeApiRecord(value) || !Array.isArray(value.responseAnnotations) || !Array.isArray(value.codeComments)) {
+      throw nativeApiError('ZEUS_INVALID_CONVERSATION_CONTEXT', 'conversationContext must contain responseAnnotations and codeComments arrays.');
+    }
+    if (value.responseAnnotations.length > 100 || value.codeComments.length > 200) {
+      throw nativeApiError('ZEUS_INVALID_CONVERSATION_CONTEXT', 'conversationContext contains too many annotations or comments.');
+    }
+    value.responseAnnotations.forEach((entry, index) => {
+      const anchor = isNativeApiRecord(entry) && isNativeApiRecord(entry.anchor) ? entry.anchor : null;
+      if (
+        !isNativeApiRecord(entry) ||
+        typeof entry.id !== 'string' ||
+        !entry.id.trim() ||
+        entry.id.length > 200 ||
+        !anchor ||
+        typeof anchor.itemId !== 'string' ||
+        !anchor.itemId.trim() ||
+        typeof anchor.startOffset !== 'number' ||
+        !Number.isSafeInteger(anchor.startOffset) ||
+        anchor.startOffset < 0 ||
+        typeof anchor.endOffset !== 'number' ||
+        !Number.isSafeInteger(anchor.endOffset) ||
+        anchor.endOffset <= anchor.startOffset ||
+        typeof anchor.selectedText !== 'string' ||
+        !anchor.selectedText.trim() ||
+        anchor.selectedText.length > 20_000 ||
+        (entry.note !== undefined && (typeof entry.note !== 'string' || entry.note.length > 20_000))
+      ) {
+        throw nativeApiError('ZEUS_INVALID_CONVERSATION_CONTEXT', `Response annotation ${index} is invalid.`);
+      }
+    });
+    value.codeComments.forEach((entry, index) => {
+      const position = isNativeApiRecord(entry) && isNativeApiRecord(entry.position) ? entry.position : null;
+      if (
+        !isNativeApiRecord(entry) ||
+        typeof entry.id !== 'string' ||
+        !entry.id.trim() ||
+        entry.id.length > 200 ||
+        typeof entry.body !== 'string' ||
+        !entry.body.trim() ||
+        entry.body.length > 20_000 ||
+        !position ||
+        typeof position.path !== 'string' ||
+        !position.path.trim() ||
+        position.path.length > 20_000 ||
+        typeof position.line !== 'number' ||
+        !Number.isSafeInteger(position.line) ||
+        position.line < 1 ||
+        (position.side !== 'left' && position.side !== 'right') ||
+        (position.startLine !== undefined && (typeof position.startLine !== 'number' || !Number.isSafeInteger(position.startLine) || position.startLine < 1)) ||
+        (position.startSide !== undefined && position.startSide !== 'left' && position.startSide !== 'right') ||
+        (entry.diffHunk !== undefined && (typeof entry.diffHunk !== 'string' || entry.diffHunk.length > 100_000))
+      ) {
+        throw nativeApiError('ZEUS_INVALID_CONVERSATION_CONTEXT', `Code comment ${index} is invalid.`);
+      }
+    });
+    const serialized = JSON.stringify(value);
+    if (Buffer.byteLength(serialized, 'utf8') > 1_000_000) {
+      throw nativeApiError('ZEUS_INVALID_CONVERSATION_CONTEXT', 'conversationContext must be no larger than 1 MB.');
+    }
+    return JSON.parse(serialized) as Record<string, unknown>;
   }
 
   function normalizeNativeClientUserMessageId(value: unknown, legacyFallback: string): string {

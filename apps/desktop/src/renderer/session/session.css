@@ -4395,6 +4395,449 @@
   }
 }
 
+/* 回答选区的两个动作与本地注释锚点保持轻量，不遮挡正文。 */
+.session-selection-toolbar {
+  background: color-mix(in srgb, var(--session-canvas, #fff) 96%, transparent);
+  border: 1px solid var(--session-line, rgb(0 0 0 / 10%));
+  border-radius: 14px;
+  box-shadow: 0 8px 28px rgb(0 0 0 / 16%);
+  display: flex;
+  overflow: hidden;
+  position: fixed;
+  transform: translate(-50%, calc(-100% - 12px));
+  z-index: 1000;
+}
+
+.session-selection-toolbar[data-placement='below'] {
+  transform: translate(-50%, 0);
+}
+
+.session-selection-toolbar > button {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-inline-end: 1px solid var(--session-line, rgb(0 0 0 / 10%));
+  color: var(--session-text, #171717);
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  min-block-size: 44px;
+  padding-inline: 16px;
+  white-space: nowrap;
+}
+
+.session-selection-toolbar > button:last-child {
+  border-inline-end: 0;
+}
+
+.session-selection-toolbar > button:hover,
+.session-selection-toolbar > button:focus-visible {
+  background: var(--session-control-hover, rgb(0 0 0 / 6%));
+}
+
+.session-response-annotation-marker {
+  align-items: center;
+  background: var(--session-accent, #087fe7);
+  border: 2px solid var(--session-canvas, #fff);
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 18%);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  font:
+    600 12px/1 system-ui,
+    sans-serif;
+  block-size: 26px;
+  inline-size: 26px;
+  justify-content: center;
+  position: fixed;
+  transform: translate(7px, -7px);
+  z-index: 998;
+}
+
+.session-response-annotation-editor {
+  background: var(--session-canvas, #fff);
+  border: 1px solid var(--session-line, rgb(0 0 0 / 10%));
+  border-radius: 16px;
+  box-shadow: 0 16px 46px rgb(0 0 0 / 20%);
+  color: var(--session-text, #171717);
+  display: grid;
+  gap: 12px;
+  inline-size: min(360px, calc(100vw - 32px));
+  inset-block-end: 24px;
+  inset-inline-end: 24px;
+  padding: 14px;
+  position: fixed;
+  z-index: 1001;
+}
+
+.session-response-annotation-editor header,
+.session-response-annotation-editor footer {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.session-response-annotation-editor textarea {
+  background: var(--session-sidebar, #f7f7f7);
+  border: 1px solid var(--session-line, rgb(0 0 0 / 10%));
+  border-radius: 10px;
+  color: inherit;
+  font: inherit;
+  min-block-size: 84px;
+  padding: 10px;
+  resize: vertical;
+}
+
+.session-response-annotation-editor button {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  color: inherit;
+  cursor: pointer;
+  min-block-size: 30px;
+  padding-inline: 9px;
+}
+
+.session-response-annotation-editor button:hover {
+  background: var(--session-control-hover, rgb(0 0 0 / 6%));
+}
+
+/* 评论和回答注释共享一个输入框上下文胶囊，发送后仍可在用户消息中辨认。 */
+.session-codex-parity-v1 .session-composer-context-draft {
+  display: flex;
+}
+
+.session-codex-parity-v1 .session-context-draft-chip,
+.session-codex-parity-v1 .session-message-context-summary {
+  align-items: center;
+  background: var(--session-canvas);
+  border: 1px solid var(--session-line);
+  border-radius: 999px;
+  color: var(--session-text);
+  display: inline-flex;
+  gap: 8px;
+  min-block-size: 36px;
+  padding: 5px 9px 5px 12px;
+}
+
+.session-codex-parity-v1 .session-context-draft-chip > svg {
+  block-size: 18px;
+  color: var(--session-text-muted);
+  inline-size: 18px;
+}
+
+.session-codex-parity-v1 .session-context-draft-chip > button {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  color: var(--session-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 18px;
+  block-size: 26px;
+  inline-size: 26px;
+  justify-content: center;
+  padding: 0;
+}
+
+.session-codex-parity-v1 .session-context-draft-chip > button:hover {
+  background: var(--session-control-hover);
+}
+
+.session-codex-parity-v1 .session-message-context-summary {
+  color: var(--session-text-secondary);
+  font-size: 12px;
+  min-block-size: 28px;
+  padding-inline: 10px;
+}
+
+/* 侧边聊天只活在当前侧栏中，关闭侧栏即销毁这组本地消息。 */
+.session-codex-parity-v1 .session-side-chat {
+  background: var(--session-canvas);
+  color: var(--session-text);
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-block-size: 0;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-side-chat-header {
+  align-items: center;
+  border-block-end: 1px solid var(--session-line);
+  display: flex;
+  flex: 0 0 52px;
+  justify-content: space-between;
+  padding-inline: 16px 10px;
+}
+
+.session-codex-parity-v1 .session-side-chat-header > div {
+  display: flex;
+  flex-direction: column;
+}
+
+.session-codex-parity-v1 .session-side-chat-header small {
+  color: var(--session-text-muted);
+  font-size: 11px;
+}
+
+.session-codex-parity-v1 .session-side-chat-header > button {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  block-size: 32px;
+  inline-size: 32px;
+  justify-content: center;
+}
+
+.session-codex-parity-v1 .session-side-chat-messages {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 18px;
+  min-block-size: 0;
+  overflow: auto;
+  padding: 24px;
+}
+
+.session-codex-parity-v1 .session-side-chat-empty {
+  align-items: center;
+  color: var(--session-text-muted);
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: center;
+  text-align: center;
+}
+
+.session-codex-parity-v1 .session-side-chat-empty > span {
+  border: 2px solid currentColor;
+  border-radius: 999px;
+  font-size: 24px;
+  block-size: 36px;
+  inline-size: 36px;
+  line-height: 30px;
+  margin-block-end: 12px;
+}
+
+.session-codex-parity-v1 .session-side-chat-messages article[data-role='user'] {
+  align-self: flex-end;
+  background: var(--session-selected);
+  border-radius: 14px;
+  max-inline-size: 82%;
+  padding: 9px 12px;
+}
+
+.session-codex-parity-v1 .session-side-chat-messages article p {
+  margin: 0;
+}
+
+.session-codex-parity-v1 .session-side-chat-status,
+.session-codex-parity-v1 .session-side-chat-error {
+  color: var(--session-text-muted);
+  margin: 0;
+}
+
+.session-codex-parity-v1 .session-side-chat-error {
+  color: var(--session-danger);
+}
+
+.session-codex-parity-v1 .session-side-chat-composer {
+  background: var(--session-canvas);
+  border: 1px solid var(--session-line);
+  border-radius: 18px;
+  box-shadow: 0 8px 26px var(--session-shadow-soft);
+  display: grid;
+  gap: 8px;
+  margin: 16px;
+  padding: 10px;
+  position: relative;
+}
+
+.session-codex-parity-v1 .session-side-chat-selection {
+  border: 1px solid var(--session-line);
+  border-radius: 999px;
+  font-size: 12px;
+  inline-size: max-content;
+  padding: 5px 9px;
+}
+
+.session-codex-parity-v1 .session-side-chat-composer textarea {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  min-block-size: 70px;
+  outline: 0;
+  padding: 3px;
+  resize: none;
+}
+
+.session-codex-parity-v1 .session-side-chat-composer > button {
+  align-items: center;
+  align-self: end;
+  background: var(--session-text);
+  border: 0;
+  border-radius: 999px;
+  color: var(--session-canvas);
+  cursor: pointer;
+  display: flex;
+  block-size: 30px;
+  inline-size: 30px;
+  justify-content: center;
+  justify-self: end;
+}
+
+.session-codex-parity-v1 .session-side-chat-composer > button:disabled {
+  opacity: 0.35;
+}
+
+/* 源码与差异视图复用同一个行评论槽和评论编辑器。 */
+.session-codex-parity-v1 .session-code-comment-add,
+.session-codex-parity-v1 .session-code-comment-spacer {
+  flex: 0 0 34px;
+  block-size: 20px;
+  inline-size: 34px;
+}
+
+.session-codex-parity-v1 .session-code-comment-add {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: transparent;
+  cursor: pointer;
+  font:
+    700 17px/20px system-ui,
+    sans-serif;
+  padding: 0;
+}
+
+.session-codex-parity-v1 .session-source-line:hover .session-code-comment-add,
+.session-codex-parity-v1 .session-diff-line:hover .session-code-comment-add,
+.session-codex-parity-v1 .session-code-comment-add:focus-visible {
+  background: #171717;
+  color: #fff;
+}
+
+.session-codex-parity-v1 .session-code-comment-panel,
+.session-codex-parity-v1 .session-saved-code-comment {
+  background: var(--session-canvas);
+  border: 1px solid var(--session-line);
+  border-radius: 14px;
+  box-sizing: border-box;
+  color: var(--session-text);
+  display: grid;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  gap: 12px;
+  inline-size: min(760px, calc(100% - 86px));
+  margin: 10px 20px 12px 66px;
+  padding: 14px;
+  white-space: normal;
+}
+
+.session-codex-parity-v1 .session-code-comment-panel-header,
+.session-codex-parity-v1 .session-code-comment-panel-footer,
+.session-codex-parity-v1 .session-saved-code-comment-actions {
+  align-items: center;
+  display: flex;
+}
+
+.session-codex-parity-v1 .session-code-comment-panel-header {
+  justify-content: space-between;
+}
+
+.session-codex-parity-v1 .session-code-comment-panel-header > span {
+  color: var(--session-text-muted);
+  font-size: 12px;
+}
+
+.session-codex-parity-v1 .session-code-comment-panel textarea {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  min-block-size: 76px;
+  outline: 0;
+  resize: vertical;
+}
+
+.session-codex-parity-v1 .session-code-comment-panel-footer {
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.session-codex-parity-v1 .session-code-comment-panel-footer > span:first-child {
+  flex: 1;
+}
+
+.session-codex-parity-v1 .session-code-comment-panel button,
+.session-codex-parity-v1 .session-saved-code-comment button {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  color: inherit;
+  cursor: pointer;
+  min-block-size: 34px;
+  padding-inline: 12px;
+}
+
+.session-codex-parity-v1 .session-code-comment-panel button.is-primary {
+  background: var(--session-text);
+  color: var(--session-canvas);
+  font-weight: 650;
+}
+
+.session-codex-parity-v1 .session-code-comment-panel button.is-delete,
+.session-codex-parity-v1 .session-saved-code-comment button:last-child {
+  color: var(--session-danger);
+}
+
+.session-codex-parity-v1 .session-code-comment-panel button:disabled {
+  opacity: 0.38;
+}
+
+.session-codex-parity-v1 .session-saved-code-comment {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.session-codex-parity-v1 .session-saved-code-comment > span:nth-child(2) {
+  overflow-wrap: anywhere;
+}
+
+.session-codex-parity-v1 .session-saved-code-comment-actions {
+  gap: 2px;
+}
+
+@media (max-width: 760px) {
+  .session-selection-toolbar > button {
+    font-size: 12px;
+    padding-inline: 11px;
+  }
+
+  .session-response-annotation-editor {
+    inset-inline: 16px;
+    inline-size: auto;
+  }
+
+  .session-codex-parity-v1 .session-code-comment-panel,
+  .session-codex-parity-v1 .session-saved-code-comment {
+    inline-size: calc(100% - 24px);
+    margin-inline: 12px;
+  }
+}
+
 /* ZEUS-0236：新会话执行上下文位于输入正文上方，项目与分支都使用真实可切换事实。 */
 .session-codex-parity-v1 .session-new-conversation-context {
   align-items: center;

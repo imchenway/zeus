@@ -269,6 +269,7 @@ function buildPendingTaskPushSession(choice: NativeConversationChoice, request: 
     submittedAttachments: attachments,
     browserSubmission: null,
     browserComments: [],
+    contextDraft: base.contextDraft,
     delivery: 'queue',
     previousConversationState: 'active_prework',
     startedAt: new Date().toISOString(),

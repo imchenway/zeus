@@ -1,11 +1,13 @@
-import {useEffect, useMemo, useRef} from 'react';
-import {ArrowsInIcon as ArrowsIn} from '@phosphor-icons/react/dist/csr/ArrowsIn';
-import {ArrowsOutIcon as ArrowsOut} from '@phosphor-icons/react/dist/csr/ArrowsOut';
-import {FileCodeIcon as FileCode} from '@phosphor-icons/react/dist/csr/FileCode';
-import {FileImageIcon as FileImage} from '@phosphor-icons/react/dist/csr/FileImage';
-import {XIcon as X} from '@phosphor-icons/react/dist/csr/X';
-import type {ConversationResourcePreview} from './sessionTypes.js';
-import type {SessionUiLanguage} from './ThreadItemView.js';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowsInIcon as ArrowsIn } from '@phosphor-icons/react/dist/csr/ArrowsIn';
+import { ArrowsOutIcon as ArrowsOut } from '@phosphor-icons/react/dist/csr/ArrowsOut';
+import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
+import { FileImageIcon as FileImage } from '@phosphor-icons/react/dist/csr/FileImage';
+import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
+import type { ConversationResourcePreview } from './sessionTypes.js';
+import type { SessionUiLanguage } from './ThreadItemView.js';
+import type { ConversationCodeComment, ConversationCodeCommentPosition } from '@zeus/shared';
+import { CodeCommentPanel } from './CodeCommentPanel.js';
 
 export function SourceWorkspace(props: {
   preview: ConversationResourcePreview;
@@ -13,14 +15,19 @@ export function SourceWorkspace(props: {
   fullWidth: boolean;
   onFullWidthChange: (fullWidth: boolean) => void;
   onClose: () => void;
+  comments?: ConversationCodeComment[];
+  onCommentsChange?: (comments: ConversationCodeComment[]) => void;
 }) {
   const zh = props.language === 'zh-CN';
   const contentRef = useRef<HTMLDivElement | null>(null);
   const titleRef = useRef<HTMLSpanElement | null>(null);
   const sourcePreview = props.preview.kind === 'source' ? props.preview : null;
-  const lines = useMemo(() => sourcePreview ? sourcePreviewLines(sourcePreview.content) : [], [sourcePreview]);
+  const lines = useMemo(() => (sourcePreview ? sourcePreviewLines(sourcePreview.content) : []), [sourcePreview]);
   const targetLine = sourcePreview?.location?.line ?? null;
   const targetEndLine = sourcePreview?.location?.endLine ?? targetLine;
+  const [draftPosition, setDraftPosition] = useState<ConversationCodeCommentPosition | null>(null);
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [rangeStartLine, setRangeStartLine] = useState<number | null>(null);
 
   useEffect(() => {
     titleRef.current?.focus();
@@ -29,28 +36,25 @@ export function SourceWorkspace(props: {
   useEffect(() => {
     if (!targetLine) return;
     const target = contentRef.current?.querySelector<HTMLElement>(`[data-source-line='${targetLine}']`);
-    target?.scrollIntoView({block: 'center'});
+    target?.scrollIntoView({ block: 'center' });
   }, [props.preview.resource.id, targetLine]);
 
-  const displayPath =
-    props.preview.resource.kind === 'file'
-      ? props.preview.resource.projectRelativePath
-      : props.preview.resource.displayName;
+  const displayPath = props.preview.resource.kind === 'file' ? props.preview.resource.projectRelativePath : props.preview.resource.displayName;
+  const comments = (props.comments ?? []).filter((comment) => comment.position.path === displayPath && comment.position.side === 'right');
+
+  function saveComment(position: ConversationCodeCommentPosition, body: string, existingId?: string): void {
+    if (!props.onCommentsChange) return;
+    const next = existingId ? (props.comments ?? []).map((comment) => (comment.id === existingId ? { ...comment, body } : comment)) : [...(props.comments ?? []), { id: crypto.randomUUID(), body, position }];
+    props.onCommentsChange(next);
+    setDraftPosition(null);
+    setEditingCommentId(null);
+  }
 
   return (
-    <section
-      className="session-context-workspace session-source-workspace"
-      aria-label={
-        props.preview.kind === 'image'
-          ? (zh ? '图片预览' : 'Image preview')
-          : (zh ? '源码预览' : 'Source preview')
-      }
-    >
+    <section className="session-context-workspace session-source-workspace" aria-label={props.preview.kind === 'image' ? (zh ? '图片预览' : 'Image preview') : zh ? '源码预览' : 'Source preview'}>
       <header className="session-context-workspace-header">
         <span className="session-context-workspace-title" ref={titleRef} tabIndex={-1}>
-          {props.preview.kind === 'image'
-            ? <FileImage aria-hidden="true" weight="regular"/>
-            : <FileCode aria-hidden="true" weight="regular"/>}
+          {props.preview.kind === 'image' ? <FileImage aria-hidden="true" weight="regular" /> : <FileCode aria-hidden="true" weight="regular" />}
           <span>
             <strong>{basename(displayPath)}</strong>
             <small title={displayPath}>{displayPath}</small>
@@ -63,10 +67,10 @@ export function SourceWorkspace(props: {
             title={props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width'}
             onClick={() => props.onFullWidthChange(!props.fullWidth)}
           >
-            {props.fullWidth ? <ArrowsIn aria-hidden="true"/> : <ArrowsOut aria-hidden="true"/>}
+            {props.fullWidth ? <ArrowsIn aria-hidden="true" /> : <ArrowsOut aria-hidden="true" />}
           </button>
           <button type="button" aria-label={zh ? '关闭源码预览' : 'Close source preview'} title={zh ? '关闭' : 'Close'} onClick={props.onClose}>
-            <X aria-hidden="true"/>
+            <X aria-hidden="true" />
           </button>
         </nav>
       </header>
@@ -84,23 +88,72 @@ export function SourceWorkspace(props: {
           </>
         )}
       </div>
-      <div
-        className={`session-source-scroll ${props.preview.kind === 'image' ? 'session-image-preview' : ''}`}
-        ref={contentRef}
-      >
+      <div className={`session-source-scroll ${props.preview.kind === 'image' ? 'session-image-preview' : ''}`} ref={contentRef}>
         {props.preview.kind === 'image' ? (
-          <img src={props.preview.dataUrl} alt={props.preview.resource.displayName}/>
+          <img src={props.preview.dataUrl} alt={props.preview.resource.displayName} />
         ) : (
           <pre aria-label={zh ? `${displayPath} 源码` : `${displayPath} source`}>
             <code>
               {lines.map((line, index) => {
                 const lineNumber = index + 1;
                 const selected = Boolean(targetLine && targetEndLine && lineNumber >= targetLine && lineNumber <= targetEndLine);
+                const lineComments = comments.filter((comment) => comment.position.line === lineNumber);
+                const draftHere = draftPosition?.line === lineNumber;
                 return (
-                  <span className="session-source-line" data-source-line={lineNumber} data-selected={selected || undefined} key={lineNumber}>
-                    <span className="session-source-line-number" aria-hidden="true">{lineNumber}</span>
-                    <span className="session-source-line-code">{line || '\u00a0'}</span>
-                  </span>
+                  <Fragment key={lineNumber}>
+                    <span className="session-source-line" data-source-line={lineNumber} data-selected={selected || undefined}>
+                      {props.onCommentsChange ? (
+                        <button
+                          type="button"
+                          className="session-code-comment-add"
+                          aria-label={zh ? `评论第 ${lineNumber} 行` : `Comment on line ${lineNumber}`}
+                          onClick={(event) => {
+                            const startLine = event.shiftKey && rangeStartLine ? Math.min(rangeStartLine, lineNumber) : lineNumber;
+                            const endLine = event.shiftKey && rangeStartLine ? Math.max(rangeStartLine, lineNumber) : lineNumber;
+                            setRangeStartLine(lineNumber);
+                            setEditingCommentId(null);
+                            setDraftPosition({ path: displayPath, line: endLine, side: 'right', ...(startLine !== endLine ? { startLine, startSide: 'right' as const } : {}) });
+                          }}
+                        >
+                          +
+                        </button>
+                      ) : null}
+                      <span className="session-source-line-number" aria-hidden="true">
+                        {lineNumber}
+                      </span>
+                      <span className="session-source-line-code">{line || '\u00a0'}</span>
+                    </span>
+                    {lineComments.map((comment) =>
+                      editingCommentId === comment.id ? (
+                        <CodeCommentPanel
+                          key={comment.id}
+                          language={props.language}
+                          position={comment.position}
+                          comment={comment}
+                          onCancel={() => setEditingCommentId(null)}
+                          onSave={(body) => saveComment(comment.position, body, comment.id)}
+                          onDelete={() => {
+                            props.onCommentsChange?.((props.comments ?? []).filter((candidate) => candidate.id !== comment.id));
+                            setEditingCommentId(null);
+                          }}
+                        />
+                      ) : (
+                        <span key={comment.id} className="session-saved-code-comment">
+                          <strong>{zh ? '本地评论' : 'Local comment'}</strong>
+                          <span>{comment.body}</span>
+                          <span className="session-saved-code-comment-actions">
+                            <button type="button" onClick={() => setEditingCommentId(comment.id)}>
+                              {zh ? '编辑' : 'Edit'}
+                            </button>
+                            <button type="button" onClick={() => props.onCommentsChange?.((props.comments ?? []).filter((candidate) => candidate.id !== comment.id))}>
+                              {zh ? '删除' : 'Delete'}
+                            </button>
+                          </span>
+                        </span>
+                      ),
+                    )}
+                    {draftHere && draftPosition ? <CodeCommentPanel language={props.language} position={draftPosition} onCancel={() => setDraftPosition(null)} onSave={(body) => saveComment(draftPosition, body)} /> : null}
+                  </Fragment>
                 );
               })}
             </code>

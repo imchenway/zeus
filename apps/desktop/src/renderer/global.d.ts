@@ -212,7 +212,7 @@ declare global {
       notifyTaskTableLayoutDirty: (dirty: boolean) => void;
       setUnsavedChangeState: (key: string, dirty: boolean) => void;
       notifySensitiveRequestDraft: (payload: { requestId: string; present: boolean }) => void;
-      notifySessionContextActivity: (payload: { active: boolean; kind: 'browser' | 'plan' | 'source' | 'turn_diff' | 'none' }) => void;
+      notifySessionContextActivity: (payload: { active: boolean; kind: 'browser' | 'plan' | 'source' | 'turn_diff' | 'side_chat' | 'none' }) => void;
       notifyAppCloseLayerActivity: (active: boolean) => void;
       resolveTaskTableLayoutCloseRequest: (proceed: boolean) => void;
       resolveUnsavedChangesCloseRequest: (proceed: boolean) => void;

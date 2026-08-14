@@ -6,8 +6,10 @@ import remarkGfm from 'remark-gfm';
 import { MessageCheckIcon, MessageEditIcon, MessageExpandIcon, MessageRemoteDeviceIcon, MessageThumbIcon } from './SessionMessageIcons.js';
 import type { NativeConversationAttachment, NativeSessionItemBuffer } from './sessionTypes.js';
 import { autosizeTextarea } from './textareaAutosize.js';
-import type { ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourcePreview, TaskPushMessageLayout } from '@zeus/shared';
+import type { ConversationContextDraft, ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourcePreview, TaskPushMessageLayout } from '@zeus/shared';
+import type { ConversationResponseAnnotation, ConversationResponseTextAnchor } from '@zeus/shared';
 import { ConversationGeneratedImage, ConversationInlineResource, ConversationMarkdownImage, ConversationPendingAttachmentImages, ConversationResourceCards, isImageResource, isPendingImageAttachment } from './ConversationResources.js';
+import { ResponseSelectionActions } from './ResponseSelectionActions.js';
 
 export type SessionUiLanguage = 'zh-CN' | 'en-US';
 export type ThreadItemRole = 'user' | 'assistant' | 'commentary' | 'tool' | 'file' | 'image' | 'request' | 'error' | 'unknown';
@@ -111,6 +113,11 @@ export interface ThreadItemViewProps {
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
   onVisibleContentChange?: () => void;
+  responseAnnotations?: ConversationResponseAnnotation[];
+  onAddResponseAnnotation?: (anchor: ConversationResponseTextAnchor) => string;
+  onUpdateResponseAnnotation?: (id: string, note: string) => void;
+  onRemoveResponseAnnotation?: (id: string) => void;
+  onOpenSideChat?: (selectedText: string) => void;
 }
 
 function taskPushMessageLayout(value: unknown): TaskPushMessageLayout | null {
@@ -250,6 +257,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const role = itemRole(props.item);
   const taskPushLayout = role === 'user' ? taskPushMessageLayout(props.item.payload.taskPushLayout) : null;
   const pendingAttachments = role === 'user' ? nativeConversationAttachments(props.item.payload.attachments) : [];
+  const conversationContext = role === 'user' ? conversationContextDraft(props.item.payload.conversationContext) : null;
   const hasAuthoritativeAttachmentResources = props.item.resources.some((resource) => resource.kind === 'attachment' && resource.presentation === 'card');
   const pendingImageAttachments = !taskPushLayout && !hasAuthoritativeAttachmentResources ? pendingAttachments.filter(isPendingImageAttachment) : [];
   const showUserMessageAttachmentGroup = role === 'user' && !taskPushLayout;
@@ -442,6 +450,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
         <span className="session-thinking-indicator">{labels.thinking}</span>
       ) : null}
       {!command ? <TypedItemFacts item={props.item} role={role} language={props.language} /> : null}
+      {conversationContext ? <UserConversationContextSummary draft={conversationContext} language={props.language} /> : null}
       {!showUserMessageAttachmentGroup && !taskPushLayout ? <ItemAttachments item={props.item} label={labels.attachments} hideImages={pendingImageAttachments.length > 0} /> : null}
       {!showUserMessageAttachmentGroup ? <ConversationPendingAttachmentImages attachments={pendingImageAttachments} language={props.language} onVisibleContentChange={props.onVisibleContentChange} /> : null}
       {!showUserMessageAttachmentGroup && role !== 'image' ? (
@@ -453,6 +462,17 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
           <MessageRemoteDeviceIcon />
         </span>
       ) : null}
+      <ResponseSelectionActions
+        articleRef={articleRef}
+        itemId={props.item.itemId}
+        enabled={role === 'assistant' && props.item.status === 'completed' && Boolean(visibleText) && Boolean(props.onAddResponseAnnotation || props.onOpenSideChat)}
+        language={props.language}
+        annotations={props.responseAnnotations ?? []}
+        onAddAnnotation={props.onAddResponseAnnotation}
+        onUpdateAnnotation={props.onUpdateResponseAnnotation}
+        onRemoveAnnotation={props.onRemoveResponseAnnotation}
+        onOpenSideChat={props.onOpenSideChat}
+      />
       {hasActions ? (
         <footer className="session-thread-item-actions" data-message-actions={role}>
           {role === 'user' && messageTimestamp && timestampSource ? <MessageTimestamp dateTime={timestampSource} value={messageTimestamp} /> : null}
@@ -1268,6 +1288,24 @@ function safePayloadJson(payload: Record<string, unknown>): string {
   } catch {
     return '[unavailable]';
   }
+}
+
+function conversationContextDraft(value: unknown): ConversationContextDraft | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (!Array.isArray(record.responseAnnotations) || !Array.isArray(record.codeComments)) return null;
+  return record as unknown as ConversationContextDraft;
+}
+
+function UserConversationContextSummary(props: { draft: ConversationContextDraft; language: SessionUiLanguage }) {
+  const annotations = props.draft.responseAnnotations.length;
+  const comments = props.draft.codeComments.length;
+  if (!annotations && !comments) return null;
+  const zh = props.language === 'zh-CN';
+  const label = zh
+    ? [comments ? `${comments} 个评论` : '', annotations ? `${annotations} 条注释` : ''].filter(Boolean).join('、')
+    : [comments ? `${comments} ${comments === 1 ? 'comment' : 'comments'}` : '', annotations ? `${annotations} ${annotations === 1 ? 'annotation' : 'annotations'}` : ''].filter(Boolean).join(', ');
+  return <span className="session-message-context-summary">{label}</span>;
 }
 function primitiveText(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : typeof value === 'number' || typeof value === 'boolean' ? String(value) : null;

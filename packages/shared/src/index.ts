@@ -206,6 +206,7 @@ export interface ZeusEvent<TPayload extends Record<string, unknown> = Record<str
 
 export * from './browser.js';
 export * from './commands.js';
+export * from './conversationContext.js';
 export * from './conversationResources.js';
 export * from './projectSourceWorkspace.js';
 export * from './requestUserInput.js';

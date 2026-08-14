@@ -19,7 +19,7 @@ import type {
   NativeTurnSnapshot,
   TransportState,
 } from './sessionTypes.js';
-import type { TaskPushMessageLayout } from '@zeus/shared';
+import { emptyConversationContextDraft, type ConversationContextDraft, type TaskPushMessageLayout } from '@zeus/shared';
 import type { ZeusBrowserComment, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 
 export type NativeSessionAction =
@@ -39,6 +39,7 @@ export type NativeSessionAction =
   | { type: 'draft_changed'; draft: string }
   | { type: 'attachments_changed'; attachments: NativeConversationAttachment[] }
   | { type: 'browser_submission_changed'; browserSubmission: ZeusBrowserPreparedSubmission | null }
+  | { type: 'context_draft_changed'; contextDraft: ConversationContextDraft }
   | {
       type: 'send_started';
       clientUserMessageId: string;
@@ -47,6 +48,7 @@ export type NativeSessionAction =
       attachments: NativeConversationAttachment[];
       submittedAttachments: NativeConversationAttachment[];
       browserSubmission: ZeusBrowserPreparedSubmission | null;
+      contextDraft: ConversationContextDraft;
       browserComments: ZeusBrowserComment[];
       delivery: 'queue' | 'steer_now';
       previousConversationState: ConversationState;
@@ -60,6 +62,7 @@ export type NativeSessionAction =
       draft: string;
       attachments: NativeConversationAttachment[];
       browserSubmission: ZeusBrowserPreparedSubmission | null;
+      contextDraft: ConversationContextDraft;
       previousConversationState: ConversationState;
       error: NativeSessionError;
     }
@@ -69,6 +72,7 @@ export type NativeSessionAction =
       draft: string;
       attachments: NativeConversationAttachment[];
       browserSubmission: ZeusBrowserPreparedSubmission | null;
+      contextDraft: ConversationContextDraft;
       previousConversationState: ConversationState;
       error: NativeSessionError;
     }
@@ -109,6 +113,7 @@ export function createInitialSessionState(): NativeSessionState {
     draft: '',
     attachments: [],
     browserSubmission: null,
+    contextDraft: structuredClone(emptyConversationContextDraft),
     transcriptRevision: 0,
     feedbackEpoch: 0,
     visibleFeedbackEpoch: 0,
@@ -192,6 +197,8 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
       return { ...state, attachments: action.attachments };
     case 'browser_submission_changed':
       return { ...state, browserSubmission: action.browserSubmission };
+    case 'context_draft_changed':
+      return { ...state, contextDraft: action.contextDraft };
     case 'send_started':
       return addOptimisticUserItem(state, action);
     case 'send_failed': {
@@ -220,6 +227,7 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
         draft: action.draft,
         attachments: action.attachments,
         browserSubmission: action.browserSubmission,
+        contextDraft: action.contextDraft,
         error: action.error,
       };
     }
@@ -248,6 +256,7 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
         draft: action.draft,
         attachments: action.attachments,
         browserSubmission: action.browserSubmission,
+        contextDraft: action.contextDraft,
         error: action.error,
         transcriptRevision: state.transcriptRevision + (optimistic ? 1 : 0),
       };
@@ -900,6 +909,7 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
       delivery: action.delivery,
       ...(action.taskPushLayout ? { taskPushLayout: action.taskPushLayout } : {}),
       ...(action.browserComments.length ? { browserComments: action.browserComments } : {}),
+      ...(action.contextDraft.responseAnnotations.length || action.contextDraft.codeComments.length ? { conversationContext: action.contextDraft } : {}),
     },
     resources: [],
     optimistic: true,
@@ -919,6 +929,7 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
     draft: '',
     attachments: [],
     browserSubmission: null,
+    contextDraft: structuredClone(emptyConversationContextDraft),
     error: null,
   };
 }
@@ -1007,6 +1018,7 @@ function submissionUserMessagePayload(submission: NativeQueuedSubmission): Recor
     delivery: submission.delivery ?? 'queue',
     submissionId: submission.id,
     attachments: submission.attachments ?? [],
+    ...(submission.conversationContext ? { conversationContext: submission.conversationContext } : {}),
     ...(submission.pausedReason ? { pausedReason: submission.pausedReason } : {}),
     ...(submission.error ? { error: submission.error } : {}),
   };
