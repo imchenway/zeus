@@ -2064,8 +2064,7 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
         method: 'POST',
         body: JSON.stringify({}),
       }),
-    loadCodexConversationCapabilities: async (projectId) =>
-      normalizeCodexConversationCapabilities(await request<CodexConversationCapabilities>(`/api/projects/${encodeURIComponent(projectId)}/codex-conversation-capabilities`)),
+    loadCodexConversationCapabilities: async (projectId) => normalizeCodexConversationCapabilities(await request<CodexConversationCapabilities>(`/api/projects/${encodeURIComponent(projectId)}/codex-conversation-capabilities`)),
     loadCodexAccount: () => request<CodexAccountSnapshot>('/api/codex/account'),
     loadCodexUsageSummary: () => request<CodexUsageSummarySnapshot>('/api/codex/usage-summary'),
     loadUsageOverview,
