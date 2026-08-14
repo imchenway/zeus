@@ -12,7 +12,7 @@ import {
   type TaskPushRelatedContextOption,
   type TaskPushSupplementalAttachment,
 } from '@zeus/shared';
-import type { TaskRecord } from '../apiClient.js';
+import type { CodexConfigImportPreview, TaskRecord } from '../apiClient.js';
 import type { CodexTaskPushCapabilities, NativeConversationAttachment, NativePermissionMode, NativeServiceTierSelection, TaskPushSupplementalAttachmentDraft, TaskPushSupplementalAttachmentInput } from '../session/sessionTypes.js';
 import { useConversationInputResources } from '../session/useConversationInputResources.js';
 import { normalizeServiceTierSelection, serviceTierOptions, serviceTierSelectionFromValue, serviceTierSelectionValue } from '../session/serviceTierSelection.js';
@@ -41,7 +41,7 @@ export interface TaskModelPushForm {
   supplementalAttachments: TaskPushSupplementalAttachmentDraft[];
 }
 
-export type TaskModelPushModalStatus = 'loading' | 'ready' | 'authenticating' | 'authenticated' | 'submitting' | 'error';
+export type TaskModelPushModalStatus = 'loading' | 'ready' | 'inspecting-config' | 'importing-config' | 'authenticating' | 'authenticated' | 'submitting' | 'error';
 
 export type TaskModelPushPreferences = Pick<TaskModelPushForm, 'model' | 'effort' | 'serviceTier' | 'workMode' | 'permissionMode'> & {
   workspaceMode?: 'direct' | 'worktree';
@@ -568,18 +568,22 @@ export function TaskModelPushModal(props: {
   capabilities: CodexTaskPushCapabilities | null;
   form: TaskModelPushForm;
   status: TaskModelPushModalStatus;
+  configImportPreview: CodexConfigImportPreview | null;
+  configImportNeedsActivation: boolean;
   refreshingRepositoryId: string | null;
   error: string | null;
   onChange: Dispatch<SetStateAction<TaskModelPushForm>>;
   onRefreshRepository: (repositoryId: string) => void;
   onClose: () => void;
   onCancelAuthentication: () => void;
+  onImportCodexConfig: () => void;
+  onSkipCodexConfigImport: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const commonSources = useMemo(() => resolveTaskPushCommonSources(props.capabilities?.repositories ?? []), [props.capabilities?.repositories]);
   const supplementalTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [supplementalResourceError, setSupplementalResourceError] = useState<string | null>(null);
-  const resourceInputDisabled = !props.open || props.status === 'authenticating' || props.status === 'submitting';
+  const resourceInputDisabled = !props.open || props.status === 'inspecting-config' || props.status === 'importing-config' || props.status === 'authenticating' || props.status === 'submitting';
   const inputResources = useConversationInputResources({
     textareaRef: supplementalTextareaRef,
     text: props.form.supplementalInfo,
@@ -619,7 +623,9 @@ export function TaskModelPushModal(props: {
   const zh = props.language === 'zh-CN';
   const authenticating = props.status === 'authenticating';
   const authenticated = props.status === 'authenticated';
-  const busy = authenticating || authenticated || props.status === 'submitting' || inputResources.processing;
+  const inspectingConfig = props.status === 'inspecting-config';
+  const importingConfig = props.status === 'importing-config';
+  const busy = inspectingConfig || importingConfig || authenticating || authenticated || props.status === 'submitting' || inputResources.processing;
   const codexLoginRequired = selectedModel?.agentKind !== 'pi' && selectedModel?.sourceId === 'codex' && props.capabilities?.codexAccount.requiresOpenaiAuth === true && !props.capabilities.codexAccount.signedIn;
   const repositories = props.capabilities?.repositories ?? [];
   const selectedCommonSourceKey = resolveSelectedTaskPushCommonSourceKey(repositories, props.form.repositorySelections, commonSources);
@@ -1038,6 +1044,40 @@ export function TaskModelPushModal(props: {
             </section>
           ) : null}
 
+          {props.configImportPreview || props.configImportNeedsActivation ? (
+            <section className="task-model-push-account task-model-push-config-import" role="status" aria-live="polite" aria-atomic="true">
+              <span>
+                <strong>{props.configImportNeedsActivation ? (zh ? '配置已导入，等待启用' : 'Configuration imported, waiting to be enabled') : zh ? '使用 Codex App 的配置？' : 'Use your Codex App configuration?'}</strong>
+                <small>
+                  {props.configImportNeedsActivation
+                    ? zh
+                      ? 'Zeus 需要先启动新的 Codex 运行服务，才能保证本次新会话使用已导入配置。'
+                      : 'Zeus must start a fresh Codex runtime before this conversation can use the imported configuration.'
+                    : zh
+                      ? 'Zeus 会把普通偏好、指令、规则、提示词、技能和用户插件复制到专属目录；不会导入账号、密钥或历史会话。'
+                      : 'Zeus will copy preferences, instructions, rules, prompts, skills, and user plugins into its own directory. Accounts, secrets, and conversation history are excluded.'}
+                </small>
+              </span>
+              {props.configImportPreview ? (
+                <ul aria-label={zh ? '可导入配置' : 'Configuration available to import'}>
+                  {props.configImportPreview.entries.map((entry) => (
+                    <li key={entry.path}>
+                      <strong>{entry.path}</strong>
+                      <small>{zh ? `${entry.nodeCount} 项` : `${entry.nodeCount} item(s)`}</small>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              {(props.configImportPreview?.skipped.length ?? 0) > 0 ? (
+                <p>
+                  {zh
+                    ? `另有 ${props.configImportPreview!.skipped.length} 项因安全限制、缺失、格式不支持或属于运行缓存而跳过。`
+                    : `${props.configImportPreview!.skipped.length} item(s) will be skipped because they are missing, unsafe, unsupported, or generated runtime cache.`}
+                </p>
+              ) : null}
+            </section>
+          ) : null}
+
           <TaskPushCurrentConversationPicker
             options={currentConversationOptions}
             selectedIds={props.form.currentConversationIds}
@@ -1093,49 +1133,92 @@ export function TaskModelPushModal(props: {
         </div>
 
         <footer className="task-model-push-footer">
-          <small>{zh ? '确认后会创建新会话并立即进入；历史会话不会被覆盖。' : 'A new conversation will be created and opened; history remains unchanged.'}</small>
+          <small>
+            {props.configImportPreview || props.configImportNeedsActivation
+              ? zh
+                ? props.configImportNeedsActivation
+                  ? '配置文件已安全导入；启用成功前不会创建本次会话。'
+                  : '只询问这一次；暂不导入后仍可在设置中手动导入。'
+                : props.configImportNeedsActivation
+                  ? 'The configuration is safely imported. This conversation will not be created until it is enabled.'
+                  : 'You will only be asked once. You can still import later from Settings.'
+              : zh
+                ? '确认后会创建新会话并立即进入；历史会话不会被覆盖。'
+                : 'A new conversation will be created and opened; history remains unchanged.'}
+          </small>
           <span>
-            <Button variant="secondary" size="regular" onClick={authenticating ? props.onCancelAuthentication : props.onClose} disabled={props.status === 'submitting'}>
-              {authenticating ? (zh ? '取消登录' : 'Cancel sign-in') : zh ? '取消' : 'Cancel'}
-            </Button>
-            <Button
-              type="submit"
-              variant="primary"
-              size="regular"
-              busy={busy}
-              disabled={
-                busy ||
-                props.status === 'loading' ||
-                !props.form.model ||
-                (props.form.workspaceMode === 'direct'
-                  ? directWorkspaceNeedsConfirmation && !props.form.directConcurrencyConfirmed
-                  : repositories.length === 0 ||
-                    repositories.some((repository) => {
-                      const selection = props.form.repositorySelections[repository.id];
-                      return !selection?.sourceRef || !selection.branchName.trim();
-                    }))
-              }
-            >
-              {authenticating
-                ? zh
-                  ? '等待登录…'
-                  : 'Waiting for sign-in…'
-                : authenticated
-                  ? zh
-                    ? '登录成功，正在继续…'
-                    : 'Signed in, continuing…'
-                  : props.status === 'submitting'
-                    ? zh
-                      ? '正在创建…'
-                      : 'Creating…'
-                    : codexLoginRequired
+            {props.configImportPreview || props.configImportNeedsActivation ? (
+              <>
+                <Button variant="secondary" size="regular" onClick={props.configImportNeedsActivation ? props.onClose : props.onSkipCodexConfigImport} disabled={importingConfig}>
+                  {props.configImportNeedsActivation ? (zh ? '关闭' : 'Close') : zh ? '暂不导入' : 'Not now'}
+                </Button>
+                <Button type="button" variant="primary" size="regular" busy={importingConfig} disabled={importingConfig} onClick={props.onImportCodexConfig}>
+                  {importingConfig
+                    ? props.configImportNeedsActivation
                       ? zh
-                        ? '登录并继续'
-                        : 'Sign in and continue'
+                        ? '正在启用…'
+                        : 'Enabling…'
                       : zh
-                        ? '创建新会话'
-                        : 'Create conversation'}
-            </Button>
+                        ? '正在导入并启用…'
+                        : 'Importing and enabling…'
+                    : props.configImportNeedsActivation
+                      ? zh
+                        ? '重试启用'
+                        : 'Retry enabling'
+                      : zh
+                        ? '导入并继续'
+                        : 'Import and continue'}
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="secondary" size="regular" onClick={authenticating ? props.onCancelAuthentication : props.onClose} disabled={props.status === 'submitting' || importingConfig}>
+                  {authenticating ? (zh ? '取消登录' : 'Cancel sign-in') : zh ? '取消' : 'Cancel'}
+                </Button>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="regular"
+                  busy={busy}
+                  disabled={
+                    busy ||
+                    props.status === 'loading' ||
+                    !props.form.model ||
+                    (props.form.workspaceMode === 'direct'
+                      ? directWorkspaceNeedsConfirmation && !props.form.directConcurrencyConfirmed
+                      : repositories.length === 0 ||
+                        repositories.some((repository) => {
+                          const selection = props.form.repositorySelections[repository.id];
+                          return !selection?.sourceRef || !selection.branchName.trim();
+                        }))
+                  }
+                >
+                  {inspectingConfig
+                    ? zh
+                      ? '正在检查 Codex 配置…'
+                      : 'Checking Codex configuration…'
+                    : authenticating
+                      ? zh
+                        ? '等待登录…'
+                        : 'Waiting for sign-in…'
+                      : authenticated
+                        ? zh
+                          ? '登录成功，正在继续…'
+                          : 'Signed in, continuing…'
+                        : props.status === 'submitting'
+                          ? zh
+                            ? '正在创建…'
+                            : 'Creating…'
+                          : codexLoginRequired
+                            ? zh
+                              ? '登录并继续'
+                              : 'Sign in and continue'
+                            : zh
+                              ? '创建新会话'
+                              : 'Create conversation'}
+                </Button>
+              </>
+            )}
           </span>
         </footer>
       </form>

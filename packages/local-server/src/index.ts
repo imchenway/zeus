@@ -2363,6 +2363,17 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   }
   const codexAppServerManager = options.codexAppServerManager ?? createCodexRuntimeGenerationManager({ accountFingerprintSalt: codexAccountFingerprintSalt });
 
+  async function activateCurrentCodexConfiguration(): Promise<{ runtimeReloaded: true; runtimeGenerationId: string; restartRequired: false }> {
+    if (!codexAppServerManager.activateFreshGeneration) {
+      throw nativeApiError('ZEUS_CODEX_CONFIG_HOT_RELOAD_UNAVAILABLE', '当前 Codex 运行服务不支持配置热启用。');
+    }
+    const capabilities = await codexAppServerManager.activateFreshGeneration({
+      commandPath: currentCodexRuntimeCommandPath(),
+      ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}),
+    });
+    return { runtimeReloaded: true, runtimeGenerationId: capabilities.generationId, restartRequired: false };
+  }
+
   async function resolveResponsesRuntime(input: { modelSourceId: string | null; model: string }): Promise<CodexResponsesRuntime | null> {
     if (!input.modelSourceId || input.modelSourceId === 'codex') return null;
     const connections = await modelConnections.loadRuntimeConnections();
@@ -3394,6 +3405,25 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     }
     try {
       const result = await codexConfigImportService.import();
+      let activation: { runtimeReloaded: boolean; runtimeGenerationId: string | null; restartRequired: boolean; runtimeError: string | null } = {
+        runtimeReloaded: false,
+        runtimeGenerationId: null,
+        restartRequired: false,
+        runtimeError: null,
+      };
+      if (result.imported.length > 0) {
+        try {
+          const activated = await activateCurrentCodexConfiguration();
+          activation = { ...activated, runtimeError: null };
+        } catch {
+          activation = {
+            runtimeReloaded: false,
+            runtimeGenerationId: null,
+            restartRequired: true,
+            runtimeError: '配置已经安全导入，但新的 Codex 运行服务尚未就绪。请重试启用。',
+          };
+        }
+      }
       auditLogs.append({
         actorType: 'user',
         action: 'settings.codex_config.imported',
@@ -3402,14 +3432,24 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           imported: result.imported,
           skipped: result.skipped.map((entry) => ({ path: entry.path, reason: entry.reason })),
           backupCreated: result.backupRoot !== null,
-          restartRequired: result.restartRequired,
+          restartRequired: activation.restartRequired,
+          runtimeReloaded: activation.runtimeReloaded,
+          runtimeGenerationId: activation.runtimeGenerationId,
         },
         createdAt: result.importedAt,
       });
       await db.save();
-      return result;
+      return { ...result, ...activation };
     } catch (error) {
       return reply.code(500).send({ error: 'ZEUS_CODEX_CONFIG_IMPORT_FAILED', message: error instanceof Error ? error.message : 'Codex configuration import failed.' });
+    }
+  });
+
+  server.post('/api/codex-config/activate', async (_request, reply) => {
+    try {
+      return await activateCurrentCodexConfiguration();
+    } catch (error) {
+      return sendNativeConversationApiError(reply, error);
     }
   });
 

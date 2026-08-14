@@ -185,6 +185,7 @@ import {
   type AiRuntimeTerminalSnapshot,
   type AppShellSettings,
   type CodeMapSettings,
+  type CodexConfigActivationResult,
   type CodexConfigImportPreview,
   type CodexConfigImportResult,
   type CodexLegacyImportResult,
@@ -376,6 +377,9 @@ type NativeConversationAppClient = SessionControllerClient &
     | 'loadCodexUsageAnalytics'
     | 'startCodexChatGptLogin'
     | 'cancelCodexChatGptLogin'
+    | 'inspectCodexConfigImport'
+    | 'importCodexConfig'
+    | 'activateCodexConfig'
     | 'startTaskModelPush'
     | 'loadModelConnections'
     | 'createModelConnection'
@@ -817,6 +821,26 @@ function browserNativeConversationStartStorage(): NativeConversationStartStorage
     return typeof window === 'undefined' ? undefined : window.localStorage;
   } catch {
     return undefined;
+  }
+}
+
+const codexConfigImportPromptStorageKey = 'zeus.codex-config-import-prompt';
+type CodexConfigImportPromptPreference = 'answered' | 'activation-required';
+
+function readCodexConfigImportPromptPreference(storage: Pick<NativeConversationStartStorage, 'getItem'> | undefined): CodexConfigImportPromptPreference | null {
+  try {
+    const value = storage?.getItem(codexConfigImportPromptStorageKey);
+    return value === 'answered' || value === 'activation-required' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCodexConfigImportPromptPreference(storage: Pick<NativeConversationStartStorage, 'setItem'> | undefined, value: CodexConfigImportPromptPreference): void {
+  try {
+    storage?.setItem(codexConfigImportPromptStorageKey, value);
+  } catch {
+    // 一次性引导偏好不可写时继续当前流程，不阻断真实登录或配置启用。
   }
 }
 
@@ -6725,6 +6749,7 @@ export function App(props: {
   onStartCodexLegacyImport?: (sourceConversationIds: string[]) => Promise<CodexLegacyImportResult>;
   onInspectCodexConfigImport?: () => Promise<CodexConfigImportPreview>;
   onImportCodexConfig?: () => Promise<CodexConfigImportResult>;
+  onActivateCodexConfig?: () => Promise<CodexConfigActivationResult>;
   onSaveAppShellSettings?: (input: AppShellSettingsSavePayload) => Promise<AppShellSettings>;
   onClearLocalCaches?: () => Promise<{
     cleared: boolean;
@@ -7185,6 +7210,8 @@ export function App(props: {
     supplementalAttachments: [],
   });
   const [taskModelPushStatus, setTaskModelPushStatus] = useState<TaskModelPushModalStatus>('loading');
+  const [taskModelPushConfigImportPreview, setTaskModelPushConfigImportPreview] = useState<CodexConfigImportPreview | null>(null);
+  const [taskModelPushConfigImportNeedsActivation, setTaskModelPushConfigImportNeedsActivation] = useState(false);
   const [taskModelPushRefreshingRepositoryId, setTaskModelPushRefreshingRepositoryId] = useState<string | null>(null);
   const [taskModelPushError, setTaskModelPushError] = useState<string | null>(null);
   const [taskModelPushPendingByTask, setTaskModelPushPendingByTask] = useState<Record<string, TrackedTaskModelPushState>>({});
@@ -9958,6 +9985,8 @@ export function App(props: {
     if (!task || taskModelPushPendingByTask[task.id]?.status === 'submitting') return;
     setTaskModelPushTaskId(task.id);
     setTaskModelPushCapabilities(null);
+    setTaskModelPushConfigImportPreview(null);
+    setTaskModelPushConfigImportNeedsActivation(false);
     setTaskModelPushForm({
       model: '',
       effort: '',
@@ -10010,6 +10039,8 @@ export function App(props: {
     if (taskModelPushTaskId) taskModelPushEnvelopeRef.current.delete(taskModelPushTaskId);
     setTaskModelPushTaskId(null);
     setTaskModelPushCapabilities(null);
+    setTaskModelPushConfigImportPreview(null);
+    setTaskModelPushConfigImportNeedsActivation(false);
     setTaskModelPushRefreshingRepositoryId(null);
     setTaskModelPushError(null);
   }
@@ -10069,17 +10100,131 @@ export function App(props: {
     const client = props.nativeConversationClient;
     const capabilities = taskModelPushCapabilities;
     const form = taskModelPushForm;
-    if (!task || !client || !capabilities || taskModelPushStatus === 'authenticating' || taskModelPushStatus === 'authenticated' || taskModelPushStatus === 'submitting' || taskModelPushDispatchingTaskIdsRef.current.has(task.id)) return;
+    if (
+      !task ||
+      !client ||
+      !capabilities ||
+      taskModelPushConfigImportPreview ||
+      taskModelPushConfigImportNeedsActivation ||
+      taskModelPushStatus === 'inspecting-config' ||
+      taskModelPushStatus === 'importing-config' ||
+      taskModelPushStatus === 'authenticating' ||
+      taskModelPushStatus === 'authenticated' ||
+      taskModelPushStatus === 'submitting' ||
+      taskModelPushDispatchingTaskIdsRef.current.has(task.id)
+    )
+      return;
     proceedTaskModelPush(task, client, capabilities, form);
   }
 
   function proceedTaskModelPush(task: TaskRecord, client: NativeConversationAppClient, capabilities: CodexTaskPushCapabilities, form: TaskModelPushForm): void {
     const selectedModel = capabilities.models.find((model) => model.id === form.model || model.model === form.model);
     if (selectedModel?.agentKind !== 'pi' && selectedModel?.sourceId === 'codex' && capabilities.codexAccount.requiresOpenaiAuth && !capabilities.codexAccount.signedIn) {
-      void authenticateCodexAndContinueTaskModelPush(task, client, capabilities, form);
+      void prepareCodexAndContinueTaskModelPush(task, client, capabilities, form);
       return;
     }
     continueTaskModelPush(task, capabilities, form);
+  }
+
+  async function prepareCodexAndContinueTaskModelPush(task: TaskRecord, client: NativeConversationAppClient, capabilities: CodexTaskPushCapabilities, form: TaskModelPushForm): Promise<void> {
+    const storage = browserNativeConversationStartStorage();
+    const preference = readCodexConfigImportPromptPreference(storage);
+    if (preference === 'answered') {
+      await authenticateCodexAndContinueTaskModelPush(task, client, capabilities, form);
+      return;
+    }
+    if (preference === 'activation-required') {
+      setTaskModelPushConfigImportNeedsActivation(true);
+      await enableImportedCodexConfigAndContinueTaskModelPush(task, client, capabilities, form);
+      return;
+    }
+
+    const requestVersion = taskModelPushLoginRequestRef.current + 1;
+    taskModelPushLoginRequestRef.current = requestVersion;
+    setTaskModelPushStatus('inspecting-config');
+    setTaskModelPushError(null);
+    try {
+      const preview = await client.inspectCodexConfigImport();
+      if (taskModelPushLoginRequestRef.current !== requestVersion) return;
+      if (preview.available && preview.entries.length > 0) {
+        setTaskModelPushConfigImportPreview(preview);
+        setTaskModelPushStatus('ready');
+        return;
+      }
+    } catch (error) {
+      recordLocalError('codex-config-import-preview', error);
+      if (taskModelPushLoginRequestRef.current !== requestVersion) return;
+    }
+    await authenticateCodexAndContinueTaskModelPush(task, client, capabilities, form);
+  }
+
+  function skipTaskModelPushCodexConfigImport(): void {
+    const task = snapshot.tasks.find((candidate) => candidate.id === taskModelPushTaskId);
+    const client = props.nativeConversationClient;
+    const capabilities = taskModelPushCapabilities;
+    if (!task || !client || !capabilities || taskModelPushStatus !== 'ready') return;
+    writeCodexConfigImportPromptPreference(browserNativeConversationStartStorage(), 'answered');
+    setTaskModelPushConfigImportPreview(null);
+    setTaskModelPushError(null);
+    void authenticateCodexAndContinueTaskModelPush(task, client, capabilities, taskModelPushForm);
+  }
+
+  async function importTaskModelPushCodexConfig(): Promise<void> {
+    const task = snapshot.tasks.find((candidate) => candidate.id === taskModelPushTaskId);
+    const client = props.nativeConversationClient;
+    const capabilities = taskModelPushCapabilities;
+    const form = taskModelPushForm;
+    if (!task || !client || !capabilities || taskModelPushStatus === 'importing-config') return;
+    if (taskModelPushConfigImportNeedsActivation) {
+      await enableImportedCodexConfigAndContinueTaskModelPush(task, client, capabilities, form);
+      return;
+    }
+    if (!taskModelPushConfigImportPreview) return;
+
+    const requestVersion = taskModelPushLoginRequestRef.current + 1;
+    taskModelPushLoginRequestRef.current = requestVersion;
+    setTaskModelPushStatus('importing-config');
+    setTaskModelPushError(null);
+    try {
+      const result = await client.importCodexConfig();
+      if (taskModelPushLoginRequestRef.current !== requestVersion) return;
+      if (!result.runtimeReloaded && result.imported.length > 0) {
+        writeCodexConfigImportPromptPreference(browserNativeConversationStartStorage(), 'activation-required');
+        setTaskModelPushConfigImportNeedsActivation(true);
+        setTaskModelPushStatus('ready');
+        setTaskModelPushError(result.runtimeError ?? (appShellSettings.appLanguage === 'zh-CN' ? '配置已导入，但新的 Codex 运行服务尚未就绪。' : 'The configuration was imported, but the fresh Codex runtime is not ready.'));
+        return;
+      }
+      writeCodexConfigImportPromptPreference(browserNativeConversationStartStorage(), 'answered');
+      setTaskModelPushConfigImportPreview(null);
+      setTaskModelPushConfigImportNeedsActivation(false);
+      await authenticateCodexAndContinueTaskModelPush(task, client, capabilities, form);
+    } catch (error) {
+      if (taskModelPushLoginRequestRef.current !== requestVersion) return;
+      setTaskModelPushStatus('ready');
+      setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error)));
+    }
+  }
+
+  async function enableImportedCodexConfigAndContinueTaskModelPush(task: TaskRecord, client: NativeConversationAppClient, capabilities: CodexTaskPushCapabilities, form: TaskModelPushForm): Promise<void> {
+    const requestVersion = taskModelPushLoginRequestRef.current + 1;
+    taskModelPushLoginRequestRef.current = requestVersion;
+    setTaskModelPushStatus('importing-config');
+    setTaskModelPushError(null);
+    try {
+      await client.activateCodexConfig();
+      if (taskModelPushLoginRequestRef.current !== requestVersion) return;
+      writeCodexConfigImportPromptPreference(browserNativeConversationStartStorage(), 'answered');
+      setTaskModelPushConfigImportPreview(null);
+      setTaskModelPushConfigImportNeedsActivation(false);
+      await authenticateCodexAndContinueTaskModelPush(task, client, capabilities, form);
+    } catch (error) {
+      if (taskModelPushLoginRequestRef.current !== requestVersion) return;
+      writeCodexConfigImportPromptPreference(browserNativeConversationStartStorage(), 'activation-required');
+      setTaskModelPushConfigImportNeedsActivation(true);
+      setTaskModelPushStatus('ready');
+      setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error)));
+    }
   }
 
   async function authenticateCodexAndContinueTaskModelPush(task: TaskRecord, client: NativeConversationAppClient, capabilities: CodexTaskPushCapabilities, form: TaskModelPushForm): Promise<void> {
@@ -10950,6 +11095,21 @@ export function App(props: {
       const result = await props.onImportCodexConfig();
       setCodexConfigImportResult(result);
       setCodexConfigImportPreview(result);
+      if (result.runtimeError) setCodexConfigImportError(result.runtimeError);
+    } catch (error) {
+      setCodexConfigImportError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCodexConfigImportLoading(false);
+    }
+  }
+
+  async function activateCodexConfig(): Promise<void> {
+    if (!props.onActivateCodexConfig || !codexConfigImportResult) return;
+    setCodexConfigImportLoading(true);
+    setCodexConfigImportError(null);
+    try {
+      const activation = await props.onActivateCodexConfig();
+      setCodexConfigImportResult((current) => (current ? { ...current, ...activation, runtimeError: null } : current));
     } catch (error) {
       setCodexConfigImportError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -13344,6 +13504,8 @@ export function App(props: {
                 capabilities={taskModelPushCapabilities}
                 form={taskModelPushForm}
                 status={taskModelPushStatus}
+                configImportPreview={taskModelPushConfigImportPreview}
+                configImportNeedsActivation={taskModelPushConfigImportNeedsActivation}
                 refreshingRepositoryId={taskModelPushRefreshingRepositoryId}
                 error={taskModelPushError}
                 onChange={(nextForm) => {
@@ -13357,6 +13519,8 @@ export function App(props: {
                 onRefreshRepository={(repositoryId) => void refreshTaskModelPushRepository(repositoryId)}
                 onClose={closeTaskModelPush}
                 onCancelAuthentication={cancelTaskModelPushAuthentication}
+                onImportCodexConfig={() => void importTaskModelPushCodexConfig()}
+                onSkipCodexConfigImport={skipTaskModelPushCodexConfigImport}
                 onSubmit={(event) => void submitTaskModelPush(event)}
               />
               <TaskGitMergeModal
@@ -14447,6 +14611,7 @@ export function App(props: {
                       error={codexConfigImportError}
                       onRefresh={refreshCodexConfigImport}
                       onImport={importCodexConfig}
+                      onActivate={activateCodexConfig}
                     />
                   </section>
                 ) : null}

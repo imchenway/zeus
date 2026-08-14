@@ -342,6 +342,8 @@ export interface CodexRemoteControlClientsPage {
 
 export interface CodexAppServerManager {
   ensureReady(input: { commandPath: string; externalAgentHome?: string; remoteControl?: boolean; providerEnvironment?: Record<string, string> }): Promise<CodexCapabilitiesSnapshot>;
+  /** 在运行身份不变时也激活新世代；多世代管理器保留旧活动轮次并让其自然排空。 */
+  activateFreshGeneration?(input: { commandPath: string; externalAgentHome?: string; remoteControl?: boolean; providerEnvironment?: Record<string, string> }): Promise<CodexCapabilitiesSnapshot>;
   readAccount(input?: { refreshToken?: boolean }): Promise<CodexAccountSnapshot>;
   readAccountRateLimits(): Promise<CodexAccountRateLimitsSnapshot>;
   readAccountUsage(): Promise<CodexAccountUsageSnapshot>;

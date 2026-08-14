@@ -1556,6 +1556,15 @@ export interface CodexConfigImportResult extends CodexConfigImportPreview {
   backupRoot: string | null;
   importedAt: string;
   restartRequired: boolean;
+  runtimeReloaded: boolean;
+  runtimeGenerationId: string | null;
+  runtimeError: string | null;
+}
+
+export interface CodexConfigActivationResult {
+  runtimeReloaded: true;
+  runtimeGenerationId: string;
+  restartRequired: false;
 }
 
 export interface ProjectArchiveConfirmation {
@@ -1672,6 +1681,7 @@ export interface DashboardClient {
   loadCodexLegacyImport: (importId: string) => Promise<CodexLegacyImportResult>;
   inspectCodexConfigImport: () => Promise<CodexConfigImportPreview>;
   importCodexConfig: () => Promise<CodexConfigImportResult>;
+  activateCodexConfig: () => Promise<CodexConfigActivationResult>;
   sendNativeMessage: (projectId: string, conversationId: string, input: SendNativeMessageRequest) => Promise<NativeOperationAcceptance>;
   askNativeSideChat: (projectId: string, conversationId: string, input: { selectedText: string; question: string }) => Promise<{ answer: string; status: 'completed' | 'interrupted' }>;
   editNativeQueuedSubmission: (projectId: string, conversationId: string, submissionId: string, content: string) => Promise<NativeQueueSnapshot>;
@@ -2230,6 +2240,7 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
     loadCodexLegacyImport: (importId) => request<CodexLegacyImportResult>(`/api/codex-native/import/${encodeURIComponent(importId)}`),
     inspectCodexConfigImport: () => request<CodexConfigImportPreview>('/api/codex-config/import'),
     importCodexConfig: () => request<CodexConfigImportResult>('/api/codex-config/import', { method: 'POST' }),
+    activateCodexConfig: () => request<CodexConfigActivationResult>('/api/codex-config/activate', { method: 'POST' }),
     sendNativeMessage: (projectId, conversationId, input) => {
       const { idempotencyKey, ...body } = input;
       return request<NativeOperationAcceptance>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/messages`, {
