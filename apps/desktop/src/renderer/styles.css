@@ -15262,6 +15262,21 @@ body[data-surface='project-git-diff'] #root {
   font-size: 12px;
   line-height: 1.5;
 }
+.macos-ai-app .task-model-push-config-import ul {
+  display: grid;
+  gap: 4px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.macos-ai-app .task-model-push-config-import li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-block: 4px;
+  border-block-start: 1px solid var(--zeus-product-line-soft);
+}
 .macos-ai-app .task-model-push-error {
   margin: 0;
   color: var(--zeus-danger-text);

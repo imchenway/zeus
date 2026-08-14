@@ -167,13 +167,14 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
     }
   }
 
-  async function activate(input: { commandPath: string; externalAgentHome?: string; remoteControl?: boolean; providerEnvironment?: Record<string, string> }): Promise<CodexCapabilitiesSnapshot> {
+  async function activate(input: { commandPath: string; externalAgentHome?: string; remoteControl?: boolean; providerEnvironment?: Record<string, string> }, forceFreshGeneration = false): Promise<CodexCapabilitiesSnapshot> {
     if (preparingForShutdown) throw managerError('ZEUS_CODEX_CLOSED', 'Codex runtime generation manager is closing.');
     const requestedHome = input.externalAgentHome ?? null;
     const requestedRemoteControl = input.remoteControl ?? remoteControlEnabled;
     const requestedProviderEnvironment = input.providerEnvironment ?? activeEntry?.providerEnvironment ?? {};
     const normalizedInput = { ...input, remoteControl: requestedRemoteControl, providerEnvironment: requestedProviderEnvironment };
     if (
+      !forceFreshGeneration &&
       activeEntry &&
       activeEntry.commandPath === input.commandPath &&
       activeEntry.externalAgentHome === requestedHome &&
@@ -246,8 +247,8 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
     }
   }
 
-  function enqueueActivation(input: { commandPath: string; externalAgentHome?: string; remoteControl?: boolean; providerEnvironment?: Record<string, string> }): Promise<CodexCapabilitiesSnapshot> {
-    const activation = activationChain.then(() => activate(input));
+  function enqueueActivation(input: { commandPath: string; externalAgentHome?: string; remoteControl?: boolean; providerEnvironment?: Record<string, string> }, forceFreshGeneration = false): Promise<CodexCapabilitiesSnapshot> {
+    const activation = activationChain.then(() => activate(input, forceFreshGeneration));
     activationChain = activation.catch(() => undefined);
     return activation;
   }
@@ -261,6 +262,9 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
   return {
     ensureReady(input) {
       return enqueueActivation(input);
+    },
+    activateFreshGeneration(input) {
+      return enqueueActivation(input, true);
     },
     async readAccount(input = {}) {
       return requireActiveEntry().manager.readAccount(input);

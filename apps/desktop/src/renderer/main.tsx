@@ -215,6 +215,7 @@ async function renderWithClient(client: DashboardClient, executionHostTransition
         onStartCodexLegacyImport={(sourceConversationIds) => client.startCodexLegacyImport(sourceConversationIds)}
         onInspectCodexConfigImport={() => client.inspectCodexConfigImport()}
         onImportCodexConfig={() => client.importCodexConfig()}
+        onActivateCodexConfig={() => client.activateCodexConfig()}
         onClearLocalCaches={() => client.clearLocalCaches()}
         onExportLocalSettings={() => client.exportLocalSettings()}
         onImportLocalSettings={(input) => client.importLocalSettings(input)}

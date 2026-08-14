@@ -8,6 +8,7 @@ interface CodexConfigImportSettingsProps {
   error: string | null;
   onRefresh: () => void | Promise<void>;
   onImport: () => void | Promise<void>;
+  onActivate: () => void | Promise<void>;
 }
 
 const copy = {
@@ -16,29 +17,34 @@ const copy = {
     help: '把 Codex 的指令、规则、提示词、技能和插件复制到 Zeus 专属目录。不会导入账号、密钥或历史会话。',
     scan: '重新检查',
     importing: '正在导入…',
+    activating: '正在启用…',
     import: '一键导入',
+    activate: '重试启用',
     empty: '没有发现可安全导入的 Codex 配置。',
     source: '来源',
     target: 'Zeus 目录',
     skipped: (count: number) => `另有 ${count} 项因缺失、安全限制、格式不支持或属于可重装运行缓存而跳过。`,
-    completed: (count: number) => `已导入 ${count} 项。重启 Zeus 后，新 Codex 会话开始使用这些配置。`,
+    completed: (count: number, active: boolean) => (active ? `已导入并启用 ${count} 项；新 Codex 会话将直接使用这些配置。` : `已导入 ${count} 项，但新的 Codex 运行服务尚未就绪。`),
   },
   'en-US': {
     title: 'Import configuration from Codex App',
     help: 'Copy Codex instructions, rules, prompts, skills, and plugins into the Zeus-owned directory. Accounts, secrets, and conversation history are excluded.',
     scan: 'Check again',
     importing: 'Importing…',
+    activating: 'Enabling…',
     import: 'Import now',
+    activate: 'Retry enabling',
     empty: 'No Codex configuration is available for safe import.',
     source: 'Source',
     target: 'Zeus directory',
     skipped: (count: number) => `${count} additional item(s) were skipped because they are missing, unsafe, unsupported, or generated runtime cache.`,
-    completed: (count: number) => `${count} item(s) imported. Restart Zeus before starting a new Codex conversation.`,
+    completed: (count: number, active: boolean) => (active ? `${count} item(s) imported and enabled. New Codex conversations will use this configuration.` : `${count} item(s) imported, but the fresh Codex runtime is not ready.`),
   },
 } as const;
 
 export function CodexConfigImportSettings(props: CodexConfigImportSettingsProps) {
   const labels = copy[props.language];
+  const activationRequired = Boolean(props.result && props.result.imported.length > 0 && !props.result.runtimeReloaded);
   return (
     <section className="legacy-import-settings" aria-labelledby="codex-config-import-title">
       <header className="legacy-import-heading">
@@ -77,11 +83,11 @@ export function CodexConfigImportSettings(props: CodexConfigImportSettingsProps)
         </ul>
       ) : null}
       {(props.preview?.skipped.length ?? 0) > 0 ? <small>{labels.skipped(props.preview!.skipped.length)}</small> : null}
-      {props.result ? <p role="status">{labels.completed(props.result.imported.length)}</p> : null}
+      {props.result && props.result.imported.length > 0 ? <p role="status">{labels.completed(props.result.imported.length, props.result.runtimeReloaded)}</p> : null}
       <footer className="legacy-import-command-row">
         <span />
-        <button type="button" disabled={props.loading || !props.preview?.available} onClick={() => void props.onImport()}>
-          {props.loading ? labels.importing : labels.import}
+        <button type="button" disabled={props.loading || (!activationRequired && !props.preview?.available)} onClick={() => void (activationRequired ? props.onActivate() : props.onImport())}>
+          {props.loading ? (activationRequired ? labels.activating : labels.importing) : activationRequired ? labels.activate : labels.import}
         </button>
       </footer>
     </section>
