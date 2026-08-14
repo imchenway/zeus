@@ -2079,6 +2079,7 @@ async function initializeApplication(): Promise<void> {
     preloadPath: join(desktopRoot(), 'dist/preload/browser-page.cjs'),
     attachmentRoot: browserAttachmentRoot,
     defaultDownloadDirectory: dataLayout.browserDownloads,
+    openExternal: (url) => shell.openExternal(url),
     legacySystemDownloadDirectory: app.getPath('downloads'),
   });
   const mainProjectRoot = resolveMainProjectRoot();

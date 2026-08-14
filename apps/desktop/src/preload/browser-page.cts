@@ -1,7 +1,7 @@
-import {ipcRenderer} from 'electron';
+import { ipcRenderer } from 'electron';
 
-type Rect = {x: number; y: number; width: number; height: number};
-type DesignChange = {kind: 'text' | 'style'; selector?: string; property?: string; previous: string; next: string};
+type Rect = { x: number; y: number; width: number; height: number };
+type DesignChange = { kind: 'text' | 'style'; selector?: string; property?: string; previous: string; next: string };
 type PageAnchor = {
   kind: 'element' | 'text' | 'region';
   pageUrl: string;
@@ -17,7 +17,7 @@ type PageAnchor = {
   immediateText?: string;
   nearbyText?: string;
   rect: Rect;
-  marker?: {x: number; y: number};
+  marker?: { x: number; y: number };
   textRange?: {
     text: string;
     startSelector?: string;
@@ -27,8 +27,8 @@ type PageAnchor = {
     direction: 'forward' | 'backward';
     rects: Rect[];
   };
-  viewport: {width: number; height: number; deviceScaleFactor: number};
-  scroll: {x: number; y: number};
+  viewport: { width: number; height: number; deviceScaleFactor: number };
+  scroll: { x: number; y: number };
   fixed: boolean;
 };
 type BrowserComment = {
@@ -39,8 +39,8 @@ type BrowserComment = {
   designChanges: DesignChange[];
   status: 'draft' | 'sent';
 };
-type SpeechRecognitionResultLike = {isFinal?: boolean; 0?: {transcript?: string}};
-type SpeechRecognitionEventLike = {results: ArrayLike<SpeechRecognitionResultLike>};
+type SpeechRecognitionResultLike = { isFinal?: boolean; 0?: { transcript?: string } };
+type SpeechRecognitionEventLike = { results: ArrayLike<SpeechRecognitionResultLike> };
 type SpeechRecognitionLike = {
   lang: string;
   continuous: boolean;
@@ -58,11 +58,11 @@ const state = {
   enabled: false,
   comments: [] as BrowserComment[],
   hoverTarget: null as Element | null,
-  pointerStart: null as {x: number; y: number} | null,
-  pointerCurrent: null as {x: number; y: number} | null,
+  pointerStart: null as { x: number; y: number } | null,
+  pointerCurrent: null as { x: number; y: number } | null,
   suppressNextClick: false,
   editorAnchor: null as PageAnchor | null,
-  editorPoint: null as {x: number; y: number} | null,
+  editorPoint: null as { x: number; y: number } | null,
   editorTarget: null as HTMLElement | null,
   originalText: null as string | null,
   editorTextNode: null as Text | null,
@@ -88,7 +88,7 @@ function install(): void {
   rootHost = document.createElement('div');
   rootHost.id = overlayRootId;
   rootHost.style.cssText = 'position:fixed;inset:0;z-index:2147483647;pointer-events:none;';
-  shadow = rootHost.attachShadow({mode: 'closed'});
+  shadow = rootHost.attachShadow({ mode: 'closed' });
   const style = document.createElement('style');
   style.textContent = `
     :host { all: initial; color-scheme: light dark; }
@@ -156,14 +156,14 @@ function install(): void {
   window.addEventListener('resize', scheduleRender, true);
   new MutationObserver((records) => {
     if (records.some((record) => !isOverlayNode(record.target))) scheduleRender();
-  }).observe(document.documentElement, {subtree: true, childList: true, attributes: true});
+  }).observe(document.documentElement, { subtree: true, childList: true, attributes: true });
   render();
   void hydrateFromHost();
 }
 
 async function hydrateFromHost(): Promise<void> {
   try {
-    const message = await ipcRenderer.invoke('zeus:browser-page:get-state') as {comments?: unknown; annotationMode?: unknown};
+    const message = (await ipcRenderer.invoke('zeus:browser-page:get-state')) as { comments?: unknown; annotationMode?: unknown };
     state.enabled = message.annotationMode === true;
     hydrateComments(Array.isArray(message.comments) ? (message.comments as BrowserComment[]) : []);
   } catch {
@@ -174,7 +174,7 @@ async function hydrateFromHost(): Promise<void> {
 function handlePointerMove(event: PointerEvent): void {
   if (!state.enabled || isOverlayEvent(event)) return;
   if (editor && !editor.hidden) return;
-  state.pointerCurrent = {x: event.clientX, y: event.clientY};
+  state.pointerCurrent = { x: event.clientX, y: event.clientY };
   if (state.pointerStart && distance(state.pointerStart, state.pointerCurrent) > 7) {
     drawRect(regionOutline, rectangleFromPoints(state.pointerStart, state.pointerCurrent));
   } else {
@@ -185,13 +185,13 @@ function handlePointerMove(event: PointerEvent): void {
 
 function handlePointerDown(event: PointerEvent): void {
   if (!state.enabled || event.button !== 0 || isOverlayEvent(event)) return;
-  state.pointerStart = {x: event.clientX, y: event.clientY};
+  state.pointerStart = { x: event.clientX, y: event.clientY };
   state.pointerCurrent = state.pointerStart;
 }
 
 function handlePointerUp(event: PointerEvent): void {
   if (!state.enabled || event.button !== 0 || isOverlayEvent(event) || !state.pointerStart) return;
-  state.pointerCurrent = {x: event.clientX, y: event.clientY};
+  state.pointerCurrent = { x: event.clientX, y: event.clientY };
   const start = state.pointerStart;
   const current = state.pointerCurrent;
   state.pointerStart = null;
@@ -228,6 +228,13 @@ function handlePointerUp(event: PointerEvent): void {
 }
 
 function handleClick(event: MouseEvent): void {
+  const externalUrl = systemBrowserUrlFromEvent(event);
+  if (externalUrl) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    void ipcRenderer.invoke('zeus:browser-page:open-system-browser-link', externalUrl).catch(() => undefined);
+    return;
+  }
   if (!state.enabled || isOverlayEvent(event)) return;
   if (!state.suppressNextClick) return;
   state.suppressNextClick = false;
@@ -235,10 +242,30 @@ function handleClick(event: MouseEvent): void {
   event.stopImmediatePropagation();
 }
 
-function openEditor(anchor: PageAnchor, target: HTMLElement | null, point: {x: number; y: number} = anchor.marker ?? {
-  x: anchor.rect.x + anchor.rect.width / 2,
-  y: anchor.rect.y,
-}): void {
+function systemBrowserUrlFromEvent(event: MouseEvent): string | null {
+  if (!event.isTrusted || event.button !== 0 || !event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || state.enabled || isOverlayEvent(event)) return null;
+  const anchor = event
+    .composedPath()
+    .filter((candidate): candidate is Element => candidate instanceof Element)
+    .map((candidate) => candidate.closest('a[href]'))
+    .find((candidate): candidate is HTMLAnchorElement => candidate instanceof HTMLAnchorElement);
+  if (!anchor) return null;
+  try {
+    const url = new URL(anchor.href, document.baseURI);
+    return ['http:', 'https:'].includes(url.protocol) ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function openEditor(
+  anchor: PageAnchor,
+  target: HTMLElement | null,
+  point: { x: number; y: number } = anchor.marker ?? {
+    x: anchor.rect.x + anchor.rect.width / 2,
+    y: anchor.rect.y,
+  },
+): void {
   if (!editor) return;
   restorePreview();
   state.editorAnchor = anchor;
@@ -311,23 +338,22 @@ function openEditor(anchor: PageAnchor, target: HTMLElement | null, point: {x: n
   else drawRect(hoverOutline, anchor.rect);
   positionEditor(anchor);
   syncEditorActions(textarea);
-  queueMicrotask(() => textarea.focus({preventScroll: true}));
+  queueMicrotask(() => textarea.focus({ preventScroll: true }));
 }
 
 function positionEditor(anchor: PageAnchor): void {
   if (!editor || editor.hidden) return;
   const width = Math.min(editor.offsetWidth || 296, Math.max(1, window.innerWidth - 24));
   const height = editor.offsetHeight || 46;
-  const point = state.editorPoint ?? anchor.marker ?? {
-    x: anchor.rect.x + anchor.rect.width / 2,
-    y: anchor.rect.y,
-  };
+  const point = state.editorPoint ??
+    anchor.marker ?? {
+      x: anchor.rect.x + anchor.rect.width / 2,
+      y: anchor.rect.y,
+    };
   const gap = 24;
   const preferredRight = point.x + gap;
   const preferredLeft = point.x - width - gap;
-  const x = preferredRight + width + 12 <= window.innerWidth
-    ? preferredRight
-    : Math.max(12, Math.min(window.innerWidth - width - 12, preferredLeft));
+  const x = preferredRight + width + 12 <= window.innerWidth ? preferredRight : Math.max(12, Math.min(window.innerWidth - width - 12, preferredLeft));
   const y = Math.max(12, Math.min(window.innerHeight - height - 12, point.y - height / 2));
   editor.style.left = `${x}px`;
   editor.style.top = `${y}px`;
@@ -351,8 +377,9 @@ function syncEditorActions(textarea: HTMLTextAreaElement): void {
 }
 
 function installVoiceInput(button: HTMLButtonElement, textarea: HTMLTextAreaElement): void {
-  const Recognition = (window as unknown as {webkitSpeechRecognition?: SpeechRecognitionConstructor; SpeechRecognition?: SpeechRecognitionConstructor}).SpeechRecognition ??
-    (window as unknown as {webkitSpeechRecognition?: SpeechRecognitionConstructor}).webkitSpeechRecognition;
+  const Recognition =
+    (window as unknown as { webkitSpeechRecognition?: SpeechRecognitionConstructor; SpeechRecognition?: SpeechRecognitionConstructor }).SpeechRecognition ??
+    (window as unknown as { webkitSpeechRecognition?: SpeechRecognitionConstructor }).webkitSpeechRecognition;
   if (!Recognition) {
     button.title = 'Focus this field, then use system dictation';
     button.addEventListener('click', () => textarea.focus());
@@ -452,7 +479,7 @@ function collectDesignChanges(): DesignChange[] {
   const textInput = editor.querySelector<HTMLInputElement>('[data-adjust="text"]');
   const previousText = state.originalTextNodeValue?.trim() ?? state.originalText;
   if (state.adjustedProperties.has('text') && textInput && previousText !== null && textInput.value !== previousText) {
-    changes.push({kind: 'text', selector: state.editorAnchor.selector, previous: previousText, next: textInput.value});
+    changes.push({ kind: 'text', selector: state.editorAnchor.selector, previous: previousText, next: textInput.value });
   }
   for (const property of state.adjustedProperties) {
     if (property === 'text') continue;
@@ -461,7 +488,7 @@ function collectDesignChanges(): DesignChange[] {
     const next = input.value.trim();
     if (!next) continue;
     const previous = state.originalComputedStyles.get(property) ?? state.originalInlineStyles.get(property) ?? '';
-    if (previous.trim() !== next) changes.push({kind: 'style', selector: state.editorAnchor.selector, property, previous: previous.trim(), next});
+    if (previous.trim() !== next) changes.push({ kind: 'style', selector: state.editorAnchor.selector, property, previous: previous.trim(), next });
   }
   return changes;
 }
@@ -531,7 +558,7 @@ function elementAnchor(element: Element): PageAnchor {
 function regionAnchor(rect: Rect): PageAnchor {
   const element = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
   return baseAnchor('region', rect, {
-    ...(element ? {selector: selectorFor(element), elementPath: elementPath(element), nearbyText: normalizedText(element.parentElement?.textContent, 2_000)} : {}),
+    ...(element ? { selector: selectorFor(element), elementPath: elementPath(element), nearbyText: normalizedText(element.parentElement?.textContent, 2_000) } : {}),
   });
 }
 
@@ -542,13 +569,13 @@ function textAnchor(selection: Selection): PageAnchor {
   const startElement = range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement;
   const endElement = range.endContainer instanceof Element ? range.endContainer : range.endContainer.parentElement;
   return baseAnchor('text', rect, {
-    ...(startElement ? {selector: selectorFor(startElement), elementPath: elementPath(startElement), nearbyText: normalizedText(startElement.parentElement?.textContent, 2_000)} : {}),
+    ...(startElement ? { selector: selectorFor(startElement), elementPath: elementPath(startElement), nearbyText: normalizedText(startElement.parentElement?.textContent, 2_000) } : {}),
     immediateText: normalizedText(selection.toString(), 20_000),
     textRange: {
       text: selection.toString(),
-      ...(startElement ? {startSelector: selectorFor(startElement)} : {}),
+      ...(startElement ? { startSelector: selectorFor(startElement) } : {}),
       startOffset: range.startOffset,
-      ...(endElement ? {endSelector: selectorFor(endElement)} : {}),
+      ...(endElement ? { endSelector: selectorFor(endElement) } : {}),
       endOffset: range.endOffset,
       direction: selection.anchorNode === range.startContainer && selection.anchorOffset === range.startOffset ? 'forward' : 'backward',
       rects,
@@ -556,11 +583,7 @@ function textAnchor(selection: Selection): PageAnchor {
   });
 }
 
-function baseAnchor(
-  kind: PageAnchor['kind'],
-  rect: DOMRect | Rect,
-  details: Partial<PageAnchor>,
-): PageAnchor {
+function baseAnchor(kind: PageAnchor['kind'], rect: DOMRect | Rect, details: Partial<PageAnchor>): PageAnchor {
   return {
     kind,
     pageUrl: topPageUrl(),
@@ -568,8 +591,8 @@ function baseAnchor(
     pageTitle: document.title,
     frameDepth: frameDepth(),
     rect: toRect(rect),
-    viewport: {width: window.innerWidth, height: window.innerHeight, deviceScaleFactor: window.devicePixelRatio || 1},
-    scroll: {x: window.scrollX, y: window.scrollY},
+    viewport: { width: window.innerWidth, height: window.innerHeight, deviceScaleFactor: window.devicePixelRatio || 1 },
+    scroll: { x: window.scrollX, y: window.scrollY },
     fixed: false,
     ...details,
   };
@@ -694,8 +717,7 @@ function applyPersistedDesignChanges(comment: BrowserComment): void {
       const textNode = editableTextNode(target);
       if (textNode) textNode.data = replaceTextNodeValue(textNode.data, change.next);
       else target.textContent = change.next;
-    }
-    else if (change.property) target.style.setProperty(change.property, change.next, 'important');
+    } else if (change.property) target.style.setProperty(change.property, change.next, 'important');
   }
 }
 
@@ -720,7 +742,7 @@ function focusComment(commentId: string): void {
   if (!comment) return;
   if (comment.anchor.selector) {
     try {
-      document.querySelector(comment.anchor.selector)?.scrollIntoView({block: 'center', inline: 'center', behavior: 'smooth'});
+      document.querySelector(comment.anchor.selector)?.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
     } catch {
       // 失效锚点仍保留编号和结构化上下文。
     }
@@ -743,7 +765,7 @@ function render(): void {
   if (state.editorAnchor && editor && !editor.hidden) {
     if (state.editorTarget) drawTargetRect(hoverOutline, state.editorTarget);
     else drawRect(hoverOutline, resolveAnchorRect(state.editorAnchor));
-    positionEditor({...state.editorAnchor, rect: resolveAnchorRect(state.editorAnchor)});
+    positionEditor({ ...state.editorAnchor, rect: resolveAnchorRect(state.editorAnchor) });
   }
   for (const marker of markerLayer?.querySelectorAll<HTMLElement>('.marker') ?? []) {
     const comment = state.comments.find((candidate) => candidate.id === marker.dataset.commentId);
@@ -770,7 +792,7 @@ function resolveAnchorRect(anchor: PageAnchor): Rect {
   };
 }
 
-function resolveCommentMarker(comment: BrowserComment): {x: number; y: number} {
+function resolveCommentMarker(comment: BrowserComment): { x: number; y: number } {
   const marker = comment.anchor.marker;
   const fallback = marker ?? {
     x: comment.anchor.rect.x + comment.anchor.rect.width - 1,
@@ -830,25 +852,25 @@ function hide(element: HTMLElement | null): void {
   if (element) element.style.display = 'none';
 }
 
-function rectangleFromPoints(start: {x: number; y: number}, end: {x: number; y: number}): Rect {
-  return {x: Math.min(start.x, end.x), y: Math.min(start.y, end.y), width: Math.abs(end.x - start.x), height: Math.abs(end.y - start.y)};
+function rectangleFromPoints(start: { x: number; y: number }, end: { x: number; y: number }): Rect {
+  return { x: Math.min(start.x, end.x), y: Math.min(start.y, end.y), width: Math.abs(end.x - start.x), height: Math.abs(end.y - start.y) };
 }
 
-function distance(left: {x: number; y: number}, right: {x: number; y: number}): number {
+function distance(left: { x: number; y: number }, right: { x: number; y: number }): number {
   return Math.hypot(left.x - right.x, left.y - right.y);
 }
 
 function toRect(rect: DOMRect | Rect): Rect {
-  return {x: rect.x, y: rect.y, width: rect.width, height: rect.height};
+  return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
 }
 
 function unionRects(rects: Rect[]): Rect {
-  if (!rects.length) return {x: 0, y: 0, width: 0, height: 0};
+  if (!rects.length) return { x: 0, y: 0, width: 0, height: 0 };
   const left = Math.min(...rects.map((rect) => rect.x));
   const top = Math.min(...rects.map((rect) => rect.y));
   const right = Math.max(...rects.map((rect) => rect.x + rect.width));
   const bottom = Math.max(...rects.map((rect) => rect.y + rect.height));
-  return {x: left, y: top, width: right - left, height: bottom - top};
+  return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
 function normalizedText(value: string | null | undefined, maximum: number): string {
@@ -883,7 +905,7 @@ function commonSelectionElement(selection: Selection): HTMLElement | null {
 
 ipcRenderer.on('zeus-browser-page:command', (_event, message: unknown) => {
   if (!message || typeof message !== 'object') return;
-  const command = message as {type?: unknown; enabled?: unknown; comments?: unknown; annotationMode?: unknown; commentId?: unknown};
+  const command = message as { type?: unknown; enabled?: unknown; comments?: unknown; annotationMode?: unknown; commentId?: unknown };
   if (command.type === 'set_annotation_mode') {
     state.enabled = command.enabled === true;
     if (!state.enabled) {
@@ -900,5 +922,5 @@ ipcRenderer.on('zeus-browser-page:command', (_event, message: unknown) => {
   }
 });
 
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install, {once: true});
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install, { once: true });
 else install();
