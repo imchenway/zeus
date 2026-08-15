@@ -31,6 +31,7 @@ export interface CodexUsageEstimate {
 export interface NativeTokenUsageSnapshot {
   generationId: string;
   sequence: number;
+  serviceTier?: string | null;
   total: TokenUsageBreakdown;
   last: TokenUsageBreakdown;
   modelContextWindow: number | null;
@@ -251,8 +252,8 @@ export function calculateCacheHitRate(usage: Pick<TokenUsageBreakdown, 'inputTok
 
 export function estimateCodexUsage(input: { model: string; serviceTier?: string | null; usage: TokenUsageBreakdown }): CodexUsageEstimate {
   const model = resolvePrice(input.model);
-  const serviceTier = input.serviceTier?.trim().toLowerCase() || null;
-  const isFast = serviceTier === 'fast' || serviceTier === 'priority';
+  const serviceTier = input.serviceTier ?? null;
+  const isFast = serviceTier === 'priority';
   const longContext = input.usage.inputTokens > 272_000 && model?.longUsd !== null;
   const usdRates = model ? (isFast ? (longContext ? model.fastLongUsd : model.fastUsd) : longContext ? model.longUsd : model.standardUsd) : null;
   const creditsMultiplier = isFast && model?.fastCreditsMultiplier ? model.fastCreditsMultiplier : 1;

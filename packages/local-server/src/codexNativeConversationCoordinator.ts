@@ -99,6 +99,11 @@ interface ConversationDispatchContext {
 
 interface PersistedSubmissionInput {
   text: string;
+  requestedServiceTier?: string | null;
+  serviceTierDowngrade?: {
+    reason: 'model_unsupported' | 'app_server_rejected' | 'provider_reported_standard';
+    actualServiceTier: string | null;
+  };
   composerDraft?: string;
   attachments?: NativeConversationAttachmentInput[];
   browserComments?: Record<string, unknown>[];
@@ -779,12 +784,14 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       requestAnswerId?: string;
       internalOperation?: boolean;
       goalObjective?: string;
+      requestedServiceTier?: string | null;
     },
     context: ConversationDispatchContext,
   ): ZeusConversationSubmissionRecord {
     const queuedCount = options.submissions.listByConversation(conversationId).filter((entry) => entry.status === 'queued' || entry.status === 'paused' || entry.status === 'failed').length;
     const payload: PersistedSubmissionInput = {
       text: content,
+      ...(Object.prototype.hasOwnProperty.call(input, 'requestedServiceTier') ? { requestedServiceTier: input.requestedServiceTier } : {}),
       ...(typeof input.composerDraft === 'string' ? { composerDraft: input.composerDraft } : {}),
       ...(input.attachments?.length ? { attachments: input.attachments } : {}),
       ...(input.browserComments?.length ? { browserComments: input.browserComments } : {}),
@@ -800,25 +807,108 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       ...(input.goalObjective ? { goalObjective: input.goalObjective } : {}),
     };
     const existing = input.submissionId ? options.submissions.getById(input.submissionId) : undefined;
+    let submission: ZeusConversationSubmissionRecord;
     if (existing) {
       if (existing.conversationId !== conversationId || existing.idempotencyKey !== input.idempotencyKey) {
         throw coordinatorError('ZEUS_NATIVE_RESERVED_RESOURCE_CONFLICT', 'Reserved submission id is already owned by another conversation operation.');
       }
-      return options.submissions.updateQueuedInput(existing.id, { requestHash: requestHash(payload), input: payload });
+      submission = options.submissions.updateQueuedInput(existing.id, { requestHash: requestHash(payload), input: payload });
+    } else {
+      submission = options.submissions.createOrGet({
+        ...(input.submissionId ? { id: input.submissionId } : {}),
+        conversationId,
+        idempotencyKey: input.idempotencyKey,
+        requestHash: requestHash(payload),
+        clientMessageId: input.clientUserMessageId,
+        kind: 'message',
+        requestedDelivery: 'queue',
+        status: 'queued',
+        queuePosition: queuedCount + 1,
+        input: payload,
+        createdAt: now(),
+      });
     }
-    return options.submissions.createOrGet({
-      ...(input.submissionId ? { id: input.submissionId } : {}),
+    return submission;
+  }
+
+  function persistServiceTierDowngradeNotice(
+    conversationId: string,
+    submission: ZeusConversationSubmissionRecord,
+    context: ConversationDispatchContext,
+    reason: 'model_unsupported' | 'app_server_rejected' | 'provider_reported_standard',
+    actualServiceTier: string | null = null,
+  ): void {
+    const providerItemId = `zeus-service-tier-downgrade:${submission.id}:${reason}`;
+    const conversation = options.conversations.getById(conversationId);
+    const reasonLabel = reason === 'model_unsupported' ? '模型目录未声明 priority 能力' : reason === 'app_server_rejected' ? 'app-server 明确拒绝 priority 服务档位' : 'Provider 接受请求后实际采用 Standard';
+    const actualTierLabel = actualServiceTier === 'default' ? 'Standard（default）' : actualServiceTier ? actualServiceTier : 'Standard（null）';
+    const content = `服务档位已降级。模型：${context.model}；请求档位：Fast（priority）；实际档位：${actualTierLabel}；原因：${reasonLabel}。会话继续执行，模型和推理强度保持不变。`;
+    const metadata = {
+      kind: 'service_tier_downgrade',
+      requestedServiceTier: 'priority',
+      dispatchedServiceTier: context.serviceTier ?? null,
+      actualServiceTier,
+      reason,
+      model: context.model,
+      modelSourceId: context.modelSourceId,
+      submissionId: submission.id,
+    };
+    const triggeringUserMessage = conversation?.messages.find((message) => message.role === 'user' && conversationMessageClientId(message) === submission.clientMessageId);
+    const currentTimestamp = now();
+    const userTimestamp = triggeringUserMessage ? Date.parse(triggeringUserMessage.createdAt) : Number.NaN;
+    const currentTime = Date.parse(currentTimestamp);
+    // 即使 Provider 与本机在同一毫秒回传，也保证刷新后的稳定顺序是“用户消息 → 系统提示”。
+    const createdAt = Number.isFinite(userTimestamp) && (!Number.isFinite(currentTime) || currentTime <= userTimestamp) ? new Date(userTimestamp + 1).toISOString() : currentTimestamp;
+    options.conversations.appendMessage({
       conversationId,
-      idempotencyKey: input.idempotencyKey,
-      requestHash: requestHash(payload),
-      clientMessageId: input.clientUserMessageId,
-      kind: 'message',
-      requestedDelivery: 'queue',
-      status: 'queued',
-      queuePosition: queuedCount + 1,
-      input: payload,
-      createdAt: now(),
+      role: 'system',
+      content,
+      source: 'zeus_service_tier',
+      metadata,
+      createdAt,
+      ...(conversation?.providerThreadId ? { providerThreadId: conversation.providerThreadId } : {}),
+      providerItemId,
+      clientMessageId: submission.clientMessageId,
     });
+    if (conversation?.providerThreadId) {
+      options.broadcast('conversation.item.updated', {
+        conversationId,
+        providerThreadId: conversation.providerThreadId,
+        providerTurnId: `message:${submission.id}`,
+        providerItemId,
+        itemType: 'serviceTierNotice',
+        itemPayload: metadata,
+        textContent: content,
+        status: 'completed',
+        phase: 'prework',
+        itemResources: [],
+      });
+    }
+  }
+
+  function recordServiceTierDowngrade(
+    conversationId: string,
+    submission: ZeusConversationSubmissionRecord,
+    context: ConversationDispatchContext,
+    reason: 'model_unsupported' | 'app_server_rejected' | 'provider_reported_standard',
+    actualServiceTier: string | null = null,
+  ): void {
+    const current = options.submissions.getById(submission.id) ?? submission;
+    const input = parseJsonRecord(current.inputJson);
+    options.db.execute(`UPDATE conversation_submissions SET input_json = ?, updated_at = ? WHERE id = ?`, [JSON.stringify({ ...input, serviceTierDowngrade: { reason, actualServiceTier } }), now(), current.id]);
+    const conversation = options.conversations.getById(conversationId);
+    if (conversation?.messages.some((message) => message.role === 'user' && conversationMessageClientId(message) === current.clientMessageId)) {
+      persistServiceTierDowngradeNotice(conversationId, current, context, reason, actualServiceTier);
+    }
+  }
+
+  function flushServiceTierDowngradeNotice(submission: ZeusConversationSubmissionRecord | undefined): void {
+    if (!submission) return;
+    const current = options.submissions.getById(submission.id) ?? submission;
+    const marker = parseJsonRecord(current.inputJson).serviceTierDowngrade;
+    if (!isRecord(marker) || (marker.reason !== 'model_unsupported' && marker.reason !== 'app_server_rejected' && marker.reason !== 'provider_reported_standard')) return;
+    const actualServiceTier = marker.actualServiceTier === null || typeof marker.actualServiceTier === 'string' ? marker.actualServiceTier : null;
+    persistServiceTierDowngradeNotice(current.conversationId, current, contextFromSubmission(current), marker.reason, actualServiceTier);
   }
 
   function nextTurnSettingsFromContext(context: ConversationDispatchContext): ConversationNextTurnSettings {
@@ -1548,6 +1638,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     submission: ZeusConversationSubmissionRecord,
     lease: NativeConversationDispatchLease,
     providerArchiveRecoveryAttempted: boolean,
+    serviceTierFallbackAttempted = false,
   ): Promise<NativeAcceptedOperation> {
     let conversation = options.conversations.getById(conversationInput.id);
     if (!conversation) throw coordinatorError('ZEUS_NATIVE_CONVERSATION_NOT_FOUND', 'Native conversation was not found.');
@@ -1575,6 +1666,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     persistSubmissionExecutionContext(submission, context);
     conversation = requireConversation(conversation.id);
     contexts.set(conversation.id, context);
+    let threadStartedForSubmission = false;
     try {
       await ensureGenerationReconciled([conversation.id]);
       conversation = options.conversations.getById(conversation.id) ?? conversation;
@@ -1608,6 +1700,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           providerState: 'ready',
         });
         persistThreadProviderSettings(conversation.id, thread);
+        threadStartedForSubmission = true;
         await persist();
         options.broadcast('conversation.transport.changed', {
           conversationId: conversation.id,
@@ -1679,6 +1772,13 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       options.submissions.updateStatus(submission.id, 'active', { providerTurnId: turn.id, dispatchedAt: timestamp });
       options.conversations.bindProvider(conversation.id, { providerId: 'codex', providerThreadId, providerModel: context.model, providerState: 'active' });
       runStates.set(conversation.id, { type: 'active', turnId: turn.id, phase: 'prework' });
+      if (!serviceTierFallbackAttempted && parseJsonRecord(submission.inputJson).requestedServiceTier === 'priority' && context.serviceTier !== 'priority') {
+        recordServiceTierDowngrade(conversation.id, submission, context, 'model_unsupported');
+      }
+      const providerSettings = options.conversations.getProviderSettingsSnapshot(conversation.id);
+      if (threadStartedForSubmission && providerSettings && Object.prototype.hasOwnProperty.call(providerSettings, 'serviceTier')) {
+        persistProviderReportedServiceTierDowngrade(conversation.id, submission, context, providerSettings.serviceTier ?? null);
+      }
       await persist();
       // submission 已进入 provider 轮次后必须同步清出队列表面，避免其他窗口继续展示旧快照。
       options.broadcast('conversation.queue.changed', { conversationId: conversation.id, providerThreadId, providerTurnId: turn.id, submissionId: submission.id });
@@ -1696,6 +1796,23 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     } catch (error) {
       const current = options.conversations.getById(conversation.id);
       const providerThreadId = current?.providerThreadId ?? null;
+      if (!serviceTierFallbackAttempted && context.serviceTier === 'priority' && isServiceTierUnavailableError(error)) {
+        const standardContext: ConversationDispatchContext = { ...context, serviceTier: null };
+        persistSubmissionExecutionContext(submission, standardContext);
+        options.conversations.updateNextTurnSettings(conversation.id, nextTurnSettingsFromContext(standardContext));
+        contexts.set(conversation.id, standardContext);
+        options.submissions.updateStatus(submission.id, 'queued', { providerTurnId: null, updatedAt: now() });
+        runStates.set(conversation.id, { type: 'idle' });
+        await persist();
+        const retrySubmission = options.submissions.getById(submission.id) ?? submission;
+        const retryConversation = options.conversations.getById(conversation.id) ?? conversation;
+        const result = await dispatchSubmissionWithLease(retryConversation, retrySubmission, lease, providerArchiveRecoveryAttempted, true);
+        if (result.status !== 'recovery_required' && result.status !== 'provider_archived') {
+          recordServiceTierDowngrade(conversation.id, retrySubmission, standardContext, 'app_server_rejected');
+          await persist();
+        }
+        return result;
+      }
       if (context.ephemeral) {
         options.submissions.updateStatus(submission.id, 'failed', { resolvedAt: now(), error: serializeError(error) });
         if (current?.providerThreadId) {
@@ -1722,7 +1839,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
             await restoreArchivedProviderThread(conversation.id);
             const retrySubmission = options.submissions.getById(submission.id);
             const retryConversation = options.conversations.getById(conversation.id);
-            if (retrySubmission && retryConversation) return dispatchSubmissionWithLease(retryConversation, retrySubmission, lease, true);
+            if (retrySubmission && retryConversation) return dispatchSubmissionWithLease(retryConversation, retrySubmission, lease, true, serviceTierFallbackAttempted);
           } catch {
             // 恢复函数已保留原始消息与可重试状态。
           }
@@ -1905,6 +2022,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       providerItemId,
       ...(clientMessageId ? { clientMessageId } : {}),
     });
+    flushServiceTierDowngradeNotice(submission);
     resolveExactSteeringSubmission(conversation.id, itemPayload, providerThreadId, providerTurnId);
     return clientMessageId;
   }
@@ -4397,6 +4515,16 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         ...(Object.prototype.hasOwnProperty.call(settings, 'serviceTier') && (settings.serviceTier === null || typeof settings.serviceTier === 'string') ? { serviceTier: settings.serviceTier } : {}),
       };
       options.conversations.upsertProviderSettingsSnapshot(conversation.id, snapshot);
+      if (Object.prototype.hasOwnProperty.call(snapshot, 'serviceTier')) {
+        const state = runStates.get(conversation.id);
+        const providerTurnId = state?.type === 'active' || state?.type === 'waiting' ? state.turnId : null;
+        const turn = providerTurnId ? options.turns.listByConversation(conversation.id).find((candidate) => candidate.providerTurnId === providerTurnId) : undefined;
+        const submission = turn?.clientSubmissionId ? options.submissions.getById(turn.clientSubmissionId) : undefined;
+        if (submission) {
+          const context = contextFromSubmission(submission);
+          persistProviderReportedServiceTierDowngrade(conversation.id, submission, context, snapshot.serviceTier ?? null);
+        }
+      }
       broadcast = { type: 'conversation.provider.settings.updated', payload: { conversationId: conversation.id, ...snapshot } };
     } else if (event.method === 'thread/tokenUsage/updated' && conversation) {
       const tokenUsage = isRecord(params.tokenUsage) ? params.tokenUsage : params;
@@ -4414,6 +4542,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         }
       }
       const settings = options.conversations.getProviderSettingsSnapshot(conversation.id);
+      const eventServiceTier = Object.prototype.hasOwnProperty.call(tokenUsage, 'serviceTier') && (tokenUsage.serviceTier === null || typeof tokenUsage.serviceTier === 'string') ? tokenUsage.serviceTier : undefined;
+      const actualServiceTier = eventServiceTier !== undefined ? eventServiceTier : settings && Object.prototype.hasOwnProperty.call(settings, 'serviceTier') ? (settings.serviceTier ?? null) : (context?.serviceTier ?? null);
       const model = context?.model ?? settings?.model ?? conversation.providerModel;
       if (!model) throw coordinatorError('ZEUS_NATIVE_PROVIDER_EVENT_INVALID', 'Token usage event cannot resolve its model.');
       const modelContextWindow = tokenUsage.modelContextWindow === null || tokenUsage.modelContextWindow === undefined ? null : requireNumber(tokenUsage.modelContextWindow, 'modelContextWindow');
@@ -4426,7 +4556,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
             providerThreadId: requireString(conversation.providerThreadId, 'provider thread id'),
             providerTurnId,
             model,
-            serviceTier: context?.serviceTier ?? settings?.serviceTier ?? null,
+            serviceTier: actualServiceTier,
             total,
             last,
             modelContextWindow,
@@ -4435,6 +4565,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         : {
             generationId: event.generationId,
             sequence: event.sequence,
+            serviceTier: actualServiceTier,
             total,
             last,
             modelContextWindow,
@@ -4660,6 +4791,13 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       ...(settings.effort ? { effort: settings.effort } : {}),
       ...(Object.prototype.hasOwnProperty.call(settings, 'serviceTier') ? { serviceTier: settings.serviceTier } : {}),
     });
+  }
+
+  function persistProviderReportedServiceTierDowngrade(conversationId: string, submission: ZeusConversationSubmissionRecord, context: ConversationDispatchContext, actualServiceTier: string | null): void {
+    const persistedInput = parseJsonRecord(submission.inputJson);
+    if (persistedInput.requestedServiceTier !== 'priority' || context.serviceTier !== 'priority') return;
+    if (actualServiceTier !== null && actualServiceTier !== 'default') return;
+    recordServiceTierDowngrade(conversationId, submission, context, 'provider_reported_standard', actualServiceTier);
   }
 
   async function safelyHandleProviderEventError(event: CodexAppServerEvent, error: unknown, receiptEvents: readonly CodexAppServerEvent[] = [event]): Promise<void> {
@@ -6030,6 +6168,23 @@ function isProviderThreadArchivedError(error: unknown): boolean {
 
 function isProviderTurnAlreadyEndedSteerError(error: unknown): boolean {
   return /\bno active turn to steer\b/i.test(error instanceof Error ? error.message : String(error));
+}
+
+function isServiceTierUnavailableError(error: unknown): boolean {
+  if (!isRecord(error)) return false;
+  if (error.code === 'ZEUS_CODEX_SERVICE_TIER_UNAVAILABLE') return true;
+  const code = error.code;
+  if (code !== -32602 && code !== -32000 && code !== 'INVALID_PARAMS' && code !== 'UNSUPPORTED_CONFIG') return false;
+  const evidence = `${error instanceof Error ? error.message : ''} ${safeErrorDataText(error.data)}`.toLowerCase();
+  return /service[ _-]?tier/u.test(evidence) && /priority|unsupported|unavailable|invalid/u.test(evidence);
+}
+
+function safeErrorDataText(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? '';
+  } catch {
+    return '';
+  }
 }
 
 function coordinatorError(code: string, message: string): Error & { code: string } {

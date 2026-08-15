@@ -816,6 +816,7 @@ export interface ConversationProviderSettingsSnapshot extends ProviderSequenceSn
 }
 
 export interface ConversationProviderTokenUsageSnapshot extends ProviderSequenceSnapshot {
+  serviceTier?: string | null;
   total: TokenUsageBreakdown;
   last: TokenUsageBreakdown;
   modelContextWindow: number | null;
@@ -7384,11 +7385,27 @@ function validateProviderTokenUsageSnapshot(snapshot: unknown): asserts snapshot
   assertNoSecretLikeProviderKeys(candidate, new Set(['inputtokens', 'cachedinputtokens', 'cachewriteinputtokens', 'outputtokens', 'reasoningoutputtokens', 'totaltokens']));
   assertOnlyKeys(
     candidate,
-    ['generationId', 'sequence', 'total', 'last', 'modelContextWindow', 'cacheHitRate', 'estimatedCredits', 'apiEquivalentUsd', 'cacheSavingsUsd', 'priceCoverage', 'pricingCatalogDate', 'pricingSourceUrls', 'historyComplete'],
+    [
+      'generationId',
+      'sequence',
+      'serviceTier',
+      'total',
+      'last',
+      'modelContextWindow',
+      'cacheHitRate',
+      'estimatedCredits',
+      'apiEquivalentUsd',
+      'cacheSavingsUsd',
+      'priceCoverage',
+      'pricingCatalogDate',
+      'pricingSourceUrls',
+      'historyComplete',
+    ],
     'provider token usage snapshot',
   );
   validateTokenUsageBreakdown(candidate.total);
   validateTokenUsageBreakdown(candidate.last);
+  if (candidate.serviceTier !== undefined && candidate.serviceTier !== null && typeof candidate.serviceTier !== 'string') throw new Error('Invalid provider token usage snapshot');
   for (const value of [candidate.modelContextWindow, candidate.cacheHitRate, candidate.estimatedCredits, candidate.apiEquivalentUsd, candidate.cacheSavingsUsd, candidate.priceCoverage]) {
     if (value !== null && (typeof value !== 'number' || !Number.isFinite(value) || value < 0)) throw new Error('Invalid provider token usage snapshot');
   }

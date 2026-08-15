@@ -59,6 +59,7 @@ async function renderWithClient(client: DashboardClient, executionHostTransition
           onLoadProject={(projectId) => client.loadProject(projectId)}
           onLoadProjectConfig={(projectId) => client.loadProjectConfig(projectId)}
           onSaveProjectConfig={(projectId, input) => client.saveProjectConfig(projectId, input)}
+          onSaveProjectModelServiceTierPreference={(projectId, input) => client.saveProjectModelServiceTierPreference(projectId, input)}
           onLoadProjectDatabaseSecret={(projectId) => client.loadProjectDatabaseSecret(projectId)}
           onSaveProjectDatabasePassword={(projectId, password) => client.saveProjectDatabasePassword(projectId, password)}
           onClearProjectDatabasePassword={(projectId) => client.clearProjectDatabasePassword(projectId)}
