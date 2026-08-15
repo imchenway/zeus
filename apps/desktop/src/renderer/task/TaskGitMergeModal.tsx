@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { type Dispatch, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
 import { buildTaskCommitMessageSuggestion } from '@zeus/shared';
 import { type DashboardClient, type TaskRecord, ZeusApiError } from '../apiClient.js';
 import type {
@@ -20,7 +20,6 @@ import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { TaskGitConflictWorkspace } from './TaskGitConflictWorkspace.js';
 import { type ConflictDocument, countUnresolvedConflictBlocks, createConflictDocument, serializeConflictForGit } from './taskConflictModel.js';
-import { TaskWorkspaceBranchList } from './TaskWorkspaceBranchList.js';
 
 type DeliveryClient = Pick<
   DashboardClient,
@@ -52,6 +51,21 @@ interface DeliveryFeedback {
   text: string;
   actionLabel?: string;
   onAction?: () => void;
+}
+
+type BatchDeliveryStatus = 'succeeded' | 'skipped' | 'attention' | 'failed';
+
+interface BatchDeliveryResult {
+  workspaceId: string;
+  repositoryName: string;
+  status: BatchDeliveryStatus;
+  message: string;
+}
+
+interface DeliveryRepositoryGroup {
+  workspace: TaskWorkspaceIndexSnapshot;
+  detail: TaskWorkspaceSnapshot | undefined;
+  files: DeliveryFile[];
 }
 
 export interface PendingConflictAiStart {
@@ -145,7 +159,8 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   const [workspaceId, setWorkspaceId] = useState('');
   const [diffScope, setDiffScope] = useState<DiffScope>('working');
   const [selectedFile, setSelectedFile] = useState('');
-  const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
+  const [selectedWorkspaceIds, setSelectedWorkspaceIds] = useState<string[]>([]);
+  const [selectedPathsByWorkspace, setSelectedPathsByWorkspace] = useState<Record<string, string[]>>({});
   const [fileDiff, setFileDiff] = useState<TaskGitDiffSummary | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
   const [message, setMessage] = useState('');
@@ -160,7 +175,9 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   const [loadRevision, setLoadRevision] = useState(0);
   const [snapshotRevision, setSnapshotRevision] = useState(0);
   const [feedback, setFeedback] = useState<DeliveryFeedback | null>(null);
+  const [batchResults, setBatchResults] = useState<BatchDeliveryResult[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const selectionInitializedRef = useRef(false);
 
   const selectedWorkspace = workspaceDetails[workspaceId] ?? null;
   const workspaceError = selectedWorkspace?.comparisonError ?? selectedWorkspace?.reviewError ?? null;
@@ -172,7 +189,34 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   const targetBranch = selectedWorkspace?.sourceBranch ?? '';
   const workingFiles = useMemo(() => collectWorkingFiles(selectedWorkspace), [selectedWorkspace]);
   const committedFiles = useMemo(() => (selectedWorkspace?.branchComparison?.files ?? []).map((file) => toCommittedDeliveryFile(file, zh)), [selectedWorkspace?.branchComparison?.files, zh]);
-  const visibleFiles = diffScope === 'committed' ? committedFiles : workingFiles.map((file) => toWorkingDeliveryFile(file, zh));
+  const repositoryGroups = useMemo<DeliveryRepositoryGroup[]>(
+    () =>
+      (workspaceIndex?.items ?? []).map((workspace) => {
+        const detail = workspaceDetails[workspace.id];
+        return {
+          workspace,
+          detail,
+          files: diffScope === 'committed' ? (detail?.branchComparison?.files ?? []).map((file) => toCommittedDeliveryFile(file, zh)) : collectWorkingFiles(detail).map((file) => toWorkingDeliveryFile(file, zh)),
+        };
+      }),
+    [workspaceIndex?.items, workspaceDetails, diffScope, zh],
+  );
+  const totalWorkingFiles = useMemo(() => Object.values(workspaceDetails).reduce((total, workspace) => total + collectWorkingFiles(workspace).length, 0), [workspaceDetails]);
+  const totalCommittedFiles = useMemo(() => Object.values(workspaceDetails).reduce((total, workspace) => total + (workspace.branchComparison?.files.length ?? 0), 0), [workspaceDetails]);
+  const selectedWorkspaceIdSet = useMemo(() => new Set(selectedWorkspaceIds), [selectedWorkspaceIds]);
+  const selectedCommitFileCount = useMemo(() => selectedWorkspaceIds.reduce((total, selectedId) => total + (selectedPathsByWorkspace[selectedId]?.length ?? 0), 0), [selectedWorkspaceIds, selectedPathsByWorkspace]);
+  const selectedMergeCandidateCount = useMemo(
+    () =>
+      selectedWorkspaceIds.filter((selectedId) => {
+        const workspace = workspaceDetails[selectedId];
+        return Boolean(workspace?.branchComparison && collectWorkingFiles(workspace).length === 0 && !findDeliveredIntegration(workspace, integrations) && !findRecoverableIntegration(integrations, selectedId));
+      }).length,
+    [selectedWorkspaceIds, workspaceDetails, integrations],
+  );
+  const selectedPushCandidateCount = useMemo(
+    () => selectedWorkspaceIds.filter((selectedId) => Boolean(workspaceDetails[selectedId]?.remoteName && findDeliveredIntegration(workspaceDetails[selectedId], integrations))).length,
+    [selectedWorkspaceIds, workspaceDetails, integrations],
+  );
   const activeConflict = integration?.state === 'conflicted' ? integration : null;
   const unresolvedConflict = conflictWorkspaceOpen && activeConflict && activeConflict.conflictFiles.length > 0 ? activeConflict : null;
   const conflictReadyToFinalize = Boolean(conflictWorkspaceOpen && activeConflict && activeConflict.conflictFiles.length === 0);
@@ -180,32 +224,21 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   const busy = busyAction !== null;
   const loading = busyAction === 'loading' && workspaceIndex === null;
   const dismissDisabled = busyAction !== null && busyAction !== 'loading';
-  const workspaceClean = selectedWorkspace?.review?.clean ?? selectedWorkspace?.worktreePath === null;
-  const commitReady = Boolean(selectedWorkspace && workspaceClean && selectedWorkspace.state !== 'discarded');
-  const mergeReady = Boolean(selectedWorkspace?.branchComparison && commitReady && targetBranch && targetBranch !== selectedWorkspace.branchName && !pendingLocalSync);
-  const currentTaskHeadSha = selectedWorkspace?.branchComparison?.taskHeadSha ?? selectedWorkspace?.review?.headSha ?? selectedWorkspace?.headSha ?? null;
-  const workspaceHeadMatchesCurrentBranch = Boolean(selectedWorkspace?.state === 'merged' && selectedWorkspace.headSha && selectedWorkspace.headSha === currentTaskHeadSha);
-  // “已合入”只描述当前任务 HEAD；历史成功记录不能阻止同一分支的新提交再次交付。
-  const deliveredIntegration =
-    integrations.find(
-      (candidate) =>
-        candidate.workspaceId === selectedWorkspace?.id &&
-        candidate.targetBranch === targetBranch &&
-        candidate.state === 'merged' &&
-        (candidate.taskHeadSha ? candidate.taskHeadSha === currentTaskHeadSha : workspaceHeadMatchesCurrentBranch),
-    ) ?? null;
-  const alreadyDelivered = Boolean(deliveredIntegration || (workspaceHeadMatchesCurrentBranch && targetBranch === selectedWorkspace?.sourceBranch));
-  const pushReady = Boolean(deliveredIntegration && selectedWorkspace?.remoteName && !pendingLocalSync);
+  const deliveredIntegration = selectedWorkspace ? findDeliveredIntegration(selectedWorkspace, integrations) : null;
   const unresolvedConflictBlocks = useMemo(() => countUnresolvedConflictBlocks(conflictDocument), [conflictDocument]);
 
   useEffect(() => {
     if (!props.open || !props.task || !props.client) return;
+    const client = props.client;
+    const taskId = props.task.id;
     let cancelled = false;
     setBusyAction('loading');
     setError(null);
     setFeedback(null);
+    setBatchResults([]);
     setConflictWorkspaceOpen(false);
     conflictDraftsRef.current = {};
+    selectionInitializedRef.current = false;
     setMessage(
       buildTaskCommitMessageSuggestion({
         taskType: props.task.taskType,
@@ -213,12 +246,12 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
         taskTitle: props.task.title,
       }),
     );
-    void Promise.all([props.client.loadTaskGitWorkspaceIndex(props.task.id), props.client.loadTaskIntegrations(props.task.id)])
+    void Promise.all([client.loadTaskGitWorkspaceIndex(taskId), client.loadTaskIntegrations(taskId)])
       .then(([workspaceSnapshot, integrationSnapshot]) => {
         if (cancelled) return;
         setWorkspaceIndex(workspaceSnapshot);
         setWorkspaceDetails({});
-        setDetailStates({});
+        setDetailStates(Object.fromEntries(workspaceSnapshot.items.map((workspace) => [workspace.id, 'loading' as const])));
         setIntegrations(integrationSnapshot.items);
         const preferredWorkspace = workspaceSnapshot.items.find((workspace) => workspace.id === initialConversationWorkspaceIdRef.current && workspace.state !== 'discarded');
         const firstWorkspace = preferredWorkspace ?? workspaceSnapshot.items.find((workspace) => workspace.state !== 'discarded') ?? workspaceSnapshot.items[0];
@@ -229,6 +262,14 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
         setConflictPath('');
         setSnapshotRevision((current) => current + 1);
         setBusyAction(null);
+        void loadWorkspaceDetailCollection(client, taskId, workspaceSnapshot.items).then(({ details, states }) => {
+          if (cancelled) return;
+          setWorkspaceDetails(details);
+          setDetailStates(states);
+          initializeDeliverySelection(details, workspaceSnapshot.items, setSelectedWorkspaceIds, setSelectedPathsByWorkspace);
+          selectionInitializedRef.current = true;
+          setSnapshotRevision((current) => current + 1);
+        });
       })
       .catch((reason: unknown) => {
         if (cancelled) return;
@@ -241,36 +282,9 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   }, [props.open, props.task?.id, props.client, zh, loadRevision]);
 
   useEffect(() => {
-    if (!props.task || !props.client || !workspaceId || selectedWorkspace) return;
-    let cancelled = false;
-    setDetailStates((current) => ({ ...current, [workspaceId]: 'loading' }));
-    void props.client
-      .loadTaskGitWorkspaceSnapshot(props.task.id, workspaceId)
-      .then(({ workspace }) => {
-        if (cancelled) return;
-        setWorkspaceDetails((current) => ({ ...current, [workspace.id]: workspace }));
-        setDetailStates((current) => {
-          const next = { ...current };
-          delete next[workspace.id];
-          return next;
-        });
-        setSnapshotRevision((current) => current + 1);
-      })
-      .catch((reason: unknown) => {
-        if (cancelled) return;
-        setDetailStates((current) => ({ ...current, [workspaceId]: 'error' }));
-        setError(errorMessage(reason, zh));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [props.task?.id, props.client, workspaceId, selectedWorkspace, zh]);
-
-  useEffect(() => {
     const nextFiles = diffScope === 'committed' ? committedFiles : workingFiles.map((file) => toWorkingDeliveryFile(file, zh));
-    setSelectedFile(nextFiles[0]?.path ?? '');
+    setSelectedFile((current) => (nextFiles.some((file) => file.path === current) ? current : (nextFiles[0]?.path ?? '')));
     setFileDiff(null);
-    setSelectedPaths(workingFiles.map((file) => file.path));
   }, [workspaceId, diffScope, committedFiles, workingFiles, zh]);
 
   useEffect(() => {
@@ -341,14 +355,15 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   async function reload(preferredWorkspaceId = workspaceId): Promise<void> {
     if (!props.task || !props.client) return;
     setDiffScope('working');
-    const [workspaceSnapshot, integrationSnapshot, detailSnapshot] = await Promise.all([
-      props.client.loadTaskGitWorkspaceIndex(props.task.id),
-      props.client.loadTaskIntegrations(props.task.id),
-      preferredWorkspaceId ? props.client.loadTaskGitWorkspaceSnapshot(props.task.id, preferredWorkspaceId) : Promise.resolve(null),
-    ]);
+    const [workspaceSnapshot, integrationSnapshot] = await Promise.all([props.client.loadTaskGitWorkspaceIndex(props.task.id), props.client.loadTaskIntegrations(props.task.id)]);
+    setDetailStates(Object.fromEntries(workspaceSnapshot.items.map((workspace) => [workspace.id, 'loading' as const])));
+    const { details, states } = await loadWorkspaceDetailCollection(props.client, props.task.id, workspaceSnapshot.items);
     setWorkspaceIndex(workspaceSnapshot);
-    if (detailSnapshot) setWorkspaceDetails((current) => ({ ...current, [detailSnapshot.workspace.id]: detailSnapshot.workspace }));
+    setWorkspaceDetails(details);
+    setDetailStates(states);
     setIntegrations(integrationSnapshot.items);
+    preserveDeliverySelection(details, workspaceSnapshot.items, selectionInitializedRef.current, setSelectedWorkspaceIds, setSelectedPathsByWorkspace);
+    selectionInitializedRef.current = true;
     const recoverable = integrationSnapshot.items.find((candidate) => candidate.workspaceId === preferredWorkspaceId && (candidate.state === 'conflicted' || candidate.state === 'pending_local_sync'));
     setIntegration(recoverable ?? null);
     setSnapshotRevision((current) => current + 1);
@@ -363,73 +378,145 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     void reload(workspaceId).catch((reason: unknown) => setError(errorMessage(reason, zh)));
   }, [props.refreshRevision]);
 
-  async function commit(): Promise<void> {
-    if (!props.task || !props.client || !selectedWorkspace || selectedPaths.length === 0) return;
+  async function commitSelected(): Promise<void> {
+    if (!props.task || !props.client || selectedCommitFileCount === 0) return;
+    const client = props.client;
+    const taskId = props.task.id;
     setBusyAction('commit');
     setError(null);
     setFeedback(null);
+    setBatchResults([]);
     try {
-      const response = await props.client.commitTaskWorkspace(props.task.id, selectedWorkspace.id, {
-        message,
-        selectedPaths,
-      });
-      await reload(selectedWorkspace.id);
+      const targets = selectedWorkspaceIds
+        .map((selectedId) => ({ workspace: workspaceDetails[selectedId], selectedPaths: selectedPathsByWorkspace[selectedId] ?? [] }))
+        .filter((target): target is { workspace: TaskWorkspaceSnapshot; selectedPaths: string[] } => Boolean(target.workspace && target.selectedPaths.length > 0));
+      const results = await Promise.all(
+        targets.map(async ({ workspace, selectedPaths }): Promise<BatchDeliveryResult> => {
+          try {
+            const response = await client.commitTaskWorkspace(taskId, workspace.id, { message, selectedPaths });
+            const formattedCount = response.result.formattedPaths.length;
+            return {
+              workspaceId: workspace.id,
+              repositoryName: repositoryLabel(workspace, zh),
+              status: 'succeeded',
+              message: zh
+                ? `已提交 ${selectedPaths.length} 个文件 · ${shortSha(response.result.headSha)}${formattedCount > 0 ? ` · 格式化 ${formattedCount} 个` : ''}`
+                : `Committed ${selectedPaths.length} file(s) · ${shortSha(response.result.headSha)}`,
+            };
+          } catch (reason) {
+            return { workspaceId: workspace.id, repositoryName: repositoryLabel(workspace, zh), status: 'failed', message: errorMessage(reason, zh) };
+          }
+        }),
+      );
+      setBatchResults(results);
+      await reload(workspaceId);
       await props.onChanged?.();
-      const formattedCount = response.result.formattedPaths.length;
-      setFeedback({
-        tone: 'success',
-        text: zh
-          ? `提交完成 · ${shortSha(response.result.headSha)}${formattedCount > 0 ? ` · 已自动格式化 ${formattedCount} 个文件` : ''}`
-          : `Commit created · ${shortSha(response.result.headSha)}${formattedCount > 0 ? ` · Auto-formatted ${formattedCount} file${formattedCount === 1 ? '' : 's'}` : ''}`,
-      });
-    } catch (reason) {
-      setError(errorMessage(reason, zh));
+      setFeedback(batchDeliveryFeedback('commit', results, zh));
     } finally {
       setBusyAction(null);
     }
   }
 
-  async function push(): Promise<void> {
-    if (!props.task || !props.client || !selectedWorkspace || !deliveredIntegration) return;
+  async function pushSelected(): Promise<void> {
+    if (!props.task || !props.client || selectedWorkspaceIds.length === 0) return;
+    const client = props.client;
+    const taskId = props.task.id;
     setBusyAction('push');
     setError(null);
     setFeedback(null);
+    setBatchResults([]);
     try {
-      const response = await props.client.pushTaskIntegration(props.task.id, deliveredIntegration.id);
-      await reload(selectedWorkspace.id);
+      const results = await Promise.all(
+        selectedWorkspaceIds.map(async (selectedId): Promise<BatchDeliveryResult> => {
+          const workspace = workspaceDetails[selectedId];
+          if (!workspace) return { workspaceId: selectedId, repositoryName: selectedId, status: 'skipped', message: zh ? '仓库详情尚未读取。' : 'Repository details are not loaded.' };
+          if (!workspace.remoteName) return { workspaceId: workspace.id, repositoryName: repositoryLabel(workspace, zh), status: 'skipped', message: zh ? '仓库未配置远端。' : 'No remote is configured.' };
+          const delivered = findDeliveredIntegration(workspace, integrations);
+          if (!delivered) return { workspaceId: workspace.id, repositoryName: repositoryLabel(workspace, zh), status: 'skipped', message: zh ? '请先完成本地合入。' : 'Complete the local merge first.' };
+          try {
+            const response = await client.pushTaskIntegration(taskId, delivered.id);
+            return {
+              workspaceId: workspace.id,
+              repositoryName: repositoryLabel(workspace, zh),
+              status: 'succeeded',
+              message: zh
+                ? `已推送 ${response.result.remoteName}/${response.result.remoteBranch} · ${shortSha(response.result.remoteHeadSha)}`
+                : `Pushed ${response.result.remoteName}/${response.result.remoteBranch} · ${shortSha(response.result.remoteHeadSha)}`,
+            };
+          } catch (reason) {
+            return { workspaceId: workspace.id, repositoryName: repositoryLabel(workspace, zh), status: 'failed', message: errorMessage(reason, zh) };
+          }
+        }),
+      );
+      setBatchResults(results);
+      await reload(workspaceId);
       await props.onChanged?.();
-      setFeedback({
-        tone: 'success',
-        text: zh
-          ? `来源分支已推送到 ${response.result.remoteName}/${response.result.remoteBranch} · ${shortSha(response.result.remoteHeadSha)}`
-          : `Source branch pushed to ${response.result.remoteName}/${response.result.remoteBranch} · ${shortSha(response.result.remoteHeadSha)}`,
-      });
-    } catch (reason) {
-      setError(errorMessage(reason, zh));
+      setFeedback(batchDeliveryFeedback('push', results, zh));
     } finally {
       setBusyAction(null);
     }
   }
 
-  async function start(): Promise<void> {
-    if (!props.task || !props.client || !selectedWorkspace || !mergeReady || alreadyDelivered) return;
-    if (targetBranch === selectedWorkspace.sourceBranch && selectedWorkspace.activeConversationCount > 0 && !confirmActiveSessionRisk(selectedWorkspace.activeConversationCount, zh)) return;
+  async function mergeSelected(): Promise<void> {
+    if (!props.task || !props.client || selectedWorkspaceIds.length === 0) return;
+    const client = props.client;
+    const taskId = props.task.id;
+    const activeConversationCount = selectedWorkspaceIds.reduce((total, selectedId) => total + (workspaceDetails[selectedId]?.activeConversationCount ?? 0), 0);
+    if (activeConversationCount > 0 && !confirmBatchActiveSessionRisk(activeConversationCount, zh)) return;
     setBusyAction('merge');
     setError(null);
     setFeedback(null);
+    setBatchResults([]);
     try {
-      const response = await props.client.startTaskIntegration(props.task.id, selectedWorkspace.id, {
-        targetBranch,
-        mode,
-      });
-      setIntegration(response.integration);
-      setConflictPath(response.integration.conflictFiles[0] ?? '');
-      setConflictWorkspaceOpen(response.integration.state === 'conflicted');
-      await reload(selectedWorkspace.id);
+      const outcomes = await Promise.all(
+        selectedWorkspaceIds.map(async (selectedId): Promise<{ result: BatchDeliveryResult; integration?: TaskIntegrationRecord }> => {
+          const workspace = workspaceDetails[selectedId];
+          if (!workspace) return { result: { workspaceId: selectedId, repositoryName: selectedId, status: 'skipped', message: zh ? '仓库详情尚未读取。' : 'Repository details are not loaded.' } };
+          const label = repositoryLabel(workspace, zh);
+          if (collectWorkingFiles(workspace).length > 0) return { result: { workspaceId: workspace.id, repositoryName: label, status: 'skipped', message: zh ? '仍有未提交文件。' : 'Uncommitted files remain.' } };
+          const recoverable = findRecoverableIntegration(integrations, workspace.id);
+          if (recoverable)
+            return {
+              integration: recoverable,
+              result: { workspaceId: workspace.id, repositoryName: label, status: 'attention', message: zh ? '已有合入冲突或本地同步现场，需继续处理。' : 'An existing merge conflict or local sync needs attention.' },
+            };
+          if (!workspace.branchComparison || !workspace.sourceBranch || workspace.sourceBranch === workspace.branchName)
+            return { result: { workspaceId: workspace.id, repositoryName: label, status: 'skipped', message: zh ? '没有可合入的任务分支成果。' : 'No task branch result is ready to merge.' } };
+          if (findDeliveredIntegration(workspace, integrations))
+            return { result: { workspaceId: workspace.id, repositoryName: label, status: 'skipped', message: zh ? '当前任务提交已经合入。' : 'The current task commit is already merged.' } };
+          try {
+            const response = await client.startTaskIntegration(taskId, workspace.id, { targetBranch: workspace.sourceBranch, mode });
+            if (response.integration.state === 'conflicted') {
+              return {
+                integration: response.integration,
+                result: {
+                  workspaceId: workspace.id,
+                  repositoryName: label,
+                  status: 'attention',
+                  message: zh ? `已保留 ${response.integration.conflictFiles.length} 个冲突文件，需继续处理。` : `${response.integration.conflictFiles.length} conflict file(s) need attention.`,
+                },
+              };
+            }
+            return {
+              integration: response.integration,
+              result: { workspaceId: workspace.id, repositoryName: label, status: 'succeeded', message: response.result ? deliveryFeedback(response.result, zh).text : zh ? '已准备合入结果。' : 'Merge result prepared.' },
+            };
+          } catch (reason) {
+            return { result: { workspaceId: workspace.id, repositoryName: label, status: 'failed', message: errorMessage(reason, zh) } };
+          }
+        }),
+      );
+      const results = outcomes.map((outcome) => outcome.result);
+      setBatchResults(results);
+      const firstAttention = outcomes.find((outcome) => outcome.result.status === 'attention' && outcome.integration);
+      await reload(firstAttention?.result.workspaceId ?? workspaceId);
+      if (firstAttention?.integration) {
+        setWorkspaceId(firstAttention.result.workspaceId);
+        setIntegration(firstAttention.integration);
+        setConflictPath(firstAttention.integration.conflictFiles[0] ?? '');
+      }
       await props.onChanged?.();
-      if (response.result) setFeedback(deliveryFeedback(response.result, zh));
-    } catch (reason) {
-      setError(errorMessage(reason, zh));
+      setFeedback(batchDeliveryFeedback('merge', results, zh));
     } finally {
       setBusyAction(null);
     }
@@ -573,25 +660,46 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     setConflictPath(nextPath);
   }
 
-  function selectWorkspace(nextId: string): void {
+  function selectWorkspace(nextId: string, nextScope: DiffScope = diffScope, nextFile?: string): void {
     rememberConflictDraft();
-    const nextWorkspace = workspaceIndex?.items.find((workspace) => workspace.id === nextId) ?? null;
     setWorkspaceId(nextId);
-    setDiffScope('working');
+    setDiffScope(nextScope);
+    if (nextFile) setSelectedFile(nextFile);
     const recoverable = findRecoverableIntegration(integrations, nextId);
     setIntegration(recoverable ?? null);
     setMode(recoverable?.mode ?? 'merge');
     setConflictWorkspaceOpen(false);
     setConflictPath('');
     setError(null);
-    setFeedback(
-      nextWorkspace
-        ? {
-            tone: 'info',
-            text: zh ? `已选择 ${nextWorkspace.branchName}` : `Selected ${nextWorkspace.branchName}`,
-          }
-        : null,
-    );
+  }
+
+  function toggleWorkspaceSelection(nextId: string, selected: boolean): void {
+    setSelectedWorkspaceIds((current) => (selected ? Array.from(new Set([...current, nextId])) : current.filter((candidate) => candidate !== nextId)));
+    if (selected && diffScope === 'working') {
+      const paths = collectWorkingFiles(workspaceDetails[nextId]).map((file) => file.path);
+      setSelectedPathsByWorkspace((current) => ({ ...current, [nextId]: paths }));
+    }
+  }
+
+  function toggleBranchSelection(workspaceIds: string[], selected: boolean): void {
+    const workspaceIdSet = new Set(workspaceIds);
+    setSelectedWorkspaceIds((current) => (selected ? Array.from(new Set([...current, ...workspaceIds])) : current.filter((candidate) => !workspaceIdSet.has(candidate))));
+    if (selected && diffScope === 'working') {
+      setSelectedPathsByWorkspace((current) => {
+        const next = { ...current };
+        for (const selectedId of workspaceIds) next[selectedId] = collectWorkingFiles(workspaceDetails[selectedId]).map((file) => file.path);
+        return next;
+      });
+    }
+  }
+
+  function toggleFileSelection(nextId: string, path: string, selected: boolean): void {
+    setSelectedPathsByWorkspace((current) => {
+      const currentPaths = current[nextId] ?? [];
+      const nextPaths = selected ? Array.from(new Set([...currentPaths, path])) : currentPaths.filter((candidate) => candidate !== path);
+      return { ...current, [nextId]: nextPaths };
+    });
+    if (selected) setSelectedWorkspaceIds((current) => Array.from(new Set([...current, nextId])));
   }
 
   function openConflictWorkspace(): void {
@@ -667,77 +775,36 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
             <ConflictCompletion zh={zh} targetBranch={activeConflict.targetBranch} taskBranch={selectedWorkspace?.branchName ?? ''} />
           ) : (
             <div className="task-git-delivery-content">
-              <DeliveryStepBar workspace={selectedWorkspace} alreadyDelivered={alreadyDelivered} sourcePushed={selectedWorkspace?.sourceRemoteVerified ?? false} zh={zh} />
+              <DeliveryScopeBar selectedRepositories={selectedWorkspaceIds.length} totalRepositories={workspaceIndex.items.length} selectedFiles={selectedCommitFileCount} zh={zh} />
               <div className="task-git-review-layout task-git-delivery-layout">
-                <TaskWorkspaceBranchList
-                  workspaces={workspaceIndex?.items ?? []}
-                  selectedWorkspaceId={workspaceId}
+                <DeliveryRepositoryFileTree
+                  groups={repositoryGroups}
+                  integrations={integrations}
+                  detailStates={detailStates}
+                  diffScope={diffScope}
+                  totalWorkingFiles={totalWorkingFiles}
+                  totalCommittedFiles={totalCommittedFiles}
+                  focusedWorkspaceId={workspaceId}
+                  selectedFile={selectedFile}
+                  selectedWorkspaceIds={selectedWorkspaceIdSet}
+                  selectedPathsByWorkspace={selectedPathsByWorkspace}
                   currentConversationWorkspaceId={props.currentConversationWorkspaceId}
                   zh={zh}
                   disabled={busy}
-                  stateLabel={(workspace, localizedZh) => workspaceStateLabel(workspace, workspaceDetails[workspace.id], detailStates[workspace.id], localizedZh, findRecoverableIntegration(integrations, workspace.id))}
-                  onSelect={selectWorkspace}
+                  onScopeChange={setDiffScope}
+                  onSelectFile={(nextWorkspaceId, path) => selectWorkspace(nextWorkspaceId, diffScope, path)}
+                  onToggleWorkspace={toggleWorkspaceSelection}
+                  onToggleBranch={toggleBranchSelection}
+                  onToggleFile={toggleFileSelection}
                   onCopyBranch={copyBranchName}
                 />
 
-                <main className="task-git-review-main">
-                  <section className="task-git-review-changes" aria-label={zh ? '代码变化' : 'Code changes'}>
-                    <span className="task-git-review-pane-title task-git-delivery-diff-tabs">
-                      <span>
-                        <button type="button" className={diffScope === 'committed' ? 'is-active' : ''} onClick={() => setDiffScope('committed')} disabled={busy}>
-                          {zh ? '已提交成果' : 'Committed result'} <small>{committedFiles.length}</small>
-                        </button>
-                        <button type="button" className={diffScope === 'working' ? 'is-active' : ''} onClick={() => setDiffScope('working')} disabled={busy || !selectedWorkspace?.worktreePath}>
-                          {zh ? '本机未提交' : 'Local uncommitted'} <small>{workingFiles.length}</small>
-                        </button>
-                      </span>
-                    </span>
-                    {detailStates[workspaceId] === 'loading' ? <p>{zh ? '正在读取当前仓库交付详情…' : 'Loading delivery details for this repository…'}</p> : null}
-                    {detailStates[workspaceId] === 'error' ? <p className="task-git-review-error">{zh ? '当前仓库读取失败，其他仓库仍可继续交付。' : 'This repository failed to load. Other repositories remain available.'}</p> : null}
-                    <ol className="task-git-review-file-tree">
-                      {visibleFiles.map((file) => (
-                        <li key={file.path} className={selectedFile === file.path ? 'is-active' : ''}>
-                          <label>
-                            {diffScope === 'working' ? (
-                              <input
-                                type="checkbox"
-                                checked={selectedPaths.includes(file.path)}
-                                onChange={(event) => setSelectedPaths((current) => (event.target.checked ? Array.from(new Set([...current, file.path])) : current.filter((path) => path !== file.path)))}
-                                disabled={busy}
-                              />
-                            ) : null}
-                            <button type="button" onClick={() => setSelectedFile(file.path)} disabled={busy}>
-                              <span>{file.path}</span>
-                              <small>
-                                {file.label}
-                                {file.additions || file.deletions ? ` · +${file.additions} −${file.deletions}` : ''}
-                              </small>
-                            </button>
-                          </label>
-                        </li>
-                      ))}
-                    </ol>
-                    {visibleFiles.length === 0 ? (
-                      <p className="task-git-review-empty">
-                        {diffScope === 'committed'
-                          ? zh
-                            ? '任务分支相对来源分支没有待交付代码。'
-                            : 'The task branch has no code pending against its source branch.'
-                          : zh
-                            ? '工作区没有未提交变化。'
-                            : 'The workspace has no uncommitted changes.'}
-                        {diffScope === 'working' && committedFiles.length > 0 ? (
-                          <Button variant="secondary" size="compact" onClick={() => setDiffScope('committed')} disabled={busy}>
-                            {zh ? `查看已提交成果（${committedFiles.length}）` : `View committed result (${committedFiles.length})`}
-                          </Button>
-                        ) : null}
-                      </p>
-                    ) : null}
-                  </section>
-
+                <main className="task-git-review-main task-git-delivery-diff-main">
                   <section className="task-git-review-diff" aria-label={zh ? '差异对比' : 'Diff'}>
                     <span className="task-git-review-pane-title">
-                      <strong>{selectedFile || (zh ? '选择文件查看差异' : 'Select a file to view its diff')}</strong>
+                      <strong>
+                        {selectedWorkspace ? `${repositoryLabel(selectedWorkspace, zh)} / ${selectedFile || (zh ? '选择文件查看差异' : 'Select a file to view its diff')}` : zh ? '选择文件查看差异' : 'Select a file to view its diff'}
+                      </strong>
                       {fileDiff?.fileDiffs[0] ? (
                         <small>
                           +{fileDiff.fileDiffs[0].addedLines} −{fileDiff.fileDiffs[0].deletedLines}
@@ -750,8 +817,8 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
 
                 <aside className="task-git-review-options task-git-delivery-actions">
                   <span>
-                    <strong>Git</strong>
-                    <small>{selectedWorkspace?.branchName ?? '—'}</small>
+                    <strong>{zh ? `已选 ${selectedWorkspaceIds.length} 个仓库` : `${selectedWorkspaceIds.length} repositories selected`}</strong>
+                    <small>{zh ? '文件决定提交范围，仓库决定合入与推送范围。' : 'Files scope commits; repositories scope merges and pushes.'}</small>
                   </span>
                   <dl>
                     <div>
@@ -791,21 +858,29 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                     </section>
                   ) : null}
 
-                  <section className={`task-git-delivery-action-step${workingFiles.length === 0 ? ' is-complete' : ''}`}>
+                  <section className={`task-git-delivery-action-step${selectedCommitFileCount === 0 ? ' is-complete' : ''}`}>
                     <strong>{zh ? '② 提交' : '② Commit'}</strong>
                     <small>
-                      {workingFiles.length === 0 ? (zh ? '本机变化已全部进入提交。' : 'All local changes are committed.') : zh ? `还有 ${workingFiles.length} 个未提交文件。` : `${workingFiles.length} uncommitted file(s) remain.`}
+                      {selectedCommitFileCount === 0
+                        ? zh
+                          ? '当前没有勾选待提交文件。'
+                          : 'No uncommitted files are selected.'
+                        : zh
+                          ? `将按仓库提交 ${selectedCommitFileCount} 个勾选文件。`
+                          : `Commit ${selectedCommitFileCount} selected file(s), grouped by repository.`}
                     </small>
-                    {workingFiles.length > 0 ? <textarea value={message} onChange={(event) => setMessage(event.target.value)} disabled={busy} aria-label={zh ? '提交说明' : 'Commit message'} /> : null}
-                    <Button variant="secondary" size="compact" busy={busyAction === 'commit'} onClick={() => void commit()} disabled={busy || !selectedWorkspace?.worktreePath || workingFiles.length === 0 || selectedPaths.length === 0}>
-                      {zh ? '提交选中文件' : 'Commit selected files'}
+                    {selectedCommitFileCount > 0 ? <textarea value={message} onChange={(event) => setMessage(event.target.value)} disabled={busy} aria-label={zh ? '提交说明' : 'Commit message'} /> : null}
+                    <Button variant="secondary" size="compact" busy={busyAction === 'commit'} onClick={() => void commitSelected()} disabled={busy || selectedCommitFileCount === 0}>
+                      {zh ? `提交所选文件（${selectedCommitFileCount}）` : `Commit selected files (${selectedCommitFileCount})`}
                     </Button>
                   </section>
 
-                  <section className={`task-git-delivery-action-step${alreadyDelivered ? ' is-complete' : ''}`}>
+                  <section className="task-git-delivery-action-step">
                     <strong>{zh ? '③ 合入来源分支' : '③ Merge into source branch'}</strong>
                     <small>
-                      {zh ? `固定合入创建任务时选择的来源分支：${targetBranch || '—'}。此步骤只修改本地分支。` : `Merge into the source selected when the task was created: ${targetBranch || '—'}. This step only changes the local branch.`}
+                      {zh
+                        ? `对 ${selectedMergeCandidateCount} 个已选且可合入仓库执行本地合入；未提交或已合入仓库会跳过。`
+                        : `Locally merge ${selectedMergeCandidateCount} selected eligible repositories; dirty or already merged repositories are skipped.`}
                     </small>
                     <ZeusSelect
                       size="compact"
@@ -819,6 +894,9 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                       disabled={busy}
                       searchable={false}
                     />
+                    <Button variant="primary" size="compact" busy={busyAction === 'merge'} onClick={() => void mergeSelected()} disabled={busy || selectedMergeCandidateCount === 0}>
+                      {zh ? `合入所选仓库（${selectedMergeCandidateCount}）` : `Merge selected repositories (${selectedMergeCandidateCount})`}
+                    </Button>
                     {activeConflict ? (
                       <>
                         <small className="task-git-delivery-local-pending">
@@ -834,11 +912,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                           {activeConflict.conflictFiles.length > 0 ? (zh ? '继续处理冲突' : 'Resume conflict resolution') : zh ? '确认完成合入' : 'Confirm merge completion'}
                         </Button>
                       </>
-                    ) : (
-                      <Button variant="primary" size="compact" busy={busyAction === 'merge'} onClick={() => void start()} disabled={busy || !mergeReady || alreadyDelivered}>
-                        {alreadyDelivered ? (zh ? '已合入来源分支' : 'Merged into source branch') : zh ? '合入来源分支' : 'Merge into source branch'}
-                      </Button>
-                    )}
+                    ) : null}
                     {pendingLocalSync ? (
                       <small className="task-git-delivery-local-pending">
                         {zh ? '合入结果已保留；来源分支存在未提交改动。处理原目录后，在底部重新同步。' : 'The integration result is preserved. Clean the source worktree, then retry local sync below.'}
@@ -851,33 +925,15 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                     ) : null}
                   </section>
 
-                  <section className={`task-git-delivery-action-step${selectedWorkspace?.sourceRemoteVerified ? ' is-complete' : ''}`}>
+                  <section className="task-git-delivery-action-step">
                     <strong>{zh ? '④ 推送来源分支（可选）' : '④ Push source branch (optional)'}</strong>
                     <small>
-                      {!selectedWorkspace?.remoteName
-                        ? zh
-                          ? '该仓库未配置远端，本地合入不受影响。'
-                          : 'No remote is configured; the local merge is unaffected.'
-                        : alreadyDelivered
-                          ? zh
-                            ? `按需将 ${targetBranch} 推送到 ${selectedWorkspace.remoteName}/${targetBranch}。失败只会显示错误，不会撤销提交或合入。`
-                            : `Optionally push ${targetBranch} to ${selectedWorkspace.remoteName}/${targetBranch}. A failure only reports an error and never rolls back commits or the merge.`
-                          : zh
-                            ? '请先完成本地合入；推送不是交付前置条件。'
-                            : 'Complete the local merge first. Push is not a delivery prerequisite.'}
+                      {zh
+                        ? `对 ${selectedPushCandidateCount} 个已选、已合入且配置远端的仓库推送来源分支。失败不会撤销提交或合入。`
+                        : `Push source branches for ${selectedPushCandidateCount} selected repositories that are merged and have remotes. Failures never roll back commits or merges.`}
                     </small>
-                    <Button variant="secondary" size="compact" busy={busyAction === 'push'} onClick={() => void push()} disabled={busy || !pushReady}>
-                      {!selectedWorkspace?.remoteName
-                        ? zh
-                          ? '未配置远端'
-                          : 'No remote configured'
-                        : selectedWorkspace.sourceRemoteVerified
-                          ? zh
-                            ? '重新推送来源分支'
-                            : 'Push source branch again'
-                          : zh
-                            ? '推送来源分支'
-                            : 'Push source branch'}
+                    <Button variant="secondary" size="compact" busy={busyAction === 'push'} onClick={() => void pushSelected()} disabled={busy || selectedPushCandidateCount === 0}>
+                      {zh ? `推送所选仓库（${selectedPushCandidateCount}）` : `Push selected repositories (${selectedPushCandidateCount})`}
                     </Button>
                   </section>
                 </aside>
@@ -887,6 +943,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
         </div>
 
         <div className="task-git-merge-status" aria-live="polite">
+          {batchResults.length > 0 ? <BatchDeliveryResults results={batchResults} zh={zh} /> : null}
           {feedback ? (
             <div className={`task-git-delivery-feedback is-${feedback.tone}`}>
               <span>{feedback.text}</span>
@@ -938,31 +995,154 @@ function InitialLoadState(props: { zh: boolean; error?: string | null; onRetry?:
   );
 }
 
-function DeliveryStepBar(props: { workspace: TaskWorkspaceSnapshot | null; alreadyDelivered: boolean; sourcePushed: boolean; zh: boolean }) {
-  const workingCount = collectWorkingFiles(props.workspace).length;
-  const steps = [
-    {
-      label: props.zh ? '① 查看代码' : '① Review code',
-      state: props.workspace?.branchComparison ? 'done' : 'current',
-    },
-    { label: props.zh ? '② 提交' : '② Commit', state: workingCount === 0 ? 'done' : 'current' },
-    {
-      label: props.zh ? '③ 合入来源' : '③ Merge source',
-      state: props.alreadyDelivered ? 'done' : workingCount === 0 ? 'current' : 'locked',
-    },
-    {
-      label: props.zh ? '④ 可选推送' : '④ Optional push',
-      state: !props.workspace?.remoteName || props.sourcePushed ? 'done' : props.alreadyDelivered ? 'current' : 'locked',
-    },
-  ];
+function DeliveryScopeBar(props: { selectedRepositories: number; totalRepositories: number; selectedFiles: number; zh: boolean }) {
   return (
-    <nav className="task-git-delivery-stepbar" aria-label={props.zh ? '代码交付步骤' : 'Code delivery steps'}>
-      {steps.map((step) => (
-        <span key={step.label} className={`is-${step.state}`}>
-          {step.label}
+    <section className="task-git-delivery-scopebar" aria-label={props.zh ? '当前交付选择' : 'Current delivery selection'}>
+      <strong>{props.zh ? '按文件审查，按仓库交付' : 'Review by file, deliver by repository'}</strong>
+      <span>
+        {props.zh
+          ? `已选 ${props.selectedRepositories}/${props.totalRepositories} 个仓库 · ${props.selectedFiles} 个待提交文件`
+          : `${props.selectedRepositories}/${props.totalRepositories} repositories · ${props.selectedFiles} uncommitted files selected`}
+      </span>
+    </section>
+  );
+}
+
+function DeliveryRepositoryFileTree(props: {
+  groups: DeliveryRepositoryGroup[];
+  integrations: TaskIntegrationRecord[];
+  detailStates: Record<string, 'loading' | 'error'>;
+  diffScope: DiffScope;
+  totalWorkingFiles: number;
+  totalCommittedFiles: number;
+  focusedWorkspaceId: string;
+  selectedFile: string;
+  selectedWorkspaceIds: Set<string>;
+  selectedPathsByWorkspace: Record<string, string[]>;
+  currentConversationWorkspaceId?: string | null;
+  zh: boolean;
+  disabled: boolean;
+  onScopeChange: (scope: DiffScope) => void;
+  onSelectFile: (workspaceId: string, path: string) => void;
+  onToggleWorkspace: (workspaceId: string, selected: boolean) => void;
+  onToggleBranch: (workspaceIds: string[], selected: boolean) => void;
+  onToggleFile: (workspaceId: string, path: string, selected: boolean) => void;
+  onCopyBranch: (branchName: string) => void | Promise<void>;
+}) {
+  const branchGroups = groupDeliveryRepositoriesByBranch(props.groups);
+  return (
+    <aside className="task-git-delivery-file-browser" aria-label={props.zh ? '按仓库分组的交付文件' : 'Delivery files grouped by repository'}>
+      <header className="task-git-review-pane-title task-git-delivery-diff-tabs">
+        <span>
+          <button type="button" className={props.diffScope === 'working' ? 'is-active' : ''} onClick={() => props.onScopeChange('working')} disabled={props.disabled}>
+            {props.zh ? '本机未提交' : 'Local uncommitted'} <small>{props.totalWorkingFiles}</small>
+          </button>
+          <button type="button" className={props.diffScope === 'committed' ? 'is-active' : ''} onClick={() => props.onScopeChange('committed')} disabled={props.disabled}>
+            {props.zh ? '已提交成果' : 'Committed result'} <small>{props.totalCommittedFiles}</small>
+          </button>
         </span>
-      ))}
-    </nav>
+      </header>
+      <div className="task-git-delivery-file-tree">
+        {branchGroups.map((branchGroup) => {
+          const workspaceIds = branchGroup.repositories.map((group) => group.workspace.id);
+          const selectedCount = workspaceIds.filter((workspaceId) => props.selectedWorkspaceIds.has(workspaceId)).length;
+          const allSelected = workspaceIds.length > 0 && selectedCount === workspaceIds.length;
+          const currentConversation = workspaceIds.includes(props.currentConversationWorkspaceId ?? '');
+          return (
+            <section key={branchGroup.branchName} className={`task-git-delivery-branch${currentConversation ? ' is-current-conversation' : ''}`}>
+              <header>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    aria-checked={selectedCount > 0 && !allSelected ? 'mixed' : allSelected}
+                    onChange={(event) => props.onToggleBranch(workspaceIds, event.target.checked)}
+                    disabled={props.disabled}
+                  />
+                  <strong>{branchGroup.branchName}</strong>
+                </label>
+                <span>
+                  {currentConversation ? <small className="task-git-current-conversation-badge">{props.zh ? '当前会话' : 'Current session'}</small> : null}
+                  <button type="button" onClick={() => void props.onCopyBranch(branchGroup.branchName)} disabled={props.disabled}>
+                    {props.zh ? '复制' : 'Copy'}
+                  </button>
+                </span>
+              </header>
+              {branchGroup.repositories.map((group) => {
+                const workspaceId = group.workspace.id;
+                const workspaceSelected = props.selectedWorkspaceIds.has(workspaceId);
+                const selectedPaths = new Set(props.selectedPathsByWorkspace[workspaceId] ?? []);
+                return (
+                  <section key={workspaceId} className={`task-git-delivery-repository${props.focusedWorkspaceId === workspaceId ? ' is-focused' : ''}`}>
+                    <header>
+                      <label>
+                        <input type="checkbox" checked={workspaceSelected} onChange={(event) => props.onToggleWorkspace(workspaceId, event.target.checked)} disabled={props.disabled || group.workspace.state === 'discarded'} />
+                        <span>
+                          <strong>{repositoryLabel(group.workspace, props.zh)}</strong>
+                          <small>{workspaceStateLabel(group.workspace, group.detail, props.detailStates[workspaceId], props.zh, findRecoverableIntegration(props.integrations, workspaceId))}</small>
+                        </span>
+                      </label>
+                    </header>
+                    {props.detailStates[workspaceId] === 'loading' ? <small className="task-git-delivery-repository-state">{props.zh ? '正在读取文件…' : 'Loading files…'}</small> : null}
+                    {props.detailStates[workspaceId] === 'error' ? (
+                      <small className="task-git-delivery-repository-state is-error">{props.zh ? '读取失败，其他仓库仍可继续。' : 'Load failed; other repositories remain available.'}</small>
+                    ) : null}
+                    {group.files.length > 0 ? (
+                      <ol>
+                        {group.files.map((file) => (
+                          <li key={file.path} className={props.focusedWorkspaceId === workspaceId && props.selectedFile === file.path ? 'is-active' : ''}>
+                            <div className="task-git-delivery-file-row">
+                              {props.diffScope === 'working' ? (
+                                <input
+                                  type="checkbox"
+                                  checked={selectedPaths.has(file.path)}
+                                  onChange={(event) => props.onToggleFile(workspaceId, file.path, event.target.checked)}
+                                  disabled={props.disabled || !workspaceSelected}
+                                  aria-label={props.zh ? `选择文件 ${file.path}` : `Select file ${file.path}`}
+                                />
+                              ) : null}
+                              <button type="button" onClick={() => props.onSelectFile(workspaceId, file.path)} disabled={props.disabled}>
+                                <span>{file.path}</span>
+                                <small>
+                                  {file.label}
+                                  {file.additions || file.deletions ? ` · +${file.additions} −${file.deletions}` : ''}
+                                </small>
+                              </button>
+                            </div>
+                          </li>
+                        ))}
+                      </ol>
+                    ) : group.detail && !props.detailStates[workspaceId] ? (
+                      <small className="task-git-delivery-repository-state">{props.diffScope === 'working' ? (props.zh ? '没有未提交文件' : 'No uncommitted files') : props.zh ? '没有已提交成果' : 'No committed result'}</small>
+                    ) : null}
+                  </section>
+                );
+              })}
+            </section>
+          );
+        })}
+      </div>
+    </aside>
+  );
+}
+
+function BatchDeliveryResults(props: { results: BatchDeliveryResult[]; zh: boolean }) {
+  const succeeded = props.results.filter((result) => result.status === 'succeeded').length;
+  const skipped = props.results.filter((result) => result.status === 'skipped').length;
+  const attention = props.results.filter((result) => result.status === 'attention').length;
+  const failed = props.results.filter((result) => result.status === 'failed').length;
+  return (
+    <section className="task-git-delivery-batch-result">
+      <strong>{props.zh ? `逐仓结果：成功 ${succeeded}，跳过 ${skipped}，待处理 ${attention}，失败 ${failed}` : `Per-repository results: ${succeeded} succeeded, ${skipped} skipped, ${attention} need attention, ${failed} failed`}</strong>
+      <ol>
+        {props.results.map((result) => (
+          <li key={result.workspaceId} data-status={result.status}>
+            <span>{result.repositoryName}</span>
+            <small>{result.message}</small>
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 }
 
@@ -990,7 +1170,89 @@ function ConflictCompletion(props: { zh: boolean; targetBranch: string; taskBran
   );
 }
 
-function collectWorkingFiles(workspace: TaskWorkspaceSnapshot | null): TaskGitFileStatus[] {
+async function loadWorkspaceDetailCollection(client: DeliveryClient, taskId: string, workspaces: TaskWorkspaceIndexSnapshot[]): Promise<{ details: Record<string, TaskWorkspaceSnapshot>; states: Record<string, 'error'> }> {
+  const snapshots = await Promise.allSettled(workspaces.map((workspace) => client.loadTaskGitWorkspaceSnapshot(taskId, workspace.id)));
+  const details: Record<string, TaskWorkspaceSnapshot> = {};
+  const states: Record<string, 'error'> = {};
+  snapshots.forEach((snapshot, index) => {
+    const workspaceId = workspaces[index]?.id;
+    if (!workspaceId) return;
+    if (snapshot.status === 'fulfilled') details[workspaceId] = snapshot.value.workspace;
+    else states[workspaceId] = 'error';
+  });
+  return { details, states };
+}
+
+function initializeDeliverySelection(
+  details: Record<string, TaskWorkspaceSnapshot>,
+  workspaces: TaskWorkspaceIndexSnapshot[],
+  setSelectedWorkspaceIds: Dispatch<SetStateAction<string[]>>,
+  setSelectedPathsByWorkspace: Dispatch<SetStateAction<Record<string, string[]>>>,
+): void {
+  const selectedIds = workspaces.filter((workspace) => isDeliverableWorkspace(details[workspace.id])).map((workspace) => workspace.id);
+  const selectedPaths = Object.fromEntries(selectedIds.map((workspaceId) => [workspaceId, collectWorkingFiles(details[workspaceId]).map((file) => file.path)]));
+  setSelectedWorkspaceIds(selectedIds);
+  setSelectedPathsByWorkspace(selectedPaths);
+}
+
+function preserveDeliverySelection(
+  details: Record<string, TaskWorkspaceSnapshot>,
+  workspaces: TaskWorkspaceIndexSnapshot[],
+  initialized: boolean,
+  setSelectedWorkspaceIds: Dispatch<SetStateAction<string[]>>,
+  setSelectedPathsByWorkspace: Dispatch<SetStateAction<Record<string, string[]>>>,
+): void {
+  if (!initialized) {
+    initializeDeliverySelection(details, workspaces, setSelectedWorkspaceIds, setSelectedPathsByWorkspace);
+    return;
+  }
+  const availableIds = new Set(workspaces.map((workspace) => workspace.id));
+  setSelectedWorkspaceIds((current) => current.filter((workspaceId) => availableIds.has(workspaceId) && isDeliverableWorkspace(details[workspaceId])));
+  setSelectedPathsByWorkspace((current) => {
+    const next: Record<string, string[]> = {};
+    for (const workspace of workspaces) {
+      const availablePaths = new Set(collectWorkingFiles(details[workspace.id]).map((file) => file.path));
+      next[workspace.id] = (current[workspace.id] ?? []).filter((path) => availablePaths.has(path));
+    }
+    return next;
+  });
+}
+
+function isDeliverableWorkspace(workspace: TaskWorkspaceSnapshot | undefined): boolean {
+  if (!workspace || workspace.state === 'discarded') return false;
+  return collectWorkingFiles(workspace).length > 0 || (workspace.branchComparison?.files.length ?? 0) > 0 || workspace.state === 'merged';
+}
+
+function groupDeliveryRepositoriesByBranch(groups: DeliveryRepositoryGroup[]): Array<{ branchName: string; repositories: DeliveryRepositoryGroup[] }> {
+  const byBranch = new Map<string, DeliveryRepositoryGroup[]>();
+  for (const group of groups) {
+    const existing = byBranch.get(group.workspace.branchName);
+    if (existing) existing.push(group);
+    else byBranch.set(group.workspace.branchName, [group]);
+  }
+  return [...byBranch].map(([branchName, repositories]) => ({ branchName, repositories }));
+}
+
+function repositoryLabel(workspace: Pick<TaskWorkspaceIndexSnapshot, 'repositoryName' | 'repositoryRelativePath'>, zh: boolean): string {
+  return workspace.repositoryName || workspace.repositoryRelativePath || (zh ? '项目仓库' : 'Project repository');
+}
+
+function findDeliveredIntegration(workspace: TaskWorkspaceSnapshot | undefined, integrations: TaskIntegrationRecord[]): TaskIntegrationRecord | null {
+  if (!workspace) return null;
+  const currentTaskHeadSha = workspace.branchComparison?.taskHeadSha ?? workspace.review?.headSha ?? workspace.headSha ?? null;
+  const workspaceHeadMatchesCurrentBranch = Boolean(workspace.state === 'merged' && workspace.headSha && workspace.headSha === currentTaskHeadSha);
+  return (
+    integrations.find(
+      (candidate) =>
+        candidate.workspaceId === workspace.id &&
+        candidate.targetBranch === workspace.sourceBranch &&
+        candidate.state === 'merged' &&
+        (candidate.taskHeadSha ? candidate.taskHeadSha === currentTaskHeadSha : workspaceHeadMatchesCurrentBranch),
+    ) ?? null
+  );
+}
+
+function collectWorkingFiles(workspace: TaskWorkspaceSnapshot | null | undefined): TaskGitFileStatus[] {
   if (!workspace?.review) return [];
   const byPath = new Map<string, TaskGitFileStatus>();
   for (const file of [...workspace.review.stagedFiles, ...workspace.review.unstagedFiles, ...workspace.review.untrackedFiles]) byPath.set(file.path, file);
@@ -1041,6 +1303,14 @@ function confirmActiveSessionRisk(activeConversationCount: number, zh: boolean):
     zh
       ? `当前仍有 ${activeConversationCount} 个活动会话可能写入此分支。合入来源分支成功后可能回收任务 worktree，后续写入可能失败或丢失工作区现场。确定继续吗？`
       : `${activeConversationCount} active conversation(s) may still write to this branch. Merging into the source branch may reclaim the task worktree, which can interrupt later writes or remove the worktree. Continue?`,
+  );
+}
+
+function confirmBatchActiveSessionRisk(activeConversationCount: number, zh: boolean): boolean {
+  return window.confirm(
+    zh
+      ? `已选仓库中仍有 ${activeConversationCount} 个活动会话可能继续写入。批量合入成功后可能回收对应 worktree，后续写入可能失败或丢失工作区现场。确定继续吗？`
+      : `${activeConversationCount} active conversation(s) may still write to selected repositories. Successful merges may reclaim their worktrees and interrupt later writes. Continue?`,
   );
 }
 
@@ -1121,6 +1391,20 @@ function deliveryFeedback(result: TaskIntegrationResult, zh: boolean): DeliveryF
         tone: 'success',
         text: zh ? `已合入来源分支 ${result.targetBranch} · ${shortSha(result.resultHeadSha)}` : `Merged into source branch ${result.targetBranch} · ${shortSha(result.resultHeadSha)}`,
       };
+}
+
+function batchDeliveryFeedback(action: 'commit' | 'merge' | 'push', results: BatchDeliveryResult[], zh: boolean): DeliveryFeedback {
+  const succeeded = results.filter((result) => result.status === 'succeeded').length;
+  const skipped = results.filter((result) => result.status === 'skipped').length;
+  const attention = results.filter((result) => result.status === 'attention').length;
+  const failed = results.filter((result) => result.status === 'failed').length;
+  const actionLabel = zh ? { commit: '提交', merge: '合入', push: '推送' }[action] : { commit: 'Commit', merge: 'Merge', push: 'Push' }[action];
+  return {
+    tone: failed > 0 || attention > 0 ? 'warning' : 'success',
+    text: zh
+      ? `${actionLabel}完成：成功 ${succeeded}，跳过 ${skipped}，待处理 ${attention}，失败 ${failed}。各仓库结果彼此独立。`
+      : `${actionLabel} finished: ${succeeded} succeeded, ${skipped} skipped, ${attention} need attention, ${failed} failed. Repository results are independent.`,
+  };
 }
 
 function shortSha(value: string): string {

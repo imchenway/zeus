@@ -16551,7 +16551,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 body[data-surface='task-git-delivery'] .task-git-delivery-layout {
-  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr) minmax(300px, 340px);
+  grid-template-columns: minmax(380px, 480px) minmax(0, 1fr) minmax(300px, 340px);
 }
 
 .macos-ai-app .task-git-merge-content {
@@ -16566,6 +16566,21 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
   block-size: 100%;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
+}
+
+.macos-ai-app .task-git-delivery-scopebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 14px;
+  border-block-end: 1px solid var(--zeus-product-line-soft);
+  background: var(--zeus-product-panel-muted);
+  font-size: 12px;
+}
+
+.macos-ai-app .task-git-delivery-scopebar span {
+  color: var(--zeus-product-muted);
 }
 
 .macos-ai-app .task-git-delivery-load-state {
@@ -16621,8 +16636,172 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
 }
 
 .macos-ai-app .task-git-delivery-layout {
-  grid-template-columns: 230px minmax(0, 1fr) 330px;
+  grid-template-columns: minmax(320px, 420px) minmax(0, 1fr) 330px;
   min-block-size: 0;
+}
+
+.macos-ai-app .task-git-delivery-file-browser {
+  min-inline-size: 0;
+  min-block-size: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border-inline-end: 1px solid var(--zeus-product-line-soft);
+  background: var(--zeus-product-panel-muted);
+}
+
+.macos-ai-app .task-git-delivery-file-tree {
+  min-block-size: 0;
+  overflow: auto;
+  padding: 7px;
+}
+
+.macos-ai-app .task-git-delivery-branch {
+  display: grid;
+  gap: 5px;
+  padding-block: 7px;
+  border-block-start: 1px solid var(--zeus-product-line-soft);
+}
+
+.macos-ai-app .task-git-delivery-branch:first-child {
+  border-block-start: 0;
+}
+
+.macos-ai-app .task-git-delivery-branch > header,
+.macos-ai-app .task-git-delivery-repository > header {
+  min-inline-size: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.macos-ai-app .task-git-delivery-branch > header {
+  padding: 3px 5px;
+}
+
+.macos-ai-app .task-git-delivery-branch > header label,
+.macos-ai-app .task-git-delivery-repository > header label {
+  min-inline-size: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+.macos-ai-app .task-git-delivery-branch > header strong {
+  overflow-wrap: anywhere;
+}
+
+.macos-ai-app .task-git-delivery-branch > header > span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.macos-ai-app .task-git-delivery-branch > header button {
+  padding: 2px 5px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--zeus-product-muted);
+  font-size: 10px;
+}
+
+.macos-ai-app .task-git-delivery-branch > header button:hover,
+.macos-ai-app .task-git-delivery-branch > header button:focus-visible {
+  background: var(--zeus-control-bg);
+  color: var(--zeus-product-text);
+}
+
+.macos-ai-app .task-git-delivery-repository {
+  min-inline-size: 0;
+  display: grid;
+  gap: 3px;
+  padding: 6px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+}
+
+.macos-ai-app .task-git-delivery-repository.is-focused {
+  border-color: var(--zeus-control-border);
+  background: var(--zeus-product-panel);
+}
+
+.macos-ai-app .task-git-delivery-repository > header label > span {
+  min-inline-size: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.macos-ai-app .task-git-delivery-repository > header strong,
+.macos-ai-app .task-git-delivery-repository > header small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macos-ai-app .task-git-delivery-repository > header small,
+.macos-ai-app .task-git-delivery-repository-state {
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+}
+
+.macos-ai-app .task-git-delivery-repository-state {
+  padding: 3px 6px 3px 24px;
+}
+
+.macos-ai-app .task-git-delivery-repository-state.is-error {
+  color: var(--zeus-danger-text);
+}
+
+.macos-ai-app .task-git-delivery-repository ol {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0 0 0 17px;
+  list-style: none;
+}
+
+.macos-ai-app .task-git-delivery-file-row {
+  min-inline-size: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  padding-inline: 5px;
+  border-radius: 6px;
+}
+
+.macos-ai-app .task-git-delivery-repository li.is-active .task-git-delivery-file-row,
+.macos-ai-app .task-git-delivery-file-row:hover {
+  background: var(--zeus-control-bg);
+}
+
+.macos-ai-app .task-git-delivery-repository li button {
+  min-inline-size: 0;
+  display: grid;
+  gap: 2px;
+  padding: 5px 3px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: start;
+}
+
+.macos-ai-app .task-git-delivery-repository li button span,
+.macos-ai-app .task-git-delivery-repository li button small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macos-ai-app .task-git-delivery-repository li button small {
+  color: var(--zeus-product-muted);
+  font-size: 10px;
+}
+
+.macos-ai-app .task-git-delivery-diff-main {
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .macos-ai-app .task-git-delivery-diff-tabs > span {
@@ -16713,6 +16892,43 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
 
 .macos-ai-app .task-git-delivery-feedback.is-info {
   color: var(--zeus-product-muted);
+}
+
+.macos-ai-app .task-git-delivery-batch-result {
+  display: grid;
+  gap: 5px;
+  max-block-size: 150px;
+  overflow: auto;
+  padding: 8px 16px;
+  border-block-start: 1px solid var(--zeus-product-line-soft);
+  font-size: 11px;
+}
+
+.macos-ai-app .task-git-delivery-batch-result ol {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.macos-ai-app .task-git-delivery-batch-result li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.macos-ai-app .task-git-delivery-batch-result li small {
+  color: inherit;
+  text-align: end;
+}
+
+.macos-ai-app .task-git-delivery-batch-result li[data-status='attention'] {
+  color: var(--zeus-warning-text, #98620d);
+}
+
+.macos-ai-app .task-git-delivery-batch-result li[data-status='failed'] {
+  color: var(--zeus-danger-text);
 }
 
 .macos-ai-app .task-git-merge-header,
