@@ -429,7 +429,9 @@ export async function startOwnedDesktopLocalServer(options: StartDesktopLocalSer
   const dbPath = dataLayout.database;
   const configPath = dataLayout.localConfig;
   const restartDelayMs = 1_000;
-  const codexAppServerManager = createCodexRuntimeGenerationManager();
+  const codexAppServerManager = createCodexRuntimeGenerationManager({
+    ...(options.codexHome ? { runtimeEnvironment: { CODEX_HOME: options.codexHome } } : {}),
+  });
   let closingIntentionally = false;
   let restartTimer: ReturnType<typeof setTimeout> | undefined;
   let restartPromise: Promise<void> | undefined;

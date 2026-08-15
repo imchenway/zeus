@@ -627,15 +627,12 @@ function PendingMessageDeliveryFeedback(props: { item: NativeSessionItemBuffer; 
       aria-live={failed || unconfirmed ? 'assertive' : 'polite'}
     >
       <span className="session-thinking-pulse" aria-hidden="true" />
-      <span>
-        <strong>{title}</strong>
-        {reason ? <small>{reason}</small> : null}
-        {guidance ? <small>{guidance}</small> : null}
-        {failed && props.onReturnToComposer ? (
-          <button type="button" onClick={props.onReturnToComposer}>
-            {zh ? '回到输入框' : 'Return to composer'}
-          </button>
-        ) : null}
+      <span className="session-message-delivery-copy">
+        <span className="session-message-delivery-summary">
+          <strong>{title}</strong>
+          {reason ? <small>{reason}</small> : null}
+        </span>
+        {guidance ? <small className="session-message-delivery-guidance">{guidance}</small> : null}
         {deliveryError && reason !== deliveryError.message ? (
           <details>
             <summary>{zh ? '技术详情' : 'Technical details'}</summary>
@@ -643,6 +640,11 @@ function PendingMessageDeliveryFeedback(props: { item: NativeSessionItemBuffer; 
           </details>
         ) : null}
       </span>
+      {failed && props.onReturnToComposer ? (
+        <button type="button" onClick={props.onReturnToComposer}>
+          {zh ? '修改后重发' : 'Edit and resend'}
+        </button>
+      ) : null}
     </section>
   );
 }
