@@ -1,7 +1,6 @@
 import { type KeyboardEvent, type RefObject, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
-import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paperclip';
 import { SquareIcon as Square } from '@phosphor-icons/react/dist/csr/Square';
@@ -532,7 +531,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
                   disabled={!writable || busy || goalOperationBusy || (goalInputActive ? !goalDraftValid : !hasDraft)}
                   aria-busy={busy || goalOperationBusy || undefined}
                 >
-                  {busy || goalOperationBusy ? <CircleNotch className="session-command-spinner" aria-hidden="true" weight="bold" /> : <ArrowUp aria-hidden="true" weight="bold" />}
+                  {busy || goalOperationBusy ? <span className="session-command-spinner" aria-hidden="true" /> : <ArrowUp aria-hidden="true" weight="bold" />}
                 </button>
               ) : (
                 <button

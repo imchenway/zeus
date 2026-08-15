@@ -13,6 +13,7 @@ import {SafeMarkdown, type SessionUiLanguage} from './ThreadItemView.js';
 export function PlanSummary(props: {
     item: NativeSessionItemBuffer;
     language: SessionUiLanguage;
+    motionActive?: boolean;
     panelOpen?: boolean;
     onOpenPanel?: (item: NativeSessionItemBuffer) => void
 }) {
@@ -39,11 +40,13 @@ export function PlanSummary(props: {
 
     return (
         <article className="session-plan-summary" data-streaming={streaming || undefined}
-                 data-collapsed={collapsed || undefined}>
+                 data-motion-active={props.motionActive || undefined} data-collapsed={collapsed || undefined}>
             <header>
                 <button type="button" className="session-plan-summary-title"
                         onClick={() => setCollapsed((value) => !value)} aria-expanded={!collapsed}>
-                    <Lightbulb className="session-plan-summary-symbol" aria-hidden="true"/>
+                    <span className="session-plan-summary-symbol" aria-hidden="true">
+                        <Lightbulb/>
+                    </span>
                     <strong>{title}</strong>
                     <CaretDown aria-hidden="true"/>
                 </button>

@@ -1600,9 +1600,10 @@ export async function createZeusDatabase(filePath: string): Promise<ZeusDatabase
     migrateTaskTypesAndContents(zeusDb);
     migrateCodexNativeConversationSchema(zeusDb);
     migrateConversationGoalSchema(zeusDb);
+    // 用量身份迁移会读取模型来源字段，新库必须先建立 Agent 会话身份列。
+    migrateAgentRuntimeSchema(zeusDb);
     migrateCodexUsageLedgerSchema(zeusDb);
     migrateConversationStageSchema(zeusDb);
-    migrateAgentRuntimeSchema(zeusDb);
     migrateRemoteConversationTurnSchema(zeusDb);
     migrateTaskGitWorkspaceSchema(zeusDb);
     migrateMultiRepositoryTaskSchema(zeusDb);

@@ -117,6 +117,7 @@ export interface ThreadItemViewProps {
   language: SessionUiLanguage;
   isLatest?: boolean;
   animateEntrance?: boolean;
+  motionActive?: boolean;
   showAssistantActions?: boolean;
   isLatestUser?: boolean;
   onEdit?: (item: NativeSessionItemBuffer, content: string) => void | Promise<void>;
@@ -376,6 +377,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
       data-item-status={props.item.status}
       data-item-phase={props.item.phase}
       data-item-type={props.item.type}
+      data-motion-active={props.motionActive || undefined}
       data-motion-block="markdown"
       aria-label={accessibleLabel}
     >
@@ -431,6 +433,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
             text={visibleText}
             sourceText={itemText}
             streaming={streamActive}
+            motionActive={Boolean(props.motionActive)}
             language={props.language}
             resources={props.item.resources}
             onOpenResource={props.onOpenResource}
@@ -454,6 +457,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
           text={visibleText}
           sourceText={itemText}
           streaming={streamActive}
+          motionActive={Boolean(props.motionActive)}
           language={props.language}
           resources={props.item.resources}
           onOpenResource={props.onOpenResource}
@@ -531,6 +535,7 @@ interface TranscriptMarkdownProps {
   text: string;
   sourceText: string;
   streaming: boolean;
+  motionActive: boolean;
   language: SessionUiLanguage;
   resources?: ConversationResource[];
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
@@ -547,15 +552,26 @@ const TranscriptMarkdown = memo(function TranscriptMarkdown(props: TranscriptMar
     return <StreamingMarkdownPlaceholder kind={streamKind} language={props.language} />;
   }
   return (
-    <div className="session-streaming-markdown" data-active="true">
-      {projection.stableBlocks.map((block, index) => (
-        <SafeMarkdown key={`stable-${index}`} text={block} language={props.language} resources={props.resources} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
-      ))}
+    <div className="session-streaming-markdown" data-motion-active={props.motionActive || undefined}>
+      {projection.stableBlocks.map((block, index) => {
+        const carriesTail = props.motionActive && !projection.tail && index === projection.stableBlocks.length - 1;
+        return (
+          <SafeMarkdown key={`stable-${index}`} text={block} streamingTail={carriesTail} language={props.language} resources={props.resources} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
+        );
+      })}
       {projection.tail ? (
         projection.tailKind === 'table' || projection.tailKind === 'fence' ? (
           <StreamingMarkdownPlaceholder kind={projection.tailKind} language={props.language} />
         ) : (
-          <SafeMarkdown key={`tail-${projection.stableBlocks.length}`} text={projection.tail} language={props.language} resources={props.resources} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
+          <SafeMarkdown
+            key={`tail-${projection.stableBlocks.length}`}
+            text={projection.tail}
+            streamingTail={props.motionActive}
+            language={props.language}
+            resources={props.resources}
+            onOpenResource={props.onOpenResource}
+            onLoadResourcePreview={props.onLoadResourcePreview}
+          />
         )
       ) : null}
     </div>
@@ -633,6 +649,7 @@ function markdownStreamKind(text: string): 'plain' | 'table' | 'fence' {
 
 export const SafeMarkdown = memo(function SafeMarkdown(props: {
   text: string;
+  streamingTail?: boolean;
   language?: SessionUiLanguage;
   resources?: ConversationResource[];
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
@@ -683,9 +700,10 @@ export const SafeMarkdown = memo(function SafeMarkdown(props: {
   );
   return (
     <div className="session-markdown zeus-fidelity-markdown" data-truncated={bounded.truncated || undefined}>
-      <Markdown components={components} remarkPlugins={[remarkGfm, [limitMarkdownComplexity, { label: labels.complexityTruncated }]]} urlTransform={(url) => url}>
+      <Markdown components={components} remarkPlugins={[remarkGfm, [limitMarkdownComplexity, { label: labels.complexityTruncated }], [markStreamingMarkdownTail, { active: Boolean(props.streamingTail) }]]} urlTransform={(url) => url}>
         {boundMarkdownCodeBlocks(bounded.text)}
       </Markdown>
+      {props.streamingTail ? <span className="session-streaming-cursor" aria-hidden="true" /> : null}
     </div>
   );
 });
@@ -705,6 +723,35 @@ export function boundedMarkdownBlockText(text: string): { text: string; truncate
 interface MarkdownAstNode {
   type: string;
   children?: MarkdownAstNode[];
+  data?: {
+    hProperties?: Record<string, unknown>;
+  };
+}
+
+function markStreamingMarkdownTail(options?: { active?: boolean }) {
+  return (tree: MarkdownAstNode): void => {
+    if (!options?.active) return;
+    const anchor = lastStreamingTailAnchor(tree);
+    if (!anchor) return;
+    anchor.data = {
+      ...anchor.data,
+      hProperties: {
+        ...anchor.data?.hProperties,
+        'data-streaming-tail-anchor': 'true',
+      },
+    };
+  };
+}
+
+function lastStreamingTailAnchor(node: MarkdownAstNode): MarkdownAstNode | null {
+  // 紧凑列表不会渲染段落外壳，列表项才是最终 DOM 中可靠的行尾锚点。
+  if (node.type === 'listItem') return node;
+  const children = node.children ?? [];
+  for (let index = children.length - 1; index >= 0; index -= 1) {
+    const anchor = lastStreamingTailAnchor(children[index]!);
+    if (anchor) return anchor;
+  }
+  return node.type === 'paragraph' || node.type === 'heading' ? node : null;
 }
 
 function limitMarkdownComplexity(options?: { label?: string }) {

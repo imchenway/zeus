@@ -112,3 +112,174 @@
     grid-template-columns: 1fr;
   }
 }
+
+.qa-motion-page {
+  background: rgb(236 238 241);
+}
+
+.qa-motion-theme {
+  background: var(--session-canvas);
+  border: 1px solid var(--session-line);
+  border-radius: 16px;
+  color: var(--session-text);
+  display: grid;
+  gap: 18px;
+  min-inline-size: 0;
+  overflow: hidden;
+  padding: 20px;
+}
+
+.qa-motion-theme.theme-dark {
+  box-shadow: 0 16px 36px rgb(18 22 28 / 0.18);
+}
+
+.qa-motion-diagnostics {
+  background: white;
+  border: 1px solid rgb(207 212 219);
+  border-radius: 12px;
+  color: rgb(31 35 41);
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.qa-motion-diagnostics h2 {
+  font-size: 13px;
+  margin: 0;
+}
+
+.qa-motion-diagnostics dl {
+  display: grid;
+  gap: 7px 18px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+}
+
+.qa-motion-diagnostics dl > div {
+  display: grid;
+  font-size: 11px;
+  gap: 2px;
+  grid-template-columns: minmax(120px, auto) minmax(0, 1fr);
+}
+
+.qa-motion-diagnostics :where(dt, dd) {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.qa-motion-diagnostics dt {
+  color: rgb(94 102 114);
+}
+
+.qa-motion-theme > header {
+  display: grid;
+  gap: 3px;
+}
+
+.qa-motion-theme > header small,
+.qa-motion-theme h3 {
+  color: var(--session-text-muted);
+}
+
+.qa-motion-transcript {
+  border: 1px solid var(--session-line-soft);
+  border-radius: 12px;
+  min-block-size: 280px;
+  overflow: hidden;
+}
+
+.qa-motion-transcript .session-transcript {
+  block-size: 280px;
+  padding-block: 22px;
+}
+
+.qa-motion-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.qa-motion-grid > section {
+  background: var(--session-sidebar);
+  border: 1px solid var(--session-line-soft);
+  border-radius: 12px;
+  display: grid;
+  gap: 12px;
+  min-block-size: 150px;
+  min-inline-size: 0;
+  overflow: hidden;
+  padding: 14px;
+}
+
+.qa-motion-grid h3 {
+  font-size: 12px;
+  font-weight: 620;
+  margin: 0;
+}
+
+.qa-motion-grid .session-transcript {
+  block-size: 110px;
+  padding: 10px 0;
+}
+
+.qa-motion-grid .session-thread-item,
+.qa-motion-grid .session-plan-summary {
+  inline-size: 100%;
+  margin-inline: 0;
+}
+
+.qa-motion-functional-row {
+  align-items: center;
+  color: var(--session-text-muted);
+  display: flex;
+  font-size: 12px;
+  gap: 10px;
+}
+
+.qa-motion-functional-row .session-workspace-root {
+  display: inline-flex;
+}
+
+.qa-motion-grid .session-reconnect-notice {
+  border: 1px solid var(--session-line-soft);
+  border-radius: 9px;
+  grid-template-columns: 20px minmax(0, 1fr);
+  padding: 8px 10px;
+}
+
+.qa-motion-grid .browser-workspace-loading {
+  flex: 0 0 auto;
+  min-block-size: 74px;
+}
+
+.qa-motion-loading {
+  grid-column: 1 / -1;
+}
+
+.qa-motion-loading .session-loading {
+  inline-size: 100%;
+  margin: 0;
+  padding-block: 10px;
+}
+
+@media (max-width: 760px) {
+  .macos-ai-app.zeus-shell.qa-motion-page {
+    padding: 16px;
+  }
+
+  .qa-motion-theme {
+    padding: 14px;
+  }
+
+  .qa-motion-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .qa-motion-diagnostics dl {
+    grid-template-columns: 1fr;
+  }
+
+  .qa-motion-loading {
+    grid-column: auto;
+  }
+}

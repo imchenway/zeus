@@ -1,13 +1,18 @@
-import React from 'react';
+import React, { useLayoutEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
+import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import '../src/renderer/styles.css';
 import '../src/renderer/session/session.css';
 import './session-styles.css';
 import type { ConversationResource } from '@zeus/shared';
 import { PendingRequestSurface } from '../src/renderer/session/PendingRequestSurface.js';
 import { type ConversationTreeRuntimeState, type ProjectConversationGroup, ProjectConversationTree } from '../src/renderer/session/ProjectConversationTree.js';
-import type { NativeConversationChoice, NativePendingRequest } from '../src/renderer/session/sessionTypes.js';
-import { SafeMarkdown } from '../src/renderer/session/ThreadItemView.js';
+import type { NativeConversationChoice, NativePendingRequest, NativeSessionItemBuffer, NativeSessionState } from '../src/renderer/session/sessionTypes.js';
+import { SafeMarkdown, ThreadItemView } from '../src/renderer/session/ThreadItemView.js';
+import { ConversationTranscript } from '../src/renderer/session/ConversationTranscript.js';
+import { PlanSummary } from '../src/renderer/session/PlanSummary.js';
+import { createInitialSessionState } from '../src/renderer/session/sessionReducer.js';
 
 const referenceBase = 'http://127.0.0.1:4181';
 
@@ -128,6 +133,203 @@ const inlineResourceMarkdown = '已完成 [ThreadItemView.tsx](apps/desktop/src/
 
 function ignoreResourceOpen() {}
 
+const motionConversationId = 'motion-conversation';
+const motionThreadId = 'motion-thread';
+const motionTurnId = 'motion-turn';
+
+function motionItem(id: string, type: string, status: string, text: string, payload: Record<string, unknown> = {}, phase = 'prework'): NativeSessionItemBuffer {
+  return {
+    key: `motion:${id}`,
+    conversationId: motionConversationId,
+    threadId: motionThreadId,
+    turnId: motionTurnId,
+    itemId: id,
+    type,
+    status,
+    phase,
+    text,
+    payload,
+    resources: [],
+    updatedAt: '2026-08-15T04:00:00.000Z',
+  };
+}
+
+const motionReasoning = motionItem('reasoning', 'reasoning', 'in_progress', '先确认当前交互阶段，再把活动焦点交给最新输出。', { summary: ['先确认当前交互阶段，再把活动焦点交给最新输出。'] });
+const motionActivity = motionItem('activity', 'commandExecution', 'in_progress', '', {
+  command: ['pnpm', 'typecheck'],
+  commandActions: [{ type: 'read', path: 'apps/desktop/src/renderer/session/ConversationTranscript.tsx' }],
+});
+const motionAnswer = motionItem('answer', 'agentMessage', 'in_progress', '会话进行中的视觉焦点已经接管到回答正文：\n\n- 思考和工具阶段保持静态\n- 光标紧跟最后一项内容', { phase: 'final_answer' }, 'final_answer');
+
+const motionSessionState: NativeSessionState = {
+  ...createInitialSessionState(),
+  transportState: 'ready',
+  conversationState: 'active_final_answer',
+  projectId: 'project-zeus',
+  conversationId: motionConversationId,
+  providerThreadId: motionThreadId,
+  activeTurnId: motionTurnId,
+  startedTurnId: motionTurnId,
+  items: {
+    [motionReasoning.key]: motionReasoning,
+    [motionActivity.key]: motionActivity,
+    [motionAnswer.key]: motionAnswer,
+  },
+  itemOrder: [motionReasoning.key, motionActivity.key, motionAnswer.key],
+  turnsByProviderId: {
+    [motionTurnId]: {
+      id: motionTurnId,
+      providerTurnId: motionTurnId,
+      submissionId: null,
+      status: 'running',
+      startedAt: '2026-08-15T04:00:00.000Z',
+      completedAt: null,
+      createdAt: '2026-08-15T04:00:00.000Z',
+      updatedAt: '2026-08-15T04:00:14.000Z',
+    },
+  },
+  transcriptRevision: 1,
+};
+
+const startingSessionState: NativeSessionState = {
+  ...createInitialSessionState(),
+  transportState: 'ready',
+  conversationState: 'starting_turn',
+  projectId: 'project-zeus',
+  conversationId: 'motion-starting',
+  providerThreadId: 'motion-starting-thread',
+};
+
+const incompleteFenceItem = motionItem('fence', 'agentMessage', 'in_progress', '正在整理代码：\n\n```ts\nconst focus =', { phase: 'final_answer' }, 'final_answer');
+const incompleteTableItem = motionItem('table', 'agentMessage', 'in_progress', '| 状态 | 表现 |\n| --- | --- |\n| 回答中 |', { phase: 'final_answer' }, 'final_answer');
+const motionPlanItem = motionItem('plan', 'plan', 'in_progress', '1. 统一活动焦点\n2. 验证减少动态效果');
+const motionImageItem = motionItem('image', 'imageGeneration', 'in_progress', '');
+
+function MotionPreview(props: { dark?: boolean }) {
+  const theme = props.dark ? 'theme-dark' : 'theme-light';
+  return (
+    <section className={`macos-ai-app session-codex-parity-v1 qa-motion-theme ${theme}`} data-testid={props.dark ? 'motion-dark' : 'motion-light'}>
+      <header>
+        <strong>{props.dark ? '深色主题' : '浅色主题'}</strong>
+        <small>正文单焦点与会话加载状态</small>
+      </header>
+      <div className="qa-motion-transcript ai-workspace" data-testid="motion-single-focus">
+        <ConversationTranscript state={motionSessionState} language="zh-CN" />
+      </div>
+      <div className="qa-motion-grid">
+        <section>
+          <h3>等待思考</h3>
+          <ConversationTranscript state={startingSessionState} language="zh-CN" />
+        </section>
+        <section>
+          <h3>计划与图片</h3>
+          <PlanSummary item={motionPlanItem} language="zh-CN" motionActive />
+          <ThreadItemView item={motionImageItem} language="zh-CN" motionActive />
+        </section>
+        <section>
+          <h3>未闭合结构</h3>
+          <ThreadItemView item={incompleteFenceItem} language="zh-CN" motionActive />
+          <ThreadItemView item={incompleteTableItem} language="zh-CN" motionActive />
+        </section>
+        <section>
+          <h3>功能型加载</h3>
+          <div className="qa-motion-functional-row">
+            <span className="session-command-spinner" aria-hidden="true" />
+            <span className="browser-tab-loading" aria-hidden="true" />
+            <span className="session-workspace-root" aria-hidden="true">
+              <span className="session-subagent-status-dot" data-status="running" />
+            </span>
+            <span>提交、浏览器、子代理</span>
+          </div>
+          <div className="session-reconnect-notice">
+            <span className="session-reconnect-symbol" aria-hidden="true">
+              <ArrowsClockwise />
+            </span>
+            <span>正在恢复连接</span>
+          </div>
+          <div className="browser-workspace browser-workspace-loading" data-loading="true">
+            <GlobeSimple aria-hidden="true" />
+            <p>正在打开内置浏览器…</p>
+          </div>
+        </section>
+        <section className="qa-motion-loading">
+          <h3>冷加载骨架</h3>
+          <div className="session-loading" role="status">
+            <span className="session-loading-line" />
+            <span className="session-loading-line" />
+            <strong>正在加载会话</strong>
+          </div>
+        </section>
+      </div>
+    </section>
+  );
+}
+
+interface MotionDiagnosticsSnapshot {
+  viewport: string;
+  reducedMotion: string;
+  focusAnimations: string;
+  tailAnchor: string;
+  tailSize: string;
+  tailAnimation: string;
+  previousReasoningAnimation: string;
+  previousActivityAnimation: string;
+}
+
+function MotionDiagnostics() {
+  const [snapshot, setSnapshot] = useState<MotionDiagnosticsSnapshot | null>(null);
+
+  useLayoutEffect(() => {
+    const transcript = document.querySelector<HTMLElement>("[data-testid='motion-light'] [data-testid='motion-single-focus']");
+    const tailAnchor = transcript?.querySelector<HTMLElement>("[data-streaming-tail-anchor='true']") ?? null;
+    const tailStyle = tailAnchor ? window.getComputedStyle(tailAnchor, '::after') : null;
+    const reasoningIcon = transcript?.querySelector<HTMLElement>('.session-reasoning-summary-icon') ?? null;
+    const activityIcon = transcript?.querySelector<HTMLElement>('.session-activity-item-icon') ?? null;
+    const focusAnimationNames = [tailStyle?.animationName, reasoningIcon ? window.getComputedStyle(reasoningIcon).animationName : null, activityIcon ? window.getComputedStyle(activityIcon).animationName : null].filter(
+      (name): name is string => Boolean(name && name !== 'none'),
+    );
+    setSnapshot({
+      viewport: `${window.innerWidth}×${window.innerHeight}`,
+      reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? '开启' : '关闭',
+      focusAnimations: `${focusAnimationNames.length}（${focusAnimationNames.join('、') || '无'}）`,
+      tailAnchor: tailAnchor?.tagName.toLocaleLowerCase() ?? '未找到',
+      tailSize: tailStyle ? `${tailStyle.inlineSize} × ${tailStyle.blockSize}` : '未找到',
+      tailAnimation: tailStyle?.animationName ?? '未找到',
+      previousReasoningAnimation: reasoningIcon ? window.getComputedStyle(reasoningIcon).animationName : '未找到',
+      previousActivityAnimation: activityIcon ? window.getComputedStyle(activityIcon).animationName : '未找到',
+    });
+  }, []);
+
+  if (!snapshot) return <p role="status">正在读取真实 DOM 计算样式…</p>;
+  return (
+    <section className="qa-motion-diagnostics" data-testid="motion-diagnostics" aria-label="真实 DOM 诊断">
+      <h2>真实 DOM 诊断</h2>
+      <dl>
+        {Object.entries(snapshot).map(([key, value]) => (
+          <div key={key}>
+            <dt>{key}</dt>
+            <dd>{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  );
+}
+
+function MotionApp() {
+  return (
+    <main className="macos-ai-app zeus-shell qa-page qa-motion-page">
+      <header className="qa-heading">
+        <p>ZEUS-0307 · 真实 DOM 动效验收</p>
+        <h1>会话进行中的活动焦点</h1>
+      </header>
+      <MotionDiagnostics />
+      <MotionPreview />
+      <MotionPreview dark />
+    </main>
+  );
+}
+
 const commandRequest: NativePendingRequest = {
   id: 'command-approval',
   conversationId: 'approval',
@@ -240,4 +442,5 @@ function App() {
   );
 }
 
-createRoot(document.getElementById('root')!).render(<App />);
+const motionQa = new URLSearchParams(window.location.search).has('motion');
+createRoot(document.getElementById('root')!).render(motionQa ? <MotionApp /> : <App />);
