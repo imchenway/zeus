@@ -3600,49 +3600,6 @@
   opacity: 0.55;
 }
 
-.session-codex-parity-v1 .session-composer-dropdown .session-composer-dropdown-menu {
-  background: var(--session-canvas);
-  border: 1px solid var(--session-line);
-  border-radius: 10px;
-  box-shadow: 0 12px 34px var(--session-shadow);
-  display: grid;
-  gap: 2px;
-  inline-size: max-content;
-  inset-block-end: calc(100% + 6px);
-  inset-inline-start: 0;
-  max-block-size: min(244px, calc(100vh - 180px));
-  max-inline-size: min(260px, calc(100vw - 32px));
-  min-inline-size: max(100%, 112px);
-  overflow-y: auto;
-  padding: 5px;
-  position: absolute;
-  z-index: 16;
-}
-
-.session-codex-parity-v1 .session-composer-dropdown-menu[hidden] {
-  display: none;
-}
-
-.session-codex-parity-v1 .session-composer-dropdown-menu > button {
-  background: transparent;
-  border: 0;
-  border-radius: 6px;
-  color: var(--session-text);
-  cursor: pointer;
-  inline-size: 100%;
-  justify-content: flex-start;
-  min-block-size: 30px;
-  padding: 5px 8px !important;
-  text-align: start;
-  white-space: nowrap;
-}
-
-.session-codex-parity-v1 .session-composer-dropdown-menu > button:hover,
-.session-codex-parity-v1 .session-composer-dropdown-menu > button:focus-visible,
-.session-codex-parity-v1 .session-composer-dropdown-menu > button[aria-selected='true'] {
-  background: var(--session-selected);
-}
-
 .session-codex-parity-v1 .session-permission-control {
   display: inline-flex;
   position: relative;
@@ -5178,239 +5135,6 @@
   position: relative;
 }
 
-.session-codex-parity-v1 .session-new-conversation-context-trigger {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: 8px;
-  color: var(--session-text);
-  cursor: default;
-  display: inline-flex;
-  font: inherit;
-  font-size: 13px;
-  gap: 7px;
-  min-block-size: 30px;
-  min-inline-size: 0;
-  padding: 0 8px;
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-trigger:hover:not(:disabled),
-.session-codex-parity-v1 .session-new-conversation-context-trigger[aria-expanded='true'] {
-  background: color-mix(in srgb, var(--session-selected) 72%, transparent);
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-trigger:focus-visible {
-  box-shadow: 0 0 0 2px var(--session-focus-outline);
-  outline: none;
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-trigger:disabled {
-  color: var(--session-text-muted);
-  cursor: not-allowed;
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-trigger > svg:first-child {
-  block-size: 17px;
-  flex: 0 0 auto;
-  inline-size: 17px;
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-trigger > svg:last-child:not(:first-child) {
-  block-size: 13px;
-  color: var(--session-text-muted);
-  inline-size: 13px;
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-trigger > span {
-  max-inline-size: min(240px, 28vw);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-popover {
-  background: var(--session-canvas);
-  border: 1px solid var(--session-line);
-  border-radius: 14px;
-  box-shadow: 0 16px 42px var(--session-shadow);
-  display: grid;
-  gap: 8px;
-  inset-block-start: calc(100% + 7px);
-  inset-inline-start: 0;
-  max-block-size: min(450px, calc(100vh - 180px));
-  min-inline-size: min(360px, calc(100vw - 48px));
-  padding: 10px;
-  position: absolute;
-  z-index: 40;
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-popover.is-branch {
-  min-inline-size: min(400px, calc(100vw - 48px));
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-search {
-  align-items: center;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  color: var(--session-text-muted);
-  display: grid;
-  gap: 8px;
-  grid-template-columns: 18px minmax(0, 1fr);
-  padding: 2px 5px;
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-search:focus-within {
-  border-color: var(--session-line);
-  box-shadow: 0 0 0 2px var(--session-focus-outline);
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-search > svg {
-  block-size: 17px;
-  inline-size: 17px;
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-search input,
-.session-codex-parity-v1 .session-new-conversation-context-create input {
-  background: transparent;
-  border: 0;
-  color: var(--session-text);
-  font: inherit;
-  font-size: 14px;
-  inline-size: 100%;
-  min-block-size: 32px;
-  outline: none;
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-heading {
-  color: var(--session-text-muted);
-  font-size: 12px;
-  font-weight: 600;
-  padding-inline: 7px;
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-options {
-  display: grid;
-  gap: 2px;
-  max-block-size: 280px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-options > button,
-.session-codex-parity-v1 .session-new-conversation-context-create > button {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: 8px;
-  color: var(--session-text);
-  display: grid;
-  font: inherit;
-  font-size: 14px;
-  gap: 9px;
-  grid-template-columns: 20px minmax(0, 1fr) 20px;
-  min-block-size: 38px;
-  padding: 5px 8px;
-  text-align: start;
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-options > button:hover:not(:disabled),
-.session-codex-parity-v1 .session-new-conversation-context-create > button:hover:not(:disabled) {
-  background: var(--session-selected);
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-options > button:focus-visible,
-.session-codex-parity-v1 .session-new-conversation-context-create button:focus-visible,
-.session-codex-parity-v1 .session-new-conversation-context-create input:focus-visible {
-  box-shadow: 0 0 0 2px var(--session-focus-outline);
-  outline: none;
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-options > button:disabled {
-  color: var(--session-text-muted);
-  cursor: not-allowed;
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-options > button > svg,
-.session-codex-parity-v1 .session-new-conversation-context-create > button > svg {
-  block-size: 18px;
-  inline-size: 18px;
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-options > button > span {
-  display: grid;
-  min-inline-size: 0;
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-options > button > span:only-of-type {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-options strong {
-  font-size: 13px;
-  font-weight: 550;
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-options small {
-  color: var(--session-text-muted);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-create {
-  border-block-start: 1px solid var(--session-line-soft);
-  padding-block-start: 6px;
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-create > button {
-  grid-template-columns: 20px minmax(0, 1fr);
-  inline-size: 100%;
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-create form {
-  align-items: center;
-  display: grid;
-  gap: 8px;
-  grid-template-columns: minmax(0, 1fr) auto;
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-create form input {
-  border: 1px solid var(--session-line);
-  border-radius: 8px;
-  padding-inline: 9px;
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-create form button {
-  background: var(--session-accent);
-  border: 0;
-  border-radius: 8px;
-  color: var(--session-canvas);
-  font: inherit;
-  min-block-size: 34px;
-  padding-inline: 12px;
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-empty,
-.session-codex-parity-v1 .session-new-conversation-context-error {
-  color: var(--session-text-muted);
-  font-size: 12px;
-  margin: 0;
-  overflow-wrap: anywhere;
-  padding: 8px;
-}
-
-.session-codex-parity-v1 .session-new-conversation-context-error {
-  color: var(--session-danger);
-  flex-basis: 100%;
-}
-
-.session-codex-parity-v1 .session-new-conversation-context:has(.session-new-conversation-context-error) {
-  flex-wrap: wrap;
-}
-
 .session-codex-parity-v1 .session-new-conversation-context-spinner {
   animation: session-context-spin 900ms linear infinite;
 }
@@ -5433,18 +5157,8 @@
     flex-direction: column;
   }
 
-  .session-codex-parity-v1 .session-new-conversation-context-control,
-  .session-codex-parity-v1 .session-new-conversation-context-trigger {
+  .session-codex-parity-v1 .session-new-conversation-context-control {
     inline-size: 100%;
-  }
-
-  .session-codex-parity-v1 .session-new-conversation-context-trigger > span {
-    max-inline-size: none;
-  }
-
-  .session-codex-parity-v1 .session-new-conversation-context-popover {
-    inset-inline-start: 0;
-    min-inline-size: min(340px, calc(100vw - 40px));
   }
 }
 
@@ -5531,85 +5245,6 @@
     max-inline-size: 100%;
     min-block-size: 128px;
   }
-}
-
-/* 模型菜单按供应商呈现；搜索区与列表区分离，键盘焦点只进入真实控件。 */
-.session-codex-parity-v1 .session-composer-dropdown-menu {
-  gap: 0;
-  max-block-size: min(280px, calc(100vh - 180px));
-  overflow: hidden;
-  padding: 0;
-}
-
-.session-codex-parity-v1 .session-composer-dropdown-search {
-  border-block-end: 1px solid var(--session-line);
-  display: block;
-  padding: 6px;
-}
-
-.session-codex-parity-v1 .session-composer-dropdown-search input {
-  background: var(--session-control);
-  border: 1px solid var(--session-line);
-  border-radius: 6px;
-  color: var(--session-text);
-  font: inherit;
-  inline-size: 100%;
-  min-block-size: 30px;
-  min-inline-size: 180px;
-  outline: 0;
-  padding: 5px 8px;
-}
-
-.session-codex-parity-v1 .session-composer-dropdown-search input:focus-visible {
-  border-color: var(--session-accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--session-accent) 18%, transparent);
-}
-
-.session-codex-parity-v1 .session-composer-dropdown-options {
-  display: grid;
-  gap: 2px;
-  max-block-size: min(232px, calc(100vh - 228px));
-  overflow-y: auto;
-  padding: 5px;
-}
-
-.session-codex-parity-v1 .session-composer-dropdown-group {
-  color: var(--session-text-muted);
-  font-size: 10px;
-  font-weight: 650;
-  letter-spacing: 0.02em;
-  padding: 7px 8px 3px;
-}
-
-.session-codex-parity-v1 .session-composer-dropdown .session-composer-dropdown-option {
-  background: transparent;
-  border: 0;
-  border-radius: 6px;
-  color: var(--session-text);
-  cursor: pointer;
-  inline-size: 100%;
-  justify-content: flex-start;
-  min-block-size: 30px;
-  padding: 5px 8px !important;
-  text-align: start;
-  white-space: nowrap;
-}
-
-.session-codex-parity-v1 .session-composer-dropdown .session-composer-dropdown-option:hover,
-.session-codex-parity-v1 .session-composer-dropdown .session-composer-dropdown-option:focus-visible,
-.session-codex-parity-v1 .session-composer-dropdown .session-composer-dropdown-option[aria-selected='true'] {
-  background: var(--session-selected);
-}
-
-.session-codex-parity-v1 .session-composer-dropdown-empty {
-  color: var(--session-text-muted);
-  font-size: 11px;
-  padding: 10px 8px;
-}
-
-.session-codex-parity-v1 .session-composer-dropdown.session-composer-model-dropdown .session-composer-dropdown-option {
-  overflow-wrap: anywhere;
-  white-space: normal;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -10285,49 +9920,6 @@
   opacity: 0.55;
 }
 
-.session-codex-parity-v1 .session-composer-dropdown-menu {
-  background: var(--session-canvas);
-  border: 1px solid var(--session-line);
-  border-radius: 10px;
-  box-shadow: 0 12px 34px var(--session-shadow);
-  display: grid;
-  gap: 2px;
-  inline-size: max-content;
-  inset-block-end: calc(100% + 6px);
-  inset-inline-start: 0;
-  max-block-size: min(244px, calc(100vh - 180px));
-  max-inline-size: min(260px, calc(100vw - 32px));
-  min-inline-size: max(100%, 112px);
-  overflow-y: auto;
-  padding: 5px;
-  position: absolute;
-  z-index: 16;
-}
-
-.session-codex-parity-v1 .session-composer-dropdown-menu[hidden] {
-  display: none;
-}
-
-.session-codex-parity-v1 .session-composer-dropdown-menu > button {
-  background: transparent;
-  border: 0;
-  border-radius: 6px;
-  color: var(--session-text);
-  cursor: pointer;
-  inline-size: 100%;
-  justify-content: flex-start;
-  min-block-size: 30px;
-  padding: 5px 8px !important;
-  text-align: start;
-  white-space: nowrap;
-}
-
-.session-codex-parity-v1 .session-composer-dropdown-menu > button:hover,
-.session-codex-parity-v1 .session-composer-dropdown-menu > button:focus-visible,
-.session-codex-parity-v1 .session-composer-dropdown-menu > button[aria-selected='true'] {
-  background: var(--session-selected);
-}
-
 .session-codex-parity-v1 .session-permission-control {
   display: inline-flex;
   position: relative;
@@ -14689,15 +14281,6 @@
   white-space: normal;
 }
 
-.session-codex-parity-v1 .session-composer-model-dropdown .session-composer-dropdown-menu {
-  max-inline-size: min(420px, calc(100vw - 32px));
-}
-
-.session-codex-parity-v1 .session-composer-model-dropdown .session-composer-dropdown-menu > button {
-  overflow-wrap: anywhere;
-  white-space: normal;
-}
-
 .session-codex-parity-v1 .session-collaboration-mode {
   background: transparent !important;
   block-size: 32px;
@@ -14783,6 +14366,100 @@
   }
 
   .session-codex-parity-v1 .session-composer-model-dropdown .session-composer-dropdown-trigger {
+    max-inline-size: min(260px, 48vw);
+  }
+}
+
+/* ZEUS-0294：会话页只定义触发器布局，浮层、搜索、选项和滚动统一复用 ZeusSelect。 */
+.session-codex-parity-v1 .session-new-conversation-context-select.zeus-select,
+.session-codex-parity-v1 .session-composer-dropdown.zeus-select {
+  display: inline-grid;
+  inline-size: auto;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-select.zeus-select[data-zeus-primitive='select'][data-control-size='compact'] > .zeus-select-trigger {
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  box-shadow: none;
+  color: var(--session-text);
+  font-size: 13px;
+  font-weight: 400;
+  gap: 7px;
+  inline-size: auto;
+  max-inline-size: min(300px, 34vw);
+  min-block-size: 30px;
+  padding: 0 8px;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-select.zeus-select[data-zeus-primitive='select'][data-control-size='compact'] > .zeus-select-trigger:hover:not(:disabled),
+.session-codex-parity-v1 .session-new-conversation-context-select.zeus-select[data-zeus-primitive='select'][data-control-size='compact'][data-open='true'] > .zeus-select-trigger {
+  background: color-mix(in srgb, var(--session-selected) 72%, transparent);
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-select.zeus-select[data-zeus-primitive='select'][data-control-size='compact'] > .zeus-select-trigger:focus-visible {
+  border: 0;
+  box-shadow: 0 0 0 2px var(--session-focus-outline);
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-select .zeus-select-trigger-icon > svg {
+  block-size: 17px;
+  inline-size: 17px;
+}
+
+.session-codex-parity-v1 .session-composer-dropdown.zeus-select[data-zeus-primitive='select'][data-control-size='compact'] > .session-composer-dropdown-trigger {
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  box-shadow: none;
+  color: var(--session-text-muted);
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 400;
+  gap: 4px;
+  inline-size: auto;
+  max-inline-size: 180px;
+  min-block-size: 28px;
+  padding: 4px 6px 4px 7px;
+}
+
+.session-codex-parity-v1 .session-composer-dropdown.zeus-select[data-zeus-primitive='select'][data-control-size='compact'] > .session-composer-dropdown-trigger:hover:not(:disabled),
+.session-codex-parity-v1 .session-composer-dropdown.zeus-select[data-zeus-primitive='select'][data-control-size='compact'][data-open='true'] > .session-composer-dropdown-trigger {
+  background: var(--session-selected);
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .session-composer-dropdown > .session-composer-dropdown-trigger .zeus-select-value {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-composer-model-dropdown.zeus-select {
+  max-inline-size: min(420px, 46vw);
+}
+
+.session-codex-parity-v1 .session-composer-model-dropdown > .session-composer-dropdown-trigger {
+  max-inline-size: 100% !important;
+}
+
+.session-codex-parity-v1 .session-composer-dropdown[data-icon-only='true'] > .session-composer-dropdown-trigger .zeus-select-chevron {
+  display: none;
+}
+
+@media (max-width: 559px) {
+  .session-codex-parity-v1 .session-new-conversation-context-select.zeus-select {
+    inline-size: 100%;
+  }
+
+  .session-codex-parity-v1 .session-new-conversation-context-select.zeus-select[data-zeus-primitive='select'][data-control-size='compact'] > .zeus-select-trigger {
+    inline-size: 100%;
+    max-inline-size: none;
+  }
+
+  .session-codex-parity-v1 .session-composer-model-dropdown.zeus-select {
     max-inline-size: min(260px, 48vw);
   }
 }
