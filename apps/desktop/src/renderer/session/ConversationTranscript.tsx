@@ -360,11 +360,17 @@ function SessionCreationNotice(props: { status: SessionCreationStatus; language:
 
 function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: SessionUiLanguage; providerErrors?: readonly NativeSessionItemBuffer[] }) {
   const zh = props.language === 'zh-CN';
+  const warning = props.failure.code === 'ZEUS_PI_MODEL_REQUEST_FAILED';
   const copy = failureCopy(props.failure.category, zh);
   const providerDetails = (props.providerErrors ?? []).map(providerErrorDetails);
   return (
-    <article className="session-turn-failure" role="alert" aria-label={zh ? '会话失败原因' : 'Conversation failure reason'}>
-      <strong>{zh ? '本轮执行失败' : 'This turn failed'}</strong>
+    <article
+      className="session-turn-failure"
+      data-severity={warning ? 'warning' : 'error'}
+      role={warning ? 'status' : 'alert'}
+      aria-label={warning ? (zh ? '模型请求警告' : 'Model request warning') : zh ? '会话失败原因' : 'Conversation failure reason'}
+    >
+      <strong>{warning ? (zh ? '本轮请求未完成，会话可以继续' : 'This request did not complete; the conversation can continue') : zh ? '本轮执行失败' : 'This turn failed'}</strong>
       <p>{copy.reason}</p>
       <small>{copy.recovery}</small>
       <details className="session-turn-failure-details">

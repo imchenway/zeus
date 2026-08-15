@@ -4993,6 +4993,16 @@ function latestIso(...values: Array<string | null | undefined>): string {
   return values.filter((value): value is string => Boolean(value)).sort((left, right) => right.localeCompare(left))[0] ?? '';
 }
 
+function isPiModelRequestFailure(errorJson: string | null | undefined): boolean {
+  if (!errorJson) return false;
+  try {
+    const error = JSON.parse(errorJson) as unknown;
+    return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ZEUS_PI_MODEL_REQUEST_FAILED';
+  } catch {
+    return false;
+  }
+}
+
 /**
  * 从持久执行事实投影当前会话阶段。该投影不读取会话正文、配置或阅读状态，避免非阶段变化污染排序。
  */
@@ -5047,9 +5057,10 @@ function deriveConversationStageProjection(db: ZeusDatabase, conversationId: str
     return { stage: 'queued', evidenceAt: latestIso(queuedSubmission.created_at, latestTerminal?.completed_at, latestTerminal?.updated_at) };
   }
 
-  const latestTurn = db.get<{ status: string; completed_at: string | null; updated_at: string }>(`SELECT status, completed_at, updated_at FROM conversation_turns WHERE conversation_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1`, [
-    conversationId,
-  ]);
+  const latestTurn = db.get<{ status: string; error_json: string | null; completed_at: string | null; updated_at: string }>(
+    `SELECT status, error_json, completed_at, updated_at FROM conversation_turns WHERE conversation_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1`,
+    [conversationId],
+  );
   const latestSubmission = db.get<{ status: string; resolved_at: string | null; updated_at: string }>(
     `SELECT status, resolved_at, updated_at FROM conversation_submissions WHERE conversation_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1`,
     [conversationId],
@@ -5059,6 +5070,8 @@ function deriveConversationStageProjection(db: ZeusDatabase, conversationId: str
   if (conversation.provider_state === 'failed' || conversation.status === 'failed') return { stage: 'failed', evidenceAt: terminalEvidenceAt };
   if (conversation.provider_state === 'closed') return { stage: 'completed', evidenceAt: terminalEvidenceAt };
   if (conversation.transport_kind === 'legacy_cli') return { stage: 'completed', evidenceAt: conversation.created_at };
+  // Pi 供应商单轮请求失败只保留为历史结果，不终止仍处于 ready 的会话。
+  if (conversation.provider_state === 'ready' && latestTurn?.status === 'failed' && isPiModelRequestFailure(latestTurn.error_json)) return { stage: 'ready', evidenceAt: terminalEvidenceAt };
   if (latestTurn?.status === 'waiting') return { stage: 'waiting_approval', evidenceAt: terminalEvidenceAt };
   if (latestTurn?.status === 'failed' || latestSubmission?.status === 'failed') return { stage: 'failed', evidenceAt: terminalEvidenceAt };
   if (latestTurn?.status === 'paused' || latestTurn?.status === 'interrupted' || latestSubmission?.status === 'paused') return { stage: 'paused', evidenceAt: terminalEvidenceAt };

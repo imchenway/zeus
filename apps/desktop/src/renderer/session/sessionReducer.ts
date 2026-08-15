@@ -595,6 +595,7 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
       const turnId = stringValue(payload.turnId);
       if (!turnId) return base;
       const status = terminalStatus(stringValue(payload.status) ?? 'completed');
+      const warning = payload.severity === 'warning';
       const existingTurn = base.turnsByProviderId[turnId];
       const completedAt = stringValue(payload.completedAt) ?? existingTurn?.completedAt ?? event.createdAt;
       const turn: NativeTurnSnapshot = {
@@ -620,7 +621,7 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
       return {
         ...nextState,
         activeTurnId: null,
-        conversationState: status === 'failed' ? 'turn_failed' : 'native_idle',
+        conversationState: status === 'failed' && !warning ? 'turn_failed' : 'native_idle',
       };
     }
     case 'conversation.turn.plan.updated': {

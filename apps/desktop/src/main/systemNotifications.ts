@@ -100,6 +100,9 @@ export function buildSystemNotificationFromRealtimeEvent(event: ZeusRealtimeEven
   if (event.type === 'conversation.turn.completed') {
     if (payload.notificationEligible !== true) return null;
     const status = readString(payload.status);
+    if (status === 'failed' && payload.severity === 'warning') {
+      return conversationNotification(payload, 'Zeus 模型请求未完成', '本轮请求未完成，会话可以继续。');
+    }
     if (status === 'failed') return conversationNotification(payload, 'Zeus 会话失败', '本轮执行失败，请回到会话查看详情。');
     if (status === 'interrupted') return conversationNotification(payload, 'Zeus 会话已中断', '本轮执行已中断。');
     if (status === 'completed') return conversationNotification(payload, 'Zeus 会话已完成', '本轮执行已经完成。');
