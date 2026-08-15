@@ -188,7 +188,9 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
             data-conversation-runtime-state={runtimeState}
             onClick={() => props.onSelectConversation(conversation)}
           >
-            <strong title={displayTitle}>{displayTitle}</strong>
+            <span className="session-conversation-title" title={displayTitle}>
+              {displayTitle}
+            </span>
             <ConversationRowState conversation={conversation} runtimeState={runtimeState} language={props.language} />
           </button>
           {props.onArchiveConversation && !conversation.taskPushCreating ? (
