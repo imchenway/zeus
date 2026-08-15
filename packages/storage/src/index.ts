@@ -840,6 +840,9 @@ export interface CodexUsageLedgerRecord {
   model: string;
   serviceTier: string | null;
   usage: TokenUsageBreakdown;
+  providerBaseline: TokenUsageBreakdown | null;
+  providerTotal: TokenUsageBreakdown | null;
+  usageComplete: boolean;
   estimate: CodexUsageEstimate;
   occurredAt: string;
   createdAt: string;
@@ -856,12 +859,16 @@ export interface UpsertCodexUsageLedgerInput {
   model: string;
   serviceTier?: string | null;
   usage: TokenUsageBreakdown;
+  providerBaseline?: TokenUsageBreakdown | null;
+  providerTotal?: TokenUsageBreakdown | null;
+  usageComplete?: boolean;
   estimate: CodexUsageEstimate;
   occurredAt: string;
 }
 
 export interface ListCodexUsageLedgerInput {
   providerId?: string | null;
+  providerThreadId?: string | null;
   accountScopeId?: string | null;
   since?: string | null;
   projectId?: string | null;
@@ -2672,6 +2679,9 @@ function migrateCodexUsageLedgerSchema(db: ZeusDatabase): void {
       cache_write_input_tokens INTEGER NOT NULL,
       output_tokens INTEGER NOT NULL,
       reasoning_output_tokens INTEGER NOT NULL,
+      provider_baseline_json TEXT,
+      provider_total_json TEXT,
+      usage_complete INTEGER NOT NULL DEFAULT 0,
       estimate_json TEXT NOT NULL,
       occurred_at TEXT NOT NULL,
       created_at TEXT NOT NULL,
@@ -2683,6 +2693,61 @@ function migrateCodexUsageLedgerSchema(db: ZeusDatabase): void {
   db.execute(`CREATE INDEX IF NOT EXISTS idx_codex_usage_ledger_project_occurred ON codex_usage_ledger(project_id, occurred_at, id)`);
   db.execute(`CREATE INDEX IF NOT EXISTS idx_codex_usage_ledger_conversation_occurred ON codex_usage_ledger(conversation_id, occurred_at, id)`);
   db.execute(`CREATE INDEX IF NOT EXISTS idx_codex_usage_ledger_model_occurred ON codex_usage_ledger(model, occurred_at, id)`);
+  for (const statement of [
+    `ALTER TABLE codex_usage_ledger ADD COLUMN provider_baseline_json TEXT`,
+    `ALTER TABLE codex_usage_ledger ADD COLUMN provider_total_json TEXT`,
+    `ALTER TABLE codex_usage_ledger ADD COLUMN usage_complete INTEGER NOT NULL DEFAULT 0`,
+  ]) {
+    try {
+      db.execute(statement);
+    } catch {
+      // 新库已包含累计基线字段；旧库只补一次。
+    }
+  }
+  const cumulativeMigrationId = '20260815_0001_codex_usage_cumulative_baseline';
+  if (!db.get<{ migration_id: string }>(`SELECT migration_id FROM schema_migrations WHERE migration_id = ?`, [cumulativeMigrationId])) {
+    const latestRows = db.select<
+      DbCodexUsageLedgerRow & {
+        provider_token_usage_json: string;
+      }
+    >(
+      `SELECT l.*, c.provider_token_usage_json
+         FROM codex_usage_ledger l
+         JOIN conversations c ON c.id = l.conversation_id
+        WHERE l.id = (
+          SELECT candidate.id
+            FROM codex_usage_ledger candidate
+           WHERE candidate.provider_id = l.provider_id
+             AND candidate.provider_thread_id = l.provider_thread_id
+           ORDER BY candidate.occurred_at DESC, candidate.id DESC
+           LIMIT 1
+        )`,
+    );
+    for (const row of latestRows) {
+      try {
+        const snapshot = JSON.parse(row.provider_token_usage_json) as { total?: TokenUsageBreakdown };
+        if (!snapshot.total) continue;
+        validateTokenUsageBreakdown(snapshot.total);
+        const legacyUsage: TokenUsageBreakdown = {
+          totalTokens: row.total_tokens,
+          inputTokens: row.input_tokens,
+          cachedInputTokens: row.cached_input_tokens,
+          cacheWriteInputTokens: row.cache_write_input_tokens,
+          outputTokens: row.output_tokens,
+          reasoningOutputTokens: row.reasoning_output_tokens,
+        };
+        const baseline = subtractTokenUsageBreakdown(snapshot.total, legacyUsage);
+        db.execute(`UPDATE codex_usage_ledger SET provider_baseline_json = ?, provider_total_json = ?, usage_complete = 0 WHERE id = ?`, [JSON.stringify(baseline), JSON.stringify(snapshot.total), row.id]);
+      } catch {
+        // 历史快照不可解析时保持未知，后续事件按保守兼容路径建立基线。
+      }
+    }
+    recordSchemaMigration(db, {
+      migrationId: cumulativeMigrationId,
+      description: '为 Codex 逐轮用量增加会话累计基线，避免把最后一次模型调用冒充整轮用量',
+      checksumSource: 'codex_usage_ledger:provider_baseline_json,provider_total_json,usage_complete:cumulative-baseline',
+    });
+  }
   recordSchemaMigration(db, {
     migrationId: '20260810_0001_codex_usage_ledger',
     description: '增加与项目、会话生命周期独立的 Codex 逐轮用量账本',
@@ -6157,6 +6222,8 @@ export class CodexUsageLedgerRepository {
 
   upsert(input: UpsertCodexUsageLedgerInput): CodexUsageLedgerRecord {
     validateTokenUsageBreakdown(input.usage);
+    if (input.providerBaseline) validateTokenUsageBreakdown(input.providerBaseline);
+    if (input.providerTotal) validateTokenUsageBreakdown(input.providerTotal);
     validateCodexUsageEstimate(input.estimate);
     if (![input.providerId, input.accountScopeId, input.projectId, input.conversationId, input.providerThreadId, input.providerTurnId, input.model].every((value) => value.trim())) {
       throw new Error('Usage ledger identity is incomplete');
@@ -6169,8 +6236,8 @@ export class CodexUsageLedgerRepository {
       `INSERT INTO codex_usage_ledger
          (id, provider_id, account_scope_id, project_id, conversation_id, provider_thread_id, provider_turn_id, model, service_tier,
           total_tokens, input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, reasoning_output_tokens,
-          estimate_json, occurred_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          provider_baseline_json, provider_total_json, usage_complete, estimate_json, occurred_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(provider_id, provider_thread_id, provider_turn_id) DO UPDATE SET
          account_scope_id = excluded.account_scope_id,
          project_id = excluded.project_id,
@@ -6183,6 +6250,9 @@ export class CodexUsageLedgerRepository {
          cache_write_input_tokens = excluded.cache_write_input_tokens,
          output_tokens = excluded.output_tokens,
          reasoning_output_tokens = excluded.reasoning_output_tokens,
+         provider_baseline_json = excluded.provider_baseline_json,
+         provider_total_json = excluded.provider_total_json,
+         usage_complete = excluded.usage_complete,
          estimate_json = excluded.estimate_json,
          occurred_at = excluded.occurred_at,
          updated_at = excluded.updated_at`,
@@ -6202,6 +6272,9 @@ export class CodexUsageLedgerRepository {
         input.usage.cacheWriteInputTokens,
         input.usage.outputTokens,
         input.usage.reasoningOutputTokens,
+        input.providerBaseline ? JSON.stringify(input.providerBaseline) : null,
+        input.providerTotal ? JSON.stringify(input.providerTotal) : null,
+        input.usageComplete === true ? 1 : 0,
         JSON.stringify(input.estimate),
         input.occurredAt,
         createdAt,
@@ -6222,6 +6295,10 @@ export class CodexUsageLedgerRepository {
     if (input.providerId) {
       clauses.push('provider_id = ?');
       values.push(input.providerId);
+    }
+    if (input.providerThreadId) {
+      clauses.push('provider_thread_id = ?');
+      values.push(input.providerThreadId);
     }
     if (input.accountScopeId) {
       clauses.push('account_scope_id = ?');
@@ -7660,6 +7737,9 @@ interface DbCodexUsageLedgerRow {
   cache_write_input_tokens: number;
   output_tokens: number;
   reasoning_output_tokens: number;
+  provider_baseline_json: string | null;
+  provider_total_json: string | null;
+  usage_complete: number;
   estimate_json: string;
   occurred_at: string;
   created_at: string;
@@ -8200,10 +8280,31 @@ function mapCodexUsageLedgerRow(row: DbCodexUsageLedgerRow): CodexUsageLedgerRec
       outputTokens: row.output_tokens,
       reasoningOutputTokens: row.reasoning_output_tokens,
     },
+    providerBaseline: parseStoredTokenUsageBreakdown(row.provider_baseline_json),
+    providerTotal: parseStoredTokenUsageBreakdown(row.provider_total_json),
+    usageComplete: row.usage_complete === 1,
     estimate,
     occurredAt: row.occurred_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function parseStoredTokenUsageBreakdown(value: string | null): TokenUsageBreakdown | null {
+  if (!value) return null;
+  const parsed = JSON.parse(value) as TokenUsageBreakdown;
+  validateTokenUsageBreakdown(parsed);
+  return parsed;
+}
+
+function subtractTokenUsageBreakdown(total: TokenUsageBreakdown, baseline: TokenUsageBreakdown): TokenUsageBreakdown {
+  return {
+    totalTokens: Math.max(0, total.totalTokens - baseline.totalTokens),
+    inputTokens: Math.max(0, total.inputTokens - baseline.inputTokens),
+    cachedInputTokens: Math.max(0, total.cachedInputTokens - baseline.cachedInputTokens),
+    cacheWriteInputTokens: Math.max(0, total.cacheWriteInputTokens - baseline.cacheWriteInputTokens),
+    outputTokens: Math.max(0, total.outputTokens - baseline.outputTokens),
+    reasoningOutputTokens: Math.max(0, total.reasoningOutputTokens - baseline.reasoningOutputTokens),
   };
 }
 

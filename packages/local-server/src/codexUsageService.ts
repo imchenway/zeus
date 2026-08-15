@@ -136,7 +136,18 @@ export function createCodexUsageService(options: CreateCodexUsageServiceOptions)
     validateBreakdown(input.total);
     validateBreakdown(input.last);
     const existing = options.ledger.findByProviderTurn('codex', input.providerThreadId, input.providerTurnId);
-    const estimate = existing ? estimateCodexUsageWithRateSnapshot(input.last, existing.estimate.rateSnapshot) : estimateCodexUsage({ model: input.model, serviceTier: input.serviceTier, usage: input.last });
+    const threadRows = options.ledger.list({ providerId: 'codex', providerThreadId: input.providerThreadId });
+    const priorProviderTotal = threadRows
+      .filter((row) => row.providerTurnId !== input.providerTurnId && row.providerTotal && row.providerTotal.totalTokens <= input.total.totalTokens)
+      .sort((left, right) => (right.providerTotal?.totalTokens ?? 0) - (left.providerTotal?.totalTokens ?? 0))[0]?.providerTotal;
+    const previousSnapshot = options.conversations.getProviderTokenUsageSnapshot(input.conversationId);
+    const previousSnapshotTotal = previousSnapshot?.total && previousSnapshot.total.totalTokens < input.total.totalTokens ? previousSnapshot.total : null;
+    const legacyRowsExist = threadRows.some((row) => row.providerTurnId !== input.providerTurnId && !row.providerTotal);
+    const providerBaseline =
+      existing?.providerBaseline ?? priorProviderTotal ?? previousSnapshotTotal ?? (existing ? subtractBreakdowns(input.total, existing.usage) : legacyRowsExist ? subtractBreakdowns(input.total, input.last) : emptyTokenUsageBreakdown());
+    const usage = subtractBreakdowns(input.total, providerBaseline);
+    const usageComplete = existing?.providerBaseline ? existing.usageComplete : Boolean(priorProviderTotal || previousSnapshotTotal || (!existing && !legacyRowsExist));
+    const estimate = existing ? estimateCodexUsageWithRateSnapshot(usage, existing.estimate.rateSnapshot) : estimateCodexUsage({ model: input.model, serviceTier: input.serviceTier, usage });
     let accountScopeId = 'codex-local';
     try {
       accountScopeId = (await readAccount()).accountScopeId;
@@ -152,7 +163,10 @@ export function createCodexUsageService(options: CreateCodexUsageServiceOptions)
       providerTurnId: input.providerTurnId,
       model: input.model,
       serviceTier: input.serviceTier,
-      usage: input.last,
+      usage,
+      providerBaseline,
+      providerTotal: input.total,
+      usageComplete,
       estimate,
       occurredAt: input.occurredAt,
     });
@@ -340,6 +354,17 @@ function sumBreakdowns(values: readonly TokenUsageBreakdown[]): TokenUsageBreakd
     total.reasoningOutputTokens += value.reasoningOutputTokens;
     return total;
   }, emptyTokenUsageBreakdown());
+}
+
+function subtractBreakdowns(total: TokenUsageBreakdown, baseline: TokenUsageBreakdown): TokenUsageBreakdown {
+  return {
+    totalTokens: Math.max(0, total.totalTokens - baseline.totalTokens),
+    inputTokens: Math.max(0, total.inputTokens - baseline.inputTokens),
+    cachedInputTokens: Math.max(0, total.cachedInputTokens - baseline.cachedInputTokens),
+    cacheWriteInputTokens: Math.max(0, total.cacheWriteInputTokens - baseline.cacheWriteInputTokens),
+    outputTokens: Math.max(0, total.outputTokens - baseline.outputTokens),
+    reasoningOutputTokens: Math.max(0, total.reasoningOutputTokens - baseline.reasoningOutputTokens),
+  };
 }
 
 function groupRows(rows: readonly CodexUsageLedgerRecord[], key: (row: CodexUsageLedgerRecord) => string): Array<[string, CodexUsageLedgerRecord[]]> {
