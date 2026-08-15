@@ -8,6 +8,7 @@ import type { ZeusConversationItemRecord, ZeusConversationResourceRecord } from 
 interface ResourceCandidateBase {
   sourceIndex: number;
   presentation: ConversationResourcePresentation;
+  delivery?: 'assistant';
   displayName: string;
 }
 
@@ -82,13 +83,13 @@ export function normalizeConversationResources(input: NormalizeConversationResou
   const candidates: ResourceCandidate[] = [];
   let sourceIndex = 0;
 
-  const generatedImage = normalizeGeneratedImageResource({
+  const generatedImages = normalizeGeneratedImageResources({
     sourceIndex,
     item: input.item,
     payload: input.payload,
     generatedImageRoot: input.generatedImageRoot,
   });
-  if (generatedImage) {
+  for (const generatedImage of generatedImages) {
     candidates.push(generatedImage);
     sourceIndex += 1;
   }
@@ -141,12 +142,28 @@ export function normalizeConversationResources(input: NormalizeConversationResou
   }
 
   if (candidates.length < maximumResourcesPerItem) {
+    const presentation = isRecord(input.payload.presentation) ? input.payload.presentation : {};
+    for (const resource of [...recordArray(input.payload.deliverables), ...recordArray(presentation.deliverables)]) {
+      const candidate = normalizeStructuredResource({
+        sourceIndex: sourceIndex++,
+        value: resource,
+        projectRoot: input.projectRoot,
+        trustedAttachmentRoots: input.trustedAttachmentRoots,
+        assistantDelivery: true,
+      });
+      if (candidate) candidates.push(candidate);
+      if (candidates.length >= maximumResourcesPerItem) break;
+    }
+  }
+
+  if (candidates.length < maximumResourcesPerItem) {
     for (const resource of recordArray(input.payload.resources ?? input.payload.artifacts)) {
       const candidate = normalizeStructuredResource({
         sourceIndex: sourceIndex++,
         value: resource,
         projectRoot: input.projectRoot,
         trustedAttachmentRoots: input.trustedAttachmentRoots,
+        assistantDelivery: resource.delivery === 'assistant' || resource.presentation === 'deliverable',
       });
       if (candidate) candidates.push(candidate);
       if (candidates.length >= maximumResourcesPerItem) break;
@@ -172,11 +189,9 @@ export function normalizeConversationResources(input: NormalizeConversationResou
   });
 }
 
-/**
- * 图片生成负载只保留会话恢复与状态展示所需的元数据，避免 base64 结果进入数据库或 Renderer。
- */
+/** 图片和音频二进制只保留会话恢复所需的元数据，避免 base64 进入数据库或 Renderer。 */
 export function sanitizeConversationItemPayload(payload: Record<string, unknown>): Record<string, unknown> {
-  if (payload.type !== 'imageGeneration') return payload;
+  if (payload.type !== 'imageGeneration') return sanitizeRichPayloadValue(payload) as Record<string, unknown>;
   const allowedKeys = [
     'type',
     'id',
@@ -199,16 +214,56 @@ export function sanitizeConversationItemPayload(payload: Record<string, unknown>
   return Object.fromEntries(allowedKeys.flatMap((key) => (Object.prototype.hasOwnProperty.call(payload, key) ? [[key, payload[key]]] : [])));
 }
 
-function normalizeGeneratedImageResource(input: { sourceIndex: number; item: ZeusConversationItemRecord; payload: Record<string, unknown>; generatedImageRoot?: string }): AttachmentResourceCandidate | null {
-  if (input.item.itemType !== 'imageGeneration' && input.payload.type !== 'imageGeneration') return null;
-  if (input.item.status !== 'completed' || !input.generatedImageRoot || !input.item.providerThreadId) return null;
-  const savedPath = stringValue(input.payload.savedPath ?? input.payload.saved_path);
-  if (!savedPath || !isAbsolute(savedPath)) return null;
+function sanitizeRichPayloadValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sanitizeRichPayloadValue);
+  if (!isRecord(value)) return value;
+  const type = stringValue(value.type)?.toLocaleLowerCase();
+  if (type && ['input_image', 'image', 'input_audio', 'audio'].includes(type)) {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => !['data', 'image_url', 'imageUrl', 'audio_url', 'audioUrl'].includes(key))
+        .map(([key, entry]) => [key, sanitizeRichPayloadValue(entry)]),
+    );
+  }
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, sanitizeRichPayloadValue(entry)]));
+}
+
+function normalizeGeneratedImageResources(input: { sourceIndex: number; item: ZeusConversationItemRecord; payload: Record<string, unknown>; generatedImageRoot?: string }): AttachmentResourceCandidate[] {
+  const generatedImageRoot = input.generatedImageRoot;
+  if (input.item.status !== 'completed' || !generatedImageRoot || !input.item.providerThreadId) return [];
+  const savedPaths: string[] = [];
+  if (input.item.itemType === 'imageGeneration' || input.payload.type === 'imageGeneration') {
+    const savedPath = stringValue(input.payload.savedPath ?? input.payload.saved_path);
+    if (savedPath) savedPaths.push(savedPath);
+  }
+
+  const outputBlocks = richOutputBlocks(input.payload);
+  const hasRenderedImage = outputBlocks.some((block) => ['input_image', 'image'].includes(stringValue(block.type)?.toLocaleLowerCase() ?? ''));
+  if (hasRenderedImage) {
+    const outputText = [stringValue(input.payload.outputHint ?? input.payload.output_hint), ...outputBlocks.map((block) => stringValue(block.text))].filter((value): value is string => Boolean(value)).join('\n');
+    for (const match of outputText.matchAll(/Generated images are saved to [^\r\n]+ as (.+?) by default\./gu)) {
+      const savedPath = match[1]?.trim();
+      if (savedPath) savedPaths.push(savedPath);
+    }
+  }
+
+  return [...new Set(savedPaths)].flatMap((savedPath, index) => {
+    const candidate = normalizeGeneratedImagePath({ item: input.item, generatedImageRoot, sourceIndex: input.sourceIndex + index, savedPath });
+    return candidate ? [candidate] : [];
+  });
+}
+
+function richOutputBlocks(payload: Record<string, unknown>): Record<string, unknown>[] {
+  return [payload.output, payload.result, payload.content].flatMap((value) => (Array.isArray(value) ? value.filter(isRecord) : isRecord(value) ? [value] : []));
+}
+
+function normalizeGeneratedImagePath(input: { sourceIndex: number; item: ZeusConversationItemRecord; generatedImageRoot: string; savedPath: string }): AttachmentResourceCandidate | null {
+  if (!isAbsolute(input.savedPath)) return null;
 
   const generatedImageRoot = resolve(input.generatedImageRoot);
   const sessionRoot = resolve(generatedImageRoot, input.item.providerThreadId);
   if (!isInsideRoot(sessionRoot, generatedImageRoot) || sessionRoot === generatedImageRoot) return null;
-  const resolved = resolveAuthorizedPath(savedPath, [sessionRoot]);
+  const resolved = resolveAuthorizedPath(input.savedPath, [sessionRoot]);
   if (!resolved) return null;
 
   let regularFile = false;
@@ -224,6 +279,7 @@ function normalizeGeneratedImageResource(input: { sourceIndex: number; item: Zeu
     kind: 'attachment',
     sourceIndex: input.sourceIndex,
     presentation: 'card',
+    delivery: 'assistant',
     displayName,
     absolutePath: resolved.absolutePath,
     allowedRoot: resolved.allowedRoot,
@@ -287,6 +343,7 @@ export function toConversationResource(record: ZeusConversationResourceRecord): 
     itemId: record.itemId,
     kind: record.kind,
     presentation: record.presentation,
+    ...(display.delivery === 'assistant' ? { delivery: 'assistant' as const } : {}),
     displayName: stringValue(display.displayName) ?? 'Resource',
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
@@ -513,7 +570,7 @@ function resolveExactAttachmentGrant(rawPath: string, authorizedPath: string | n
   return { absolutePath: absoluteRealPath, allowedRoot: dirname(absoluteRealPath) };
 }
 
-function normalizeStructuredResource(input: { sourceIndex: number; value: Record<string, unknown>; projectRoot: string; trustedAttachmentRoots: readonly string[] }): ResourceCandidate | null {
+function normalizeStructuredResource(input: { sourceIndex: number; value: Record<string, unknown>; projectRoot: string; trustedAttachmentRoots: readonly string[]; assistantDelivery?: boolean }): ResourceCandidate | null {
   const url = stringValue(input.value.url ?? input.value.href);
   if (url) {
     const website = normalizeWebsiteUrl(url);
@@ -523,6 +580,7 @@ function normalizeStructuredResource(input: { sourceIndex: number; value: Record
         kind: 'website',
         sourceIndex: input.sourceIndex,
         presentation: 'card',
+        ...(input.assistantDelivery ? { delivery: 'assistant' as const } : {}),
         displayName: title ?? website.domain,
         ...(title ? { title } : {}),
         ...website,
@@ -538,6 +596,7 @@ function normalizeStructuredResource(input: { sourceIndex: number; value: Record
       kind: 'attachment',
       sourceIndex: input.sourceIndex,
       presentation: 'card',
+      ...(input.assistantDelivery ? { delivery: 'assistant' as const } : {}),
       displayName: stringValue(input.value.title ?? input.value.name) ?? basename(resolvedAttachment.absolutePath),
       absolutePath: resolvedAttachment.absolutePath,
       allowedRoot: resolvedAttachment.allowedRoot,
@@ -553,6 +612,7 @@ function normalizeStructuredResource(input: { sourceIndex: number; value: Record
     kind: 'file',
     sourceIndex: input.sourceIndex,
     presentation: 'card',
+    ...(input.assistantDelivery ? { delivery: 'assistant' as const } : {}),
     displayName: stringValue(input.value.title ?? input.value.name) ?? basename(parsedFile.absolutePath),
     absolutePath: parsedFile.absolutePath,
     projectRelativePath: parsedFile.projectRelativePath,
@@ -694,8 +754,10 @@ function markdownLinks(text: string): Array<{ label: string; href: string }> {
 }
 
 function displayForCandidate(candidate: ResourceCandidate): Record<string, unknown> {
+  const delivery = candidate.delivery === 'assistant' ? { delivery: candidate.delivery } : {};
   if (candidate.kind === 'file') {
     return {
+      ...delivery,
       displayName: candidate.displayName,
       projectRelativePath: candidate.projectRelativePath,
       iconKind: candidate.iconKind,
@@ -705,6 +767,7 @@ function displayForCandidate(candidate: ResourceCandidate): Record<string, unkno
   }
   if (candidate.kind === 'website') {
     return {
+      ...delivery,
       displayName: candidate.displayName,
       domain: candidate.domain,
       local: candidate.local,
@@ -712,6 +775,7 @@ function displayForCandidate(candidate: ResourceCandidate): Record<string, unkno
     };
   }
   return {
+    ...delivery,
     displayName: candidate.displayName,
     attachmentRef: candidate.attachmentRef,
     previewKind: candidate.previewKind,

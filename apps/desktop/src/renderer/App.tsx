@@ -235,9 +235,14 @@ import {
   type SecuritySecretsSnapshot,
   type SendConversationMessageResult,
   type TaskAgentRunStatus,
+  type TaskBoardMoveRequest,
+  type TaskBoardOpenMode,
+  type TaskBoardViewSettings,
+  type TaskBoardViewSnapshot,
   type TaskEventRecord,
   type TaskManagementStatus,
   type TaskPriority,
+  type TaskPageViewMode,
   type TaskRecord,
   type TaskStatus,
   type TaskStatusFilter,
@@ -390,6 +395,9 @@ type NativeConversationAppClient = SessionControllerClient &
     | 'saveProjectModelSelection'
     | 'loadProjectWorkspaceConfig'
     | 'saveProjectWorkspaceConfig'
+    | 'loadTaskBoard'
+    | 'updateTaskBoard'
+    | 'moveTaskBoardTask'
     | 'loadProjectGitWorkbench'
     | 'loadProjectGitCommit'
     | 'executeProjectGitAction'
@@ -709,6 +717,7 @@ type AppShellSettingsSavePayload = Pick<
   | 'taskManagementStatusByProject'
   | 'taskStatusFilterByProject'
   | 'taskViewModeByProject'
+  | 'taskPageViewByProject'
   | 'taskExpandedIdsByProject'
   | 'codeWorkspaceByProject'
 > & { taskManagementStatusReplacements?: Record<string, Record<string, string>> };
@@ -5157,6 +5166,11 @@ function normalizeTaskViewModeByProject(value: unknown): Record<string, TaskWork
   return Object.fromEntries(Object.entries(value).filter(([projectId, mode]) => Boolean(projectId.trim()) && (mode === 'hierarchy' || mode === 'flat'))) as Record<string, TaskWorkspaceViewMode>;
 }
 
+function normalizeTaskPageViewByProject(value: unknown): Record<string, TaskPageViewMode> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).filter(([projectId, mode]) => Boolean(projectId.trim()) && (mode === 'list' || mode === 'board'))) as Record<string, TaskPageViewMode>;
+}
+
 function normalizeTaskExpandedIdsByProject(value: unknown): Record<string, string[]> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return Object.fromEntries(
@@ -5242,6 +5256,7 @@ function normalizeRendererAppShellSettings(settings: AppShellSettings): AppShell
     taskManagementStatusByProject,
     taskStatusFilterByProject: normalizeTaskStatusFilterByProject(settings.taskStatusFilterByProject),
     taskViewModeByProject: normalizeTaskViewModeByProject(settings.taskViewModeByProject),
+    taskPageViewByProject: normalizeTaskPageViewByProject(settings.taskPageViewByProject),
     taskExpandedIdsByProject: normalizeTaskExpandedIdsByProject(settings.taskExpandedIdsByProject),
     codeWorkspaceByProject: normalizeCodeWorkspaceByProject(settings.codeWorkspaceByProject),
   };
@@ -5283,6 +5298,7 @@ export function toAppShellSettingsSavePayload(settings: AppShellSettings, taskMa
     ...(taskManagementStatusReplacements && Object.keys(taskManagementStatusReplacements).length > 0 ? { taskManagementStatusReplacements } : {}),
     taskStatusFilterByProject,
     taskViewModeByProject: normalizeTaskViewModeByProject(settings.taskViewModeByProject),
+    taskPageViewByProject: normalizeTaskPageViewByProject(settings.taskPageViewByProject),
     taskExpandedIdsByProject: normalizeTaskExpandedIdsByProject(settings.taskExpandedIdsByProject),
     codeWorkspaceByProject: normalizeCodeWorkspaceByProject(settings.codeWorkspaceByProject),
   };
@@ -5319,6 +5335,7 @@ export function resolveTaskTableColumnsSaveResponse(input: { currentSettings: Ap
     taskTableEnumSortOrders: savedSettings.taskTableEnumSortOrders,
     taskStatusFilterByProject: currentSettings.taskStatusFilterByProject,
     taskViewModeByProject: currentSettings.taskViewModeByProject,
+    taskPageViewByProject: currentSettings.taskPageViewByProject,
     taskExpandedIdsByProject: currentSettings.taskExpandedIdsByProject,
     codeWorkspaceByProject: currentSettings.codeWorkspaceByProject,
     sidebarConversationOrganization: currentSettings.sidebarConversationOrganization,
@@ -5337,6 +5354,7 @@ export function mergeAppShellSettingsSaveResponse(input: { currentSettings: AppS
     taskTableEnumSortOrders: currentSettings.taskTableEnumSortOrders,
     taskStatusFilterByProject: currentSettings.taskStatusFilterByProject,
     taskViewModeByProject: currentSettings.taskViewModeByProject,
+    taskPageViewByProject: currentSettings.taskPageViewByProject,
     taskExpandedIdsByProject: currentSettings.taskExpandedIdsByProject,
     codeWorkspaceByProject: currentSettings.codeWorkspaceByProject,
     sidebarConversationOrganization: currentSettings.sidebarConversationOrganization,
@@ -7020,6 +7038,27 @@ export function App(props: {
   const [projectDetail, setProjectDetail] = useState<ProjectRecord | undefined>(() => props.snapshot?.projects[0]);
   const [taskDetail, setTaskDetail] = useState<TaskRecord | undefined>(() => props.snapshot?.tasks[0]);
   const [taskDetailPaneTaskId, setTaskDetailPaneTaskId] = useState<string | undefined>();
+  const [taskDetailPresentation, setTaskDetailPresentation] = useState<TaskBoardOpenMode>('side_peek');
+  const [taskBoardSnapshots, setTaskBoardSnapshots] = useState<Record<string, TaskBoardViewSnapshot>>({});
+  const [taskBoardLoadState, setTaskBoardLoadState] = useState<Record<string, { loading: boolean; error: string | null }>>({});
+  const loadTaskBoard = useCallback(
+    async (projectId: string): Promise<TaskBoardViewSnapshot | null> => {
+      const client = props.nativeConversationClient;
+      if (!client) return null;
+      setTaskBoardLoadState((current) => ({ ...current, [projectId]: { loading: true, error: null } }));
+      try {
+        const board = await client.loadTaskBoard(projectId);
+        setTaskBoardSnapshots((current) => ({ ...current, [projectId]: board }));
+        setTaskBoardLoadState((current) => ({ ...current, [projectId]: { loading: false, error: null } }));
+        return board;
+      } catch (error) {
+        const message = errorToLocalUiMessage(error);
+        setTaskBoardLoadState((current) => ({ ...current, [projectId]: { loading: false, error: message } }));
+        return null;
+      }
+    },
+    [props.nativeConversationClient],
+  );
   const [projectCreateDialogOpen, setProjectCreateDialogOpen] = useState(false);
   const [projectCreateForm, setProjectCreateForm] = useState<ProjectCreateFormState>({ name: '', localPath: '' });
   const [projectCreateError, setProjectCreateError] = useState<string | undefined>();
@@ -7122,6 +7161,7 @@ export function App(props: {
         taskManagementStatusByProject: {},
         taskStatusFilterByProject: {},
         taskViewModeByProject: {},
+        taskPageViewByProject: {},
         taskExpandedIdsByProject: {},
         codeWorkspaceByProject: {},
         localLogDirectory: 'Zeus/logs',
@@ -7523,6 +7563,7 @@ export function App(props: {
   const selectedProject = projectDetail ?? firstProject;
   const activeProjectId = selectedProject?.id ?? firstProjectId;
   const taskStatusFilter = resolveTaskStatusFilterForProject(appShellSettings, activeProjectId);
+  const taskPageViewMode: TaskPageViewMode = activeProjectId ? (appShellSettings.taskPageViewByProject?.[activeProjectId] ?? 'list') : 'list';
   const taskViewMode: TaskWorkspaceViewMode = activeProjectId ? (appShellSettings.taskViewModeByProject?.[activeProjectId] ?? 'hierarchy') : 'hierarchy';
   const expandedTaskIds = activeProjectId ? (appShellSettings.taskExpandedIdsByProject?.[activeProjectId] ?? []) : [];
   const persistedTaskTableColumns = useMemo(() => resolveTaskTableColumnsForProject(appShellSettings, activeProjectId), [activeProjectId, appShellSettings.taskTableColumns, appShellSettings.taskTableColumnsByProject]);
@@ -7542,6 +7583,10 @@ export function App(props: {
   const pendingTaskTableLayoutLeaveRef = useRef<(() => void) | null>(null);
   const pendingTaskTableLayoutLeaveCancelRef = useRef<(() => void) | null>(null);
   const saveTaskTableLayoutThenLeaveRef = useRef(false);
+  useEffect(() => {
+    if (!activeProjectId || taskPageViewMode !== 'board' || taskBoardSnapshots[activeProjectId] || taskBoardLoadState[activeProjectId]?.loading) return;
+    void loadTaskBoard(activeProjectId);
+  }, [activeProjectId, loadTaskBoard, taskBoardLoadState, taskBoardSnapshots, taskPageViewMode]);
   useEffect(() => {
     if (taskTableLayoutDraft.projectId === activeProjectId) return;
     setTaskTableLayoutDraft({ projectId: activeProjectId, preferences: persistedTaskTableColumns });
@@ -8320,6 +8365,9 @@ export function App(props: {
           setTaskGitDeliveryRevision((current) => current + 1);
           taskGitDeliveryChangedRef.current(event.payload.taskId);
         }
+        if (event.type === 'task.board.updated' && typeof event.payload.projectId === 'string') {
+          void loadTaskBoard(event.payload.projectId);
+        }
         if (event.type === 'task.updated' && typeof event.payload.taskId === 'string' && props.onLoadTask) {
           const taskId = event.payload.taskId;
           if (typeof event.payload.managementStatus === 'string') {
@@ -8380,6 +8428,7 @@ export function App(props: {
       if (unsubscribe) unsubscribe();
     };
   }, [
+    loadTaskBoard,
     mergeTaskRecord,
     nativeConversationChoiceLoadCoordinator,
     nativeProjectConversationChoiceLoadCoordinator,
@@ -8566,8 +8615,9 @@ export function App(props: {
     }
   }
 
-  async function openTaskDetailPane(taskId: string): Promise<void> {
-    // 点击任务行从右侧打开悬浮详情抽屉；透明点击层保留列表原貌，并让用户点击抽屉外空白处立即关闭。
+  async function openTaskDetailPane(taskId: string, presentation: TaskBoardOpenMode = 'side_peek'): Promise<void> {
+    // 任务详情只有真正打开时才建立选中态；看板可在右侧抽屉、居中预览和工作区全页之间选择。
+    setTaskDetailPresentation(presentation);
     setTaskDetailPaneTaskId(taskId);
     const pending: Promise<void>[] = [loadTaskDetail(taskId)];
     if (props.onLoadTaskEvents) {
@@ -11318,6 +11368,70 @@ export function App(props: {
     }
   }
 
+  async function saveTaskPageViewMode(pageViewMode: TaskPageViewMode): Promise<void> {
+    if (!activeProjectId || pageViewMode === taskPageViewMode) return;
+    const nextSettings = normalizeRendererAppShellSettings({
+      ...appShellSettings,
+      taskPageViewByProject: {
+        ...(appShellSettings.taskPageViewByProject ?? {}),
+        [activeProjectId]: pageViewMode,
+      },
+    });
+    setAppShellSettings(nextSettings);
+    if (pageViewMode === 'board' && !taskBoardSnapshots[activeProjectId]) void loadTaskBoard(activeProjectId);
+    if (!props.onSaveAppShellSettings) return;
+    try {
+      const savedSettings = await props.onSaveAppShellSettings(toAppShellSettingsSavePayload(nextSettings, taskManagementStatusReplacements));
+      setAppShellSettings((currentSettings) => mergeAppShellSettingsSaveResponse({ currentSettings, savedSettings }));
+    } catch (error) {
+      recordLocalError('task-page-view-preference-save', error);
+    }
+  }
+
+  async function updateTaskBoardSettings(settings: Partial<TaskBoardViewSettings>): Promise<TaskBoardViewSnapshot> {
+    if (!activeProjectId || !props.nativeConversationClient) throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '看板设置能力不可用。' : 'Board settings are unavailable.');
+    const projectId = activeProjectId;
+    const currentBoard = taskBoardSnapshots[projectId] ?? (await loadTaskBoard(projectId));
+    if (!currentBoard) throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '无法载入看板配置。' : 'Unable to load board settings.');
+    try {
+      const board = await props.nativeConversationClient.updateTaskBoard(projectId, currentBoard.revision, settings);
+      setTaskBoardSnapshots((current) => ({ ...current, [projectId]: board }));
+      return board;
+    } catch (error) {
+      if (error instanceof ZeusApiError && error.status === 409) await loadTaskBoard(projectId);
+      throw error;
+    }
+  }
+
+  async function moveTaskBoardTask(input: TaskBoardMoveRequest): Promise<{ task: TaskRecord; board: TaskBoardViewSnapshot }> {
+    if (!activeProjectId || !props.nativeConversationClient) throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '看板移动能力不可用。' : 'Board move is unavailable.');
+    const projectId = activeProjectId;
+    try {
+      let result: { task: TaskRecord; board: TaskBoardViewSnapshot };
+      try {
+        result = await props.nativeConversationClient.moveTaskBoardTask(projectId, input);
+      } catch (error) {
+        if (!(error instanceof ZeusApiError && error.error === 'ZEUS_TASK_WORKTREE_CLEANUP_CONFIRMATION_REQUIRED')) throw error;
+        const boardSettings = taskBoardSnapshots[projectId]?.settings;
+        const statusId = boardSettings?.groupBy === 'managementStatus' ? input.target.groupId : boardSettings?.subgroupBy === 'managementStatus' ? input.target.subgroupId : null;
+        const statusLabel = statusId ? formatConfiguredTaskManagementStatus(statusId, activeTaskManagementStatusConfig, appShellSettings.appLanguage) : appShellSettings.appLanguage === 'zh-CN' ? '终态' : 'terminal status';
+        const confirmed = await requestTaskTerminalCleanupConfirmation(statusLabel);
+        if (!confirmed) throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '已取消移动。' : 'Move cancelled.');
+        result = await props.nativeConversationClient.moveTaskBoardTask(projectId, { ...input, confirmWorktreeCleanup: true });
+      }
+      setTaskBoardSnapshots((current) => ({ ...current, [projectId]: result.board }));
+      mergeTaskRecord(result.task);
+      recordTaskMutationVersion(input.taskId, input.expectedTaskUpdatedAt, result.task.updatedAt);
+      refreshOpenTaskEvents(input.taskId);
+      return result;
+    } catch (error) {
+      if (error instanceof ZeusApiError && error.status === 409) {
+        await Promise.all([loadTaskBoard(projectId), props.onLoadTask ? props.onLoadTask(input.taskId).then(mergeTaskRecord) : Promise.resolve()]);
+      }
+      throw error;
+    }
+  }
+
   async function saveTaskViewPreferences(input: { viewMode?: TaskWorkspaceViewMode; expandedTaskIds?: string[] }): Promise<void> {
     if (!activeProjectId) return;
     const nextSettings = normalizeRendererAppShellSettings({
@@ -11367,6 +11481,7 @@ export function App(props: {
         ...savedSettings,
         taskStatusFilterByProject: currentSettings.taskStatusFilterByProject,
         taskViewModeByProject: currentSettings.taskViewModeByProject,
+        taskPageViewByProject: currentSettings.taskPageViewByProject,
         taskExpandedIdsByProject: currentSettings.taskExpandedIdsByProject,
         sidebarConversationOrganization: currentSettings.sidebarConversationOrganization,
         sidebarConversationCollapsedStatusIdsByProject: currentSettings.sidebarConversationCollapsedStatusIdsByProject,
@@ -12483,6 +12598,54 @@ export function App(props: {
     );
   }
 
+  function closeTaskDetail(): void {
+    setTaskDetailPaneTaskId(undefined);
+    setTaskDetailPresentation('side_peek');
+  }
+
+  function renderTaskDetailPaneContent(): ReactNode {
+    if (!taskDetailPaneTask) return null;
+    return (
+      <TaskDetailPaneContent
+        language={appShellSettings.appLanguage}
+        task={taskDetailPaneTask}
+        allTasks={currentProjectTasks}
+        events={taskEvents.filter((event) => event.taskId === taskDetailPaneTask.id)}
+        copy={taskWorkspaceCopy}
+        statusLabels={activeTaskManagementStatusLabels}
+        statusDefinitions={activeTaskManagementStatusConfig.statuses}
+        priorityOptions={taskWorkspaceCopy.taskCreatePriorityOptions}
+        busy={updatingTaskBusy}
+        terminalReadOnly={
+          Boolean(optimisticTerminalTaskStatuses[taskDetailPaneTask.id]) ||
+          resolveTaskManagementStatus(taskDetailPaneTask) === activeTaskManagementStatusConfig.roles.completedStatusId ||
+          resolveTaskManagementStatus(taskDetailPaneTask) === activeTaskManagementStatusConfig.roles.cancelledStatusId
+        }
+        conversations={taskDetailPaneConversations}
+        conversationsLoading={taskDetailPaneConversationState?.status === 'loading' && !taskDetailPaneConversationState.choicesKnown}
+        conversationsError={taskDetailPaneConversationState?.status === 'error' ? taskDetailPaneConversationState.error : null}
+        modelPushOperation={taskDetailPaneModelPushView}
+        onOpenConversation={(taskId, conversationId) => void openTaskConversation(taskId, conversationId)}
+        onPushNewConversation={(taskId) => void openTaskModelPush(taskId)}
+        onRetryModelPush={retryTaskModelPush}
+        onOpenCodeDelivery={(taskId) => openTaskGitDelivery(taskId)}
+        onCommitCode={(taskId) => setTaskGitReviewState({ taskId, mode: 'commit-only' })}
+        onPushCode={(taskId) => setTaskGitReviewState({ taskId, mode: 'push-only' })}
+        onUpdateTaskContent={updateTaskContent}
+        onUpdateRelationships={updateTaskRelationships}
+        onCreateChild={(taskId) => openTaskCreateModal(taskId)}
+        onDeleteTask={(taskId) => setTaskDeleteDialogTaskId(taskId)}
+        onManagementStatusChange={(taskId, status, expectedUpdatedAt) => updateTaskManagementStatus(taskId, status, { expectedUpdatedAt })}
+        onAuthorizeFiles={props.onAuthorizeTaskFiles}
+        onMaterializeResources={props.onMaterializeTaskResources}
+        onReadClipboardResources={props.onReadTaskClipboardResources}
+        onReloadConversations={(taskId) => void refreshNativeConversationChoices(taskId)}
+        onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
+        onOpenAttachment={props.onOpenTaskAttachment}
+      />
+    );
+  }
+
   return (
     <main
       className={`zeus-shell ai-native-shell macos-ai-app codex-thread-workbench code-map-product-shell theme-${appShellSettings.appearance}${activeNavTarget === 'settings' ? ' settings-dedicated-shell' : ''}${activeProjectSection === 'sessions' && activeNavTarget !== 'settings' ? ' session-codex-parity-v1' : ''}`}
@@ -13344,67 +13507,89 @@ export function App(props: {
             >
               {activeProjectSection === 'tasks' ? (
                 <>
-                  {/* 任务页首屏只保留任务表格，任务列表保持完整宽度；任务详情通过透明点击层上的右侧悬浮抽屉展开，点击抽屉外空白处即可关闭。 */}
-                  <TaskWorkspace
-                    projectName={selectedProject?.name}
-                    tasks={currentProjectTasks}
-                    selectedTaskId={taskDetailPaneTaskId}
-                    selectedTaskIds={selectedTaskIds}
-                    searchQuery={taskSearchQuery}
-                    statusFilter={taskStatusFilter}
-                    tagFilter={taskTagFilter}
-                    statusOptions={taskStatusFilterValues}
-                    statusLabels={activeTaskManagementStatusLabels}
-                    statusDefinitions={activeTaskManagementStatusConfig.statuses}
-                    completedStatusId={activeTaskManagementStatusConfig.roles.completedStatusId}
-                    cancelledStatusId={activeTaskManagementStatusConfig.roles.cancelledStatusId}
-                    runStatusLabels={taskAgentRunStatusLabels[appShellSettings.appLanguage]}
-                    priorityOptions={taskWorkspaceCopy.taskCreatePriorityOptions}
-                    copy={taskWorkspaceCopy}
-                    appLanguage={appShellSettings.appLanguage}
-                    runtime={runtime}
-                    runtimeSessions={runtimeSessions}
-                    taskConversations={currentTaskConversationChoices}
-                    conversationRunStatuses={nativeConversationTaskRunStatuses}
-                    taskTableColumns={activeTaskTableColumns}
-                    taskTableEnumSortOrders={taskTableEnumSortOrders}
-                    taskTableLayoutDirty={taskTableLayoutDirty}
-                    creatingTaskBusy={creatingTaskBusy}
-                    bulkActionBusy={updatingTaskBusy}
-                    statusChangeBusy={updatingTaskBusy}
-                    bulkActionStatus={taskBulkActionStatus}
-                    listState={!props.snapshot ? 'loading' : 'ready'}
-                    activeProjectId={activeProjectId}
-                    viewMode={taskViewMode}
-                    expandedTaskIds={expandedTaskIds}
-                    onSearchChange={setTaskSearchQuery}
-                    onStatusFilterChange={(filter) => void saveTaskStatusFilter(filter)}
-                    onTagFilterChange={setTaskTagFilter}
-                    onTaskTableColumnsChange={(preferences) => setTaskTableLayoutDraft({ projectId: activeProjectId, preferences })}
-                    onSaveTaskTableLayout={() => setTaskTableLayoutScopeDialogOpen(true)}
-                    onCreateTask={() => openTaskCreateModal()}
-                    onOpenTaskDetail={(taskId) => void openTaskDetailPane(taskId)}
-                    onOpenTaskConversation={(taskId, conversationId) => void openTaskConversationDrawer(taskId, conversationId)}
-                    onViewModeChange={(viewMode) => void saveTaskViewPreferences({ viewMode })}
-                    onToggleTaskExpanded={(taskId) =>
-                      void saveTaskViewPreferences({
-                        expandedTaskIds: expandedTaskIds.includes(taskId) ? expandedTaskIds.filter((id) => id !== taskId) : [...expandedTaskIds, taskId],
-                      })
-                    }
-                    onToggleTaskSelection={toggleTaskSelection}
-                    onToggleAllVisibleTaskSelection={toggleAllVisibleTaskSelection}
-                    onClearTaskSelection={clearTaskSelection}
-                    onTaskStatusChange={(taskId, targetStatus) => void updateTaskManagementStatus(taskId, targetStatus).catch(() => undefined)}
-                    onTaskPriorityChange={updateTaskContent}
-                    onBulkTaskStatusChange={(targetStatus, taskIds) => void runBulkTaskStatusChange(targetStatus, taskIds)}
-                    onBulkTaskDelete={(taskIds) => void runBulkTaskDelete(taskIds)}
-                    onRetryTaskList={
-                      props.onLoadTasks && activeProjectId ? () => void props.onLoadTasks?.(activeProjectId, taskSearchQuery, taskStatusFilter && taskStatusFilter !== 'unfinished' ? taskStatusFilter : undefined, taskTagFilter) : undefined
-                    }
-                    onOpenProjectSettings={selectedProject ? () => openProjectSection(selectedProject, 'project-settings') : undefined}
-                    onOpenProjectCode={selectedProject ? () => openProjectSection(selectedProject, 'code') : undefined}
-                    controlBusyProps={controlBusyProps}
-                  />
+                  {/* 默认仍是完整宽度的任务列表；看板可按项目切换，只有全页详情会临时替换任务工作区。 */}
+                  {taskDetailPaneTask && taskDetailPresentation === 'full_page' ? (
+                    <section className="task-detail-full-page" aria-label={taskWorkspaceCopy.detailPaneLabel}>
+                      <header className="task-detail-presentation-header">
+                        <Button variant="secondary" size="compact" onClick={closeTaskDetail}>
+                          {appShellSettings.appLanguage === 'zh-CN' ? '返回任务' : 'Back to tasks'}
+                        </Button>
+                        <strong>{taskDetailPaneTask.title}</strong>
+                      </header>
+                      {renderTaskDetailPaneContent()}
+                    </section>
+                  ) : (
+                    <TaskWorkspace
+                      projectName={selectedProject?.name}
+                      tasks={currentProjectTasks}
+                      boardTasks={visibleTasks}
+                      selectedTaskId={taskDetailPaneTaskId}
+                      selectedTaskIds={selectedTaskIds}
+                      searchQuery={taskSearchQuery}
+                      statusFilter={taskStatusFilter}
+                      tagFilter={taskTagFilter}
+                      statusOptions={taskStatusFilterValues}
+                      statusLabels={activeTaskManagementStatusLabels}
+                      statusDefinitions={activeTaskManagementStatusConfig.statuses}
+                      completedStatusId={activeTaskManagementStatusConfig.roles.completedStatusId}
+                      cancelledStatusId={activeTaskManagementStatusConfig.roles.cancelledStatusId}
+                      runStatusLabels={taskAgentRunStatusLabels[appShellSettings.appLanguage]}
+                      priorityOptions={taskWorkspaceCopy.taskCreatePriorityOptions}
+                      copy={taskWorkspaceCopy}
+                      appLanguage={appShellSettings.appLanguage}
+                      runtime={runtime}
+                      runtimeSessions={runtimeSessions}
+                      taskConversations={currentTaskConversationChoices}
+                      conversationRunStatuses={nativeConversationTaskRunStatuses}
+                      taskTableColumns={activeTaskTableColumns}
+                      taskTableEnumSortOrders={taskTableEnumSortOrders}
+                      taskTableLayoutDirty={taskTableLayoutDirty}
+                      creatingTaskBusy={creatingTaskBusy}
+                      bulkActionBusy={updatingTaskBusy}
+                      statusChangeBusy={updatingTaskBusy}
+                      bulkActionStatus={taskBulkActionStatus}
+                      listState={!props.snapshot ? 'loading' : 'ready'}
+                      activeProjectId={activeProjectId}
+                      pageViewMode={taskPageViewMode}
+                      viewMode={taskViewMode}
+                      taskBoardSnapshot={activeProjectId ? (taskBoardSnapshots[activeProjectId] ?? null) : null}
+                      taskBoardLoading={activeProjectId ? Boolean(taskBoardLoadState[activeProjectId]?.loading) : false}
+                      taskBoardError={activeProjectId ? (taskBoardLoadState[activeProjectId]?.error ?? null) : null}
+                      expandedTaskIds={expandedTaskIds}
+                      onSearchChange={setTaskSearchQuery}
+                      onStatusFilterChange={(filter) => void saveTaskStatusFilter(filter)}
+                      onTagFilterChange={setTaskTagFilter}
+                      onTaskTableColumnsChange={(preferences) => setTaskTableLayoutDraft({ projectId: activeProjectId, preferences })}
+                      onSaveTaskTableLayout={() => setTaskTableLayoutScopeDialogOpen(true)}
+                      onCreateTask={() => openTaskCreateModal()}
+                      onOpenTaskDetail={(taskId, mode) => void openTaskDetailPane(taskId, mode)}
+                      onOpenTaskConversation={(taskId, conversationId) => void openTaskConversationDrawer(taskId, conversationId)}
+                      onViewModeChange={(viewMode) => void saveTaskViewPreferences({ viewMode })}
+                      onPageViewModeChange={(viewMode) => void saveTaskPageViewMode(viewMode)}
+                      onReloadTaskBoard={activeProjectId ? () => void loadTaskBoard(activeProjectId) : undefined}
+                      onUpdateTaskBoard={updateTaskBoardSettings}
+                      onMoveTaskBoardTask={moveTaskBoardTask}
+                      onLoadTaskAttachmentPreview={props.onLoadTaskAttachmentPreview}
+                      onToggleTaskExpanded={(taskId) =>
+                        void saveTaskViewPreferences({
+                          expandedTaskIds: expandedTaskIds.includes(taskId) ? expandedTaskIds.filter((id) => id !== taskId) : [...expandedTaskIds, taskId],
+                        })
+                      }
+                      onToggleTaskSelection={toggleTaskSelection}
+                      onToggleAllVisibleTaskSelection={toggleAllVisibleTaskSelection}
+                      onClearTaskSelection={clearTaskSelection}
+                      onTaskStatusChange={(taskId, targetStatus) => void updateTaskManagementStatus(taskId, targetStatus).catch(() => undefined)}
+                      onTaskPriorityChange={updateTaskContent}
+                      onBulkTaskStatusChange={(targetStatus, taskIds) => void runBulkTaskStatusChange(targetStatus, taskIds)}
+                      onBulkTaskDelete={(taskIds) => void runBulkTaskDelete(taskIds)}
+                      onRetryTaskList={
+                        props.onLoadTasks && activeProjectId ? () => void props.onLoadTasks?.(activeProjectId, taskSearchQuery, taskStatusFilter && taskStatusFilter !== 'unfinished' ? taskStatusFilter : undefined, taskTagFilter) : undefined
+                      }
+                      onOpenProjectSettings={selectedProject ? () => openProjectSection(selectedProject, 'project-settings') : undefined}
+                      onOpenProjectCode={selectedProject ? () => openProjectSection(selectedProject, 'code') : undefined}
+                      controlBusyProps={controlBusyProps}
+                    />
+                  )}
                   <TaskCreateModal
                     open={taskCreateModalOpen}
                     copy={taskWorkspaceCopy}
@@ -13544,7 +13729,7 @@ export function App(props: {
                 onOpenConversation={(taskId, conversationId) => openTaskConflictAiConversation(taskId, conversationId)}
                 onClose={() => setTaskGitMergeTaskId(null)}
               />
-              {taskDetailPaneTask ? (
+              {taskDetailPaneTask && taskDetailPresentation === 'side_peek' ? (
                 <WorkspaceDrawer
                   presentation="floating"
                   backdrop="dimmed"
@@ -13554,46 +13739,23 @@ export function App(props: {
                   closeLabel={taskWorkspaceCopy.detailPaneClose}
                   className="task-detail-floating-drawer"
                   portalStyle={workspaceDrawerPortalStyle}
-                  onClose={() => setTaskDetailPaneTaskId(undefined)}
+                  onClose={closeTaskDetail}
                 >
-                  <TaskDetailPaneContent
-                    language={appShellSettings.appLanguage}
-                    task={taskDetailPaneTask}
-                    allTasks={currentProjectTasks}
-                    events={taskEvents.filter((event) => event.taskId === taskDetailPaneTask.id)}
-                    copy={taskWorkspaceCopy}
-                    statusLabels={activeTaskManagementStatusLabels}
-                    statusDefinitions={activeTaskManagementStatusConfig.statuses}
-                    priorityOptions={taskWorkspaceCopy.taskCreatePriorityOptions}
-                    busy={updatingTaskBusy}
-                    terminalReadOnly={
-                      Boolean(optimisticTerminalTaskStatuses[taskDetailPaneTask.id]) ||
-                      resolveTaskManagementStatus(taskDetailPaneTask) === activeTaskManagementStatusConfig.roles.completedStatusId ||
-                      resolveTaskManagementStatus(taskDetailPaneTask) === activeTaskManagementStatusConfig.roles.cancelledStatusId
-                    }
-                    conversations={taskDetailPaneConversations}
-                    conversationsLoading={taskDetailPaneConversationState?.status === 'loading' && !taskDetailPaneConversationState.choicesKnown}
-                    conversationsError={taskDetailPaneConversationState?.status === 'error' ? taskDetailPaneConversationState.error : null}
-                    modelPushOperation={taskDetailPaneModelPushView}
-                    onOpenConversation={(taskId, conversationId) => void openTaskConversation(taskId, conversationId)}
-                    onPushNewConversation={(taskId) => void openTaskModelPush(taskId)}
-                    onRetryModelPush={retryTaskModelPush}
-                    onOpenCodeDelivery={(taskId) => openTaskGitDelivery(taskId)}
-                    onCommitCode={(taskId) => setTaskGitReviewState({ taskId, mode: 'commit-only' })}
-                    onPushCode={(taskId) => setTaskGitReviewState({ taskId, mode: 'push-only' })}
-                    onUpdateTaskContent={updateTaskContent}
-                    onUpdateRelationships={updateTaskRelationships}
-                    onCreateChild={(taskId) => openTaskCreateModal(taskId)}
-                    onDeleteTask={(taskId) => setTaskDeleteDialogTaskId(taskId)}
-                    onManagementStatusChange={(taskId, status, expectedUpdatedAt) => updateTaskManagementStatus(taskId, status, { expectedUpdatedAt })}
-                    onAuthorizeFiles={props.onAuthorizeTaskFiles}
-                    onMaterializeResources={props.onMaterializeTaskResources}
-                    onReadClipboardResources={props.onReadTaskClipboardResources}
-                    onReloadConversations={(taskId) => void refreshNativeConversationChoices(taskId)}
-                    onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
-                    onOpenAttachment={props.onOpenTaskAttachment}
-                  />
+                  {renderTaskDetailPaneContent()}
                 </WorkspaceDrawer>
+              ) : null}
+              {taskDetailPaneTask && taskDetailPresentation === 'center_peek' ? (
+                <ModalPortal rootClassName="task-detail-center-portal" backdropClassName="task-detail-center-backdrop" onDismiss={closeTaskDetail}>
+                  <section className="task-detail-center-dialog" role="dialog" aria-modal="true" aria-label={taskWorkspaceCopy.detailPaneLabel}>
+                    <header className="task-detail-presentation-header">
+                      <strong>{taskDetailPaneTask.title}</strong>
+                      <Button variant="secondary" size="compact" onClick={closeTaskDetail} aria-label={taskWorkspaceCopy.detailPaneClose}>
+                        {appShellSettings.appLanguage === 'zh-CN' ? '关闭' : 'Close'}
+                      </Button>
+                    </header>
+                    {renderTaskDetailPaneContent()}
+                  </section>
+                </ModalPortal>
               ) : null}
 
               {taskConversationDrawerTarget ? (
@@ -15219,6 +15381,7 @@ function toSafeAppShellImport(
       | 'taskManagementStatusByProject'
       | 'taskStatusFilterByProject'
       | 'taskViewModeByProject'
+      | 'taskPageViewByProject'
       | 'taskExpandedIdsByProject'
       | 'codeWorkspaceByProject'
     >
@@ -15253,6 +15416,7 @@ function toSafeAppShellImport(
     ),
     taskStatusFilterByProject: normalizeTaskStatusFilterByProject(raw.taskStatusFilterByProject),
     taskViewModeByProject: normalizeTaskViewModeByProject(raw.taskViewModeByProject),
+    taskPageViewByProject: normalizeTaskPageViewByProject(raw.taskPageViewByProject),
     taskExpandedIdsByProject: normalizeTaskExpandedIdsByProject(raw.taskExpandedIdsByProject),
     codeWorkspaceByProject: normalizeCodeWorkspaceByProject(raw.codeWorkspaceByProject),
   };

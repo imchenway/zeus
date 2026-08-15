@@ -14,15 +14,22 @@ import {
   type ConversationResource,
   type ConversationResourcePreview,
   defaultTaskManagementStatusConfig,
+  isTaskBoardGroupProperty,
   isTaskAttachmentField,
   isTaskStatusFilter,
   normalizeTaskManagementStatusConfig,
   parseCanonicalRequestUserInputQuestions,
   type ProjectCodeWorkspacePreference,
   renderTaskPushLayoutText,
+  taskBoardEmptyGroupId,
+  taskBoardLayoutKey,
   type TaskAttachmentField,
   type TaskAttachmentReference,
+  type TaskBoardGroupProperty,
+  type TaskBoardMoveRequest,
+  type TaskBoardViewUpdateRequest,
   type TaskManagementStatusConfig,
+  type TaskPageViewMode,
   type TaskPushContextConversationOption,
   type TaskPushMessageLayout,
   type TaskPushParentAttachmentOption,
@@ -173,6 +180,7 @@ import {
   SettingRepository,
   type SqlValue,
   TaskEnvironmentRepository,
+  TaskBoardRepository,
   TaskEventRepository,
   TaskIntegrationAttemptRepository,
   TaskIntegrationRepository,
@@ -1041,6 +1049,11 @@ function normalizeTaskViewModeByProject(value: unknown): Record<string, 'hierarc
   ) as Record<string, 'hierarchy' | 'flat'>;
 }
 
+function normalizeTaskPageViewByProject(value: unknown): Record<string, TaskPageViewMode> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, TaskPageViewMode] => Boolean(entry[0]) && (entry[1] === 'list' || entry[1] === 'board')));
+}
+
 function normalizeTaskExpandedIdsByProject(value: unknown): Record<string, string[]> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   const normalized: Record<string, string[]> = {};
@@ -1158,6 +1171,7 @@ interface AppShellSettingsSnapshot {
   taskManagementStatusByProject: Record<string, TaskManagementStatusConfig>;
   taskStatusFilterByProject: Record<string, TaskStatusFilter>;
   taskViewModeByProject: Record<string, 'hierarchy' | 'flat'>;
+  taskPageViewByProject: Record<string, TaskPageViewMode>;
   taskExpandedIdsByProject: Record<string, string[]>;
   codeWorkspaceByProject: Record<string, ProjectCodeWorkspacePreference>;
   localLogDirectory: string;
@@ -1201,6 +1215,7 @@ interface UpdateAppShellSettingsBody {
   taskManagementStatusReplacements?: Record<string, Record<string, string>>;
   taskStatusFilterByProject?: Record<string, TaskStatusFilter>;
   taskViewModeByProject?: Record<string, 'hierarchy' | 'flat'>;
+  taskPageViewByProject?: Record<string, TaskPageViewMode>;
   taskExpandedIdsByProject?: Record<string, string[]>;
   codeWorkspaceByProject?: Record<string, ProjectCodeWorkspacePreference>;
 }
@@ -1432,6 +1447,9 @@ interface UpdateTaskManagementStatusBody {
   confirmWorktreeCleanup?: boolean;
   reopenConversationId?: string;
 }
+
+type UpdateTaskBoardViewBody = TaskBoardViewUpdateRequest;
+type MoveTaskBoardTaskBody = TaskBoardMoveRequest;
 
 interface UpdateTaskBody {
   expectedUpdatedAt?: string;
@@ -2032,6 +2050,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const projectRepositories = new ProjectRepositoryRegistrationRepository(db);
   const projectSharedPaths = new ProjectSharedPathRepository(db);
   const tasks = new TaskRepository(db);
+  const taskBoards = new TaskBoardRepository(db);
   const taskEnvironments = new TaskEnvironmentRepository(db);
   const taskWorkspaces = new TaskWorkspaceRepository(db);
   const taskConversationExecutionContextPromises = new Map<string, Promise<{ projectLocalPath: string; writableRoots: string[] } | null>>();
@@ -2164,6 +2183,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         JSON.stringify(persistedAppShellSettings.taskManagementStatusByProject) !== JSON.stringify(appShellSettings.taskManagementStatusByProject) ||
         JSON.stringify(persistedAppShellSettings.taskStatusFilterByProject) !== JSON.stringify(appShellSettings.taskStatusFilterByProject) ||
         JSON.stringify(persistedAppShellSettings.taskViewModeByProject) !== JSON.stringify(appShellSettings.taskViewModeByProject) ||
+        JSON.stringify(persistedAppShellSettings.taskPageViewByProject) !== JSON.stringify(appShellSettings.taskPageViewByProject) ||
         JSON.stringify(persistedAppShellSettings.taskExpandedIdsByProject) !== JSON.stringify(appShellSettings.taskExpandedIdsByProject) ||
         persistedAppShellSettings.sidebarConversationOrganization !== appShellSettings.sidebarConversationOrganization ||
         JSON.stringify(persistedAppShellSettings.sidebarConversationCollapsedStatusIdsByProject) !== JSON.stringify(appShellSettings.sidebarConversationCollapsedStatusIdsByProject)))
@@ -2178,6 +2198,122 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
 
   function isConfiguredTaskManagementStatus(projectId: string, status: unknown): status is TaskManagementStatus {
     return typeof status === 'string' && resolveTaskManagementStatusConfigForProject(projectId).statuses.some((definition) => definition.id === status);
+  }
+
+  function taskBoardBranchStatus(taskId: string): string {
+    const workspaces = taskWorkspaces.listByTask(taskId);
+    if (workspaces.length === 0) return 'not_created';
+    if (workspaces.some((workspace) => workspace.state === 'failed')) return 'action_required';
+    if (workspaces.some((workspace) => workspace.state === 'ready')) return 'active';
+    if (workspaces.some((workspace) => workspace.state === 'reclaimed')) return 'pushed';
+    if (workspaces.some((workspace) => workspace.state === 'merged')) return 'merged';
+    return 'discarded';
+  }
+
+  function taskBoardRunStatus(task: ZeusTaskRecord): TaskAgentRunStatus {
+    const latestConversation = conversations
+      .listRecordsByProject(task.projectId)
+      .filter((conversation) => conversation.taskId === task.id)
+      .sort(compareConversationStageUpdatedDesc)[0];
+    if (!latestConversation) return 'not_started';
+    return projectNativeConversationChoiceState(latestConversation, buildNativeConversationChoiceProjectionContext(task.projectId)).taskRunStatus;
+  }
+
+  function taskBoardGroupValues(task: ZeusTaskRecord, property: TaskBoardGroupProperty): string[] {
+    if (property === 'managementStatus') return [task.managementStatus];
+    if (property === 'priority') return [task.priority || taskBoardEmptyGroupId];
+    if (property === 'taskType') return [task.taskType];
+    if (property === 'tags') return task.tags.length > 0 ? task.tags : [taskBoardEmptyGroupId];
+    if (property === 'parentTask') return [task.parentTaskId ?? taskBoardEmptyGroupId];
+    if (property === 'runStatus') return [taskBoardRunStatus(task)];
+    if (property === 'branchStatus') return [taskBoardBranchStatus(task.id)];
+    return [task.createdFrom || taskBoardEmptyGroupId];
+  }
+
+  function taskBoardTaskBelongsToLane(task: ZeusTaskRecord, groupBy: TaskBoardGroupProperty, subgroupBy: TaskBoardGroupProperty | null, groupId: string, subgroupId: string): boolean {
+    if (!taskBoardGroupValues(task, groupBy).includes(groupId)) return false;
+    if (!subgroupBy) return subgroupId === '';
+    return taskBoardGroupValues(task, subgroupBy).includes(subgroupId);
+  }
+
+  function taskBoardMutationError(statusCode: number, payload: Record<string, unknown>): Error {
+    return Object.assign(new Error(typeof payload.message === 'string' ? payload.message : 'Task board update failed.'), { statusCode, payload });
+  }
+
+  function validateTaskBoardPropertyMutation(input: { task: ZeusTaskRecord; property: TaskBoardGroupProperty; sourceId: string; targetId: string }): void {
+    if (input.sourceId === input.targetId) return;
+    if (input.property === 'managementStatus') {
+      if (!isConfiguredTaskManagementStatus(input.task.projectId, input.targetId)) {
+        throw taskBoardMutationError(400, { error: 'ZEUS_INVALID_TASK_MANAGEMENT_STATUS', message: '目标任务状态已经不存在。' });
+      }
+      return;
+    }
+    if (input.property === 'priority') {
+      if (!isTaskPriority(input.targetId)) throw taskBoardMutationError(400, { error: 'ZEUS_INVALID_TASK_PRIORITY', message: '目标优先级无效。' });
+      return;
+    }
+    if (input.property === 'taskType') {
+      if (!isTaskType(input.targetId)) throw taskBoardMutationError(400, { error: 'ZEUS_INVALID_TASK_TYPE', message: '目标任务类型无效。' });
+      return;
+    }
+    if (input.property === 'tags') return;
+    if (input.property === 'parentTask') {
+      try {
+        tasks.validateParentChange(input.task.id, input.targetId === taskBoardEmptyGroupId ? null : input.targetId);
+      } catch (error) {
+        const details = taskEditConflictDetails(error);
+        const code = details?.code ?? 'ZEUS_TASK_PARENT_INVALID';
+        const statusCode = code === 'ZEUS_TASK_PARENT_NOT_FOUND' || code === 'ZEUS_TASK_NOT_FOUND' ? 404 : 409;
+        throw taskBoardMutationError(statusCode, { error: code, message: error instanceof Error ? error.message : 'Invalid task parent.' });
+      }
+      return;
+    }
+    throw taskBoardMutationError(409, {
+      error: 'ZEUS_TASK_BOARD_DERIVED_GROUP_READ_ONLY',
+      message: '执行状态、分支状态和任务来源由真实运行事实派生，不能通过跨列拖动修改。',
+    });
+  }
+
+  async function applyTaskBoardPropertyMutation(input: { task: ZeusTaskRecord; property: TaskBoardGroupProperty; sourceId: string; targetId: string; confirmWorktreeCleanup?: boolean }): Promise<ZeusTaskRecord> {
+    if (input.sourceId === input.targetId) return input.task;
+    const expectedUpdatedAt = input.task.updatedAt;
+    let response;
+    if (input.property === 'managementStatus') {
+      if (!isConfiguredTaskManagementStatus(input.task.projectId, input.targetId)) {
+        throw taskBoardMutationError(400, { error: 'ZEUS_INVALID_TASK_MANAGEMENT_STATUS', message: '目标任务状态已经不存在。' });
+      }
+      response = await server.inject({
+        method: 'PATCH',
+        url: `/api/tasks/${encodeURIComponent(input.task.id)}/management-status`,
+        headers: { authorization: `Bearer ${options.apiToken}` },
+        payload: { status: input.targetId, expectedUpdatedAt, confirmWorktreeCleanup: input.confirmWorktreeCleanup },
+      });
+    } else if (input.property === 'priority') {
+      if (!isTaskPriority(input.targetId)) throw taskBoardMutationError(400, { error: 'ZEUS_INVALID_TASK_PRIORITY', message: '目标优先级无效。' });
+      response = await server.inject({ method: 'PATCH', url: `/api/tasks/${encodeURIComponent(input.task.id)}`, headers: { authorization: `Bearer ${options.apiToken}` }, payload: { priority: input.targetId, expectedUpdatedAt } });
+    } else if (input.property === 'taskType') {
+      if (!isTaskType(input.targetId)) throw taskBoardMutationError(400, { error: 'ZEUS_INVALID_TASK_TYPE', message: '目标任务类型无效。' });
+      response = await server.inject({ method: 'PATCH', url: `/api/tasks/${encodeURIComponent(input.task.id)}`, headers: { authorization: `Bearer ${options.apiToken}` }, payload: { taskType: input.targetId, expectedUpdatedAt } });
+    } else if (input.property === 'tags') {
+      const nextTags = input.task.tags.filter((tag) => input.sourceId === taskBoardEmptyGroupId || tag !== input.sourceId);
+      if (input.targetId !== taskBoardEmptyGroupId && !nextTags.includes(input.targetId)) nextTags.push(input.targetId);
+      response = await server.inject({ method: 'PATCH', url: `/api/tasks/${encodeURIComponent(input.task.id)}`, headers: { authorization: `Bearer ${options.apiToken}` }, payload: { tags: nextTags, expectedUpdatedAt } });
+    } else if (input.property === 'parentTask') {
+      response = await server.inject({
+        method: 'PATCH',
+        url: `/api/tasks/${encodeURIComponent(input.task.id)}/relationships`,
+        headers: { authorization: `Bearer ${options.apiToken}` },
+        payload: { parentTaskId: input.targetId === taskBoardEmptyGroupId ? null : input.targetId, expectedUpdatedAt },
+      });
+    } else {
+      throw taskBoardMutationError(409, {
+        error: 'ZEUS_TASK_BOARD_DERIVED_GROUP_READ_ONLY',
+        message: '执行状态、分支状态和任务来源由真实运行事实派生，不能通过跨列拖动修改。',
+      });
+    }
+    const payload = response.json() as Record<string, unknown>;
+    if (response.statusCode >= 400) throw taskBoardMutationError(response.statusCode, payload);
+    return payload as unknown as ZeusTaskRecord;
   }
   const secretStore = createMacOSKeychainStore();
   const modelConnections = createModelConnectionService({
@@ -6872,6 +7008,200 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     },
   );
 
+  server.get('/api/projects/:projectId/task-board', async (request: FastifyRequest<{ Params: { projectId: string } }>, reply) => {
+    const project = projects.getById(request.params.projectId);
+    if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' });
+    return taskBoards.getSnapshot(project.id);
+  });
+
+  server.patch(
+    '/api/projects/:projectId/task-board',
+    async (
+      request: FastifyRequest<{
+        Params: { projectId: string };
+        Body: UpdateTaskBoardViewBody;
+      }>,
+      reply,
+    ) => {
+      const project = projects.getById(request.params.projectId);
+      if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' });
+      if (!Number.isSafeInteger(request.body?.expectedRevision) || request.body.expectedRevision < 0) {
+        return reply.code(400).send({ error: 'ZEUS_TASK_BOARD_REVISION_REQUIRED', message: 'expectedRevision is required when updating the task board.' });
+      }
+      if (!request.body.settings || typeof request.body.settings !== 'object' || Array.isArray(request.body.settings)) {
+        return reply.code(400).send({ error: 'ZEUS_TASK_BOARD_SETTINGS_REQUIRED', message: 'Task board settings are required.' });
+      }
+      try {
+        const updated = taskBoards.updateSettings(project.id, request.body.expectedRevision, request.body.settings);
+        appendAuditLog({
+          actorType: 'local_api',
+          action: 'task.board.settings.updated',
+          resourceType: 'project',
+          resourceId: project.id,
+          payload: { projectId: project.id, revision: updated.revision, groupBy: updated.settings.groupBy, subgroupBy: updated.settings.subgroupBy },
+        });
+        publishRealtimeEvent('task.board.updated', { projectId: project.id, revision: updated.revision, reason: 'settings' });
+        await db.save();
+        return updated;
+      } catch (error) {
+        const details = error as { code?: string; currentRevision?: number };
+        if (details.code === 'ZEUS_TASK_BOARD_REVISION_CONFLICT') {
+          return reply.code(409).send({ error: details.code, message: 'Task board changed after editing started.', currentRevision: details.currentRevision, board: taskBoards.getSnapshot(project.id) });
+        }
+        throw error;
+      }
+    },
+  );
+
+  server.post(
+    '/api/projects/:projectId/task-board/moves',
+    async (
+      request: FastifyRequest<{
+        Params: { projectId: string };
+        Body: MoveTaskBoardTaskBody;
+      }>,
+      reply,
+    ) => {
+      const project = projects.getById(request.params.projectId);
+      if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' });
+      const body = request.body;
+      if (
+        !body ||
+        typeof body.taskId !== 'string' ||
+        !body.taskId ||
+        typeof body.expectedTaskUpdatedAt !== 'string' ||
+        !body.expectedTaskUpdatedAt ||
+        !Number.isSafeInteger(body.expectedViewRevision) ||
+        body.expectedViewRevision < 0 ||
+        !body.source ||
+        !body.target ||
+        typeof body.source.groupId !== 'string' ||
+        typeof body.target.groupId !== 'string' ||
+        body.source.groupId.length > 160 ||
+        body.target.groupId.length > 160
+      ) {
+        return reply.code(400).send({ error: 'ZEUS_INVALID_TASK_BOARD_MOVE', message: 'Task board move payload is invalid.' });
+      }
+      if (
+        [body.source.subgroupId, body.target.subgroupId, body.target.beforeTaskId, body.target.afterTaskId].some((value) => value !== undefined && value !== null && (typeof value !== 'string' || value.length > 160)) ||
+        (body.target.beforeTaskId && body.target.afterTaskId)
+      ) {
+        return reply.code(400).send({ error: 'ZEUS_INVALID_TASK_BOARD_MOVE', message: 'Task board move lane and anchors must be strings.' });
+      }
+      const existing = tasks.getById(body.taskId);
+      if (!existing || existing.projectId !== project.id) return reply.code(404).send({ error: 'ZEUS_TASK_NOT_FOUND', message: 'Task not found' });
+      if (existing.updatedAt !== body.expectedTaskUpdatedAt) {
+        return reply.code(409).send({ error: 'ZEUS_TASK_EDIT_CONFLICT', message: 'Task changed after dragging started.', currentUpdatedAt: existing.updatedAt, task: existing });
+      }
+      const board = taskBoards.getSnapshot(project.id);
+      if (board.revision !== body.expectedViewRevision) {
+        return reply.code(409).send({ error: 'ZEUS_TASK_BOARD_REVISION_CONFLICT', message: 'Task board changed after dragging started.', currentRevision: board.revision, board });
+      }
+      const groupBy = board.settings.groupBy;
+      const subgroupBy = board.settings.subgroupBy;
+      if (!isTaskBoardGroupProperty(groupBy) || (subgroupBy !== null && !isTaskBoardGroupProperty(subgroupBy))) {
+        return reply.code(409).send({ error: 'ZEUS_TASK_BOARD_SETTINGS_INVALID', message: 'Task board grouping is invalid.', board });
+      }
+      const sourceSubgroupId = subgroupBy ? (body.source.subgroupId ?? taskBoardEmptyGroupId) : '';
+      const targetSubgroupId = subgroupBy ? (body.target.subgroupId ?? taskBoardEmptyGroupId) : '';
+      if (!taskBoardGroupValues(existing, groupBy).includes(body.source.groupId) || (subgroupBy && !taskBoardGroupValues(existing, subgroupBy).includes(sourceSubgroupId))) {
+        return reply.code(409).send({ error: 'ZEUS_TASK_BOARD_SOURCE_CHANGED', message: 'Task is no longer in the dragged lane.', task: existing, board });
+      }
+      const sameLane = body.source.groupId === body.target.groupId && sourceSubgroupId === targetSubgroupId;
+      if (sameLane && board.settings.sorts.length > 0) {
+        return reply.code(409).send({ error: 'ZEUS_TASK_BOARD_SORT_ACTIVE', message: '当前看板使用属性排序；请清除排序后再调整列内手工顺序。', board });
+      }
+      const layoutKey = taskBoardLayoutKey(board.settings);
+      const rankByTaskId = new Map(
+        board.positions.filter((position) => position.layoutKey === layoutKey && position.groupId === body.target.groupId && position.subgroupId === targetSubgroupId).map((position) => [position.taskId, position.rank]),
+      );
+      const targetLaneTaskIds = tasks
+        .listByProject(project.id)
+        .filter((task) => task.id !== existing.id && taskBoardTaskBelongsToLane(task, groupBy, subgroupBy, body.target.groupId, targetSubgroupId))
+        .sort((left, right) => {
+          const leftRank = rankByTaskId.get(left.id);
+          const rightRank = rankByTaskId.get(right.id);
+          if (leftRank !== undefined || rightRank !== undefined) return (leftRank ?? Number.MAX_SAFE_INTEGER) - (rightRank ?? Number.MAX_SAFE_INTEGER);
+          return (left.taskSequence ?? Number.MAX_SAFE_INTEGER) - (right.taskSequence ?? Number.MAX_SAFE_INTEGER) || left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id);
+        })
+        .map((task) => task.id);
+      let insertionIndex = targetLaneTaskIds.length;
+      if (body.target.beforeTaskId) {
+        insertionIndex = targetLaneTaskIds.indexOf(body.target.beforeTaskId);
+        if (insertionIndex < 0) return reply.code(409).send({ error: 'ZEUS_TASK_BOARD_ANCHOR_CHANGED', message: 'Target card moved while dragging.', task: existing, board });
+      } else if (body.target.afterTaskId) {
+        const afterIndex = targetLaneTaskIds.indexOf(body.target.afterTaskId);
+        if (afterIndex < 0) return reply.code(409).send({ error: 'ZEUS_TASK_BOARD_ANCHOR_CHANGED', message: 'Target card moved while dragging.', task: existing, board });
+        insertionIndex = afterIndex + 1;
+      }
+      const mutations = [{ property: groupBy, sourceId: body.source.groupId, targetId: body.target.groupId }, ...(subgroupBy ? [{ property: subgroupBy, sourceId: sourceSubgroupId, targetId: targetSubgroupId }] : [])].sort(
+        (left, right) => Number(right.property === 'managementStatus') - Number(left.property === 'managementStatus'),
+      );
+      let updatedTask = existing;
+      try {
+        for (const mutation of mutations) validateTaskBoardPropertyMutation({ task: existing, ...mutation });
+        for (const mutation of mutations) {
+          updatedTask = await applyTaskBoardPropertyMutation({
+            task: updatedTask,
+            ...mutation,
+            confirmWorktreeCleanup: body.confirmWorktreeCleanup,
+          });
+        }
+      } catch (error) {
+        const details = error as { statusCode?: number; payload?: Record<string, unknown> };
+        if (details.statusCode && details.payload) return reply.code(details.statusCode).send(details.payload);
+        throw error;
+      }
+      const removeTagOccurrenceOnly = updatedTask.tags.length > 0 && ((groupBy === 'tags' && body.target.groupId === taskBoardEmptyGroupId) || (subgroupBy === 'tags' && targetSubgroupId === taskBoardEmptyGroupId));
+      if (!removeTagOccurrenceOnly && !taskBoardTaskBelongsToLane(updatedTask, groupBy, subgroupBy, body.target.groupId, targetSubgroupId)) {
+        return reply.code(409).send({ error: 'ZEUS_TASK_BOARD_TARGET_REJECTED', message: 'Task fields did not resolve to the target lane.', task: updatedTask, board });
+      }
+      if (!removeTagOccurrenceOnly) targetLaneTaskIds.splice(insertionIndex, 0, updatedTask.id);
+      try {
+        const updatedBoard = taskBoards.replaceLaneOrder({
+          projectId: project.id,
+          taskId: updatedTask.id,
+          layoutKey,
+          source: { groupId: body.source.groupId, subgroupId: sourceSubgroupId },
+          target: { groupId: body.target.groupId, subgroupId: targetSubgroupId },
+          orderedTaskIds: targetLaneTaskIds,
+          expectedRevision: body.expectedViewRevision,
+          includeTaskInTarget: !removeTagOccurrenceOnly,
+        });
+        appendAuditLog({
+          actorType: 'local_api',
+          action: 'task.board.task.moved',
+          resourceType: 'task',
+          resourceId: updatedTask.id,
+          payload: {
+            taskId: updatedTask.id,
+            projectId: project.id,
+            groupBy,
+            subgroupBy,
+            source: { groupId: body.source.groupId, subgroupId: sourceSubgroupId },
+            target: { groupId: body.target.groupId, subgroupId: targetSubgroupId },
+            revision: updatedBoard.revision,
+          },
+        });
+        publishRealtimeEvent('task.board.updated', { projectId: project.id, taskId: updatedTask.id, revision: updatedBoard.revision, reason: 'move' });
+        await db.save();
+        return { task: updatedTask, board: updatedBoard };
+      } catch (error) {
+        const details = error as { code?: string; currentRevision?: number };
+        if (details.code === 'ZEUS_TASK_BOARD_REVISION_CONFLICT') {
+          return reply.code(409).send({
+            error: details.code,
+            message: 'Task board changed while the task was being moved.',
+            currentRevision: details.currentRevision,
+            task: tasks.getById(updatedTask.id),
+            board: taskBoards.getSnapshot(project.id),
+          });
+        }
+        throw error;
+      }
+    },
+  );
+
   server.get('/api/projects/:projectId/conversation-choices', async (request: FastifyRequest<{ Params: { projectId: string } }>, reply) => {
     const project = projects.getById(request.params.projectId);
     if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' });
@@ -8863,6 +9193,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         migratedTaskManagementStatusCount: migratedTasks.length,
         taskStatusFilterByProject: appShellSettings.taskStatusFilterByProject,
         taskViewModeByProject: appShellSettings.taskViewModeByProject,
+        taskPageViewByProject: appShellSettings.taskPageViewByProject,
         taskExpandedIdsByProject: appShellSettings.taskExpandedIdsByProject,
         codeWorkspaceByProject: appShellSettings.codeWorkspaceByProject,
       },
@@ -11586,6 +11917,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       taskManagementStatusByProject: normalizeTaskManagementStatusByProject(value?.taskManagementStatusByProject, taskManagementStatusTemplate),
       taskStatusFilterByProject: normalizeTaskStatusFilterByProject(value?.taskStatusFilterByProject),
       taskViewModeByProject: normalizeTaskViewModeByProject(value?.taskViewModeByProject),
+      taskPageViewByProject: normalizeTaskPageViewByProject(value?.taskPageViewByProject),
       taskExpandedIdsByProject: normalizeTaskExpandedIdsByProject(value?.taskExpandedIdsByProject),
       codeWorkspaceByProject: normalizeCodeWorkspaceByProject(value?.codeWorkspaceByProject),
       localLogDirectory: fallbackLogDirectory,
@@ -11648,6 +11980,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           : current.taskManagementStatusByProject,
         taskStatusFilterByProject: Object.prototype.hasOwnProperty.call(input, 'taskStatusFilterByProject') ? normalizeTaskStatusFilterByProject(input.taskStatusFilterByProject) : current.taskStatusFilterByProject,
         taskViewModeByProject: Object.prototype.hasOwnProperty.call(input, 'taskViewModeByProject') ? normalizeTaskViewModeByProject(input.taskViewModeByProject) : current.taskViewModeByProject,
+        taskPageViewByProject: Object.prototype.hasOwnProperty.call(input, 'taskPageViewByProject') ? normalizeTaskPageViewByProject(input.taskPageViewByProject) : current.taskPageViewByProject,
         taskExpandedIdsByProject: Object.prototype.hasOwnProperty.call(input, 'taskExpandedIdsByProject') ? normalizeTaskExpandedIdsByProject(input.taskExpandedIdsByProject) : current.taskExpandedIdsByProject,
         codeWorkspaceByProject: Object.prototype.hasOwnProperty.call(input, 'codeWorkspaceByProject') ? normalizeCodeWorkspaceByProject(input.codeWorkspaceByProject) : current.codeWorkspaceByProject,
       },

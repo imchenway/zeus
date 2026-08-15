@@ -204,6 +204,267 @@ export interface ZeusEvent<TPayload extends Record<string, unknown> = Record<str
   createdAt: string;
 }
 
+/** 任务页一级视图；列表内部的层级和平铺不属于一级视图。 */
+export type TaskPageViewMode = 'list' | 'board';
+
+export const taskBoardGroupProperties = ['managementStatus', 'priority', 'taskType', 'tags', 'parentTask', 'runStatus', 'branchStatus', 'source'] as const;
+export type TaskBoardGroupProperty = (typeof taskBoardGroupProperties)[number];
+export const taskBoardEmptyGroupId = '__zeus_none__';
+
+export const taskBoardCardProperties = ['code', 'managementStatus', 'priority', 'taskType', 'runStatus', 'branchStatus', 'tags', 'parentTask', 'source', 'createdAt', 'updatedAt'] as const;
+export type TaskBoardCardProperty = (typeof taskBoardCardProperties)[number];
+export type TaskBoardCardSize = 'small' | 'medium' | 'large';
+export type TaskBoardPreviewMode = 'none' | 'content' | 'first_image';
+export type TaskBoardOpenMode = 'side_peek' | 'center_peek' | 'full_page';
+export type TaskBoardGroupSort = 'manual' | 'ascending' | 'descending';
+export type TaskBoardSortDirection = 'ascending' | 'descending';
+export type TaskBoardFilterOperator = 'equals' | 'not_equals' | 'contains' | 'not_contains' | 'is_empty' | 'is_not_empty';
+export type TaskBoardFilterConjunction = 'and' | 'or';
+export type TaskBoardColorTone = 'neutral' | 'blue' | 'violet' | 'green' | 'amber' | 'orange' | 'red';
+export type TaskBoardCalculationKind = 'count_all' | 'count_values' | 'count_unique' | 'count_empty' | 'count_not_empty' | 'percent_empty' | 'percent_not_empty' | 'earliest_date' | 'latest_date' | 'date_range';
+
+export interface TaskBoardFilterRule {
+  id: string;
+  kind: 'rule';
+  property: TaskBoardCardProperty;
+  operator: TaskBoardFilterOperator;
+  value?: string | string[] | null;
+}
+
+export interface TaskBoardFilterGroup {
+  id: string;
+  kind: 'group';
+  conjunction: TaskBoardFilterConjunction;
+  conditions: Array<TaskBoardFilterRule | TaskBoardFilterGroup>;
+}
+
+export interface TaskBoardSortRule {
+  id: string;
+  property: TaskBoardCardProperty;
+  direction: TaskBoardSortDirection;
+}
+
+export interface TaskBoardCalculation {
+  kind: TaskBoardCalculationKind;
+  property?: TaskBoardCardProperty;
+}
+
+export interface TaskBoardConditionalColorRule {
+  id: string;
+  filter: TaskBoardFilterGroup;
+  tone: TaskBoardColorTone;
+}
+
+export interface TaskBoardPreviewPosition {
+  x: number;
+  y: number;
+}
+
+export interface TaskBoardViewSettings {
+  groupBy: TaskBoardGroupProperty;
+  subgroupBy: TaskBoardGroupProperty | null;
+  groupSort: TaskBoardGroupSort;
+  groupOrder: string[];
+  hiddenGroupIds: string[];
+  collapsedGroupIds: string[];
+  hiddenSubgroupIdsByGroup: Record<string, string[]>;
+  collapsedSubgroupIdsByGroup: Record<string, string[]>;
+  hideEmptyGroups: boolean;
+  colorColumns: boolean;
+  columnColors: Record<string, TaskBoardColorTone>;
+  cardSize: TaskBoardCardSize;
+  visibleProperties: TaskBoardCardProperty[];
+  propertyOrder: TaskBoardCardProperty[];
+  preview: TaskBoardPreviewMode;
+  fitPreview: boolean;
+  previewPositions: Record<string, TaskBoardPreviewPosition>;
+  filters: TaskBoardFilterGroup | null;
+  sorts: TaskBoardSortRule[];
+  calculation: TaskBoardCalculation;
+  conditionalColors: TaskBoardConditionalColorRule[];
+  openMode: TaskBoardOpenMode;
+}
+
+export interface TaskBoardViewSnapshot {
+  projectId: string;
+  revision: number;
+  settings: TaskBoardViewSettings;
+  positions: TaskBoardPosition[];
+  updatedAt: string | null;
+}
+
+export interface TaskBoardPosition {
+  projectId: string;
+  layoutKey: string;
+  groupId: string;
+  subgroupId: string;
+  taskId: string;
+  rank: number;
+  updatedAt: string;
+}
+
+export interface TaskBoardLaneIdentity {
+  groupId: string;
+  subgroupId?: string | null;
+}
+
+export interface TaskBoardMoveRequest {
+  taskId: string;
+  source: TaskBoardLaneIdentity;
+  target: TaskBoardLaneIdentity & { beforeTaskId?: string; afterTaskId?: string };
+  expectedTaskUpdatedAt: string;
+  expectedViewRevision: number;
+  confirmWorktreeCleanup?: boolean;
+}
+
+export interface TaskBoardViewUpdateRequest {
+  expectedRevision: number;
+  settings: Partial<TaskBoardViewSettings>;
+}
+
+const taskBoardFilterOperators = new Set<TaskBoardFilterOperator>(['equals', 'not_equals', 'contains', 'not_contains', 'is_empty', 'is_not_empty']);
+const taskBoardColorTones = new Set<TaskBoardColorTone>(['neutral', 'blue', 'violet', 'green', 'amber', 'orange', 'red']);
+const taskBoardCalculationKinds = new Set<TaskBoardCalculationKind>(['count_all', 'count_values', 'count_unique', 'count_empty', 'count_not_empty', 'percent_empty', 'percent_not_empty', 'earliest_date', 'latest_date', 'date_range']);
+
+export function isTaskBoardGroupProperty(value: unknown): value is TaskBoardGroupProperty {
+  return typeof value === 'string' && taskBoardGroupProperties.includes(value as TaskBoardGroupProperty);
+}
+
+export function isTaskBoardCardProperty(value: unknown): value is TaskBoardCardProperty {
+  return typeof value === 'string' && taskBoardCardProperties.includes(value as TaskBoardCardProperty);
+}
+
+export function taskBoardLayoutKey(settings: Pick<TaskBoardViewSettings, 'groupBy' | 'subgroupBy'>): string {
+  return `${settings.groupBy}:${settings.subgroupBy ?? ''}`;
+}
+
+export function createDefaultTaskBoardViewSettings(): TaskBoardViewSettings {
+  return {
+    groupBy: 'managementStatus',
+    subgroupBy: null,
+    groupSort: 'manual',
+    groupOrder: [],
+    hiddenGroupIds: [],
+    collapsedGroupIds: [],
+    hiddenSubgroupIdsByGroup: {},
+    collapsedSubgroupIdsByGroup: {},
+    hideEmptyGroups: false,
+    colorColumns: true,
+    columnColors: {},
+    cardSize: 'medium',
+    visibleProperties: ['code', 'priority', 'taskType', 'runStatus', 'tags'],
+    propertyOrder: [...taskBoardCardProperties],
+    preview: 'none',
+    fitPreview: true,
+    previewPositions: {},
+    filters: null,
+    sorts: [],
+    calculation: { kind: 'count_all' },
+    conditionalColors: [],
+    openMode: 'side_peek',
+  };
+}
+
+function boardStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(value.filter((entry): entry is string => typeof entry === 'string' && entry.length <= 160)));
+}
+
+function normalizeTaskBoardFilter(value: unknown, depth = 1): TaskBoardFilterGroup | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || depth > 3) return null;
+  const candidate = value as Partial<TaskBoardFilterGroup>;
+  if (candidate.kind !== 'group' || (candidate.conjunction !== 'and' && candidate.conjunction !== 'or') || !Array.isArray(candidate.conditions)) return null;
+  const conditions: Array<TaskBoardFilterRule | TaskBoardFilterGroup> = [];
+  for (const condition of candidate.conditions.slice(0, 32)) {
+    if (!condition || typeof condition !== 'object' || Array.isArray(condition)) continue;
+    const entry = condition as Partial<TaskBoardFilterRule | TaskBoardFilterGroup>;
+    if (entry.kind === 'group') {
+      const group = normalizeTaskBoardFilter(entry, depth + 1);
+      if (group) conditions.push(group);
+      continue;
+    }
+    if (entry.kind !== 'rule' || !isTaskBoardCardProperty(entry.property) || !taskBoardFilterOperators.has(entry.operator as TaskBoardFilterOperator)) continue;
+    conditions.push({
+      id: typeof entry.id === 'string' && entry.id ? entry.id : `rule-${depth}-${conditions.length}`,
+      kind: 'rule',
+      property: entry.property,
+      operator: entry.operator as TaskBoardFilterOperator,
+      ...(entry.value === null || typeof entry.value === 'string' || (Array.isArray(entry.value) && entry.value.every((item) => typeof item === 'string')) ? { value: entry.value } : {}),
+    });
+  }
+  return {
+    id: typeof candidate.id === 'string' && candidate.id ? candidate.id : `group-${depth}`,
+    kind: 'group',
+    conjunction: candidate.conjunction,
+    conditions,
+  };
+}
+
+/** 对服务端持久化和 Renderer 草稿使用同一看板配置清洗规则。 */
+export function normalizeTaskBoardViewSettings(value: unknown, fallback: TaskBoardViewSettings = createDefaultTaskBoardViewSettings()): TaskBoardViewSettings {
+  const candidate = value && typeof value === 'object' && !Array.isArray(value) ? (value as Partial<TaskBoardViewSettings>) : {};
+  const groupBy = isTaskBoardGroupProperty(candidate.groupBy) ? candidate.groupBy : fallback.groupBy;
+  const subgroupBy = candidate.subgroupBy === null ? null : isTaskBoardGroupProperty(candidate.subgroupBy) && candidate.subgroupBy !== groupBy ? candidate.subgroupBy : fallback.subgroupBy === groupBy ? null : fallback.subgroupBy;
+  const propertyOrder = boardStringArray(candidate.propertyOrder).filter(isTaskBoardCardProperty);
+  const completePropertyOrder = [...propertyOrder, ...taskBoardCardProperties.filter((property) => !propertyOrder.includes(property))];
+  const visibleProperties = boardStringArray(candidate.visibleProperties).filter(isTaskBoardCardProperty);
+  const hiddenSubgroupIdsByGroup = Object.fromEntries(
+    Object.entries(candidate.hiddenSubgroupIdsByGroup ?? {})
+      .filter(([key]) => key.length <= 160)
+      .map(([key, ids]) => [key, boardStringArray(ids)]),
+  );
+  const collapsedSubgroupIdsByGroup = Object.fromEntries(
+    Object.entries(candidate.collapsedSubgroupIdsByGroup ?? {})
+      .filter(([key]) => key.length <= 160)
+      .map(([key, ids]) => [key, boardStringArray(ids)]),
+  );
+  const previewPositions = Object.fromEntries(
+    Object.entries(candidate.previewPositions ?? {})
+      .filter(([taskId, position]) => taskId.length <= 160 && position && Number.isFinite(position.x) && Number.isFinite(position.y))
+      .map(([taskId, position]) => [taskId, { x: Math.min(100, Math.max(0, position.x)), y: Math.min(100, Math.max(0, position.y)) }]),
+  );
+  const columnColors = Object.fromEntries(Object.entries(candidate.columnColors ?? {}).filter(([groupId, tone]) => groupId.length <= 160 && taskBoardColorTones.has(tone)));
+  const sorts = Array.isArray(candidate.sorts)
+    ? candidate.sorts.filter((sort): sort is TaskBoardSortRule => Boolean(sort && typeof sort.id === 'string' && isTaskBoardCardProperty(sort.property) && (sort.direction === 'ascending' || sort.direction === 'descending'))).slice(0, 8)
+    : fallback.sorts;
+  const calculation =
+    candidate.calculation && taskBoardCalculationKinds.has(candidate.calculation.kind)
+      ? { kind: candidate.calculation.kind, ...(isTaskBoardCardProperty(candidate.calculation.property) ? { property: candidate.calculation.property } : {}) }
+      : fallback.calculation;
+  const conditionalColors = Array.isArray(candidate.conditionalColors)
+    ? candidate.conditionalColors
+        .flatMap((rule) => {
+          const filter = normalizeTaskBoardFilter(rule?.filter);
+          return rule && typeof rule.id === 'string' && filter && taskBoardColorTones.has(rule.tone) ? [{ id: rule.id, filter, tone: rule.tone }] : [];
+        })
+        .slice(0, 16)
+    : fallback.conditionalColors;
+  return {
+    groupBy,
+    subgroupBy,
+    groupSort: candidate.groupSort === 'ascending' || candidate.groupSort === 'descending' || candidate.groupSort === 'manual' ? candidate.groupSort : fallback.groupSort,
+    groupOrder: boardStringArray(candidate.groupOrder),
+    hiddenGroupIds: boardStringArray(candidate.hiddenGroupIds),
+    collapsedGroupIds: boardStringArray(candidate.collapsedGroupIds),
+    hiddenSubgroupIdsByGroup,
+    collapsedSubgroupIdsByGroup,
+    hideEmptyGroups: typeof candidate.hideEmptyGroups === 'boolean' ? candidate.hideEmptyGroups : fallback.hideEmptyGroups,
+    colorColumns: typeof candidate.colorColumns === 'boolean' ? candidate.colorColumns : fallback.colorColumns,
+    columnColors,
+    cardSize: candidate.cardSize === 'small' || candidate.cardSize === 'large' || candidate.cardSize === 'medium' ? candidate.cardSize : fallback.cardSize,
+    visibleProperties: Array.isArray(candidate.visibleProperties) ? visibleProperties : [...fallback.visibleProperties],
+    propertyOrder: completePropertyOrder,
+    preview: candidate.preview === 'content' || candidate.preview === 'first_image' || candidate.preview === 'none' ? candidate.preview : fallback.preview,
+    fitPreview: typeof candidate.fitPreview === 'boolean' ? candidate.fitPreview : fallback.fitPreview,
+    previewPositions,
+    filters: candidate.filters === null ? null : (normalizeTaskBoardFilter(candidate.filters) ?? fallback.filters),
+    sorts,
+    calculation,
+    conditionalColors,
+    openMode: candidate.openMode === 'center_peek' || candidate.openMode === 'full_page' || candidate.openMode === 'side_peek' ? candidate.openMode : fallback.openMode,
+  };
+}
+
 export * from './browser.js';
 export * from './commands.js';
 export * from './conversationContext.js';

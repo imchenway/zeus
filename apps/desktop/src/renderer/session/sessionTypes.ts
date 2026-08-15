@@ -1067,6 +1067,11 @@ export interface NativeSessionItemBuffer {
   updatedAt?: string;
 }
 
+/** 明确交付给用户的资源必须脱离工具过程折叠，刷新后也保持在会话正文中。 */
+export function isAssistantDeliverableItem(item: Pick<NativeSessionItemBuffer, 'resources'>): boolean {
+  return item.resources.some((resource) => resource.delivery === 'assistant');
+}
+
 export interface NativeSessionError {
   message: string;
   code: string | null;

@@ -5,14 +5,20 @@ import { backup, DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { nanoid } from 'nanoid';
 import initSqlJs, { type Database as SqlJsDatabase, type SqlJsStatic, type SqlValue as SqlJsValue } from 'sql.js';
 import {
+  createDefaultTaskBoardViewSettings,
   type CodexUsageEstimate,
   type TokenUsageBreakdown,
   type ConversationResourceKind,
   type ConversationResourcePresentation,
   isTaskManagementStatus,
+  normalizeTaskBoardViewSettings,
   isTaskPriority,
   isTaskType,
   type TaskAttachmentReference,
+  type TaskBoardLaneIdentity,
+  type TaskBoardPosition,
+  type TaskBoardViewSettings,
+  type TaskBoardViewSnapshot,
   type TaskManagementStatus,
   type TaskPriority,
   type TaskType,
@@ -1248,6 +1254,7 @@ const builtInTaskTemplates = [
 
 const NATIVE_SQLITE_MIGRATION_ID = '20260808_0001_native_sqlite_wal';
 const PROVIDER_EVENT_RECEIPTS_MIGRATION_ID = '20260808_0002_provider_event_receipts';
+const TASK_BOARD_SCHEMA_MIGRATION_ID = '20260815_0001_task_board_schema';
 const NATIVE_SQLITE_BACKUP_SUFFIX = '.pre-native-sqlite.bak';
 const SQLITE_BUSY_TIMEOUT_MS = 5_000;
 const SQLITE_BACKUP_FREE_SPACE_RESERVE_BYTES = 64 * 1024 * 1024;
@@ -1523,6 +1530,36 @@ function quoteSqliteIdentifier(value: string): string {
   return `"${value.replace(/"/gu, '""')}"`;
 }
 
+function migrateTaskBoardSchema(db: ZeusDatabase): void {
+  db.execute(`
+    CREATE TABLE IF NOT EXISTS task_board_views (
+      project_id TEXT PRIMARY KEY,
+      settings_json TEXT NOT NULL,
+      revision INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  db.execute(`
+    CREATE TABLE IF NOT EXISTS task_board_positions (
+      project_id TEXT NOT NULL,
+      layout_key TEXT NOT NULL,
+      group_id TEXT NOT NULL,
+      subgroup_id TEXT NOT NULL DEFAULT '',
+      task_id TEXT NOT NULL,
+      rank INTEGER NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (project_id, layout_key, group_id, subgroup_id, task_id)
+    )
+  `);
+  db.execute(`CREATE INDEX IF NOT EXISTS idx_task_board_positions_lane ON task_board_positions(project_id, layout_key, group_id, subgroup_id, rank)`);
+  recordSchemaMigration(db, {
+    migrationId: TASK_BOARD_SCHEMA_MIGRATION_ID,
+    description: '新增任务看板项目配置、布局修订和卡片排序位置',
+    checksumSource: 'task_board_views:project_id,settings_json,revision,created_at,updated_at;task_board_positions:project_id,layout_key,group_id,subgroup_id,task_id,rank,updated_at',
+  });
+}
+
 /** 创建或打开 Zeus SQLite 数据库，并执行幂等迁移；不会写入任何 seed 业务记录。 */
 export async function createZeusDatabase(filePath: string): Promise<ZeusDatabase> {
   const parentPath = dirname(filePath);
@@ -1551,6 +1588,7 @@ export async function createZeusDatabase(filePath: string): Promise<ZeusDatabase
   const zeusDb = new ZeusDatabase(nativeDb);
   try {
     migrateCoreSchema(zeusDb);
+    migrateTaskBoardSchema(zeusDb);
     migrateRetiredUnitTestTemplate(zeusDb);
     migrateTaskManagementStatus(zeusDb);
     migrateTaskTypesAndContents(zeusDb);
@@ -3876,6 +3914,13 @@ export class TaskRepository {
     });
   }
 
+  /** 看板跨泳道移动写入前先复用任务关系约束做只读校验，避免多字段移动出现部分成功。 */
+  validateParentChange(taskId: string, parentTaskId: string | null): void {
+    const existing = this.getById(taskId);
+    if (!existing) throw Object.assign(new Error('Task not found.'), { code: 'ZEUS_TASK_NOT_FOUND' as const });
+    this.assertValidParent(existing.projectId, taskId, parentTaskId, this.subtreeHeight(taskId));
+  }
+
   delete(taskId: string, input: DeleteTaskInput = {}): DeleteTaskResult {
     return this.db.transaction(() => {
       if (input.childStrategy && !['reparent', 'delete_descendants', 'make_roots'].includes(input.childStrategy)) {
@@ -4032,6 +4077,200 @@ export class TaskRepository {
       taskById.get(relation.right_task_id)?.relatedTaskIds.push(relation.left_task_id);
     }
   }
+}
+
+interface DbTaskBoardViewRow {
+  project_id: string;
+  settings_json: string;
+  revision: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface DbTaskBoardPositionRow {
+  project_id: string;
+  layout_key: string;
+  group_id: string;
+  subgroup_id: string;
+  task_id: string;
+  rank: number;
+  updated_at: string;
+}
+
+function taskBoardRevisionConflict(currentRevision: number): Error {
+  return Object.assign(new Error('Task board changed after editing started.'), {
+    code: 'ZEUS_TASK_BOARD_REVISION_CONFLICT' as const,
+    currentRevision,
+  });
+}
+
+/** 任务看板仓储只保存项目视图配置和手工顺序，不复制任务业务字段。 */
+export class TaskBoardRepository {
+  constructor(private readonly db: ZeusDatabase) {}
+
+  getSnapshot(projectId: string): TaskBoardViewSnapshot {
+    const view = this.db.get<DbTaskBoardViewRow>(`SELECT project_id, settings_json, revision, created_at, updated_at FROM task_board_views WHERE project_id = ?`, [projectId]);
+    let settings = createDefaultTaskBoardViewSettings();
+    if (view) {
+      try {
+        settings = normalizeTaskBoardViewSettings(JSON.parse(view.settings_json));
+      } catch {
+        settings = createDefaultTaskBoardViewSettings();
+      }
+    }
+    const positions = this.db
+      .select<DbTaskBoardPositionRow>(
+        `SELECT project_id, layout_key, group_id, subgroup_id, task_id, rank, updated_at
+         FROM task_board_positions WHERE project_id = ? ORDER BY layout_key, group_id, subgroup_id, rank, task_id`,
+        [projectId],
+      )
+      .map(mapTaskBoardPositionRow);
+    return {
+      projectId,
+      revision: view?.revision ?? 0,
+      settings,
+      positions,
+      updatedAt: view?.updated_at ?? null,
+    };
+  }
+
+  updateSettings(projectId: string, expectedRevision: number, patch: Partial<TaskBoardViewSettings>): TaskBoardViewSnapshot {
+    const current = this.getSnapshot(projectId);
+    if (current.revision !== expectedRevision) throw taskBoardRevisionConflict(current.revision);
+    const settings = normalizeTaskBoardViewSettings({ ...current.settings, ...patch }, current.settings);
+    if (JSON.stringify(settings) === JSON.stringify(current.settings)) return current;
+    this.db.transaction(() => {
+      const timestamp = nowIso();
+      const existing = this.db.get<{ revision: number }>(`SELECT revision FROM task_board_views WHERE project_id = ?`, [projectId]);
+      if ((existing?.revision ?? 0) !== expectedRevision) throw taskBoardRevisionConflict(existing?.revision ?? 0);
+      if (existing) {
+        this.db.execute(`UPDATE task_board_views SET settings_json = ?, revision = revision + 1, updated_at = ? WHERE project_id = ? AND revision = ?`, [JSON.stringify(settings), timestamp, projectId, expectedRevision]);
+      } else {
+        this.db.execute(`INSERT INTO task_board_views (project_id, settings_json, revision, created_at, updated_at) VALUES (?, ?, 1, ?, ?)`, [projectId, JSON.stringify(settings), timestamp, timestamp]);
+      }
+    });
+    return this.getSnapshot(projectId);
+  }
+
+  replaceLaneOrder(input: {
+    projectId: string;
+    taskId: string;
+    layoutKey: string;
+    source: TaskBoardLaneIdentity;
+    target: TaskBoardLaneIdentity;
+    orderedTaskIds: string[];
+    expectedRevision: number;
+    /** 多选标签移入“无标签”且仍保留其他标签时，只移除来源出现位置，不创建不存在的目标卡片。 */
+    includeTaskInTarget?: boolean;
+  }): TaskBoardViewSnapshot {
+    const current = this.getSnapshot(input.projectId);
+    if (current.revision !== input.expectedRevision) throw taskBoardRevisionConflict(current.revision);
+    const orderedTaskIds = Array.from(new Set(input.orderedTaskIds.filter(Boolean)));
+    this.db.transaction(() => {
+      const timestamp = nowIso();
+      const existing = this.db.get<{ revision: number }>(`SELECT revision FROM task_board_views WHERE project_id = ?`, [input.projectId]);
+      if ((existing?.revision ?? 0) !== input.expectedRevision) throw taskBoardRevisionConflict(existing?.revision ?? 0);
+      if (!existing) {
+        this.db.execute(`INSERT INTO task_board_views (project_id, settings_json, revision, created_at, updated_at) VALUES (?, ?, 0, ?, ?)`, [input.projectId, JSON.stringify(current.settings), timestamp, timestamp]);
+      }
+      const targetSubgroupId = input.target.subgroupId ?? '';
+      for (const lane of [input.source, input.target]) {
+        this.db.execute(`DELETE FROM task_board_positions WHERE project_id = ? AND layout_key = ? AND group_id = ? AND subgroup_id = ? AND task_id NOT IN (SELECT id FROM tasks WHERE deleted_at IS NULL)`, [
+          input.projectId,
+          input.layoutKey,
+          lane.groupId,
+          lane.subgroupId ?? '',
+        ]);
+      }
+      const existingTargetRanks = new Map(
+        this.db
+          .select<{
+            task_id: string;
+            rank: number;
+          }>(`SELECT task_id, rank FROM task_board_positions WHERE project_id = ? AND layout_key = ? AND group_id = ? AND subgroup_id = ? ORDER BY rank, task_id`, [input.projectId, input.layoutKey, input.target.groupId, targetSubgroupId])
+          .map((row) => [row.task_id, row.rank]),
+      );
+      const sourceSubgroupId = input.source.subgroupId ?? '';
+      if (input.source.groupId !== input.target.groupId) {
+        // 主分组变化会让该任务在来源列内的全部标签子组出现位置失效，但不得删除其他仍然有效的标签列位置。
+        this.db.execute(`DELETE FROM task_board_positions WHERE project_id = ? AND layout_key = ? AND group_id = ? AND task_id = ?`, [input.projectId, input.layoutKey, input.source.groupId, input.taskId]);
+      } else if (sourceSubgroupId !== targetSubgroupId) {
+        this.db.execute(`DELETE FROM task_board_positions WHERE project_id = ? AND layout_key = ? AND group_id = ? AND subgroup_id = ? AND task_id = ?`, [
+          input.projectId,
+          input.layoutKey,
+          input.source.groupId,
+          sourceSubgroupId,
+          input.taskId,
+        ]);
+      }
+      this.db.execute(`DELETE FROM task_board_positions WHERE project_id = ? AND layout_key = ? AND group_id = ? AND subgroup_id = ? AND task_id = ?`, [
+        input.projectId,
+        input.layoutKey,
+        input.target.groupId,
+        targetSubgroupId,
+        input.taskId,
+      ]);
+      existingTargetRanks.delete(input.taskId);
+      const movedIndex = orderedTaskIds.indexOf(input.taskId);
+      if (input.includeTaskInTarget === false) {
+        this.db.execute(`UPDATE task_board_views SET revision = revision + 1, updated_at = ? WHERE project_id = ?`, [timestamp, input.projectId]);
+        return;
+      }
+      const previousTaskId = movedIndex > 0 ? orderedTaskIds[movedIndex - 1] : undefined;
+      const nextTaskId = movedIndex >= 0 && movedIndex < orderedTaskIds.length - 1 ? orderedTaskIds[movedIndex + 1] : undefined;
+      const previousRank = previousTaskId ? existingTargetRanks.get(previousTaskId) : undefined;
+      const nextRank = nextTaskId ? existingTargetRanks.get(nextTaskId) : undefined;
+      const sparseRank =
+        !previousTaskId && !nextTaskId
+          ? 1024
+          : previousTaskId && previousRank === undefined
+            ? null
+            : nextTaskId && nextRank === undefined
+              ? null
+              : previousRank === undefined && nextRank !== undefined
+                ? nextRank > 1
+                  ? Math.floor(nextRank / 2)
+                  : null
+                : previousRank !== undefined && nextRank === undefined
+                  ? previousRank + 1024
+                  : previousRank !== undefined && nextRank !== undefined && nextRank - previousRank > 1
+                    ? previousRank + Math.floor((nextRank - previousRank) / 2)
+                    : null;
+      if (sparseRank !== null) {
+        this.db.execute(
+          `INSERT INTO task_board_positions (project_id, layout_key, group_id, subgroup_id, task_id, rank, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(project_id, layout_key, group_id, subgroup_id, task_id)
+           DO UPDATE SET rank = excluded.rank, updated_at = excluded.updated_at`,
+          [input.projectId, input.layoutKey, input.target.groupId, targetSubgroupId, input.taskId, sparseRank, timestamp],
+        );
+      } else {
+        // 只有相邻序号耗尽或泳道尚未建立完整序号时，才重排受影响的目标泳道。
+        this.db.execute(`DELETE FROM task_board_positions WHERE project_id = ? AND layout_key = ? AND group_id = ? AND subgroup_id = ?`, [input.projectId, input.layoutKey, input.target.groupId, targetSubgroupId]);
+        orderedTaskIds.forEach((taskId, index) => {
+          this.db.execute(
+            `INSERT INTO task_board_positions (project_id, layout_key, group_id, subgroup_id, task_id, rank, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [input.projectId, input.layoutKey, input.target.groupId, targetSubgroupId, taskId, (index + 1) * 1024, timestamp],
+          );
+        });
+      }
+      this.db.execute(`UPDATE task_board_views SET revision = revision + 1, updated_at = ? WHERE project_id = ?`, [timestamp, input.projectId]);
+    });
+    return this.getSnapshot(input.projectId);
+  }
+}
+
+function mapTaskBoardPositionRow(row: DbTaskBoardPositionRow): TaskBoardPosition {
+  return {
+    projectId: row.project_id,
+    layoutKey: row.layout_key,
+    groupId: row.group_id,
+    subgroupId: row.subgroup_id,
+    taskId: row.task_id,
+    rank: row.rank,
+    updatedAt: row.updated_at,
+  };
 }
 
 const selectProjectRepositoryFields = `id, project_id, name, relative_path, local_path, created_at, updated_at`;
