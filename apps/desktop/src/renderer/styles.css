@@ -15750,13 +15750,14 @@ body[data-surface='task-git-delivery'] {
   background: var(--zeus-product-panel);
 }
 
-body[data-surface='task-git-delivery'] .task-git-merge-backdrop {
+/* 独立代码交付窗口复用弹窗内容，但窗口壳必须铺满原生内容区，不能保留通用弹窗的四周遮罩留白。 */
+body[data-surface='task-git-delivery'] .task-git-merge-portal-root.macos-ai-app[data-zeus-primitive='modal'] .task-git-merge-backdrop {
   padding: 0;
   background: transparent;
   backdrop-filter: none;
 }
 
-body[data-surface='task-git-delivery'] .task-git-delivery-modal {
+body[data-surface='task-git-delivery'] .task-git-merge-portal-root.macos-ai-app[data-zeus-primitive='modal'] .task-git-delivery-modal {
   inline-size: 100%;
   block-size: 100%;
   max-block-size: none;
@@ -15768,34 +15769,14 @@ body[data-surface='task-git-delivery'] .task-git-delivery-modal {
 body[data-surface='task-git-delivery'] .task-git-merge-header {
   box-sizing: border-box;
   min-block-size: 52px;
-  padding-inline-start: 84px;
+  justify-content: center;
+  padding-inline: 84px;
+  text-align: center;
   -webkit-app-region: drag;
 }
 
 body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, input, select, textarea) {
   -webkit-app-region: no-drag;
-}
-
-body[data-surface='task-git-delivery'] .task-git-window-back {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: 6px;
-  color: var(--zeus-product-muted);
-  display: flex;
-  font-size: 24px;
-  height: 28px;
-  justify-content: center;
-  margin-left: -38px;
-  padding: 0;
-  width: 28px;
-}
-
-body[data-surface='task-git-delivery'] .task-git-window-back:hover,
-body[data-surface='task-git-delivery'] .task-git-window-back:focus-visible {
-  background: var(--zeus-source-list-hover);
-  color: var(--zeus-product-text);
-  outline: 0;
 }
 
 body[data-surface='task-git-delivery'] .task-git-delivery-layout {
