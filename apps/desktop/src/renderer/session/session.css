@@ -5946,7 +5946,7 @@
   display: inline;
 }
 
-.session-codex-parity-v1 .session-inline-resource {
+.session-codex-parity-v1 button.session-inline-resource {
   align-items: baseline;
   appearance: none;
   background: transparent;
@@ -11540,7 +11540,7 @@
   display: inline;
 }
 
-.session-codex-parity-v1 .session-inline-resource {
+.session-codex-parity-v1 button.session-inline-resource {
   align-items: baseline;
   appearance: none;
   background: transparent;
