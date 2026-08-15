@@ -201,7 +201,7 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
         case "state":
             applyState(command)
         case "show":
-            showPanel()
+            showPanel(activating: true)
         case "hide":
             panel.orderOut(nil)
         case "relaunch":
@@ -266,21 +266,26 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
         refreshDetailsControls()
         fitPanelToContent(animated: panel.isVisible)
         if command["present"] as? Bool ?? true {
-            showPanel()
+            showPanel(activating: false)
         }
     }
 
-    private func showPanel() {
-        if panel.isMiniaturized {
-            panel.deminiaturize(nil)
-        }
-        if !panel.isVisible {
-            panel.center()
+    /** 只有用户显式打开时才激活窗口；进度刷新不得抢占其他窗口的键盘焦点。 */
+    private func showPanel(activating: Bool) {
+        if activating {
+            if panel.isMiniaturized {
+                panel.deminiaturize(nil)
+            }
+            if !panel.isVisible {
+                panel.center()
+            }
             panel.makeKeyAndOrderFront(nil)
-        } else {
-            panel.makeKey()
+            NSApp.activate(ignoringOtherApps: true)
+            return
         }
-        NSApp.activate(ignoringOtherApps: true)
+        guard !panel.isVisible, !panel.isMiniaturized else { return }
+        panel.center()
+        panel.orderFront(nil)
     }
 
     private func setButtons(secondary: String?, primary: String?) {
@@ -468,7 +473,7 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
             self.setButtons(secondary: nil, primary: self.localized("close"))
             self.refreshDetailsControls()
             self.fitPanelToContent(animated: false)
-            self.showPanel()
+            self.showPanel(activating: true)
         }
     }
 }
