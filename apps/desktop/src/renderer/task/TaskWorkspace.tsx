@@ -1060,8 +1060,8 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
               </span>
             </section>
           ) : model.visibleTasks.length === 0 ? (
-            // visual thesis: 空任务态只说明下一步，不重复顶部主操作；筛选无结果才显示恢复动作。
-            // 任务列表空态必须融入表格工作台底色，不能再用灰色块和额外按钮制造视觉割裂。
+            // visual thesis: 空任务态只说明任务页价值与下一步，不重复顶部主操作；筛选无结果才显示恢复动作。
+            // 空态必须以当前可见列表区为居中基准，不能被横向溢出的表头宽度拉偏。
             <section
               className={['project-inline-recovery-row task-list-empty-row task-empty-state', model.emptyState === 'no-results' ? 'task-empty-state-with-actions' : 'task-empty-state-copy-only'].join(' ')}
               aria-label={model.emptyState === 'no-results' ? props.copy.noResultsTitle : props.copy.emptyTitle}
