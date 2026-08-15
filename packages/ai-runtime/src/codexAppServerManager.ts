@@ -402,6 +402,7 @@ interface CreateCodexAppServerManagerOptions {
   eventReplayLimit?: number;
   shutdownTimeoutMs?: number;
   accountFingerprintSalt?: string;
+  runtimeEnvironment?: Record<string, string>;
 }
 
 type ProcessExitTracker = { promise: Promise<void>; resolve: () => void; exited: boolean };
@@ -440,6 +441,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
   const eventReplayLimit = options.eventReplayLimit ?? 1_024;
   const shutdownTimeoutMs = Math.max(0, options.shutdownTimeoutMs ?? 5_000);
   const accountFingerprintSalt = options.accountFingerprintSalt?.trim() || 'zeus-local-account-scope';
+  const runtimeEnvironment = { ...options.runtimeEnvironment };
   const listeners = new Set<(event: CodexAppServerEvent) => void>();
   const externalAgentImportListeners = new Set<(event: ExternalAgentImportEvent) => void>();
   const eventReplayBuffer: CodexAppServerEvent[] = [];
@@ -484,9 +486,10 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     const decoder = new CodexJsonLineDecoder();
     const env = {
       ...process.env,
+      ...providerEnvironment,
+      ...runtimeEnvironment,
       PATH: expandCliSearchPath(),
       ...(externalAgentHome === null ? {} : { ZEUS_CODEX_EXTERNAL_AGENT_HOME: externalAgentHome }),
-      ...providerEnvironment,
     };
     const spawned = remoteControlTransport ? spawnRemoteControlCodexAppServer(command, { env }) : spawn(command, ['app-server', ...(options.appServerFlags ?? []), '--listen', 'stdio://'], { env });
     trackProcessExit(spawned);

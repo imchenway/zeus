@@ -429,7 +429,10 @@ export async function startOwnedDesktopLocalServer(options: StartDesktopLocalSer
   const dbPath = dataLayout.database;
   const configPath = dataLayout.localConfig;
   const restartDelayMs = 1_000;
-  const codexAppServerManager = createCodexRuntimeGenerationManager();
+  const codexAppServerManager = createCodexRuntimeGenerationManager({
+    // 内嵌宿主必须让所有 Codex 运行世代使用 Zeus 独立目录，不能回退到用户默认目录。
+    runtimeEnvironment: { CODEX_HOME: options.codexHome ?? dataLayout.codexHome },
+  });
   let closingIntentionally = false;
   let restartTimer: ReturnType<typeof setTimeout> | undefined;
   let restartPromise: Promise<void> | undefined;
