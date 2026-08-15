@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
-import { createConversationAttachmentGrant, resolveConversationAttachmentGrant } from '@zeus/local-server';
+import { createConversationAttachmentGrant, resolveConversationAttachmentGrant } from '@zeus/local-server/conversation-attachment-grant';
 import {
   buildTaskAttachmentPreviewDataUrl,
   coerceTaskClipboardAttachmentBuffer,

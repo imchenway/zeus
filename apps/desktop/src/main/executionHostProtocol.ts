@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createLegacyFlatZeusDataLayout, createZeusDataLayout } from '@zeus/local-server';
+import { createLegacyFlatZeusDataLayout, createZeusDataLayout } from '@zeus/local-server/zeus-data-layout';
 
 export const executionHostProtocolVersion = 1;
 export const executionHostRendezvousFileName = 'rendezvous.json';

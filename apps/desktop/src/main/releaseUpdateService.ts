@@ -5,7 +5,7 @@ import { access, chmod, lstat, mkdir, open, readdir, readFile, rename, rm } from
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { createLegacyFlatZeusDataLayout, createZeusDataLayout } from '@zeus/local-server';
+import { createLegacyFlatZeusDataLayout, createZeusDataLayout } from '@zeus/local-server/zeus-data-layout';
 import { releaseInstallerProtocolVersion, releaseInstallerResultPath, writeReleaseInstallerBootstrap } from './releaseInstallerProtocol.js';
 
 const execFile = promisify(execFileCallback);

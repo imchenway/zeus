@@ -46,7 +46,7 @@ import { cleanupStaleReleaseBackups, createReleaseUpdateService, type ReleaseUpd
 import { createHomebrewUpdateService } from './homebrewUpdateService.js';
 import { createHomebrewUpdateController, type HomebrewUpdateController, type HomebrewUpdateIndicatorState } from './homebrewUpdateController.js';
 import { createAutomaticUpdateScheduler, type AutomaticUpdateScheduler } from './automaticUpdateScheduler.js';
-import { type ZeusDataLayout } from '@zeus/local-server';
+import type { ZeusDataLayout } from '@zeus/local-server/zeus-data-layout';
 import { prepareZeusDataRoot } from './zeusDataMigration.js';
 import { ProjectSourceWorkspaceService } from './projectSourceWorkspace.js';
 import { ProjectGitWorkbenchService, type ProjectGitProjectIdentity } from './projectGitWorkbench.js';

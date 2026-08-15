@@ -4,6 +4,20 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./conversation-attachment-grant": {
+      "types": "./dist/conversationAttachmentGrant.d.ts",
+      "import": "./dist/conversationAttachmentGrant.js"
+    },
+    "./zeus-data-layout": {
+      "types": "./dist/zeusDataLayout.d.ts",
+      "import": "./dist/zeusDataLayout.js"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json"
   },
