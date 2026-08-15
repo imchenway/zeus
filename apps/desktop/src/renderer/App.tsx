@@ -7654,7 +7654,19 @@ export function App(props: {
     // 当前项目变化时必须先清空旧图谱工作区，避免 A 项目的真实图谱继续挂在 B 项目的代码页里。
     resetGraphWorkspace(activeProjectId);
   }, [activeProjectId, graphProjectId]);
-  const currentProjectTasks = useMemo(() => (activeProjectId ? snapshot.tasks.filter((task) => task.projectId === activeProjectId) : snapshot.tasks), [activeProjectId, snapshot.tasks]);
+  const projectTaskModelPushManagementStatus = useCallback(
+    (task: TaskRecord): TaskRecord => {
+      const pending = taskModelPushPendingByTask[task.id];
+      if (!pending || pending.status === 'failed') return task;
+      const statusConfig = resolveTaskManagementStatusConfig(appShellSettings, task.projectId);
+      return resolveTaskManagementStatus(task) === statusConfig.roles.defaultStatusId ? { ...task, managementStatus: statusConfig.roles.pushedStatusId } : task;
+    },
+    [appShellSettings, taskModelPushPendingByTask],
+  );
+  const currentProjectTasks = useMemo(
+    () => (activeProjectId ? snapshot.tasks.filter((task) => task.projectId === activeProjectId) : snapshot.tasks).map(projectTaskModelPushManagementStatus),
+    [activeProjectId, projectTaskModelPushManagementStatus, snapshot.tasks],
+  );
   const currentProjectTaskIdsSignature = useMemo(() => JSON.stringify(currentProjectTasks.map((task) => task.id)), [currentProjectTasks]);
   const terminalTaskIds = useMemo(
     () =>
@@ -7837,6 +7849,7 @@ export function App(props: {
           })),
           tasks: snapshot.tasks
             .filter((task) => task.projectId === project.id)
+            .map(projectTaskModelPushManagementStatus)
             .map((task) => ({
               taskId: task.id,
               taskCode: task.taskCode?.trim() || task.id,
@@ -7853,6 +7866,7 @@ export function App(props: {
       conversationTreeHiddenTaskIds,
       nativeConversationChoicesByProject,
       orderedProjects,
+      projectTaskModelPushManagementStatus,
       projectedTaskConversationChoices,
       snapshot.tasks,
     ],
@@ -7991,11 +8005,12 @@ export function App(props: {
     [nativeConversationChoiceLoadCoordinator, nativeProjectConversationChoiceLoadCoordinator, props.nativeConversationClient, reconcileNativeConversationProjectionStates],
   );
 
-  const nativeSessionTaskRecord = selectedNativeConversation?.taskId
+  const nativeSessionTaskRecordSource = selectedNativeConversation?.taskId
     ? snapshot.tasks.find((task) => task.id === selectedNativeConversation.taskId)
     : conversationDraftOpen && taskDetail && (!activeProjectId || taskDetail.projectId === activeProjectId)
       ? taskDetail
       : undefined;
+  const nativeSessionTaskRecord = nativeSessionTaskRecordSource ? projectTaskModelPushManagementStatus(nativeSessionTaskRecordSource) : undefined;
   const optimisticNativeSessionTaskStatus = nativeSessionTaskRecord ? optimisticTerminalTaskStatuses[nativeSessionTaskRecord.id] : undefined;
   const effectiveNativeSessionTaskRecord = nativeSessionTaskRecord && optimisticNativeSessionTaskStatus ? { ...nativeSessionTaskRecord, managementStatus: optimisticNativeSessionTaskStatus } : nativeSessionTaskRecord;
   const nativeSessionTaskStatusConfig = effectiveNativeSessionTaskRecord ? resolveTaskManagementStatusConfig(appShellSettings, effectiveNativeSessionTaskRecord.projectId) : null;
@@ -8333,7 +8348,8 @@ export function App(props: {
     reconcileNativeConversationProjectionStates,
   ]);
 
-  const taskDetailPaneTask = taskDetailPaneTaskId ? (taskDetail?.id === taskDetailPaneTaskId ? taskDetail : snapshot.tasks.find((task) => task.id === taskDetailPaneTaskId)) : undefined;
+  const taskDetailPaneTaskSource = taskDetailPaneTaskId ? (taskDetail?.id === taskDetailPaneTaskId ? taskDetail : snapshot.tasks.find((task) => task.id === taskDetailPaneTaskId)) : undefined;
+  const taskDetailPaneTask = taskDetailPaneTaskSource ? projectTaskModelPushManagementStatus(taskDetailPaneTaskSource) : undefined;
   const taskDetailPaneConversations = taskDetailPaneTask ? (nativeConversationChoicesByTask[taskDetailPaneTask.id]?.choices ?? []) : [];
   const taskDetailPaneConversationState = taskDetailPaneTask ? nativeConversationChoiceTaskStates[taskDetailPaneTask.id] : undefined;
   const taskDetailPaneModelPushOperation = taskDetailPaneTask ? taskModelPushPendingByTask[taskDetailPaneTask.id] : undefined;
@@ -12273,7 +12289,8 @@ export function App(props: {
       owner: SessionConversationOwner | undefined;
       choices: NativeConversationChoice[];
     } {
-      const taskRecord = conversation.taskId ? snapshot.tasks.find((candidate) => candidate.id === conversation.taskId) : undefined;
+      const taskRecordSource = conversation.taskId ? snapshot.tasks.find((candidate) => candidate.id === conversation.taskId) : undefined;
+      const taskRecord = taskRecordSource ? projectTaskModelPushManagementStatus(taskRecordSource) : undefined;
       const task = taskRecord ? createSessionWorkspaceTask(taskRecord, appShellSettings, appShellSettings.appLanguage) : null;
       const project = snapshot.projects.find((candidate) => candidate.id === conversation.projectId);
       const owner: SessionConversationOwner | undefined = task

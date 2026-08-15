@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 /**
  * 只标记当前列表真实新增的对象；首批历史数据不播放逐项入场，避免打开页面时整列内容排队闪动。
  */
-export function useNewItemMotionIds(ids: readonly string[], durationMs = 220): ReadonlySet<string> {
+export function useNewItemMotionIds(ids: readonly string[], durationMs = 220, baselineReady = true): ReadonlySet<string> {
   const identity = JSON.stringify(ids);
   const stableIds = useMemo(() => JSON.parse(identity) as string[], [identity]);
   const initializedRef = useRef(false);
@@ -13,6 +13,11 @@ export function useNewItemMotionIds(ids: readonly string[], durationMs = 220): R
 
   useLayoutEffect(() => {
     const currentIds = new Set(stableIds);
+    if (!baselineReady) {
+      // 首次权威数据尚未到达时只跟踪当前壳层，不能把后续整批历史误判为实时新增消息。
+      knownIdsRef.current = currentIds;
+      return;
+    }
     if (!initializedRef.current) {
       initializedRef.current = true;
       knownIdsRef.current = currentIds;
@@ -38,7 +43,7 @@ export function useNewItemMotionIds(ids: readonly string[], durationMs = 220): R
       }, durationMs);
       timersRef.current.set(id, timer);
     }
-  }, [durationMs, stableIds]);
+  }, [baselineReady, durationMs, stableIds]);
 
   useEffect(
     () => () => {

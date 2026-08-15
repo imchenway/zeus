@@ -104,7 +104,12 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     () => transcriptItems.filter((entry) => entry.optimistic && entry.status === 'queued' && !taskPushOptimisticKeys.has(entry.key) && !queuedClientIds.has(entry.clientUserMessageId ?? '')),
     [queuedClientIds, taskPushOptimisticKeys, transcriptItems],
   );
-  const enteringItemIds = useNewItemMotionIds([...items, ...immediateOptimisticItems, ...queuedOptimisticItems].map((item) => item.key));
+  const historyHydrated = props.state.snapshot !== null;
+  const enteringItemIds = useNewItemMotionIds(
+    [...items, ...immediateOptimisticItems, ...queuedOptimisticItems].map((item) => item.key),
+    220,
+    historyHydrated,
+  );
   const lastUserKey = [...items].reverse().find((entry) => `${entry.type}`.toLocaleLowerCase().includes('user'))?.key;
   const answeredRequests = useMemo(() => props.state.pendingRequests.filter(isAnsweredUserInputRequest), [props.state.pendingRequests]);
   const transcriptRows = useMemo(() => projectTranscriptRows(items, answeredRequests), [answeredRequests, items]);
@@ -118,7 +123,6 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   }, [items, props.state.turnsByProviderId]);
   const showActiveStatus = shouldShowTranscriptThinking(props.state, items);
   const activeStatusKind = props.state.conversationState === 'starting_turn' ? 'starting' : 'thinking';
-  const historyHydrated = props.state.snapshot !== null;
   const historyUnavailable = !historyHydrated && (props.state.transportState === 'reconnecting' || props.state.transportState === 'failed');
   const latestSubmittedMessageId = [...taskPushOptimisticItems, ...immediateOptimisticItems, ...queuedOptimisticItems].at(-1)?.clientUserMessageId ?? null;
   const maintainLatestPosition = useCallback(() => {
@@ -827,10 +831,12 @@ export function isVisibleTranscriptItem(item: NativeSessionItemBuffer): boolean 
 export function shouldShowTranscriptThinking(state: NativeSessionState, items: readonly NativeSessionItemBuffer[] = Object.values(state.items)): boolean {
   if (state.conversationState !== 'starting_turn' && state.conversationState !== 'active_prework' && state.conversationState !== 'active_final_answer') return false;
   if (state.conversationState === 'starting_turn' || !state.activeTurnId) return true;
-  return !items.some((item) => item.turnId === state.activeTurnId && itemIsOngoingVisibleFeedback(item));
+  return !items.some((item) => item.turnId === state.activeTurnId && itemProvidesCurrentVisibleFeedback(item, state));
 }
 
-function itemIsOngoingVisibleFeedback(item: NativeSessionItemBuffer): boolean {
+function itemProvidesCurrentVisibleFeedback(item: NativeSessionItemBuffer, state: NativeSessionState): boolean {
+  // 最新可读思考摘要在活动轮次中已经使用转圈图标表达持续处理，此时不再叠加第二行“正在思考”。
+  if (normalizeItemType(item.type) === 'reasoning' && reasoningSummaryStatus(item, state) === 'active' && transcriptItemText(item).trim().length > 0) return true;
   if (item.status === 'completed' || item.status === 'failed' || item.status === 'interrupted') return false;
   if (itemRole(item) === 'user') return false;
   if (isOperationalActivityItem(item)) return true;

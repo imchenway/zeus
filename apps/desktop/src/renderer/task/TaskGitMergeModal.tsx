@@ -628,11 +628,6 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     <ModalPortal rootClassName="task-git-merge-portal-root" backdropClassName="task-git-merge-backdrop" dismissDisabled={dismissDisabled} onDismiss={props.onClose}>
       <section className={`task-git-merge-modal task-git-delivery-modal${conflictWorkspaceOpen && activeConflict ? ' is-conflicted' : ''}`} role="dialog" aria-modal="true" aria-labelledby="task-git-merge-title">
         <header className="task-git-merge-header">
-          {standaloneWindow ? (
-            <button type="button" className="task-git-window-back" aria-label={zh ? '返回任务' : 'Back to task'} onClick={props.onClose} disabled={dismissDisabled}>
-              ‹
-            </button>
-          ) : null}
           <span>
             <strong id="task-git-merge-title">
               {unresolvedConflict ? (zh ? '解决合入冲突' : 'Resolve Merge Conflicts') : conflictReadyToFinalize ? (zh ? '确认完成合入' : 'Confirm Merge Completion') : zh ? '代码交付' : 'Code Delivery'}
