@@ -21,6 +21,7 @@ import type { ConversationFileIconKind, ConversationFileLocation, ConversationOp
 import { listConversationResourceOpenTargetsInMain } from '../appShellBridge.js';
 import type { NativeConversationAttachment } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
 export interface ConversationResourceInteraction {
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
@@ -152,6 +153,12 @@ export function ConversationInlineResource(
   const location = rawLocation && !/\(\s*lines?\s+\d+/iu.test(props.label) ? rawLocation : null;
   const title = props.resource.kind === 'file' ? props.resource.projectRelativePath : props.resource.kind === 'website' ? props.resource.url : props.resource.displayName;
 
+  useApplicationErrorDialog(error, {
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+    title: props.language === 'zh-CN' ? '资源打开失败' : 'Resource failed to open',
+    source: 'ConversationInlineResource',
+  });
+
   async function open(): Promise<void> {
     if (!props.onOpenResource || busy) return;
     setBusy(true);
@@ -167,24 +174,11 @@ export function ConversationInlineResource(
 
   return (
     <span className="session-inline-resource-shell" data-resource-kind={props.resource.kind}>
-      <button
-        type="button"
-        className="session-inline-resource"
-        title={error ?? title}
-        aria-label={`${props.label}${location ? ` ${location}` : ''}`}
-        aria-busy={busy || undefined}
-        data-error={Boolean(error) || undefined}
-        onClick={() => void open()}
-      >
+      <button type="button" className="session-inline-resource" title={title} aria-label={`${props.label}${location ? ` ${location}` : ''}`} aria-busy={busy || undefined} data-error={Boolean(error) || undefined} onClick={() => void open()}>
         <ResourceIcon resource={props.resource} />
         <span>{props.label}</span>
         {location ? <span className="session-inline-resource-location">{location}</span> : null}
       </button>
-      {error ? (
-        <span className="session-sr-only" role="alert">
-          {error}
-        </span>
-      ) : null}
     </span>
   );
 }
@@ -230,6 +224,11 @@ function ConversationImagePreview(
   const resourceRef = useRef(props.resource);
   const languageRef = useRef(props.language);
   const loadPreviewRef = useRef(props.onLoadResourcePreview);
+  useApplicationErrorDialog(error, {
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+    title: props.language === 'zh-CN' ? '图片资源操作失败' : 'Image resource operation failed',
+    source: 'ConversationImagePreview',
+  });
   const previewFailureRef = useRef(props.onPreviewFailure);
   const visibleContentChangeRef = useRef(props.onVisibleContentChange);
   const failureReportedRef = useRef(false);
@@ -337,7 +336,7 @@ function ConversationImagePreview(
       aria-label={`${props.language === 'zh-CN' ? '在 Zeus 中预览' : 'Preview in Zeus'}：${props.label}`}
       aria-busy={loading || opening || undefined}
       data-error={Boolean(error) || undefined}
-      title={error ?? props.resource.displayName}
+      title={props.resource.displayName}
       onClick={() => void open()}
     >
       {preview ? (
@@ -418,6 +417,12 @@ function ConversationResourceCard(
   const [error, setError] = useState<string | null>(props.initialError ?? null);
   const subtitle = resourceSubtitle(props.resource, props.language);
 
+  useApplicationErrorDialog(error, {
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+    title: props.language === 'zh-CN' ? '资源操作失败' : 'Resource operation failed',
+    source: 'ConversationResourceCard',
+  });
+
   async function open(target = defaultOpenTarget(props.resource)): Promise<void> {
     if (!props.onOpenResource || busy) return;
     setBusy(true);
@@ -439,7 +444,7 @@ function ConversationResourceCard(
         </span>
         <span className="session-resource-card-copy">
           <strong>{props.resource.displayName}</strong>
-          <small>{error ?? subtitle}</small>
+          <small>{subtitle}</small>
         </span>
       </button>
       <OpenWithMenu resource={props.resource} language={props.language} disabled={busy} onOpen={(target) => open(target)} />
@@ -456,6 +461,12 @@ function OpenWithMenu(props: { resource: ConversationResource; language: Session
   const [targets, setTargets] = useState<ConversationResourceOpenTarget[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [menuPosition, setMenuPosition] = useState<{ left: number; top: number } | null>(null);
+
+  useApplicationErrorDialog(error, {
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+    title: props.language === 'zh-CN' ? '打开方式读取失败' : 'Open-with options failed to load',
+    source: 'OpenWithMenu',
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -574,11 +585,6 @@ function OpenWithMenu(props: { resource: ConversationResource; language: Session
             <div className={openWithPortalClassName()}>
               <div className="session-open-with-menu" role="menu" ref={menuRef} onKeyDown={handleMenuKeyDown} style={menuPositionStyle(menuPosition)}>
                 {loading ? <span className="session-open-with-status">{props.language === 'zh-CN' ? '正在检测应用…' : 'Detecting apps…'}</span> : null}
-                {error ? (
-                  <span className="session-open-with-status" role="alert">
-                    {error}
-                  </span>
-                ) : null}
                 {!loading && !error
                   ? targets.map((target) => (
                       <button

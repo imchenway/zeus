@@ -4,6 +4,7 @@ import { type DashboardClient, type TaskRecord, ZeusApiError } from '../apiClien
 import type { BatchTaskWorkspaceResponse, TaskGitDiffSummary, TaskGitFileDiff, TaskGitFileStatus, TaskWorkspaceIndexCollection, TaskWorkspaceIndexSnapshot, TaskWorkspaceSnapshot } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import { TaskWorkspaceBranchList } from './TaskWorkspaceBranchList.js';
 
 type ReviewMode = 'commit' | 'commit-only' | 'push-only' | 'delivery';
@@ -60,6 +61,12 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
   const activeWorkspaceIndex = workspaceIndex?.items.find((workspace) => workspace.id === activeWorkspaceId) ?? null;
   const activeWorkspace = workspaceDetails[activeWorkspaceId] ?? null;
   const files = useMemo(() => collectReviewFiles(activeWorkspace), [activeWorkspace]);
+  const workspaceError = activeWorkspace?.reviewError ?? activeWorkspace?.remoteRefreshError ?? null;
+  useApplicationErrorDialog(error ?? workspaceError, {
+    language: zh ? 'zh-CN' : 'en',
+    title: zh ? 'Git 审核操作失败' : 'Git review operation failed',
+    source: 'TaskGitReviewModal',
+  });
 
   useEffect(() => {
     if (!props.open || !props.task || !props.client) return;
@@ -333,7 +340,6 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
               </span>
               {status === 'loading' || detailStates[activeWorkspaceId] === 'loading' ? <p>{zh ? '正在读取当前仓库 Git 状态…' : 'Loading Git status for this repository…'}</p> : null}
               {detailStates[activeWorkspaceId] === 'error' ? <p className="task-git-review-error">{zh ? '当前仓库读取失败，其他仓库仍可继续操作。' : 'This repository failed to load. Other repositories remain available.'}</p> : null}
-              {activeWorkspace?.reviewError ? <p className="task-git-review-error">{activeWorkspace.reviewError}</p> : null}
               {activeReview?.conflictFiles.length ? (
                 <p className="task-git-review-error">{zh ? `存在 ${activeReview.conflictFiles.length} 个冲突文件，请先进入冲突处理。` : `${activeReview.conflictFiles.length} conflicted files require resolution.`}</p>
               ) : null}
@@ -418,12 +424,8 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
             ) : null}
             {activeWorkspace?.remoteRefreshError ? (
               <section className="task-git-review-active-sessions">
-                <strong>{zh ? '远端刷新失败' : 'Remote refresh failed'}</strong>
-                <small>
-                  {zh
-                    ? `远端刷新失败：${activeWorkspace.remoteRefreshError}。本地查看、提交和合入仍可继续；尝试推送时会显示真实 Git 错误，不使用旧远端记录。`
-                    : `Remote refresh failed: ${activeWorkspace.remoteRefreshError}. Local review, commits, and merge remain available; pushing will show the real Git error instead of using stale remote data.`}
-                </small>
+                <strong>{zh ? '远端信息暂不可用' : 'Remote information is unavailable'}</strong>
+                <small>{zh ? '本地查看、提交和合入仍可继续；推送时会重新核对真实远端状态。' : 'Local review, commits, and merge remain available; pushing will verify the live remote state again.'}</small>
               </section>
             ) : null}
           </aside>
@@ -445,12 +447,6 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
               {zh ? '确认放弃' : 'Discard branch'}
             </Button>
           </section>
-        ) : null}
-
-        {error ? (
-          <p className="task-git-review-global-error" role="alert">
-            {error}
-          </p>
         ) : null}
 
         {batchResult ? (

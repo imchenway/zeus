@@ -8,6 +8,7 @@ import type { NativePendingRequest } from './sessionTypes.js';
 import type { NativeConversationAttachment } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { ConversationComposerAttachments } from './ConversationComposerAttachments.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
 export interface AnsweredRequestHistoryProps {
   request: NativePendingRequest;
@@ -67,6 +68,11 @@ export function AnsweredRequestHistory(props: AnsweredRequestHistoryProps) {
   const [previewAttachment, setPreviewAttachment] = useState<NativeConversationAttachment | null>(null);
   const [resourceError, setResourceError] = useState<string | null>(null);
   const previewTriggerRef = useRef<HTMLButtonElement | null>(null);
+  useApplicationErrorDialog(resourceError, {
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+    title: props.language === 'zh-CN' ? '回答附件打开失败' : 'Answer attachment failed to open',
+    source: 'AnsweredRequestHistory',
+  });
   if (entries.length === 0) return null;
   const heading = entries.length === 1 ? copy.answered : copy.answeredCount(entries.length);
 
@@ -164,11 +170,6 @@ export function AnsweredRequestHistory(props: AnsweredRequestHistoryProps) {
           );
         })}
       </div>
-      {resourceError ? (
-        <p className="session-answered-request-resource-error" role="alert">
-          {resourceError}
-        </p>
-      ) : null}
       {previewAttachment ? <AnsweredAttachmentPreviewDialog attachment={previewAttachment} language={props.language} onClose={closeAttachmentPreview} /> : null}
     </article>
   );

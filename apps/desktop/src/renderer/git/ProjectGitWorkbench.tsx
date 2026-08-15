@@ -14,6 +14,7 @@ import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/c
 import type { DashboardClient, ProjectGitAction, ProjectGitCommitDetail, ProjectGitRepositoryWorkbenchItem, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import { SideBySideDiff } from './ProjectGitDiffViewer.js';
 
 type GitTab = 'changes' | 'shelf' | 'stash' | 'log' | 'console';
@@ -46,6 +47,11 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const [snapshot, setSnapshot] = useState<ProjectGitWorkbenchSnapshot | null>(null);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [error, setError] = useState<string | null>(null);
+  useApplicationErrorDialog(error, {
+    language: zh ? 'zh-CN' : 'en',
+    title: zh ? 'Git 操作失败' : 'Git operation failed',
+    source: 'ProjectGitWorkbench',
+  });
   const [tab, setTab] = useState<GitTab>(() => readRememberedTab(props.project.id));
   const [selectedRepositoryId, setSelectedRepositoryId] = useState('');
   const [selectedCommitHash, setSelectedCommitHash] = useState('');
@@ -223,10 +229,10 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
 
   if (loadState === 'error' && !snapshot) {
     return (
-      <section className="project-git-workbench-state" role="alert">
+      <section className="project-git-workbench-state" role="status">
         <WarningCircle aria-hidden="true" />
-        <strong>{zh ? '无法读取项目 Git 现场' : 'Project Git state is unavailable'}</strong>
-        <span>{error}</span>
+        <strong>{zh ? '当前没有可显示的 Git 现场' : 'No Git state is currently available'}</strong>
+        <span>{zh ? '可以重新读取本机仓库。' : 'You can reload the local repositories.'}</span>
         <Button variant="secondary" onClick={() => void loadWorkbench()}>
           {zh ? '重新读取' : 'Reload'}
         </Button>
@@ -344,16 +350,6 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
           </label>
         </span>
       </nav>
-
-      {error ? (
-        <div className="project-git-inline-error" role="alert">
-          <WarningCircle aria-hidden="true" />
-          <span>{error}</span>
-          <button type="button" onClick={() => setError(null)} aria-label={zh ? '收起错误' : 'Dismiss error'}>
-            {zh ? '收起' : 'Dismiss'}
-          </button>
-        </div>
-      ) : null}
 
       {tab === 'log' ? (
         <GitLogSurface

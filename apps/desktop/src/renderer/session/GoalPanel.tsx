@@ -1,5 +1,6 @@
 import { useEffect, useId, useState } from 'react';
 import { ModalPortal } from '../ui/ModalPortal.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import type { NativeGoalCapability, NativeGoalSnapshot, NativeGoalTimelineEvent } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 
@@ -47,6 +48,11 @@ export function GoalPanel(props: GoalPanelProps) {
   const descriptionId = useId();
   const [objective, setObjective] = useState(props.goal?.objective ?? props.initialObjective ?? '');
   const [confirmClear, setConfirmClear] = useState(false);
+  useApplicationErrorDialog(props.error, {
+    language: zh ? 'zh-CN' : 'en',
+    title: zh ? '目标操作失败' : 'Goal operation failed',
+    source: 'GoalPanel',
+  });
 
   useEffect(() => {
     if (!props.open) return;
@@ -92,11 +98,6 @@ export function GoalPanel(props: GoalPanelProps) {
               <dd>{props.goal.tokenBudget === null ? (zh ? '未设置' : 'Not set') : new Intl.NumberFormat(zh ? 'zh-CN' : 'en-US').format(props.goal.tokenBudget)}</dd>
             </div>
           </dl>
-        ) : null}
-        {props.error ? (
-          <p className="session-goal-error" role="alert">
-            {props.error}
-          </p>
         ) : null}
         {confirmClear ? (
           <section className="session-goal-clear-confirm" role="alertdialog" aria-label={zh ? '确认清除目标' : 'Confirm goal clear'}>

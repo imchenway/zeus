@@ -10,6 +10,7 @@ import type { ConversationContextDraft, ConversationFileLocation, ConversationOp
 import type { ConversationResponseAnnotation, ConversationResponseTextAnchor } from '@zeus/shared';
 import { ConversationGeneratedImage, ConversationInlineResource, ConversationMarkdownImage, ConversationPendingAttachmentImages, ConversationResourceCards, isImageResource, isPendingImageAttachment } from './ConversationResources.js';
 import { ResponseSelectionActions } from './ResponseSelectionActions.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
 export type SessionUiLanguage = 'zh-CN' | 'en-US';
 export type ThreadItemRole = 'user' | 'assistant' | 'commentary' | 'tool' | 'file' | 'image' | 'request' | 'error' | 'unknown';
@@ -251,6 +252,11 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const [editing, setEditing] = useState(false);
   const [editDraft, setEditDraft] = useState('');
   const [editError, setEditError] = useState<string | null>(null);
+  useApplicationErrorDialog(editError, {
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+    title: props.language === 'zh-CN' ? '消息重新发送失败' : 'Message failed to resend',
+    source: 'ThreadItemView.submitEditedMessage',
+  });
   const [submittingEdit, setSubmittingEdit] = useState(false);
   const editTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const articleRef = useRef<HTMLElement | null>(null);
@@ -399,7 +405,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
             onKeyDown={handleEditKeyDown}
           />
           <footer>
-            {editError ? <small role="alert">{editError}</small> : <span />}
+            <span />
             <button type="button" onClick={cancelEditing} disabled={submittingEdit}>
               {labels.cancelEdit}
             </button>

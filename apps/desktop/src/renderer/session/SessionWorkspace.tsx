@@ -67,6 +67,7 @@ import { resolveModelCapability } from './modelSelection.js';
 import { GoalPanel, GoalRail } from './GoalPanel.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
 import { NewConversationExecutionContext } from './NewConversationExecutionContext.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
 export interface SessionWorkspaceTaskManagementStatus {
   id: string;
@@ -1318,6 +1319,22 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const legacy = props.conversation && (props.conversation.readOnly || props.conversation.transportKind !== 'codex_native');
   const interactionReadOnly = Boolean(props.readOnlyGate);
   const effectiveProviderState = props.state?.snapshot?.providerState ?? props.conversation?.providerState ?? null;
+  const transportError = props.state?.transportState === 'failed' ? (errorMessage(props.state.error) ?? props.loadError ?? copy.failed) : null;
+  useApplicationErrorDialog(props.readOnlyGate?.error, {
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+    title: props.language === 'zh-CN' ? '会话重新打开失败' : 'Conversation failed to reopen',
+    source: 'SessionWorkspace.readOnlyGate',
+  });
+  useApplicationErrorDialog(props.loadState === 'error' ? (props.loadError ?? copy.failed) : null, {
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+    title: props.language === 'zh-CN' ? '会话读取失败' : 'Conversation failed to load',
+    source: 'SessionWorkspace.load',
+  });
+  useApplicationErrorDialog(transportError, {
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+    title: props.language === 'zh-CN' ? '会话连接失败' : 'Conversation connection failed',
+    source: 'SessionWorkspace.transport',
+  });
   const effectiveResumable = props.state?.snapshot ? !['closed', 'failed'].includes(effectiveProviderState ?? '') : effectiveProviderState === 'archived' ? true : props.conversation?.resumable;
   const nonResumableNative = Boolean(props.conversation && !legacy && !effectiveResumable);
   const pendingRequests = props.state?.pendingRequests.filter((request) => request.status === 'pending' && hasPendingRequestDetails(request)) ?? [];
@@ -2025,7 +2042,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
           <span>
             <strong>{props.readOnlyGate.title}</strong>
             <small>{props.readOnlyGate.description}</small>
-            {props.readOnlyGate.error ? <em role="alert">{props.readOnlyGate.error}</em> : null}
           </span>
           <button type="button" onClick={() => void props.readOnlyGate?.onAction()} disabled={props.readOnlyGate.busy} aria-busy={props.readOnlyGate.busy || undefined}>
             {props.readOnlyGate.busy ? (props.language === 'zh-CN' ? '正在重新打开…' : 'Reopening…') : props.readOnlyGate.actionLabel}
@@ -2043,8 +2059,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
             </p>
           ) : null}
           {props.loadState === 'error' ? (
-            <p className="session-legacy-load-status session-legacy-load-error" role="alert">
-              {props.loadError ?? copy.failed}
+            <p className="session-legacy-load-status" role="status">
+              {props.language === 'zh-CN' ? '旧会话仍保持只读。' : 'The legacy conversation remains read-only.'}
             </p>
           ) : null}
           {(props.legacyMessages?.[props.conversation.legacySourceConversationId ?? props.conversation.id] ?? []).length > 0 ? (
@@ -2075,17 +2091,11 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                   {(props.state.transportState === 'hydrating' || props.state.transportState === 'connecting') && !props.state.snapshot ? <SessionLoading language={props.language} /> : null}
                   {props.state.transportState === 'reconnecting' ? <SessionReconnectNotice language={props.language} attempt={props.state.reconnectAttempt} onReconnect={actions.onReconnect} /> : null}
                   {props.state.transportState === 'failed' ? (
-                    <section className="session-transport-failure" role="alert" data-retained-content={Boolean(props.state.snapshot) || undefined}>
+                    <section className="session-transport-failure" role="status" data-retained-content={Boolean(props.state.snapshot) || undefined}>
                       <WarningCircle aria-hidden="true" weight="regular" />
                       <span className="session-transport-failure-copy">
                         <strong>{isServerBusyError(props.state.error) ? copy.serverBusy : copy.failed}</strong>
-                        <p>{props.state.transportState === 'failed' && props.state.snapshot ? copy.refreshFailureHelp : isServerBusyError(props.state.error) ? copy.serverBusyHelp : (props.state.error?.message ?? copy.failureHelp)}</p>
-                        {errorMessage(props.state.error) || props.loadError ? (
-                          <details className="session-error-details">
-                            <summary>{copy.details}</summary>
-                            <p>{errorMessage(props.state.error) ?? props.loadError}</p>
-                          </details>
-                        ) : null}
+                        <p>{props.state.transportState === 'failed' && props.state.snapshot ? copy.refreshFailureHelp : isServerBusyError(props.state.error) ? copy.serverBusyHelp : copy.failureHelp}</p>
                       </span>
                       {actions.onReconnect ? (
                         <button type="button" onClick={() => void actions.onReconnect?.()}>
@@ -2421,6 +2431,12 @@ function NewConversationComposer(props: {
     onError: setLocalError,
   });
 
+  useApplicationErrorDialog(localError ?? (props.loadState === 'error' ? props.loadError : null), {
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+    title: props.language === 'zh-CN' ? '新会话创建失败' : 'New conversation failed to start',
+    source: 'NewConversationComposer',
+  });
+
   useEffect(() => {
     if (props.autoFocus) textareaRef.current?.focus();
   }, [props.autoFocus]);
@@ -2559,11 +2575,6 @@ function NewConversationComposer(props: {
       onDragLeave={inputResources.handleDragLeave}
       onDrop={inputResources.handleDrop}
     >
-      {localError || (props.loadState === 'error' && props.loadError) ? (
-        <p className="session-new-conversation-error" role="alert">
-          {localError ?? props.loadError}
-        </p>
-      ) : null}
       <ConversationComposerAttachments
         attachments={attachments}
         language={props.language}

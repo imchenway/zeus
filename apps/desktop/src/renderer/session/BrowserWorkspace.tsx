@@ -14,6 +14,7 @@ import { SidebarSimpleIcon as SidebarSimple } from '@phosphor-icons/react/dist/c
 import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { ZeusBrowserApprovalDecision, ZeusBrowserApprovalRequest, ZeusBrowserCommand, ZeusBrowserConversationSnapshot, ZeusBrowserEvent, ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
 interface BrowserWorkspaceProps {
   conversationId: string;
@@ -118,6 +119,11 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
   const [moreOpen, setMoreOpen] = useState(false);
   const [staging, setStaging] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useApplicationErrorDialog(error, {
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+    title: props.language === 'zh-CN' ? '内置浏览器操作失败' : 'Built-in browser operation failed',
+    source: 'BrowserWorkspace',
+  });
   const activeTab = snapshot?.tabs.find((tab) => tab.id === snapshot.activeTabId) ?? null;
   const draftComments = activeTab?.comments.filter((comment) => comment.status === 'draft') ?? [];
 
@@ -320,7 +326,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
     return (
       <section className="browser-workspace browser-workspace-loading" aria-label={labels.title}>
         <GlobeSimple aria-hidden="true" weight="regular" />
-        <p>{error ?? labels.loading}</p>
+        <p>{error ? (props.language === 'zh-CN' ? '浏览器现场暂不可用。' : 'The browser state is temporarily unavailable.') : labels.loading}</p>
       </section>
     );
   }
@@ -471,12 +477,6 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
           </span>
         </div>
       )}
-
-      {error ? (
-        <p className="browser-error-banner" role="alert">
-          {error}
-        </p>
-      ) : null}
 
       <div className="browser-content-row">
         <div ref={viewportRef} className="browser-native-viewport" aria-label={activeTab.title || activeTab.url} />

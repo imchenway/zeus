@@ -20,6 +20,7 @@ import {
 } from '@zeus/shared';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { CodeCommentPanel } from './CodeCommentPanel.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
 type ChangeAction = 'undo' | 'reapply';
 const maximumRenderedDiffLines = 2_000;
@@ -34,6 +35,11 @@ export function TurnChangeCard(props: {
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState<ChangeAction | null>(null);
   const [error, setError] = useState<string | null>(null);
+  useApplicationErrorDialog(error && error !== props.changeSet.conflict?.message && error !== props.changeSet.unavailableReason ? error : null, {
+    language: zh ? 'zh-CN' : 'en',
+    title: zh ? '文件变更操作失败' : 'File change operation failed',
+    source: 'TurnChangeCard',
+  });
   const [optimisticChangeSet, setOptimisticChangeSet] = useState<TurnChangeSet | null>(null);
   const changeSet = optimisticChangeSet && optimisticChangeSet.id === props.changeSet.id && optimisticChangeSet.updatedAt >= props.changeSet.updatedAt ? optimisticChangeSet : props.changeSet;
   const visibleFiles = expanded ? changeSet.files : changeSet.files.slice(0, 3);
@@ -83,12 +89,6 @@ export function TurnChangeCard(props: {
           </button>
         </nav>
       </header>
-      {error && error !== changeSet.conflict?.message && error !== changeSet.unavailableReason ? (
-        <p className="session-turn-change-error" role="alert">
-          <WarningCircle aria-hidden="true" />
-          {error}
-        </p>
-      ) : null}
       {changeSet.conflict ? (
         <p className="session-turn-change-error" role="alert">
           <WarningCircle aria-hidden="true" />
@@ -145,6 +145,11 @@ export function TurnDiffWorkspace(props: {
   const titleRef = useRef<HTMLSpanElement | null>(null);
   const [busy, setBusy] = useState<ChangeAction | null>(null);
   const [error, setError] = useState<string | null>(null);
+  useApplicationErrorDialog(error && error !== props.changeSet.conflict?.message && error !== props.changeSet.unavailableReason ? error : null, {
+    language: zh ? 'zh-CN' : 'en',
+    title: zh ? '变更审核操作失败' : 'Change review operation failed',
+    source: 'TurnDiffWorkspace',
+  });
   const [optimisticChangeSet, setOptimisticChangeSet] = useState<TurnChangeSet | null>(null);
   const [draftPosition, setDraftPosition] = useState<ConversationCodeCommentPosition | null>(null);
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
@@ -241,12 +246,6 @@ export function TurnDiffWorkspace(props: {
           </button>
         </nav>
       </header>
-      {error && error !== changeSet.conflict?.message && error !== changeSet.unavailableReason ? (
-        <p className="session-turn-change-error session-turn-diff-error" role="alert">
-          <WarningCircle aria-hidden="true" />
-          {error}
-        </p>
-      ) : null}
       {changeSet.conflict ? (
         <p className="session-turn-change-error session-turn-diff-error" role="alert">
           <WarningCircle aria-hidden="true" />

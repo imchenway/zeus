@@ -8,6 +8,7 @@ import { ModalPortal } from '../ui/ModalPortal.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { readConversationRuntimePreferences, writeConversationRuntimePreferences } from './conversationRuntimePreferences.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
 export interface SessionCodeReviewSelection {
   agentKind: 'codex' | 'pi';
@@ -46,6 +47,11 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
   const [form, setForm] = useState<SessionCodeReviewForm | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'submitting' | 'preparing' | 'error'>('loading');
   const [error, setError] = useState<string | null>(null);
+  useApplicationErrorDialog(error, {
+    language: zh ? 'zh-CN' : 'en',
+    title: zh ? '代码审查启动失败' : 'Code review failed to start',
+    source: 'SessionCodeReviewDialog',
+  });
   const [cancelPreparation, setCancelPreparation] = useState<(() => void) | null>(null);
 
   useEffect(() => {
@@ -269,11 +275,6 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
           {status === 'preparing' ? (
             <p className="session-code-review-message" role="status">
               {zh ? '正在准备，完成后自动开始。' : 'Preparing. This will start automatically when ready.'}
-            </p>
-          ) : null}
-          {error ? (
-            <p className="session-code-review-error" role="alert">
-              {error}
             </p>
           ) : null}
         </div>

@@ -4,6 +4,7 @@ import { ZeusApiError, type TaskEventRecord, type TaskManagementStatus, type Tas
 import type { NativeConversationChoice } from '../session/sessionTypes.js';
 import { compareConversationCreatedAsc } from '../session/conversationOrdering.js';
 import { Button } from '../ui/Button.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../ui/pendingResourcePolicy.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { TaskAttachmentPreviewList } from './TaskAttachmentPreviewList.js';
@@ -632,6 +633,16 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
   const [undoAttachment, setUndoAttachment] = useState<TaskAttachmentView | null>(null);
   const [relationshipSaveState, setRelationshipSaveState] = useState<TaskFieldSaveState>({ kind: 'idle' });
   const [relatedTaskCandidateId, setRelatedTaskCandidateId] = useState('');
+  useApplicationErrorDialog(props.conversationsError, {
+    language: zh ? 'zh-CN' : 'en',
+    title: props.copy.conversationError,
+    source: 'TaskDetailPaneContent.loadConversations',
+  });
+  useApplicationErrorDialog(modelPushFailed ? props.modelPushOperation?.error : null, {
+    language: zh ? 'zh-CN' : 'en',
+    title: zh ? '会话创建失败' : 'Conversation creation failed',
+    source: 'TaskDetailPaneContent.modelPush',
+  });
   useEffect(() => {
     setAttachmentSaveState({ kind: 'idle' });
     setUndoAttachment(null);
@@ -1196,9 +1207,8 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
             {props.copy.conversationLoading}
           </p>
         ) : props.conversationsError && conversations.length === 0 ? (
-          <span className="task-detail-conversation-state task-detail-conversation-error" role="alert">
-            <strong>{props.copy.conversationError}</strong>
-            <small>{props.conversationsError}</small>
+          <span className="task-detail-conversation-state" role="status">
+            <strong>{props.copy.conversationEmptyTitle}</strong>
             {props.onReloadConversations ? (
               <Button variant="secondary" size="compact" onClick={() => props.onReloadConversations?.(props.task.id)}>
                 {props.copy.retryConversationLoad}
@@ -1308,7 +1318,6 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
               <strong>
                 {modelPushCreating ? (zh ? '正在后台创建会话' : 'Creating conversation in the background') : modelPushFailed ? (zh ? '会话创建失败' : 'Conversation creation failed') : zh ? '会话已创建' : 'Conversation created'}
               </strong>
-              {modelPushFailed && props.modelPushOperation.error ? <small>{props.modelPushOperation.error}</small> : null}
             </span>
             {modelPushFailed && props.onRetryModelPush ? (
               <Button variant="secondary" size="compact" onClick={() => props.onRetryModelPush?.(props.task.id)}>

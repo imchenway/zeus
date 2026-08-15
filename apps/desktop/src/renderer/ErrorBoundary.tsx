@@ -67,24 +67,8 @@ export class RendererErrorBoundary extends Component<RendererErrorBoundaryProps,
   render(): ReactNode {
     if (this.state.hasError) {
       const copy = getRendererCrashCopy(this.props.appLanguage);
-      return (
-        <main className="renderer-crash-shell" data-theme="system" aria-label={copy.ariaLabel}>
-          <section className="renderer-crash-workspace">
-            <article className="renderer-crash-surface" role="alert">
-              <span className="renderer-crash-status">{copy.status}</span>
-              <div className="renderer-crash-copy">
-                <h1>{copy.title}</h1>
-                <p>{copy.description}</p>
-              </div>
-              <div className="renderer-crash-command-rail">
-                <button type="button" onClick={() => globalThis.location?.reload()}>
-                  {copy.refresh}
-                </button>
-              </div>
-            </article>
-          </section>
-        </main>
-      );
+      // 真实错误由应用级弹窗承载；这里仅保留稳定底面，避免再次渲染故障组件。
+      return <main className="renderer-crash-shell" data-theme="system" aria-label={copy.ariaLabel} />;
     }
     return this.props.children;
   }

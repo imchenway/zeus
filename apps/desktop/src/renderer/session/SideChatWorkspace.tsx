@@ -1,6 +1,7 @@
 import { type FormEvent, useState } from 'react';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { SafeMarkdown, type SessionUiLanguage } from './ThreadItemView.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
 interface SideChatMessage {
   id: string;
@@ -14,6 +15,11 @@ export function SideChatWorkspace(props: { selectedText: string; language: Sessi
   const [messages, setMessages] = useState<SideChatMessage[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useApplicationErrorDialog(error, {
+    language: zh ? 'zh-CN' : 'en',
+    title: zh ? '侧边聊天请求失败' : 'Side chat request failed',
+    source: 'SideChatWorkspace',
+  });
 
   async function submit(event: FormEvent): Promise<void> {
     event.preventDefault();
@@ -62,11 +68,6 @@ export function SideChatWorkspace(props: { selectedText: string; language: Sessi
           ))
         )}
         {busy ? <p className="session-side-chat-status">{zh ? '正在回答…' : 'Answering…'}</p> : null}
-        {error ? (
-          <p className="session-side-chat-error" role="alert">
-            {error}
-          </p>
-        ) : null}
       </div>
       <form className="session-side-chat-composer" onSubmit={(event) => void submit(event)}>
         <span className="session-side-chat-selection" title={props.selectedText}>

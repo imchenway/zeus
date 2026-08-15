@@ -3,6 +3,7 @@ import { ColumnsIcon as Columns } from '@phosphor-icons/react/dist/csr/Columns';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
 import { RowsIcon as Rows } from '@phosphor-icons/react/dist/csr/Rows';
 import type { DashboardClient, GitDiffHunk, GitDiffLine, GitDiffSummary } from '../apiClient.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import '../styles.css';
 import '../ui/primitives.css';
 
@@ -26,6 +27,11 @@ export function ProjectGitDiffWindow(props: {
   const [title, setTitle] = useState(props.filePath || (zh ? 'Git 差异' : 'Git diff'));
   const [selectedPath, setSelectedPath] = useState(props.filePath);
   const [error, setError] = useState<string | null>(null);
+  useApplicationErrorDialog(error, {
+    language: zh ? 'zh-CN' : 'en',
+    title: zh ? 'Git 差异读取失败' : 'Git diff failed to load',
+    source: 'ProjectGitDiffWindow',
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -71,11 +77,7 @@ export function ProjectGitDiffWindow(props: {
 
   return (
     <main className="macos-ai-app project-git-diff-window" aria-label={zh ? 'Git 差异窗口' : 'Git diff window'}>
-      {error ? (
-        <p className="project-git-diff-window-error" role="alert">
-          {error}
-        </p>
-      ) : diff ? (
+      {diff ? (
         diff.fileDiffs.length > 1 ? (
           <div className="project-git-diff-window-layout">
             <aside className="project-git-diff-window-files" aria-label={zh ? '变更文件' : 'Changed files'}>
@@ -105,7 +107,7 @@ export function ProjectGitDiffWindow(props: {
           viewer
         )
       ) : (
-        <p className="project-git-diff-loading">{zh ? '正在读取差异…' : 'Loading diff…'}</p>
+        <p className="project-git-diff-loading">{error ? (zh ? '当前没有可显示的差异。' : 'No diff is currently available.') : zh ? '正在读取差异…' : 'Loading diff…'}</p>
       )}
     </main>
   );
