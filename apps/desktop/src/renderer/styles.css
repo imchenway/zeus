@@ -9739,6 +9739,31 @@ body[data-surface='project-git-diff'] #root {
   grid-template-columns: 10px minmax(0, 1fr) 14px;
 }
 
+.macos-ai-app .zeus-select-trigger:has(.zeus-select-trigger-icon) {
+  grid-template-columns: 18px minmax(0, 1fr) 14px;
+}
+
+.macos-ai-app .zeus-select-trigger:has(.zeus-select-trigger-icon):has(.zeus-select-value-color) {
+  grid-template-columns: 18px 10px minmax(0, 1fr) 14px;
+}
+
+.macos-ai-app .zeus-select[data-icon-only='true'] > .zeus-select-trigger:has(.zeus-select-trigger-icon) {
+  grid-template-columns: 18px 14px;
+  inline-size: max-content;
+}
+
+.macos-ai-app .zeus-select-trigger-icon {
+  align-items: center;
+  display: inline-flex;
+  justify-content: center;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .zeus-select-trigger-icon > svg {
+  block-size: 17px;
+  inline-size: 17px;
+}
+
 .macos-ai-app .zeus-select-trigger:hover:not(:disabled) {
   background: var(--zeus-select-trigger-hover-bg);
   border-color: var(--zeus-select-line-hover);
@@ -9773,6 +9798,11 @@ body[data-surface='project-git-diff'] #root {
   block-size: 14px;
   inline-size: 14px;
   justify-self: end;
+  transition: transform 120ms var(--zeus-motion-ease-out);
+}
+
+.macos-ai-app .zeus-select[data-open='true'] > .zeus-select-trigger .zeus-select-chevron {
+  transform: rotate(180deg);
 }
 
 .zeus-select-portal-root {

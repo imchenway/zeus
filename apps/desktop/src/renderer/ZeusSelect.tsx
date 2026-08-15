@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom';
-import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
 
 export interface ZeusSelectOption<T extends string> {
   value: T;
@@ -17,6 +17,11 @@ export interface ZeusSelectProps<T extends string> {
   options: readonly ZeusSelectOption<T>[];
   onChange: (value: T) => void;
   triggerLabel?: string;
+  triggerIcon?: ReactNode;
+  triggerClassName?: string;
+  triggerTitle?: string;
+  triggerRef?: RefObject<HTMLButtonElement | null>;
+  hideSelectedLabel?: boolean;
   className?: string;
   style?: CSSProperties;
   disabled?: boolean;
@@ -119,7 +124,8 @@ function measurePopoverContentWidth(popover: HTMLElement, maxWidth: number): num
 export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
   const generatedId = useId();
   const rootRef = useRef<HTMLSpanElement | null>(null);
-  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const fallbackTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const triggerRef = props.triggerRef ?? fallbackTriggerRef;
   const popoverRef = useRef<HTMLSpanElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const optionRefs = useRef(new Map<T, HTMLButtonElement>());
@@ -433,6 +439,9 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
       data-zeus-primitive="select"
       data-zeus-select-placement={open ? (popoverLayout?.placement ?? 'bottom') : 'bottom'}
       data-control-size={props.size}
+      data-open={open || undefined}
+      data-value={props.value}
+      data-icon-only={props.hideSelectedLabel || undefined}
       style={props.style}
       ref={rootRef}
     >
@@ -440,7 +449,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
       <button
         ref={triggerRef}
         type="button"
-        className="zeus-select-trigger"
+        className={props.triggerClassName ? `zeus-select-trigger ${props.triggerClassName}` : 'zeus-select-trigger'}
         role="combobox"
         aria-label={props.ariaLabel}
         aria-describedby={props.ariaDescribedBy}
@@ -448,12 +457,18 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
         aria-expanded={open}
         aria-controls={listboxId}
         aria-activedescendant={open ? activeOptionId : undefined}
+        title={props.triggerTitle}
         disabled={props.disabled}
         onClick={() => (open ? closeListbox(false) : openListbox(props.value))}
         onKeyDown={handleTriggerKeyDown}
       >
+        {props.triggerIcon ? (
+          <span className="zeus-select-trigger-icon" aria-hidden="true">
+            {props.triggerIcon}
+          </span>
+        ) : null}
         {selectedOption?.color ? <span className="zeus-select-value-color" style={{ backgroundColor: selectedOption.color }} aria-hidden="true" /> : null}
-        <span className="zeus-select-value">{props.triggerLabel ?? selectedOption?.label ?? props.value}</span>
+        {props.hideSelectedLabel ? null : <span className="zeus-select-value">{props.triggerLabel ?? selectedOption?.label ?? props.value}</span>}
         <span className="zeus-select-chevron" aria-hidden="true" />
       </button>
       {popover && portalHost ? createPortal(popover, portalHost) : popover}
