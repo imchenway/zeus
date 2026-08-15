@@ -2428,12 +2428,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   });
   let usageRefreshTimer: ReturnType<typeof setInterval> | undefined;
   const refreshOfficialUsageInBackground = async (): Promise<void> => {
-    await codexAppServerManager
-      .ensureReady({
-        commandPath: currentCodexRuntimeCommandPath(),
-        ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}),
-      })
-      .catch(() => undefined);
+    // 后台用量刷新只能复用已经由用户操作启动的 Codex，应用首次打开不得为读取用量而执行外部 CLI。
+    if (codexAppServerManager.getState().type !== 'ready') return;
     const official = await codexUsageService.refreshOfficialUsage();
     publishRealtimeEvent('usage.changed', { providerId: 'codex', scope: 'official', stale: official.stale, updatedAt: now().toISOString() });
   };
@@ -6791,15 +6787,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     }
   });
 
-  server.get('/api/codex/usage-summary', async () => {
-    await codexAppServerManager
-      .ensureReady({
-        commandPath: currentCodexRuntimeCommandPath(),
-        ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}),
-      })
-      .catch(() => undefined);
-    return codexUsageService.readSummary();
-  });
+  // 被动查看用量只能读取现有运行时或持久缓存，不得为了展示统计而启动外部 Codex。
+  server.get('/api/codex/usage-summary', async () => codexUsageService.readSummary());
 
   server.get('/api/usage-overview', async () => usageOverviewService.read());
 
@@ -6815,12 +6804,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       if (range !== '7d' && range !== '30d' && range !== '90d' && range !== 'all') {
         return reply.code(400).send({ error: 'ZEUS_CODEX_USAGE_RANGE_INVALID', message: 'range must be 7d, 30d, 90d, or all.' });
       }
-      await codexAppServerManager
-        .ensureReady({
-          commandPath: currentCodexRuntimeCommandPath(),
-          ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}),
-        })
-        .catch(() => undefined);
       return codexUsageService.readAnalytics({
         range,
         projectId: request.query.projectId?.trim() || null,
