@@ -48,9 +48,26 @@ export interface NativeQueuedSubmission {
   updatedAt: string;
 }
 
+export type NativeQueueWaitReason =
+  | 'current_turn'
+  | 'dispatching'
+  | 'user_input'
+  | 'approval'
+  | 'plan_confirmation'
+  | 'execution_context_preparing'
+  | 'interrupted'
+  | 'transport_unavailable'
+  | 'provider_archived'
+  | 'recovery_required'
+  | 'conflict_preparing'
+  | 'conflict_preparation_failed'
+  | 'user_confirmation'
+  | 'dispatch_pending';
+
 export interface NativeQueueSnapshot {
   conversationId: string;
   state: NativeConversationRunState;
+  waitReason: NativeQueueWaitReason;
   submissions: NativeQueuedSubmission[];
 }
 
@@ -110,8 +127,6 @@ export interface StartTaskConversationInput {
   taskPushLayout?: TaskPushMessageLayout;
   /** 服务端预检后允许 Codex 读取附件的目录；不接受 Renderer 自报信任根。 */
   allowedAttachmentRoots?: string[];
-  /** 用户明确触发并等待结果的任务操作直接创建 app-server thread/turn，不进入普通会话并发队列。 */
-  bypassConcurrency?: boolean;
   /** 会话与首条消息持久接受后立即返回，由后台队列启动 Provider；用于先进入会话再展示准备结果。 */
   deferInitialDispatch?: boolean;
   /** 执行现场尚未就绪时只持久接受消息；释放前所有队列消息都不得派发。 */
@@ -309,6 +324,5 @@ export interface CodexNativeConversationCoordinator {
   resumeGoal(input: { conversationId: string }): Promise<ZeusConversationGoalRecord>;
   clearGoal(input: { conversationId: string }): Promise<{ cleared: boolean }>;
   recover(): Promise<void>;
-  capacityChanged(): Promise<void>;
   close(): Promise<void>;
 }

@@ -51,6 +51,7 @@ import type {
   NativeConversationRunState,
   NativeProviderWriteLifecycle,
   NativeQueueSnapshot,
+  NativeQueueWaitReason,
   NativeSubmissionError,
   NativeTurnResult,
   RecoverNativeQueueInput,
@@ -89,7 +90,6 @@ interface ConversationDispatchContext {
   permissionMode: ConversationPermissionMode;
   allowedAttachmentRoots?: string[];
   writableRoots?: string[];
-  bypassConcurrency?: boolean;
   workMode: ConversationCollaborationMode;
   applyLegacyTaskGuards?: boolean;
   ephemeral?: boolean;
@@ -148,7 +148,6 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
   syncCheckpoints?: ConversationProviderSyncCheckpointRepository;
   settings: SettingRepository;
   usage?: CodexUsageService;
-  getConcurrency: (projectId: string) => { project: number; global: number; maxPerProject: number; maxGlobal: number };
   broadcast: (type: string, payload: Record<string, unknown>) => void;
   now?: () => string;
   operationId?: () => string;
@@ -504,24 +503,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     }
   }
 
-  function activeNativeCounts(projectId: string): { project: number; global: number } {
-    let project = 0;
-    let global = 0;
-    for (const [conversationId, state] of runStates) {
-      if (state.type !== 'dispatching' && state.type !== 'active' && state.type !== 'waiting') continue;
-      global += 1;
-      if (contexts.get(conversationId)?.projectId === projectId) project += 1;
-    }
-    return { project, global };
-  }
-
-  function hasConcurrency(context: ConversationDispatchContext): boolean {
-    if (context.bypassConcurrency) return true;
-    const external = options.getConcurrency(context.projectId);
-    const active = activeNativeCounts(context.projectId);
-    return external.project + active.project < external.maxPerProject && external.global + active.global < external.maxGlobal;
-  }
-
   function hasPendingPlanImplementationRequest(conversationId: string): boolean {
     return planActions.listByConversation(conversationId).some((request) => request.status === 'pending');
   }
@@ -546,7 +527,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       permissionMode: permissionModeFromValue(context.permissionMode, context.allowCodeChanges === true ? 'auto' : 'read-only'),
       ...(Array.isArray(context.allowedAttachmentRoots) && context.allowedAttachmentRoots.every((root) => typeof root === 'string') ? { allowedAttachmentRoots: context.allowedAttachmentRoots } : {}),
       ...(Array.isArray(context.writableRoots) && context.writableRoots.every((root) => typeof root === 'string') ? { writableRoots: context.writableRoots } : {}),
-      ...(context.bypassConcurrency === true ? { bypassConcurrency: true } : {}),
       workMode: context.workMode === 'plan' || context.workMode === 'default' ? context.workMode : 'default',
       ...(context.applyLegacyTaskGuards === false ? { applyLegacyTaskGuards: false } : {}),
       ...(context.ephemeral === true ? { ephemeral: true } : {}),
@@ -724,9 +704,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   function toQueueSnapshot(conversationId: string): NativeQueueSnapshot {
     const entries = options.submissions.listByConversation(conversationId).filter((submission) => (submission.status === 'queued' || submission.status === 'paused') && !submission.providerTurnId);
+    const state = runStates.get(conversationId) ?? { type: 'idle' as const };
     return {
       conversationId,
-      state: runStates.get(conversationId) ?? { type: 'idle' },
+      state,
+      waitReason: queueWaitReason(conversationId, state, entries),
       submissions: entries.map((submission, index) => {
         const input = parseJsonRecord(submission.inputJson);
         const error = submissionErrorSnapshot(submission.errorJson);
@@ -758,6 +740,24 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         };
       }),
     };
+  }
+
+  function queueWaitReason(conversationId: string, state: NativeConversationRunState, entries: readonly ZeusConversationSubmissionRecord[]): NativeQueueWaitReason {
+    if (state.type === 'active') return 'current_turn';
+    if (state.type === 'dispatching') return 'dispatching';
+    if (state.type === 'waiting') return state.reason;
+    if (state.type === 'paused') return state.reason;
+    if (hasPendingPlanImplementationRequest(conversationId)) return 'plan_confirmation';
+    if (
+      entries.some((submission) => {
+        const input = parseJsonRecord(submission.inputJson);
+        return isRecord(input.context) && input.context.holdDispatch === true;
+      })
+    ) {
+      return 'execution_context_preparing';
+    }
+    if (entries.length > 0 && entries.every((submission) => submission.pausedReason === 'user_confirmation')) return 'user_confirmation';
+    return 'dispatch_pending';
   }
 
   function createSubmission(
@@ -887,7 +887,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       permissionMode,
       ...(input.allowedAttachmentRoots?.length ? { allowedAttachmentRoots: input.allowedAttachmentRoots.map((root) => resolve(root)) } : {}),
       ...(input.writableRoots?.length ? { writableRoots: input.writableRoots.map((root) => resolve(root)) } : {}),
-      ...(input.bypassConcurrency ? { bypassConcurrency: true } : {}),
       workMode: input.workMode ?? existingConversation?.collaborationMode ?? 'default',
       ...(input.applyLegacyTaskGuards === false ? { applyLegacyTaskGuards: false } : {}),
       ...(input.ephemeral ? { ephemeral: true } : {}),
@@ -933,7 +932,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const submission = createSubmission(conversation.id, input.prompt, input, context);
     await persist();
     await input.providerWriteLifecycle?.markPrepared(submission.id);
-    if (input.holdDispatch || !hasConcurrency(context)) return accepted(submission, 'queued', null, null);
+    if (input.holdDispatch) return accepted(submission, 'queued', null, null);
     if (input.deferInitialDispatch) {
       // 冲突会话先把稳定身份和用户消息交给界面，Provider 启动失败由会话队列继续呈现和恢复。
       requestQueueDrain();
@@ -989,7 +988,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const submission = createSubmission(conversation.id, input.prompt, input, context);
     await persist();
     await input.providerWriteLifecycle?.markPrepared(submission.id);
-    if (!hasConcurrency(context)) return accepted(submission, 'queued', null, null);
     return dispatchSubmission(conversation, submission, input.providerWriteLifecycle);
   }
 
@@ -1145,7 +1143,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       workMode: 'default',
       ephemeral: true,
     };
-    if (!hasConcurrency(context)) throw coordinatorError('ZEUS_CODEX_CONCURRENCY_FULL', 'Codex native Graph question cannot start because concurrency is full.');
     const conversation = options.conversations.create({
       projectId: input.projectId,
       title: input.title,
@@ -1164,8 +1161,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     await persist();
     const operation = await dispatchSubmission(conversation, submission);
     if (operation.status === 'queued') {
-      await closeEphemeralConversation(conversation.id, null, 'cancelled', { code: 'ZEUS_CODEX_CONCURRENCY_FULL' }, false);
-      throw coordinatorError('ZEUS_CODEX_CONCURRENCY_FULL', 'Codex native Graph question cannot start because concurrency is full.');
+      await closeEphemeralConversation(conversation.id, null, 'cancelled', { code: 'ZEUS_CODEX_EPHEMERAL_DISPATCH_PENDING' }, false);
+      throw coordinatorError('ZEUS_CODEX_EPHEMERAL_DISPATCH_PENDING', 'Codex native Graph question did not start immediately.');
     }
     if (operation.status === 'recovery_required') {
       throw coordinatorError('ZEUS_CODEX_EPHEMERAL_DISPATCH_FAILED', 'Codex native Graph provider dispatch failed.');
@@ -1241,8 +1238,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     if (hasPendingPlanImplementationRequest(conversation.id)) return accepted(submission, 'queued', conversation.providerThreadId, null);
     try {
       await ensureGenerationReconciled([conversation.id]);
-    } catch {
-      return accepted(submission, 'queued', conversation.providerThreadId, null);
+    } catch (error) {
+      return pauseQueueAfterDispatchFailure(conversation, submission, error);
     }
     let refreshed = requireConversation(conversation.id);
     if (refreshed.providerState === 'archived') {
@@ -1276,7 +1273,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     }
     const state = runStates.get(conversation.id) ?? inferRunState(refreshed);
     runStates.set(conversation.id, state);
-    if (state.type !== 'idle' || !hasConcurrency(context)) return accepted(submission, 'queued', refreshed.providerThreadId, null);
+    if (state.type !== 'idle') return accepted(submission, 'queued', refreshed.providerThreadId, null);
     return dispatchSubmission(refreshed, submission, input.providerWriteLifecycle);
   }
 
@@ -1578,7 +1575,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     try {
       await ensureGenerationReconciled([conversation.id]);
       conversation = options.conversations.getById(conversation.id) ?? conversation;
-      if (!hasConcurrency(context)) return accepted(submission, 'queued', conversation.providerThreadId, null);
       if (hasPendingPlanImplementationRequest(conversation.id) && !planControlModeForSubmission(submission)) {
         return accepted(submission, 'queued', conversation.providerThreadId, null);
       }
@@ -2717,11 +2713,10 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     });
     try {
       await ensureGenerationReconciled([conversation.id]);
-    } catch {
-      return accepted(submission, 'queued', conversation.providerThreadId, null);
+    } catch (error) {
+      return pauseQueueAfterDispatchFailure(conversation, submission, error);
     }
     const refreshed = requireConversation(conversation.id);
-    if (!hasConcurrency(context)) return accepted(submission, 'queued', refreshed.providerThreadId, null);
     return dispatchSubmission(refreshed, submission, inputValue.input.providerWriteLifecycle);
   }
 
@@ -2861,7 +2856,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const refreshed = requireConversation(conversation.id);
     const state = runStates.get(conversation.id) ?? inferRunState(refreshed);
     runStates.set(conversation.id, state);
-    if (state.type !== 'idle' || !hasConcurrency(context)) return accepted(submission, 'queued', refreshed.providerThreadId, null);
+    if (state.type !== 'idle') return accepted(submission, 'queued', refreshed.providerThreadId, null);
     return dispatchSubmission(refreshed, submission);
   }
 
@@ -2950,13 +2945,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     return reconciledCount;
   }
 
-  async function capacityChanged(): Promise<void> {
-    if (closing || closed || options.enabled === false) return;
-    await drainQueuedSubmissions();
-    // 容量信号若与既有 drain 竞态，须在其 finalizer 清空 queueDrainPromise 后再跑一轮，避免丢失 terminal runtime 释放事件。
-    if (!closing && !closed) await drainQueuedSubmissions();
-  }
-
   function requestQueueDrain(): void {
     queueMicrotask(() => {
       void drainQueuedSubmissions().catch((error) => {
@@ -2972,35 +2960,40 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         const candidates = nextQueuedSubmissionPerConversation();
         let dispatched = false;
         for (const submission of candidates) {
-          let conversation = options.conversations.getById(submission.conversationId);
-          if (!conversation || conversation.archived || conversation.providerState === 'archived' || conversation.providerState === 'closed' || conversation.providerState === 'failed') continue;
-          // 计划结果等待用户决策时，普通后续消息不能抢先开启下一轮。
-          if (hasPendingPlanImplementationRequest(conversation.id)) continue;
-          let state = runStates.get(conversation.id) ?? inferRunState(conversation);
-          if (state.type === 'paused' && state.reason === 'recovery_required') {
-            try {
-              conversation = await recoverPausedConversation(conversation.id, 'dispatch');
-              state = runStates.get(conversation.id) ?? inferRunState(conversation);
-            } catch (error) {
-              markConversationRecoveryRequired(conversation.id, error);
-              await persist();
-              options.broadcast('conversation.native.recovery_failed', {
-                conversationId: conversation.id,
-                providerThreadId: conversation.providerThreadId,
-                submissionId: submission.id,
-                error: serializeError(error),
-              });
-              continue;
+          try {
+            let conversation = options.conversations.getById(submission.conversationId);
+            if (!conversation || conversation.archived || conversation.providerState === 'archived' || conversation.providerState === 'closed' || conversation.providerState === 'failed') continue;
+            // 计划结果等待用户决策时，普通后续消息不能抢先开启下一轮。
+            if (hasPendingPlanImplementationRequest(conversation.id)) continue;
+            let state = runStates.get(conversation.id) ?? inferRunState(conversation);
+            if (state.type === 'paused' && state.reason === 'recovery_required') {
+              try {
+                conversation = await recoverPausedConversation(conversation.id, 'dispatch');
+                state = runStates.get(conversation.id) ?? inferRunState(conversation);
+              } catch (error) {
+                markConversationRecoveryRequired(conversation.id, error);
+                await persist();
+                options.broadcast('conversation.native.recovery_failed', {
+                  conversationId: conversation.id,
+                  providerThreadId: conversation.providerThreadId,
+                  submissionId: submission.id,
+                  error: serializeError(error),
+                });
+                continue;
+              }
             }
+            const context = { ...contextFromSubmission(submission), permissionMode: conversation.permissionMode };
+            if (context.holdDispatch) continue;
+            contexts.set(conversation.id, context);
+            runStates.set(conversation.id, state);
+            if (state.type !== 'idle') continue;
+            if (closing || closed) return;
+            const result = await dispatchSubmission(conversation, submission);
+            if (result.status === 'active') dispatched = true;
+          } catch (error) {
+            const conversation = options.conversations.getById(submission.conversationId);
+            if (conversation) await pauseQueueAfterDispatchFailure(conversation, submission, error);
           }
-          const context = { ...contextFromSubmission(submission), permissionMode: conversation.permissionMode };
-          if (context.holdDispatch) continue;
-          contexts.set(conversation.id, context);
-          runStates.set(conversation.id, state);
-          if (state.type !== 'idle' || !hasConcurrency(context)) continue;
-          if (closing || closed) return;
-          const result = await dispatchSubmission(conversation, submission);
-          if (result.status === 'active') dispatched = true;
         }
         if (!dispatched) return;
       }
@@ -3634,6 +3627,27 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     runStates.set(submission.conversationId, { type: 'paused', reason: 'recovery_required' });
   }
 
+  async function pauseQueueAfterDispatchFailure(
+    conversation: ZeusConversationWithMessagesRecord,
+    submission: ZeusConversationSubmissionRecord,
+    error: unknown,
+  ): Promise<NativeAcceptedOperation> {
+    markConversationRecoveryRequired(conversation.id, error);
+    await persist();
+    const failure = serializeError(error);
+    options.broadcast('conversation.native.queue_dispatch_failed', {
+      conversationId: conversation.id,
+      providerThreadId: conversation.providerThreadId,
+      submissionId: submission.id,
+      error: failure,
+    });
+    options.broadcast('conversation.queue.changed', {
+      conversationId: conversation.id,
+      submissionId: submission.id,
+    });
+    return accepted(options.submissions.getById(submission.id) ?? submission, 'recovery_required', conversation.providerThreadId, null);
+  }
+
   function ensurePlanImplementationRequest(conversationId: string, turn: ZeusConversationTurnRecord, submission: ZeusConversationSubmissionRecord | undefined, timestamp: string, recoveredPlanItem?: ZeusConversationItemRecord | null) {
     if (!submission || contextFromSubmission(submission).workMode !== 'plan') return null;
     const planItem = recoveredPlanItem === undefined ? options.items.getLatestCompletedPlanByTurn(turn.id) : recoveredPlanItem;
@@ -4038,7 +4052,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           notificationEligible: !conversationGoal,
         },
       };
-      queueChangedAfterTurn = interrupted || recoveryRequiredSubmissions.length > 0;
+      queueChangedAfterTurn = interrupted || recoveryRequiredSubmissions.length > 0 || createdPlanImplementationRequest !== null;
       drainAfterTurn = !failed && !interrupted && recoveryRequiredSubmissions.length === 0 && conversationGoal?.status !== 'active';
     } else if (event.method === 'item/started' && conversation && threadId) {
       const providerTurnId = providerTurnIdFrom(params);
@@ -4793,7 +4807,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     resumeGoal,
     clearGoal,
     recover,
-    capacityChanged,
     close(input = { mode: 'final' }) {
       if (input.mode === 'handoff') {
         if (finalizationPromise) return finalizationPromise;

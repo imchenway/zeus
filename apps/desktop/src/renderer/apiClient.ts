@@ -544,10 +544,6 @@ export interface RuntimeSettings {
     path: string | null;
     login: boolean;
   };
-  concurrency: {
-    maxPerProject: number;
-    maxGlobal: number;
-  };
   executionTimeoutSeconds: number;
   logRetentionDays: number;
   autoConfirmationPolicy: 'never' | 'low_risk_only';

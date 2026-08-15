@@ -1946,9 +1946,6 @@ const languageCopy = {
         cliPathAria: 'CLI 路径',
         cliPathTitle: 'CLI 路径',
         cliPathDescription: '可选本机可执行文件绝对路径；留空则依次检查当前 PATH、常见目录和登录 Shell。Zeus 不内置或自动安装 CLI。',
-        concurrencyAria: 'Runtime 并发上限',
-        concurrencyTitle: '项目并发上限',
-        globalConcurrency: (count: number) => `全局并发上限：${count}`,
         timeoutAria: 'Runtime 执行超时',
         timeoutTitle: '执行超时',
         seconds: (count: number) => `${count} 秒`,
@@ -3412,9 +3409,6 @@ const languageCopy = {
         cliPathAria: 'CLI path',
         cliPathTitle: 'CLI path',
         cliPathDescription: 'Optional absolute path. When empty, Zeus checks PATH, common local directories, and the login shell. Zeus never bundles or installs the CLI.',
-        concurrencyAria: 'Runtime concurrency limit',
-        concurrencyTitle: 'Project concurrency limit',
-        globalConcurrency: (count: number) => `Global concurrency limit: ${count}`,
         timeoutAria: 'Runtime execution timeout',
         timeoutTitle: 'Execution timeout',
         seconds: (count: number) => `${count} seconds`,
@@ -4666,9 +4660,6 @@ const languageCopy = {
         cliPathAria: string;
         cliPathTitle: string;
         cliPathDescription: string;
-        concurrencyAria: string;
-        concurrencyTitle: string;
-        globalConcurrency: (count: number) => string;
         timeoutAria: string;
         timeoutTitle: string;
         seconds: (count: number) => string;
@@ -14511,11 +14502,6 @@ export function App(props: {
                           <span className="settings-action-meta">PATH</span>
                         </span>
                       </section>
-                      <section className="settings-state-row settings-runtime-concurrency-state-row" aria-label={settingsWorkspaceCopy.runtime.concurrencyAria}>
-                        <strong>{settingsWorkspaceCopy.runtime.concurrencyTitle}</strong>
-                        <span>{runtimeSettings.concurrency.maxPerProject}</span>
-                        <em>{settingsWorkspaceCopy.runtime.globalConcurrency(runtimeSettings.concurrency.maxGlobal)}</em>
-                      </section>
                       <section className="settings-state-row settings-runtime-timeout-state-row" aria-label={settingsWorkspaceCopy.runtime.timeoutAria}>
                         <strong>{settingsWorkspaceCopy.runtime.timeoutTitle}</strong>
                         <span>{settingsWorkspaceCopy.runtime.seconds(runtimeSettings.executionTimeoutSeconds)}</span>
@@ -19580,13 +19566,10 @@ function normalizeRuntimeSettings(settings?: Partial<RuntimeSettings>): RuntimeS
     adapterCliPaths: {},
     terminalEnv: {},
     shell: { path: null, login: false },
-    concurrency: { maxPerProject: 1, maxGlobal: 2 },
     executionTimeoutSeconds: 3600,
     logRetentionDays: 30,
     autoConfirmationPolicy: 'never',
   };
-  const maxPerProject = normalizeRuntimeSettingNumber(String(settings?.concurrency?.maxPerProject ?? defaultSettings.concurrency.maxPerProject), defaultSettings.concurrency.maxPerProject);
-  const maxGlobal = Math.max(normalizeRuntimeSettingNumber(String(settings?.concurrency?.maxGlobal ?? defaultSettings.concurrency.maxGlobal), defaultSettings.concurrency.maxGlobal), maxPerProject);
   return {
     ...defaultSettings,
     ...settings,
@@ -19595,7 +19578,6 @@ function normalizeRuntimeSettings(settings?: Partial<RuntimeSettings>): RuntimeS
     adapterCliPaths: settings?.adapterCliPaths ?? defaultSettings.adapterCliPaths,
     terminalEnv: settings?.terminalEnv ?? defaultSettings.terminalEnv,
     shell: { ...defaultSettings.shell, ...settings?.shell },
-    concurrency: { maxPerProject, maxGlobal },
   };
 }
 
