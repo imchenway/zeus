@@ -255,6 +255,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   let providerEventChain = Promise.resolve();
   let generationReconcileChain = Promise.resolve();
   let reconciledGenerationId: string | null = null;
+  const reconciledConversationIds = new Set<string>();
+  const completedPlanRecoverySettingKey = 'codex.native.completed_plan_recovery';
+  const completedPlanRecoveryRevision = '20260815_completed_plan_projection';
   let hotReceiptGenerationId: string | null = null;
   let queueDrainPromise: Promise<void> | null = null;
   let handoffPromise: Promise<void> | null = null;
@@ -1040,7 +1043,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   async function requireGoalConversation(conversationId: string) {
     assertOpen();
-    await ensureGenerationReconciled();
+    await ensureGenerationReconciled([conversationId]);
     const conversation = requireConversation(conversationId);
     if (!conversation.providerThreadId) throw coordinatorError('ZEUS_CODEX_GOAL_THREAD_REQUIRED', '创建目标前必须先建立原生会话。');
     const capabilities = options.manager.getState();
@@ -1213,7 +1216,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     await input.providerWriteLifecycle?.markPrepared(submission.id);
     if (context.holdDispatch) return accepted(submission, 'queued', conversation.providerThreadId, null);
     try {
-      await ensureGenerationReconciled();
+      await ensureGenerationReconciled([conversation.id]);
     } catch {
       return accepted(submission, 'queued', conversation.providerThreadId, null);
     }
@@ -1549,7 +1552,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     conversation = requireConversation(conversation.id);
     contexts.set(conversation.id, context);
     try {
-      await ensureGenerationReconciled();
+      await ensureGenerationReconciled([conversation.id]);
       conversation = options.conversations.getById(conversation.id) ?? conversation;
       if (!hasConcurrency(context)) return accepted(submission, 'queued', conversation.providerThreadId, null);
       markDispatchRpcStarted(lease, submission.id);
@@ -2197,7 +2200,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     if (conversation.archived || conversation.providerState === 'archived') {
       throw coordinatorError('ZEUS_NATIVE_QUEUE_PROVIDER_ARCHIVED', 'The provider conversation must be restored explicitly before its queue can be recovered.');
     }
-    await ensureGenerationReconciled();
+    await ensureGenerationReconciled([conversation.id]);
     conversation = requireConversation(input.conversationId);
     const deliveryUnconfirmed = options.submissions.listByConversation(conversation.id).find((submission) => submission.status === 'paused' && submission.pausedReason === 'recovery_required' && Boolean(submission.providerTurnId));
     if (deliveryUnconfirmed) {
@@ -2236,7 +2239,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     let conversation = requireConversation(input.conversationId);
     if (conversation.archived) return toQueueSnapshot(conversation.id);
     assertConversationCanBeArchived(conversation);
-    await ensureGenerationReconciled();
+    await ensureGenerationReconciled([conversation.id]);
     conversation = requireConversation(input.conversationId);
     if (conversation.archived) return toQueueSnapshot(conversation.id);
     assertConversationCanBeArchived(conversation);
@@ -2300,7 +2303,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     assertOpen();
     let conversation = requireConversation(input.conversationId);
     if (conversation.providerState === 'archived') {
-      await ensureGenerationReconciled();
+      await ensureGenerationReconciled([conversation.id]);
       conversation = requireConversation(input.conversationId);
       if (conversation.providerState === 'archived') await restoreArchivedProviderThread(conversation.id);
     }
@@ -2670,7 +2673,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       resumedAfterTransportRecovery: true,
     });
     try {
-      await ensureGenerationReconciled();
+      await ensureGenerationReconciled([conversation.id]);
     } catch {
       return accepted(submission, 'queued', conversation.providerThreadId, null);
     }
@@ -2843,8 +2846,18 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   async function recover(): Promise<void> {
     assertOpen();
     await reconcilePersistedTerminalSubmissions();
+    const automaticRecoveryConversationIds = new Set(
+      options.conversations
+        .listNativeBoundRecords('codex')
+        .filter((conversation) => conversation.providerState === 'binding' || conversation.providerState === 'active' || conversation.providerState === 'waiting')
+        .map((conversation) => conversation.id),
+    );
+    for (const submission of options.submissions.listRecoverable()) {
+      const conversation = options.conversations.getRecordById(submission.conversationId);
+      if (conversation?.agentKind === 'codex' && (submission.status === 'dispatching' || submission.status === 'active')) automaticRecoveryConversationIds.add(submission.conversationId);
+    }
     try {
-      await ensureGenerationReconciled(true);
+      await ensureGenerationReconciled([...automaticRecoveryConversationIds]);
     } catch (error) {
       for (const submission of options.submissions.listRecoverable()) {
         if (options.conversations.getById(submission.conversationId)?.agentKind !== 'codex') continue;
@@ -2855,22 +2868,30 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       await persist();
       return;
     }
-    recoverCompletedPlanImplementationRequests();
-    await persist();
-    for (const conversation of options.conversations.listNativeBound('codex')) {
-      for (const request of options.requests.listByConversation(conversation.id)) scheduleAutoResolution(request);
+    const completedPlanRecoveryState = options.settings.getJson<{ revision?: string }>(completedPlanRecoverySettingKey);
+    if (completedPlanRecoveryState?.revision !== completedPlanRecoveryRevision) {
+      const existingPlanActionCount = options.db.countRows('conversation_plan_actions');
+      // 旧版已经在每次启动执行过计划收口；已有操作记录就是历史投影完成证据，不再重扫大体量消息表。
+      if (existingPlanActionCount === 0) recoverCompletedPlanImplementationRequests();
+      options.settings.setJson(completedPlanRecoverySettingKey, {
+        revision: completedPlanRecoveryRevision,
+        completedAt: now(),
+        projectedPlanActionCount: options.db.countRows('conversation_plan_actions'),
+        adoptedExistingProjection: existingPlanActionCount > 0,
+      });
     }
+    await persist();
+    for (const request of options.requests.listPending()) scheduleAutoResolution(request);
     await drainQueuedSubmissions();
   }
 
   function recoverCompletedPlanImplementationRequests(): void {
-    for (const conversation of options.conversations.listNativeBound('codex')) {
-      const submissions = options.submissions.listByConversation(conversation.id);
-      for (const turn of options.turns.listByConversation(conversation.id)) {
-        if (turn.status !== 'completed') continue;
-        const submission = submissions.find((candidate) => candidate.id === turn.clientSubmissionId);
-        ensurePlanImplementationRequest(conversation.id, turn, submission, turn.completedAt ?? turn.updatedAt);
-      }
+    const turns = options.turns.listCompletedPlanRecoveryCandidates('codex');
+    const planItemsByTurn = new Map(options.items.listLatestCompletedPlansByTurns(turns.map((turn) => turn.id)).map((item) => [item.turnId, item]));
+    for (const turn of turns) {
+      if (!turn.clientSubmissionId) continue;
+      const submission = options.submissions.getById(turn.clientSubmissionId);
+      ensurePlanImplementationRequest(turn.conversationId, turn, submission, turn.completedAt ?? turn.updatedAt, planItemsByTurn.get(turn.id) ?? null);
     }
   }
 
@@ -2945,7 +2966,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const heads = new Map<string, ZeusConversationSubmissionRecord>();
     for (const submission of options.submissions.listRecoverable()) {
       if (submission.status !== 'queued') continue;
-      if (options.conversations.getById(submission.conversationId)?.agentKind !== 'codex') continue;
+      if (options.conversations.getRecordById(submission.conversationId)?.agentKind !== 'codex') continue;
       const current = heads.get(submission.conversationId);
       if (!current || compareConversationQueueOrder(submission, current) < 0) heads.set(submission.conversationId, submission);
     }
@@ -2967,21 +2988,27 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     return (left.queuePosition ?? Number.MAX_SAFE_INTEGER) - (right.queuePosition ?? Number.MAX_SAFE_INTEGER) || left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id);
   }
 
-  async function ensureGenerationReconciled(force = false): Promise<void> {
+  async function ensureGenerationReconciled(conversationIds: readonly string[]): Promise<void> {
+    const requestedConversationIds = [...new Set(conversationIds)];
+    if (requestedConversationIds.length === 0) return;
     const capabilities = await options.manager.ensureReady({ commandPath: commandPath(), ...(options.externalAgentHome ? { externalAgentHome: options.externalAgentHome } : {}) });
-    if (!force && reconciledGenerationId === capabilities.generationId) return;
+    if (reconciledGenerationId === capabilities.generationId && requestedConversationIds.every((conversationId) => reconciledConversationIds.has(conversationId))) return;
     const initialGenerationId = capabilities.generationId;
     const reconcile = generationReconcileChain
       .catch(() => undefined)
       .then(async () => {
-        if (!force && reconciledGenerationId === initialGenerationId) return;
         let targetGenerationId = initialGenerationId;
         for (let pass = 0; pass < 3; pass += 1) {
-          await reconcileBoundConversations(targetGenerationId);
+          if (reconciledGenerationId !== targetGenerationId) {
+            reconciledGenerationId = targetGenerationId;
+            reconciledConversationIds.clear();
+          }
+          const pendingConversationIds = requestedConversationIds.filter((conversationId) => !reconciledConversationIds.has(conversationId));
+          if (pendingConversationIds.length > 0) await reconcileBoundConversations(targetGenerationId, new Set(pendingConversationIds));
           const current = options.manager.getState();
           if (current.type !== 'ready') throw coordinatorError('ZEUS_CODEX_GENERATION_CHANGED_DURING_RECOVERY', 'Codex app-server generation changed during native conversation recovery.');
           if (current.generationId === targetGenerationId) {
-            reconciledGenerationId = targetGenerationId;
+            for (const conversationId of requestedConversationIds) reconciledConversationIds.add(conversationId);
             return;
           }
           targetGenerationId = current.generationId;
@@ -2992,10 +3019,13 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     await reconcile;
   }
 
-  async function reconcileBoundConversations(generationId: string): Promise<void> {
-    const boundConversationIds = new Set<string>();
-    for (const conversation of options.conversations.listNativeBound('codex')) {
-      boundConversationIds.add(conversation.id);
+  async function reconcileBoundConversations(generationId: string, requestedConversationIds: ReadonlySet<string>): Promise<void> {
+    const boundConversations = options.conversations.listNativeBoundRecords('codex');
+    const boundConversationIds = new Set(boundConversations.map((conversation) => conversation.id));
+    for (const record of boundConversations) {
+      if (!requestedConversationIds.has(record.id)) continue;
+      const conversation = options.conversations.getById(record.id);
+      if (!conversation) continue;
       // 已归档 Provider 会话只能由用户显式恢复，启动恢复不得触碰其线程。
       if (conversation.archived || conversation.providerState === 'archived') continue;
       try {
@@ -3555,13 +3585,15 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     runStates.set(submission.conversationId, { type: 'paused', reason: 'recovery_required' });
   }
 
-  function ensurePlanImplementationRequest(conversationId: string, turn: ZeusConversationTurnRecord, submission: ZeusConversationSubmissionRecord | undefined, timestamp: string) {
+  function ensurePlanImplementationRequest(
+    conversationId: string,
+    turn: ZeusConversationTurnRecord,
+    submission: ZeusConversationSubmissionRecord | undefined,
+    timestamp: string,
+    recoveredPlanItem?: ZeusConversationItemRecord | null,
+  ) {
     if (!submission || contextFromSubmission(submission).workMode !== 'plan') return null;
-    const planItem = options.items
-      .listByConversation(conversationId)
-      .filter((item) => item.turnId === turn.id && item.itemType === 'plan' && item.status === 'completed' && item.textContent.trim())
-      .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt) || left.id.localeCompare(right.id))
-      .at(-1);
+    const planItem = recoveredPlanItem === undefined ? options.items.getLatestCompletedPlanByTurn(turn.id) : recoveredPlanItem;
     if (!planItem) return null;
     return planActions.createPending({
       conversationId,

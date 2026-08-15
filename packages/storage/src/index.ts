@@ -1528,12 +1528,17 @@ export async function createZeusDatabase(filePath: string): Promise<ZeusDatabase
   const parentPath = dirname(filePath);
   await mkdir(parentPath, { recursive: true, mode: 0o700 });
   const databaseExists = await pathExists(filePath);
+  let requiresSynchronousIntegrityCheck = !databaseExists;
 
   if (databaseExists) {
     const sourceDb = openNativeSqlite(filePath, true);
     try {
-      assertDatabaseQuickCheck(sourceDb, '现有 Zeus 数据库');
-      if (!hasNativeSqliteMigration(sourceDb)) await ensureNativeSqliteBackup(sourceDb, filePath);
+      if (!hasNativeSqliteMigration(sourceDb)) {
+        // 旧格式转换前必须完成全盘校验和备份；正常原生库启动不再因数据库体积同步扫描全部页面。
+        assertDatabaseQuickCheck(sourceDb, '现有 Zeus 数据库');
+        await ensureNativeSqliteBackup(sourceDb, filePath);
+        requiresSynchronousIntegrityCheck = true;
+      }
     } finally {
       sourceDb.close();
     }
@@ -1574,7 +1579,7 @@ export async function createZeusDatabase(filePath: string): Promise<ZeusDatabase
       checksumSource: 'node:sqlite,WAL,synchronous=FULL,busy_timeout=5000,wal_autocheckpoint=1000',
     });
     await zeusDb.save();
-    assertDatabaseQuickCheck(nativeDb, '迁移后的 Zeus 数据库');
+    if (requiresSynchronousIntegrityCheck) assertDatabaseQuickCheck(nativeDb, '迁移后的 Zeus 数据库');
     return zeusDb;
   } catch (error) {
     zeusDb.discardAndClose();
@@ -6174,6 +6179,28 @@ export class ConversationTurnRepository {
     return this.db.select<DbConversationTurnRow>(`SELECT * FROM conversation_turns WHERE conversation_id = ? ORDER BY created_at, id`, [conversationId]).map(mapConversationTurnRow);
   }
 
+  /** 启动恢复只枚举尚未产生计划操作的计划轮次，避免逐会话读取全部历史轮次和提交。 */
+  listCompletedPlanRecoveryCandidates(agentKind: ConversationAgentKind): ZeusConversationTurnRecord[] {
+    return this.db
+      .select<DbConversationTurnRow>(
+        `SELECT turn.*
+           FROM conversation_turns turn
+           JOIN conversations conversation ON conversation.id = turn.conversation_id
+           JOIN conversation_submissions submission ON submission.id = turn.client_submission_id
+          WHERE conversation.transport_kind = 'codex_native'
+            AND conversation.provider_thread_id IS NOT NULL
+            AND conversation.provider_state NOT IN ('closed', 'failed')
+            AND conversation.archived = 0
+            AND conversation.agent_kind = ?
+            AND turn.status = 'completed'
+            AND json_extract(submission.input_json, '$.context.workMode') = 'plan'
+            AND NOT EXISTS (SELECT 1 FROM conversation_plan_actions action WHERE action.turn_id = turn.id)
+          ORDER BY turn.created_at, turn.id`,
+        [agentKind],
+      )
+      .map(mapConversationTurnRow);
+  }
+
   getLatestActiveByConversation(conversationId: string): ZeusConversationTurnRecord | undefined {
     const row = this.db.get<DbConversationTurnRow>(
       `SELECT id, conversation_id, provider_thread_id, provider_turn_id, client_submission_id, status,
@@ -6570,6 +6597,40 @@ export class ConversationItemRepository {
 
   listByConversation(conversationId: string): ZeusConversationItemRecord[] {
     return this.db.select<DbConversationItemRow>(`SELECT * FROM conversation_items WHERE conversation_id = ? ORDER BY updated_at, id`, [conversationId]).map(mapConversationItemRow);
+  }
+
+  /** 计划完成收口只读取当前轮次最后一份有效计划，不加载整段会话正文。 */
+  getLatestCompletedPlanByTurn(turnId: string): ZeusConversationItemRecord | undefined {
+    const row = this.db.get<DbConversationItemRow>(
+      `SELECT *
+         FROM conversation_items
+        WHERE turn_id = ? AND item_type = 'plan' AND status = 'completed' AND trim(text_content) <> ''
+        ORDER BY updated_at DESC, id DESC
+        LIMIT 1`,
+      [turnId],
+    );
+    return row ? mapConversationItemRow(row) : undefined;
+  }
+
+  /** 启动收口把少量候选轮次合并为一次历史扫描，避免无索引旧库为每个轮次重复扫描大表。 */
+  listLatestCompletedPlansByTurns(turnIds: readonly string[]): ZeusConversationItemRecord[] {
+    const uniqueTurnIds = [...new Set(turnIds)];
+    if (uniqueTurnIds.length === 0) return [];
+    const placeholders = uniqueTurnIds.map(() => '?').join(', ');
+    const rows = this.db
+      .select<DbConversationItemRow>(
+        `SELECT *
+           FROM conversation_items
+          WHERE turn_id IN (${placeholders}) AND item_type = 'plan' AND status = 'completed' AND trim(text_content) <> ''
+          ORDER BY turn_id, updated_at DESC, id DESC`,
+        uniqueTurnIds,
+      )
+      .map(mapConversationItemRow);
+    const latestByTurn = new Map<string, ZeusConversationItemRecord>();
+    for (const row of rows) {
+      if (!latestByTurn.has(row.turnId)) latestByTurn.set(row.turnId, row);
+    }
+    return [...latestByTurn.values()];
   }
 }
 

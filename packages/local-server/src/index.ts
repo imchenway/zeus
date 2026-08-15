@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { accessSync, appendFileSync, constants as fsConstants, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { getNextTaskStatus, type TaskStatus } from '@zeus/task-core';
 import {
   buildTaskCommitMessageSuggestion,
@@ -2004,9 +2005,17 @@ interface TelegramRuntimeConfirmation {
 
 /** 创建 Zeus 本地服务实例；监听动作由 Electron Main 决定。 */
 export async function createLocalServer(options: CreateLocalServerOptions): Promise<FastifyInstance> {
+  const startupStartedAt = performance.now();
+  const traceStartup = (stage: string): void => {
+    if (process.env.ZEUS_STARTUP_TIMING !== '1') return;
+    console.info(`[Zeus startup] ${stage} ${Math.round(performance.now() - startupStartedAt)}ms`);
+  };
   const db = await createZeusDatabase(options.dbPath);
+  traceStartup('database_ready');
   try {
-    return await createLocalServerWithDatabase(options, db);
+    const server = await createLocalServerWithDatabase(options, db, traceStartup);
+    traceStartup('local_server_created');
+    return server;
   } catch (error) {
     try {
       db.discardAndClose();
@@ -2017,7 +2026,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   }
 }
 
-async function createLocalServerWithDatabase(options: CreateLocalServerOptions, db: ZeusDatabase): Promise<FastifyInstance> {
+async function createLocalServerWithDatabase(options: CreateLocalServerOptions, db: ZeusDatabase, traceStartup: (stage: string) => void): Promise<FastifyInstance> {
   const dataLayout = options.dataLayout ?? createZeusDataLayoutForDatabase(options.dbPath);
   if (resolve(dataLayout.database) !== resolve(options.dbPath)) throw new Error('Zeus 数据路径登记表与数据库路径不一致。');
   const taskAttachmentRoot = prepareTaskAttachmentRoot(options.taskAttachmentRoot ?? dataLayout.taskAttachments);
@@ -2028,6 +2037,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       `Zeus 已修复 ${attachmentRepair.repairedTaskCount} 个历史任务中的 ${attachmentRepair.repairedAttachmentCount} 个附件引用（路径 ${attachmentRepair.repairedPathCount} 个，字段归属 ${attachmentRepair.repairedFieldCount} 个）。`,
     );
   }
+  traceStartup('attachments_repaired');
   const projects = new ProjectRepository(db);
   const projectRepositories = new ProjectRepositoryRegistrationRepository(db);
   const projectSharedPaths = new ProjectSharedPathRepository(db);
@@ -2085,6 +2095,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     }
     throw error;
   }
+  traceStartup('fastify_initialized');
   const projectRoot = options.projectRoot ?? process.cwd();
   const readGitStatus = getGitStatus;
   const readGitDiff = getGitDiff;
@@ -2111,6 +2122,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const now = () => new Date();
   const appShellSettingsKey = 'app.shell.settings';
   const codexAccountFingerprintSaltKey = 'codex.usage.account_fingerprint_salt';
+  const conversationResourceBackfillSettingKey = 'conversation.resource_backfill';
+  const conversationResourceBackfillRevision = '20260815_resource_projection';
   const localLogDirectory = dataLayout.localLogs;
   const localConfigPath = options.localConfigPath ?? dataLayout.localConfig;
   // 本地日志目录是设计书明确要求的物理落点；服务启动时创建，避免 UI 只展示一个不存在的路径。
@@ -2136,6 +2149,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     return result;
   };
   await runRuntimeLogRetention();
+  traceStartup('runtime_retention_ready');
   let codeMapSettings: CodeMapSettingsSnapshot = normalizeCodeMapSettings(settings.getJson<CodeMapSettingsSnapshot>(codeMapSettingsKey)) ?? defaultCodeMapSettings;
   let codexRemoteControlEnabled = settings.getJson<boolean>(codexRemoteControlEnabledSettingKey) === true;
   let memoryGraphCache: ProjectGraph | null = null;
@@ -2172,6 +2186,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     settings.setJson(appShellSettingsKey, appShellSettings);
     await db.save();
   }
+  traceStartup('settings_ready');
   function resolveTaskManagementStatusConfigForProject(projectId: string): TaskManagementStatusConfig {
     return appShellSettings.taskManagementStatusByProject[projectId] ?? appShellSettings.taskManagementStatusTemplate;
   }
@@ -2207,6 +2222,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const repairedPiConversationIdentityCount = piNativeCoordinator.repairPersistedConversationIdentities();
   const repairedPiAgentMessageProjectionCount = piNativeCoordinator.repairPersistedAgentMessageProjections();
   if (repairedPiConversationIdentityCount > 0 || repairedPiAgentMessageProjectionCount > 0) await db.save();
+  traceStartup('pi_recovery_ready');
   const runtimePersistenceWrites = new Set<Promise<void>>();
   const runtimePersistenceErrors: unknown[] = [];
   let runtimePersistenceSaveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -2305,42 +2321,56 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const conversationAttachmentRoot = prepareTaskAttachmentRoot(options.conversationAttachmentRoot ?? dataLayout.conversationAttachments);
   const trustedConversationAttachmentRoots = [taskAttachmentRoot, browserAttachmentRoot, conversationAttachmentRoot].filter((root): root is string => Boolean(root));
   const generatedImageRoot = codexHome ? join(codexHome, 'generated_images') : undefined;
-  let conversationResourceBackfillCount = 0;
-  for (const conversation of conversations.listNativeBoundRecords()) {
-    const project = projects.getById(conversation.projectId);
-    if (!project) continue;
-    const conversationExecutionRoot = resolveNativeConversationExecutionRoot(conversation);
-    // 任务会话的文件属于独立 worktree；执行根不可恢复时不能回退到项目主目录重写资源。
-    if (!conversationExecutionRoot) continue;
-    const submissions = conversationSubmissions.listByConversation(conversation.id);
-    const existingResourcesByItem = new Map<string, ReturnType<typeof conversationResources.listByItem>>();
-    for (const resource of conversationResources.listByConversation(conversation.id)) {
-      const existing = existingResourcesByItem.get(resource.itemId) ?? [];
-      existing.push(resource);
-      existingResourcesByItem.set(resource.itemId, existing);
+  const resourceBackfillState = settings.getJson<{ revision?: string }>(conversationResourceBackfillSettingKey);
+  if (resourceBackfillState?.revision !== conversationResourceBackfillRevision) {
+    const existingResourceCount = db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM conversation_resources`)?.count ?? 0;
+    let conversationResourceBackfillCount = 0;
+    // 资源表已有投影说明旧版启动回填已经实际运行；只补登记，不再把全部历史正文读入内存重算一次。
+    if (existingResourceCount === 0) {
+      for (const conversation of conversations.listNativeBoundRecords()) {
+        const project = projects.getById(conversation.projectId);
+        if (!project) continue;
+        const conversationExecutionRoot = resolveNativeConversationExecutionRoot(conversation);
+        // 任务会话的文件属于独立 worktree；执行根不可恢复时不能回退到项目主目录重写资源。
+        if (!conversationExecutionRoot) continue;
+        const submissions = conversationSubmissions.listByConversation(conversation.id);
+        const existingResourcesByItem = new Map<string, ReturnType<typeof conversationResources.listByItem>>();
+        for (const resource of conversationResources.listByConversation(conversation.id)) {
+          const existing = existingResourcesByItem.get(resource.itemId) ?? [];
+          existing.push(resource);
+          existingResourcesByItem.set(resource.itemId, existing);
+        }
+        for (const item of conversationItems.listByConversation(conversation.id)) {
+          const submission = item.itemType === 'userMessage' ? submissions.find((candidate) => candidate.providerTurnId === item.providerTurnId) : undefined;
+          const payload = parseJsonObject(item.payloadJson);
+          const normalized = normalizeConversationResources({
+            projectId: conversation.projectId,
+            projectRoot: conversationExecutionRoot,
+            conversationId: conversation.id,
+            turnId: item.turnId,
+            item,
+            payload: submission ? { ...payload, attachments: parseJsonObject(submission.inputJson).attachments } : payload,
+            text: item.textContent,
+            trustedAttachmentRoots: trustedConversationAttachmentRoots,
+            generatedImageRoot,
+            now: item.updatedAt,
+          });
+          const existing = existingResourcesByItem.get(item.id) ?? [];
+          if (conversationResourceRecordsEqual(existing, normalized)) continue;
+          conversationResources.replaceForItem(item.id, normalized, item.updatedAt);
+          conversationResourceBackfillCount += Math.max(normalized.length, existing.length);
+        }
+      }
     }
-    for (const item of conversationItems.listByConversation(conversation.id)) {
-      const submission = item.itemType === 'userMessage' ? submissions.find((candidate) => candidate.providerTurnId === item.providerTurnId) : undefined;
-      const payload = parseJsonObject(item.payloadJson);
-      const normalized = normalizeConversationResources({
-        projectId: conversation.projectId,
-        projectRoot: conversationExecutionRoot,
-        conversationId: conversation.id,
-        turnId: item.turnId,
-        item,
-        payload: submission ? { ...payload, attachments: parseJsonObject(submission.inputJson).attachments } : payload,
-        text: item.textContent,
-        trustedAttachmentRoots: trustedConversationAttachmentRoots,
-        generatedImageRoot,
-        now: item.updatedAt,
-      });
-      const existing = existingResourcesByItem.get(item.id) ?? [];
-      if (conversationResourceRecordsEqual(existing, normalized)) continue;
-      conversationResources.replaceForItem(item.id, normalized, item.updatedAt);
-      conversationResourceBackfillCount += Math.max(normalized.length, existing.length);
-    }
+    settings.setJson(conversationResourceBackfillSettingKey, {
+      revision: conversationResourceBackfillRevision,
+      completedAt: now().toISOString(),
+      projectedResourceCount: existingResourceCount + conversationResourceBackfillCount,
+      adoptedExistingProjection: existingResourceCount > 0,
+    });
+    await db.save();
   }
-  if (conversationResourceBackfillCount > 0) await db.save();
+  traceStartup('conversation_resources_ready');
   const turnChangeSetService = createTurnChangeSetService({
     db,
     changeSets: turnChangeSets,
@@ -2499,6 +2529,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (cleanupErrors.length > 0) throw new AggregateError([factoryError, ...cleanupErrors], 'Zeus native coordinator creation and cleanup failed.');
     throw factoryError;
   }
+  traceStartup('codex_coordinator_ready');
   if (codexNativeEnabled && codexRemoteControlEnabled) {
     void codexAppServerManager
       .ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}), remoteControl: true })
@@ -2557,6 +2588,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       await db.save();
     }
   }
+  traceStartup('legacy_threads_ready');
   let codexLegacyImportService: CodexLegacyImportService | undefined;
   if (codexNativeEnabled && options.codexLegacyImportRoot) {
     codexLegacyImportService = createCodexLegacyImportService({
@@ -2583,12 +2615,14 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       await db.save();
     }
   }
+  traceStartup('legacy_imports_ready');
   (server as ZeusFastifyLifecycle).prepareZeusShutdown = async () => {
     settleCodexPendingOnClose = true;
     await codexLegacyImportService?.close();
     await codexNativeCoordinator.close({ mode: 'final' });
   };
   await turnChangeSetService.recoverInterruptedOperations();
+  traceStartup('turn_changes_ready');
   if (
     codexNativeEnabled &&
     (conversations.listNativeBoundRecords('codex').length > 0 ||
@@ -2625,6 +2659,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       throw claimedRecoveryError;
     }
   }
+  traceStartup('codex_recovery_ready');
 
   function recordTaskEvent(input: CreateTaskEventInput) {
     const event = taskEvents.create(input);
@@ -2766,6 +2801,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   }
 
   await recoverPersistedRuntimeSessions();
+  traceStartup('runtime_sessions_ready');
 
   /** 向本地 WebSocket 订阅者广播真实领域事件；payload 只放业务上下文，绝不包含 API Token。 */
   function publishRealtimeEvent(type: string, payload: Record<string, unknown>): ZeusRealtimeEvent {
@@ -19088,6 +19124,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     );
   }
 
+  traceStartup('routes_ready');
   return server;
 }
 

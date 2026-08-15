@@ -136,7 +136,8 @@ function prepareZeusDataRootWithoutLock(root: string, legacyRoots: readonly stri
 
   if (hasLayeredDatabase) {
     ensureLayeredDirectories(layered);
-    assertDatabaseQuickCheck(layered.database);
+    // 正常分层目录已经完成过迁移校验；每次启动再全库 quick_check 会随历史数据线性变慢。
+    // SQLite 打开、迁移和业务读写仍会显式报错，完整校验保留给迁移、维护与正式发布验证。
     return { status: 'already-layered', layout: layered, migrationManifestPath: null };
   }
 

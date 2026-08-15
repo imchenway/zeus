@@ -19,6 +19,9 @@ import {
   removeExecutionHostRendezvous,
   writeExecutionHostBootstrap,
 } from './executionHostProtocol.js';
+import type { DesktopLocalServerCloseMode } from './beforeQuitCleanup.js';
+
+export type { DesktopLocalServerCloseMode } from './beforeQuitCleanup.js';
 
 export interface RendererLocalServerConfig {
   baseUrl: string;
@@ -47,8 +50,6 @@ export interface DesktopLocalServerRuntime {
   stopActiveWork: () => Promise<void>;
   close: (mode?: DesktopLocalServerCloseMode) => Promise<void>;
 }
-
-export type DesktopLocalServerCloseMode = 'continue_in_background' | 'upgrade_handoff' | 'final_quit' | 'force_quit';
 
 interface ExecutionHostHandoffCheckpoint {
   sourceInstanceId: string;
@@ -98,10 +99,6 @@ export interface DesktopLocalAppConfigFile {
   localLogDirectory: string;
   localServerHost: '127.0.0.1';
   updatedAt: string;
-}
-
-export function parseCodexNativeEnabled(value: string | undefined): boolean {
-  return value !== '0';
 }
 
 /**
@@ -873,47 +870,4 @@ function throwCollectedCleanupErrors(errors: unknown[], message: string): void {
   if (errors.length === 0) return;
   if (errors.length === 1) throw errors[0];
   throw new AggregateError(errors, message);
-}
-
-export interface BeforeQuitCleanupEvent {
-  preventDefault: () => void;
-}
-
-export interface BeforeQuitCleanupResources {
-  closeSystemNotifications?: () => void;
-  resolveQuitMode?: () => Promise<DesktopLocalServerCloseMode | 'cancel'>;
-  closeLocalServer?: (mode: DesktopLocalServerCloseMode) => Promise<void>;
-  shouldDeferQuit?: () => boolean;
-  requestQuitConfirmation?: () => void;
-  exitApp: (code: number) => void;
-}
-
-/**
- * Electron 的 before-quit 不会等待 async listener；这里先同步拦截退出，
- * 等系统通知桥和本地服务都关闭后再显式退出，避免残留本机进程或旧 WebSocket。
- */
-export function createBeforeQuitCleanupHandler(resources: BeforeQuitCleanupResources): (event: BeforeQuitCleanupEvent) => void {
-  let cleanupStarted = false;
-  return (event) => {
-    event.preventDefault();
-    if (cleanupStarted) return;
-    if (resources.shouldDeferQuit?.()) {
-      resources.requestQuitConfirmation?.();
-      return;
-    }
-    cleanupStarted = true;
-    void (async () => {
-      try {
-        const quitMode = (await resources.resolveQuitMode?.()) ?? 'final_quit';
-        if (quitMode === 'cancel') {
-          cleanupStarted = false;
-          return;
-        }
-        resources.closeSystemNotifications?.();
-        await resources.closeLocalServer?.(quitMode);
-      } finally {
-        if (cleanupStarted) resources.exitApp(0);
-      }
-    })();
-  };
 }

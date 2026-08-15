@@ -108,6 +108,16 @@ export async function migrateLegacyCodexThreads(input: LegacyCodexThreadMigratio
         report.skipped.push({ sourceConversationId: source.id, runtimeSessionId: runtime.id, reason: 'runtime_ownership_conflict' });
         continue;
       }
+      const existingImport = findExistingImport(input.db, source.id, runtime.id);
+      if (existingImport) {
+        report.existing.push({
+          sourceConversationId: source.id,
+          runtimeSessionId: runtime.id,
+          conversationId: existingImport.conversationId,
+          providerThreadId: existingImport.providerThreadId,
+        });
+        continue;
+      }
       if (!isCodexExecRuntime(runtime)) {
         sourceComplete = false;
         report.skipped.push({ sourceConversationId: source.id, runtimeSessionId: runtime.id, reason: 'invalid_runtime_transport' });
@@ -199,9 +209,25 @@ export async function migrateLegacyCodexThreads(input: LegacyCodexThreadMigratio
 function listLegacySources(projects: ProjectRepository, conversations: ConversationRepository): ZeusConversationRecord[] {
   const sources: ZeusConversationRecord[] = [];
   for (const project of projects.list()) {
-    sources.push(...conversations.listRecordsByProject(project.id).filter((conversation) => conversation.transportKind === 'legacy_cli' && conversation.taskId));
+    sources.push(...conversations.listRecordsByProject(project.id).filter((conversation) => conversation.transportKind === 'legacy_cli' && conversation.taskId && !conversation.archived));
   }
   return sources.sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+}
+
+/** 已落库的迁移身份就是完成证据，启动时不得再次恢复 Provider 线程并重放完整快照。 */
+function findExistingImport(db: ZeusDatabase, sourceConversationId: string, runtimeSessionId: string): { conversationId: string; providerThreadId: string } | null {
+  const existing = db.get<{ id: string; provider_thread_id: string }>(
+    `SELECT id, provider_thread_id
+       FROM conversations
+      WHERE transport_kind = 'codex_native'
+        AND legacy_source_conversation_id = ?
+        AND session_id = ?
+        AND provider_thread_id IS NOT NULL
+      ORDER BY created_at, id
+      LIMIT 1`,
+    [sourceConversationId, runtimeSessionId],
+  );
+  return existing ? { conversationId: existing.id, providerThreadId: existing.provider_thread_id } : null;
 }
 
 function linkedRuntimeSessions(source: ZeusConversationRecord, taskEvents: TaskEventRepository): LegacyRuntimeLink[] {
