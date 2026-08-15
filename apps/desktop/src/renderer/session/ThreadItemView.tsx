@@ -821,7 +821,7 @@ export function itemRole(item: NativeSessionItemBuffer): ThreadItemRole {
   if (type === 'reasoning' || type === 'plan' || type === 'commentary' || type === 'analysis') return 'commentary';
   if (type === 'filechange' || type === 'file') return 'file';
   if (type === 'imagegeneration') return item.status === 'failed' ? 'error' : 'image';
-  if (['commandexecution', 'command', 'mcptoolcall', 'dynamictoolcall', 'websearch', 'imageview', 'toolcall', 'tool'].includes(type)) return 'tool';
+  if (['commandexecution', 'command', 'mcptoolcall', 'dynamictoolcall', 'websearch', 'imageview', 'toolcall', 'tool', 'providerevent', 'hookprompt', 'sleep', 'enteredreviewmode', 'exitedreviewmode'].includes(type)) return 'tool';
   if (type.includes('request') || type.includes('approval')) return 'request';
   if (type === 'error' || type.endsWith('error') || item.status === 'failed') return 'error';
   return 'unknown';

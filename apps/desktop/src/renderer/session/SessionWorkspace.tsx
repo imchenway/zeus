@@ -6,6 +6,7 @@ import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/c
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paperclip';
 import { TargetIcon as Target } from '@phosphor-icons/react/dist/csr/Target';
+import { UsersThreeIcon as UsersThree } from '@phosphor-icons/react/dist/csr/UsersThree';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { animate as animateMotion, motion, useMotionValue, useTransform } from 'framer-motion';
 import type { ConversationContextDraft, ConversationFileLocation, ConversationOpenTarget, TurnChangeFile, ZeusBrowserPreparedSubmission } from '@zeus/shared';
@@ -27,6 +28,7 @@ import { BrowserWorkspace } from './BrowserWorkspace.js';
 import { SourceWorkspace } from './SourceWorkspace.js';
 import { TurnDiffWorkspace } from './TurnChanges.js';
 import { SideChatWorkspace } from './SideChatWorkspace.js';
+import { SubagentWorkspace } from './SubagentWorkspace.js';
 import { defaultOpenTarget } from './ConversationResources.js';
 import type {
   CodexConversationCapabilities,
@@ -44,6 +46,8 @@ import type {
   NativeServiceTierSelection,
   NativeSessionItemBuffer,
   NativeSessionState,
+  NativeSubagentListSnapshot,
+  NativeSubagentThreadSnapshot,
   NativeTurnSettingsSelection,
   SessionConversationOwner,
   StartNativeConversationRequest,
@@ -172,6 +176,8 @@ export interface SessionWorkspaceActions {
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => Promise<ConversationResourceOpenActionResult>;
   onOpenTurnChangeFile?: (changeSet: TurnChangeSet, file: TurnChangeFile, target: ConversationOpenTarget, location?: ConversationFileLocation) => Promise<ConversationResourceOpenActionResult>;
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
+  onLoadSubagents?: () => Promise<NativeSubagentListSnapshot>;
+  onLoadSubagentThread?: (threadId: string) => Promise<NativeSubagentThreadSnapshot>;
   onOperateTurnChangeSet?: (changeSet: TurnChangeSet, action: 'undo' | 'reapply') => Promise<TurnChangeSetOperationResult>;
 }
 
@@ -286,6 +292,23 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     initialOptimisticState,
     enabled: controllerEnabled,
   });
+  const [subagentListSnapshot, setSubagentListSnapshot] = useState<NativeSubagentListSnapshot | null>(null);
+  useEffect(() => {
+    setSubagentListSnapshot(null);
+    const loadSubagents = props.client.loadNativeSubagents;
+    if (!loadSubagents || props.conversation.transportKind !== 'codex_native') return;
+    let active = true;
+    void loadSubagents(props.conversation.projectId, props.conversation.id)
+      .then((snapshot) => {
+        if (active) setSubagentListSnapshot(snapshot);
+      })
+      .catch(() => {
+        // 智能体预读失败不影响主会话；用户打开面板时仍可手动重试。
+      });
+    return () => {
+      active = false;
+    };
+  }, [props.client, props.conversation.id, props.conversation.projectId, props.conversation.transportKind]);
   const [capabilities, setCapabilities] = useState<CodexConversationCapabilities | null>(props.initialCapabilities ?? null);
   useEffect(() => {
     let active = true;
@@ -353,6 +376,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       quickActionsSuppressed={props.quickActionsSuppressed}
       taskManagementStatusChangeBusy={props.taskManagementStatusChangeBusy}
       readOnlyGate={props.readOnlyGate}
+      subagentListSnapshot={subagentListSnapshot}
       creationStatus={displayedCreationStatus}
       onLatestContentVisibilityChange={props.onLatestContentVisibilityChange}
       actions={{
@@ -435,6 +459,12 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
                     },
                   }
                 : {}),
+            }
+          : {}),
+        ...(props.client.loadNativeSubagents && props.client.loadNativeSubagentThread
+          ? {
+              onLoadSubagents: () => props.client.loadNativeSubagents!(props.conversation.projectId, props.conversation.id),
+              onLoadSubagentThread: (threadId: string) => props.client.loadNativeSubagentThread!(props.conversation.projectId, props.conversation.id, threadId),
             }
           : {}),
         onStartConversation: props.onStartConversation,
@@ -1048,6 +1078,8 @@ export interface SessionWorkspaceProps {
   taskManagementStatusChangeBusy?: boolean;
   readOnlyGate?: SessionReadOnlyGate;
   capabilities?: CodexConversationCapabilities | null;
+  /** 权威子线程预读结果；实时连接失败时仍允许只读打开智能体。 */
+  subagentListSnapshot?: NativeSubagentListSnapshot | null;
   choicesKnown?: boolean;
   legacyMessages?: Record<string, Array<{ id: string; role: string; content: string }>>;
   loadState?: 'empty' | 'loading' | 'error';
@@ -1245,6 +1277,7 @@ type SessionWorkspaceStatus = { kind: 'ready' | 'busy' | 'warning' | 'error'; la
 type SessionContextWorkspace =
   | { kind: 'none' }
   | { kind: 'browser' }
+  | { kind: 'subagents' }
   | { kind: 'plan'; itemId: string }
   | { kind: 'source'; preview: ConversationResourcePreview }
   | { kind: 'turn_diff'; turnId: string; initialFileId?: string }
@@ -1313,6 +1346,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const browserAnimatedWidth = useTransform<number, number>([browserVisibilityProgress, browserTargetWidth], ([progress, targetWidth]) => Math.max(0, Math.min(1, progress)) * targetWidth);
   const contextOpen = contextWorkspace.kind !== 'none';
   const browserOpen = contextWorkspace.kind === 'browser';
+  const subagentsOpen = contextWorkspace.kind === 'subagents';
   const planWorkspaceItemId = contextWorkspace.kind === 'plan' ? contextWorkspace.itemId : null;
   const sessionReady = props.state != null;
   const resolvedBrowserTargetWidth = resolveBrowserTargetWidth(browserLayoutWidth, browserPaneShare, contextFullWidth);
@@ -1368,6 +1402,11 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     } as const);
   const selectedComposerModel = resolveModelCapability(props.capabilities?.models, composerRuntimeSettings?.model ?? props.state?.snapshot?.nextTurnSettings?.model ?? props.state?.providerSettings?.model);
   const goalAvailable = !legacy && goalCapability.supported && goalCapability.enabled && (selectedComposerModel?.agentKind ?? props.state?.snapshot?.agent?.kind ?? props.conversation?.agent?.kind) === 'codex';
+  const subagentActivity = useMemo(() => projectSubagentActivity(Object.values(props.state?.items ?? {})), [props.state?.items]);
+  const subagentThreadIds = useMemo(() => [...new Set([...subagentActivity.threadIds, ...(props.subagentListSnapshot?.items.map((item) => item.id) ?? [])])].sort(), [props.subagentListSnapshot?.items, subagentActivity.threadIds]);
+  const subagentSnapshotRevision = props.subagentListSnapshot?.items.map((item) => `${item.id}:${item.status}:${item.updatedAt ?? ''}`).join('|') ?? '';
+  const subagentSignature = subagentThreadIds.join(',');
+  const autoOpenedSubagentSignatureRef = useRef('');
 
   useEffect(() => {
     contextReturnFocusRef.current = null;
@@ -1377,6 +1416,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     setContextFullWidth(false);
     setGoalPanelOpen(false);
     setGoalError(null);
+    autoOpenedSubagentSignatureRef.current = '';
     browserMotionStopRef.current?.();
     browserMotionStopRef.current = null;
     browserVisibilityProgress.set(0);
@@ -1384,6 +1424,14 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     setBrowserResizing(false);
     browserResizeActiveRef.current = false;
   }, [browserVisibilityProgress, props.conversation?.id]);
+
+  useEffect(() => {
+    if (!subagentSignature || subagentSignature === autoOpenedSubagentSignatureRef.current) return;
+    autoOpenedSubagentSignatureRef.current = subagentSignature;
+    if (contextWorkspace.kind !== 'none' || !actions.onLoadSubagents || !actions.onLoadSubagentThread) return;
+    setContextFullWidth(false);
+    setContextWorkspace({ kind: 'subagents' });
+  }, [actions.onLoadSubagentThread, actions.onLoadSubagents, contextWorkspace.kind, subagentSignature]);
 
   useEffect(() => {
     if (!props.state || legacy || composerRuntimeSettings) return;
@@ -1988,6 +2036,27 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
             {displayedHeader.contextLabel ? <small>{displayedHeader.contextLabel}</small> : null}
           </span>
           <div className="session-thread-header-actions">
+            {!legacy && props.conversation && actions.onLoadSubagents && actions.onLoadSubagentThread ? (
+              <button
+                type="button"
+                className={`session-agents-toggle ${subagentsOpen ? 'selected' : ''}`}
+                aria-pressed={subagentsOpen}
+                title={props.language === 'zh-CN' ? '查看智能体' : 'View agents'}
+                onClick={(event) => {
+                  contextReturnFocusRef.current = event.currentTarget;
+                  if (subagentsOpen) {
+                    closeContextWorkspace();
+                    return;
+                  }
+                  setContextFullWidth(false);
+                  setContextWorkspace({ kind: 'subagents' });
+                }}
+              >
+                <UsersThree aria-hidden="true" weight="regular" />
+                <span>{props.language === 'zh-CN' ? '智能体' : 'Agents'}</span>
+                <small>{subagentThreadIds.length}</small>
+              </button>
+            ) : null}
             {!legacy && props.conversation ? (
               <button
                 type="button"
@@ -2224,7 +2293,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     <div
                       className="session-browser-resizer"
                       role="separator"
-                      aria-label={props.language === 'zh-CN' ? '调整会话与浏览器宽度' : 'Resize conversation and browser'}
+                      aria-label={props.language === 'zh-CN' ? '调整会话与右侧面板宽度' : 'Resize conversation and side panel'}
                       aria-orientation="vertical"
                       aria-valuemin={38}
                       aria-valuemax={72}
@@ -2258,6 +2327,20 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                             await actions.onStageBrowserComments?.(prepared);
                             closeContextWorkspace({ focusComposer: true });
                           }}
+                        />
+                      ) : null}
+                      {contextWorkspace.kind === 'subagents' && actions.onLoadSubagents && actions.onLoadSubagentThread ? (
+                        <SubagentWorkspace
+                          language={props.language}
+                          conversationId={props.state.conversationId ?? props.conversation.id}
+                          activityRevision={`${subagentActivity.revision}|${subagentSnapshotRevision}`}
+                          hintCount={subagentThreadIds.length}
+                          initialSnapshot={props.subagentListSnapshot}
+                          fullWidth={contextFullWidth}
+                          onFullWidthChange={setContextFullWidth}
+                          onClose={closeContextWorkspace}
+                          loadList={actions.onLoadSubagents}
+                          loadThread={actions.onLoadSubagentThread}
                         />
                       ) : null}
                       {contextWorkspace.kind === 'plan' && planWorkspaceItem ? (
@@ -2343,11 +2426,32 @@ export function selectDockedTurnPlan(state: NativeSessionState): NativeSessionSt
 function contextWorkspaceLabel(workspace: SessionContextWorkspace, language: SessionUiLanguage): string {
   const zh = language === 'zh-CN';
   if (workspace.kind === 'browser') return zh ? '会话浏览器' : 'Conversation browser';
+  if (workspace.kind === 'subagents') return zh ? '智能体' : 'Agents';
   if (workspace.kind === 'plan') return zh ? '计划工作区' : 'Plan workspace';
   if (workspace.kind === 'source') return zh ? '源码预览' : 'Source preview';
   if (workspace.kind === 'turn_diff') return zh ? '变更审核' : 'Change review';
   if (workspace.kind === 'side_chat') return zh ? '侧边聊天' : 'Side chat';
   return zh ? '会话上下文工作区' : 'Conversation context workspace';
+}
+
+export function projectSubagentActivity(items: readonly NativeSessionItemBuffer[]): { threadIds: string[]; revision: string } {
+  const threadIds = new Set<string>();
+  const revisions: string[] = [];
+  for (const item of items) {
+    const payloadType = typeof item.payload.type === 'string' ? item.payload.type : item.type;
+    const type = payloadType.toLowerCase().replaceAll(/[^a-z]/gu, '');
+    if (type !== 'subagentactivity' && type !== 'collabagenttoolcall') continue;
+    revisions.push(`${item.key}:${item.status}:${item.updatedAt ?? ''}`);
+    if (typeof item.payload.agentThreadId === 'string') threadIds.add(item.payload.agentThreadId);
+    if (Array.isArray(item.payload.receiverThreadIds)) {
+      for (const threadId of item.payload.receiverThreadIds) if (typeof threadId === 'string' && threadId) threadIds.add(threadId);
+    }
+    const states = item.payload.agentsStates;
+    if (states && typeof states === 'object' && !Array.isArray(states)) {
+      for (const threadId of Object.keys(states)) if (threadId) threadIds.add(threadId);
+    }
+  }
+  return { threadIds: [...threadIds].sort(), revision: revisions.join('|') };
 }
 
 function normalizeProjectRelativePath(path: string): string {

@@ -940,6 +940,9 @@ export type ConversationItemType =
   | 'imageGeneration'
   | 'webSearch'
   | 'contextCompaction'
+  | 'collabAgentToolCall'
+  | 'subAgentActivity'
+  | 'providerEvent'
   | 'error';
 export type ConversationItemStatus = 'in_progress' | 'completed' | 'failed';
 export type ConversationItemPhase = 'prework' | 'final_answer';
@@ -6365,7 +6368,24 @@ export class ConversationItemRepository {
   appendDelta(input: ConversationItemBaseInput & { delta: string; status?: ConversationItemStatus }): ZeusConversationItemRecord {
     const itemType = assertEnum(
       input.itemType,
-      ['userMessage', 'agentMessage', 'reasoning', 'commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'plan', 'imageView', 'imageGeneration', 'webSearch', 'contextCompaction', 'error'] as const,
+      [
+        'userMessage',
+        'agentMessage',
+        'reasoning',
+        'commandExecution',
+        'fileChange',
+        'mcpToolCall',
+        'dynamicToolCall',
+        'plan',
+        'imageView',
+        'imageGeneration',
+        'webSearch',
+        'contextCompaction',
+        'collabAgentToolCall',
+        'subAgentActivity',
+        'providerEvent',
+        'error',
+      ] as const,
       'conversation item type',
     );
     const status = assertEnum(input.status ?? 'in_progress', ['in_progress', 'completed', 'failed'] as const, 'conversation item status');
@@ -6405,7 +6425,24 @@ export class ConversationItemRepository {
   upsertProgress(input: ConversationItemBaseInput & { textContent: string; status?: ConversationItemStatus }): ZeusConversationItemRecord {
     const itemType = assertEnum(
       input.itemType,
-      ['userMessage', 'agentMessage', 'reasoning', 'commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'plan', 'imageView', 'imageGeneration', 'webSearch', 'contextCompaction', 'error'] as const,
+      [
+        'userMessage',
+        'agentMessage',
+        'reasoning',
+        'commandExecution',
+        'fileChange',
+        'mcpToolCall',
+        'dynamicToolCall',
+        'plan',
+        'imageView',
+        'imageGeneration',
+        'webSearch',
+        'contextCompaction',
+        'collabAgentToolCall',
+        'subAgentActivity',
+        'providerEvent',
+        'error',
+      ] as const,
       'conversation item type',
     );
     const status = assertEnum(input.status ?? 'in_progress', ['in_progress', 'completed', 'failed'] as const, 'conversation item status');
@@ -6445,13 +6482,31 @@ export class ConversationItemRepository {
   upsertCompleted(input: ConversationItemBaseInput & { textContent: string; completedAt: string | null; status?: ConversationItemStatus }): ZeusConversationItemRecord {
     const itemType = assertEnum(
       input.itemType,
-      ['userMessage', 'agentMessage', 'reasoning', 'commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'plan', 'imageView', 'imageGeneration', 'webSearch', 'contextCompaction', 'error'] as const,
+      [
+        'userMessage',
+        'agentMessage',
+        'reasoning',
+        'commandExecution',
+        'fileChange',
+        'mcpToolCall',
+        'dynamicToolCall',
+        'plan',
+        'imageView',
+        'imageGeneration',
+        'webSearch',
+        'contextCompaction',
+        'collabAgentToolCall',
+        'subAgentActivity',
+        'providerEvent',
+        'error',
+      ] as const,
       'conversation item type',
     );
     const status = assertEnum(input.status ?? 'completed', ['in_progress', 'completed', 'failed'] as const, 'conversation item status');
     const phase = assertEnum(input.phase, ['prework', 'final_answer'] as const, 'conversation item phase');
     const existing = this.getByProvider(input.providerThreadId, input.providerItemId);
-    if (existing?.status === 'completed') return existing;
+    // 协议新增类型曾被旧版降级为 error；快照重放时允许只纠正已完成项的真实类型。
+    if (existing?.status === 'completed' && existing.itemType === itemType) return existing;
     const id = existing?.id ?? `conversation_item_${nanoid(12)}`;
     this.db.execute(
       `INSERT INTO conversation_items (id, conversation_id, turn_id, provider_thread_id, provider_turn_id, provider_item_id, item_type, status, phase, text_content, payload_json, started_at, completed_at, updated_at, agent_kind, native_item_id)
