@@ -364,6 +364,13 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
     async readThread(input) {
       return routeThread(input.threadId).manager.readThread(input);
     },
+    async listThreads(input) {
+      const routeId = input.ancestorThreadId ?? input.parentThreadId;
+      const entry = routeId ? routeThread(routeId) : requireActiveEntry();
+      const page = await entry.manager.listThreads(input);
+      for (const thread of page.data) bindThread(entry, thread.id);
+      return page;
+    },
     async readThreadGoal(input) {
       return routeThread(input.threadId).manager.readThreadGoal(input);
     },

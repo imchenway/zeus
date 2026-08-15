@@ -149,6 +149,40 @@ export interface NativeItemSnapshot {
   updatedAt: string;
 }
 
+export type NativeSubagentStatus = 'pending' | 'running' | 'waiting' | 'completed' | 'interrupted' | 'failed' | 'unknown';
+
+export interface NativeSubagentSummary {
+  id: string;
+  parentThreadId: string | null;
+  title: string;
+  nickname: string | null;
+  role: string | null;
+  path: string | null;
+  preview: string;
+  status: NativeSubagentStatus;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface NativeSubagentListSnapshot {
+  conversationId: string;
+  parentThreadId: string;
+  items: NativeSubagentSummary[];
+}
+
+export interface NativeSubagentThreadTurn {
+  id: string;
+  status: string;
+  items: NativeItemSnapshot[];
+}
+
+export interface NativeSubagentThreadSnapshot {
+  conversationId: string;
+  parentThreadId: string;
+  agent: NativeSubagentSummary;
+  turns: NativeSubagentThreadTurn[];
+}
+
 export interface NativeQueuedSubmission {
   id: string;
   conversationId?: string;

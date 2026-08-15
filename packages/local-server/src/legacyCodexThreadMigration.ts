@@ -400,8 +400,26 @@ function submissionStatus(turn: Record<string, unknown>): 'completed' | 'failed'
 }
 
 function itemType(value: unknown): ConversationItemType {
-  const allowed: ConversationItemType[] = ['userMessage', 'agentMessage', 'reasoning', 'commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'plan', 'imageView', 'imageGeneration', 'webSearch', 'contextCompaction', 'error'];
-  return typeof value === 'string' && allowed.includes(value as ConversationItemType) ? (value as ConversationItemType) : 'error';
+  const allowed: ConversationItemType[] = [
+    'userMessage',
+    'agentMessage',
+    'reasoning',
+    'commandExecution',
+    'fileChange',
+    'mcpToolCall',
+    'dynamicToolCall',
+    'plan',
+    'imageView',
+    'imageGeneration',
+    'webSearch',
+    'contextCompaction',
+    'collabAgentToolCall',
+    'subAgentActivity',
+    'providerEvent',
+    'error',
+  ];
+  // 未识别的协议事件保持中性，避免历史线程中的新事件被迁移成错误。
+  return typeof value === 'string' && allowed.includes(value as ConversationItemType) ? (value as ConversationItemType) : 'providerEvent';
 }
 
 function itemStatus(item: Record<string, unknown>): ConversationItemStatus {

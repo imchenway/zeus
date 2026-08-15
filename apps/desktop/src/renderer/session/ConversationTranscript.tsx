@@ -798,6 +798,8 @@ export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[],
       continue;
     }
     const item = entry.item;
+    // 多智能体协调事件统一进入右侧智能体面板，不在主会话重复暴露协议载荷。
+    if (isSubagentCoordinationItem(item)) continue;
     if (!isOperationalActivityItem(item)) {
       flushActivity();
       rows.push({ kind: 'item', key: transcriptItemRenderKey(item), item });
@@ -808,6 +810,12 @@ export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[],
   }
   flushActivity();
   return rows;
+}
+
+export function isSubagentCoordinationItem(item: Pick<NativeSessionItemBuffer, 'type' | 'payload'>): boolean {
+  const rawType = typeof item.payload.type === 'string' ? item.payload.type : item.type;
+  const type = rawType.toLowerCase().replaceAll(/[^a-z]/gu, '');
+  return type === 'collabagenttoolcall' || type === 'subagentactivity';
 }
 
 function transcriptItemRenderKey(item: NativeSessionItemBuffer): string {
@@ -823,6 +831,7 @@ function isTaskPushUserMessageItem(item: NativeSessionItemBuffer): boolean {
 }
 
 export function isVisibleTranscriptItem(item: NativeSessionItemBuffer): boolean {
+  if (isSubagentCoordinationItem(item)) return false;
   if (typeof item.payload.requestAnswerId === 'string') return false;
   if (itemRole(item) !== 'commentary') return true;
   return transcriptItemText(item).trim().length > 0;

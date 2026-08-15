@@ -3798,6 +3798,226 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     },
   );
 
+  const codexSubagentSourceKinds = ['subAgent', 'subAgentReview', 'subAgentCompact', 'subAgentThreadSpawn', 'subAgentOther'] as const;
+
+  function nativeSubagentErrorCode(error: unknown): string | null {
+    return error instanceof Error && 'code' in error && typeof (error as Error & { code?: unknown }).code === 'string' ? ((error as Error & { code: string }).code ?? null) : null;
+  }
+
+  async function listCodexSubagentThreads(parentThreadId: string) {
+    await codexAppServerManager.ensureReady({
+      commandPath: currentCodexRuntimeCommandPath(),
+      ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}),
+    });
+    const threads: Awaited<ReturnType<typeof codexAppServerManager.listThreads>>['data'] = [];
+    let cursor: string | null = null;
+    do {
+      const page = await codexAppServerManager.listThreads({
+        ancestorThreadId: parentThreadId,
+        cursor,
+        limit: 200,
+        sortKey: 'created_at',
+        sortDirection: 'asc',
+        sourceKinds: [...codexSubagentSourceKinds],
+        useStateDbOnly: true,
+      });
+      threads.push(...page.data);
+      cursor = page.nextCursor;
+    } while (cursor && threads.length < 1_000);
+    return threads;
+  }
+
+  function conversationSubagentActivity(conversationId: string): {
+    threadIds: Set<string>;
+    paths: Map<string, string>;
+    interrupted: Set<string>;
+    states: Map<string, string>;
+  } {
+    const threadIds = new Set<string>();
+    const paths = new Map<string, string>();
+    const interrupted = new Set<string>();
+    const states = new Map<string, string>();
+    for (const item of conversationItems.listByConversation(conversationId)) {
+      const payload = parseJsonObject(item.payloadJson);
+      const payloadType = typeof payload.type === 'string' ? payload.type : item.itemType;
+      if (payloadType === 'subAgentActivity') {
+        const threadId = typeof payload.agentThreadId === 'string' ? payload.agentThreadId : null;
+        if (!threadId) continue;
+        threadIds.add(threadId);
+        if (typeof payload.agentPath === 'string' && payload.agentPath.trim()) paths.set(threadId, payload.agentPath);
+        if (payload.kind === 'interrupted') interrupted.add(threadId);
+        continue;
+      }
+      if (payloadType !== 'collabAgentToolCall') continue;
+      if (isNativeApiRecord(payload.agentsStates)) {
+        for (const [threadId, rawState] of Object.entries(payload.agentsStates)) {
+          if (!isNativeApiRecord(rawState) || typeof rawState.status !== 'string') continue;
+          threadIds.add(threadId);
+          states.set(threadId, rawState.status);
+        }
+      }
+      if (Array.isArray(payload.receiverThreadIds)) {
+        for (const threadId of payload.receiverThreadIds) if (typeof threadId === 'string' && threadId) threadIds.add(threadId);
+      }
+    }
+    return { threadIds, paths, interrupted, states };
+  }
+
+  function codexEpochIso(value: unknown): string | null {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
+    return new Date(value * 1_000).toISOString();
+  }
+
+  function codexSubagentStatus(thread: Record<string, unknown>, providerStatus: string | undefined, interrupted: boolean): 'pending' | 'running' | 'waiting' | 'completed' | 'interrupted' | 'failed' | 'unknown' {
+    if (interrupted || providerStatus === 'interrupted') return 'interrupted';
+    if (providerStatus === 'pendingInit') return 'pending';
+    if (providerStatus === 'running') return 'running';
+    if (providerStatus === 'completed' || providerStatus === 'shutdown') return 'completed';
+    if (providerStatus === 'errored' || providerStatus === 'notFound') return 'failed';
+    const status = isNativeApiRecord(thread.status) ? thread.status : {};
+    if (status.type === 'active') return Array.isArray(status.activeFlags) && status.activeFlags.length > 0 ? 'waiting' : 'running';
+    if (status.type === 'systemError') return 'failed';
+    if (status.type === 'idle' || status.type === 'notLoaded') return 'completed';
+    return 'unknown';
+  }
+
+  function codexSubagentTitle(thread: Record<string, unknown>, path: string | null): string {
+    if (typeof thread.name === 'string' && thread.name.trim()) return thread.name.trim();
+    if (typeof thread.agentNickname === 'string' && thread.agentNickname.trim()) return thread.agentNickname.trim();
+    if (path) {
+      const segment = path.split('/').filter(Boolean).pop();
+      if (segment) return segment;
+    }
+    if (typeof thread.agentRole === 'string' && thread.agentRole.trim()) return thread.agentRole.trim();
+    return '智能体';
+  }
+
+  function toNativeSubagentSummary(thread: Record<string, unknown>, activity: ReturnType<typeof conversationSubagentActivity>) {
+    const id = typeof thread.id === 'string' ? thread.id : '';
+    const path = activity.paths.get(id) ?? null;
+    return {
+      id,
+      parentThreadId: typeof thread.parentThreadId === 'string' ? thread.parentThreadId : null,
+      title: codexSubagentTitle(thread, path),
+      nickname: typeof thread.agentNickname === 'string' ? thread.agentNickname : null,
+      role: typeof thread.agentRole === 'string' ? thread.agentRole : null,
+      path,
+      preview: typeof thread.preview === 'string' ? thread.preview : '',
+      status: codexSubagentStatus(thread, activity.states.get(id), activity.interrupted.has(id)),
+      createdAt: codexEpochIso(thread.createdAt),
+      updatedAt: codexEpochIso(thread.updatedAt),
+    };
+  }
+
+  function codexSubagentItemText(item: Record<string, unknown>): string {
+    if (typeof item.text === 'string') return item.text;
+    if (typeof item.content === 'string') return item.content;
+    if (Array.isArray(item.content)) return item.content.flatMap((part) => (isNativeApiRecord(part) && typeof part.text === 'string' ? [part.text] : [])).join('');
+    if (Array.isArray(item.summary)) return item.summary.filter((part): part is string => typeof part === 'string' && part.trim().length > 0).join('\n\n');
+    return '';
+  }
+
+  function codexSubagentItemStatus(item: Record<string, unknown>, turnStatus: string): 'in_progress' | 'completed' | 'failed' {
+    const raw = typeof item.status === 'string' ? item.status : turnStatus;
+    if (raw === 'failed' || raw === 'errored') return 'failed';
+    if (raw === 'inProgress' || raw === 'in_progress' || raw === 'running') return 'in_progress';
+    return 'completed';
+  }
+
+  function toNativeSubagentTurns(thread: Record<string, unknown>) {
+    const threadUpdatedAt = codexEpochIso(thread.updatedAt) ?? now().toISOString();
+    return (Array.isArray(thread.turns) ? thread.turns : []).flatMap((rawTurn) => {
+      if (!isNativeApiRecord(rawTurn) || typeof rawTurn.id !== 'string') return [];
+      const turnStatus = typeof rawTurn.status === 'string' ? rawTurn.status : 'completed';
+      const startedAt = codexEpochIso(rawTurn.startedAt);
+      const completedAt = codexEpochIso(rawTurn.completedAt);
+      const items = (Array.isArray(rawTurn.items) ? rawTurn.items : []).flatMap((rawItem) => {
+        if (!isNativeApiRecord(rawItem) || typeof rawItem.id !== 'string' || typeof rawItem.type !== 'string') return [];
+        const phase = rawItem.phase === 'final_answer' || rawItem.phase === 'finalAnswer' || rawItem.type === 'agentMessage' ? 'final_answer' : 'prework';
+        return [
+          {
+            id: rawItem.id,
+            turnId: rawTurn.id,
+            providerItemId: rawItem.id,
+            type: rawItem.type,
+            status: codexSubagentItemStatus(rawItem, turnStatus),
+            phase,
+            text: codexSubagentItemText(rawItem),
+            payload: sanitizeConversationItemPayload(rawItem),
+            resources: [],
+            startedAt,
+            completedAt,
+            updatedAt: completedAt ?? startedAt ?? threadUpdatedAt,
+          },
+        ];
+      });
+      return [{ id: rawTurn.id, status: turnStatus, items }];
+    });
+  }
+
+  async function loadConversationSubagents(conversation: { id: string; providerThreadId: string | null }) {
+    const parentThreadId = conversation.providerThreadId;
+    if (!parentThreadId) throw nativeApiError('ZEUS_CODEX_THREAD_UNAVAILABLE', '当前会话没有可读取的 Codex 线程。');
+    const activity = conversationSubagentActivity(conversation.id);
+    let listError: unknown;
+    const listed = await listCodexSubagentThreads(parentThreadId).catch((error) => {
+      listError = error;
+      return [];
+    });
+    const byId = new Map(listed.map((thread) => [thread.id, thread]));
+    // 活动事件可能早于 Codex 状态库索引；只对缺失的已知子线程做一次权威读取。
+    for (const threadId of activity.threadIds) {
+      if (byId.has(threadId)) continue;
+      const thread = await codexAppServerManager.readThread({ threadId }).catch(() => null);
+      if (thread) byId.set(thread.id, thread);
+    }
+    if (byId.size === 0 && listError) throw listError;
+    return {
+      conversationId: conversation.id,
+      parentThreadId,
+      items: [...byId.values()].map((thread) => toNativeSubagentSummary(thread, activity)).sort((left, right) => (left.createdAt ?? '').localeCompare(right.createdAt ?? '') || left.id.localeCompare(right.id)),
+    };
+  }
+
+  server.get('/api/projects/:projectId/conversations/:conversationId/subagents', async (request: FastifyRequest<{ Params: { projectId: string; conversationId: string } }>, reply) => {
+    const conversation = conversations.getById(request.params.conversationId);
+    if (!conversation || conversation.projectId !== request.params.projectId) {
+      return reply.code(404).send({ error: 'ZEUS_CONVERSATION_NOT_FOUND', message: 'Conversation not found' });
+    }
+    if (conversation.transportKind !== 'codex_native' || (conversation.agentKind !== 'codex' && conversation.providerId !== 'codex')) {
+      return reply.code(409).send({ error: 'ZEUS_CODEX_SUBAGENTS_UNAVAILABLE', message: 'Subagents are only available for native Codex conversations.' });
+    }
+    try {
+      return await loadConversationSubagents(conversation);
+    } catch (error) {
+      return reply.code(409).send({ error: nativeSubagentErrorCode(error) ?? 'ZEUS_CODEX_SUBAGENTS_READ_FAILED', message: error instanceof Error ? error.message : 'Failed to read Codex subagents.' });
+    }
+  });
+
+  server.get('/api/projects/:projectId/conversations/:conversationId/subagents/:threadId', async (request: FastifyRequest<{ Params: { projectId: string; conversationId: string; threadId: string } }>, reply) => {
+    const conversation = conversations.getById(request.params.conversationId);
+    if (!conversation || conversation.projectId !== request.params.projectId) {
+      return reply.code(404).send({ error: 'ZEUS_CONVERSATION_NOT_FOUND', message: 'Conversation not found' });
+    }
+    if (conversation.transportKind !== 'codex_native' || (conversation.agentKind !== 'codex' && conversation.providerId !== 'codex')) {
+      return reply.code(409).send({ error: 'ZEUS_CODEX_SUBAGENTS_UNAVAILABLE', message: 'Subagents are only available for native Codex conversations.' });
+    }
+    try {
+      const snapshot = await loadConversationSubagents(conversation);
+      const agent = snapshot.items.find((item) => item.id === request.params.threadId);
+      if (!agent) return reply.code(404).send({ error: 'ZEUS_CODEX_SUBAGENT_NOT_FOUND', message: 'Subagent thread not found.' });
+      const thread = await codexAppServerManager.readThread({ threadId: agent.id });
+      return {
+        conversationId: conversation.id,
+        parentThreadId: snapshot.parentThreadId,
+        agent,
+        turns: toNativeSubagentTurns(thread),
+      };
+    } catch (error) {
+      return reply.code(409).send({ error: nativeSubagentErrorCode(error) ?? 'ZEUS_CODEX_SUBAGENT_THREAD_READ_FAILED', message: error instanceof Error ? error.message : 'Failed to read Codex subagent thread.' });
+    }
+  });
+
   server.get('/api/projects/:projectId/conversations/:conversationId/resources', async (request: FastifyRequest<{ Params: { projectId: string; conversationId: string } }>, reply) => {
     const conversation = conversations.getById(request.params.conversationId);
     if (!conversation || conversation.projectId !== request.params.projectId) {
