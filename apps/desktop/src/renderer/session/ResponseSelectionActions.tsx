@@ -8,6 +8,12 @@ interface SelectionCandidate {
   point: { left: number; top: number; placement: 'above' | 'below' };
 }
 
+interface AnnotationEditorPoint {
+  left: number;
+  top: number;
+  placement: 'above' | 'below';
+}
+
 export function ResponseSelectionActions(props: {
   articleRef: RefObject<HTMLElement | null>;
   itemId: string;
@@ -90,10 +96,14 @@ export function ResponseSelectionActions(props: {
   const markers = root
     ? props.annotations.flatMap((annotation, index) => {
         const range = rangeFromOffsets(root, annotation.anchor.startOffset, annotation.anchor.endOffset);
-        const rect = range?.getBoundingClientRect();
+        const rect = range ? rangeEndRect(range) : null;
         return rect && rect.width > 0 ? [{ annotation, index, left: rect.right, top: rect.top }] : [];
       })
     : [];
+  const editingAnnotation = props.annotations.find((annotation) => annotation.id === editingId) ?? null;
+  const editingRange = root && editingAnnotation ? rangeFromOffsets(root, editingAnnotation.anchor.startOffset, editingAnnotation.anchor.endOffset) : null;
+  const editingRect = editingRange ? rangeEndRect(editingRange) : null;
+  const editorPoint = editingRect ? annotationEditorPoint(editingRect, props.articleRef.current?.ownerDocument.defaultView ?? null) : null;
   void revision;
   const portalRoot = props.articleRef.current?.closest<HTMLElement>('.session-codex-parity-v1') ?? props.articleRef.current?.ownerDocument.body ?? document.body;
 
@@ -142,39 +152,40 @@ export function ResponseSelectionActions(props: {
           {index + 1}
         </button>
       ))}
-      {editingId ? (
-        <ResponseAnnotationEditor
-          annotation={props.annotations.find((annotation) => annotation.id === editingId) ?? null}
-          language={props.language}
-          onClose={() => setEditingId(null)}
-          onUpdate={props.onUpdateAnnotation}
-          onRemove={props.onRemoveAnnotation}
-        />
+      {editingAnnotation && editorPoint ? (
+        <ResponseAnnotationEditor annotation={editingAnnotation} point={editorPoint} language={props.language} onClose={() => setEditingId(null)} onUpdate={props.onUpdateAnnotation} onRemove={props.onRemoveAnnotation} />
       ) : null}
     </>,
     portalRoot,
   );
 }
 
-function ResponseAnnotationEditor(props: { annotation: ConversationResponseAnnotation | null; language: SessionUiLanguage; onClose: () => void; onUpdate?: (id: string, note: string) => void; onRemove?: (id: string) => void }) {
+function ResponseAnnotationEditor(props: {
+  annotation: ConversationResponseAnnotation;
+  point: AnnotationEditorPoint;
+  language: SessionUiLanguage;
+  onClose: () => void;
+  onUpdate?: (id: string, note: string) => void;
+  onRemove?: (id: string) => void;
+}) {
   const [note, setNote] = useState(props.annotation?.note ?? '');
   useEffect(() => setNote(props.annotation?.note ?? ''), [props.annotation?.id, props.annotation?.note]);
-  if (!props.annotation) return null;
   const zh = props.language === 'zh-CN';
   return (
-    <section className="session-response-annotation-editor" aria-label={zh ? '选区注释' : 'Selection annotation'}>
+    <section className="session-response-annotation-editor" data-placement={props.point.placement} style={{ left: props.point.left, top: props.point.top }} aria-label={zh ? '回答批注' : 'Response annotation'}>
       <header>
-        <strong>{zh ? '本地注释' : 'Local annotation'}</strong>
+        <strong>{zh ? '添加评论' : 'Add comment'}</strong>
         <button type="button" onClick={props.onClose} aria-label={zh ? '关闭' : 'Close'}>
           ×
         </button>
       </header>
-      <textarea autoFocus value={note} placeholder={zh ? '添加评论…' : 'Add a comment…'} onChange={(event) => setNote(event.currentTarget.value)} />
+      <blockquote title={props.annotation.anchor.selectedText}>{props.annotation.anchor.selectedText}</blockquote>
+      <textarea autoFocus rows={2} value={note} placeholder={zh ? '写下评论…' : 'Write a comment…'} onChange={(event) => setNote(event.currentTarget.value)} />
       <footer>
         <button
           type="button"
           onClick={() => {
-            props.onRemove?.(props.annotation!.id);
+            props.onRemove?.(props.annotation.id);
             props.onClose();
           }}
         >
@@ -183,7 +194,7 @@ function ResponseAnnotationEditor(props: { annotation: ConversationResponseAnnot
         <button
           type="button"
           onClick={() => {
-            props.onUpdate?.(props.annotation!.id, note);
+            props.onUpdate?.(props.annotation.id, note);
             props.onClose();
           }}
         >
@@ -192,6 +203,34 @@ function ResponseAnnotationEditor(props: { annotation: ConversationResponseAnnot
       </footer>
     </section>
   );
+}
+
+function rangeEndRect(range: Range): DOMRect | null {
+  const rects = Array.from(range.getClientRects()).filter((rect) => rect.width > 0 && rect.height > 0);
+  return (
+    rects.at(-1) ??
+    (() => {
+      const rect = range.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 ? rect : null;
+    })()
+  );
+}
+
+function annotationEditorPoint(rect: DOMRect, view: Window | null): AnnotationEditorPoint {
+  const viewportWidth = view?.innerWidth ?? 380;
+  const viewportHeight = view?.innerHeight ?? 640;
+  const margin = 12;
+  const gap = 10;
+  const editorWidth = Math.min(300, viewportWidth - margin * 2);
+  const editorHeight = 196;
+  const roomOnRight = viewportWidth - rect.right - margin;
+  const left = roomOnRight >= editorWidth + gap ? rect.right + gap : Math.max(margin, Math.min(rect.right - editorWidth - gap, viewportWidth - editorWidth - margin));
+  const placeBelow = rect.bottom + gap + editorHeight <= viewportHeight - margin || rect.top - gap - editorHeight < margin;
+  return {
+    left,
+    top: placeBelow ? rect.bottom + gap : rect.top - gap,
+    placement: placeBelow ? 'below' : 'above',
+  };
 }
 
 function textOffset(root: HTMLElement, node: Node, offset: number): number | null {

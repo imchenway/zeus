@@ -102,7 +102,7 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
   const active = props.state.conversationState === 'active_prework' || props.state.conversationState === 'active_final_answer';
   const queueExplanation = describeQueueState(props.state, queue, copy);
   const attentionRequired = queue.some((submission) => submission.status === 'paused' && submission.pausedReason !== 'conflict_preparing');
-  const [expanded, setExpanded] = useState(attentionRequired);
+  const [expanded, setExpanded] = useState(true);
   const previousQueueLengthRef = useRef(queue.length);
 
   useEffect(() => {
@@ -110,7 +110,7 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
   }, [attentionRequired]);
 
   useEffect(() => {
-    if (previousQueueLengthRef.current > 0 && queue.length === 0) setExpanded(false);
+    if (previousQueueLengthRef.current === 0 && queue.length > 0) setExpanded(true);
     previousQueueLengthRef.current = queue.length;
   }, [queue.length]);
 
@@ -289,9 +289,9 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
 }
 
 function queuedMessagePreview(submission: NativeQueuedSubmission, attachmentOnly: string): string {
-  const content = submission.content.trim().replace(/\s+/gu, ' ');
+  const content = submission.content.trim();
   if (!content) return attachmentOnly;
-  return content.length > 96 ? `${content.slice(0, 95).trimEnd()}…` : content;
+  return content;
 }
 
 function queuedMessageEditDraft(submission: NativeQueuedSubmission): string {
@@ -327,7 +327,7 @@ function describeQueueState(state: NativeSessionState, queue: readonly NativeQue
 
 export function visibleQueuedSubmissions(queue: NativeQueueSnapshot | null): NativeQueuedSubmission[] {
   return [...(queue?.submissions ?? [])]
-    .filter((submission) => (submission.status === 'queued' || submission.status === 'paused') && !submission.providerTurnId)
+    .filter((submission) => (submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'paused') && !submission.providerTurnId)
     .sort((left, right) => left.position - right.position || (left.createdAt ?? '').localeCompare(right.createdAt ?? '') || left.id.localeCompare(right.id));
 }
 
