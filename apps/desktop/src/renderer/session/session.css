@@ -14357,6 +14357,12 @@
   line-height: 1.6;
 }
 
+/* Provider 的过程说明可能仍以 agentMessage 投影；过程容器是最终的展示语义，不能按 assistant 角色套用答复样式。 */
+.session-codex-parity-v1 :where(.session-turn-duration-body, .session-turn-process-body) .session-thread-item-assistant .session-markdown {
+  color: var(--session-process-text);
+  font-size: var(--session-readable-font-size);
+}
+
 /* 多行摘要保持顶部锚定，图标只在首行行盒内居中。 */
 .session-codex-parity-v1 .session-reasoning-summary-icon {
   block-size: 1.5em;
