@@ -301,7 +301,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             <Fragment key={item.key}>
               <ThreadItemView item={item} language={props.language} isLatest animateEntrance={enteringItemIds.has(item.key)} onVisibleContentChange={maintainLatestPosition} />
               {!showActiveStatus || item.status === 'failed' || item.status === 'unconfirmed' || item.status === 'paused' ? (
-                <PendingMessageDeliveryFeedback item={item} stateError={props.state.error} language={props.language} onReturnToComposer={props.onRetryItem ? () => props.onRetryItem?.(item) : undefined} />
+                <MessageDeliveryOutcomeFeedback item={item} stateError={props.state.error} language={props.language} onReturnToComposer={props.onRetryItem ? () => props.onRetryItem?.(item) : undefined} />
               ) : null}
             </Fragment>
           ))}
@@ -566,7 +566,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         onOpenSideChat={options.props.onOpenSideChat}
       />
       {showTaskPushDeliveryFeedback ? (
-        <PendingMessageDeliveryFeedback item={row.item} stateError={options.props.state.error} language={options.props.language} onReturnToComposer={options.props.onRetryItem ? () => options.props.onRetryItem?.(row.item) : undefined} />
+        <MessageDeliveryOutcomeFeedback item={row.item} stateError={options.props.state.error} language={options.props.language} onReturnToComposer={options.props.onRetryItem ? () => options.props.onRetryItem?.(row.item) : undefined} />
       ) : null}
     </>
   );
@@ -581,34 +581,17 @@ function TranscriptActiveStatus(props: { language: SessionUiLanguage; kind: 'sta
   );
 }
 
-function PendingMessageDeliveryFeedback(props: { item: NativeSessionItemBuffer; stateError: NativeSessionError | null; language: SessionUiLanguage; onReturnToComposer?: () => void }): ReactNode {
+function MessageDeliveryOutcomeFeedback(props: { item: NativeSessionItemBuffer; stateError: NativeSessionError | null; language: SessionUiLanguage; onReturnToComposer?: () => void }): ReactNode {
   const zh = props.language === 'zh-CN';
   const deliveryError = nativeSessionErrorFrom(props.item.payload.deliveryError) ?? (props.stateError?.code === 'ZEUS_NATIVE_ACCEPTANCE_HYDRATION_PENDING' ? props.stateError : null);
   const unconfirmed = props.item.status === 'unconfirmed' || props.item.status === 'paused';
   const failed = props.item.status === 'failed';
-  const delivery = typeof props.item.payload.delivery === 'string' ? props.item.payload.delivery : 'queue';
-  // 乐观消息已经即时展示正文，普通发送阶段不再重复显示过程提示。
-  if (props.item.status === 'pending' && delivery !== 'steer_now' && !deliveryError) return null;
+  const hydrationPending = deliveryError?.code === 'ZEUS_NATIVE_ACCEPTANCE_HYDRATION_PENDING';
+  const deliveryFailed = failed || Boolean(deliveryError && !hydrationPending);
+  // 正常投递过程不形成独立提示，只保留失败、结果不确定和持久记录确认。
+  if (!deliveryFailed && !unconfirmed && !hydrationPending) return null;
   const reason = deliveryError ? messageDeliveryFailureReason(deliveryError, zh) : null;
-  const title = failed
-    ? zh
-      ? '消息发送失败'
-      : 'Message send failed'
-    : unconfirmed
-      ? zh
-        ? '发送结果待确认'
-        : 'Send outcome unconfirmed'
-      : deliveryError?.code === 'ZEUS_NATIVE_ACCEPTANCE_HYDRATION_PENDING'
-        ? zh
-          ? '消息已接收，正在确认记录'
-          : 'Message accepted; confirming its record'
-        : delivery === 'steer_now'
-          ? zh
-            ? '正在把消息交给当前回复'
-            : 'Sending the message to the current response'
-          : zh
-            ? '消息已接收，正在启动处理'
-            : 'Message accepted; starting processing';
+  const title = deliveryFailed ? (zh ? '消息发送失败' : 'Message send failed') : unconfirmed ? (zh ? '发送结果待确认' : 'Send outcome unconfirmed') : zh ? '消息已接收，正在确认记录' : 'Message accepted; confirming its record';
   const guidance = failed
     ? zh
       ? '内容已保留在输入框中，可修改后重新发送。'
@@ -622,9 +605,9 @@ function PendingMessageDeliveryFeedback(props: { item: NativeSessionItemBuffer; 
   return (
     <section
       className="session-message-delivery-feedback"
-      data-state={failed ? 'failed' : unconfirmed ? 'unconfirmed' : 'pending'}
-      role={failed || unconfirmed ? 'alert' : 'status'}
-      aria-live={failed || unconfirmed ? 'assertive' : 'polite'}
+      data-state={deliveryFailed ? 'failed' : unconfirmed ? 'unconfirmed' : 'pending'}
+      role={deliveryFailed || unconfirmed ? 'alert' : 'status'}
+      aria-live={deliveryFailed || unconfirmed ? 'assertive' : 'polite'}
     >
       <span className="session-thinking-pulse" aria-hidden="true" />
       <span>
