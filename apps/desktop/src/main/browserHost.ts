@@ -825,7 +825,17 @@ export class BrowserHost implements BrowserAutomationPort {
   }
 
   private async markCommentsSent(conversationId: string, tabId: string, commentIds: string[]): Promise<void> {
-    const tab = this.requireConversationTab(conversationId, tabId);
+    const tab = this.tabs.get(tabId);
+    // 标签关闭时其批注也已从 BrowserHost 权威状态删除，补偿标记可按幂等成功处理。
+    if (!tab) {
+      if (this.persistenceTimer) {
+        clearTimeout(this.persistenceTimer);
+        this.persistenceTimer = undefined;
+      }
+      await this.persist();
+      return;
+    }
+    if (tab.snapshot.conversationId !== conversationId) throw new Error('The browser tab does not belong to this conversation.');
     const sent = new Set(commentIds);
     const timestamp = this.now();
     tab.snapshot = {
@@ -842,7 +852,12 @@ export class BrowserHost implements BrowserAutomationPort {
       updatedAt: timestamp,
     };
     this.syncPageComments(tab);
-    this.schedulePersist();
+    if (this.persistenceTimer) {
+      clearTimeout(this.persistenceTimer);
+      this.persistenceTimer = undefined;
+    }
+    // IPC 只有在原子文件替换完成后才返回；Renderer 随后删除补偿账本不会留下崩溃窗口。
+    await this.persist();
     this.emitSnapshot(conversationId);
   }
 

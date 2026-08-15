@@ -288,10 +288,6 @@ const PROJECT_WORKSPACE_ENTRIES = [
 type ProjectDetailPanel = 'diff' | 'edit' | 'config' | 'archive' | undefined;
 type ConversationDrawer = 'runtime' | 'context' | 'changes' | 'templates' | undefined;
 
-interface ConversationSwitchTransition {
-  source: NativeConversationChoice;
-  targetNavigationId: string;
-}
 type TaskConversationDrawerTarget = Readonly<{ taskId: string; conversationId: string }> | undefined;
 type TaskConversationReopenState = Readonly<{ conversationId: string; status: 'busy' | 'error'; error?: string }> | undefined;
 type SettingsCategory = 'general' | 'usage' | 'tasks' | 'runtime' | 'models' | 'browser' | 'telegram' | 'security' | 'commands' | 'git' | 'release' | 'data';
@@ -6957,7 +6953,6 @@ export function App(props: {
   );
   const [selectedNativeConversationId, setSelectedNativeConversationId] = useState<string | null>(() => props.initialSelectedNativeConversationId ?? null);
   const selectedNativeConversationIdRef = useRef<string | null>(props.initialSelectedNativeConversationId ?? null);
-  const [conversationSwitchTransition, setConversationSwitchTransition] = useState<ConversationSwitchTransition | null>(null);
   const [latestConversationContentVisible, setLatestConversationContentVisible] = useState(false);
   const [zeusWindowForeground, setZeusWindowForeground] = useState(false);
   const [focusedArchivedConversation, setFocusedArchivedConversation] = useState<NativeConversationChoice | null>(null);
@@ -7824,11 +7819,6 @@ export function App(props: {
     selectedNativeConversationIdRef.current = selectedNativeConversationId;
     setLatestConversationContentVisible(false);
   }, [selectedNativeConversationId]);
-  useEffect(() => {
-    if (selectedNativeConversationId && activeProjectSection === 'sessions' && activeNavTarget !== 'settings') return;
-    setConversationSwitchTransition(null);
-  }, [activeNavTarget, activeProjectSection, selectedNativeConversationId]);
-
   useEffect(() => {
     const bridge = window.zeus;
     if (bridge?.getRequestingWindowForeground && bridge.onRequestingWindowForegroundChanged) {
@@ -9605,18 +9595,6 @@ export function App(props: {
     if (task) setTaskDetail(task);
     else setTaskDetail(undefined);
     const navigationId = conversation.navigationId ?? conversation.id;
-    const sourceConversation = conversationSwitchTransition?.source ?? selectedNativeConversation;
-    const sourceCache = sourceConversation ? nativeConversationHotCacheRef.current.get(sourceConversation.id)?.state : undefined;
-    const targetCache = nativeConversationHotCacheRef.current.get(conversation.id)?.state;
-    const shouldRetainSource = Boolean(
-      sourceConversation &&
-      sourceConversation.id !== conversation.id &&
-      sourceConversation.transportKind === 'codex_native' &&
-      !sourceConversation.readOnly &&
-      sourceCache?.snapshot &&
-      !(targetCache?.snapshot?.id === conversation.id && targetCache.projectId === conversation.projectId),
-    );
-    setConversationSwitchTransition(shouldRetainSource && sourceConversation ? { source: sourceConversation, targetNavigationId: navigationId } : null);
     selectedNativeConversationIdRef.current = navigationId;
     setSelectedNativeConversationId(navigationId);
     setFocusedArchivedConversation(conversation.archived ? conversation : null);
@@ -12343,30 +12321,6 @@ export function App(props: {
   }
 
   function renderNativeConversationWorkspace(onOpenTaskDetail: (taskId: string) => void): ReactNode {
-    function workspaceContextForConversation(conversation: NativeConversationChoice): {
-      task: SessionWorkspaceTask | null;
-      owner: SessionConversationOwner | undefined;
-      choices: NativeConversationChoice[];
-    } {
-      const taskRecordSource = conversation.taskId ? snapshot.tasks.find((candidate) => candidate.id === conversation.taskId) : undefined;
-      const taskRecord = taskRecordSource ? projectTaskModelPushManagementStatus(taskRecordSource) : undefined;
-      const task = taskRecord ? createSessionWorkspaceTask(taskRecord, appShellSettings, appShellSettings.appLanguage) : null;
-      const project = snapshot.projects.find((candidate) => candidate.id === conversation.projectId);
-      const owner: SessionConversationOwner | undefined = task
-        ? {
-            kind: 'task',
-            projectId: task.projectId,
-            projectName: project?.name ?? task.projectId,
-            taskId: task.id,
-            taskTitle: task.title,
-          }
-        : project
-          ? { kind: 'project', projectId: project.id, projectName: project.name }
-          : undefined;
-      const choices = task ? (projectedTaskConversationChoices[task.id] ?? []) : project ? (nativeConversationChoicesByProject[project.id]?.choices ?? []) : [];
-      return { task, owner, choices };
-    }
-
     const taskReadOnlyGate =
       nativeSessionTaskReadOnly && nativeSessionTask && selectedNativeConversation
         ? {
@@ -12454,9 +12408,6 @@ export function App(props: {
           onChooseAttachments={props.onChooseConversationResources ? chooseNativeConversationAttachments : undefined}
           onStateChange={(conversationId, state) => {
             recordNativeConversationRuntimeState(conversationId, state);
-            if (conversationSwitchTransition?.targetNavigationId === (selectedNativeConversation.navigationId ?? selectedNativeConversation.id) && state.transportState === 'ready' && state.snapshot?.id === selectedNativeConversation.id) {
-              setConversationSwitchTransition(null);
-            }
             if (selectedTaskModelPushOperation?.status === 'accepted' && selectedTaskModelPushOperation.choice?.id === conversationId && selectHasConfirmedUserMessage(state, selectedTaskModelPushOperation.request.clientUserMessageId)) {
               writeTaskModelPushPreferences(browserNativeConversationStartStorage(), selectedTaskModelPushOperation.task.projectId, selectedTaskModelPushOperation.form);
             }
@@ -12472,58 +12423,7 @@ export function App(props: {
           onLatestContentVisibilityChange={setLatestConversationContentVisible}
         />
       );
-      const transitionSource = conversationSwitchTransition?.targetNavigationId === (selectedNativeConversation.navigationId ?? selectedNativeConversation.id) ? conversationSwitchTransition.source : null;
-      const sourceCachedState = transitionSource ? nativeConversationHotCacheRef.current.get(transitionSource.id)?.state : undefined;
-      const sourceContext = transitionSource ? workspaceContextForConversation(transitionSource) : null;
-      if (!transitionSource || !sourceCachedState?.snapshot || !sourceContext?.owner) return <div className="session-switch-stack">{targetWorkspace}</div>;
-      return (
-        <div className="session-switch-stack">
-          <ConnectedSessionWorkspace
-            key={transitionSource.navigationId ?? transitionSource.id}
-            language={appShellSettings.appLanguage}
-            client={props.nativeConversationClient}
-            conversation={transitionSource}
-            task={sourceContext.task}
-            owner={sourceContext.owner}
-            choices={sourceContext.choices}
-            initialCachedState={sourceCachedState}
-            suppressInputComposer
-            quickActionsSuppressed={Boolean(taskDetailPaneTaskId)}
-            onStateChange={recordNativeConversationRuntimeState}
-            onStartConversation={startNativeConversation}
-            onStartProjectConversation={startProjectConversation}
-            onOpenTaskDetail={onOpenTaskDetail}
-            onLoadTaskWorkspaces={props.nativeConversationClient.loadTaskGitWorkspaces}
-            onOpenTaskGitReview={(taskId, workspaceId, mode) => setTaskGitReviewState({ taskId, workspaceId, mode })}
-            onOpenTaskGitDelivery={(taskId, workspaceId) => openTaskGitDelivery(taskId, workspaceId)}
-            onOpenProjectCommands={() => openProjectCommands(transitionSource.projectId)}
-          />
-          <ConnectedSessionWorkspace
-            key={selectedNativeConversation.navigationId ?? selectedNativeConversation.id}
-            language={appShellSettings.appLanguage}
-            client={props.nativeConversationClient}
-            conversation={selectedNativeConversation}
-            task={nativeSessionTask}
-            owner={nativeSessionOwner}
-            choices={nativeSessionChoices}
-            transitionDock
-            initialCapabilities={selectedTaskModelPushOperation?.capabilities}
-            quickActionsSuppressed={Boolean(taskDetailPaneTaskId)}
-            onChooseAttachments={props.onChooseConversationResources ? chooseNativeConversationAttachments : undefined}
-            onStateChange={(conversationId, state) => {
-              recordNativeConversationRuntimeState(conversationId, state);
-              if (state.transportState === 'ready' && state.snapshot?.id === selectedNativeConversation.id) setConversationSwitchTransition(null);
-            }}
-            onStartConversation={startNativeConversation}
-            onStartProjectConversation={startProjectConversation}
-            onOpenTaskDetail={onOpenTaskDetail}
-            onLoadTaskWorkspaces={props.nativeConversationClient.loadTaskGitWorkspaces}
-            onOpenTaskGitReview={(taskId, workspaceId, mode) => setTaskGitReviewState({ taskId, workspaceId, mode })}
-            onOpenTaskGitDelivery={(taskId, workspaceId) => openTaskGitDelivery(taskId, workspaceId)}
-            onOpenProjectCommands={() => openProjectCommands(selectedNativeConversation.projectId)}
-          />
-        </div>
-      );
+      return targetWorkspace;
     }
     return (
       <SessionWorkspace

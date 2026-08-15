@@ -18,12 +18,12 @@ export const MAX_MARKDOWN_CHARACTERS = 200_000;
 export const MAX_MARKDOWN_BLOCK_CHARACTERS = 50_000;
 export const MAX_MARKDOWN_BLOCKS = 512;
 export const MAX_MARKDOWN_NODES = 4_096;
-const STREAM_IDLE_FLUSH_MS = 120;
-const STREAM_MAX_FLUSH_MS = 180;
-const STREAM_MIN_BATCH_CHARACTERS = 12;
-const STREAM_IMMEDIATE_CHUNK_CHARACTERS = 48;
-const STREAM_CATCH_UP_CHARACTERS = 96;
-const STREAM_STRUCTURED_IDLE_FLUSH_MS = 1_200;
+const STREAM_IDLE_FLUSH_MS = 48;
+const STREAM_MAX_FLUSH_MS = 80;
+const STREAM_MIN_BATCH_CHARACTERS = 4;
+const STREAM_IMMEDIATE_CHUNK_CHARACTERS = 24;
+const STREAM_CATCH_UP_CHARACTERS = 64;
+const STREAM_STRUCTURED_IDLE_FLUSH_MS = 700;
 
 const copy = {
   'zh-CN': {
@@ -57,6 +57,11 @@ const copy = {
     details: '技术详情',
     complexityTruncated: '内容过于复杂，已截断',
     queued: '排队中',
+    conflictPreparing: '正在准备冲突现场',
+    conflictPreparationFailed: '冲突现场准备失败',
+    deliveryPaused: '发送已暂停',
+    waitingConnection: '等待连接恢复',
+    providerArchived: '等待恢复原会话',
     sendFailed: '发送失败',
     sendUnconfirmed: '发送结果待确认',
     steering: '引导中',
@@ -94,6 +99,11 @@ const copy = {
     details: 'Technical details',
     complexityTruncated: 'Content complexity truncated',
     queued: 'Queued',
+    conflictPreparing: 'Preparing conflict workspace',
+    conflictPreparationFailed: 'Conflict workspace preparation failed',
+    deliveryPaused: 'Sending paused',
+    waitingConnection: 'Waiting for connection',
+    providerArchived: 'Waiting for conversation restore',
     sendFailed: 'Send failed',
     sendUnconfirmed: 'Send outcome unconfirmed',
     steering: 'Steering',
@@ -235,12 +245,20 @@ function TaskPushMessageContent(
 
 function optimisticDeliveryStatus(item: NativeSessionItemBuffer, labels: (typeof copy)[SessionUiLanguage]): string | null {
   const delivery = primitiveText(item.payload.delivery);
+  const pausedReason = primitiveText(item.payload.pausedReason);
   if (item.status === 'failed') return labels.sendFailed;
   if (delivery === 'steer_now') {
     const unconfirmed = item.status === 'paused' || item.status === 'unconfirmed' || primitiveText(item.payload.pausedReason) === 'recovery_required';
     return unconfirmed ? labels.steerUnconfirmed : labels.steering;
   }
-  if (item.status === 'paused' || item.status === 'unconfirmed' || primitiveText(item.payload.pausedReason) === 'recovery_required') return labels.sendUnconfirmed;
+  if (item.status === 'paused') {
+    if (pausedReason === 'conflict_preparing') return labels.conflictPreparing;
+    if (pausedReason === 'conflict_preparation_failed') return labels.conflictPreparationFailed;
+    if (pausedReason === 'transport_unavailable') return labels.waitingConnection;
+    if (pausedReason === 'provider_archived') return labels.providerArchived;
+    if (pausedReason !== 'recovery_required') return labels.deliveryPaused;
+  }
+  if (item.status === 'unconfirmed' || pausedReason === 'recovery_required') return labels.sendUnconfirmed;
   return item.status === 'queued' ? labels.queued : null;
 }
 
@@ -314,19 +332,6 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
     // 自适应流式文本在子组件内提交，通知会话容器重新检查底部跟随状态。
     props.onVisibleContentChange?.();
   }, [adaptiveText.revision, props.onVisibleContentChange]);
-
-  useLayoutEffect(() => {
-    if (!naturalLanguageStream || adaptiveText.revision === 0 || prefersReducedMotion()) return;
-    const latestBlock = articleRef.current?.querySelector<HTMLElement>('.session-markdown > :last-child');
-    const animation = latestBlock?.animate(
-      [
-        { opacity: 0.68, transform: 'translateY(2px)' },
-        { opacity: 1, transform: 'translateY(0)' },
-      ],
-      { duration: 140, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' },
-    );
-    return () => animation?.cancel();
-  }, [adaptiveText.revision, naturalLanguageStream]);
 
   async function submitEditedMessage(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -540,7 +545,7 @@ const TranscriptMarkdown = memo(function TranscriptMarkdown(props: TranscriptMar
     return <StreamingMarkdownPlaceholder kind={streamKind} language={props.language} />;
   }
   return (
-    <div className="session-streaming-markdown">
+    <div className="session-streaming-markdown" data-active="true">
       {projection.stableBlocks.map((block, index) => (
         <SafeMarkdown key={`stable-${index}`} text={block} language={props.language} resources={props.resources} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
       ))}
@@ -840,7 +845,7 @@ export function transcriptItemText(item: NativeSessionItemBuffer): string {
 
 type AdaptiveFlushMode = 'semantic' | 'chunk' | 'catch_up' | 'idle' | 'max_wait';
 
-function useAdaptiveTranscriptText(text: string, enabled: boolean): { text: string; revision: number } {
+export function useAdaptiveTranscriptText(text: string, enabled: boolean): { text: string; revision: number } {
   const [visible, setVisible] = useState(() => ({ text, revision: 0 }));
   const visibleTextRef = useRef(text);
   const targetTextRef = useRef(text);
@@ -943,7 +948,10 @@ function adaptiveCommitLength(value: string, mode: AdaptiveFlushMode): number {
   const semanticBoundary = lastSemanticFlushBoundary(value);
   if (semanticBoundary > 0) return semanticBoundary;
   if (mode === 'semantic') return 0;
-  if ((mode === 'idle' || mode === 'max_wait') && value.length < STREAM_MIN_BATCH_CHARACTERS) return 0;
+  // 最长等待必须刷出不足一个批次的尾字，避免短句在 Provider 停顿时一直不可见。
+  if (mode === 'max_wait') return value.length;
+  if (mode === 'idle' && value.length < STREAM_MIN_BATCH_CHARACTERS) return 0;
+  if (mode === 'idle') return value.length;
   if (mode === 'catch_up' && value.length < STREAM_CATCH_UP_CHARACTERS) return 0;
   return readableBatchBoundary(value);
 }
@@ -978,10 +986,6 @@ function structuredTailStart(value: string, visibleLength: number): number | nul
   const pathMatch = tail.match(/(?:^|[\s[(<{])((?:file:\/\/|https?:\/\/|~\/|\.{1,2}\/|\/(?:[^/\s)]+\/)+|[A-Za-z]:[\\/])[^\s)]*)$/u);
   if (pathMatch?.index !== undefined) candidates.push(lineStart + pathMatch.index + pathMatch[0].length - pathMatch[1].length);
   return candidates.length > 0 ? Math.min(...candidates) : null;
-}
-
-function prefersReducedMotion(): boolean {
-  return typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
 }
 
 function transcriptTextFragments(value: unknown, depth = 0): string[] {

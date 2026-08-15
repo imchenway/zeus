@@ -187,9 +187,12 @@ export interface NativeQueuedSubmission {
   id: string;
   conversationId?: string;
   content: string;
+  composerDraft?: string;
   status: string;
   delivery?: 'queue' | 'steer_now';
   attachments?: NativeConversationAttachment[];
+  browserComments?: ZeusBrowserComment[];
+  browserCommentContent?: string;
   conversationContext?: ConversationContextDraft;
   expectedTurnId?: string | null;
   clientUserMessageId?: string;
@@ -898,8 +901,10 @@ export interface SendNativeMessageRequest {
   agentKind?: 'codex' | 'pi' | 'claude';
   content: string;
   displayText?: string;
+  composerDraft?: string;
   attachments: NativeConversationAttachment[];
   browserComments?: ZeusBrowserComment[];
+  browserCommentContent?: string;
   conversationContext?: ConversationContextDraft;
   delivery: 'queue' | 'steer_now';
   expectedTurnId?: string;

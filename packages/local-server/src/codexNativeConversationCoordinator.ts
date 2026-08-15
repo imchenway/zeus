@@ -99,8 +99,10 @@ interface ConversationDispatchContext {
 
 interface PersistedSubmissionInput {
   text: string;
+  composerDraft?: string;
   attachments?: NativeConversationAttachmentInput[];
   browserComments?: Record<string, unknown>[];
+  browserCommentContent?: string;
   conversationContext?: Record<string, unknown>;
   context: ConversationDispatchContext;
   displayText?: string;
@@ -725,13 +727,17 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           id: submission.id,
           conversationId: submission.conversationId,
           content:
+            (typeof input.displayText === 'string' ? input.displayText.trim() : '') ||
             submissionText(submission) ||
             submissionAttachments(submission)
               .map((attachment) => attachment.name)
               .join('、'),
+          ...(typeof input.composerDraft === 'string' ? { composerDraft: input.composerDraft } : {}),
           status: submission.status as 'queued' | 'paused',
           delivery: input.delivery === 'steer_now' ? ('steer_now' as const) : ('queue' as const),
           attachments: submissionAttachments(submission),
+          ...(submissionBrowserComments(submission).length ? { browserComments: submissionBrowserComments(submission) } : {}),
+          ...(typeof input.browserCommentContent === 'string' ? { browserCommentContent: input.browserCommentContent } : {}),
           ...(submissionConversationContext(submission) ? { conversationContext: submissionConversationContext(submission)! } : {}),
           expectedTurnId: typeof input.expectedTurnId === 'string' ? input.expectedTurnId : null,
           clientUserMessageId: submission.clientMessageId,
@@ -753,8 +759,10 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       submissionId?: string;
       idempotencyKey: string;
       clientUserMessageId: string;
+      composerDraft?: string;
       attachments?: NativeConversationAttachmentInput[];
       browserComments?: Record<string, unknown>[];
+      browserCommentContent?: string;
       conversationContext?: Record<string, unknown>;
       displayText?: string;
       taskPushLayout?: TaskPushMessageLayout;
@@ -769,8 +777,10 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const queuedCount = options.submissions.listByConversation(conversationId).filter((entry) => entry.status === 'queued' || entry.status === 'paused' || entry.status === 'failed').length;
     const payload: PersistedSubmissionInput = {
       text: content,
+      ...(typeof input.composerDraft === 'string' ? { composerDraft: input.composerDraft } : {}),
       ...(input.attachments?.length ? { attachments: input.attachments } : {}),
       ...(input.browserComments?.length ? { browserComments: input.browserComments } : {}),
+      ...(input.browserCommentContent ? { browserCommentContent: input.browserCommentContent } : {}),
       ...(input.conversationContext ? { conversationContext: input.conversationContext } : {}),
       context,
       ...(input.displayText ? { displayText: input.displayText } : {}),
@@ -1250,8 +1260,10 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const queuedCount = options.submissions.listByConversation(conversation.id).filter((entry) => entry.status === 'queued' || entry.status === 'paused' || entry.status === 'failed').length;
     const payload: PersistedSubmissionInput = {
       text: input.content,
+      ...(typeof input.composerDraft === 'string' ? { composerDraft: input.composerDraft } : {}),
       ...(input.attachments?.length ? { attachments: input.attachments } : {}),
       ...(input.browserComments?.length ? { browserComments: input.browserComments } : {}),
+      ...(input.browserCommentContent ? { browserCommentContent: input.browserCommentContent } : {}),
       ...(input.conversationContext ? { conversationContext: input.conversationContext } : {}),
       context,
       ...(input.displayText ? { displayText: input.displayText } : {}),
@@ -2005,12 +2017,48 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   async function editQueuedSubmission(input: { conversationId: string; submissionId: string; content: string }): Promise<NativeQueueSnapshot> {
     assertOpen();
     const submission = requireOwnedSubmission(input.conversationId, input.submissionId);
+    if (submission.status !== 'queued' && submission.status !== 'paused' && submission.status !== 'failed') {
+      throw coordinatorError('ZEUS_NATIVE_SUBMISSION_NOT_EDITABLE', 'Only queued, paused, or failed submissions can be edited.');
+    }
     const persisted = parseJsonRecord(submission.inputJson);
-    // 展示文本与实际派发文本必须同时更新，否则队列里看到的是新内容，接管后却会恢复成旧气泡。
+    if (isRecord(persisted.taskPushLayout) || persisted.internalOperation === true || typeof persisted.requestAnswerId === 'string') {
+      throw coordinatorError('ZEUS_NATIVE_SUBMISSION_NOT_EDITABLE', 'Structured internal submissions cannot be edited as plain text.');
+    }
+    const persistedText = persisted.text;
+    if (typeof persistedText !== 'string') throw coordinatorError('ZEUS_NATIVE_PERSISTED_STATE_INVALID', 'Persisted submission text is invalid.');
+    const previousText = persistedText.trim();
+    const browserComments = Array.isArray(persisted.browserComments) ? persisted.browserComments : [];
+    const conversationContext = isRecord(persisted.conversationContext) ? persisted.conversationContext : null;
+    const hasStructuredSuffix = browserComments.length > 0 || Boolean(conversationContext);
+    const previousComposerDraft = typeof persisted.composerDraft === 'string' ? persisted.composerDraft.trim() : null;
+    const previousDisplayText = typeof persisted.displayText === 'string' ? persisted.displayText.trim() : null;
+    const automaticStructuredSummary =
+      browserComments.length > 0
+        ? `Browser comments (${browserComments.length})`
+        : conversationContext && Array.isArray(conversationContext.codeComments) && conversationContext.codeComments.length > 0
+          ? `Code comments (${conversationContext.codeComments.length})`
+          : conversationContext && Array.isArray(conversationContext.responseAnnotations)
+            ? `Response annotations (${conversationContext.responseAnnotations.length})`
+            : null;
+    const previousDraft = previousComposerDraft ?? previousDisplayText;
+    let preservedSuffix = '';
+    if (previousDraft !== null) {
+      if (!previousDraft) preservedSuffix = previousText;
+      else if (previousText === previousDraft) preservedSuffix = '';
+      else if (previousText.startsWith(`${previousDraft}\n\n`)) preservedSuffix = previousText.slice(previousDraft.length + 2);
+      else if (previousComposerDraft === null && hasStructuredSuffix && previousDisplayText === automaticStructuredSummary) preservedSuffix = previousText;
+      else throw coordinatorError('ZEUS_NATIVE_PERSISTED_STATE_INVALID', 'Persisted submission text no longer matches its composer draft.');
+    } else if (hasStructuredSuffix) {
+      throw coordinatorError('ZEUS_NATIVE_PERSISTED_STATE_INVALID', 'Structured submission composer metadata is unavailable.');
+    }
+    const nextComposerDraft = input.content.trim();
+    const nextProviderText = [nextComposerDraft, preservedSuffix].filter(Boolean).join('\n\n');
+    // 队列编辑只替换用户可见的 composer 前缀，浏览器批注与会话上下文后缀保持原字节不变。
     const next = {
       ...persisted,
-      text: input.content,
-      ...(typeof persisted.displayText === 'string' ? { displayText: input.content } : {}),
+      text: nextProviderText,
+      composerDraft: nextComposerDraft,
+      displayText: nextComposerDraft,
     };
     options.submissions.updateQueuedInput(submission.id, { requestHash: requestHash(next), input: next, updatedAt: now() });
     await persist();
