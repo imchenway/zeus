@@ -429,9 +429,9 @@ export async function startOwnedDesktopLocalServer(options: StartDesktopLocalSer
   const dbPath = dataLayout.database;
   const configPath = dataLayout.localConfig;
   const restartDelayMs = 1_000;
+  // 内嵌 Local Server 不再经过独立宿主的 spawn 环境，必须让所有运行世代固定使用 Zeus 的 Codex Home。
   const codexAppServerManager = createCodexRuntimeGenerationManager({
-    // 内嵌宿主必须让所有 Codex 运行世代使用 Zeus 独立目录，不能回退到用户默认目录。
-    runtimeEnvironment: { CODEX_HOME: options.codexHome ?? dataLayout.codexHome },
+    codexHome: options.codexHome ?? dataLayout.codexHome,
   });
   let closingIntentionally = false;
   let restartTimer: ReturnType<typeof setTimeout> | undefined;

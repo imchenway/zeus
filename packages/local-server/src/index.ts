@@ -200,7 +200,7 @@ import {
   type ZeusTaskRecord,
   type ZeusTaskWorkspaceRecord,
 } from '@zeus/storage';
-import { createCodexNativeConversationCoordinator } from './codexNativeConversationCoordinator.js';
+import { createCodexNativeConversationCoordinator, filterCompatibilitySnapshotItemAliases } from './codexNativeConversationCoordinator.js';
 import { createCodexUsageService } from './codexUsageService.js';
 import { createUsageOverviewService } from './usageOverviewService.js';
 import { chooseNativeUserMessageContent, resolveNativeUserMessageSubmission } from './codexNativeUserMessageProjection.js';
@@ -2365,7 +2365,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     options.codexAppServerManager ??
     createCodexRuntimeGenerationManager({
       accountFingerprintSalt: codexAccountFingerprintSalt,
-      ...(codexHome ? { runtimeEnvironment: { CODEX_HOME: codexHome } } : {}),
+      ...(codexHome ? { codexHome } : {}),
     });
 
   async function activateCurrentCodexConfiguration(): Promise<{ runtimeReloaded: true; runtimeGenerationId: string; restartRequired: false }> {
@@ -13808,7 +13808,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
 
   async function toNativeConversationSnapshot(conversation: ZeusConversationWithMessagesRecord) {
     const submissions = conversationSubmissions.listByConversation(conversation.id);
-    const itemRecords = conversationItems.listByConversation(conversation.id);
+    const itemProjection = filterCompatibilitySnapshotItemAliases(conversationItems.listByConversation(conversation.id));
+    const itemRecords = itemProjection.items;
+    const projectedMessages = conversation.messages.filter((message) => !message.providerItemId || !itemProjection.suppressedProviderItemIds.has(message.providerItemId));
     const turnRecords = conversationTurns.listByConversation(conversation.id);
     const persistedChangeSets = turnChangeSetService.listByConversation(conversation.id);
     const persistedChangeSetByTurn = new Map(persistedChangeSets.map((changeSet) => [changeSet.turnId, changeSet]));
@@ -13852,7 +13854,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     const mcpStartup = settings.getCodexMcpStartupStatusSnapshot();
     const executionContext = await readNativeConversationExecutionContext(conversation);
     const nativeUserMessageClientIds = new Set(
-      conversation.messages
+      projectedMessages
         .filter((message) => message.role === 'user' && message.source === 'codex_native')
         .map((message) => {
           const metadata = parseJsonObject(message.metadataJson);
@@ -13872,7 +13874,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       goal: conversationGoals.get(conversation.id) ?? null,
       goalTimeline: conversationGoals.listEvents(conversation.id),
       goalCapability: conversationGoalCapability(conversation),
-      messages: conversation.messages.map((message) => {
+      messages: projectedMessages.map((message) => {
         const providerItem = message.providerItemId ? itemByProviderItemId.get(message.providerItemId) : undefined;
         const metadata = parseJsonObject(message.metadataJson);
         const clientMessageId = message.clientMessageId ?? (typeof metadata.clientUserMessageId === 'string' && metadata.clientUserMessageId.trim() ? metadata.clientUserMessageId : null);
