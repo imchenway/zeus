@@ -1,25 +1,25 @@
-import {createHash, randomUUID} from 'node:crypto';
-import {chmod, mkdir, readFile, rename, stat, statfs, unlink} from 'node:fs/promises';
-import {dirname} from 'node:path';
-import {backup, DatabaseSync, type SQLInputValue} from 'node:sqlite';
-import {nanoid} from 'nanoid';
-import initSqlJs, {type Database as SqlJsDatabase, type SqlJsStatic, type SqlValue as SqlJsValue} from 'sql.js';
+import { createHash, randomUUID } from 'node:crypto';
+import { chmod, mkdir, readFile, rename, stat, statfs, unlink } from 'node:fs/promises';
+import { dirname } from 'node:path';
+import { backup, DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import { nanoid } from 'nanoid';
+import initSqlJs, { type Database as SqlJsDatabase, type SqlJsStatic, type SqlValue as SqlJsValue } from 'sql.js';
 import {
-    type CodexUsageEstimate,
-    type ConversationResourceKind,
-    type ConversationResourcePresentation,
-    isTaskManagementStatus,
-    isTaskPriority,
-    isTaskType,
-    type TaskAttachmentReference,
-    type TaskManagementStatus,
-    type TaskPriority,
-    type TaskType,
-    type TokenUsageBreakdown,
-    type TurnChangeFileType,
-    type TurnChangeSetState,
+  type CodexUsageEstimate,
+  type ConversationResourceKind,
+  type ConversationResourcePresentation,
+  isTaskManagementStatus,
+  isTaskPriority,
+  isTaskType,
+  type TaskAttachmentReference,
+  type TaskManagementStatus,
+  type TaskPriority,
+  type TaskType,
+  type TokenUsageBreakdown,
+  type TurnChangeFileType,
+  type TurnChangeSetState,
 } from '@zeus/shared';
-import {migrateCommandCenterSchema} from './commands.js';
+import { migrateCommandCenterSchema } from './commands.js';
 
 export * from './commands.js';
 
@@ -5490,15 +5490,18 @@ export class ConversationRepository {
   }
 
   updateProviderThreadPath(conversationId: string, input: { providerThreadId: string; providerThreadPath: string }): ZeusConversationWithMessagesRecord {
-      const updated = this.updateProviderThreadPathRecord(conversationId, input);
-      return {...updated, messages: this.listMessages(updated.id)};
+    const updated = this.updateProviderThreadPathRecord(conversationId, input);
+    return { ...updated, messages: this.listMessages(updated.id) };
   }
 
-    /** 线程文件迁移只校验并返回主记录，不为每条历史会话加载完整消息。 */
-    updateProviderThreadPathRecord(conversationId: string, input: {
-        providerThreadId: string;
-        providerThreadPath: string
-    }): ZeusConversationRecord {
+  /** 线程文件迁移只校验并返回主记录，不为每条历史会话加载完整消息。 */
+  updateProviderThreadPathRecord(
+    conversationId: string,
+    input: {
+      providerThreadId: string;
+      providerThreadPath: string;
+    },
+  ): ZeusConversationRecord {
     const providerThreadPath = input.providerThreadPath;
     if (!providerThreadPath.trim()) throw new Error('Provider thread path is required.');
     this.db.execute(
@@ -5506,7 +5509,7 @@ export class ConversationRepository {
       WHERE id = ? AND provider_thread_id = ?`,
       [providerThreadPath, providerThreadPath, conversationId, input.providerThreadId],
     );
-        const updated = this.getRecordById(conversationId);
+    const updated = this.getRecordById(conversationId);
     if (!updated) throw new Error(`Zeus conversation not found: ${conversationId}`);
     if (updated.providerThreadId !== input.providerThreadId || updated.providerThreadPath !== providerThreadPath || updated.nativeSessionPath !== providerThreadPath) {
       throw new Error(`Zeus conversation provider thread does not match: ${conversationId}`);
@@ -5667,19 +5670,19 @@ export class ConversationRepository {
     return { ...conversation, messages: this.listMessages(conversation.id) };
   }
 
-    /** 历史线程文件迁移只读取主记录，避免在应用启动时加载全部会话正文。 */
-    listProviderThreadPathCandidates(): ZeusConversationRecord[] {
-        return this.db
-            .select<DbConversationRow>(
-                `SELECT ${selectConversationFields}
+  /** 历史线程文件迁移只读取主记录，避免在应用启动时加载全部会话正文。 */
+  listProviderThreadPathCandidates(): ZeusConversationRecord[] {
+    return this.db
+      .select<DbConversationRow>(
+        `SELECT ${selectConversationFields}
                  FROM conversations
                  WHERE transport_kind = 'codex_native'
                    AND provider_thread_id IS NOT NULL
                    AND provider_thread_path IS NOT NULL
                  ORDER BY created_at, id`,
-            )
-            .map(mapConversationRow);
-    }
+      )
+      .map(mapConversationRow);
+  }
 
   /** 只读取已绑定原生会话元数据，供状态投影和枚举路径使用。 */
   listNativeBoundRecords(agentKind?: ConversationAgentKind): ZeusConversationRecord[] {
