@@ -168,6 +168,7 @@ import {
 import { ZeusSelect } from './ZeusSelect.js';
 import { Button, type ButtonVariant } from './ui/Button.js';
 import { ModalPortal } from './ui/ModalPortal.js';
+import { useApplicationErrorDialog } from './ui/ApplicationErrorDialog.js';
 import { SourceListRow } from './ui/SourceListRow.js';
 import { taskAgentRunStatusLabels } from './task/TaskRunStatusChip.js';
 import { WorkspaceDrawer } from './ui/WorkspaceDrawer.js';
@@ -7088,6 +7089,16 @@ export function App(props: {
       },
     ),
   );
+  useApplicationErrorDialog(projectWorkspaceConfigError, {
+    language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en',
+    title: appShellSettings.appLanguage === 'zh-CN' ? '项目配置保存失败' : 'Project configuration failed',
+    source: 'ProjectWorkspaceConfig',
+  });
+  useApplicationErrorDialog(archivedConversationLoadState === 'error' ? (appShellSettings.appLanguage === 'zh-CN' ? '已归档会话读取失败' : 'Archived conversations failed to load') : null, {
+    language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en',
+    title: appShellSettings.appLanguage === 'zh-CN' ? '已归档会话读取失败' : 'Archived conversations failed to load',
+    source: 'ArchivedConversations.load',
+  });
   const appShellSettingsRef = useRef(appShellSettings);
   const codeWorkspacePreferenceTimerRef = useRef<number | null>(null);
   appShellSettingsRef.current = appShellSettings;
@@ -7364,6 +7375,12 @@ export function App(props: {
   const scanActionBusy = scanState === 'scanning';
   const releaseUpdateBusy = releaseUpdateCheckState === 'loading';
   const [localError, setLocalError] = useState<LocalUiErrorSnapshot | undefined>(() => normalizeLocalUiError(props.initialLocalError));
+  useApplicationErrorDialog(localError?.message, {
+    language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en',
+    title: uiCopy.localOperationFailed,
+    source: localError?.action,
+    occurredAt: localError?.occurredAt,
+  });
   const projectCreationReady = Boolean(props.onChooseProjectDirectory && props.onCreateCurrentProject);
   const gitLabel = snapshot.git.isRepository ? `Git ${snapshot.git.branch}` : codeWorkspaceCopy.gitNotDetected;
   useEffect(() => {
@@ -12600,12 +12617,6 @@ export function App(props: {
             onOpen={(section, codeMode) => openProjectSection(selectedProject, section, codeMode)}
           />
         ) : null}
-        {localError ? (
-          <section className="inline-status failed" aria-label={uiCopy.localOperationFailed}>
-            <strong>{localError.message}</strong>
-          </section>
-        ) : null}
-
         {activeNavTarget !== 'settings' && activeProjectSection === 'code' && selectedProject ? (
           <section className="workspace-view workspace-view-project-code project-code-workspace" aria-label={codeWorkspaceCopy.projectCodeAria}>
             <div className="project-code-mode-host">
@@ -13088,11 +13099,6 @@ export function App(props: {
                                 />
                                 <small>内容不会复制进任务 worktree，也不会随 worktree 回收；并发任务会写入同一份真实内容。</small>
                               </label>
-                              {projectWorkspaceConfigError ? (
-                                <p className="task-model-push-error" role="alert">
-                                  {projectWorkspaceConfigError}
-                                </p>
-                              ) : null}
                               <div className="project-config-command-rail">
                                 <button
                                   type="button"
@@ -14916,7 +14922,6 @@ export function App(props: {
                           {archivedConversationLoadState === 'loading' ? <small>{settingsWorkspaceCopy.data.loadingArchivedConversations}</small> : null}
                           {archivedConversationLoadState === 'error' ? (
                             <span className="settings-archived-conversation-state">
-                              <small>{settingsWorkspaceCopy.data.archivedConversationsError}</small>
                               <button type="button" onClick={() => void refreshArchivedConversations()}>
                                 {settingsWorkspaceCopy.data.retryArchivedConversations}
                               </button>

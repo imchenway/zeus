@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import type { ZeusBrowserSettings } from '@zeus/shared';
 import { Button } from '../ui/Button.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
 interface BrowserSettingsPaneProps {
   language: 'zh-CN' | 'en-US';
@@ -94,6 +95,11 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  useApplicationErrorDialog(error, {
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+    title: props.language === 'zh-CN' ? '浏览器设置操作失败' : 'Browser settings operation failed',
+    source: 'BrowserSettingsPane',
+  });
 
   useEffect(() => {
     let active = true;
@@ -159,8 +165,8 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
     return (
       <section className="settings-product-pane browser-settings-product-pane" aria-label={labels.title}>
         <h2 className="settings-page-title">{labels.title}</h2>
-        <p className="browser-settings-status" role={error ? 'alert' : 'status'}>
-          {error ?? labels.loading}
+        <p className="browser-settings-status" role="status">
+          {labels.loading}
         </p>
       </section>
     );
@@ -253,9 +259,11 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
           </Button>
         </div>
       </section>
-      <p className={`browser-settings-status ${error ? 'error' : ''}`} role={error ? 'alert' : 'status'}>
-        {error ?? status}
-      </p>
+      {status ? (
+        <p className="browser-settings-status" role="status">
+          {status}
+        </p>
+      ) : null}
       <p className="browser-settings-clear-help">{labels.clearHelp}</p>
     </section>
   );

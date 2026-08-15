@@ -20,6 +20,7 @@ import { readConversationRuntimePreferences, writeConversationRuntimePreferences
 import { resolveModelCapability } from '../session/modelSelection.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
 import { TaskPushSupplementalAttachmentCards } from './TaskPushSupplementalAttachmentCards.js';
@@ -583,6 +584,12 @@ export function TaskModelPushModal(props: {
   const commonSources = useMemo(() => resolveTaskPushCommonSources(props.capabilities?.repositories ?? []), [props.capabilities?.repositories]);
   const supplementalTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [supplementalResourceError, setSupplementalResourceError] = useState<string | null>(null);
+  const repositoryRefreshError = props.capabilities?.repositories.find((repository) => repository.remoteRefreshError)?.remoteRefreshError ?? null;
+  useApplicationErrorDialog(props.error ?? supplementalResourceError ?? repositoryRefreshError, {
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+    title: props.language === 'zh-CN' ? '模型推送操作失败' : 'Model push operation failed',
+    source: 'TaskModelPushModal',
+  });
   const resourceInputDisabled = !props.open || props.status === 'inspecting-config' || props.status === 'importing-config' || props.status === 'authenticating' || props.status === 'submitting';
   const inputResources = useConversationInputResources({
     textareaRef: supplementalTextareaRef,
@@ -885,8 +892,8 @@ export function TaskModelPushModal(props: {
                       <p className={repository.remoteRefreshError ? 'task-model-push-error' : 'task-model-push-warning'}>
                         {repository.remoteRefreshError
                           ? zh
-                            ? `远端刷新失败：${repository.remoteRefreshError}。本地分支、已知远端分支和当前选择不受影响。`
-                            : `Remote refresh failed: ${repository.remoteRefreshError}. Local branches, known remote branches, and the current selection remain available.`
+                            ? '远端信息暂不可用；本地分支、已知远端分支和当前选择不受影响。'
+                            : 'Remote information is unavailable; local branches, known remote branches, and the current selection remain available.'
                           : repository.remoteRefreshStatus === 'succeeded'
                             ? zh
                               ? '远端分支已手动刷新。来源分支仍由你选择。'
@@ -1112,11 +1119,6 @@ export function TaskModelPushModal(props: {
               disabled={busy}
               placeholder={zh ? '仅影响本次推送，不会修改任务本身。' : 'Applies only to this push and does not modify the task.'}
             />
-            {supplementalResourceError ? (
-              <p className="task-model-push-supplement-error" role="alert">
-                {supplementalResourceError}
-              </p>
-            ) : null}
           </section>
 
           <TaskPushContextPicker kind="parent" options={parentContextOptions} selections={props.form.parentContextSelections} busy={busy} zh={zh} onChange={(taskId, selection) => changeContextSelection('parent', taskId, selection)} />
@@ -1125,11 +1127,6 @@ export function TaskModelPushModal(props: {
           <TaskPushLayoutPreview layout={taskPushLayout} language={props.language} />
 
           {props.status === 'loading' ? <p className="task-model-push-message">{zh ? '正在连接 app-server 并读取可用模型…' : 'Connecting to app-server and loading models…'}</p> : null}
-          {props.error ? (
-            <p className="task-model-push-error" role="alert">
-              {props.error}
-            </p>
-          ) : null}
         </div>
 
         <footer className="task-model-push-footer">

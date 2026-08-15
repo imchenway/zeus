@@ -9,6 +9,7 @@ import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { ProjectCodeWorkspacePreference, ProjectSourceDirectorySnapshot, ProjectSourceDocument, ProjectSourceEntry, ProjectSourceEvent } from '@zeus/shared';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import { CodeEditor } from './CodeEditor.js';
 import './projectSourceWorkspace.css';
 
@@ -67,6 +68,11 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   const [busyPath, setBusyPath] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  useApplicationErrorDialog(error, {
+    language: zh ? 'zh-CN' : 'en',
+    title: zh ? '源码操作失败' : 'Source operation failed',
+    source: 'ProjectSourceWorkspace',
+  });
   const [operation, setOperation] = useState<FileOperation>(null);
   const [operationName, setOperationName] = useState('');
   const [operationParent, setOperationParent] = useState('');
@@ -449,9 +455,9 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         </span>
       </header>
 
-      {error || notice ? (
-        <div className={`project-source-message ${error ? 'failed' : 'success'}`} role={error ? 'alert' : 'status'}>
-          <span>{error ?? notice}</span>
+      {notice || activeTab?.externalChange ? (
+        <div className="project-source-message success" role="status">
+          <span>{notice ?? (zh ? '文件已在外部发生变化，请重新加载或另存为。' : 'The file changed externally. Reload it or save it as a new file.')}</span>
           {activeTab?.externalChange ? (
             <>
               <button type="button" onClick={() => beginOperation({ kind: 'save-as', tabPath: activeTab.document.relativePath })}>
@@ -462,7 +468,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
               </button>
             </>
           ) : null}
-          <button type="button" aria-label={zh ? '关闭提示' : 'Dismiss'} onClick={() => (error ? setError(null) : setNotice(null))}>
+          <button type="button" aria-label={zh ? '关闭提示' : 'Dismiss'} onClick={() => setNotice(null)}>
             <X aria-hidden="true" />
           </button>
         </div>

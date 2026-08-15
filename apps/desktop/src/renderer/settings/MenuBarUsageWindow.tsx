@@ -1,6 +1,7 @@
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CodexOfficialRateWindow, UsageOverviewSnapshot, UsageProviderSummary } from '@zeus/shared';
 import type { AppShellSettings, DashboardClient } from '../apiClient.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import './MenuBarUsageWindow.css';
 
 type Language = AppShellSettings['appLanguage'];
@@ -95,6 +96,11 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestRef = useRef<Promise<void> | null>(null);
+  useApplicationErrorDialog(error, {
+    language: surfaceSettings.language === 'zh-CN' ? 'zh-CN' : 'en',
+    title: surfaceSettings.language === 'zh-CN' ? '用量读取失败' : 'Usage failed to load',
+    source: 'MenuBarUsageWindow',
+  });
 
   useEffect(() => window.zeus?.onMenuBarUsageSettingsChanged?.(setSurfaceSettings), []);
 
@@ -192,14 +198,6 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
               <span>{text.codexOnlyCompatibility}</span>
             </div>
           ) : null}
-          {error && snapshot ? (
-            <div className="menu-bar-usage-notice" data-tone="error" role="alert">
-              <span>{text.failed}</span>
-              <button type="button" onClick={() => void load()} disabled={loading}>
-                {text.retry}
-              </button>
-            </div>
-          ) : null}
         </div>
 
         <div className="menu-bar-usage-content" role="tabpanel">
@@ -236,9 +234,9 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
 function UsageLoadFailure(props: { language: Language; loading: boolean; onRetry: () => Promise<void> }) {
   const text = copy[props.language];
   return (
-    <div className="menu-bar-usage-load-failure" role="alert">
-      <strong>{text.failed}</strong>
-      <span>{text.failedDetail}</span>
+    <div className="menu-bar-usage-load-failure" role="status">
+      <strong>{text.noProviders}</strong>
+      <span>{props.language === 'zh-CN' ? '可以重新读取本地用量。' : 'You can reload local usage.'}</span>
       <button type="button" onClick={() => void props.onRetry()} disabled={props.loading}>
         {props.loading ? text.loading : text.retry}
       </button>

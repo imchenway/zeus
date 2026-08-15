@@ -10,6 +10,7 @@ import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { parseCanonicalRequestUserInputQuestions } from '@zeus/shared';
 import { openExternalHttpsUrlInMain } from '../appShellBridge.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import type { NativeConversationAttachment, NativePendingRequest, NativePermissionMode } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { autosizeTextarea } from './textareaAutosize.js';
@@ -144,6 +145,22 @@ export function PendingRequestSurface(props: PendingRequestSurfaceProps) {
   const decisions = supportedRequestDecisions(props.request);
   const autofocusDecision = defaultAutofocusDecision(decisions);
 
+  useApplicationErrorDialog(props.error, {
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+    title: props.language === 'zh-CN' ? '请求处理失败' : 'Request handling failed',
+    source: 'PendingRequestSurface',
+  });
+  useApplicationErrorDialog(mcpUrlError, {
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+    title: props.language === 'zh-CN' ? '外部链接打开失败' : 'External link failed to open',
+    source: 'PendingRequestSurface.openMcpUrl',
+  });
+  useApplicationErrorDialog(kind === 'unknown' ? copy.unsupportedHelp : null, {
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+    title: copy.unsupported,
+    source: 'PendingRequestSurface.requestKind',
+  });
+
   useEffect(() => {
     if (props.autoFocus === false) return;
     firstControlRef.current?.focus();
@@ -161,11 +178,10 @@ export function PendingRequestSurface(props: PendingRequestSurfaceProps) {
 
   if (kind === 'unknown') {
     return (
-      <section className="session-pending-request session-pending-request-unsupported" role="alert">
+      <section className="session-pending-request session-pending-request-unsupported" role="status">
         <strong>{copy.unsupported}</strong>
         <p>{copy.unsupportedHelp}</p>
         <pre className="session-request-preview">{props.request.type}</pre>
-        {props.error ? <p role="alert">{props.error}</p> : null}
       </section>
     );
   }
@@ -222,14 +238,12 @@ export function PendingRequestSurface(props: PendingRequestSurfaceProps) {
               {copy.mcpUrl}
             </button>
           ) : null}
-          {mcpUrlError ? <p role="alert">{mcpUrlError}</p> : null}
           {invalidMcp ? (
             <p className="session-request-invalid" role="alert">
               <strong>{copy.invalidMcp}</strong>
               <span>{copy.invalidMcpHelp}</span>
             </p>
           ) : null}
-          {props.error ? <p role="alert">{props.error}</p> : null}
           <div className="session-request-actions">
             {decisions.map((decision) => (
               <button
@@ -347,7 +361,6 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
             <span>{copy.incompleteApprovalHelp}</span>
           </p>
         ) : null}
-        {props.error ? <p role="alert">{props.error}</p> : null}
         <div className="session-compact-approval-decision-row">
           <div className="session-compact-approval-target">
             {props.kind === 'file' ? props.filePaths.length > 0 ? <FileApprovalTargetList paths={props.filePaths} moreLabel={copy.moreFiles} /> : null : <pre className="session-request-preview">{preview}</pre>}
@@ -515,6 +528,12 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
   const answerAttachmentsEnabled = props.answerAttachmentsSupported !== false && !currentQuestion.secret && (currentQuestion.kind === 'freeform' || currentQuestion.allowOther);
   const actionsPlacement = currentQuestion.kind === 'freeform' ? 'freeform' : currentQuestion.allowOther ? 'other' : 'options';
   const showSubmitAction = currentQuestion.kind !== 'single' || otherSelected;
+
+  useApplicationErrorDialog(resourceError, {
+    language: zh ? 'zh-CN' : 'en',
+    title: zh ? '回答附件处理失败' : 'Answer attachment failed',
+    source: 'RequestUserInputPanel',
+  });
 
   const inputResources = useConversationInputResources({
     textareaRef: attachmentTextareaRef,
@@ -980,8 +999,6 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
             {actionsPlacement === 'options' ? renderActions({ gridRow: currentQuestion.options.length }) : null}
           </div>
           {currentQuestion.secret ? <small className="session-secret-hint">{zh ? '敏感回答仅发送给本机 app-server，不写入会话或草稿。' : 'Secret answers are sent locally and are never stored in the transcript or draft.'}</small> : null}
-          {resourceError ? <p role="alert">{resourceError}</p> : null}
-          {props.error ? <p role="alert">{props.error}</p> : null}
         </fieldset>
       </form>
     </section>
