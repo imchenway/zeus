@@ -19175,6 +19175,99 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
   justify-content: flex-end;
 }
 
+/* 任务终态确认把不可恢复影响和保留内容分开呈现，避免系统确认框把风险压成一段正文。 */
+.task-terminal-cleanup-dialog-portal.macos-ai-app {
+  background: transparent;
+}
+
+.macos-ai-app .task-terminal-cleanup-dialog {
+  background: var(--zeus-solid-surface-bg);
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 14px;
+  box-shadow: 0 24px 58px oklch(28% 0.008 255 / 0.18);
+  color: var(--zeus-product-text);
+  display: grid;
+  gap: 14px;
+  inline-size: min(500px, calc(100vw - 32px));
+  padding: 20px;
+  pointer-events: auto;
+}
+
+.macos-ai-app .task-terminal-cleanup-dialog header {
+  align-items: start;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 28px minmax(0, 1fr);
+}
+
+.macos-ai-app .task-terminal-cleanup-dialog header > span:last-child {
+  display: grid;
+  gap: 6px;
+}
+
+.macos-ai-app .task-terminal-cleanup-dialog-icon {
+  color: var(--zeus-danger-text);
+  display: inline-flex;
+}
+
+.macos-ai-app .task-terminal-cleanup-dialog-icon svg {
+  block-size: 24px;
+  inline-size: 24px;
+}
+
+.macos-ai-app .task-terminal-cleanup-dialog header strong {
+  font-size: 15px;
+  line-height: 21px;
+}
+
+.macos-ai-app .task-terminal-cleanup-dialog header p,
+.macos-ai-app .task-terminal-cleanup-dialog-preserved {
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+  line-height: 18px;
+  margin: 0;
+}
+
+.macos-ai-app .task-terminal-cleanup-dialog ul {
+  display: grid;
+  gap: 7px;
+  margin: 0 0 0 40px;
+  padding-inline-start: 16px;
+}
+
+.macos-ai-app .task-terminal-cleanup-dialog li {
+  font-size: 12px;
+  line-height: 18px;
+  padding-inline-start: 2px;
+}
+
+.macos-ai-app .task-terminal-cleanup-dialog li:last-child {
+  color: var(--zeus-danger-text);
+  font-weight: 600;
+}
+
+.macos-ai-app .task-terminal-cleanup-dialog-preserved {
+  background: var(--zeus-product-panel-muted);
+  border-radius: 8px;
+  margin-inline-start: 40px;
+  padding: 9px 11px;
+}
+
+.macos-ai-app .task-terminal-cleanup-dialog footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-block-start: 2px;
+}
+
+@media (max-width: 520px) {
+  .macos-ai-app .task-terminal-cleanup-dialog ul,
+  .macos-ai-app .task-terminal-cleanup-dialog-preserved {
+    margin-inline-start: 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .macos-ai-app .task-table-column-drag-handle,
   .macos-ai-app .task-table-column-resize-handle::after {
