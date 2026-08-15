@@ -20,6 +20,8 @@ import type {
   NativePlanImplementationRequest,
   NativeProjectConversationChoicesSnapshot,
   NativeQueueSnapshot,
+  NativeSubagentListSnapshot,
+  NativeSubagentThreadSnapshot,
   SendNativeMessageRequest,
   StartNativeConversationRequest,
   StartProjectConversationRequest,
@@ -1653,6 +1655,8 @@ export interface DashboardClient {
   }>;
   loadNativeConversation: (projectId: string, conversationId: string) => Promise<NativeConversationSnapshot>;
   loadNativePendingRequests: (projectId: string, conversationId: string) => Promise<{ conversationId: string; requests: NativePendingRequest[] }>;
+  loadNativeSubagents: (projectId: string, conversationId: string) => Promise<NativeSubagentListSnapshot>;
+  loadNativeSubagentThread: (projectId: string, conversationId: string, threadId: string) => Promise<NativeSubagentThreadSnapshot>;
   loadNativeConversationChoice: (projectId: string, conversationId: string) => Promise<NativeConversationChoice>;
   archiveNativeConversation: (projectId: string, conversationId: string) => Promise<GraphConversationHistoryItem>;
   restoreConversationArchive: (projectId: string, conversationId: string) => Promise<GraphConversationHistoryItem>;
@@ -2181,6 +2185,9 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
     loadNativeConversation: (projectId, conversationId) => request<NativeConversationSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}`),
     loadNativePendingRequests: (projectId, conversationId) =>
       request<{ conversationId: string; requests: NativePendingRequest[] }>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/pending-requests`),
+    loadNativeSubagents: (projectId, conversationId) => request<NativeSubagentListSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/subagents`),
+    loadNativeSubagentThread: (projectId, conversationId, threadId) =>
+      request<NativeSubagentThreadSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/subagents/${encodeURIComponent(threadId)}`),
     loadNativeConversationChoice: (projectId, conversationId) => request<NativeConversationChoice>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/choice`),
     archiveNativeConversation: (projectId, conversationId) => request<GraphConversationHistoryItem>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/archive`, { method: 'POST' }),
     restoreConversationArchive: (projectId, conversationId) => request<GraphConversationHistoryItem>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/restore`, { method: 'POST' }),

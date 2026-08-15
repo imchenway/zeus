@@ -14,7 +14,7 @@ import { WrenchIcon as Wrench } from '@phosphor-icons/react/dist/csr/Wrench';
 import type { NativePendingRequest, NativeSessionItemBuffer, NativeTurnPlanSnapshot, NativeTurnSnapshot } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 
-const operationalTypes = new Set(['commandexecution', 'command', 'mcptoolcall', 'dynamictoolcall', 'websearch', 'imageview', 'toolcall', 'tool', 'filechange', 'file', 'contextcompaction']);
+const operationalTypes = new Set(['commandexecution', 'command', 'mcptoolcall', 'dynamictoolcall', 'websearch', 'imageview', 'toolcall', 'tool', 'filechange', 'file', 'contextcompaction', 'providerevent']);
 const MAX_ACTIVITY_OUTPUT_CHARACTERS = 40_000;
 
 export function isOperationalActivityItem(item: NativeSessionItemBuffer): boolean {

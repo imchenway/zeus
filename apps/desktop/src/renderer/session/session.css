@@ -14557,3 +14557,351 @@
     max-inline-size: min(260px, 48vw);
   }
 }
+
+/* Ultra 智能体使用右侧原生线程面板，协调事件不再挤占主会话正文。 */
+.session-workspace-root .session-agents-toggle {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--session-text-muted);
+  display: inline-flex;
+  font: inherit;
+  gap: 6px;
+  min-block-size: 30px;
+  padding: 0 8px;
+}
+
+.session-workspace-root .session-agents-toggle:hover,
+.session-workspace-root .session-agents-toggle.selected {
+  background: var(--session-control-hover);
+  border-color: var(--session-line);
+  color: var(--session-text);
+}
+
+.session-workspace-root .session-agents-toggle:focus-visible,
+.session-workspace-root .session-subagent-workspace button:focus-visible {
+  box-shadow: 0 0 0 3px var(--session-focus);
+  outline: 1px solid var(--session-focus-outline);
+  outline-offset: 1px;
+}
+
+.session-workspace-root .session-agents-toggle > svg {
+  block-size: 16px;
+  inline-size: 16px;
+}
+
+.session-workspace-root .session-agents-toggle > small {
+  align-items: center;
+  background: var(--session-selected);
+  border-radius: 999px;
+  color: var(--session-text-secondary);
+  display: inline-flex;
+  font-size: 10px;
+  font-weight: 650;
+  justify-content: center;
+  line-height: 18px;
+  min-inline-size: 18px;
+  padding-inline: 5px;
+}
+
+.session-workspace-root .session-subagent-workspace {
+  background: var(--session-canvas);
+  color: var(--session-text);
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  inline-size: 100%;
+  min-block-size: 0;
+  min-inline-size: 0;
+  overflow: hidden;
+}
+
+.session-workspace-root .session-subagent-header {
+  align-items: center;
+  border-block-end: 1px solid var(--session-line-soft);
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: space-between;
+  min-block-size: 52px;
+  padding: 0 10px 0 14px;
+}
+
+.session-workspace-root .session-subagent-title,
+.session-workspace-root .session-subagent-header nav {
+  align-items: center;
+  display: flex;
+  min-inline-size: 0;
+}
+
+.session-workspace-root .session-subagent-title {
+  gap: 9px;
+}
+
+.session-workspace-root .session-subagent-title > svg {
+  block-size: 18px;
+  color: var(--session-text-muted);
+  flex: 0 0 auto;
+  inline-size: 18px;
+}
+
+.session-workspace-root .session-subagent-title > span {
+  display: grid;
+  min-inline-size: 0;
+}
+
+.session-workspace-root .session-subagent-title strong {
+  font-size: 13px;
+  font-weight: 640;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-workspace-root .session-subagent-title small {
+  color: var(--session-text-muted);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.session-workspace-root .session-subagent-header nav {
+  flex: 0 0 auto;
+  gap: 1px;
+}
+
+.session-workspace-root .session-subagent-header button {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  color: var(--session-text-muted);
+  cursor: pointer;
+  display: inline-grid;
+  min-block-size: 30px;
+  min-inline-size: 30px;
+  padding: 6px;
+  place-items: center;
+}
+
+.session-workspace-root .session-subagent-header button:hover {
+  background: var(--session-control-hover);
+  color: var(--session-text);
+}
+
+.session-workspace-root .session-subagent-header button svg {
+  block-size: 16px;
+  inline-size: 16px;
+}
+
+.session-workspace-root .session-subagent-list,
+.session-workspace-root .session-subagent-thread {
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  min-block-size: 0;
+  overflow-y: auto;
+}
+
+.session-workspace-root .session-subagent-list {
+  padding: 15px 10px 30px;
+}
+
+.session-workspace-root .session-subagent-group + .session-subagent-group {
+  margin-block-start: 18px;
+}
+
+.session-workspace-root .session-subagent-group > header {
+  align-items: center;
+  color: var(--session-text-muted);
+  display: flex;
+  font-size: 10px;
+  justify-content: space-between;
+  letter-spacing: 0.03em;
+  padding: 0 8px 6px;
+  text-transform: uppercase;
+}
+
+.session-workspace-root .session-subagent-group > header strong {
+  font-weight: 650;
+}
+
+.session-workspace-root .session-subagent-group > div {
+  display: grid;
+  gap: 2px;
+}
+
+.session-workspace-root .session-subagent-row {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  color: var(--session-text);
+  cursor: pointer;
+  display: grid;
+  font: inherit;
+  gap: 8px;
+  grid-template-columns: 8px minmax(0, 1fr) auto 14px;
+  min-block-size: 48px;
+  padding: 7px 8px;
+  text-align: start;
+  inline-size: 100%;
+}
+
+.session-workspace-root .session-subagent-row:hover {
+  background: var(--session-control-hover);
+}
+
+.session-workspace-root .session-subagent-row-copy {
+  display: grid;
+  min-inline-size: 0;
+}
+
+.session-workspace-root .session-subagent-row-copy strong {
+  font-size: 12px;
+  font-weight: 620;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-workspace-root .session-subagent-row-copy small,
+.session-workspace-root .session-subagent-row-status {
+  color: var(--session-text-muted);
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.session-workspace-root .session-subagent-row-status {
+  white-space: nowrap;
+}
+
+.session-workspace-root .session-subagent-row > svg {
+  block-size: 13px;
+  color: var(--session-text-muted);
+  inline-size: 13px;
+}
+
+.session-workspace-root .session-subagent-status-dot {
+  background: var(--session-text-muted);
+  block-size: 7px;
+  border-radius: 999px;
+  inline-size: 7px;
+}
+
+.session-workspace-root .session-subagent-status-dot[data-status='pending'],
+.session-workspace-root .session-subagent-status-dot[data-status='waiting'] {
+  background: var(--session-warning);
+}
+
+.session-workspace-root .session-subagent-status-dot[data-status='running'] {
+  background: var(--session-accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--session-accent) 16%, transparent);
+}
+
+.session-workspace-root .session-subagent-status-dot[data-status='completed'] {
+  background: var(--session-success);
+}
+
+.session-workspace-root .session-subagent-status-dot[data-status='failed'] {
+  background: var(--session-danger);
+}
+
+.session-workspace-root .session-subagent-thread {
+  padding: 18px clamp(12px, 3vw, 28px) 44px;
+}
+
+.session-workspace-root .session-subagent-thread .session-thread-item {
+  inline-size: 100%;
+  margin-inline: 0;
+  max-inline-size: none;
+}
+
+.session-workspace-root .session-subagent-loading,
+.session-workspace-root .session-subagent-error,
+.session-workspace-root .session-subagent-empty {
+  box-sizing: border-box;
+  color: var(--session-text-muted);
+  margin: 0;
+}
+
+.session-workspace-root .session-subagent-loading {
+  align-items: center;
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+  padding: 18px 10px;
+}
+
+.session-workspace-root .session-subagent-empty {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  justify-content: center;
+  min-block-size: 220px;
+  padding: 28px;
+  text-align: center;
+}
+
+.session-workspace-root .session-subagent-empty > svg {
+  block-size: 28px;
+  inline-size: 28px;
+}
+
+.session-workspace-root .session-subagent-empty strong {
+  color: var(--session-text);
+  font-size: 13px;
+}
+
+.session-workspace-root .session-subagent-empty small {
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.session-workspace-root .session-subagent-error {
+  align-items: start;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 20px;
+}
+
+.session-workspace-root .session-subagent-error strong {
+  color: var(--session-danger);
+  font-size: 13px;
+}
+
+.session-workspace-root .session-subagent-error p {
+  font-size: 11px;
+  line-height: 17px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.session-workspace-root .session-subagent-error button {
+  background: var(--session-control);
+  border: 1px solid var(--session-line);
+  border-radius: 7px;
+  color: var(--session-text);
+  min-block-size: 28px;
+  padding: 4px 10px;
+}
+
+@media (max-width: 759px) {
+  .session-workspace-root .session-agents-toggle > span {
+    block-size: 1px;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    inline-size: 1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-workspace-root .session-subagent-status-dot[data-status='running'] {
+    box-shadow: none;
+  }
+}

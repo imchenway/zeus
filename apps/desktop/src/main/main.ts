@@ -60,7 +60,7 @@ const taskGitDeliveryTaskByWindowId = new Map<number, string>();
 const taskGitDeliveryWindowSaveTimers = new Map<number, ReturnType<typeof setTimeout>>();
 const taskGitDeliveryWindowPersistenceGates = new Map<number, WindowStatePersistenceGate>();
 const mainWindowTaskGitContexts = new Map<number, TaskGitDeliveryCurrentContext>();
-type SessionContextKind = 'browser' | 'plan' | 'source' | 'turn_diff' | 'none';
+type SessionContextKind = 'browser' | 'subagents' | 'plan' | 'source' | 'turn_diff' | 'none';
 const sessionContextActivityByWindow = new Map<number, { active: boolean; kind: SessionContextKind }>();
 const appCloseLayerActivityByWindow = new Map<number, boolean>();
 let currentTaskGitDeliveryContext: TaskGitDeliveryCurrentContext = { taskId: null, workspaceId: null };
@@ -1230,7 +1230,7 @@ function setupIpc(): void {
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || !payload || typeof payload !== 'object') return;
     const value = payload as { active?: unknown; kind?: unknown };
     const kind = value.kind;
-    if (kind !== 'browser' && kind !== 'plan' && kind !== 'source' && kind !== 'turn_diff' && kind !== 'none') return;
+    if (kind !== 'browser' && kind !== 'subagents' && kind !== 'plan' && kind !== 'source' && kind !== 'turn_diff' && kind !== 'none') return;
     sessionContextActivityByWindow.set(requestingWindow.id, { active: value.active === true && kind !== 'none', kind });
   });
   ipcMain.on('zeus:app-close-layer-activity-changed', (event, active: unknown) => {

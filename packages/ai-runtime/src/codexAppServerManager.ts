@@ -247,6 +247,22 @@ export interface CodexThreadTurnsPage {
   nextCursor: string | null;
 }
 
+export interface CodexThreadsPage {
+  data: CodexThreadSnapshot[];
+  nextCursor: string | null;
+}
+
+export interface CodexThreadListInput {
+  cursor?: string | null;
+  limit?: number | null;
+  sortKey?: 'created_at' | 'updated_at' | null;
+  sortDirection?: 'asc' | 'desc' | null;
+  sourceKinds?: Array<'cli' | 'vscode' | 'exec' | 'appServer' | 'subAgent' | 'subAgentReview' | 'subAgentCompact' | 'subAgentThreadSpawn' | 'subAgentOther' | 'unknown'> | null;
+  useStateDbOnly?: boolean;
+  parentThreadId?: string | null;
+  ancestorThreadId?: string | null;
+}
+
 interface CodexServerResponseBase {
   generationId: string;
   requestId: CodexWireId;
@@ -354,6 +370,7 @@ export interface CodexAppServerManager {
   archiveThread(input: { threadId: string }): Promise<void>;
   unarchiveThread(input: { threadId: string }): Promise<CodexThreadSnapshot>;
   readThread(input: { threadId: string }): Promise<CodexThreadSnapshot>;
+  listThreads(input: CodexThreadListInput): Promise<CodexThreadsPage>;
   readThreadGoal(input: { threadId: string }): Promise<CodexThreadGoal | null>;
   setThreadGoal(input: { threadId: string; objective?: string; status?: CodexThreadGoalStatus; tokenBudget?: number | null }): Promise<CodexThreadGoal>;
   clearThreadGoal(input: { threadId: string }): Promise<{ cleared: boolean }>;
@@ -958,6 +975,17 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       const capabilities = await awaitCapabilities();
       const response = asRecord(await rpc(capabilities.generationId, 'thread/read', { threadId: input.threadId, includeTurns: true }));
       return parseThread(response.thread);
+    },
+    async listThreads(input) {
+      const capabilities = await awaitCapabilities();
+      const response = asRecord(await rpc(capabilities.generationId, 'thread/list', compactObject({ ...input })));
+      if (!Array.isArray(response.data) || (response.nextCursor !== null && typeof response.nextCursor !== 'string')) {
+        throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex thread/list returned an invalid page.');
+      }
+      return {
+        data: response.data.map(parseThread),
+        nextCursor: response.nextCursor,
+      };
     },
     async readThreadGoal(input) {
       const capabilities = await awaitCapabilities();
