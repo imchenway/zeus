@@ -2609,7 +2609,13 @@ function NewConversationComposer(props: {
           onPaste={inputResources.handlePaste}
           onKeyDown={(event) => {
             inputResources.handlePasteShortcut(event);
-            const intent = resolveComposerKeyIntent({ key: event.key, shiftKey: event.shiftKey, isComposing: isComposing || event.nativeEvent.isComposing, repeat: event.repeat });
+            const intent = resolveComposerKeyIntent({
+              key: event.key,
+              shiftKey: event.shiftKey,
+              isComposing: isComposing || event.nativeEvent.isComposing,
+              keyCode: event.nativeEvent.keyCode,
+              repeat: event.repeat,
+            });
             if (intent !== 'submit') return;
             event.preventDefault();
             if (content.trim() === '/goal' && goalAvailable) {

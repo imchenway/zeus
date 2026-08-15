@@ -96,7 +96,9 @@ export function ConversationComposer(props: ConversationComposerProps) {
   );
   const fallbackRef = useRef<HTMLTextAreaElement | null>(null);
   const textareaRef = props.textareaRef ?? fallbackRef;
+  const composingRef = useRef(false);
   const [isComposing, setIsComposing] = useState(false);
+  const [editorValue, setEditorValue] = useState(props.state.draft);
   const [inputResourceError, setInputResourceError] = useState<string | null>(null);
   useApplicationErrorDialog(inputResourceError, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
@@ -109,8 +111,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const active = props.state.conversationState === 'active_prework' || props.state.conversationState === 'active_final_answer';
   const busy = Boolean(props.state.busyOperation);
   const writable = props.readOnly !== true && props.state.conversationState !== 'legacy_readonly';
-  const hasDraft =
-    props.state.draft.trim().length > 0 || props.state.attachments.length > 0 || Boolean(props.state.browserSubmission) || props.state.contextDraft.responseAnnotations.length > 0 || props.state.contextDraft.codeComments.length > 0;
+  const hasDraft = editorValue.trim().length > 0 || props.state.attachments.length > 0 || Boolean(props.state.browserSubmission) || props.state.contextDraft.responseAnnotations.length > 0 || props.state.contextDraft.codeComments.length > 0;
   const showSendCommand = !active || hasDraft;
   const modelPresentation = useMemo(() => presentModelOptions(props.capabilities?.models ?? [], selectedModel, props.language), [props.capabilities?.models, props.language, selectedModel]);
   const effectiveModel = modelPresentation.selectedId || selectedModel;
@@ -159,7 +160,12 @@ export function ConversationComposer(props: ConversationComposerProps) {
 
   useLayoutEffect(() => {
     if (textareaRef.current) autosizeTextarea(textareaRef.current);
-  }, [props.state.draft, textareaRef]);
+  }, [editorValue, textareaRef]);
+
+  useEffect(() => {
+    // 拼音尚未上屏时由 textarea 本地值持有组合文本，避免会话快照或草稿持久化回写打断输入法。
+    if (!composingRef.current) setEditorValue(props.state.draft);
+  }, [props.state.draft]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -187,10 +193,16 @@ export function ConversationComposer(props: ConversationComposerProps) {
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
     inputResources.handlePasteShortcut(event);
-    const intent = resolveComposerKeyIntent({ key: event.key, shiftKey: event.shiftKey, isComposing: isComposing || event.nativeEvent.isComposing, repeat: event.repeat });
+    const intent = resolveComposerKeyIntent({
+      key: event.key,
+      shiftKey: event.shiftKey,
+      isComposing: isComposing || composingRef.current || event.nativeEvent.isComposing,
+      keyCode: event.nativeEvent.keyCode,
+      repeat: event.repeat,
+    });
     if (intent === 'submit') {
       event.preventDefault();
-      if (props.state.draft.trim() === '/plan' && !props.state.browserSubmission && props.onRuntimeSettingsChange) {
+      if (editorValue.trim() === '/plan' && !props.state.browserSubmission && props.onRuntimeSettingsChange) {
         props.onDraftChange('');
         props.onRuntimeSettingsChange({
           model: effectiveModel,
@@ -201,7 +213,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
         });
         return;
       }
-      if (props.state.draft.trim() === '/goal' && !props.state.browserSubmission && props.goalAvailable && props.onOpenGoal) {
+      if (editorValue.trim() === '/goal' && !props.state.browserSubmission && props.goalAvailable && props.onOpenGoal) {
         props.onDraftChange('');
         props.onOpenGoal();
         return;
@@ -240,14 +252,33 @@ export function ConversationComposer(props: ConversationComposerProps) {
           aria-label={copy.input}
           aria-keyshortcuts="Enter Shift+Enter Escape Meta+A Control+A"
           placeholder={copy.placeholder}
-          value={props.state.draft}
+          value={editorValue}
           disabled={!writable || busy}
           onChange={(event) => {
             autosizeTextarea(event.currentTarget);
-            props.onDraftChange(event.currentTarget.value);
+            const nextValue = event.currentTarget.value;
+            setEditorValue(nextValue);
+            if (!composingRef.current) props.onDraftChange(nextValue);
           }}
-          onCompositionStart={() => setIsComposing(true)}
-          onCompositionEnd={() => setIsComposing(false)}
+          onCompositionStart={() => {
+            composingRef.current = true;
+            setIsComposing(true);
+          }}
+          onCompositionEnd={(event) => {
+            const nextValue = event.currentTarget.value;
+            composingRef.current = false;
+            setIsComposing(false);
+            setEditorValue(nextValue);
+            props.onDraftChange(nextValue);
+          }}
+          onBlur={(event) => {
+            if (!composingRef.current) return;
+            const nextValue = event.currentTarget.value;
+            composingRef.current = false;
+            setIsComposing(false);
+            setEditorValue(nextValue);
+            props.onDraftChange(nextValue);
+          }}
           onPaste={inputResources.handlePaste}
           onKeyDown={handleKeyDown}
         />
@@ -437,11 +468,12 @@ function BrowserSubmissionAttachment(props: { submission: ZeusBrowserPreparedSub
   );
 }
 
-export function resolveComposerKeyIntent(input: { key: string; shiftKey: boolean; isComposing: boolean; repeat: boolean }): ComposerKeyIntent {
+export function resolveComposerKeyIntent(input: { key: string; shiftKey: boolean; isComposing: boolean; keyCode?: number; repeat: boolean }): ComposerKeyIntent {
   if (input.repeat) return 'ignore';
   if (input.key === 'Escape') return 'escape';
   if (input.key !== 'Enter') return 'ignore';
-  if (input.isComposing) return 'ignore';
+  // Chromium 在部分输入法收尾按键上只保留 229，不能把该 Enter 当成发送。
+  if (input.isComposing || input.keyCode === 229) return 'ignore';
   return input.shiftKey ? 'newline' : 'submit';
 }
 
