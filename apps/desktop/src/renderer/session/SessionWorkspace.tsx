@@ -254,10 +254,7 @@ export interface ConnectedSessionWorkspaceProps {
   localState?: NativeSessionState;
   localActions?: SessionWorkspaceActions;
   creationStatus?: SessionWorkspaceProps['creationStatus'];
-  /** 会话首次读取期间只投影目标输入区和底部状态。 */
-  transitionDock?: boolean;
   suppressComposer?: boolean;
-  suppressInputComposer?: boolean;
   stableConversationId?: string;
   onStartConversation?: SessionWorkspaceActions['onStartConversation'];
   onStartProjectConversation?: SessionWorkspaceActions['onStartProjectConversation'];
@@ -324,8 +321,10 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
   const controllerFailed = controllerEnabled && state.transportState === 'failed';
   // 已经取得的完整正文始终优先于首发本地投影；后台校准只更新状态，不能让消息区退回第一条消息。
   const controllerVisible = controllerHasSnapshot || (controllerFailed && !props.creationStatus);
-  const controllerInteractive = controllerVisible || props.transitionDock;
-  const displayedState = props.transitionDock ? state : controllerVisible ? state : (props.localState ?? state);
+  // 普通会话冷切换时直接使用目标 controller；其 send 会在快照就绪前安全排队。
+  // 创建期仍优先使用 localActions，避免临时会话身份提前连接服务端。
+  const controllerInteractive = controllerVisible || (controllerEnabled && !props.localState);
+  const displayedState = controllerVisible ? state : (props.localState ?? state);
   const displayedCreationStatus: SessionCreationStatus | undefined =
     controllerFailed && props.creationStatus
       ? {
@@ -348,8 +347,6 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       choices={props.choices}
       capabilities={capabilities}
       suppressComposer={props.suppressComposer || Boolean(props.readOnlyGate)}
-      suppressInputComposer={props.suppressInputComposer}
-      transitionDock={props.transitionDock}
       quickActionsSuppressed={props.quickActionsSuppressed}
       taskManagementStatusChangeBusy={props.taskManagementStatusChangeBusy}
       readOnlyGate={props.readOnlyGate}
@@ -1041,9 +1038,6 @@ export interface SessionWorkspaceProps {
   projects?: readonly Pick<ProjectRecord, 'id' | 'name' | 'localPath'>[];
   choices?: NativeConversationChoice[];
   suppressComposer?: boolean;
-  /** 只隐藏普通输入框，审批、回答等旧正文动作仍保持可用。 */
-  suppressInputComposer?: boolean;
-  transitionDock?: boolean;
   quickActionsSuppressed?: boolean;
   taskManagementStatusChangeBusy?: boolean;
   readOnlyGate?: SessionReadOnlyGate;
@@ -1899,24 +1893,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     );
   }
 
-  if (props.transitionDock && props.state) {
-    const failed = props.state.transportState === 'failed';
-    return (
-      <section className="session-switch-target-dock" aria-label={props.language === 'zh-CN' ? '目标会话输入' : 'Target conversation input'} onKeyDownCapture={handleWorkspaceKeyDownCapture}>
-        {renderConversationComposer()}
-        <section className={`session-switch-status${failed ? ' is-failed' : ''}`} role={failed ? 'alert' : 'status'} aria-live="polite">
-          {failed ? <WarningCircle aria-hidden="true" weight="regular" /> : <span className="session-command-spinner" aria-hidden="true" />}
-          <span>{failed ? (props.language === 'zh-CN' ? '目标会话加载失败' : 'Target conversation failed to load') : props.language === 'zh-CN' ? '正在加载' : 'Loading'}</span>
-          {failed && actions.onReconnect ? (
-            <button type="button" onClick={() => void actions.onReconnect?.()}>
-              {props.language === 'zh-CN' ? '重试' : 'Retry'}
-            </button>
-          ) : null}
-        </section>
-      </section>
-    );
-  }
-
   return (
     <section
       className="session-workspace-root"
@@ -2206,7 +2182,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       {renderQueuedConversationMessages()}
                     </section>
                   ) : null}
-                  {props.suppressComposer || props.suppressInputComposer || blockingUserInputRequest ? null : (
+                  {props.suppressComposer || blockingUserInputRequest ? null : (
                     <>
                       {renderQueuedConversationMessages()}
                       {goal ? <GoalRail goal={goal} language={props.language} onOpen={() => setGoalPanelOpen(true)} /> : null}

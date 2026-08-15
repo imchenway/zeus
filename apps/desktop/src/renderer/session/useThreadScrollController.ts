@@ -19,7 +19,7 @@ export interface ThreadScrollController {
   onUserScroll(metrics: ThreadScrollMetrics): ThreadScrollState;
   onExplicitLatestRequest(): ThreadScrollEffect;
   onDelta(metrics: ThreadScrollMetrics, now: number): ThreadScrollEffect;
-
+  onMessageSubmitted(metrics: ThreadScrollMetrics, now: number): ThreadScrollEffect;
   onTurnStarted(metrics: ThreadScrollMetrics, now: number): ThreadScrollEffect;
 }
 
@@ -53,17 +53,26 @@ export function createThreadScrollController(): ThreadScrollController {
       }
       return { type: 'scroll_to_bottom' };
     },
+    onMessageSubmitted(metrics, now) {
+      // 明确发送代表用户要进入最新轮次；首帧就预留回复空间，避免先落在底部再跳到顶部。
+      state = { mode: 'prework_watch', suppressBounceUntil: now + BOUNCE_SUPPRESSION_MS };
+      return newTurnPositionEffect(metrics);
+    },
     onTurnStarted(metrics, now) {
       if (distanceFromBottom(metrics) > NEW_TURN_DISTANCE_PX) {
         state = { mode: 'static', suppressBounceUntil: 0 };
         return { type: 'none' };
       }
       state = { mode: 'prework_watch', suppressBounceUntil: now + BOUNCE_SUPPRESSION_MS };
-      return {
-        type: 'position_new_turn',
-        spacerHeight: Math.max(MIN_NEW_TURN_SPACER_PX, Math.round((metrics.clientHeight * 2) / 3)),
-      };
+      return newTurnPositionEffect(metrics);
     },
+  };
+}
+
+function newTurnPositionEffect(metrics: ThreadScrollMetrics): ThreadScrollEffect {
+  return {
+    type: 'position_new_turn',
+    spacerHeight: Math.max(MIN_NEW_TURN_SPACER_PX, Math.round((metrics.clientHeight * 2) / 3)),
   };
 }
 

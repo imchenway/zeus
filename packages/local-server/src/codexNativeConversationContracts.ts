@@ -30,9 +30,12 @@ export interface NativeQueuedSubmission {
   id: string;
   conversationId: string;
   content: string;
+  composerDraft?: string;
   status: 'queued' | 'paused';
   delivery: 'queue' | 'steer_now';
   attachments: NativeConversationAttachmentInput[];
+  browserComments?: Record<string, unknown>[];
+  browserCommentContent?: string;
   conversationContext?: Record<string, unknown>;
   expectedTurnId: string | null;
   clientUserMessageId: string;
@@ -155,8 +158,10 @@ export interface SubmitNativeMessageInput {
   submissionId?: string;
   content: string;
   displayText?: string;
+  composerDraft?: string;
   attachments?: NativeConversationAttachmentInput[];
   browserComments?: Record<string, unknown>[];
+  browserCommentContent?: string;
   conversationContext?: Record<string, unknown>;
   model?: string;
   modelSourceId?: string | null;
@@ -173,8 +178,10 @@ export interface SteerNativeMessageInput {
   conversationId: string;
   content: string;
   displayText?: string;
+  composerDraft?: string;
   attachments?: NativeConversationAttachmentInput[];
   browserComments?: Record<string, unknown>[];
+  browserCommentContent?: string;
   conversationContext?: Record<string, unknown>;
   expectedTurnId: string;
   idempotencyKey: string;

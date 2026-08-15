@@ -76,7 +76,7 @@ export type NativeSessionAction =
       previousConversationState: ConversationState;
       error: NativeSessionError;
     }
-  | { type: 'send_accepted'; clientUserMessageId: string; status: string }
+  | { type: 'send_accepted'; clientUserMessageId: string; status: string; submissionId?: string; providerTurnId?: string }
   | { type: 'send_reconciliation_failed'; error: NativeSessionError }
   | { type: 'send_succeeded' };
 
@@ -165,7 +165,7 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
       };
     }
     case 'queue_hydrated': {
-      return { ...state, queue: action.queue, conversationState: conversationStateFromQueue(action.queue, state) };
+      return projectQueueSubmissionMessages(state, action.queue);
     }
     case 'queued_submission_deleted':
       return removeQueuedSubmissionProjection(state, action.submissionId, action.clientUserMessageId, action.queue);
@@ -266,9 +266,28 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
       const optimisticKey = optimisticEntry?.[0] ?? optimisticUserItemKey(state, action.clientUserMessageId);
       const optimistic = optimisticEntry?.[1];
       if (!optimistic) return { ...state, error: null };
+      const terminal = action.providerTurnId ? state.terminalTurnIds[action.providerTurnId] : undefined;
+      const payload: Record<string, unknown> = {
+        ...optimistic.payload,
+        ...(action.submissionId ? { submissionId: action.submissionId } : {}),
+      };
+      if (action.status === 'active' || action.status === 'completed' || action.status === 'resolved' || terminal) {
+        delete payload.pausedReason;
+        delete payload.error;
+        delete payload.deliveryError;
+      }
       return {
         ...state,
-        items: { ...state.items, [optimisticKey]: { ...optimistic, status: action.status } },
+        items: {
+          ...state.items,
+          [optimisticKey]: {
+            ...optimistic,
+            ...(action.providerTurnId ? { turnId: action.providerTurnId } : {}),
+            status: terminal ? 'completed' : action.status,
+            payload,
+            optimistic: terminal || action.status === 'completed' || action.status === 'resolved' ? false : optimistic.optimistic,
+          },
+        },
         transcriptRevision: state.transcriptRevision + 1,
         error: null,
       };
@@ -402,15 +421,16 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
     orderedItems.push({ key, timestamp: message.createdAt, stableIndex: stableIndexForClient(clientUserMessageId) });
   }
 
-  // Provider 尚未回放精确 userMessage 时，从持久 submission 立即恢复已进入轮次的用户消息。
+  // Provider 尚未回放精确 userMessage 时，从持久 submission 恢复同一条用户消息。
+  // 排队阶段也保留稳定客户端身份，后续开轮只更新状态与 turnId，不把消息挪出再重建。
   for (const submission of snapshot.submissions) {
     const clientUserMessageId = submission.clientUserMessageId;
-    const providerTurnId = submission.providerTurnId;
-    const pendingStatus = submission.status === 'dispatching' || submission.status === 'active' || (submission.status === 'paused' && submission.pausedReason === 'recovery_required');
-    if (!pendingStatus || !clientUserMessageId || !providerTurnId || durableClientIds.has(clientUserMessageId)) continue;
+    const pendingStatus = shouldProjectSubmissionMessage(submission);
+    if (!pendingStatus || !clientUserMessageId || durableClientIds.has(clientUserMessageId)) continue;
+    const providerTurnId = submission.providerTurnId ?? `pending:${clientUserMessageId}`;
     const itemId = `${submission.delivery === 'steer_now' ? 'steering' : 'submission'}:${submission.id}`;
     const key = previousUserItemKeys.get(clientUserMessageId) ?? nativeSessionItemKey(snapshot.id, threadId, providerTurnId, itemId);
-    const submissionItem = submissionUserMessageItem(snapshot.id, threadId, submission, key, itemId);
+    const submissionItem = submissionUserMessageItem(snapshot.id, threadId, submission, key, itemId, providerTurnId);
     const previousUserItem = previousUserItemsByClientId.get(clientUserMessageId);
     items[key] = previousUserItem
       ? {
@@ -424,9 +444,14 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
 
   // A pending user message is renderer-owned until a durable conversation_message with
   // either the renderer id or the server-acknowledged canonical id appears in a snapshot.
+  const submissionsByClientId = new Map(snapshot.submissions.flatMap((submission) => (submission.clientUserMessageId ? [[submission.clientUserMessageId, submission] as const] : [])));
   for (const key of state.itemOrder) {
     const item = state.items[key];
     if (!item?.optimistic || item.conversationId !== snapshot.id || key in items) continue;
+    const knownSubmission = userMessageClientIds(item)
+      .map((clientId) => submissionsByClientId.get(clientId))
+      .find((submission): submission is NativeQueuedSubmission => Boolean(submission));
+    if (knownSubmission && shouldDiscardSubmissionProjection(knownSubmission)) continue;
     if ((item.clientUserMessageId && durableClientIds.has(item.clientUserMessageId)) || (item.durableClientUserMessageId && durableClientIds.has(item.durableClientUserMessageId))) continue;
     items[key] = item;
     orderedItems.push({ key, timestamp: item.updatedAt ?? snapshot.updatedAt, stableIndex: stableIndexForClient(item.clientUserMessageId ?? item.durableClientUserMessageId ?? null) });
@@ -580,11 +605,30 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
             submissions: submissionId ? base.queue.submissions.filter((submission) => submission.id !== submissionId) : base.queue.submissions,
           }
         : null;
+      const openingUserEntry = submissionId ? Object.entries(base.items).find(([, item]) => item.optimistic && isUserMessageItem(item) && stringValue(item.payload.submissionId) === submissionId) : undefined;
+      let items = base.items;
+      if (openingUserEntry) {
+        const [key, item] = openingUserEntry;
+        const nextPayload = { ...item.payload };
+        delete nextPayload.pausedReason;
+        delete nextPayload.error;
+        items = {
+          ...items,
+          [key]: {
+            ...item,
+            turnId,
+            status: 'active',
+            payload: nextPayload,
+            updatedAt: event.createdAt,
+          },
+        };
+      }
       return {
         ...base,
         activeTurnId: turnId,
         startedTurnId: turnId,
         queue,
+        items,
         turnsByProviderId: { ...base.turnsByProviderId, [turnId]: turn },
         feedbackEpoch: base.feedbackEpoch + 1,
         transcriptRevision: base.transcriptRevision + 1,
@@ -611,9 +655,28 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
         updatedAt: event.createdAt,
       };
       const terminalTurnIds = { ...base.terminalTurnIds, [turnId]: status };
+      const submissionId = stringValue(payload.submissionId) ?? turn.submissionId;
+      let items = base.items;
+      for (const [key, item] of Object.entries(base.items)) {
+        if (!item.optimistic || !isUserMessageItem(item) || (item.turnId !== turnId && (!submissionId || stringValue(item.payload.submissionId) !== submissionId))) continue;
+        const nextPayload = { ...item.payload };
+        delete nextPayload.pausedReason;
+        delete nextPayload.error;
+        delete nextPayload.deliveryError;
+        if (items === base.items) items = { ...base.items };
+        items[key] = {
+          ...item,
+          turnId,
+          status: 'completed',
+          payload: nextPayload,
+          optimistic: false,
+          updatedAt: event.createdAt,
+        };
+      }
       const nextState = {
         ...base,
         terminalTurnIds,
+        items,
         turnsByProviderId: { ...base.turnsByProviderId, [turnId]: turn },
         transcriptRevision: base.transcriptRevision + 1,
       };
@@ -665,7 +728,7 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
       return { ...base, mcpStartup: providerValueFrom(payload) };
     case 'conversation.queue.changed': {
       const queue = isRecord(payload.queue) ? (payload.queue as unknown as NativeQueueSnapshot) : state.queue;
-      return queue ? { ...base, queue, transcriptRevision: base.transcriptRevision + 1, conversationState: conversationStateFromQueue(queue, base) } : base;
+      return queue ? projectQueueSubmissionMessages(base, queue) : base;
     }
     case 'conversation.submission.steering': {
       const submission = isRecord(payload.submission) ? (payload.submission as unknown as NativeQueuedSubmission) : null;
@@ -948,6 +1011,66 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
   };
 }
 
+function projectQueueSubmissionMessages(state: NativeSessionState, queue: NativeQueueSnapshot): NativeSessionState {
+  let items = state.items;
+  let itemOrder = state.itemOrder;
+  let transcriptChanged = false;
+  const conversationId = state.conversationId;
+  const threadId = state.providerThreadId ?? state.snapshot?.providerThreadId ?? 'unbound-thread';
+
+  if (conversationId) {
+    for (const submission of queue.submissions) {
+      const clientUserMessageId = submission.clientUserMessageId;
+      if (!clientUserMessageId || !shouldProjectSubmissionMessage(submission)) continue;
+      const matchedEntry = Object.entries(items).find(([, item]) => isUserMessageItem(item) && userMessageClientIds(item).includes(clientUserMessageId));
+      if (matchedEntry && !matchedEntry[1].optimistic) continue;
+
+      const key = matchedEntry?.[0] ?? optimisticUserItemKey(state, clientUserMessageId);
+      const previous = matchedEntry?.[1];
+      const turnId = submission.providerTurnId ?? `pending:${clientUserMessageId}`;
+      const itemId = `${submission.delivery === 'steer_now' ? 'steering' : 'submission'}:${submission.id}`;
+      const projected = submissionUserMessageItem(conversationId, threadId, submission, key, itemId, turnId);
+      const next = previous
+        ? {
+            ...projected,
+            resources: previous.resources,
+            payload: mergeSubmissionUserMessagePayload(previous.payload, submission),
+            timelineAt: previous.timelineAt ?? projected.timelineAt,
+          }
+        : projected;
+      if (previous && equivalentSessionItem(previous, next)) continue;
+      if (items === state.items) items = { ...state.items };
+      items[key] = next;
+      if (!previous) itemOrder = [...itemOrder, key];
+      transcriptChanged = true;
+    }
+  }
+
+  return {
+    ...state,
+    items,
+    itemOrder,
+    queue,
+    conversationState: conversationStateFromQueue(queue, state),
+    transcriptRevision: state.transcriptRevision + (transcriptChanged ? 1 : 0),
+  };
+}
+
+function shouldProjectSubmissionMessage(submission: NativeQueuedSubmission): boolean {
+  if (shouldRecoverSubmissionToComposer(submission)) return false;
+  if (submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active' || submission.status === 'failed' || submission.status === 'completed' || submission.status === 'resolved') return true;
+  // user_confirmation 尚未确认进入会话记录，继续回到输入框；其余暂停态保留原消息和可见原因。
+  return submission.status === 'paused' && submission.pausedReason !== 'user_confirmation';
+}
+
+function shouldDiscardSubmissionProjection(submission: NativeQueuedSubmission): boolean {
+  return submission.status === 'cancelled' || submission.status === 'deleted';
+}
+
+function shouldRecoverSubmissionToComposer(submission: NativeQueuedSubmission): boolean {
+  return (submission.status === 'queued' || submission.status === 'paused') && submission.pausedReason === 'user_confirmation' && !submission.providerTurnId;
+}
+
 function projectSteeringSubmission(state: NativeSessionState, submission: NativeQueuedSubmission, authoritativeQueue?: NativeQueueSnapshot): NativeSessionState {
   const queue = authoritativeQueue ?? (state.queue ? { ...state.queue, submissions: state.queue.submissions.filter((entry) => entry.id !== submission.id) } : null);
   const clientUserMessageId = submission.clientUserMessageId;
@@ -960,8 +1083,8 @@ function projectSteeringSubmission(state: NativeSessionState, submission: Native
   const matchedEntry = Object.entries(state.items).find(([, item]) => isUserMessageItem(item) && userMessageClientIds(item).includes(clientUserMessageId));
   if (matchedEntry && !matchedEntry[1].optimistic) return queue ? { ...state, queue, conversationState: conversationStateFromQueue(queue, state) } : state;
   const itemId = `steering:${submission.id}`;
-  const key = nativeSessionItemKey(conversationId, threadId, turnId, itemId);
   const previousKey = matchedEntry?.[0];
+  const key = previousKey ?? nativeSessionItemKey(conversationId, threadId, turnId, itemId);
   const previous = matchedEntry?.[1];
   const item: NativeSessionItemBuffer = {
     ...submissionUserMessageItem(conversationId, threadId, submission, key, itemId),
@@ -969,13 +1092,12 @@ function projectSteeringSubmission(state: NativeSessionState, submission: Native
       ? {
           text: submission.content || previous.text,
           resources: previous.resources,
-          payload: { ...previous.payload, ...submissionUserMessagePayload(submission) },
+          payload: mergeSubmissionUserMessagePayload(previous.payload, submission),
         }
       : {}),
   };
   const items = { ...state.items, [key]: item };
-  if (previousKey && previousKey !== key) delete items[previousKey];
-  const itemOrder = previousKey ? [...new Set(state.itemOrder.map((entry) => (entry === previousKey ? key : entry)))] : state.itemOrder.includes(key) ? state.itemOrder : [...state.itemOrder, key];
+  const itemOrder = previousKey || state.itemOrder.includes(key) ? state.itemOrder : [...state.itemOrder, key];
   return {
     ...state,
     items,
@@ -1006,12 +1128,12 @@ function removeQueuedSubmissionProjection(state: NativeSessionState, submissionI
   };
 }
 
-function submissionUserMessageItem(conversationId: string, threadId: string, submission: NativeQueuedSubmission, key: string, itemId: string): NativeSessionItemBuffer {
+function submissionUserMessageItem(conversationId: string, threadId: string, submission: NativeQueuedSubmission, key: string, itemId: string, turnId = submission.providerTurnId!): NativeSessionItemBuffer {
   return {
     key,
     conversationId,
     threadId,
-    turnId: submission.providerTurnId!,
+    turnId,
     itemId,
     type: 'userMessage',
     status: submission.status,
@@ -1019,7 +1141,7 @@ function submissionUserMessageItem(conversationId: string, threadId: string, sub
     text: submission.content,
     payload: submissionUserMessagePayload(submission),
     resources: [],
-    optimistic: true,
+    optimistic: submission.status !== 'completed' && submission.status !== 'resolved',
     clientUserMessageId: submission.clientUserMessageId,
     durableClientUserMessageId: submission.clientUserMessageId,
     timelineAt: submission.createdAt ?? submission.updatedAt,
@@ -1034,8 +1156,18 @@ function submissionUserMessagePayload(submission: NativeQueuedSubmission): Recor
     attachments: submission.attachments ?? [],
     ...(submission.conversationContext ? { conversationContext: submission.conversationContext } : {}),
     ...(submission.pausedReason ? { pausedReason: submission.pausedReason } : {}),
-    ...(submission.error ? { error: submission.error } : {}),
+    ...(submission.error ? { error: submission.error, deliveryError: submission.error } : {}),
   };
+}
+
+function mergeSubmissionUserMessagePayload(previous: Record<string, unknown>, submission: NativeQueuedSubmission): Record<string, unknown> {
+  const next = { ...previous, ...submissionUserMessagePayload(submission) };
+  if (!submission.pausedReason) delete next.pausedReason;
+  if (!submission.error) {
+    delete next.error;
+    delete next.deliveryError;
+  }
+  return next;
 }
 
 function isUserMessageItem(item: NativeSessionItemBuffer): boolean {

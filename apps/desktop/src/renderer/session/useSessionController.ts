@@ -27,8 +27,8 @@ import {
 } from './sessionTypes.js';
 
 export const reconnectBackoffMs = [250, 500, 1_000, 2_000, 5_000] as const;
-// 同一个会话项的短增量只在一小段窗口内合并，避免把 React 更新频率绑定到 provider 的字符频率。
-const RENDER_DELTA_COALESCE_MS = 40;
+// 同一个会话项的增量按一帧窗口合并，兼顾 Markdown 成本与首字可见延迟。
+const RENDER_DELTA_COALESCE_MS = 16;
 
 export function reconnectDelayMs(attempt: number): number {
   return reconnectBackoffMs[Math.min(Math.max(0, Math.floor(attempt) - 1), reconnectBackoffMs.length - 1)]!;
@@ -175,7 +175,15 @@ interface PendingSendEnvelope {
   browserCommentsMarked?: boolean;
 }
 
-type FailedSendReconciliation = { kind: 'durable'; acceptance: NativeOperationAcceptance } | { kind: 'absent' } | { kind: 'unknown' };
+interface PendingBrowserCommentMark {
+  id: string;
+  groups: Array<{
+    tabId: string;
+    commentIds: string[];
+  }>;
+}
+
+type FailedSendReconciliation = { kind: 'durable'; acceptance: NativeOperationAcceptance } | { kind: 'recovered' } | { kind: 'absent' } | { kind: 'unknown' };
 
 interface PersistedDraft {
   draft: string;
@@ -184,6 +192,7 @@ interface PersistedDraft {
   contextDraft?: ConversationContextDraft;
   pendingSend?: PendingSendEnvelope;
   deferredSends?: PendingSendEnvelope[];
+  pendingBrowserCommentMarks?: PendingBrowserCommentMark[];
   recoveredSubmissionIds?: string[];
 }
 
@@ -209,7 +218,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
     ...envelope,
     startedAt: envelope.startedAt ?? new Date().toISOString(),
   }));
+  let pendingBrowserCommentMarks = persisted.pendingBrowserCommentMarks ?? [];
   const recoveredSubmissionIds = new Set(persisted.recoveredSubmissionIds ?? []);
+  const recoveringSubmissionIds = new Set<string>();
+  const confirmedRetiredSubmissionIds = new Set<string>();
   const initialCachedState =
     options.initialCachedState?.projectId === options.projectId &&
     options.initialCachedState.conversationId === options.conversationId &&
@@ -317,6 +329,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
   const pendingRenderDeltas = new Map<string, NativeConversationEvent>();
   let renderDeltaTimer: ReturnType<typeof setTimeout> | null = null;
   let activeOperation: { key: string; promise: Promise<unknown> } | null = null;
+  let browserCommentMarkFlush: Promise<void> | null = null;
   let nextTurnSettingsWrite: Promise<NativeNextTurnSettings> | null = null;
   let nextTurnSettingsRevision = 0;
   const listeners = new Set<() => void>();
@@ -338,7 +351,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const attachments = state.attachments;
     const browserSubmission = state.browserSubmission;
     const contextDraft = state.contextDraft;
-    if (!draft && attachments.length === 0 && !browserSubmission && !hasConversationContext(contextDraft) && !pendingSend && deferredSends.length === 0 && recoveredSubmissionIds.size === 0) {
+    if (!draft && attachments.length === 0 && !browserSubmission && !hasConversationContext(contextDraft) && !pendingSend && deferredSends.length === 0 && pendingBrowserCommentMarks.length === 0 && recoveredSubmissionIds.size === 0) {
       storage.removeItem(storageKey);
       return;
     }
@@ -351,6 +364,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         ...(hasConversationContext(contextDraft) ? { contextDraft } : {}),
         ...(pendingSend ? { pendingSend } : {}),
         ...(deferredSends.length > 0 ? { deferredSends } : {}),
+        ...(pendingBrowserCommentMarks.length > 0 ? { pendingBrowserCommentMarks } : {}),
         ...(recoveredSubmissionIds.size > 0 ? { recoveredSubmissionIds: [...recoveredSubmissionIds] } : {}),
       } satisfies PersistedDraft),
     );
@@ -372,26 +386,44 @@ export function createSessionController(options: CreateSessionControllerOptions)
     recoveredSubmissionIds.clear();
   }
 
-  async function recoverManualConfirmationDraft(snapshot: NativeConversationSnapshot): Promise<void> {
-    const recoverable = snapshot.queue.submissions
-      .filter(isManualConfirmationSubmission)
-      .sort((left, right) => left.position - right.position || (left.createdAt ?? '').localeCompare(right.createdAt ?? '') || left.id.localeCompare(right.id));
+  function restoreRecoveredEnvelopeComposer(envelope: PendingSendEnvelope): void {
+    const nextDraft = mergeRecoveredDraftText(state.draft, envelope.draft);
+    const nextAttachments = mergeAttachments(state.attachments, envelope.composerAttachments);
+    const nextBrowserSubmission = mergeBrowserSubmissions(state.browserSubmission, envelope.browserSubmission);
+    const nextContextDraft = mergeConversationContextDraft(state.contextDraft, envelope.contextDraft);
+    if (nextDraft !== state.draft) dispatch({ type: 'draft_changed', draft: nextDraft });
+    if (!sameAttachments(nextAttachments, state.attachments)) dispatch({ type: 'attachments_changed', attachments: nextAttachments });
+    if (!sameBrowserSubmission(nextBrowserSubmission, state.browserSubmission)) dispatch({ type: 'browser_submission_changed', browserSubmission: nextBrowserSubmission });
+    if (!sameContextDraft(nextContextDraft, state.contextDraft)) dispatch({ type: 'context_draft_changed', contextDraft: nextContextDraft });
+  }
+
+  async function recoverManualConfirmationQueue(queue: NativeQueueSnapshot): Promise<void> {
+    const recoverable = queue.submissions.filter(isManualConfirmationSubmission).sort((left, right) => left.position - right.position || (left.createdAt ?? '').localeCompare(right.createdAt ?? '') || left.id.localeCompare(right.id));
     if (recoverable.length === 0) return;
 
     const unseen = recoverable.filter((submission) => !recoveredSubmissionIds.has(submission.id));
     if (unseen.length > 0) {
+      const matchingEnvelope = pendingSend && unseen.some((submission) => submission.clientUserMessageId === pendingSend?.clientUserMessageId) ? pendingSend : null;
       const recoveredText = unseen
-        .map((submission) => submission.content.trim())
+        .map((submission) => (matchingEnvelope && submission.clientUserMessageId === matchingEnvelope.clientUserMessageId ? matchingEnvelope.draft : composerDraftFromQueuedSubmission(submission)).trim())
         .filter(Boolean)
         .join('\n\n');
-      const currentDraft = state.draft.trim();
-      const nextDraft = !recoveredText || currentDraft === recoveredText ? state.draft : [recoveredText, state.draft].filter((part) => part.trim()).join('\n\n');
+      const nextDraft = mergeRecoveredDraftText(state.draft, recoveredText);
       const nextAttachments = mergeAttachments(
         state.attachments,
-        unseen.flatMap((submission) => submission.attachments ?? []),
+        unseen.flatMap((submission) => (matchingEnvelope && submission.clientUserMessageId === matchingEnvelope.clientUserMessageId ? matchingEnvelope.composerAttachments : composerAttachmentsFromQueuedSubmission(submission))),
       );
+      let nextBrowserSubmission = state.browserSubmission;
+      let nextContextDraft = state.contextDraft;
+      for (const submission of unseen) {
+        const envelopeMatches = matchingEnvelope && submission.clientUserMessageId === matchingEnvelope.clientUserMessageId;
+        nextBrowserSubmission = mergeBrowserSubmissions(nextBrowserSubmission, envelopeMatches ? matchingEnvelope.browserSubmission : browserSubmissionFromQueuedSubmission(submission));
+        nextContextDraft = mergeConversationContextDraft(nextContextDraft, envelopeMatches ? matchingEnvelope.contextDraft : (submission.conversationContext ?? structuredClone(emptyConversationContextDraft)));
+      }
       dispatch({ type: 'draft_changed', draft: nextDraft });
       dispatch({ type: 'attachments_changed', attachments: nextAttachments });
+      if (!sameBrowserSubmission(nextBrowserSubmission, state.browserSubmission)) dispatch({ type: 'browser_submission_changed', browserSubmission: nextBrowserSubmission });
+      if (!sameContextDraft(nextContextDraft, state.contextDraft)) dispatch({ type: 'context_draft_changed', contextDraft: nextContextDraft });
       unseen.forEach((submission) => recoveredSubmissionIds.add(submission.id));
       if (!storage) return;
       try {
@@ -404,15 +436,48 @@ export function createSessionController(options: CreateSessionControllerOptions)
     }
 
     if (!storage) return;
+    let projectedQueue = queue;
     for (const submission of recoverable) {
+      if (recoveringSubmissionIds.has(submission.id)) continue;
+      // 草稿已经成功持久化后，先在本地原子撤下同一条乐观消息；服务端删除失败仍保留队列记录供后续重试。
+      dispatch({
+        type: 'queued_submission_deleted',
+        submissionId: submission.id,
+        ...(submission.clientUserMessageId ? { clientUserMessageId: submission.clientUserMessageId } : {}),
+        queue: projectedQueue,
+      });
+      recoveringSubmissionIds.add(submission.id);
       try {
-        const queue = await options.client.deleteNativeQueuedSubmission(options.projectId, options.conversationId, submission.id);
+        const nextQueue = await options.client.deleteNativeQueuedSubmission(options.projectId, options.conversationId, submission.id);
         if (disposed) return;
-        dispatch({ type: 'queue_hydrated', queue });
+        if (!nextQueue.submissions.some((entry) => entry.id === submission.id)) {
+          confirmedRetiredSubmissionIds.add(submission.id);
+          if (submission.clientUserMessageId && retireBrowserCommentMarks(submission.clientUserMessageId)) persistDraft();
+        }
+        projectedQueue = nextQueue;
+        dispatch({
+          type: 'queued_submission_deleted',
+          submissionId: submission.id,
+          ...(submission.clientUserMessageId ? { clientUserMessageId: submission.clientUserMessageId } : {}),
+          queue: nextQueue,
+        });
       } catch {
         // 删除确认失败时保留服务端记录；下次权威快照会按 submission id 去重并重试。
+      } finally {
+        recoveringSubmissionIds.delete(submission.id);
       }
     }
+  }
+
+  async function applyAuthoritativeQueue(queue: NativeQueueSnapshot): Promise<void> {
+    dispatch({ type: 'queue_hydrated', queue });
+    await recoverManualConfirmationQueue(queue);
+  }
+
+  async function applyAuthoritativeSnapshot(snapshot: NativeConversationSnapshot): Promise<void> {
+    dispatch({ type: 'snapshot_hydrated', snapshot: withoutResolvedRequests(snapshot) });
+    await recoverManualConfirmationQueue(snapshot.queue);
+    retireRecoveredBrowserCommentMarks(snapshot);
   }
 
   function flushRenderDeltas(): void {
@@ -461,6 +526,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
     }
     const suppressRequestAuthority = event.type === 'conversation.request.created' && requestId !== null && resolvedRequestIds.has(requestId);
     dispatch({ type: 'event_received', event, ...(suppressRequestAuthority ? { suppressRequestAuthority: true } : {}) });
+    if (event.type === 'conversation.queue.changed') {
+      const queue = nativeQueueSnapshotFrom(event.payload.queue);
+      if (queue) void recoverManualConfirmationQueue(queue);
+    }
     if (event.type === 'conversation.request.created' && !suppressRequestAuthority && requestId) {
       if (eventCarriesRequestDetails(event, requestId)) {
         requestsAwaitingDetails.delete(requestId);
@@ -494,12 +563,47 @@ export function createSessionController(options: CreateSessionControllerOptions)
     return requests.length === snapshot.requests.length ? snapshot : { ...snapshot, requests };
   }
 
+  function envelopeHasProviderUserFact(snapshot: NativeConversationSnapshot, envelope: PendingSendEnvelope): boolean {
+    return snapshot.messages.some((message) => message.metadata.clientUserMessageId === envelope.clientUserMessageId) || snapshot.items.some((item) => snapshotItemClientUserMessageId(item) === envelope.clientUserMessageId);
+  }
+
+  function matchingEnvelopeSubmissions(snapshot: NativeConversationSnapshot, envelope: PendingSendEnvelope): NativeQueuedSubmission[] {
+    return snapshot.submissions.filter((submission) => submission.clientUserMessageId === envelope.clientUserMessageId);
+  }
+
+  function submissionIsDurableEnvelopeEvidence(submission: NativeQueuedSubmission): boolean {
+    return submission.status !== 'deleted' && submission.status !== 'cancelled' && !isManualConfirmationSubmission(submission);
+  }
+
   function acceptedEnvelopeIsDurable(snapshot: NativeConversationSnapshot, envelope: PendingSendEnvelope): boolean {
-    return (
-      snapshot.submissions.some((submission) => submission.clientUserMessageId === envelope.clientUserMessageId) ||
-      snapshot.messages.some((message) => message.metadata.clientUserMessageId === envelope.clientUserMessageId) ||
-      snapshot.items.some((item) => snapshotItemClientUserMessageId(item) === envelope.clientUserMessageId)
+    if (envelopeHasProviderUserFact(snapshot, envelope)) return true;
+    return matchingEnvelopeSubmissions(snapshot, envelope).some(submissionIsDurableEnvelopeEvidence);
+  }
+
+  function envelopeWasRecoveredToComposer(snapshot: NativeConversationSnapshot, envelope: PendingSendEnvelope): boolean {
+    if (!storage || envelopeHasProviderUserFact(snapshot, envelope)) return false;
+    const matchingSubmissions = matchingEnvelopeSubmissions(snapshot, envelope);
+    if (matchingSubmissions.some(submissionIsDurableEnvelopeEvidence)) return false;
+    const snapshotConfirmsRetired = matchingSubmissions.some((submission) => recoveredSubmissionIds.has(submission.id) && (submission.status === 'deleted' || submission.status === 'cancelled'));
+    const matchingSubmissionIds = matchingSubmissions.map((submission) => submission.id);
+    const acceptedSubmissionId = envelope.acceptance?.submission?.id;
+    const deleteResponseConfirmsRetired = [...matchingSubmissionIds, ...(acceptedSubmissionId ? [acceptedSubmissionId] : [])].some(
+      (submissionId) => recoveredSubmissionIds.has(submissionId) && confirmedRetiredSubmissionIds.has(submissionId),
     );
+    return snapshotConfirmsRetired || deleteResponseConfirmsRetired;
+  }
+
+  function envelopeWasDiscardedWithoutProviderFact(snapshot: NativeConversationSnapshot, envelope: PendingSendEnvelope): boolean {
+    if (envelopeHasProviderUserFact(snapshot, envelope)) return false;
+    const matchingSubmissions = matchingEnvelopeSubmissions(snapshot, envelope);
+    return matchingSubmissions.length > 0 && matchingSubmissions.every((submission) => submission.status === 'deleted' || submission.status === 'cancelled');
+  }
+
+  function finalizeRecoveredEnvelope(envelope: PendingSendEnvelope): void {
+    restoreRecoveredEnvelopeComposer(envelope);
+    pendingSend = null;
+    dispatch({ type: 'send_succeeded' });
+    persistDraft();
   }
 
   function acceptedStatus(acceptance: NativeOperationAcceptance): string {
@@ -507,26 +611,137 @@ export function createSessionController(options: CreateSessionControllerOptions)
     return typeof submissionStatus === 'string' ? submissionStatus : typeof acceptance.operation.status === 'string' ? acceptance.operation.status : 'accepted';
   }
 
-  async function markEnvelopeBrowserCommentsSent(envelope: PendingSendEnvelope): Promise<void> {
+  function dispatchSendAccepted(clientUserMessageId: string, acceptance: NativeOperationAcceptance): void {
+    const providerTurnIdValue = acceptance.submission?.providerTurnId ?? acceptance.operation.providerTurnId;
+    dispatch({
+      type: 'send_accepted',
+      clientUserMessageId,
+      status: acceptedStatus(acceptance),
+      ...(acceptance.submission?.id ? { submissionId: acceptance.submission.id } : {}),
+      ...(typeof providerTurnIdValue === 'string' && providerTurnIdValue ? { providerTurnId: providerTurnIdValue } : {}),
+    });
+  }
+
+  function browserCommentMarkFromEnvelope(envelope: PendingSendEnvelope): PendingBrowserCommentMark | null {
     const browserSubmission = envelope.browserSubmission;
-    if (!browserSubmission || envelope.browserCommentsMarked) return;
+    if (!browserSubmission || envelope.browserCommentsMarked) return null;
+    const commentTabById = new Map(browserSubmission.comments.map((comment) => [comment.id, comment.tabId]));
+    const commentIdsByTab = new Map<string, Set<string>>();
+    for (const commentId of browserSubmission.commentIds) {
+      const tabId = commentTabById.get(commentId) || browserSubmission.tabId;
+      const commentIds = commentIdsByTab.get(tabId) ?? new Set<string>();
+      commentIds.add(commentId);
+      commentIdsByTab.set(tabId, commentIds);
+    }
+    const groups = [...commentIdsByTab].map(([tabId, commentIds]) => ({ tabId, commentIds: [...commentIds] }));
+    if (groups.length === 0) return null;
+    return {
+      id: envelope.clientUserMessageId || envelope.idempotencyKey,
+      groups,
+    };
+  }
+
+  function enqueueBrowserCommentMark(envelope: PendingSendEnvelope): boolean {
+    const task = browserCommentMarkFromEnvelope(envelope);
+    if (!task) return false;
+    const merged = mergePendingBrowserCommentMarks([...pendingBrowserCommentMarks, task]);
+    if (JSON.stringify(merged) === JSON.stringify(pendingBrowserCommentMarks)) return false;
+    pendingBrowserCommentMarks = merged;
+    return true;
+  }
+
+  function flushPendingBrowserCommentMarks(): Promise<void> {
+    if (browserCommentMarkFlush) return browserCommentMarkFlush;
     const mark =
       options.markBrowserCommentsSent ??
       (typeof window !== 'undefined' && window.zeus?.markBrowserCommentsSent ? (input: { conversationId: string; tabId: string; commentIds: string[] }) => window.zeus!.markBrowserCommentsSent!(input) : undefined);
-    if (!mark) return;
-    try {
-      await mark({
-        conversationId: options.conversationId,
-        tabId: browserSubmission.tabId,
-        commentIds: browserSubmission.commentIds,
-      });
-      envelope.browserCommentsMarked = true;
-      if (pendingSend === envelope) pendingSend = { ...envelope };
-      persistDraft();
-    } catch {
-      // 模型提交已经被服务端接受时不能因本地页面状态同步失败而回滚或重复提交；
-      // 下次恢复已接受的 envelope 时仍会重试标记。
+    if (!mark || pendingBrowserCommentMarks.length === 0) return Promise.resolve();
+
+    const attempted = new Set<string>();
+    const attempt = (async () => {
+      while (!disposed) {
+        const next = pendingBrowserCommentMarks.flatMap((task) => task.groups.map((group) => ({ task, group }))).find(({ task, group }) => !attempted.has(`${task.id}\u0000${group.tabId}`));
+        if (!next) return;
+        const { task, group } = next;
+        attempted.add(`${task.id}\u0000${group.tabId}`);
+        try {
+          await mark({
+            conversationId: options.conversationId,
+            tabId: group.tabId,
+            commentIds: group.commentIds,
+          });
+        } catch {
+          // 页面暂时不可用时保留独立账本；它不占用发送 envelope，也不会阻塞后续消息。
+          continue;
+        }
+        if (disposed) return;
+        pendingBrowserCommentMarks = pendingBrowserCommentMarks.flatMap((candidate) => {
+          if (candidate.id !== task.id) return [candidate];
+          const groups = candidate.groups.filter((candidateGroup) => candidateGroup.tabId !== group.tabId);
+          return groups.length > 0 ? [{ ...candidate, groups }] : [];
+        });
+        try {
+          persistDraft();
+        } catch {
+          // BrowserHost 已完成幂等标记；旧持久记录会在下次启动时安全重试。
+        }
+      }
+    })();
+    const tracked = attempt.finally(() => {
+      if (browserCommentMarkFlush === tracked) browserCommentMarkFlush = null;
+    });
+    browserCommentMarkFlush = tracked;
+    return tracked;
+  }
+
+  function finalizeDurableEnvelope(envelope: PendingSendEnvelope): void {
+    if (pendingSend !== envelope) return;
+    const queuedBrowserMark = enqueueBrowserCommentMark(envelope);
+    // 先让 accepted envelope 与补偿账本同时落盘；第二阶段失败时仍可从任一身份安全重放。
+    if (queuedBrowserMark) persistDraft();
+    clearDraftIfItStillMatches(envelope);
+    pendingSend = null;
+    dispatch({ type: 'send_succeeded' });
+    persistDraft();
+    void flushPendingBrowserCommentMarks();
+  }
+
+  function reservedBrowserCommentIds(allowedPending: PendingSendEnvelope | null = null): Set<string> {
+    const reserved = new Set<string>();
+    if (pendingSend && pendingSend !== allowedPending) pendingSend.browserSubmission?.commentIds.forEach((commentId) => reserved.add(commentId));
+    deferredSends.forEach((envelope) => envelope.browserSubmission?.commentIds.forEach((commentId) => reserved.add(commentId)));
+    pendingBrowserCommentMarks.forEach((task) => task.groups.forEach((group) => group.commentIds.forEach((commentId) => reserved.add(commentId))));
+    return reserved;
+  }
+
+  function browserSubmissionUsesReservedComments(browserSubmission: ZeusBrowserPreparedSubmission | null, allowedPending: PendingSendEnvelope | null = null): boolean {
+    if (!browserSubmission) return false;
+    const reserved = reservedBrowserCommentIds(allowedPending);
+    return browserSubmission.commentIds.some((commentId) => reserved.has(commentId));
+  }
+
+  function retireBrowserCommentMarks(clientUserMessageId: string): boolean {
+    const remaining = pendingBrowserCommentMarks.filter((task) => task.id !== clientUserMessageId);
+    if (remaining.length === pendingBrowserCommentMarks.length) return false;
+    pendingBrowserCommentMarks = remaining;
+    return true;
+  }
+
+  function retireRecoveredBrowserCommentMarks(snapshot: NativeConversationSnapshot): void {
+    let changed = false;
+    for (const submission of snapshot.submissions) {
+      if (
+        !submission.clientUserMessageId ||
+        !recoveredSubmissionIds.has(submission.id) ||
+        (submission.status !== 'deleted' && submission.status !== 'cancelled') ||
+        snapshot.messages.some((message) => message.metadata.clientUserMessageId === submission.clientUserMessageId) ||
+        snapshot.items.some((item) => snapshotItemClientUserMessageId(item) === submission.clientUserMessageId)
+      ) {
+        continue;
+      }
+      changed = retireBrowserCommentMarks(submission.clientUserMessageId) || changed;
     }
+    if (changed) persistDraft();
   }
 
   function projectAcceptedEnvelope(envelope: PendingSendEnvelope): void {
@@ -545,20 +760,27 @@ export function createSessionController(options: CreateSessionControllerOptions)
       previousConversationState: state.conversationState,
       startedAt: envelope.startedAt ?? new Date().toISOString(),
     });
-    dispatch({ type: 'send_accepted', clientUserMessageId: envelope.clientUserMessageId, status: acceptedStatus(envelope.acceptance) });
+    dispatchSendAccepted(envelope.clientUserMessageId, envelope.acceptance);
   }
 
-  function reconcilePersistedAcceptance(snapshot: NativeConversationSnapshot): void {
+  async function reconcilePersistedAcceptance(snapshot: NativeConversationSnapshot): Promise<void> {
     if (pendingSend?.deliveryState !== 'accepted' || !pendingSend.acceptance) return;
-    if (acceptedEnvelopeIsDurable(snapshot, pendingSend)) {
-      void markEnvelopeBrowserCommentsSent(pendingSend);
-      clearDraftIfItStillMatches(pendingSend);
-      pendingSend = null;
-      dispatch({ type: 'send_succeeded' });
-      persistDraft();
+    const envelope = pendingSend;
+    if (envelopeWasRecoveredToComposer(snapshot, envelope)) {
+      finalizeRecoveredEnvelope(envelope);
       return;
     }
-    if (!hasNativeOptimisticItem(state, pendingSend.clientUserMessageId)) projectAcceptedEnvelope(pendingSend);
+    if (envelopeWasDiscardedWithoutProviderFact(snapshot, envelope)) {
+      finalizeRecoveredEnvelope(envelope);
+      return;
+    }
+    if (acceptedEnvelopeIsDurable(snapshot, envelope)) {
+      finalizeDurableEnvelope(envelope);
+      return;
+    }
+    // 确认恢复尚未成功持久化时保留 envelope，不能把未进入 Provider 的输入重新投影为已接受消息。
+    if (snapshotRequiresManualConfirmation(snapshot, envelope.clientUserMessageId)) return;
+    if (!hasNativeOptimisticItem(state, envelope.clientUserMessageId)) projectAcceptedEnvelope(envelope);
   }
 
   async function reconcileAcceptedSend(): Promise<void> {
@@ -569,12 +791,17 @@ export function createSessionController(options: CreateSessionControllerOptions)
     try {
       const snapshot = await options.client.loadNativeConversation(options.projectId, options.conversationId);
       if (disposed || pendingSend !== envelope) return;
-      dispatch({ type: 'snapshot_hydrated', snapshot: withoutResolvedRequests(snapshot) });
+      await applyAuthoritativeSnapshot(snapshot);
+      if (envelopeWasRecoveredToComposer(snapshot, envelope)) {
+        finalizeRecoveredEnvelope(envelope);
+        return;
+      }
+      if (envelopeWasDiscardedWithoutProviderFact(snapshot, envelope)) {
+        finalizeRecoveredEnvelope(envelope);
+        return;
+      }
       if (acceptedEnvelopeIsDurable(snapshot, envelope)) {
-        void markEnvelopeBrowserCommentsSent(envelope);
-        clearDraftIfItStillMatches(envelope);
-        pendingSend = null;
-        dispatch({ type: 'send_succeeded' });
+        finalizeDurableEnvelope(envelope);
       } else {
         dispatch({
           type: 'send_reconciliation_failed',
@@ -639,13 +866,17 @@ export function createSessionController(options: CreateSessionControllerOptions)
     try {
       const snapshot = await options.client.loadNativeConversation(options.projectId, options.conversationId);
       if (disposed || pendingSend !== envelope) return { kind: 'unknown' };
-      dispatch({ type: 'snapshot_hydrated', snapshot: withoutResolvedRequests(snapshot) });
+      await applyAuthoritativeSnapshot(snapshot);
+      if (envelopeWasRecoveredToComposer(snapshot, envelope)) {
+        finalizeRecoveredEnvelope(envelope);
+        return { kind: 'recovered' };
+      }
+      if (snapshotRequiresManualConfirmation(snapshot, envelope.clientUserMessageId)) return { kind: 'unknown' };
       if (!acceptedEnvelopeIsDurable(snapshot, envelope)) return { kind: 'absent' };
 
       const acceptance = acceptanceFromDurableSnapshot(snapshot, envelope);
       pendingSend = { ...envelope, deliveryState: 'accepted', acceptance };
-      dispatch({ type: 'send_accepted', clientUserMessageId: envelope.clientUserMessageId, status: acceptedStatus(acceptance) });
-      void markEnvelopeBrowserCommentsSent(pendingSend);
+      dispatchSendAccepted(envelope.clientUserMessageId, acceptance);
       persistDraft();
       return { kind: 'durable', acceptance };
     } catch {
@@ -866,13 +1097,13 @@ export function createSessionController(options: CreateSessionControllerOptions)
       const snapshot = await options.client.loadNativeConversation(options.projectId, options.conversationId);
       if (disposed || token !== connectionToken) return;
       if (lifecycle.isDisconnected()) throw new SocketDisconnectedDuringHydrationError();
-      dispatch({ type: 'snapshot_hydrated', snapshot: withoutResolvedRequests(snapshot) });
-      await recoverManualConfirmationDraft(snapshot);
-      reconcilePersistedAcceptance(snapshot);
+      await applyAuthoritativeSnapshot(snapshot);
+      await reconcilePersistedAcceptance(snapshot);
       for (const event of buffered) applyEvent(event);
       hydrating = false;
       ready = true;
       dispatch({ type: 'transport_changed', transportState: 'ready', error: null });
+      void flushPendingBrowserCommentMarks();
       void flushDeferredSends();
     } catch (error) {
       hydrating = false;
@@ -915,7 +1146,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     return promise;
   }
 
-  function submitEnvelope(envelope: PendingSendEnvelope): Promise<NativeOperationAcceptance> {
+  function submitEnvelope(envelope: PendingSendEnvelope): Promise<NativeOperationAcceptance | void> {
     pendingSend = envelope;
     persistDraft();
     const operation = `send:${envelope.fingerprint}`;
@@ -938,16 +1169,17 @@ export function createSessionController(options: CreateSessionControllerOptions)
           startedAt: envelope.startedAt ?? new Date().toISOString(),
         });
         if (envelope.deliveryState === 'accepted' && envelope.acceptance) {
-          dispatch({ type: 'send_accepted', clientUserMessageId: envelope.clientUserMessageId, status: acceptedStatus(envelope.acceptance) });
-          void markEnvelopeBrowserCommentsSent(envelope);
+          dispatchSendAccepted(envelope.clientUserMessageId, envelope.acceptance);
           return envelope.acceptance;
         }
         try {
           const acceptance = await options.client.sendNativeMessage(options.projectId, options.conversationId, {
             content: envelope.content,
             ...(envelope.displayText ? { displayText: envelope.displayText } : {}),
+            composerDraft: envelope.draft,
             attachments: envelope.attachments,
             ...(envelope.browserSubmission?.comments.length ? { browserComments: envelope.browserSubmission.comments } : {}),
+            ...(envelope.browserSubmission ? { browserCommentContent: envelope.browserSubmission.content } : {}),
             ...(hasConversationContext(envelope.contextDraft) ? { conversationContext: envelope.contextDraft } : {}),
             delivery: envelope.delivery,
             ...(envelope.expectedTurnId ? { expectedTurnId: envelope.expectedTurnId } : {}),
@@ -961,13 +1193,13 @@ export function createSessionController(options: CreateSessionControllerOptions)
             clientUserMessageId: envelope.clientUserMessageId,
           });
           pendingSend = { ...envelope, deliveryState: 'accepted', acceptance };
-          dispatch({ type: 'send_accepted', clientUserMessageId: envelope.clientUserMessageId, status: acceptedStatus(acceptance) });
-          void markEnvelopeBrowserCommentsSent(pendingSend);
+          dispatchSendAccepted(envelope.clientUserMessageId, acceptance);
           persistDraft();
           return acceptance;
         } catch (error) {
           const reconciliation = await reconcileFailedSend(envelope);
           if (reconciliation.kind === 'durable') return reconciliation.acceptance;
+          if (reconciliation.kind === 'recovered') return;
           const sessionError = toSessionError(error, true);
           pendingSend = {
             ...envelope,
@@ -1070,6 +1302,9 @@ export function createSessionController(options: CreateSessionControllerOptions)
       persistDraft();
     },
     setBrowserSubmission(browserSubmission) {
+      if (browserSubmission && !sameBrowserSubmission(state.browserSubmission, browserSubmission) && browserSubmissionUsesReservedComments(browserSubmission)) {
+        throw new Error('These browser comments already belong to a pending or delivered message.');
+      }
       if (pendingSend && pendingSend.deliveryState !== 'accepted' && !sameBrowserSubmission(pendingSend.browserSubmission, browserSubmission)) {
         pendingSend = null;
       }
@@ -1089,14 +1324,14 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return runOperation(
         `permission-mode:${permissionMode}`,
         () => options.client.updateNativePermissionMode(options.projectId, options.conversationId, permissionMode),
-        (snapshot) => dispatch({ type: 'snapshot_hydrated', snapshot: withoutResolvedRequests(snapshot) }),
+        (snapshot) => applyAuthoritativeSnapshot(snapshot),
       );
     },
     setCollaborationMode(collaborationMode) {
       return runOperation(
         `collaboration-mode:${collaborationMode}`,
         () => options.client.updateNativeCollaborationMode(options.projectId, options.conversationId, collaborationMode),
-        (snapshot) => dispatch({ type: 'snapshot_hydrated', snapshot: withoutResolvedRequests(snapshot) }),
+        (snapshot) => applyAuthoritativeSnapshot(snapshot),
       );
     },
     setNextTurnSettings(settings) {
@@ -1128,7 +1363,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
           pendingSend.permissionMode === requestedPermissionMode &&
           pendingSend.collaborationMode === requestedCollaborationMode
         ) {
-          return activeOperation.promise as Promise<NativeOperationAcceptance>;
+          return activeOperation.promise as Promise<NativeOperationAcceptance | void>;
         }
         return Promise.reject(new Error(`Session operation already in progress: ${activeOperation.key}`));
       }
@@ -1161,26 +1396,33 @@ export function createSessionController(options: CreateSessionControllerOptions)
         ...(appliedSettings ? { permissionMode: appliedSettings.permissionMode } : {}),
         collaborationMode: requestedCollaborationMode,
       });
+      const reusableIdentity =
+        pendingSend &&
+        pendingSend.deliveryState !== 'accepted' &&
+        pendingSend.content === content &&
+        pendingSend.displayText === displayText &&
+        pendingSend.draft === draft &&
+        sameAttachments(pendingSend.attachments, attachments) &&
+        sameAttachments(pendingSend.composerAttachments, composerAttachments) &&
+        sameBrowserSubmission(pendingSend.browserSubmission, browserSubmission) &&
+        sameContextDraft(pendingSend.contextDraft, contextDraft) &&
+        pendingSend.delivery === delivery &&
+        pendingSend.expectedTurnId === normalizedExpectedTurnId &&
+        pendingSend.model === appliedSettings?.model &&
+        pendingSend.agentKind === appliedSettings?.agentKind &&
+        pendingSend.effort === appliedSettings?.effort &&
+        pendingSend.permissionMode === (appliedSettings ? appliedSettings.permissionMode : undefined) &&
+        pendingSend.collaborationMode === requestedCollaborationMode
+          ? pendingSend
+          : null;
+      const exactPending = pendingSend?.fingerprint === fingerprint ? pendingSend : null;
+      if (pendingSend?.deliveryState === 'accepted' && !exactPending) {
+        return Promise.reject(new Error('The previous accepted message is still waiting for its authoritative conversation snapshot.'));
+      }
+      if (browserSubmissionUsesReservedComments(browserSubmission, exactPending ?? reusableIdentity)) {
+        return Promise.reject(new Error('These browser comments already belong to a pending or delivered message.'));
+      }
       if (!pendingSend || pendingSend.fingerprint !== fingerprint) {
-        const reusableIdentity =
-          pendingSend &&
-          pendingSend.deliveryState !== 'accepted' &&
-          pendingSend.content === content &&
-          pendingSend.displayText === displayText &&
-          pendingSend.draft === draft &&
-          sameAttachments(pendingSend.attachments, attachments) &&
-          sameAttachments(pendingSend.composerAttachments, composerAttachments) &&
-          sameBrowserSubmission(pendingSend.browserSubmission, browserSubmission) &&
-          sameContextDraft(pendingSend.contextDraft, contextDraft) &&
-          pendingSend.delivery === delivery &&
-          pendingSend.expectedTurnId === normalizedExpectedTurnId &&
-          pendingSend.model === appliedSettings?.model &&
-          pendingSend.agentKind === appliedSettings?.agentKind &&
-          pendingSend.effort === appliedSettings?.effort &&
-          pendingSend.permissionMode === (appliedSettings ? appliedSettings.permissionMode : undefined) &&
-          pendingSend.collaborationMode === requestedCollaborationMode
-            ? pendingSend
-            : null;
         pendingSend = {
           fingerprint,
           content,
@@ -1235,7 +1477,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return runOperation(
         `queue:edit:${submissionId}:${JSON.stringify(content)}`,
         () => options.client.editNativeQueuedSubmission(options.projectId, options.conversationId, submissionId, content),
-        (queue) => dispatch({ type: 'queue_hydrated', queue }),
+        (queue) => applyAuthoritativeQueue(queue),
       );
     },
     deleteQueuedSubmission(submissionId) {
@@ -1243,7 +1485,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return runOperation(
         `queue:delete:${submissionId}`,
         () => options.client.deleteNativeQueuedSubmission(options.projectId, options.conversationId, submissionId),
-        (queue) => dispatch({ type: 'queued_submission_deleted', submissionId, ...(clientUserMessageId ? { clientUserMessageId } : {}), queue }),
+        async (queue) => {
+          dispatch({ type: 'queued_submission_deleted', submissionId, ...(clientUserMessageId ? { clientUserMessageId } : {}), queue });
+          await recoverManualConfirmationQueue(queue);
+        },
         false,
       );
     },
@@ -1251,7 +1496,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return runOperation(
         `queue:reorder:${JSON.stringify(orderedSubmissionIds)}`,
         () => options.client.reorderNativeQueue(options.projectId, options.conversationId, orderedSubmissionIds),
-        (queue) => dispatch({ type: 'queue_hydrated', queue }),
+        (queue) => applyAuthoritativeQueue(queue),
       );
     },
     sendQueuedNow(submissionId) {
@@ -1268,14 +1513,14 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return runOperation(
         'queue:resume',
         () => options.client.resumeNativeQueue(options.projectId, options.conversationId),
-        (queue) => dispatch({ type: 'queue_hydrated', queue }),
+        (queue) => applyAuthoritativeQueue(queue),
       );
     },
     recoverQueue() {
       return runOperation(
         'queue:recover',
         () => options.client.recoverNativeQueue(options.projectId, options.conversationId),
-        (queue) => dispatch({ type: 'queue_hydrated', queue }),
+        (queue) => applyAuthoritativeQueue(queue),
         true,
       );
     },
@@ -1283,7 +1528,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return runOperation(
         'provider-thread:restore',
         () => options.client.restoreArchivedNativeConversation(options.projectId, options.conversationId),
-        (snapshot) => dispatch({ type: 'snapshot_hydrated', snapshot: withoutResolvedRequests(snapshot) }),
+        (snapshot) => applyAuthoritativeSnapshot(snapshot),
       );
     },
     interruptActiveTurn() {
@@ -1327,11 +1572,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return runOperation(
         `plan-request:${requestId}:${JSON.stringify(input)}`,
         () => options.client.respondToPlanImplementationRequest(options.projectId, options.conversationId, requestId, input),
-        ({ conversation }) =>
-          dispatch({
-            type: 'snapshot_hydrated',
-            snapshot: withoutResolvedRequests(conversation),
-          }),
+        ({ conversation }) => applyAuthoritativeSnapshot(conversation),
       ).then(() => undefined);
     },
   };
@@ -1379,6 +1620,9 @@ function readPersistedDraft(storage: SessionDraftStorage | undefined, key: strin
     const pendingCandidate = isPendingSendEnvelope(parsed.pendingSend) ? parsed.pendingSend : undefined;
     const pending = pendingCandidate ? { ...pendingCandidate, collaborationMode: pendingCandidate.collaborationMode ?? 'default' } : undefined;
     const deferredSends = Array.isArray(parsed.deferredSends) ? parsed.deferredSends.filter(isPendingSendEnvelope).map((envelope) => ({ ...envelope, collaborationMode: envelope.collaborationMode ?? 'default' })) : [];
+    const pendingBrowserCommentMarks = Array.isArray(parsed.pendingBrowserCommentMarks)
+      ? mergePendingBrowserCommentMarks(parsed.pendingBrowserCommentMarks.map(normalizePendingBrowserCommentMark).filter((task): task is PendingBrowserCommentMark => task !== null))
+      : [];
     const recoveredSubmissionIds = Array.isArray(parsed.recoveredSubmissionIds) ? parsed.recoveredSubmissionIds.filter((id): id is string => typeof id === 'string' && Boolean(id)) : [];
     const persistedDraft = typeof parsed.draft === 'string' ? parsed.draft : '';
     const restorePendingInput = pending && pending.deliveryState !== 'accepted' && !persistedDraft && attachments.length === 0 && !browserSubmission && !hasConversationContext(contextDraft);
@@ -1389,11 +1633,49 @@ function readPersistedDraft(storage: SessionDraftStorage | undefined, key: strin
       contextDraft: restorePendingInput ? pending.contextDraft : contextDraft,
       ...(pending ? { pendingSend: pending } : {}),
       ...(deferredSends.length > 0 ? { deferredSends } : {}),
+      ...(pendingBrowserCommentMarks.length > 0 ? { pendingBrowserCommentMarks } : {}),
       ...(recoveredSubmissionIds.length > 0 ? { recoveredSubmissionIds } : {}),
     };
   } catch {
     return empty;
   }
+}
+
+function normalizePendingBrowserCommentMark(value: unknown): PendingBrowserCommentMark | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const task = value as { id?: unknown; groups?: unknown };
+  if (typeof task.id !== 'string' || !task.id || !Array.isArray(task.groups) || task.groups.length === 0) return null;
+  const commentIdsByTab = new Map<string, Set<string>>();
+  for (const valueGroup of task.groups) {
+    if (typeof valueGroup !== 'object' || valueGroup === null) return null;
+    const group = valueGroup as { tabId?: unknown; commentIds?: unknown };
+    if (typeof group.tabId !== 'string' || !group.tabId || !Array.isArray(group.commentIds) || group.commentIds.length === 0) return null;
+    if (!group.commentIds.every((commentId) => typeof commentId === 'string' && Boolean(commentId))) return null;
+    const commentIds = commentIdsByTab.get(group.tabId) ?? new Set<string>();
+    group.commentIds.forEach((commentId) => commentIds.add(commentId as string));
+    commentIdsByTab.set(group.tabId, commentIds);
+  }
+  return {
+    id: task.id,
+    groups: [...commentIdsByTab].map(([tabId, commentIds]) => ({ tabId, commentIds: [...commentIds] })),
+  };
+}
+
+function mergePendingBrowserCommentMarks(tasks: PendingBrowserCommentMark[]): PendingBrowserCommentMark[] {
+  const groupsByTask = new Map<string, Map<string, Set<string>>>();
+  for (const task of tasks) {
+    const groupsByTab = groupsByTask.get(task.id) ?? new Map<string, Set<string>>();
+    for (const group of task.groups) {
+      const commentIds = groupsByTab.get(group.tabId) ?? new Set<string>();
+      group.commentIds.forEach((commentId) => commentIds.add(commentId));
+      groupsByTab.set(group.tabId, commentIds);
+    }
+    groupsByTask.set(task.id, groupsByTab);
+  }
+  return [...groupsByTask].map(([id, groupsByTab]) => ({
+    id,
+    groups: [...groupsByTab].map(([tabId, commentIds]) => ({ tabId, commentIds: [...commentIds] })),
+  }));
 }
 
 function isPendingSendEnvelope(value: unknown): value is PendingSendEnvelope {
@@ -1512,6 +1794,95 @@ function mergeAttachments(left: NativeConversationAttachment[], right: NativeCon
   return [...merged.values()];
 }
 
+function mergeRecoveredDraftText(current: string, recovered: string): string {
+  const normalizedRecovered = recovered.trim();
+  const normalizedCurrent = current.trim();
+  if (
+    !normalizedRecovered ||
+    normalizedCurrent === normalizedRecovered ||
+    normalizedCurrent.startsWith(`${normalizedRecovered}\n\n`) ||
+    normalizedCurrent.endsWith(`\n\n${normalizedRecovered}`) ||
+    normalizedCurrent.includes(`\n\n${normalizedRecovered}\n\n`)
+  ) {
+    return current;
+  }
+  return [normalizedRecovered, current].filter((part) => part.trim()).join('\n\n');
+}
+
+function mergeConversationContextDraft(left: ConversationContextDraft, right: ConversationContextDraft): ConversationContextDraft {
+  const responseAnnotations = new Map(left.responseAnnotations.map((annotation) => [annotation.id, annotation]));
+  const codeComments = new Map(left.codeComments.map((comment) => [comment.id, comment]));
+  for (const annotation of right.responseAnnotations) if (!responseAnnotations.has(annotation.id)) responseAnnotations.set(annotation.id, annotation);
+  for (const comment of right.codeComments) if (!codeComments.has(comment.id)) codeComments.set(comment.id, comment);
+  return {
+    responseAnnotations: [...responseAnnotations.values()],
+    codeComments: [...codeComments.values()],
+  };
+}
+
+function mergeBrowserSubmissions(current: ZeusBrowserPreparedSubmission | null, recovered: ZeusBrowserPreparedSubmission | null): ZeusBrowserPreparedSubmission | null {
+  if (!recovered) return current;
+  if (!current) return structuredClone(recovered);
+
+  const comments = new Map(recovered.comments.map((comment) => [comment.id, comment]));
+  for (const comment of current.comments) comments.set(comment.id, comment);
+  const attachments = new Map(recovered.attachments.map((attachment) => [attachment.localPath, attachment]));
+  for (const attachment of current.attachments) attachments.set(attachment.localPath, attachment);
+  return {
+    tabId: current.tabId,
+    commentIds: [...new Set([...recovered.commentIds, ...current.commentIds])],
+    content: mergeRecoveredDraftText(current.content, recovered.content),
+    comments: [...comments.values()],
+    attachments: [...attachments.values()],
+  };
+}
+
+function browserSubmissionFromQueuedSubmission(submission: NativeQueuedSubmission): ZeusBrowserPreparedSubmission | null {
+  const comments = submission.browserComments ?? [];
+  const firstComment = comments[0];
+  if (!firstComment) return null;
+  const screenshotPaths = new Set(comments.map((comment) => comment.screenshotPath).filter((path): path is string => Boolean(path)));
+  const attachments = (submission.attachments ?? []).flatMap((attachment) => {
+    if (!('localPath' in attachment) || !attachment.localPath || attachment.mime !== 'image/png' || !screenshotPaths.has(attachment.localPath)) return [];
+    return [{ name: attachment.name, mime: 'image/png' as const, size: attachment.size, localPath: attachment.localPath }];
+  });
+  return {
+    tabId: firstComment.tabId,
+    commentIds: comments.map((comment) => comment.id),
+    content: submission.browserCommentContent?.trim() || serializeRecoveredBrowserComments(comments),
+    comments: structuredClone(comments),
+    attachments,
+  };
+}
+
+function composerAttachmentsFromQueuedSubmission(submission: NativeQueuedSubmission): NativeConversationAttachment[] {
+  const browserScreenshotPaths = new Set((submission.browserComments ?? []).map((comment) => comment.screenshotPath).filter((path): path is string => Boolean(path)));
+  return (submission.attachments ?? []).filter((attachment) => !('localPath' in attachment) || !attachment.localPath || !browserScreenshotPaths.has(attachment.localPath));
+}
+
+function composerDraftFromQueuedSubmission(submission: NativeQueuedSubmission): string {
+  if (typeof submission.composerDraft === 'string') return submission.composerDraft;
+  const displayText = submission.content.trim();
+  if (submission.browserComments?.length && /^Browser comments \(\d+\)$/u.test(displayText)) return '';
+  if (submission.conversationContext && /^(?:Code comments|Response annotations) \(\d+\)$/u.test(displayText)) return '';
+  return submission.content;
+}
+
+function serializeRecoveredBrowserComments(comments: NonNullable<NativeQueuedSubmission['browserComments']>): string {
+  const sections = comments.map((comment) => {
+    const anchor = comment.anchor;
+    return [
+      `## ${comment.number}. ${anchor.kind} comment`,
+      `- Page: ${JSON.stringify(anchor.pageTitle || anchor.pageUrl)}`,
+      `- URL: ${JSON.stringify(anchor.pageUrl)}`,
+      ...(anchor.selector ? [`- Selector: ${JSON.stringify(anchor.selector)}`] : []),
+      ...(anchor.textRange?.text ? [`- Selected text: ${JSON.stringify(anchor.textRange.text)}`] : []),
+      `- Comment: ${JSON.stringify(comment.body)}`,
+    ].join('\n');
+  });
+  return ['# Browser comments', '', 'Recovered from the durable Zeus conversation submission.', '', ...sections].join('\n\n');
+}
+
 function eventRequestId(event: NativeConversationEvent): string | null {
   const requestId = event.payload.requestId;
   return typeof requestId === 'string' && requestId.trim() ? requestId : null;
@@ -1539,6 +1910,17 @@ function snapshotItemClientUserMessageId(item: { type: string; payload: Record<s
 
 function isManualConfirmationSubmission(submission: NativeQueuedSubmission): boolean {
   return (submission.status === 'queued' || submission.status === 'paused') && submission.pausedReason === 'user_confirmation' && !submission.providerTurnId;
+}
+
+function snapshotRequiresManualConfirmation(snapshot: NativeConversationSnapshot, clientUserMessageId: string): boolean {
+  return snapshot.submissions.some((submission) => submission.clientUserMessageId === clientUserMessageId && isManualConfirmationSubmission(submission));
+}
+
+function nativeQueueSnapshotFrom(value: unknown): NativeQueueSnapshot | null {
+  if (!value || typeof value !== 'object') return null;
+  const queue = value as Partial<NativeQueueSnapshot>;
+  if (!Array.isArray(queue.submissions) || !queue.state || typeof queue.state !== 'object') return null;
+  return queue as NativeQueueSnapshot;
 }
 
 function toSessionError(error: unknown, retryable: boolean): NativeSessionError {

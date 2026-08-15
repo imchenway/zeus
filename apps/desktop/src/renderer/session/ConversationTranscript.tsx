@@ -68,9 +68,9 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const [completedAnnouncement, setCompletedAnnouncement] = useState<{ key: string; text: string } | null>(null);
   const completedAnnouncementTrackerRef = useRef<CompletedItemAnnouncementTracker>({ hydrated: false, lastCompletedKey: null });
   const positionedConversationIdRef = useRef<string | null>(null);
-  const latestSubmittedMessageIdRef = useRef<string | null>(null);
+  const awaitingReplyMessageIdsRef = useRef<Set<string>>(new Set());
+  const awaitingReplyConversationIdRef = useRef<string | null>(null);
   const queuedSubmissions = useMemo(() => visibleQueuedSubmissions(props.state.queue), [props.state.queue]);
-  const queuedClientIds = useMemo(() => new Set(queuedSubmissions.map((submission) => submission.clientUserMessageId).filter((value): value is string => Boolean(value))), [queuedSubmissions]);
   const projectedItems = useMemo(
     () => props.state.itemOrder.map((key) => props.state.items[key]).filter((entry): entry is NativeSessionItemBuffer => Boolean(entry) && isVisibleTranscriptItem(entry)),
     [props.state.itemOrder, props.state.items],
@@ -86,27 +86,10 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       }),
     [collapsedErrorItems, props.state.turnsByProviderId],
   );
-  const taskPushOptimisticItems = useMemo(() => transcriptItems.filter((entry) => entry.optimistic && isTaskPushUserMessageItem(entry)), [transcriptItems]);
-  const items = useMemo(
-    () =>
-      latestReasoningItemsByTurn(
-        transcriptItems.filter((entry) => !entry.optimistic || isTaskPushUserMessageItem(entry)),
-        props.state.activeTurnId,
-      ),
-    [props.state.activeTurnId, transcriptItems],
-  );
-  const taskPushOptimisticKeys = useMemo(() => new Set(taskPushOptimisticItems.map((entry) => entry.key)), [taskPushOptimisticItems]);
-  const immediateOptimisticItems = useMemo(
-    () => transcriptItems.filter((entry) => entry.optimistic && entry.status !== 'queued' && !taskPushOptimisticKeys.has(entry.key) && !queuedClientIds.has(entry.clientUserMessageId ?? '')),
-    [queuedClientIds, taskPushOptimisticKeys, transcriptItems],
-  );
-  const queuedOptimisticItems = useMemo(
-    () => transcriptItems.filter((entry) => entry.optimistic && entry.status === 'queued' && !taskPushOptimisticKeys.has(entry.key) && !queuedClientIds.has(entry.clientUserMessageId ?? '')),
-    [queuedClientIds, taskPushOptimisticKeys, transcriptItems],
-  );
+  const items = useMemo(() => latestReasoningItemsByTurn(transcriptItems, props.state.activeTurnId), [props.state.activeTurnId, transcriptItems]);
   const historyHydrated = props.state.snapshot !== null;
   const enteringItemIds = useNewItemMotionIds(
-    [...items, ...immediateOptimisticItems, ...queuedOptimisticItems].map((item) => item.key),
+    items.map((item) => item.key),
     220,
     historyHydrated,
   );
@@ -124,7 +107,14 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const showActiveStatus = shouldShowTranscriptThinking(props.state, items);
   const activeStatusKind = props.state.conversationState === 'starting_turn' ? 'starting' : 'thinking';
   const historyUnavailable = !historyHydrated && (props.state.transportState === 'reconnecting' || props.state.transportState === 'failed');
-  const latestSubmittedMessageId = [...taskPushOptimisticItems, ...immediateOptimisticItems, ...queuedOptimisticItems].at(-1)?.clientUserMessageId ?? null;
+  const awaitingReplyMessageIdsKey = items
+    .filter(isOptimisticMessageAwaitingReply)
+    .map((item) => item.clientUserMessageId)
+    .filter((value): value is string => Boolean(value))
+    .join('\u0000');
+  const awaitingReplyMessageIds = useMemo(() => (awaitingReplyMessageIdsKey ? awaitingReplyMessageIdsKey.split('\u0000') : []), [awaitingReplyMessageIdsKey]);
+  const latestSubmittedMessageId = awaitingReplyMessageIds.at(-1) ?? null;
+  const turnPositionAnchorId = latestSubmittedMessageId ?? props.state.activeTurnId;
   const maintainLatestPosition = useCallback(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -164,13 +154,25 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
 
   useLayoutEffect(() => {
     const container = containerRef.current;
-    if (!container || !latestSubmittedMessageId || latestSubmittedMessageIdRef.current === latestSubmittedMessageId) return;
-    latestSubmittedMessageIdRef.current = latestSubmittedMessageId;
-    const effect = scrollController.onExplicitLatestRequest();
-    if (effect.type !== 'scroll_to_bottom') return;
-    scrollToLatest(container);
-    setReturnToLatestVisible(false);
-  }, [latestSubmittedMessageId, scrollController]);
+    const conversationId = props.state.conversationId;
+    if (awaitingReplyConversationIdRef.current !== conversationId) {
+      awaitingReplyConversationIdRef.current = conversationId;
+      awaitingReplyMessageIdsRef.current = new Set();
+    }
+    const previousIds = awaitingReplyMessageIdsRef.current;
+    const newlyAwaitingIds = awaitingReplyMessageIds.filter((clientId) => !previousIds.has(clientId));
+    awaitingReplyMessageIdsRef.current = new Set(awaitingReplyMessageIds);
+    const newestSubmittedMessageId = newlyAwaitingIds.at(-1);
+    if (!container || !newestSubmittedMessageId) return;
+    // 首次水合带回的旧排队消息只按普通历史定位；只有当前工作面明确提交的新消息才建立新轮次锚点。
+    if (historyHydrated && !activeTurnTrackingInitializedRef.current) return;
+    const effect = scrollController.onMessageSubmitted(metrics(container), Date.now());
+    if (effect.type === 'position_new_turn') {
+      pendingTurnPositionRef.current = true;
+      setTurnSpacerHeight(effect.spacerHeight);
+      setReturnToLatestVisible(false);
+    }
+  }, [awaitingReplyMessageIds, historyHydrated, props.state.conversationId, scrollController]);
 
   useEffect(() => {
     const resolution = resolveCompletedItemAnnouncement(completedAnnouncementTrackerRef.current, items, props.language);
@@ -178,41 +180,43 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     if (resolution.announcement) setCompletedAnnouncement(resolution.announcement);
   }, [items, props.language, props.state.transcriptRevision]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const container = containerRef.current;
     if (!container || !historyHydrated) return;
     if (!activeTurnTrackingInitializedRef.current) {
       // 首次水合得到的活动轮次属于既有会话现场，不能误当成当前页面刚开始的新轮次。
       activeTurnTrackingInitializedRef.current = true;
       previousTurnIdRef.current = props.state.activeTurnId;
-      pendingTurnPositionRef.current = false;
-      setTurnSpacerHeight(0);
+      if (!pendingTurnPositionRef.current) setTurnSpacerHeight(0);
       return;
     }
     if (props.state.activeTurnId && previousTurnIdRef.current !== props.state.activeTurnId) {
-      const effect = scrollController.onTurnStarted(metrics(container), Date.now());
-      if (effect.type === 'position_new_turn') {
-        pendingTurnPositionRef.current = true;
-        setTurnSpacerHeight(effect.spacerHeight);
+      // 本机提交已经在首帧完成定位时，Provider 开轮只接管身份，不再二次滚动。
+      if (!pendingTurnPositionRef.current) {
+        const effect = scrollController.onTurnStarted(metrics(container), Date.now());
+        if (effect.type === 'position_new_turn') {
+          pendingTurnPositionRef.current = true;
+          setTurnSpacerHeight(effect.spacerHeight);
+        }
       }
     }
-    if (!props.state.activeTurnId) {
+    if (!props.state.activeTurnId && !latestSubmittedMessageId) {
       pendingTurnPositionRef.current = false;
       setTurnSpacerHeight(0);
     }
     previousTurnIdRef.current = props.state.activeTurnId;
-  }, [historyHydrated, props.state.activeTurnId, scrollController]);
+  }, [historyHydrated, latestSubmittedMessageId, props.state.activeTurnId, scrollController]);
 
   useLayoutEffect(() => {
     const container = containerRef.current;
-    if (!container || !pendingTurnPositionRef.current || turnSpacerHeight <= 0 || !props.state.activeTurnId) return;
+    if (!container || !pendingTurnPositionRef.current || turnSpacerHeight <= 0 || !turnPositionAnchorId) return;
     const cancel = scheduleTurnPositionAfterSpacerCommit(
       container,
       (callback) => window.requestAnimationFrame(callback),
       () => pendingTurnPositionRef.current && scrollController.getState().mode === 'prework_watch',
     );
     return () => cancel();
-  }, [props.state.activeTurnId, scrollController, turnSpacerHeight]);
+  }, [scrollController, turnPositionAnchorId, turnSpacerHeight]);
 
   useLayoutEffect(() => {
     maintainLatestPosition();
@@ -291,7 +295,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                 </Fragment>
               );
             })
-          ) : !showActiveStatus && immediateOptimisticItems.length === 0 && queuedOptimisticItems.length === 0 && queuedSubmissions.length === 0 && historyHydrated ? (
+          ) : !showActiveStatus && queuedSubmissions.length === 0 && historyHydrated ? (
             <p className="session-transcript-empty">{props.language === 'zh-CN' ? '发送第一条消息后，真实 app-server 对话会显示在这里。' : 'Send the first message to begin the real app-server transcript.'}</p>
           ) : !showActiveStatus && historyUnavailable ? (
             <p className="session-transcript-empty" role="status">
@@ -301,20 +305,9 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           {orphanFailedTurns.map((turn) => (
             <TurnFailureCard key={`turn-failure:${turn.providerTurnId ?? turn.id}`} failure={turn.error!} language={props.language} providerErrors={providerErrorItemsByTurn.get(turn.providerTurnId ?? '')} />
           ))}
-          {immediateOptimisticItems.map((item) => (
-            <Fragment key={item.key}>
-              <ThreadItemView item={item} language={props.language} isLatest animateEntrance={enteringItemIds.has(item.key)} onVisibleContentChange={maintainLatestPosition} />
-              {!showActiveStatus || item.status === 'failed' || item.status === 'unconfirmed' || item.status === 'paused' ? (
-                <PendingMessageDeliveryFeedback item={item} stateError={props.state.error} language={props.language} onReturnToComposer={props.onRetryItem ? () => props.onRetryItem?.(item) : undefined} />
-              ) : null}
-            </Fragment>
-          ))}
           {props.creationStatus ? <SessionCreationNotice status={props.creationStatus} language={props.language} /> : null}
           {showActiveStatus ? <TranscriptActiveStatus language={props.language} kind={activeStatusKind} /> : null}
-          {queuedOptimisticItems.map((item) => (
-            <ThreadItemView key={item.key} item={item} language={props.language} animateEntrance={enteringItemIds.has(item.key)} onVisibleContentChange={maintainLatestPosition} />
-          ))}
-          {turnSpacerHeight > 0 && props.state.activeTurnId ? <span className="session-latest-turn-spacer" style={{ blockSize: `${turnSpacerHeight}px` }} aria-hidden="true" /> : null}
+          {turnSpacerHeight > 0 && turnPositionAnchorId ? <span className="session-latest-turn-spacer" style={{ blockSize: `${turnSpacerHeight}px` }} aria-hidden="true" /> : null}
           <span ref={latestContentMarkerRef} className="session-latest-content-marker" aria-hidden="true" />
         </section>
         <button
@@ -552,9 +545,9 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
     return <PlanSummary item={row.item} language={options.props.language} panelOpen={options.props.openPlanItemId === (row.item.localItemId ?? row.item.itemId)} onOpenPanel={options.props.onOpenPlan} />;
   }
   if (normalizeItemType(row.item.type) === 'reasoning') {
-    return <SessionReasoningSummary item={row.item} language={options.props.language} status={reasoningSummaryStatus(row.item, options.props.state)} />;
+    return <SessionReasoningSummary item={row.item} language={options.props.language} status={reasoningSummaryStatus(row.item, options.props.state)} onVisibleContentChange={options.onVisibleContentChange} />;
   }
-  const showTaskPushDeliveryFeedback = row.item.optimistic && isTaskPushUserMessageItem(row.item) && (!options.showThinking || row.item.status === 'failed' || row.item.status === 'unconfirmed' || row.item.status === 'paused');
+  const showPendingDeliveryFeedback = row.item.optimistic && shouldShowPendingMessageDeliveryFeedback(row.item, options.showThinking);
   return (
     <>
       <ThreadItemView
@@ -575,7 +568,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         onRemoveResponseAnnotation={options.props.onRemoveResponseAnnotation}
         onOpenSideChat={options.props.onOpenSideChat}
       />
-      {showTaskPushDeliveryFeedback ? (
+      {showPendingDeliveryFeedback ? (
         <PendingMessageDeliveryFeedback item={row.item} stateError={options.props.state.error} language={options.props.language} onReturnToComposer={options.props.onRetryItem ? () => options.props.onRetryItem?.(row.item) : undefined} />
       ) : null}
     </>
@@ -657,6 +650,21 @@ function PendingMessageDeliveryFeedback(props: { item: NativeSessionItemBuffer; 
       ) : null}
     </section>
   );
+}
+
+function shouldShowPendingMessageDeliveryFeedback(item: NativeSessionItemBuffer, showActiveStatus: boolean): boolean {
+  if (item.status === 'failed' || item.status === 'unconfirmed') return true;
+  if (item.status === 'queued') return false;
+  if (item.status === 'paused') return item.payload.pausedReason === 'recovery_required';
+  return !showActiveStatus;
+}
+
+function isOptimisticMessageAwaitingReply(item: NativeSessionItemBuffer): boolean {
+  if (!item.optimistic || itemRole(item) !== 'user' || item.status === 'failed' || item.status === 'unconfirmed') return false;
+  if (item.status !== 'paused') return true;
+  const reason = item.payload.pausedReason;
+  // 只有会自动恢复的暂停态继续为即将到来的回复保留空间；需要用户处理或结果待确认时撤销空白区。
+  return reason === undefined || reason === 'conflict_preparing' || reason === 'transport_unavailable';
 }
 
 function nativeSessionErrorFrom(value: unknown): NativeSessionError | null {
@@ -811,15 +819,10 @@ export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[],
 }
 
 function transcriptItemRenderKey(item: NativeSessionItemBuffer): string {
+  if (normalizeItemType(item.type) === 'reasoning') return `reasoning-summary:${encodeURIComponent(item.turnId)}`;
   const clientUserMessageId = itemRole(item) === 'user' ? (item.clientUserMessageId ?? item.durableClientUserMessageId) : null;
   // 用户消息的可见身份来自客户端消息 id；Provider 技术条目接管时不能替换整个消息节点。
   return clientUserMessageId ? `user-message:${encodeURIComponent(clientUserMessageId)}` : item.key;
-}
-
-function isTaskPushUserMessageItem(item: NativeSessionItemBuffer): boolean {
-  if (itemRole(item) !== 'user') return false;
-  const layout = item.payload.taskPushLayout;
-  return Boolean(layout && typeof layout === 'object' && !Array.isArray(layout) && (layout as Record<string, unknown>).kind === 'task_push');
 }
 
 export function isVisibleTranscriptItem(item: NativeSessionItemBuffer): boolean {

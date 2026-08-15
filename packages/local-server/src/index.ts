@@ -1618,8 +1618,10 @@ interface RuntimeInputBody {
 interface CreateConversationMessageBody {
   content?: string;
   displayText?: string;
+  composerDraft?: string;
   attachments?: NativeConversationAttachment[];
   browserComments?: unknown;
+  browserCommentContent?: string;
   conversationContext?: unknown;
   delivery?: 'queue' | 'steer_now';
   expectedTurnId?: string;
@@ -13740,15 +13742,18 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     return { runtimeState: 'ready', taskRunStatus: 'idle' };
   }
 
-  function toNativeSubmission(submission: NonNullable<ReturnType<ConversationSubmissionRepository['getById']>>) {
+  function toNativeSubmission(submission: NonNullable<ReturnType<ConversationSubmissionRepository['getById']>>, options: { includeRecoveryPayload?: boolean } = {}) {
     const input = parseJsonObject(submission.inputJson);
     return {
       id: submission.id,
       conversationId: submission.conversationId,
       content: typeof input.displayText === 'string' && input.displayText.trim() ? input.displayText : typeof input.text === 'string' ? input.text : '',
+      ...(options.includeRecoveryPayload && typeof input.composerDraft === 'string' ? { composerDraft: input.composerDraft } : {}),
       status: submission.status,
       delivery: input.delivery === 'steer_now' ? 'steer_now' : 'queue',
       attachments: Array.isArray(input.attachments) ? input.attachments : [],
+      ...(options.includeRecoveryPayload && Array.isArray(input.browserComments) && input.browserComments.length ? { browserComments: input.browserComments } : {}),
+      ...(options.includeRecoveryPayload && typeof input.browserCommentContent === 'string' ? { browserCommentContent: input.browserCommentContent } : {}),
       ...(isNativeApiRecord(input.conversationContext) ? { conversationContext: input.conversationContext } : {}),
       expectedTurnId: typeof input.expectedTurnId === 'string' ? input.expectedTurnId : null,
       clientUserMessageId: submission.clientMessageId,
@@ -13936,7 +13941,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         completedAt: item.completedAt,
         updatedAt: item.updatedAt,
       })),
-      submissions: submissions.map(toNativeSubmission),
+      submissions: submissions.map((submission) => toNativeSubmission(submission)),
       changeSets,
       queue: toNativeQueueApiSnapshot(conversation, submissions),
       requests: conversationRequests.listByConversation(conversation.id).map(toNativeServerRequest),
@@ -14256,7 +14261,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   function toNativeQueueApiSnapshot(conversation: ZeusConversationRecord, submissions = conversationSubmissions.listQueueByConversation(conversation.id)) {
     return {
       state: inferNativeConversationSnapshotState(conversation),
-      submissions: submissions.filter((submission) => (submission.status === 'queued' || submission.status === 'paused') && !submission.providerTurnId).map(toNativeSubmission),
+      submissions: submissions.filter((submission) => (submission.status === 'queued' || submission.status === 'paused') && !submission.providerTurnId).map((submission) => toNativeSubmission(submission, { includeRecoveryPayload: true })),
     };
   }
 
@@ -14310,6 +14315,22 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (!project) throw nativeApiError('ZEUS_PROJECT_NOT_FOUND', 'Conversation project was not found.');
     const attachments = normalizeNativeConversationAttachments(body.attachments, project.localPath);
     const browserComments = normalizeNativeBrowserComments(body.browserComments);
+    const composerDraft =
+      body.composerDraft === undefined
+        ? undefined
+        : typeof body.composerDraft === 'string' && body.composerDraft.length <= 100_000
+          ? body.composerDraft
+          : (() => {
+              throw nativeApiError('ZEUS_INVALID_CONVERSATION_MESSAGE', 'composerDraft must be a string no longer than 100000 characters.');
+            })();
+    const browserCommentContent =
+      body.browserCommentContent === undefined
+        ? undefined
+        : typeof body.browserCommentContent === 'string' && body.browserCommentContent.length <= 1_000_000
+          ? body.browserCommentContent
+          : (() => {
+              throw nativeApiError('ZEUS_INVALID_BROWSER_COMMENTS', 'browserCommentContent must be a string no larger than 1 MB.');
+            })();
     const conversationContext = normalizeNativeConversationContext(body.conversationContext);
     if (!content && attachments.length === 0 && browserComments.length === 0 && !conversationContext) {
       throw nativeApiError('ZEUS_INVALID_CONVERSATION_MESSAGE', 'Conversation message content, attachments, comments, or annotations are required.');
@@ -14407,8 +14428,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
               conversationId: conversation.id,
               content,
               ...(displayText ? { displayText } : {}),
+              ...(typeof composerDraft === 'string' ? { composerDraft } : {}),
               attachments,
               browserComments,
+              ...(browserCommentContent ? { browserCommentContent } : {}),
               ...(conversationContext ? { conversationContext } : {}),
               expectedTurnId: expectedTurnId!,
               idempotencyKey,
@@ -14419,8 +14442,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
               conversationId: conversation.id,
               content,
               ...(displayText ? { displayText } : {}),
+              ...(typeof composerDraft === 'string' ? { composerDraft } : {}),
               attachments,
               browserComments,
+              ...(browserCommentContent ? { browserCommentContent } : {}),
               ...(conversationContext ? { conversationContext } : {}),
               ...(selectedModel ? { model: selectedModel } : {}),
               ...(selectedModel ? { modelSourceId: selectedModelSourceId } : {}),
@@ -14440,8 +14465,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       JSON.stringify({
         ...input,
         delivery,
+        ...(typeof composerDraft === 'string' ? { composerDraft } : {}),
         attachments,
         browserComments,
+        ...(browserCommentContent ? { browserCommentContent } : {}),
         ...(conversationContext ? { conversationContext } : {}),
         expectedTurnId,
         ...(displayText ? { displayText } : {}),

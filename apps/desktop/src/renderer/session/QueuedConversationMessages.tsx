@@ -1,7 +1,6 @@
 import { type FormEvent, type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { NativeQueuedSubmission, NativeQueueSnapshot, NativeSessionState } from './sessionTypes.js';
-import { SafeMarkdown, type SessionUiLanguage } from './ThreadItemView.js';
-import { ConversationPendingAttachmentImages, isPendingImageAttachment } from './ConversationResources.js';
+import type { SessionUiLanguage } from './ThreadItemView.js';
 import { autosizeTextarea } from './textareaAutosize.js';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
@@ -46,7 +45,8 @@ const labels = {
     retry: '恢复并发送',
     saveFailed: '保存失败，编辑内容已保留。',
     attachmentOnly: '仅附件消息',
-    attachments: '附件',
+    item: (position: number) => `第 ${position} 条`,
+    attachmentCount: (count: number) => `${count} 个附件`,
     reordered: (position: number, total: number) => `队列消息已移到第 ${position} 项，共 ${total} 项`,
   },
   'en-US': {
@@ -78,7 +78,8 @@ const labels = {
     retry: 'Restore and send',
     saveFailed: 'Save failed. Your edit is preserved.',
     attachmentOnly: 'Attachment-only message',
-    attachments: 'Attachments',
+    item: (position: number) => `Message ${position}`,
+    attachmentCount: (count: number) => `${count} attachment${count === 1 ? '' : 's'}`,
     reordered: (position: number, total: number) => `Queued message moved to position ${position} of ${total}`,
   },
 } as const;
@@ -96,6 +97,18 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
   const writable = props.state.transportState === 'ready' && props.state.conversationState !== 'legacy_readonly';
   const active = props.state.conversationState === 'active_prework' || props.state.conversationState === 'active_final_answer';
   const queueExplanation = describeQueueState(props.state, queue, copy);
+  const attentionRequired = queue.some((submission) => submission.status === 'paused' && submission.pausedReason !== 'conflict_preparing');
+  const [expanded, setExpanded] = useState(attentionRequired);
+  const previousQueueLengthRef = useRef(queue.length);
+
+  useEffect(() => {
+    if (attentionRequired) setExpanded(true);
+  }, [attentionRequired]);
+
+  useEffect(() => {
+    if (previousQueueLengthRef.current > 0 && queue.length === 0) setExpanded(false);
+    previousQueueLengthRef.current = queue.length;
+  }, [queue.length]);
 
   useApplicationErrorDialog(editError, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
@@ -157,16 +170,16 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
   }
 
   return (
-    <section className="session-queued-messages" aria-label={copy.region}>
-      <output className="session-sr-only" aria-live="polite" aria-atomic="true">
-        {announcement}
-      </output>
-      <header className="session-queued-messages-header">
+    <details className="session-queued-messages" aria-label={copy.region} open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
+      <summary className="session-queued-messages-header">
         <strong>{copy.heading(queue.length)}</strong>
         <span role="status" aria-live="polite">
           {queueExplanation}
         </span>
-      </header>
+      </summary>
+      <output className="session-sr-only" aria-live="polite" aria-atomic="true">
+        {announcement}
+      </output>
       <ol>
         {queue.map((submission, index) => (
           <li key={submission.id}>
@@ -197,19 +210,15 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                 </form>
               ) : (
                 <div className="session-queued-message-content">
-                  {submission.content.trim() ? <SafeMarkdown text={submission.content} language={props.language} /> : <p className="session-queued-message-empty">{copy.attachmentOnly}</p>}
+                  <p className="session-queued-message-reference">
+                    <strong>{copy.item(index + 1)}</strong>
+                    <span>{queuedMessagePreview(submission, copy.attachmentOnly)}</span>
+                    {(submission.attachments?.length ?? 0) > 0 ? <small>{copy.attachmentCount(submission.attachments!.length)}</small> : null}
+                  </p>
                   {submission.error?.message ? (
                     <small className="session-queued-message-error" role="alert">
                       {submission.error.message}
                     </small>
-                  ) : null}
-                  <ConversationPendingAttachmentImages attachments={submission.attachments ?? []} language={props.language} />
-                  {queuedNonImageAttachments(submission).length ? (
-                    <ul className="session-queued-message-attachments" aria-label={copy.attachments}>
-                      {queuedNonImageAttachments(submission).map((attachment) => (
-                        <li key={`${attachment.name}:${attachment.localPath ?? attachment.uploadRef ?? ''}`}>{attachment.name}</li>
-                      ))}
-                    </ul>
                   ) : null}
                 </div>
               )}
@@ -244,7 +253,7 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                     type="button"
                     onClick={() => {
                       setEditingId(submission.id);
-                      setEditDraft(submission.content);
+                      setEditDraft(queuedMessageEditDraft(submission));
                       setEditError(null);
                     }}
                     disabled={!writable || busy || !props.onEdit}
@@ -266,12 +275,25 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
           </li>
         ))}
       </ol>
-    </section>
+    </details>
   );
 }
 
-function queuedNonImageAttachments(submission: NativeQueuedSubmission) {
-  return (submission.attachments ?? []).filter((attachment) => !isPendingImageAttachment(attachment));
+function queuedMessagePreview(submission: NativeQueuedSubmission, attachmentOnly: string): string {
+  const content = submission.content.trim().replace(/\s+/gu, ' ');
+  if (!content) return attachmentOnly;
+  return content.length > 96 ? `${content.slice(0, 95).trimEnd()}…` : content;
+}
+
+function queuedMessageEditDraft(submission: NativeQueuedSubmission): string {
+  if (typeof submission.composerDraft === 'string') return submission.composerDraft;
+  const content = submission.content.trim();
+  if (submission.browserComments?.length && content === `Browser comments (${submission.browserComments.length})`) return '';
+  const codeCommentCount = submission.conversationContext?.codeComments.length ?? 0;
+  if (codeCommentCount > 0 && content === `Code comments (${codeCommentCount})`) return '';
+  const responseAnnotationCount = submission.conversationContext?.responseAnnotations.length ?? 0;
+  if (responseAnnotationCount > 0 && content === `Response annotations (${responseAnnotationCount})`) return '';
+  return submission.content;
 }
 
 function describeQueueState(state: NativeSessionState, queue: readonly NativeQueuedSubmission[], copy: (typeof labels)[SessionUiLanguage]): string {
