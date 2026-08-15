@@ -111,8 +111,9 @@ export function ResponseSelectionActions(props: {
             type="button"
             onPointerDown={(event) => event.preventDefault()}
             onClick={() => {
-              props.onAddAnnotation?.(candidate.anchor);
+              const id = props.onAddAnnotation?.(candidate.anchor);
               setCandidate(null);
+              if (id) setEditingId(id);
             }}
           >
             {props.language === 'zh-CN' ? '添加到对话' : 'Add to chat'}
@@ -168,7 +169,7 @@ function ResponseAnnotationEditor(props: { annotation: ConversationResponseAnnot
           ×
         </button>
       </header>
-      <textarea value={note} placeholder={zh ? '添加可选评论…' : 'Add an optional comment…'} onChange={(event) => setNote(event.currentTarget.value)} />
+      <textarea autoFocus value={note} placeholder={zh ? '添加评论…' : 'Add a comment…'} onChange={(event) => setNote(event.currentTarget.value)} />
       <footer>
         <button
           type="button"

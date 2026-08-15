@@ -1866,7 +1866,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     const current = props.state?.contextDraft;
     if (!current || !actions.onContextDraftChange) return '';
     actions.onContextDraftChange({ ...current, responseAnnotations: [...current.responseAnnotations, { id, anchor }] });
-    requestAnimationFrame(() => composerRef.current?.focus());
     return id;
   }
 
