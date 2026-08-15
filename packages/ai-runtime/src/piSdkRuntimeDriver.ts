@@ -431,6 +431,8 @@ function toPiModelConfig(model: ConfiguredModelDefinition) {
     maxTokens: model.maxTokens,
     compat: {
       thinkingFormat: model.capability.reasoning.thinkingFormat,
+      // 外部 OpenAI 兼容端点普遍支持 system，但不一定接受 OpenAI 专有的 developer 角色。
+      supportsDeveloperRole: false,
       supportsReasoningEffort: model.capability.reasoning.state === 'supported',
       supportsUsageInStreaming: model.capability.usage.state !== 'unsupported',
       supportsStrictMode: false,

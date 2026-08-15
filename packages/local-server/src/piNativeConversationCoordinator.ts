@@ -605,6 +605,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     }
     if (event.type === 'agent_settled' || event.type === 'runtime_error') {
       const failed = event.type === 'runtime_error';
+      const warning = failed && payload.code === 'ZEUS_PI_MODEL_REQUEST_FAILED';
       const interrupted = interruptedRuns.delete(event.nativeRunId);
       const status = interrupted ? 'interrupted' : failed ? 'failed' : 'completed';
       const existingTurn = options.turns.getById(run.turnId);
@@ -627,10 +628,14 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         settleInterruptedRun(run, event.createdAt);
       } else {
         options.submissions.updateStatus(run.submissionId, failed ? 'failed' : 'completed', { ...(failed ? { error: payload } : {}), resolvedAt: event.createdAt, updatedAt: event.createdAt });
-        options.conversations.updateAgentRuntime(run.conversationId, { providerState: failed ? 'failed' : 'ready', status: failed ? 'failed' : 'open' });
+        options.conversations.updateAgentRuntime(run.conversationId, {
+          providerState: warning || !failed ? 'ready' : 'failed',
+          status: warning || !failed ? 'open' : 'failed',
+        });
       }
       options.conversations.markAttentionUnread(run.conversationId, {
-        kind: status,
+        // 供应商拒绝单次模型请求只提醒用户，不把仍可继续的 Pi 会话标成失败。
+        kind: warning ? 'unread' : status,
         turnId: run.providerTurnId,
         occurredAt: event.createdAt,
       });
@@ -651,7 +656,14 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       runs.delete(event.nativeRunId);
       await options.db.save();
       if (run.usage.totalTokens > 0) options.publish('usage.changed', { providerId: `pi:${run.sourceId}`, conversationId: run.conversationId, updatedAt: event.createdAt });
-      publish('conversation.turn.completed', run.conversationId, { turnId: run.providerTurnId, submissionId: run.submissionId, status, completedAt: event.createdAt, notificationEligible: true });
+      publish('conversation.turn.completed', run.conversationId, {
+        turnId: run.providerTurnId,
+        submissionId: run.submissionId,
+        status,
+        ...(warning ? { severity: 'warning' } : {}),
+        completedAt: event.createdAt,
+        notificationEligible: true,
+      });
       if (interrupted) publish('conversation.queue.changed', run.conversationId, { turnId: run.providerTurnId, submissionId: run.submissionId });
       if (!failed && !interrupted) void dispatchNextQueued(run.conversationId).catch(() => undefined);
     }

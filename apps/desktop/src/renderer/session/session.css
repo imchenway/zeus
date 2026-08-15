@@ -2525,6 +2525,19 @@
   font-weight: 620;
 }
 
+.session-codex-parity-v1 .session-turn-failure[data-severity='warning'] {
+  background: color-mix(in srgb, var(--session-warning) 7%, var(--session-control));
+  border-color: color-mix(in srgb, var(--session-warning) 30%, var(--session-line));
+}
+
+.session-codex-parity-v1 .session-turn-failure[data-severity='warning'] > strong {
+  color: var(--session-warning);
+}
+
+.session-codex-parity-v1 .session-turn-failure[data-severity='warning'] .session-turn-failure-details {
+  border-block-start-color: color-mix(in srgb, var(--session-warning) 20%, var(--session-line-soft));
+}
+
 .session-codex-parity-v1 .session-turn-failure {
   background: color-mix(in srgb, var(--session-danger) 7%, var(--session-control));
   border: 1px solid color-mix(in srgb, var(--session-danger) 28%, var(--session-line));

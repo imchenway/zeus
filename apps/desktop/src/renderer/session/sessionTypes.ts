@@ -911,6 +911,7 @@ export type NativeConversationAttentionKind = 'none' | 'unread' | 'completed' | 
 type NativeTurnEventPayload = NativeEventIdentity & {
   turnId: string;
   status?: string;
+  severity?: 'warning' | 'error';
   submissionId?: string;
   startedAt?: string;
   completedAt?: string;
