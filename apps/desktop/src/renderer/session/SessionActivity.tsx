@@ -24,7 +24,7 @@ export function isOperationalActivityItem(item: NativeSessionItemBuffer): boolea
   return operationalTypes.has(type);
 }
 
-export const SessionActivityGroup = memo(function SessionActivityGroup(props: { items: NativeSessionItemBuffer[]; language: SessionUiLanguage }) {
+export const SessionActivityGroup = memo(function SessionActivityGroup(props: { items: NativeSessionItemBuffer[]; language: SessionUiLanguage; motionActive?: boolean }) {
   const liveItem = [...props.items].reverse().find((item) => item.status !== 'completed' && item.status !== 'failed') ?? null;
   const active = Boolean(liveItem);
   const summary = activitySummary(props.items, props.language, active);
@@ -39,10 +39,12 @@ export const SessionActivityGroup = memo(function SessionActivityGroup(props: { 
   }, [active]);
 
   return (
-    <section className="session-activity-group" data-active={active || undefined} aria-label={props.language === 'zh-CN' ? '工作活动' : 'Work activity'}>
+    <section className="session-activity-group" data-active={active || undefined} data-motion-active={props.motionActive || undefined} aria-label={props.language === 'zh-CN' ? '工作活动' : 'Work activity'}>
       <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
         <summary>
-          <GroupIcon aria-hidden="true" weight="regular" />
+          <span className="session-activity-group-icon" aria-hidden="true">
+            <GroupIcon weight="regular" />
+          </span>
           <span>{summary}</span>
           <CaretDown className="session-activity-caret" aria-hidden="true" weight="bold" />
         </summary>
@@ -58,7 +60,7 @@ export const SessionActivityGroup = memo(function SessionActivityGroup(props: { 
             ) : null}
             <ol>
               {props.items.map((item) => (
-                <ActivityItemRow key={item.key} item={item} language={props.language} />
+                <ActivityItemRow key={item.key} item={item} language={props.language} motionActive={Boolean(props.motionActive && item.key === liveItem?.key)} />
               ))}
             </ol>
           </div>
@@ -73,10 +75,11 @@ function sameActivityGroupProps(
   previous: Readonly<{
     items: NativeSessionItemBuffer[];
     language: SessionUiLanguage;
+    motionActive?: boolean;
   }>,
-  next: Readonly<{ items: NativeSessionItemBuffer[]; language: SessionUiLanguage }>,
+  next: Readonly<{ items: NativeSessionItemBuffer[]; language: SessionUiLanguage; motionActive?: boolean }>,
 ): boolean {
-  if (previous.language !== next.language || previous.items.length !== next.items.length) return false;
+  if (previous.language !== next.language || previous.motionActive !== next.motionActive || previous.items.length !== next.items.length) return false;
   return previous.items.every((item, index) => item === next.items[index]);
 }
 
@@ -92,14 +95,14 @@ function ActivityLiveRow(props: { item: NativeSessionItemBuffer; language: Sessi
   );
 }
 
-const ActivityItemRow = memo(function ActivityItemRow(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage }) {
+const ActivityItemRow = memo(function ActivityItemRow(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage; motionActive?: boolean }) {
   const title = activityItemTitle(props.item, props.language);
   const detail = activityItemDetail(props.item);
   const [open, setOpen] = useState(false);
   const Icon = activityItemIcon(props.item);
   const outputPreview = open && detail?.output ? activityOutputPreview(detail.output) : null;
   return (
-    <li data-status={props.item.status}>
+    <li data-status={props.item.status} data-motion-active={props.motionActive || undefined}>
       <span className="session-activity-item-icon" aria-hidden="true">
         <Icon weight="regular" />
       </span>
@@ -210,7 +213,9 @@ export function SessionPlanProgress(props: { plan: NativeTurnPlanSnapshot; langu
                 const StepIcon = step.status === 'completed' ? CheckCircle : step.status === 'inProgress' ? CircleNotch : Circle;
                 return (
                   <li key={`${index}-${step.step}`} data-status={step.status}>
-                    <StepIcon aria-hidden="true" weight={step.status === 'completed' ? 'fill' : 'regular'} />
+                    <span className="session-plan-step-icon" aria-hidden="true">
+                      <StepIcon weight={step.status === 'completed' ? 'fill' : 'regular'} />
+                    </span>
                     <span>{step.step}</span>
                     <small>{planStatusLabel(step.status, props.language)}</small>
                   </li>

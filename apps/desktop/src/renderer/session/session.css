@@ -14551,16 +14551,6 @@
   outline: none;
 }
 
-.session-codex-parity-v1 .session-streaming-markdown[data-active='true']::after {
-  animation: session-streaming-progress 900ms linear infinite;
-  background: linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--session-accent) 68%, transparent) 45%, transparent 100%);
-  background-size: 200% 100%;
-  block-size: 2px;
-  border-radius: 999px;
-  content: '';
-  inline-size: 36px;
-}
-
 @keyframes session-workspace-target-reveal {
   from {
     opacity: 0.92;
@@ -14571,15 +14561,6 @@
   from {
     opacity: 0.74;
     transform: translateY(4px);
-  }
-}
-
-@keyframes session-streaming-progress {
-  from {
-    background-position: 140% 0;
-  }
-  to {
-    background-position: -140% 0;
   }
 }
 
@@ -14928,5 +14909,281 @@
 @media (prefers-reduced-motion: reduce) {
   .session-workspace-root .session-subagent-status-dot[data-status='running'] {
     box-shadow: none;
+  }
+}
+
+/* ZEUS-0307：会话工作态共享低饱和蓝灰与慢节奏；正文区由唯一活动焦点决定谁可以循环动画。 */
+.session-codex-parity-v1 {
+  --session-working-color: color-mix(in oklab, var(--session-accent) 38%, var(--session-text-muted));
+  --session-working-halo: color-mix(in oklab, var(--session-working-color) 15%, transparent);
+  --session-working-soft: color-mix(in oklab, var(--session-working-color) 12%, var(--session-selected));
+  --session-working-cycle: 1800ms;
+  --session-working-spinner-cycle: 1200ms;
+}
+
+.session-codex-parity-v1 .session-activity-live,
+.session-codex-parity-v1 .session-thinking-indicator,
+.session-codex-parity-v1 .session-thinking-indicator::after,
+.session-codex-parity-v1 .session-thinking-pulse,
+.session-codex-parity-v1 .session-reasoning-summary[data-status='active'] .session-reasoning-summary-icon,
+.session-codex-parity-v1 .session-streaming-markdown-placeholder,
+.session-codex-parity-v1 .session-streaming-markdown-placeholder span {
+  animation: none;
+}
+
+.session-codex-parity-v1 .session-thinking-indicator::after {
+  display: none;
+}
+
+.session-codex-parity-v1 :where(.session-reasoning-summary-icon, .session-activity-group-icon, .session-activity-item-icon, .session-plan-summary-symbol) {
+  align-items: center;
+  border-radius: 999px;
+  display: inline-grid;
+  flex: 0 0 auto;
+  justify-items: center;
+}
+
+.session-codex-parity-v1 .session-activity-group-icon,
+.session-codex-parity-v1 .session-activity-group-icon > svg {
+  block-size: 19px;
+  inline-size: 19px;
+}
+
+.session-codex-parity-v1 .session-plan-summary-symbol,
+.session-codex-parity-v1 .session-plan-summary-symbol > svg {
+  block-size: 17px;
+  inline-size: 17px;
+}
+
+.session-codex-parity-v1 .session-reasoning-summary[data-motion-active='true'] .session-reasoning-summary-icon,
+.session-codex-parity-v1 .session-activity-group[data-motion-active='true'] > .session-activity-live .session-activity-item-icon,
+.session-codex-parity-v1 .session-activity-group[data-motion-active='true'] .session-activity-body li[data-motion-active='true'] > .session-activity-item-icon,
+.session-codex-parity-v1 .session-plan-summary[data-motion-active='true'] .session-plan-summary-symbol {
+  animation: session-working-breathe var(--session-working-cycle) var(--session-ease-out) infinite;
+  background: var(--session-working-halo);
+  box-shadow: 0 0 0 3px var(--session-working-halo);
+  color: var(--session-working-color);
+}
+
+.session-codex-parity-v1 .session-transcript-thinking[data-motion-active='true'] .session-thinking-pulse {
+  animation: session-working-breathe var(--session-working-cycle) var(--session-ease-out) infinite;
+  background: var(--session-working-color);
+  box-shadow: 0 0 0 3px var(--session-working-halo);
+  color: var(--session-working-color);
+}
+
+.session-codex-parity-v1 .session-thread-item[data-motion-active='true'] .session-thinking-indicator {
+  animation: session-working-breathe var(--session-working-cycle) var(--session-ease-out) infinite;
+  color: var(--session-working-color);
+}
+
+.session-codex-parity-v1 .session-markdown [data-streaming-tail-anchor='true']::after,
+.session-codex-parity-v1 .session-markdown > .session-streaming-cursor {
+  animation: session-working-breathe var(--session-working-cycle) var(--session-ease-out) infinite;
+  background: var(--session-working-color);
+  block-size: 2px;
+  border-radius: 999px;
+  box-shadow: 0 0 0 2px var(--session-working-halo);
+  content: '';
+  inline-size: 12px;
+}
+
+.session-codex-parity-v1 .session-markdown [data-streaming-tail-anchor='true']::after {
+  display: inline-block;
+  margin-inline-start: 5px;
+  vertical-align: 0.12em;
+}
+
+.session-codex-parity-v1 .session-markdown > .session-streaming-cursor {
+  display: block;
+  margin-block-start: 6px;
+}
+
+.session-codex-parity-v1 .session-markdown:has([data-streaming-tail-anchor='true']) > .session-streaming-cursor {
+  display: none;
+}
+
+.session-codex-parity-v1 .session-thread-item[data-motion-active='true'] .session-streaming-markdown-placeholder,
+.session-codex-parity-v1 .session-streaming-markdown[data-motion-active='true'] .session-streaming-markdown-placeholder {
+  animation: session-working-breathe var(--session-working-cycle) var(--session-ease-out) infinite;
+  transform-origin: left center;
+}
+
+/* 三条骨架线只保留静态轮廓，由外层统一呼吸，确保一轮正文只有一个循环实例。 */
+.session-codex-parity-v1 .session-thread-item[data-motion-active='true'] .session-streaming-markdown-placeholder span,
+.session-codex-parity-v1 .session-streaming-markdown[data-motion-active='true'] .session-streaming-markdown-placeholder span {
+  background: var(--session-working-soft);
+  background-size: auto;
+}
+
+.session-codex-parity-v1 .session-loading-line {
+  animation: session-working-sweep 2200ms var(--session-ease-out) infinite;
+  background: linear-gradient(90deg, var(--session-working-soft) 0%, color-mix(in oklab, var(--session-working-color) 20%, var(--session-canvas)) 48%, var(--session-working-soft) 76%);
+  background-size: 220% 100%;
+}
+
+.session-codex-parity-v1 .session-loading-line:nth-child(2) {
+  animation-delay: 160ms;
+}
+
+.session-codex-parity-v1 :where(.session-command-spinner, .browser-tab-loading, .session-new-conversation-context-spinner) {
+  animation: session-working-spin var(--session-working-spinner-cycle) linear infinite;
+  border: 1.5px solid var(--session-working-color);
+  border-inline-end-color: transparent;
+  border-radius: 999px;
+  box-sizing: border-box;
+  display: inline-block;
+  flex: 0 0 auto;
+}
+
+.session-codex-parity-v1 .session-command-spinner {
+  block-size: 16px;
+  inline-size: 16px;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-spinner {
+  block-size: 14px;
+  inline-size: 14px;
+}
+
+.session-codex-parity-v1 .browser-tab-loading {
+  block-size: 11px;
+  inline-size: 11px;
+}
+
+.session-codex-parity-v1 .session-reconnect-symbol {
+  animation: session-working-spin 1400ms linear infinite;
+  block-size: 18px;
+  color: var(--session-working-color);
+  display: grid;
+  inline-size: 18px;
+  margin-block-start: 2px;
+  place-items: center;
+}
+
+.session-codex-parity-v1 .session-reconnect-symbol > svg {
+  block-size: 18px;
+  inline-size: 18px;
+}
+
+.session-codex-parity-v1 .session-connection-symbol,
+.session-codex-parity-v1 .browser-workspace-loading[data-loading='true'] .browser-workspace-loading-symbol,
+.session-workspace-root .session-subagent-status-dot[data-status='running'] {
+  animation: session-working-breathe var(--session-working-cycle) var(--session-ease-out) infinite;
+  color: var(--session-working-color);
+}
+
+.session-codex-parity-v1 .browser-workspace-loading-symbol,
+.session-codex-parity-v1 .browser-workspace-loading-symbol > svg {
+  block-size: 24px;
+  inline-size: 24px;
+}
+
+.session-codex-parity-v1 .browser-workspace-loading-symbol {
+  display: grid;
+  place-items: center;
+}
+
+.session-workspace-root .session-subagent-status-dot[data-status='running'] {
+  background: var(--session-working-color);
+  box-shadow: 0 0 0 3px var(--session-working-halo);
+}
+
+.session-codex-parity-v1 .session-plan-step-icon {
+  block-size: 16px;
+  color: var(--session-text-muted);
+  display: grid;
+  inline-size: 16px;
+  place-items: center;
+}
+
+.session-codex-parity-v1 .session-plan-step-icon > svg {
+  block-size: 16px;
+  inline-size: 16px;
+}
+
+.session-codex-parity-v1 .session-plan-body li[data-status='completed'] > .session-plan-step-icon {
+  color: var(--session-success);
+}
+
+.session-codex-parity-v1 .session-plan-body li[data-status='inProgress'] > .session-plan-step-icon {
+  animation: session-working-spin var(--session-working-spinner-cycle) linear infinite;
+  color: var(--session-working-color);
+}
+
+@keyframes session-working-breathe {
+  0%,
+  20%,
+  72%,
+  100% {
+    opacity: 0.44;
+    transform: scale(0.96);
+  }
+  48% {
+    opacity: 0.94;
+    transform: scale(1);
+  }
+}
+
+@keyframes session-working-sweep {
+  0%,
+  18% {
+    background-position: 120% 0;
+  }
+  72%,
+  100% {
+    background-position: -120% 0;
+  }
+}
+
+@keyframes session-working-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (forced-colors: active) {
+  .session-codex-parity-v1 {
+    --session-working-color: Highlight;
+    --session-working-halo: transparent;
+    --session-working-soft: Canvas;
+  }
+
+  .session-codex-parity-v1 .session-markdown [data-streaming-tail-anchor='true']::after,
+  .session-codex-parity-v1 .session-markdown > .session-streaming-cursor,
+  .session-workspace-root .session-subagent-status-dot[data-status='running'] {
+    background: Highlight;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-codex-parity-v1
+    :where(
+      .session-reasoning-summary-icon,
+      .session-activity-item-icon,
+      .session-plan-summary-symbol,
+      .session-thinking-pulse,
+      .session-thinking-indicator,
+      .session-streaming-markdown-placeholder,
+      .session-streaming-markdown-placeholder span,
+      .session-loading-line,
+      .session-command-spinner,
+      .browser-tab-loading,
+      .session-new-conversation-context-spinner,
+      .session-reconnect-symbol,
+      .session-connection-symbol,
+      .browser-workspace-loading-symbol,
+      .session-plan-step-icon
+    ),
+  .session-codex-parity-v1 .session-markdown [data-streaming-tail-anchor='true']::after,
+  .session-codex-parity-v1 .session-markdown > .session-streaming-cursor,
+  .session-workspace-root .session-subagent-status-dot[data-status='running'] {
+    animation: none !important;
+    transform: none !important;
+  }
+
+  .session-codex-parity-v1 .session-markdown [data-streaming-tail-anchor='true']::after,
+  .session-codex-parity-v1 .session-markdown > .session-streaming-cursor {
+    opacity: 0.72;
   }
 }

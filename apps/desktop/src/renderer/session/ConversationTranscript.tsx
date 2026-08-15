@@ -106,6 +106,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   }, [items, props.state.turnsByProviderId]);
   const showActiveStatus = shouldShowTranscriptThinking(props.state, items);
+  const motionFocus = resolveSessionMotionFocus(props.state, transcriptItems, showActiveStatus);
   const activeStatusKind = props.state.conversationState === 'starting_turn' ? 'starting' : 'thinking';
   const historyUnavailable = !historyHydrated && (props.state.transportState === 'reconnecting' || props.state.transportState === 'failed');
   const awaitingReplyMessageIdsKey = items
@@ -254,7 +255,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                   return (
                     <Fragment key={row.key}>
                       {row.rows.map((child) => (
-                        <Fragment key={child.key}>{renderTranscriptRow(child, transcriptRowRenderOptions(props, items, showActiveStatus, lastUserKey, true, enteringItemIds, maintainLatestPosition))}</Fragment>
+                        <Fragment key={child.key}>{renderTranscriptRow(child, transcriptRowRenderOptions(props, items, showActiveStatus, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition))}</Fragment>
                       ))}
                     </Fragment>
                   );
@@ -263,7 +264,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                 const active = isActiveSessionTurn(turn);
                 const process = row.rows.map((child) => (
                   <Fragment key={child.key}>
-                    {renderTranscriptRow(child, transcriptRowRenderOptions(props, items, showActiveStatus && props.state.activeTurnId === row.turnId, lastUserKey, true, enteringItemIds, maintainLatestPosition))}
+                    {renderTranscriptRow(child, transcriptRowRenderOptions(props, items, showActiveStatus && props.state.activeTurnId === row.turnId, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition))}
                   </Fragment>
                 ));
                 return (
@@ -290,7 +291,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
               const closesVisibleTurn = lastItemKeyByTurn[lastRowItem.turnId] === lastRowItem.key;
               return (
                 <Fragment key={row.key}>
-                  {renderTranscriptRow(row, transcriptRowRenderOptions(props, items, showActiveStatus, lastUserKey, false, enteringItemIds, maintainLatestPosition))}
+                  {renderTranscriptRow(row, transcriptRowRenderOptions(props, items, showActiveStatus, motionFocus, lastUserKey, false, enteringItemIds, maintainLatestPosition))}
                   {closesVisibleTurn ? renderTurnArtifacts(lastRowItem.turnId, props, lastRowItem.key, providerErrorItemsByTurn.get(lastRowItem.turnId)) : null}
                   {closesVisibleTurn && turn && !isActiveSessionTurn(turn) ? <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} /> : null}
                 </Fragment>
@@ -307,7 +308,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             <TurnFailureCard key={`turn-failure:${turn.providerTurnId ?? turn.id}`} failure={turn.error!} language={props.language} providerErrors={providerErrorItemsByTurn.get(turn.providerTurnId ?? '')} />
           ))}
           {props.creationStatus ? <SessionCreationNotice status={props.creationStatus} language={props.language} /> : null}
-          {showActiveStatus ? <TranscriptActiveStatus language={props.language} kind={activeStatusKind} /> : null}
+          {motionFocus?.kind === 'thinking' ? <TranscriptActiveStatus language={props.language} kind={activeStatusKind} /> : null}
           {turnSpacerHeight > 0 && turnPositionAnchorId ? <span className="session-latest-turn-spacer" style={{ blockSize: `${turnSpacerHeight}px` }} aria-hidden="true" /> : null}
           <span ref={latestContentMarkerRef} className="session-latest-content-marker" aria-hidden="true" />
         </section>
@@ -521,6 +522,7 @@ interface TranscriptRowRenderOptions {
   props: ConversationTranscriptProps;
   items: readonly NativeSessionItemBuffer[];
   showThinking: boolean;
+  motionFocus: SessionMotionFocus;
   lastUserKey: string | undefined;
   insideWork: boolean;
   enteringItemIds: ReadonlySet<string>;
@@ -531,22 +533,33 @@ function transcriptRowRenderOptions(
   props: ConversationTranscriptProps,
   items: readonly NativeSessionItemBuffer[],
   showThinking: boolean,
+  motionFocus: SessionMotionFocus,
   lastUserKey: string | undefined,
   insideWork: boolean,
   enteringItemIds: ReadonlySet<string>,
   onVisibleContentChange: () => void,
 ): TranscriptRowRenderOptions {
-  return { props, items, showThinking, lastUserKey, insideWork, enteringItemIds, onVisibleContentChange };
+  return { props, items, showThinking, motionFocus, lastUserKey, insideWork, enteringItemIds, onVisibleContentChange };
 }
 
 function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOptions): ReactNode {
   if (row.kind === 'answered_request') return <AnsweredRequestHistory request={row.request} language={options.props.language} />;
-  if (row.kind === 'activity') return <SessionActivityGroup items={row.items} language={options.props.language} />;
+  if (row.kind === 'activity') {
+    return <SessionActivityGroup items={row.items} language={options.props.language} motionActive={row.items.some((item) => item.key === options.motionFocus?.itemKey)} />;
+  }
   if (row.item.type === 'plan') {
-    return <PlanSummary item={row.item} language={options.props.language} panelOpen={options.props.openPlanItemKey === row.item.key} onOpenPanel={options.props.onOpenPlan} />;
+    return <PlanSummary item={row.item} language={options.props.language} motionActive={row.item.key === options.motionFocus?.itemKey} panelOpen={options.props.openPlanItemKey === row.item.key} onOpenPanel={options.props.onOpenPlan} />;
   }
   if (normalizeItemType(row.item.type) === 'reasoning') {
-    return <SessionReasoningSummary item={row.item} language={options.props.language} status={reasoningSummaryStatus(row.item, options.props.state)} onVisibleContentChange={options.onVisibleContentChange} />;
+    return (
+      <SessionReasoningSummary
+        item={row.item}
+        language={options.props.language}
+        status={reasoningSummaryStatus(row.item, options.props.state)}
+        motionActive={row.item.key === options.motionFocus?.itemKey}
+        onVisibleContentChange={options.onVisibleContentChange}
+      />
+    );
   }
   const showPendingDeliveryFeedback = row.item.optimistic && shouldShowPendingMessageDeliveryFeedback(row.item, options.showThinking);
   return (
@@ -558,6 +571,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         animateEntrance={options.enteringItemIds.has(row.item.key)}
         showAssistantActions={!options.insideWork && itemRole(row.item) === 'assistant' && !options.showThinking}
         isLatestUser={row.item.key === options.lastUserKey}
+        motionActive={row.item.key === options.motionFocus?.itemKey}
         onEdit={options.props.onEditUserItem}
         onRetry={options.props.onRetryItem}
         onOpenResource={options.props.onOpenResource}
@@ -578,7 +592,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
 
 function TranscriptActiveStatus(props: { language: SessionUiLanguage; kind: 'starting' | 'thinking' }): ReactNode {
   return (
-    <p className="session-transcript-thinking" role="status" aria-live="polite">
+    <p className="session-transcript-thinking" data-motion-active="true" role="status" aria-live="polite">
       <span className="session-thinking-pulse" aria-hidden="true" />
       {props.kind === 'starting' ? (props.language === 'zh-CN' ? '正在启动处理' : 'Starting processing') : props.language === 'zh-CN' ? '正在思考' : 'Thinking'}
     </p>
@@ -839,6 +853,45 @@ export function isVisibleTranscriptItem(item: NativeSessionItemBuffer): boolean 
   if (typeof item.payload.requestAnswerId === 'string') return false;
   if (itemRole(item) !== 'commentary') return true;
   return transcriptItemText(item).trim().length > 0;
+}
+
+type SessionMotionFocusKind = 'thinking' | 'reasoning' | 'activity' | 'plan' | 'image' | 'streaming';
+
+interface ActiveSessionMotionFocus {
+  kind: SessionMotionFocusKind;
+  itemKey?: string;
+}
+
+type SessionMotionFocus = ActiveSessionMotionFocus | null;
+
+const nonRunningMotionStatuses = new Set(['completed', 'failed', 'interrupted', 'waiting', 'pending', 'queued', 'paused', 'unconfirmed']);
+const userBlockingConversationStates = new Set(['waiting_approval', 'waiting_user_input', 'interrupt_confirm']);
+
+function resolveSessionMotionFocus(state: NativeSessionState, items: readonly NativeSessionItemBuffer[], showThinking: boolean): SessionMotionFocus {
+  if (!state.activeTurnId || userBlockingConversationStates.has(state.conversationState)) return showThinking ? { kind: 'thinking' } : null;
+  const activeItems = items.filter((item) => item.turnId === state.activeTurnId && !nonRunningMotionStatuses.has(item.status.toLocaleLowerCase()));
+
+  // 最终回答已经开始时，它是离用户结果最近的活动，优先接管仍未终止的过程条目。
+  const finalAnswer = [...activeItems].reverse().find(isFinalAnswerItem);
+  if (finalAnswer) return { kind: 'streaming', itemKey: finalAnswer.key };
+
+  for (let index = activeItems.length - 1; index >= 0; index -= 1) {
+    const item = activeItems[index]!;
+    const kind = sessionMotionKind(item);
+    if (kind) return { kind, itemKey: item.key };
+  }
+  return showThinking ? { kind: 'thinking' } : null;
+}
+
+function sessionMotionKind(item: NativeSessionItemBuffer): Exclude<SessionMotionFocusKind, 'thinking'> | null {
+  const type = normalizeItemType(item.type);
+  if (isOperationalActivityItem(item)) return 'activity';
+  if (type === 'plan') return 'plan';
+  if (type === 'reasoning') return 'reasoning';
+  const role = itemRole(item);
+  if (role === 'image') return 'image';
+  if (role === 'assistant' || role === 'commentary') return 'streaming';
+  return null;
 }
 
 export function shouldShowTranscriptThinking(state: NativeSessionState, items: readonly NativeSessionItemBuffer[] = Object.values(state.items)): boolean {

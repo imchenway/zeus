@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { GitBranchIcon as GitBranch } from '@phosphor-icons/react/dist/csr/GitBranch';
 import type { ProjectGitAction, ProjectGitActionResponse, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
@@ -173,7 +172,7 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
             searchable
             searchPlaceholder={zh ? `搜索 ${selectedProject?.name ?? ''} 分支` : `Search ${selectedProject?.name ?? ''} branches`}
             size="compact"
-            triggerIcon={loadState === 'loading' ? <CircleNotch className="session-new-conversation-context-spinner" /> : <GitBranch />}
+            triggerIcon={loadState === 'loading' ? <span className="session-new-conversation-context-spinner" aria-hidden="true" /> : <GitBranch />}
             triggerLabel={branchLabel}
             triggerRef={branchTriggerRef}
             value={rootRepository?.snapshot.branch ?? branchLabel}

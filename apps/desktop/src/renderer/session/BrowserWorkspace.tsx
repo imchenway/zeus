@@ -324,8 +324,10 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
 
   if (!snapshot || !activeTab) {
     return (
-      <section className="browser-workspace browser-workspace-loading" aria-label={labels.title}>
-        <GlobeSimple aria-hidden="true" weight="regular" />
+      <section className="browser-workspace browser-workspace-loading" data-loading={!error || undefined} aria-label={labels.title}>
+        <span className="browser-workspace-loading-symbol" aria-hidden="true">
+          <GlobeSimple weight="regular" />
+        </span>
         <p>{error ? (props.language === 'zh-CN' ? '浏览器现场暂不可用。' : 'The browser state is temporarily unavailable.') : labels.loading}</p>
       </section>
     );

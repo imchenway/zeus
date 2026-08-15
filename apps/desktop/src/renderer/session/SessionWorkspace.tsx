@@ -1,7 +1,6 @@
 import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
 import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
-import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paperclip';
@@ -2862,7 +2861,7 @@ function NewConversationComposer(props: {
                 disabled={submitting || executionContextBusy || capabilitiesLoading || inputResources.processing || !props.owner || !selectedModel || (goalInputActive ? !goalObjectiveValid : !content.trim() && attachments.length === 0)}
                 aria-busy={submitting || undefined}
               >
-                {submitting ? <CircleNotch className="session-command-spinner" aria-hidden="true" weight="bold" /> : <ArrowUp aria-hidden="true" weight="bold" />}
+                {submitting ? <span className="session-command-spinner" aria-hidden="true" /> : <ArrowUp aria-hidden="true" weight="bold" />}
               </button>
             </span>
           </span>
@@ -2975,7 +2974,9 @@ function SessionReconnectNotice(props: { language: SessionUiLanguage; attempt: n
   const delayLabel = delay < 1_000 ? `${delay} ms` : `${delay / 1_000} s`;
   return (
     <section className="session-reconnect-notice" role="status" aria-live="polite" aria-atomic="true">
-      <ArrowsClockwise aria-hidden="true" weight="regular" />
+      <span className="session-reconnect-symbol" aria-hidden="true">
+        <ArrowsClockwise weight="regular" />
+      </span>
       <span>
         <strong>{labels[props.language].reconnectingAttempt(props.attempt)}</strong>
         <small>{props.language === 'zh-CN' ? `自动重试会持续进行；下次约 ${delayLabel} 后，历史记录仍可查看。` : `Automatic retries continue; next attempt in about ${delayLabel}. History remains available.`}</small>

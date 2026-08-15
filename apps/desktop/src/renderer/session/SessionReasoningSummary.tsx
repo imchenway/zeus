@@ -9,7 +9,13 @@ import { type SessionUiLanguage, useAdaptiveTranscriptText } from './ThreadItemV
 
 export type ReasoningSummaryStatus = 'active' | 'waiting' | 'completed' | 'failed' | 'interrupted';
 
-export const SessionReasoningSummary = memo(function SessionReasoningSummary(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage; status: ReasoningSummaryStatus; onVisibleContentChange?: () => void }) {
+export const SessionReasoningSummary = memo(function SessionReasoningSummary(props: {
+  item: NativeSessionItemBuffer;
+  language: SessionUiLanguage;
+  status: ReasoningSummaryStatus;
+  motionActive?: boolean;
+  onVisibleContentChange?: () => void;
+}) {
   const sourceText = latestReasoningSummaryText(props.item);
   const adaptiveText = useAdaptiveTranscriptText(sourceText, props.status === 'active');
   useLayoutEffect(() => {
@@ -20,7 +26,7 @@ export const SessionReasoningSummary = memo(function SessionReasoningSummary(pro
   const statusLabel = reasoningStatusLabel(props.status, props.language);
 
   return (
-    <p className="session-reasoning-summary" data-status={props.status} aria-label={`${statusLabel}：${sourceText}`}>
+    <p className="session-reasoning-summary" data-status={props.status} data-motion-active={props.motionActive || undefined} aria-label={`${statusLabel}：${sourceText}`}>
       <span className="session-sr-only" role="status" aria-live="polite">
         {statusLabel}
       </span>
