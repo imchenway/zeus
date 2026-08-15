@@ -1272,7 +1272,7 @@ type SessionContextWorkspace =
   | { kind: 'none' }
   | { kind: 'browser' }
   | { kind: 'subagents' }
-  | { kind: 'plan'; itemId: string }
+  | { kind: 'plan'; itemKey: string }
   | { kind: 'source'; preview: ConversationResourcePreview }
   | { kind: 'turn_diff'; turnId: string; initialFileId?: string }
   | { kind: 'side_chat'; selectedText: string };
@@ -1341,7 +1341,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const contextOpen = contextWorkspace.kind !== 'none';
   const browserOpen = contextWorkspace.kind === 'browser';
   const subagentsOpen = contextWorkspace.kind === 'subagents';
-  const planWorkspaceItemId = contextWorkspace.kind === 'plan' ? contextWorkspace.itemId : null;
+  const planWorkspaceItemKey = contextWorkspace.kind === 'plan' ? contextWorkspace.itemKey : null;
   const sessionReady = props.state != null;
   const resolvedBrowserTargetWidth = resolveBrowserTargetWidth(browserLayoutWidth, browserPaneShare, contextFullWidth);
   const currentHeader = useMemo(() => createSessionHeaderSnapshot(props.conversation, props.task, props.state, props.loadState, props.language, owner), [owner, props.conversation, props.language, props.loadState, props.state, props.task]);
@@ -1383,7 +1383,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const blockingUserInputRequest = blockingPendingRequest && requestKind(blockingPendingRequest) === 'request_user_input' ? blockingPendingRequest : null;
   const blockingPlanImplementationRequest = blockingPendingRequest ? null : (pendingPlanImplementationRequests[0] ?? null);
   const blockingInteractionCount = pendingRequests.length + pendingPlanImplementationRequests.length;
-  const planWorkspaceItem = planWorkspaceItemId ? (Object.values(props.state?.items ?? {}).find((item) => item.type === 'plan' && (item.localItemId === planWorkspaceItemId || item.itemId === planWorkspaceItemId)) ?? null) : null;
+  // 计划工作区绑定渲染层稳定 key，避免本地记录 ID 在实时事件合并后消失，导致右侧只打开空壳。
+  const planWorkspaceItemCandidate = planWorkspaceItemKey ? props.state?.items[planWorkspaceItemKey] : null;
+  const planWorkspaceItem = planWorkspaceItemCandidate?.type === 'plan' ? planWorkspaceItemCandidate : null;
   const turnDiffChangeSet = contextWorkspace.kind === 'turn_diff' ? (props.state?.changeSetsByProviderId[contextWorkspace.turnId] ?? null) : null;
   const dockedPlan = props.state ? selectDockedTurnPlan(props.state) : null;
   const goal = props.state?.snapshot?.goal ?? null;
@@ -2186,11 +2188,11 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                             composerRef.current?.focus();
                           }
                     }
-                    openPlanItemId={planWorkspaceItemId}
+                    openPlanItemKey={planWorkspaceItemKey}
                     onOpenPlan={(item) => {
                       contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
                       setContextFullWidth(false);
-                      setContextWorkspace({ kind: 'plan', itemId: item.localItemId ?? item.itemId });
+                      setContextWorkspace({ kind: 'plan', itemKey: item.key });
                     }}
                     onOpenResource={openConversationResource}
                     onLoadResourcePreview={actions.onLoadResourcePreview}

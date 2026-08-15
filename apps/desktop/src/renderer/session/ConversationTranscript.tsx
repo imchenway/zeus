@@ -26,7 +26,7 @@ export interface ConversationTranscriptProps {
   language: SessionUiLanguage;
   onEditUserItem?: (item: NativeSessionItemBuffer, content: string) => void | Promise<void>;
   onRetryItem?: (item: NativeSessionItemBuffer) => void;
-  openPlanItemId?: string | null;
+  openPlanItemKey?: string | null;
   onOpenPlan?: (item: NativeSessionItemBuffer) => void;
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
@@ -542,7 +542,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
   if (row.kind === 'answered_request') return <AnsweredRequestHistory request={row.request} language={options.props.language} />;
   if (row.kind === 'activity') return <SessionActivityGroup items={row.items} language={options.props.language} />;
   if (row.item.type === 'plan') {
-    return <PlanSummary item={row.item} language={options.props.language} panelOpen={options.props.openPlanItemId === (row.item.localItemId ?? row.item.itemId)} onOpenPanel={options.props.onOpenPlan} />;
+    return <PlanSummary item={row.item} language={options.props.language} panelOpen={options.props.openPlanItemKey === row.item.key} onOpenPanel={options.props.onOpenPlan} />;
   }
   if (normalizeItemType(row.item.type) === 'reasoning') {
     return <SessionReasoningSummary item={row.item} language={options.props.language} status={reasoningSummaryStatus(row.item, options.props.state)} onVisibleContentChange={options.onVisibleContentChange} />;
