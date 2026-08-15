@@ -2383,11 +2383,21 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           providerEnvironment: responsesRuntime.environment,
         });
       }
-      await options.manager.unarchiveThread({ threadId: providerThreadId });
+      try {
+        await options.manager.unarchiveThread({ threadId: providerThreadId });
+      } catch (error) {
+        if (!isProviderThreadAlreadyAvailableError(error)) throw error;
+      }
       const resumed = await options.manager.resumeThread({ threadId: providerThreadId, cwd: context.projectLocalPath, ...(responsesRuntime ? { responsesRuntime } : {}) });
+      if (resumed.id !== providerThreadId) {
+        throw coordinatorError('ZEUS_CODEX_THREAD_IDENTITY_MISMATCH', 'Codex returned a different thread while restoring the archived conversation.');
+      }
       persistThreadProviderSettings(conversation.id, resumed);
       await enqueueProviderTurnReconciliation(requireConversation(conversation.id));
       const snapshot = await options.manager.readThread({ threadId: providerThreadId });
+      if (snapshot.id !== providerThreadId) {
+        throw coordinatorError('ZEUS_CODEX_THREAD_IDENTITY_MISMATCH', 'Codex returned a different thread snapshot while restoring the archived conversation.');
+      }
       for (const submission of options.submissions.listByConversation(conversation.id)) {
         if (submission.status === 'paused' && submission.pausedReason === 'provider_archived' && !submission.providerTurnId) {
           options.submissions.updateStatus(submission.id, 'paused', { pausedReason: 'user_confirmation' });
@@ -3381,7 +3391,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       });
     }
     if (item.itemType === 'fileChange') {
-      options.changeSets?.capture({ conversation, turn, providerItemId, changes: itemPayload.changes, phase: itemTerminal ? 'post' : 'pre', timestamp });
+      try {
+        options.changeSets?.capture({ conversation, turn, providerItemId, changes: itemPayload.changes, phase: itemTerminal ? 'post' : 'pre', timestamp });
+      } catch (error) {
+        if (!isRejectedHistoricalFileChangeError(error)) throw error;
+      }
     }
     const itemResources = syncItemResources(conversation, turn, item, presentedItemPayload, item.textContent, timestamp);
     options.broadcast('conversation.item.updated', {
@@ -6028,6 +6042,15 @@ function toRecoverySubmissionError(error: unknown): { message: string; code: str
 
 function isProviderThreadArchivedError(error: unknown): boolean {
   return /\bis archived\b[\s\S]*\bunarchive\b/i.test(error instanceof Error ? error.message : String(error));
+}
+
+function isProviderThreadAlreadyAvailableError(error: unknown): boolean {
+  return /\bno archived rollout found for thread id\b/i.test(error instanceof Error ? error.message : String(error));
+}
+
+function isRejectedHistoricalFileChangeError(error: unknown): boolean {
+  const code = isRecord(error) && typeof error.code === 'string' ? error.code : null;
+  return code === 'ZEUS_TURN_CHANGE_SET_PATH_FORBIDDEN' || code === 'ZEUS_TURN_CHANGE_SET_PATH_INVALID';
 }
 
 function isProviderTurnAlreadyEndedSteerError(error: unknown): boolean {
