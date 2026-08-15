@@ -1,5 +1,6 @@
 export type ConversationResourceKind = 'file' | 'website' | 'attachment';
 export type ConversationResourcePresentation = 'inline' | 'card';
+export type ConversationResourceDelivery = 'assistant';
 
 export interface ConversationFileLocation {
   line?: number;
@@ -17,6 +18,8 @@ interface ConversationResourceBase {
   itemId: string;
   kind: ConversationResourceKind;
   presentation: ConversationResourcePresentation;
+  /** 明确交给用户的助手产物；普通工具预览不得设置该字段。 */
+  delivery?: ConversationResourceDelivery;
   displayName: string;
   createdAt: string;
   updatedAt: string;

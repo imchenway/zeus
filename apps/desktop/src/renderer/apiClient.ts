@@ -49,8 +49,12 @@ import type {
   CommandRun,
   ProjectCodeWorkspacePreference,
   TaskAttachmentReference,
+  TaskBoardMoveRequest,
+  TaskBoardViewSettings,
+  TaskBoardViewSnapshot,
   TaskManagementStatus,
   TaskManagementStatusConfig,
+  TaskPageViewMode,
   TaskPriority,
   TaskStatusFilter,
   TaskType,
@@ -70,6 +74,11 @@ export type {
   CommandRunStatus,
   TaskManagementStatus,
   TaskManagementStatusConfig,
+  TaskPageViewMode,
+  TaskBoardMoveRequest,
+  TaskBoardOpenMode,
+  TaskBoardViewSettings,
+  TaskBoardViewSnapshot,
   TaskPriority,
   TaskStatusFilter,
   TaskType,
@@ -591,6 +600,7 @@ export interface AppShellSettings {
   taskManagementStatusByProject?: Record<string, TaskManagementStatusConfig>;
   taskStatusFilterByProject?: Record<string, TaskStatusFilter>;
   taskViewModeByProject?: Record<string, 'hierarchy' | 'flat'>;
+  taskPageViewByProject?: Record<string, TaskPageViewMode>;
   taskExpandedIdsByProject?: Record<string, string[]>;
   codeWorkspaceByProject?: Record<string, ProjectCodeWorkspacePreference>;
   localLogDirectory: string;
@@ -627,6 +637,7 @@ export type UpdateAppShellSettingsRequest = Pick<
   taskManagementStatusReplacements?: Record<string, Record<string, string>>;
   taskStatusFilterByProject?: Record<string, TaskStatusFilter>;
   taskViewModeByProject?: Record<string, 'hierarchy' | 'flat'>;
+  taskPageViewByProject?: Record<string, TaskPageViewMode>;
   taskExpandedIdsByProject?: Record<string, string[]>;
   codeWorkspaceByProject?: Record<string, ProjectCodeWorkspacePreference>;
 };
@@ -1846,6 +1857,9 @@ export interface DashboardClient {
   loadProjectOverview: (projectId: string) => Promise<ProjectOverview>;
   createTask: (input: CreateTaskRequest) => Promise<TaskRecord>;
   loadTasks: (input: LoadTasksRequest) => Promise<TaskRecord[]>;
+  loadTaskBoard: (projectId: string) => Promise<TaskBoardViewSnapshot>;
+  updateTaskBoard: (projectId: string, expectedRevision: number, settings: Partial<TaskBoardViewSettings>) => Promise<TaskBoardViewSnapshot>;
+  moveTaskBoardTask: (projectId: string, input: TaskBoardMoveRequest) => Promise<{ task: TaskRecord; board: TaskBoardViewSnapshot }>;
   loadTask: (taskId: string) => Promise<TaskRecord>;
   updateTask: (taskId: string, input: UpdateTaskRequest) => Promise<TaskRecord>;
   updateTaskRelationships: (taskId: string, input: UpdateTaskRelationshipsRequest) => Promise<TaskRecord>;
@@ -2601,6 +2615,17 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
       request<TaskRecord[]>(
         `/api/tasks?projectId=${encodeURIComponent(input.projectId)}${input.query ? `&query=${encodeURIComponent(input.query)}` : ''}${input.managementStatus ? `&managementStatus=${encodeURIComponent(input.managementStatus)}` : ''}${input.tag ? `&tag=${encodeURIComponent(input.tag)}` : ''}${input.sortBy ? `&sortBy=${encodeURIComponent(input.sortBy)}` : ''}${input.sortDirection ? `&sortDirection=${encodeURIComponent(input.sortDirection)}` : ''}`,
       ),
+    loadTaskBoard: (projectId) => request<TaskBoardViewSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/task-board`),
+    updateTaskBoard: (projectId, expectedRevision, settings) =>
+      request<TaskBoardViewSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/task-board`, {
+        method: 'PATCH',
+        body: JSON.stringify({ expectedRevision, settings }),
+      }),
+    moveTaskBoardTask: (projectId, input) =>
+      request<{ task: TaskRecord; board: TaskBoardViewSnapshot }>(`/api/projects/${encodeURIComponent(projectId)}/task-board/moves`, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
     loadTask: (taskId) => request<TaskRecord>(`/api/tasks/${taskId}`),
     updateTask: (taskId, input) =>
       request<TaskRecord>(`/api/tasks/${taskId}`, {

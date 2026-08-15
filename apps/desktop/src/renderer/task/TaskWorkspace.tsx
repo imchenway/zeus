@@ -1,10 +1,16 @@
-import { type CSSProperties, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useId, useRef, useState } from 'react';
+import { lazy, Suspense, type CSSProperties, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { GearSixIcon as GearSix } from '@phosphor-icons/react/dist/csr/GearSix';
 import { isTaskPriority } from '@zeus/shared';
 import type { TaskManagementStatusDefinition } from '@zeus/shared';
 import type {
   AiRuntimeSession,
   RuntimeStatusSnapshot,
   TaskManagementStatus,
+  TaskBoardMoveRequest,
+  TaskBoardOpenMode,
+  TaskBoardViewSettings,
+  TaskBoardViewSnapshot,
+  TaskPageViewMode,
   TaskPriority,
   TaskRecord,
   TaskStatusFilter,
@@ -31,6 +37,8 @@ import {
   normalizeTaskTableColumnPreferences,
   placeTaskTableColumn,
   resolveTaskManagementStatus,
+  resolveTaskAgentRunStatus,
+  resolveTaskBranchStatus,
   setTaskTableColumnWidth,
   type TaskAgentRunStatus,
   type TaskBranchStatus,
@@ -41,6 +49,8 @@ import {
 } from './taskWorkspaceModel.js';
 import { TaskRunStatusChip, type TaskSemanticTone } from './TaskRunStatusChip.js';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+
+const LazyTaskBoardView = lazy(() => import('./TaskBoardView.js').then((module) => ({ default: module.TaskBoardView })));
 
 function taskBranchStatusTone(status: TaskBranchStatus): TaskSemanticTone {
   if (status === 'action_required') return 'red';
@@ -279,6 +289,7 @@ export type TaskWorkspaceListState = 'ready' | 'loading' | 'error';
 export interface TaskWorkspaceProps {
   projectName?: string;
   tasks: TaskRecord[];
+  boardTasks?: TaskRecord[];
   selectedTaskId?: string;
   selectedTaskIds?: readonly string[];
   searchQuery: string;
@@ -306,7 +317,11 @@ export interface TaskWorkspaceProps {
   bulkActionStatus?: TaskWorkspaceBulkActionStatus;
   listState?: TaskWorkspaceListState;
   activeProjectId?: string;
+  pageViewMode: TaskPageViewMode;
   viewMode: TaskWorkspaceViewMode;
+  taskBoardSnapshot?: TaskBoardViewSnapshot | null;
+  taskBoardLoading?: boolean;
+  taskBoardError?: string | null;
   expandedTaskIds?: readonly string[];
   onSearchChange: (value: string) => void;
   onStatusFilterChange: (value: TaskStatusFilter) => void;
@@ -314,9 +329,14 @@ export interface TaskWorkspaceProps {
   onTaskTableColumnsChange: (value: TaskTableColumnPreferences) => void;
   onSaveTaskTableLayout?: () => void;
   onCreateTask: () => void;
-  onOpenTaskDetail: (taskId: string) => void;
+  onOpenTaskDetail: (taskId: string, mode?: TaskBoardOpenMode) => void;
   onOpenTaskConversation?: (taskId: string, conversationId: string) => void;
   onViewModeChange: (viewMode: TaskWorkspaceViewMode) => void;
+  onPageViewModeChange: (viewMode: TaskPageViewMode) => void;
+  onReloadTaskBoard?: () => void;
+  onUpdateTaskBoard?: (settings: Partial<TaskBoardViewSettings>) => Promise<TaskBoardViewSnapshot>;
+  onMoveTaskBoardTask?: (input: TaskBoardMoveRequest) => Promise<{ task: TaskRecord; board: TaskBoardViewSnapshot }>;
+  onLoadTaskAttachmentPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
   onToggleTaskExpanded: (taskId: string) => void;
   onToggleTaskSelection?: (taskId: string, selected: boolean) => void;
   onToggleAllVisibleTaskSelection?: (taskIds: string[], selected: boolean) => void;
@@ -403,6 +423,7 @@ function TaskSelectionCheckbox(props: { ariaLabel: string; checked: boolean; mix
 export function TaskWorkspace(props: TaskWorkspaceProps) {
   const [fieldSettingsOpen, setFieldSettingsOpen] = useState(false);
   const [moreSettingsOpen, setMoreSettingsOpen] = useState(false);
+  const [boardSettingsOpen, setBoardSettingsOpen] = useState(false);
   const [draggedColumnKey, setDraggedColumnKey] = useState<TaskTableColumnKey | null>(null);
   const [dragInsertion, setDragInsertion] = useState<{ targetColumnKey: TaskTableColumnKey; position: TaskTableColumnDropPosition } | null>(null);
   const [keyboardMovingColumnKey, setKeyboardMovingColumnKey] = useState<TaskTableColumnKey | null>(null);
@@ -481,6 +502,11 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
   const taskListLoading = taskListState === 'loading';
   const taskListError = taskListState === 'error';
   const showEmptyState = !taskListLoading && !taskListError && model.visibleTasks.length === 0;
+  const boardRunStatuses = useMemo(
+    () => Object.fromEntries(props.tasks.map((task) => [task.id, resolveTaskAgentRunStatus(props.taskConversations?.[task.id] ?? [], props.conversationRunStatuses ?? {})])),
+    [props.conversationRunStatuses, props.taskConversations, props.tasks],
+  );
+  const boardBranchStatuses = useMemo(() => Object.fromEntries(props.tasks.map((task) => [task.id, resolveTaskBranchStatus(props.taskConversations?.[task.id] ?? [])])), [props.taskConversations, props.tasks]);
   const enteringTaskIds = useNewItemMotionIds(props.tasks.map((task) => task.id));
   // visual thesis: 任务表格像 macOS 原生工作台，选择列稳定，批量栏只在选择后低噪音出现，任务列表空态必须保持轻量行。
   // content plan: 顶部仍只服务筛选与新建；选择后追加批量状态、删除与结果提示；单任务详情在右侧悬浮抽屉中展开。
@@ -735,7 +761,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
 
   return (
     <section className="task-management-codex-layout task-table-only-layout task-table-layout" aria-label={props.copy.workbenchAria}>
-      <section className="task-management-navigation task-table-workbench" role="grid" aria-label={props.copy.filterAria}>
+      <section className="task-management-navigation task-table-workbench" role={props.pageViewMode === 'list' ? 'grid' : undefined} aria-label={props.copy.filterAria}>
         <section className="task-filter-workbench task-filter-toolbar task-table-toolbar task-table-primary-toolbar" aria-label={props.copy.filterAria}>
           <label className="task-filter-control-row task-filter-search task-toolbar-search" aria-label={props.copy.searchAria}>
             <span className="sr-only">{props.copy.searchTitle}</span>
@@ -751,467 +777,530 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
             ))}
           </div>
           <div className="task-table-view-actions" aria-label={isEnglishCopy ? 'Task view actions' : '任务视图动作'}>
-            <div className="task-table-view-mode-segments" role="group" aria-label={isEnglishCopy ? 'Task layout' : '任务排列方式'}>
-              <button className="task-table-view-pill" type="button" aria-pressed={props.viewMode === 'hierarchy'} onClick={() => props.onViewModeChange('hierarchy')}>
-                {isEnglishCopy ? 'Hierarchy' : '层级'}
+            <div className="task-table-page-view-segments" role="group" aria-label={isEnglishCopy ? 'Task view' : '任务视图'}>
+              <button className="task-table-view-pill" type="button" aria-pressed={props.pageViewMode === 'list'} onClick={() => props.onPageViewModeChange('list')}>
+                {isEnglishCopy ? 'List' : '列表'}
               </button>
-              <button className="task-table-view-pill" type="button" aria-pressed={props.viewMode === 'flat'} onClick={() => props.onViewModeChange('flat')}>
-                {isEnglishCopy ? 'Flat' : '平铺'}
+              <button className="task-table-view-pill" type="button" aria-pressed={props.pageViewMode === 'board'} onClick={() => props.onPageViewModeChange('board')}>
+                {isEnglishCopy ? 'Board' : '看板'}
               </button>
             </div>
-            <button
-              className="task-table-view-pill task-table-view-bulk-pill"
-              type="button"
-              disabled={bulkActionBusy || model.visibleTaskIds.length === 0}
-              onClick={() => props.onToggleAllVisibleTaskSelection?.(model.visibleTaskIds, !model.allVisibleSelected)}
-            >
-              {batchViewActionLabel}
-            </button>
-            <div className="task-table-field-settings">
-              {/* 字段配置属于低频视图偏好，在主工具条中只保留紧凑入口，并以 overlay 展开。 */}
+            {props.pageViewMode === 'board' ? (
               <button
-                ref={fieldSettingsTriggerRef}
-                className="task-table-view-pill task-table-view-pill-strong task-table-field-settings-trigger"
+                className="task-table-view-pill task-table-board-settings-trigger"
                 type="button"
                 aria-haspopup="dialog"
-                aria-expanded={fieldSettingsOpen}
-                aria-controls="task-table-field-settings-popover"
-                aria-label={props.copy.fieldSettingsAria}
-                title={props.copy.fieldSettingsAria}
-                onClick={() => setFieldSettingsOpen((open) => !open)}
+                aria-expanded={boardSettingsOpen}
+                aria-label={isEnglishCopy ? 'Board settings' : '看板设置'}
+                title={isEnglishCopy ? 'Board settings' : '看板设置'}
+                onClick={() => setBoardSettingsOpen(true)}
               >
-                <span className="task-table-field-settings-label">{columnViewActionLabel}</span>
+                <GearSix aria-hidden="true" />
+                <span>{isEnglishCopy ? 'Settings' : '设置'}</span>
               </button>
-              <section
-                ref={fieldSettingsPopoverRef}
-                id="task-table-field-settings-popover"
-                className="task-table-field-settings-popover"
-                role="dialog"
-                aria-label={props.copy.fieldSettingsAria}
-                hidden={!fieldSettingsOpen}
-                data-open={fieldSettingsOpen ? 'true' : 'false'}
-              >
-                {/* 字段弹层是有边界的 popover：标题说明固定、字段列表独立滚动、底部恢复动作固定，避免在小分辨率下被裁切。 */}
-                <header className="task-table-field-settings-heading">
-                  <strong>{props.copy.fieldSettingsAria}</strong>
-                  <small>{props.copy.fieldSettingsHelp}</small>
-                </header>
-                <div className="task-table-field-settings-list">
-                  {model.columnPreferences.columnOrder.map((columnKey) => {
-                    const columnTitle = columnLabels[columnKey];
-                    const isRequiredColumn = columnKey === 'code' || columnKey === 'intent';
-                    const requiredReasonId = `task-table-field-${columnKey}-reason`;
-                    return (
-                      <div className="task-table-field-option" key={columnKey}>
-                        <label className="task-table-field-option-label">
-                          <input
-                            type="checkbox"
-                            checked={model.columnPreferences.visibleColumnKeys.includes(columnKey)}
-                            disabled={isRequiredColumn}
-                            aria-describedby={isRequiredColumn ? requiredReasonId : undefined}
-                            onChange={(event) => props.onTaskTableColumnsChange(toggleTaskTableColumn(model.columnPreferences, columnKey, event.currentTarget.checked))}
-                          />
-                          <span className="task-table-field-option-copy">
-                            <span>{columnTitle}</span>
-                            {isRequiredColumn ? (
-                              <small id={requiredReasonId} className="task-table-required-reason">
-                                {props.copy.requiredColumnReason}
-                              </small>
-                            ) : null}
-                          </span>
-                        </label>
-                      </div>
-                    );
-                  })}
-                </div>
-                <footer className="task-table-field-settings-footer">
-                  <button type="button" className="task-table-field-reset" onClick={() => props.onTaskTableColumnsChange(normalizeTaskTableColumnPreferences())}>
-                    {props.copy.restoreDefaultColumns}
+            ) : null}
+            {props.pageViewMode === 'list' ? (
+              <>
+                <div className="task-table-view-mode-segments" role="group" aria-label={isEnglishCopy ? 'List layout' : '列表排列方式'}>
+                  <button className="task-table-view-pill" type="button" aria-pressed={props.viewMode === 'hierarchy'} onClick={() => props.onViewModeChange('hierarchy')}>
+                    {isEnglishCopy ? 'Hierarchy' : '层级'}
                   </button>
-                </footer>
-              </section>
-            </div>
-            {props.taskTableLayoutDirty ? (
-              <button className="task-table-view-pill task-table-view-save-pill" type="button" onClick={props.onSaveTaskTableLayout} disabled={!props.onSaveTaskTableLayout}>
-                {saveViewActionLabel}
-              </button>
-            ) : (
-              <div className="task-table-more-settings">
+                  <button className="task-table-view-pill" type="button" aria-pressed={props.viewMode === 'flat'} onClick={() => props.onViewModeChange('flat')}>
+                    {isEnglishCopy ? 'Flat' : '平铺'}
+                  </button>
+                </div>
                 <button
-                  ref={moreSettingsTriggerRef}
-                  className="task-table-view-pill task-table-more-settings-trigger"
+                  className="task-table-view-pill task-table-view-bulk-pill"
                   type="button"
-                  aria-haspopup="menu"
-                  aria-expanded={moreSettingsOpen}
-                  aria-controls="task-table-more-settings-popover"
-                  disabled={!moreActionsAvailable}
-                  aria-disabled={!moreActionsAvailable}
-                  onClick={() => {
-                    if (!moreActionsAvailable) return;
-                    setMoreSettingsOpen((open) => !open);
-                  }}
+                  disabled={bulkActionBusy || model.visibleTaskIds.length === 0}
+                  onClick={() => props.onToggleAllVisibleTaskSelection?.(model.visibleTaskIds, !model.allVisibleSelected)}
                 >
-                  {moreViewActionLabel}
+                  {batchViewActionLabel}
                 </button>
-                {moreActionsAvailable ? (
-                  <section
-                    ref={moreSettingsPopoverRef}
-                    id="task-table-more-settings-popover"
-                    className="task-table-view-more-panel"
-                    role="menu"
-                    aria-label={isEnglishCopy ? 'More task view actions' : '更多任务视图动作'}
-                    hidden={!moreSettingsOpen}
-                    data-open={moreSettingsOpen ? 'true' : 'false'}
+                <div className="task-table-field-settings">
+                  {/* 字段配置属于低频视图偏好，在主工具条中只保留紧凑入口，并以 overlay 展开。 */}
+                  <button
+                    ref={fieldSettingsTriggerRef}
+                    className="task-table-view-pill task-table-view-pill-strong task-table-field-settings-trigger"
+                    type="button"
+                    aria-haspopup="dialog"
+                    aria-expanded={fieldSettingsOpen}
+                    aria-controls="task-table-field-settings-popover"
+                    aria-label={props.copy.fieldSettingsAria}
+                    title={props.copy.fieldSettingsAria}
+                    onClick={() => setFieldSettingsOpen((open) => !open)}
                   >
-                    {filtersHaveValue ? (
-                      <button className="task-table-more-menu-action" type="button" role="menuitem" onClick={handleMoreResetTaskFilters}>
-                        <span>{props.copy.noResultsPrimaryAction}</span>
-                        <small>{isEnglishCopy ? 'Reset search, status and tag filters.' : '重置搜索、状态和标签筛选'}</small>
+                    <span className="task-table-field-settings-label">{columnViewActionLabel}</span>
+                  </button>
+                  <section
+                    ref={fieldSettingsPopoverRef}
+                    id="task-table-field-settings-popover"
+                    className="task-table-field-settings-popover"
+                    role="dialog"
+                    aria-label={props.copy.fieldSettingsAria}
+                    hidden={!fieldSettingsOpen}
+                    data-open={fieldSettingsOpen ? 'true' : 'false'}
+                  >
+                    {/* 字段弹层是有边界的 popover：标题说明固定、字段列表独立滚动、底部恢复动作固定，避免在小分辨率下被裁切。 */}
+                    <header className="task-table-field-settings-heading">
+                      <strong>{props.copy.fieldSettingsAria}</strong>
+                      <small>{props.copy.fieldSettingsHelp}</small>
+                    </header>
+                    <div className="task-table-field-settings-list">
+                      {model.columnPreferences.columnOrder.map((columnKey) => {
+                        const columnTitle = columnLabels[columnKey];
+                        const isRequiredColumn = columnKey === 'code' || columnKey === 'intent';
+                        const requiredReasonId = `task-table-field-${columnKey}-reason`;
+                        return (
+                          <div className="task-table-field-option" key={columnKey}>
+                            <label className="task-table-field-option-label">
+                              <input
+                                type="checkbox"
+                                checked={model.columnPreferences.visibleColumnKeys.includes(columnKey)}
+                                disabled={isRequiredColumn}
+                                aria-describedby={isRequiredColumn ? requiredReasonId : undefined}
+                                onChange={(event) => props.onTaskTableColumnsChange(toggleTaskTableColumn(model.columnPreferences, columnKey, event.currentTarget.checked))}
+                              />
+                              <span className="task-table-field-option-copy">
+                                <span>{columnTitle}</span>
+                                {isRequiredColumn ? (
+                                  <small id={requiredReasonId} className="task-table-required-reason">
+                                    {props.copy.requiredColumnReason}
+                                  </small>
+                                ) : null}
+                              </span>
+                            </label>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <footer className="task-table-field-settings-footer">
+                      <button type="button" className="task-table-field-reset" onClick={() => props.onTaskTableColumnsChange(normalizeTaskTableColumnPreferences())}>
+                        {props.copy.restoreDefaultColumns}
                       </button>
-                    ) : null}
-                    {columnsHaveCustomPreferences ? (
-                      <button className="task-table-more-menu-action" type="button" role="menuitem" onClick={handleMoreRestoreDefaultColumns}>
-                        <span>{resetColumnsActionLabel}</span>
-                        <small>{isEnglishCopy ? 'Return task columns to the default view.' : '恢复默认任务列视图'}</small>
-                      </button>
-                    ) : null}
+                    </footer>
                   </section>
-                ) : null}
-              </div>
-            )}
+                </div>
+                {props.taskTableLayoutDirty ? (
+                  <button className="task-table-view-pill task-table-view-save-pill" type="button" onClick={props.onSaveTaskTableLayout} disabled={!props.onSaveTaskTableLayout}>
+                    {saveViewActionLabel}
+                  </button>
+                ) : (
+                  <div className="task-table-more-settings">
+                    <button
+                      ref={moreSettingsTriggerRef}
+                      className="task-table-view-pill task-table-more-settings-trigger"
+                      type="button"
+                      aria-haspopup="menu"
+                      aria-expanded={moreSettingsOpen}
+                      aria-controls="task-table-more-settings-popover"
+                      disabled={!moreActionsAvailable}
+                      aria-disabled={!moreActionsAvailable}
+                      onClick={() => {
+                        if (!moreActionsAvailable) return;
+                        setMoreSettingsOpen((open) => !open);
+                      }}
+                    >
+                      {moreViewActionLabel}
+                    </button>
+                    {moreActionsAvailable ? (
+                      <section
+                        ref={moreSettingsPopoverRef}
+                        id="task-table-more-settings-popover"
+                        className="task-table-view-more-panel"
+                        role="menu"
+                        aria-label={isEnglishCopy ? 'More task view actions' : '更多任务视图动作'}
+                        hidden={!moreSettingsOpen}
+                        data-open={moreSettingsOpen ? 'true' : 'false'}
+                      >
+                        {filtersHaveValue ? (
+                          <button className="task-table-more-menu-action" type="button" role="menuitem" onClick={handleMoreResetTaskFilters}>
+                            <span>{props.copy.noResultsPrimaryAction}</span>
+                            <small>{isEnglishCopy ? 'Reset search, status and tag filters.' : '重置搜索、状态和标签筛选'}</small>
+                          </button>
+                        ) : null}
+                        {columnsHaveCustomPreferences ? (
+                          <button className="task-table-more-menu-action" type="button" role="menuitem" onClick={handleMoreRestoreDefaultColumns}>
+                            <span>{resetColumnsActionLabel}</span>
+                            <small>{isEnglishCopy ? 'Return task columns to the default view.' : '恢复默认任务列视图'}</small>
+                          </button>
+                        ) : null}
+                      </section>
+                    ) : null}
+                  </div>
+                )}
+              </>
+            ) : null}
           </div>
           <button className="task-table-new-task-button" type="button" onClick={props.onCreateTask} disabled={!props.activeProjectId || props.creatingTaskBusy} {...props.controlBusyProps(props.creatingTaskBusy)}>
             {props.copy.newTask}
           </button>
         </section>
-        {selectedVisibleCount > 0 ? (
-          <section className="task-table-bulk-action-bar" aria-label={props.copy.bulkStatusTargetTitle}>
-            <strong className="task-table-bulk-count">{props.copy.bulkSelectedCount(selectedVisibleCount)}</strong>
-            <button
-              type="button"
-              className="task-table-bulk-secondary-button"
-              disabled={bulkActionBusy || model.visibleTaskIds.length === 0}
-              onClick={() => props.onToggleAllVisibleTaskSelection?.(model.visibleTaskIds, !model.allVisibleSelected)}
-            >
-              {props.copy.selectAllVisibleTasks}
-            </button>
-            <button type="button" className="task-table-bulk-secondary-button" disabled={bulkActionBusy} onClick={() => props.onClearTaskSelection?.()}>
-              {props.copy.clearTaskSelection}
-            </button>
-            <label className="task-table-bulk-status-control" aria-label={props.copy.bulkStatusTargetTitle}>
-              <span className="sr-only">{props.copy.bulkStatusTargetTitle}</span>
-              <ZeusSelect
-                size="compact"
-                ariaLabel={props.copy.bulkStatusTargetAria}
-                value={bulkTargetStatus}
-                onChange={setBulkTargetStatus}
-                searchPlaceholder={props.copy.selectSearchPlaceholder}
-                emptyLabel={props.copy.selectNoResults}
-                searchable={false}
-                options={bulkStatusOptions.map((status) => ({
-                  value: status,
-                  label: statusLabel(status),
-                  color: statusColorById.get(status),
-                }))}
-              />
-            </label>
-            <span className="task-table-bulk-hint">{props.copy.bulkStatusSkippedHint(bulkTargetEligibility.eligibleTaskIds.length, bulkTargetEligibility.skippedTaskIds.length)}</span>
-            <button
-              type="button"
-              className="task-table-bulk-apply-button"
-              disabled={bulkActionBusy || bulkTargetEligibility.eligibleTaskIds.length === 0}
-              onClick={() => props.onBulkTaskStatusChange?.(bulkTargetStatus, model.selectedVisibleTaskIds)}
-              {...props.controlBusyProps(bulkActionBusy)}
-            >
-              {props.copy.bulkApplyStatus}
-            </button>
-            <button
-              type="button"
-              className="task-table-bulk-delete-button"
-              disabled={bulkActionBusy || model.bulkDeleteEligibility.eligibleTaskIds.length === 0}
-              onClick={() => props.onBulkTaskDelete?.(model.selectedVisibleTaskIds)}
-              {...props.controlBusyProps(bulkActionBusy)}
-            >
-              {props.copy.bulkDelete}
-            </button>
-            {bulkActionStatus.message ? (
-              <span className={`task-table-bulk-status task-table-bulk-status-${bulkActionStatus.kind}`} role="status" aria-live="polite">
-                {bulkActionStatus.message}
-              </span>
-            ) : null}
-          </section>
-        ) : null}
-        {showTaskStatusLine ? (
-          <div className="task-table-status-line">
-            <span>
-              <strong>{statusLineTitle}</strong>
-              <span> · {statusLineHelp}</span>
-            </span>
-            <span>{visibleTaskCountLabel}</span>
-          </div>
-        ) : null}
-        <section className={listClassName} role="rowgroup" data-source-list-keyboard="vertical" aria-label={props.copy.today} aria-busy={taskListLoading ? true : undefined} onKeyDown={handleListKeyboardNavigation}>
-          {renderedVisibleColumns.length > 0 ? (
-            <div className="task-table-header" role="row" style={taskTableGridStyle}>
-              <span className="task-table-cell task-table-select-cell" role="columnheader">
-                <TaskSelectionCheckbox
-                  ariaLabel={props.copy.selectAllVisibleTasks}
-                  checked={model.allVisibleSelected}
-                  mixed={model.someVisibleSelected && !model.allVisibleSelected}
+        {props.pageViewMode === 'board' ? (
+          <Suspense
+            fallback={
+              <section className="task-board-state" role="status" aria-live="polite">
+                <strong>{isEnglishCopy ? 'Loading board…' : '正在加载看板…'}</strong>
+              </section>
+            }
+          >
+            <LazyTaskBoardView
+              projectId={props.activeProjectId ?? ''}
+              language={props.appLanguage}
+              tasks={props.boardTasks ?? model.visibleTasks}
+              snapshot={props.taskBoardSnapshot ?? null}
+              loading={Boolean(props.taskBoardLoading)}
+              error={props.taskBoardError ?? null}
+              statusDefinitions={props.statusDefinitions}
+              runStatuses={boardRunStatuses}
+              branchStatuses={boardBranchStatuses}
+              settingsOpen={boardSettingsOpen}
+              onSettingsOpenChange={setBoardSettingsOpen}
+              onReload={() => props.onReloadTaskBoard?.()}
+              onUpdateSettings={(settings) => {
+                if (!props.onUpdateTaskBoard) return Promise.reject(new Error(isEnglishCopy ? 'Board settings are unavailable.' : '看板设置能力不可用。'));
+                return props.onUpdateTaskBoard(settings);
+              }}
+              onMoveTask={(input) => {
+                if (!props.onMoveTaskBoardTask) return Promise.reject(new Error(isEnglishCopy ? 'Board move is unavailable.' : '看板移动能力不可用。'));
+                return props.onMoveTaskBoardTask(input);
+              }}
+              onOpenTask={props.onOpenTaskDetail}
+              onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
+            />
+          </Suspense>
+        ) : (
+          <>
+            {selectedVisibleCount > 0 ? (
+              <section className="task-table-bulk-action-bar" aria-label={props.copy.bulkStatusTargetTitle}>
+                <strong className="task-table-bulk-count">{props.copy.bulkSelectedCount(selectedVisibleCount)}</strong>
+                <button
+                  type="button"
+                  className="task-table-bulk-secondary-button"
                   disabled={bulkActionBusy || model.visibleTaskIds.length === 0}
-                  onChange={(selected) => props.onToggleAllVisibleTaskSelection?.(model.visibleTaskIds, selected)}
-                />
-              </span>
-              {renderedVisibleColumns.map((columnKey) => {
-                const sortDirection = model.columnPreferences.sort.columnKey === columnKey ? model.columnPreferences.sort.direction : null;
-                const width = model.columnPreferences.columnWidths?.[columnKey] ?? defaultTaskTableColumnWidths[columnKey];
-                const bounds = getTaskTableColumnWidthBounds(columnKey);
-                const sortLabel = sortDirection === 'asc' ? (isEnglishCopy ? 'ascending' : '升序') : sortDirection === 'desc' ? (isEnglishCopy ? 'descending' : '降序') : isEnglishCopy ? 'not sorted' : '未排序';
-                return (
-                  <span
-                    className={[
-                      taskTableCellClassName(columnKey),
-                      'task-table-interactive-header',
-                      draggedColumnKey === columnKey ? 'dragging' : undefined,
-                      dragInsertion?.targetColumnKey === columnKey ? `drop-${dragInsertion.position}` : undefined,
-                    ]
-                      .filter(Boolean)
-                      .join(' ')}
-                    role="columnheader"
-                    aria-sort={sortDirection === 'asc' ? 'ascending' : sortDirection === 'desc' ? 'descending' : 'none'}
-                    key={columnKey}
-                    onDragOver={(event) => handleColumnDragOver(event, columnKey)}
-                    onDrop={(event) => handleColumnDrop(event, columnKey)}
-                  >
-                    <button
-                      type="button"
-                      className="task-table-column-drag-handle"
-                      draggable
-                      aria-pressed={keyboardMovingColumnKey === columnKey}
-                      aria-label={isEnglishCopy ? `Move ${columnLabels[columnKey]} column` : `移动${columnLabels[columnKey]}列`}
-                      title={isEnglishCopy ? 'Drag to reorder. Keyboard: Space, arrows, Space.' : '拖动调整位置；键盘可按空格、方向键、空格。'}
-                      onDragStart={(event) => handleColumnDragStart(event, columnKey)}
-                      onDragEnd={clearColumnDragState}
-                      onKeyDown={(event) => handleColumnMoveKeyDown(event, columnKey)}
-                    >
-                      <span aria-hidden="true">⋮⋮</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="task-table-column-sort-button"
-                      draggable
-                      aria-label={isEnglishCopy ? `Sort by ${columnLabels[columnKey]}; currently ${sortLabel}` : `按${columnLabels[columnKey]}排序；当前${sortLabel}`}
-                      title={isEnglishCopy ? `Click to sort (${sortLabel}); drag to reorder.` : `点击排序（${sortLabel}）；拖动调整列位置。`}
-                      onDragStart={(event) => handleColumnDragStart(event, columnKey)}
-                      onDragEnd={clearColumnDragState}
-                      onClick={() => props.onTaskTableColumnsChange(cycleTaskTableSort(model.columnPreferences, columnKey))}
-                    >
-                      <span>{columnLabels[columnKey]}</span>
-                      {sortDirection ? (
-                        <span className="task-table-column-sort-indicator" aria-hidden="true">
-                          {sortDirection === 'asc' ? '↑' : '↓'}
-                        </span>
-                      ) : null}
-                    </button>
-                    <span
-                      className="task-table-column-resize-handle"
-                      role="separator"
-                      tabIndex={0}
-                      aria-orientation="vertical"
-                      aria-valuemin={bounds.min}
-                      aria-valuemax={bounds.max}
-                      aria-valuenow={width}
-                      aria-label={isEnglishCopy ? `Resize ${columnLabels[columnKey]} column` : `调整${columnLabels[columnKey]}列宽`}
-                      onPointerDown={(event) => handleColumnResizePointerDown(event, columnKey)}
-                      onKeyDown={(event) => handleColumnResizeKeyDown(event, columnKey)}
+                  onClick={() => props.onToggleAllVisibleTaskSelection?.(model.visibleTaskIds, !model.allVisibleSelected)}
+                >
+                  {props.copy.selectAllVisibleTasks}
+                </button>
+                <button type="button" className="task-table-bulk-secondary-button" disabled={bulkActionBusy} onClick={() => props.onClearTaskSelection?.()}>
+                  {props.copy.clearTaskSelection}
+                </button>
+                <label className="task-table-bulk-status-control" aria-label={props.copy.bulkStatusTargetTitle}>
+                  <span className="sr-only">{props.copy.bulkStatusTargetTitle}</span>
+                  <ZeusSelect
+                    size="compact"
+                    ariaLabel={props.copy.bulkStatusTargetAria}
+                    value={bulkTargetStatus}
+                    onChange={setBulkTargetStatus}
+                    searchPlaceholder={props.copy.selectSearchPlaceholder}
+                    emptyLabel={props.copy.selectNoResults}
+                    searchable={false}
+                    options={bulkStatusOptions.map((status) => ({
+                      value: status,
+                      label: statusLabel(status),
+                      color: statusColorById.get(status),
+                    }))}
+                  />
+                </label>
+                <span className="task-table-bulk-hint">{props.copy.bulkStatusSkippedHint(bulkTargetEligibility.eligibleTaskIds.length, bulkTargetEligibility.skippedTaskIds.length)}</span>
+                <button
+                  type="button"
+                  className="task-table-bulk-apply-button"
+                  disabled={bulkActionBusy || bulkTargetEligibility.eligibleTaskIds.length === 0}
+                  onClick={() => props.onBulkTaskStatusChange?.(bulkTargetStatus, model.selectedVisibleTaskIds)}
+                  {...props.controlBusyProps(bulkActionBusy)}
+                >
+                  {props.copy.bulkApplyStatus}
+                </button>
+                <button
+                  type="button"
+                  className="task-table-bulk-delete-button"
+                  disabled={bulkActionBusy || model.bulkDeleteEligibility.eligibleTaskIds.length === 0}
+                  onClick={() => props.onBulkTaskDelete?.(model.selectedVisibleTaskIds)}
+                  {...props.controlBusyProps(bulkActionBusy)}
+                >
+                  {props.copy.bulkDelete}
+                </button>
+                {bulkActionStatus.message ? (
+                  <span className={`task-table-bulk-status task-table-bulk-status-${bulkActionStatus.kind}`} role="status" aria-live="polite">
+                    {bulkActionStatus.message}
+                  </span>
+                ) : null}
+              </section>
+            ) : null}
+            {showTaskStatusLine ? (
+              <div className="task-table-status-line">
+                <span>
+                  <strong>{statusLineTitle}</strong>
+                  <span> · {statusLineHelp}</span>
+                </span>
+                <span>{visibleTaskCountLabel}</span>
+              </div>
+            ) : null}
+            <section className={listClassName} role="rowgroup" data-source-list-keyboard="vertical" aria-label={props.copy.today} aria-busy={taskListLoading ? true : undefined} onKeyDown={handleListKeyboardNavigation}>
+              {renderedVisibleColumns.length > 0 ? (
+                <div className="task-table-header" role="row" style={taskTableGridStyle}>
+                  <span className="task-table-cell task-table-select-cell" role="columnheader">
+                    <TaskSelectionCheckbox
+                      ariaLabel={props.copy.selectAllVisibleTasks}
+                      checked={model.allVisibleSelected}
+                      mixed={model.someVisibleSelected && !model.allVisibleSelected}
+                      disabled={bulkActionBusy || model.visibleTaskIds.length === 0}
+                      onChange={(selected) => props.onToggleAllVisibleTaskSelection?.(model.visibleTaskIds, selected)}
                     />
                   </span>
-                );
-              })}
-            </div>
-          ) : null}
-          <span className="sr-only" role="status" aria-live="polite">
-            {columnInteractionAnnouncement}
-          </span>
-          {taskListLoading ? (
-            // 加载态只替换表格内容，不替换工具条和列头，用户能确认即将出现的数据结构。
-            <section className="task-list-state-row task-list-loading-state" role="status" aria-live="polite">
-              <span className="task-list-state-copy">
-                <strong>{props.copy.taskListLoadingTitle}</strong>
-                <small>{props.copy.taskListLoadingHelp}</small>
-              </span>
-              <span className="task-loading-skeleton-stack" aria-hidden="true">
-                <span className="task-loading-skeleton-line" />
-                <span className="task-loading-skeleton-line" />
-                <span className="task-loading-skeleton-line short" />
-              </span>
-            </section>
-          ) : taskListError ? (
-            // 弹窗负责错误事实；列表区只保留可恢复操作，避免关闭弹窗后失去重试入口。
-            <section className="project-inline-recovery-row task-list-state-row" aria-label={props.copy.taskListErrorTitle} role="status">
-              <span className="task-list-state-mark" aria-hidden="true">
-                !
-              </span>
-              <span className="project-inline-recovery-copy task-list-state-copy">
-                <strong>{props.copy.taskListErrorRetry}</strong>
-              </span>
-              <span className="task-list-state-action-rail">
-                <button type="button" className="task-list-state-primary-action" onClick={props.onRetryTaskList} disabled={!props.onRetryTaskList}>
-                  {props.copy.taskListErrorRetry}
-                </button>
-                <button type="button" className="task-list-state-secondary-action" onClick={props.onOpenProjectSettings} disabled={!props.onOpenProjectSettings}>
-                  {props.copy.taskListErrorProjectSettings}
-                </button>
-              </span>
-            </section>
-          ) : model.visibleTasks.length === 0 ? (
-            // visual thesis: 空任务态只说明任务页价值与下一步，不重复顶部主操作；筛选无结果才显示恢复动作。
-            // 空态必须以当前可见列表区为居中基准，不能被横向溢出的表头宽度拉偏。
-            <section
-              className={['project-inline-recovery-row task-list-empty-row task-empty-state', model.emptyState === 'no-results' ? 'task-empty-state-with-actions' : 'task-empty-state-copy-only'].join(' ')}
-              aria-label={model.emptyState === 'no-results' ? props.copy.noResultsTitle : props.copy.emptyTitle}
-              role="region"
-            >
-              <span className="task-empty-state-mark" aria-hidden="true">
-                0
-              </span>
-              <span className="project-inline-recovery-copy task-empty-state-copy">
-                <strong>{model.emptyState === 'no-results' ? props.copy.noResultsTitle : props.copy.emptyTitle}</strong>
-                <small>{model.emptyState === 'no-results' ? props.copy.noResultsHelp : props.copy.emptyHelp}</small>
-              </span>
-              {model.emptyState === 'no-results' ? (
-                <span className="task-empty-state-action-rail">
-                  <button className="task-empty-state-primary-action" type="button" onClick={handleResetTaskFilters}>
-                    {props.copy.noResultsPrimaryAction}
-                  </button>
-                  <button className="task-empty-state-secondary-action" type="button" onClick={handleViewAllTaskStates}>
-                    {props.copy.noResultsSecondaryAction}
-                  </button>
-                </span>
-              ) : null}
-            </section>
-          ) : (
-            model.rows.map((row) => {
-              const task = row.task;
-              const managementStatus = resolveTaskManagementStatus(task);
-              const branchStatus = row.cells.branchStatus.sortValue as TaskBranchStatus;
-              const runStatus = row.cells.runStatus.sortValue as TaskAgentRunStatus;
-              const runStatusConversationId = row.runStatusConversationId;
-              return (
-                <div
-                  key={task.id}
-                  className={row.selected ? 'task-list-row selected task-table-row' : 'task-list-row task-table-row'}
-                  role="row"
-                  style={taskTableGridStyle}
-                  aria-selected={row.selected}
-                  aria-label={`${props.copy.openTaskDetail}：${task.title}`}
-                  tabIndex={task.id === keyboardEntryTaskId ? 0 : -1}
-                  data-source-list-item="true"
-                  data-task-row-action={row.action}
-                  data-motion-surface="list-item"
-                  data-motion-state={enteringTaskIds.has(task.id) ? 'entering' : undefined}
-                  onClick={(event) => {
-                    event.currentTarget.focus();
-                    props.onOpenTaskDetail(task.id);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.target !== event.currentTarget) return;
-                    if (event.key !== 'Enter' && event.key !== ' ') return;
-                    event.preventDefault();
-                    props.onOpenTaskDetail(task.id);
-                  }}
-                >
-                  {/* 任务列表是任务页布局主角：点击任务行打开右侧悬浮详情抽屉，列表本身不提前塞入 Runtime、完成、取消等推进按钮。 */}
-                  <span className="task-table-cell task-table-select-cell" role="gridcell" onClick={(event) => event.stopPropagation()}>
-                    <TaskSelectionCheckbox ariaLabel={props.copy.selectTaskAria(task.title)} checked={row.bulkSelected} disabled={bulkActionBusy} onChange={(selected) => props.onToggleTaskSelection?.(task.id, selected)} />
-                  </span>
                   {renderedVisibleColumns.map((columnKey) => {
-                    const cell = row.cells[columnKey];
+                    const sortDirection = model.columnPreferences.sort.columnKey === columnKey ? model.columnPreferences.sort.direction : null;
+                    const width = model.columnPreferences.columnWidths?.[columnKey] ?? defaultTaskTableColumnWidths[columnKey];
+                    const bounds = getTaskTableColumnWidthBounds(columnKey);
+                    const sortLabel = sortDirection === 'asc' ? (isEnglishCopy ? 'ascending' : '升序') : sortDirection === 'desc' ? (isEnglishCopy ? 'descending' : '降序') : isEnglishCopy ? 'not sorted' : '未排序';
                     return (
-                      <span className={taskTableCellClassName(columnKey, true)} role="gridcell" key={columnKey} data-column-label={columnLabels[columnKey]}>
-                        {columnKey === 'taskType' ? (
-                          <span className={`task-status-chip task-type-chip task-status-tone-${taskTypeTone(task.taskType)}`}>
-                            <strong>{cell.primary}</strong>
-                          </span>
-                        ) : columnKey === 'managementStatus' ? (
-                          <span className="task-table-row-status-control" onClick={(event) => event.stopPropagation()}>
-                            <ZeusSelect
-                              size="compact"
-                              ariaLabel={props.copy.taskStatusSelectAria(task.title)}
-                              value={managementStatus}
-                              options={bulkStatusOptions.map((status) => ({
-                                value: status,
-                                label: statusLabel(status),
-                                color: statusColorById.get(status),
-                              }))}
-                              onChange={(status) => props.onTaskStatusChange?.(task.id, status)}
-                              className="task-status-select task-status-custom"
-                              style={{ '--task-status-tone': statusColorById.get(managementStatus) ?? '#6b7280' } as CSSProperties}
-                              disabled={props.statusChangeBusy || !props.onTaskStatusChange}
-                              searchable={false}
-                            />
-                          </span>
-                        ) : columnKey === 'branchStatus' ? (
-                          <span className={`task-status-chip task-branch-status-chip task-status-tone-${taskBranchStatusTone(branchStatus)}`}>
-                            <strong>{cell.primary}</strong>
-                          </span>
-                        ) : columnKey === 'runStatus' ? (
-                          <TaskRunStatusChip
-                            status={runStatus}
-                            label={cell.primary}
-                            ariaLabel={runStatusConversationId && props.onOpenTaskConversation ? props.copy.openRunStatusConversationAria(task.title, cell.primary) : cell.primary}
-                            onClick={
-                              runStatusConversationId && props.onOpenTaskConversation
-                                ? (event) => {
-                                    event.stopPropagation();
-                                    props.onOpenTaskConversation?.(task.id, runStatusConversationId);
-                                  }
-                                : undefined
-                            }
-                          />
-                        ) : columnKey === 'priority' ? (
-                          <TaskPriorityControl
-                            task={task}
-                            language={props.appLanguage}
-                            options={props.priorityOptions}
-                            ariaLabel={props.copy.taskPrioritySelectAria(task.title)}
-                            disabled={props.statusChangeBusy || !props.onTaskPriorityChange}
-                            onSave={(taskId, input) => {
-                              if (!props.onTaskPriorityChange) return Promise.reject(new Error(props.appLanguage === 'zh-CN' ? '任务优先级更新能力不可用。' : 'Task priority update is unavailable.'));
-                              return props.onTaskPriorityChange(taskId, input);
-                            }}
-                          />
-                        ) : columnKey === 'intent' ? (
-                          <span className="task-table-title-hierarchy" style={{ paddingInlineStart: `${row.depth * 22}px` }}>
-                            {props.viewMode === 'hierarchy' ? (
-                              <button
-                                type="button"
-                                className="task-table-hierarchy-toggle"
-                                aria-label={row.hasChildren ? (isEnglishCopy ? `${row.expanded ? 'Collapse' : 'Expand'} ${task.title}` : `${row.expanded ? '收起' : '展开'}${task.title}`) : undefined}
-                                aria-expanded={row.hasChildren ? row.expanded : undefined}
-                                disabled={!row.hasChildren}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  if (row.hasChildren) props.onToggleTaskExpanded(task.id);
-                                }}
-                              >
-                                <span aria-hidden="true">{row.hasChildren ? (row.expanded ? '▾' : '▸') : '·'}</span>
-                              </button>
-                            ) : null}
-                            <span className="task-table-title-text">{cell.primary}</span>
-                          </span>
-                        ) : (
-                          <strong>{cell.primary}</strong>
-                        )}
-                        {cell.secondary ? <small>{cell.secondary}</small> : null}
+                      <span
+                        className={[
+                          taskTableCellClassName(columnKey),
+                          'task-table-interactive-header',
+                          draggedColumnKey === columnKey ? 'dragging' : undefined,
+                          dragInsertion?.targetColumnKey === columnKey ? `drop-${dragInsertion.position}` : undefined,
+                        ]
+                          .filter(Boolean)
+                          .join(' ')}
+                        role="columnheader"
+                        aria-sort={sortDirection === 'asc' ? 'ascending' : sortDirection === 'desc' ? 'descending' : 'none'}
+                        key={columnKey}
+                        onDragOver={(event) => handleColumnDragOver(event, columnKey)}
+                        onDrop={(event) => handleColumnDrop(event, columnKey)}
+                      >
+                        <button
+                          type="button"
+                          className="task-table-column-drag-handle"
+                          draggable
+                          aria-pressed={keyboardMovingColumnKey === columnKey}
+                          aria-label={isEnglishCopy ? `Move ${columnLabels[columnKey]} column` : `移动${columnLabels[columnKey]}列`}
+                          title={isEnglishCopy ? 'Drag to reorder. Keyboard: Space, arrows, Space.' : '拖动调整位置；键盘可按空格、方向键、空格。'}
+                          onDragStart={(event) => handleColumnDragStart(event, columnKey)}
+                          onDragEnd={clearColumnDragState}
+                          onKeyDown={(event) => handleColumnMoveKeyDown(event, columnKey)}
+                        >
+                          <span aria-hidden="true">⋮⋮</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="task-table-column-sort-button"
+                          draggable
+                          aria-label={isEnglishCopy ? `Sort by ${columnLabels[columnKey]}; currently ${sortLabel}` : `按${columnLabels[columnKey]}排序；当前${sortLabel}`}
+                          title={isEnglishCopy ? `Click to sort (${sortLabel}); drag to reorder.` : `点击排序（${sortLabel}）；拖动调整列位置。`}
+                          onDragStart={(event) => handleColumnDragStart(event, columnKey)}
+                          onDragEnd={clearColumnDragState}
+                          onClick={() => props.onTaskTableColumnsChange(cycleTaskTableSort(model.columnPreferences, columnKey))}
+                        >
+                          <span>{columnLabels[columnKey]}</span>
+                          {sortDirection ? (
+                            <span className="task-table-column-sort-indicator" aria-hidden="true">
+                              {sortDirection === 'asc' ? '↑' : '↓'}
+                            </span>
+                          ) : null}
+                        </button>
+                        <span
+                          className="task-table-column-resize-handle"
+                          role="separator"
+                          tabIndex={0}
+                          aria-orientation="vertical"
+                          aria-valuemin={bounds.min}
+                          aria-valuemax={bounds.max}
+                          aria-valuenow={width}
+                          aria-label={isEnglishCopy ? `Resize ${columnLabels[columnKey]} column` : `调整${columnLabels[columnKey]}列宽`}
+                          onPointerDown={(event) => handleColumnResizePointerDown(event, columnKey)}
+                          onKeyDown={(event) => handleColumnResizeKeyDown(event, columnKey)}
+                        />
                       </span>
                     );
                   })}
                 </div>
-              );
-            })
-          )}
-        </section>
+              ) : null}
+              <span className="sr-only" role="status" aria-live="polite">
+                {columnInteractionAnnouncement}
+              </span>
+              {taskListLoading ? (
+                // 加载态只替换表格内容，不替换工具条和列头，用户能确认即将出现的数据结构。
+                <section className="task-list-state-row task-list-loading-state" role="status" aria-live="polite">
+                  <span className="task-list-state-copy">
+                    <strong>{props.copy.taskListLoadingTitle}</strong>
+                    <small>{props.copy.taskListLoadingHelp}</small>
+                  </span>
+                  <span className="task-loading-skeleton-stack" aria-hidden="true">
+                    <span className="task-loading-skeleton-line" />
+                    <span className="task-loading-skeleton-line" />
+                    <span className="task-loading-skeleton-line short" />
+                  </span>
+                </section>
+              ) : taskListError ? (
+                // 弹窗负责错误事实；列表区只保留可恢复操作，避免关闭弹窗后失去重试入口。
+                <section className="project-inline-recovery-row task-list-state-row" aria-label={props.copy.taskListErrorTitle} role="status">
+                  <span className="task-list-state-mark" aria-hidden="true">
+                    !
+                  </span>
+                  <span className="project-inline-recovery-copy task-list-state-copy">
+                    <strong>{props.copy.taskListErrorRetry}</strong>
+                  </span>
+                  <span className="task-list-state-action-rail">
+                    <button type="button" className="task-list-state-primary-action" onClick={props.onRetryTaskList} disabled={!props.onRetryTaskList}>
+                      {props.copy.taskListErrorRetry}
+                    </button>
+                    <button type="button" className="task-list-state-secondary-action" onClick={props.onOpenProjectSettings} disabled={!props.onOpenProjectSettings}>
+                      {props.copy.taskListErrorProjectSettings}
+                    </button>
+                  </span>
+                </section>
+              ) : model.visibleTasks.length === 0 ? (
+                // visual thesis: 空任务态只说明任务页价值与下一步，不重复顶部主操作；筛选无结果才显示恢复动作。
+                // 空态必须以当前可见列表区为居中基准，不能被横向溢出的表头宽度拉偏。
+                <section
+                  className={['project-inline-recovery-row task-list-empty-row task-empty-state', model.emptyState === 'no-results' ? 'task-empty-state-with-actions' : 'task-empty-state-copy-only'].join(' ')}
+                  aria-label={model.emptyState === 'no-results' ? props.copy.noResultsTitle : props.copy.emptyTitle}
+                  role="region"
+                >
+                  <span className="task-empty-state-mark" aria-hidden="true">
+                    0
+                  </span>
+                  <span className="project-inline-recovery-copy task-empty-state-copy">
+                    <strong>{model.emptyState === 'no-results' ? props.copy.noResultsTitle : props.copy.emptyTitle}</strong>
+                    <small>{model.emptyState === 'no-results' ? props.copy.noResultsHelp : props.copy.emptyHelp}</small>
+                  </span>
+                  {model.emptyState === 'no-results' ? (
+                    <span className="task-empty-state-action-rail">
+                      <button className="task-empty-state-primary-action" type="button" onClick={handleResetTaskFilters}>
+                        {props.copy.noResultsPrimaryAction}
+                      </button>
+                      <button className="task-empty-state-secondary-action" type="button" onClick={handleViewAllTaskStates}>
+                        {props.copy.noResultsSecondaryAction}
+                      </button>
+                    </span>
+                  ) : null}
+                </section>
+              ) : (
+                model.rows.map((row) => {
+                  const task = row.task;
+                  const managementStatus = resolveTaskManagementStatus(task);
+                  const branchStatus = row.cells.branchStatus.sortValue as TaskBranchStatus;
+                  const runStatus = row.cells.runStatus.sortValue as TaskAgentRunStatus;
+                  const runStatusConversationId = row.runStatusConversationId;
+                  return (
+                    <div
+                      key={task.id}
+                      className={row.selected ? 'task-list-row selected task-table-row' : 'task-list-row task-table-row'}
+                      role="row"
+                      style={taskTableGridStyle}
+                      aria-selected={row.selected}
+                      aria-label={`${props.copy.openTaskDetail}：${task.title}`}
+                      tabIndex={task.id === keyboardEntryTaskId ? 0 : -1}
+                      data-source-list-item="true"
+                      data-task-row-action={row.action}
+                      data-motion-surface="list-item"
+                      data-motion-state={enteringTaskIds.has(task.id) ? 'entering' : undefined}
+                      onClick={(event) => {
+                        event.currentTarget.focus();
+                        props.onOpenTaskDetail(task.id);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.target !== event.currentTarget) return;
+                        if (event.key !== 'Enter' && event.key !== ' ') return;
+                        event.preventDefault();
+                        props.onOpenTaskDetail(task.id);
+                      }}
+                    >
+                      {/* 任务列表是任务页布局主角：点击任务行打开右侧悬浮详情抽屉，列表本身不提前塞入 Runtime、完成、取消等推进按钮。 */}
+                      <span className="task-table-cell task-table-select-cell" role="gridcell" onClick={(event) => event.stopPropagation()}>
+                        <TaskSelectionCheckbox ariaLabel={props.copy.selectTaskAria(task.title)} checked={row.bulkSelected} disabled={bulkActionBusy} onChange={(selected) => props.onToggleTaskSelection?.(task.id, selected)} />
+                      </span>
+                      {renderedVisibleColumns.map((columnKey) => {
+                        const cell = row.cells[columnKey];
+                        return (
+                          <span className={taskTableCellClassName(columnKey, true)} role="gridcell" key={columnKey} data-column-label={columnLabels[columnKey]}>
+                            {columnKey === 'taskType' ? (
+                              <span className={`task-status-chip task-type-chip task-status-tone-${taskTypeTone(task.taskType)}`}>
+                                <strong>{cell.primary}</strong>
+                              </span>
+                            ) : columnKey === 'managementStatus' ? (
+                              <span className="task-table-row-status-control" onClick={(event) => event.stopPropagation()}>
+                                <ZeusSelect
+                                  size="compact"
+                                  ariaLabel={props.copy.taskStatusSelectAria(task.title)}
+                                  value={managementStatus}
+                                  options={bulkStatusOptions.map((status) => ({
+                                    value: status,
+                                    label: statusLabel(status),
+                                    color: statusColorById.get(status),
+                                  }))}
+                                  onChange={(status) => props.onTaskStatusChange?.(task.id, status)}
+                                  className="task-status-select task-status-custom"
+                                  style={{ '--task-status-tone': statusColorById.get(managementStatus) ?? '#6b7280' } as CSSProperties}
+                                  disabled={props.statusChangeBusy || !props.onTaskStatusChange}
+                                  searchable={false}
+                                />
+                              </span>
+                            ) : columnKey === 'branchStatus' ? (
+                              <span className={`task-status-chip task-branch-status-chip task-status-tone-${taskBranchStatusTone(branchStatus)}`}>
+                                <strong>{cell.primary}</strong>
+                              </span>
+                            ) : columnKey === 'runStatus' ? (
+                              <TaskRunStatusChip
+                                status={runStatus}
+                                label={cell.primary}
+                                ariaLabel={runStatusConversationId && props.onOpenTaskConversation ? props.copy.openRunStatusConversationAria(task.title, cell.primary) : cell.primary}
+                                onClick={
+                                  runStatusConversationId && props.onOpenTaskConversation
+                                    ? (event) => {
+                                        event.stopPropagation();
+                                        props.onOpenTaskConversation?.(task.id, runStatusConversationId);
+                                      }
+                                    : undefined
+                                }
+                              />
+                            ) : columnKey === 'priority' ? (
+                              <TaskPriorityControl
+                                task={task}
+                                language={props.appLanguage}
+                                options={props.priorityOptions}
+                                ariaLabel={props.copy.taskPrioritySelectAria(task.title)}
+                                disabled={props.statusChangeBusy || !props.onTaskPriorityChange}
+                                onSave={(taskId, input) => {
+                                  if (!props.onTaskPriorityChange) return Promise.reject(new Error(props.appLanguage === 'zh-CN' ? '任务优先级更新能力不可用。' : 'Task priority update is unavailable.'));
+                                  return props.onTaskPriorityChange(taskId, input);
+                                }}
+                              />
+                            ) : columnKey === 'intent' ? (
+                              <span className="task-table-title-hierarchy" style={{ paddingInlineStart: `${row.depth * 22}px` }}>
+                                {props.viewMode === 'hierarchy' ? (
+                                  <button
+                                    type="button"
+                                    className="task-table-hierarchy-toggle"
+                                    aria-label={row.hasChildren ? (isEnglishCopy ? `${row.expanded ? 'Collapse' : 'Expand'} ${task.title}` : `${row.expanded ? '收起' : '展开'}${task.title}`) : undefined}
+                                    aria-expanded={row.hasChildren ? row.expanded : undefined}
+                                    disabled={!row.hasChildren}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      if (row.hasChildren) props.onToggleTaskExpanded(task.id);
+                                    }}
+                                  >
+                                    <span aria-hidden="true">{row.hasChildren ? (row.expanded ? '▾' : '▸') : '·'}</span>
+                                  </button>
+                                ) : null}
+                                <span className="task-table-title-text">{cell.primary}</span>
+                              </span>
+                            ) : (
+                              <strong>{cell.primary}</strong>
+                            )}
+                            {cell.secondary ? <small>{cell.secondary}</small> : null}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  );
+                })
+              )}
+            </section>
+          </>
+        )}
       </section>
     </section>
   );

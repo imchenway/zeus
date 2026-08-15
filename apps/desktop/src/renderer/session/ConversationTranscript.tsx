@@ -2,6 +2,7 @@ import { Fragment, type ReactNode, useCallback, useEffect, useLayoutEffect, useM
 import { isActiveSessionTurn, isOperationalActivityItem, SessionActivityGroup, SessionTurnDuration, SessionTurnProcessDisclosure } from './SessionActivity.js';
 import { itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText } from './ThreadItemView.js';
 import { PlanSummary } from './PlanSummary.js';
+import { isAssistantDeliverableItem } from './sessionTypes.js';
 import type {
   ConversationResource,
   ConversationResourcePreview,
@@ -754,14 +755,14 @@ export function projectTranscriptTurnRows(rows: readonly TranscriptRow[], active
 function isLiveTurnTimelineRow(row: TranscriptRow): boolean {
   if (row.kind === 'answered_request' || row.kind === 'activity') return true;
   // 计划是需要独立审核的产物，不属于仍在展开的过程正文。
-  return row.item.type !== 'plan' && !isFinalAnswerItem(row.item);
+  return row.item.type !== 'plan' && !isFinalAnswerItem(row.item) && !isAssistantDeliverableItem(row.item);
 }
 
 function isTurnProcessRow(row: TranscriptRow): boolean {
   if (row.kind === 'answered_request') return false;
   if (row.kind === 'activity') return true;
-  // 计划是交给用户审核的最终产物，必须独立展示，不能折叠进“已处理”过程。
-  if (row.item.type === 'plan') return false;
+  // 计划和明确交付资源属于最终产物，必须独立展示，不能折叠进“已处理”过程。
+  if (row.item.type === 'plan' || isAssistantDeliverableItem(row.item)) return false;
   return itemRole(row.item) !== 'user' && !isFinalAnswerItem(row.item);
 }
 
