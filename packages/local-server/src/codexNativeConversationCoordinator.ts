@@ -5131,9 +5131,27 @@ function itemTypeFromMethod(method: string): ConversationItemType {
 }
 
 function itemTypeFromValue(value: unknown): ConversationItemType {
-  const normalized = typeof value === 'string' ? value : 'error';
-  const allowed: ConversationItemType[] = ['userMessage', 'agentMessage', 'reasoning', 'commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'plan', 'imageView', 'imageGeneration', 'webSearch', 'contextCompaction', 'error'];
-  return allowed.includes(normalized as ConversationItemType) ? (normalized as ConversationItemType) : 'error';
+  const normalized = typeof value === 'string' ? value : 'providerEvent';
+  const allowed: ConversationItemType[] = [
+    'userMessage',
+    'agentMessage',
+    'reasoning',
+    'commandExecution',
+    'fileChange',
+    'mcpToolCall',
+    'dynamicToolCall',
+    'plan',
+    'imageView',
+    'imageGeneration',
+    'webSearch',
+    'contextCompaction',
+    'collabAgentToolCall',
+    'subAgentActivity',
+    'providerEvent',
+    'error',
+  ];
+  // 未识别的协议事件保持中性，避免 Codex 新增能力被误报成“本轮错误”；显式 error 仍按错误处理。
+  return allowed.includes(normalized as ConversationItemType) ? (normalized as ConversationItemType) : 'providerEvent';
 }
 
 function phaseFromItem(item: Record<string, unknown>): ConversationItemPhase {

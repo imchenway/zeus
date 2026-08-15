@@ -20,6 +20,8 @@ import {
   type NativeRealtimeEventEnvelope,
   type NativeSessionError,
   type NativeSessionState,
+  type NativeSubagentListSnapshot,
+  type NativeSubagentThreadSnapshot,
   type NativeTurnSettingsSelection,
   type SendNativeMessageRequest,
   type TurnChangeSet,
@@ -38,6 +40,8 @@ export interface SessionControllerClient {
   loadCodexConversationCapabilities?(projectId: string): Promise<CodexConversationCapabilities>;
   loadNativeConversation(projectId: string, conversationId: string): Promise<NativeConversationSnapshot>;
   loadNativePendingRequests(projectId: string, conversationId: string): Promise<{ conversationId: string; requests: NativePendingRequest[] }>;
+  loadNativeSubagents?(projectId: string, conversationId: string): Promise<NativeSubagentListSnapshot>;
+  loadNativeSubagentThread?(projectId: string, conversationId: string, threadId: string): Promise<NativeSubagentThreadSnapshot>;
   loadConversationResourcePreview?(projectId: string, conversationId: string, resourceId: string): Promise<ConversationResourcePreview>;
   loadTurnChangeFilePreview?(projectId: string, conversationId: string, turnId: string, changeSetId: string, fileId: string): Promise<ConversationResourcePreview>;
   loadTurnChangeSet?(projectId: string, conversationId: string, turnId: string): Promise<TurnChangeSet>;
