@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
-import type { CodexLocalUsageDay, CodexLocalUsageGroup, CodexOfficialUsageSnapshot, CodexUsageAnalyticsSnapshot, CodexUsageRange } from '@zeus/shared';
+import { calculateUncachedInputTokens, type CodexLocalUsageDay, type CodexLocalUsageGroup, type CodexOfficialUsageSnapshot, type CodexUsageAnalyticsSnapshot, type CodexUsageRange } from '@zeus/shared';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
 type UsageClient = {
@@ -231,7 +231,8 @@ function LocalOverview(props: { snapshot: CodexUsageAnalyticsSnapshot; language:
           [props.language === 'zh-CN' ? '输入' : 'Input', formatTokens(totals.inputTokens, props.language)],
           [props.language === 'zh-CN' ? '输出' : 'Output', formatTokens(totals.outputTokens, props.language)],
           [props.language === 'zh-CN' ? '推理输出' : 'Reasoning output', formatTokens(totals.reasoningOutputTokens, props.language)],
-          [props.language === 'zh-CN' ? '缓存读取' : 'Cache reads', formatTokens(totals.cachedInputTokens, props.language)],
+          [props.language === 'zh-CN' ? '缓存命中' : 'Cache hits', formatTokens(totals.cachedInputTokens, props.language)],
+          [props.language === 'zh-CN' ? '缓存未命中' : 'Cache misses', formatTokens(calculateUncachedInputTokens(totals), props.language)],
           [props.language === 'zh-CN' ? '缓存写入' : 'Cache writes', formatTokens(totals.cacheWriteInputTokens, props.language)],
           [props.language === 'zh-CN' ? '缓存命中率' : 'Cache hit rate', formatPercent(totals.cacheHitRate, props.language)],
           ['Credits', formatEstimate(totals.estimatedCredits, 'credits', props.language)],

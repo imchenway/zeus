@@ -1,5 +1,5 @@
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CodexOfficialRateWindow, UsageOverviewSnapshot, UsageProviderSummary } from '@zeus/shared';
+import { calculateUncachedInputTokens, type CodexOfficialRateWindow, type UsageOverviewSnapshot, type UsageProviderSummary } from '@zeus/shared';
 import type { AppShellSettings, DashboardClient } from '../apiClient.js';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import './MenuBarUsageWindow.css';
@@ -291,7 +291,7 @@ function ProviderDetail(props: { provider: UsageProviderSummary; language: Langu
   const { provider, language } = props;
   const text = copy[language];
   const urgent = useMemo(() => findMostUrgentWindow(provider.rateLimitWindows), [provider.rateLimitWindows]);
-  const cacheAvailable = provider.providerId === 'codex' || provider.sevenDayLocal.cachedInputTokens > 0 || provider.sevenDayLocal.cacheWriteInputTokens > 0;
+  const cacheAvailable = provider.cacheUsageAvailable ?? (provider.providerId === 'codex' || provider.sevenDayLocal.cachedInputTokens > 0 || provider.sevenDayLocal.cacheWriteInputTokens > 0);
   const todayLocalComplete = provider.todayLocalComplete === true;
   const sevenDayLocalComplete = provider.sevenDayLocalComplete === true;
   const todayLocalValue = formatTokens(provider.todayLocal.totalTokens, language);
@@ -335,7 +335,15 @@ function ProviderDetail(props: { provider: UsageProviderSummary; language: Langu
           value={provider.kind === 'api' ? formatTokens(provider.sevenDayLocal.totalTokens, language) : todayLocalComplete ? todayLocalValue : `≥${todayLocalValue}`}
           hint={provider.kind === 'subscription' ? (todayLocalComplete ? text.localUsage : text.localUsageIncomplete) : undefined}
         />
-        <Metric label={text.cache} value={!sevenDayLocalComplete ? '—' : cacheAvailable ? formatPercent(provider.sevenDayLocal.cacheHitRate, language, '—') : text.cacheUnsupported} />
+        <Metric
+          label={text.cache}
+          value={!sevenDayLocalComplete ? '—' : cacheAvailable ? formatPercent(provider.sevenDayLocal.cacheHitRate, language, '—') : text.cacheUnsupported}
+          hint={
+            sevenDayLocalComplete && cacheAvailable
+              ? `${language === 'zh-CN' ? '命中' : 'Hit'} ${formatTokens(provider.sevenDayLocal.cachedInputTokens, language)} · ${language === 'zh-CN' ? '未命中' : 'Miss'} ${formatTokens(calculateUncachedInputTokens(provider.sevenDayLocal), language)}`
+              : undefined
+          }
+        />
         <Metric label={text.costShort} accessibleLabel={text.cost} value={sevenDayLocalComplete ? formatCost(provider, language, text.noPrice) : '—'} hint={sevenDayLocalComplete ? text.localEstimate : text.localUsageIncomplete} />
       </dl>
 

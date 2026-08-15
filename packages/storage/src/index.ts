@@ -822,6 +822,7 @@ export interface ConversationProviderTokenUsageSnapshot extends ProviderSequence
   cacheHitRate: number | null;
   estimatedCredits: number | null;
   apiEquivalentUsd: number | null;
+  lastApiEquivalentUsd: number | null;
   cacheSavingsUsd: number | null;
   priceCoverage: number | null;
   pricingCatalogDate: string | null;
@@ -2754,6 +2755,30 @@ function migrateCodexUsageLedgerSchema(db: ZeusDatabase): void {
       migrationId: cumulativeMigrationId,
       description: '为 Codex 逐轮用量增加会话累计基线，避免把最后一次模型调用冒充整轮用量',
       checksumSource: 'codex_usage_ledger:provider_baseline_json,provider_total_json,usage_complete:cumulative-baseline',
+    });
+  }
+  const externalUsageIdentityMigrationId = '20260815_0002_external_model_usage_identity';
+  if (!db.get<{ migration_id: string }>(`SELECT migration_id FROM schema_migrations WHERE migration_id = ?`, [externalUsageIdentityMigrationId])) {
+    // App Server 承载的外部模型仍属于 API 供应源，不能继续混入 Codex 订阅账户统计。
+    db.execute(
+      `UPDATE codex_usage_ledger
+          SET provider_id = 'api:' || (SELECT model_source_id FROM conversations WHERE conversations.id = codex_usage_ledger.conversation_id),
+              account_scope_id = (SELECT model_source_id FROM conversations WHERE conversations.id = codex_usage_ledger.conversation_id)
+        WHERE provider_id = 'codex'
+          AND EXISTS (
+            SELECT 1
+              FROM conversations
+             WHERE conversations.id = codex_usage_ledger.conversation_id
+               AND model_source_id IS NOT NULL
+               AND model_source_id <> ''
+          )`,
+    );
+    // Pi 的账本值本来就是逐轮增量；旧记录只缺少完整性标记。
+    db.execute(`UPDATE codex_usage_ledger SET usage_complete = 1 WHERE provider_id LIKE 'pi:%'`);
+    recordSchemaMigration(db, {
+      migrationId: externalUsageIdentityMigrationId,
+      description: '外部模型用量从 Codex 订阅统计中拆分，并确认历史 Pi 轮次完整性',
+      checksumSource: 'codex_usage_ledger:external-model-provider-identity,pi-turn-usage-complete',
     });
   }
   recordSchemaMigration(db, {
@@ -5532,7 +5557,7 @@ export class ConversationRepository {
   getProviderTokenUsageSnapshot(conversationId: string): ConversationProviderTokenUsageSnapshot | undefined {
     const snapshot = this.getConversationSnapshot<ConversationProviderTokenUsageSnapshot & { inputTokens?: number; outputTokens?: number; totalTokens?: number }>(conversationId, 'provider_token_usage_json');
     if (!snapshot) return undefined;
-    if (snapshot.total && snapshot.last) return snapshot;
+    if (snapshot.total && snapshot.last) return { ...snapshot, lastApiEquivalentUsd: snapshot.lastApiEquivalentUsd ?? null };
     if ([snapshot.inputTokens, snapshot.outputTokens, snapshot.totalTokens].every((value) => typeof value === 'number' && Number.isFinite(value) && value >= 0)) {
       const total: TokenUsageBreakdown = {
         totalTokens: snapshot.totalTokens!,
@@ -5551,6 +5576,7 @@ export class ConversationRepository {
         cacheHitRate: null,
         estimatedCredits: null,
         apiEquivalentUsd: null,
+        lastApiEquivalentUsd: null,
         cacheSavingsUsd: null,
         priceCoverage: null,
         pricingCatalogDate: null,
@@ -7384,12 +7410,27 @@ function validateProviderTokenUsageSnapshot(snapshot: unknown): asserts snapshot
   assertNoSecretLikeProviderKeys(candidate, new Set(['inputtokens', 'cachedinputtokens', 'cachewriteinputtokens', 'outputtokens', 'reasoningoutputtokens', 'totaltokens']));
   assertOnlyKeys(
     candidate,
-    ['generationId', 'sequence', 'total', 'last', 'modelContextWindow', 'cacheHitRate', 'estimatedCredits', 'apiEquivalentUsd', 'cacheSavingsUsd', 'priceCoverage', 'pricingCatalogDate', 'pricingSourceUrls', 'historyComplete'],
+    [
+      'generationId',
+      'sequence',
+      'total',
+      'last',
+      'modelContextWindow',
+      'cacheHitRate',
+      'estimatedCredits',
+      'apiEquivalentUsd',
+      'lastApiEquivalentUsd',
+      'cacheSavingsUsd',
+      'priceCoverage',
+      'pricingCatalogDate',
+      'pricingSourceUrls',
+      'historyComplete',
+    ],
     'provider token usage snapshot',
   );
   validateTokenUsageBreakdown(candidate.total);
   validateTokenUsageBreakdown(candidate.last);
-  for (const value of [candidate.modelContextWindow, candidate.cacheHitRate, candidate.estimatedCredits, candidate.apiEquivalentUsd, candidate.cacheSavingsUsd, candidate.priceCoverage]) {
+  for (const value of [candidate.modelContextWindow, candidate.cacheHitRate, candidate.estimatedCredits, candidate.apiEquivalentUsd, candidate.lastApiEquivalentUsd, candidate.cacheSavingsUsd, candidate.priceCoverage]) {
     if (value !== null && (typeof value !== 'number' || !Number.isFinite(value) || value < 0)) throw new Error('Invalid provider token usage snapshot');
   }
   if ((candidate.pricingCatalogDate !== null && typeof candidate.pricingCatalogDate !== 'string') || !Array.isArray(candidate.pricingSourceUrls) || candidate.pricingSourceUrls.some((url) => typeof url !== 'string')) {

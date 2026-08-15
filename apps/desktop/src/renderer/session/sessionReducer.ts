@@ -1374,6 +1374,7 @@ function tokenUsageFrom(payload: Record<string, unknown>): NativeTokenUsageSnaps
     cacheHitRate: numberValue(payload.cacheHitRate),
     estimatedCredits: numberValue(payload.estimatedCredits),
     apiEquivalentUsd: numberValue(payload.apiEquivalentUsd),
+    lastApiEquivalentUsd: numberValue(payload.lastApiEquivalentUsd),
     cacheSavingsUsd: numberValue(payload.cacheSavingsUsd),
     priceCoverage: numberValue(payload.priceCoverage),
     pricingCatalogDate: stringValue(payload.pricingCatalogDate),
