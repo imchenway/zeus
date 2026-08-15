@@ -288,7 +288,14 @@ const PROJECT_WORKSPACE_ENTRIES = [
 type ProjectDetailPanel = 'diff' | 'edit' | 'config' | 'archive' | undefined;
 type ConversationDrawer = 'runtime' | 'context' | 'changes' | 'templates' | undefined;
 
-type TaskConversationDrawerTarget = Readonly<{ taskId: string; conversationId: string }> | undefined;
+type TaskConversationDrawerTarget =
+  | Readonly<{
+      taskId: string;
+      conversationId: string;
+      navigationId: string;
+      status: 'opening' | 'error';
+    }>
+  | undefined;
 type TaskConversationReopenState = Readonly<{ conversationId: string; status: 'busy' | 'error'; error?: string }> | undefined;
 type SettingsCategory = 'general' | 'usage' | 'tasks' | 'runtime' | 'models' | 'browser' | 'telegram' | 'security' | 'commands' | 'git' | 'release' | 'data';
 const SETTINGS_CATEGORIES = ['general', 'usage', 'tasks', 'runtime', 'models', 'browser', 'telegram', 'security', 'commands', 'git', 'release', 'data'] as const satisfies readonly SettingsCategory[];
@@ -873,7 +880,11 @@ export function resolveSessionDrawerInitialFocusTarget(drawer: HTMLElement): HTM
 
 export function resolveSelectedNativeConversationForProject(choices: NativeConversationChoice[], selectedConversationId: string | null, activeProjectId: string | undefined): NativeConversationChoice | null {
   if (!selectedConversationId || !activeProjectId) return null;
-  return choices.find((conversation) => (conversation.navigationId ?? conversation.id) === selectedConversationId && conversation.projectId === activeProjectId) ?? null;
+  return choices.find((conversation) => resolveConversationNavigationId(conversation) === selectedConversationId && conversation.projectId === activeProjectId) ?? null;
+}
+
+function resolveConversationNavigationId(conversation: NativeConversationChoice): string {
+  return conversation.navigationId ?? conversation.id;
 }
 
 export function resolveTaskConversationToView(snapshot: NativeConversationChoicesSnapshot | undefined): NativeConversationChoice | null {
@@ -1425,6 +1436,8 @@ const languageCopy = {
       taskConversationDrawerBackdrop: '任务会话抽屉背景',
       taskConversationDrawerClose: '关闭任务会话',
       taskConversationDrawerLoading: '正在打开会话…',
+      taskConversationDrawerUnavailable: '暂时无法打开这条会话',
+      taskConversationDrawerRetry: '重新打开',
       taskCountPrefix: '任务',
       filteredState: '已筛选',
       allState: '全部状态',
@@ -2891,6 +2904,8 @@ const languageCopy = {
       taskConversationDrawerBackdrop: 'Task conversation drawer backdrop',
       taskConversationDrawerClose: 'Close task conversation',
       taskConversationDrawerLoading: 'Opening conversation…',
+      taskConversationDrawerUnavailable: 'This conversation cannot be opened right now',
+      taskConversationDrawerRetry: 'Open again',
       taskCountPrefix: 'Tasks',
       filteredState: 'Filtered',
       allState: 'All states',
@@ -4161,6 +4176,8 @@ const languageCopy = {
       taskConversationDrawerBackdrop: string;
       taskConversationDrawerClose: string;
       taskConversationDrawerLoading: string;
+      taskConversationDrawerUnavailable: string;
+      taskConversationDrawerRetry: string;
       taskCountPrefix: string;
       filteredState: string;
       allState: string;
@@ -7758,6 +7775,25 @@ export function App(props: {
     () => resolveSelectedNativeConversationForProject(nativeConversationChoices, selectedNativeConversationId, activeProjectId),
     [activeProjectId, nativeConversationChoices, selectedNativeConversationId],
   );
+  const taskConversationDrawerReady = Boolean(
+    taskConversationDrawerTarget && selectedNativeConversation?.taskId === taskConversationDrawerTarget.taskId && resolveConversationNavigationId(selectedNativeConversation) === taskConversationDrawerTarget.navigationId,
+  );
+  useEffect(() => {
+    if (!taskConversationDrawerTarget || taskConversationDrawerTarget.status !== 'opening' || taskConversationDrawerReady) return;
+    const target = taskConversationDrawerTarget;
+    const frame = window.requestAnimationFrame(() => {
+      recordLocalError('task-conversation-drawer-open', new Error(`Task conversation ${target.conversationId} did not resolve to navigation identity ${target.navigationId}.`));
+      setTaskConversationDrawerTarget((current) =>
+        current?.taskId === target.taskId && current.navigationId === target.navigationId
+          ? {
+              ...current,
+              status: 'error',
+            }
+          : current,
+      );
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [taskConversationDrawerReady, taskConversationDrawerTarget]);
   useEffect(() => {
     if (!selectedNativeConversation?.taskId) return;
     const taskId = selectedNativeConversation.taskId;
@@ -9739,10 +9775,15 @@ export function App(props: {
   };
 
   async function openTaskConversationDrawer(taskId: string, conversationId: string): Promise<void> {
-    const conversation = nativeConversationChoicesByTask[taskId]?.choices.find((candidate) => candidate.id === conversationId);
-    if (!conversation) return;
+    const conversation = projectedTaskConversationChoices[taskId]?.find((candidate) => candidate.id === conversationId || resolveConversationNavigationId(candidate) === conversationId);
+    if (!conversation) {
+      setTaskConversationDrawerTarget({ taskId, conversationId, navigationId: conversationId, status: 'error' });
+      recordLocalError('task-conversation-drawer-open', new Error(`Task conversation ${conversationId} is no longer available in task ${taskId}.`));
+      return;
+    }
+    const navigationId = resolveConversationNavigationId(conversation);
     setConversationDrawer(undefined);
-    setTaskConversationDrawerTarget({ taskId, conversationId });
+    setTaskConversationDrawerTarget({ taskId, conversationId: conversation.id, navigationId, status: 'opening' });
     await selectNativeConversation(conversation, 'preserve');
   }
 
@@ -13608,11 +13649,18 @@ export function App(props: {
                   portalStyle={workspaceDrawerPortalStyle}
                   onClose={() => setTaskConversationDrawerTarget(undefined)}
                 >
-                  {selectedNativeConversation?.id === taskConversationDrawerTarget.conversationId ? (
+                  {taskConversationDrawerReady ? (
                     renderNativeConversationWorkspace((taskId) => {
                       setTaskConversationDrawerTarget(undefined);
                       void openTaskDetailPane(taskId);
                     })
+                  ) : taskConversationDrawerTarget.status === 'error' ? (
+                    <section className="task-conversation-drawer-loading task-conversation-drawer-error" role="status">
+                      <p>{taskWorkspaceCopy.taskConversationDrawerUnavailable}</p>
+                      <Button variant="secondary" size="compact" onClick={() => void openTaskConversationDrawer(taskConversationDrawerTarget.taskId, taskConversationDrawerTarget.conversationId)}>
+                        {taskWorkspaceCopy.taskConversationDrawerRetry}
+                      </Button>
+                    </section>
                   ) : (
                     <section className="task-conversation-drawer-loading" role="status" aria-live="polite">
                       {taskWorkspaceCopy.taskConversationDrawerLoading}

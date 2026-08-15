@@ -5102,6 +5102,15 @@ body[data-surface='project-git-diff'] #root {
   padding: 24px;
 }
 
+.workspace-drawer-portal-root.macos-ai-app .task-conversation-drawer-error {
+  align-content: center;
+  gap: 12px;
+}
+
+.workspace-drawer-portal-root.macos-ai-app .task-conversation-drawer-error p {
+  margin: 0;
+}
+
 @media (max-width: 760px) {
   /* 移动端会话内容保持不透明，抽屉尺寸和遮罩仍由显式变体负责。 */
   .workspace-drawer-portal-root.macos-ai-app .conversation-drawer-shell {
