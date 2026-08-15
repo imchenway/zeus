@@ -3585,13 +3585,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     runStates.set(submission.conversationId, { type: 'paused', reason: 'recovery_required' });
   }
 
-  function ensurePlanImplementationRequest(
-    conversationId: string,
-    turn: ZeusConversationTurnRecord,
-    submission: ZeusConversationSubmissionRecord | undefined,
-    timestamp: string,
-    recoveredPlanItem?: ZeusConversationItemRecord | null,
-  ) {
+  function ensurePlanImplementationRequest(conversationId: string, turn: ZeusConversationTurnRecord, submission: ZeusConversationSubmissionRecord | undefined, timestamp: string, recoveredPlanItem?: ZeusConversationItemRecord | null) {
     if (!submission || contextFromSubmission(submission).workMode !== 'plan') return null;
     const planItem = recoveredPlanItem === undefined ? options.items.getLatestCompletedPlanByTurn(turn.id) : recoveredPlanItem;
     if (!planItem) return null;
