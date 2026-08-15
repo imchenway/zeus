@@ -39,7 +39,7 @@ const supportedServerRequestMethods = new Set([
  * 让一个执行宿主同时持有多个 Codex app-server。
  * 新线程和已经空闲的旧线程迁移到当前运行时；正在执行或等待交互的线程固定在原运行时，直至自然排空。
  */
-export function createCodexRuntimeGenerationManager(options: { accountFingerprintSalt?: string } = {}): CodexAppServerManager {
+export function createCodexRuntimeGenerationManager(options: { accountFingerprintSalt?: string; codexHome?: string } = {}): CodexAppServerManager {
   const entries = new Set<RuntimeEntry>();
   const entriesByGeneration = new Map<string, RuntimeEntry>();
   const entriesByThread = new Map<string, RuntimeEntry>();
@@ -208,7 +208,10 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
       return capabilities;
     }
 
-    const manager = createCodexAppServerManager({ ...(options.accountFingerprintSalt ? { accountFingerprintSalt: options.accountFingerprintSalt } : {}) });
+    const manager = createCodexAppServerManager({
+      ...(options.accountFingerprintSalt ? { accountFingerprintSalt: options.accountFingerprintSalt } : {}),
+      ...(options.codexHome ? { codexHome: options.codexHome } : {}),
+    });
     const provisional: RuntimeEntry = {
       manager,
       commandPath: input.commandPath,

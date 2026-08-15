@@ -36,6 +36,7 @@ import {
   SettingRepository,
   type ZeusConversationServerRequestRecord,
   type ZeusConversationSubmissionRecord,
+  type ZeusConversationItemRecord,
   type ZeusConversationTurnRecord,
   type ZeusConversationWithMessagesRecord,
   type ZeusDatabase,
@@ -175,6 +176,56 @@ const providerEventHotReceiptLimit = 10_000;
 /** 只接收 app-server 明确返回的绝对路径；缺失或相对路径都不推测本地会话位置。 */
 function threadPath(snapshot: CodexThreadSnapshot): string | undefined {
   return typeof snapshot.path === 'string' && snapshot.path.trim() && isAbsolute(snapshot.path.trim()) ? snapshot.path.trim() : undefined;
+}
+
+const compatibilitySnapshotItemIdPattern = /^item-\d+$/u;
+
+function compatibilitySnapshotItemIdentity(item: Pick<ZeusConversationItemRecord, 'providerThreadId' | 'providerTurnId' | 'itemType' | 'status' | 'phase' | 'textContent'>): string {
+  return JSON.stringify([item.providerThreadId, item.providerTurnId, item.itemType, item.status, item.phase]);
+}
+
+function claimCompatibilitySnapshotSourceItems(
+  target: Pick<ZeusConversationItemRecord, 'providerThreadId' | 'providerTurnId' | 'itemType' | 'status' | 'phase' | 'textContent'>,
+  candidates: readonly ZeusConversationItemRecord[],
+  claimedItemIds: Set<string>,
+): ZeusConversationItemRecord[] {
+  const scoped = candidates.filter(
+    (candidate) => !compatibilitySnapshotItemIdPattern.test(candidate.providerItemId) && !claimedItemIds.has(candidate.id) && compatibilitySnapshotItemIdentity(candidate) === compatibilitySnapshotItemIdentity(target),
+  );
+  const maximumSegmentCount = target.itemType === 'reasoning' ? scoped.length : Math.min(scoped.length, 1);
+  for (let start = 0; start < scoped.length; start += 1) {
+    const matched: ZeusConversationItemRecord[] = [];
+    let combinedText = '';
+    for (let index = start; index < scoped.length && matched.length < maximumSegmentCount; index += 1) {
+      const candidate = scoped[index]!;
+      matched.push(candidate);
+      combinedText = combinedText ? `${combinedText}\n\n${candidate.textContent}` : candidate.textContent;
+      if (combinedText === target.textContent) return matched;
+      if (!target.textContent.startsWith(combinedText)) break;
+    }
+  }
+  return [];
+}
+
+/**
+ * 部分 Codex 版本在恢复旧 JSONL 时会把真实 `msg_* / rs_*` 条目改投影为 `item-N`。
+ * 只有存在逐字段相同的真实条目时才抑制兼容别名；同文但没有真实身份的条目继续保留。
+ */
+export function filterCompatibilitySnapshotItemAliases(items: readonly ZeusConversationItemRecord[]): {
+  items: ZeusConversationItemRecord[];
+  suppressedProviderItemIds: Set<string>;
+} {
+  const claimedItemIds = new Set<string>();
+  const suppressedProviderItemIds = new Set<string>();
+  const projectedItems = items.filter((item) => {
+    if (!compatibilitySnapshotItemIdPattern.test(item.providerItemId)) return true;
+    const sourceItems = claimCompatibilitySnapshotSourceItems(item, items, claimedItemIds);
+    if (sourceItems.length === 0) return true;
+    for (const sourceItem of sourceItems) claimedItemIds.add(sourceItem.id);
+    suppressedProviderItemIds.add(item.providerItemId);
+    return false;
+  });
+  return { items: projectedItems, suppressedProviderItemIds };
 }
 
 export function createCodexNativeConversationCoordinator(options: CreateCodexNativeConversationCoordinatorOptions): CodexNativeConversationRuntime {
@@ -3051,9 +3102,10 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       updatedAt: timestamp,
     });
 
+    const matchedCompatibilityItemIds = new Set<string>();
     for (const candidate of Array.isArray(providerTurn.items) ? providerTurn.items : []) {
       if (!isRecord(candidate)) continue;
-      projectProviderSnapshotItem(conversation, turn, candidate, classification, timestamp);
+      projectProviderSnapshotItem(conversation, turn, candidate, classification, timestamp, matchedCompatibilityItemIds);
     }
 
     if (classification === 'active') {
@@ -3121,6 +3173,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     itemPayload: Record<string, unknown>,
     turnClassification: ReturnType<typeof classifySnapshotTurn>,
     timestamp: string,
+    matchedCompatibilityItemIds: Set<string>,
   ): void {
     const providerThreadId = turn.providerThreadId;
     const providerTurnId = requireString(turn.providerTurnId, 'provider turn id');
@@ -3136,6 +3189,25 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       : completedItemProjection(existing, presentedItemPayload, itemType);
     const itemFailed = itemPayload.status === 'failed';
     const itemTerminal = turnClassification !== 'active' || itemFailed || itemPayload.status === 'completed';
+    const projectedStatus = itemFailed ? 'failed' : itemTerminal ? 'completed' : 'in_progress';
+    if (compatibilitySnapshotItemIdPattern.test(providerItemId)) {
+      const sourceItems = claimCompatibilitySnapshotSourceItems(
+        {
+          providerThreadId,
+          providerTurnId,
+          itemType,
+          status: projectedStatus,
+          phase: phaseFromItem(itemPayload),
+          textContent: completedProjection.textContent,
+        },
+        options.items.listByConversation(conversation.id).filter((candidate) => candidate.turnId === turn.id),
+        matchedCompatibilityItemIds,
+      );
+      if (sourceItems.length > 0) {
+        for (const sourceItem of sourceItems) matchedCompatibilityItemIds.add(sourceItem.id);
+        return;
+      }
+    }
     const item = itemTerminal
       ? options.items.upsertCompleted({
           conversationId: conversation.id,
@@ -3147,7 +3219,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           phase: phaseFromItem(itemPayload),
           payload: completedProjection.payload,
           textContent: completedProjection.textContent,
-          status: itemFailed ? 'failed' : 'completed',
+          status: projectedStatus,
           startedAt: existing?.startedAt ?? turn.startedAt,
           completedAt: itemFailed || turnClassification !== 'active' ? (turn.completedAt ?? timestamp) : timestamp,
           updatedAt: timestamp,

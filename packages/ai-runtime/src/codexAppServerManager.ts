@@ -393,6 +393,8 @@ type PendingRequest = {
 
 interface CreateCodexAppServerManagerOptions {
   spawn?: CodexAppServerSpawn;
+  /** Codex 自己的持久目录；桌面内嵌运行时不能依赖父进程偶然继承的环境变量。 */
+  codexHome?: string;
   now?: () => string;
   generationId?: () => string;
   requestTimeoutMs?: number;
@@ -440,6 +442,8 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
   const eventReplayLimit = options.eventReplayLimit ?? 1_024;
   const shutdownTimeoutMs = Math.max(0, options.shutdownTimeoutMs ?? 5_000);
   const accountFingerprintSalt = options.accountFingerprintSalt?.trim() || 'zeus-local-account-scope';
+  const codexHome = options.codexHome?.trim() || null;
+  if (codexHome !== null && !isAbsolute(codexHome)) throw managerError('ZEUS_CODEX_HOME_INVALID', 'Codex home must be an absolute path.');
   const listeners = new Set<(event: CodexAppServerEvent) => void>();
   const externalAgentImportListeners = new Set<(event: ExternalAgentImportEvent) => void>();
   const eventReplayBuffer: CodexAppServerEvent[] = [];
@@ -485,6 +489,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     const env = {
       ...process.env,
       PATH: expandCliSearchPath(),
+      ...(codexHome === null ? {} : { CODEX_HOME: codexHome }),
       ...(externalAgentHome === null ? {} : { ZEUS_CODEX_EXTERNAL_AGENT_HOME: externalAgentHome }),
       ...providerEnvironment,
     };

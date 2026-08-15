@@ -429,7 +429,8 @@ export async function startOwnedDesktopLocalServer(options: StartDesktopLocalSer
   const dbPath = dataLayout.database;
   const configPath = dataLayout.localConfig;
   const restartDelayMs = 1_000;
-  const codexAppServerManager = createCodexRuntimeGenerationManager();
+  // 内嵌 Local Server 不再经过独立宿主的 spawn 环境，必须显式固定 Zeus 的 Codex Home。
+  const codexAppServerManager = createCodexRuntimeGenerationManager({ codexHome: options.codexHome ?? dataLayout.codexHome });
   let closingIntentionally = false;
   let restartTimer: ReturnType<typeof setTimeout> | undefined;
   let restartPromise: Promise<void> | undefined;
