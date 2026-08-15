@@ -3641,11 +3641,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     runStates.set(submission.conversationId, { type: 'paused', reason: 'recovery_required' });
   }
 
-  async function pauseQueueAfterDispatchFailure(
-    conversation: ZeusConversationWithMessagesRecord,
-    submission: ZeusConversationSubmissionRecord,
-    error: unknown,
-  ): Promise<NativeAcceptedOperation> {
+  async function pauseQueueAfterDispatchFailure(conversation: ZeusConversationWithMessagesRecord, submission: ZeusConversationSubmissionRecord, error: unknown): Promise<NativeAcceptedOperation> {
     markConversationRecoveryRequired(conversation.id, error);
     await persist();
     const failure = serializeError(error);

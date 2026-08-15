@@ -14747,11 +14747,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     };
   }
 
-  function inferNativeQueueWaitReason(
-    conversation: ZeusConversationRecord,
-    state: ReturnType<typeof inferNativeConversationSnapshotState>,
-    submissions: ReturnType<ConversationSubmissionRepository['listQueueByConversation']>,
-  ) {
+  function inferNativeQueueWaitReason(conversation: ZeusConversationRecord, state: ReturnType<typeof inferNativeConversationSnapshotState>, submissions: ReturnType<ConversationSubmissionRepository['listQueueByConversation']>) {
     if (state.type === 'active') return 'current_turn' as const;
     if (state.type === 'dispatching') return 'dispatching' as const;
     if (state.type === 'waiting') return state.reason;
