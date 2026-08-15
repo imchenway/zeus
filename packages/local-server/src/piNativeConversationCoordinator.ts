@@ -9,13 +9,14 @@ import {
   type AgentRuntimeEvent,
   type AgentSessionIdentity,
   createPiSdkRuntimeDriver,
+  isOfficialDeepSeekApiConnection,
   modelRef,
   parseModelRef,
   type PiZeusToolBroker,
   type PiZeusToolRequest,
   type PiZeusToolResult,
 } from '@zeus/ai-runtime';
-import { buildTaskPushInputParts, emptyTokenUsageBreakdown, type CodexUsageEstimate, type TaskPushMessageLayout, type TokenUsageBreakdown } from '@zeus/shared';
+import { buildTaskPushInputParts, calculateCacheHitRate, emptyTokenUsageBreakdown, estimateDeepSeekUsage, type CodexUsageEstimate, type NativeTokenUsageSnapshot, type TaskPushMessageLayout, type TokenUsageBreakdown } from '@zeus/shared';
 import type {
   CodexUsageLedgerRepository,
   ConversationItemRepository,
@@ -639,7 +640,11 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         turnId: run.providerTurnId,
         occurredAt: event.createdAt,
       });
+      let usageSnapshot: NativeTokenUsageSnapshot | null = null;
       if (run.usage.totalTokens > 0) {
+        const connection = options.modelConnections.listMetadata().find((candidate) => candidate.id === run.sourceId);
+        const estimate =
+          connection && isOfficialDeepSeekApiConnection(connection) ? estimateDeepSeekUsage({ model: run.modelId, usage: run.usage, occurredAt: event.createdAt }) : unavailablePriceEstimate(run.modelId, run.usage.totalTokens);
         options.usageLedger.upsert({
           providerId: `pi:${run.sourceId}`,
           accountScopeId: run.sourceId,
@@ -649,13 +654,26 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           providerTurnId: run.providerTurnId,
           model: run.modelId,
           usage: run.usage,
-          estimate: unavailablePriceEstimate(run.modelId, run.usage.totalTokens),
+          usageComplete: true,
+          estimate,
           occurredAt: event.createdAt,
         });
+        usageSnapshot = buildPiUsageSnapshot({
+          rows: options.usageLedger.list({ conversationId: run.conversationId }),
+          last: run.usage,
+          lastEstimate: estimate,
+          modelContextWindow: connection?.models.find((model) => model.id === run.modelId)?.contextWindow ?? null,
+          generationId: options.conversations.getById(run.conversationId)?.nativeSessionId ?? 'pi-sdk',
+          sequence: eventSequence + 1,
+        });
+        options.conversations.upsertProviderTokenUsageSnapshot(run.conversationId, usageSnapshot);
       }
       runs.delete(event.nativeRunId);
       await options.db.save();
-      if (run.usage.totalTokens > 0) options.publish('usage.changed', { providerId: `pi:${run.sourceId}`, conversationId: run.conversationId, updatedAt: event.createdAt });
+      if (usageSnapshot) {
+        options.publish('usage.changed', { providerId: `pi:${run.sourceId}`, conversationId: run.conversationId, updatedAt: event.createdAt });
+        publish('conversation.provider.token_usage.updated', run.conversationId, { ...usageSnapshot });
+      }
       publish('conversation.turn.completed', run.conversationId, {
         turnId: run.providerTurnId,
         submissionId: run.submissionId,
@@ -996,6 +1014,43 @@ function addUsage(target: TokenUsageBreakdown, value: TokenUsageBreakdown | null
   target.cacheWriteInputTokens += value.cacheWriteInputTokens;
   target.outputTokens += value.outputTokens;
   target.reasoningOutputTokens += value.reasoningOutputTokens;
+}
+
+function buildPiUsageSnapshot(input: {
+  rows: ReturnType<CodexUsageLedgerRepository['list']>;
+  last: TokenUsageBreakdown;
+  lastEstimate: CodexUsageEstimate;
+  modelContextWindow: number | null;
+  generationId: string;
+  sequence: number;
+}): NativeTokenUsageSnapshot {
+  const total = emptyTokenUsageBreakdown();
+  for (const row of input.rows) addUsage(total, row.usage);
+  const billableTokens = input.rows.reduce((sum, row) => sum + row.estimate.billableTokens, 0);
+  const pricedTokens = input.rows.reduce((sum, row) => sum + row.estimate.pricedTokens, 0);
+  const credits = input.rows.flatMap((row) => (row.estimate.credits === null ? [] : [row.estimate.credits]));
+  const usd = input.rows.flatMap((row) => (row.estimate.apiEquivalentUsd === null ? [] : [row.estimate.apiEquivalentUsd]));
+  const savings = input.rows.flatMap((row) => (row.estimate.cacheSavingsUsd === null ? [] : [row.estimate.cacheSavingsUsd]));
+  const catalogDates = input.rows
+    .map((row) => row.estimate.rateSnapshot.catalogDate)
+    .filter((date) => date !== 'unavailable')
+    .sort();
+  return {
+    generationId: input.generationId,
+    sequence: input.sequence,
+    total,
+    last: input.last,
+    modelContextWindow: input.modelContextWindow,
+    cacheHitRate: calculateCacheHitRate(total),
+    estimatedCredits: credits.length > 0 ? credits.reduce((sum, value) => sum + value, 0) : null,
+    apiEquivalentUsd: usd.length > 0 ? usd.reduce((sum, value) => sum + value, 0) : null,
+    lastApiEquivalentUsd: input.lastEstimate.apiEquivalentUsd,
+    cacheSavingsUsd: savings.length > 0 ? savings.reduce((sum, value) => sum + value, 0) : null,
+    priceCoverage: billableTokens > 0 ? pricedTokens / billableTokens : null,
+    pricingCatalogDate: catalogDates.at(-1) ?? null,
+    pricingSourceUrls: [...new Set(input.rows.flatMap((row) => row.estimate.rateSnapshot.sourceUrls))],
+    historyComplete: input.rows.every((row) => row.usageComplete),
+  };
 }
 
 function unavailablePriceEstimate(model: string, billableTokens: number): CodexUsageEstimate {

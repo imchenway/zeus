@@ -2801,6 +2801,7 @@ function normalizeLegacyCodexUsageOverview(analytics: CodexUsageAnalyticsSnapsho
         name: 'Codex',
         kind: 'subscription',
         deleted: false,
+        cacheUsageAvailable: true,
         planType: analytics.official.planType,
         officialState: analytics.official.state,
         rateLimitWindows: analytics.official.rateLimitWindows,

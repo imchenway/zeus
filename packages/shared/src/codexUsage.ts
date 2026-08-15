@@ -37,6 +37,7 @@ export interface NativeTokenUsageSnapshot {
   cacheHitRate: number | null;
   estimatedCredits: number | null;
   apiEquivalentUsd: number | null;
+  lastApiEquivalentUsd: number | null;
   cacheSavingsUsd: number | null;
   priceCoverage: number | null;
   pricingCatalogDate: string | null;
@@ -81,6 +82,7 @@ export interface UsageProviderSummary {
   name: string;
   kind: UsageProviderKind;
   deleted: boolean;
+  cacheUsageAvailable: boolean;
   planType: string | null;
   officialState: CodexOfficialUsageSnapshot['state'] | null;
   rateLimitWindows: CodexOfficialRateWindow[];
@@ -170,6 +172,13 @@ interface CodexModelPrice {
   fastCreditsMultiplier: number | null;
 }
 
+interface DeepSeekModelPrice {
+  id: string;
+  beforeWindowPricing: { input: number; cachedInput: number; output: number };
+  offPeak: { input: number; cachedInput: number; output: number };
+  peak: { input: number; cachedInput: number; output: number };
+}
+
 export const CODEX_USAGE_PRICE_CATALOG_DATE = '2026-08-10';
 export const CODEX_USAGE_PRICE_SOURCE_URLS = [
   'https://developers.openai.com/api/docs/pricing',
@@ -177,6 +186,25 @@ export const CODEX_USAGE_PRICE_SOURCE_URLS = [
   'https://learn.chatgpt.com/docs/pricing#what-are-tokens-and-credits',
   'https://learn.chatgpt.com/docs/agent-configuration/speed',
 ] as const;
+
+export const DEEPSEEK_USAGE_PRICE_CATALOG_DATE = '2026-08-15';
+export const DEEPSEEK_USAGE_PRICE_SOURCE_URLS = ['https://api-docs.deepseek.com/quick_start/pricing/'] as const;
+
+const deepSeekWindowPricingStartsAt = Date.parse('2026-08-16T16:00:00Z');
+const deepSeekPrices: DeepSeekModelPrice[] = [
+  {
+    id: 'deepseek-v4-flash',
+    beforeWindowPricing: { input: 0.14, cachedInput: 0.0028, output: 0.28 },
+    offPeak: { input: 0.22, cachedInput: 0.007, output: 0.66 },
+    peak: { input: 0.44, cachedInput: 0.014, output: 1.32 },
+  },
+  {
+    id: 'deepseek-v4-pro',
+    beforeWindowPricing: { input: 0.435, cachedInput: 0.003625, output: 0.87 },
+    offPeak: { input: 0.66, cachedInput: 0.022, output: 1.98 },
+    peak: { input: 1.32, cachedInput: 0.044, output: 3.96 },
+  },
+];
 
 const prices: CodexModelPrice[] = [
   {
@@ -249,6 +277,11 @@ export function calculateCacheHitRate(usage: Pick<TokenUsageBreakdown, 'inputTok
   return usage.inputTokens > 0 ? Math.min(1, Math.max(0, usage.cachedInputTokens / usage.inputTokens)) : null;
 }
 
+/** 未命中输入包含普通输入，不重复计算已经单列的缓存读取和缓存写入。 */
+export function calculateUncachedInputTokens(usage: Pick<TokenUsageBreakdown, 'inputTokens' | 'cachedInputTokens' | 'cacheWriteInputTokens'>): number {
+  return Math.max(0, usage.inputTokens - usage.cachedInputTokens - usage.cacheWriteInputTokens);
+}
+
 export function estimateCodexUsage(input: { model: string; serviceTier?: string | null; usage: TokenUsageBreakdown }): CodexUsageEstimate {
   const model = resolvePrice(input.model);
   const serviceTier = input.serviceTier?.trim().toLowerCase() || null;
@@ -277,11 +310,30 @@ export function estimateCodexUsage(input: { model: string; serviceTier?: string 
   return estimateCodexUsageWithRateSnapshot(input.usage, rateSnapshot);
 }
 
+/** 按 DeepSeek 官方公开单价和请求发生时间估算费用，并把当时费率固化到账本。 */
+export function estimateDeepSeekUsage(input: { model: string; usage: TokenUsageBreakdown; occurredAt: string }): CodexUsageEstimate {
+  const model = resolveDeepSeekPrice(input.model);
+  const occurredAt = Date.parse(input.occurredAt);
+  const rate = model && Number.isFinite(occurredAt) ? resolveDeepSeekRate(model, occurredAt) : null;
+  const rateSnapshot: CodexUsageRateSnapshot = {
+    catalogDate: DEEPSEEK_USAGE_PRICE_CATALOG_DATE,
+    model: input.model,
+    normalizedModel: model?.id ?? null,
+    serviceTier: null,
+    longContext: false,
+    creditsPerMillion: null,
+    // DeepSeek 不单独收取缓存写入费；若运行内核单列缓存写入 token，按未命中输入计价。
+    usdPerMillion: rate ? { input: rate.input, cachedInput: rate.cachedInput, cacheWrite: rate.input, output: rate.output } : null,
+    sourceUrls: [...DEEPSEEK_USAGE_PRICE_SOURCE_URLS],
+  };
+  return estimateCodexUsageWithRateSnapshot(input.usage, rateSnapshot);
+}
+
 /** 用原始费率快照重算同一轮的增量通知，避免 Zeus 升级后改写历史价格口径。 */
 export function estimateCodexUsageWithRateSnapshot(usage: TokenUsageBreakdown, rateSnapshot: CodexUsageRateSnapshot): CodexUsageEstimate {
   const usdRates = rateSnapshot.usdPerMillion;
   const creditRates = rateSnapshot.creditsPerMillion;
-  const uncachedInput = Math.max(0, usage.inputTokens - usage.cachedInputTokens - usage.cacheWriteInputTokens);
+  const uncachedInput = calculateUncachedInputTokens(usage);
   const billableTokens = uncachedInput + usage.cachedInputTokens + usage.cacheWriteInputTokens + usage.outputTokens;
   if (!usdRates) {
     return { credits: null, apiEquivalentUsd: null, cacheSavingsUsd: null, pricedTokens: 0, billableTokens, coverage: billableTokens > 0 ? 0 : null, rateSnapshot };
@@ -311,6 +363,18 @@ export function estimateCodexUsageWithRateSnapshot(usage: TokenUsageBreakdown, r
 function resolvePrice(model: string): CodexModelPrice | null {
   const normalized = model.trim().toLowerCase();
   return prices.find((price) => price.aliases.some((alias) => normalized === alias || normalized.startsWith(`${alias}-20`))) ?? null;
+}
+
+function resolveDeepSeekPrice(model: string): DeepSeekModelPrice | null {
+  const normalized = model.trim().toLowerCase();
+  return deepSeekPrices.find((price) => price.id === normalized) ?? null;
+}
+
+function resolveDeepSeekRate(model: DeepSeekModelPrice, occurredAt: number): DeepSeekModelPrice['beforeWindowPricing'] {
+  if (occurredAt < deepSeekWindowPricingStartsAt) return model.beforeWindowPricing;
+  const hour = new Date(occurredAt).getUTCHours();
+  const peak = (hour >= 1 && hour < 4) || (hour >= 6 && hour < 10);
+  return peak ? model.peak : model.offPeak;
 }
 
 function perMillion(value: number): number {

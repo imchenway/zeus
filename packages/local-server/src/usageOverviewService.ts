@@ -23,14 +23,16 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
     const allRows = options.ledger.list();
     const connections = options.modelConnections.listMetadata();
     const connectionNames = new Map(connections.map((connection) => [connection.id, connection.name]));
+    const connectionsById = new Map(connections.map((connection) => [connection.id, connection]));
     const official = options.codexUsage.readCachedOfficialUsage();
-    const groups = groupRows(allRows, (row) => row.providerId);
+    const groups = groupRows(allRows, (row) => canonicalUsageProviderId(row.providerId));
     if (official.state === 'available' && !groups.some(([providerId]) => providerId === 'codex')) groups.unshift(['codex', []]);
     const providers = groups
       .map(([providerId, rows]): UsageProviderSummary => {
         const isCodex = providerId === 'codex';
-        const sourceId = isCodex ? 'codex' : providerId.startsWith('pi:') ? providerId.slice(3) : providerId;
+        const sourceId = isCodex ? 'codex' : providerId.startsWith('api:') ? providerId.slice(4) : providerId;
         const connectionName = connectionNames.get(sourceId);
+        const connection = connectionsById.get(sourceId);
         const todayRows = rows.filter((row) => row.occurredAt >= startOfLocalDay(readAt).toISOString());
         const sevenDayRows = rows.filter((row) => row.occurredAt >= addDays(startOfLocalDay(readAt), -6).toISOString());
         const today = localDate(readAt);
@@ -44,6 +46,7 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
           name: isCodex ? 'Codex' : (connectionName ?? '已删除供应源'),
           kind: isCodex ? 'subscription' : 'api',
           deleted: !isCodex && !connectionName,
+          cacheUsageAvailable: isCodex || connection?.templateId === 'deepseek' || rows.some((row) => row.usage.cachedInputTokens > 0 || row.usage.cacheWriteInputTokens > 0),
           planType: isCodex ? official.planType : null,
           officialState: isCodex ? official.state : null,
           rateLimitWindows: isCodex ? official.rateLimitWindows : [],
@@ -76,6 +79,12 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
   }
 
   return { read };
+}
+
+/** 同一个外部模型连接无论由 Pi 还是 App Server 执行，都归并到同一 API 供应源。 */
+function canonicalUsageProviderId(providerId: string): string {
+  if (providerId.startsWith('pi:')) return `api:${providerId.slice(3)}`;
+  return providerId;
 }
 
 function aggregateRows(rows: readonly CodexUsageLedgerRecord[]): CodexLocalUsageTotals {

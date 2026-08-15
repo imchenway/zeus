@@ -6,6 +6,7 @@ import {
   emptyTokenUsageBreakdown,
   estimateCodexUsage,
   estimateCodexUsageWithRateSnapshot,
+  estimateDeepSeekUsage,
   type CodexLocalUsageDay,
   type CodexLocalUsageTotals,
   type CodexOfficialUsageSnapshot,
@@ -42,6 +43,7 @@ export interface CodexUsageService {
     providerThreadId: string;
     providerTurnId: string;
     model: string;
+    modelSourceId?: string | null;
     serviceTier?: string | null;
     total: TokenUsageBreakdown;
     last: TokenUsageBreakdown;
@@ -135,8 +137,9 @@ export function createCodexUsageService(options: CreateCodexUsageServiceOptions)
   async function recordTurn(input: Parameters<CodexUsageService['recordTurn']>[0]): Promise<NativeTokenUsageSnapshot> {
     validateBreakdown(input.total);
     validateBreakdown(input.last);
-    const existing = options.ledger.findByProviderTurn('codex', input.providerThreadId, input.providerTurnId);
-    const threadRows = options.ledger.list({ providerId: 'codex', providerThreadId: input.providerThreadId });
+    const providerId = input.modelSourceId ? `api:${input.modelSourceId}` : 'codex';
+    const existing = options.ledger.findByProviderTurn(providerId, input.providerThreadId, input.providerTurnId);
+    const threadRows = options.ledger.list({ providerId, providerThreadId: input.providerThreadId });
     const priorProviderTotal = threadRows
       .filter((row) => row.providerTurnId !== input.providerTurnId && row.providerTotal && row.providerTotal.totalTokens <= input.total.totalTokens)
       .sort((left, right) => (right.providerTotal?.totalTokens ?? 0) - (left.providerTotal?.totalTokens ?? 0))[0]?.providerTotal;
@@ -147,15 +150,21 @@ export function createCodexUsageService(options: CreateCodexUsageServiceOptions)
       existing?.providerBaseline ?? priorProviderTotal ?? previousSnapshotTotal ?? (existing ? subtractBreakdowns(input.total, existing.usage) : legacyRowsExist ? subtractBreakdowns(input.total, input.last) : emptyTokenUsageBreakdown());
     const usage = subtractBreakdowns(input.total, providerBaseline);
     const usageComplete = existing?.providerBaseline ? existing.usageComplete : Boolean(priorProviderTotal || previousSnapshotTotal || (!existing && !legacyRowsExist));
-    const estimate = existing ? estimateCodexUsageWithRateSnapshot(usage, existing.estimate.rateSnapshot) : estimateCodexUsage({ model: input.model, serviceTier: input.serviceTier, usage });
-    let accountScopeId = 'codex-local';
-    try {
-      accountScopeId = (await readAccount()).accountScopeId;
-    } catch {
-      // 离线轮次仍进入本机账本，不伪装成官方账户统计。
+    const estimate = existing
+      ? estimateCodexUsageWithRateSnapshot(usage, existing.estimate.rateSnapshot)
+      : input.modelSourceId
+        ? estimateDeepSeekUsage({ model: input.model, usage, occurredAt: input.occurredAt })
+        : estimateCodexUsage({ model: input.model, serviceTier: input.serviceTier, usage });
+    let accountScopeId = input.modelSourceId ?? 'codex-local';
+    if (!input.modelSourceId) {
+      try {
+        accountScopeId = (await readAccount()).accountScopeId;
+      } catch {
+        // 离线轮次仍进入本机账本，不伪装成官方账户统计。
+      }
     }
     options.ledger.upsert({
-      providerId: 'codex',
+      providerId,
       accountScopeId,
       projectId: input.projectId,
       conversationId: input.conversationId,
@@ -184,13 +193,14 @@ export function createCodexUsageService(options: CreateCodexUsageServiceOptions)
       cacheHitRate: calculateCacheHitRate(input.total),
       estimatedCredits: local.estimatedCredits,
       apiEquivalentUsd: local.apiEquivalentUsd,
+      lastApiEquivalentUsd: estimate.apiEquivalentUsd,
       cacheSavingsUsd: local.cacheSavingsUsd,
       priceCoverage: local.priceCoverage,
       pricingCatalogDate: catalogDates.at(-1) ?? null,
       pricingSourceUrls,
       historyComplete,
     };
-    options.broadcast('codex.usage.changed', { providerId: 'codex', conversationId: input.conversationId, updatedAt: now() });
+    options.broadcast('codex.usage.changed', { providerId, conversationId: input.conversationId, updatedAt: now() });
     return snapshot;
   }
 

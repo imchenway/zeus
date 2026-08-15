@@ -9,7 +9,7 @@ import { TargetIcon as Target } from '@phosphor-icons/react/dist/csr/Target';
 import { UsersThreeIcon as UsersThree } from '@phosphor-icons/react/dist/csr/UsersThree';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { animate as animateMotion, motion, useMotionValue, useTransform } from 'framer-motion';
-import type { ConversationContextDraft, ConversationFileLocation, ConversationOpenTarget, TurnChangeFile, ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import { calculateUncachedInputTokens, type ConversationContextDraft, type ConversationFileLocation, type ConversationOpenTarget, type TurnChangeFile, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import type { ProjectGitAction, ProjectGitActionResponse, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
 import { openConversationResourceInMain, openTurnChangeFileInMain } from '../appShellBridge.js';
 import { ZeusSelect } from '../ZeusSelect.js';
@@ -1132,12 +1132,13 @@ const labels = {
     model: '模型',
     usage: 'Token 用量',
     cacheHitRate: '缓存 Token 命中率',
-    cacheRead: '缓存读取',
+    cacheRead: '缓存命中',
+    cacheMiss: '缓存未命中',
     cacheWrite: '缓存写入',
     reasoningOutput: '推理输出',
     contextUsage: '上下文占用',
     estimatedCredits: '估算 Credits',
-    apiEquivalentUsd: 'API 等价美元',
+    apiEquivalentUsd: 'API 单价费用估算',
     priceCoverage: '费用覆盖率',
     priceSource: '价格来源',
     collectionNotice: '该指标自用量采集启用后开始记录',
@@ -1193,12 +1194,13 @@ const labels = {
     model: 'Model',
     usage: 'Token usage',
     cacheHitRate: 'Cached-token hit rate',
-    cacheRead: 'Cache reads',
+    cacheRead: 'Cache hits',
+    cacheMiss: 'Cache misses',
     cacheWrite: 'Cache writes',
     reasoningOutput: 'Reasoning output',
     contextUsage: 'Context usage',
     estimatedCredits: 'Estimated Credits',
-    apiEquivalentUsd: 'API-equivalent USD',
+    apiEquivalentUsd: 'API price estimate',
     priceCoverage: 'Price coverage',
     priceSource: 'Price source',
     collectionNotice: 'This metric is recorded only since usage collection was enabled',
@@ -3046,8 +3048,9 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
         {usage ? (
           <>
             <RuntimeUsageRow label={copy.usage} value={<TokenUsageValue count={usage.total.totalTokens} label="tokens" language={props.language} />} />
-            <RuntimeUsageRow label={props.language === 'zh-CN' ? '输入' : 'Input'} value={<TokenUsageValue count={usage.total.inputTokens} label="in" language={props.language} />} />
+            <RuntimeUsageRow label={props.language === 'zh-CN' ? '总输入' : 'Total input'} value={<TokenUsageValue count={usage.total.inputTokens} label="in" language={props.language} />} />
             <RuntimeUsageRow label={copy.cacheRead} value={<TokenUsageValue count={usage.total.cachedInputTokens} label="tokens" language={props.language} />} />
+            <RuntimeUsageRow label={copy.cacheMiss} value={<TokenUsageValue count={calculateUncachedInputTokens(usage.total)} label="tokens" language={props.language} />} />
             <RuntimeUsageRow label={copy.cacheWrite} value={<TokenUsageValue count={usage.total.cacheWriteInputTokens} label="tokens" language={props.language} />} />
             <RuntimeUsageRow label={props.language === 'zh-CN' ? '输出' : 'Output'} value={<TokenUsageValue count={usage.total.outputTokens} label="out" language={props.language} />} />
             <RuntimeUsageRow label={copy.reasoningOutput} value={<TokenUsageValue count={usage.total.reasoningOutputTokens} label="tokens" language={props.language} />} />
@@ -3062,6 +3065,11 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
             />
             <RuntimeUsageRow label={copy.estimatedCredits} value={formatEstimatedCost(usage.estimatedCredits, 'Credits', props.language)} />
             <RuntimeUsageRow label={copy.apiEquivalentUsd} value={formatEstimatedCost(usage.apiEquivalentUsd, 'USD', props.language)} />
+            <RuntimeUsageRow
+              label={props.language === 'zh-CN' ? '本轮用量' : 'Current turn'}
+              value={`${props.language === 'zh-CN' ? '命中' : 'hit'} ${formatTokenCount(usage.last.cachedInputTokens, props.language).compact} · ${props.language === 'zh-CN' ? '未命中' : 'miss'} ${formatTokenCount(calculateUncachedInputTokens(usage.last), props.language).compact} · ${props.language === 'zh-CN' ? '输出' : 'out'} ${formatTokenCount(usage.last.outputTokens, props.language).compact}`}
+            />
+            <RuntimeUsageRow label={props.language === 'zh-CN' ? '本轮费用估算' : 'Current-turn estimate'} value={formatEstimatedCost(usage.lastApiEquivalentUsd, 'USD', props.language)} />
             <RuntimeUsageRow label={copy.priceCoverage} value={formatPercentage(usage.priceCoverage, props.language)} />
             <RuntimeUsageRow
               label={copy.priceSource}

@@ -213,9 +213,9 @@ export function normalizeProjectModelSelection(projectId: string, value: unknown
 
 const officialDeepSeekResponsesModelIds = new Set(['deepseek-v4-flash', 'deepseek-v4-pro']);
 
-/** 只有 DeepSeek 官方域名上的 V4 模型可以继承官方 Responses 兼容证据。 */
-export function isOfficialDeepSeekResponsesModel(connection: Pick<ModelConnectionRecord, 'templateId' | 'baseUrl'>, modelId: string): boolean {
-  if (connection.templateId !== 'deepseek' || !officialDeepSeekResponsesModelIds.has(modelId.trim().toLowerCase())) return false;
+/** DeepSeek 模板只有指向官方 HTTPS 端点时，才能使用官方价格和能力证据。 */
+export function isOfficialDeepSeekApiConnection(connection: Pick<ModelConnectionRecord, 'templateId' | 'baseUrl'>): boolean {
+  if (connection.templateId !== 'deepseek') return false;
   try {
     const url = new URL(connection.baseUrl);
     const path = url.pathname.replace(/\/+$/u, '');
@@ -223,6 +223,11 @@ export function isOfficialDeepSeekResponsesModel(connection: Pick<ModelConnectio
   } catch {
     return false;
   }
+}
+
+/** 只有 DeepSeek 官方域名上的 V4 模型可以继承官方 Responses 兼容证据。 */
+export function isOfficialDeepSeekResponsesModel(connection: Pick<ModelConnectionRecord, 'templateId' | 'baseUrl'>, modelId: string): boolean {
+  return isOfficialDeepSeekApiConnection(connection) && officialDeepSeekResponsesModelIds.has(modelId.trim().toLowerCase());
 }
 
 export function modelConnectionAgentKind(connection: Pick<ModelConnectionRecord, 'templateId' | 'baseUrl'>, modelId: string): 'codex' | 'pi' {
