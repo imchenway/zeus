@@ -441,6 +441,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
   const eventReplayLimit = options.eventReplayLimit ?? 1_024;
   const shutdownTimeoutMs = Math.max(0, options.shutdownTimeoutMs ?? 5_000);
   const accountFingerprintSalt = options.accountFingerprintSalt?.trim() || 'zeus-local-account-scope';
+  const runtimeEnvironment = { ...options.runtimeEnvironment };
   const listeners = new Set<(event: CodexAppServerEvent) => void>();
   const externalAgentImportListeners = new Set<(event: ExternalAgentImportEvent) => void>();
   const eventReplayBuffer: CodexAppServerEvent[] = [];
@@ -486,7 +487,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     const env = {
       ...process.env,
       ...providerEnvironment,
-      ...options.runtimeEnvironment,
+      ...runtimeEnvironment,
       PATH: expandCliSearchPath(),
       ...(externalAgentHome === null ? {} : { ZEUS_CODEX_EXTERNAL_AGENT_HOME: externalAgentHome }),
     };
