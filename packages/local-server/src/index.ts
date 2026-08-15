@@ -15156,6 +15156,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         const taskPushPrompt = renderTaskPushLayoutText(taskPushLayout);
         if (selectedModel.agentKind !== 'pi') await assertCodexAccountReady(selectedModel.sourceId ?? null, selectedModel.model);
         const taskEnvironment = directWorkspace ? null : await resolveTaskPushEnvironment(project, task, body.workspace, stableOperationId);
+        moveTaskToPushedManagementStatus(task.id);
+        await db.save();
         nativeOperation = await startNativeTaskConversationFromPlan({
           agentKind: selectedModel.agentKind === 'pi' ? 'pi' : 'codex',
           conversationId: reservation.conversationId,
@@ -18258,6 +18260,41 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       });
     }
     return current;
+  }
+
+  function moveTaskToPushedManagementStatus(taskId: string): ZeusTaskRecord {
+    const current = tasks.getById(taskId);
+    if (!current) throw new Error(`Task not found: ${taskId}`);
+    const statusConfig = resolveTaskManagementStatusConfigForProject(current.projectId);
+    if (current.managementStatus !== statusConfig.roles.defaultStatusId || current.managementStatus === statusConfig.roles.pushedStatusId) return current;
+    const updated = tasks.updateManagementStatus(current.id, statusConfig.roles.pushedStatusId, current.updatedAt);
+    recordTaskEvent({
+      taskId: updated.id,
+      eventType: 'task.management_status.changed',
+      title: '任务已进入推送后状态',
+      payload: { from: current.managementStatus, to: updated.managementStatus, source: 'task_push' },
+    });
+    appendAuditLog({
+      actorType: 'local_api',
+      action: 'task.management_status.changed',
+      resourceType: 'task',
+      resourceId: updated.id,
+      payload: {
+        taskId: updated.id,
+        projectId: updated.projectId,
+        from: current.managementStatus,
+        to: updated.managementStatus,
+        source: 'task_push',
+      },
+    });
+    publishRealtimeEvent('task.updated', {
+      taskId: updated.id,
+      projectId: updated.projectId,
+      managementStatus: updated.managementStatus,
+      changedFields: ['managementStatus'],
+      updatedAt: updated.updatedAt,
+    });
+    return updated;
   }
 
   function moveTaskToWaitingConfirmation(taskId: string): ZeusTaskRecord {
