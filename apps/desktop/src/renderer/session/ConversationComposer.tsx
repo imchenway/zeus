@@ -19,6 +19,7 @@ import { resolveModelCapability } from './modelSelection.js';
 import { useConversationInputResources } from './useConversationInputResources.js';
 import { normalizeServiceTierSelection, selectionFromEffectiveServiceTier, serviceTierSelectionValue, serviceTierWireOverride } from './serviceTierSelection.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
 export type ComposerKeyIntent = 'submit' | 'newline' | 'escape' | 'ignore';
 export interface ComposerRuntimeSettings {
@@ -97,6 +98,11 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const textareaRef = props.textareaRef ?? fallbackRef;
   const [isComposing, setIsComposing] = useState(false);
   const [inputResourceError, setInputResourceError] = useState<string | null>(null);
+  useApplicationErrorDialog(inputResourceError, {
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+    title: props.language === 'zh-CN' ? '会话附件处理失败' : 'Conversation attachment failed',
+    source: 'ConversationComposer',
+  });
   const [selectedModel, setSelectedModel] = useState(initialModel);
   const [selectedEffort, setSelectedEffort] = useState(initialEffort);
   const [selectedServiceTier, setSelectedServiceTier] = useState<NativeServiceTierSelection>(initialServiceTier);
@@ -220,11 +226,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
       {props.state.browserSubmission ? <BrowserSubmissionAttachment submission={props.state.browserSubmission} language={props.language} disabled={!writable || busy} onRemove={props.onRemoveBrowserSubmission} /> : null}
       {props.state.contextDraft.responseAnnotations.length || props.state.contextDraft.codeComments.length ? (
         <ContextDraftAttachment draft={props.state.contextDraft} language={props.language} disabled={!writable || busy} onRemove={() => props.onContextDraftChange?.({ responseAnnotations: [], codeComments: [] })} />
-      ) : null}
-      {inputResourceError ? (
-        <p className="session-composer-resource-error" role="alert">
-          {inputResourceError}
-        </p>
       ) : null}
       <div className="session-composer-input-frame">
         <ConversationComposerAttachments

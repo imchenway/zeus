@@ -26,6 +26,7 @@ import type {
   TaskWorkspacesSnapshot,
 } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
 interface SessionQuickActionsCardProps {
   language: SessionUiLanguage;
@@ -71,6 +72,11 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const [workspaces, setWorkspaces] = useState<TaskWorkspacesSnapshot | null>(null);
   const [workspaceState, setWorkspaceState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  useApplicationErrorDialog(workspaceError, {
+    language: zh ? 'zh-CN' : 'en',
+    title: zh ? 'Git 状态读取失败' : 'Git status failed to load',
+    source: 'SessionQuickActionsCard',
+  });
   const taskId = props.task?.id ?? props.conversation.taskId;
   const workspace = resolveConversationWorkspace(workspaces, props.conversation, props.state);
   const executionContext = props.state.snapshot?.executionContext;
@@ -405,11 +411,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
               ) : null}
             </section>
 
-            {workspaceState === 'error' ? (
-              <p className="session-quick-actions-error" role="alert" title={workspaceError ?? undefined}>
-                {zh ? 'Git 状态读取失败；目录与分支仍来自会话快照。' : 'Git status could not be loaded; directory and branch still come from the conversation snapshot.'}
-              </p>
-            ) : null}
+            {workspaceState === 'error' ? <p role="status">{zh ? '目录与分支来自最近一次会话快照。' : 'Directory and branch come from the latest conversation snapshot.'}</p> : null}
           </section>
         </SessionQuickActionsCardMount>
       ) : null}

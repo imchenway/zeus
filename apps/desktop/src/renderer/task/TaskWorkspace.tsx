@@ -40,6 +40,7 @@ import {
   toggleTaskTableColumn,
 } from './taskWorkspaceModel.js';
 import { TaskRunStatusChip, type TaskSemanticTone } from './TaskRunStatusChip.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
 function taskBranchStatusTone(status: TaskBranchStatus): TaskSemanticTone {
   if (status === 'action_required') return 'red';
@@ -407,6 +408,11 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
   const [keyboardMovingColumnKey, setKeyboardMovingColumnKey] = useState<TaskTableColumnKey | null>(null);
   const [columnInteractionAnnouncement, setColumnInteractionAnnouncement] = useState('');
   const [bulkTargetStatus, setBulkTargetStatus] = useState<TaskManagementStatus>(() => props.statusDefinitions[0]?.id ?? 'todo');
+  useApplicationErrorDialog(props.listState === 'error' ? props.copy.taskListErrorHelp : null, {
+    language: props.appLanguage === 'zh-CN' ? 'zh-CN' : 'en',
+    title: props.copy.taskListErrorTitle,
+    source: 'TaskWorkspace.loadTaskList',
+  });
   const keyboardMoveStartOrderRef = useRef<TaskTableColumnKey[] | null>(null);
   const resizeStateRef = useRef<{ columnKey: TaskTableColumnKey; startX: number; startWidth: number } | null>(null);
   const fieldSettingsTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -1041,14 +1047,13 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
               </span>
             </section>
           ) : taskListError ? (
-            // 错误态保持在表格内容区的 inline recovery，不弹窗、不暴露堆栈，也不清空项目导航。
-            <section className="project-inline-recovery-row task-list-state-row task-list-error-row" aria-label={props.copy.taskListErrorTitle} role="alert">
+            // 弹窗负责错误事实；列表区只保留可恢复操作，避免关闭弹窗后失去重试入口。
+            <section className="project-inline-recovery-row task-list-state-row" aria-label={props.copy.taskListErrorTitle} role="status">
               <span className="task-list-state-mark" aria-hidden="true">
                 !
               </span>
               <span className="project-inline-recovery-copy task-list-state-copy">
-                <strong>{props.copy.taskListErrorTitle}</strong>
-                <small>{props.copy.taskListErrorHelp}</small>
+                <strong>{props.copy.taskListErrorRetry}</strong>
               </span>
               <span className="task-list-state-action-rail">
                 <button type="button" className="task-list-state-primary-action" onClick={props.onRetryTaskList} disabled={!props.onRetryTaskList}>

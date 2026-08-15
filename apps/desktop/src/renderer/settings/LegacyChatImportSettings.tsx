@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { AppShellSettings, CodexLegacyImportSnapshot } from '../apiClient.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
 interface LegacyChatImportSettingsProps {
   language: AppShellSettings['appLanguage'];
@@ -55,6 +56,11 @@ export function LegacyChatImportSettings(props: LegacyChatImportSettingsProps) {
       return new Set(eligibleIds);
     });
   }, [eligibleIds]);
+  useApplicationErrorDialog(props.error, {
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+    title: props.language === 'zh-CN' ? '旧会话导入失败' : 'Legacy conversation import failed',
+    source: 'LegacyChatImportSettings',
+  });
 
   return (
     <section className="legacy-import-settings" aria-labelledby="legacy-import-settings-title">
@@ -67,11 +73,6 @@ export function LegacyChatImportSettings(props: LegacyChatImportSettingsProps) {
           {labels.refresh}
         </button>
       </header>
-      {props.error ? (
-        <p role="alert" className="legacy-import-error">
-          {props.error}
-        </p>
-      ) : null}
       {props.loading ? <p role="status">{labels.loading}</p> : null}
       {!props.loading && props.snapshot?.eligible.length === 0 ? <p className="legacy-import-empty">{labels.empty}</p> : null}
       {(props.snapshot?.eligible.length ?? 0) > 0 ? (

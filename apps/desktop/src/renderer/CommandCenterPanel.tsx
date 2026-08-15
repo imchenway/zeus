@@ -25,6 +25,7 @@ import {
 } from './apiClient.js';
 import { Button } from './ui/Button.js';
 import { ModalPortal } from './ui/ModalPortal.js';
+import { useApplicationErrorDialog } from './ui/ApplicationErrorDialog.js';
 import './commandCenter.css';
 
 export interface CommandCenterPanelProps {
@@ -214,6 +215,11 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useApplicationErrorDialog(error, {
+    language: zh ? 'zh-CN' : 'en',
+    title: zh ? '命令操作失败' : 'Command operation failed',
+    source: 'CommandCenterPanel',
+  });
   const [notice, setNotice] = useState<string | null>(null);
   const [editing, setEditing] = useState<CommandDefinition | 'new' | null>(null);
   const [draft, setDraft] = useState<CommandDraft>(emptyDraft);
@@ -587,7 +593,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
       </header>
 
       <div className="command-center-live" role="status" aria-live="polite">
-        {error ? <span className="command-center-error">{error}</span> : notice ? <span>{notice}</span> : null}
+        {notice ? <span>{notice}</span> : null}
       </div>
 
       <section className="command-definition-list" aria-label={zh ? '命令定义列表' : 'Command definitions'}>
@@ -744,11 +750,6 @@ function CommandRunHistoryModal(props: {
           </button>
         </header>
         <div className="command-history-modal-body">
-          {props.error ? (
-            <p className="command-modal-error" role="alert">
-              {props.error}
-            </p>
-          ) : null}
           {props.runs.length === 0 ? (
             <p className="command-center-empty">{zh ? '此命令在当前项目中尚无执行记录。' : 'This command has no run history in the current project.'}</p>
           ) : (
@@ -870,11 +871,6 @@ function CommandDefinitionModal(props: {
           </button>
         </header>
         <div className="command-modal-body">
-          {props.error ? (
-            <p className="command-modal-error" role="alert">
-              {props.error}
-            </p>
-          ) : null}
           <div className="command-editor-grid">
             <label>
               {zh ? '名称' : 'Name'}
@@ -1025,11 +1021,6 @@ function CommandPermissionModal(props: { request: CommandPermissionRequest; proj
           </button>
         </header>
         <div className="command-modal-body command-permission-body">
-          {props.error ? (
-            <p className="command-modal-error" role="alert">
-              {props.error}
-            </p>
-          ) : null}
           <p id="command-permission-modal-description">
             {zh ? '运行此命令前需要开启下列项目权限。权限会保存到当前项目，但不会因此立即执行命令。' : 'This command needs the following project permissions. They will be saved for this project, but the command will not run yet.'}
           </p>
@@ -1092,11 +1083,6 @@ function CommandRunModal(props: {
           </button>
         </header>
         <div className="command-modal-body">
-          {props.error ? (
-            <p className="command-modal-error" role="alert">
-              {props.error}
-            </p>
-          ) : null}
           <dl>
             <div>
               <dt>{zh ? '项目目录' : 'Project directory'}</dt>

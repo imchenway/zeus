@@ -8,6 +8,7 @@ import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/di
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import type { ProjectGitAction, ProjectGitActionResponse, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
 type OpenContextMenu = 'project' | 'branch' | null;
 
@@ -36,6 +37,11 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
   const [workbench, setWorkbench] = useState<ProjectGitWorkbenchSnapshot | null>(null);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [error, setError] = useState<string | null>(null);
+  useApplicationErrorDialog(error, {
+    language: zh ? 'zh-CN' : 'en',
+    title: zh ? '新会话执行环境操作失败' : 'New conversation context failed',
+    source: 'NewConversationExecutionContext',
+  });
   const [branchBusy, setBranchBusy] = useState(false);
   const [createBranchOpen, setCreateBranchOpen] = useState(false);
   const [createBranchName, setCreateBranchName] = useState('');
@@ -293,12 +299,6 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
           </section>
         ) : null}
       </span>
-
-      {error ? (
-        <p className="session-new-conversation-context-error" role="alert">
-          {error}
-        </p>
-      ) : null}
     </div>
   );
 }

@@ -3,6 +3,7 @@ import type { NativeQueuedSubmission, NativeQueueSnapshot, NativeSessionState } 
 import { SafeMarkdown, type SessionUiLanguage } from './ThreadItemView.js';
 import { ConversationPendingAttachmentImages, isPendingImageAttachment } from './ConversationResources.js';
 import { autosizeTextarea } from './textareaAutosize.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
 export interface QueuedConversationMessagesProps {
   state: NativeSessionState;
@@ -96,6 +97,12 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
   const active = props.state.conversationState === 'active_prework' || props.state.conversationState === 'active_final_answer';
   const queueExplanation = describeQueueState(props.state, queue, copy);
 
+  useApplicationErrorDialog(editError, {
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+    title: props.language === 'zh-CN' ? '队列消息保存失败' : 'Queued message failed to save',
+    source: 'QueuedConversationMessages.saveEdit',
+  });
+
   useEffect(() => {
     if (editingId && !queue.some((submission) => submission.id === editingId)) {
       setEditingId(null);
@@ -179,7 +186,7 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                     onKeyDown={handleEditKeyDown}
                   />
                   <footer>
-                    {editError ? <small role="alert">{editError}</small> : <span />}
+                    <span />
                     <button type="button" onClick={cancelEdit} disabled={saving}>
                       {copy.cancel}
                     </button>

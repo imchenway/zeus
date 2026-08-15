@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { CodexRemoteControlPairing, CodexRemoteControlSnapshot, DashboardClient } from '../apiClient.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
 type RemoteControlClient = Pick<
   DashboardClient,
@@ -108,6 +109,11 @@ export function CodexRemoteControlSettings(props: CodexRemoteControlSettingsProp
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  useApplicationErrorDialog(error, {
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+    title: props.language === 'zh-CN' ? '远程接管操作失败' : 'Remote Control operation failed',
+    source: 'CodexRemoteControlSettings',
+  });
 
   useEffect(() => {
     let active = true;
@@ -238,24 +244,6 @@ export function CodexRemoteControlSettings(props: CodexRemoteControlSettingsProp
               {!standaloneReady ? (
                 <button type="button" disabled={busy} onClick={() => void copyValue(managedStandalone.installCommand).then(() => setMessage(labels.installCopied))}>
                   {labels.copyInstall}
-                </button>
-              ) : null}
-            </span>
-          </section>
-        ) : null}
-        {error ? (
-          <section className="settings-config-row codex-remote-control-recovery" aria-label={labels.connectionFailed}>
-            <span className="settings-row-copy">
-              <strong>{labels.connectionFailed}</strong>
-              <small>{labels.recoveryHelp}</small>
-            </span>
-            <span className="settings-row-field">
-              <span role="alert">{error}</span>
-            </span>
-            <span className="settings-row-action-rail">
-              {!snapshot?.enabled ? (
-                <button type="button" disabled={busy || !props.client || standaloneBlocked} onClick={() => void run(() => props.client!.enableCodexRemoteControl())}>
-                  {labels.retry}
                 </button>
               ) : null}
             </span>

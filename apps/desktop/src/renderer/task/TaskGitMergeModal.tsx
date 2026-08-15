@@ -16,6 +16,7 @@ import type {
 } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { TaskGitConflictWorkspace } from './TaskGitConflictWorkspace.js';
 import { type ConflictDocument, countUnresolvedConflictBlocks, createConflictDocument, serializeConflictForGit } from './taskConflictModel.js';
@@ -162,6 +163,12 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   const [error, setError] = useState<string | null>(null);
 
   const selectedWorkspace = workspaceDetails[workspaceId] ?? null;
+  const workspaceError = selectedWorkspace?.comparisonError ?? selectedWorkspace?.reviewError ?? null;
+  useApplicationErrorDialog(error ?? workspaceError, {
+    language: zh ? 'zh-CN' : 'en',
+    title: zh ? '代码交付操作失败' : 'Code delivery operation failed',
+    source: 'TaskGitMergeModal',
+  });
   const targetBranch = selectedWorkspace?.sourceBranch ?? '';
   const workingFiles = useMemo(() => collectWorkingFiles(selectedWorkspace), [selectedWorkspace]);
   const committedFiles = useMemo(() => (selectedWorkspace?.branchComparison?.files ?? []).map((file) => toCommittedDeliveryFile(file, zh)), [selectedWorkspace?.branchComparison?.files, zh]);
@@ -692,8 +699,6 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                     </span>
                     {detailStates[workspaceId] === 'loading' ? <p>{zh ? '正在读取当前仓库交付详情…' : 'Loading delivery details for this repository…'}</p> : null}
                     {detailStates[workspaceId] === 'error' ? <p className="task-git-review-error">{zh ? '当前仓库读取失败，其他仓库仍可继续交付。' : 'This repository failed to load. Other repositories remain available.'}</p> : null}
-                    {selectedWorkspace?.comparisonError && diffScope === 'committed' ? <p className="task-git-review-error">{selectedWorkspace.comparisonError}</p> : null}
-                    {selectedWorkspace?.reviewError && diffScope === 'working' ? <p className="task-git-review-error">{selectedWorkspace.reviewError}</p> : null}
                     <ol className="task-git-review-file-tree">
                       {visibleFiles.map((file) => (
                         <li key={file.path} className={selectedFile === file.path ? 'is-active' : ''}>
@@ -767,8 +772,8 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                             : 'Local-only mode'
                           : selectedWorkspace.remoteRefreshError
                             ? zh
-                              ? `远端刷新失败：${selectedWorkspace.remoteRefreshError}`
-                              : `Remote refresh failed: ${selectedWorkspace.remoteRefreshError}`
+                              ? '远端信息暂不可用'
+                              : 'Remote information unavailable'
                             : selectedWorkspace.sourceRemoteVerified
                               ? zh
                                 ? '本机记录显示已推送'
@@ -897,11 +902,6 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
               ) : null}
             </div>
           ) : null}
-          {error && workspaceIndex ? (
-            <p className="task-git-merge-error" role="alert">
-              {error}
-            </p>
-          ) : null}
         </div>
 
         <footer className="task-git-merge-footer">
@@ -931,9 +931,9 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
 
 function InitialLoadState(props: { zh: boolean; error?: string | null; onRetry?: () => void }) {
   return (
-    <section className="task-git-delivery-load-state" role={props.error ? 'alert' : 'status'}>
-      <strong>{props.error ? (props.zh ? '代码交付信息读取失败' : 'Code delivery could not be loaded') : props.zh ? '正在读取本机 Git 信息…' : 'Loading local Git information…'}</strong>
-      <small>{props.error ? props.error : props.zh ? '这里只读取本机分支、提交和工作区，不会连接远端仓库。' : 'This reads local branches, commits, and worktrees without contacting a remote repository.'}</small>
+    <section className="task-git-delivery-load-state" role="status">
+      <strong>{props.error ? (props.zh ? '当前没有可显示的交付信息' : 'No delivery information is available') : props.zh ? '正在读取本机 Git 信息…' : 'Loading local Git information…'}</strong>
+      <small>{props.zh ? '这里只读取本机分支、提交和工作区，不会连接远端仓库。' : 'This reads local branches, commits, and worktrees without contacting a remote repository.'}</small>
       {props.onRetry ? (
         <Button variant="secondary" size="compact" onClick={props.onRetry}>
           {props.zh ? '重新读取' : 'Retry'}

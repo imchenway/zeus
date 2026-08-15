@@ -1,4 +1,5 @@
 import type { AppShellSettings, CodexConfigImportPreview, CodexConfigImportResult } from '../apiClient.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
 interface CodexConfigImportSettingsProps {
   language: AppShellSettings['appLanguage'];
@@ -45,6 +46,11 @@ const copy = {
 export function CodexConfigImportSettings(props: CodexConfigImportSettingsProps) {
   const labels = copy[props.language];
   const activationRequired = Boolean(props.result && props.result.imported.length > 0 && !props.result.runtimeReloaded);
+  useApplicationErrorDialog(props.error, {
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+    title: props.language === 'zh-CN' ? 'Codex 配置导入失败' : 'Codex configuration import failed',
+    source: 'CodexConfigImportSettings',
+  });
   return (
     <section className="legacy-import-settings" aria-labelledby="codex-config-import-title">
       <header className="legacy-import-heading">
@@ -56,11 +62,6 @@ export function CodexConfigImportSettings(props: CodexConfigImportSettingsProps)
           {labels.scan}
         </button>
       </header>
-      {props.error ? (
-        <p role="alert" className="legacy-import-error">
-          {props.error}
-        </p>
-      ) : null}
       {props.preview ? (
         <span className="settings-row-copy">
           <small>

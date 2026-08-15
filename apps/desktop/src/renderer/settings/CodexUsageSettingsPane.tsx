@@ -1,5 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import type { CodexLocalUsageDay, CodexLocalUsageGroup, CodexOfficialUsageSnapshot, CodexUsageAnalyticsSnapshot, CodexUsageRange } from '@zeus/shared';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
 type UsageClient = {
   loadCodexUsageAnalytics: (input: { range: CodexUsageRange; projectId?: string; model?: string }) => Promise<CodexUsageAnalyticsSnapshot>;
@@ -60,6 +61,11 @@ export function CodexUsageSettingsPane(props: { client: UsageClient | null; lang
   const [snapshot, setSnapshot] = useState<CodexUsageAnalyticsSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  useApplicationErrorDialog(error, {
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+    title: props.language === 'zh-CN' ? '用量读取失败' : 'Usage failed to load',
+    source: 'CodexUsageSettingsPane',
+  });
   const [filterOptions, setFilterOptions] = useState<{ projects: CodexLocalUsageGroup[]; models: CodexLocalUsageGroup[] }>({ projects: [], models: [] });
 
   const load = useCallback(async () => {
@@ -103,11 +109,6 @@ export function CodexUsageSettingsPane(props: { client: UsageClient | null; lang
       {loading && !snapshot ? (
         <p className="codex-usage-state" role="status">
           {copy.loading}
-        </p>
-      ) : null}
-      {error ? (
-        <p className="codex-usage-state is-error" role="alert">
-          {error}
         </p>
       ) : null}
       {snapshot ? (
@@ -175,9 +176,14 @@ function UsageSection(props: { title: string; description: string; badge: string
 
 function OfficialOverview(props: { snapshot: CodexOfficialUsageSnapshot; language: Language }) {
   const copy = text[props.language];
+  useApplicationErrorDialog(props.snapshot.state === 'unavailable' ? props.snapshot.error : null, {
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+    title: props.language === 'zh-CN' ? '官方用量读取失败' : 'Official usage failed to load',
+    source: 'CodexUsageSettingsPane.official',
+  });
   if (props.snapshot.state === 'signed_out') return <p className="codex-usage-state">{copy.signedOut}</p>;
   if (props.snapshot.state === 'unsupported') return <p className="codex-usage-state">{copy.unsupported}</p>;
-  if (props.snapshot.state === 'unavailable' && !props.snapshot.fetchedAt) return <p className="codex-usage-state">{props.snapshot.error ?? copy.unavailable}</p>;
+  if (props.snapshot.state === 'unavailable' && !props.snapshot.fetchedAt) return <p className="codex-usage-state">{copy.unavailable}</p>;
   return (
     <>
       {props.snapshot.stale ? <p className="codex-usage-stale">{copy.stale}</p> : null}
