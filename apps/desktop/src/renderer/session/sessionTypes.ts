@@ -216,8 +216,25 @@ export type NativeConversationRunState =
   | { type: 'waiting'; turnId: string; requestId: string; reason: 'approval' | 'user_input' }
   | { type: 'paused'; reason: 'interrupted' | 'transport_unavailable' | 'provider_archived' | 'recovery_required' | 'conflict_preparing' | 'conflict_preparation_failed' };
 
+export type NativeQueueWaitReason =
+  | 'current_turn'
+  | 'dispatching'
+  | 'user_input'
+  | 'approval'
+  | 'plan_confirmation'
+  | 'execution_context_preparing'
+  | 'interrupted'
+  | 'transport_unavailable'
+  | 'provider_archived'
+  | 'recovery_required'
+  | 'conflict_preparing'
+  | 'conflict_preparation_failed'
+  | 'user_confirmation'
+  | 'dispatch_pending';
+
 export interface NativeQueueSnapshot {
   state: NativeConversationRunState;
+  waitReason?: NativeQueueWaitReason;
   submissions: NativeQueuedSubmission[];
 }
 

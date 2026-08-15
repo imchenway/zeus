@@ -23,7 +23,9 @@ const labels = {
     dispatching: '第一条后续消息正在启动处理。',
     waitingUserInput: '完成上方选择后按顺序自动发送。',
     waitingApproval: '完成上方审批后按顺序自动发送。',
-    waitingCapacity: '等待其他会话完成后按顺序自动发送。',
+    waitingPlanConfirmation: '完成上方计划确认后按顺序自动发送。',
+    preparingExecutionContext: '正在准备会话执行现场，完成后按顺序自动发送。',
+    dispatchPending: '队首消息正在等待发送。',
     interrupted: '当前回复已中断，后续消息已暂停。',
     transportUnavailable: '连接恢复后继续处理后续消息。',
     providerArchived: '原会话已归档，恢复后由你确认发送。',
@@ -32,7 +34,7 @@ const labels = {
     retryPreparation: '重试准备',
     uncertain: '部分消息的接收结果尚未确认，不会自动重发。',
     confirmationRequired: '这些消息需要你确认后再发送。',
-    planControlWaiting: '计划操作正在等待处理。',
+    recoveryRequired: '消息派发或接收状态需要恢复，已暂停自动发送。',
     planControl: '计划操作',
     edit: '编辑',
     editLabel: '编辑队列消息',
@@ -58,7 +60,9 @@ const labels = {
     dispatching: 'Starting the first follow-up.',
     waitingUserInput: 'Sends automatically in order after you answer above.',
     waitingApproval: 'Sends automatically in order after you approve above.',
-    waitingCapacity: 'Waiting for another conversation to finish, then sends automatically.',
+    waitingPlanConfirmation: 'Sends automatically in order after you confirm the plan above.',
+    preparingExecutionContext: 'Preparing the conversation workspace, then sends automatically in order.',
+    dispatchPending: 'The first follow-up is waiting to be sent.',
     interrupted: 'The current response was interrupted. Follow-ups are paused.',
     transportUnavailable: 'Follow-ups continue after the connection recovers.',
     providerArchived: 'The original conversation is archived. Restore it to confirm sending.',
@@ -67,7 +71,7 @@ const labels = {
     retryPreparation: 'Retry preparation',
     uncertain: 'Some message delivery results are unconfirmed and will not resend automatically.',
     confirmationRequired: 'These messages need your confirmation before sending.',
-    planControlWaiting: 'The plan action is waiting to run.',
+    recoveryRequired: 'Message dispatch or delivery state requires recovery. Automatic sending is paused.',
     planControl: 'Plan action',
     edit: 'Edit',
     editLabel: 'Edit queued message',
@@ -306,23 +310,34 @@ function queuedMessageEditDraft(submission: NativeQueuedSubmission): string {
 }
 
 function describeQueueState(state: NativeSessionState, queue: readonly NativeQueuedSubmission[], copy: (typeof labels)[SessionUiLanguage]): string {
-  if (state.conversationState === 'waiting_user_input') return copy.waitingUserInput;
-  if (state.conversationState === 'waiting_approval') return copy.waitingApproval;
+  const waitReason = state.queue?.waitReason ?? inferLegacyQueueWaitReason(state, queue);
+  if (waitReason === 'current_turn') return copy.active;
+  if (waitReason === 'dispatching') return copy.dispatching;
+  if (waitReason === 'user_input') return copy.waitingUserInput;
+  if (waitReason === 'approval') return copy.waitingApproval;
+  if (waitReason === 'plan_confirmation') return copy.waitingPlanConfirmation;
+  if (waitReason === 'execution_context_preparing') return copy.preparingExecutionContext;
+  if (waitReason === 'interrupted') return copy.interrupted;
+  if (waitReason === 'transport_unavailable') return copy.transportUnavailable;
+  if (waitReason === 'provider_archived') return copy.providerArchived;
+  if (waitReason === 'conflict_preparing') return copy.conflictPreparing;
+  if (waitReason === 'conflict_preparation_failed') return copy.conflictPreparationFailed;
+  if (waitReason === 'user_confirmation') return copy.confirmationRequired;
+  if (waitReason === 'recovery_required') return queue.some((submission) => submission.error?.code === 'ZEUS_NATIVE_SUBMISSION_DELIVERY_UNCONFIRMED') ? copy.uncertain : copy.recoveryRequired;
+  return copy.dispatchPending;
+}
+
+function inferLegacyQueueWaitReason(state: NativeSessionState, queue: readonly NativeQueuedSubmission[]) {
+  if (state.conversationState === 'waiting_user_input') return 'user_input' as const;
+  if (state.conversationState === 'waiting_approval') return 'approval' as const;
   const runState = state.queue?.state;
-  if (!runState) return copy.waitingCapacity;
-  if (runState.type === 'active') return copy.active;
-  if (runState.type === 'dispatching') return copy.dispatching;
-  if (runState.type === 'waiting') return runState.reason === 'user_input' ? copy.waitingUserInput : copy.waitingApproval;
-  if (runState.type === 'paused') {
-    if (runState.reason === 'interrupted') return copy.interrupted;
-    if (runState.reason === 'transport_unavailable') return copy.transportUnavailable;
-    if (runState.reason === 'provider_archived') return copy.providerArchived;
-    if (runState.reason === 'conflict_preparing') return copy.conflictPreparing;
-    if (runState.reason === 'conflict_preparation_failed') return copy.conflictPreparationFailed;
-    return copy.uncertain;
-  }
-  if (queue.some((submission) => submission.controlAction)) return copy.planControlWaiting;
-  return queue.every((submission) => submission.pausedReason === 'user_confirmation') ? copy.confirmationRequired : copy.waitingCapacity;
+  if (runState?.type === 'active') return 'current_turn' as const;
+  if (runState?.type === 'dispatching') return 'dispatching' as const;
+  if (runState?.type === 'waiting') return runState.reason;
+  if (runState?.type === 'paused') return runState.reason;
+  if (queue.some((submission) => submission.controlAction)) return 'plan_confirmation' as const;
+  if (queue.length > 0 && queue.every((submission) => submission.pausedReason === 'user_confirmation')) return 'user_confirmation' as const;
+  return 'dispatch_pending' as const;
 }
 
 export function visibleQueuedSubmissions(queue: NativeQueueSnapshot | null): NativeQueuedSubmission[] {

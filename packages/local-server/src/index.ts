@@ -760,10 +760,6 @@ interface RuntimeSettingsSnapshot {
     path: string | null;
     login: boolean;
   };
-  concurrency: {
-    maxPerProject: number;
-    maxGlobal: number;
-  };
   executionTimeoutSeconds: number;
   logRetentionDays: number;
   autoConfirmationPolicy: RuntimeAutoConfirmationPolicy;
@@ -806,10 +802,6 @@ interface UpdateRuntimeSettingsBody {
   shell?: {
     path?: unknown;
     login?: unknown;
-  };
-  concurrency?: {
-    maxPerProject?: unknown;
-    maxGlobal?: unknown;
   };
   executionTimeoutSeconds?: unknown;
   logRetentionDays?: unknown;
@@ -1783,7 +1775,6 @@ const defaultRuntimeSettings: RuntimeSettingsSnapshot = {
   adapterCliPaths: {},
   terminalEnv: {},
   shell: { path: null, login: false },
-  concurrency: { maxPerProject: 1, maxGlobal: 2 },
   executionTimeoutSeconds: 3600,
   logRetentionDays: 30,
   autoConfirmationPolicy: 'never',
@@ -2670,15 +2661,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       generatedImageRoot,
       getProjectRoot: (projectId) => projects.getById(projectId)?.localPath ?? null,
       ensureExecutionContext: ensureNativeConversationExecutionContext,
-      getConcurrency: (projectId) => {
-        const runningLegacy = listUniqueRunningRuntimeSessions();
-        return {
-          project: runningLegacy.filter((session) => session.projectId === projectId).length,
-          global: runningLegacy.length,
-          maxPerProject: runtimeSettings.concurrency.maxPerProject,
-          maxGlobal: runtimeSettings.concurrency.maxGlobal,
-        };
-      },
       broadcast: publishNativeConversationEvent,
       now: () => now().toISOString(),
     });
@@ -9143,13 +9125,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         message: 'shell.path must be an absolute single-line path when provided',
       });
     }
-    const concurrency = normalizeRuntimeConcurrencySettings(request.body?.concurrency);
-    if (!concurrency) {
-      return reply.code(400).send({
-        error: 'ZEUS_INVALID_RUNTIME_SETTINGS',
-        message: 'concurrency must use positive integer limits',
-      });
-    }
     // Runtime 默认 adapter 是本机偏好设置；只保存选择，不假定对应 CLI 已安装或已登录。
     const executionTimeoutSeconds = normalizeRuntimeExecutionTimeoutSeconds(request.body?.executionTimeoutSeconds);
     if (executionTimeoutSeconds === null) {
@@ -9180,7 +9155,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       adapterCliPaths,
       terminalEnv,
       shell,
-      concurrency,
       executionTimeoutSeconds,
       logRetentionDays,
       autoConfirmationPolicy,
@@ -9890,16 +9864,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           consumedAt,
         },
         createdAt: consumedAt,
-      });
-    }
-    const concurrency = evaluateRuntimeConcurrency(body.projectId);
-    if (!concurrency.allowed) {
-      return reply.code(409).send({
-        error: 'ZEUS_RUNTIME_CONCURRENCY_LIMIT',
-        message: concurrency.reason,
-        scope: concurrency.scope,
-        limit: concurrency.limit,
-        runningCount: concurrency.runningCount,
       });
     }
     try {
@@ -11928,7 +11892,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       adapterCliPaths: normalizeRuntimeAdapterCliPaths(value.adapterCliPaths) ?? {},
       terminalEnv: normalizeRuntimeTerminalEnv(value.terminalEnv) ?? {},
       shell: normalizeRuntimeShellSettings(value.shell) ?? defaultRuntimeSettings.shell,
-      concurrency: normalizeRuntimeConcurrencySettings(value.concurrency) ?? defaultRuntimeSettings.concurrency,
       executionTimeoutSeconds: normalizeRuntimeExecutionTimeoutSeconds(value.executionTimeoutSeconds) ?? defaultRuntimeSettings.executionTimeoutSeconds,
       logRetentionDays: normalizeRuntimeLogRetentionDays(value.logRetentionDays) ?? defaultRuntimeSettings.logRetentionDays,
       autoConfirmationPolicy: normalizeRuntimeAutoConfirmationPolicy(value.autoConfirmationPolicy) ?? defaultRuntimeSettings.autoConfirmationPolicy,
@@ -11942,11 +11905,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     const adapterCliPaths = normalizeRuntimeAdapterCliPaths(value.adapterCliPaths);
     const terminalEnv = normalizeRuntimeTerminalEnv(value.terminalEnv);
     const shell = normalizeRuntimeShellSettings(value.shell);
-    const concurrency = normalizeRuntimeConcurrencySettings(value.concurrency);
     const executionTimeoutSeconds = normalizeRuntimeExecutionTimeoutSeconds(value.executionTimeoutSeconds);
     const logRetentionDays = normalizeRuntimeLogRetentionDays(value.logRetentionDays);
     const autoConfirmationPolicy = normalizeRuntimeAutoConfirmationPolicy(value.autoConfirmationPolicy);
-    if (!adapterModels || !adapterDefaultArgs || !adapterCliPaths || !terminalEnv || !shell || !concurrency || executionTimeoutSeconds === null || logRetentionDays === null || autoConfirmationPolicy === null) {
+    if (!adapterModels || !adapterDefaultArgs || !adapterCliPaths || !terminalEnv || !shell || executionTimeoutSeconds === null || logRetentionDays === null || autoConfirmationPolicy === null) {
       return null;
     }
     // 设置快照导入只恢复安全的本机偏好；Generic shell 不能被导入为默认 adapter，避免绕过显式确认。
@@ -11957,7 +11919,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       adapterCliPaths,
       terminalEnv,
       shell,
-      concurrency,
       executionTimeoutSeconds,
       logRetentionDays,
       autoConfirmationPolicy,
@@ -12209,22 +12170,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       path: path || null,
       login: raw.login === true,
     };
-  }
-
-  function normalizeRuntimeConcurrencySettings(value: unknown): RuntimeSettingsSnapshot['concurrency'] | null {
-    if (value === undefined) return defaultRuntimeSettings.concurrency;
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-    const raw = value as { maxPerProject?: unknown; maxGlobal?: unknown };
-    const maxPerProject = normalizeRuntimeConcurrencyLimit(raw.maxPerProject, defaultRuntimeSettings.concurrency.maxPerProject);
-    const maxGlobal = normalizeRuntimeConcurrencyLimit(raw.maxGlobal, defaultRuntimeSettings.concurrency.maxGlobal);
-    if (maxPerProject === null || maxGlobal === null || maxGlobal < maxPerProject) return null;
-    return { maxPerProject, maxGlobal };
-  }
-
-  function normalizeRuntimeConcurrencyLimit(value: unknown, fallback: number): number | null {
-    if (value === undefined) return fallback;
-    if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 20) return null;
-    return value;
   }
 
   function normalizeRuntimeExecutionTimeoutSeconds(value: unknown): number | null {
@@ -12587,49 +12532,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     }
     if (codeMapSettings.graphCacheStrategy === 'disabled') return undefined;
     return readGraphNeighborhood(db, nodeId, depth, projectName);
-  }
-
-  function evaluateRuntimeConcurrency(projectId: string):
-    | { allowed: true }
-    | {
-        allowed: false;
-        scope: 'project' | 'global';
-        limit: number;
-        runningCount: number;
-        reason: string;
-      } {
-    const runningSessions = listUniqueRunningRuntimeSessions();
-    const projectRunningCount = runningSessions.filter((session) => session.projectId === projectId).length;
-    if (projectRunningCount >= runtimeSettings.concurrency.maxPerProject) {
-      return {
-        allowed: false,
-        scope: 'project',
-        limit: runtimeSettings.concurrency.maxPerProject,
-        runningCount: projectRunningCount,
-        reason: `项目运行中 Runtime 会话已达到并发上限 ${runtimeSettings.concurrency.maxPerProject}，任务保持 READY 等待后续启动。`,
-      };
-    }
-    if (runningSessions.length >= runtimeSettings.concurrency.maxGlobal) {
-      return {
-        allowed: false,
-        scope: 'global',
-        limit: runtimeSettings.concurrency.maxGlobal,
-        runningCount: runningSessions.length,
-        reason: `全局运行中 Runtime 会话已达到并发上限 ${runtimeSettings.concurrency.maxGlobal}，任务保持 READY 等待后续启动。`,
-      };
-    }
-    return { allowed: true };
-  }
-
-  function listUniqueRunningRuntimeSessions(): AiRuntimeSession[] {
-    const sessionsById = new Map<string, AiRuntimeSession>();
-    for (const session of runtimeSessions.list({ archived: false }).map(toAiRuntimeSession)) {
-      if (session.status === 'running') sessionsById.set(session.id, session);
-    }
-    for (const session of aiRuntimeManager.listSessions()) {
-      if (session.status === 'running') sessionsById.set(session.id, session);
-    }
-    return [...sessionsById.values()];
   }
 
   function markRuntimeSessionConversationsInactive(session: Pick<AiRuntimeSession, 'id' | 'status' | 'endedAt' | 'exitCode'>): void {
@@ -13866,40 +13768,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (!task || task.projectId !== project.id) {
       return { runtimeError: { message: `Conversation task not found: ${conversation.taskId}` } };
     }
-    const concurrency = evaluateRuntimeConcurrency(project.id);
-    if (!concurrency.allowed) {
-      const queuedConversation = conversations.updateRuntimeState(conversation.id, {
-        status: 'queued',
-        summary: concurrency.reason,
-      });
-      recordTaskEvent({
-        taskId: task.id,
-        eventType: 'task.runtime.reconnect.queued',
-        title: 'Runtime 续接已排队',
-        payload: {
-          projectId: project.id,
-          conversationId: conversation.id,
-          previousSessionId,
-          scope: concurrency.scope,
-          limit: concurrency.limit,
-          runningCount: concurrency.runningCount,
-        },
-      });
-      appendAuditLog({
-        actorType: 'local_api',
-        action: 'runtime.session.reconnect.queued',
-        resourceType: 'conversation',
-        resourceId: conversation.id,
-        payload: {
-          projectId: project.id,
-          taskId: task.id,
-          conversationId: queuedConversation.id,
-          previousSessionId,
-          reason: concurrency.reason,
-        },
-      });
-      return { runtimeError: { message: concurrency.reason } };
-    }
     assertNonCodexTaskAttachmentsSupported(context.adapterId, task);
     const runningTask = moveTaskTowardRunning(task.id, 'task.runtime.reconnect');
     const latestConversation = conversations.getById(conversation.id) ?? conversation;
@@ -14870,10 +14738,35 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   }
 
   function toNativeQueueApiSnapshot(conversation: ZeusConversationRecord, submissions = conversationSubmissions.listQueueByConversation(conversation.id)) {
+    const state = inferNativeConversationSnapshotState(conversation);
+    const queuedSubmissions = submissions.filter((submission) => (submission.status === 'queued' || submission.status === 'paused') && !submission.providerTurnId);
     return {
-      state: inferNativeConversationSnapshotState(conversation),
-      submissions: submissions.filter((submission) => (submission.status === 'queued' || submission.status === 'paused') && !submission.providerTurnId).map((submission) => toNativeSubmission(submission, { includeRecoveryPayload: true })),
+      state,
+      waitReason: inferNativeQueueWaitReason(conversation, state, queuedSubmissions),
+      submissions: queuedSubmissions.map((submission) => toNativeSubmission(submission, { includeRecoveryPayload: true })),
     };
+  }
+
+  function inferNativeQueueWaitReason(
+    conversation: ZeusConversationRecord,
+    state: ReturnType<typeof inferNativeConversationSnapshotState>,
+    submissions: ReturnType<ConversationSubmissionRepository['listQueueByConversation']>,
+  ) {
+    if (state.type === 'active') return 'current_turn' as const;
+    if (state.type === 'dispatching') return 'dispatching' as const;
+    if (state.type === 'waiting') return state.reason;
+    if (state.type === 'paused') return state.reason;
+    if (conversationPlanActions.listByConversation(conversation.id).some((request) => request.status === 'pending')) return 'plan_confirmation' as const;
+    if (
+      submissions.some((submission) => {
+        const input = parseJsonObject(submission.inputJson);
+        return isNativeApiRecord(input.context) && input.context.holdDispatch === true;
+      })
+    ) {
+      return 'execution_context_preparing' as const;
+    }
+    if (submissions.length > 0 && submissions.every((submission) => submission.pausedReason === 'user_confirmation')) return 'user_confirmation' as const;
+    return 'dispatch_pending' as const;
   }
 
   function inferNativeConversationSnapshotState(conversation: ZeusConversationRecord) {
@@ -14902,6 +14795,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       }
       return { type: 'active' as const, turnId: active.providerTurnId, phase: 'prework' as const };
     }
+    const dispatching = conversationSubmissions.listByConversation(conversation.id).find((submission) => submission.status === 'dispatching' && !submission.providerTurnId);
+    if (dispatching) return { type: 'dispatching' as const, submissionId: dispatching.id };
     const paused = conversationSubmissions.listByConversation(conversation.id).filter((submission) => submission.status === 'paused' && !submission.providerTurnId);
     if (paused.some((submission) => submission.pausedReason === 'recovery_required')) return { type: 'paused' as const, reason: 'recovery_required' as const };
     if (paused.some((submission) => submission.pausedReason === 'interrupted')) return { type: 'paused' as const, reason: 'interrupted' as const };
@@ -15632,7 +15527,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     allowedAttachmentRoots?: string[];
     taskPushLayout?: TaskPushMessageLayout;
     legacyReference?: { conversationId: string; messageIds: string[] };
-    bypassConcurrency: boolean;
     deferInitialDispatch?: boolean;
     holdDispatch?: boolean;
     additionalContext?: Record<string, unknown>;
@@ -15697,7 +15591,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       permissionMode: plan.permissionMode,
       ...(plan.workMode ? { workMode: plan.workMode } : {}),
       applyLegacyTaskGuards: false,
-      bypassConcurrency: plan.bypassConcurrency,
       ...(plan.deferInitialDispatch ? { deferInitialDispatch: true } : {}),
       ...(plan.holdDispatch ? { holdDispatch: true } : {}),
       ...(plan.additionalContext ? { additionalContext: plan.additionalContext } : {}),
@@ -15827,7 +15720,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           allowGitCommit: false,
           attachments: taskPushAttachments,
           allowedAttachmentRoots: attachmentInput.allowedRoots,
-          bypassConcurrency: true,
           idempotencyKey,
           clientUserMessageId,
           providerWriteLifecycle: reservedLifecycle,
@@ -15906,7 +15798,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           allowCodeChanges: false,
           allowTests: false,
           allowGitCommit: false,
-          bypassConcurrency: true,
           idempotencyKey,
           clientUserMessageId,
           providerWriteLifecycle: reservedLifecycle,
@@ -16019,7 +15910,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           allowCodeChanges: true,
           allowTests: true,
           allowGitCommit: false,
-          bypassConcurrency: true,
           holdDispatch: true,
           additionalContext: {
             conflictPreparation: {
@@ -16148,7 +16038,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           allowGitCommit: task.allowGitCommit,
           attachments,
           ...(canonicalAttachmentInput?.allowedRoots.length ? { allowedAttachmentRoots: canonicalAttachmentInput.allowedRoots } : {}),
-          bypassConcurrency: false,
           idempotencyKey,
           clientUserMessageId,
           providerWriteLifecycle: reservedLifecycle,
@@ -17593,7 +17482,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         allowCodeChanges: true,
         allowTests: true,
         allowGitCommit: false,
-        bypassConcurrency: true,
         deferInitialDispatch: true,
         idempotencyKey: input.dispatchIdempotencyKey ?? input.idempotencyKey,
         clientUserMessageId: input.dispatchClientUserMessageId ?? input.clientUserMessageId,
@@ -18544,7 +18432,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     recordTaskEvent({
       taskId: nextTask.id,
       eventType: operation.status === 'active' ? eventType : 'task.runtime.queued',
-      title: operation.status === 'active' ? eventTitle : 'Codex native 并发已满，任务保持 READY',
+      title: operation.status === 'active' ? eventTitle : 'Codex native 会话等待派发',
       payload: {
         conversationId: conversation.id,
         providerThreadId: operation.providerThreadId,
@@ -18568,7 +18456,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       },
     });
     await db.save();
-    return { task: nextTask, conversation: toGraphConversationHistoryItem(conversation), nativeOperation: operation, ...(operation.status === 'queued' ? { queued: true as const, reason: 'Codex native concurrency is full.' } : {}) };
+    return { task: nextTask, conversation: toGraphConversationHistoryItem(conversation), nativeOperation: operation, ...(operation.status === 'queued' ? { queued: true as const, reason: 'Codex native dispatch is pending.' } : {}) };
   }
 
   async function startTaskRuntimeSession(
@@ -18587,17 +18475,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         reason?: string;
       }
     | { task: ZeusTaskRecord; conversation: GraphConversationHistoryItem; runtimeError: { message: string } }
-    | {
-        task: ZeusTaskRecord;
-        conversation: GraphConversationHistoryItem;
-        queued: true;
-        reason: string;
-        concurrency: {
-          scope: 'project' | 'global';
-          limit: number;
-          runningCount: number;
-        };
-      }
   > {
     const adapterId = runtimeSettings.defaultAdapterId;
     if (adapterId === 'codex') {
@@ -18609,52 +18486,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     const prompt = createTaskRuntimePrompt(task, instruction);
     const invocation = createNonCodexTaskRuntimeInvocation(adapterId, project, task, instruction, prompt);
     const startingConversation = createTaskRuntimeConversation(adapterId, invocation.command, project, task, prompt, eventType);
-    const concurrency = evaluateRuntimeConcurrency(project.id);
-    if (!concurrency.allowed) {
-      const queuedConversation = conversations.updateRuntimeState(startingConversation.id, {
-        status: 'queued',
-        summary: concurrency.reason,
-      });
-      const readyTask = task.status === 'ready' ? task : transitionTaskStatus(task, 'ready', `${eventType}.queued`);
-      recordTaskEvent({
-        taskId: readyTask.id,
-        eventType: 'task.runtime.queued',
-        title: 'Runtime 并发已满，任务保持 READY',
-        payload: {
-          projectId: project.id,
-          scope: concurrency.scope,
-          limit: concurrency.limit,
-          runningCount: concurrency.runningCount,
-        },
-      });
-      appendAuditLog({
-        actorType: 'local_api',
-        action: 'runtime.session.queued',
-        resourceType: 'task',
-        resourceId: readyTask.id,
-        payload: {
-          taskId: readyTask.id,
-          projectId: project.id,
-          source: eventType,
-          conversationId: queuedConversation.id,
-          scope: concurrency.scope,
-          limit: concurrency.limit,
-          runningCount: concurrency.runningCount,
-        },
-      });
-      await db.save();
-      return {
-        task: readyTask,
-        conversation: toGraphConversationHistoryItem(queuedConversation),
-        queued: true,
-        reason: concurrency.reason,
-        concurrency: {
-          scope: concurrency.scope,
-          limit: concurrency.limit,
-          runningCount: concurrency.runningCount,
-        },
-      };
-    }
     const runningTask = moveTaskTowardRunning(task.id, eventType);
     let session: AiRuntimeSession;
     let runningConversation: ZeusConversationWithMessagesRecord;
@@ -19348,15 +19179,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     commandCenter.handleRuntimeSessionChange(session);
     void notifyTelegramCommandRunSession(session);
     scheduleRuntimePersistenceSave(session.status !== 'running');
-    if (session.status !== 'running') {
-      void codexNativeCoordinator.capacityChanged().catch((error) => {
-        publishRealtimeEvent('conversation.native.queue_dispatch_failed', {
-          source: 'legacy_runtime_capacity_changed',
-          sessionId: session.id,
-          error: { message: error instanceof Error ? error.message : String(error) },
-        });
-      });
-    }
   }
 
   function persistRuntimeLog(log: AiRuntimeLogEntry): void {
