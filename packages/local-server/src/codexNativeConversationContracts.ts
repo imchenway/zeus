@@ -39,6 +39,7 @@ export interface NativeQueuedSubmission {
   conversationContext?: Record<string, unknown>;
   expectedTurnId: string | null;
   clientUserMessageId: string;
+  controlAction?: 'implement_plan' | 'refine_plan';
   position: number;
   providerTurnId: null;
   pausedReason: string | null;

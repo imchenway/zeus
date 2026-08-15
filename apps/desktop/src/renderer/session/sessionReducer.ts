@@ -784,6 +784,8 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
       const status = planImplementationStatus(payload.status);
       if (!requestId || !status) return base;
       const existing = base.planImplementationRequests.find((request) => request.id === requestId);
+      // HTTP 权威快照可能先于较早的 WebSocket pending 事件到达，已解决请求禁止回退成可再次操作。
+      if (existing && existing.status !== 'pending' && status === 'pending') return base;
       const updated: NativePlanImplementationRequest = existing
         ? {
             ...existing,

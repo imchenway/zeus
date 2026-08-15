@@ -2454,8 +2454,8 @@ export function createRequestResponseGuard(): { begin(requestId: string): boolea
 }
 
 export function isRequestResponseBusy(operation: string | null, requestId: string): boolean {
-  const prefix = `request:respond:${requestId}`;
-  return operation === prefix || operation?.startsWith(`${prefix}:`) === true;
+  const prefixes = [`request:respond:${requestId}`, `plan-request:${requestId}`];
+  return prefixes.some((prefix) => operation === prefix || operation?.startsWith(`${prefix}:`) === true);
 }
 
 export function shouldRestoreComposerFocus(previousPendingCount: number, pendingCount: number, state: NativeSessionState | null): boolean {
