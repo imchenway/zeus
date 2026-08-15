@@ -3162,22 +3162,12 @@
   z-index: 5;
 }
 
-.session-codex-parity-v1 .session-goal-trigger,
 .session-codex-parity-v1 .session-goal-rail {
   min-width: 24px;
   min-height: 24px;
   border: 1px solid color-mix(in srgb, var(--session-accent, #5f75ff) 24%, transparent);
   color: var(--text-secondary);
   background: color-mix(in srgb, var(--session-accent, #5f75ff) 7%, transparent);
-}
-
-.session-codex-parity-v1 .session-goal-trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 8px;
-  border-radius: 8px;
-  font-size: 12px;
 }
 
 .session-codex-parity-v1 .session-goal-rail {
@@ -14330,7 +14320,111 @@
   inline-size: 20px;
 }
 
-.session-codex-parity-v1 :where(.session-attachment-button, .session-service-tier-toggle, .session-collaboration-mode, .session-composer-dropdown[data-icon-only='true'] .session-composer-dropdown-trigger):focus-visible {
+.session-codex-parity-v1 .session-goal-trigger {
+  align-items: center;
+  background: transparent !important;
+  block-size: 32px;
+  border: 0;
+  border-radius: 999px !important;
+  color: var(--session-text-muted);
+  display: inline-flex;
+  inline-size: 32px;
+  justify-content: center;
+  padding: 0 !important;
+}
+
+.session-codex-parity-v1 .session-goal-trigger:hover:not(:disabled) {
+  background: var(--session-selected) !important;
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .session-goal-trigger[data-active='true'] {
+  background: color-mix(in srgb, var(--session-accent) 10%, transparent) !important;
+  color: var(--session-accent);
+}
+
+.session-codex-parity-v1 .session-goal-trigger > svg {
+  block-size: 20px;
+  inline-size: 20px;
+}
+
+.session-codex-parity-v1 .session-composer-input-frame[data-goal-input='true'] {
+  border-color: color-mix(in srgb, var(--session-accent) 36%, var(--session-line));
+}
+
+.session-codex-parity-v1 .session-goal-compose-context {
+  align-items: center;
+  color: var(--session-accent);
+  display: flex;
+  font-size: 12px;
+  gap: 6px;
+  min-inline-size: 0;
+  padding: 1px 4px 0;
+}
+
+.session-codex-parity-v1 .session-goal-compose-context > svg {
+  block-size: 17px;
+  flex: 0 0 auto;
+  inline-size: 17px;
+}
+
+.session-codex-parity-v1 .session-goal-compose-context > strong {
+  color: currentColor;
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.session-codex-parity-v1 .session-goal-compose-context > small {
+  color: var(--session-text-muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-goal-compose-count {
+  color: var(--session-text-muted);
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.session-codex-parity-v1 .session-goal-compose-count.is-invalid {
+  color: var(--session-danger);
+}
+
+.session-codex-parity-v1 .session-goal-compose-context > button {
+  align-items: center;
+  block-size: 24px;
+  border-radius: 999px !important;
+  display: inline-flex;
+  flex: 0 0 auto;
+  inline-size: 24px;
+  justify-content: center;
+  margin-inline-start: auto;
+  padding: 0 !important;
+}
+
+.session-codex-parity-v1 .session-goal-compose-context > button:hover:not(:disabled) {
+  background: var(--session-selected);
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .session-goal-compose-context > button > svg {
+  block-size: 14px;
+  inline-size: 14px;
+}
+
+.session-codex-parity-v1
+  :where(
+    .session-attachment-button,
+    .session-goal-trigger,
+    .session-goal-compose-context > button,
+    .session-service-tier-toggle,
+    .session-collaboration-mode,
+    .session-composer-dropdown[data-icon-only='true'] .session-composer-dropdown-trigger
+  ):focus-visible {
   box-shadow: 0 0 0 2px var(--session-focus-outline);
   outline: none;
 }

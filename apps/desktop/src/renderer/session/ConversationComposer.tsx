@@ -5,8 +5,19 @@ import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/C
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paperclip';
 import { SquareIcon as Square } from '@phosphor-icons/react/dist/csr/Square';
+import { TargetIcon as Target } from '@phosphor-icons/react/dist/csr/Target';
+import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { ConversationContextDraft, ZeusBrowserPreparedSubmission } from '@zeus/shared';
-import type { CodexConversationCapabilities, NativeCollaborationMode, NativeConversationAttachment, NativePermissionMode, NativeServiceTierSelection, NativeSessionState, NativeTurnSettingsSelection } from './sessionTypes.js';
+import type {
+  CodexConversationCapabilities,
+  NativeCollaborationMode,
+  NativeConversationAttachment,
+  NativeGoalSnapshot,
+  NativePermissionMode,
+  NativeServiceTierSelection,
+  NativeSessionState,
+  NativeTurnSettingsSelection,
+} from './sessionTypes.js';
 import { ComposerDropdown } from './ComposerDropdown.js';
 import { PermissionModeControl } from './PermissionModeControl.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
@@ -50,6 +61,11 @@ export interface ConversationComposerProps {
   permissionMode: NativePermissionMode;
   collaborationMode: NativeCollaborationMode;
   goalAvailable?: boolean;
+  goal?: NativeGoalSnapshot | null;
+  goalBusy?: boolean;
+  onSetGoal?: (objective: string) => boolean | Promise<boolean>;
+  onPauseGoal?: () => boolean | Promise<boolean>;
+  onResumeGoal?: () => boolean | Promise<boolean>;
   onOpenGoal?: () => void;
 }
 
@@ -68,6 +84,11 @@ const labels = {
     searchModel: '搜索供应商或模型',
     noModel: '没有匹配模型',
     goal: '目标',
+    createGoal: '创建目标',
+    goalInput: '目标内容',
+    goalPlaceholder: '说明要达成什么、如何验证，以及何时停止',
+    exitGoal: '退出目标输入',
+    normalDraftPreserved: '普通消息草稿已保留',
   },
   'en-US': {
     input: 'Message Codex',
@@ -83,6 +104,11 @@ const labels = {
     searchModel: 'Search providers or models',
     noModel: 'No matching models',
     goal: 'Goal',
+    createGoal: 'Create goal',
+    goalInput: 'Goal objective',
+    goalPlaceholder: 'Describe the outcome, validation, and stopping condition',
+    exitGoal: 'Exit goal input',
+    normalDraftPreserved: 'Message draft preserved',
   },
 } as const;
 
@@ -99,6 +125,9 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const composingRef = useRef(false);
   const [isComposing, setIsComposing] = useState(false);
   const [editorValue, setEditorValue] = useState(props.state.draft);
+  const [goalInputOpen, setGoalInputOpen] = useState(false);
+  const [goalDraft, setGoalDraft] = useState('');
+  const [goalSubmitting, setGoalSubmitting] = useState(false);
   const [inputResourceError, setInputResourceError] = useState<string | null>(null);
   useApplicationErrorDialog(inputResourceError, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
@@ -112,7 +141,11 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const busy = Boolean(props.state.busyOperation);
   const writable = props.readOnly !== true && props.state.conversationState !== 'legacy_readonly';
   const hasDraft = editorValue.trim().length > 0 || props.state.attachments.length > 0 || Boolean(props.state.browserSubmission) || props.state.contextDraft.responseAnnotations.length > 0 || props.state.contextDraft.codeComments.length > 0;
-  const showSendCommand = !active || hasDraft;
+  const goalInputActive = goalInputOpen && !props.goal;
+  const goalCount = [...goalDraft.trim()].length;
+  const goalDraftValid = goalCount > 0 && goalCount <= 4_000;
+  const goalOperationBusy = goalSubmitting || props.goalBusy === true;
+  const showSendCommand = goalInputActive || !active || hasDraft;
   const modelPresentation = useMemo(() => presentModelOptions(props.capabilities?.models ?? [], selectedModel, props.language), [props.capabilities?.models, props.language, selectedModel]);
   const effectiveModel = modelPresentation.selectedId || selectedModel;
   const selectedCapability = resolveModelCapability(modelPresentation.models, effectiveModel);
@@ -123,7 +156,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const inputResources = useConversationInputResources({
     textareaRef,
     text: props.state.draft,
-    disabled: !writable || busy,
+    disabled: !writable || busy || goalInputActive,
     onTextChange: props.onDraftChange,
     onAddAttachments: (attachments) => {
       setInputResourceError(null);
@@ -160,12 +193,18 @@ export function ConversationComposer(props: ConversationComposerProps) {
 
   useLayoutEffect(() => {
     if (textareaRef.current) autosizeTextarea(textareaRef.current);
-  }, [editorValue, textareaRef]);
+  }, [editorValue, goalDraft, goalInputActive, textareaRef]);
 
   useEffect(() => {
     // 拼音尚未上屏时由 textarea 本地值持有组合文本，避免会话快照或草稿持久化回写打断输入法。
     if (!composingRef.current) setEditorValue(props.state.draft);
   }, [props.state.draft]);
+
+  useEffect(() => {
+    if (!props.goal) return;
+    setGoalInputOpen(false);
+    setGoalDraft('');
+  }, [props.goal]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -191,8 +230,60 @@ export function ConversationComposer(props: ConversationComposerProps) {
     void props.onSubmit(nextDelivery, settings);
   }
 
+  function enterGoalInput(initialObjective?: string): void {
+    if (initialObjective !== undefined) setGoalDraft(initialObjective);
+    setGoalInputOpen(true);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }
+
+  function exitGoalInput(): void {
+    if (goalSubmitting) return;
+    setGoalInputOpen(false);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }
+
+  async function setGoalObjective(objective: string, clearMessageDraft = false): Promise<void> {
+    const normalized = objective.trim();
+    if (!props.onSetGoal || !normalized || [...normalized].length > 4_000 || goalOperationBusy) return;
+    setGoalSubmitting(true);
+    try {
+      const saved = await props.onSetGoal(normalized);
+      if (saved === false) return;
+      if (clearMessageDraft) props.onDraftChange('');
+      setGoalInputOpen(false);
+      setGoalDraft('');
+    } finally {
+      setGoalSubmitting(false);
+    }
+  }
+
+  async function runGoalCommand(command: string): Promise<void> {
+    const argument = command.slice('/goal'.length).trim();
+    if (!argument) {
+      props.onDraftChange('');
+      if (props.goal) props.onOpenGoal?.();
+      else enterGoalInput();
+      return;
+    }
+    if (props.goal && argument === 'pause' && props.onPauseGoal) {
+      if ((await props.onPauseGoal()) !== false) props.onDraftChange('');
+      return;
+    }
+    if (props.goal && argument === 'resume' && props.onResumeGoal) {
+      if ((await props.onResumeGoal()) !== false) props.onDraftChange('');
+      return;
+    }
+    if (props.goal && argument === 'clear') {
+      props.onDraftChange('');
+      props.onOpenGoal?.();
+      return;
+    }
+    if (!props.goal && ['pause', 'resume', 'clear'].includes(argument)) return;
+    await setGoalObjective(argument, true);
+  }
+
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
-    inputResources.handlePasteShortcut(event);
+    if (!goalInputActive) inputResources.handlePasteShortcut(event);
     const intent = resolveComposerKeyIntent({
       key: event.key,
       shiftKey: event.shiftKey,
@@ -202,6 +293,10 @@ export function ConversationComposer(props: ConversationComposerProps) {
     });
     if (intent === 'submit') {
       event.preventDefault();
+      if (goalInputActive) {
+        if (writable && goalDraftValid && !busy && !goalOperationBusy) void setGoalObjective(goalDraft);
+        return;
+      }
       if (editorValue.trim() === '/plan' && !props.state.browserSubmission && props.onRuntimeSettingsChange) {
         props.onDraftChange('');
         props.onRuntimeSettingsChange({
@@ -213,12 +308,17 @@ export function ConversationComposer(props: ConversationComposerProps) {
         });
         return;
       }
-      if (editorValue.trim() === '/goal' && !props.state.browserSubmission && props.goalAvailable && props.onOpenGoal) {
-        props.onDraftChange('');
-        props.onOpenGoal();
+      if (/^\/goal(?:\s|$)/u.test(editorValue.trim()) && !props.state.browserSubmission && props.goalAvailable) {
+        void runGoalCommand(editorValue.trim());
         return;
       }
       if (writable && hasDraft && !busy) submit('queue');
+      return;
+    }
+    if (intent === 'escape' && goalInputActive) {
+      event.preventDefault();
+      event.stopPropagation();
+      exitGoalInput();
       return;
     }
     // Escape 由 SessionWorkspace capture 统一处理，保证 approval/RUI 层优先于 interrupt。
@@ -229,34 +329,51 @@ export function ConversationComposer(props: ConversationComposerProps) {
       className="session-composer-shell"
       aria-label={copy.input}
       data-active={active ? 'true' : 'false'}
+      data-goal-input={goalInputActive ? 'true' : 'false'}
       data-resource-dragging={inputResources.dragging ? 'true' : 'false'}
       onDragEnter={inputResources.handleDragEnter}
       onDragOver={inputResources.handleDragOver}
       onDragLeave={inputResources.handleDragLeave}
       onDrop={inputResources.handleDrop}
     >
-      {props.state.browserSubmission ? <BrowserSubmissionAttachment submission={props.state.browserSubmission} language={props.language} disabled={!writable || busy} onRemove={props.onRemoveBrowserSubmission} /> : null}
-      {props.state.contextDraft.responseAnnotations.length || props.state.contextDraft.codeComments.length ? (
+      {!goalInputActive && props.state.browserSubmission ? <BrowserSubmissionAttachment submission={props.state.browserSubmission} language={props.language} disabled={!writable || busy} onRemove={props.onRemoveBrowserSubmission} /> : null}
+      {!goalInputActive && (props.state.contextDraft.responseAnnotations.length || props.state.contextDraft.codeComments.length) ? (
         <ContextDraftAttachment draft={props.state.contextDraft} language={props.language} disabled={!writable || busy} onRemove={() => props.onContextDraftChange?.({ responseAnnotations: [], codeComments: [] })} />
       ) : null}
-      <div className="session-composer-input-frame">
-        <ConversationComposerAttachments
-          attachments={props.state.attachments}
-          language={props.language}
-          disabled={!writable || busy || inputResources.processing}
-          onRemove={(attachment) => props.onRemoveAttachment?.(attachment)}
-          onRestorePastedText={inputResources.restorePastedText}
-        />
+      <div className="session-composer-input-frame" data-goal-input={goalInputActive ? 'true' : 'false'}>
+        {goalInputActive ? (
+          <div className="session-goal-compose-context">
+            <Target aria-hidden="true" weight="regular" />
+            <strong>{copy.createGoal}</strong>
+            {hasDraft ? <small>{copy.normalDraftPreserved}</small> : null}
+            <span className={goalCount > 4_000 ? 'session-goal-compose-count is-invalid' : 'session-goal-compose-count'}>{goalCount} / 4000</span>
+            <button type="button" aria-label={copy.exitGoal} onClick={exitGoalInput} disabled={goalOperationBusy}>
+              <X aria-hidden="true" weight="bold" />
+            </button>
+          </div>
+        ) : (
+          <ConversationComposerAttachments
+            attachments={props.state.attachments}
+            language={props.language}
+            disabled={!writable || busy || inputResources.processing}
+            onRemove={(attachment) => props.onRemoveAttachment?.(attachment)}
+            onRestorePastedText={inputResources.restorePastedText}
+          />
+        )}
         <textarea
           ref={textareaRef}
-          aria-label={copy.input}
+          aria-label={goalInputActive ? copy.goalInput : copy.input}
           aria-keyshortcuts="Enter Shift+Enter Escape Meta+A Control+A"
-          placeholder={copy.placeholder}
-          value={editorValue}
-          disabled={!writable || busy}
+          placeholder={goalInputActive ? copy.goalPlaceholder : copy.placeholder}
+          value={goalInputActive ? goalDraft : editorValue}
+          disabled={!writable || busy || goalOperationBusy}
           onChange={(event) => {
             autosizeTextarea(event.currentTarget);
             const nextValue = event.currentTarget.value;
+            if (goalInputActive) {
+              setGoalDraft(nextValue);
+              return;
+            }
             setEditorValue(nextValue);
             if (!composingRef.current) props.onDraftChange(nextValue);
           }}
@@ -268,6 +385,10 @@ export function ConversationComposer(props: ConversationComposerProps) {
             const nextValue = event.currentTarget.value;
             composingRef.current = false;
             setIsComposing(false);
+            if (goalInputActive) {
+              setGoalDraft(nextValue);
+              return;
+            }
             setEditorValue(nextValue);
             props.onDraftChange(nextValue);
           }}
@@ -276,15 +397,19 @@ export function ConversationComposer(props: ConversationComposerProps) {
             const nextValue = event.currentTarget.value;
             composingRef.current = false;
             setIsComposing(false);
+            if (goalInputActive) {
+              setGoalDraft(nextValue);
+              return;
+            }
             setEditorValue(nextValue);
             props.onDraftChange(nextValue);
           }}
-          onPaste={inputResources.handlePaste}
+          onPaste={goalInputActive ? undefined : inputResources.handlePaste}
           onKeyDown={handleKeyDown}
         />
         <div className="session-composer-command-row">
           <span className="session-composer-leading-actions">
-            {props.onChooseAttachments ? (
+            {!goalInputActive && props.onChooseAttachments ? (
               <button
                 type="button"
                 className="session-attachment-button"
@@ -329,9 +454,23 @@ export function ConversationComposer(props: ConversationComposerProps) {
               }
             />
             {props.goalAvailable ? (
-              <button type="button" className="session-goal-trigger" aria-haspopup="dialog" onClick={props.onOpenGoal} disabled={!props.onOpenGoal || props.readOnly === true}>
-                <span aria-hidden="true">◎</span>
-                <span>{copy.goal}</span>
+              <button
+                type="button"
+                className="session-goal-trigger"
+                aria-label={props.goal ? copy.goal : goalInputActive ? copy.exitGoal : copy.createGoal}
+                aria-haspopup={props.goal ? 'dialog' : undefined}
+                aria-pressed={!props.goal ? goalInputActive : undefined}
+                data-active={goalInputActive || props.goal ? 'true' : 'false'}
+                data-status={props.goal?.status}
+                title={props.goal ? copy.goal : copy.createGoal}
+                onClick={() => {
+                  if (props.goal) props.onOpenGoal?.();
+                  else if (goalInputActive) exitGoalInput();
+                  else enterGoalInput();
+                }}
+                disabled={props.readOnly === true || goalOperationBusy || (props.goal ? !props.onOpenGoal : !props.onSetGoal)}
+              >
+                <Target aria-hidden="true" weight={goalInputActive || props.goal ? 'fill' : 'regular'} />
               </button>
             ) : null}
           </span>
@@ -385,8 +524,15 @@ export function ConversationComposer(props: ConversationComposerProps) {
             </span>
             <span className="session-primary-command-slot" data-primary-command-slot="true">
               {showSendCommand ? (
-                <button type="button" className="session-send-button" aria-label={copy.send} onClick={() => submit('queue')} disabled={!writable || !hasDraft || busy} aria-busy={busy || undefined}>
-                  {busy ? <CircleNotch className="session-command-spinner" aria-hidden="true" weight="bold" /> : <ArrowUp aria-hidden="true" weight="bold" />}
+                <button
+                  type="button"
+                  className="session-send-button"
+                  aria-label={goalInputActive ? copy.createGoal : copy.send}
+                  onClick={() => (goalInputActive ? void setGoalObjective(goalDraft) : submit('queue'))}
+                  disabled={!writable || busy || goalOperationBusy || (goalInputActive ? !goalDraftValid : !hasDraft)}
+                  aria-busy={busy || goalOperationBusy || undefined}
+                >
+                  {busy || goalOperationBusy ? <CircleNotch className="session-command-spinner" aria-hidden="true" weight="bold" /> : <ArrowUp aria-hidden="true" weight="bold" />}
                 </button>
               ) : (
                 <button
