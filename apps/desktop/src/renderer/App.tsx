@@ -6333,6 +6333,54 @@ function TaskTableLayoutDecisionDialog(props: { open: boolean; title: string; de
   return surface;
 }
 
+function TaskTerminalCleanupDialog(props: { confirmation: { statusLabel: string } | null; language: AppLanguage; onCancel: () => void; onConfirm: () => void }) {
+  if (!props.confirmation) return null;
+  const zh = props.language === 'zh-CN';
+  const title = zh ? `清理工作现场并标记为“${props.confirmation.statusLabel}”？` : `Clean up the workspace and mark it “${props.confirmation.statusLabel}”?`;
+  return (
+    <ModalPortal rootClassName="task-terminal-cleanup-dialog-portal" backdropClassName="task-create-modal-backdrop" onDismiss={props.onCancel}>
+      <section
+        className="task-terminal-cleanup-dialog zeus-solid-form-surface"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="task-terminal-cleanup-dialog-title"
+        aria-describedby="task-terminal-cleanup-dialog-description task-terminal-cleanup-dialog-effects task-terminal-cleanup-dialog-preserved"
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            props.onCancel();
+          }
+        }}
+      >
+        <header>
+          <span className="task-terminal-cleanup-dialog-icon" aria-hidden="true">
+            <WarningCircle weight="fill" />
+          </span>
+          <span>
+            <strong id="task-terminal-cleanup-dialog-title">{title}</strong>
+            <p id="task-terminal-cleanup-dialog-description">{zh ? '这个任务还有未提交内容或活动会话。继续后，Zeus 会：' : 'This task still has local changes or active sessions. If you continue, Zeus will:'}</p>
+          </span>
+        </header>
+        <ul id="task-terminal-cleanup-dialog-effects">
+          <li>{zh ? '停止并归档关联会话；消息记录仍可查看。' : 'Stop and archive related sessions; their message history remains available.'}</li>
+          <li>{zh ? '永久删除任务工作目录中的未提交和未跟踪文件。' : 'Permanently delete uncommitted and untracked files from the task workspace.'}</li>
+        </ul>
+        <p className="task-terminal-cleanup-dialog-preserved" id="task-terminal-cleanup-dialog-preserved">
+          {zh ? '已提交的代码、任务分支和代码交付记录不会删除。' : 'Committed code, task branches, and delivery records will not be deleted.'}
+        </p>
+        <footer>
+          <Button variant="secondary" onClick={props.onCancel}>
+            {zh ? '先保留现场' : 'Keep workspace'}
+          </Button>
+          <Button variant="danger" onClick={props.onConfirm}>
+            {zh ? `清理并标记为“${props.confirmation.statusLabel}”` : `Clean up and mark “${props.confirmation.statusLabel}”`}
+          </Button>
+        </footer>
+      </section>
+    </ModalPortal>
+  );
+}
+
 function TaskDeleteRelationshipDialog(props: { task?: TaskRecord; allTasks: TaskRecord[]; busy: boolean; language: AppLanguage; onCancel: () => void; onConfirm: (input: DeleteTaskRequest) => void }) {
   const [strategy, setStrategy] = useState<NonNullable<DeleteTaskRequest['childStrategy']>>('make_roots');
   const [replacementParentTaskId, setReplacementParentTaskId] = useState('');
@@ -6913,6 +6961,10 @@ export function App(props: {
   const [zeusWindowForeground, setZeusWindowForeground] = useState(false);
   const [focusedArchivedConversation, setFocusedArchivedConversation] = useState<NativeConversationChoice | null>(null);
   const [optimisticTerminalTaskStatuses, setOptimisticTerminalTaskStatuses] = useState<Record<string, TaskManagementStatus>>({});
+  const [taskTerminalCleanupConfirmation, setTaskTerminalCleanupConfirmation] = useState<{
+    statusLabel: string;
+    resolve: (confirmed: boolean) => void;
+  } | null>(null);
   const [archivedConversations, setArchivedConversations] = useState<NativeConversationChoice[]>([]);
   const [archivedConversationLoadState, setArchivedConversationLoadState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [restoringArchivedConversationId, setRestoringArchivedConversationId] = useState<string | null>(null);
@@ -9907,6 +9959,17 @@ export function App(props: {
     }
   }
 
+  function requestTaskTerminalCleanupConfirmation(statusLabel: string): Promise<boolean> {
+    return new Promise((resolve) => setTaskTerminalCleanupConfirmation({ statusLabel, resolve }));
+  }
+
+  function resolveTaskTerminalCleanupConfirmation(confirmed: boolean): void {
+    const pending = taskTerminalCleanupConfirmation;
+    if (!pending) return;
+    setTaskTerminalCleanupConfirmation(null);
+    pending.resolve(confirmed);
+  }
+
   async function updateTaskManagementStatus(taskId: string, status: TaskManagementStatus, options: { expectedUpdatedAt?: string; reopenConversationId?: string } = {}): Promise<TaskEditResult | undefined> {
     const currentTask = (taskDetail?.id === taskId ? taskDetail : undefined) ?? snapshot.tasks.find((task) => task.id === taskId);
     if (!props.onUpdateTaskManagementStatus || !currentTask || resolveTaskManagementStatus(currentTask) === status) return;
@@ -9931,11 +9994,7 @@ export function App(props: {
           nextSnapshot = await updateManagementStatus(taskId, status, expectedUpdatedAt, undefined, options.reopenConversationId);
         } catch (error) {
           if (!(terminalStatus && error instanceof ZeusApiError && error.error === 'ZEUS_TASK_WORKTREE_CLEANUP_CONFIRMATION_REQUIRED')) throw error;
-          const confirmed = window.confirm(
-            appShellSettings.appLanguage === 'zh-CN'
-              ? `此任务存在未提交内容或活动会话。继续将停止并归档关联会话，永久删除任务 worktree 中未提交和未跟踪的文件，然后把任务标记为“${statusLabel}”。是否继续？`
-              : `This task has local changes or active sessions. Continuing will stop and archive related sessions, permanently delete uncommitted and untracked files in the task worktrees, and mark the task as “${statusLabel}”. Continue?`,
-          );
+          const confirmed = await requestTaskTerminalCleanupConfirmation(statusLabel);
           if (!confirmed) {
             clearOptimisticTerminalStatus();
             setActionState('idle');
@@ -12541,6 +12600,12 @@ export function App(props: {
         onChooseDirectory={() => void chooseProjectDirectoryForCreate()}
         onClose={closeProjectCreateDialog}
         onSubmit={(event) => void createCurrentProject(event)}
+      />
+      <TaskTerminalCleanupDialog
+        confirmation={taskTerminalCleanupConfirmation}
+        language={appShellSettings.appLanguage}
+        onCancel={() => resolveTaskTerminalCleanupConfirmation(false)}
+        onConfirm={() => resolveTaskTerminalCleanupConfirmation(true)}
       />
       <TaskTableLayoutDecisionDialog
         open={sourceWorkspaceLeaveDialogOpen}
