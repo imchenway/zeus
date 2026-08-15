@@ -3341,7 +3341,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       conversationAttentionByProject: buildProjectConversationAttentionByProject(currentProjects.map((project) => project.id)),
       conversationUnreadCountByProject: buildProjectConversationUnreadCountByProject(currentProjects.map((project) => project.id)),
       runtime: {
-        aiCli: await toRuntimeStatus(runtimeSettings),
+        aiCli: toPassiveRuntimeStatus(runtimeSettings),
         telegram: getTelegramConfigurationState(await readTelegramToken(), telegramSecuritySettings.allowedUserIds),
       },
       git: await getGitStatus(projectRoot),
@@ -10214,7 +10214,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   server.get(
     '/api/settings/runtime-status',
     async (): Promise<RuntimeStatusSnapshot> => ({
-      aiCli: await toRuntimeStatus(runtimeSettings),
+      aiCli: toPassiveRuntimeStatus(runtimeSettings),
       telegram: getTelegramConfigurationState(await readTelegramToken(), telegramSecuritySettings.allowedUserIds),
       terminal: runtimeTerminalStatus,
     }),
@@ -19173,21 +19173,31 @@ function parseRuntimeArgs(argsJson: string): string[] {
   }
 }
 
-async function toRuntimeStatus(runtimeSettings: RuntimeSettingsSnapshot): Promise<{
+/**
+ * 只根据 Zeus 已保存的选择返回展示状态，不扫描 PATH、不访问候选文件，也不执行外部 CLI。
+ * 真实版本和兼容性检查只能由用户明确点击单个 Adapter 的“检查”操作触发。
+ */
+function toPassiveRuntimeStatus(runtimeSettings: RuntimeSettingsSnapshot): {
   name: string;
   command: string;
   available: boolean;
   reason: string;
-}> {
-  const adapters = listAiCliAdapters().filter((adapter) => adapter.id !== 'generic');
-  const candidates = await Promise.all(adapters.map((adapter) => checkAiCliAdapter(adapter.id, { commandPath: runtimeSettings.adapterCliPaths[adapter.id] })));
-  const available = candidates.find((candidate) => candidate.available);
-  if (available) return available;
+} {
+  const adapters = listAiCliAdapters();
+  const selected = adapters.find((adapter) => adapter.id === runtimeSettings.defaultAdapterId) ?? adapters.find((adapter) => adapter.id === 'codex');
+  if (selected) {
+    return {
+      name: selected.name,
+      command: selected.command,
+      available: false,
+      reason: `Zeus 未主动检查 ${selected.displayName}。启动和状态刷新不会扫描或执行外部 CLI；请在 Runtime 适配器中手动检查。`,
+    };
+  }
   return {
     name: 'Codex CLI',
     command: 'codex',
     available: false,
-    reason: '未检测到可用 AI CLI，请在设置中配置 Codex、Claude Code、Gemini 或通用 CLI。',
+    reason: 'Zeus 未主动检查外部 CLI。请在 Runtime 适配器中选择目标后手动检查。',
   };
 }
 

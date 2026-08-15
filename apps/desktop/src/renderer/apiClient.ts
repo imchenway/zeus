@@ -2891,7 +2891,7 @@ export function createEmptyDashboardSnapshot(): DashboardSnapshot {
     runtime: {
       aiCli: {
         available: false,
-        reason: '未检测到可用 AI CLI，请在设置中配置。',
+        reason: 'Zeus 不会在启动时扫描或执行外部 CLI；请在 Runtime 适配器中手动检查。',
       },
       telegram: { enabled: false, reason: 'Telegram Bot Token 未配置。' },
     },

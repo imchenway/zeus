@@ -11140,6 +11140,17 @@ export function App(props: {
         ...current,
         [adapterId]: status,
       }));
+      if (adapterId === runtimeSettings.defaultAdapterId) {
+        setRuntimeStatus((current) => ({
+          ...(current ?? runtime),
+          aiCli: {
+            name: status.name,
+            command: status.command,
+            available: status.available,
+            reason: status.reason,
+          },
+        }));
+      }
       setActionState('idle');
     } catch (error) {
       recordLocalError('renderer-action', error);
@@ -11150,8 +11161,9 @@ export function App(props: {
     if (!props.onSaveRuntimeSettings) return;
     setActionState('loading-runtime');
     try {
-      // 只保存用户选择的默认 adapter；是否可用仍必须通过真实 CLI 检测确认。
+      // 保存设置不触发外部 CLI；真实可用性只能由用户随后明确点击检查确认。
       setRuntimeSettings(normalizeRuntimeSettings(await props.onSaveRuntimeSettings(runtimeSettings)));
+      if (props.onLoadRuntimeStatus) setRuntimeStatus(await props.onLoadRuntimeStatus());
       setActionState('idle');
     } catch (error) {
       recordLocalError('renderer-action', error);
