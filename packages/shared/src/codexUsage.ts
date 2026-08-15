@@ -86,8 +86,13 @@ export interface UsageProviderSummary {
   rateLimitWindows: CodexOfficialRateWindow[];
   officialCreditBalance: string | null;
   officialCreditsUnlimited: boolean;
+  accountTodayTokens: number | null;
+  accountSevenDayTokens: number | null;
+  dailyAccount: Array<{ date: string; totalTokens: number }> | null;
   todayLocal: CodexLocalUsageTotals;
+  todayLocalComplete: boolean;
   sevenDayLocal: CodexLocalUsageTotals;
+  sevenDayLocalComplete: boolean;
   dailyLocal: CodexLocalUsageDay[];
   collectionStartedAt: string | null;
   updatedAt: string;

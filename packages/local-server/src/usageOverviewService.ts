@@ -25,6 +25,7 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
     const connectionNames = new Map(connections.map((connection) => [connection.id, connection.name]));
     const official = options.codexUsage.readCachedOfficialUsage();
     const groups = groupRows(allRows, (row) => row.providerId);
+    if (official.state === 'available' && !groups.some(([providerId]) => providerId === 'codex')) groups.unshift(['codex', []]);
     const providers = groups
       .map(([providerId, rows]): UsageProviderSummary => {
         const isCodex = providerId === 'codex';
@@ -32,6 +33,9 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
         const connectionName = connectionNames.get(sourceId);
         const todayRows = rows.filter((row) => row.occurredAt >= startOfLocalDay(readAt).toISOString());
         const sevenDayRows = rows.filter((row) => row.occurredAt >= addDays(startOfLocalDay(readAt), -6).toISOString());
+        const today = localDate(readAt);
+        const sevenDayStart = localDate(addDays(startOfLocalDay(readAt), -6));
+        const accountDays = isCodex ? (official.dailyUsageBuckets?.filter((bucket) => bucket.startDate >= sevenDayStart && bucket.startDate <= today).map((bucket) => ({ date: bucket.startDate, totalTokens: bucket.tokens })) ?? null) : null;
         const latestLocalAt = rows.at(-1)?.occurredAt ?? readAt.toISOString();
         const updatedAt = isCodex && official.fetchedAt && official.fetchedAt > latestLocalAt ? official.fetchedAt : latestLocalAt;
         return {
@@ -45,8 +49,13 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
           rateLimitWindows: isCodex ? official.rateLimitWindows : [],
           officialCreditBalance: isCodex ? official.creditBalance : null,
           officialCreditsUnlimited: isCodex ? official.creditsUnlimited : false,
+          accountTodayTokens: accountDays?.find((day) => day.date === today)?.totalTokens ?? null,
+          accountSevenDayTokens: accountDays && accountDays.length > 0 ? accountDays.reduce((sum, day) => sum + day.totalTokens, 0) : null,
+          dailyAccount: accountDays,
           todayLocal: aggregateRows(todayRows),
+          todayLocalComplete: todayRows.every((row) => row.usageComplete),
           sevenDayLocal: aggregateRows(sevenDayRows),
+          sevenDayLocalComplete: sevenDayRows.every((row) => row.usageComplete),
           dailyLocal: groupRows(sevenDayRows, (row) => localDate(new Date(row.occurredAt))).map(([date, entries]) => ({ date, ...aggregateRows(entries) })) satisfies CodexLocalUsageDay[],
           collectionStartedAt: rows[0]?.occurredAt ?? null,
           updatedAt,

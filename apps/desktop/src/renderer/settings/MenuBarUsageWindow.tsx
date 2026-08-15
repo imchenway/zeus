@@ -30,9 +30,13 @@ const copy = {
     costShort: '7 日估算费用',
     noPrice: '暂无价格',
     localEstimate: 'Zeus 本地估算',
+    localUsage: 'Zeus 本地统计',
+    localUsageIncomplete: 'Zeus 本地记录不完整',
     officialCredits: '官方积分余额',
     unlimited: '不限量',
     recentUsage: '近 7 日用量',
+    accountRecentUsage: '账户近 7 日用量',
+    officialUsageUnavailable: '官方账户暂未提供日用量',
     insufficientHistory: '用量积累后显示趋势',
     fullStatistics: '查看完整统计',
     showZeus: '显示 Zeus',
@@ -67,9 +71,13 @@ const copy = {
     costShort: '7-day estimate',
     noPrice: 'No pricing',
     localEstimate: 'Zeus local estimate',
+    localUsage: 'Zeus local usage',
+    localUsageIncomplete: 'Incomplete Zeus local history',
     officialCredits: 'Official credits',
     unlimited: 'Unlimited',
     recentUsage: 'Usage · 7 days',
+    accountRecentUsage: 'Account usage · 7 days',
+    officialUsageUnavailable: 'Official daily account usage is unavailable',
     insufficientHistory: 'A trend appears after usage is recorded',
     fullStatistics: 'View full statistics',
     showZeus: 'Show Zeus',
@@ -284,6 +292,9 @@ function ProviderDetail(props: { provider: UsageProviderSummary; language: Langu
   const text = copy[language];
   const urgent = useMemo(() => findMostUrgentWindow(provider.rateLimitWindows), [provider.rateLimitWindows]);
   const cacheAvailable = provider.providerId === 'codex' || provider.sevenDayLocal.cachedInputTokens > 0 || provider.sevenDayLocal.cacheWriteInputTokens > 0;
+  const todayLocalComplete = provider.todayLocalComplete === true;
+  const sevenDayLocalComplete = provider.sevenDayLocalComplete === true;
+  const todayLocalValue = formatTokens(provider.todayLocal.totalTokens, language);
   return (
     <article className="menu-bar-usage-detail">
       {provider.kind === 'subscription' ? (
@@ -319,12 +330,13 @@ function ProviderDetail(props: { provider: UsageProviderSummary; language: Langu
 
       <dl className="menu-bar-usage-metrics">
         <Metric
-          label={provider.kind === 'api' ? text.sevenDaysShort : text.todayShort}
+          label={provider.kind === 'api' ? text.sevenDaysShort : text.today}
           accessibleLabel={provider.kind === 'api' ? text.sevenDays : text.today}
-          value={formatTokens(provider.kind === 'api' ? provider.sevenDayLocal.totalTokens : provider.todayLocal.totalTokens, language)}
+          value={provider.kind === 'api' ? formatTokens(provider.sevenDayLocal.totalTokens, language) : todayLocalComplete ? todayLocalValue : `≥${todayLocalValue}`}
+          hint={provider.kind === 'subscription' ? (todayLocalComplete ? text.localUsage : text.localUsageIncomplete) : undefined}
         />
-        <Metric label={text.cache} value={cacheAvailable ? formatPercent(provider.sevenDayLocal.cacheHitRate, language, '—') : text.cacheUnsupported} />
-        <Metric label={text.costShort} accessibleLabel={text.cost} value={formatCost(provider, language, text.noPrice)} hint={text.localEstimate} />
+        <Metric label={text.cache} value={!sevenDayLocalComplete ? '—' : cacheAvailable ? formatPercent(provider.sevenDayLocal.cacheHitRate, language, '—') : text.cacheUnsupported} />
+        <Metric label={text.costShort} accessibleLabel={text.cost} value={sevenDayLocalComplete ? formatCost(provider, language, text.noPrice) : '—'} hint={sevenDayLocalComplete ? text.localEstimate : text.localUsageIncomplete} />
       </dl>
 
       {provider.officialCreditsUnlimited || provider.officialCreditBalance ? (
@@ -361,24 +373,33 @@ function RateWindows(props: { windows: CodexOfficialRateWindow[]; language: Lang
 
 function DailyBars(props: { provider: UsageProviderSummary; language: Language }) {
   const text = copy[props.language];
-  const buckets = props.provider.dailyLocal;
+  const accountUsage = props.provider.kind === 'subscription';
+  const buckets = accountUsage ? (props.provider.dailyAccount ?? null) : props.provider.dailyLocal;
+  const label = accountUsage ? text.accountRecentUsage : text.recentUsage;
+  if (buckets === null)
+    return (
+      <div className="menu-bar-usage-chart-empty">
+        <span>{label}</span>
+        <small>{text.officialUsageUnavailable}</small>
+      </div>
+    );
   if (buckets.length === 0)
     return (
       <div className="menu-bar-usage-chart-empty">
-        <span>{text.recentUsage}</span>
+        <span>{label}</span>
         <small>{text.insufficientHistory}</small>
       </div>
     );
   const maximum = Math.max(...buckets.map((bucket) => bucket.totalTokens), 1);
   return (
-    <figure className="menu-bar-usage-bars" aria-label={`${props.provider.name} ${text.recentUsage}`}>
+    <figure className="menu-bar-usage-bars" aria-label={`${props.provider.name} ${label}`}>
       <figcaption>
-        <span>{text.recentUsage}</span>
-        <strong>{formatTokens(props.provider.sevenDayLocal.totalTokens, props.language)}</strong>
+        <span>{label}</span>
+        <strong>{accountUsage ? formatOptionalTokens(props.provider.accountSevenDayTokens, props.language) : formatTokens(props.provider.sevenDayLocal.totalTokens, props.language)}</strong>
       </figcaption>
       <div>
         {buckets.map((bucket) => (
-          <span key={bucket.date} aria-label={`${formatShortDate(bucket.date, props.language)} ${formatTokens(bucket.totalTokens, props.language)}`}>
+          <span key={bucket.date} aria-label={`${formatShortDate(bucket.date, props.language)} ${formatTokens(bucket.totalTokens, props.language)}`} title={`${bucket.date} · ${formatTokens(bucket.totalTokens, props.language)} Token`}>
             <i style={{ blockSize: `${Math.max(8, (bucket.totalTokens / maximum) * 100)}%` }} />
             <small>{formatShortDate(bucket.date, props.language)}</small>
           </span>
@@ -428,6 +449,10 @@ function windowLabel(window: CodexOfficialRateWindow, language: Language): strin
 
 function formatTokens(value: number, language: Language): string {
   return new Intl.NumberFormat(language, { notation: 'compact', maximumFractionDigits: 1 }).format(value);
+}
+
+function formatOptionalTokens(value: number | null | undefined, language: Language): string {
+  return value === null || value === undefined ? '—' : formatTokens(value, language);
 }
 
 function formatPercent(value: number | null, language: Language, unavailable = ''): string {

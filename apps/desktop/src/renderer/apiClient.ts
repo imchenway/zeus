@@ -2779,7 +2779,12 @@ function isLikelyLocalServerConnectionError(error: unknown): boolean {
 }
 
 function normalizeLegacyCodexUsageOverview(analytics: CodexUsageAnalyticsSnapshot): UsageOverviewSnapshot {
-  const today = localDateKey(new Date());
+  const currentDate = new Date();
+  const today = localDateKey(currentDate);
+  const sevenDayStartDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate());
+  sevenDayStartDate.setDate(sevenDayStartDate.getDate() - 6);
+  const sevenDayStart = localDateKey(sevenDayStartDate);
+  const dailyAccount = analytics.official.dailyUsageBuckets?.filter((bucket) => bucket.startDate >= sevenDayStart && bucket.startDate <= today).map((bucket) => ({ date: bucket.startDate, totalTokens: bucket.tokens })) ?? null;
   const todayLocal = analytics.local.daily.find((bucket) => bucket.date === today) ?? emptyLocalUsageTotals();
   return {
     providers: [
@@ -2794,8 +2799,13 @@ function normalizeLegacyCodexUsageOverview(analytics: CodexUsageAnalyticsSnapsho
         rateLimitWindows: analytics.official.rateLimitWindows,
         officialCreditBalance: analytics.official.creditBalance,
         officialCreditsUnlimited: analytics.official.creditsUnlimited,
+        accountTodayTokens: dailyAccount?.find((bucket) => bucket.date === today)?.totalTokens ?? null,
+        accountSevenDayTokens: dailyAccount && dailyAccount.length > 0 ? dailyAccount.reduce((sum, bucket) => sum + bucket.totalTokens, 0) : null,
+        dailyAccount,
         todayLocal,
+        todayLocalComplete: false,
         sevenDayLocal: analytics.local.totals,
+        sevenDayLocalComplete: false,
         dailyLocal: analytics.local.daily,
         collectionStartedAt: analytics.local.collectionStartedAt,
         updatedAt: analytics.updatedAt,

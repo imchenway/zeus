@@ -4307,7 +4307,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
             total,
             last,
             modelContextWindow,
-            occurredAt: event.receivedAt,
+            occurredAt: turn?.completedAt ?? event.receivedAt,
           })
         : {
             generationId: event.generationId,
