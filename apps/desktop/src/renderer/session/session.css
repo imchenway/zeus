@@ -4653,8 +4653,8 @@
 .session-selection-toolbar {
   background: color-mix(in srgb, var(--session-canvas, #fff) 96%, transparent);
   border: 1px solid var(--session-line, rgb(0 0 0 / 10%));
-  border-radius: 14px;
-  box-shadow: 0 8px 28px rgb(0 0 0 / 16%);
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 14%);
   display: flex;
   overflow: hidden;
   position: fixed;
@@ -4674,10 +4674,11 @@
   color: var(--session-text, #171717);
   cursor: pointer;
   font: inherit;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
-  min-block-size: 44px;
-  padding-inline: 16px;
+  line-height: 18px;
+  min-block-size: 30px;
+  padding-inline: 12px;
   white-space: nowrap;
 }
 
@@ -5077,7 +5078,8 @@
 @media (max-width: 760px) {
   .session-selection-toolbar > button {
     font-size: 12px;
-    padding-inline: 11px;
+    min-block-size: 28px;
+    padding-inline: 10px;
   }
 
   .session-response-annotation-editor {
