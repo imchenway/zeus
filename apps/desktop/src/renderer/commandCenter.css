@@ -272,24 +272,40 @@
   font-weight: 600;
 }
 
-.command-run-copy-action.zeus-button[data-zeus-primitive='button'] {
+.command-run-copy-action {
+  align-items: center;
+  appearance: none;
   background: transparent;
-  border-color: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
   color: #cbd5e1;
-  font-size: 12px;
-  gap: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 auto;
+  inline-size: 28px;
+  justify-content: center;
   min-block-size: 28px;
-  padding-inline: 8px;
+  padding: 0;
 }
 
-.command-run-copy-action.zeus-button[data-zeus-primitive='button']:hover:not(:disabled) {
+.command-run-copy-action:hover:not(:disabled) {
   background: rgb(255 255 255 / 0.08);
   border-color: rgb(255 255 255 / 0.1);
   color: #f8fafc;
 }
 
-.command-run-copy-action.zeus-button[data-zeus-primitive='button']:focus-visible {
+.command-run-copy-action:active:not(:disabled) {
+  background: rgb(255 255 255 / 0.12);
+}
+
+.command-run-copy-action:focus-visible {
   box-shadow: 0 0 0 2px rgb(147 197 253 / 0.65);
+  outline: 0;
+}
+
+.command-run-copy-action:disabled {
+  cursor: default;
+  opacity: 0.48;
 }
 
 .command-run-copy-action[data-copy-state='copied'] {
@@ -304,6 +320,16 @@
   block-size: 15px;
   flex: 0 0 auto;
   inline-size: 15px;
+}
+
+.command-run-copy-spinner {
+  animation: command-run-copy-spin 800ms linear infinite;
+}
+
+@keyframes command-run-copy-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .command-run-log {
@@ -363,7 +389,8 @@
 
 .command-history-modal {
   grid-template-rows: auto minmax(0, 1fr);
-  width: min(1080px, calc(100vw - 40px));
+  max-height: min(960px, calc(100vh - 32px));
+  width: min(1320px, calc(100vw - 32px));
 }
 
 .command-history-modal-body {
@@ -376,7 +403,7 @@
 }
 
 .command-history-modal .command-run-layout {
-  height: min(600px, calc(100vh - 160px));
+  height: min(720px, calc(100vh - 144px));
   min-height: 360px;
 }
 
@@ -693,5 +720,11 @@
 
   .command-modal-footer .zeus-button {
     width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .command-run-copy-spinner {
+    animation: none;
   }
 }
