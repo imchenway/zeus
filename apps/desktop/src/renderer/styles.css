@@ -1054,9 +1054,9 @@ a {
   min-block-size: 28px;
   padding: 0 6px 0 4px;
 }
-.project-sidebar-conversations .session-conversation-tree-row strong {
+.project-sidebar-conversations .session-conversation-tree-row .session-conversation-title {
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 400;
 }
 .project-sidebar-conversations .session-conversation-archive-button {
   right: 4px;
@@ -9230,9 +9230,9 @@ body[data-surface='project-git-diff'] #root {
   }
 }
 
-.macos-ai-app .session-conversation-tree-row > strong {
+.macos-ai-app .session-conversation-tree-row > .session-conversation-title {
   font-size: 13px;
-  font-weight: 590;
+  font-weight: 400;
   min-inline-size: 0;
   overflow: hidden;
   text-overflow: ellipsis;
