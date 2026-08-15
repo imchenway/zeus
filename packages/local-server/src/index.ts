@@ -4719,7 +4719,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       }
       if (conversation.transportKind === 'codex_native') {
         try {
-          await codexNativeCoordinator.archiveConversation({ conversationId: conversation.id });
+          await archiveNativeConversation(conversation);
         } catch (error) {
           return sendNativeConversationApiError(reply, error);
         }
@@ -4778,7 +4778,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       }
       if (conversation.transportKind === 'codex_native') {
         try {
-          await codexNativeCoordinator.restoreArchivedConversation({ conversationId: conversation.id });
+          await restoreNativeConversation(conversation);
         } catch (error) {
           return sendNativeConversationApiError(reply, error);
         }
@@ -6572,7 +6572,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
             if (reopenTarget.transportKind === 'codex_native') {
               taskConversationReopenInProgressIds.add(reopenTarget.id);
               try {
-                await codexNativeCoordinator.restoreArchivedConversation({ conversationId: reopenTarget.id });
+                await restoreNativeConversation(reopenTarget);
               } finally {
                 taskConversationReopenInProgressIds.delete(reopenTarget.id);
               }
@@ -13407,7 +13407,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     const latestConversation = conversations.getRecordById(conversation.id);
     if (latestConversation && !latestConversation.archived) {
       if (latestConversation.transportKind === 'codex_native') {
-        await codexNativeCoordinator.archiveConversation({ conversationId: latestConversation.id });
+        await archiveNativeConversation(latestConversation);
       } else {
         conversations.archive(latestConversation.id);
       }
@@ -13419,6 +13419,28 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       await closeTaskResourcesForTerminalStatus(task.id, cleanup);
     }
     await db.save();
+  }
+
+  async function archiveNativeConversation(conversation: ZeusConversationRecord): Promise<void> {
+    if (conversation.agentKind === 'pi') {
+      await piNativeCoordinator.archiveConversation({ conversationId: conversation.id });
+      return;
+    }
+    if (conversation.agentKind !== null && conversation.agentKind !== 'codex') {
+      throw nativeApiError('ZEUS_AGENT_NOT_AVAILABLE', `Agent ${conversation.agentKind} does not support native conversation archive.`);
+    }
+    await codexNativeCoordinator.archiveConversation({ conversationId: conversation.id });
+  }
+
+  async function restoreNativeConversation(conversation: ZeusConversationRecord): Promise<void> {
+    if (conversation.agentKind === 'pi') {
+      await piNativeCoordinator.restoreArchivedConversation({ conversationId: conversation.id });
+      return;
+    }
+    if (conversation.agentKind !== null && conversation.agentKind !== 'codex') {
+      throw nativeApiError('ZEUS_AGENT_NOT_AVAILABLE', `Agent ${conversation.agentKind} does not support native conversation restore.`);
+    }
+    await codexNativeCoordinator.restoreArchivedConversation({ conversationId: conversation.id });
   }
 
   function listArchivedConversationHistory(): ZeusConversationRecord[] {

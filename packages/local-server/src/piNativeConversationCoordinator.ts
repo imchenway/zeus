@@ -856,6 +856,51 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     options.publish(type, { projectId: conversation.projectId, conversationId, threadId: conversation.providerThreadId ?? undefined, generationId: conversation.nativeSessionId ?? 'pi-sdk', sequence: (eventSequence += 1), ...extra });
   }
 
+  function requirePiConversation(conversationId: string): ZeusConversationWithMessagesRecord {
+    const conversation = options.conversations.getById(conversationId);
+    if (!conversation || conversation.transportKind !== 'codex_native' || conversation.agentKind !== 'pi') {
+      throw piError('ZEUS_PI_CONVERSATION_NOT_FOUND', 'Pi native conversation was not found.');
+    }
+    return conversation;
+  }
+
+  function assertConversationCanBeArchived(conversation: ZeusConversationWithMessagesRecord): void {
+    const activeRun = [...runs.values()].find((run) => run.conversationId === conversation.id);
+    const pendingApproval = [...pendingApprovals.values()].find((approval) => approval.conversationId === conversation.id);
+    const pendingRequest = options.requests.listByConversation(conversation.id).find((request) => request.status === 'pending');
+    const unfinishedTurn = options.turns.listByConversation(conversation.id).find((turn) => turn.status === 'dispatching' || turn.status === 'running' || turn.status === 'waiting');
+    const pendingSubmission = options.submissions
+      .listByConversation(conversation.id)
+      .find((submission) => submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active' || (submission.status === 'paused' && !submission.providerTurnId));
+    if (activeRun || pendingApproval || pendingRequest || unfinishedTurn || pendingSubmission || conversation.providerState === 'binding' || conversation.providerState === 'active' || conversation.providerState === 'waiting') {
+      throw piError('ZEUS_NATIVE_CONVERSATION_IN_PROGRESS', 'The conversation still has an active turn, queued message, or pending request and cannot be archived.');
+    }
+  }
+
+  async function archiveConversation(input: { conversationId: string }): Promise<void> {
+    const conversation = requirePiConversation(input.conversationId);
+    if (conversation.archived) return;
+    assertConversationCanBeArchived(conversation);
+    options.conversations.archive(conversation.id);
+    if (conversation.nativeSessionId) contexts.delete(conversation.nativeSessionId);
+    await options.db.save();
+    publish('conversation.thread.archived', conversation.id, {
+      providerState: conversation.providerState,
+      agentKind: 'pi',
+    });
+  }
+
+  async function restoreArchivedConversation(input: { conversationId: string }): Promise<void> {
+    const conversation = requirePiConversation(input.conversationId);
+    if (!conversation.archived) return;
+    options.conversations.restore(conversation.id);
+    await options.db.save();
+    publish('conversation.thread.unarchived', conversation.id, {
+      providerState: conversation.providerState,
+      agentKind: 'pi',
+    });
+  }
+
   return {
     repairPersistedConversationIdentities,
     repairPersistedAgentMessageProjections,
@@ -863,6 +908,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     submitMessage,
     queueHeldMessage,
     steerMessage,
+    archiveConversation,
+    restoreArchivedConversation,
     async interruptTurn(input: { conversation: ZeusConversationWithMessagesRecord; providerTurnId: string }): Promise<{ submissionId: string | null }> {
       const run = runs.get(input.providerTurnId);
       if (!run || run.conversationId !== input.conversation.id) throw piError('ZEUS_PI_RUN_NOT_ACTIVE', '目标 Pi 轮次当前未在执行。');
