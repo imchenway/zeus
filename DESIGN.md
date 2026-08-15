@@ -48,6 +48,7 @@ Zeus 是生产力工具，不是营销页面。界面采用克制、清晰、可
 
 - 不得展示明文 token、API Key、数据库密码、Bot Token 或完整密钥输出。
 - Keychain、Telegram、AI CLI、数据库连接和发布凭据只展示配置状态、更新时间、风险提示和可执行的清理/重置操作。
+- Zeus 专属 Codex 的可执行文件和 `CODEX_HOME` 必须作为同一运行身份传递给每个 app-server 世代；只选择专属二进制但回退默认用户目录会造成身份、历史线程和远程接管串用，必须明确阻断。
 - Git 写操作、Generic shell、删除文件、项目外路径访问、远程触发 Runtime 必须保留二次确认和审计记录。
 - 日志导出、Telegram `/logs --full`、patch export、Mermaid export 都必须脱敏或只写入本机文件，不把长敏感正文发到远端。
 

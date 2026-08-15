@@ -2361,7 +2361,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     settings.setJson(codexAccountFingerprintSaltKey, codexAccountFingerprintSalt);
     await db.save();
   }
-  const codexAppServerManager = options.codexAppServerManager ?? createCodexRuntimeGenerationManager({ accountFingerprintSalt: codexAccountFingerprintSalt });
+  const codexAppServerManager =
+    options.codexAppServerManager ??
+    createCodexRuntimeGenerationManager({
+      accountFingerprintSalt: codexAccountFingerprintSalt,
+      ...(codexHome ? { runtimeEnvironment: { CODEX_HOME: codexHome } } : {}),
+    });
 
   async function activateCurrentCodexConfiguration(): Promise<{ runtimeReloaded: true; runtimeGenerationId: string; restartRequired: false }> {
     if (!codexAppServerManager.activateFreshGeneration) {
