@@ -106,7 +106,7 @@ interface PersistedSubmissionInput {
   conversationContext?: Record<string, unknown>;
   context: ConversationDispatchContext;
   displayText?: string;
-  origin?: 'implement_plan';
+  origin?: 'implement_plan' | 'refine_plan';
   planItemId?: string;
   delivery?: 'queue' | 'steer_now';
   expectedTurnId?: string | null;
@@ -522,6 +522,10 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     return external.project + active.project < external.maxPerProject && external.global + active.global < external.maxGlobal;
   }
 
+  function hasPendingPlanImplementationRequest(conversationId: string): boolean {
+    return planActions.listByConversation(conversationId).some((request) => request.status === 'pending');
+  }
+
   function contextFromSubmission(submission: ZeusConversationSubmissionRecord): ConversationDispatchContext {
     const parsed = parseJsonRecord(submission.inputJson);
     const context = isRecord(parsed.context) ? parsed.context : {};
@@ -744,6 +748,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           ...(submissionConversationContext(submission) ? { conversationContext: submissionConversationContext(submission)! } : {}),
           expectedTurnId: typeof input.expectedTurnId === 'string' ? input.expectedTurnId : null,
           clientUserMessageId: submission.clientMessageId,
+          ...(input.origin === 'implement_plan' || input.origin === 'refine_plan' ? { controlAction: input.origin } : {}),
           position: submission.queuePosition ?? index + 1,
           providerTurnId: null,
           pausedReason: submission.pausedReason,
@@ -769,7 +774,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       conversationContext?: Record<string, unknown>;
       displayText?: string;
       taskPushLayout?: TaskPushMessageLayout;
-      origin?: 'implement_plan';
+      origin?: 'implement_plan' | 'refine_plan';
       planItemId?: string;
       requestAnswerId?: string;
       internalOperation?: boolean;
@@ -840,6 +845,24 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     if (settings.effort) latest.effort = settings.effort;
     if (Object.prototype.hasOwnProperty.call(settings, 'serviceTier')) latest.serviceTier = settings.serviceTier;
     return latest;
+  }
+
+  function planControlModeForSubmission(submission: ZeusConversationSubmissionRecord): ConversationCollaborationMode | null {
+    const origin = parseJsonRecord(submission.inputJson).origin;
+    if (origin === 'implement_plan') return 'default';
+    if (origin === 'refine_plan') return 'plan';
+    return null;
+  }
+
+  function dispatchContextForSubmission(submission: ZeusConversationSubmissionRecord): ConversationDispatchContext {
+    const latest = contextWithLatestNextTurnSettings(submission.conversationId, contextFromSubmission(submission));
+    const controlMode = planControlModeForSubmission(submission);
+    if (!controlMode) return latest;
+    // 计划控制动作的模式属于动作语义，排队期间不能被下一轮设置覆盖。
+    return {
+      ...latest,
+      workMode: controlMode,
+    };
   }
 
   async function startTaskConversation(input: StartTaskConversationInput): Promise<NativeAcceptedOperation> {
@@ -1215,6 +1238,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     await persist();
     await input.providerWriteLifecycle?.markPrepared(submission.id);
     if (context.holdDispatch) return accepted(submission, 'queued', conversation.providerThreadId, null);
+    if (hasPendingPlanImplementationRequest(conversation.id)) return accepted(submission, 'queued', conversation.providerThreadId, null);
     try {
       await ensureGenerationReconciled([conversation.id]);
     } catch {
@@ -1545,7 +1569,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       });
       return accepted(submission, 'recovery_required', conversation.providerThreadId, null);
     }
-    const context = contextWithLatestNextTurnSettings(conversation.id, contextFromSubmission(submission));
+    const context = dispatchContextForSubmission(submission);
     if (conversation.permissionMode !== context.permissionMode) options.conversations.updatePermissionMode(conversation.id, context.permissionMode);
     if (conversation.collaborationMode !== context.workMode) options.conversations.updateCollaborationMode(conversation.id, context.workMode);
     persistSubmissionExecutionContext(submission, context);
@@ -1555,6 +1579,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       await ensureGenerationReconciled([conversation.id]);
       conversation = options.conversations.getById(conversation.id) ?? conversation;
       if (!hasConcurrency(context)) return accepted(submission, 'queued', conversation.providerThreadId, null);
+      if (hasPendingPlanImplementationRequest(conversation.id) && !planControlModeForSubmission(submission)) {
+        return accepted(submission, 'queued', conversation.providerThreadId, null);
+      }
       markDispatchRpcStarted(lease, submission.id);
       runStates.set(conversation.id, { type: 'dispatching', submissionId: submission.id });
       options.submissions.updateStatus(submission.id, 'dispatching', { dispatchedAt: now() });
@@ -2020,6 +2047,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   async function editQueuedSubmission(input: { conversationId: string; submissionId: string; content: string }): Promise<NativeQueueSnapshot> {
     assertOpen();
     const submission = requireOwnedSubmission(input.conversationId, input.submissionId);
+    if (planControlModeForSubmission(submission)) {
+      throw coordinatorError('ZEUS_PLAN_CONTROL_SUBMISSION_IMMUTABLE', 'Plan control submissions cannot be edited.');
+    }
     if (submission.status !== 'queued' && submission.status !== 'paused' && submission.status !== 'failed') {
       throw coordinatorError('ZEUS_NATIVE_SUBMISSION_NOT_EDITABLE', 'Only queued, paused, or failed submissions can be edited.');
     }
@@ -2071,6 +2101,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   async function deleteQueuedSubmission(input: { conversationId: string; submissionId: string }): Promise<NativeQueueSnapshot> {
     assertOpen();
     const submission = requireOwnedSubmission(input.conversationId, input.submissionId);
+    if (planControlModeForSubmission(submission)) {
+      throw coordinatorError('ZEUS_PLAN_CONTROL_SUBMISSION_IMMUTABLE', 'Plan control submissions cannot be deleted.');
+    }
     if (submission.status !== 'queued' && submission.status !== 'paused' && submission.status !== 'failed') {
       throw coordinatorError('ZEUS_NATIVE_SUBMISSION_NOT_EDITABLE', 'Only queued, paused, or failed submissions can be deleted.');
     }
@@ -2088,6 +2121,13 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   async function reorderQueue(input: { conversationId: string; orderedSubmissionIds: string[] }): Promise<NativeQueueSnapshot> {
     assertOpen();
     requireConversation(input.conversationId);
+    const controlIds = options.submissions
+      .listByConversation(input.conversationId)
+      .filter((submission) => (submission.status === 'queued' || submission.status === 'paused' || submission.status === 'failed') && planControlModeForSubmission(submission))
+      .map((submission) => submission.id);
+    if (controlIds.some((id, index) => input.orderedSubmissionIds[index] !== id)) {
+      throw coordinatorError('ZEUS_PLAN_CONTROL_SUBMISSION_IMMUTABLE', 'Plan control submissions must remain ahead of ordinary queued messages.');
+    }
     options.submissions.reorderQueued(input.conversationId, input.orderedSubmissionIds, now());
     await persist();
     return toQueueSnapshot(input.conversationId);
@@ -2097,6 +2137,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     assertOpen();
     const conversation = requireConversation(input.conversationId);
     const submission = requireOwnedSubmission(input.conversationId, input.submissionId);
+    if (planControlModeForSubmission(submission)) {
+      throw coordinatorError('ZEUS_PLAN_CONTROL_SUBMISSION_IMMUTABLE', 'Plan control submissions cannot steer an active turn.');
+    }
     const state = runStates.get(conversation.id) ?? inferRunState(conversation);
     if (state.type !== 'active' && state.type !== 'waiting') throw coordinatorError('ZEUS_NATIVE_TURN_NOT_ACTIVE', 'send-now requires a current active Codex native turn.');
     if (submission.status !== 'queued') throw coordinatorError('ZEUS_NATIVE_SUBMISSION_NOT_QUEUED', 'Submission is not queued.');
@@ -2753,6 +2796,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         requestId: request.id,
         status: 'dismissed',
       });
+      requestQueueDrain();
       return {
         operationId: operationId(),
         conversationId: conversation.id,
@@ -2784,13 +2828,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           submissionId: `conversation_submission_${submissionIdentity}`,
           idempotencyKey: `plan-action:${request.id}:${input.action}`,
           clientUserMessageId: `plan-action-client:${request.id}:${input.action}`,
-          ...(refinement
-            ? {}
-            : {
-                displayText: '是，实施此计划',
-                origin: 'implement_plan' as const,
-                planItemId: planItem.id,
-              }),
+          origin: refinement ? ('refine_plan' as const) : ('implement_plan' as const),
+          planItemId: planItem.id,
+          ...(refinement ? {} : { displayText: '是，实施此计划' }),
         },
         context,
       );
@@ -2799,6 +2839,13 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         submissionId: created.id,
         resolvedAt: timestamp,
       });
+      const queuedIds = options.submissions
+        .listByConversation(conversation.id)
+        .filter((candidate) => candidate.status === 'queued' || candidate.status === 'paused' || candidate.status === 'failed')
+        .map((candidate) => candidate.id);
+      if (queuedIds[0] !== created.id) {
+        options.submissions.reorderQueued(conversation.id, [created.id, ...queuedIds.filter((id) => id !== created.id)], timestamp);
+      }
       return created;
     });
     contexts.set(conversation.id, context);
@@ -2927,6 +2974,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         for (const submission of candidates) {
           let conversation = options.conversations.getById(submission.conversationId);
           if (!conversation || conversation.archived || conversation.providerState === 'archived' || conversation.providerState === 'closed' || conversation.providerState === 'failed') continue;
+          // 计划结果等待用户决策时，普通后续消息不能抢先开启下一轮。
+          if (hasPendingPlanImplementationRequest(conversation.id)) continue;
           let state = runStates.get(conversation.id) ?? inferRunState(conversation);
           if (state.type === 'paused' && state.reason === 'recovery_required') {
             try {

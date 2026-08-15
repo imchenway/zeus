@@ -32,6 +32,8 @@ const labels = {
     retryPreparation: '重试准备',
     uncertain: '部分消息的接收结果尚未确认，不会自动重发。',
     confirmationRequired: '这些消息需要你确认后再发送。',
+    planControlWaiting: '计划操作正在等待处理。',
+    planControl: '计划操作',
     edit: '编辑',
     editLabel: '编辑队列消息',
     save: '保存',
@@ -65,6 +67,8 @@ const labels = {
     retryPreparation: 'Retry preparation',
     uncertain: 'Some message delivery results are unconfirmed and will not resend automatically.',
     confirmationRequired: 'These messages need your confirmation before sending.',
+    planControlWaiting: 'The plan action is waiting to run.',
+    planControl: 'Plan action',
     edit: 'Edit',
     editLabel: 'Edit queued message',
     save: 'Save',
@@ -213,7 +217,8 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                   <p className="session-queued-message-reference">
                     <strong>{copy.item(index + 1)}</strong>
                     <span>{queuedMessagePreview(submission, copy.attachmentOnly)}</span>
-                    {(submission.attachments?.length ?? 0) > 0 ? <small>{copy.attachmentCount(submission.attachments!.length)}</small> : null}
+                    {submission.controlAction ? <small>{copy.planControl}</small> : null}
+                    {!submission.controlAction && (submission.attachments?.length ?? 0) > 0 ? <small>{copy.attachmentCount(submission.attachments!.length)}</small> : null}
                   </p>
                   {submission.error?.message ? (
                     <small className="session-queued-message-error" role="alert">
@@ -237,38 +242,42 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                       {copy.retryPreparation}
                     </button>
                   ) : null}
-                  {active && submission.status === 'queued' ? (
-                    <button
-                      type="button"
-                      className="session-queued-message-steer"
-                      title={copy.steerHelp}
-                      aria-label={`${copy.steer}. ${copy.steerHelp}`}
-                      onClick={() => void props.onSendNow?.(submission.id)}
-                      disabled={!writable || busy || !props.onSendNow}
-                    >
-                      {copy.steer}
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingId(submission.id);
-                      setEditDraft(queuedMessageEditDraft(submission));
-                      setEditError(null);
-                    }}
-                    disabled={!writable || busy || !props.onEdit}
-                  >
-                    {copy.edit}
-                  </button>
-                  <button type="button" onClick={() => void props.onDelete?.(submission.id)} disabled={!writable || busy || !props.onDelete}>
-                    {copy.remove}
-                  </button>
-                  <button type="button" onClick={() => reorder(submission, -1)} disabled={!writable || busy || !props.onReorder || index === 0}>
-                    {copy.moveUp}
-                  </button>
-                  <button type="button" onClick={() => reorder(submission, 1)} disabled={!writable || busy || !props.onReorder || index === queue.length - 1}>
-                    {copy.moveDown}
-                  </button>
+                  {submission.controlAction ? null : (
+                    <>
+                      {active && submission.status === 'queued' ? (
+                        <button
+                          type="button"
+                          className="session-queued-message-steer"
+                          title={copy.steerHelp}
+                          aria-label={`${copy.steer}. ${copy.steerHelp}`}
+                          onClick={() => void props.onSendNow?.(submission.id)}
+                          disabled={!writable || busy || !props.onSendNow}
+                        >
+                          {copy.steer}
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingId(submission.id);
+                          setEditDraft(queuedMessageEditDraft(submission));
+                          setEditError(null);
+                        }}
+                        disabled={!writable || busy || !props.onEdit}
+                      >
+                        {copy.edit}
+                      </button>
+                      <button type="button" onClick={() => void props.onDelete?.(submission.id)} disabled={!writable || busy || !props.onDelete}>
+                        {copy.remove}
+                      </button>
+                      <button type="button" onClick={() => reorder(submission, -1)} disabled={!writable || busy || !props.onReorder || index === 0 || Boolean(queue[index - 1]?.controlAction)}>
+                        {copy.moveUp}
+                      </button>
+                      <button type="button" onClick={() => reorder(submission, 1)} disabled={!writable || busy || !props.onReorder || index === queue.length - 1}>
+                        {copy.moveDown}
+                      </button>
+                    </>
+                  )}
                 </footer>
               )}
             </article>
@@ -312,6 +321,7 @@ function describeQueueState(state: NativeSessionState, queue: readonly NativeQue
     if (runState.reason === 'conflict_preparation_failed') return copy.conflictPreparationFailed;
     return copy.uncertain;
   }
+  if (queue.some((submission) => submission.controlAction)) return copy.planControlWaiting;
   return queue.every((submission) => submission.pausedReason === 'user_confirmation') ? copy.confirmationRequired : copy.waitingCapacity;
 }
 
