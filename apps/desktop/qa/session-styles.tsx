@@ -3,9 +3,11 @@ import { createRoot } from 'react-dom/client';
 import '../src/renderer/styles.css';
 import '../src/renderer/session/session.css';
 import './session-styles.css';
+import type { ConversationResource } from '@zeus/shared';
 import { PendingRequestSurface } from '../src/renderer/session/PendingRequestSurface.js';
 import { type ConversationTreeRuntimeState, type ProjectConversationGroup, ProjectConversationTree } from '../src/renderer/session/ProjectConversationTree.js';
 import type { NativeConversationChoice, NativePendingRequest } from '../src/renderer/session/sessionTypes.js';
+import { SafeMarkdown } from '../src/renderer/session/ThreadItemView.js';
 
 const referenceBase = 'http://127.0.0.1:4181';
 
@@ -87,6 +89,44 @@ const conversationStates: Record<string, ConversationTreeRuntimeState> = {
   unread: 'ready',
   running: 'streaming',
 };
+
+const inlineResourceItems: ConversationResource[] = [
+  {
+    id: 'resource-thread-item-view',
+    projectId: 'project-zeus',
+    conversationId: 'conversation-resource-style',
+    turnId: 'turn-resource-style',
+    itemId: 'item-resource-style',
+    kind: 'file',
+    presentation: 'inline',
+    displayName: 'ThreadItemView.tsx',
+    projectRelativePath: 'apps/desktop/src/renderer/session/ThreadItemView.tsx',
+    location: { line: 647 },
+    iconKind: 'typescript',
+    createdAt: '2026-08-15T00:00:00.000Z',
+    updatedAt: '2026-08-15T00:00:00.000Z',
+  },
+  {
+    id: 'resource-openai-docs',
+    projectId: 'project-zeus',
+    conversationId: 'conversation-resource-style',
+    turnId: 'turn-resource-style',
+    itemId: 'item-resource-style',
+    kind: 'website',
+    presentation: 'inline',
+    displayName: 'OpenAI 开发者文档',
+    url: 'https://developers.openai.com/',
+    domain: 'developers.openai.com',
+    title: 'OpenAI 开发者文档',
+    local: false,
+    createdAt: '2026-08-15T00:00:00.000Z',
+    updatedAt: '2026-08-15T00:00:00.000Z',
+  },
+];
+
+const inlineResourceMarkdown = '已完成 [ThreadItemView.tsx](apps/desktop/src/renderer/session/ThreadItemView.tsx:647) 与 [OpenAI 开发者文档](https://developers.openai.com/)；未取得受信资源的 [项目外文件](/tmp/outside.txt) 保持正文色。';
+
+function ignoreResourceOpen() {}
 
 const commandRequest: NativePendingRequest = {
   id: 'command-approval',
@@ -188,6 +228,13 @@ function App() {
           <h2>真实请求结构：带 isBlocking 元数据</h2>
           <PendingRequestSurface request={userInputRequest} language="zh-CN" permissionMode="auto" onRespond={() => undefined} autoFocus={false} />
         </section>
+      </section>
+
+      <section className="qa-implementation-panel qa-resource-implementation" data-testid="inline-resource-implementation">
+        <h2>会话正文：可打开资源与不可用引用</h2>
+        <div className="ai-workspace">
+          <SafeMarkdown text={inlineResourceMarkdown} language="zh-CN" resources={inlineResourceItems} onOpenResource={ignoreResourceOpen} />
+        </div>
       </section>
     </main>
   );

@@ -530,16 +530,28 @@ export class BrowserHost implements BrowserAutomationPort {
     const url = input.url ? normalizeBrowserUrl(input.url) : 'about:blank';
     const id = `browser-tab-${randomUUID()}`;
     const tab: LiveBrowserTab = {
-      snapshot: emptyTabSnapshot({ id, conversationId: input.conversationId, url, now: this.now() }),
+      snapshot: {
+        ...emptyTabSnapshot({ id, conversationId: input.conversationId, url, now: this.now() }),
+        loading: url !== 'about:blank',
+      },
       ownerWindowId: window.id,
       refs: new Map(),
     };
     this.tabs.set(id, tab);
     this.activeTabByConversation.set(input.conversationId, id);
     const view = this.ensureView(tab, false);
-    if (url !== 'about:blank') await view.webContents.loadURL(url);
     this.schedulePersist();
     this.emitSnapshot(input.conversationId);
+    if (url !== 'about:blank') {
+      // 标签和浏览器工作面先进入可交互状态，网页继续在 WebContents 内按正常导航生命周期加载。
+      void view.webContents.loadURL(url).catch((error) => {
+        if (this.tabs.get(id) !== tab || view.webContents.isDestroyed()) return;
+        tab.snapshot = { ...tab.snapshot, loading: false, updatedAt: this.now() };
+        this.schedulePersist();
+        this.emitSnapshot(input.conversationId);
+        this.emitError(tab, error);
+      });
+    }
     return this.snapshotFor(input.conversationId);
   }
 
