@@ -15,10 +15,10 @@ interface GoalPanelProps {
   initialObjective?: string;
   draftOnly?: boolean;
   onDismiss: () => void;
-  onSave: (objective: string) => void | Promise<void>;
-  onPause?: () => void | Promise<void>;
-  onResume?: () => void | Promise<void>;
-  onClear?: (confirmUnfinished: boolean) => void | Promise<void>;
+  onSave: (objective: string) => void | boolean | Promise<void | boolean>;
+  onPause?: () => void | boolean | Promise<void | boolean>;
+  onResume?: () => void | boolean | Promise<void | boolean>;
+  onClear?: (confirmUnfinished: boolean) => void | boolean | Promise<void | boolean>;
 }
 
 const statusLabels: Record<NativeGoalSnapshot['status'], { zh: string; en: string }> = {
