@@ -1360,20 +1360,31 @@
   overflow: hidden;
 }
 
-.session-codex-parity-v1 .session-queued-message-content .session-markdown {
+.session-codex-parity-v1 .session-queued-message-reference {
+  align-items: baseline;
+  color: var(--session-text-muted);
+  display: flex;
+  font-size: 11px;
+  gap: 7px;
+  margin: 0;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-queued-message-reference strong {
   color: var(--session-text);
-  font-size: 12px;
-  line-height: 1.45;
-  max-block-size: 3.05em;
+  flex: 0 0 auto;
+  font-weight: 610;
+}
+
+.session-codex-parity-v1 .session-queued-message-reference span {
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.session-codex-parity-v1 .session-queued-message-content .session-markdown > :first-child {
-  margin-block-start: 0;
-}
-
-.session-codex-parity-v1 .session-queued-message-content .session-markdown > :last-child {
-  margin-block-end: 0;
+.session-codex-parity-v1 .session-queued-message-reference small {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .session-codex-parity-v1 .session-queued-message-actions {
@@ -1459,22 +1470,6 @@
 .session-codex-parity-v1 .session-queued-message-editor > footer small {
   color: var(--session-danger);
   margin-inline-end: auto;
-}
-
-.session-codex-parity-v1 .session-queued-message-attachments {
-  color: var(--session-text-muted);
-  display: flex;
-  flex-wrap: wrap;
-  font-size: 11px;
-  gap: 4px 10px;
-  list-style-position: inside;
-  margin: 3px 0 0;
-  padding: 0;
-}
-
-.session-codex-parity-v1 .session-queued-message-empty {
-  color: var(--session-text-muted);
-  margin: 0;
 }
 
 .session-codex-parity-v1 .session-queued-message-error {
@@ -14148,52 +14143,6 @@
   }
 }
 
-/* ZEUS-0224：首次读取目标会话时保留旧正文，底部只接管目标输入与加载状态。 */
-.session-codex-parity-v1 .session-switch-stack {
-  display: flex;
-  flex: 1 1 auto;
-  inline-size: 100%;
-  min-block-size: 0;
-  min-inline-size: 0;
-  overflow: hidden;
-  position: relative;
-}
-
-.session-codex-parity-v1 .session-switch-target-dock {
-  background: linear-gradient(to bottom, transparent, var(--session-canvas) 18px);
-  display: grid;
-  inset: auto 0 0;
-  padding-block-start: 18px;
-  position: absolute;
-  z-index: 40;
-}
-
-.session-codex-parity-v1 .session-switch-status {
-  align-items: center;
-  color: var(--session-text-muted);
-  display: flex;
-  font-size: 12px;
-  gap: 7px;
-  justify-content: center;
-  min-block-size: 28px;
-  padding: 2px 18px 8px;
-}
-
-.session-codex-parity-v1 .session-switch-status.is-failed {
-  color: var(--session-danger);
-}
-
-.session-codex-parity-v1 .session-switch-status button {
-  background: transparent;
-  border: 0;
-  color: inherit;
-  cursor: pointer;
-  margin-inline-start: 4px;
-  padding: 2px 5px;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
 /* ZEUS-0181：完全访问属于会话级高风险切换，使用居中弹窗完整说明真实能力与风险。 */
 .session-permission-dialog-portal-root.macos-ai-app {
   background: transparent;
@@ -14784,5 +14733,81 @@
 
   .session-codex-parity-v1 .session-composer-model-dropdown .session-composer-dropdown-trigger {
     max-inline-size: min(260px, 48vw);
+  }
+}
+
+/* ZEUS-0288：消息从提交到 Provider 接管保持同一视觉身份，流式过程使用持续而非逐增量重启动画。 */
+.session-codex-parity-v1 .session-workspace-root {
+  animation: session-workspace-target-reveal 140ms var(--session-ease-out) both;
+}
+
+.session-codex-parity-v1 .session-thread-item.is-latest.is-entering {
+  animation: session-message-settle 160ms var(--session-ease-out) both;
+}
+
+.session-codex-parity-v1 .session-queued-messages-header {
+  cursor: pointer;
+  list-style: none;
+}
+
+.session-codex-parity-v1 .session-queued-messages:not([open]) > .session-queued-messages-header {
+  border-block-end-color: transparent;
+}
+
+.session-codex-parity-v1 .session-queued-messages-header::-webkit-details-marker {
+  display: none;
+}
+
+.session-codex-parity-v1 .session-queued-messages-header::after {
+  block-size: 7px;
+  border-block-end: 1.5px solid currentColor;
+  border-inline-end: 1.5px solid currentColor;
+  color: var(--session-text-muted);
+  content: '';
+  flex: 0 0 auto;
+  inline-size: 7px;
+  margin-inline-start: auto;
+  transform: rotate(45deg) translateY(-1px);
+  transition: transform 140ms var(--session-ease-out);
+}
+
+.session-codex-parity-v1 .session-queued-messages[open] > .session-queued-messages-header::after {
+  transform: rotate(225deg) translate(-1px, -1px);
+}
+
+.session-codex-parity-v1 .session-queued-messages-header:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--session-focus-outline);
+  outline: none;
+}
+
+.session-codex-parity-v1 .session-streaming-markdown[data-active='true']::after {
+  animation: session-streaming-progress 900ms linear infinite;
+  background: linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--session-accent) 68%, transparent) 45%, transparent 100%);
+  background-size: 200% 100%;
+  block-size: 2px;
+  border-radius: 999px;
+  content: '';
+  inline-size: 36px;
+}
+
+@keyframes session-workspace-target-reveal {
+  from {
+    opacity: 0.92;
+  }
+}
+
+@keyframes session-message-settle {
+  from {
+    opacity: 0.74;
+    transform: translateY(4px);
+  }
+}
+
+@keyframes session-streaming-progress {
+  from {
+    background-position: 140% 0;
+  }
+  to {
+    background-position: -140% 0;
   }
 }

@@ -1,29 +1,36 @@
+import { memo, useLayoutEffect } from 'react';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
 import { CircleIcon as Circle } from '@phosphor-icons/react/dist/csr/Circle';
 import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
 import { StopCircleIcon as StopCircle } from '@phosphor-icons/react/dist/csr/StopCircle';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import type { ConversationState, NativeSessionItemBuffer } from './sessionTypes.js';
-import type { SessionUiLanguage } from './ThreadItemView.js';
+import { type SessionUiLanguage, useAdaptiveTranscriptText } from './ThreadItemView.js';
 
 export type ReasoningSummaryStatus = 'active' | 'waiting' | 'completed' | 'failed' | 'interrupted';
 
-export function SessionReasoningSummary(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage; status: ReasoningSummaryStatus }) {
-  const text = latestReasoningSummaryText(props.item);
-  if (!text) return null;
+export const SessionReasoningSummary = memo(function SessionReasoningSummary(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage; status: ReasoningSummaryStatus; onVisibleContentChange?: () => void }) {
+  const sourceText = latestReasoningSummaryText(props.item);
+  const adaptiveText = useAdaptiveTranscriptText(sourceText, props.status === 'active');
+  useLayoutEffect(() => {
+    if (adaptiveText.revision > 0) props.onVisibleContentChange?.();
+  }, [adaptiveText.revision, props.onVisibleContentChange]);
+  if (!sourceText) return null;
   const StatusIcon = reasoningStatusIcon(props.status);
   const statusLabel = reasoningStatusLabel(props.status, props.language);
-  const live = props.status === 'active';
 
   return (
-    <p className="session-reasoning-summary" data-status={props.status} aria-label={`${statusLabel}：${text}`} {...(live ? { role: 'status', 'aria-live': 'polite' as const, 'aria-atomic': true } : {})}>
+    <p className="session-reasoning-summary" data-status={props.status} aria-label={`${statusLabel}：${sourceText}`}>
+      <span className="session-sr-only" role="status" aria-live="polite">
+        {statusLabel}
+      </span>
       <span className="session-reasoning-summary-icon" aria-hidden="true">
         <StatusIcon weight={props.status === 'completed' ? 'fill' : 'regular'} />
       </span>
-      <span className="zeus-fidelity-text">{text}</span>
+      <span className="zeus-fidelity-text">{adaptiveText.text}</span>
     </p>
   );
-}
+});
 
 export function latestReasoningItemsByTurn(items: readonly NativeSessionItemBuffer[], activeTurnId: string | null = null): NativeSessionItemBuffer[] {
   const latestKeyByTurn = new Map<string, string>();

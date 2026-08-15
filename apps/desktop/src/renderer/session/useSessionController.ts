@@ -27,8 +27,8 @@ import {
 } from './sessionTypes.js';
 
 export const reconnectBackoffMs = [250, 500, 1_000, 2_000, 5_000] as const;
-// 同一个会话项的短增量只在一小段窗口内合并，避免把 React 更新频率绑定到 provider 的字符频率。
-const RENDER_DELTA_COALESCE_MS = 40;
+// 同一个会话项的增量按一帧窗口合并，兼顾 Markdown 成本与首字可见延迟。
+const RENDER_DELTA_COALESCE_MS = 16;
 
 export function reconnectDelayMs(attempt: number): number {
   return reconnectBackoffMs[Math.min(Math.max(0, Math.floor(attempt) - 1), reconnectBackoffMs.length - 1)]!;
@@ -210,6 +210,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     startedAt: envelope.startedAt ?? new Date().toISOString(),
   }));
   const recoveredSubmissionIds = new Set(persisted.recoveredSubmissionIds ?? []);
+  const recoveringSubmissionIds = new Set<string>();
   const initialCachedState =
     options.initialCachedState?.projectId === options.projectId &&
     options.initialCachedState.conversationId === options.conversationId &&
@@ -372,10 +373,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
     recoveredSubmissionIds.clear();
   }
 
-  async function recoverManualConfirmationDraft(snapshot: NativeConversationSnapshot): Promise<void> {
-    const recoverable = snapshot.queue.submissions
-      .filter(isManualConfirmationSubmission)
-      .sort((left, right) => left.position - right.position || (left.createdAt ?? '').localeCompare(right.createdAt ?? '') || left.id.localeCompare(right.id));
+  async function recoverManualConfirmationQueue(queue: NativeQueueSnapshot): Promise<void> {
+    const recoverable = queue.submissions.filter(isManualConfirmationSubmission).sort((left, right) => left.position - right.position || (left.createdAt ?? '').localeCompare(right.createdAt ?? '') || left.id.localeCompare(right.id));
     if (recoverable.length === 0) return;
 
     const unseen = recoverable.filter((submission) => !recoveredSubmissionIds.has(submission.id));
@@ -404,15 +403,43 @@ export function createSessionController(options: CreateSessionControllerOptions)
     }
 
     if (!storage) return;
+    let projectedQueue = queue;
     for (const submission of recoverable) {
+      if (recoveringSubmissionIds.has(submission.id)) continue;
+      // 草稿已经成功持久化后，先在本地原子撤下同一条乐观消息；服务端删除失败仍保留队列记录供后续重试。
+      dispatch({
+        type: 'queued_submission_deleted',
+        submissionId: submission.id,
+        ...(submission.clientUserMessageId ? { clientUserMessageId: submission.clientUserMessageId } : {}),
+        queue: projectedQueue,
+      });
+      recoveringSubmissionIds.add(submission.id);
       try {
-        const queue = await options.client.deleteNativeQueuedSubmission(options.projectId, options.conversationId, submission.id);
+        const nextQueue = await options.client.deleteNativeQueuedSubmission(options.projectId, options.conversationId, submission.id);
         if (disposed) return;
-        dispatch({ type: 'queue_hydrated', queue });
+        projectedQueue = nextQueue;
+        dispatch({
+          type: 'queued_submission_deleted',
+          submissionId: submission.id,
+          ...(submission.clientUserMessageId ? { clientUserMessageId: submission.clientUserMessageId } : {}),
+          queue: nextQueue,
+        });
       } catch {
         // 删除确认失败时保留服务端记录；下次权威快照会按 submission id 去重并重试。
+      } finally {
+        recoveringSubmissionIds.delete(submission.id);
       }
     }
+  }
+
+  async function applyAuthoritativeQueue(queue: NativeQueueSnapshot): Promise<void> {
+    dispatch({ type: 'queue_hydrated', queue });
+    await recoverManualConfirmationQueue(queue);
+  }
+
+  async function applyAuthoritativeSnapshot(snapshot: NativeConversationSnapshot): Promise<void> {
+    dispatch({ type: 'snapshot_hydrated', snapshot: withoutResolvedRequests(snapshot) });
+    await recoverManualConfirmationQueue(snapshot.queue);
   }
 
   function flushRenderDeltas(): void {
@@ -461,6 +488,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
     }
     const suppressRequestAuthority = event.type === 'conversation.request.created' && requestId !== null && resolvedRequestIds.has(requestId);
     dispatch({ type: 'event_received', event, ...(suppressRequestAuthority ? { suppressRequestAuthority: true } : {}) });
+    if (event.type === 'conversation.queue.changed') {
+      const queue = nativeQueueSnapshotFrom(event.payload.queue);
+      if (queue) void recoverManualConfirmationQueue(queue);
+    }
     if (event.type === 'conversation.request.created' && !suppressRequestAuthority && requestId) {
       if (eventCarriesRequestDetails(event, requestId)) {
         requestsAwaitingDetails.delete(requestId);
@@ -507,6 +538,17 @@ export function createSessionController(options: CreateSessionControllerOptions)
     return typeof submissionStatus === 'string' ? submissionStatus : typeof acceptance.operation.status === 'string' ? acceptance.operation.status : 'accepted';
   }
 
+  function dispatchSendAccepted(clientUserMessageId: string, acceptance: NativeOperationAcceptance): void {
+    const providerTurnIdValue = acceptance.submission?.providerTurnId ?? acceptance.operation.providerTurnId;
+    dispatch({
+      type: 'send_accepted',
+      clientUserMessageId,
+      status: acceptedStatus(acceptance),
+      ...(acceptance.submission?.id ? { submissionId: acceptance.submission.id } : {}),
+      ...(typeof providerTurnIdValue === 'string' && providerTurnIdValue ? { providerTurnId: providerTurnIdValue } : {}),
+    });
+  }
+
   async function markEnvelopeBrowserCommentsSent(envelope: PendingSendEnvelope): Promise<void> {
     const browserSubmission = envelope.browserSubmission;
     if (!browserSubmission || envelope.browserCommentsMarked) return;
@@ -545,14 +587,14 @@ export function createSessionController(options: CreateSessionControllerOptions)
       previousConversationState: state.conversationState,
       startedAt: envelope.startedAt ?? new Date().toISOString(),
     });
-    dispatch({ type: 'send_accepted', clientUserMessageId: envelope.clientUserMessageId, status: acceptedStatus(envelope.acceptance) });
+    dispatchSendAccepted(envelope.clientUserMessageId, envelope.acceptance);
   }
 
   function reconcilePersistedAcceptance(snapshot: NativeConversationSnapshot): void {
     if (pendingSend?.deliveryState !== 'accepted' || !pendingSend.acceptance) return;
     if (acceptedEnvelopeIsDurable(snapshot, pendingSend)) {
       void markEnvelopeBrowserCommentsSent(pendingSend);
-      clearDraftIfItStillMatches(pendingSend);
+      if (!snapshotRequiresManualConfirmation(snapshot, pendingSend.clientUserMessageId)) clearDraftIfItStillMatches(pendingSend);
       pendingSend = null;
       dispatch({ type: 'send_succeeded' });
       persistDraft();
@@ -569,10 +611,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
     try {
       const snapshot = await options.client.loadNativeConversation(options.projectId, options.conversationId);
       if (disposed || pendingSend !== envelope) return;
-      dispatch({ type: 'snapshot_hydrated', snapshot: withoutResolvedRequests(snapshot) });
+      await applyAuthoritativeSnapshot(snapshot);
       if (acceptedEnvelopeIsDurable(snapshot, envelope)) {
         void markEnvelopeBrowserCommentsSent(envelope);
-        clearDraftIfItStillMatches(envelope);
+        if (!snapshotRequiresManualConfirmation(snapshot, envelope.clientUserMessageId)) clearDraftIfItStillMatches(envelope);
         pendingSend = null;
         dispatch({ type: 'send_succeeded' });
       } else {
@@ -639,12 +681,12 @@ export function createSessionController(options: CreateSessionControllerOptions)
     try {
       const snapshot = await options.client.loadNativeConversation(options.projectId, options.conversationId);
       if (disposed || pendingSend !== envelope) return { kind: 'unknown' };
-      dispatch({ type: 'snapshot_hydrated', snapshot: withoutResolvedRequests(snapshot) });
+      await applyAuthoritativeSnapshot(snapshot);
       if (!acceptedEnvelopeIsDurable(snapshot, envelope)) return { kind: 'absent' };
 
       const acceptance = acceptanceFromDurableSnapshot(snapshot, envelope);
       pendingSend = { ...envelope, deliveryState: 'accepted', acceptance };
-      dispatch({ type: 'send_accepted', clientUserMessageId: envelope.clientUserMessageId, status: acceptedStatus(acceptance) });
+      dispatchSendAccepted(envelope.clientUserMessageId, acceptance);
       void markEnvelopeBrowserCommentsSent(pendingSend);
       persistDraft();
       return { kind: 'durable', acceptance };
@@ -866,8 +908,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       const snapshot = await options.client.loadNativeConversation(options.projectId, options.conversationId);
       if (disposed || token !== connectionToken) return;
       if (lifecycle.isDisconnected()) throw new SocketDisconnectedDuringHydrationError();
-      dispatch({ type: 'snapshot_hydrated', snapshot: withoutResolvedRequests(snapshot) });
-      await recoverManualConfirmationDraft(snapshot);
+      await applyAuthoritativeSnapshot(snapshot);
       reconcilePersistedAcceptance(snapshot);
       for (const event of buffered) applyEvent(event);
       hydrating = false;
@@ -938,7 +979,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
           startedAt: envelope.startedAt ?? new Date().toISOString(),
         });
         if (envelope.deliveryState === 'accepted' && envelope.acceptance) {
-          dispatch({ type: 'send_accepted', clientUserMessageId: envelope.clientUserMessageId, status: acceptedStatus(envelope.acceptance) });
+          dispatchSendAccepted(envelope.clientUserMessageId, envelope.acceptance);
           void markEnvelopeBrowserCommentsSent(envelope);
           return envelope.acceptance;
         }
@@ -961,7 +1002,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
             clientUserMessageId: envelope.clientUserMessageId,
           });
           pendingSend = { ...envelope, deliveryState: 'accepted', acceptance };
-          dispatch({ type: 'send_accepted', clientUserMessageId: envelope.clientUserMessageId, status: acceptedStatus(acceptance) });
+          dispatchSendAccepted(envelope.clientUserMessageId, acceptance);
           void markEnvelopeBrowserCommentsSent(pendingSend);
           persistDraft();
           return acceptance;
@@ -1089,14 +1130,14 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return runOperation(
         `permission-mode:${permissionMode}`,
         () => options.client.updateNativePermissionMode(options.projectId, options.conversationId, permissionMode),
-        (snapshot) => dispatch({ type: 'snapshot_hydrated', snapshot: withoutResolvedRequests(snapshot) }),
+        (snapshot) => applyAuthoritativeSnapshot(snapshot),
       );
     },
     setCollaborationMode(collaborationMode) {
       return runOperation(
         `collaboration-mode:${collaborationMode}`,
         () => options.client.updateNativeCollaborationMode(options.projectId, options.conversationId, collaborationMode),
-        (snapshot) => dispatch({ type: 'snapshot_hydrated', snapshot: withoutResolvedRequests(snapshot) }),
+        (snapshot) => applyAuthoritativeSnapshot(snapshot),
       );
     },
     setNextTurnSettings(settings) {
@@ -1235,7 +1276,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return runOperation(
         `queue:edit:${submissionId}:${JSON.stringify(content)}`,
         () => options.client.editNativeQueuedSubmission(options.projectId, options.conversationId, submissionId, content),
-        (queue) => dispatch({ type: 'queue_hydrated', queue }),
+        (queue) => applyAuthoritativeQueue(queue),
       );
     },
     deleteQueuedSubmission(submissionId) {
@@ -1243,7 +1284,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return runOperation(
         `queue:delete:${submissionId}`,
         () => options.client.deleteNativeQueuedSubmission(options.projectId, options.conversationId, submissionId),
-        (queue) => dispatch({ type: 'queued_submission_deleted', submissionId, ...(clientUserMessageId ? { clientUserMessageId } : {}), queue }),
+        async (queue) => {
+          dispatch({ type: 'queued_submission_deleted', submissionId, ...(clientUserMessageId ? { clientUserMessageId } : {}), queue });
+          await recoverManualConfirmationQueue(queue);
+        },
         false,
       );
     },
@@ -1251,7 +1295,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return runOperation(
         `queue:reorder:${JSON.stringify(orderedSubmissionIds)}`,
         () => options.client.reorderNativeQueue(options.projectId, options.conversationId, orderedSubmissionIds),
-        (queue) => dispatch({ type: 'queue_hydrated', queue }),
+        (queue) => applyAuthoritativeQueue(queue),
       );
     },
     sendQueuedNow(submissionId) {
@@ -1268,14 +1312,14 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return runOperation(
         'queue:resume',
         () => options.client.resumeNativeQueue(options.projectId, options.conversationId),
-        (queue) => dispatch({ type: 'queue_hydrated', queue }),
+        (queue) => applyAuthoritativeQueue(queue),
       );
     },
     recoverQueue() {
       return runOperation(
         'queue:recover',
         () => options.client.recoverNativeQueue(options.projectId, options.conversationId),
-        (queue) => dispatch({ type: 'queue_hydrated', queue }),
+        (queue) => applyAuthoritativeQueue(queue),
         true,
       );
     },
@@ -1283,7 +1327,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return runOperation(
         'provider-thread:restore',
         () => options.client.restoreArchivedNativeConversation(options.projectId, options.conversationId),
-        (snapshot) => dispatch({ type: 'snapshot_hydrated', snapshot: withoutResolvedRequests(snapshot) }),
+        (snapshot) => applyAuthoritativeSnapshot(snapshot),
       );
     },
     interruptActiveTurn() {
@@ -1327,11 +1371,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return runOperation(
         `plan-request:${requestId}:${JSON.stringify(input)}`,
         () => options.client.respondToPlanImplementationRequest(options.projectId, options.conversationId, requestId, input),
-        ({ conversation }) =>
-          dispatch({
-            type: 'snapshot_hydrated',
-            snapshot: withoutResolvedRequests(conversation),
-          }),
+        ({ conversation }) => applyAuthoritativeSnapshot(conversation),
       ).then(() => undefined);
     },
   };
@@ -1539,6 +1579,17 @@ function snapshotItemClientUserMessageId(item: { type: string; payload: Record<s
 
 function isManualConfirmationSubmission(submission: NativeQueuedSubmission): boolean {
   return (submission.status === 'queued' || submission.status === 'paused') && submission.pausedReason === 'user_confirmation' && !submission.providerTurnId;
+}
+
+function snapshotRequiresManualConfirmation(snapshot: NativeConversationSnapshot, clientUserMessageId: string): boolean {
+  return snapshot.submissions.some((submission) => submission.clientUserMessageId === clientUserMessageId && isManualConfirmationSubmission(submission));
+}
+
+function nativeQueueSnapshotFrom(value: unknown): NativeQueueSnapshot | null {
+  if (!value || typeof value !== 'object') return null;
+  const queue = value as Partial<NativeQueueSnapshot>;
+  if (!Array.isArray(queue.submissions) || !queue.state || typeof queue.state !== 'object') return null;
+  return queue as NativeQueueSnapshot;
 }
 
 function toSessionError(error: unknown, retryable: boolean): NativeSessionError {
