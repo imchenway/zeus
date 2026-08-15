@@ -4714,17 +4714,19 @@
 .session-response-annotation-editor {
   background: var(--session-canvas, #fff);
   border: 1px solid var(--session-line, rgb(0 0 0 / 10%));
-  border-radius: 16px;
-  box-shadow: 0 16px 46px rgb(0 0 0 / 20%);
+  border-radius: 12px;
+  box-shadow: 0 10px 28px rgb(0 0 0 / 18%);
   color: var(--session-text, #171717);
   display: grid;
-  gap: 12px;
-  inline-size: min(360px, calc(100vw - 32px));
-  inset-block-end: 24px;
-  inset-inline-end: 24px;
-  padding: 14px;
+  gap: 8px;
+  inline-size: min(300px, calc(100vw - 24px));
+  padding: 10px;
   position: fixed;
   z-index: 1001;
+}
+
+.session-response-annotation-editor[data-placement='above'] {
+  transform: translateY(-100%);
 }
 
 .session-response-annotation-editor header,
@@ -4734,14 +4736,37 @@
   justify-content: space-between;
 }
 
+.session-response-annotation-editor header strong {
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.session-response-annotation-editor blockquote {
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  background: var(--session-sidebar, #f7f7f7);
+  border-inline-start: 2px solid var(--session-accent, #087fe7);
+  color: var(--session-text-secondary, #60656f);
+  display: -webkit-box;
+  font-size: 12px;
+  line-height: 17px;
+  margin: 0;
+  overflow: hidden;
+  padding: 5px 7px;
+  white-space: pre-wrap;
+}
+
 .session-response-annotation-editor textarea {
   background: var(--session-sidebar, #f7f7f7);
   border: 1px solid var(--session-line, rgb(0 0 0 / 10%));
-  border-radius: 10px;
+  border-radius: 8px;
   color: inherit;
   font: inherit;
-  min-block-size: 84px;
-  padding: 10px;
+  font-size: 13px;
+  line-height: 18px;
+  max-block-size: 120px;
+  min-block-size: 54px;
+  padding: 7px 8px;
   resize: vertical;
 }
 
@@ -4752,8 +4777,18 @@
   border-radius: 7px;
   color: inherit;
   cursor: pointer;
-  min-block-size: 30px;
-  padding-inline: 9px;
+  font-size: 12px;
+  min-block-size: 28px;
+  padding-inline: 8px;
+}
+
+.session-response-annotation-editor footer {
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.session-response-annotation-editor footer > button:first-child {
+  margin-inline-end: auto;
 }
 
 .session-response-annotation-editor button:hover {
@@ -4765,8 +4800,7 @@
   display: flex;
 }
 
-.session-codex-parity-v1 .session-context-draft-chip,
-.session-codex-parity-v1 .session-message-context-summary {
+.session-codex-parity-v1 .session-context-draft-chip {
   align-items: center;
   background: var(--session-canvas);
   border: 1px solid var(--session-line);
@@ -4804,11 +4838,74 @@
   background: var(--session-control-hover);
 }
 
-.session-codex-parity-v1 .session-message-context-summary {
+.session-codex-parity-v1 span.session-message-context-summary {
+  align-items: center;
+  background: var(--session-canvas);
+  border: 1px solid var(--session-line);
+  border-radius: 999px;
   color: var(--session-text-secondary);
+  display: inline-flex;
   font-size: 12px;
   min-block-size: 28px;
   padding-inline: 10px;
+}
+
+.session-codex-parity-v1 section.session-message-context-summary {
+  background: color-mix(in srgb, var(--session-canvas) 84%, var(--session-sidebar));
+  border: 1px solid var(--session-line);
+  border-radius: 12px;
+  color: var(--session-text);
+  display: grid;
+  gap: 8px;
+  inline-size: min(520px, 100%);
+  padding: 10px;
+}
+
+.session-codex-parity-v1 section.session-message-context-summary > header {
+  align-items: center;
+  display: flex;
+  font-size: 12px;
+  justify-content: space-between;
+  line-height: 17px;
+}
+
+.session-codex-parity-v1 section.session-message-context-summary > header > span,
+.session-codex-parity-v1 section.session-message-context-summary > small {
+  color: var(--session-text-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.session-codex-parity-v1 .session-message-response-annotations {
+  display: grid;
+  gap: 8px;
+}
+
+.session-codex-parity-v1 .session-message-response-annotations > article {
+  border-inline-start: 2px solid var(--session-accent);
+  display: grid;
+  gap: 3px;
+  min-inline-size: 0;
+  padding-inline-start: 8px;
+}
+
+.session-codex-parity-v1 .session-message-response-annotations > article > span {
+  color: var(--session-text-muted);
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.session-codex-parity-v1 .session-message-response-annotations blockquote,
+.session-codex-parity-v1 .session-message-response-annotations p {
+  font-size: 13px;
+  line-height: 19px;
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.session-codex-parity-v1 .session-message-response-annotations blockquote {
+  color: var(--session-text-secondary);
 }
 
 /* 侧边聊天只活在当前侧栏中，关闭侧栏即销毁这组本地消息。 */
@@ -5080,11 +5177,6 @@
     font-size: 12px;
     min-block-size: 28px;
     padding-inline: 10px;
-  }
-
-  .session-response-annotation-editor {
-    inset-inline: 16px;
-    inline-size: auto;
   }
 
   .session-codex-parity-v1 .session-code-comment-panel,
@@ -14929,4 +15021,17 @@
   .session-workspace-root .session-subagent-status-dot[data-status='running'] {
     box-shadow: none;
   }
+}
+
+/* ZEUS-0306：队列靠近输入区完整呈现，阻塞交互紧跟当前会话过程。 */
+.session-codex-parity-v1 .session-queued-message-reference span {
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: pre-wrap;
+}
+
+.session-codex-parity-v1 .session-transcript > .session-interaction-dock {
+  inline-size: min(var(--session-composer-max), 100%);
+  margin-block: 0;
+  padding-block-end: 0;
 }

@@ -1942,6 +1942,48 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     );
   }
 
+  function renderBlockingInteraction(): ReactNode {
+    if (props.suppressComposer) return null;
+    if (blockingPendingRequest) {
+      return (
+        <section className="session-interaction-dock" aria-label={props.language === 'zh-CN' ? '待处理交互' : 'Pending interaction'}>
+          <PendingRequestSurface
+            key={blockingPendingRequest.id}
+            request={blockingPendingRequest}
+            language={props.language}
+            permissionMode={props.state?.snapshot?.permissionMode ?? 'read-only'}
+            filePaths={linkedFileApprovalPaths(props.state, blockingPendingRequest)}
+            autoFocus
+            busy={isRequestResponseBusy(props.state?.busyOperation ?? null, blockingPendingRequest.id)}
+            error={requestErrors[blockingPendingRequest.id]}
+            onRespond={(_requestId, response) => respond(blockingPendingRequest, response)}
+            onSnooze={actions.onSnoozeRequest ? () => actions.onSnoozeRequest?.(blockingPendingRequest.id) : undefined}
+            onChooseAttachments={actions.onChooseStartAttachments}
+            answerAttachmentsSupported={(props.state?.snapshot?.agent?.kind ?? props.conversation?.agent?.kind ?? 'codex') === 'codex'}
+          />
+          {renderQueuedConversationMessages()}
+        </section>
+      );
+    }
+    if (blockingPlanImplementationRequest) {
+      return (
+        <section className="session-interaction-dock" aria-label={props.language === 'zh-CN' ? '待处理交互' : 'Pending interaction'}>
+          <PlanImplementationRequestSurface
+            key={blockingPlanImplementationRequest.id}
+            request={blockingPlanImplementationRequest}
+            language={props.language}
+            autoFocus
+            busy={isRequestResponseBusy(props.state?.busyOperation ?? null, blockingPlanImplementationRequest.id)}
+            error={requestErrors[blockingPlanImplementationRequest.id]}
+            onRespond={(_requestId, response) => respondToPlanImplementationRequest(blockingPlanImplementationRequest, response)}
+          />
+          {renderQueuedConversationMessages()}
+        </section>
+      );
+    }
+    return null;
+  }
+
   return (
     <section
       className="session-workspace-root"
@@ -2174,6 +2216,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                   <ConversationTranscript
                     state={props.state}
                     language={props.language}
+                    trailingInteraction={blockingUserInputRequest ? renderBlockingInteraction() : null}
+                    trailingInteractionKey={blockingUserInputRequest?.id ?? null}
                     onLatestContentVisibilityChange={props.onLatestContentVisibilityChange}
                     creationStatus={props.creationStatus}
                     onEditUserItem={interactionReadOnly ? undefined : actions.onEditUserItem}
@@ -2220,39 +2264,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     }
                   />
                   {props.suppressComposer || !dockedPlan ? null : <SessionPlanProgress plan={dockedPlan} language={props.language} />}
-                  {props.suppressComposer ? null : blockingPendingRequest ? (
-                    <section className="session-interaction-dock" aria-label={props.language === 'zh-CN' ? '待处理交互' : 'Pending interaction'}>
-                      <PendingRequestSurface
-                        key={blockingPendingRequest.id}
-                        request={blockingPendingRequest}
-                        language={props.language}
-                        permissionMode={props.state?.snapshot?.permissionMode ?? 'read-only'}
-                        filePaths={linkedFileApprovalPaths(props.state, blockingPendingRequest)}
-                        autoFocus
-                        busy={isRequestResponseBusy(props.state?.busyOperation ?? null, blockingPendingRequest.id)}
-                        error={requestErrors[blockingPendingRequest.id]}
-                        onRespond={(_requestId, response) => respond(blockingPendingRequest, response)}
-                        onSnooze={actions.onSnoozeRequest ? () => actions.onSnoozeRequest?.(blockingPendingRequest.id) : undefined}
-                        onChooseAttachments={actions.onChooseStartAttachments}
-                        answerAttachmentsSupported={(props.state?.snapshot?.agent?.kind ?? props.conversation?.agent?.kind ?? 'codex') === 'codex'}
-                      />
-                      {renderQueuedConversationMessages()}
-                    </section>
-                  ) : blockingPlanImplementationRequest ? (
-                    <section className="session-interaction-dock" aria-label={props.language === 'zh-CN' ? '待处理交互' : 'Pending interaction'}>
-                      <PlanImplementationRequestSurface
-                        key={blockingPlanImplementationRequest.id}
-                        request={blockingPlanImplementationRequest}
-                        language={props.language}
-                        autoFocus
-                        busy={isRequestResponseBusy(props.state?.busyOperation ?? null, blockingPlanImplementationRequest.id)}
-                        error={requestErrors[blockingPlanImplementationRequest.id]}
-                        onRespond={(_requestId, response) => respondToPlanImplementationRequest(blockingPlanImplementationRequest, response)}
-                      />
-                      {renderQueuedConversationMessages()}
-                    </section>
-                  ) : null}
-                  {props.suppressComposer || blockingUserInputRequest ? null : (
+                  {blockingUserInputRequest ? null : renderBlockingInteraction()}
+                  {props.suppressComposer || blockingPendingRequest || blockingPlanImplementationRequest ? null : (
                     <>
                       {renderQueuedConversationMessages()}
                       {goal ? <GoalRail goal={goal} language={props.language} onOpen={() => setGoalPanelOpen(true)} /> : null}
