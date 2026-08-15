@@ -20751,6 +20751,47 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   box-shadow: none;
 }
 
+/* ZEUS-0275 空任务居中基准：表头可以横向溢出，空态始终以当前可见列表区为基准居中。 */
+.macos-ai-app .workspace-view-project-tasks {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.macos-ai-app .workspace-view-project-tasks .task-management-detail-pane > .task-management-codex-layout.task-table-layout {
+  block-size: 100%;
+  flex: 1 1 auto;
+}
+
+.macos-ai-app .task-table-workbench:has(.task-list-empty) {
+  align-content: stretch;
+  block-size: 100%;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.macos-ai-app .task-table-workbench:has(.task-empty-state) > .task-list-workbench.task-list-protagonist.task-list-empty {
+  align-content: stretch;
+  block-size: 100%;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  min-inline-size: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-block: 0;
+}
+
+.macos-ai-app .task-list-empty-row.task-empty-state {
+  align-self: stretch;
+  box-sizing: border-box;
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+/* 窄窗口会隐藏任务表头，此时空态直接占满列表，不保留已经消失的表头行。 */
+@media (max-width: 760px) {
+  .macos-ai-app .task-table-workbench:has(.task-empty-state) > .task-list-workbench.task-list-protagonist.task-list-empty {
+    grid-template-rows: minmax(0, 1fr);
+  }
+}
+
 .macos-ai-app .zeus-select-popover::before {
   border-block-start-color: var(--zeus-select-line);
   border-inline-start-color: var(--zeus-select-line);
