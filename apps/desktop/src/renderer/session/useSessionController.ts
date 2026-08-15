@@ -1379,10 +1379,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         return Promise.reject(new Error('Conversation message content, attachments, comments, or annotations are required.'));
       }
       const attachments = mergeAttachments(composerAttachments, browserSubmission?.attachments ?? []);
-      const displayText =
-        draft.trim() ||
-        (browserSubmission ? `Browser comments (${browserSubmission.commentIds.length})` : '') ||
-        (contextDraft.codeComments.length ? `Code comments (${contextDraft.codeComments.length})` : `Response annotations (${contextDraft.responseAnnotations.length})`);
+      const displayText = draft.trim() || (browserSubmission ? `Browser comments (${browserSubmission.commentIds.length})` : '') || (contextDraft.codeComments.length ? '代码评论' : '回答批注');
       const content = [draft.trim(), browserSubmission?.content.trim(), serializeConversationContext(contextDraft)].filter(Boolean).join('\n\n');
       const appliedSettings = delivery === 'queue' ? settings : undefined;
       const fingerprint = sendFingerprint({

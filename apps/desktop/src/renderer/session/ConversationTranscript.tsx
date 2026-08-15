@@ -2,6 +2,7 @@ import { Fragment, type ReactNode, useCallback, useEffect, useLayoutEffect, useM
 import { isActiveSessionTurn, isOperationalActivityItem, SessionActivityGroup, SessionTurnDuration, SessionTurnProcessDisclosure } from './SessionActivity.js';
 import { itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText } from './ThreadItemView.js';
 import { PlanSummary } from './PlanSummary.js';
+import { isAssistantDeliverableItem } from './sessionTypes.js';
 import type {
   ConversationResource,
   ConversationResourcePreview,
@@ -34,6 +35,8 @@ export interface ConversationTranscriptProps {
   onOperateTurnChangeSet?: (changeSet: TurnChangeSet, action: 'undo' | 'reapply') => Promise<TurnChangeSetOperationResult>;
   onLatestContentVisibilityChange?: (visible: boolean) => void;
   creationStatus?: SessionCreationStatus;
+  trailingInteraction?: ReactNode;
+  trailingInteractionKey?: string | null;
   onAddResponseAnnotation?: (anchor: ConversationResponseTextAnchor) => string;
   onUpdateResponseAnnotation?: (id: string, note: string) => void;
   onRemoveResponseAnnotation?: (id: string) => void;
@@ -60,20 +63,23 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const containerRef = useRef<HTMLElement | null>(null);
   const latestContentMarkerRef = useRef<HTMLSpanElement | null>(null);
   const previousTurnIdRef = useRef<string | null>(null);
+  const previousTrailingInteractionKeyRef = useRef<string | null>(null);
   const activeTurnTrackingInitializedRef = useRef(false);
-  const pendingTurnPositionRef = useRef(false);
   const scrollController = useThreadScrollController();
   const [returnToLatestVisible, setReturnToLatestVisible] = useState(false);
-  const [turnSpacerHeight, setTurnSpacerHeight] = useState(0);
   const [completedAnnouncement, setCompletedAnnouncement] = useState<{ key: string; text: string } | null>(null);
   const completedAnnouncementTrackerRef = useRef<CompletedItemAnnouncementTracker>({ hydrated: false, lastCompletedKey: null });
   const positionedConversationIdRef = useRef<string | null>(null);
   const awaitingReplyMessageIdsRef = useRef<Set<string>>(new Set());
   const awaitingReplyConversationIdRef = useRef<string | null>(null);
   const queuedSubmissions = useMemo(() => visibleQueuedSubmissions(props.state.queue), [props.state.queue]);
+  const queuedClientUserMessageIds = useMemo(() => new Set(queuedSubmissions.map((submission) => submission.clientUserMessageId).filter((value): value is string => Boolean(value))), [queuedSubmissions]);
   const projectedItems = useMemo(
-    () => props.state.itemOrder.map((key) => props.state.items[key]).filter((entry): entry is NativeSessionItemBuffer => Boolean(entry) && isVisibleTranscriptItem(entry)),
-    [props.state.itemOrder, props.state.items],
+    () =>
+      props.state.itemOrder
+        .map((key) => props.state.items[key])
+        .filter((entry): entry is NativeSessionItemBuffer => Boolean(entry) && isVisibleTranscriptItem(entry) && !isUnacceptedQueuedUserItem(entry, props.state, queuedClientUserMessageIds)),
+    [props.state, queuedClientUserMessageIds],
   );
   const collapsedErrorItems = useMemo(() => collapseRepeatedErrorItems(projectedItems), [projectedItems]);
   const providerErrorItemsByTurn = useMemo(() => groupErrorItemsByTurn(collapsedErrorItems), [collapsedErrorItems]);
@@ -119,7 +125,6 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     .join('\u0000');
   const awaitingReplyMessageIds = useMemo(() => (awaitingReplyMessageIdsKey ? awaitingReplyMessageIdsKey.split('\u0000') : []), [awaitingReplyMessageIdsKey]);
   const latestSubmittedMessageId = awaitingReplyMessageIds.at(-1) ?? null;
-  const turnPositionAnchorId = latestSubmittedMessageId ?? props.state.activeTurnId;
   const maintainLatestPosition = useCallback(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -172,9 +177,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     // 首次水合带回的旧排队消息只按普通历史定位；只有当前工作面明确提交的新消息才建立新轮次锚点。
     if (historyHydrated && !activeTurnTrackingInitializedRef.current) return;
     const effect = scrollController.onMessageSubmitted(metrics(container), Date.now());
-    if (effect.type === 'position_new_turn') {
-      pendingTurnPositionRef.current = true;
-      setTurnSpacerHeight(effect.spacerHeight);
+    if (effect.type === 'scroll_to_bottom') {
+      scrollToLatest(container);
       setReturnToLatestVisible(false);
     }
   }, [awaitingReplyMessageIds, historyHydrated, props.state.conversationId, scrollController]);
@@ -192,36 +196,28 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       // 首次水合得到的活动轮次属于既有会话现场，不能误当成当前页面刚开始的新轮次。
       activeTurnTrackingInitializedRef.current = true;
       previousTurnIdRef.current = props.state.activeTurnId;
-      if (!pendingTurnPositionRef.current) setTurnSpacerHeight(0);
       return;
     }
     if (props.state.activeTurnId && previousTurnIdRef.current !== props.state.activeTurnId) {
-      // 本机提交已经在首帧完成定位时，Provider 开轮只接管身份，不再二次滚动。
-      if (!pendingTurnPositionRef.current) {
-        const effect = scrollController.onTurnStarted(metrics(container), Date.now());
-        if (effect.type === 'position_new_turn') {
-          pendingTurnPositionRef.current = true;
-          setTurnSpacerHeight(effect.spacerHeight);
-        }
+      const effect = scrollController.onTurnStarted(metrics(container), Date.now());
+      if (effect.type === 'scroll_to_bottom') {
+        scrollToLatest(container);
+        setReturnToLatestVisible(false);
       }
-    }
-    if (!props.state.activeTurnId && !latestSubmittedMessageId) {
-      pendingTurnPositionRef.current = false;
-      setTurnSpacerHeight(0);
     }
     previousTurnIdRef.current = props.state.activeTurnId;
   }, [historyHydrated, latestSubmittedMessageId, props.state.activeTurnId, scrollController]);
 
   useLayoutEffect(() => {
     const container = containerRef.current;
-    if (!container || !pendingTurnPositionRef.current || turnSpacerHeight <= 0 || !turnPositionAnchorId) return;
-    const cancel = scheduleTurnPositionAfterSpacerCommit(
-      container,
-      (callback) => window.requestAnimationFrame(callback),
-      () => pendingTurnPositionRef.current && scrollController.getState().mode === 'prework_watch',
-    );
-    return () => cancel();
-  }, [scrollController, turnPositionAnchorId, turnSpacerHeight]);
+    const interactionKey = props.trailingInteractionKey ?? null;
+    const previousKey = previousTrailingInteractionKeyRef.current;
+    previousTrailingInteractionKeyRef.current = interactionKey;
+    if (!container || !interactionKey || interactionKey === previousKey) return;
+    scrollController.onExplicitLatestRequest();
+    scrollToLatest(container);
+    setReturnToLatestVisible(false);
+  }, [props.trailingInteractionKey, scrollController]);
 
   useLayoutEffect(() => {
     maintainLatestPosition();
@@ -312,7 +308,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           ))}
           {showCreationStatus && props.creationStatus ? <SessionCreationNotice status={props.creationStatus} language={props.language} /> : null}
           {showStandaloneActiveStatus ? <TranscriptActiveStatus language={props.language} kind={activeStatusKind} /> : null}
-          {turnSpacerHeight > 0 && turnPositionAnchorId ? <span className="session-latest-turn-spacer" style={{ blockSize: `${turnSpacerHeight}px` }} aria-hidden="true" /> : null}
+          {props.trailingInteraction}
           <span ref={latestContentMarkerRef} className="session-latest-content-marker" aria-hidden="true" />
         </section>
         <button
@@ -742,14 +738,14 @@ export function projectTranscriptTurnRows(rows: readonly TranscriptRow[], active
 function isLiveTurnTimelineRow(row: TranscriptRow): boolean {
   if (row.kind === 'answered_request' || row.kind === 'activity') return true;
   // 计划是需要独立审核的产物，不属于仍在展开的过程正文。
-  return row.item.type !== 'plan' && !isFinalAnswerItem(row.item);
+  return row.item.type !== 'plan' && !isFinalAnswerItem(row.item) && !isAssistantDeliverableItem(row.item);
 }
 
 function isTurnProcessRow(row: TranscriptRow): boolean {
   if (row.kind === 'answered_request') return false;
   if (row.kind === 'activity') return true;
-  // 计划是交给用户审核的最终产物，必须独立展示，不能折叠进“已处理”过程。
-  if (row.item.type === 'plan') return false;
+  // 计划和明确交付资源属于最终产物，必须独立展示，不能折叠进“已处理”过程。
+  if (row.item.type === 'plan' || isAssistantDeliverableItem(row.item)) return false;
   return itemRole(row.item) !== 'user' && !isFinalAnswerItem(row.item);
 }
 
@@ -828,6 +824,13 @@ export function isVisibleTranscriptItem(item: NativeSessionItemBuffer): boolean 
   return transcriptItemText(item).trim().length > 0;
 }
 
+function isUnacceptedQueuedUserItem(item: NativeSessionItemBuffer, state: NativeSessionState, queuedClientUserMessageIds: ReadonlySet<string>): boolean {
+  if (!item.optimistic || itemRole(item) !== 'user' || item.payload.delivery !== 'queue') return false;
+  const clientUserMessageId = item.clientUserMessageId ?? item.durableClientUserMessageId;
+  if (clientUserMessageId && queuedClientUserMessageIds.has(clientUserMessageId)) return true;
+  return item.turnId.startsWith('pending:') && Boolean(state.activeTurnId && item.turnId !== state.activeTurnId);
+}
+
 export function shouldShowTranscriptThinking(state: NativeSessionState, items: readonly NativeSessionItemBuffer[] = Object.values(state.items)): boolean {
   if (state.conversationState !== 'starting_turn' && state.conversationState !== 'active_prework' && state.conversationState !== 'active_final_answer') return false;
   if (state.conversationState === 'starting_turn' || !state.activeTurnId) return true;
@@ -863,16 +866,6 @@ export function resolveCompletedItemAnnouncement(
   return {
     tracker: { hydrated: true, lastCompletedKey: completed.key },
     announcement: { key: completed.key, text: `${label}: ${completed.text.slice(0, 180)}` },
-  };
-}
-
-export function scheduleTurnPositionAfterSpacerCommit(container: Pick<HTMLElement, 'scrollHeight' | 'scrollTo'>, requestFrame: (callback: FrameRequestCallback) => number, shouldPosition: () => boolean): () => void {
-  const frameId = requestFrame(() => {
-    // 回调在 spacer commit/layout 后才读取 scrollHeight，不能使用 setState 前的旧高度。
-    if (shouldPosition()) container.scrollTo({ top: container.scrollHeight, behavior: 'instant' });
-  });
-  return () => {
-    if (typeof window !== 'undefined') window.cancelAnimationFrame(frameId);
   };
 }
 

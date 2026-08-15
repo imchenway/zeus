@@ -12,7 +12,7 @@ export interface ThreadScrollState {
   suppressBounceUntil: number;
 }
 
-export type ThreadScrollEffect = { type: 'none' } | { type: 'scroll_to_bottom' } | { type: 'position_new_turn'; spacerHeight: number };
+export type ThreadScrollEffect = { type: 'none' } | { type: 'scroll_to_bottom' };
 
 export interface ThreadScrollController {
   getState(): ThreadScrollState;
@@ -25,8 +25,6 @@ export interface ThreadScrollController {
 
 const FOLLOW_DISTANCE_PX = 24;
 const NEW_TURN_DISTANCE_PX = 300;
-const MIN_NEW_TURN_SPACER_PX = 240;
-const BOUNCE_SUPPRESSION_MS = 500;
 
 export function createThreadScrollController(): ThreadScrollController {
   // 进入会话默认定位到最新内容；只有真实用户滚动离开底部后才切换为 static。
@@ -45,34 +43,23 @@ export function createThreadScrollController(): ThreadScrollController {
       state = { mode: 'user_follow', suppressBounceUntil: 0 };
       return { type: 'scroll_to_bottom' };
     },
-    onDelta(_metrics, now) {
+    onDelta() {
       if (state.mode === 'static') return { type: 'none' };
-      if (state.mode === 'prework_watch') {
-        if (now < state.suppressBounceUntil) return { type: 'none' };
-        state = { ...state, mode: 'prework_follow' };
-      }
       return { type: 'scroll_to_bottom' };
     },
-    onMessageSubmitted(metrics, now) {
-      // 明确发送代表用户要进入最新轮次；首帧就预留回复空间，避免先落在底部再跳到顶部。
-      state = { mode: 'prework_watch', suppressBounceUntil: now + BOUNCE_SUPPRESSION_MS };
-      return newTurnPositionEffect(metrics);
+    onMessageSubmitted() {
+      // 明确发送后进入最新内容跟随，不再为尚未出现的回复制造空白占位。
+      state = { mode: 'user_follow', suppressBounceUntil: 0 };
+      return { type: 'scroll_to_bottom' };
     },
-    onTurnStarted(metrics, now) {
+    onTurnStarted(metrics) {
       if (distanceFromBottom(metrics) > NEW_TURN_DISTANCE_PX) {
         state = { mode: 'static', suppressBounceUntil: 0 };
         return { type: 'none' };
       }
-      state = { mode: 'prework_watch', suppressBounceUntil: now + BOUNCE_SUPPRESSION_MS };
-      return newTurnPositionEffect(metrics);
+      state = { mode: 'user_follow', suppressBounceUntil: 0 };
+      return { type: 'scroll_to_bottom' };
     },
-  };
-}
-
-function newTurnPositionEffect(metrics: ThreadScrollMetrics): ThreadScrollEffect {
-  return {
-    type: 'position_new_turn',
-    spacerHeight: Math.max(MIN_NEW_TURN_SPACER_PX, Math.round((metrics.clientHeight * 2) / 3)),
   };
 }
 

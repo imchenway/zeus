@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { ClockCounterClockwiseIcon as ClockCounterClockwise } from '@phosphor-icons/react/dist/csr/ClockCounterClockwise';
 import { CheckIcon as CheckGlyph } from '@phosphor-icons/react/dist/csr/Check';
+import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import { GlobeIcon as Globe } from '@phosphor-icons/react/dist/csr/Globe';
 import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
@@ -71,6 +72,7 @@ const COMMAND_RUN_LOG_PAGE_SIZE = 1_000;
 const MAX_DISPLAYED_COMMAND_RUN_LOGS = 2_000;
 const MAX_DISPLAYED_COMMAND_RUN_LOG_BYTES = 4 * 1024 * 1024;
 const COMMAND_RUN_LOG_FOLLOW_DISTANCE_PX = 24;
+const COMMAND_RUN_COPY_SUCCESS_DURATION_MS = 2_000;
 const UTF8_ENCODER = new TextEncoder();
 
 function CommandRunDurationValue(props: { run: CommandRun; zh: boolean }) {
@@ -120,6 +122,12 @@ function CommandRunLog(props: { runId: string; content: string; ariaLabel: strin
   const shouldFollowLatestRef = useRef(true);
   const [copyState, setCopyState] = useState<CommandRunCopyState>('idle');
 
+  useEffect(() => {
+    if (copyState !== 'copied') return undefined;
+    const timer = window.setTimeout(() => setCopyState('idle'), COMMAND_RUN_COPY_SUCCESS_DURATION_MS);
+    return () => window.clearTimeout(timer);
+  }, [copyState]);
+
   useLayoutEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -167,10 +175,26 @@ function CommandRunLog(props: { runId: string; content: string; ariaLabel: strin
     <section className="command-run-log-shell" aria-label={props.ariaLabel}>
       <header className="command-run-log-toolbar">
         <strong>{props.ariaLabel}</strong>
-        <Button className="command-run-copy-action" size="compact" busy={copyState === 'copying'} disabled={!props.hasLogs} data-copy-state={copyState} aria-label={copyLabel} title={copyLabel} onClick={() => void copyCompleteLog()}>
-          {copyState === 'copied' ? <CheckGlyph aria-hidden="true" /> : copyState === 'too_large' || copyState === 'failed' ? <WarningCircle aria-hidden="true" /> : <Copy aria-hidden="true" />}
-          <span>{copyLabel}</span>
-        </Button>
+        <button
+          className="command-run-copy-action"
+          type="button"
+          disabled={!props.hasLogs || copyState === 'copying'}
+          aria-busy={copyState === 'copying' || undefined}
+          data-copy-state={copyState}
+          aria-label={copyLabel}
+          title={copyLabel}
+          onClick={() => void copyCompleteLog()}
+        >
+          {copyState === 'copying' ? (
+            <CircleNotch className="command-run-copy-spinner" aria-hidden="true" />
+          ) : copyState === 'copied' ? (
+            <CheckGlyph aria-hidden="true" />
+          ) : copyState === 'too_large' || copyState === 'failed' ? (
+            <WarningCircle aria-hidden="true" />
+          ) : (
+            <Copy aria-hidden="true" />
+          )}
+        </button>
       </header>
       <span className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">
         {copyState === 'idle' ? '' : copyLabel}

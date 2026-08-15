@@ -4,7 +4,7 @@ import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist
 import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { MessageCheckIcon, MessageEditIcon, MessageExpandIcon, MessageRemoteDeviceIcon, MessageThumbIcon } from './SessionMessageIcons.js';
-import type { NativeConversationAttachment, NativeSessionItemBuffer } from './sessionTypes.js';
+import { isAssistantDeliverableItem, type NativeConversationAttachment, type NativeSessionItemBuffer } from './sessionTypes.js';
 import { autosizeTextarea } from './textareaAutosize.js';
 import type { ConversationContextDraft, ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourcePreview, TaskPushMessageLayout } from '@zeus/shared';
 import type { ConversationResponseAnnotation, ConversationResponseTextAnchor } from '@zeus/shared';
@@ -286,12 +286,13 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const pendingImageAttachments = !taskPushLayout && !hasAuthoritativeAttachmentResources ? pendingAttachments.filter(isPendingImageAttachment) : [];
   const showUserMessageAttachmentGroup = role === 'user' && !taskPushLayout;
   const taskPushAttachmentKeys = new Set([...(taskPushLayout?.blocks.flatMap((block) => block.attachments.map((attachment) => attachment.key)) ?? []), ...(taskPushLayout?.supplementalAttachments ?? []).map((attachment) => attachment.key)]);
-  const unplacedResources = taskPushLayout
+  const itemResources = taskPushLayout
     ? props.item.resources.filter((resource) => {
         const key = resourceTaskPushAttachmentKey(resource);
         return !key || !taskPushAttachmentKeys.has(key);
       })
     : props.item.resources;
+  const unplacedResources = isAssistantDeliverableItem(props.item) ? itemResources.filter((resource) => resource.delivery === 'assistant') : itemResources;
   const itemText = transcriptItemText(props.item);
   const commentary = role === 'commentary';
   const naturalLanguageStream = role === 'assistant' || commentary;
@@ -299,7 +300,8 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const adaptiveText = useAdaptiveTranscriptText(itemText, streamActive);
   const presentedItemText = naturalLanguageStream ? adaptiveText.text : itemText;
   const longUserMessage = role === 'user' && itemText.length > 640;
-  const visibleText = longUserMessage && !expanded ? `${itemText.slice(0, 620).trimEnd()}…` : presentedItemText;
+  const contextOnlyPlaceholder = role === 'user' && conversationContext ? isConversationContextPlaceholder(itemText) : false;
+  const visibleText = contextOnlyPlaceholder ? '' : longUserMessage && !expanded ? `${itemText.slice(0, 620).trimEnd()}…` : presentedItemText;
   const label = roleLabel(role, labels);
   const command = normalizeType(props.item.type) === 'commandexecution' || normalizeType(props.item.type) === 'command';
   const accessibleLabel = command ? (props.language === 'zh-CN' ? '命令执行' : 'Command execution') : label;
@@ -821,6 +823,10 @@ function decodeReferencePath(href: string): string {
 
 export function itemRole(item: NativeSessionItemBuffer): ThreadItemRole {
   const type = normalizeType(item.type);
+  if (isAssistantDeliverableItem(item)) {
+    const deliverables = item.resources.filter((resource) => resource.delivery === 'assistant');
+    return deliverables.length > 0 && deliverables.every(isImageResource) ? 'image' : 'assistant';
+  }
   if (type === 'usermessage' || type === 'user') return 'user';
   if (type === 'agentmessage' || type === 'assistantmessage' || type === 'assistant' || type === 'message') return 'assistant';
   if (type === 'reasoning' || type === 'plan' || type === 'commentary' || type === 'analysis') return 'commentary';
@@ -1039,7 +1045,8 @@ function GeneratedImageItem(props: {
       </div>
     );
   }
-  const images = props.item.resources.filter(isImageResource);
+  const deliverableImages = props.item.resources.filter((resource) => resource.delivery === 'assistant' && isImageResource(resource));
+  const images = deliverableImages.length > 0 ? deliverableImages : props.item.resources.filter(isImageResource);
   if (images.length === 0) {
     return (
       <div className="session-generated-image-unavailable" role="status">
@@ -1307,14 +1314,36 @@ function conversationContextDraft(value: unknown): ConversationContextDraft | nu
   return record as unknown as ConversationContextDraft;
 }
 
+function isConversationContextPlaceholder(value: string): boolean {
+  return /^(?:回答批注|代码评论|Response annotations \(\d+\)|Code comments \(\d+\))$/u.test(value.trim());
+}
+
 function UserConversationContextSummary(props: { draft: ConversationContextDraft; language: SessionUiLanguage }) {
-  const annotations = props.draft.responseAnnotations.length;
+  const annotations = props.draft.responseAnnotations;
   const comments = props.draft.codeComments.length;
-  if (!annotations && !comments) return null;
+  if (!annotations.length && !comments) return null;
   const zh = props.language === 'zh-CN';
-  const label = zh
-    ? [comments ? `${comments} 个评论` : '', annotations ? `${annotations} 条注释` : ''].filter(Boolean).join('、')
-    : [comments ? `${comments} ${comments === 1 ? 'comment' : 'comments'}` : '', annotations ? `${annotations} ${annotations === 1 ? 'annotation' : 'annotations'}` : ''].filter(Boolean).join(', ');
+  if (annotations.length > 0) {
+    return (
+      <section className="session-message-context-summary" aria-label={zh ? '回答批注' : 'Response annotations'}>
+        <header>
+          <strong>{zh ? '回答批注' : 'Response annotations'}</strong>
+          <span>{annotations.length}</span>
+        </header>
+        <div className="session-message-response-annotations">
+          {annotations.map((annotation, index) => (
+            <article key={annotation.id}>
+              <span>{zh ? `批注 ${index + 1}` : `Annotation ${index + 1}`}</span>
+              <blockquote>{annotation.anchor.selectedText}</blockquote>
+              {annotation.note?.trim() ? <p>{annotation.note.trim()}</p> : null}
+            </article>
+          ))}
+        </div>
+        {comments ? <small>{zh ? `${comments} 个代码评论` : `${comments} ${comments === 1 ? 'code comment' : 'code comments'}`}</small> : null}
+      </section>
+    );
+  }
+  const label = zh ? `${comments} 个评论` : `${comments} ${comments === 1 ? 'comment' : 'comments'}`;
   return <span className="session-message-context-summary">{label}</span>;
 }
 function primitiveText(value: unknown): string | null {

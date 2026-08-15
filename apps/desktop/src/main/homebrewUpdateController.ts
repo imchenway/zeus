@@ -113,7 +113,10 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
     prepared = null;
     currentUpdate = null;
     lastFailureStep = 'check';
-    if (present) await publish(copyFor(options.language(), 'checking', options.currentVersion));
+    if (present) {
+      await publish(copyFor(options.language(), 'checking', options.currentVersion));
+      (await ensureHost()).show();
+    }
     try {
       const update = await retryOperation(options.loadUpdateStatus, 2);
       currentUpdate = update;
@@ -207,7 +210,7 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
     hidden = false;
     const currentHost = await ensureHost();
     if (lastState) currentHost.update({ ...lastState, present: true });
-    else currentHost.show();
+    currentHost.show();
   }
 
   async function checkAutomatically(input?: { blockedPrepareVersion?: string | null }): Promise<boolean> {

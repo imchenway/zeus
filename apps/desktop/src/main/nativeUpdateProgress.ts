@@ -16,8 +16,10 @@ export interface NativeUpdateProgressState {
 }
 
 export interface NativeUpdateProgressHost {
+  /** 用户显式要求打开窗口时调用，允许原生窗口获得一次键盘焦点。 */
   show(): void;
   hide(): void;
+  /** 只更新内容与可见性，不得把更新窗口重新激活到前台。 */
   update(state: NativeUpdateProgressState): void;
   relaunchAfterProcessExit(input: { pid: number; appPath: string; bundleId: string; version: string }): void;
   close(): void;

@@ -11,13 +11,14 @@ import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr
 import { PlugsIcon as Plugs } from '@phosphor-icons/react/dist/csr/Plugs';
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import { WrenchIcon as Wrench } from '@phosphor-icons/react/dist/csr/Wrench';
-import type { NativePendingRequest, NativeSessionItemBuffer, NativeTurnPlanSnapshot, NativeTurnSnapshot } from './sessionTypes.js';
+import { isAssistantDeliverableItem, type NativePendingRequest, type NativeSessionItemBuffer, type NativeTurnPlanSnapshot, type NativeTurnSnapshot } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 
 const operationalTypes = new Set(['commandexecution', 'command', 'mcptoolcall', 'dynamictoolcall', 'websearch', 'imageview', 'toolcall', 'tool', 'filechange', 'file', 'contextcompaction', 'providerevent']);
 const MAX_ACTIVITY_OUTPUT_CHARACTERS = 40_000;
 
 export function isOperationalActivityItem(item: NativeSessionItemBuffer): boolean {
+  if (isAssistantDeliverableItem(item)) return false;
   const type = normalizeType(item.type);
   if (type === 'contextcompaction' && item.status === 'failed') return false;
   return operationalTypes.has(type);
