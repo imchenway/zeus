@@ -1381,7 +1381,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const pendingRequests = props.state?.pendingRequests.filter((request) => request.status === 'pending' && hasPendingRequestDetails(request)) ?? [];
   const pendingPlanImplementationRequests = props.state?.planImplementationRequests.filter((request) => request.status === 'pending').slice(-1) ?? [];
   const blockingPendingRequest = pendingRequests[0] ?? null;
-  const blockingUserInputRequest = blockingPendingRequest && requestKind(blockingPendingRequest) === 'request_user_input' ? blockingPendingRequest : null;
   const blockingPlanImplementationRequest = blockingPendingRequest ? null : (pendingPlanImplementationRequests[0] ?? null);
   const blockingInteractionCount = pendingRequests.length + pendingPlanImplementationRequests.length;
   // 计划工作区绑定渲染层稳定 key，避免本地记录 ID 在实时事件合并后消失，导致右侧只打开空壳。
@@ -2217,8 +2216,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                   <ConversationTranscript
                     state={props.state}
                     language={props.language}
-                    trailingInteraction={blockingUserInputRequest ? renderBlockingInteraction() : null}
-                    trailingInteractionKey={blockingUserInputRequest?.id ?? null}
                     onLatestContentVisibilityChange={props.onLatestContentVisibilityChange}
                     creationStatus={props.creationStatus}
                     onEditUserItem={interactionReadOnly ? undefined : actions.onEditUserItem}
@@ -2265,7 +2262,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     }
                   />
                   {props.suppressComposer || !dockedPlan ? null : <SessionPlanProgress plan={dockedPlan} language={props.language} />}
-                  {blockingUserInputRequest ? null : renderBlockingInteraction()}
+                  {renderBlockingInteraction()}
                   {props.suppressComposer || blockingPendingRequest || blockingPlanImplementationRequest ? null : (
                     <>
                       {renderQueuedConversationMessages()}

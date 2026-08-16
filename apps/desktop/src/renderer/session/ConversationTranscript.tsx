@@ -35,8 +35,6 @@ export interface ConversationTranscriptProps {
   onOperateTurnChangeSet?: (changeSet: TurnChangeSet, action: 'undo' | 'reapply') => Promise<TurnChangeSetOperationResult>;
   onLatestContentVisibilityChange?: (visible: boolean) => void;
   creationStatus?: SessionCreationStatus;
-  trailingInteraction?: ReactNode;
-  trailingInteractionKey?: string | null;
   onAddResponseAnnotation?: (anchor: ConversationResponseTextAnchor) => string;
   onUpdateResponseAnnotation?: (id: string, note: string) => void;
   onRemoveResponseAnnotation?: (id: string) => void;
@@ -63,7 +61,6 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const containerRef = useRef<HTMLElement | null>(null);
   const latestContentMarkerRef = useRef<HTMLSpanElement | null>(null);
   const previousTurnIdRef = useRef<string | null>(null);
-  const previousTrailingInteractionKeyRef = useRef<string | null>(null);
   const activeTurnTrackingInitializedRef = useRef(false);
   const scrollController = useThreadScrollController();
   const [returnToLatestVisible, setReturnToLatestVisible] = useState(false);
@@ -210,17 +207,6 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   }, [historyHydrated, latestSubmittedMessageId, props.state.activeTurnId, scrollController]);
 
   useLayoutEffect(() => {
-    const container = containerRef.current;
-    const interactionKey = props.trailingInteractionKey ?? null;
-    const previousKey = previousTrailingInteractionKeyRef.current;
-    previousTrailingInteractionKeyRef.current = interactionKey;
-    if (!container || !interactionKey || interactionKey === previousKey) return;
-    scrollController.onExplicitLatestRequest();
-    scrollToLatest(container);
-    setReturnToLatestVisible(false);
-  }, [props.trailingInteractionKey, scrollController]);
-
-  useLayoutEffect(() => {
     maintainLatestPosition();
     const container = containerRef.current;
     if (container) reportLatestContentVisibility(container);
@@ -309,7 +295,6 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           ))}
           {showCreationStatus && props.creationStatus ? <SessionCreationNotice status={props.creationStatus} language={props.language} /> : null}
           {showStandaloneActiveStatus && motionFocus?.kind === 'thinking' ? <TranscriptActiveStatus language={props.language} kind={activeStatusKind} /> : null}
-          {props.trailingInteraction}
           <span ref={latestContentMarkerRef} className="session-latest-content-marker" aria-hidden="true" />
         </section>
         <button

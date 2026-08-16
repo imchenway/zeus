@@ -15004,17 +15004,11 @@
   }
 }
 
-/* ZEUS-0306：队列靠近输入区完整呈现，阻塞交互紧跟当前会话过程。 */
+/* ZEUS-0306：队列靠近输入区完整呈现。 */
 .session-codex-parity-v1 .session-queued-message-reference span {
   overflow-wrap: anywhere;
   text-overflow: clip;
   white-space: pre-wrap;
-}
-
-.session-codex-parity-v1 .session-transcript > .session-interaction-dock {
-  inline-size: min(var(--session-composer-max), 100%);
-  margin-block: 0;
-  padding-block-end: 0;
 }
 
 /* ZEUS-0307：会话工作态共享低饱和蓝灰与慢节奏；正文区由唯一活动焦点决定谁可以循环动画。 */
