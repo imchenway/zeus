@@ -337,11 +337,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       providerBinaryVersion: 'pi-sdk-0.83.0',
       observedAt: createdAt,
     });
-    input.segmentLifecycle?.adapterSerialized(
-      { model: input.model.modelId, sourceId: input.model.sourceId, thinkingLevel: input.thinkingLevel ?? null },
-      { adapter: 'pi_sdk', api: 'openai-completions' },
-      createdAt,
-    );
+    input.segmentLifecycle?.adapterSerialized({ model: input.model.modelId, sourceId: input.model.sourceId, thinkingLevel: input.thinkingLevel ?? null }, { adapter: 'pi_sdk', api: 'openai-completions' }, createdAt);
     let acceptedTurnId: string | undefined;
     let run;
     let compactionFinished = false;
@@ -439,7 +435,16 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     return { conversationId: input.conversationId, submissionId: submission.id, providerThreadId: session.nativeSessionId, providerTurnId: run.nativeRunId, status: 'active' as const };
   }
 
-  async function submitMessage(input: { conversation: ZeusConversationWithMessagesRecord; submissionId: string; content: string; model: AgentModelIdentity; thinkingLevel?: string; idempotencyKey: string; clientUserMessageId: string; segmentLifecycle?: ConversationSegmentLifecycle }) {
+  async function submitMessage(input: {
+    conversation: ZeusConversationWithMessagesRecord;
+    submissionId: string;
+    content: string;
+    model: AgentModelIdentity;
+    thinkingLevel?: string;
+    idempotencyKey: string;
+    clientUserMessageId: string;
+    segmentLifecycle?: ConversationSegmentLifecycle;
+  }) {
     let context = input.conversation.nativeSessionId ? contexts.get(input.conversation.nativeSessionId) : undefined;
     if (!context) {
       if (!input.conversation.nativeSessionId || !input.conversation.nativeSessionPath) throw piError('ZEUS_PI_SESSION_UNAVAILABLE', 'Pi 会话缺少可恢复的会话文件。');
@@ -465,11 +470,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     await input.segmentLifecycle?.prepare(submission);
     await input.segmentLifecycle?.beginDispatch();
     input.segmentLifecycle?.nativeSessionReady({ nativeSessionId: context.session.nativeSessionId, nativeSessionPath: context.session.nativeSessionPath, observedAt: createdAt });
-    input.segmentLifecycle?.adapterSerialized(
-      { model: input.model.modelId, sourceId: input.model.sourceId, thinkingLevel: input.thinkingLevel ?? null },
-      { adapter: 'pi_sdk', api: 'openai-completions' },
-      createdAt,
-    );
+    input.segmentLifecycle?.adapterSerialized({ model: input.model.modelId, sourceId: input.model.sourceId, thinkingLevel: input.thinkingLevel ?? null }, { adapter: 'pi_sdk', api: 'openai-completions' }, createdAt);
     let acceptedTurnId: string | undefined;
     let run;
     try {
@@ -674,7 +675,16 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           publish(processItem.status === 'in_progress' ? 'conversation.item.started' : 'conversation.item.completed', run.conversationId, {
             turnId: run.providerTurnId,
             itemId: processItem.id,
-            itemType: processItem.kind === 'reasoning' ? 'reasoning' : processItem.kind === 'command' ? 'commandExecution' : processItem.kind === 'context_compaction' ? 'contextCompaction' : processItem.kind === 'warning' ? 'error' : 'dynamicToolCall',
+            itemType:
+              processItem.kind === 'reasoning'
+                ? 'reasoning'
+                : processItem.kind === 'command'
+                  ? 'commandExecution'
+                  : processItem.kind === 'context_compaction'
+                    ? 'contextCompaction'
+                    : processItem.kind === 'warning'
+                      ? 'error'
+                      : 'dynamicToolCall',
             itemPayload: { processKind: processItem.kind, title: processItem.title, detail: asRecord(JSON.parse(processItem.detailJson)) },
             status: processItem.status,
             phase: 'prework',

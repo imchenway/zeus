@@ -13,15 +13,7 @@ import {
   type CodexThreadSnapshot,
   type CodexTurnSnapshot,
 } from '@zeus/ai-runtime';
-import {
-  buildTaskPushInputParts,
-  calculateCacheHitRate,
-  type CodexAdditionalContextEntry,
-  type CodexBootstrapAdditionalContext,
-  type NativeTokenUsageSnapshot,
-  type TaskPushMessageLayout,
-  type TokenUsageBreakdown,
-} from '@zeus/shared';
+import { buildTaskPushInputParts, calculateCacheHitRate, type CodexAdditionalContextEntry, type CodexBootstrapAdditionalContext, type NativeTokenUsageSnapshot, type TaskPushMessageLayout, type TokenUsageBreakdown } from '@zeus/shared';
 import {
   type CodexMcpServerStartupState,
   type ConversationCollaborationMode,
@@ -4825,15 +4817,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           segmentId: segment.id,
           requestKind,
           // 身份不包含推断出的种类；历史重放即使发生在已有后续请求之后，也能命中原记录。
-          observationIdentity: `codex:${providerTurnId}:${JSON.stringify([
-            last.inputTokens,
-            last.cachedInputTokens,
-            last.cacheWriteInputTokens,
-            last.outputTokens,
-            last.reasoningOutputTokens,
-            last.totalTokens,
-            modelContextWindow,
-          ])}`,
+          observationIdentity: `codex:${providerTurnId}:${JSON.stringify([last.inputTokens, last.cachedInputTokens, last.cacheWriteInputTokens, last.outputTokens, last.reasoningOutputTokens, last.totalTokens, modelContextWindow])}`,
           modelId: model,
           contextWindow: modelContextWindow,
           inputTokens: last.inputTokens,
@@ -5506,34 +5490,36 @@ async function runCodexPortableContextCompaction(input: {
       if (event.method === 'turn/completed') finishCompletion();
       else if (event.method === 'turn/failed' || event.method === 'turn/cancelled') finishCompletion(providerTurnFailure(params, eventTurnId ?? providerTurnId ?? 'unknown'));
     });
-    const turn = await input.manager.startTurn({
-      threadId: thread.id,
-      clientUserMessageId: `zeus-compaction-${createHash('sha256')
-        .update(`${input.conversationId}\0${input.plan.prefixEntries.at(-1)?.sequence ?? 0}`)
-        .digest('hex')
-        .slice(0, 24)}`,
-      input: [{ type: 'text', text: '压缩 additionalContext 中最旧的闭合历史前缀。只输出摘要正文。' }],
-      additionalContext: encodeCodexPortableAdditionalContext({
-        conversationId: input.conversationId,
-        throughModelHistorySequence: input.plan.prefixEntries.at(-1)?.sequence ?? 0,
-        entries: input.plan.prefixEntries,
-        capabilityLosses: [],
-      })!,
-      model: input.model,
-      ...(input.effort ? { effort: input.effort } : {}),
-      serviceTier: input.serviceTier,
-      summary: 'none',
-      collaborationMode: {
-        mode: 'default',
-        settings: { model: input.model, reasoning_effort: input.effort, developer_instructions: null },
-      },
-      cwd: input.cwd,
-      approvalPolicy: 'never',
-      sandboxPolicy: { type: 'readOnly', networkAccess: false },
-    }).catch((error: unknown) => {
-      finishCompletion();
-      throw error;
-    });
+    const turn = await input.manager
+      .startTurn({
+        threadId: thread.id,
+        clientUserMessageId: `zeus-compaction-${createHash('sha256')
+          .update(`${input.conversationId}\0${input.plan.prefixEntries.at(-1)?.sequence ?? 0}`)
+          .digest('hex')
+          .slice(0, 24)}`,
+        input: [{ type: 'text', text: '压缩 additionalContext 中最旧的闭合历史前缀。只输出摘要正文。' }],
+        additionalContext: encodeCodexPortableAdditionalContext({
+          conversationId: input.conversationId,
+          throughModelHistorySequence: input.plan.prefixEntries.at(-1)?.sequence ?? 0,
+          entries: input.plan.prefixEntries,
+          capabilityLosses: [],
+        })!,
+        model: input.model,
+        ...(input.effort ? { effort: input.effort } : {}),
+        serviceTier: input.serviceTier,
+        summary: 'none',
+        collaborationMode: {
+          mode: 'default',
+          settings: { model: input.model, reasoning_effort: input.effort, developer_instructions: null },
+        },
+        cwd: input.cwd,
+        approvalPolicy: 'never',
+        sandboxPolicy: { type: 'readOnly', networkAccess: false },
+      })
+      .catch((error: unknown) => {
+        finishCompletion();
+        throw error;
+      });
     providerTurnId = turn.id;
     await completion;
     const summary = summaryParts.join('\n\n').trim();

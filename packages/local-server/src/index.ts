@@ -2926,9 +2926,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   };
   const recoverAcceptedPiTurnsAfterRestart = async () => {
     const interruptedAt = now().toISOString();
-    const candidates = conversationTurns
-      .listInProgress()
-      .filter((turn) => turn.agentKind === 'pi' && (turn.status === 'dispatching' || turn.status === 'running' || turn.status === 'waiting'));
+    const candidates = conversationTurns.listInProgress().filter((turn) => turn.agentKind === 'pi' && (turn.status === 'dispatching' || turn.status === 'running' || turn.status === 'waiting'));
     let recovered = false;
     for (const turn of candidates) {
       const segment = conversationExecution.currentSegment(turn.conversationId);

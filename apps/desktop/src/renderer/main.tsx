@@ -489,12 +489,11 @@ function renderConversationStoreMigration(status: NonNullable<Awaited<ReturnType
   title.textContent = migrationFailed ? '会话数据升级已安全暂停' : '正在升级会话数据';
   Object.assign(title.style, { margin: '0 0 12px', fontSize: '22px', lineHeight: '1.3' });
   const detail = document.createElement('p');
-  detail.textContent =
-    migrationFailed
-      ? status.phase === 'promoted_but_validation_failed'
-        ? `候选库已提升为正式数据库，但提升后校验未完成。请查看诊断并重试收敛状态。${status.error?.message ? `\n${status.error.message}` : ''}`
-        : (status.error?.message ?? '候选库未通过校验，正式数据库没有被替换。')
-      : `${migrationPhaseLabel(status.phase)}。升级完成前，本地服务和正常业务界面不会启动。`;
+  detail.textContent = migrationFailed
+    ? status.phase === 'promoted_but_validation_failed'
+      ? `候选库已提升为正式数据库，但提升后校验未完成。请查看诊断并重试收敛状态。${status.error?.message ? `\n${status.error.message}` : ''}`
+      : (status.error?.message ?? '候选库未通过校验，正式数据库没有被替换。')
+    : `${migrationPhaseLabel(status.phase)}。升级完成前，本地服务和正常业务界面不会启动。`;
   Object.assign(detail.style, { margin: '0', color: '#5f6368', lineHeight: '1.65', whiteSpace: 'pre-wrap' });
   panel.append(title, detail);
   if (migrationFailed) {

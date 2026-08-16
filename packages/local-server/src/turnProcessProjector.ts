@@ -49,18 +49,20 @@ export class TurnProcessProjector {
         if (type !== 'thinking' && type !== 'reasoning' && type !== 'toolCall' && type !== 'tool_use') continue;
         const kind: ConversationProcessKind = type === 'thinking' || type === 'reasoning' ? 'reasoning' : 'tool';
         const sourceId = typeof block.id === 'string' ? block.id : `${event.sequence}:${index}`;
-        records.push(this.execution.appendProcessItem({
-          conversationId: identity.conversationId,
-          turnId: identity.turnId,
-          segmentId: identity.segment.id,
-          kind,
-          status: 'completed',
-          title: processTitle(kind, type),
-          detail: { provider: 'pi', block },
-          sourceEventId: `pi:block:${sourceId}`,
-          startedAt: event.createdAt,
-          completedAt: event.createdAt,
-        }));
+        records.push(
+          this.execution.appendProcessItem({
+            conversationId: identity.conversationId,
+            turnId: identity.turnId,
+            segmentId: identity.segment.id,
+            kind,
+            status: 'completed',
+            title: processTitle(kind, type),
+            detail: { provider: 'pi', block },
+            sourceEventId: `pi:block:${sourceId}`,
+            startedAt: event.createdAt,
+            completedAt: event.createdAt,
+          }),
+        );
       }
       return records;
     }
@@ -69,18 +71,20 @@ export class TurnProcessProjector {
     const sourceId = typeof payload.toolCallId === 'string' ? payload.toolCallId : typeof payload.attempt === 'number' ? String(payload.attempt) : String(event.sequence);
     const ending = /(_end|_settled|_complete|_completed)$/.test(event.type);
     const failed = event.type === 'runtime_error' || payload.error !== undefined;
-    return [this.execution.appendProcessItem({
-      conversationId: identity.conversationId,
-      turnId: identity.turnId,
-      segmentId: identity.segment.id,
-      kind: mapped,
-      status: failed ? 'failed' : ending ? 'completed' : 'in_progress',
-      title: processTitle(mapped, event.type),
-      detail: { provider: 'pi', eventType: event.type, payload },
-      sourceEventId: `pi:${event.type.replace(/_(start|end|complete|completed)$/, '')}:${sourceId}`,
-      startedAt: event.createdAt,
-      completedAt: failed || ending ? event.createdAt : null,
-    })];
+    return [
+      this.execution.appendProcessItem({
+        conversationId: identity.conversationId,
+        turnId: identity.turnId,
+        segmentId: identity.segment.id,
+        kind: mapped,
+        status: failed ? 'failed' : ending ? 'completed' : 'in_progress',
+        title: processTitle(mapped, event.type),
+        detail: { provider: 'pi', eventType: event.type, payload },
+        sourceEventId: `pi:${event.type.replace(/_(start|end|complete|completed)$/, '')}:${sourceId}`,
+        startedAt: event.createdAt,
+        completedAt: failed || ending ? event.createdAt : null,
+      }),
+    ];
   }
 }
 

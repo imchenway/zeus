@@ -5,15 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { conversationSchemaGeneration, createZeusDatabase } from '@zeus/storage';
 import type { ZeusDataLayout } from './zeusDataLayout.js';
 
-export type ConversationStoreMigrationPhase =
-  | 'not_required'
-  | 'preflight'
-  | 'candidate_build'
-  | 'candidate_validation'
-  | 'promotion'
-  | 'promoted_but_validation_failed'
-  | 'completed'
-  | 'failed';
+export type ConversationStoreMigrationPhase = 'not_required' | 'preflight' | 'candidate_build' | 'candidate_validation' | 'promotion' | 'promoted_but_validation_failed' | 'completed' | 'failed';
 
 export interface ConversationStoreMigrationStatus {
   phase: ConversationStoreMigrationPhase;
@@ -106,10 +98,7 @@ export async function prepareUnifiedConversationStoreMigration(layout: ZeusDataL
     // 这样候选主库替换正式路径后，不会误读属于旧主库身份的 -wal / -shm。
     checkpointAndValidate(layout.database);
     checkpointAndValidate(candidatePath);
-    const archivedSidecars = [
-      ...archiveDatabaseSidecars(layout.database, layout.databaseBackups, `${migrationId}.source`),
-      ...archiveDatabaseSidecars(candidatePath, layout.databaseBackups, `${migrationId}.candidate`),
-    ];
+    const archivedSidecars = [...archiveDatabaseSidecars(layout.database, layout.databaseBackups, `${migrationId}.source`), ...archiveDatabaseSidecars(candidatePath, layout.databaseBackups, `${migrationId}.candidate`)];
     atomicWriteJson(diagnosticPath, {
       schema: 1,
       migrationId,
@@ -178,7 +167,9 @@ function normalizeSafeRollbackCopy(source: string, destination: string): { inter
     const hasSubmissions = Boolean(db.prepare(`SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'conversation_submissions'`).get());
     if (!hasSubmissions) return { interruptedSubmissions: [] };
     const columns = new Set((db.prepare(`PRAGMA table_info(conversation_submissions)`).all() as Array<{ name: string }>).map((row) => row.name));
-    const rows = db.prepare(`SELECT id, status${columns.has('paused_reason') ? ', paused_reason' : ''}${columns.has('error_json') ? ', error_json' : ''} FROM conversation_submissions WHERE status IN ('queued', 'dispatching', 'active', 'paused')`).all() as Array<Record<string, unknown>>;
+    const rows = db
+      .prepare(`SELECT id, status${columns.has('paused_reason') ? ', paused_reason' : ''}${columns.has('error_json') ? ', error_json' : ''} FROM conversation_submissions WHERE status IN ('queued', 'dispatching', 'active', 'paused')`)
+      .all() as Array<Record<string, unknown>>;
     const interruptedSubmissions = rows.map((row) => ({ id: String(row.id), sourceHash: createHash('sha256').update(JSON.stringify(row)).digest('hex') }));
     if (columns.has('paused_reason')) {
       db.prepare(`UPDATE conversation_submissions SET status = 'paused', paused_reason = 'recovery_required' WHERE status IN ('queued', 'dispatching', 'active', 'paused')`).run();
@@ -199,9 +190,11 @@ function extractLegacyToolResults(candidatePath: string, managedRoot: string): {
   let stored = 0;
   let skipped = 0;
   try {
-    const segments = db
-      .prepare(`SELECT id, conversation_id, native_session_path FROM conversation_runtime_segments WHERE state = 'sealed' ORDER BY created_at, id`)
-      .all() as Array<{ id: string; conversation_id: string; native_session_path: string | null }>;
+    const segments = db.prepare(`SELECT id, conversation_id, native_session_path FROM conversation_runtime_segments WHERE state = 'sealed' ORDER BY created_at, id`).all() as Array<{
+      id: string;
+      conversation_id: string;
+      native_session_path: string | null;
+    }>;
     const segmentByConversation = new Map(segments.map((segment) => [segment.conversation_id, segment]));
     const candidates: Array<{ conversationId: string; segmentId: string; turnId: string; toolPairId: string; text: string; createdAt: string }> = [];
     const hasItems = Boolean(db.prepare(`SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'conversation_items'`).get());
@@ -331,8 +324,12 @@ function validateCandidate(sourcePath: string, candidatePath: string): Record<st
     const sourceSubmissions = count(source, 'conversation_submissions');
     const candidateConversations = count(candidate, 'conversations');
     const candidateSubmissions = count(candidate, 'conversation_submissions');
-    const duplicateCurrent = Number((candidate.prepare(`SELECT COUNT(*) AS count FROM (SELECT conversation_id FROM conversation_runtime_segments WHERE state = 'current' GROUP BY conversation_id HAVING COUNT(*) > 1)`).get() as { count: number }).count);
-    const duplicateProvisional = Number((candidate.prepare(`SELECT COUNT(*) AS count FROM (SELECT conversation_id FROM conversation_runtime_segments WHERE state = 'provisional' GROUP BY conversation_id HAVING COUNT(*) > 1)`).get() as { count: number }).count);
+    const duplicateCurrent = Number(
+      (candidate.prepare(`SELECT COUNT(*) AS count FROM (SELECT conversation_id FROM conversation_runtime_segments WHERE state = 'current' GROUP BY conversation_id HAVING COUNT(*) > 1)`).get() as { count: number }).count,
+    );
+    const duplicateProvisional = Number(
+      (candidate.prepare(`SELECT COUNT(*) AS count FROM (SELECT conversation_id FROM conversation_runtime_segments WHERE state = 'provisional' GROUP BY conversation_id HAVING COUNT(*) > 1)`).get() as { count: number }).count,
+    );
     const generation = readSchemaGeneration(candidatePath);
     if (sourceConversations !== candidateConversations || sourceSubmissions !== candidateSubmissions || duplicateCurrent !== 0 || duplicateProvisional !== 0 || generation !== conversationSchemaGeneration) {
       throw migrationError('ZEUS_CONVERSATION_MIGRATION_CANDIDATE_MISMATCH', '统一会话候选库的数量或唯一性校验失败。');

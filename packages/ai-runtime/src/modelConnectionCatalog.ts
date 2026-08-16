@@ -241,9 +241,7 @@ export function modelConnectionAgentKind(connection: Pick<ModelConnectionRecord,
 }
 
 export function modelConnectionRoute(connection: Pick<ModelConnectionRecord, 'templateId' | 'baseUrl'>, modelId: string): Pick<ConfiguredModelDefinition, 'runtimeAdapter' | 'protocolFamily'> {
-  return isOfficialDeepSeekResponsesModel(connection, modelId)
-    ? { runtimeAdapter: 'codex_app_server', protocolFamily: 'openai_responses' }
-    : { runtimeAdapter: 'pi_sdk', protocolFamily: 'openai_completions' };
+  return isOfficialDeepSeekResponsesModel(connection, modelId) ? { runtimeAdapter: 'codex_app_server', protocolFamily: 'openai_responses' } : { runtimeAdapter: 'pi_sdk', protocolFamily: 'openai_completions' };
 }
 
 export function listSelectableConnectionModels(connections: readonly ModelConnectionRecord[]): SelectableConnectionModel[] {

@@ -1,19 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { CodexBootstrapAdditionalContext, PortableConversationContext } from '@zeus/shared';
-import type {
-  ConversationExecutionRepository,
-  ConversationRuntimeKind,
-  ConversationSubmissionRepository,
-  ZeusConversationSubmissionRecord,
-  ZeusDatabase,
-} from '@zeus/storage';
-import {
-  applyPortableContextCompaction,
-  planPortableContextCompaction,
-  PortableConversationContextBuilder,
-  type PortableContextCompactionPlan,
-  type PortableContextTargetCapabilities,
-} from './conversationPortableContext.js';
+import type { ConversationExecutionRepository, ConversationRuntimeKind, ConversationSubmissionRepository, ZeusConversationSubmissionRecord, ZeusDatabase } from '@zeus/storage';
+import { applyPortableContextCompaction, planPortableContextCompaction, PortableConversationContextBuilder, type PortableContextCompactionPlan, type PortableContextTargetCapabilities } from './conversationPortableContext.js';
 
 export interface ConversationExecutionRoute {
   runtimeKind: ConversationRuntimeKind;
@@ -40,7 +28,15 @@ export interface ConversationSegmentLifecycle {
   readonly contextCompactionPlan: PortableContextCompactionPlan | null;
   prepare(submission: ZeusConversationSubmissionRecord): Promise<void>;
   beginDispatch(): Promise<void>;
-  nativeSessionReady(input: { nativeSessionId: string; nativeSessionPath?: string | null; providerId?: string | null; providerModel?: string | null; providerProtocolVersion?: string | null; providerBinaryVersion?: string | null; observedAt: string }): void;
+  nativeSessionReady(input: {
+    nativeSessionId: string;
+    nativeSessionPath?: string | null;
+    providerId?: string | null;
+    providerModel?: string | null;
+    providerProtocolVersion?: string | null;
+    providerBinaryVersion?: string | null;
+    observedAt: string;
+  }): void;
   adapterSerialized(configuration: unknown, evidence: unknown, observedAt: string): void;
   beginContextCompaction(observedAt: string): Promise<void>;
   completeContextCompaction(input: {
@@ -361,9 +357,7 @@ export class ConversationExecutionCoordinator {
         if (accepted.providerEcho !== undefined) {
           const echoed = providerConfiguration(accepted.providerEcho);
           providerMismatch =
-            (echoed.modelId !== null && echoed.modelId !== input.route.modelId) ||
-            (echoed.effort !== null && echoed.effort !== input.route.effort) ||
-            (echoed.serviceTier !== undefined && echoed.serviceTier !== input.route.serviceTier);
+            (echoed.modelId !== null && echoed.modelId !== input.route.modelId) || (echoed.effort !== null && echoed.effort !== input.route.effort) || (echoed.serviceTier !== undefined && echoed.serviceTier !== input.route.serviceTier);
           this.options.execution.appendConfigEvidence({
             conversationId: input.conversationId,
             turnId,
@@ -399,12 +393,7 @@ export class ConversationExecutionCoordinator {
         acceptedByRuntime = true;
         if (providerMismatch) {
           try {
-            this.options.execution.pauseQueuedAfterConfigurationMismatch(
-              input.conversationId,
-              submissionId,
-              { expected: routeConfiguration(input.route), providerEcho: accepted.providerEcho },
-              accepted.acceptedAt,
-            );
+            this.options.execution.pauseQueuedAfterConfigurationMismatch(input.conversationId, submissionId, { expected: routeConfiguration(input.route), providerEcho: accepted.providerEcho }, accepted.acceptedAt);
           } catch (error) {
             // 持久接纳已经提交后不能再向适配器抛出“未接纳”；后处理失败只保留为持久警告。
             try {
@@ -447,7 +436,9 @@ export class ConversationExecutionCoordinator {
 }
 
 function routeFingerprint(route: ConversationExecutionRoute): string {
-  return createHash('sha256').update(JSON.stringify([route.runtimeKind, route.connectionId, route.endpointIdentity, route.protocolFamily, route.modelId, route.credentialSlotId])).digest('hex');
+  return createHash('sha256')
+    .update(JSON.stringify([route.runtimeKind, route.connectionId, route.endpointIdentity, route.protocolFamily, route.modelId, route.credentialSlotId]))
+    .digest('hex');
 }
 
 function routeConfiguration(route: ConversationExecutionRoute): Record<string, unknown> {

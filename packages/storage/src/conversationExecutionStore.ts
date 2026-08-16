@@ -445,10 +445,12 @@ export function migrateUnifiedConversationStoreSchema(db: ZeusDatabase): void {
   `);
 
   const checksum = `sha256:${createHash('sha256').update('unified-conversation-segments-submissions-history-context-tools-usage-evidence-process-recovery').digest('hex')}`;
-  db.execute(
-    `INSERT OR IGNORE INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)`,
-    [schemaMigrationId, '建立统一产品会话、运行分段、不可变提交、上下文、用量与处理过程语义表', checksum, migratedAt],
-  );
+  db.execute(`INSERT OR IGNORE INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)`, [
+    schemaMigrationId,
+    '建立统一产品会话、运行分段、不可变提交、上下文、用量与处理过程语义表',
+    checksum,
+    migratedAt,
+  ]);
   db.execute(`CREATE TABLE IF NOT EXISTS conversation_legacy_write_fence (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), current_writer_open INTEGER NOT NULL CHECK (current_writer_open IN (0, 1)))`);
   db.execute(`INSERT OR IGNORE INTO conversation_legacy_write_fence (singleton, current_writer_open) VALUES (1, 1)`);
   for (const action of ['INSERT', 'UPDATE', 'DELETE'] as const) {
@@ -517,19 +519,12 @@ export class ConversationExecutionRepository {
 
   /** 入队时只冻结执行配置；运行分段与模型历史水位要等到队首派发时再绑定。 */
   freezeSubmissionExecutionSnapshot(input: { conversationId: string; submissionId: string; executionSnapshotId: string }): void {
-    const submission = this.db.get<{ execution_snapshot_id: string | null }>(
-      `SELECT execution_snapshot_id FROM conversation_submissions WHERE id = ? AND conversation_id = ?`,
-      [input.submissionId, input.conversationId],
-    );
+    const submission = this.db.get<{ execution_snapshot_id: string | null }>(`SELECT execution_snapshot_id FROM conversation_submissions WHERE id = ? AND conversation_id = ?`, [input.submissionId, input.conversationId]);
     if (!submission) throw new Error(`会话提交不存在：${input.submissionId}`);
     if (submission.execution_snapshot_id && submission.execution_snapshot_id !== input.executionSnapshotId) {
       throw new Error(`会话提交已经冻结到其他执行快照：${input.submissionId}`);
     }
-    this.db.execute(`UPDATE conversation_submissions SET execution_snapshot_id = ? WHERE id = ? AND conversation_id = ?`, [
-      input.executionSnapshotId,
-      input.submissionId,
-      input.conversationId,
-    ]);
+    this.db.execute(`UPDATE conversation_submissions SET execution_snapshot_id = ? WHERE id = ? AND conversation_id = ?`, [input.executionSnapshotId, input.submissionId, input.conversationId]);
   }
 
   beginSwitch(input: BeginSwitchInput): ConversationSwitchOperationRecord {
@@ -592,16 +587,7 @@ export class ConversationExecutionRepository {
               provider_model = COALESCE(?, provider_model), provider_protocol_version = COALESCE(?, provider_protocol_version),
               provider_binary_version = COALESCE(?, provider_binary_version), updated_at = ?
         WHERE id = ? AND state = 'provisional'`,
-      [
-        input.nativeSessionId,
-        input.nativeSessionPath ?? null,
-        input.providerId ?? null,
-        input.providerModel ?? null,
-        input.providerProtocolVersion ?? null,
-        input.providerBinaryVersion ?? null,
-        input.updatedAt,
-        operation.targetSegmentId,
-      ],
+      [input.nativeSessionId, input.nativeSessionPath ?? null, input.providerId ?? null, input.providerModel ?? null, input.providerProtocolVersion ?? null, input.providerBinaryVersion ?? null, input.updatedAt, operation.targetSegmentId],
     );
     return this.segmentById(operation.targetSegmentId)!;
   }
@@ -654,32 +640,14 @@ export class ConversationExecutionRepository {
         `INSERT INTO conversation_timeline_events
          (id, conversation_id, sequence, event_kind, turn_id, submission_id, segment_id, payload_json, occurred_at)
          VALUES (?, ?, ?, 'turn_accepted', ?, ?, ?, ?, ?)`,
-        [
-          `conversation_timeline_event_${nanoid(12)}`,
-          operation.conversationId,
-          timelineSequence,
-          input.turnId,
-          operation.submissionId,
-          target.id,
-          JSON.stringify({ providerTurnId: input.providerTurnId, eventSequence }),
-          input.acceptedAt,
-        ],
+        [`conversation_timeline_event_${nanoid(12)}`, operation.conversationId, timelineSequence, input.turnId, operation.submissionId, target.id, JSON.stringify({ providerTurnId: input.providerTurnId, eventSequence }), input.acceptedAt],
       );
       this.db.execute(
         `INSERT INTO conversation_model_history
          (id, conversation_id, sequence, turn_id, submission_id, segment_id, role, content_json,
           reasoning_source_json, tool_pair_id, capability_loss_json, confirmed_at)
          VALUES (?, ?, ?, ?, ?, ?, 'user', ?, NULL, NULL, NULL, ?)`,
-        [
-          `conversation_model_history_${nanoid(12)}`,
-          operation.conversationId,
-          modelHistorySequence,
-          input.turnId,
-          operation.submissionId,
-          target.id,
-          JSON.stringify(input.userHistoryContent),
-          input.acceptedAt,
-        ],
+        [`conversation_model_history_${nanoid(12)}`, operation.conversationId, modelHistorySequence, input.turnId, operation.submissionId, target.id, JSON.stringify(input.userHistoryContent), input.acceptedAt],
       );
       this.resumeQueueBlockedByHead(operation.conversationId, input.acceptedAt);
       this.projectCurrentSegmentToLegacyConversation(target, input.acceptedAt);
@@ -690,10 +658,7 @@ export class ConversationExecutionRepository {
   bindSubmissionToCurrentSegment(input: { conversationId: string; submissionId: string; executionSnapshotId: string; segmentId: string }): void {
     const current = this.currentSegment(input.conversationId);
     if (!current || current.id !== input.segmentId) throw new Error('提交绑定的运行分段已经不是当前分段。');
-    this.db.execute(
-      `UPDATE conversation_submissions SET execution_snapshot_id = ?, segment_id = ? WHERE id = ? AND conversation_id = ?`,
-      [input.executionSnapshotId, input.segmentId, input.submissionId, input.conversationId],
-    );
+    this.db.execute(`UPDATE conversation_submissions SET execution_snapshot_id = ?, segment_id = ? WHERE id = ? AND conversation_id = ?`, [input.executionSnapshotId, input.segmentId, input.submissionId, input.conversationId]);
   }
 
   acceptOnCurrentSegmentDurably(input: AcceptCurrentSegmentInput): void {
@@ -723,32 +688,14 @@ export class ConversationExecutionRepository {
         `INSERT INTO conversation_timeline_events
          (id, conversation_id, sequence, event_kind, turn_id, submission_id, segment_id, payload_json, occurred_at)
          VALUES (?, ?, ?, 'turn_accepted', ?, ?, ?, ?, ?)`,
-        [
-          `conversation_timeline_event_${nanoid(12)}`,
-          input.conversationId,
-          timelineSequence,
-          input.turnId,
-          input.submissionId,
-          segment.id,
-          JSON.stringify({ providerTurnId: input.providerTurnId, eventSequence }),
-          input.acceptedAt,
-        ],
+        [`conversation_timeline_event_${nanoid(12)}`, input.conversationId, timelineSequence, input.turnId, input.submissionId, segment.id, JSON.stringify({ providerTurnId: input.providerTurnId, eventSequence }), input.acceptedAt],
       );
       this.db.execute(
         `INSERT INTO conversation_model_history
          (id, conversation_id, sequence, turn_id, submission_id, segment_id, role, content_json,
           reasoning_source_json, tool_pair_id, capability_loss_json, confirmed_at)
          VALUES (?, ?, ?, ?, ?, ?, 'user', ?, NULL, NULL, NULL, ?)`,
-        [
-          `conversation_model_history_${nanoid(12)}`,
-          input.conversationId,
-          modelHistorySequence,
-          input.turnId,
-          input.submissionId,
-          segment.id,
-          JSON.stringify(input.userHistoryContent),
-          input.acceptedAt,
-        ],
+        [`conversation_model_history_${nanoid(12)}`, input.conversationId, modelHistorySequence, input.turnId, input.submissionId, segment.id, JSON.stringify(input.userHistoryContent), input.acceptedAt],
       );
       this.resumeQueueBlockedByHead(input.conversationId, input.acceptedAt);
     });
@@ -756,14 +703,8 @@ export class ConversationExecutionRepository {
 
   markOutcomeUnknown(operationId: string, evidence: unknown, updatedAt: string): ConversationSwitchOperationRecord {
     const operation = this.requireOpenSwitch(operationId);
-    this.db.execute(
-      `UPDATE conversation_switch_operations SET state = 'outcome_unknown', failure_json = ?, updated_at = ? WHERE id = ?`,
-      [JSON.stringify(evidence), updatedAt, operation.id],
-    );
-    this.db.execute(
-      `UPDATE conversation_submissions SET status = 'paused', paused_reason = 'outcome_unknown', submission_outcome = 'outcome_unknown', updated_at = ? WHERE id = ?`,
-      [updatedAt, operation.submissionId],
-    );
+    this.db.execute(`UPDATE conversation_switch_operations SET state = 'outcome_unknown', failure_json = ?, updated_at = ? WHERE id = ?`, [JSON.stringify(evidence), updatedAt, operation.id]);
+    this.db.execute(`UPDATE conversation_submissions SET status = 'paused', paused_reason = 'outcome_unknown', submission_outcome = 'outcome_unknown', updated_at = ? WHERE id = ?`, [updatedAt, operation.submissionId]);
     this.pauseQueueBehindHead(operation.conversationId, operation.submissionId, updatedAt);
     return this.getSwitch(operation.id)!;
   }
@@ -771,9 +712,17 @@ export class ConversationExecutionRepository {
   failBeforeProviderWrite(operationId: string, failure: unknown, updatedAt: string): ConversationSwitchOperationRecord {
     const operation = this.requireOpenSwitch(operationId);
     this.db.transaction(() => {
-      this.db.execute(`UPDATE conversation_runtime_segments SET state = 'abandoned', sealed_at = ?, seal_reason = 'preflight_failed', updated_at = ? WHERE id = ? AND state = 'provisional'`, [updatedAt, updatedAt, operation.targetSegmentId]);
+      this.db.execute(`UPDATE conversation_runtime_segments SET state = 'abandoned', sealed_at = ?, seal_reason = 'preflight_failed', updated_at = ? WHERE id = ? AND state = 'provisional'`, [
+        updatedAt,
+        updatedAt,
+        operation.targetSegmentId,
+      ]);
       this.db.execute(`UPDATE conversation_switch_operations SET state = 'failed', failure_json = ?, updated_at = ?, resolved_at = ? WHERE id = ?`, [JSON.stringify(failure), updatedAt, updatedAt, operation.id]);
-      this.db.execute(`UPDATE conversation_submissions SET status = 'paused', paused_reason = 'preflight_failed', submission_outcome = 'paused', error_json = ?, updated_at = ? WHERE id = ?`, [JSON.stringify(failure), updatedAt, operation.submissionId]);
+      this.db.execute(`UPDATE conversation_submissions SET status = 'paused', paused_reason = 'preflight_failed', submission_outcome = 'paused', error_json = ?, updated_at = ? WHERE id = ?`, [
+        JSON.stringify(failure),
+        updatedAt,
+        operation.submissionId,
+      ]);
       this.pauseQueueBehindHead(operation.conversationId, operation.submissionId, updatedAt);
     });
     return this.getSwitch(operation.id)!;
@@ -862,10 +811,7 @@ export class ConversationExecutionRepository {
 
   segmentByNativeSession(nativeSessionId: string, conversationId?: string): ConversationRuntimeSegmentRecord | undefined {
     const row = conversationId
-      ? this.db.get<RuntimeSegmentRow>(
-          `SELECT * FROM conversation_runtime_segments WHERE native_session_id = ? AND conversation_id = ? ORDER BY created_at DESC LIMIT 1`,
-          [nativeSessionId, conversationId],
-        )
+      ? this.db.get<RuntimeSegmentRow>(`SELECT * FROM conversation_runtime_segments WHERE native_session_id = ? AND conversation_id = ? ORDER BY created_at DESC LIMIT 1`, [nativeSessionId, conversationId])
       : this.db.get<RuntimeSegmentRow>(`SELECT * FROM conversation_runtime_segments WHERE native_session_id = ? ORDER BY created_at DESC LIMIT 1`, [nativeSessionId]);
     return row ? mapRuntimeSegment(row) : undefined;
   }
@@ -875,9 +821,7 @@ export class ConversationExecutionRepository {
   }
 
   listOpenSwitchOperations(): ConversationSwitchOperationRecord[] {
-    return this.db
-      .select<SwitchOperationRow>(`SELECT * FROM conversation_switch_operations WHERE state IN ('preflight', 'provisional', 'outcome_unknown') ORDER BY created_at, id`)
-      .map(mapSwitchOperation);
+    return this.db.select<SwitchOperationRow>(`SELECT * FROM conversation_switch_operations WHERE state IN ('preflight', 'provisional', 'outcome_unknown') ORDER BY created_at, id`).map(mapSwitchOperation);
   }
 
   recordRecoveryEvent(input: { conversationId: string; segmentId?: string | null; eventKind: string; payload: unknown; occurredAt: string }): string {
@@ -1007,18 +951,7 @@ export class ConversationExecutionRepository {
          summary_json = excluded.summary_json,
          status = excluded.status,
          updated_at = excluded.updated_at`,
-      [
-        id,
-        input.conversationId,
-        input.portableContextId,
-        input.routeFingerprint,
-        input.throughModelHistorySequence,
-        input.requestUsageId,
-        JSON.stringify(input.summary),
-        input.status,
-        input.occurredAt,
-        input.occurredAt,
-      ],
+      [id, input.conversationId, input.portableContextId, input.routeFingerprint, input.throughModelHistorySequence, input.requestUsageId, JSON.stringify(input.summary), input.status, input.occurredAt, input.occurredAt],
     );
     return id;
   }
@@ -1035,9 +968,7 @@ export class ConversationExecutionRepository {
     startedAt: string;
     completedAt?: string | null;
   }): ConversationProcessItemRecord {
-    const existing = input.sourceEventId
-      ? this.db.get<ProcessItemRow>(`SELECT * FROM conversation_process_items WHERE segment_id = ? AND source_event_id = ?`, [input.segmentId, input.sourceEventId])
-      : undefined;
+    const existing = input.sourceEventId ? this.db.get<ProcessItemRow>(`SELECT * FROM conversation_process_items WHERE segment_id = ? AND source_event_id = ?`, [input.segmentId, input.sourceEventId]) : undefined;
     if (existing) {
       this.db.execute(
         `UPDATE conversation_process_items
@@ -1072,19 +1003,7 @@ export class ConversationExecutionRepository {
        (handle, conversation_id, turn_id, segment_id, tool_pair_id, relative_path, sha256,
         byte_length, mime_type, projection_json, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        input.handle,
-        input.conversationId,
-        input.turnId,
-        input.segmentId,
-        input.toolPairId,
-        input.relativePath,
-        input.sha256,
-        input.byteLength,
-        input.mimeType,
-        input.projectionJson,
-        input.createdAt,
-      ],
+      [input.handle, input.conversationId, input.turnId, input.segmentId, input.toolPairId, input.relativePath, input.sha256, input.byteLength, input.mimeType, input.projectionJson, input.createdAt],
     );
     return this.getToolResult(input.handle)!;
   }
@@ -1094,12 +1013,8 @@ export class ConversationExecutionRepository {
     return row ? mapToolResult(row) : undefined;
   }
 
-  observeModelRequest(
-    input: Omit<ConversationModelRequestUsageRecord, 'id' | 'requestSequence'> & { observationIdentity?: string },
-  ): ConversationModelRequestUsageRecord {
-    const id = input.observationIdentity
-      ? `conversation_model_request_${createHash('sha256').update(`${input.conversationId}\0${input.observationIdentity}`).digest('hex').slice(0, 24)}`
-      : `conversation_model_request_${nanoid(12)}`;
+  observeModelRequest(input: Omit<ConversationModelRequestUsageRecord, 'id' | 'requestSequence'> & { observationIdentity?: string }): ConversationModelRequestUsageRecord {
+    const id = input.observationIdentity ? `conversation_model_request_${createHash('sha256').update(`${input.conversationId}\0${input.observationIdentity}`).digest('hex').slice(0, 24)}` : `conversation_model_request_${nanoid(12)}`;
     const existing = this.modelRequestById(id);
     if (existing) return existing;
     const requestSequence = this.nextSequence(input.conversationId, 'model_request_sequence');
@@ -1134,9 +1049,7 @@ export class ConversationExecutionRepository {
 
   /** 读取同一产品轮次已经确认的真实模型请求，供 Provider 的增量用量事件恢复请求边界。 */
   listModelRequestsForTurn(conversationId: string, turnId: string): ConversationModelRequestUsageRecord[] {
-    return this.db
-      .select<ModelRequestRow>(`SELECT * FROM conversation_model_requests WHERE conversation_id = ? AND turn_id = ? ORDER BY request_sequence`, [conversationId, turnId])
-      .map(mapModelRequest);
+    return this.db.select<ModelRequestRow>(`SELECT * FROM conversation_model_requests WHERE conversation_id = ? AND turn_id = ? ORDER BY request_sequence`, [conversationId, turnId]).map(mapModelRequest);
   }
 
   appendConfigEvidence(input: {
@@ -1273,15 +1186,7 @@ export class ConversationExecutionRepository {
     );
   }
 
-  private upsertAcceptedTurn(input: {
-    turnId: string;
-    conversationId: string;
-    providerThreadId: string;
-    providerTurnId: string;
-    submissionId: string;
-    runtimeKind: ConversationRuntimeKind;
-    acceptedAt: string;
-  }): void {
+  private upsertAcceptedTurn(input: { turnId: string; conversationId: string; providerThreadId: string; providerTurnId: string; submissionId: string; runtimeKind: ConversationRuntimeKind; acceptedAt: string }): void {
     this.db.execute(
       `INSERT INTO conversation_turns
        (id, conversation_id, provider_thread_id, provider_turn_id, client_submission_id, status,
@@ -1290,18 +1195,7 @@ export class ConversationExecutionRepository {
        ON CONFLICT(provider_thread_id, provider_turn_id) WHERE provider_turn_id IS NOT NULL DO UPDATE SET
          client_submission_id = excluded.client_submission_id, status = 'running', started_at = COALESCE(conversation_turns.started_at, excluded.started_at),
          completed_at = NULL, updated_at = excluded.updated_at, agent_kind = excluded.agent_kind, native_run_id = excluded.native_run_id`,
-      [
-        input.turnId,
-        input.conversationId,
-        input.providerThreadId,
-        input.providerTurnId,
-        input.submissionId,
-        input.acceptedAt,
-        input.acceptedAt,
-        input.acceptedAt,
-        input.runtimeKind,
-        input.providerTurnId,
-      ],
+      [input.turnId, input.conversationId, input.providerThreadId, input.providerTurnId, input.submissionId, input.acceptedAt, input.acceptedAt, input.acceptedAt, input.runtimeKind, input.providerTurnId],
     );
   }
 
@@ -1375,14 +1269,7 @@ function sealLegacyProviderSessions(db: ZeusDatabase, migratedAt: string): void 
       `INSERT INTO conversation_migration_mappings
        (id, conversation_id, source_kind, source_identity, target_kind, target_identity, source_hash, mapped_at)
        VALUES (?, ?, 'provider_session', ?, 'sealed_segment', ?, ?, ?)`,
-      [
-        `conversation_migration_mapping_${nanoid(12)}`,
-        row.id,
-        sourceIdentity,
-        segmentId,
-        createHash('sha256').update(JSON.stringify(row)).digest('hex'),
-        migratedAt,
-      ],
+      [`conversation_migration_mapping_${nanoid(12)}`, row.id, sourceIdentity, segmentId, createHash('sha256').update(JSON.stringify(row)).digest('hex'), migratedAt],
     );
     if (row.agent_kind === 'pi') inspectPiMigrationSource(db, row.id, row.native_session_path ?? row.provider_thread_path, migratedAt);
   }
@@ -1406,15 +1293,17 @@ function migrateLegacyConversationHistory(db: ZeusDatabase, migratedAt: string):
   for (const message of messages) {
     const segment = db.get<{ id: string }>(`SELECT id FROM conversation_runtime_segments WHERE conversation_id = ? AND state = 'sealed' ORDER BY created_at DESC LIMIT 1`, [message.conversation_id]);
     if (!segment) continue;
-    const mapped = db.get<{ present: number }>(
-      `SELECT 1 AS present FROM conversation_migration_mappings WHERE source_kind = 'conversation_message' AND source_identity = ? AND target_kind = 'model_history'`,
-      [message.id],
-    );
+    const mapped = db.get<{ present: number }>(`SELECT 1 AS present FROM conversation_migration_mappings WHERE source_kind = 'conversation_message' AND source_identity = ? AND target_kind = 'model_history'`, [message.id]);
     if (mapped) continue;
     const turn = message.provider_turn_id
       ? db.get<{ id: string }>(`SELECT id FROM conversation_turns WHERE conversation_id = ? AND provider_turn_id = ? ORDER BY created_at LIMIT 1`, [message.conversation_id, message.provider_turn_id])
       : undefined;
-    const turnId = turn?.id ?? `migration_turn_${createHash('sha256').update(`${message.conversation_id}\0${message.provider_turn_id ?? message.id}`).digest('hex').slice(0, 24)}`;
+    const turnId =
+      turn?.id ??
+      `migration_turn_${createHash('sha256')
+        .update(`${message.conversation_id}\0${message.provider_turn_id ?? message.id}`)
+        .digest('hex')
+        .slice(0, 24)}`;
     const sequence = nextMigrationSequence(db, message.conversation_id, 'model_history_sequence');
     const historyId = `conversation_model_history_${nanoid(12)}`;
     db.execute(
@@ -1428,14 +1317,7 @@ function migrateLegacyConversationHistory(db: ZeusDatabase, migratedAt: string):
       `INSERT INTO conversation_migration_mappings
        (id, conversation_id, source_kind, source_identity, target_kind, target_identity, source_hash, mapped_at)
        VALUES (?, ?, 'conversation_message', ?, 'model_history', ?, ?, ?)`,
-      [
-        `conversation_migration_mapping_${nanoid(12)}`,
-        message.conversation_id,
-        message.id,
-        historyId,
-        createHash('sha256').update(JSON.stringify(message)).digest('hex'),
-        migratedAt,
-      ],
+      [`conversation_migration_mapping_${nanoid(12)}`, message.conversation_id, message.id, historyId, createHash('sha256').update(JSON.stringify(message)).digest('hex'), migratedAt],
     );
   }
 
@@ -1460,14 +1342,7 @@ function migrateLegacyConversationHistory(db: ZeusDatabase, migratedAt: string):
   for (const item of items) {
     const segment = db.get<{ id: string }>(`SELECT id FROM conversation_runtime_segments WHERE conversation_id = ? AND state = 'sealed' ORDER BY created_at DESC LIMIT 1`, [item.conversation_id]);
     if (!segment) continue;
-    const kind: ConversationProcessKind =
-      item.item_type === 'reasoning'
-        ? 'reasoning'
-        : item.item_type === 'commandExecution'
-          ? 'command'
-          : item.item_type === 'contextCompaction'
-            ? 'context_compaction'
-            : 'tool';
+    const kind: ConversationProcessKind = item.item_type === 'reasoning' ? 'reasoning' : item.item_type === 'commandExecution' ? 'command' : item.item_type === 'contextCompaction' ? 'context_compaction' : 'tool';
     const processSequence = nextMigrationSequence(db, item.conversation_id, 'process_sequence');
     db.execute(
       `INSERT OR IGNORE INTO conversation_process_items
@@ -1532,16 +1407,7 @@ function migrateLegacyConversationHistory(db: ZeusDatabase, migratedAt: string):
          (id, conversation_id, sequence, turn_id, submission_id, segment_id, role, content_json,
           reasoning_source_json, tool_pair_id, capability_loss_json, confirmed_at)
          VALUES (?, ?, ?, ?, NULL, ?, 'tool', ?, NULL, ?, NULL, ?)`,
-        [
-          `conversation_model_history_${nanoid(12)}`,
-          item.conversation_id,
-          sequence,
-          item.turn_id,
-          segment.id,
-          JSON.stringify({ text: resultText, migratedFromItemId: item.id }),
-          item.provider_item_id,
-          item.completed_at ?? item.updated_at,
-        ],
+        [`conversation_model_history_${nanoid(12)}`, item.conversation_id, sequence, item.turn_id, segment.id, JSON.stringify({ text: resultText, migratedFromItemId: item.id }), item.provider_item_id, item.completed_at ?? item.updated_at],
       );
     }
   }
@@ -1575,11 +1441,7 @@ function inspectPiMigrationSource(db: ZeusDatabase, conversationId: string, sess
   );
 }
 
-function nextMigrationSequence(
-  db: ZeusDatabase,
-  conversationId: string,
-  column: 'model_history_sequence' | 'process_sequence' | 'sync_event_sequence',
-): number {
+function nextMigrationSequence(db: ZeusDatabase, conversationId: string, column: 'model_history_sequence' | 'process_sequence' | 'sync_event_sequence'): number {
   db.execute(`INSERT OR IGNORE INTO conversation_sequence_counters (conversation_id) VALUES (?)`, [conversationId]);
   db.execute(`UPDATE conversation_sequence_counters SET ${column} = ${column} + 1 WHERE conversation_id = ?`, [conversationId]);
   return db.get<Record<typeof column, number>>(`SELECT ${column} FROM conversation_sequence_counters WHERE conversation_id = ?`, [conversationId])![column];
