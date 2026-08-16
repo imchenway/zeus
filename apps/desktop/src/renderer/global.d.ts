@@ -38,6 +38,19 @@ declare global {
   interface Window {
     zeus?: {
       appName: 'Zeus';
+      getConversationStoreMigrationStatus: () => Promise<{
+        phase: 'not_required' | 'preflight' | 'candidate_build' | 'candidate_validation' | 'promotion' | 'promoted_but_validation_failed' | 'completed' | 'failed';
+        migrationId: string;
+        databasePath: string;
+        candidatePath: string | null;
+        safeRollbackPath: string | null;
+        diagnosticPath: string;
+        updatedAt: string;
+        error: { message: string; code: string | null } | null;
+      } | null>;
+      retryConversationStoreMigration: () => Promise<unknown>;
+      openConversationStoreMigrationDiagnostics: () => Promise<void>;
+      exitConversationStoreMigration: () => Promise<void>;
       getLocalServerConfig: () => Promise<DashboardClientOptions>;
       openTaskGitDeliveryWindow: (input: { taskId: string; workspaceId?: string | null }) => Promise<{ opened: true; reused: boolean; taskId: string }>;
       closeTaskGitDeliveryWindow: () => Promise<{ closed: true; taskId: string }>;

@@ -44,6 +44,8 @@ export interface ConfiguredModelDefinition {
   contextWindow: number;
   maxTokens: number;
   speedLabel: 'standard' | 'high_speed' | 'flash' | 'turbo';
+  runtimeAdapter: 'codex_app_server' | 'pi_sdk';
+  protocolFamily: 'openai_responses' | 'openai_completions';
   capability: ConfiguredModelCapability;
 }
 
@@ -93,6 +95,9 @@ export interface SelectableConnectionModel {
   speedLabel: ConfiguredModelDefinition['speedLabel'];
   tools: ModelCapabilityState;
   imageInput: ModelCapabilityState;
+  runtimeAdapter: ConfiguredModelDefinition['runtimeAdapter'];
+  protocolFamily: ConfiguredModelDefinition['protocolFamily'];
+  contextWindow: number;
 }
 
 const thinkingLevels = new Set<PiThinkingLevel>(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
@@ -156,7 +161,8 @@ export function normalizeModelConnection(input: SaveModelConnectionInput, option
   const name = normalizeSingleLine(input.name || template?.name || '', '供应商名称', 80);
   const baseUrl = normalizeModelBaseUrl(input.baseUrl || template?.baseUrl || '');
   const modelsPath = normalizeModelsPath(input.modelsPath ?? template?.modelsPath ?? '/models');
-  const models = normalizeConfiguredModels(input.models ?? [], template?.thinkingFormat ?? 'openai').map((model) => applyAutomaticCapabilityProfile(model, templateId));
+  const routeIdentity = { templateId, baseUrl };
+  const models = normalizeConfiguredModels(input.models ?? [], template?.thinkingFormat ?? 'openai').map((model) => applyModelRoute(applyAutomaticCapabilityProfile(model, templateId), routeIdentity));
   return {
     id: normalizeIdentifier(options.id, '连接 ID'),
     name,
@@ -234,10 +240,16 @@ export function modelConnectionAgentKind(connection: Pick<ModelConnectionRecord,
   return isOfficialDeepSeekResponsesModel(connection, modelId) ? 'codex' : 'pi';
 }
 
+export function modelConnectionRoute(connection: Pick<ModelConnectionRecord, 'templateId' | 'baseUrl'>, modelId: string): Pick<ConfiguredModelDefinition, 'runtimeAdapter' | 'protocolFamily'> {
+  return isOfficialDeepSeekResponsesModel(connection, modelId)
+    ? { runtimeAdapter: 'codex_app_server', protocolFamily: 'openai_responses' }
+    : { runtimeAdapter: 'pi_sdk', protocolFamily: 'openai_completions' };
+}
+
 export function listSelectableConnectionModels(connections: readonly ModelConnectionRecord[]): SelectableConnectionModel[] {
   return connections.flatMap((connection) =>
     connection.models.map((model) => {
-      const agentKind = modelConnectionAgentKind(connection, model.id);
+      const agentKind = model.runtimeAdapter === 'codex_app_server' ? 'codex' : 'pi';
       const tools = agentKind === 'codex' ? 'supported' : model.capability.tools.state;
       const imageInput = agentKind === 'codex' ? 'unsupported' : model.capability.imageInput.state;
       const available = connection.enabled && connection.apiKeyConfigured && model.enabled;
@@ -269,6 +281,9 @@ export function listSelectableConnectionModels(connections: readonly ModelConnec
         speedLabel: model.speedLabel,
         tools,
         imageInput,
+        runtimeAdapter: model.runtimeAdapter,
+        protocolFamily: model.protocolFamily,
+        contextWindow: model.contextWindow,
       };
     }),
   );
@@ -284,6 +299,8 @@ export function createConfiguredModelDefinition(id: string, input: Partial<Confi
       contextWindow: input.contextWindow ?? 128_000,
       maxTokens: input.maxTokens ?? 8_192,
       speedLabel: input.speedLabel ?? inferSpeedLabel(normalizedId),
+      runtimeAdapter: input.runtimeAdapter ?? 'pi_sdk',
+      protocolFamily: input.protocolFamily ?? 'openai_completions',
       capability:
         input.capability ??
         ({
@@ -349,7 +366,13 @@ function normalizeConfiguredModel(value: ConfiguredModelDefinition, fallbackThin
   const maxTokens = normalizePositiveInteger(value.maxTokens, '最大输出 Token', 1, contextWindow);
   const speedLabel = speedLabels.has(value.speedLabel) ? value.speedLabel : inferSpeedLabel(id);
   const capability = normalizeCapability(value.capability, fallbackThinkingFormat);
-  return { id, displayName, enabled: value.enabled !== false, contextWindow, maxTokens, speedLabel, capability };
+  const runtimeAdapter = value.runtimeAdapter === 'codex_app_server' ? 'codex_app_server' : 'pi_sdk';
+  const protocolFamily = value.protocolFamily === 'openai_responses' ? 'openai_responses' : 'openai_completions';
+  return { id, displayName, enabled: value.enabled !== false, contextWindow, maxTokens, speedLabel, runtimeAdapter, protocolFamily, capability };
+}
+
+function applyModelRoute(model: ConfiguredModelDefinition, connection: Pick<ModelConnectionRecord, 'templateId' | 'baseUrl'>): ConfiguredModelDefinition {
+  return { ...model, ...modelConnectionRoute(connection, model.id) };
 }
 
 /** 根据渠道和已知模型档案自动生成能力，未知能力保持未验证。 */
@@ -368,8 +391,7 @@ function applyAutomaticCapabilityProfile(model: ConfiguredModelDefinition, templ
     return {
       ...baseModel,
       displayName: catalogModel.name,
-      contextWindow: catalogModel.contextWindow,
-      maxTokens: catalogModel.maxTokens,
+      // 连接中持久化的窗口与输出限制属于该路由的执行配置；内置目录只补全能力证据，不能静默覆盖用户已经确认的限制。
       capability: {
         ...baseModel.capability,
         reasoning:

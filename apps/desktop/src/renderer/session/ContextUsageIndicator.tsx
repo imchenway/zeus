@@ -1,18 +1,19 @@
 import { type CSSProperties, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { NativeTokenUsageSnapshot } from './sessionTypes.js';
+import type { NativeTokenUsageSnapshot, NativeUnifiedUsageSnapshot } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 
 type ContextUsageSeverity = 'unavailable' | 'normal' | 'warning' | 'danger';
 
-export function ContextUsageIndicator(props: { usage: NativeTokenUsageSnapshot | null; language: SessionUiLanguage }) {
+export function ContextUsageIndicator(props: { usage: NativeTokenUsageSnapshot | null; unifiedUsage: NativeUnifiedUsageSnapshot | null; language: SessionUiLanguage }) {
   const tooltipId = `session-context-usage-${useId().replaceAll(':', '')}`;
   const indicatorRef = useRef<HTMLSpanElement | null>(null);
   const tooltipRef = useRef<HTMLSpanElement | null>(null);
   const [tooltipOpen, setTooltipOpen] = useState(false);
   const [tooltipPosition, setTooltipPosition] = useState<{ left: number; top: number } | null>(null);
-  const used = props.usage?.last.inputTokens ?? null;
-  const capacity = props.usage?.modelContextWindow ?? null;
+  // 圆环只消费最后一次真实模型请求及该请求实际模型的上下文窗口。
+  const used = props.unifiedUsage ? (props.unifiedUsage.latestModelRequest?.inputTokens ?? null) : (props.usage?.last.inputTokens ?? null);
+  const capacity = props.unifiedUsage ? (props.unifiedUsage.latestModelRequest?.contextWindow ?? null) : (props.usage?.modelContextWindow ?? null);
   const available = used !== null && capacity !== null && capacity > 0;
   const ratio = available ? used / capacity : null;
   const progress = ratio === null ? 0 : Math.min(100, Math.max(0, ratio * 100));

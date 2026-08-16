@@ -54,6 +54,10 @@ async function authorizePendingResourceFiles(files: File[], source: 'paste' | 'd
 
 contextBridge.exposeInMainWorld('zeus', {
   appName: 'Zeus',
+  getConversationStoreMigrationStatus: () => ipcRenderer.invoke('zeus:conversation-store-migration:get-status'),
+  retryConversationStoreMigration: () => ipcRenderer.invoke('zeus:conversation-store-migration:retry'),
+  openConversationStoreMigrationDiagnostics: () => ipcRenderer.invoke('zeus:conversation-store-migration:open-diagnostics'),
+  exitConversationStoreMigration: () => ipcRenderer.invoke('zeus:conversation-store-migration:exit'),
   getLocalServerConfig: () => ipcRenderer.invoke('zeus:get-local-server-config'),
   openTaskGitDeliveryWindow: (input: unknown) => ipcRenderer.invoke('zeus:task-git-delivery:open', input),
   closeTaskGitDeliveryWindow: () => ipcRenderer.invoke('zeus:task-git-delivery:close'),

@@ -38,29 +38,6 @@ export const SessionReasoningSummary = memo(function SessionReasoningSummary(pro
   );
 });
 
-export function latestReasoningItemsByTurn(items: readonly NativeSessionItemBuffer[], activeTurnId: string | null = null): NativeSessionItemBuffer[] {
-  const latestKeyByTurn = new Map<string, string>();
-  for (const item of items) {
-    if (isReasoningItem(item) && latestReasoningSummaryText(item)) latestKeyByTurn.set(item.turnId, item.key);
-  }
-  const projectedItems = items.filter((item) => !isReasoningItem(item) || latestKeyByTurn.get(item.turnId) === item.key);
-  if (!activeTurnId) return projectedItems;
-
-  const activeReasoningIndex = projectedItems.findIndex((item) => item.turnId === activeTurnId && isReasoningItem(item));
-  if (activeReasoningIndex < 0) return projectedItems;
-
-  let lastActiveTurnItemIndex = activeReasoningIndex;
-  for (let index = activeReasoningIndex + 1; index < projectedItems.length; index += 1) {
-    if (projectedItems[index]!.turnId === activeTurnId) lastActiveTurnItemIndex = index;
-  }
-  if (lastActiveTurnItemIndex === activeReasoningIndex) return projectedItems;
-
-  const reorderedItems = [...projectedItems];
-  const [activeReasoningItem] = reorderedItems.splice(activeReasoningIndex, 1);
-  reorderedItems.splice(lastActiveTurnItemIndex, 0, activeReasoningItem!);
-  return reorderedItems;
-}
-
 export function latestReasoningSummaryText(item: NativeSessionItemBuffer): string {
   const presentation = recordValue(item.payload.presentation);
   const presentedSegments = stringSegments(presentation.summarySegments);
@@ -78,10 +55,6 @@ export function reasoningSummaryStatus(
   if (state.activeTurnId !== item.turnId) return 'completed';
   if (state.conversationState === 'waiting_approval' || state.conversationState === 'waiting_user_input' || state.conversationState === 'interrupt_confirm') return 'waiting';
   return 'active';
-}
-
-function isReasoningItem(item: NativeSessionItemBuffer): boolean {
-  return item.type.toLocaleLowerCase().replace(/[\s_\-/]+/gu, '') === 'reasoning';
 }
 
 function stringSegments(value: unknown): string[] {
@@ -111,11 +84,11 @@ function reasoningStatusIcon(status: ReasoningSummaryStatus) {
 
 function reasoningStatusLabel(status: ReasoningSummaryStatus, language: SessionUiLanguage): string {
   if (language === 'zh-CN') {
-    if (status === 'active') return '思考中';
-    if (status === 'waiting') return '等待继续';
-    if (status === 'failed') return '思考失败';
-    if (status === 'interrupted') return '思考已中断';
-    return '思考完成';
+    if (status === 'active') return '正在生成思考摘要';
+    if (status === 'waiting') return '思考摘要等待继续';
+    if (status === 'failed') return '思考摘要生成失败';
+    if (status === 'interrupted') return '思考摘要已中断';
+    return '思考摘要';
   }
   if (status === 'active') return 'Thinking';
   if (status === 'waiting') return 'Waiting to continue';

@@ -258,7 +258,7 @@ export function SessionTurnDuration(props: { turn: NativeTurnSnapshot; requests:
 export function SessionTurnProcessDisclosure(props: { language: SessionUiLanguage; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const bodyId = useId();
-  const label = props.language === 'zh-CN' ? (open ? '收起思考过程' : '查看思考过程') : open ? 'Hide thinking process' : 'View thinking process';
+  const label = props.language === 'zh-CN' ? (open ? '收起处理过程' : '查看处理过程') : open ? 'Hide process' : 'View process';
   return (
     <section className="session-turn-process" data-open={open || undefined}>
       <div className="session-turn-process-control">
