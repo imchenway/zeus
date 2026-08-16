@@ -416,6 +416,7 @@ function gitOperationReason(operation: string): string {
 
 async function hydrateRenderer(): Promise<void> {
   if (!window.zeus?.getLocalServerConfig) throw new Error('Electron 本地桥接未就绪');
+  await waitForConversationStoreMigration();
   const config = await window.zeus.getLocalServerConfig();
   const client = createDashboardClient({
     ...config,
@@ -448,6 +449,103 @@ async function hydrateRenderer(): Promise<void> {
     return;
   }
   await renderWithClient(client, config.executionHostTransition);
+}
+
+async function waitForConversationStoreMigration(): Promise<void> {
+  const bridge = window.zeus;
+  if (!bridge?.getConversationStoreMigrationStatus) return;
+  await new Promise((resolve) => setTimeout(resolve, 180));
+  let status = await bridge.getConversationStoreMigrationStatus();
+  if (!status || status.phase === 'completed' || status.phase === 'not_required') return;
+  bridge.reportRendererBootstrapReady?.();
+  while (status && status.phase !== 'completed' && status.phase !== 'not_required') {
+    renderConversationStoreMigration(status);
+    if (status.phase === 'failed' || status.phase === 'promoted_but_validation_failed') await new Promise<void>(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    status = await bridge.getConversationStoreMigrationStatus();
+  }
+  document.getElementById('root')?.replaceChildren();
+}
+
+function renderConversationStoreMigration(status: NonNullable<Awaited<ReturnType<NonNullable<Window['zeus']>['getConversationStoreMigrationStatus']>>>): void {
+  const root = document.getElementById('root');
+  if (!root) return;
+  const shell = document.createElement('main');
+  shell.className = 'zeus-conversation-migration';
+  Object.assign(shell.style, {
+    minHeight: '100%',
+    display: 'grid',
+    placeItems: 'center',
+    padding: '32px',
+    boxSizing: 'border-box',
+    background: '#f7f7f8',
+    color: '#202124',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  });
+  const panel = document.createElement('section');
+  Object.assign(panel.style, { width: 'min(620px, 100%)', padding: '28px', border: '1px solid #dedfe3', borderRadius: '18px', background: '#fff', boxSizing: 'border-box' });
+  const title = document.createElement('h1');
+  const migrationFailed = status.phase === 'failed' || status.phase === 'promoted_but_validation_failed';
+  title.textContent = migrationFailed ? '会话数据升级已安全暂停' : '正在升级会话数据';
+  Object.assign(title.style, { margin: '0 0 12px', fontSize: '22px', lineHeight: '1.3' });
+  const detail = document.createElement('p');
+  detail.textContent =
+    migrationFailed
+      ? status.phase === 'promoted_but_validation_failed'
+        ? `候选库已提升为正式数据库，但提升后校验未完成。请查看诊断并重试收敛状态。${status.error?.message ? `\n${status.error.message}` : ''}`
+        : (status.error?.message ?? '候选库未通过校验，正式数据库没有被替换。')
+      : `${migrationPhaseLabel(status.phase)}。升级完成前，本地服务和正常业务界面不会启动。`;
+  Object.assign(detail.style, { margin: '0', color: '#5f6368', lineHeight: '1.65', whiteSpace: 'pre-wrap' });
+  panel.append(title, detail);
+  if (migrationFailed) {
+    const actions = document.createElement('div');
+    Object.assign(actions.style, { display: 'flex', gap: '10px', marginTop: '22px', flexWrap: 'wrap' });
+    const retry = migrationButton('重试迁移', true);
+    retry.onclick = async () => {
+      retry.disabled = true;
+      retry.textContent = '正在重试…';
+      try {
+        await window.zeus?.retryConversationStoreMigration?.();
+      } catch (error) {
+        retry.disabled = false;
+        retry.textContent = '重试迁移';
+        detail.textContent = error instanceof Error ? error.message : String(error);
+      }
+    };
+    const diagnostics = migrationButton('查看诊断', false);
+    diagnostics.onclick = () => void window.zeus?.openConversationStoreMigrationDiagnostics?.();
+    const exit = migrationButton('退出 Zeus', false);
+    exit.onclick = () => void window.zeus?.exitConversationStoreMigration?.();
+    actions.append(retry, diagnostics, exit);
+    panel.append(actions);
+  }
+  shell.append(panel);
+  root.replaceChildren(shell);
+}
+
+function migrationButton(label: string, primary: boolean): HTMLButtonElement {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = label;
+  Object.assign(button.style, {
+    minHeight: '38px',
+    padding: '0 16px',
+    borderRadius: '10px',
+    border: primary ? '1px solid #202124' : '1px solid #d0d2d7',
+    background: primary ? '#202124' : '#fff',
+    color: primary ? '#fff' : '#202124',
+    cursor: 'pointer',
+  });
+  return button;
+}
+
+function migrationPhaseLabel(phase: string): string {
+  if (phase === 'preflight') return '正在检查磁盘空间、权限和数据库锁';
+  if (phase === 'candidate_build') return '正在构建候选库和安全回退库';
+  if (phase === 'candidate_validation') return '正在逐项校验迁移映射和数据库一致性';
+  if (phase === 'promotion') return '正在同卷原子提升候选库';
+  if (phase === 'promoted_but_validation_failed') return '候选库已经提升，正在等待提升后校验收敛';
+  return '正在准备会话数据';
 }
 
 hydrateRenderer().catch((error: unknown) => {

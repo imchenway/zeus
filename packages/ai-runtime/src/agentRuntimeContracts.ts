@@ -71,6 +71,12 @@ export interface StartAgentRunInput {
   model?: AgentModelIdentity;
   thinkingLevel?: string;
   images?: AgentImageInput[];
+  /** Pi 在进入 agent run 前同步返回预检结论；false 表示请求不会写给模型。 */
+  preflightResult?: (accepted: boolean) => void;
+  /** 只在预检成功时同步执行，回调抛错必须阻止 agent run。 */
+  durableTransactionSync?: (acceptance: AcceptedAgentRun) => void;
+  /** 同步持久接纳完成后、Pi 可能开始 Provider 写入前的边界通知。 */
+  providerWriteMayStart?: () => void;
 }
 
 export interface SteerAgentRunInput extends StartAgentRunInput {
@@ -97,6 +103,26 @@ export interface ReadAgentSessionInput {
 export interface AcceptedAgentRun {
   nativeRunId: string;
   acceptedAt: string;
+}
+
+export interface CompactAgentSessionInput {
+  session: AgentSessionIdentity;
+  thinkingLevel?: string;
+  customInstructions: string;
+}
+
+export interface CompactAgentSessionResult {
+  summary: string;
+  tokensBefore: number;
+  estimatedTokensAfter: number | null;
+  usage: {
+    inputTokens: number | null;
+    cachedInputTokens: number | null;
+    cacheWriteInputTokens: number | null;
+    outputTokens: number | null;
+    reasoningOutputTokens: number | null;
+    totalTokens: number | null;
+  };
 }
 
 export interface AgentSessionSnapshot {
@@ -136,6 +162,8 @@ export interface AgentRuntimeDriver {
   steerRun(input: SteerAgentRunInput): Promise<AcceptedAgentRun>;
 
   followUp(input: FollowUpAgentRunInput): Promise<AcceptedAgentRun>;
+
+  compactSession(input: CompactAgentSessionInput): Promise<CompactAgentSessionResult>;
 
   interruptRun(input: InterruptAgentRunInput): Promise<void>;
 

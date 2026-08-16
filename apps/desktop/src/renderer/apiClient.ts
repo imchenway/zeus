@@ -1696,6 +1696,8 @@ export interface DashboardClient {
   sendNativeMessage: (projectId: string, conversationId: string, input: SendNativeMessageRequest) => Promise<NativeOperationAcceptance>;
   askNativeSideChat: (projectId: string, conversationId: string, input: { selectedText: string; question: string }) => Promise<{ answer: string; status: 'completed' | 'interrupted' }>;
   editNativeQueuedSubmission: (projectId: string, conversationId: string, submissionId: string, content: string) => Promise<NativeQueueSnapshot>;
+  retryNativeQueuedSubmission: (projectId: string, conversationId: string, submissionId: string) => Promise<NativeQueueSnapshot>;
+  rerouteNativeQueuedSubmission: (projectId: string, conversationId: string, submissionId: string, settings: NativeNextTurnSettings) => Promise<NativeQueueSnapshot>;
   deleteNativeQueuedSubmission: (projectId: string, conversationId: string, submissionId: string) => Promise<NativeQueueSnapshot>;
   sendNativeQueuedNow: (projectId: string, conversationId: string, submissionId: string) => Promise<NativeOperationAcceptance>;
   interruptNativeTurn: (projectId: string, conversationId: string, turnId: string) => Promise<NativeOperationAcceptance>;
@@ -2275,6 +2277,13 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
       request<NativeQueueSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/queue/${encodeURIComponent(submissionId)}`, {
         method: 'PATCH',
         body: JSON.stringify({ content }),
+      }),
+    retryNativeQueuedSubmission: (projectId, conversationId, submissionId) =>
+      request<NativeQueueSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/queue/${encodeURIComponent(submissionId)}/retry`, { method: 'POST' }),
+    rerouteNativeQueuedSubmission: (projectId, conversationId, submissionId, settings) =>
+      request<NativeQueueSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/queue/${encodeURIComponent(submissionId)}/reroute`, {
+        method: 'POST',
+        body: JSON.stringify(settings),
       }),
     deleteNativeQueuedSubmission: (projectId, conversationId, submissionId) =>
       request<NativeQueueSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/queue/${encodeURIComponent(submissionId)}`, { method: 'DELETE' }),

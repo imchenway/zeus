@@ -4,6 +4,7 @@ import { EventEmitter } from 'node:events';
 import { createConnection } from 'node:net';
 import { isAbsolute, join } from 'node:path';
 import { WebSocket, type RawData } from 'ws';
+import type { CodexBootstrapAdditionalContext } from '@zeus/shared';
 import {
   CodexJsonLineDecoder,
   type CodexWireId,
@@ -36,7 +37,7 @@ export interface CodexAppServerReadable {
 
 export interface CodexAppServerProcess {
   readonly pid?: number;
-  stdin: { write(chunk: string | Uint8Array): boolean };
+  stdin: { write(chunk: string | Uint8Array, callback?: (error?: Error | null) => void): boolean };
   stdout: CodexAppServerReadable;
   stderr: CodexAppServerReadable;
   on(event: 'exit' | 'error', listener: (...args: unknown[]) => void): this;
@@ -216,7 +217,11 @@ export interface CodexTurnStartInput {
   threadId: string;
   clientUserMessageId?: string;
   input: Array<Record<string, unknown>>;
-  additionalContext?: Record<string, unknown>;
+  additionalContext?: CodexBootstrapAdditionalContext;
+  /** 仅供适配器确认 JSON-RPC 帧已经成功写入传输层，不进入线协议。 */
+  requestWritten?: () => void;
+  /** 仅供运行管理器在进程重启后恢复外部 Responses Provider，不进入 turn/start 线协议。 */
+  responsesRuntime?: CodexResponsesRuntime;
   collaborationMode?: { mode: 'plan' | 'default'; settings: { model: string; reasoning_effort: string | null; developer_instructions: string | null } };
   model?: string;
   effort?: string;
@@ -226,6 +231,11 @@ export interface CodexTurnStartInput {
   approvalPolicy?: string;
   approvalsReviewer?: string;
   sandboxPolicy?: CodexSandboxPolicy;
+}
+
+/** 产品层沿用 Pi 的 `off` 术语；Codex Responses 线协议对应值是 `none`。 */
+export function toCodexWireReasoningEffort(effort: string | null | undefined): string | null | undefined {
+  return effort === 'off' ? 'none' : effort;
 }
 
 export interface CodexTurnSteerInput {
@@ -357,7 +367,14 @@ export interface CodexRemoteControlClientsPage {
 }
 
 export interface CodexAppServerManager {
-  ensureReady(input: { commandPath: string; externalAgentHome?: string; remoteControl?: boolean; providerEnvironment?: Record<string, string> }): Promise<CodexCapabilitiesSnapshot>;
+  ensureReady(input: {
+    commandPath: string;
+    externalAgentHome?: string;
+    remoteControl?: boolean;
+    providerEnvironment?: Record<string, string>;
+    /** 世代管理器用于在进程启动前安装外部 Responses Provider；底层管理器不把它写入 RPC。 */
+    responsesProvider?: CodexResponsesModelProvider | null;
+  }): Promise<CodexCapabilitiesSnapshot>;
   /** 在运行身份不变时也激活新世代；多世代管理器保留旧活动轮次并让其自然排空。 */
   activateFreshGeneration?(input: { commandPath: string; externalAgentHome?: string; remoteControl?: boolean; providerEnvironment?: Record<string, string> }): Promise<CodexCapabilitiesSnapshot>;
   readAccount(input?: { refreshToken?: boolean }): Promise<CodexAccountSnapshot>;
@@ -513,7 +530,8 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       ...(codexHome === null ? {} : { CODEX_HOME: codexHome }),
       ...(externalAgentHome === null ? {} : { ZEUS_CODEX_EXTERNAL_AGENT_HOME: externalAgentHome }),
     };
-    const spawned = remoteControlTransport ? spawnRemoteControlCodexAppServer(command, { env }) : spawn(command, ['app-server', ...(options.appServerFlags ?? []), '--listen', 'stdio://'], { env });
+    // `-c/--config` 是 Codex 根命令参数，必须位于 app-server 子命令之前。
+    const spawned = remoteControlTransport ? spawnRemoteControlCodexAppServer(command, { env }) : spawn(command, [...(options.appServerFlags ?? []), 'app-server', '--listen', 'stdio://'], { env });
     trackProcessExit(spawned);
     child = spawned;
     spawned.stdout.on('data', (chunk) => {
@@ -642,12 +660,14 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     void readyPromise.catch(() => undefined);
   }
 
-  function write(message: unknown): void {
+  function write(message: unknown, completed?: (error?: Error) => void): void {
     if (child === null) throw managerError('ZEUS_CODEX_NOT_READY', 'Codex app-server process is unavailable.');
-    child.stdin.write(`${JSON.stringify(message)}\n`);
+    child.stdin.write(`${JSON.stringify(message)}\n`, (error) => {
+      completed?.(error ?? undefined);
+    });
   }
 
-  function rpc(generationId: string, method: string, params: unknown): Promise<unknown> {
+  function rpc(generationId: string, method: string, params: unknown, input: { requestWritten?: () => void } = {}): Promise<unknown> {
     if (preparingForShutdown || state.type === 'closed') return Promise.reject(managerError('ZEUS_CODEX_CLOSED', 'Codex app-server manager is closing.'));
     if (generationId !== currentGenerationId()) return Promise.reject(managerError('ZEUS_CODEX_STALE_GENERATION', 'Codex app-server generation is stale.'));
     const id = `${generationId}:${++requestSequence}`;
@@ -658,7 +678,18 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       }, requestTimeoutMs);
       pendingRequests.set(pendingKey(generationId, id), { generationId, resolve, reject, timeout });
       try {
-        write({ id, method, params });
+        write({ id, method, params }, (error) => {
+          if (!error) {
+            input.requestWritten?.();
+            return;
+          }
+          const key = pendingKey(generationId, id);
+          const pending = pendingRequests.get(key);
+          if (!pending) return;
+          clearTimeout(pending.timeout);
+          pendingRequests.delete(key);
+          pending.reject(error);
+        });
       } catch (error) {
         clearTimeout(timeout);
         pendingRequests.delete(pendingKey(generationId, id));
@@ -693,7 +724,13 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       pendingRequests.delete(key);
       clearTimeout(pending.timeout);
       if (message.error) {
-        pending.reject(Object.assign(new Error(message.error.message), { code: message.error.code, data: message.error.data }));
+        pending.reject(
+          Object.assign(new Error(message.error.message), {
+            code: message.error.code,
+            data: message.error.data,
+            dispatchDisposition: 'runtime_rejected' as const,
+          }),
+        );
       } else {
         pending.resolve(message.result);
       }
@@ -1021,12 +1058,23 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     async startTurn(input) {
       const capabilities = await awaitCapabilities();
       const modelName = input.model ?? threadModels.get(input.threadId);
-      const responsesProvider = threadResponsesProviders.get(input.threadId);
+      const responsesProvider = input.responsesRuntime ? normalizeResponsesProvider(input.responsesRuntime.provider) : threadResponsesProviders.get(input.threadId);
+      if (responsesProvider) threadResponsesProviders.set(input.threadId, responsesProvider);
       const model = !responsesProvider && modelName ? requireModel(capabilities, modelName) : null;
-      if (input.effort !== undefined && !responsesProvider) {
+      const wireEffort = toCodexWireReasoningEffort(input.effort);
+      const wireCollaborationMode = input.collaborationMode
+        ? {
+            ...input.collaborationMode,
+            settings: {
+              ...input.collaborationMode.settings,
+              reasoning_effort: toCodexWireReasoningEffort(input.collaborationMode.settings.reasoning_effort) ?? null,
+            },
+          }
+        : undefined;
+      if (typeof wireEffort === 'string' && !responsesProvider) {
         const supportedEfforts = model?.supportedReasoningEfforts ?? [];
-        if (!model || !supportedEfforts.includes(input.effort)) {
-          throw Object.assign(new Error(`Configured Codex effort is unavailable: ${input.effort}`), {
+        if (!model || !supportedEfforts.includes(wireEffort)) {
+          throw Object.assign(new Error(`Configured Codex effort is unavailable: ${wireEffort}`), {
             code: 'ZEUS_CODEX_EFFORT_UNAVAILABLE',
             supportedEfforts: [...supportedEfforts],
           });
@@ -1036,9 +1084,9 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
         if (!model) throw managerError('ZEUS_CODEX_MODEL_UNAVAILABLE', 'Codex service tier validation requires a known model.');
         validateServiceTier(model, input.serviceTier);
       }
-      if (input.collaborationMode && !responsesProvider) {
-        const collaborationModel = requireModel(capabilities, input.collaborationMode.settings.model);
-        const collaborationEffort = input.collaborationMode.settings.reasoning_effort;
+      if (wireCollaborationMode && !responsesProvider) {
+        const collaborationModel = requireModel(capabilities, wireCollaborationMode.settings.model);
+        const collaborationEffort = wireCollaborationMode.settings.reasoning_effort;
         if (collaborationEffort !== null && !collaborationModel.supportedReasoningEfforts.includes(collaborationEffort)) {
           throw Object.assign(new Error(`Configured Codex effort is unavailable: ${collaborationEffort}`), {
             code: 'ZEUS_CODEX_EFFORT_UNAVAILABLE',
@@ -1056,9 +1104,9 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
             clientUserMessageId: input.clientUserMessageId,
             input: input.input,
             additionalContext: input.additionalContext,
-            collaborationMode: input.collaborationMode,
+            collaborationMode: wireCollaborationMode,
             model: input.model,
-            effort: input.effort,
+            effort: wireEffort,
             serviceTier: input.serviceTier,
             summary: input.summary,
             cwd: input.cwd,
@@ -1066,6 +1114,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
             approvalsReviewer: input.approvalsReviewer,
             sandboxPolicy,
           }),
+          { requestWritten: input.requestWritten },
         ),
       );
       const turn = parseTurn(response.turn, input.threadId);

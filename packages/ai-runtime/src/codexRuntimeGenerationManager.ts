@@ -15,6 +15,7 @@ interface RuntimeEntry {
   externalAgentHome: string | null;
   remoteControl: boolean;
   providerEnvironment: Record<string, string>;
+  responsesProvider: CodexResponsesModelProvider | null;
   capabilities: CodexCapabilitiesSnapshot;
   threads: Set<string>;
   activeTurns: Map<string, string>;
@@ -24,6 +25,39 @@ interface RuntimeEntry {
   unsubscribe: () => void;
   unsubscribeExternalImport: () => void;
   closing: boolean;
+}
+
+type RuntimeActivationInput = {
+  commandPath: string;
+  externalAgentHome?: string;
+  remoteControl?: boolean;
+  providerEnvironment?: Record<string, string>;
+  responsesProvider?: CodexResponsesModelProvider | null;
+};
+
+function sameResponsesProvider(left: CodexResponsesModelProvider | null, right: CodexResponsesModelProvider | null): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+/** app-server 重启后仍需在进程级配置中声明外部 Responses Provider，原生 thread 才能继续运行。 */
+function responsesProviderFlags(provider: CodexResponsesModelProvider | null): string[] {
+  if (!provider) return [];
+  if (!/^[a-z0-9_-]{1,100}$/iu.test(provider.id) || !/^ZEUS_MODEL_CONNECTION_[A-Z0-9_]+_API_KEY$/u.test(provider.envKey)) {
+    throw managerError('ZEUS_CODEX_PROVIDER_INVALID', 'Responses 自定义 Provider 身份无效。');
+  }
+  const prefix = `model_providers.${provider.id}`;
+  return [
+    '-c',
+    `${prefix}.name=${JSON.stringify(provider.name)}`,
+    '-c',
+    `${prefix}.base_url=${JSON.stringify(provider.baseUrl)}`,
+    '-c',
+    `${prefix}.env_key=${JSON.stringify(provider.envKey)}`,
+    '-c',
+    `${prefix}.wire_api="responses"`,
+    '-c',
+    `${prefix}.requires_openai_auth=false`,
+  ];
 }
 
 const supportedServerRequestMethods = new Set([
@@ -44,6 +78,7 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
   const entriesByGeneration = new Map<string, RuntimeEntry>();
   const entriesByThread = new Map<string, RuntimeEntry>();
   const responsesProvidersByThread = new Map<string, CodexResponsesModelProvider>();
+  const responsesProviderEnvironmentsByThread = new Map<string, Record<string, string>>();
   const listeners = new Set<(event: CodexAppServerEvent) => void>();
   const externalImportListeners = new Set<(event: ExternalAgentImportEvent) => void>();
   let activeEntry: RuntimeEntry | null = null;
@@ -188,11 +223,12 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
     }
   }
 
-  async function activate(input: { commandPath: string; externalAgentHome?: string; remoteControl?: boolean; providerEnvironment?: Record<string, string> }, forceFreshGeneration = false): Promise<CodexCapabilitiesSnapshot> {
+  async function activate(input: RuntimeActivationInput, forceFreshGeneration = false): Promise<CodexCapabilitiesSnapshot> {
     if (preparingForShutdown) throw managerError('ZEUS_CODEX_CLOSED', 'Codex runtime generation manager is closing.');
     const requestedHome = input.externalAgentHome ?? null;
     const requestedRemoteControl = input.remoteControl ?? remoteControlEnabled;
     const requestedProviderEnvironment = input.providerEnvironment ?? activeEntry?.providerEnvironment ?? {};
+    const requestedResponsesProvider = input.responsesProvider === undefined ? (activeEntry?.responsesProvider ?? null) : input.responsesProvider;
     const normalizedInput = { ...input, remoteControl: requestedRemoteControl, providerEnvironment: requestedProviderEnvironment };
     if (
       !forceFreshGeneration &&
@@ -200,7 +236,8 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
       activeEntry.commandPath === input.commandPath &&
       activeEntry.externalAgentHome === requestedHome &&
       activeEntry.remoteControl === requestedRemoteControl &&
-      sameStringRecord(activeEntry.providerEnvironment, requestedProviderEnvironment)
+      sameStringRecord(activeEntry.providerEnvironment, requestedProviderEnvironment) &&
+      sameResponsesProvider(activeEntry.responsesProvider, requestedResponsesProvider)
     ) {
       const capabilities = await activeEntry.manager.ensureReady(normalizedInput);
       activeEntry.capabilities = capabilities;
@@ -212,6 +249,7 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
       ...(options.accountFingerprintSalt ? { accountFingerprintSalt: options.accountFingerprintSalt } : {}),
       ...(options.codexHome ? { codexHome: options.codexHome } : {}),
       ...(options.runtimeEnvironment ? { runtimeEnvironment: options.runtimeEnvironment } : {}),
+      ...(requestedResponsesProvider ? { appServerFlags: responsesProviderFlags(requestedResponsesProvider) } : {}),
     });
     const provisional: RuntimeEntry = {
       manager,
@@ -219,6 +257,7 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
       externalAgentHome: requestedHome,
       remoteControl: requestedRemoteControl,
       providerEnvironment: { ...requestedProviderEnvironment },
+      responsesProvider: requestedResponsesProvider,
       capabilities: {
         generationId: '',
         initializedAt: '',
@@ -274,7 +313,7 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
     }
   }
 
-  function enqueueActivation(input: { commandPath: string; externalAgentHome?: string; remoteControl?: boolean; providerEnvironment?: Record<string, string> }, forceFreshGeneration = false): Promise<CodexCapabilitiesSnapshot> {
+  function enqueueActivation(input: RuntimeActivationInput, forceFreshGeneration = false): Promise<CodexCapabilitiesSnapshot> {
     const activation = activationChain.then(() => activate(input, forceFreshGeneration));
     activationChain = activation.catch(() => undefined);
     return activation;
@@ -316,12 +355,14 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
           ...(current.externalAgentHome ? { externalAgentHome: current.externalAgentHome } : {}),
           remoteControl: current.remoteControl,
           providerEnvironment: input.responsesRuntime.environment,
+          responsesProvider: input.responsesRuntime.provider,
         });
       }
       const entry = requireActiveEntry();
       const thread = await entry.manager.startThread(input);
       bindThread(entry, thread.id);
       if (input.responsesRuntime) responsesProvidersByThread.set(thread.id, input.responsesRuntime.provider);
+      if (input.responsesRuntime) responsesProviderEnvironmentsByThread.set(thread.id, { ...input.responsesRuntime.environment });
       return thread;
     },
     async resumeThread(input) {
@@ -334,12 +375,14 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
           ...(current.externalAgentHome ? { externalAgentHome: current.externalAgentHome } : {}),
           remoteControl: current.remoteControl,
           providerEnvironment: input.responsesRuntime.environment,
+          responsesProvider: input.responsesRuntime.provider,
         });
       }
       const active = requireActiveEntry();
       const thread = await active.manager.resumeThread(input);
       bindThread(active, thread.id);
       if (input.responsesRuntime) responsesProvidersByThread.set(thread.id, input.responsesRuntime.provider);
+      if (input.responsesRuntime) responsesProviderEnvironmentsByThread.set(thread.id, { ...input.responsesRuntime.environment });
       await syncThreadGoalPin(active, thread.id);
       if (mapped && mapped !== active) void tryDrain(mapped);
       return thread;
@@ -349,6 +392,7 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
       await entry.manager.archiveThread(input);
       entriesByThread.delete(input.threadId);
       responsesProvidersByThread.delete(input.threadId);
+      responsesProviderEnvironmentsByThread.delete(input.threadId);
       entry.threads.delete(input.threadId);
       void tryDrain(entry);
     },
@@ -392,6 +436,29 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
       return routeThread(input.threadId).manager.listThreadTurns(input);
     },
     async startTurn(input) {
+      const responsesProvider = input.responsesRuntime?.provider ?? responsesProvidersByThread.get(input.threadId);
+      const responsesEnvironment = input.responsesRuntime?.environment ?? responsesProviderEnvironmentsByThread.get(input.threadId);
+      if (input.responsesRuntime) {
+        responsesProvidersByThread.set(input.threadId, input.responsesRuntime.provider);
+        responsesProviderEnvironmentsByThread.set(input.threadId, { ...input.responsesRuntime.environment });
+      }
+      const current = requireActiveEntry();
+      if (responsesProvider && responsesEnvironment && !sameResponsesProvider(current.responsesProvider, responsesProvider)) {
+        await enqueueActivation({
+          commandPath: current.commandPath,
+          ...(current.externalAgentHome ? { externalAgentHome: current.externalAgentHome } : {}),
+          remoteControl: current.remoteControl,
+          providerEnvironment: responsesEnvironment,
+          responsesProvider,
+        });
+        const active = requireActiveEntry();
+        await active.manager.resumeThread({
+          threadId: input.threadId,
+          ...(input.cwd ? { cwd: input.cwd } : {}),
+          responsesRuntime: { provider: responsesProvider, environment: responsesEnvironment },
+        });
+        bindThread(active, input.threadId);
+      }
       const entry = await migrateThreadToActive(input.threadId, input.cwd);
       const turn = await entry.manager.startTurn(input);
       const identity = turnKey(input.threadId, turn.id);
@@ -510,6 +577,7 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
         entriesByGeneration.clear();
         entriesByThread.clear();
         responsesProvidersByThread.clear();
+        responsesProviderEnvironmentsByThread.clear();
         listeners.clear();
         externalImportListeners.clear();
         activeEntry = null;

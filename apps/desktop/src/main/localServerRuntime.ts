@@ -5,7 +5,15 @@ import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createCodexRuntimeGenerationManager } from '@zeus/ai-runtime';
-import { type BrowserAutomationPort, createZeusDataLayout, hasCodexFinalizationOwnershipClaim, type RunningZeusLocalServer, startZeusLocalServer, type ZeusDataLayout } from '@zeus/local-server';
+import {
+  type BrowserAutomationPort,
+  createZeusDataLayout,
+  hasCodexFinalizationOwnershipClaim,
+  prepareUnifiedConversationStoreMigration,
+  type RunningZeusLocalServer,
+  startZeusLocalServer,
+  type ZeusDataLayout,
+} from '@zeus/local-server';
 import { startDesktopBrowserAutomationBridge } from './browserAutomationBridge.js';
 import {
   createExecutionHostControlClient,
@@ -70,6 +78,8 @@ export interface StartDesktopLocalServerOptions {
   currentAppVersion?: () => string;
   apiToken?: string;
   telegramToken?: string;
+  /** 仅供已完成同一轮旧宿主清退与迁移预检的内嵌启动链使用。 */
+  conversationStoreMigrationPrepared?: boolean;
   telegramAllowedUserIds?: number[];
   codexNativeEnabled?: boolean;
   codexLegacyImportRoot?: string;
@@ -415,8 +425,16 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
  * 独立宿主上的活动工作会先停止；这是移除后台常驻能力后的明确退出语义。
  */
 export async function startEmbeddedDesktopLocalServer(options: StartDesktopLocalServerOptions): Promise<DesktopLocalServerRuntime> {
-  await retireDetachedExecutionHost(options.userDataPath);
-  return startOwnedDesktopLocalServer(options);
+  await prepareDesktopConversationStoreMigration(options.userDataPath, options.dataLayout);
+  return startOwnedDesktopLocalServer({ ...options, conversationStoreMigrationPrepared: true });
+}
+
+/** 首次启动和维护页重试共享完全相同的旧宿主清退与数据库预检顺序。 */
+export async function prepareDesktopConversationStoreMigration(userDataPath: string, providedLayout?: ZeusDataLayout) {
+  const dataLayout = providedLayout ?? createZeusDataLayout(userDataPath);
+  return prepareUnifiedConversationStoreMigration(dataLayout, {
+    preflightGuard: () => retireDetachedExecutionHost(userDataPath),
+  });
 }
 
 /** Local Server、SQLite 与 Codex app-server 由当前进程直接持有。 */
@@ -436,6 +454,8 @@ export async function startOwnedDesktopLocalServer(options: StartDesktopLocalSer
   let closePromise: Promise<void> | undefined;
   let shutdownOwner: RunningZeusLocalServer | undefined;
   let shutdownOwnerFinalized = false;
+  // 旧宿主已由调用链精确清退；业务 HTTP 服务启动前先完成候选库构建、校验和同卷提升。
+  if (!options.conversationStoreMigrationPrepared) await prepareUnifiedConversationStoreMigration(dataLayout);
   await writeDesktopLocalAppConfig({
     configPath,
     userDataPath: options.userDataPath,

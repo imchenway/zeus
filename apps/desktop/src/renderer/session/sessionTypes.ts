@@ -214,7 +214,7 @@ export type NativeConversationRunState =
   | { type: 'dispatching'; submissionId: string }
   | { type: 'active'; turnId: string; phase: 'prework' | 'final_answer' }
   | { type: 'waiting'; turnId: string; requestId: string; reason: 'approval' | 'user_input' }
-  | { type: 'paused'; reason: 'interrupted' | 'transport_unavailable' | 'provider_archived' | 'recovery_required' | 'conflict_preparing' | 'conflict_preparation_failed' };
+  | { type: 'paused'; reason: 'interrupted' | 'transport_unavailable' | 'provider_archived' | 'recovery_required' | 'runtime_rejected' | 'conflict_preparing' | 'conflict_preparation_failed' };
 
 export type NativeQueueWaitReason =
   | 'current_turn'
@@ -227,6 +227,7 @@ export type NativeQueueWaitReason =
   | 'transport_unavailable'
   | 'provider_archived'
   | 'recovery_required'
+  | 'runtime_rejected'
   | 'conflict_preparing'
   | 'conflict_preparation_failed'
   | 'user_confirmation'
@@ -285,6 +286,36 @@ export interface NativeNextTurnSettings {
 
 export type NativeTokenUsageSnapshot = SharedNativeTokenUsageSnapshot;
 
+export interface NativeNullableUsageBreakdown {
+  inputTokens: number | null;
+  cachedInputTokens: number | null;
+  cacheWriteInputTokens: number | null;
+  outputTokens: number | null;
+  reasoningOutputTokens: number | null;
+  totalTokens: number | null;
+  estimatedUsd: number | null;
+  complete: boolean;
+}
+
+export interface NativeModelRequestUsageObservation extends Omit<NativeNullableUsageBreakdown, 'complete'> {
+  id: string;
+  turnId: string | null;
+  segmentId: string;
+  requestKind: 'inference' | 'tool_continuation' | 'retry' | 'context_compaction';
+  requestSequence: number;
+  modelId: string;
+  contextWindow: number | null;
+  usageComplete: boolean;
+  occurredAt: string;
+}
+
+export interface NativeUnifiedUsageSnapshot {
+  conversationTotal: NativeNullableUsageBreakdown;
+  turnTotal: NativeNullableUsageBreakdown;
+  latestModelRequest: NativeModelRequestUsageObservation | null;
+  preflightEstimate: null;
+}
+
 export interface NativeProviderValueSnapshot {
   generationId?: string;
   sequence?: number;
@@ -300,6 +331,18 @@ export interface NativeConversationExecutionContext {
 export type NativeConversationStage = 'created' | 'connecting' | 'queued' | 'running' | 'waiting_user' | 'waiting_approval' | 'completed' | 'failed' | 'paused' | 'ready' | 'archived';
 
 export interface NativeConversationSnapshot {
+  conversationSchemaGeneration: '2026-08-16-unified-conversation-segments';
+  throughEventSeq: number;
+  productConversation: Record<string, unknown>;
+  openSegment: Record<string, unknown> | null;
+  segments: Record<string, unknown>[];
+  composerPreset: Record<string, unknown>;
+  executionQueue: NativeQueueSnapshot;
+  process: Record<string, unknown>[];
+  usage: NativeUnifiedUsageSnapshot;
+  contextState: Record<string, unknown>;
+  persistentWarnings: Record<string, unknown>[];
+  configurationEvidence: Record<string, unknown>[];
   id: string;
   projectId: string;
   taskId: string | null;
@@ -1118,6 +1161,7 @@ export interface NativeSessionState {
   planImplementationRequests: NativePlanImplementationRequest[];
   providerSettings: NativeProviderSettingsSnapshot | null;
   tokenUsage: NativeTokenUsageSnapshot | null;
+  unifiedUsage: NativeUnifiedUsageSnapshot | null;
   rateLimits: NativeProviderValueSnapshot | null;
   mcpStartup: NativeProviderValueSnapshot | null;
   seenEventIds: Record<string, true>;

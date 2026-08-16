@@ -31,6 +31,7 @@ import {
 export const reconnectBackoffMs = [250, 500, 1_000, 2_000, 5_000] as const;
 // 同一个会话项的增量按一帧窗口合并，兼顾 Markdown 成本与首字可见延迟。
 const RENDER_DELTA_COALESCE_MS = 16;
+const CONVERSATION_SCHEMA_GENERATION = '2026-08-16-unified-conversation-segments' as const;
 
 export function reconnectDelayMs(attempt: number): number {
   return reconnectBackoffMs[Math.min(Math.max(0, Math.floor(attempt) - 1), reconnectBackoffMs.length - 1)]!;
@@ -67,6 +68,8 @@ export interface SessionControllerClient {
   sendNativeMessage(projectId: string, conversationId: string, input: SendNativeMessageRequest): Promise<NativeOperationAcceptance>;
   askNativeSideChat?(projectId: string, conversationId: string, input: { selectedText: string; question: string }): Promise<{ answer: string; status: 'completed' | 'interrupted' }>;
   editNativeQueuedSubmission(projectId: string, conversationId: string, submissionId: string, content: string): Promise<NativeQueueSnapshot>;
+  retryNativeQueuedSubmission(projectId: string, conversationId: string, submissionId: string): Promise<NativeQueueSnapshot>;
+  rerouteNativeQueuedSubmission(projectId: string, conversationId: string, submissionId: string, settings: NativeNextTurnSettings): Promise<NativeQueueSnapshot>;
   deleteNativeQueuedSubmission(projectId: string, conversationId: string, submissionId: string): Promise<NativeQueueSnapshot>;
   reorderNativeQueue(projectId: string, conversationId: string, orderedSubmissionIds: string[]): Promise<NativeQueueSnapshot>;
   sendNativeQueuedNow(projectId: string, conversationId: string, submissionId: string): Promise<NativeOperationAcceptance>;
@@ -128,6 +131,8 @@ export interface SessionController {
 
   send(delivery: 'queue' | 'steer_now', expectedTurnId?: string, settings?: NativeTurnSettingsSelection): Promise<NativeOperationAcceptance | void>;
   editQueuedSubmission(submissionId: string, content: string): Promise<NativeQueueSnapshot>;
+  retryQueuedSubmission(submissionId: string): Promise<NativeQueueSnapshot>;
+  rerouteQueuedSubmission(submissionId: string, settings: NativeNextTurnSettings): Promise<NativeQueueSnapshot>;
   deleteQueuedSubmission(submissionId: string): Promise<NativeQueueSnapshot>;
   reorderQueue(orderedSubmissionIds: string[]): Promise<NativeQueueSnapshot>;
   sendQueuedNow(submissionId: string): Promise<NativeOperationAcceptance>;
@@ -330,6 +335,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
   const requestsAwaitingDetails = new Set<string>();
   const resolvedRequestIds = new Set<string>();
   let targetedHydrationBuffer: NativeConversationEvent[] | null = null;
+  let lastAppliedSyncEventSequence = 0;
   const pendingRenderDeltas = new Map<string, NativeConversationEvent>();
   let renderDeltaTimer: ReturnType<typeof setTimeout> | null = null;
   let activeOperation: { key: string; promise: Promise<unknown> } | null = null;
@@ -479,6 +485,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
   }
 
   async function applyAuthoritativeSnapshot(snapshot: NativeConversationSnapshot): Promise<void> {
+    if (snapshot.conversationSchemaGeneration !== CONVERSATION_SCHEMA_GENERATION || !Number.isSafeInteger(snapshot.throughEventSeq) || snapshot.throughEventSeq < 0) {
+      throw new Error('Zeus Renderer 与本地服务的会话结构代次不匹配，已拒绝猜测旧新字段。');
+    }
+    lastAppliedSyncEventSequence = snapshot.throughEventSeq;
     dispatch({ type: 'snapshot_hydrated', snapshot: withoutResolvedRequests(snapshot) });
     await recoverManualConfirmationQueue(snapshot.queue);
     retireRecoveredBrowserCommentMarks(snapshot);
@@ -523,6 +533,9 @@ export function createSessionController(options: CreateSessionControllerOptions)
 
   function applyEventImmediately(event: NativeConversationEvent): void {
     if (!isEventForController(event)) return;
+    const syncSequence = event.payload.sequence;
+    if (!Number.isSafeInteger(syncSequence) || syncSequence <= lastAppliedSyncEventSequence) return;
+    lastAppliedSyncEventSequence = syncSequence;
     const requestId = eventRequestId(event);
     if (event.type === 'conversation.request.resolved' && requestId) {
       markRequestResolved(requestId, event);
@@ -1478,6 +1491,20 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return runOperation(
         `queue:edit:${submissionId}:${JSON.stringify(content)}`,
         () => options.client.editNativeQueuedSubmission(options.projectId, options.conversationId, submissionId, content),
+        (queue) => applyAuthoritativeQueue(queue),
+      );
+    },
+    retryQueuedSubmission(submissionId) {
+      return runOperation(
+        `queue:retry:${submissionId}`,
+        () => options.client.retryNativeQueuedSubmission(options.projectId, options.conversationId, submissionId),
+        (queue) => applyAuthoritativeQueue(queue),
+      );
+    },
+    rerouteQueuedSubmission(submissionId, settings) {
+      return runOperation(
+        `queue:reroute:${submissionId}:${JSON.stringify(settings)}`,
+        () => options.client.rerouteNativeQueuedSubmission(options.projectId, options.conversationId, submissionId, settings),
         (queue) => applyAuthoritativeQueue(queue),
       );
     },

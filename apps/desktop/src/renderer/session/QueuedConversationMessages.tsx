@@ -10,6 +10,8 @@ export interface QueuedConversationMessagesProps {
   onEdit?: (submissionId: string, content: string) => void | Promise<void>;
   onDelete?: (submissionId: string) => void | Promise<void>;
   onSendNow?: (submissionId: string) => void | Promise<void>;
+  onRetrySubmission?: (submissionId: string) => void | Promise<void>;
+  onRerouteSubmission?: (submissionId: string) => void | Promise<void>;
   onReorder?: (orderedSubmissionIds: string[]) => void | Promise<void>;
   onResume?: () => void | Promise<void>;
   onRetry?: () => void | Promise<void>;
@@ -35,6 +37,7 @@ const labels = {
     uncertain: '部分消息的接收结果尚未确认，不会自动重发。',
     confirmationRequired: '这些消息需要你确认后再发送。',
     recoveryRequired: '消息派发或接收状态需要恢复，已暂停自动发送。',
+    runtimeRejected: '运行时已明确拒绝这条消息，未进入模型历史；可重试、改用当前模型或取消。',
     planControl: '计划操作',
     edit: '编辑',
     editLabel: '编辑队列消息',
@@ -47,6 +50,8 @@ const labels = {
     moveDown: '下移',
     resume: '继续发送',
     retry: '恢复并发送',
+    retrySameRoute: '重试原路由',
+    rerouteCurrentModel: '改用当前模型',
     saveFailed: '保存失败，编辑内容已保留。',
     attachmentOnly: '仅附件消息',
     item: (position: number) => `第 ${position} 条`,
@@ -72,6 +77,7 @@ const labels = {
     uncertain: 'Some message delivery results are unconfirmed and will not resend automatically.',
     confirmationRequired: 'These messages need your confirmation before sending.',
     recoveryRequired: 'Message dispatch or delivery state requires recovery. Automatic sending is paused.',
+    runtimeRejected: 'The runtime explicitly rejected this message before acceptance. Retry, reroute, or cancel it.',
     planControl: 'Plan action',
     edit: 'Edit',
     editLabel: 'Edit queued message',
@@ -84,6 +90,8 @@ const labels = {
     moveDown: 'Move down',
     resume: 'Resume sending',
     retry: 'Restore and send',
+    retrySameRoute: 'Retry same route',
+    rerouteCurrentModel: 'Use current model',
     saveFailed: 'Save failed. Your edit is preserved.',
     attachmentOnly: 'Attachment-only message',
     item: (position: number) => `Message ${position}`,
@@ -246,6 +254,18 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                       {copy.retryPreparation}
                     </button>
                   ) : null}
+                  {canReplaceFailedQueueHead(submission, index) ? (
+                    <>
+                      {canRetrySameRoute(submission) ? (
+                        <button type="button" onClick={() => void props.onRetrySubmission?.(submission.id)} disabled={!writable || busy || !props.onRetrySubmission}>
+                          {copy.retrySameRoute}
+                        </button>
+                      ) : null}
+                      <button type="button" onClick={() => void props.onRerouteSubmission?.(submission.id)} disabled={!writable || busy || !props.onRerouteSubmission}>
+                        {copy.rerouteCurrentModel}
+                      </button>
+                    </>
+                  ) : null}
                   {submission.controlAction ? null : (
                     <>
                       {active && submission.status === 'queued' ? (
@@ -292,6 +312,16 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
   );
 }
 
+function canReplaceFailedQueueHead(submission: NativeQueuedSubmission, index: number): boolean {
+  if (index !== 0 || submission.status !== 'paused' || submission.providerTurnId) return false;
+  if (submission.pausedReason === 'outcome_unknown') return false;
+  return ['preflight_failed', 'runtime_rejected', 'recovery_required', 'semantic_route_changed', 'upgrade_interrupted', 'configuration_mismatch'].includes(submission.pausedReason ?? '');
+}
+
+function canRetrySameRoute(submission: NativeQueuedSubmission): boolean {
+  return submission.pausedReason !== 'semantic_route_changed' && submission.pausedReason !== 'upgrade_interrupted' && submission.pausedReason !== 'configuration_mismatch';
+}
+
 function queuedMessagePreview(submission: NativeQueuedSubmission, attachmentOnly: string): string {
   const content = submission.content.trim();
   if (!content) return attachmentOnly;
@@ -324,6 +354,7 @@ function describeQueueState(state: NativeSessionState, queue: readonly NativeQue
   if (waitReason === 'conflict_preparation_failed') return copy.conflictPreparationFailed;
   if (waitReason === 'user_confirmation') return copy.confirmationRequired;
   if (waitReason === 'recovery_required') return queue.some((submission) => submission.error?.code === 'ZEUS_NATIVE_SUBMISSION_DELIVERY_UNCONFIRMED') ? copy.uncertain : copy.recoveryRequired;
+  if (waitReason === 'runtime_rejected') return copy.runtimeRejected;
   return copy.dispatchPending;
 }
 

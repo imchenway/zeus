@@ -18,7 +18,7 @@ import type { ConversationFileLocation, ConversationOpenTarget, ConversationResp
 import { useThreadScrollController } from './useThreadScrollController.js';
 import { TurnChangeCard } from './TurnChanges.js';
 import { visibleQueuedSubmissions } from './QueuedConversationMessages.js';
-import { latestReasoningItemsByTurn, reasoningSummaryStatus, SessionReasoningSummary } from './SessionReasoningSummary.js';
+import { reasoningSummaryStatus, SessionReasoningSummary } from './SessionReasoningSummary.js';
 import { AnsweredRequestHistory, isAnsweredUserInputRequest } from './AnsweredRequestHistory.js';
 import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
 
@@ -89,7 +89,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       }),
     [collapsedErrorItems, props.state.turnsByProviderId],
   );
-  const items = useMemo(() => latestReasoningItemsByTurn(transcriptItems, props.state.activeTurnId), [props.state.activeTurnId, transcriptItems]);
+  // 同一轮的每条思考摘要都属于稳定处理过程，禁止只保留最后一条。
+  const items = transcriptItems;
   const historyHydrated = props.state.snapshot !== null;
   const enteringItemIds = useNewItemMotionIds(
     items.map((item) => item.key),
@@ -810,7 +811,9 @@ export function isSubagentCoordinationItem(item: Pick<NativeSessionItemBuffer, '
 }
 
 function transcriptItemRenderKey(item: NativeSessionItemBuffer): string {
-  if (normalizeItemType(item.type) === 'reasoning') return `reasoning-summary:${encodeURIComponent(item.turnId)}`;
+  // 同一轮可以有多条思考摘要；每条都必须保留独立且稳定的 React 身份，
+  // 否则完成态折叠时会因重复 key 遗留活动态 DOM，形成看似重复的处理过程。
+  if (normalizeItemType(item.type) === 'reasoning') return `reasoning-summary:${encodeURIComponent(item.turnId)}:${encodeURIComponent(item.itemId)}`;
   const clientUserMessageId = itemRole(item) === 'user' ? (item.clientUserMessageId ?? item.durableClientUserMessageId) : null;
   // 用户消息的可见身份来自客户端消息 id；Provider 技术条目接管时不能替换整个消息节点。
   return clientUserMessageId ? `user-message:${encodeURIComponent(clientUserMessageId)}` : item.key;

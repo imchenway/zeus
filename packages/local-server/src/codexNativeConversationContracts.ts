@@ -1,13 +1,14 @@
 import type { CodexServerRequestResponse } from '@zeus/ai-runtime';
-import type { TaskPushMessageLayout } from '@zeus/shared';
+import type { CodexBootstrapAdditionalContext, TaskPushMessageLayout } from '@zeus/shared';
 import type { ConversationCollaborationMode, ConversationPermissionMode, ZeusConversationGoalRecord } from '@zeus/storage';
+import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
 
 export type NativeConversationRunState =
   | { type: 'idle' }
   | { type: 'dispatching'; submissionId: string }
   | { type: 'active'; turnId: string; phase: 'prework' | 'final_answer' }
   | { type: 'waiting'; turnId: string; requestId: string; reason: 'approval' | 'user_input' }
-  | { type: 'paused'; reason: 'interrupted' | 'transport_unavailable' | 'provider_archived' | 'recovery_required' | 'conflict_preparing' | 'conflict_preparation_failed' };
+  | { type: 'paused'; reason: 'interrupted' | 'transport_unavailable' | 'provider_archived' | 'recovery_required' | 'runtime_rejected' | 'conflict_preparing' | 'conflict_preparation_failed' };
 
 export type NativeOperationStatus = 'queued' | 'active' | 'steering' | 'steered' | 'interrupted' | 'responded' | 'provider_archived' | 'recovery_required';
 
@@ -59,6 +60,7 @@ export type NativeQueueWaitReason =
   | 'transport_unavailable'
   | 'provider_archived'
   | 'recovery_required'
+  | 'runtime_rejected'
   | 'conflict_preparing'
   | 'conflict_preparation_failed'
   | 'user_confirmation'
@@ -131,8 +133,10 @@ export interface StartTaskConversationInput {
   deferInitialDispatch?: boolean;
   /** 执行现场尚未就绪时只持久接受消息；释放前所有队列消息都不得派发。 */
   holdDispatch?: boolean;
-  /** 由专用业务入口保存的可恢复准备信封，不参与用户消息正文。 */
-  additionalContext?: Record<string, unknown>;
+  /** 已经编码为 app-server v2 线协议的模型上下文。 */
+  additionalContext?: CodexBootstrapAdditionalContext;
+  /** 由专用业务入口保存的可恢复准备信封，只供 Zeus 使用。 */
+  operationContext?: Record<string, unknown>;
   /** 后台追赶分支产生的 Provider turn，不投影成新的用户消息。 */
   internalOperation?: boolean;
   /** Codex composer 的协作模式，仅用于显式任务推送。 */
@@ -143,6 +147,7 @@ export interface StartTaskConversationInput {
   ephemeral?: boolean;
   providerWriteLifecycle?: NativeProviderWriteLifecycle;
   goalObjective?: string;
+  segmentLifecycle?: ConversationSegmentLifecycle;
 }
 
 export interface StartProjectConversationInput {
@@ -162,6 +167,7 @@ export interface StartProjectConversationInput {
   attachments?: NativeConversationAttachmentInput[];
   providerWriteLifecycle?: NativeProviderWriteLifecycle;
   goalObjective?: string;
+  segmentLifecycle?: ConversationSegmentLifecycle;
 }
 
 export interface SetNativeGoalInput {
@@ -188,6 +194,7 @@ export interface SubmitNativeMessageInput {
   idempotencyKey: string;
   clientUserMessageId: string;
   providerWriteLifecycle?: NativeProviderWriteLifecycle;
+  segmentLifecycle?: ConversationSegmentLifecycle;
 }
 
 export interface SteerNativeMessageInput {
@@ -221,6 +228,11 @@ export interface EditQueuedSubmissionInput {
 }
 
 export interface DeleteQueuedSubmissionInput {
+  conversationId: string;
+  submissionId: string;
+}
+
+export interface RetryQueuedSubmissionInput {
   conversationId: string;
   submissionId: string;
 }
@@ -305,6 +317,7 @@ export interface CodexNativeConversationCoordinator {
   submitMessage(input: SubmitNativeMessageInput): Promise<NativeAcceptedOperation>;
   steerMessage(input: SteerNativeMessageInput): Promise<NativeAcceptedOperation>;
   editQueuedSubmission(input: EditQueuedSubmissionInput): Promise<NativeQueueSnapshot>;
+  retryQueuedSubmission(input: RetryQueuedSubmissionInput): Promise<NativeQueueSnapshot>;
   deleteQueuedSubmission(input: DeleteQueuedSubmissionInput): Promise<NativeQueueSnapshot>;
   reorderQueue(input: ReorderNativeQueueInput): Promise<NativeQueueSnapshot>;
   sendQueuedNow(input: SendQueuedNowInput): Promise<NativeAcceptedOperation>;

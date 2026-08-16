@@ -47,6 +47,7 @@ import { createHomebrewUpdateService } from './homebrewUpdateService.js';
 import { createHomebrewUpdateController, type HomebrewUpdateController, type HomebrewUpdateIndicatorState } from './homebrewUpdateController.js';
 import { createAutomaticUpdateScheduler, type AutomaticUpdateScheduler } from './automaticUpdateScheduler.js';
 import type { ZeusDataLayout } from '@zeus/local-server/zeus-data-layout';
+import { readUnifiedConversationStoreMigrationStatus } from '@zeus/local-server';
 import { prepareZeusDataRoot } from './zeusDataMigration.js';
 import { ProjectSourceWorkspaceService } from './projectSourceWorkspace.js';
 import { ProjectGitWorkbenchService, type ProjectGitProjectIdentity } from './projectGitWorkbench.js';
@@ -989,6 +990,22 @@ function auditProjectSourceStructure(action: 'create' | 'move' | 'trash', projec
 }
 
 function setupIpc(): void {
+  ipcMain.handle('zeus:conversation-store-migration:get-status', () => readUnifiedConversationStoreMigrationStatus(activeZeusDataLayout()));
+  ipcMain.handle('zeus:conversation-store-migration:retry', async () => {
+    const { prepareDesktopConversationStoreMigration } = await import('./localServerRuntime.js');
+    const status = await prepareDesktopConversationStoreMigration(activeZeusDataLayout().root, activeZeusDataLayout());
+    if (status.phase === 'completed' || status.phase === 'not_required') {
+      app.relaunch();
+      app.exit(0);
+    }
+    return status;
+  });
+  ipcMain.handle('zeus:conversation-store-migration:open-diagnostics', async () => {
+    const status = readUnifiedConversationStoreMigrationStatus(activeZeusDataLayout());
+    if (!status) throw new Error('统一会话迁移诊断尚不存在。');
+    return shell.showItemInFolder(status.diagnosticPath);
+  });
+  ipcMain.handle('zeus:conversation-store-migration:exit', () => app.quit());
   ipcMain.handle('zeus:get-local-server-config', async () => {
     const runtime = localServerRuntime ?? (await rendererRuntimeReady);
     return runtime.refreshConfig();
@@ -2236,9 +2253,17 @@ async function initializeApplication(): Promise<void> {
     await initialWindowPromise;
     traceApplicationStartup('initialization_finished');
   } catch (error) {
+    if (isConversationStoreMigrationError(error)) {
+      console.error('Zeus unified conversation store migration paused startup', error);
+      return;
+    }
     rejectRendererRuntimeReady(error);
     throw error;
   }
+}
+
+function isConversationStoreMigrationError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string' && error.code.startsWith('ZEUS_CONVERSATION_MIGRATION_');
 }
 
 function handleFatalStartupError(error: unknown): void {

@@ -26,8 +26,10 @@ import {
   type TurnChangeSetState,
 } from '@zeus/shared';
 import { migrateCommandCenterSchema } from './commands.js';
+import { migrateUnifiedConversationStoreSchema } from './conversationExecutionStore.js';
 
 export * from './commands.js';
+export * from './conversationExecutionStore.js';
 
 export { isTaskManagementStatus, isTaskPriority, isTaskType };
 export type { TaskManagementStatus, TaskPriority, TaskType };
@@ -1081,6 +1083,14 @@ export interface ZeusConversationSubmissionRecord {
   updatedAt: string;
   dispatchedAt: string | null;
   resolvedAt: string | null;
+  replacementOfSubmissionId: string | null;
+  replacementReason: string | null;
+  executionSnapshotId: string | null;
+  segmentId: string | null;
+  submissionOutcome: 'queued' | 'paused' | 'outcome_unknown' | 'accepted' | 'terminal';
+  acceptedAt: string | null;
+  timelineSequence: number | null;
+  modelHistorySequence: number | null;
 }
 
 export type ConversationServerRequestKind = 'command' | 'file' | 'permissions' | 'request_user_input' | 'mcp';
@@ -1368,6 +1378,40 @@ export class ZeusDatabase {
     }
   }
 
+  /**
+   * 在回调返回前把整个事务提交到 SQLite。
+   * 该入口只用于 Provider 即将接纳真实请求的窄边界，禁止嵌套或异步回调。
+   */
+  durableTransactionSync<T>(operation: () => T): T {
+    this.assertWritable();
+    if (this.savepointDepth > 0) throw new Error('ZeusDatabase.durableTransactionSync 不能嵌套在保存点事务中。');
+    if (this.persistedSaveRevision < this.requestedSaveRevision) {
+      throw new Error('ZeusDatabase.durableTransactionSync 执行前仍有未完成的异步保存。');
+    }
+    try {
+      // 先提交调用方已经建立的普通待持久事务，避免把更早的无关写入混进接纳事务。
+      if (this.db.isTransaction) this.db.exec('COMMIT');
+      this.db.exec('BEGIN IMMEDIATE');
+      const result = operation();
+      if (result instanceof Promise) throw new Error('ZeusDatabase.durableTransactionSync 只接受同步事务回调。');
+      this.db.exec('COMMIT');
+      const committedRevision = Math.max(this.requestedSaveRevision, this.persistedSaveRevision) + 1;
+      this.requestedSaveRevision = committedRevision;
+      this.persistedSaveRevision = committedRevision;
+      return result;
+    } catch (error) {
+      if (this.db.isTransaction) {
+        try {
+          this.db.exec('ROLLBACK');
+        } catch (rollbackError) {
+          this.writeFailure = storageWriteError('Zeus SQLite 同步持久事务回滚失败，存储已进入只读故障态。', rollbackError);
+          throw new AggregateError([error, this.writeFailure], 'Zeus SQLite 同步持久事务与回滚同时失败。');
+        }
+      }
+      throw error;
+    }
+  }
+
   /** 正常关闭会先提交、截断 WAL，再释放数据库句柄。 */
   async close(): Promise<void> {
     if (this.closed) return;
@@ -1593,6 +1637,9 @@ export async function createZeusDatabase(filePath: string): Promise<ZeusDatabase
 
   const zeusDb = new ZeusDatabase(nativeDb);
   try {
+    if (zeusDb.get<{ present: number }>(`SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'conversation_legacy_write_fence'`)) {
+      zeusDb.execute(`UPDATE conversation_legacy_write_fence SET current_writer_open = 1 WHERE singleton = 1`);
+    }
     migrateCoreSchema(zeusDb);
     migrateTaskBoardSchema(zeusDb);
     migrateRetiredUnitTestTemplate(zeusDb);
@@ -1613,11 +1660,15 @@ export async function createZeusDatabase(filePath: string): Promise<ZeusDatabase
     migrateImageGenerationItemClassification(zeusDb);
     migrateCommandCenterSchema(zeusDb);
     migrateProviderEventReceipts(zeusDb);
+    migrateUnifiedConversationStoreSchema(zeusDb);
     recordSchemaMigration(zeusDb, {
       migrationId: NATIVE_SQLITE_MIGRATION_ID,
       description: '切换为原生 SQLite WAL 增量持久化',
       checksumSource: 'node:sqlite,WAL,synchronous=FULL,busy_timeout=5000,wal_autocheckpoint=1000',
     });
+    if (zeusDb.get<{ present: number }>(`SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'conversation_legacy_write_fence'`)) {
+      zeusDb.execute(`UPDATE conversation_legacy_write_fence SET current_writer_open = 0 WHERE singleton = 1`);
+    }
     await zeusDb.save();
     if (requiresSynchronousIntegrityCheck) assertDatabaseQuickCheck(nativeDb, '迁移后的 Zeus 数据库');
     return zeusDb;
@@ -6542,6 +6593,21 @@ export class ConversationProviderSyncCheckpointRepository {
     return checkpoint;
   }
 
+  /** 产品会话切换到新的 Codex 分段时，检查点随当前原生线程重新建立边界。 */
+  rebind(input: { conversationId: string; providerThreadId: string; baselineTurnId: string | null; timestamp: string }): ZeusConversationProviderSyncCheckpointRecord {
+    this.db.execute(
+      `UPDATE conversation_provider_sync_checkpoints
+          SET provider_thread_id = ?, baseline_turn_id = ?, last_synced_turn_id = ?,
+              initialized_at = ?, updated_at = ?
+        WHERE conversation_id = ?`,
+      [input.providerThreadId, input.baselineTurnId, input.baselineTurnId, input.timestamp, input.timestamp, input.conversationId],
+    );
+    const checkpoint = this.getByConversation(input.conversationId);
+    if (!checkpoint) throw new Error(`Provider 同步检查点重建失败：${input.conversationId}`);
+    if (checkpoint.providerThreadId !== input.providerThreadId) throw new Error(`Provider 同步检查点线程身份冲突：${input.conversationId}`);
+    return checkpoint;
+  }
+
   advance(input: { conversationId: string; providerThreadId: string; lastSyncedTurnId: string; timestamp: string }): ZeusConversationProviderSyncCheckpointRecord {
     const checkpoint = this.getByConversation(input.conversationId);
     if (!checkpoint) throw new Error(`Provider 同步检查点不存在：${input.conversationId}`);
@@ -7145,6 +7211,9 @@ export class ConversationSubmissionRepository {
     createdAt: string;
     dispatchedAt?: string | null;
     resolvedAt?: string | null;
+    replacementOfSubmissionId?: string | null;
+    replacementReason?: string | null;
+    executionSnapshotId?: string | null;
   }): ZeusConversationSubmissionRecord {
     const kind = assertEnum(input.kind, ['message', 'steer'] as const, 'conversation submission kind');
     const requestedDelivery = assertEnum(input.requestedDelivery, ['queue', 'send_now'] as const, 'conversation submission requested delivery');
@@ -7157,8 +7226,8 @@ export class ConversationSubmissionRepository {
     const id = input.id ?? `conversation_submission_${nanoid(12)}`;
     const errorJson = input.error === undefined ? null : JSON.stringify(input.error);
     this.db.execute(
-      `INSERT INTO conversation_submissions (id, conversation_id, idempotency_key, request_hash, client_message_id, kind, requested_delivery, status, queue_position, input_json, target_provider_turn_id, provider_turn_id, paused_reason, error_json, created_at, updated_at, dispatched_at, resolved_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO conversation_submissions (id, conversation_id, idempotency_key, request_hash, client_message_id, kind, requested_delivery, status, queue_position, input_json, target_provider_turn_id, provider_turn_id, paused_reason, error_json, created_at, updated_at, dispatched_at, resolved_at, replacement_of_submission_id, replacement_reason, execution_snapshot_id, submission_outcome)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         input.conversationId,
@@ -7178,6 +7247,10 @@ export class ConversationSubmissionRepository {
         input.createdAt,
         input.dispatchedAt ?? null,
         input.resolvedAt ?? null,
+        input.replacementOfSubmissionId ?? null,
+        input.replacementReason ?? null,
+        input.executionSnapshotId ?? null,
+        input.status === 'paused' || input.status === 'failed' ? 'paused' : 'queued',
       ],
     );
     syncConversationStage(this.db, input.conversationId, input.createdAt);
@@ -7210,14 +7283,68 @@ export class ConversationSubmissionRepository {
       .map(mapConversationSubmissionRow);
   }
 
-  updateQueuedInput(id: string, input: { requestHash: string; input: unknown; updatedAt?: string }): ZeusConversationSubmissionRecord {
+  createReplacement(
+    id: string,
+    input: {
+      requestHash: string;
+      input: unknown;
+      reason: 'edit' | 'reroute' | 'retry' | 'steer_replacement' | 'release_hold';
+      idempotencyKey?: string;
+      clientMessageId?: string;
+      kind?: ConversationSubmissionKind;
+      requestedDelivery?: ConversationRequestedDelivery;
+      targetProviderTurnId?: string | null;
+      inheritExecutionSnapshot?: boolean;
+      updatedAt?: string;
+    },
+  ): ZeusConversationSubmissionRecord {
     const existing = this.getById(id);
     if (!existing) throw new Error(`Conversation submission not found: ${id}`);
     if (existing.status !== 'queued' && existing.status !== 'paused' && existing.status !== 'failed') {
       throw Object.assign(new Error('Only queued, paused, or failed submissions can be edited.'), { code: 'ZEUS_NATIVE_SUBMISSION_NOT_EDITABLE' as const });
     }
-    this.db.execute(`UPDATE conversation_submissions SET request_hash = ?, input_json = ?, updated_at = ? WHERE id = ?`, [input.requestHash, JSON.stringify(input.input), input.updatedAt ?? nowIso(), id]);
-    return this.getById(id)!;
+    const updatedAt = input.updatedAt ?? nowIso();
+    const replacementId = `conversation_submission_${nanoid(12)}`;
+    const replacementStatus = input.reason === 'retry' || input.reason === 'reroute' ? 'queued' : existing.status === 'failed' ? 'paused' : existing.status;
+    const replacementPausedReason = replacementStatus === 'paused' ? existing.pausedReason : null;
+    this.db.transaction(() => {
+      this.db.execute(
+        `UPDATE conversation_submissions
+            SET status = 'cancelled', submission_outcome = 'terminal', resolved_at = ?, updated_at = ?
+          WHERE id = ?`,
+        [updatedAt, updatedAt, existing.id],
+      );
+      this.db.execute(
+        `INSERT INTO conversation_submissions
+         (id, conversation_id, idempotency_key, request_hash, client_message_id, kind, requested_delivery,
+          status, queue_position, input_json, target_provider_turn_id, provider_turn_id, paused_reason,
+          error_json, created_at, updated_at, dispatched_at, resolved_at, replacement_of_submission_id,
+          replacement_reason, execution_snapshot_id, segment_id, submission_outcome)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, NULL, NULL, ?, ?, ?, NULL, ?)`,
+        [
+          replacementId,
+          existing.conversationId,
+          input.idempotencyKey ?? `${existing.idempotencyKey}:replacement:${replacementId}`,
+          input.requestHash,
+          input.clientMessageId ?? `replacement-client-${nanoid(16)}`,
+          input.kind ?? existing.kind,
+          input.requestedDelivery ?? existing.requestedDelivery,
+          replacementStatus,
+          existing.queuePosition,
+          JSON.stringify(input.input),
+          input.targetProviderTurnId === undefined ? existing.targetProviderTurnId : input.targetProviderTurnId,
+          replacementPausedReason,
+          updatedAt,
+          updatedAt,
+          existing.id,
+          input.reason,
+          input.inheritExecutionSnapshot === false ? null : existing.executionSnapshotId,
+          replacementStatus === 'paused' ? 'paused' : 'queued',
+        ],
+      );
+    });
+    syncConversationStage(this.db, existing.conversationId, updatedAt);
+    return this.getById(replacementId)!;
   }
 
   reorderQueued(conversationId: string, orderedSubmissionIds: readonly string[], updatedAt = nowIso()): ZeusConversationSubmissionRecord[] {
@@ -7239,8 +7366,17 @@ export class ConversationSubmissionRepository {
     const status = assertEnum(statusValue, ['queued', 'dispatching', 'active', 'paused', 'completed', 'resolved', 'failed', 'cancelled', 'deleted'] as const, 'conversation submission status');
     const updatedAt = input.updatedAt ?? nowIso();
     this.db.execute(
-      `UPDATE conversation_submissions SET status = ?, provider_turn_id = COALESCE(?, provider_turn_id), paused_reason = ?, error_json = ?, dispatched_at = COALESCE(?, dispatched_at), resolved_at = COALESCE(?, resolved_at), updated_at = ? WHERE id = ?`,
-      [status, input.providerTurnId ?? null, input.pausedReason ?? null, input.error === undefined ? null : JSON.stringify(input.error), input.dispatchedAt ?? null, input.resolvedAt ?? null, updatedAt, id],
+      `UPDATE conversation_submissions
+          SET status = ?, provider_turn_id = COALESCE(?, provider_turn_id), paused_reason = ?, error_json = ?,
+              dispatched_at = COALESCE(?, dispatched_at), resolved_at = COALESCE(?, resolved_at), updated_at = ?,
+              submission_outcome = CASE
+                WHEN ? IN ('active', 'resolved', 'completed') THEN CASE WHEN ? = 'active' THEN 'accepted' ELSE 'terminal' END
+                WHEN ? IN ('paused', 'failed') THEN 'paused'
+                WHEN ? IN ('cancelled', 'deleted') THEN 'terminal'
+                ELSE 'queued'
+              END
+        WHERE id = ?`,
+      [status, input.providerTurnId ?? null, input.pausedReason ?? null, input.error === undefined ? null : JSON.stringify(input.error), input.dispatchedAt ?? null, input.resolvedAt ?? null, updatedAt, status, status, status, status, id],
     );
     const updated = this.getById(id);
     if (!updated) throw new Error(`Conversation submission not found: ${id}`);
@@ -7253,26 +7389,19 @@ export class ConversationSubmissionRepository {
     if (!existing) throw new Error(`Conversation submission not found: ${id}`);
     const parsedInput = parseStoredJson(existing.inputJson);
     if (!isPlainRecord(parsedInput)) throw new Error(`Conversation submission input is invalid: ${id}`);
-    // Provider 明确拒绝已结束轮次的 steer 时，这条输入从未进入模型；清除旧轮次绑定后按普通队列消息继续处理。
-    this.db.execute(
-      `UPDATE conversation_submissions
-       SET kind = 'message', requested_delivery = 'queue', status = 'queued', input_json = ?,
-           target_provider_turn_id = NULL, provider_turn_id = NULL, paused_reason = NULL,
-           error_json = NULL, dispatched_at = NULL, resolved_at = NULL, updated_at = ?
-       WHERE id = ?`,
-      [
-        JSON.stringify({
-          ...parsedInput,
-          delivery: 'queue',
-          expectedTurnId: null,
-        }),
-        updatedAt,
-        id,
-      ],
-    );
-    const updated = this.getById(id)!;
-    syncConversationStage(this.db, updated.conversationId, updatedAt);
-    return updated;
+    // Provider 明确拒绝已结束轮次的 steer 时，原提交保持审计事实，改由关联 replacement 进入普通队列。
+    const replacement = this.createReplacement(id, {
+      requestHash: createHash('sha256')
+        .update(JSON.stringify({ ...parsedInput, delivery: 'queue', expectedTurnId: null }))
+        .digest('hex'),
+      input: { ...parsedInput, delivery: 'queue', expectedTurnId: null },
+      reason: 'steer_replacement',
+      kind: 'message',
+      requestedDelivery: 'queue',
+      targetProviderTurnId: null,
+      updatedAt,
+    });
+    return replacement;
   }
 }
 
@@ -8292,6 +8421,14 @@ interface DbConversationSubmissionRow {
   updated_at: string;
   dispatched_at: string | null;
   resolved_at: string | null;
+  replacement_of_submission_id: string | null;
+  replacement_reason: string | null;
+  execution_snapshot_id: string | null;
+  segment_id: string | null;
+  submission_outcome: 'queued' | 'paused' | 'outcome_unknown' | 'accepted' | 'terminal';
+  accepted_at: string | null;
+  timeline_sequence: number | null;
+  model_history_sequence: number | null;
 }
 
 interface DbConversationServerRequestRow {
@@ -8865,6 +9002,14 @@ function mapConversationSubmissionRow(row: DbConversationSubmissionRow): ZeusCon
     updatedAt: row.updated_at,
     dispatchedAt: row.dispatched_at,
     resolvedAt: row.resolved_at,
+    replacementOfSubmissionId: row.replacement_of_submission_id,
+    replacementReason: row.replacement_reason,
+    executionSnapshotId: row.execution_snapshot_id,
+    segmentId: row.segment_id,
+    submissionOutcome: row.submission_outcome,
+    acceptedAt: row.accepted_at,
+    timelineSequence: row.timeline_sequence,
+    modelHistorySequence: row.model_history_sequence,
   };
 }
 

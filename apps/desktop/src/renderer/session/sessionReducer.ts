@@ -15,6 +15,7 @@ import type {
   NativeSessionItemBuffer,
   NativeSessionState,
   NativeTokenUsageSnapshot,
+  NativeUnifiedUsageSnapshot,
   NativeTurnPlanSnapshot,
   NativeTurnSnapshot,
   TransportState,
@@ -105,6 +106,7 @@ export function createInitialSessionState(): NativeSessionState {
     planImplementationRequests: [],
     providerSettings: null,
     tokenUsage: null,
+    unifiedUsage: null,
     rateLimits: null,
     mcpStartup: null,
     seenEventIds: {},
@@ -495,6 +497,7 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
     planImplementationRequests: snapshot.planImplementationRequests ?? [],
     providerSettings: snapshot.providerSettings ?? null,
     tokenUsage: snapshot.tokenUsage ?? null,
+    unifiedUsage: snapshot.usage,
     rateLimits: snapshot.rateLimits ?? null,
     mcpStartup: snapshot.mcpStartup ?? null,
     conversationState: requestConversationState(pendingRequests) ?? conversationStateFromSnapshot(snapshot),
@@ -721,7 +724,7 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
     case 'conversation.settings.changed':
       return { ...base, providerSettings: providerSettingsFrom(payload) };
     case 'conversation.tokenUsage.changed':
-      return { ...base, tokenUsage: tokenUsageFrom(payload) };
+      return { ...base, tokenUsage: tokenUsageFrom(payload), unifiedUsage: unifiedUsageFrom(payload.unifiedUsage) ?? base.unifiedUsage };
     case 'conversation.rateLimits.changed':
       return { ...base, rateLimits: providerValueFrom(payload) };
     case 'conversation.mcpStartup.changed':
@@ -1381,6 +1384,11 @@ function tokenUsageFrom(payload: Record<string, unknown>): NativeTokenUsageSnaps
     pricingSourceUrls: Array.isArray(payload.pricingSourceUrls) ? payload.pricingSourceUrls.filter((value): value is string => typeof value === 'string') : [],
     historyComplete: payload.historyComplete === true,
   };
+}
+
+function unifiedUsageFrom(value: unknown): NativeUnifiedUsageSnapshot | null {
+  if (!isRecord(value) || !isRecord(value.conversationTotal) || !isRecord(value.turnTotal)) return null;
+  return value as unknown as NativeUnifiedUsageSnapshot;
 }
 
 function tokenBreakdownFrom(value: unknown): NativeTokenUsageSnapshot['total'] {

@@ -80,10 +80,12 @@ import {
   isNonCodexAiCliAdapterId,
   isOfficialDeepSeekResponsesModel,
   listAiCliAdapters,
+  modelRef,
   type NonCodexAiCliAdapterId,
   parseModelRef,
 } from '@zeus/ai-runtime';
 import type { BrowserAutomationPort } from './browserAutomation.js';
+export { prepareUnifiedConversationStoreMigration, readUnifiedConversationStoreMigrationStatus, type ConversationStoreMigrationStatus } from './conversationStoreMigration.js';
 import { resolveConversationAttachmentGrant } from './conversationAttachmentGrant.js';
 import { createModelConnectionService, type SaveModelConnectionRequest } from './modelConnectionService.js';
 import { createPiNativeConversationCoordinator } from './piNativeConversationCoordinator.js';
@@ -153,6 +155,7 @@ import {
   CommandRunRepository,
   type ConversationAttentionKind,
   type ConversationCollaborationMode,
+  ConversationExecutionRepository,
   ConversationGoalRepository,
   ConversationItemRepository,
   type ConversationNextTurnSettings,
@@ -211,6 +214,8 @@ import {
 } from '@zeus/storage';
 import { createCodexNativeConversationCoordinator, filterCompatibilitySnapshotItemAliases } from './codexNativeConversationCoordinator.js';
 import { createCodexUsageService } from './codexUsageService.js';
+import { ConversationExecutionCoordinator, type ConversationExecutionRoute } from './conversationExecutionCoordinator.js';
+import { ManagedConversationToolResultStore } from './conversationPortableContext.js';
 import { createUsageOverviewService } from './usageOverviewService.js';
 import { chooseNativeUserMessageContent, resolveNativeUserMessageSubmission } from './codexNativeUserMessageProjection.js';
 import { type ConversationFileOpenGrant, createConversationFileOpenGrant, normalizeConversationResources, sanitizeConversationItemPayload, toConversationResource, toConversationResourceOpenIntent } from './conversationResources.js';
@@ -2079,12 +2084,23 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const turnChangeSets = new TurnChangeSetRepository(db);
   const turnChangeFiles = new TurnChangeFileRepository(db);
   const conversationSubmissions = new ConversationSubmissionRepository(db);
+  const conversationExecution = new ConversationExecutionRepository(db);
   const conversationRequests = new ConversationServerRequestRepository(db);
   const conversationPlanActions = new ConversationPlanActionRepository(db);
   const conversationProviderSyncCheckpoints = new ConversationProviderSyncCheckpointRepository(db);
   const providerEventReceipts = new ProviderEventReceiptRepository(db);
   const idempotencyRequests = new IdempotencyRequestRepository(db);
   const gitSnapshots = new GitSnapshotRepository(db);
+  const conversationExecutionCoordinator = new ConversationExecutionCoordinator({
+    db,
+    execution: conversationExecution,
+    submissions: conversationSubmissions,
+    now: () => now().toISOString(),
+  });
+  let dispatchUnifiedConversationQueueHead: ((conversationId: string) => Promise<void>) | null = null;
+  const conversationToolResults = new ManagedConversationToolResultStore(dataLayout.conversationToolResults, conversationExecution);
+  conversationExecution.setDispatchEnabled(false);
+  await db.save();
   const recoveredInterruptedScans = projects.recoverInterruptedScans();
   if (recoveredInterruptedScans > 0) {
     // 上次进程在扫描中崩溃时不会进入 catch 分支；启动时恢复为 failed，避免项目永久停在“扫描中”且无法重试。
@@ -2346,6 +2362,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     sessionDirectory: piSessionDirectory,
     now: () => now().toISOString(),
     publish: publishNativeConversationEvent,
+    execution: conversationExecution,
+    toolResults: conversationToolResults,
   });
   const repairedPiConversationIdentityCount = piNativeCoordinator.repairPersistedConversationIdentities();
   const repairedPiAgentMessageProjectionCount = piNativeCoordinator.repairPersistedAgentMessageProjections();
@@ -2655,6 +2673,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       syncCheckpoints: conversationProviderSyncCheckpoints,
       settings,
       usage: codexUsageService,
+      execution: conversationExecution,
+      toolResults: conversationToolResults,
       resolveResponsesRuntime,
       browserAutomation: options.browserAutomation,
       trustedAttachmentRoots: trustedConversationAttachmentRoots,
@@ -2686,6 +2706,270 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (cleanupErrors.length > 0) throw new AggregateError([factoryError, ...cleanupErrors], 'Zeus native coordinator creation and cleanup failed.');
     throw factoryError;
   }
+  const unifiedQueueDispatches = new Set<string>();
+  dispatchUnifiedConversationQueueHead = async (conversationId) => {
+    if (unifiedQueueDispatches.has(conversationId) || !conversationExecution.isDispatchEnabled()) return;
+    const conversation = conversations.getById(conversationId);
+    if (!conversation || conversation.archived) return;
+    if (conversationTurns.listByConversation(conversationId).some((turn) => turn.status === 'running' || turn.status === 'waiting' || turn.status === 'dispatching')) return;
+    const head = conversationSubmissions
+      .listQueueByConversation(conversationId)
+      .filter((submission) => !submission.providerTurnId && (submission.status === 'queued' || submission.status === 'paused' || submission.status === 'failed'))
+      .at(0);
+    if (!head || head.status !== 'queued' || !head.executionSnapshotId) return;
+    const frozen = conversationExecution.getExecutionSnapshot(head.executionSnapshotId);
+    if (!frozen) {
+      conversationSubmissions.updateStatus(head.id, 'paused', { pausedReason: 'recovery_required', updatedAt: now().toISOString() });
+      await db.save();
+      return;
+    }
+    unifiedQueueDispatches.add(conversationId);
+    try {
+      const persisted = isNativeApiRecord(JSON.parse(head.inputJson)) ? (JSON.parse(head.inputJson) as Record<string, unknown>) : {};
+      const content = typeof persisted.text === 'string' ? persisted.text : '';
+      const workspaceIdentity = isNativeApiRecord(JSON.parse(frozen.workspaceIdentityJson)) ? (JSON.parse(frozen.workspaceIdentityJson) as Record<string, unknown>) : {};
+      const project = projects.getById(conversation.projectId);
+      if (!project) throw nativeApiError('ZEUS_PROJECT_NOT_FOUND', 'Conversation project was not found.');
+      const executionRoot = typeof workspaceIdentity.executionRoot === 'string' ? workspaceIdentity.executionRoot : project.localPath;
+      const connection = frozen.connectionId ? await modelConnections.get(frozen.connectionId) : undefined;
+      const configuredModel = connection?.models.find((model) => model.id === frozen.modelId);
+      if (frozen.connectionId) {
+        const currentRuntimeKind = configuredModel?.runtimeAdapter === 'codex_app_server' ? 'codex' : configuredModel?.runtimeAdapter === 'pi_sdk' ? 'pi' : null;
+        const mismatch = {
+          connectionMissing: !connection,
+          modelMissingOrDisabled: !configuredModel?.enabled,
+          endpointChanged: Boolean(connection && connection.baseUrl !== frozen.endpointIdentity),
+          protocolChanged: Boolean(configuredModel && configuredModel.protocolFamily !== frozen.protocolFamily),
+          runtimeChanged: currentRuntimeKind !== null && currentRuntimeKind !== frozen.runtimeKind,
+        };
+        if (Object.values(mismatch).some(Boolean)) {
+          const pausedAt = now().toISOString();
+          conversationSubmissions.updateStatus(head.id, 'paused', {
+            pausedReason: 'semantic_route_changed',
+            error: { code: 'ZEUS_CONVERSATION_ROUTE_CHANGED', message: '排队后模型端点、协议或运行路由发生变化，需要改路由 replacement。', mismatch },
+            updatedAt: pausedAt,
+          });
+          conversationExecution.pauseQueueBehindHead(conversationId, head.id, pausedAt);
+          conversationExecution.persistWarning({ conversationId, warningKind: 'semantic_route_changed', payload: { submissionId: head.id, mismatch }, occurredAt: pausedAt });
+          await db.save();
+          publishNativeConversationEvent('conversation.queue.changed', { conversationId, submissionId: head.id });
+          return;
+        }
+      }
+      const route: ConversationExecutionRoute = {
+        runtimeKind: frozen.runtimeKind,
+        connectionId: frozen.connectionId,
+        credentialSlotId: frozen.credentialSlotId,
+        endpointIdentity: frozen.endpointIdentity,
+        protocolFamily: frozen.protocolFamily,
+        modelId: frozen.modelId,
+        effort: frozen.effort,
+        serviceTier: frozen.serviceTier,
+        permissionMode: frozen.permissionMode,
+        collaborationMode: frozen.collaborationMode,
+        workspaceIdentity,
+        providerId: frozen.runtimeKind === 'codex' ? 'codex' : `pi:${frozen.connectionId ?? 'custom'}`,
+        providerModel: frozen.connectionId ? modelRef(frozen.connectionId, frozen.modelId) : frozen.modelId,
+        providerProtocolVersion: frozen.runtimeKind === 'codex' ? 'app-server' : 'sdk',
+        providerBinaryVersion: frozen.runtimeKind === 'pi' ? 'pi-sdk-0.83.0' : null,
+      };
+      const lifecycle = conversationExecutionCoordinator.createLifecycle({
+        conversationId,
+        route,
+        targetCapabilities: {
+          readableReasoningSummary: true,
+          media: configuredModel?.capability.imageInput.state !== 'unsupported',
+          contextWindow: configuredModel?.contextWindow ?? null,
+          currentInputCharacters: content.length,
+        },
+        userHistoryContent: { text: content },
+      });
+      if (frozen.runtimeKind === 'pi') {
+        if (lifecycle.requiresNewSegment) {
+          await piNativeCoordinator.startConversation({
+            conversationId,
+            submissionId: head.id,
+            projectId: conversation.projectId,
+            ...(conversation.taskId ? { taskId: conversation.taskId } : {}),
+            ...(conversation.workspaceId ? { workspaceId: conversation.workspaceId } : {}),
+            ...(conversation.environmentId ? { environmentId: conversation.environmentId } : {}),
+            conversationTitle: conversation.title,
+            cwd: executionRoot,
+            prompt: content,
+            model: { sourceId: frozen.connectionId, modelId: frozen.modelId, displayName: null },
+            ...(frozen.effort ? { thinkingLevel: frozen.effort } : {}),
+            permissionMode: frozen.permissionMode as 'read-only' | 'auto' | 'full-access',
+            idempotencyKey: head.idempotencyKey,
+            clientUserMessageId: head.clientMessageId,
+            segmentLifecycle: lifecycle,
+          });
+        } else {
+          await piNativeCoordinator.submitMessage({
+            conversation,
+            submissionId: head.id,
+            content,
+            model: { sourceId: frozen.connectionId, modelId: frozen.modelId, displayName: null },
+            ...(frozen.effort ? { thinkingLevel: frozen.effort } : {}),
+            idempotencyKey: head.idempotencyKey,
+            clientUserMessageId: head.clientMessageId,
+            segmentLifecycle: lifecycle,
+          });
+        }
+      } else {
+        await codexNativeCoordinator.submitMessage({
+          conversationId,
+          content,
+          ...(typeof persisted.displayText === 'string' ? { displayText: persisted.displayText } : {}),
+          model: frozen.modelId,
+          modelSourceId: frozen.connectionId,
+          ...(frozen.effort ? { effort: frozen.effort } : {}),
+          serviceTier: frozen.serviceTier,
+          permissionMode: frozen.permissionMode as 'read-only' | 'auto' | 'full-access',
+          collaborationMode: frozen.collaborationMode as 'default' | 'plan',
+          idempotencyKey: head.idempotencyKey,
+          clientUserMessageId: head.clientMessageId,
+          segmentLifecycle: lifecycle,
+        });
+      }
+    } catch (error) {
+      const failureAt = now().toISOString();
+      const currentHead = conversationSubmissions.getById(head.id);
+      // 生命周期已经区分“写入前失败”和“接受结果未知”时，不得再用通用恢复原因覆盖证据边界。
+      if (!currentHead || currentHead.status === 'queued' || currentHead.status === 'dispatching') {
+        conversationSubmissions.updateStatus(head.id, 'paused', {
+          pausedReason: 'recovery_required',
+          error: { code: 'ZEUS_UNIFIED_QUEUE_HEAD_FAILED', message: error instanceof Error ? error.message : String(error) },
+          updatedAt: failureAt,
+        });
+      }
+      conversationExecution.pauseQueueBehindHead(conversationId, head.id, failureAt);
+      conversationExecution.persistWarning({
+        conversationId,
+        warningKind: 'queue_head_failed',
+        payload: { submissionId: head.id, message: error instanceof Error ? error.message : String(error) },
+        occurredAt: failureAt,
+      });
+      await db.save();
+      publishNativeConversationEvent('conversation.queue.changed', { conversationId, submissionId: head.id });
+    } finally {
+      unifiedQueueDispatches.delete(conversationId);
+    }
+  };
+  const recoverUnifiedOutcomeUnknownSwitches = async () => {
+    const operations = conversationExecution.listOpenSwitchOperations().filter((operation) => operation.state === 'outcome_unknown');
+    for (const operation of operations) {
+      const segment = conversationExecution.segmentById(operation.targetSegmentId);
+      const submission = conversationSubmissions.getById(operation.submissionId);
+      if (!segment || !submission || segment.runtimeKind !== 'codex' || !segment.nativeSessionId) continue;
+      try {
+        const page = await codexAppServerManager.listThreadTurns({ threadId: segment.nativeSessionId, limit: 100, sortDirection: 'desc', itemsView: 'full' });
+        const matched = page.data.find((turn) => providerTurnClientMessageId(turn) === submission.clientMessageId);
+        if (!matched) {
+          conversationExecution.recordRecoveryEvent({
+            conversationId: operation.conversationId,
+            segmentId: segment.id,
+            eventKind: 'outcome_unknown_not_confirmed',
+            payload: { operationId: operation.id, nativeSessionId: segment.nativeSessionId, clientUserMessageId: submission.clientMessageId },
+            occurredAt: now().toISOString(),
+          });
+          continue;
+        }
+        const recoveredAt = now().toISOString();
+        const persisted = isNativeApiRecord(JSON.parse(submission.inputJson)) ? (JSON.parse(submission.inputJson) as Record<string, unknown>) : {};
+        const turnId = `conversation_turn_${createHash('sha256').update(`${operation.conversationId}\0${segment.id}\0${matched.id}`).digest('hex').slice(0, 24)}`;
+        conversationExecution.acceptSwitchDurably({
+          operationId: operation.id,
+          providerTurnId: matched.id,
+          turnId,
+          acceptanceEvidence: {
+            source: 'startup_reconciliation',
+            nativeSessionId: segment.nativeSessionId,
+            clientUserMessageId: submission.clientMessageId,
+            nativeTurnListed: true,
+          },
+          userHistoryContent: {
+            text: typeof persisted.text === 'string' ? persisted.text : '',
+            ...(typeof persisted.displayText === 'string' ? { displayText: persisted.displayText } : {}),
+            ...(Array.isArray(persisted.attachments) ? { attachments: persisted.attachments } : {}),
+            ...(Array.isArray(persisted.browserComments) ? { browserComments: persisted.browserComments } : {}),
+            ...(isNativeApiRecord(persisted.conversationContext) ? { conversationContext: persisted.conversationContext } : {}),
+          },
+          acceptedAt: recoveredAt,
+        });
+        conversationExecution.appendConfigEvidence({
+          conversationId: operation.conversationId,
+          turnId,
+          submissionId: submission.id,
+          segmentId: segment.id,
+          layer: 'runtime_acknowledged',
+          configuration: { recovered: true },
+          evidence: { method: 'thread/turns/list', nativeTurnId: matched.id, clientUserMessageId: submission.clientMessageId },
+          observedAt: recoveredAt,
+        });
+        conversationExecution.recordRecoveryEvent({
+          conversationId: operation.conversationId,
+          segmentId: segment.id,
+          eventKind: 'outcome_unknown_accepted',
+          payload: { operationId: operation.id, nativeTurnId: matched.id, clientUserMessageId: submission.clientMessageId },
+          occurredAt: recoveredAt,
+        });
+      } catch (error) {
+        conversationExecution.persistWarning({
+          conversationId: operation.conversationId,
+          warningKind: 'outcome_unknown_reconciliation_failed',
+          payload: { operationId: operation.id, message: error instanceof Error ? error.message : String(error) },
+          occurredAt: now().toISOString(),
+        });
+      }
+    }
+    if (operations.length > 0) await db.save();
+  };
+  const recoverAcceptedPiTurnsAfterRestart = async () => {
+    const interruptedAt = now().toISOString();
+    const candidates = conversationTurns
+      .listInProgress()
+      .filter((turn) => turn.agentKind === 'pi' && (turn.status === 'dispatching' || turn.status === 'running' || turn.status === 'waiting'));
+    let recovered = false;
+    for (const turn of candidates) {
+      const segment = conversationExecution.currentSegment(turn.conversationId);
+      if (!segment || segment.runtimeKind !== 'pi' || segment.nativeSessionId !== turn.providerThreadId) continue;
+      const failure = {
+        code: 'ZEUS_PI_RUN_INTERRUPTED_BY_RESTART',
+        message: 'Zeus 重启后确认此前 Pi 运行内核已结束；已接纳轮次保留为中断，不会自动重发。',
+      };
+      conversationTurns.upsert({ ...turn, status: 'interrupted', error: failure, completedAt: interruptedAt, updatedAt: interruptedAt });
+      if (turn.clientSubmissionId) {
+        const submission = conversationSubmissions.getById(turn.clientSubmissionId);
+        if (submission && (submission.status === 'dispatching' || submission.status === 'active')) {
+          conversationSubmissions.updateStatus(submission.id, 'completed', {
+            providerTurnId: turn.providerTurnId,
+            error: failure,
+            resolvedAt: interruptedAt,
+            updatedAt: interruptedAt,
+          });
+        }
+      }
+      for (const queued of conversationSubmissions.listByConversation(turn.conversationId).filter((submission) => submission.status === 'queued' && !submission.providerTurnId)) {
+        conversationSubmissions.updateStatus(queued.id, 'paused', { pausedReason: 'interrupted', updatedAt: interruptedAt });
+      }
+      conversations.updateAgentRuntime(turn.conversationId, { providerState: 'ready', status: 'open' });
+      conversationExecution.recordRecoveryEvent({
+        conversationId: turn.conversationId,
+        segmentId: segment.id,
+        eventKind: 'pi_accepted_turn_interrupted_after_restart',
+        payload: { turnId: turn.id, providerTurnId: turn.providerTurnId, submissionId: turn.clientSubmissionId },
+        occurredAt: interruptedAt,
+      });
+      conversationExecution.persistWarning({
+        conversationId: turn.conversationId,
+        warningKind: 'pi_turn_interrupted_after_restart',
+        payload: { turnId: turn.id, providerTurnId: turn.providerTurnId },
+        occurredAt: interruptedAt,
+      });
+      recovered = true;
+    }
+    if (recovered) await db.save();
+  };
   traceStartup('codex_coordinator_ready');
   if (codexNativeEnabled && codexRemoteControlEnabled) {
     void codexAppServerManager
@@ -3036,6 +3320,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           scheduleTaskIntegrationAiFinalization(attemptId, operation.conversationId);
         }
       }
+      if (mappedType === 'conversation.turn.completed' && dispatchUnifiedConversationQueueHead) {
+        const conversationId = payload.conversationId;
+        queueMicrotask(() => void dispatchUnifiedConversationQueueHead?.(conversationId).catch(() => undefined));
+      }
     }
     if (mappedType !== 'conversation.item.delta') flushPendingNativeDeltaEvents();
     for (const conversationId of new Set(conversationIds)) {
@@ -3043,10 +3331,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       const conversation = conversations.getRecordById(conversationId);
       if (!conversation || conversation.transportKind !== 'codex_native') continue;
       const generationId = typeof payload.generationId === 'string' ? payload.generationId : nativeLocalEventGenerationId;
-      const sequence = typeof payload.sequence === 'number' ? payload.sequence : ++nativeLocalEventSequence;
+      const sequence = conversationExecution.nextSyncEventSequence(conversationId);
+      nativeLocalEventSequence = Math.max(nativeLocalEventSequence, sequence);
       const steeringSubmission = mappedType === 'conversation.submission.steering' && typeof payload.submissionId === 'string' ? conversationSubmissions.getById(payload.submissionId) : undefined;
       const eventPayload = {
         ...payload,
+        ...(mappedType === 'conversation.tokenUsage.changed' ? { unifiedUsage: conversationExecution.snapshot(conversationId).usage } : {}),
         ...(mappedType === 'conversation.queue.changed' ? { queue: toNativeQueueApiSnapshot(conversation) } : {}),
         ...(mappedType === 'conversation.submission.steering' && steeringSubmission
           ? {
@@ -4358,6 +4648,25 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     return changeSet;
   });
 
+  server.get(
+    '/api/projects/:projectId/conversations/:conversationId/tool-results/:handle',
+    async (request: FastifyRequest<{ Params: { projectId: string; conversationId: string; handle: string }; Querystring: { offset?: string; limit?: string } }>, reply) => {
+      const conversation = conversations.getRecordById(request.params.conversationId);
+      if (!conversation || conversation.projectId !== request.params.projectId) return reply.code(404).send({ error: 'ZEUS_CONVERSATION_NOT_FOUND', message: 'Conversation not found' });
+      try {
+        return await conversationToolResults.readPage({
+          conversationId: conversation.id,
+          handle: request.params.handle,
+          offset: request.query.offset === undefined ? undefined : Number(request.query.offset),
+          limit: request.query.limit === undefined ? undefined : Number(request.query.limit),
+        });
+      } catch (error) {
+        const code = error instanceof Error && 'code' in error ? String((error as Error & { code?: unknown }).code ?? '') : 'ZEUS_CONVERSATION_TOOL_RESULT_READ_FAILED';
+        return reply.code(code === 'ZEUS_CONVERSATION_TOOL_RESULT_NOT_FOUND' ? 404 : 409).send({ error: code, message: error instanceof Error ? error.message : '工具结果读取失败。' });
+      }
+    },
+  );
+
   for (const action of ['undo', 'reapply'] as const) {
     server.post(
       `/api/projects/:projectId/conversations/:conversationId/turns/:turnId/change-set/${action}`,
@@ -4672,6 +4981,130 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     },
   );
 
+  server.post(
+    '/api/projects/:projectId/conversations/:conversationId/queue/:submissionId/retry',
+    async (
+      request: FastifyRequest<{
+        Params: { projectId: string; conversationId: string; submissionId: string };
+      }>,
+      reply,
+    ) => {
+      const conversation = conversations.getById(request.params.conversationId);
+      if (!conversation || conversation.projectId !== request.params.projectId || conversation.transportKind !== 'codex_native') {
+        return reply.code(404).send({ error: 'ZEUS_NATIVE_CONVERSATION_NOT_FOUND', message: 'Native conversation not found' });
+      }
+      try {
+        const queue = await codexNativeCoordinator.retryQueuedSubmission({ conversationId: conversation.id, submissionId: request.params.submissionId });
+        publishNativeConversationEvent('conversation.queue.changed', { conversationId: conversation.id });
+        queueMicrotask(() => void dispatchUnifiedConversationQueueHead?.(conversation.id).catch(() => undefined));
+        return reply.code(202).send(queue);
+      } catch (error) {
+        return sendNativeConversationApiError(reply, error);
+      }
+    },
+  );
+
+  server.post(
+    '/api/projects/:projectId/conversations/:conversationId/queue/:submissionId/reroute',
+    async (
+      request: FastifyRequest<{
+        Params: { projectId: string; conversationId: string; submissionId: string };
+        Body: { model?: unknown; effort?: unknown; serviceTier?: unknown; permissionMode?: unknown; collaborationMode?: unknown };
+      }>,
+      reply,
+    ) => {
+      const project = projects.getById(request.params.projectId);
+      const conversation = conversations.getById(request.params.conversationId);
+      if (!project || !conversation || conversation.projectId !== project.id || conversation.transportKind !== 'codex_native') {
+        return reply.code(404).send({ error: 'ZEUS_NATIVE_CONVERSATION_NOT_FOUND', message: 'Native conversation not found' });
+      }
+      try {
+        const original = conversationSubmissions.getById(request.params.submissionId);
+        const queueHead = conversationSubmissions.listByConversation(conversation.id).find((entry) => entry.status === 'queued' || entry.status === 'paused' || entry.status === 'failed');
+        if (!original || original.conversationId !== conversation.id || !queueHead || queueHead.id !== original.id) {
+          throw nativeApiError('ZEUS_NATIVE_QUEUE_HEAD_REQUIRED', '只能改路由替换当前暂停的队首提交。');
+        }
+        if ((original.status !== 'paused' && original.status !== 'failed') || original.providerTurnId) {
+          throw nativeApiError('ZEUS_NATIVE_SUBMISSION_NOT_REROUTABLE', '只有 Provider 写入前失败且未产生 turn 的队首可以改路由。');
+        }
+        if (original.pausedReason === 'outcome_unknown' || original.submissionOutcome === 'outcome_unknown') {
+          throw nativeApiError('ZEUS_NATIVE_SUBMISSION_OUTCOME_UNKNOWN', '接纳结果未知的提交禁止改路由，必须先完成恢复核对或取消。');
+        }
+        const requestedModel = typeof request.body?.model === 'string' ? request.body.model.trim() : '';
+        if (!requestedModel) throw nativeApiError('ZEUS_INVALID_CONVERSATION_SETTINGS', '改路由必须指定输入框当前模型。');
+        const capabilities = await resolveConversationCapabilities(project);
+        const selectedModel = resolveModelCapability(capabilities.models, requestedModel);
+        if (!selectedModel || selectedModel.available === false) throw nativeApiError('ZEUS_MODEL_NOT_READY', selectedModel?.availabilityReason || '所选模型当前不可运行。');
+        const effort = typeof request.body?.effort === 'string' && request.body.effort.trim() ? request.body.effort.trim() : (selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? null);
+        if (effort && !selectedModel.supportedReasoningEfforts.some((candidate) => candidate === effort)) {
+          throw nativeApiError('ZEUS_INVALID_CONVERSATION_SETTINGS', '所选模型不支持该推理级别。');
+        }
+        const requestedServiceTier = readServiceTierOverride(request.body ?? {});
+        const serviceTier = normalizeServiceTierForCapability(requestedServiceTier, selectedModel) ?? null;
+        const permissionMode = request.body?.permissionMode === undefined ? conversation.permissionMode : parseConversationPermissionMode(request.body.permissionMode);
+        const collaborationMode = request.body?.collaborationMode === undefined ? conversation.collaborationMode : parseConversationCollaborationMode(request.body.collaborationMode);
+        if (!permissionMode || !collaborationMode) throw nativeApiError('ZEUS_INVALID_CONVERSATION_SETTINGS', '改路由的权限或工作模式无效。');
+        const modelSourceId = selectedModel.sourceId ?? (selectedModel.agentKind === 'codex' ? 'codex' : conversation.modelSourceId);
+        const connection = modelSourceId && modelSourceId !== 'codex' ? await modelConnections.get(modelSourceId) : undefined;
+        if (modelSourceId && modelSourceId !== 'codex' && !connection) throw nativeApiError('ZEUS_MODEL_CONNECTION_NOT_FOUND', '目标模型连接已经不存在。');
+        const configuredModel = connection?.models.find((model) => model.id === selectedModel.model);
+        const executionRoot = resolveNativeConversationExecutionRoot(conversation) ?? project.localPath;
+        const replacedAt = now().toISOString();
+        const previousInput = parseJsonObject(original.inputJson);
+        const previousContext = isNativeApiRecord(previousInput.context) ? previousInput.context : {};
+        const nextInput = {
+          ...previousInput,
+          context: {
+            ...previousContext,
+            model: selectedModel.model,
+            modelSourceId,
+            agentKind: selectedModel.agentKind === 'pi' ? 'pi' : 'codex',
+            thinkingLevel: effort,
+            permissionMode,
+            collaborationMode,
+          },
+        };
+        db.transaction(() => {
+          const replacement = conversationSubmissions.createReplacement(original.id, {
+            requestHash: createHash('sha256').update(JSON.stringify(nextInput)).digest('hex'),
+            input: nextInput,
+            reason: 'reroute',
+            inheritExecutionSnapshot: false,
+            updatedAt: replacedAt,
+          });
+          const snapshot = conversationExecution.createExecutionSnapshot({
+            conversationId: conversation.id,
+            runtimeKind: selectedModel.agentKind === 'pi' ? 'pi' : 'codex',
+            connectionId: connection?.id ?? null,
+            credentialSlotId: connection ? `model-connection:${connection.id}` : 'codex-managed-account',
+            endpointIdentity: connection?.baseUrl ?? 'codex://managed-account',
+            protocolFamily: configuredModel?.protocolFamily ?? (selectedModel.agentKind === 'pi' ? 'openai_completions' : 'openai_responses'),
+            modelId: selectedModel.model,
+            effort,
+            serviceTier,
+            permissionMode,
+            collaborationMode,
+            workspaceIdentity: {
+              projectId: conversation.projectId,
+              taskId: conversation.taskId,
+              workspaceId: conversation.workspaceId,
+              environmentId: conversation.environmentId,
+              executionRoot,
+            },
+            createdAt: replacedAt,
+          });
+          conversationExecution.freezeSubmissionExecutionSnapshot({ conversationId: conversation.id, submissionId: replacement.id, executionSnapshotId: snapshot.id });
+        });
+        await db.save();
+        publishNativeConversationEvent('conversation.queue.changed', { conversationId: conversation.id });
+        queueMicrotask(() => void dispatchUnifiedConversationQueueHead?.(conversation.id).catch(() => undefined));
+        return reply.code(202).send(toNativeQueueApiSnapshot(conversation));
+      } catch (error) {
+        return sendNativeConversationApiError(reply, error);
+      }
+    },
+  );
+
   server.delete(
     '/api/projects/:projectId/conversations/:conversationId/queue/:submissionId',
     async (
@@ -4690,6 +5123,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           submissionId: request.params.submissionId,
         });
         publishNativeConversationEvent('conversation.queue.changed', { conversationId: conversation.id });
+        queueMicrotask(() => void dispatchUnifiedConversationQueueHead?.(conversation.id).catch(() => undefined));
         return queue;
       } catch (error) {
         return sendNativeConversationApiError(reply, error);
@@ -14296,6 +14730,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     const itemRecords = itemProjection.items;
     const projectedMessages = conversation.messages.filter((message) => !message.providerItemId || !itemProjection.suppressedProviderItemIds.has(message.providerItemId));
     const turnRecords = conversationTurns.listByConversation(conversation.id);
+    const unifiedExecution = conversationExecutionCoordinator.snapshot(conversation.id, [...turnRecords].reverse().find((turn) => turn.status === 'running' || turn.status === 'waiting')?.id ?? null);
     const persistedChangeSets = turnChangeSetService.listByConversation(conversation.id);
     const persistedChangeSetByTurn = new Map(persistedChangeSets.map((changeSet) => [changeSet.turnId, changeSet]));
     const submissionById = new Map(submissions.map((submission) => [submission.id, submission]));
@@ -14346,7 +14781,64 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         })
         .filter((value): value is string => Boolean(value)),
     );
+    const providerItemIds = new Set(itemRecords.map((item) => item.providerItemId));
+    const projectedProcessItems = unifiedExecution.process
+      .filter((processItem) => {
+        const sourceProviderItemId = processItem.sourceEventId?.match(/^(?:codex|pi):item:(.+)$/)?.[1];
+        return !sourceProviderItemId || !providerItemIds.has(sourceProviderItemId);
+      })
+      .map((processItem) => {
+        const detail = parseJsonObject(processItem.detailJson);
+        const block = isNativeApiRecord(detail.block) ? detail.block : {};
+        const detailText = typeof detail.text === 'string' ? detail.text : typeof block.text === 'string' ? block.text : typeof block.thinking === 'string' ? block.thinking : '';
+        return {
+          id: processItem.id,
+          turnId: processItem.turnId,
+          providerItemId: processItem.id,
+          type:
+            processItem.kind === 'reasoning'
+              ? 'reasoning'
+              : processItem.kind === 'command'
+                ? 'commandExecution'
+                : processItem.kind === 'context_compaction'
+                  ? 'contextCompaction'
+                  : processItem.kind === 'warning'
+                    ? 'error'
+                    : 'dynamicToolCall',
+          status: processItem.status,
+          phase: 'prework' as const,
+          text: detailText || processItem.title,
+          payload: { processKind: processItem.kind, title: processItem.title, detail },
+          resources: [],
+          startedAt: processItem.startedAt,
+          completedAt: processItem.completedAt,
+          updatedAt: processItem.completedAt ?? processItem.startedAt,
+        };
+      });
     return {
+      conversationSchemaGeneration: unifiedExecution.conversationSchemaGeneration,
+      throughEventSeq: unifiedExecution.throughEventSeq,
+      productConversation: {
+        id: conversation.id,
+        projectId: conversation.projectId,
+        taskId: conversation.taskId,
+        title: conversation.title,
+        archived: conversation.archived,
+        createdAt: conversation.createdAt,
+        updatedAt: conversation.updatedAt,
+      },
+      openSegment: unifiedExecution.currentSegment,
+      segments: unifiedExecution.segments,
+      composerPreset: nextTurnSettings ?? null,
+      executionQueue: toNativeQueueApiSnapshot(conversation),
+      process: unifiedExecution.process,
+      usage: unifiedExecution.usage,
+      contextState: {
+        throughModelHistorySequence: unifiedExecution.modelHistory.at(-1)?.sequence ?? 0,
+        confirmedEntryCount: unifiedExecution.modelHistory.length,
+      },
+      persistentWarnings: unifiedExecution.warnings,
+      configurationEvidence: unifiedExecution.configurationEvidence,
       ...toGraphConversationHistoryItem(conversation),
       ...toNativeConversationSummary(conversation),
       ...(providerSettings ? { providerSettings } : {}),
@@ -14406,20 +14898,23 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         createdAt: turn.createdAt,
         updatedAt: turn.updatedAt,
       })),
-      items: itemRecords.map((item) => ({
-        id: item.id,
-        turnId: item.turnId,
-        providerItemId: item.providerItemId,
-        type: item.itemType,
-        status: item.status,
-        phase: item.phase,
-        text: item.textContent,
-        payload: sanitizeConversationItemPayload(parseJsonObject(item.payloadJson)),
-        resources: resourcesByItemId.get(item.id) ?? [],
-        startedAt: item.startedAt,
-        completedAt: item.completedAt,
-        updatedAt: item.updatedAt,
-      })),
+      items: [
+        ...itemRecords.map((item) => ({
+          id: item.id,
+          turnId: item.turnId,
+          providerItemId: item.providerItemId,
+          type: item.itemType,
+          status: item.status,
+          phase: item.phase,
+          text: item.textContent,
+          payload: sanitizeConversationItemPayload(parseJsonObject(item.payloadJson)),
+          resources: resourcesByItemId.get(item.id) ?? [],
+          startedAt: item.startedAt,
+          completedAt: item.completedAt,
+          updatedAt: item.updatedAt,
+        })),
+        ...projectedProcessItems,
+      ].sort((left, right) => left.updatedAt.localeCompare(right.updatedAt) || left.id.localeCompare(right.id)),
       submissions: submissions.map((submission) => toNativeSubmission(submission)),
       changeSets,
       queue: toNativeQueueApiSnapshot(conversation, submissions),
@@ -14794,6 +15289,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     const dispatching = conversationSubmissions.listByConversation(conversation.id).find((submission) => submission.status === 'dispatching' && !submission.providerTurnId);
     if (dispatching) return { type: 'dispatching' as const, submissionId: dispatching.id };
     const paused = conversationSubmissions.listByConversation(conversation.id).filter((submission) => submission.status === 'paused' && !submission.providerTurnId);
+    if (paused.some((submission) => submission.pausedReason === 'runtime_rejected')) return { type: 'paused' as const, reason: 'runtime_rejected' as const };
     if (paused.some((submission) => submission.pausedReason === 'recovery_required')) return { type: 'paused' as const, reason: 'recovery_required' as const };
     if (paused.some((submission) => submission.pausedReason === 'interrupted')) return { type: 'paused' as const, reason: 'interrupted' as const };
     if (paused.some((submission) => submission.pausedReason === 'transport_unavailable')) return { type: 'paused' as const, reason: 'transport_unavailable' as const };
@@ -14867,6 +15363,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     let selectedAgentKind: 'codex' | 'pi' = conversation.agentKind === 'pi' ? 'pi' : 'codex';
     let selectedEffort: string | null = null;
     let selectedServiceTier: string | null | undefined;
+    let selectedContextWindow: number | null = null;
     if (requestedModel || requestedEffort || requestedServiceTier.present) {
       const capabilities = await resolveConversationCapabilities(project);
       const model = requestedModel ?? conversation.providerModel ?? capabilities.preferredModel;
@@ -14881,108 +15378,242 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       selectedAgentKind = capability.agentKind ?? 'codex';
       selectedEffort = requestedEffort ?? capability.defaultReasoningEffort ?? capability.supportedReasoningEfforts[0] ?? null;
       selectedServiceTier = normalizeServiceTierForCapability(requestedServiceTier, capability);
+      selectedContextWindow = capability.contextWindow;
     }
     const clientUserMessageId = normalizeNativeClientUserMessageId(body.clientUserMessageId, `native-client-${createHash('sha256').update(`${conversation.id}\0${idempotencyKey}`).digest('hex').slice(0, 24)}`);
-    if (selectedAgentKind !== (conversation.agentKind === 'pi' ? 'pi' : 'codex')) {
-      throw nativeApiError('ZEUS_AGENT_SWITCH_REQUIRES_NEW_CONVERSATION', '不能在同一会话内切换 Codex 与 Pi，请新建会话。');
-    }
-    if (selectedAgentKind === 'codex' && selectedModel && (selectedModelSourceId ?? 'codex') !== (conversation.modelSourceId ?? 'codex')) {
-      throw nativeApiError('ZEUS_PROVIDER_SWITCH_REQUIRES_NEW_CONVERSATION', '不能在同一会话内切换 Codex App Server 的模型渠道，请新建会话。');
-    }
+    const effectiveModel = selectedModel ?? conversation.modelId ?? conversation.providerModel;
+    if (!effectiveModel) throw nativeApiError('ZEUS_MODEL_UNAVAILABLE', '当前会话没有可冻结的目标模型。');
+    const effectiveModelSourceId = selectedModelSourceId ?? (selectedAgentKind === 'codex' ? 'codex' : conversation.modelSourceId);
+    const executionRoot = resolveNativeConversationExecutionRoot(conversation) ?? project.localPath;
+    const resolvedExecutionRoute = await resolveConversationExecutionRoute({
+      agentKind: selectedAgentKind,
+      modelSourceId: effectiveModelSourceId,
+      modelId: effectiveModel,
+      effort: selectedEffort,
+      serviceTier: selectedServiceTier ?? null,
+      permissionMode: permissionMode ?? conversation.permissionMode,
+      collaborationMode: collaborationMode ?? conversation.collaborationMode,
+      projectId: conversation.projectId,
+      taskId: conversation.taskId,
+      workspaceId: conversation.workspaceId,
+      environmentId: conversation.environmentId,
+      executionRoot,
+    });
+    const executionRoute = resolvedExecutionRoute.route;
+    const selectedConfiguredModel = resolvedExecutionRoute.configuredModel;
+    const segmentLifecycle =
+      delivery === 'queue'
+        ? conversationExecutionCoordinator.createLifecycle({
+            conversationId: conversation.id,
+            route: executionRoute,
+            targetCapabilities: {
+              readableReasoningSummary: true,
+              media: selectedConfiguredModel?.capability.imageInput.state !== 'unsupported',
+              contextWindow: selectedConfiguredModel?.contextWindow ?? selectedContextWindow,
+              currentInputCharacters: content.length + JSON.stringify({ attachments, browserComments, conversationContext }).length,
+            },
+            userHistoryContent: {
+              text: content,
+              ...(displayText ? { displayText } : {}),
+              attachments,
+              browserComments,
+              ...(conversationContext ? { conversationContext } : {}),
+            },
+          })
+        : null;
     const conflictAttempt = taskIntegrationAttempts.getByConversationId(conversation.id);
     const conflictPreparationHeld = conflictAttempt?.state === 'preparing' || conflictAttempt?.state === 'failed';
+    const executionBusy =
+      conversationTurns.listByConversation(conversation.id).some((turn) => turn.status === 'running' || turn.status === 'waiting' || turn.status === 'dispatching') ||
+      conversationSubmissions.listByConversation(conversation.id).some((submission) => submission.status === 'dispatching' || submission.status === 'active');
     if (conflictPreparationHeld && delivery === 'steer_now') {
       throw nativeApiError('ZEUS_CONFLICT_PREPARATION_NOT_ACTIVE', '冲突现场尚未准备完成，补充消息只能进入当前会话队列。');
     }
-    const nativeOperation =
-      conversation.agentKind === 'pi'
-        ? conflictPreparationHeld
-          ? await piNativeCoordinator.queueHeldMessage({
-              conversation,
-              submissionId: `conversation_submission_${createHash('sha256').update(`${stableOperationId}\0pi-held`).digest('hex').slice(0, 24)}`,
-              content,
-              model: { sourceId: selectedModelSourceId, modelId: selectedModel ?? conversation.modelId ?? conversation.providerModel ?? '', displayName: null },
-              ...(selectedEffort ? { thinkingLevel: selectedEffort } : {}),
-              ...(permissionMode ? { permissionMode } : {}),
-              idempotencyKey,
-              clientUserMessageId,
-            })
-          : delivery === 'steer_now'
-            ? await piNativeCoordinator.steerMessage({
-                conversation,
-                submissionId: `conversation_submission_${createHash('sha256').update(`${stableOperationId}\0pi-steer`).digest('hex').slice(0, 24)}`,
-                content,
-                expectedTurnId: expectedTurnId!,
-                idempotencyKey,
-                clientUserMessageId,
-              })
-            : await piNativeCoordinator.submitMessage({
-                conversation,
-                submissionId: `conversation_submission_${createHash('sha256').update(`${stableOperationId}\0pi-submission`).digest('hex').slice(0, 24)}`,
-                content,
-                model: { sourceId: selectedModelSourceId, modelId: selectedModel ?? conversation.modelId ?? conversation.providerModel ?? '', displayName: null },
-                ...(selectedEffort ? { thinkingLevel: selectedEffort } : {}),
-                idempotencyKey,
-                clientUserMessageId,
-              })
-        : delivery === 'steer_now'
-          ? await codexNativeCoordinator.steerMessage({
-              conversationId: conversation.id,
-              content,
-              ...(displayText ? { displayText } : {}),
-              ...(typeof composerDraft === 'string' ? { composerDraft } : {}),
-              attachments,
-              browserComments,
-              ...(browserCommentContent ? { browserCommentContent } : {}),
-              ...(conversationContext ? { conversationContext } : {}),
-              expectedTurnId: expectedTurnId!,
-              idempotencyKey,
-              clientUserMessageId,
-              providerWriteLifecycle,
-            })
-          : await codexNativeCoordinator.submitMessage({
-              conversationId: conversation.id,
-              content,
-              ...(displayText ? { displayText } : {}),
-              ...(typeof composerDraft === 'string' ? { composerDraft } : {}),
-              attachments,
-              browserComments,
-              ...(browserCommentContent ? { browserCommentContent } : {}),
-              ...(conversationContext ? { conversationContext } : {}),
-              ...(selectedModel ? { model: selectedModel } : {}),
-              ...(selectedModel ? { modelSourceId: selectedModelSourceId } : {}),
-              ...(selectedEffort ? { effort: selectedEffort } : {}),
-              ...(requestedServiceTier.present ? { serviceTier: selectedServiceTier ?? null } : {}),
-              ...(permissionMode ? { permissionMode } : {}),
-              ...(collaborationMode ? { collaborationMode } : {}),
-              idempotencyKey,
-              clientUserMessageId,
-              providerWriteLifecycle,
-            });
-    const persisted = conversationSubmissions.getById(nativeOperation.submissionId);
-    if (!persisted) throw nativeApiError('ZEUS_NATIVE_ACCEPTANCE_NOT_DURABLE', 'Native message submission was not persisted.');
-    const input = parseJsonObject(persisted.inputJson);
-    db.execute('UPDATE conversation_submissions SET requested_delivery = ?, input_json = ?, updated_at = ? WHERE id = ?', [
-      delivery === 'steer_now' ? 'send_now' : 'queue',
-      JSON.stringify({
-        ...input,
-        delivery,
+    const nativeOperation = await (async () => {
+      if (selectedAgentKind === 'pi') {
+        if (delivery === 'queue' && executionBusy && !conflictPreparationHeld) {
+          return piNativeCoordinator.queueHeldMessage({
+            conversation,
+            submissionId: `conversation_submission_${createHash('sha256').update(`${stableOperationId}\0pi-queued`).digest('hex').slice(0, 24)}`,
+            content,
+            model: { sourceId: effectiveModelSourceId, modelId: effectiveModel, displayName: null },
+            ...(selectedEffort ? { thinkingLevel: selectedEffort } : {}),
+            ...(permissionMode ? { permissionMode } : {}),
+            idempotencyKey,
+            clientUserMessageId,
+            holdDispatch: false,
+            ...(segmentLifecycle ? { segmentLifecycle } : {}),
+          });
+        }
+        if (conflictPreparationHeld) {
+          return piNativeCoordinator.queueHeldMessage({
+            conversation,
+            submissionId: `conversation_submission_${createHash('sha256').update(`${stableOperationId}\0pi-held`).digest('hex').slice(0, 24)}`,
+            content,
+            model: { sourceId: effectiveModelSourceId, modelId: effectiveModel, displayName: null },
+            ...(selectedEffort ? { thinkingLevel: selectedEffort } : {}),
+            ...(permissionMode ? { permissionMode } : {}),
+            idempotencyKey,
+            clientUserMessageId,
+          });
+        }
+        if (delivery === 'steer_now') {
+          return piNativeCoordinator.steerMessage({
+            conversation,
+            submissionId: `conversation_submission_${createHash('sha256').update(`${stableOperationId}\0pi-steer`).digest('hex').slice(0, 24)}`,
+            content,
+            expectedTurnId: expectedTurnId!,
+            idempotencyKey,
+            clientUserMessageId,
+          });
+        }
+        const submissionId = `conversation_submission_${createHash('sha256').update(`${stableOperationId}\0pi-submission`).digest('hex').slice(0, 24)}`;
+        if (segmentLifecycle?.requiresNewSegment) {
+          return piNativeCoordinator.startConversation({
+            conversationId: conversation.id,
+            submissionId,
+            projectId: conversation.projectId,
+            ...(conversation.taskId ? { taskId: conversation.taskId } : {}),
+            ...(conversation.workspaceId ? { workspaceId: conversation.workspaceId } : {}),
+            ...(conversation.environmentId ? { environmentId: conversation.environmentId } : {}),
+            conversationTitle: conversation.title,
+            cwd: executionRoot,
+            prompt: content,
+            model: { sourceId: effectiveModelSourceId, modelId: effectiveModel, displayName: null },
+            ...(selectedEffort ? { thinkingLevel: selectedEffort } : {}),
+            permissionMode: permissionMode ?? conversation.permissionMode,
+            idempotencyKey,
+            clientUserMessageId,
+            attachments,
+            allowedAttachmentRoots: trustedConversationAttachmentRoots,
+            providerWriteLifecycle,
+            segmentLifecycle,
+          });
+        }
+        return piNativeCoordinator.submitMessage({
+          conversation,
+          submissionId,
+          content,
+          model: { sourceId: effectiveModelSourceId, modelId: effectiveModel, displayName: null },
+          ...(selectedEffort ? { thinkingLevel: selectedEffort } : {}),
+          idempotencyKey,
+          clientUserMessageId,
+          ...(segmentLifecycle ? { segmentLifecycle } : {}),
+        });
+      }
+      if (delivery === 'steer_now') {
+        return codexNativeCoordinator.steerMessage({
+          conversationId: conversation.id,
+          content,
+          ...(displayText ? { displayText } : {}),
+          ...(typeof composerDraft === 'string' ? { composerDraft } : {}),
+          attachments,
+          browserComments,
+          ...(browserCommentContent ? { browserCommentContent } : {}),
+          ...(conversationContext ? { conversationContext } : {}),
+          expectedTurnId: expectedTurnId!,
+          idempotencyKey,
+          clientUserMessageId,
+          providerWriteLifecycle,
+        });
+      }
+      if (executionBusy) {
+        return codexNativeCoordinator.submitMessage({
+          conversationId: conversation.id,
+          content,
+          ...(displayText ? { displayText } : {}),
+          ...(typeof composerDraft === 'string' ? { composerDraft } : {}),
+          attachments,
+          browserComments,
+          ...(browserCommentContent ? { browserCommentContent } : {}),
+          ...(conversationContext ? { conversationContext } : {}),
+          model: effectiveModel,
+          modelSourceId: effectiveModelSourceId,
+          ...(selectedEffort ? { effort: selectedEffort } : {}),
+          ...(requestedServiceTier.present ? { serviceTier: selectedServiceTier ?? null } : {}),
+          ...(permissionMode ? { permissionMode } : {}),
+          ...(collaborationMode ? { collaborationMode } : {}),
+          idempotencyKey,
+          clientUserMessageId,
+          providerWriteLifecycle,
+          ...(segmentLifecycle ? { segmentLifecycle } : {}),
+        });
+      }
+      if (segmentLifecycle?.requiresNewSegment) {
+        if (conversation.taskId) {
+          const task = tasks.getById(conversation.taskId);
+          if (!task) throw nativeApiError('ZEUS_TASK_NOT_FOUND', 'Conversation task was not found.');
+          return codexNativeCoordinator.startTaskConversation({
+            conversationId: conversation.id,
+            submissionId: `conversation_submission_${createHash('sha256').update(`${stableOperationId}\0codex-segment`).digest('hex').slice(0, 24)}`,
+            projectId: conversation.projectId,
+            projectLocalPath: executionRoot,
+            taskId: task.id,
+            ...(conversation.workspaceId ? { workspaceId: conversation.workspaceId } : {}),
+            ...(conversation.environmentId ? { environmentId: conversation.environmentId } : {}),
+            conversationTitle: conversation.title,
+            taskTitle: task.title,
+            prompt: content,
+            model: effectiveModel,
+            modelSourceId: effectiveModelSourceId,
+            ...(selectedEffort ? { effort: selectedEffort } : {}),
+            ...(requestedServiceTier.present ? { serviceTier: selectedServiceTier ?? null } : {}),
+            allowCodeChanges: (permissionMode ?? conversation.permissionMode) !== 'read-only',
+            allowTests: (permissionMode ?? conversation.permissionMode) !== 'read-only',
+            allowGitCommit: false,
+            permissionMode: permissionMode ?? conversation.permissionMode,
+            idempotencyKey,
+            clientUserMessageId,
+            attachments,
+            allowedAttachmentRoots: trustedConversationAttachmentRoots,
+            workMode: collaborationMode ?? conversation.collaborationMode,
+            applyLegacyTaskGuards: false,
+            providerWriteLifecycle,
+            segmentLifecycle,
+          });
+        }
+        return codexNativeCoordinator.startProjectConversation({
+          conversationId: conversation.id,
+          submissionId: `conversation_submission_${createHash('sha256').update(`${stableOperationId}\0codex-segment`).digest('hex').slice(0, 24)}`,
+          projectId: conversation.projectId,
+          projectLocalPath: executionRoot,
+          prompt: content,
+          model: effectiveModel,
+          modelSourceId: effectiveModelSourceId,
+          ...(selectedEffort ? { effort: selectedEffort } : {}),
+          ...(requestedServiceTier.present ? { serviceTier: selectedServiceTier ?? null } : {}),
+          permissionMode: permissionMode ?? conversation.permissionMode,
+          collaborationMode: collaborationMode ?? conversation.collaborationMode,
+          idempotencyKey,
+          clientUserMessageId,
+          attachments,
+          providerWriteLifecycle,
+          segmentLifecycle,
+        });
+      }
+      return codexNativeCoordinator.submitMessage({
+        conversationId: conversation.id,
+        content,
+        ...(displayText ? { displayText } : {}),
         ...(typeof composerDraft === 'string' ? { composerDraft } : {}),
         attachments,
         browserComments,
         ...(browserCommentContent ? { browserCommentContent } : {}),
         ...(conversationContext ? { conversationContext } : {}),
-        expectedTurnId,
-        ...(displayText ? { displayText } : {}),
         ...(selectedModel ? { model: selectedModel } : {}),
+        ...(selectedModel ? { modelSourceId: selectedModelSourceId } : {}),
         ...(selectedEffort ? { effort: selectedEffort } : {}),
         ...(requestedServiceTier.present ? { serviceTier: selectedServiceTier ?? null } : {}),
         ...(permissionMode ? { permissionMode } : {}),
         ...(collaborationMode ? { collaborationMode } : {}),
-      }),
-      now().toISOString(),
-      persisted.id,
-    ]);
+        idempotencyKey,
+        clientUserMessageId,
+        providerWriteLifecycle,
+        ...(segmentLifecycle ? { segmentLifecycle } : {}),
+      });
+    })();
+    const persisted = conversationSubmissions.getById(nativeOperation.submissionId);
+    if (!persisted) throw nativeApiError('ZEUS_NATIVE_ACCEPTANCE_NOT_DURABLE', 'Native message submission was not persisted.');
     if (persisted.providerTurnId) {
       db.execute('UPDATE conversation_messages SET metadata_json = ? WHERE conversation_id = ? AND client_message_id = ?', [
         JSON.stringify({
@@ -15366,6 +15997,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     }
     const requestedServiceTier = readServiceTierOverride(body);
     const serviceTier = normalizeServiceTierForCapability(requestedServiceTier, selectedModel);
+    if (selectedModel.agentKind === 'pi') throw nativeApiError('ZEUS_INVALID_CONVERSATION_SETTINGS', '项目首发当前只接受 Codex App Server 模型。');
+    const effectiveEffort = requestedEffort ?? selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? null;
     const goalObjective = parseGoalObjective(body.goalObjective);
     if (goalObjective && (selectedModel.agentKind !== 'codex' || capabilities.goals?.enabled !== true)) {
       throw nativeApiError('ZEUS_CODEX_GOALS_UNAVAILABLE', '当前 Agent 或 app-server 不支持原生目标。');
@@ -15382,6 +16015,29 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         return providerWriteLifecycle.markRpcStarted(resourceId);
       },
     };
+    const resolvedRoute = await resolveConversationExecutionRoute({
+      agentKind: 'codex',
+      modelSourceId: selectedModel.sourceId ?? null,
+      modelId: selectedModel.model,
+      effort: effectiveEffort,
+      serviceTier: requestedServiceTier.present ? (serviceTier ?? null) : null,
+      permissionMode,
+      collaborationMode,
+      projectId: project.id,
+      taskId: null,
+      executionRoot: project.localPath,
+    });
+    const segmentLifecycle = conversationExecutionCoordinator.createLifecycle({
+      conversationId: reservation.conversationId,
+      route: resolvedRoute.route,
+      targetCapabilities: {
+        readableReasoningSummary: true,
+        media: resolvedRoute.configuredModel?.capability.imageInput.state !== 'unsupported',
+        contextWindow: resolvedRoute.configuredModel?.contextWindow ?? selectedModel.contextWindow,
+        currentInputCharacters: content.length + JSON.stringify(attachments).length,
+      },
+      userHistoryContent: { text: content, ...(attachments.length ? { attachments } : {}) },
+    });
     const nativeOperation = await codexNativeCoordinator.startProjectConversation({
       conversationId: reservation.conversationId,
       submissionId: reservation.submissionId,
@@ -15391,13 +16047,14 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       attachments,
       model: selectedModel.model,
       modelSourceId: selectedModel.sourceId ?? null,
-      effort: requestedEffort ?? selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? undefined,
+      ...(effectiveEffort ? { effort: effectiveEffort } : {}),
       ...(requestedServiceTier.present ? { serviceTier } : {}),
       permissionMode,
       collaborationMode,
       idempotencyKey,
       clientUserMessageId,
       providerWriteLifecycle: reservedLifecycle,
+      segmentLifecycle,
       ...(goalObjective ? { goalObjective } : {}),
     });
     const conversation = conversations.getById(nativeOperation.conversationId);
@@ -15525,7 +16182,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     legacyReference?: { conversationId: string; messageIds: string[] };
     deferInitialDispatch?: boolean;
     holdDispatch?: boolean;
-    additionalContext?: Record<string, unknown>;
+    operationContext?: Record<string, unknown>;
     internalOperation?: boolean;
     idempotencyKey: string;
     clientUserMessageId: string;
@@ -15533,10 +16190,89 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     goalObjective?: string;
   }
 
+  async function resolveConversationExecutionRoute(input: {
+    agentKind: 'codex' | 'pi';
+    modelSourceId: string | null;
+    modelId: string;
+    effort: string | null;
+    serviceTier: string | null;
+    permissionMode: ConversationPermissionMode;
+    collaborationMode: ConversationCollaborationMode;
+    projectId: string;
+    taskId: string | null;
+    workspaceId?: string | null;
+    environmentId?: string | null;
+    executionRoot: string;
+  }) {
+    const connectionId = input.modelSourceId && input.modelSourceId !== 'codex' ? input.modelSourceId : null;
+    const connection = connectionId ? await modelConnections.get(connectionId) : undefined;
+    if (connectionId && !connection) throw nativeApiError('ZEUS_MODEL_CONNECTION_NOT_FOUND', '目标模型连接已经不存在。');
+    const configuredModel = connection?.models.find((model) => model.id === input.modelId);
+    if (connection && !configuredModel) throw nativeApiError('ZEUS_MODEL_NOT_READY', '目标模型已经不在连接目录中。');
+    const configuredRuntimeKind = configuredModel?.runtimeAdapter === 'codex_app_server' ? 'codex' : configuredModel?.runtimeAdapter === 'pi_sdk' ? 'pi' : null;
+    if (configuredRuntimeKind && configuredRuntimeKind !== input.agentKind) {
+      throw nativeApiError('ZEUS_CONVERSATION_ROUTE_CHANGED', '目标模型的运行适配器与已选择路由不一致。');
+    }
+    const route: ConversationExecutionRoute = {
+      runtimeKind: input.agentKind,
+      connectionId,
+      credentialSlotId: connection ? `model-connection:${connection.id}` : 'codex-managed-account',
+      endpointIdentity: connection?.baseUrl ?? 'codex://managed-account',
+      protocolFamily: configuredModel?.protocolFamily ?? (input.agentKind === 'codex' ? 'openai_responses' : 'openai_completions'),
+      modelId: input.modelId,
+      effort: input.effort,
+      serviceTier: input.serviceTier,
+      permissionMode: input.permissionMode,
+      collaborationMode: input.collaborationMode,
+      workspaceIdentity: {
+        projectId: input.projectId,
+        taskId: input.taskId,
+        workspaceId: input.workspaceId ?? null,
+        environmentId: input.environmentId ?? null,
+        executionRoot: input.executionRoot,
+      },
+      providerId: input.agentKind === 'codex' ? 'codex' : `pi:${connectionId ?? 'custom'}`,
+      providerModel: connectionId ? modelRef(connectionId, input.modelId) : input.modelId,
+      providerProtocolVersion: input.agentKind === 'codex' ? 'app-server' : 'sdk',
+      providerBinaryVersion: input.agentKind === 'pi' ? 'pi-sdk-0.83.0' : null,
+    };
+    return { route, configuredModel };
+  }
+
   /** 专用入口只生成计划；首发可见正文与实际提示词同源，Provider 分流和持久接受生命周期统一在此执行。 */
   async function startNativeTaskConversationFromPlan(plan: NativeTaskConversationStartPlan) {
+    const resolvedRoute = await resolveConversationExecutionRoute({
+      agentKind: plan.agentKind,
+      modelSourceId: plan.model.sourceId,
+      modelId: plan.model.modelId,
+      effort: plan.effort ?? null,
+      serviceTier: plan.serviceTierPresent ? (plan.serviceTier ?? null) : null,
+      permissionMode: plan.permissionMode,
+      collaborationMode: plan.workMode ?? 'default',
+      projectId: plan.projectId,
+      taskId: plan.taskId,
+      workspaceId: plan.workspaceId,
+      environmentId: plan.environmentId,
+      executionRoot: plan.cwd,
+    });
+    const segmentLifecycle = conversationExecutionCoordinator.createLifecycle({
+      conversationId: plan.conversationId,
+      route: resolvedRoute.route,
+      targetCapabilities: {
+        readableReasoningSummary: true,
+        media: resolvedRoute.configuredModel?.capability.imageInput.state !== 'unsupported',
+        contextWindow: resolvedRoute.configuredModel?.contextWindow ?? null,
+        currentInputCharacters: plan.prompt.length + JSON.stringify({ attachments: plan.attachments ?? [], taskPushLayout: plan.taskPushLayout ?? null, legacyReference: plan.legacyReference ?? null }).length,
+      },
+      userHistoryContent: {
+        text: plan.prompt,
+        ...(plan.attachments?.length ? { attachments: plan.attachments } : {}),
+        ...(plan.taskPushLayout ? { taskPushLayout: plan.taskPushLayout } : {}),
+        ...(plan.legacyReference ? { legacyReference: plan.legacyReference } : {}),
+      },
+    });
     if (plan.agentKind === 'pi') {
-      return piNativeCoordinator.startConversation({
+      const operation = await piNativeCoordinator.startConversation({
         conversationId: plan.conversationId,
         submissionId: plan.submissionId,
         projectId: plan.projectId,
@@ -15551,7 +16287,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         ...(plan.allowedAttachmentRoots ? { allowedAttachmentRoots: plan.allowedAttachmentRoots } : {}),
         ...(plan.taskPushLayout ? { taskPushLayout: plan.taskPushLayout } : {}),
         ...(plan.holdDispatch ? { holdDispatch: true } : {}),
-        ...(plan.additionalContext ? { additionalContext: plan.additionalContext } : {}),
+        ...(plan.operationContext ? { operationContext: plan.operationContext } : {}),
         ...(plan.internalOperation ? { internalOperation: true } : {}),
         permissionMode: plan.permissionMode,
         idempotencyKey: plan.idempotencyKey,
@@ -15559,9 +16295,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         ...(plan.environmentId ? { environmentId: plan.environmentId } : {}),
         ...(plan.workspaceId ? { workspaceId: plan.workspaceId } : {}),
         providerWriteLifecycle: plan.providerWriteLifecycle,
+        segmentLifecycle,
       });
+      if (plan.deferInitialDispatch) queueMicrotask(() => void dispatchUnifiedConversationQueueHead?.(plan.conversationId).catch(() => undefined));
+      return operation;
     }
-    return codexNativeCoordinator.startTaskConversation({
+    const operation = await codexNativeCoordinator.startTaskConversation({
       conversationId: plan.conversationId,
       submissionId: plan.submissionId,
       projectId: plan.projectId,
@@ -15589,14 +16328,17 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       applyLegacyTaskGuards: false,
       ...(plan.deferInitialDispatch ? { deferInitialDispatch: true } : {}),
       ...(plan.holdDispatch ? { holdDispatch: true } : {}),
-      ...(plan.additionalContext ? { additionalContext: plan.additionalContext } : {}),
+      ...(plan.operationContext ? { operationContext: plan.operationContext } : {}),
       ...(plan.internalOperation ? { internalOperation: true } : {}),
       idempotencyKey: plan.idempotencyKey,
       clientUserMessageId: plan.clientUserMessageId,
       ...(plan.legacyReference ? { legacyReference: plan.legacyReference } : {}),
       providerWriteLifecycle: plan.providerWriteLifecycle,
       ...(plan.goalObjective ? { goalObjective: plan.goalObjective } : {}),
+      segmentLifecycle,
     });
+    if (plan.deferInitialDispatch) queueMicrotask(() => void dispatchUnifiedConversationQueueHead?.(plan.conversationId).catch(() => undefined));
+    return operation;
   }
 
   async function acceptTaskConversation(
@@ -15907,7 +16649,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           allowTests: true,
           allowGitCommit: false,
           holdDispatch: true,
-          additionalContext: {
+          operationContext: {
             conflictPreparation: {
               attemptId,
               integrationId,
@@ -15990,6 +16732,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         }
         const requestedServiceTier = readServiceTierOverride(body);
         const serviceTier = normalizeServiceTierForCapability(requestedServiceTier, selectedModel);
+        const selectedEffort = selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? null;
         const inheritConversationId = typeof body.inheritConversationId === 'string' ? body.inheritConversationId.trim() : '';
         let inheritedEnvironment: Awaited<ReturnType<typeof resolveTaskPushEnvironment>> | null = null;
         if (inheritConversationId) {
@@ -16008,7 +16751,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           );
         }
         nativeOperation = await startNativeTaskConversationFromPlan({
-          agentKind: 'codex',
+          agentKind: selectedModel.agentKind === 'pi' ? 'pi' : 'codex',
           conversationId: reservation.conversationId,
           submissionId: reservation.submissionId,
           projectId: project.id,
@@ -16017,6 +16760,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           cwd: inheritedEnvironment?.cwd ?? project.localPath,
           prompt: content,
           model: { sourceId: selectedModel.sourceId ?? null, modelId: selectedModel.model, displayName: selectedModel.displayName ?? null },
+          ...(selectedEffort ? { effort: selectedEffort } : {}),
           serviceTier,
           serviceTierPresent: requestedServiceTier.present,
           permissionMode,
@@ -16052,15 +16796,103 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       if (selected.id !== reservation.conversationId) throw nativeApiError('ZEUS_NATIVE_RESERVED_RESOURCE_CONFLICT', 'Selected resume conversation does not match the reserved task acceptance resource.');
       const collaborationMode = body.collaborationMode === undefined ? selected.collaborationMode : parseConversationCollaborationMode(body.collaborationMode);
       if (!collaborationMode) throw nativeApiError('ZEUS_INVALID_COLLABORATION_MODE', 'collaborationMode must be default or plan.');
-      nativeOperation = await codexNativeCoordinator.submitMessage({
-        conversationId: selected.id,
-        submissionId: reservation.submissionId,
-        content,
+      const nextSettings = conversations.getNextTurnSettings(selected.id);
+      const selectedAgentKind = selected.agentKind === 'pi' ? 'pi' : 'codex';
+      const piModelRef = selectedAgentKind === 'pi' && nextSettings?.model ? parseModelRef(nextSettings.model) : null;
+      const modelSourceId = piModelRef?.sourceId ?? selected.modelSourceId ?? null;
+      const modelId = piModelRef?.modelId ?? selected.modelId ?? selected.providerModel ?? '';
+      if (!modelId) throw nativeApiError('ZEUS_MODEL_UNAVAILABLE', '当前会话没有可恢复的目标模型。');
+      const resolvedRoute = await resolveConversationExecutionRoute({
+        agentKind: selectedAgentKind,
+        modelSourceId,
+        modelId,
+        effort: nextSettings?.effort ?? null,
+        serviceTier: nextSettings && Object.prototype.hasOwnProperty.call(nextSettings, 'serviceTier') ? (nextSettings.serviceTier ?? null) : null,
+        permissionMode: nextSettings?.permissionMode ?? selected.permissionMode,
         collaborationMode,
-        idempotencyKey,
-        clientUserMessageId,
-        providerWriteLifecycle: reservedLifecycle,
+        projectId: project.id,
+        taskId: task.id,
+        workspaceId: selected.workspaceId,
+        environmentId: selected.environmentId,
+        executionRoot: resolveNativeConversationExecutionRoot(selected) ?? project.localPath,
       });
+      const segmentLifecycle = conversationExecutionCoordinator.createLifecycle({
+        conversationId: selected.id,
+        route: resolvedRoute.route,
+        targetCapabilities: {
+          readableReasoningSummary: true,
+          media: resolvedRoute.configuredModel?.capability.imageInput.state !== 'unsupported',
+          contextWindow: resolvedRoute.configuredModel?.contextWindow ?? null,
+          currentInputCharacters: content.length,
+        },
+        userHistoryContent: { text: content },
+      });
+      if (selectedAgentKind === 'pi') {
+        nativeOperation = segmentLifecycle.requiresNewSegment
+          ? await piNativeCoordinator.startConversation({
+              conversationId: selected.id,
+              submissionId: reservation.submissionId,
+              projectId: project.id,
+              taskId: task.id,
+              taskTitle: task.title,
+              conversationTitle: selected.title,
+              cwd: resolveNativeConversationExecutionRoot(selected) ?? project.localPath,
+              prompt: content,
+              model: { sourceId: modelSourceId, modelId, displayName: null },
+              ...(nextSettings?.effort ? { thinkingLevel: nextSettings.effort } : {}),
+              permissionMode: nextSettings?.permissionMode ?? selected.permissionMode,
+              idempotencyKey,
+              clientUserMessageId,
+              providerWriteLifecycle: reservedLifecycle,
+              segmentLifecycle,
+            })
+          : await piNativeCoordinator.submitMessage({
+              conversation: selected,
+              submissionId: reservation.submissionId,
+              content,
+              model: { sourceId: modelSourceId, modelId, displayName: null },
+              ...(nextSettings?.effort ? { thinkingLevel: nextSettings.effort } : {}),
+              idempotencyKey,
+              clientUserMessageId,
+              segmentLifecycle,
+            });
+      } else {
+        nativeOperation = segmentLifecycle.requiresNewSegment
+          ? await codexNativeCoordinator.startTaskConversation({
+              conversationId: selected.id,
+              submissionId: reservation.submissionId,
+              projectId: project.id,
+              projectLocalPath: resolveNativeConversationExecutionRoot(selected) ?? project.localPath,
+              taskId: task.id,
+              taskTitle: task.title,
+              conversationTitle: selected.title,
+              prompt: content,
+              model: modelId,
+              modelSourceId,
+              ...(nextSettings?.effort ? { effort: nextSettings.effort } : {}),
+              ...(nextSettings && Object.prototype.hasOwnProperty.call(nextSettings, 'serviceTier') ? { serviceTier: nextSettings.serviceTier ?? null } : {}),
+              allowCodeChanges: task.allowCodeChanges,
+              allowTests: task.allowTests,
+              allowGitCommit: task.allowGitCommit,
+              permissionMode: nextSettings?.permissionMode ?? selected.permissionMode,
+              workMode: collaborationMode,
+              applyLegacyTaskGuards: false,
+              idempotencyKey,
+              clientUserMessageId,
+              providerWriteLifecycle: reservedLifecycle,
+              segmentLifecycle,
+            })
+          : await codexNativeCoordinator.submitMessage({
+              conversationId: selected.id,
+              submissionId: reservation.submissionId,
+              content,
+              collaborationMode,
+              idempotencyKey,
+              clientUserMessageId,
+              providerWriteLifecycle: reservedLifecycle,
+              segmentLifecycle,
+            });
+      }
     } else if (body.mode === 'reference_legacy') {
       const sourceConversationId = typeof body.sourceConversationId === 'string' ? body.sourceConversationId : '';
       const content = typeof body.content === 'string' ? body.content.trim() : '';
@@ -16074,21 +16906,28 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       if (!permissionMode) throw nativeApiError('ZEUS_INVALID_PERMISSION_MODE', 'permissionMode must be read-only, auto, or full-access.');
       const collaborationMode = body.collaborationMode === undefined ? 'default' : parseConversationCollaborationMode(body.collaborationMode);
       if (!collaborationMode) throw nativeApiError('ZEUS_INVALID_COLLABORATION_MODE', 'collaborationMode must be default or plan.');
-      nativeOperation = await codexNativeCoordinator.startTaskConversation({
+      const capabilities = await resolveConversationCapabilities(project);
+      const selectedModelId = await resolveCodexModel(project);
+      const selectedModel = resolveModelCapability(capabilities.models, selectedModelId);
+      if (!selectedModel || selectedModel.agentKind === 'pi') throw nativeApiError('ZEUS_MODEL_NOT_READY', '旧会话引用需要可用的 Codex App Server 模型。');
+      nativeOperation = await startNativeTaskConversationFromPlan({
+        agentKind: 'codex',
         conversationId: reservation.conversationId,
         submissionId: reservation.submissionId,
         projectId: project.id,
-        projectLocalPath: project.localPath,
         taskId: task.id,
         taskTitle: task.title,
+        cwd: project.localPath,
         prompt: content,
-        model: await resolveCodexModel(project),
+        model: { sourceId: selectedModel.sourceId ?? null, modelId: selectedModel.model, displayName: selectedModel.displayName ?? null },
+        ...(selectedModel.defaultReasoningEffort ? { effort: selectedModel.defaultReasoningEffort } : {}),
         allowCodeChanges: task.allowCodeChanges,
         allowTests: task.allowTests,
         allowGitCommit: task.allowGitCommit,
         permissionMode,
         workMode: collaborationMode,
         executionWorkspaceMode: 'direct',
+        writableRoots: [project.localPath],
         idempotencyKey,
         clientUserMessageId,
         legacyReference: { conversationId: selected.id, messageIds },
@@ -16472,6 +17311,19 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
 
   function isNativeApiRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
+  }
+
+  function providerTurnClientMessageId(turn: Record<string, unknown>): string | null {
+    if (typeof turn.clientUserMessageId === 'string') return turn.clientUserMessageId;
+    if (typeof turn.clientMessageId === 'string') return turn.clientMessageId;
+    if (!Array.isArray(turn.items)) return null;
+    for (const candidate of turn.items) {
+      if (!isNativeApiRecord(candidate) || candidate.type !== 'userMessage') continue;
+      if (typeof candidate.clientId === 'string') return candidate.clientId;
+      const metadata = isNativeApiRecord(candidate.metadata) ? candidate.metadata : {};
+      if (typeof metadata.clientUserMessageId === 'string') return metadata.clientUserMessageId;
+    }
+    return null;
   }
 
   function canonicalNativeApiJson(value: unknown): string {
@@ -17513,8 +18365,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (!submission || submission.conversationId !== conversation.id) throw nativeApiError('ZEUS_NATIVE_ACCEPTANCE_NOT_DURABLE', '冲突处理首条消息不存在。');
     const persistedInput = parseJsonObject(submission.inputJson);
     const context = isNativeApiRecord(persistedInput.context) ? persistedInput.context : {};
-    const additionalContext = isNativeApiRecord(context.additionalContext) ? context.additionalContext : {};
-    const envelope = isNativeApiRecord(additionalContext.conflictPreparation) ? additionalContext.conflictPreparation : {};
+    const operationContext = isNativeApiRecord(context.operationContext) ? context.operationContext : {};
+    const envelope = isNativeApiRecord(operationContext.conflictPreparation) ? operationContext.conflictPreparation : {};
     const required = (key: string): string => {
       const value = envelope[key];
       if (typeof value !== 'string' || !value) throw nativeApiError('ZEUS_CONFLICT_PREPARATION_ENVELOPE_INVALID', `冲突处理准备信封缺少 ${key}。`);
@@ -17806,6 +18658,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     return legacyMatches.length === 1 ? legacyMatches[0]! : null;
   }
 
+  function positiveIntegerOrNull(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.trunc(value) : null;
+  }
+
   async function resolveConversationCapabilities(project: ZeusProjectRecord) {
     const connectionSelection = await modelConnections.getProjectSelection(project.id);
     const connectionCatalog = await modelConnections.listSelectableModels();
@@ -17833,6 +18689,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       ...(model.defaultReasoningEffort ? { defaultReasoningEffort: model.defaultReasoningEffort } : {}),
       serviceTiers: model.serviceTiers.map((tier) => ({ ...tier })),
       ...(model.defaultServiceTier !== undefined ? { defaultServiceTier: model.defaultServiceTier } : {}),
+      contextWindow: positiveIntegerOrNull(model.raw.contextWindow ?? model.raw.context_window ?? model.raw.modelContextWindow ?? model.raw.model_context_window),
     }));
     const connectionModels = allowedConnectionModels.map((model) => ({
       id: model.id,
@@ -17850,6 +18707,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       speedLabel: model.speedLabel,
       tools: model.tools,
       imageInput: model.imageInput,
+      runtimeAdapter: model.runtimeAdapter,
+      protocolFamily: model.protocolFamily,
+      contextWindow: model.contextWindow,
     }));
     const models = [...codexModels, ...connectionModels];
     if (models.length === 0) throw nativeApiError('ZEUS_MODEL_UNAVAILABLE', '当前项目没有可用的 Codex 或 Pi 模型。');
@@ -19314,6 +20174,13 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     );
   }
 
+  // 先核对“请求已写出但 turn/start 回执丢失”的候选 thread；只有原生 turn 与
+  // clientUserMessageId 同时吻合时才补交提升事务，其他情况保持结果未知和队列锁。
+  // Pi 运行内核随 Zeus 进程结束，重启时必须把已接纳但未终结的轮次显式收敛为中断。
+  await recoverAcceptedPiTurnsAfterRestart();
+  await recoverUnifiedOutcomeUnknownSwitches();
+  conversationExecution.setDispatchEnabled(true);
+  await db.save();
   traceStartup('routes_ready');
   return server;
 }
