@@ -177,3 +177,34 @@ ZEUS-0320 先完成“Claude 原生缓存链路可用且可证明”的闭环，
 - `pnpm lint`：通过。
 - `pnpm typecheck`：通过。
 - `pnpm build`：通过；最终 `pnpm package:mac` 内再次完成全仓构建，只有既有的大分块体积提醒。
+
+## 正式 Zeus 的真实 1XM 验收准备
+
+### 2026-08-17 现场核对
+
+- 正式 `/Applications/Zeus.app` 版本为 `0.3.20`，Bundle ID 为 `dev.hypha.zeus`，磁盘签名结构校验通过；正式应用正在运行，没有替换、重启或修改应用包。
+- 安装包中存在 `anthropic_messages`、`Anthropic Messages`、`cache_creation_input_tokens` 和 `cache_read_input_tokens` 四项实现标记，能够确认不是缺少本次能力的旧包。
+- 正式本地服务 `/health` 返回版本 `0.3.20`，数据库和 Runtime 均为正常状态；受保护 API 继续拒绝无 Token 请求，没有绕过本机 API 的认证边界。
+- 正式数据库只读核对显示：1XM 连接地址为 `https://api.1xm.ai`，Keychain 条目存在，Zeus 项目允许使用 `claude-opus-5`、`claude-fable-5` 和 `claude-sonnet-5`。
+- 三个启用模型当前仍全部保存为 `openai_completions`，没有任何模型保存为 `anthropic_messages`。直接调用只会继续走 OpenAI Chat Completions，不能作为 Anthropic 缓存验收。
+- 现场存在一个真实运行中的会话轮次。为避免中断用户当前工作，没有退出或重启正式 Zeus，也没有启动第二个正式身份应用或第二个数据库写入者。
+- 本轮没有发起 1XM 推理请求，因此没有产生新增 Token 费用，也没有生成可报告的缓存命中率。
+
+### 继续验收的最小闭环
+
+1. 在正式 Zeus 的“模型供应商 → 1XM”中，将一个启用模型明确改为 Anthropic Messages 并保存；建议先用 `claude-sonnet-5` 控制真实验收成本。
+2. 在同一个新项目对话中连续发送三轮短指令，保持 Agent、模型、系统提示、工具集合和会话不变；第一轮负责创建缓存，后两轮观察缓存读取。
+3. 逐轮记录输入、缓存创建和缓存读取 Token；单轮读取命中比例按 `缓存读取 Token ÷（缓存读取 Token + 未缓存输入 Token）` 计算，同时报告三轮原始数值，避免只给百分比掩盖样本规模。
+
+优点：严格验证正式包、正式配置、真实 1XM 回执和 Zeus 用量账本的完整链路，不把本地探针或 OpenAI 兼容请求冒充 Anthropic 命中。
+
+缺点：正式配置必须先经过受信界面保存并触发运行时缓存失效；当前会话没有可用的本机界面控制器，无法在不绕过认证边界的前提下代替用户完成这一步。
+
+### 正式界面控制等待项
+
+- 用户已明确授权使用 macOS AppleScript 完成上述正式验收操作。
+- 首次调用被 macOS 辅助功能权限阻止，系统返回 `osascript 不允许辅助访问 (-25211)`；没有发生 Zeus 界面点击、配置修改或第三方请求。
+- 已打开“隐私与安全性 → 辅助功能”页面，等待用户为 Zeus 专属 Codex 可执行文件开启辅助功能权限。权限生效后继续原定范围，不扩大为其他应用控制。
+- 用户补充授权：如果 1XM 返回额度不足、余额不足或其他明确计费类错误，可以改用正式 Zeus 中名为 `apikey` 的 Claude 连接完成同一验收。
+- apikey Claude 连接的 Keychain 条目存在，Zeus 项目已允许其 `claude-opus-5`、`claude-fable-5` 和 `claude-sonnet-5`；三个模型当前同样仍是 `openai_completions`，使用备用前也必须先由正式界面保存为 Anthropic Messages。
+- 供应商降级顺序固定为“1XM `claude-sonnet-5` → apikey `claude-sonnet-5`”，只在前者出现明确额度或计费错误时切换；两家原始用量分别记录，不跨供应商合并计算缓存命中比例。
