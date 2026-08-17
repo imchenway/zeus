@@ -597,6 +597,20 @@ export interface CodexTaskPushCapabilities {
     path: string;
     activeWritableConversationCount: number;
   };
+  existingEnvironments?: Array<{
+    id: string;
+    available: boolean;
+    unavailableReason: 'active_conversation' | 'closed_workspace' | null;
+    repositories: Array<{
+      repositoryId: string | null;
+      repositoryName: string;
+      repositoryRelativePath: string;
+      branchName: string;
+      sourceBranch: string;
+    }>;
+    createdAt: string;
+    updatedAt: string;
+  }>;
   sharedWritablePaths: ProjectSharedPathRecord[];
   git: {
     primaryWorkspacePath: string;
@@ -883,6 +897,7 @@ export interface StartTaskModelPushRequest {
   permissionMode: NativePermissionMode;
   workspace:
     | { mode: 'direct'; confirmConcurrentWrites: boolean }
+    | { mode: 'existing'; environmentId: string }
     | {
         mode: 'create';
         repositoryRevision: string;

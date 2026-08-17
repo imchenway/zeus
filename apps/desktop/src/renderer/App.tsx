@@ -7307,6 +7307,8 @@ export function App(props: {
     workMode: 'default',
     permissionMode: 'read-only',
     workspaceMode: 'direct',
+    taskBranchMode: 'create',
+    environmentId: '',
     directConcurrencyConfirmed: false,
     repositorySelections: {},
     currentConversationIds: [],
@@ -10147,6 +10149,8 @@ export function App(props: {
       workMode: 'default',
       permissionMode: 'read-only',
       workspaceMode: 'direct',
+      taskBranchMode: 'create',
+      environmentId: '',
       directConcurrencyConfirmed: false,
       repositorySelections: {},
       currentConversationIds: [],
@@ -10478,16 +10482,18 @@ export function App(props: {
               workspace:
                 form.workspaceMode === 'direct'
                   ? { mode: 'direct', confirmConcurrentWrites: form.directConcurrencyConfirmed }
-                  : {
-                      mode: 'create',
-                      repositoryRevision: capabilities.repositoryRevision,
-                      repositories: capabilities.repositories.map((repository) => ({
-                        repositoryId: repository.id,
-                        sourceRef: form.repositorySelections[repository.id]?.sourceRef ?? '',
-                        branchName: form.repositorySelections[repository.id]?.branchName ?? '',
-                        includeLocalChanges: form.repositorySelections[repository.id]?.includeLocalChanges === true,
-                      })),
-                    },
+                  : form.taskBranchMode === 'existing'
+                    ? { mode: 'existing', environmentId: form.environmentId }
+                    : {
+                        mode: 'create',
+                        repositoryRevision: capabilities.repositoryRevision,
+                        repositories: capabilities.repositories.map((repository) => ({
+                          repositoryId: repository.id,
+                          sourceRef: form.repositorySelections[repository.id]?.sourceRef ?? '',
+                          branchName: form.repositorySelections[repository.id]?.branchName ?? '',
+                          includeLocalChanges: form.repositorySelections[repository.id]?.includeLocalChanges === true,
+                        })),
+                      },
               ...(form.supplementalInfo.trim() ? { supplementalInfo: form.supplementalInfo.trim() } : {}),
               ...(form.supplementalAttachments.length > 0 ? { supplementalAttachments: taskPushSupplementalRequestAttachments(form.supplementalAttachments) } : {}),
               taskContext: {

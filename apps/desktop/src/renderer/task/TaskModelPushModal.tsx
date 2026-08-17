@@ -33,6 +33,8 @@ export interface TaskModelPushForm {
   workMode: 'default' | 'plan';
   permissionMode: NativePermissionMode;
   workspaceMode: 'direct' | 'worktree';
+  taskBranchMode: 'create' | 'existing';
+  environmentId: string;
   directConcurrencyConfirmed: boolean;
   repositorySelections: Record<string, { sourceRef: string; branchName: string; includeLocalChanges: boolean }>;
   currentConversationIds: string[];
@@ -51,6 +53,7 @@ export type TaskModelPushPreferences = Pick<TaskModelPushForm, 'model' | 'effort
 type TaskPushRepositoryCapability = CodexTaskPushCapabilities['repositories'][number];
 type TaskPushSourceRef = TaskPushRepositoryCapability['sourceRefs'][number];
 type TaskPushContextCapability = CodexTaskPushCapabilities['parentContextOptions'][number] | CodexTaskPushCapabilities['relatedContextOptions'][number];
+type TaskPushEnvironmentCapability = NonNullable<CodexTaskPushCapabilities['existingEnvironments']>[number];
 
 interface TaskPushCommonSource {
   key: string;
@@ -75,6 +78,7 @@ export function normalizeTaskModelPushCapabilities(capabilities: CodexTaskPushCa
     currentConversationOptions: Array.isArray(capabilities.currentConversationOptions) ? capabilities.currentConversationOptions : [],
     parentContextOptions: Array.isArray(capabilities.parentContextOptions) ? capabilities.parentContextOptions.map(normalizeContext) : [],
     relatedContextOptions: Array.isArray(capabilities.relatedContextOptions) ? capabilities.relatedContextOptions.map(normalizeContext) : [],
+    existingEnvironments: Array.isArray(capabilities.existingEnvironments) ? capabilities.existingEnvironments : [],
   };
 }
 
@@ -126,6 +130,15 @@ function resolveSelectedTaskPushCommonSourceKey(repositories: TaskPushRepository
 function taskPushCommonSourceLabel(source: TaskPushCommonSource, repositoryCount: number, zh: boolean): string {
   if (zh) return `${source.label} · ${source.kind === 'local' ? '本地' : `${source.group} 远端`} · ${repositoryCount} 个仓库`;
   return `${source.label} · ${source.kind === 'local' ? 'local' : `${source.group} remote`} · ${repositoryCount} repositories`;
+}
+
+function taskPushEnvironmentLabel(environment: TaskPushEnvironmentCapability, zh: boolean): string {
+  const branches = Array.from(new Set(environment.repositories.map((repository) => repository.branchName)));
+  const branchLabel = branches.length === 1 ? branches[0]! : branches.join(zh ? '、' : ', ');
+  const repositoryLabel = environment.repositories.length === 1 ? environment.repositories[0]!.repositoryName : zh ? `${environment.repositories.length} 个仓库` : `${environment.repositories.length} repositories`;
+  const unavailableLabel =
+    environment.unavailableReason === 'active_conversation' ? (zh ? ' · 正有会话使用' : ' · active conversation') : environment.unavailableReason === 'closed_workspace' ? (zh ? ' · 已部分关闭' : ' · partially closed') : '';
+  return `${branchLabel} · ${repositoryLabel}${unavailableLabel}`;
 }
 
 export function buildTaskModelPushMessage(
@@ -529,6 +542,7 @@ export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapab
   const effort = rememberedModel && remembered && selectedModel.supportedReasoningEfforts.includes(remembered.effort) ? remembered.effort : (selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? '');
   const requestedServiceTier = remembered?.serviceTier ?? serviceTier;
   const normalizedServiceTier = normalizeServiceTierSelection(requestedServiceTier, selectedModel);
+  const firstAvailableEnvironment = capabilities.existingEnvironments?.find((environment) => environment.available);
   return {
     model: selectedModel.id,
     effort,
@@ -538,6 +552,8 @@ export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapab
     // 用户已确认：项目没有成功记忆时，权限必须回退为只读。
     permissionMode: remembered?.permissionMode ?? 'read-only',
     workspaceMode: remembered?.workspaceMode ?? (capabilities.repositories.length > 0 ? 'worktree' : 'direct'),
+    taskBranchMode: 'create',
+    environmentId: firstAvailableEnvironment?.id ?? '',
     directConcurrencyConfirmed: false,
     repositorySelections: Object.fromEntries(
       capabilities.repositories.map((repository) => {
@@ -635,6 +651,9 @@ export function TaskModelPushModal(props: {
   const busy = inspectingConfig || importingConfig || authenticating || authenticated || props.status === 'submitting' || inputResources.processing;
   const codexLoginRequired = selectedModel?.agentKind !== 'pi' && selectedModel?.sourceId === 'codex' && props.capabilities?.codexAccount.requiresOpenaiAuth === true && !props.capabilities.codexAccount.signedIn;
   const repositories = props.capabilities?.repositories ?? [];
+  const existingEnvironments = props.capabilities?.existingEnvironments ?? [];
+  const availableEnvironments = existingEnvironments.filter((environment) => environment.available);
+  const selectedEnvironment = existingEnvironments.find((environment) => environment.id === props.form.environmentId);
   const selectedCommonSourceKey = resolveSelectedTaskPushCommonSourceKey(repositories, props.form.repositorySelections, commonSources);
   const selectedCommonSource = commonSources.find((source) => source.key === selectedCommonSourceKey);
   const hasRepositorySourceSelection = repositories.some((repository) => Boolean(props.form.repositorySelections[repository.id]?.sourceRef));
@@ -712,7 +731,7 @@ export function TaskModelPushModal(props: {
           <section className="task-model-push-workspace" aria-label={zh ? '本次推送工作区' : 'Workspace for this push'}>
             <span className="task-model-push-section-heading">
               <strong>{zh ? '本次推送工作区' : 'Workspace for this push'}</strong>
-              <small>{zh ? '直接使用项目目录，或按需创建独立分支和 worktree' : 'Use the project directory directly, or create isolated branches and worktrees'}</small>
+              <small>{zh ? '直接使用项目目录，或创建、继续独立分支和 worktree' : 'Use the project directory directly, or create and continue isolated branches and worktrees'}</small>
             </span>
             <fieldset className="task-model-push-mode-choice">
               <legend>{zh ? '工作方式' : 'Workspace mode'}</legend>
@@ -741,10 +760,44 @@ export function TaskModelPushModal(props: {
                 />
                 <span>
                   <strong>Worktree</strong>
-                  <small>{zh ? '自动发现全部 Git 仓库，并创建独立任务分支' : 'Discover all Git repositories and create isolated task branches'}</small>
+                  <small>{zh ? '自动发现全部 Git 仓库，并创建或继续独立任务分支' : 'Discover all Git repositories, then create or continue isolated task branches'}</small>
                 </span>
               </label>
             </fieldset>
+            {props.form.workspaceMode === 'worktree' && existingEnvironments.length > 0 ? (
+              <fieldset className="task-model-push-mode-choice task-model-push-branch-choice">
+                <legend>{zh ? '任务分支方式' : 'Task branch mode'}</legend>
+                <label className={props.form.taskBranchMode === 'create' ? 'is-selected' : undefined}>
+                  <input type="radio" name="task-branch-mode" value="create" checked={props.form.taskBranchMode === 'create'} onChange={() => props.onChange({ ...props.form, taskBranchMode: 'create' })} disabled={busy} />
+                  <span>
+                    <strong>{zh ? '创建新的任务分支' : 'Create new task branches'}</strong>
+                    <small>{zh ? '从下方来源分支创建新的独立开发线' : 'Create a new isolated development line from the source branches below'}</small>
+                  </span>
+                </label>
+                <label className={props.form.taskBranchMode === 'existing' ? 'is-selected' : undefined}>
+                  <input
+                    type="radio"
+                    name="task-branch-mode"
+                    value="existing"
+                    checked={props.form.taskBranchMode === 'existing'}
+                    onChange={() => props.onChange({ ...props.form, taskBranchMode: 'existing', environmentId: availableEnvironments[0]?.id ?? '' })}
+                    disabled={busy || availableEnvironments.length === 0}
+                  />
+                  <span>
+                    <strong>{zh ? '继续已有任务分支' : 'Continue existing task branches'}</strong>
+                    <small>
+                      {availableEnvironments.length > 0
+                        ? zh
+                          ? '创建新会话，继续使用原 worktree 和分支'
+                          : 'Create a new conversation in the original worktree and branches'
+                        : zh
+                          ? '现有任务分支正在写入或已部分关闭'
+                          : 'Existing task branches are active or partially closed'}
+                    </small>
+                  </span>
+                </label>
+              </fieldset>
+            ) : null}
             {props.form.workspaceMode === 'direct' ? (
               <div className="task-model-push-direct-summary">
                 <small>
@@ -764,6 +817,43 @@ export function TaskModelPushModal(props: {
                   </label>
                 ) : null}
               </div>
+            ) : props.form.taskBranchMode === 'existing' ? (
+              <section className="task-model-push-existing-environment" aria-labelledby="task-model-push-existing-environment-title">
+                <span className="task-model-push-section-heading">
+                  <strong id="task-model-push-existing-environment-title">{zh ? '选择已有任务分支' : 'Choose existing task branches'}</strong>
+                  <small>{zh ? '多仓任务会整体继续，保持原执行目录与可写根一致' : 'Multi-repository tasks continue as one environment to preserve the execution root'}</small>
+                </span>
+                <ZeusSelect
+                  size="regular"
+                  ariaLabel={zh ? '选择已有任务分支' : 'Choose existing task branches'}
+                  value={props.form.environmentId}
+                  options={existingEnvironments.map((environment) => ({
+                    value: environment.id,
+                    label: taskPushEnvironmentLabel(environment, zh),
+                    group: environment.available ? (zh ? '可继续' : 'Available') : zh ? '暂不可用' : 'Unavailable',
+                    disabled: !environment.available,
+                  }))}
+                  onChange={(environmentId) => props.onChange({ ...props.form, environmentId })}
+                  disabled={busy || availableEnvironments.length === 0}
+                  searchPlaceholder={zh ? '搜索任务分支或仓库' : 'Search task branches or repositories'}
+                  emptyLabel={zh ? '没有匹配的任务分支' : 'No matching task branches'}
+                />
+                {selectedEnvironment ? (
+                  <ul className="task-model-push-existing-repositories">
+                    {selectedEnvironment.repositories.map((repository) => (
+                      <li key={`${repository.repositoryId ?? repository.repositoryRelativePath}:${repository.branchName}`}>
+                        <span>{repository.repositoryName}</span>
+                        <code>{repository.branchName}</code>
+                        <small>{zh ? `来源：${repository.sourceBranch}` : `Source: ${repository.sourceBranch}`}</small>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="task-model-push-error" role="alert">
+                    {zh ? '请选择一组当前可继续的任务分支。' : 'Choose a task branch environment that is currently available.'}
+                  </p>
+                )}
+              </section>
             ) : !props.capabilities ? (
               <p className={props.status === 'error' ? 'task-model-push-error' : 'task-model-push-message'} role="status">
                 {props.status === 'error'
@@ -937,7 +1027,7 @@ export function TaskModelPushModal(props: {
                 {zh ? '项目目录下没有发现 Git 仓库。请先自行初始化仓库，或改用“直接使用项目目录”。' : 'No Git repository was found. Initialize one first, or use the project directory directly.'}
               </p>
             )}
-            {props.form.workspaceMode === 'worktree' ? (
+            {props.form.workspaceMode === 'worktree' && props.form.taskBranchMode === 'create' ? (
               <small className="task-model-push-worktree-root">
                 {zh ? '新工作区路径' : 'New workspace path'}：{props.capabilities?.git.worktreeRoot ?? '—'}/&lt;{zh ? '项目' : 'project'}&gt;/&lt;{zh ? '推送标识' : 'push-id'}&gt;/{props.task.taskCode ?? props.task.id}
               </small>
@@ -1183,11 +1273,13 @@ export function TaskModelPushModal(props: {
                     !props.form.model ||
                     (props.form.workspaceMode === 'direct'
                       ? directWorkspaceNeedsConfirmation && !props.form.directConcurrencyConfirmed
-                      : repositories.length === 0 ||
-                        repositories.some((repository) => {
-                          const selection = props.form.repositorySelections[repository.id];
-                          return !selection?.sourceRef || !selection.branchName.trim();
-                        }))
+                      : props.form.taskBranchMode === 'existing'
+                        ? !selectedEnvironment?.available
+                        : repositories.length === 0 ||
+                          repositories.some((repository) => {
+                            const selection = props.form.repositorySelections[repository.id];
+                            return !selection?.sourceRef || !selection.branchName.trim();
+                          }))
                   }
                 >
                   {inspectingConfig

@@ -16405,7 +16405,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         if (selectedEffort && !selectedModel.supportedReasoningEfforts.some((candidate) => candidate === selectedEffort)) {
           throw nativeApiError('ZEUS_CODEX_EFFORT_UNAVAILABLE', `Configured Codex effort is unavailable: ${selectedEffort}`);
         }
-        if (!isNativeApiRecord(body.workspace) || (body.workspace.mode !== 'create' && body.workspace.mode !== 'direct')) {
+        if (!isNativeApiRecord(body.workspace) || (body.workspace.mode !== 'create' && body.workspace.mode !== 'existing' && body.workspace.mode !== 'direct')) {
           throw nativeApiError('ZEUS_TASK_PUSH_WORKSPACE_MODE_REQUIRED', 'Choose the project directory or a worktree for this task push.');
         }
         const directWorkspace = body.workspace.mode === 'direct';
@@ -17508,6 +17508,31 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     const repositoryCapabilities = await mapTaskRepositoriesWithConcurrency(synchronizedRepositories, ({ record, discovered }) => resolveTaskPushRepositoryCapability(project, task, record, false, discovered));
     const registeredRepositories = synchronizedRepositories.map(({ record }) => record);
     const primaryRepository = repositoryCapabilities[0];
+    const existingEnvironments = taskEnvironments.listByTask(task.id).flatMap((environment) => {
+      if (environment.state === 'reclaimed') return [];
+      const members = taskWorkspaces.listByEnvironment(environment.id).filter((workspace) => workspace.kind === 'task');
+      if (members.length === 0) return [];
+      const hasClosedWorkspace = members.some((workspace) => workspace.state === 'merged' || workspace.state === 'discarded');
+      const hasActiveConversation = taskEnvironmentHasActiveWritableConversation(environment.id);
+      return [
+        {
+          id: environment.id,
+          available: !hasClosedWorkspace && !hasActiveConversation,
+          unavailableReason: hasClosedWorkspace ? ('closed_workspace' as const) : hasActiveConversation ? ('active_conversation' as const) : null,
+          repositories: members
+            .map((workspace) => ({
+              repositoryId: workspace.repositoryId,
+              repositoryName: workspace.repositoryName,
+              repositoryRelativePath: workspace.repositoryRelativePath,
+              branchName: workspace.branchName,
+              sourceBranch: workspace.sourceBranch,
+            }))
+            .sort((left, right) => left.repositoryRelativePath.localeCompare(right.repositoryRelativePath)),
+          createdAt: environment.createdAt,
+          updatedAt: environment.updatedAt,
+        },
+      ];
+    });
     return {
       ...capabilities,
       taskId: task.id,
@@ -17524,6 +17549,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         path: project.localPath,
         activeWritableConversationCount: countDirectProjectActiveWritableConversations(project.id),
       },
+      existingEnvironments,
       sharedWritablePaths: projectSharedPaths.listByProject(project.id),
       git: {
         primaryWorkspacePath: primaryRepository?.localPath ?? project.localPath,
@@ -17835,9 +17861,13 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   }
 
   function assertTaskEnvironmentWritable(environment: ZeusTaskEnvironmentRecord): void {
-    if (conversations.listByEnvironment(environment.id).some((conversation) => conversation.providerState === 'binding' || conversation.providerState === 'active' || conversation.providerState === 'waiting')) {
+    if (taskEnvironmentHasActiveWritableConversation(environment.id)) {
       throw nativeApiError('ZEUS_TASK_ENVIRONMENT_BUSY', 'The selected task environment already has an active writable Codex turn.');
     }
+  }
+
+  function taskEnvironmentHasActiveWritableConversation(environmentId: string): boolean {
+    return conversations.listByEnvironment(environmentId).some((conversation) => conversation.providerState === 'binding' || conversation.providerState === 'active' || conversation.providerState === 'waiting');
   }
 
   /** 父子仓库的代码交付互不联动，但物理目录回收必须先子后父。 */

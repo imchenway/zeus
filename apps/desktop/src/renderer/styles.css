@@ -15752,6 +15752,56 @@ body[data-surface='project-git-diff'] #root {
   gap: 8px;
 }
 
+.macos-ai-app .task-model-push-existing-environment {
+  min-inline-size: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.macos-ai-app .task-model-push-existing-environment .zeus-select {
+  inline-size: 100%;
+}
+
+.macos-ai-app .task-model-push-existing-repositories {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 10px;
+  background: var(--zeus-control-bg);
+  list-style: none;
+}
+
+.macos-ai-app .task-model-push-existing-repositories li {
+  min-inline-size: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 3px 10px;
+  padding: 9px 10px;
+}
+
+.macos-ai-app .task-model-push-existing-repositories li + li {
+  border-block-start: 1px solid var(--zeus-product-line-soft);
+}
+
+.macos-ai-app .task-model-push-existing-repositories code,
+.macos-ai-app .task-model-push-existing-repositories small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macos-ai-app .task-model-push-existing-repositories code {
+  color: var(--zeus-product-text);
+  font-size: 12px;
+}
+
+.macos-ai-app .task-model-push-existing-repositories small {
+  grid-column: 1 / -1;
+  color: var(--zeus-product-muted);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .macos-ai-app .task-model-push-mode-choice > label,
   .macos-ai-app .task-model-push-mode-choice > label > input[type='radio']::before {
@@ -16249,6 +16299,10 @@ body[data-surface='project-git-diff'] #root {
   .macos-ai-app .task-model-push-workspace-grid,
   .macos-ai-app .task-model-push-mode-choice,
   .macos-ai-app .task-model-push-parent-resources {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .macos-ai-app .task-model-push-existing-repositories li {
     grid-template-columns: minmax(0, 1fr);
   }
 }
