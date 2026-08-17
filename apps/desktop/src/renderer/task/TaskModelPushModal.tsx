@@ -561,6 +561,155 @@ export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapab
   };
 }
 
+function TaskModelPushLoginDialog(props: { language: 'zh-CN' | 'en-US'; status: Extract<TaskModelPushModalStatus, 'inspecting-config' | 'authenticating' | 'authenticated'>; onCancel: () => void }) {
+  const zh = props.language === 'zh-CN';
+  const authenticated = props.status === 'authenticated';
+  const inspectingConfig = props.status === 'inspecting-config';
+  const title = zh ? '登录 Zeus 专属 Codex' : 'Sign in to Codex for Zeus';
+  return (
+    <ModalPortal rootClassName="task-model-push-portal-root" backdropClassName="task-model-push-backdrop" dismissDisabled={authenticated} onDismiss={props.onCancel}>
+      <section className="task-model-push-step-modal zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="task-model-push-login-title" aria-describedby="task-model-push-login-description">
+        <header className="task-model-push-header">
+          <span>
+            <strong id="task-model-push-login-title">{title}</strong>
+            <small>{zh ? '账号登录' : 'Account sign-in'}</small>
+          </span>
+          <button type="button" aria-label={zh ? '返回推送设置' : 'Back to push settings'} onClick={props.onCancel} disabled={authenticated}>
+            ×
+          </button>
+        </header>
+        <div className="task-model-push-step-body" role="status" aria-live="polite" aria-atomic="true">
+          <strong>
+            {authenticated ? (zh ? '登录成功，正在返回 Zeus' : 'Signed in, returning to Zeus') : inspectingConfig ? (zh ? '正在准备登录' : 'Preparing sign-in') : zh ? '请在官方页面完成登录' : 'Complete sign-in on the official page'}
+          </strong>
+          <p id="task-model-push-login-description">
+            {authenticated
+              ? zh
+                ? 'Zeus 已验证专属账号，正在恢复刚才的推送设置并创建会话。'
+                : 'Zeus verified its dedicated account and is restoring your push settings to create the conversation.'
+              : inspectingConfig
+                ? zh
+                  ? '正在检查是否有可安全导入的 Codex App 配置；有可导入内容时会单独询问。'
+                  : 'Checking for Codex App configuration that can be imported safely. If anything is available, Zeus will ask in a separate dialog.'
+                : zh
+                  ? '官方登录页已在系统浏览器中打开。完成授权后无需点击网页中的其他产品按钮，Zeus 会自动回到前台并继续。'
+                  : 'The official sign-in page is open in your system browser. After authorization, do not choose another product button there; Zeus will return to the foreground and continue automatically.'}
+          </p>
+          <small>{zh ? 'Zeus 只读取登录结果，不会读取、复制或覆盖 Codex App 的账号信息。' : 'Zeus only reads the sign-in result and does not read, copy, or overwrite the Codex App account.'}</small>
+        </div>
+        <footer className="task-model-push-footer">
+          <small>{zh ? '当前模型、工作区、权限、补充信息和附件都会保留。' : 'Your model, workspace, permissions, supplemental information, and attachments are preserved.'}</small>
+          {authenticated ? (
+            <Button variant="primary" size="regular" busy disabled>
+              {zh ? '正在继续…' : 'Continuing…'}
+            </Button>
+          ) : (
+            <Button variant="secondary" size="regular" onClick={props.onCancel}>
+              {zh ? '返回' : 'Back'}
+            </Button>
+          )}
+        </footer>
+      </section>
+    </ModalPortal>
+  );
+}
+
+function TaskModelPushConfigImportDialog(props: {
+  language: 'zh-CN' | 'en-US';
+  preview: CodexConfigImportPreview | null;
+  needsActivation: boolean;
+  importing: boolean;
+  onCancel: () => void;
+  onClose: () => void;
+  onSkip: () => void;
+  onImport: () => void;
+}) {
+  const zh = props.language === 'zh-CN';
+  const dismiss = props.needsActivation ? props.onClose : props.onCancel;
+  return (
+    <ModalPortal rootClassName="task-model-push-portal-root" backdropClassName="task-model-push-backdrop" dismissDisabled={props.importing} onDismiss={dismiss}>
+      <section
+        className="task-model-push-step-modal task-model-push-config-dialog zeus-solid-form-surface"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="task-model-push-config-import-title"
+        aria-describedby="task-model-push-config-import-description"
+      >
+        <header className="task-model-push-header">
+          <span>
+            <strong id="task-model-push-config-import-title">{props.needsActivation ? (zh ? '启用已导入配置' : 'Enable imported configuration') : zh ? '导入 Codex 配置' : 'Import Codex configuration'}</strong>
+            <small>{zh ? '配置导入' : 'Configuration import'}</small>
+          </span>
+          <button type="button" aria-label={zh ? (props.needsActivation ? '关闭' : '返回登录') : props.needsActivation ? 'Close' : 'Back to sign-in'} onClick={dismiss} disabled={props.importing}>
+            ×
+          </button>
+        </header>
+        <div className="task-model-push-step-body task-model-push-config-import">
+          <p id="task-model-push-config-import-description">
+            {props.needsActivation
+              ? zh
+                ? '配置文件已经安全导入。Zeus 需要先启动新的 Codex 运行服务，才能保证本次新会话使用这些配置。'
+                : 'The configuration was imported safely. Zeus must start a fresh Codex runtime before this conversation can use it.'
+              : zh
+                ? 'Zeus 会把普通偏好、指令、规则、提示词、技能和用户插件复制到专属目录；不会导入账号、密钥或历史会话。'
+                : 'Zeus will copy preferences, instructions, rules, prompts, skills, and user plugins into its own directory. Accounts, secrets, and conversation history are excluded.'}
+          </p>
+          {props.preview ? (
+            <ul aria-label={zh ? '可导入配置' : 'Configuration available to import'}>
+              {props.preview.entries.map((entry) => (
+                <li key={entry.path}>
+                  <strong>{entry.path}</strong>
+                  <small>{zh ? `${entry.nodeCount} 项` : `${entry.nodeCount} item(s)`}</small>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {(props.preview?.skipped.length ?? 0) > 0 ? (
+            <small>
+              {zh
+                ? `另有 ${props.preview!.skipped.length} 项因安全限制、缺失、格式不支持或属于运行缓存而跳过。`
+                : `${props.preview!.skipped.length} item(s) will be skipped because they are missing, unsafe, unsupported, or generated runtime cache.`}
+            </small>
+          ) : null}
+        </div>
+        <footer className="task-model-push-footer">
+          <small>
+            {props.needsActivation
+              ? zh
+                ? '启用成功前不会创建本次会话。'
+                : 'This conversation will not be created until activation succeeds.'
+              : zh
+                ? '只询问这一次；暂不导入后仍可在设置中手动导入。'
+                : 'You will only be asked once. You can still import later from Settings.'}
+          </small>
+          <span>
+            <Button variant="secondary" size="regular" onClick={props.needsActivation ? props.onClose : props.onSkip} disabled={props.importing}>
+              {props.needsActivation ? (zh ? '关闭' : 'Close') : zh ? '暂不导入' : 'Not now'}
+            </Button>
+            <Button type="button" variant="primary" size="regular" busy={props.importing} disabled={props.importing} onClick={props.onImport}>
+              {props.importing
+                ? props.needsActivation
+                  ? zh
+                    ? '正在启用…'
+                    : 'Enabling…'
+                  : zh
+                    ? '正在导入并启用…'
+                    : 'Importing and enabling…'
+                : props.needsActivation
+                  ? zh
+                    ? '重试启用'
+                    : 'Retry enabling'
+                  : zh
+                    ? '导入并继续'
+                    : 'Import and continue'}
+            </Button>
+          </span>
+        </footer>
+      </section>
+    </ModalPortal>
+  );
+}
+
 export function TaskModelPushModal(props: {
   open: boolean;
   language: 'zh-CN' | 'en-US';
@@ -577,6 +726,7 @@ export function TaskModelPushModal(props: {
   onRefreshRepository: (repositoryId: string) => void;
   onClose: () => void;
   onCancelAuthentication: () => void;
+  onCancelCodexConfigImport: () => void;
   onImportCodexConfig: () => void;
   onSkipCodexConfigImport: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
@@ -693,6 +843,25 @@ export function TaskModelPushModal(props: {
       repositorySelections[repository.id] = { ...current, sourceRef };
     }
     props.onChange({ ...props.form, repositorySelections });
+  }
+
+  if (props.configImportPreview || props.configImportNeedsActivation) {
+    return (
+      <TaskModelPushConfigImportDialog
+        language={props.language}
+        preview={props.configImportPreview}
+        needsActivation={props.configImportNeedsActivation}
+        importing={importingConfig}
+        onCancel={props.onCancelCodexConfigImport}
+        onClose={props.onClose}
+        onSkip={props.onSkipCodexConfigImport}
+        onImport={props.onImportCodexConfig}
+      />
+    );
+  }
+
+  if (inspectingConfig || authenticating || authenticated) {
+    return <TaskModelPushLoginDialog language={props.language} status={authenticated ? 'authenticated' : authenticating ? 'authenticating' : 'inspecting-config'} onCancel={props.onCancelAuthentication} />;
   }
 
   const modal = (
@@ -1021,70 +1190,6 @@ export function TaskModelPushModal(props: {
             </label>
           </div>
 
-          {codexLoginRequired || authenticating || authenticated ? (
-            <section className={`task-model-push-account${authenticated ? ' is-success' : ''}`} role="status" aria-live="polite" aria-atomic="true">
-              <span>
-                <strong>{authenticated ? (zh ? '登录成功，正在继续' : 'Signed in, continuing') : zh ? 'Zeus 专属 Codex 需要登录' : 'Sign in to Codex for Zeus'}</strong>
-                <small>
-                  {authenticated
-                    ? zh
-                      ? 'Zeus 已验证专属 Codex 账号，正在恢复刚才的配置并创建会话。'
-                      : 'Zeus verified its Codex account and is restoring your configuration to create the conversation.'
-                    : zh
-                      ? 'Zeus 与 Codex App 使用独立账号状态，不会复制或覆盖 Codex App 的登录信息。'
-                      : 'Zeus keeps a separate account state and does not copy or overwrite the Codex App sign-in.'}
-                </small>
-              </span>
-              <p>
-                {authenticated
-                  ? zh
-                    ? '无需再次确认，请稍候。'
-                    : 'No further confirmation is needed.'
-                  : authenticating
-                    ? zh
-                      ? '官方登录页已打开。完成后无需点击网页中的“打开 ChatGPT”或“打开 Codex”，Zeus 会自动返回并继续。'
-                      : 'The official sign-in page is open. You do not need to choose “Open ChatGPT” or “Open Codex”; Zeus will return and continue automatically.'
-                    : zh
-                      ? '点击“登录并继续”会打开官方登录页。完成后无需点击网页中的其他按钮，Zeus 会自动返回；当前模型、工作区、权限、补充信息和本次附件都会保留。'
-                      : 'Choose “Sign in and continue” to open the official sign-in page. You do not need to choose another button there; Zeus will return automatically and preserve your model, workspace, permissions, supplemental information, and attachments for this push.'}
-              </p>
-            </section>
-          ) : null}
-
-          {props.configImportPreview || props.configImportNeedsActivation ? (
-            <section className="task-model-push-account task-model-push-config-import" role="status" aria-live="polite" aria-atomic="true">
-              <span>
-                <strong>{props.configImportNeedsActivation ? (zh ? '配置已导入，等待启用' : 'Configuration imported, waiting to be enabled') : zh ? '使用 Codex App 的配置？' : 'Use your Codex App configuration?'}</strong>
-                <small>
-                  {props.configImportNeedsActivation
-                    ? zh
-                      ? 'Zeus 需要先启动新的 Codex 运行服务，才能保证本次新会话使用已导入配置。'
-                      : 'Zeus must start a fresh Codex runtime before this conversation can use the imported configuration.'
-                    : zh
-                      ? 'Zeus 会把普通偏好、指令、规则、提示词、技能和用户插件复制到专属目录；不会导入账号、密钥或历史会话。'
-                      : 'Zeus will copy preferences, instructions, rules, prompts, skills, and user plugins into its own directory. Accounts, secrets, and conversation history are excluded.'}
-                </small>
-              </span>
-              {props.configImportPreview ? (
-                <ul aria-label={zh ? '可导入配置' : 'Configuration available to import'}>
-                  {props.configImportPreview.entries.map((entry) => (
-                    <li key={entry.path}>
-                      <strong>{entry.path}</strong>
-                      <small>{zh ? `${entry.nodeCount} 项` : `${entry.nodeCount} item(s)`}</small>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-              {(props.configImportPreview?.skipped.length ?? 0) > 0 ? (
-                <p>
-                  {zh
-                    ? `另有 ${props.configImportPreview!.skipped.length} 项因安全限制、缺失、格式不支持或属于运行缓存而跳过。`
-                    : `${props.configImportPreview!.skipped.length} item(s) will be skipped because they are missing, unsafe, unsupported, or generated runtime cache.`}
-                </p>
-              ) : null}
-            </section>
-          ) : null}
-
           <TaskPushCurrentConversationPicker
             options={currentConversationOptions}
             selectedIds={props.form.currentConversationIds}
@@ -1131,91 +1236,38 @@ export function TaskModelPushModal(props: {
 
         <footer className="task-model-push-footer">
           <small>
-            {props.configImportPreview || props.configImportNeedsActivation
+            {codexLoginRequired
               ? zh
-                ? props.configImportNeedsActivation
-                  ? '配置文件已安全导入；启用成功前不会创建本次会话。'
-                  : '只询问这一次；暂不导入后仍可在设置中手动导入。'
-                : props.configImportNeedsActivation
-                  ? 'The configuration is safely imported. This conversation will not be created until it is enabled.'
-                  : 'You will only be asked once. You can still import later from Settings.'
+                ? '需要先登录 Zeus 专属 Codex；当前推送设置会完整保留。'
+                : 'Sign in to Codex for Zeus first; the current push settings will be preserved.'
               : zh
                 ? '确认后会创建新会话并立即进入；历史会话不会被覆盖。'
                 : 'A new conversation will be created and opened; history remains unchanged.'}
           </small>
           <span>
-            {props.configImportPreview || props.configImportNeedsActivation ? (
-              <>
-                <Button variant="secondary" size="regular" onClick={props.configImportNeedsActivation ? props.onClose : props.onSkipCodexConfigImport} disabled={importingConfig}>
-                  {props.configImportNeedsActivation ? (zh ? '关闭' : 'Close') : zh ? '暂不导入' : 'Not now'}
-                </Button>
-                <Button type="button" variant="primary" size="regular" busy={importingConfig} disabled={importingConfig} onClick={props.onImportCodexConfig}>
-                  {importingConfig
-                    ? props.configImportNeedsActivation
-                      ? zh
-                        ? '正在启用…'
-                        : 'Enabling…'
-                      : zh
-                        ? '正在导入并启用…'
-                        : 'Importing and enabling…'
-                    : props.configImportNeedsActivation
-                      ? zh
-                        ? '重试启用'
-                        : 'Retry enabling'
-                      : zh
-                        ? '导入并继续'
-                        : 'Import and continue'}
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button variant="secondary" size="regular" onClick={authenticating ? props.onCancelAuthentication : props.onClose} disabled={props.status === 'submitting' || importingConfig}>
-                  {authenticating ? (zh ? '取消登录' : 'Cancel sign-in') : zh ? '取消' : 'Cancel'}
-                </Button>
-                <Button
-                  type="submit"
-                  variant="primary"
-                  size="regular"
-                  busy={busy}
-                  disabled={
-                    busy ||
-                    props.status === 'loading' ||
-                    !props.form.model ||
-                    (props.form.workspaceMode === 'direct'
-                      ? directWorkspaceNeedsConfirmation && !props.form.directConcurrencyConfirmed
-                      : repositories.length === 0 ||
-                        repositories.some((repository) => {
-                          const selection = props.form.repositorySelections[repository.id];
-                          return !selection?.sourceRef || !selection.branchName.trim();
-                        }))
-                  }
-                >
-                  {inspectingConfig
-                    ? zh
-                      ? '正在检查 Codex 配置…'
-                      : 'Checking Codex configuration…'
-                    : authenticating
-                      ? zh
-                        ? '等待登录…'
-                        : 'Waiting for sign-in…'
-                      : authenticated
-                        ? zh
-                          ? '登录成功，正在继续…'
-                          : 'Signed in, continuing…'
-                        : props.status === 'submitting'
-                          ? zh
-                            ? '正在创建…'
-                            : 'Creating…'
-                          : codexLoginRequired
-                            ? zh
-                              ? '登录并继续'
-                              : 'Sign in and continue'
-                            : zh
-                              ? '创建新会话'
-                              : 'Create conversation'}
-                </Button>
-              </>
-            )}
+            <Button variant="secondary" size="regular" onClick={props.onClose} disabled={props.status === 'submitting'}>
+              {zh ? '取消' : 'Cancel'}
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              size="regular"
+              busy={busy}
+              disabled={
+                busy ||
+                props.status === 'loading' ||
+                !props.form.model ||
+                (props.form.workspaceMode === 'direct'
+                  ? directWorkspaceNeedsConfirmation && !props.form.directConcurrencyConfirmed
+                  : repositories.length === 0 ||
+                    repositories.some((repository) => {
+                      const selection = props.form.repositorySelections[repository.id];
+                      return !selection?.sourceRef || !selection.branchName.trim();
+                    }))
+              }
+            >
+              {props.status === 'submitting' ? (zh ? '正在创建…' : 'Creating…') : codexLoginRequired ? (zh ? '登录并继续' : 'Sign in and continue') : zh ? '创建新会话' : 'Create conversation'}
+            </Button>
           </span>
         </footer>
       </form>

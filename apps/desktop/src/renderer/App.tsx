@@ -10321,6 +10321,13 @@ export function App(props: {
     void authenticateCodexAndContinueTaskModelPush(task, client, capabilities, taskModelPushForm);
   }
 
+  function cancelTaskModelPushCodexConfigImport(): void {
+    taskModelPushLoginRequestRef.current += 1;
+    setTaskModelPushConfigImportPreview(null);
+    setTaskModelPushStatus('ready');
+    setTaskModelPushError(null);
+  }
+
   async function importTaskModelPushCodexConfig(): Promise<void> {
     const task = snapshot.tasks.find((candidate) => candidate.id === taskModelPushTaskId);
     const client = props.nativeConversationClient;
@@ -13796,6 +13803,7 @@ export function App(props: {
                 onRefreshRepository={(repositoryId) => void refreshTaskModelPushRepository(repositoryId)}
                 onClose={closeTaskModelPush}
                 onCancelAuthentication={cancelTaskModelPushAuthentication}
+                onCancelCodexConfigImport={cancelTaskModelPushCodexConfigImport}
                 onImportCodexConfig={() => void importTaskModelPushCodexConfig()}
                 onSkipCodexConfigImport={skipTaskModelPushCodexConfigImport}
                 onSubmit={(event) => void submitTaskModelPush(event)}
