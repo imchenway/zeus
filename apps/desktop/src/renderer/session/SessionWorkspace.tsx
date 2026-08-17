@@ -1339,6 +1339,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const [contextFullWidth, setContextFullWidth] = useState(false);
   const [browserPaneShare, setBrowserPaneShare] = useState(56);
   const [browserResizing, setBrowserResizing] = useState(false);
+  const [quickActionsPopoverOpen, setQuickActionsPopoverOpen] = useState(false);
   const [browserLayoutWidth, setBrowserLayoutWidth] = useState(0);
   const [goalPanelOpen, setGoalPanelOpen] = useState(false);
   const [goalBusy, setGoalBusy] = useState(false);
@@ -1430,6 +1431,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     browserVisibilityProgress.set(0);
     setContextMounted(false);
     setBrowserResizing(false);
+    setQuickActionsPopoverOpen(false);
     browserResizeActiveRef.current = false;
   }, [browserVisibilityProgress, props.conversation?.id]);
 
@@ -2173,6 +2175,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 onAddSources={actions.onChooseAttachments}
                 onOpenSource={(resource) => openConversationResource(resource, defaultOpenTarget(resource))}
                 onLoadResourcePreview={actions.onLoadResourcePreview}
+                onPopoverOpenChange={setQuickActionsPopoverOpen}
               />
             ) : null}
           </div>
@@ -2337,7 +2340,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                           conversationId={props.state?.conversationId ?? props.conversation.id}
                           language={props.language}
                           disabled={interactionReadOnly || nonResumableNative}
-                          suspended={browserResizing}
+                          suspended={browserResizing || quickActionsPopoverOpen}
                           expanded={contextFullWidth}
                           onClose={closeContextWorkspace}
                           onToggleExpanded={() => setContextFullWidth((expanded) => !expanded)}
