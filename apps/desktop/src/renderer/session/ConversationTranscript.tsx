@@ -89,7 +89,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       }),
     [collapsedErrorItems, props.state.turnsByProviderId],
   );
-  // 同一轮的每条思考摘要都属于稳定处理过程，禁止只保留最后一条。
+  // 原始思考摘要完整保留在会话状态中；会话记录的当前态选择统一交给行投影处理。
   const items = transcriptItems;
   const historyHydrated = props.state.snapshot !== null;
   const enteringItemIds = useNewItemMotionIds(
@@ -99,15 +99,15 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   );
   const lastUserKey = [...items].reverse().find((entry) => `${entry.type}`.toLocaleLowerCase().includes('user'))?.key;
   const answeredRequests = useMemo(() => props.state.pendingRequests.filter(isAnsweredUserInputRequest), [props.state.pendingRequests]);
-  const transcriptRows = useMemo(() => projectTranscriptRows(items, answeredRequests), [answeredRequests, items]);
+  const transcriptRows = useMemo(() => projectTranscriptRows(items, answeredRequests, props.state.activeTurnId), [answeredRequests, items, props.state.activeTurnId]);
   const turnRows = useMemo(() => projectTranscriptTurnRows(transcriptRows, props.state.activeTurnId), [props.state.activeTurnId, transcriptRows]);
-  const lastItemKeyByTurn = useMemo(() => Object.fromEntries(items.map((item) => [item.turnId, item.key])), [items]);
+  const lastItemKeyByTurn = useMemo(() => lastVisibleItemKeyByTurn(transcriptRows), [transcriptRows]);
   const orphanFailedTurns = useMemo(() => {
-    const visibleTurnIds = new Set(items.map((item) => item.turnId));
+    const visibleTurnIds = new Set(transcriptRows.map(transcriptRowTurnId).filter((turnId): turnId is string => Boolean(turnId)));
     return Object.values(props.state.turnsByProviderId)
       .filter((turn) => turn.status === 'failed' && turn.error && !visibleTurnIds.has(turn.providerTurnId ?? ''))
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
-  }, [items, props.state.turnsByProviderId]);
+  }, [props.state.turnsByProviderId, transcriptRows]);
   const showActiveStatus = shouldShowTranscriptThinking(props.state, items);
   const motionFocus = resolveSessionMotionFocus(props.state, transcriptItems, showActiveStatus);
   const activeStatusKind = props.state.conversationState === 'starting_turn' ? 'starting' : 'thinking';
@@ -764,9 +764,12 @@ export function isFinalAnswerItem(item: NativeSessionItemBuffer): boolean {
   return itemRole(item) === 'assistant' && (providerPhase === 'final_answer' || providerPhase === 'finalAnswer');
 }
 
-export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[], answeredRequests: readonly NativePendingRequest[] = []): TranscriptRow[] {
+const MAX_GROUPED_COMMAND_ACTIVITY = 32;
+
+export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[], answeredRequests: readonly NativePendingRequest[] = [], activeTurnId: string | null = null): TranscriptRow[] {
   const rows: TranscriptRow[] = [];
   let activity: NativeSessionItemBuffer[] = [];
+  const currentReasoningItemKey = latestCurrentReasoningItemKey(items, activeTurnId);
   const flushActivity = () => {
     if (activity.length === 0) return;
     rows.push({
@@ -792,16 +795,73 @@ export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[],
     const item = entry.item;
     // 多智能体协调事件统一进入右侧智能体面板，不在主会话重复暴露协议载荷。
     if (isSubagentCoordinationItem(item)) continue;
+    if (normalizeItemType(item.type) === 'reasoning') {
+      // 思考摘要是当前工作状态，不是会话历史正文。每个摘要仍会截断前一批命令，
+      // 但只有活动轮次最新一条可见，避免长任务留下逐阶段状态瀑布。
+      flushActivity();
+      if (item.key === currentReasoningItemKey) rows.push({ kind: 'item', key: transcriptItemRenderKey(item), item });
+      continue;
+    }
     if (!isOperationalActivityItem(item)) {
       flushActivity();
       rows.push({ kind: 'item', key: transcriptItemRenderKey(item), item });
       continue;
     }
-    if (activity.length > 0 && activity[activity.length - 1]!.turnId !== item.turnId) flushActivity();
+    if (!isCommandActivityItem(item)) {
+      // MCP、网页、图片和文件变更各自拥有独立生命周期，不能与命令混成一个数量摘要。
+      flushActivity();
+      activity.push(item);
+      flushActivity();
+      continue;
+    }
+    if (!canJoinCommandActivity(activity, item)) flushActivity();
     activity.push(item);
+    if (item.status === 'failed' || activity.length >= MAX_GROUPED_COMMAND_ACTIVITY || !isGroupableCommandSource(item)) flushActivity();
   }
   flushActivity();
   return rows;
+}
+
+function latestCurrentReasoningItemKey(items: readonly NativeSessionItemBuffer[], activeTurnId: string | null): string | null {
+  if (!activeTurnId || items.some((item) => item.turnId === activeTurnId && isFinalAnswerItem(item))) return null;
+  return [...items].reverse().find((item) => item.turnId === activeTurnId && normalizeItemType(item.type) === 'reasoning' && item.status !== 'failed' && item.status !== 'interrupted')?.key ?? null;
+}
+
+function canJoinCommandActivity(activity: readonly NativeSessionItemBuffer[], item: NativeSessionItemBuffer): boolean {
+  if (activity.length === 0) return true;
+  if (activity.length >= MAX_GROUPED_COMMAND_ACTIVITY || activity[0]!.turnId !== item.turnId) return false;
+  if (!isGroupableCommandSource(item) || activity.some((candidate) => !isCommandActivityItem(candidate) || !isGroupableCommandSource(candidate) || candidate.status === 'failed')) return false;
+  const hasRunningCommand = activity.some((candidate) => candidate.status !== 'completed');
+  return !hasRunningCommand || (isExploringCommand(item) && activity.every(isExploringCommand));
+}
+
+function isCommandActivityItem(item: NativeSessionItemBuffer): boolean {
+  return ['commandexecution', 'command'].includes(normalizeItemType(item.type));
+}
+
+function isGroupableCommandSource(item: NativeSessionItemBuffer): boolean {
+  const source = typeof item.payload.source === 'string' ? normalizeItemType(item.payload.source) : '';
+  return source !== 'usershell' && source !== 'unifiedexecinteraction';
+}
+
+function isExploringCommand(item: NativeSessionItemBuffer): boolean {
+  if (!Array.isArray(item.payload.commandActions) || item.payload.commandActions.length === 0) return false;
+  return item.payload.commandActions.every((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const rawType = (value as Record<string, unknown>).type;
+    const type = typeof rawType === 'string' ? normalizeItemType(rawType) : '';
+    return type === 'read' || type === 'listfiles' || type === 'search';
+  });
+}
+
+function lastVisibleItemKeyByTurn(rows: readonly TranscriptRow[]): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const row of rows) {
+    if (row.kind === 'answered_request') continue;
+    const item = row.kind === 'item' ? row.item : row.items.at(-1);
+    if (item) result[item.turnId] = item.key;
+  }
+  return result;
 }
 
 export function isSubagentCoordinationItem(item: Pick<NativeSessionItemBuffer, 'type' | 'payload'>): boolean {
