@@ -1235,7 +1235,14 @@ function formatMessageTimestamp(item: NativeSessionItemBuffer, language: Session
   if (!source) return null;
   const date = new Date(source);
   if (Number.isNaN(date.getTime())) return null;
-  return new Intl.DateTimeFormat(language, { hour: '2-digit', minute: '2-digit', hour12: false }).format(date);
+  const now = new Date();
+  const isToday = date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate();
+  return new Intl.DateTimeFormat(language, {
+    ...(isToday ? {} : { year: 'numeric', month: '2-digit', day: '2-digit' }),
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date);
 }
 
 function commandText(value: unknown): string | null {
