@@ -13,6 +13,10 @@ export type PiThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'x
 
 export type OpenAiThinkingFormat = 'openai' | 'openrouter' | 'deepseek' | 'together' | 'zai' | 'qwen' | 'qwen-chat-template' | 'string-thinking' | 'ant-ling';
 
+export type ModelProtocolFamily = 'openai_responses' | 'openai_completions' | 'anthropic_messages';
+
+export type ModelAuthenticationScheme = 'protocol_default' | 'bearer' | 'x_api_key';
+
 export interface ModelCapabilityEvidence {
   source: 'template' | 'catalog' | 'manual' | 'probe';
   state: ModelCapabilityState;
@@ -45,7 +49,8 @@ export interface ConfiguredModelDefinition {
   maxTokens: number;
   speedLabel: 'standard' | 'high_speed' | 'flash' | 'turbo';
   runtimeAdapter: 'codex_app_server' | 'pi_sdk';
-  protocolFamily: 'openai_responses' | 'openai_completions';
+  protocolFamily: ModelProtocolFamily;
+  authenticationScheme: ModelAuthenticationScheme;
   capability: ConfiguredModelCapability;
 }
 
@@ -97,6 +102,7 @@ export interface SelectableConnectionModel {
   imageInput: ModelCapabilityState;
   runtimeAdapter: ConfiguredModelDefinition['runtimeAdapter'];
   protocolFamily: ConfiguredModelDefinition['protocolFamily'];
+  authenticationScheme: ConfiguredModelDefinition['authenticationScheme'];
   contextWindow: number;
 }
 
@@ -240,8 +246,16 @@ export function modelConnectionAgentKind(connection: Pick<ModelConnectionRecord,
   return isOfficialDeepSeekResponsesModel(connection, modelId) ? 'codex' : 'pi';
 }
 
-export function modelConnectionRoute(connection: Pick<ModelConnectionRecord, 'templateId' | 'baseUrl'>, modelId: string): Pick<ConfiguredModelDefinition, 'runtimeAdapter' | 'protocolFamily'> {
-  return isOfficialDeepSeekResponsesModel(connection, modelId) ? { runtimeAdapter: 'codex_app_server', protocolFamily: 'openai_responses' } : { runtimeAdapter: 'pi_sdk', protocolFamily: 'openai_completions' };
+export function modelConnectionRoute(
+  connection: Pick<ModelConnectionRecord, 'templateId' | 'baseUrl'>,
+  modelId: string,
+  configuredProtocol: ModelProtocolFamily = 'openai_completions',
+): Pick<ConfiguredModelDefinition, 'runtimeAdapter' | 'protocolFamily'> {
+  if (isOfficialDeepSeekResponsesModel(connection, modelId)) return { runtimeAdapter: 'codex_app_server', protocolFamily: 'openai_responses' };
+  return {
+    runtimeAdapter: 'pi_sdk',
+    protocolFamily: configuredProtocol === 'anthropic_messages' ? 'anthropic_messages' : 'openai_completions',
+  };
 }
 
 export function listSelectableConnectionModels(connections: readonly ModelConnectionRecord[]): SelectableConnectionModel[] {
@@ -281,6 +295,7 @@ export function listSelectableConnectionModels(connections: readonly ModelConnec
         imageInput,
         runtimeAdapter: model.runtimeAdapter,
         protocolFamily: model.protocolFamily,
+        authenticationScheme: model.authenticationScheme,
         contextWindow: model.contextWindow,
       };
     }),
@@ -299,6 +314,7 @@ export function createConfiguredModelDefinition(id: string, input: Partial<Confi
       speedLabel: input.speedLabel ?? inferSpeedLabel(normalizedId),
       runtimeAdapter: input.runtimeAdapter ?? 'pi_sdk',
       protocolFamily: input.protocolFamily ?? 'openai_completions',
+      authenticationScheme: input.authenticationScheme ?? 'protocol_default',
       capability:
         input.capability ??
         ({
@@ -342,7 +358,33 @@ export function modelConnectionSecretAccount(connectionId: string): string {
 }
 
 export function buildModelsUrl(connection: Pick<ModelConnectionRecord, 'baseUrl' | 'modelsPath'>): string {
-  return new URL(connection.modelsPath.replace(/^\/+/, ''), `${connection.baseUrl.replace(/\/+$/u, '')}/`).toString();
+  const catalogBaseUrl = connection.baseUrl.replace(/\/(?:v1\/messages|chat\/completions|responses)$/u, '');
+  return new URL(connection.modelsPath.replace(/^\/+/, ''), `${catalogBaseUrl.replace(/\/+$/u, '')}/`).toString();
+}
+
+/**
+ * Pi 的协议适配器负责追加最终请求路径；这里统一把用户可能填写的标准完整端点还原为适配器需要的 Base URL。
+ */
+export function modelConnectionRuntimeBaseUrl(baseUrl: string, protocolFamily: ModelProtocolFamily): string {
+  const normalized = baseUrl.replace(/\/+$/u, '');
+  if (protocolFamily === 'anthropic_messages') return normalized.replace(/\/v1\/messages$/u, '').replace(/\/v1$/u, '');
+  if (protocolFamily === 'openai_completions') return normalized.replace(/\/chat\/completions$/u, '');
+  return normalized.replace(/\/responses$/u, '');
+}
+
+/** 返回不含密钥的最终 HTTP 端点，供运行证据和诊断展示使用。 */
+export function modelConnectionRequestEndpoint(baseUrl: string, protocolFamily: ModelProtocolFamily): string {
+  const runtimeBaseUrl = modelConnectionRuntimeBaseUrl(baseUrl, protocolFamily);
+  const requestPath = protocolFamily === 'anthropic_messages' ? 'v1/messages' : protocolFamily === 'openai_responses' ? 'responses' : 'chat/completions';
+  return new URL(requestPath, `${runtimeBaseUrl.replace(/\/+$/u, '')}/`).toString();
+}
+
+/**
+ * 认证摆放方式属于语义路由。默认方式保持旧快照身份；显式覆盖后使用新的凭据槽身份，避免排队任务静默改头。
+ */
+export function modelConnectionCredentialSlotId(connectionId: string, authenticationScheme: ModelAuthenticationScheme): string {
+  const base = `model-connection:${normalizeIdentifier(connectionId, '连接 ID')}`;
+  return authenticationScheme === 'protocol_default' ? base : `${base}:${authenticationScheme}`;
 }
 
 function normalizeConfiguredModels(value: readonly ConfiguredModelDefinition[], fallbackThinkingFormat: OpenAiThinkingFormat): ConfiguredModelDefinition[] {
@@ -365,12 +407,14 @@ function normalizeConfiguredModel(value: ConfiguredModelDefinition, fallbackThin
   const speedLabel = speedLabels.has(value.speedLabel) ? value.speedLabel : inferSpeedLabel(id);
   const capability = normalizeCapability(value.capability, fallbackThinkingFormat);
   const runtimeAdapter = value.runtimeAdapter === 'codex_app_server' ? 'codex_app_server' : 'pi_sdk';
-  const protocolFamily = value.protocolFamily === 'openai_responses' ? 'openai_responses' : 'openai_completions';
-  return { id, displayName, enabled: value.enabled !== false, contextWindow, maxTokens, speedLabel, runtimeAdapter, protocolFamily, capability };
+  const protocolFamily: ModelProtocolFamily = value.protocolFamily === 'openai_responses' ? 'openai_responses' : value.protocolFamily === 'anthropic_messages' ? 'anthropic_messages' : 'openai_completions';
+  const requestedAuthenticationScheme: ModelAuthenticationScheme = value.authenticationScheme === 'bearer' ? 'bearer' : value.authenticationScheme === 'x_api_key' ? 'x_api_key' : 'protocol_default';
+  const authenticationScheme: ModelAuthenticationScheme = protocolFamily === 'anthropic_messages' || requestedAuthenticationScheme !== 'x_api_key' ? requestedAuthenticationScheme : 'protocol_default';
+  return { id, displayName, enabled: value.enabled !== false, contextWindow, maxTokens, speedLabel, runtimeAdapter, protocolFamily, authenticationScheme, capability };
 }
 
 function applyModelRoute(model: ConfiguredModelDefinition, connection: Pick<ModelConnectionRecord, 'templateId' | 'baseUrl'>): ConfiguredModelDefinition {
-  return { ...model, ...modelConnectionRoute(connection, model.id) };
+  return { ...model, ...modelConnectionRoute(connection, model.id, model.protocolFamily) };
 }
 
 /** 根据渠道和已知模型档案自动生成能力，未知能力保持未验证。 */

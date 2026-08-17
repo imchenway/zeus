@@ -445,6 +445,7 @@ function routeConfiguration(route: ConversationExecutionRoute): Record<string, u
   return {
     runtimeKind: route.runtimeKind,
     connectionId: route.connectionId,
+    credentialSlotId: route.credentialSlotId,
     endpointIdentity: route.endpointIdentity,
     protocolFamily: route.protocolFamily,
     modelId: route.modelId,

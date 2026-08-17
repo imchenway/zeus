@@ -79,6 +79,7 @@ import {
   expandCliSearchPath,
   isNonCodexAiCliAdapterId,
   isOfficialDeepSeekResponsesModel,
+  modelConnectionCredentialSlotId,
   listAiCliAdapters,
   modelRef,
   type NonCodexAiCliAdapterId,
@@ -2736,11 +2737,13 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       const configuredModel = connection?.models.find((model) => model.id === frozen.modelId);
       if (frozen.connectionId) {
         const currentRuntimeKind = configuredModel?.runtimeAdapter === 'codex_app_server' ? 'codex' : configuredModel?.runtimeAdapter === 'pi_sdk' ? 'pi' : null;
+        const currentCredentialSlotId = connection && configuredModel ? modelConnectionCredentialSlotId(connection.id, configuredModel.authenticationScheme) : null;
         const mismatch = {
           connectionMissing: !connection,
           modelMissingOrDisabled: !configuredModel?.enabled,
           endpointChanged: Boolean(connection && connection.baseUrl !== frozen.endpointIdentity),
           protocolChanged: Boolean(configuredModel && configuredModel.protocolFamily !== frozen.protocolFamily),
+          authenticationChanged: Boolean(currentCredentialSlotId && currentCredentialSlotId !== frozen.credentialSlotId),
           runtimeChanged: currentRuntimeKind !== null && currentRuntimeKind !== frozen.runtimeKind,
         };
         if (Object.values(mismatch).some(Boolean)) {
@@ -5075,7 +5078,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
             conversationId: conversation.id,
             runtimeKind: selectedModel.agentKind === 'pi' ? 'pi' : 'codex',
             connectionId: connection?.id ?? null,
-            credentialSlotId: connection ? `model-connection:${connection.id}` : 'codex-managed-account',
+            credentialSlotId: connection && configuredModel ? modelConnectionCredentialSlotId(connection.id, configuredModel.authenticationScheme) : 'codex-managed-account',
             endpointIdentity: connection?.baseUrl ?? 'codex://managed-account',
             protocolFamily: configuredModel?.protocolFamily ?? (selectedModel.agentKind === 'pi' ? 'openai_completions' : 'openai_responses'),
             modelId: selectedModel.model,
@@ -9400,6 +9403,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   server.post('/api/model-connections', async (request: FastifyRequest<{ Body: SaveModelConnectionRequest }>, reply) => {
     try {
       const connection = await modelConnections.create(request.body ?? ({} as SaveModelConnectionRequest));
+      await piNativeCoordinator.refreshModelRuntime();
       appendAuditLog({
         actorType: 'local_api',
         action: 'model.connection.created',
@@ -9424,6 +9428,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   server.put('/api/model-connections/:connectionId', async (request: FastifyRequest<{ Params: { connectionId: string }; Body: SaveModelConnectionRequest }>, reply) => {
     try {
       const connection = await modelConnections.update(request.params.connectionId, request.body ?? ({} as SaveModelConnectionRequest));
+      await piNativeCoordinator.refreshModelRuntime();
       appendAuditLog({
         actorType: 'local_api',
         action: 'model.connection.updated',
@@ -9448,6 +9453,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   server.delete('/api/model-connections/:connectionId', async (request: FastifyRequest<{ Params: { connectionId: string } }>, reply) => {
     try {
       await modelConnections.remove(request.params.connectionId);
+      await piNativeCoordinator.refreshModelRuntime();
       appendAuditLog({ actorType: 'local_api', action: 'model.connection.deleted', resourceType: 'model_connection', resourceId: request.params.connectionId, payload: {} });
       return reply.code(204).send();
     } catch (error) {
@@ -9458,6 +9464,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   server.delete('/api/model-connections/:connectionId/api-key', async (request: FastifyRequest<{ Params: { connectionId: string } }>, reply) => {
     try {
       const connection = await modelConnections.clearApiKey(request.params.connectionId);
+      await piNativeCoordinator.refreshModelRuntime();
       appendAuditLog({ actorType: 'local_api', action: 'model.connection.api_key.cleared', resourceType: 'model_connection', resourceId: connection.id, payload: {} });
       return connection;
     } catch (error) {
@@ -9468,6 +9475,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   server.post('/api/model-connections/:connectionId/models/refresh', async (request: FastifyRequest<{ Params: { connectionId: string } }>, reply) => {
     try {
       const result = await modelConnections.refreshModels(request.params.connectionId);
+      await piNativeCoordinator.refreshModelRuntime();
       appendAuditLog({
         actorType: 'local_api',
         action: 'model.connection.catalog.refreshed',
@@ -16215,7 +16223,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     const route: ConversationExecutionRoute = {
       runtimeKind: input.agentKind,
       connectionId,
-      credentialSlotId: connection ? `model-connection:${connection.id}` : 'codex-managed-account',
+      credentialSlotId: connection && configuredModel ? modelConnectionCredentialSlotId(connection.id, configuredModel.authenticationScheme) : 'codex-managed-account',
       endpointIdentity: connection?.baseUrl ?? 'codex://managed-account',
       protocolFamily: configuredModel?.protocolFamily ?? (input.agentKind === 'codex' ? 'openai_responses' : 'openai_completions'),
       modelId: input.modelId,
@@ -18713,6 +18721,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       imageInput: model.imageInput,
       runtimeAdapter: model.runtimeAdapter,
       protocolFamily: model.protocolFamily,
+      authenticationScheme: model.authenticationScheme,
       contextWindow: model.contextWindow,
     }));
     const models = [...codexModels, ...connectionModels];
