@@ -14,6 +14,17 @@ interface AnnotationEditorPoint {
   placement: 'above' | 'below';
 }
 
+interface OverlayBounds {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
+const ANNOTATION_MARKER_SIZE = 26;
+const ANNOTATION_MARKER_INLINE_OFFSET = 7;
+const ANNOTATION_MARKER_BLOCK_OFFSET = -7;
+
 export function ResponseSelectionActions(props: {
   articleRef: RefObject<HTMLElement | null>;
   itemId: string;
@@ -57,14 +68,8 @@ export function ResponseSelectionActions(props: {
           setCandidate(null);
           return;
         }
-        setCandidate({
-          anchor: { itemId: props.itemId, startOffset, endOffset, selectedText },
-          point: {
-            left: Math.min(Math.max(rect.left + rect.width / 2, 190), Math.max(190, (article.ownerDocument.defaultView?.innerWidth ?? 380) - 190)),
-            top: rect.top >= 64 ? rect.top : rect.bottom + 12,
-            placement: rect.top >= 64 ? 'above' : 'below',
-          },
-        });
+        const point = selectionToolbarPoint(rect, article, article.ownerDocument.defaultView ?? null);
+        setCandidate(point ? { anchor: { itemId: props.itemId, startOffset, endOffset, selectedText }, point } : null);
       });
     };
     const clearOnPointerDown = (event: PointerEvent) => {
@@ -82,7 +87,11 @@ export function ResponseSelectionActions(props: {
   useLayoutEffect(() => {
     const view = props.articleRef.current?.ownerDocument.defaultView;
     if (!view) return;
-    const update = () => setRevision((value) => value + 1);
+    const update = () => {
+      // 选区工具条只服务当前静止选区；滚动或窗口变化后关闭，避免悬浮在已经离开的文字上。
+      setCandidate(null);
+      setRevision((value) => value + 1);
+    };
     view.addEventListener('resize', update);
     view.addEventListener('scroll', update, true);
     return () => {
@@ -92,20 +101,23 @@ export function ResponseSelectionActions(props: {
   }, [props.articleRef]);
 
   if (!props.enabled) return null;
-  const root = props.articleRef.current?.querySelector<HTMLElement>('.session-markdown') ?? null;
+  const article = props.articleRef.current;
+  const root = article?.querySelector<HTMLElement>('.session-markdown') ?? null;
+  const view = article?.ownerDocument.defaultView ?? null;
+  const overlayBounds = visibleOverlayBounds(article, view);
   const markers = root
     ? props.annotations.flatMap((annotation, index) => {
         const range = rangeFromOffsets(root, annotation.anchor.startOffset, annotation.anchor.endOffset);
         const rect = range ? rangeEndRect(range) : null;
-        return rect && rect.width > 0 ? [{ annotation, index, left: rect.right, top: rect.top }] : [];
+        return rect && rect.width > 0 && markerFitsVisibleBounds(rect, overlayBounds) ? [{ annotation, index, left: rect.right, top: rect.top }] : [];
       })
     : [];
   const editingAnnotation = props.annotations.find((annotation) => annotation.id === editingId) ?? null;
   const editingRange = root && editingAnnotation ? rangeFromOffsets(root, editingAnnotation.anchor.startOffset, editingAnnotation.anchor.endOffset) : null;
   const editingRect = editingRange ? rangeEndRect(editingRange) : null;
-  const editorPoint = editingRect ? annotationEditorPoint(editingRect, props.articleRef.current?.ownerDocument.defaultView ?? null) : null;
+  const editorPoint = editingRect && rectFitsVisibleBounds(editingRect, overlayBounds) ? annotationEditorPoint(editingRect, view, overlayBounds) : null;
   void revision;
-  const portalRoot = props.articleRef.current?.closest<HTMLElement>('.session-codex-parity-v1') ?? props.articleRef.current?.ownerDocument.body ?? document.body;
+  const portalRoot = article?.closest<HTMLElement>('.session-codex-parity-v1') ?? article?.ownerDocument.body ?? document.body;
 
   return createPortal(
     <>
@@ -216,21 +228,67 @@ function rangeEndRect(range: Range): DOMRect | null {
   );
 }
 
-function annotationEditorPoint(rect: DOMRect, view: Window | null): AnnotationEditorPoint {
+function selectionToolbarPoint(rect: DOMRect, article: HTMLElement, view: Window | null): SelectionCandidate['point'] | null {
+  const bounds = visibleOverlayBounds(article, view);
+  if (!rectFitsVisibleBounds(rect, bounds)) return null;
+  const toolbarHalfWidth = 190;
+  const roomAbove = rect.top - bounds.top;
+  const placement = roomAbove >= 44 ? 'above' : 'below';
+  const minimumCenter = bounds.left + toolbarHalfWidth;
+  const maximumCenter = bounds.right - toolbarHalfWidth;
+  const center = rect.left + rect.width / 2;
+  return {
+    left: maximumCenter >= minimumCenter ? Math.min(Math.max(center, minimumCenter), maximumCenter) : bounds.left + (bounds.right - bounds.left) / 2,
+    top: placement === 'above' ? rect.top : rect.bottom + 12,
+    placement,
+  };
+}
+
+function annotationEditorPoint(rect: DOMRect, view: Window | null, overlayBounds: OverlayBounds): AnnotationEditorPoint {
   const viewportWidth = view?.innerWidth ?? 380;
-  const viewportHeight = view?.innerHeight ?? 640;
   const margin = 12;
   const gap = 10;
-  const editorWidth = Math.min(300, viewportWidth - margin * 2);
+  const availableWidth = Math.max(1, overlayBounds.right - overlayBounds.left - margin * 2);
+  const editorWidth = Math.min(300, viewportWidth - margin * 2, availableWidth);
   const editorHeight = 196;
-  const roomOnRight = viewportWidth - rect.right - margin;
-  const left = roomOnRight >= editorWidth + gap ? rect.right + gap : Math.max(margin, Math.min(rect.right - editorWidth - gap, viewportWidth - editorWidth - margin));
-  const placeBelow = rect.bottom + gap + editorHeight <= viewportHeight - margin || rect.top - gap - editorHeight < margin;
+  const roomOnRight = overlayBounds.right - rect.right - margin;
+  const minimumLeft = overlayBounds.left + margin;
+  const maximumLeft = overlayBounds.right - editorWidth - margin;
+  const left = roomOnRight >= editorWidth + gap ? rect.right + gap : Math.max(minimumLeft, Math.min(rect.right - editorWidth - gap, maximumLeft));
+  const placeBelow = rect.bottom + gap + editorHeight <= overlayBounds.bottom - margin || rect.top - gap - editorHeight < overlayBounds.top + margin;
   return {
     left,
     top: placeBelow ? rect.bottom + gap : rect.top - gap,
     placement: placeBelow ? 'below' : 'above',
   };
+}
+
+function visibleOverlayBounds(article: HTMLElement | null, view: Window | null): OverlayBounds {
+  const viewport = {
+    left: 0,
+    right: view?.innerWidth ?? 380,
+    top: 0,
+    bottom: view?.innerHeight ?? 640,
+  };
+  const transcript = article?.closest<HTMLElement>('.session-transcript');
+  if (!transcript) return viewport;
+  const rect = transcript.getBoundingClientRect();
+  return {
+    left: Math.max(viewport.left, rect.left),
+    right: Math.min(viewport.right, rect.right),
+    top: Math.max(viewport.top, rect.top),
+    bottom: Math.min(viewport.bottom, rect.bottom),
+  };
+}
+
+function rectFitsVisibleBounds(rect: DOMRect, bounds: OverlayBounds): boolean {
+  return rect.left >= bounds.left && rect.right <= bounds.right && rect.top >= bounds.top && rect.bottom <= bounds.bottom;
+}
+
+function markerFitsVisibleBounds(rect: DOMRect, bounds: OverlayBounds): boolean {
+  const markerLeft = rect.right + ANNOTATION_MARKER_INLINE_OFFSET;
+  const markerTop = rect.top + ANNOTATION_MARKER_BLOCK_OFFSET;
+  return markerLeft >= bounds.left && markerLeft + ANNOTATION_MARKER_SIZE <= bounds.right && markerTop >= bounds.top && markerTop + ANNOTATION_MARKER_SIZE <= bounds.bottom;
 }
 
 function textOffset(root: HTMLElement, node: Node, offset: number): number | null {
