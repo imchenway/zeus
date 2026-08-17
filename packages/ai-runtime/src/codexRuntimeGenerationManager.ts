@@ -140,15 +140,37 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
   }
 
   async function migrateThreadToActive(threadId: string, cwd?: string): Promise<RuntimeEntry> {
-    const active = requireActiveEntry();
+    let active = requireActiveEntry();
     const mapped = entriesByThread.get(threadId);
-    if (mapped === active) return active;
     if (mapped && isPinned(mapped, threadId)) return mapped;
     const responsesProvider = responsesProvidersByThread.get(threadId);
+    const responsesEnvironment = responsesProviderEnvironmentsByThread.get(threadId);
+    if (responsesProvider && responsesEnvironment && (active.remoteControl || !sameResponsesProvider(active.responsesProvider, responsesProvider) || !sameStringRecord(active.providerEnvironment, responsesEnvironment))) {
+      // Remote Control 守护进程不能可靠接收连接专属密钥；外部 Responses 固定迁入本地隔离世代。
+      await enqueueActivation({
+        commandPath: active.commandPath,
+        ...(active.externalAgentHome ? { externalAgentHome: active.externalAgentHome } : {}),
+        remoteControl: false,
+        providerEnvironment: responsesEnvironment,
+        responsesProvider,
+      });
+      active = requireActiveEntry();
+    } else if (!responsesProvider && (active.responsesProvider !== null || active.remoteControl !== remoteControlEnabled)) {
+      // 离开外部 Responses 后恢复用户选择的官方 Codex 宿主，不把本地供应源世代变成全局默认。
+      await enqueueActivation({
+        commandPath: active.commandPath,
+        ...(active.externalAgentHome ? { externalAgentHome: active.externalAgentHome } : {}),
+        remoteControl: remoteControlEnabled,
+        providerEnvironment: {},
+        responsesProvider: null,
+      });
+      active = requireActiveEntry();
+    }
+    if (mapped === active) return active;
     await active.manager.resumeThread({
       threadId,
       ...(cwd ? { cwd } : {}),
-      ...(responsesProvider ? { responsesRuntime: { provider: responsesProvider, environment: active.providerEnvironment } } : {}),
+      ...(responsesProvider ? { responsesRuntime: { provider: responsesProvider, environment: responsesEnvironment ?? active.providerEnvironment } } : {}),
     });
     bindThread(active, threadId);
     await syncThreadGoalPin(active, threadId);
@@ -226,9 +248,10 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
   async function activate(input: RuntimeActivationInput, forceFreshGeneration = false): Promise<CodexCapabilitiesSnapshot> {
     if (preparingForShutdown) throw managerError('ZEUS_CODEX_CLOSED', 'Codex runtime generation manager is closing.');
     const requestedHome = input.externalAgentHome ?? null;
-    const requestedRemoteControl = input.remoteControl ?? remoteControlEnabled;
-    const requestedProviderEnvironment = input.providerEnvironment ?? activeEntry?.providerEnvironment ?? {};
-    const requestedResponsesProvider = input.responsesProvider === undefined ? (activeEntry?.responsesProvider ?? null) : input.responsesProvider;
+    const requestedResponsesProvider = input.responsesProvider ?? null;
+    // 外部 Responses 依赖连接专属进程环境，不能交给已经运行且环境不可更新的 Remote Control 守护进程。
+    const requestedRemoteControl = requestedResponsesProvider ? false : (input.remoteControl ?? remoteControlEnabled);
+    const requestedProviderEnvironment = input.providerEnvironment ?? (requestedResponsesProvider ? (activeEntry?.providerEnvironment ?? {}) : {});
     const normalizedInput = { ...input, remoteControl: requestedRemoteControl, providerEnvironment: requestedProviderEnvironment };
     if (
       !forceFreshGeneration &&
@@ -443,11 +466,11 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
         responsesProviderEnvironmentsByThread.set(input.threadId, { ...input.responsesRuntime.environment });
       }
       const current = requireActiveEntry();
-      if (responsesProvider && responsesEnvironment && !sameResponsesProvider(current.responsesProvider, responsesProvider)) {
+      if (responsesProvider && responsesEnvironment && (current.remoteControl || !sameResponsesProvider(current.responsesProvider, responsesProvider) || !sameStringRecord(current.providerEnvironment, responsesEnvironment))) {
         await enqueueActivation({
           commandPath: current.commandPath,
           ...(current.externalAgentHome ? { externalAgentHome: current.externalAgentHome } : {}),
-          remoteControl: current.remoteControl,
+          remoteControl: false,
           providerEnvironment: responsesEnvironment,
           responsesProvider,
         });

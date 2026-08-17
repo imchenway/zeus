@@ -1360,10 +1360,11 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   currentHeaderRef.current = currentHeader;
   const [displayedHeader, setDisplayedHeader] = useState(currentHeader);
   const [titleMotion, setTitleMotion] = useState<'entered' | 'exiting'>('entered');
-  // 会话重新挂载时先接管本地已确认的用户选择，避免旧热快照在首轮 effect 中覆盖尚在落盘的配置。
+  // 本地缓存只支撑会话重挂载的首帧；没有待确认用户修改时，后续以服务端快照为权威。
   const [composerRuntimeSettings, setComposerRuntimeSettings] = useState<ComposerRuntimeSettings | null>(() =>
     readConversationNextTurnSettings(browserConversationStorage(), props.conversation?.projectId ?? '', props.conversation?.id ?? ''),
   );
+  const composerRuntimeSettingsDirtyRef = useRef(false);
   const lastNextTurnSettingsSyncRef = useRef<string | null>(null);
   const previousBlockingInteractionCountRef = useRef(0);
   const composerFocusRestorationPendingRef = useRef(false);
@@ -1417,6 +1418,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   useEffect(() => {
     contextReturnFocusRef.current = null;
     setComposerRuntimeSettings(readConversationNextTurnSettings(browserConversationStorage(), props.conversation?.projectId ?? '', props.conversation?.id ?? ''));
+    composerRuntimeSettingsDirtyRef.current = false;
     lastNextTurnSettingsSyncRef.current = null;
     setContextWorkspace({ kind: 'none' });
     setContextFullWidth(false);
@@ -1440,29 +1442,38 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   }, [actions.onLoadSubagentThread, actions.onLoadSubagents, contextWorkspace.kind, subagentSignature]);
 
   useEffect(() => {
-    if (!props.state || legacy || composerRuntimeSettings) return;
+    if (!props.state || legacy || composerRuntimeSettingsDirtyRef.current) return;
     const snapshotSettings = composerRuntimeSettingsFromState(props.state, props.capabilities, props.conversation);
     const projectId = props.state.projectId ?? props.conversation?.projectId;
     const conversationId = props.state.conversationId ?? props.conversation?.id;
     if (!snapshotSettings || !projectId || !conversationId) return;
+    if (JSON.stringify(snapshotSettings) === JSON.stringify(composerRuntimeSettings)) return;
     writeConversationNextTurnSettings(browserConversationStorage(), projectId, conversationId, snapshotSettings);
     setComposerRuntimeSettings(snapshotSettings);
   }, [composerRuntimeSettings, legacy, props.capabilities, props.conversation?.collaborationMode, props.conversation?.permissionMode, props.state]);
 
   useEffect(() => {
-    if (!props.state || legacy || interactionReadOnly || !composerRuntimeSettings || !actions.onNextTurnSettingsChange) return;
+    if (!props.state || legacy || interactionReadOnly || !composerRuntimeSettings || !composerRuntimeSettingsDirtyRef.current || !actions.onNextTurnSettingsChange) return;
     const signature = JSON.stringify(composerRuntimeSettings);
     if (lastNextTurnSettingsSyncRef.current === signature) return;
     lastNextTurnSettingsSyncRef.current = signature;
-    void Promise.resolve(actions.onNextTurnSettingsChange(composerRuntimeSettings)).catch(() => {
-      if (lastNextTurnSettingsSyncRef.current === signature) lastNextTurnSettingsSyncRef.current = null;
-    });
+    void Promise.resolve(actions.onNextTurnSettingsChange(composerRuntimeSettings))
+      .then(() => {
+        if (lastNextTurnSettingsSyncRef.current !== signature) return;
+        composerRuntimeSettingsDirtyRef.current = false;
+        // 触发一次权威快照对账，接收服务端可能做出的规范化结果。
+        setComposerRuntimeSettings((current) => (current ? { ...current } : current));
+      })
+      .catch(() => {
+        if (lastNextTurnSettingsSyncRef.current === signature) lastNextTurnSettingsSyncRef.current = null;
+      });
   }, [actions, composerRuntimeSettings, interactionReadOnly, legacy, props.state?.transportState]);
 
   function updateComposerRuntimeSettings(settings: ComposerRuntimeSettings): void {
     const projectId = props.state?.projectId ?? props.conversation?.projectId;
     const conversationId = props.state?.conversationId ?? props.conversation?.id;
     if (!props.state || !projectId || !conversationId || legacy || interactionReadOnly) return;
+    composerRuntimeSettingsDirtyRef.current = true;
     writeConversationNextTurnSettings(browserConversationStorage(), projectId, conversationId, settings);
     const capability = props.capabilities?.models.find((candidate) => candidate.model === settings.model || candidate.id === settings.model);
     const preferenceKind = conversationRuntimePreferenceKind(owner, props.conversation?.title);
