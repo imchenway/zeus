@@ -1,54 +1,24 @@
+import { type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from 'react';
+import { isTaskPriority, type TaskAttachmentField, type TaskAttachmentReference, type TaskManagementStatusDefinition } from '@zeus/shared';
+import { type TaskEventRecord, type TaskManagementStatus, type TaskPriority, type TaskRecord, type TaskType, type UpdateTaskRelationshipsRequest, type UpdateTaskRequest, ZeusApiError } from '../apiClient.js';
+import type { NativeConversationChoice } from '../session/sessionTypes.js';
+import { compareConversationCreatedAsc } from '../session/conversationOrdering.js';
+import { Button } from '../ui/Button.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../ui/pendingResourcePolicy.js';
+import { ZeusSelect } from '../ZeusSelect.js';
+import { TaskAttachmentPreviewList } from './TaskAttachmentPreviewList.js';
 import {
-    type ClipboardEvent as ReactClipboardEvent,
-    type CSSProperties,
-    type KeyboardEvent as ReactKeyboardEvent,
-    type ReactNode,
-    useEffect,
-    useId,
-    useRef,
-    useState
-} from 'react';
-import {
-    isTaskPriority,
-    type TaskAttachmentField,
-    type TaskAttachmentReference,
-    type TaskManagementStatusDefinition
-} from '@zeus/shared';
-import {
-    type TaskEventRecord,
-    type TaskManagementStatus,
-    type TaskPriority,
-    type TaskRecord,
-    type TaskType,
-    type UpdateTaskRelationshipsRequest,
-    type UpdateTaskRequest,
-    ZeusApiError
-} from '../apiClient.js';
-import type {NativeConversationChoice} from '../session/sessionTypes.js';
-import {compareConversationCreatedAsc} from '../session/conversationOrdering.js';
-import {Button} from '../ui/Button.js';
-import {useApplicationErrorDialog} from '../ui/ApplicationErrorDialog.js';
-import {PENDING_RESOURCE_LONG_TEXT_THRESHOLD} from '../ui/pendingResourcePolicy.js';
-import {ZeusSelect} from '../ZeusSelect.js';
-import {TaskAttachmentPreviewList} from './TaskAttachmentPreviewList.js';
-import {
-    mergeTaskAttachments,
-    parseTaskAttachments,
-    type TaskAttachmentCandidate,
-    taskAttachmentsForField,
-    type TaskAttachmentView,
-    type TaskResourceAuthorizationResult,
-    type TaskResourcePayload,
-    toPersistedTaskAttachment,
+  mergeTaskAttachments,
+  parseTaskAttachments,
+  type TaskAttachmentCandidate,
+  taskAttachmentsForField,
+  type TaskAttachmentView,
+  type TaskResourceAuthorizationResult,
+  type TaskResourcePayload,
+  toPersistedTaskAttachment,
 } from './taskAttachments.js';
-import {
-    formatTaskSource,
-    formatTaskType,
-    formatTaskUpdatedAt,
-    resolveTaskManagementStatus,
-    type TaskSourceLabels,
-    taskTypes
-} from './taskWorkspaceModel.js';
+import { formatTaskSource, formatTaskType, formatTaskUpdatedAt, resolveTaskManagementStatus, type TaskSourceLabels, taskTypes } from './taskWorkspaceModel.js';
 
 export interface TaskDetailPaneCopy {
   requestTitle: string;

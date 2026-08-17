@@ -1,56 +1,56 @@
 import {
-    type ClipboardEvent as ReactClipboardEvent,
-    type CSSProperties,
-    type FormEvent,
-    type KeyboardEvent as ReactKeyboardEvent,
-    type PointerEvent as ReactPointerEvent,
-    type ReactNode,
-    type RefObject,
-    useCallback,
-    useEffect,
-    useMemo,
-    useRef,
-    useState,
-    type WheelEvent as ReactWheelEvent,
+  type ClipboardEvent as ReactClipboardEvent,
+  type CSSProperties,
+  type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  type RefObject,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type WheelEvent as ReactWheelEvent,
 } from 'react';
-import {createPortal} from 'react-dom';
-import {FolderIcon as Folder} from '@phosphor-icons/react/dist/csr/Folder';
-import {FolderOpenIcon as FolderOpen} from '@phosphor-icons/react/dist/csr/FolderOpen';
-import {FolderPlusIcon as FolderPlus} from '@phosphor-icons/react/dist/csr/FolderPlus';
-import {projectTerminalOutput} from '@zeus/terminal-core';
-import {MagnifyingGlassIcon as MagnifyingGlass} from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
-import {PencilSimpleIcon as PencilSimple} from '@phosphor-icons/react/dist/csr/PencilSimple';
-import {PlusIcon as Plus} from '@phosphor-icons/react/dist/csr/Plus';
-import {PushPinIcon as PushPin} from '@phosphor-icons/react/dist/csr/PushPin';
-import {PushPinSlashIcon as PushPinSlash} from '@phosphor-icons/react/dist/csr/PushPinSlash';
-import {XIcon as X} from '@phosphor-icons/react/dist/csr/X';
-import {CheckCircleIcon as CheckCircle} from '@phosphor-icons/react/dist/csr/CheckCircle';
-import {DownloadSimpleIcon as DownloadSimple} from '@phosphor-icons/react/dist/csr/DownloadSimple';
-import {SpinnerGapIcon as SpinnerGap} from '@phosphor-icons/react/dist/csr/SpinnerGap';
-import {WarningCircleIcon as WarningCircle} from '@phosphor-icons/react/dist/csr/WarningCircle';
-import {CheckSquareIcon as WorkspaceTasksIcon} from '@phosphor-icons/react/dist/csr/CheckSquare';
-import {GitBranchIcon as WorkspaceGitIcon} from '@phosphor-icons/react/dist/csr/GitBranch';
-import {CodeIcon as WorkspaceSourceIcon} from '@phosphor-icons/react/dist/csr/Code';
-import {GraphIcon as WorkspaceGraphIcon} from '@phosphor-icons/react/dist/csr/Graph';
-import {TerminalWindowIcon as WorkspaceCommandsIcon} from '@phosphor-icons/react/dist/csr/TerminalWindow';
+import { createPortal } from 'react-dom';
+import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
+import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
+import { FolderPlusIcon as FolderPlus } from '@phosphor-icons/react/dist/csr/FolderPlus';
+import { projectTerminalOutput } from '@zeus/terminal-core';
+import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
+import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
+import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
+import { PushPinIcon as PushPin } from '@phosphor-icons/react/dist/csr/PushPin';
+import { PushPinSlashIcon as PushPinSlash } from '@phosphor-icons/react/dist/csr/PushPinSlash';
+import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
+import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
+import { DownloadSimpleIcon as DownloadSimple } from '@phosphor-icons/react/dist/csr/DownloadSimple';
+import { SpinnerGapIcon as SpinnerGap } from '@phosphor-icons/react/dist/csr/SpinnerGap';
+import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
+import { CheckSquareIcon as WorkspaceTasksIcon } from '@phosphor-icons/react/dist/csr/CheckSquare';
+import { GitBranchIcon as WorkspaceGitIcon } from '@phosphor-icons/react/dist/csr/GitBranch';
+import { CodeIcon as WorkspaceSourceIcon } from '@phosphor-icons/react/dist/csr/Code';
+import { GraphIcon as WorkspaceGraphIcon } from '@phosphor-icons/react/dist/csr/Graph';
+import { TerminalWindowIcon as WorkspaceCommandsIcon } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import {
-    buildMermaidDiagramExport,
-    buildMermaidDiagramSource,
-    buildPlantUmlDiagramExport,
-    buildPlantUmlDiagramSource,
-    type MermaidDiagramExportFile,
-    type PlantUmlDiagramExportFile,
-    toReactFlowElements,
-    toSigmaGraph,
+  buildMermaidDiagramExport,
+  buildMermaidDiagramSource,
+  buildPlantUmlDiagramExport,
+  buildPlantUmlDiagramSource,
+  type MermaidDiagramExportFile,
+  type PlantUmlDiagramExportFile,
+  toReactFlowElements,
+  toSigmaGraph,
 } from '@zeus/diagram-engine';
 import {
-    cloneTaskManagementStatusConfig,
-    defaultTaskManagementStatusConfig,
-    isTaskStatusFilter,
-    normalizeTaskManagementStatusConfig,
-    type ProjectCodeWorkspacePreference,
-    type TaskManagementStatusConfig,
-    type TaskManagementStatusDefinition,
+  cloneTaskManagementStatusConfig,
+  defaultTaskManagementStatusConfig,
+  isTaskStatusFilter,
+  normalizeTaskManagementStatusConfig,
+  type ProjectCodeWorkspacePreference,
+  type TaskManagementStatusConfig,
+  type TaskManagementStatusDefinition,
 } from '@zeus/shared';
 import '@xterm/xterm/css/xterm.css';
 import '@xyflow/react/dist/style.css';
@@ -58,223 +58,207 @@ import './styles.css';
 import './session/session.css';
 import './ui/primitives.css';
 import {
-    activateRequestingZeusWindowInMain,
-    type AutomaticUpdateIndicatorState,
-    loadAutomaticUpdateIndicatorFromMain,
-    notifyMainAppShellSettingsChanged,
-    openAutomaticUpdateIndicatorInMain,
-    openExternalHttpsUrlInMain,
-    recordManualUpdateCheckInMain,
+  activateRequestingZeusWindowInMain,
+  type AutomaticUpdateIndicatorState,
+  loadAutomaticUpdateIndicatorFromMain,
+  notifyMainAppShellSettingsChanged,
+  openAutomaticUpdateIndicatorInMain,
+  openExternalHttpsUrlInMain,
+  recordManualUpdateCheckInMain,
 } from './appShellBridge.js';
-import {completeCodexLoginHandoff} from './codexLoginHandoff.js';
-import {PENDING_RESOURCE_LONG_TEXT_THRESHOLD} from './ui/pendingResourcePolicy.js';
-import {TaskAttachmentPreviewList} from './task/TaskAttachmentPreviewList.js';
+import { completeCodexLoginHandoff } from './codexLoginHandoff.js';
+import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from './ui/pendingResourcePolicy.js';
+import { TaskAttachmentPreviewList } from './task/TaskAttachmentPreviewList.js';
+import { type ConversationTreeRuntimeState, conversationTreeRuntimeStateFromConversation, conversationTreeRuntimeStateFromSession, type ProjectConversationGroup, ProjectConversationTree } from './session/ProjectConversationTree.js';
+import { ProjectGitWorkbench } from './git/ProjectGitWorkbench.js';
 import {
-    type ConversationTreeRuntimeState,
-    conversationTreeRuntimeStateFromConversation,
-    conversationTreeRuntimeStateFromSession,
-    type ProjectConversationGroup,
-    ProjectConversationTree
-} from './session/ProjectConversationTree.js';
-import {ProjectGitWorkbench} from './git/ProjectGitWorkbench.js';
-import {
-    ConnectedSessionWorkspace,
-    createNativeConversationStartEnvelopeManager,
-    createProjectConversationStartEnvelopeManager,
-    isDurableNativeConversationAcceptance,
-    loadLegacyConversationDetail,
-    nativeConversationChoiceFromAcceptance,
-    type NativeConversationStartPreparation,
-    type NativeConversationStartStorage,
-    type ProjectSessionWorkspaceStartInput,
-    SessionWorkspace,
-    type SessionWorkspaceActions,
-    type SessionWorkspaceStartInput,
-    type SessionWorkspaceTask,
-    startNativeConversationWithDurableAcceptance,
-    startProjectConversationWithDurableAcceptance,
+  ConnectedSessionWorkspace,
+  createNativeConversationStartEnvelopeManager,
+  createProjectConversationStartEnvelopeManager,
+  isDurableNativeConversationAcceptance,
+  loadLegacyConversationDetail,
+  nativeConversationChoiceFromAcceptance,
+  type NativeConversationStartPreparation,
+  type NativeConversationStartStorage,
+  type ProjectSessionWorkspaceStartInput,
+  SessionWorkspace,
+  type SessionWorkspaceActions,
+  type SessionWorkspaceStartInput,
+  type SessionWorkspaceTask,
+  startNativeConversationWithDurableAcceptance,
+  startProjectConversationWithDurableAcceptance,
 } from './session/SessionWorkspace.js';
 import type {
-    CodexTaskPushCapabilities,
-    NativeConversationAttachment,
-    NativeConversationChoice,
-    NativeConversationChoicesSnapshot,
-    NativeProjectConversationChoicesSnapshot,
-    NativeSessionState,
-    NativeTurnSettingsSelection,
-    SessionConversationOwner,
-    StartTaskModelPushRequest,
+  CodexTaskPushCapabilities,
+  NativeConversationAttachment,
+  NativeConversationChoice,
+  NativeConversationChoicesSnapshot,
+  NativeProjectConversationChoicesSnapshot,
+  NativeSessionState,
+  NativeTurnSettingsSelection,
+  SessionConversationOwner,
+  StartTaskModelPushRequest,
 } from './session/sessionTypes.js';
-import {selectHasConfirmedUserMessage} from './session/sessionSelectors.js';
-import {compareConversationStageUpdatedDesc} from './session/conversationOrdering.js';
-import {conversationDisplayTitle} from './session/conversationDisplayTitle.js';
-import {rememberSessionHotState, type SessionHotCache} from './session/sessionHotCache.js';
-import {serviceTierWireOverride} from './session/serviceTierSelection.js';
-import type {SessionControllerClient} from './session/useSessionController.js';
-import {TaskDetailPaneContent, type TaskEditResult} from './task/TaskDetailPaneContent.js';
-import {TaskGitReviewModal} from './task/TaskGitReviewModal.js';
+import { selectHasConfirmedUserMessage } from './session/sessionSelectors.js';
+import { compareConversationStageUpdatedDesc } from './session/conversationOrdering.js';
+import { conversationDisplayTitle } from './session/conversationDisplayTitle.js';
+import { rememberSessionHotState, type SessionHotCache } from './session/sessionHotCache.js';
+import { serviceTierWireOverride } from './session/serviceTierSelection.js';
+import type { SessionControllerClient } from './session/useSessionController.js';
+import { TaskDetailPaneContent, type TaskEditResult } from './task/TaskDetailPaneContent.js';
+import { TaskGitReviewModal } from './task/TaskGitReviewModal.js';
+import { clearPendingConflictAiStart, listPendingConflictAiStarts, persistPendingConflictAiStart, TaskGitMergeModal } from './task/TaskGitMergeModal.js';
 import {
-    clearPendingConflictAiStart,
-    listPendingConflictAiStarts,
-    persistPendingConflictAiStart,
-    TaskGitMergeModal
-} from './task/TaskGitMergeModal.js';
-import {
-    buildTaskModelPushLayout,
-    buildTaskModelPushMessage,
-    normalizeTaskModelPushCapabilities,
-    readTaskModelPushPreferences,
-    resolveTaskModelPushInitialForm,
-    selectedTaskPushCurrentConversationPaths,
-    selectedTaskPushParentContexts,
-    selectedTaskPushRelatedContexts,
-    type TaskModelPushForm,
-    TaskModelPushModal,
-    type TaskModelPushModalStatus,
-    taskPushSupplementalLayoutAttachments,
-    taskPushSupplementalRequestAttachments,
-    writeTaskModelPushPreferences,
+  buildTaskModelPushLayout,
+  buildTaskModelPushMessage,
+  normalizeTaskModelPushCapabilities,
+  readTaskModelPushPreferences,
+  resolveTaskModelPushInitialForm,
+  selectedTaskPushCurrentConversationPaths,
+  selectedTaskPushParentContexts,
+  selectedTaskPushRelatedContexts,
+  type TaskModelPushForm,
+  TaskModelPushModal,
+  type TaskModelPushModalStatus,
+  taskPushSupplementalLayoutAttachments,
+  taskPushSupplementalRequestAttachments,
+  writeTaskModelPushPreferences,
 } from './task/TaskModelPushModal.js';
 import {
-    acceptTaskModelPushPendingState,
-    attachTaskModelPushChoice,
-    createTaskModelPushPendingState,
-    enqueueTaskModelPushMessage,
-    failTaskModelPushPendingState,
-    retryTaskModelPushPendingState,
-    taskModelPushHasRealChoice,
-    type TaskModelPushPendingState,
-    updateTaskModelPushAttachments,
-    updateTaskModelPushDeferredMessages,
-    updateTaskModelPushDraft,
+  acceptTaskModelPushPendingState,
+  attachTaskModelPushChoice,
+  createTaskModelPushPendingState,
+  enqueueTaskModelPushMessage,
+  failTaskModelPushPendingState,
+  retryTaskModelPushPendingState,
+  taskModelPushHasRealChoice,
+  type TaskModelPushPendingState,
+  updateTaskModelPushAttachments,
+  updateTaskModelPushDeferredMessages,
+  updateTaskModelPushDraft,
 } from './task/TaskModelPushPendingWorkspace.js';
-import {TaskWorkspace} from './task/TaskWorkspace.js';
-import {LegacyChatImportSettings} from './settings/LegacyChatImportSettings.js';
-import {CodexConfigImportSettings} from './settings/CodexConfigImportSettings.js';
-import {BrowserSettingsPane} from './settings/BrowserSettingsPane.js';
-import {CodexRemoteControlSettings} from './settings/CodexRemoteControlSettings.js';
-import {ModelConnectionsSettingsPane} from './settings/ModelConnectionsSettingsPane.js';
-import {ProjectModelsSettings} from './settings/ProjectModelsSettings.js';
-import {TaskManagementStatusEditor} from './settings/TaskManagementStatusEditor.js';
-import {CodexUsageSettingsPane} from './settings/CodexUsageSettingsPane.js';
+import { TaskWorkspace } from './task/TaskWorkspace.js';
+import { LegacyChatImportSettings } from './settings/LegacyChatImportSettings.js';
+import { CodexConfigImportSettings } from './settings/CodexConfigImportSettings.js';
+import { BrowserSettingsPane } from './settings/BrowserSettingsPane.js';
+import { CodexRemoteControlSettings } from './settings/CodexRemoteControlSettings.js';
+import { ModelConnectionsSettingsPane } from './settings/ModelConnectionsSettingsPane.js';
+import { ProjectModelsSettings } from './settings/ProjectModelsSettings.js';
+import { TaskManagementStatusEditor } from './settings/TaskManagementStatusEditor.js';
+import { CodexUsageSettingsPane } from './settings/CodexUsageSettingsPane.js';
 import {
-    type TaskAttachmentCandidate,
-    type TaskAttachmentRestoreTarget,
-    taskAttachmentsForField,
-    type TaskAttachmentView,
-    type TaskResourceAuthorizationResult,
-    type TaskResourcePayload,
-    toPersistedTaskAttachment,
+  type TaskAttachmentCandidate,
+  type TaskAttachmentRestoreTarget,
+  taskAttachmentsForField,
+  type TaskAttachmentView,
+  type TaskResourceAuthorizationResult,
+  type TaskResourcePayload,
+  toPersistedTaskAttachment,
 } from './task/taskAttachments.js';
 import {
-    defaultTaskTableEnumSortOrders,
-    filterVisibleTasks,
-    normalizeTaskTableColumnPreferences,
-    normalizeTaskTableEnumSortOrders,
-    resolveTaskManagementStatus,
-    taskAgentRunStatusFromConversation,
-    taskAgentRunStatusFromSession,
-    type TaskWorkspaceViewMode,
+  defaultTaskTableEnumSortOrders,
+  filterVisibleTasks,
+  normalizeTaskTableColumnPreferences,
+  normalizeTaskTableEnumSortOrders,
+  resolveTaskManagementStatus,
+  taskAgentRunStatusFromConversation,
+  taskAgentRunStatusFromSession,
+  type TaskWorkspaceViewMode,
 } from './task/taskWorkspaceModel.js';
-import {ZeusSelect} from './ZeusSelect.js';
-import {Button, type ButtonVariant} from './ui/Button.js';
-import {ModalPortal} from './ui/ModalPortal.js';
-import {reportApplicationError, useApplicationErrorDialog} from './ui/ApplicationErrorDialog.js';
-import {SourceListRow} from './ui/SourceListRow.js';
-import {taskAgentRunStatusLabels} from './task/TaskRunStatusChip.js';
-import {WorkspaceDrawer} from './ui/WorkspaceDrawer.js';
-import {useNewItemMotionIds} from './ui/useNewItemMotion.js';
-import {CommandCenterPanel} from './CommandCenterPanel.js';
-import {ProjectSourceWorkspace, type ProjectSourceWorkspaceHandle} from './code/ProjectSourceWorkspace.js';
+import { ZeusSelect } from './ZeusSelect.js';
+import { Button, type ButtonVariant } from './ui/Button.js';
+import { ModalPortal } from './ui/ModalPortal.js';
+import { reportApplicationError, useApplicationErrorDialog } from './ui/ApplicationErrorDialog.js';
+import { SourceListRow } from './ui/SourceListRow.js';
+import { taskAgentRunStatusLabels } from './task/TaskRunStatusChip.js';
+import { WorkspaceDrawer } from './ui/WorkspaceDrawer.js';
+import { useNewItemMotionIds } from './ui/useNewItemMotion.js';
+import { CommandCenterPanel } from './CommandCenterPanel.js';
+import { ProjectSourceWorkspace, type ProjectSourceWorkspaceHandle } from './code/ProjectSourceWorkspace.js';
+import { ArchitectureGraphCanvas, type ArchitectureLayerModel, buildArchitectureLayerModel, canRenderArchitectureLayerModel } from './graph/ArchitectureGraphCanvas.js';
 import {
-    ArchitectureGraphCanvas,
-    type ArchitectureLayerModel,
-    buildArchitectureLayerModel,
-    canRenderArchitectureLayerModel
-} from './graph/ArchitectureGraphCanvas.js';
-import {
-    type AiRuntimeAdapterDescriptor,
-    type AiRuntimeAdapterStatus,
-    type AiRuntimeLogEntry,
-    type AiRuntimeSession,
-    type AiRuntimeSessionStatus,
-    type AiRuntimeTerminalEvent,
-    type AiRuntimeTerminalSnapshot,
-    type AppShellSettings,
-    type CodeMapSettings,
-    type CodexConfigActivationResult,
-    type CodexConfigImportPreview,
-    type CodexConfigImportResult,
-    type CodexLegacyImportResult,
-    type CodexLegacyImportSnapshot,
-    createEmptyDashboardSnapshot,
-    type CreateProjectRequest,
-    type DashboardClient,
-    type DashboardSnapshot,
-    type DeleteTaskRequest,
-    type ExecutedGitOperationResult,
-    type ExecuteGitOperationRequest,
-    type ExecutionHostTransition,
-    type GitDiffHunk,
-    type GitDiffSummary,
-    type GitOperationConfirmation,
-    type GitPatchExport,
-    type GraphConversationHistoryItem,
-    type GraphConversationHistoryPage,
-    type GraphNeighborhood,
-    type GraphQuestionAnswer,
-    type GraphSearchResult,
-    type GraphViewSnapshot,
-    type GraphViewType,
-    type HighRiskGitOperation,
-    type ImportLocalBusinessDataResult,
-    type ImportLocalSettingsRequest,
-    type ImportLocalSettingsResult,
-    type LoadRuntimeSessionsRequest,
-    type LocalBusinessDataSnapshot,
-    type LocalSettingsExportSnapshot,
-    type ProjectArchiveConfirmation,
-    type ProjectConfig,
-    type ProjectConversationAttentionState,
-    type ProjectDatabaseSecretSnapshot,
-    type ProjectGitAction,
-    type ProjectGitActionResponse,
-    type ProjectRecord,
-    type ReleaseStatusSnapshot,
-    type ReleaseUpdateStatusSnapshot,
-    type RuntimeOperationConfirmation,
-    type RuntimeSettings,
-    type RuntimeStatusSnapshot,
-    type SaveProjectConfigRequest,
-    type SecurityAuditLogEntry,
-    type SecurityResetResult,
-    type SecuritySecretsSnapshot,
-    type SendConversationMessageResult,
-    type TaskAgentRunStatus,
-    type TaskBoardMoveRequest,
-    type TaskBoardOpenMode,
-    type TaskBoardViewSettings,
-    type TaskBoardViewSnapshot,
-    type TaskEventRecord,
-    type TaskManagementStatus,
-    type TaskPageViewMode,
-    type TaskPriority,
-    type TaskRecord,
-    type TaskStatus,
-    type TaskStatusFilter,
-    type TaskTableColumnPreferences,
-    type TaskTemplateRecord,
-    type TaskType,
-    type TelegramNotificationSettings,
-    type TelegramPollingLogEntry,
-    type TelegramPollingStatus,
-    type TelegramSecuritySettings,
-    type TelegramTestConnectionResult,
-    type UpdateTaskRelationshipsRequest,
-    type UpdateTaskRequest,
-    ZeusApiError,
-    type ZeusRealtimeConnectionState,
-    type ZeusRealtimeEvent,
+  type AiRuntimeAdapterDescriptor,
+  type AiRuntimeAdapterStatus,
+  type AiRuntimeLogEntry,
+  type AiRuntimeSession,
+  type AiRuntimeSessionStatus,
+  type AiRuntimeTerminalEvent,
+  type AiRuntimeTerminalSnapshot,
+  type AppShellSettings,
+  type CodeMapSettings,
+  type CodexConfigActivationResult,
+  type CodexConfigImportPreview,
+  type CodexConfigImportResult,
+  type CodexLegacyImportResult,
+  type CodexLegacyImportSnapshot,
+  createEmptyDashboardSnapshot,
+  type CreateProjectRequest,
+  type DashboardClient,
+  type DashboardSnapshot,
+  type DeleteTaskRequest,
+  type ExecutedGitOperationResult,
+  type ExecuteGitOperationRequest,
+  type ExecutionHostTransition,
+  type GitDiffHunk,
+  type GitDiffSummary,
+  type GitOperationConfirmation,
+  type GitPatchExport,
+  type GraphConversationHistoryItem,
+  type GraphConversationHistoryPage,
+  type GraphNeighborhood,
+  type GraphQuestionAnswer,
+  type GraphSearchResult,
+  type GraphViewSnapshot,
+  type GraphViewType,
+  type HighRiskGitOperation,
+  type ImportLocalBusinessDataResult,
+  type ImportLocalSettingsRequest,
+  type ImportLocalSettingsResult,
+  type LoadRuntimeSessionsRequest,
+  type LocalBusinessDataSnapshot,
+  type LocalSettingsExportSnapshot,
+  type ProjectArchiveConfirmation,
+  type ProjectConfig,
+  type ProjectConversationAttentionState,
+  type ProjectDatabaseSecretSnapshot,
+  type ProjectGitAction,
+  type ProjectGitActionResponse,
+  type ProjectRecord,
+  type ReleaseStatusSnapshot,
+  type ReleaseUpdateStatusSnapshot,
+  type RuntimeOperationConfirmation,
+  type RuntimeSettings,
+  type RuntimeStatusSnapshot,
+  type SaveProjectConfigRequest,
+  type SecurityAuditLogEntry,
+  type SecurityResetResult,
+  type SecuritySecretsSnapshot,
+  type SendConversationMessageResult,
+  type TaskAgentRunStatus,
+  type TaskBoardMoveRequest,
+  type TaskBoardOpenMode,
+  type TaskBoardViewSettings,
+  type TaskBoardViewSnapshot,
+  type TaskEventRecord,
+  type TaskManagementStatus,
+  type TaskPageViewMode,
+  type TaskPriority,
+  type TaskRecord,
+  type TaskStatus,
+  type TaskStatusFilter,
+  type TaskTableColumnPreferences,
+  type TaskTemplateRecord,
+  type TaskType,
+  type TelegramNotificationSettings,
+  type TelegramPollingLogEntry,
+  type TelegramPollingStatus,
+  type TelegramSecuritySettings,
+  type TelegramTestConnectionResult,
+  type UpdateTaskRelationshipsRequest,
+  type UpdateTaskRequest,
+  ZeusApiError,
+  type ZeusRealtimeConnectionState,
+  type ZeusRealtimeEvent,
 } from './apiClient.js';
 
 export {
@@ -10662,10 +10646,10 @@ export function App(props: {
           .catch((error: unknown) => recordLocalError('task-model-push-task-refresh', error));
       }
     } catch (error) {
-        if (error instanceof ZeusApiError && error.error === 'ZEUS_CODEX_LOGIN_REQUIRED') {
-            void resumeTaskModelPushAfterCodexLoginRequired(pending, client);
-            return;
-        }
+      if (error instanceof ZeusApiError && error.error === 'ZEUS_CODEX_LOGIN_REQUIRED') {
+        void resumeTaskModelPushAfterCodexLoginRequired(pending, client);
+        return;
+      }
       if (error instanceof ZeusApiError && (error.error === 'ZEUS_TASK_PUSH_CONTEXT_CHANGED' || error.error === 'ZEUS_TASK_PUSH_PARENT_CONTEXT_CHANGED')) {
         taskModelPushDispatchingTaskIdsRef.current.delete(pending.task.id);
         updateTaskModelPushPendingByTask((current) => {
@@ -10687,52 +10671,52 @@ export function App(props: {
     }
   }
 
-    async function resumeTaskModelPushAfterCodexLoginRequired(pending: TrackedTaskModelPushState, client: NativeConversationAppClient): Promise<void> {
-        taskModelPushDispatchingTaskIdsRef.current.delete(pending.task.id);
-        updateTaskModelPushPendingByTask((current) => {
-            const active = current[pending.task.id];
-            if (active?.request.idempotencyKey !== pending.request.idempotencyKey) return current;
-            const next = {...current};
-            delete next[pending.task.id];
-            return next;
-        });
+  async function resumeTaskModelPushAfterCodexLoginRequired(pending: TrackedTaskModelPushState, client: NativeConversationAppClient): Promise<void> {
+    taskModelPushDispatchingTaskIdsRef.current.delete(pending.task.id);
+    updateTaskModelPushPendingByTask((current) => {
+      const active = current[pending.task.id];
+      if (active?.request.idempotencyKey !== pending.request.idempotencyKey) return current;
+      const next = { ...current };
+      delete next[pending.task.id];
+      return next;
+    });
 
-        const originProject = pending.origin.projectId ? snapshot.projects.find((project) => project.id === pending.origin.projectId) : undefined;
-        if (originProject) {
-            activeProjectIdRef.current = originProject.id;
-            setProjectDetail(originProject);
-        }
-        selectedNativeConversationIdRef.current = pending.origin.selectedConversationId;
-        setSelectedNativeConversationId(pending.origin.selectedConversationId);
-        setActiveNavTarget(pending.origin.activeNavTarget);
-        setActiveProjectSection(pending.origin.activeProjectSection);
-        setTaskDetailPaneTaskId(pending.origin.taskDetailPaneTaskId);
-
-        setTaskModelPushTaskId(pending.task.id);
-        setTaskModelPushCapabilities(null);
-        setTaskModelPushConfigImportPreview(null);
-        setTaskModelPushConfigImportNeedsActivation(false);
-        setTaskModelPushRefreshingRepositoryId(null);
-        setTaskModelPushForm(pending.form);
-        setTaskModelPushStatus('loading');
-        setTaskModelPushError(null);
-        setTaskModelPushAnnouncement(appShellSettings.appLanguage === 'zh-CN' ? `${pending.task.title}：Codex 登录已失效，已恢复本次推送。` : `${pending.task.title}: Codex sign-in expired. The push was restored.`);
-
-        const requestVersion = taskModelPushCapabilityRequestRef.current + 1;
-        taskModelPushCapabilityRequestRef.current = requestVersion;
-        try {
-            const capabilities = normalizeTaskModelPushCapabilities(await client.loadCodexTaskPushCapabilities(pending.task.projectId, pending.task.id));
-            if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
-            setTaskModelPushCapabilities(capabilities);
-            setTaskModelPushStatus('ready');
-            setTaskModelPushError(null);
-            proceedTaskModelPush(pending.task, client, capabilities, pending.form);
-        } catch (error) {
-            if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
-            setTaskModelPushStatus('error');
-            setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error)));
-        }
+    const originProject = pending.origin.projectId ? snapshot.projects.find((project) => project.id === pending.origin.projectId) : undefined;
+    if (originProject) {
+      activeProjectIdRef.current = originProject.id;
+      setProjectDetail(originProject);
     }
+    selectedNativeConversationIdRef.current = pending.origin.selectedConversationId;
+    setSelectedNativeConversationId(pending.origin.selectedConversationId);
+    setActiveNavTarget(pending.origin.activeNavTarget);
+    setActiveProjectSection(pending.origin.activeProjectSection);
+    setTaskDetailPaneTaskId(pending.origin.taskDetailPaneTaskId);
+
+    setTaskModelPushTaskId(pending.task.id);
+    setTaskModelPushCapabilities(null);
+    setTaskModelPushConfigImportPreview(null);
+    setTaskModelPushConfigImportNeedsActivation(false);
+    setTaskModelPushRefreshingRepositoryId(null);
+    setTaskModelPushForm(pending.form);
+    setTaskModelPushStatus('loading');
+    setTaskModelPushError(null);
+    setTaskModelPushAnnouncement(appShellSettings.appLanguage === 'zh-CN' ? `${pending.task.title}：Codex 登录已失效，已恢复本次推送。` : `${pending.task.title}: Codex sign-in expired. The push was restored.`);
+
+    const requestVersion = taskModelPushCapabilityRequestRef.current + 1;
+    taskModelPushCapabilityRequestRef.current = requestVersion;
+    try {
+      const capabilities = normalizeTaskModelPushCapabilities(await client.loadCodexTaskPushCapabilities(pending.task.projectId, pending.task.id));
+      if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
+      setTaskModelPushCapabilities(capabilities);
+      setTaskModelPushStatus('ready');
+      setTaskModelPushError(null);
+      proceedTaskModelPush(pending.task, client, capabilities, pending.form);
+    } catch (error) {
+      if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
+      setTaskModelPushStatus('error');
+      setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error)));
+    }
+  }
 
   async function flushTaskModelPushDeferredMessages(pending: TrackedTaskModelPushState): Promise<void> {
     const client = props.nativeConversationClient;
@@ -10888,15 +10872,15 @@ export function App(props: {
       return { ...current, [pending.task.id]: { ...failTaskModelPushPendingState(active, message), origin: active.origin } };
     });
     setTaskModelPushAnnouncement(appShellSettings.appLanguage === 'zh-CN' ? `${pending.task.title}：会话创建失败，可以在当前工作面重试。` : `${pending.task.title}: Conversation creation failed. Retry in the current workspace.`);
-      reportApplicationError(message, {
-          language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en',
-          title: appShellSettings.appLanguage === 'zh-CN' ? '会话创建失败' : 'Conversation creation failed',
-          source: 'App.taskModelPush',
-          primaryAction: {
-              label: appShellSettings.appLanguage === 'zh-CN' ? '重试' : 'Retry',
-              run: () => retryTaskModelPush(pending.task.id),
-          },
-      });
+    reportApplicationError(message, {
+      language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en',
+      title: appShellSettings.appLanguage === 'zh-CN' ? '会话创建失败' : 'Conversation creation failed',
+      source: 'App.taskModelPush',
+      primaryAction: {
+        label: appShellSettings.appLanguage === 'zh-CN' ? '重试' : 'Retry',
+        run: () => retryTaskModelPush(pending.task.id),
+      },
+    });
   }
 
   function retryTaskModelPush(taskId: string): void {

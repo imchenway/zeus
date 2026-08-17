@@ -1,39 +1,29 @@
-import {randomUUID} from 'node:crypto';
-import {mkdir} from 'node:fs/promises';
-import {resolve} from 'node:path';
-import {
-    type AgentSession,
-    type AgentSessionEvent,
-    createAgentSession,
-    DefaultResourceLoader,
-    defineTool,
-    ModelRuntime,
-    SessionManager,
-    SettingsManager,
-    type ToolDefinition
-} from '@earendil-works/pi-coding-agent';
-import {Type} from 'typebox';
+import { randomUUID } from 'node:crypto';
+import { mkdir } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { type AgentSession, type AgentSessionEvent, createAgentSession, DefaultResourceLoader, defineTool, ModelRuntime, SessionManager, SettingsManager, type ToolDefinition } from '@earendil-works/pi-coding-agent';
+import { Type } from 'typebox';
 import type {
-    AcceptedAgentRun,
-    AgentDescriptor,
-    AgentModelIdentity,
-    AgentRuntimeDriver,
-    AgentRuntimeEvent,
-    AgentRuntimeProbe,
-    AgentSessionIdentity,
-    AgentSessionSnapshot,
-    CompactAgentSessionInput,
-    CompactAgentSessionResult,
-    FollowUpAgentRunInput,
-    InterruptAgentRunInput,
-    OpenAgentSessionInput,
-    ReadAgentSessionInput,
-    RespondAgentInteractionInput,
-    ResumeAgentSessionInput,
-    StartAgentRunInput,
-    SteerAgentRunInput,
+  AcceptedAgentRun,
+  AgentDescriptor,
+  AgentModelIdentity,
+  AgentRuntimeDriver,
+  AgentRuntimeEvent,
+  AgentRuntimeProbe,
+  AgentSessionIdentity,
+  AgentSessionSnapshot,
+  CompactAgentSessionInput,
+  CompactAgentSessionResult,
+  FollowUpAgentRunInput,
+  InterruptAgentRunInput,
+  OpenAgentSessionInput,
+  ReadAgentSessionInput,
+  RespondAgentInteractionInput,
+  ResumeAgentSessionInput,
+  StartAgentRunInput,
+  SteerAgentRunInput,
 } from './agentRuntimeContracts.js';
-import type {ConfiguredModelDefinition, ModelConnectionRecord, PiThinkingLevel} from './modelConnectionCatalog.js';
+import type { ConfiguredModelDefinition, ModelConnectionRecord, PiThinkingLevel } from './modelConnectionCatalog.js';
 
 export interface PiRuntimeConnection extends ModelConnectionRecord {
   apiKey?: string;
@@ -230,7 +220,7 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
     let resolvePreflight: (() => void) | null = null;
     let rejectPreflight: ((error: unknown) => void) | null = null;
     let preflightSettled = false;
-      let preflightTimeout: ReturnType<typeof setTimeout> | null = null;
+    let preflightTimeout: ReturnType<typeof setTimeout> | null = null;
     const preflight =
       mode === 'prompt' && (input.preflightResult || input.durableTransactionSync)
         ? new Promise<void>((resolveResult, rejectResult) => {
@@ -238,18 +228,18 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
             rejectPreflight = rejectResult;
           })
         : null;
-      const clearPreflightTimeout = () => {
-          if (preflightTimeout === null) return;
-          clearTimeout(preflightTimeout);
-          preflightTimeout = null;
-      };
-      const rejectPendingPreflight = (error: unknown): boolean => {
-          if (!preflight || preflightSettled) return false;
-          preflightSettled = true;
-          clearPreflightTimeout();
-          rejectPreflight?.(error);
-          return true;
-      };
+    const clearPreflightTimeout = () => {
+      if (preflightTimeout === null) return;
+      clearTimeout(preflightTimeout);
+      preflightTimeout = null;
+    };
+    const rejectPendingPreflight = (error: unknown): boolean => {
+      if (!preflight || preflightSettled) return false;
+      preflightSettled = true;
+      clearPreflightTimeout();
+      rejectPreflight?.(error);
+      return true;
+    };
     const promptOptions =
       images?.length || preflight
         ? {
@@ -257,17 +247,17 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
             ...(preflight
               ? {
                   preflightResult: (accepted: boolean) => {
-                      if (preflightSettled) return;
+                    if (preflightSettled) return;
                     try {
                       input.preflightResult?.(accepted);
                       if (!accepted) throw runtimeError('ZEUS_PI_PREFLIGHT_REJECTED', 'Pi 预检拒绝了本轮请求。');
                       input.durableTransactionSync?.(acceptance);
                       input.providerWriteMayStart?.();
                       preflightSettled = true;
-                        clearPreflightTimeout();
+                      clearPreflightTimeout();
                       resolvePreflight?.();
                     } catch (error) {
-                        rejectPendingPreflight(error);
+                      rejectPendingPreflight(error);
                       throw error;
                     }
                   },
@@ -277,39 +267,39 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
         : undefined;
     const operation = mode === 'steer' ? entry.session.steer(input.content, images) : mode === 'follow_up' ? entry.session.followUp(input.content, images) : entry.session.prompt(input.content, promptOptions);
     if (preflight && !preflightSettled) {
-        // prompt() 返回的是整轮异步 Promise，不代表认证、压缩和扩展预处理已经完成。
-        // 只在有限等待后判定 SDK 破坏预检契约，避免迟到回调反向写入已失败的持久状态。
-        preflightTimeout = setTimeout(() => {
-            const timeoutError = runtimeError('ZEUS_PI_PREFLIGHT_TIMEOUT', 'Pi 未在 5 分钟内返回本轮预检结果。');
-            if (!rejectPendingPreflight(timeoutError)) return;
-            void entry.session
-                .abort()
-                .catch(() => undefined)
-                .finally(() => {
-                    if (entry.activeRunId === nativeRunId) entry.activeRunId = null;
-                });
-        }, piPreflightTimeoutMs);
-        preflightTimeout.unref();
+      // prompt() 返回的是整轮异步 Promise，不代表认证、压缩和扩展预处理已经完成。
+      // 只在有限等待后判定 SDK 破坏预检契约，避免迟到回调反向写入已失败的持久状态。
+      preflightTimeout = setTimeout(() => {
+        const timeoutError = runtimeError('ZEUS_PI_PREFLIGHT_TIMEOUT', 'Pi 未在 5 分钟内返回本轮预检结果。');
+        if (!rejectPendingPreflight(timeoutError)) return;
+        void entry.session
+          .abort()
+          .catch(() => undefined)
+          .finally(() => {
+            if (entry.activeRunId === nativeRunId) entry.activeRunId = null;
+          });
+      }, piPreflightTimeoutMs);
+      preflightTimeout.unref();
     }
-      void operation.then(
-          () => {
-              if (!preflight || preflightSettled) return;
-              rejectPendingPreflight(runtimeError('ZEUS_PI_PREFLIGHT_CALLBACK_MISSING', 'Pi 已结束本轮，但没有返回预检结果。'));
-              if (entry.activeRunId === nativeRunId) entry.activeRunId = null;
-          },
-          (error: unknown) => {
-              rejectPendingPreflight(error);
-              const payload = {
-                  message: error instanceof Error ? error.message : String(error),
-                  code: readErrorCode(error)
-              };
-              // 等协调器登记已接受轮次后再投递错误，避免同步失败事件被忽略。
-              queueMicrotask(() => {
-                  publishSyntheticEvent(entry, nativeRunId, 'runtime_error', payload);
-                  if (entry.activeRunId === nativeRunId) entry.activeRunId = null;
-              });
-          },
-      );
+    void operation.then(
+      () => {
+        if (!preflight || preflightSettled) return;
+        rejectPendingPreflight(runtimeError('ZEUS_PI_PREFLIGHT_CALLBACK_MISSING', 'Pi 已结束本轮，但没有返回预检结果。'));
+        if (entry.activeRunId === nativeRunId) entry.activeRunId = null;
+      },
+      (error: unknown) => {
+        rejectPendingPreflight(error);
+        const payload = {
+          message: error instanceof Error ? error.message : String(error),
+          code: readErrorCode(error),
+        };
+        // 等协调器登记已接受轮次后再投递错误，避免同步失败事件被忽略。
+        queueMicrotask(() => {
+          publishSyntheticEvent(entry, nativeRunId, 'runtime_error', payload);
+          if (entry.activeRunId === nativeRunId) entry.activeRunId = null;
+        });
+      },
+    );
     if (preflight) await preflight;
     return acceptance;
   }
