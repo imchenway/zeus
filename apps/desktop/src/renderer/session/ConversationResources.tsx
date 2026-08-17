@@ -360,8 +360,10 @@ export function ConversationResourceCards(
 ) {
   const resources = props.resources.filter((resource) => resource.presentation === 'card');
   if (resources.length === 0) return null;
+  const imageCount = resources.filter(isImageResource).length;
+  const layout = imageCount === resources.length ? 'images' : imageCount === 0 ? 'files' : 'mixed';
   return (
-    <section className="session-resource-card-list" aria-label={props.language === 'zh-CN' ? '会话资源' : 'Conversation resources'}>
+    <section className="session-resource-card-list" data-layout={layout} aria-label={props.language === 'zh-CN' ? '会话资源' : 'Conversation resources'}>
       {resources.map((resource) =>
         isImageResource(resource) ? (
           <ConversationResourceImage key={resource.id} resource={resource} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />

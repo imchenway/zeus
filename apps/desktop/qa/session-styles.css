@@ -256,6 +256,23 @@
   grid-column: 1 / -1;
 }
 
+.qa-defect-page {
+  background: var(--session-canvas);
+}
+
+.qa-defect-transcript {
+  block-size: 720px;
+  inline-size: min(920px, 100%);
+  justify-self: center;
+  overflow: hidden;
+  padding: 0;
+}
+
+.qa-defect-transcript .session-transcript {
+  block-size: 720px;
+  padding-block: 32px;
+}
+
 .qa-motion-loading .session-loading {
   inline-size: 100%;
   margin: 0;

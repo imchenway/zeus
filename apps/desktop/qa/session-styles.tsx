@@ -5,7 +5,7 @@ import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/G
 import '../src/renderer/styles.css';
 import '../src/renderer/session/session.css';
 import './session-styles.css';
-import type { ConversationResource } from '@zeus/shared';
+import type { ConversationResource, ConversationResourcePreview } from '@zeus/shared';
 import { PendingRequestSurface } from '../src/renderer/session/PendingRequestSurface.js';
 import { type ConversationTreeRuntimeState, type ProjectConversationGroup, ProjectConversationTree } from '../src/renderer/session/ProjectConversationTree.js';
 import type { NativeConversationChoice, NativePendingRequest, NativeSessionItemBuffer, NativeSessionState } from '../src/renderer/session/sessionTypes.js';
@@ -204,6 +204,123 @@ const incompleteFenceItem = motionItem('fence', 'agentMessage', 'in_progress', '
 const incompleteTableItem = motionItem('table', 'agentMessage', 'in_progress', '| 状态 | 表现 |\n| --- | --- |\n| 回答中 |', { phase: 'final_answer' }, 'final_answer');
 const motionPlanItem = motionItem('plan', 'plan', 'in_progress', '1. 统一活动焦点\n2. 验证减少动态效果');
 const motionImageItem = motionItem('image', 'imageGeneration', 'in_progress', '');
+
+const defectConversationId = 'zeus-0323-conversation';
+const defectTurnId = 'zeus-0323-turn';
+const defectThreadId = 'zeus-0323-thread';
+
+const defectJsonlResource: ConversationResource = {
+  id: 'zeus-0323-jsonl',
+  projectId: 'project-zeus',
+  conversationId: defectConversationId,
+  turnId: defectTurnId,
+  itemId: 'zeus-0323-user',
+  kind: 'attachment',
+  presentation: 'card',
+  displayName: '2026-08-17T01-31-56-741Z_01a00d58-c5c5-7a83-9336-b8275fee7d64.jsonl',
+  attachmentRef: 'conversation.jsonl',
+  mimeType: 'application/octet-stream',
+  previewKind: 'none',
+  iconKind: 'json',
+  createdAt: '2026-08-17T01:42:07.957Z',
+  updatedAt: '2026-08-17T01:42:07.957Z',
+};
+
+const defectImageResource: ConversationResource = {
+  id: 'zeus-0323-image',
+  projectId: 'project-zeus',
+  conversationId: defectConversationId,
+  turnId: defectTurnId,
+  itemId: 'zeus-0323-user',
+  kind: 'attachment',
+  presentation: 'card',
+  displayName: 'image.png',
+  attachmentRef: 'image.png',
+  mimeType: 'image/png',
+  previewKind: 'image',
+  iconKind: 'image',
+  createdAt: '2026-08-17T01:42:07.957Z',
+  updatedAt: '2026-08-17T01:42:07.957Z',
+};
+
+function defectItem(id: string, type: string, text: string, phase = 'prework', resources: ConversationResource[] = []): NativeSessionItemBuffer {
+  return {
+    key: `zeus-0323:${id}`,
+    conversationId: defectConversationId,
+    threadId: defectThreadId,
+    turnId: defectTurnId,
+    itemId: id,
+    type,
+    status: 'completed',
+    phase,
+    text,
+    payload: phase === 'final_answer' ? { phase: 'final_answer' } : {},
+    resources,
+    updatedAt: id === 'process' ? '2026-08-17T01:42:03.772Z' : id === 'user' ? '2026-08-17T01:42:07.957Z' : '2026-08-17T02:02:09.433Z',
+  };
+}
+
+const defectProcessItem = defectItem('process', 'commandExecution', '', 'prework');
+defectProcessItem.payload = {
+  command: ['rg', 'cache_control'],
+  commandActions: [{ type: 'read', path: 'packages/local-server/src/conversationResources.ts' }],
+};
+const defectUserItem = defectItem('user', 'userMessage', '调用第三方的 Claude 模型时，依旧没有任何缓存命中。', 'prework', [defectJsonlResource, defectImageResource]);
+const defectAnswerItem = defectItem('answer', 'agentMessage', '已修复。非图片文件保持文件卡，图片继续显示可预览的缩略图。', 'final_answer');
+
+const defectSessionState: NativeSessionState = {
+  ...createInitialSessionState(),
+  transportState: 'ready',
+  conversationState: 'ready',
+  projectId: 'project-zeus',
+  conversationId: defectConversationId,
+  providerThreadId: defectThreadId,
+  items: {
+    [defectProcessItem.key]: defectProcessItem,
+    [defectUserItem.key]: defectUserItem,
+    [defectAnswerItem.key]: defectAnswerItem,
+  },
+  // 故意保留 Provider 过程先于用户消息的落库顺序，核对产品时间线的语义重排。
+  itemOrder: [defectProcessItem.key, defectUserItem.key, defectAnswerItem.key],
+  turnsByProviderId: {
+    [defectTurnId]: {
+      id: defectTurnId,
+      providerTurnId: defectTurnId,
+      submissionId: null,
+      status: 'completed',
+      startedAt: '2026-08-17T01:42:03.772Z',
+      completedAt: '2026-08-17T02:02:09.433Z',
+      createdAt: '2026-08-17T01:42:03.772Z',
+      updatedAt: '2026-08-17T02:02:09.433Z',
+    },
+  },
+  transcriptRevision: 1,
+};
+
+async function loadDefectResourcePreview(resource: ConversationResource): Promise<ConversationResourcePreview> {
+  if (resource.id !== defectImageResource.id) throw new Error('非图片资源不提供图片预览。');
+  return {
+    kind: 'image',
+    resource: defectImageResource,
+    mimeType: 'image/png',
+    dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    byteLength: 68,
+  };
+}
+
+function ConversationDefectApp() {
+  return (
+    <main className="macos-ai-app zeus-shell session-codex-parity-v1 qa-page qa-defect-page theme-light">
+      <header className="qa-heading">
+        <p>ZEUS-0323 · 会话时间线与资源布局验收</p>
+        <h1>用户消息 → 处理过程 → 最终回答</h1>
+      </header>
+      <section className="qa-implementation-panel qa-defect-transcript" data-testid="zeus-0323-transcript">
+        <ConversationTranscript state={defectSessionState} language="zh-CN" onOpenResource={ignoreResourceOpen} onLoadResourcePreview={loadDefectResourcePreview} />
+      </section>
+    </main>
+  );
+}
 
 function MotionPreview(props: { dark?: boolean }) {
   const theme = props.dark ? 'theme-dark' : 'theme-light';
@@ -443,4 +560,5 @@ function App() {
 }
 
 const motionQa = new URLSearchParams(window.location.search).has('motion');
-createRoot(document.getElementById('root')!).render(motionQa ? <MotionApp /> : <App />);
+const defectQa = new URLSearchParams(window.location.search).has('zeus0323');
+createRoot(document.getElementById('root')!).render(defectQa ? <ConversationDefectApp /> : motionQa ? <MotionApp /> : <App />);
