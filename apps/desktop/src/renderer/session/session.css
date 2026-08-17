@@ -13622,7 +13622,7 @@
 
 .session-codex-parity-v1 .session-turn-duration-body {
   display: grid;
-  gap: 14px;
+  gap: 6px;
   min-inline-size: 0;
   padding-block-end: 6px;
 }
@@ -13702,7 +13702,7 @@
 
 .session-codex-parity-v1 .session-turn-process-body {
   display: grid;
-  gap: 14px;
+  gap: 6px;
   min-inline-size: 0;
   padding-block: 6px 2px;
 }
