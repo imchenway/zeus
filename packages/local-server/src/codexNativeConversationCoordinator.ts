@@ -2,6 +2,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import { dirname, extname, isAbsolute, relative, resolve } from 'node:path';
 import {
+  modelRef,
+  parseModelRef,
   toCodexWireReasoningEffort,
   type CodexAppServerEvent,
   type CodexAppServerManager,
@@ -620,14 +622,14 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     };
   }
 
-  async function ensureConversationExecutionContext(conversationId: string, mode: 'reconcile' | 'submit' | 'dispatch' | 'recover_queue' | 'restore'): Promise<void> {
+  async function ensureConversationExecutionContext(conversationId: string, mode: 'reconcile' | 'submit' | 'dispatch' | 'recover_queue' | 'restore', allowProductConversation = false): Promise<void> {
     if (!options.ensureExecutionContext) return;
     const existing = executionContextPromises.get(conversationId);
     if (existing) return existing;
     const promise = (async () => {
       const resolved = await options.ensureExecutionContext!({ conversationId, mode });
       if (!resolved) return;
-      const conversation = requireConversation(conversationId);
+      const conversation = allowProductConversation ? requireProductConversation(conversationId) : requireConversation(conversationId);
       const current = contexts.get(conversationId) ?? contextFromConversation(conversation);
       const next: ConversationDispatchContext = {
         ...current,
@@ -896,7 +898,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   function nextTurnSettingsFromContext(context: ConversationDispatchContext): ConversationNextTurnSettings {
     return {
-      model: context.model,
+      model: context.modelSourceId && context.modelSourceId !== 'codex' ? modelRef(context.modelSourceId, context.model) : context.model,
       ...(context.effort ? { effort: context.effort } : {}),
       ...(Object.prototype.hasOwnProperty.call(context, 'serviceTier') ? { serviceTier: context.serviceTier } : {}),
       permissionMode: context.permissionMode,
@@ -907,9 +909,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   function contextWithLatestNextTurnSettings(conversationId: string, context: ConversationDispatchContext): ConversationDispatchContext {
     const settings = options.conversations.getNextTurnSettings(conversationId);
     if (!settings) return context;
+    const selectedModelRef = parseModelRef(settings.model);
     const latest: ConversationDispatchContext = {
       ...context,
-      model: settings.model,
+      model: selectedModelRef?.modelId ?? settings.model,
+      modelSourceId: selectedModelRef?.sourceId ?? (settings.model === context.model ? context.modelSourceId : null),
       permissionMode: settings.permissionMode,
       workMode: settings.collaborationMode,
     };
@@ -1294,8 +1298,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   async function submitMessage(input: SubmitNativeMessageInput): Promise<NativeAcceptedOperation> {
     assertOpen();
-    const candidateConversation = options.conversations.getById(input.conversationId);
-    const conversation = input.segmentLifecycle?.requiresNewSegment && candidateConversation?.transportKind === 'codex_native' ? candidateConversation : requireConversation(input.conversationId);
+    const requiresNewSegment = input.segmentLifecycle?.requiresNewSegment === true;
+    const conversation = requiresNewSegment ? requireProductConversation(input.conversationId) : requireConversation(input.conversationId);
     const previousContext = contextWithLatestNextTurnSettings(conversation.id, contexts.get(conversation.id) ?? contextFromConversation(conversation));
     const context: ConversationDispatchContext = {
       ...previousContext,
@@ -1315,12 +1319,12 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     if (context.holdDispatch) return accepted(submission, 'queued', conversation.providerThreadId, null);
     if (hasPendingPlanImplementationRequest(conversation.id)) return accepted(submission, 'queued', conversation.providerThreadId, null);
     try {
-      if (!input.segmentLifecycle?.requiresNewSegment) await ensureGenerationReconciled([conversation.id]);
+      if (!requiresNewSegment) await ensureGenerationReconciled([conversation.id]);
     } catch (error) {
       return pauseQueueAfterDispatchFailure(conversation, submission, error);
     }
-    let refreshed = requireConversation(conversation.id);
-    if (!input.segmentLifecycle?.requiresNewSegment && refreshed.providerState === 'archived') {
+    let refreshed = requiresNewSegment ? requireProductConversation(conversation.id) : requireConversation(conversation.id);
+    if (!requiresNewSegment && refreshed.providerState === 'archived') {
       try {
         await restoreArchivedProviderThread(refreshed.id);
         refreshed = requireConversation(refreshed.id);
@@ -1329,9 +1333,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       }
     }
     try {
-      await ensureConversationExecutionContext(refreshed.id, 'submit');
+      await ensureConversationExecutionContext(refreshed.id, 'submit', requiresNewSegment);
       const recoveryState = runStates.get(refreshed.id) ?? inferRunState(refreshed);
-      if (recoveryState.type === 'paused' && recoveryState.reason === 'recovery_required') {
+      if (!requiresNewSegment && recoveryState.type === 'paused' && recoveryState.reason === 'recovery_required') {
         refreshed = await recoverPausedConversation(refreshed.id, 'submit');
       }
     } catch (error) {
@@ -1630,9 +1634,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     if (!conversation) throw coordinatorError('ZEUS_NATIVE_CONVERSATION_NOT_FOUND', 'Native conversation was not found.');
     await segmentLifecycle?.beginDispatch();
     try {
-      await ensureConversationExecutionContext(conversation.id, 'dispatch');
+      await ensureConversationExecutionContext(conversation.id, 'dispatch', segmentLifecycle?.requiresNewSegment === true);
       const recoveryState = runStates.get(conversation.id) ?? inferRunState(conversation);
-      if (recoveryState.type === 'paused' && recoveryState.reason === 'recovery_required') {
+      if (!segmentLifecycle?.requiresNewSegment && recoveryState.type === 'paused' && recoveryState.reason === 'recovery_required') {
         conversation = await recoverPausedConversation(conversation.id, 'dispatch');
       }
     } catch (error) {
@@ -5303,9 +5307,17 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   };
 
   function requireConversation(conversationId: string): ZeusConversationWithMessagesRecord {
-    const conversation = options.conversations.getById(conversationId);
-    if (!conversation || conversation.transportKind !== 'codex_native' || conversation.agentKind !== 'codex') {
+    const conversation = requireProductConversation(conversationId);
+    if (conversation.agentKind !== 'codex') {
       throw coordinatorError('ZEUS_NATIVE_CONVERSATION_NOT_FOUND', 'Codex native conversation was not found.');
+    }
+    return conversation;
+  }
+
+  function requireProductConversation(conversationId: string): ZeusConversationWithMessagesRecord {
+    const conversation = options.conversations.getById(conversationId);
+    if (!conversation || conversation.transportKind !== 'codex_native') {
+      throw coordinatorError('ZEUS_NATIVE_CONVERSATION_NOT_FOUND', 'Native product conversation was not found.');
     }
     return conversation;
   }

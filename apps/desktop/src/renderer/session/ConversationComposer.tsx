@@ -145,10 +145,11 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const goalDraftValid = goalCount > 0 && goalCount <= 4_000;
   const goalOperationBusy = goalSubmitting || props.goalBusy === true;
   const showSendCommand = goalInputActive || !active || hasDraft;
-  const modelPresentation = useMemo(() => presentModelOptions(props.capabilities?.models ?? [], selectedModel, props.language), [props.capabilities?.models, props.language, selectedModel]);
+  const modelPresentation = useMemo(() => presentModelOptions(props.capabilities?.models ?? [], selectedModel, props.language, { preserveMissingSelection: true }), [props.capabilities?.models, props.language, selectedModel]);
   const effectiveModel = modelPresentation.selectedId || selectedModel;
   const selectedCapability = resolveModelCapability(modelPresentation.models, effectiveModel);
   const settingsWritable = props.readOnly !== true && Boolean(selectedCapability);
+  const modelSelectionWritable = props.readOnly !== true && modelPresentation.options.length > 0;
   const modelOptions = modelPresentation.options;
   const selectedModelLabel = modelPresentation.triggerLabel || copy.unsynced;
   const effortOptions = selectedCapability?.supportedReasoningEfforts.map((effort) => ({ value: effort, label: effort })) ?? [];
@@ -215,6 +216,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
   }, [textareaRef]);
 
   function submit(nextDelivery: 'queue' | 'steer_now'): void {
+    if (nextDelivery === 'queue' && !selectedCapability) return;
     const settings =
       nextDelivery === 'queue' && effectiveModel
         ? {
@@ -493,7 +495,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
                 className="session-composer-model-dropdown"
                 value={effectiveModel}
                 options={modelOptions}
-                disabled={!settingsWritable}
+                disabled={!modelSelectionWritable}
                 searchable
                 searchPlaceholder={copy.searchModel}
                 emptyLabel={copy.noModel}
@@ -528,7 +530,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
                   className="session-send-button"
                   aria-label={goalInputActive ? copy.createGoal : copy.send}
                   onClick={() => (goalInputActive ? void setGoalObjective(goalDraft) : submit('queue'))}
-                  disabled={!writable || busy || goalOperationBusy || (goalInputActive ? !goalDraftValid : !hasDraft)}
+                  disabled={!writable || !settingsWritable || busy || goalOperationBusy || (goalInputActive ? !goalDraftValid : !hasDraft)}
                   aria-busy={busy || goalOperationBusy || undefined}
                 >
                   {busy || goalOperationBusy ? <span className="session-command-spinner" aria-hidden="true" /> : <ArrowUp aria-hidden="true" weight="bold" />}
@@ -630,9 +632,8 @@ export function canSteerActiveTurn(state: NativeSessionState): boolean {
 function resolveComposerModel(capabilities: CodexConversationCapabilities | null | undefined, providerModel: string | undefined): string {
   const normalized = providerModel?.trim();
   const availableModels = capabilities?.models.filter((model) => model.available !== false);
-  const capability = resolveModelCapability(availableModels, normalized);
-  if (capability) return capability.id;
-  return resolveModelCapability(availableModels, capabilities?.preferredModel)?.id ?? availableModels?.[0]?.id ?? normalized ?? '';
+  if (normalized) return resolveModelCapability(availableModels, normalized)?.id ?? normalized;
+  return resolveModelCapability(availableModels, capabilities?.preferredModel)?.id ?? availableModels?.[0]?.id ?? '';
 }
 
 function resolveComposerEffort(capabilities: CodexConversationCapabilities | null | undefined, model: string, providerEffort: string | undefined): string {

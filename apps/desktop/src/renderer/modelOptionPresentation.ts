@@ -43,19 +43,26 @@ function speedLabel(model: ModelOptionSource, zh: boolean): string | null {
   return 'Turbo';
 }
 
-function resolveSelectedId<Model extends ModelOptionSource>(models: readonly Model[], selectedId: string): string {
+function resolveSelectedId<Model extends ModelOptionSource>(models: readonly Model[], selectedId: string, preserveMissingSelection: boolean): string {
   if (models.some((model) => model.id === selectedId)) return selectedId;
   const legacyMatches = models.filter((model) => model.model === selectedId);
-  return legacyMatches.length === 1 ? legacyMatches[0]!.id : (models[0]?.id ?? '');
+  if (legacyMatches.length === 1) return legacyMatches[0]!.id;
+  if (preserveMissingSelection && selectedId) return selectedId;
+  return models[0]?.id ?? '';
 }
 
 /**
  * 所有模型选择入口共用这套排序和文案，避免供应商、连接或 Agent 语义在不同页面漂移。
  */
-export function presentModelOptions<Model extends ModelOptionSource>(models: readonly Model[], selectedId: string, language: 'zh-CN' | 'en-US'): ModelOptionPresentation<Model> {
+export function presentModelOptions<Model extends ModelOptionSource>(
+  models: readonly Model[],
+  selectedId: string,
+  language: 'zh-CN' | 'en-US',
+  presentationOptions: { preserveMissingSelection?: boolean } = {},
+): ModelOptionPresentation<Model> {
   const zh = language === 'zh-CN';
   const availableModels = models.filter((model) => model.available !== false);
-  const resolvedSelectedId = resolveSelectedId(availableModels, selectedId);
+  const resolvedSelectedId = resolveSelectedId(availableModels, selectedId, presentationOptions.preserveMissingSelection === true);
   const selectedModel = availableModels.find((model) => model.id === resolvedSelectedId);
   const selectedProviderName = selectedModel ? providerName(selectedModel, zh) : null;
   const collator = new Intl.Collator(language, { numeric: true, sensitivity: 'base' });
@@ -105,7 +112,15 @@ export function presentModelOptions<Model extends ModelOptionSource>(models: rea
     groups,
     options,
     selectedId: resolvedSelectedId,
-    triggerLabel: resolvedSelectedModel ? `${providerName(resolvedSelectedModel, zh)} / ${modelName(resolvedSelectedModel)}` : zh ? '没有可运行模型' : 'No runnable models',
+    triggerLabel: resolvedSelectedModel
+      ? `${providerName(resolvedSelectedModel, zh)} / ${modelName(resolvedSelectedModel)}`
+      : resolvedSelectedId
+        ? zh
+          ? '当前选择不可用'
+          : 'Current selection unavailable'
+        : zh
+          ? '没有可运行模型'
+          : 'No runnable models',
     showProviderGroups,
   };
 }
