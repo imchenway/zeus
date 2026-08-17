@@ -284,6 +284,8 @@ export type ModelConnectionTemplateId = 'custom' | 'deepseek' | 'bailian' | 'kim
 export type ModelCapabilityState = 'supported' | 'unsupported' | 'unverified';
 export type ModelThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export type ModelThinkingFormat = 'openai' | 'openrouter' | 'deepseek' | 'together' | 'zai' | 'qwen' | 'qwen-chat-template' | 'string-thinking' | 'ant-ling';
+export type ModelProtocolFamily = 'openai_responses' | 'openai_completions' | 'anthropic_messages';
+export type ModelAuthenticationScheme = 'protocol_default' | 'bearer' | 'x_api_key';
 
 export interface ModelCapabilityEvidence {
   source: 'template' | 'catalog' | 'manual' | 'probe';
@@ -299,6 +301,9 @@ export interface ModelConnectionModel {
   contextWindow: number;
   maxTokens: number;
   speedLabel: 'standard' | 'high_speed' | 'flash' | 'turbo';
+  runtimeAdapter: 'codex_app_server' | 'pi_sdk';
+  protocolFamily: ModelProtocolFamily;
+  authenticationScheme: ModelAuthenticationScheme;
   capability: {
     reasoning: {
       state: ModelCapabilityState;
@@ -367,6 +372,9 @@ export interface SelectablePiModel {
   speedLabel: ModelConnectionModel['speedLabel'];
   tools: ModelCapabilityState;
   imageInput: ModelCapabilityState;
+  runtimeAdapter: 'codex_app_server' | 'pi_sdk';
+  protocolFamily: ModelProtocolFamily;
+  authenticationScheme: ModelAuthenticationScheme;
 }
 
 export interface ProjectModelSelection {

@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { createProvider, envApiKeyAuth, type Api, type Model, type ProviderStreams, type StreamOptions } from '@earendil-works/pi-ai';
+import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy';
+import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
 import { type AgentSession, type AgentSessionEvent, createAgentSession, DefaultResourceLoader, defineTool, ModelRuntime, SessionManager, SettingsManager, type ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import type {
@@ -23,7 +26,7 @@ import type {
   StartAgentRunInput,
   SteerAgentRunInput,
 } from './agentRuntimeContracts.js';
-import type { ConfiguredModelDefinition, ModelConnectionRecord, PiThinkingLevel } from './modelConnectionCatalog.js';
+import { modelConnectionRuntimeBaseUrl, type ConfiguredModelDefinition, type ModelAuthenticationScheme, type ModelConnectionRecord, type PiThinkingLevel } from './modelConnectionCatalog.js';
 
 export interface PiRuntimeConnection extends ModelConnectionRecord {
   apiKey?: string;
@@ -59,6 +62,10 @@ export interface CreatePiSdkRuntimeDriverOptions {
   runtimeInstanceId?: string;
 }
 
+export interface PiSdkRuntimeDriver extends AgentRuntimeDriver {
+  invalidateModelRuntime(): void;
+}
+
 interface PiSessionEntry {
   identity: AgentSessionIdentity;
   cwd: string;
@@ -82,7 +89,7 @@ const piPreflightTimeoutMs = 5 * 60_000;
  * 把 Pi SDK 收敛为 Zeus 的公共运行内核驱动。
  * Pi 默认工具全部关闭，只有经过 Zeus broker 的同名工具可以执行。
  */
-export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOptions): AgentRuntimeDriver {
+export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOptions): PiSdkRuntimeDriver {
   const now = options.now ?? (() => new Date().toISOString());
   const runtimeInstanceId = options.runtimeInstanceId ?? `pi_runtime_${randomUUID()}`;
   const sessions = new Map<string, PiSessionEntry>();
@@ -96,15 +103,24 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
       const connections = await options.loadConnections();
       const runtime = await ModelRuntime.create({ modelsPath: null, allowModelNetwork: false });
       for (const connection of connections) {
-        const piModels = connection.models.filter((model) => model.runtimeAdapter === 'pi_sdk' && model.protocolFamily === 'openai_completions');
+        const piModels = connection.models.filter((model) => model.runtimeAdapter === 'pi_sdk' && (model.protocolFamily === 'openai_completions' || model.protocolFamily === 'anthropic_messages'));
         if (!connection.enabled || piModels.length === 0) continue;
-        runtime.registerProvider(piProviderId(connection.id), {
-          name: connection.name,
-          baseUrl: connection.baseUrl,
-          api: 'openai-completions',
-          models: piModels.map((model) => toPiModelConfig(model)),
-        });
-        if (connection.apiKey) await runtime.setRuntimeApiKey(piProviderId(connection.id), connection.apiKey, { allowNetwork: false });
+        const providerId = piProviderId(connection.id);
+        const authenticationSchemes = new Map(piModels.map((model) => [model.id, model.authenticationScheme]));
+        runtime.registerNativeProvider(
+          createProvider({
+            id: providerId,
+            name: connection.name,
+            baseUrl: connection.baseUrl,
+            auth: { apiKey: envApiKeyAuth(`${connection.name} API Key`, []) },
+            models: piModels.map((model) => toPiModel(model, providerId, connection.baseUrl)),
+            api: {
+              'openai-completions': withModelAuthentication(openAICompletionsApi(), authenticationSchemes),
+              'anthropic-messages': withModelAuthentication(anthropicMessagesApi(), authenticationSchemes),
+            },
+          }),
+        );
+        if (connection.apiKey) await runtime.setRuntimeApiKey(providerId, connection.apiKey, { allowNetwork: false });
       }
       return { runtime, connections };
     })();
@@ -443,6 +459,9 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
       assertOpen();
       await loadModelRuntime(true);
     },
+    invalidateModelRuntime(): void {
+      modelRuntimePromise = null;
+    },
     async close(): Promise<void> {
       closed = true;
       for (const entry of sessions.values()) {
@@ -525,7 +544,7 @@ function createZeusTools(getEntry: () => PiSessionEntry | null, broker: PiZeusTo
   ];
 }
 
-function toPiModelConfig(model: ConfiguredModelDefinition) {
+function toPiModel(model: ConfiguredModelDefinition, providerId: string, connectionBaseUrl: string): Model<Api> {
   const supportedLevels = new Set(model.capability.reasoning.levels);
   const levelMap = model.capability.reasoning.levelMap;
   const thinkingLevelMap = Object.fromEntries(
@@ -534,9 +553,13 @@ function toPiModelConfig(model: ConfiguredModelDefinition) {
       return [level, Object.prototype.hasOwnProperty.call(levelMap, level) ? levelMap[level] : level];
     }),
   );
+  const anthropicMessages = model.protocolFamily === 'anthropic_messages';
   return {
     id: model.id,
     name: model.displayName,
+    provider: providerId,
+    api: anthropicMessages ? ('anthropic-messages' as const) : ('openai-completions' as const),
+    baseUrl: modelConnectionRuntimeBaseUrl(connectionBaseUrl, model.protocolFamily),
     reasoning: model.capability.reasoning.state === 'supported',
     thinkingLevelMap,
     // 明确不支持图片时只注册文本输入；目录未知时保留运行探测机会。
@@ -544,13 +567,44 @@ function toPiModelConfig(model: ConfiguredModelDefinition) {
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: model.contextWindow,
     maxTokens: model.maxTokens,
-    compat: {
-      thinkingFormat: model.capability.reasoning.thinkingFormat,
-      // 外部 OpenAI 兼容端点普遍支持 system，但不一定接受 OpenAI 专有的 developer 角色。
-      supportsDeveloperRole: false,
-      supportsReasoningEffort: model.capability.reasoning.state === 'supported',
-      supportsUsageInStreaming: model.capability.usage.state !== 'unsupported',
-      supportsStrictMode: false,
+    ...(anthropicMessages
+      ? {}
+      : {
+          compat: {
+            thinkingFormat: model.capability.reasoning.thinkingFormat,
+            // 外部 OpenAI 兼容端点普遍支持 system，但不一定接受 OpenAI 专有的 developer 角色。
+            supportsDeveloperRole: false,
+            supportsReasoningEffort: model.capability.reasoning.state === 'supported',
+            supportsUsageInStreaming: model.capability.usage.state !== 'unsupported',
+            supportsStrictMode: false,
+          },
+        }),
+  };
+}
+
+/**
+ * Pi 先解析一份钥匙，再在模型 API 分发边界决定请求头的摆放方式。
+ * Bearer 模式会清空 SDK 的 apiKey 入口，避免 Anthropic SDK 额外再发 x-api-key。
+ */
+function withModelAuthentication(streams: ProviderStreams, authenticationSchemes: ReadonlyMap<string, ModelAuthenticationScheme>): ProviderStreams {
+  return {
+    stream(model, context, options) {
+      return streams.stream(model, context, applyModelAuthentication(options, authenticationSchemes.get(model.id) ?? 'protocol_default'));
+    },
+    streamSimple(model, context, options) {
+      return streams.streamSimple(model, context, applyModelAuthentication(options, authenticationSchemes.get(model.id) ?? 'protocol_default'));
+    },
+  };
+}
+
+function applyModelAuthentication(options: StreamOptions | undefined, authenticationScheme: ModelAuthenticationScheme): StreamOptions | undefined {
+  if (authenticationScheme !== 'bearer' || !options?.apiKey) return options;
+  return {
+    ...options,
+    apiKey: undefined,
+    headers: {
+      ...options.headers,
+      Authorization: `Bearer ${options.apiKey}`,
     },
   };
 }

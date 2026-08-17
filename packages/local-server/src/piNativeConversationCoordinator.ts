@@ -10,6 +10,7 @@ import {
   type AgentSessionIdentity,
   createPiSdkRuntimeDriver,
   isOfficialDeepSeekApiConnection,
+  modelConnectionRequestEndpoint,
   modelRef,
   parseModelRef,
   type PiZeusToolBroker,
@@ -140,6 +141,17 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     now: options.now,
   });
   const unsubscribe = driver.subscribe((event) => void handleRuntimeEvent(event));
+
+  function adapterRouteForModel(model: AgentModelIdentity): { api: 'anthropic-messages' | 'openai-completions'; authenticationScheme: 'protocol_default' | 'bearer' | 'x_api_key'; endpoint: string | null } {
+    const connection = model.sourceId ? options.modelConnections.listMetadata().find((candidate) => candidate.id === model.sourceId) : undefined;
+    const configuredModel = connection?.models.find((candidate) => candidate.id === model.modelId);
+    const protocolFamily = configuredModel?.protocolFamily === 'anthropic_messages' ? 'anthropic_messages' : 'openai_completions';
+    return {
+      api: protocolFamily === 'anthropic_messages' ? 'anthropic-messages' : 'openai-completions',
+      authenticationScheme: configuredModel?.authenticationScheme ?? 'protocol_default',
+      endpoint: connection ? modelConnectionRequestEndpoint(connection.baseUrl, protocolFamily) : null,
+    };
+  }
 
   function settleInterruptedRun(run: PiRunContext, timestamp: string): void {
     const submissions = options.submissions.listByConversation(run.conversationId);
@@ -337,7 +349,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       providerBinaryVersion: 'pi-sdk-0.83.0',
       observedAt: createdAt,
     });
-    input.segmentLifecycle?.adapterSerialized({ model: input.model.modelId, sourceId: input.model.sourceId, thinkingLevel: input.thinkingLevel ?? null }, { adapter: 'pi_sdk', api: 'openai-completions' }, createdAt);
+    input.segmentLifecycle?.adapterSerialized({ model: input.model.modelId, sourceId: input.model.sourceId, thinkingLevel: input.thinkingLevel ?? null }, { adapter: 'pi_sdk', ...adapterRouteForModel(input.model) }, createdAt);
     let acceptedTurnId: string | undefined;
     let run;
     let compactionFinished = false;
@@ -470,7 +482,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     await input.segmentLifecycle?.prepare(submission);
     await input.segmentLifecycle?.beginDispatch();
     input.segmentLifecycle?.nativeSessionReady({ nativeSessionId: context.session.nativeSessionId, nativeSessionPath: context.session.nativeSessionPath, observedAt: createdAt });
-    input.segmentLifecycle?.adapterSerialized({ model: input.model.modelId, sourceId: input.model.sourceId, thinkingLevel: input.thinkingLevel ?? null }, { adapter: 'pi_sdk', api: 'openai-completions' }, createdAt);
+    input.segmentLifecycle?.adapterSerialized({ model: input.model.modelId, sourceId: input.model.sourceId, thinkingLevel: input.thinkingLevel ?? null }, { adapter: 'pi_sdk', ...adapterRouteForModel(input.model) }, createdAt);
     let acceptedTurnId: string | undefined;
     let run;
     try {
@@ -1158,6 +1170,9 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   return {
     repairPersistedConversationIdentities,
     repairPersistedAgentMessageProjections,
+    refreshModelRuntime(): void {
+      driver.invalidateModelRuntime();
+    },
     startConversation,
     submitMessage,
     queueHeldMessage,

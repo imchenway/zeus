@@ -1,5 +1,17 @@
 import { useEffect, useState } from 'react';
-import type { DashboardClient, ModelCapabilityEvidence, ModelConnectionDiagnostic, ModelConnectionModel, ModelConnectionRecord, ModelConnectionTemplateId, ModelThinkingFormat, SaveModelConnectionRequest } from '../apiClient.js';
+import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
+import type {
+  DashboardClient,
+  ModelAuthenticationScheme,
+  ModelCapabilityEvidence,
+  ModelConnectionDiagnostic,
+  ModelConnectionModel,
+  ModelConnectionRecord,
+  ModelConnectionTemplateId,
+  ModelProtocolFamily,
+  ModelThinkingFormat,
+  SaveModelConnectionRequest,
+} from '../apiClient.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
@@ -222,7 +234,7 @@ export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US
         <nav className="model-connection-list" aria-label={zh ? '模型供应商列表' : 'Model provider list'}>
           {connections.length === 0 ? <p>{zh ? '还没有模型供应商。' : 'No model providers yet.'}</p> : null}
           {connections.map((connection) => (
-            <button key={connection.id} type="button" className={draft.id === connection.id ? 'selected' : ''} onClick={() => selectConnection(connection)}>
+            <button key={connection.id} type="button" className={draft.id === connection.id ? 'selected' : ''} aria-current={draft.id === connection.id ? 'true' : undefined} onClick={() => selectConnection(connection)}>
               <span>
                 <strong>{connection.name}</strong>
                 <small>
@@ -316,10 +328,8 @@ export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US
           <section className="model-definition-section">
             <header>
               <span>
-                <strong>{zh ? '模型与能力档案' : 'Models and capability profiles'}</strong>
-                <small>
-                  {zh ? 'Zeus 根据渠道、模型档案和运行结果自动识别能力，不需要手工配置技术参数。' : 'Zeus identifies capabilities from the channel, model profile, and runtime results. Technical parameters are not configured manually.'}
-                </small>
+                <strong>{zh ? '模型路由与能力' : 'Model routing and capabilities'}</strong>
+                <small>{zh ? '每个模型独立选择真实协议与认证；能力状态仍以当前渠道的运行证据为准。' : 'Choose the actual protocol and authentication per model. Capability states still depend on runtime evidence from this channel.'}</small>
               </span>
               {draft.templateId === 'custom' ? (
                 <span className="model-add-row">
@@ -430,40 +440,109 @@ function requiresInsecureHttpConfirmation(baseUrl: string, existingBaseUrl?: str
 function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: ModelConnectionModel; readOnly: boolean; onChange: (model: ModelConnectionModel) => void; onRemove: () => void }) {
   const zh = props.language === 'zh-CN';
   const model = props.model;
+  const routeDescription = protocolDescription(model.protocolFamily, zh);
   return (
-    <article className="model-definition-card">
-      <header>
-        <label>
+    <article className="model-definition-card" data-enabled={model.enabled ? 'true' : 'false'}>
+      <header className="model-definition-header">
+        <label className="model-definition-identity">
           <input type="checkbox" checked={model.enabled} onChange={(event) => props.onChange({ ...model, enabled: event.currentTarget.checked })} />
-          <strong>{model.id}</strong>
+          <span>
+            <strong title={model.id}>{model.id}</strong>
+            <small>{modelRouteLabel(model, zh)}</small>
+          </span>
         </label>
         {props.readOnly ? null : (
-          <button type="button" onClick={props.onRemove} aria-label={zh ? `移除模型 ${model.id}` : `Remove model ${model.id}`}>
-            ×
+          <button className="model-definition-remove" type="button" onClick={props.onRemove} aria-label={zh ? `移除模型 ${model.id}` : `Remove model ${model.id}`} title={zh ? '移除模型' : 'Remove model'}>
+            <X aria-hidden="true" weight="bold" />
           </button>
         )}
       </header>
+      {props.readOnly ? (
+        <dl className="model-route-facts">
+          <div>
+            <dt>{zh ? '请求协议' : 'Request protocol'}</dt>
+            <dd>{protocolLabel(model.protocolFamily)}</dd>
+          </div>
+          <div>
+            <dt>{zh ? '认证方式' : 'Authentication'}</dt>
+            <dd>{authenticationLabel(model.protocolFamily, model.authenticationScheme, zh)}</dd>
+          </div>
+        </dl>
+      ) : (
+        <div className="model-route-controls">
+          <label>
+            <span>{zh ? '请求协议' : 'Request protocol'}</span>
+            <ZeusSelect<ModelProtocolFamily>
+              ariaLabel={zh ? `${model.id} 请求协议` : `${model.id} request protocol`}
+              className="model-protocol-select"
+              size="compact"
+              value={model.protocolFamily}
+              disabled={props.readOnly}
+              onChange={(protocolFamily) =>
+                props.onChange({
+                  ...model,
+                  protocolFamily,
+                  runtimeAdapter: protocolFamily === 'openai_responses' ? 'codex_app_server' : 'pi_sdk',
+                  authenticationScheme: protocolFamily !== 'anthropic_messages' && model.authenticationScheme === 'x_api_key' ? 'protocol_default' : model.authenticationScheme,
+                })
+              }
+              options={[
+                { value: 'openai_completions', label: 'OpenAI Chat Completions' },
+                { value: 'anthropic_messages', label: 'Anthropic Messages' },
+                { value: 'openai_responses', label: 'OpenAI Responses', disabled: model.protocolFamily !== 'openai_responses' },
+              ]}
+            />
+          </label>
+          <label>
+            <span>{zh ? '认证方式' : 'Authentication'}</span>
+            <ZeusSelect<ModelAuthenticationScheme>
+              ariaLabel={zh ? `${model.id} 认证方式` : `${model.id} authentication`}
+              className="model-protocol-select"
+              size="compact"
+              value={model.authenticationScheme}
+              disabled={props.readOnly}
+              onChange={(authenticationScheme) => props.onChange({ ...model, authenticationScheme })}
+              options={[
+                { value: 'protocol_default', label: zh ? '协议默认' : 'Protocol default' },
+                { value: 'bearer', label: 'Authorization: Bearer' },
+                { value: 'x_api_key', label: 'x-api-key', disabled: model.protocolFamily !== 'anthropic_messages' },
+              ]}
+            />
+          </label>
+        </div>
+      )}
+      <p className="model-route-description">{routeDescription}</p>
       <dl className="model-capability-summary">
         <div>
           <dt>{zh ? '推理' : 'Reasoning'}</dt>
-          <dd>
-            {model.capability.reasoning.state === 'supported'
-              ? `${model.capability.reasoning.levels.join(' / ')} · ${zh ? '默认' : 'default'} ${model.capability.reasoning.defaultLevel}`
-              : capabilityStateLabel(model.capability.reasoning.state, zh)}
-          </dd>
-          <small>{model.capability.reasoning.reason}</small>
+          <dd>{reasoningCapabilityLabel(model, zh)}</dd>
         </div>
         <div>
           <dt>{zh ? '工具调用' : 'Tool calling'}</dt>
           <dd>{capabilityStateLabel(model.capability.tools.state, zh)}</dd>
-          <small>{model.capability.tools.reason}</small>
         </div>
         <div>
           <dt>{zh ? '图片输入' : 'Image input'}</dt>
           <dd>{capabilityStateLabel(model.capability.imageInput.state, zh)}</dd>
-          <small>{model.capability.imageInput.reason}</small>
         </div>
       </dl>
+      <details className="model-capability-evidence">
+        <summary>{zh ? '查看能力依据' : 'View capability evidence'}</summary>
+        <dl>
+          <div>
+            <dt>{zh ? '推理' : 'Reasoning'}</dt>
+            <dd>{model.capability.reasoning.reason}</dd>
+          </div>
+          <div>
+            <dt>{zh ? '工具调用' : 'Tool calling'}</dt>
+            <dd>{model.capability.tools.reason}</dd>
+          </div>
+          <div>
+            <dt>{zh ? '图片输入' : 'Image input'}</dt>
+            <dd>{model.capability.imageInput.reason}</dd>
+          </div>
+        </dl>
+      </details>
     </article>
   );
 }
@@ -484,6 +563,9 @@ function createModel(id: string, thinkingFormat: ModelThinkingFormat): ModelConn
     contextWindow: 128_000,
     maxTokens: 8_192,
     speedLabel,
+    runtimeAdapter: 'pi_sdk',
+    protocolFamily: 'openai_completions',
+    authenticationScheme: 'protocol_default',
     capability: {
       reasoning: {
         state: 'unverified',
@@ -501,6 +583,38 @@ function createModel(id: string, thinkingFormat: ModelThinkingFormat): ModelConn
       usage: evidence('等待真实用量字段探针。'),
     },
   };
+}
+
+function protocolDescription(protocolFamily: ModelProtocolFamily, zh: boolean): string {
+  if (protocolFamily === 'anthropic_messages') {
+    return zh ? 'Claude 原生 Messages 链路 · 支持缓存断点与缓存用量' : 'Native Claude Messages route · cache breakpoints and usage';
+  }
+  if (protocolFamily === 'openai_responses') {
+    return zh ? '由已验证的官方 Responses 路由管理' : 'Managed by a verified official Responses route';
+  }
+  return zh ? 'OpenAI Chat Completions 兼容链路' : 'OpenAI Chat Completions-compatible route';
+}
+
+function protocolLabel(protocolFamily: ModelProtocolFamily): string {
+  if (protocolFamily === 'anthropic_messages') return 'Anthropic Messages';
+  if (protocolFamily === 'openai_responses') return 'OpenAI Responses';
+  return 'OpenAI Chat Completions';
+}
+
+function authenticationLabel(protocolFamily: ModelProtocolFamily, authenticationScheme: ModelAuthenticationScheme, zh: boolean): string {
+  if (authenticationScheme === 'bearer') return 'Authorization: Bearer';
+  if (authenticationScheme === 'x_api_key') return 'x-api-key';
+  return protocolFamily === 'anthropic_messages' ? (zh ? '协议默认 · x-api-key' : 'Protocol default · x-api-key') : zh ? '协议默认 · Bearer' : 'Protocol default · Bearer';
+}
+
+function modelRouteLabel(model: ModelConnectionModel, zh: boolean): string {
+  return `${protocolLabel(model.protocolFamily)} · ${authenticationLabel(model.protocolFamily, model.authenticationScheme, zh)}`;
+}
+
+function reasoningCapabilityLabel(model: ModelConnectionModel, zh: boolean): string {
+  const reasoning = model.capability.reasoning;
+  if (reasoning.state !== 'supported') return capabilityStateLabel(reasoning.state, zh);
+  return zh ? `默认 ${reasoning.defaultLevel} · ${reasoning.levels.length} 档` : `Default ${reasoning.defaultLevel} · ${reasoning.levels.length} levels`;
 }
 
 const zhModelCapabilityPendingReason = '待 Zeus 根据渠道和模型档案自动识别。';
