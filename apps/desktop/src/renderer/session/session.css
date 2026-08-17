@@ -14657,51 +14657,10 @@
 }
 
 /* Ultra 智能体使用右侧原生线程面板，协调事件不再挤占主会话正文。 */
-.session-workspace-root .session-agents-toggle {
-  align-items: center;
-  appearance: none;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  color: var(--session-text-muted);
-  display: inline-flex;
-  font: inherit;
-  gap: 6px;
-  min-block-size: 30px;
-  padding: 0 8px;
-}
-
-.session-workspace-root .session-agents-toggle:hover,
-.session-workspace-root .session-agents-toggle.selected {
-  background: var(--session-control-hover);
-  border-color: var(--session-line);
-  color: var(--session-text);
-}
-
-.session-workspace-root .session-agents-toggle:focus-visible,
 .session-workspace-root .session-subagent-workspace button:focus-visible {
   box-shadow: 0 0 0 3px var(--session-focus);
   outline: 1px solid var(--session-focus-outline);
   outline-offset: 1px;
-}
-
-.session-workspace-root .session-agents-toggle > svg {
-  block-size: 16px;
-  inline-size: 16px;
-}
-
-.session-workspace-root .session-agents-toggle > small {
-  align-items: center;
-  background: var(--session-selected);
-  border-radius: 999px;
-  color: var(--session-text-secondary);
-  display: inline-flex;
-  font-size: 10px;
-  font-weight: 650;
-  justify-content: center;
-  line-height: 18px;
-  min-inline-size: 18px;
-  padding-inline: 5px;
 }
 
 .session-workspace-root .session-subagent-workspace {
@@ -14984,18 +14943,6 @@
   color: var(--session-text);
   min-block-size: 28px;
   padding: 4px 10px;
-}
-
-@media (max-width: 759px) {
-  .session-workspace-root .session-agents-toggle > span {
-    block-size: 1px;
-    clip: rect(0 0 0 0);
-    clip-path: inset(50%);
-    inline-size: 1px;
-    overflow: hidden;
-    position: absolute;
-    white-space: nowrap;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

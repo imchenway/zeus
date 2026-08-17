@@ -5,7 +5,6 @@ import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/c
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paperclip';
 import { TargetIcon as Target } from '@phosphor-icons/react/dist/csr/Target';
-import { UsersThreeIcon as UsersThree } from '@phosphor-icons/react/dist/csr/UsersThree';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { animate as animateMotion, motion, useMotionValue, useTransform } from 'framer-motion';
 import { calculateUncachedInputTokens, type ConversationContextDraft, type ConversationFileLocation, type ConversationOpenTarget, type TurnChangeFile, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
@@ -1351,7 +1350,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const browserAnimatedWidth = useTransform<number, number>([browserVisibilityProgress, browserTargetWidth], ([progress, targetWidth]) => Math.max(0, Math.min(1, progress)) * targetWidth);
   const contextOpen = contextWorkspace.kind !== 'none';
   const browserOpen = contextWorkspace.kind === 'browser';
-  const subagentsOpen = contextWorkspace.kind === 'subagents';
   const planWorkspaceItemKey = contextWorkspace.kind === 'plan' ? contextWorkspace.itemKey : null;
   const sessionReady = props.state != null;
   const resolvedBrowserTargetWidth = resolveBrowserTargetWidth(browserLayoutWidth, browserPaneShare, contextFullWidth);
@@ -2089,27 +2087,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
             {displayedHeader.contextLabel ? <small>{displayedHeader.contextLabel}</small> : null}
           </span>
           <div className="session-thread-header-actions">
-            {!legacy && props.conversation && actions.onLoadSubagents && actions.onLoadSubagentThread ? (
-              <button
-                type="button"
-                className={`session-agents-toggle ${subagentsOpen ? 'selected' : ''}`}
-                aria-pressed={subagentsOpen}
-                title={props.language === 'zh-CN' ? '查看智能体' : 'View agents'}
-                onClick={(event) => {
-                  contextReturnFocusRef.current = event.currentTarget;
-                  if (subagentsOpen) {
-                    closeContextWorkspace();
-                    return;
-                  }
-                  setContextFullWidth(false);
-                  setContextWorkspace({ kind: 'subagents' });
-                }}
-              >
-                <UsersThree aria-hidden="true" weight="regular" />
-                <span>{props.language === 'zh-CN' ? '智能体' : 'Agents'}</span>
-                <small>{subagentThreadIds.length}</small>
-              </button>
-            ) : null}
             {!legacy && props.conversation ? (
               <button
                 type="button"
@@ -2154,6 +2131,16 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 onOpenGitReview={actions.onOpenTaskGitReview}
                 onOpenGitDelivery={actions.onOpenTaskGitDelivery}
                 onOpenProjectCommands={actions.onOpenProjectCommands}
+                subagentCount={subagentThreadIds.length}
+                onOpenSubagents={
+                  actions.onLoadSubagents && actions.onLoadSubagentThread
+                    ? (trigger) => {
+                        contextReturnFocusRef.current = trigger;
+                        setContextFullWidth(false);
+                        setContextWorkspace({ kind: 'subagents' });
+                      }
+                    : undefined
+                }
                 onStartCodeReview={(selection: SessionCodeReviewSelection) => {
                   if (!props.task || !actions.onStartConversation) return false;
                   return actions.onStartConversation({
