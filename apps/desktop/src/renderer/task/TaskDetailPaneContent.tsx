@@ -1,24 +1,54 @@
-import { useEffect, useId, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
-import { isTaskPriority, type TaskAttachmentField, type TaskAttachmentReference, type TaskManagementStatusDefinition } from '@zeus/shared';
-import { ZeusApiError, type TaskEventRecord, type TaskManagementStatus, type TaskPriority, type TaskRecord, type TaskType, type UpdateTaskRelationshipsRequest, type UpdateTaskRequest } from '../apiClient.js';
-import type { NativeConversationChoice } from '../session/sessionTypes.js';
-import { compareConversationCreatedAsc } from '../session/conversationOrdering.js';
-import { Button } from '../ui/Button.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
-import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../ui/pendingResourcePolicy.js';
-import { ZeusSelect } from '../ZeusSelect.js';
-import { TaskAttachmentPreviewList } from './TaskAttachmentPreviewList.js';
 import {
-  mergeTaskAttachments,
-  parseTaskAttachments,
-  taskAttachmentsForField,
-  toPersistedTaskAttachment,
-  type TaskAttachmentCandidate,
-  type TaskAttachmentView,
-  type TaskResourceAuthorizationResult,
-  type TaskResourcePayload,
+    type ClipboardEvent as ReactClipboardEvent,
+    type CSSProperties,
+    type KeyboardEvent as ReactKeyboardEvent,
+    type ReactNode,
+    useEffect,
+    useId,
+    useRef,
+    useState
+} from 'react';
+import {
+    isTaskPriority,
+    type TaskAttachmentField,
+    type TaskAttachmentReference,
+    type TaskManagementStatusDefinition
+} from '@zeus/shared';
+import {
+    type TaskEventRecord,
+    type TaskManagementStatus,
+    type TaskPriority,
+    type TaskRecord,
+    type TaskType,
+    type UpdateTaskRelationshipsRequest,
+    type UpdateTaskRequest,
+    ZeusApiError
+} from '../apiClient.js';
+import type {NativeConversationChoice} from '../session/sessionTypes.js';
+import {compareConversationCreatedAsc} from '../session/conversationOrdering.js';
+import {Button} from '../ui/Button.js';
+import {useApplicationErrorDialog} from '../ui/ApplicationErrorDialog.js';
+import {PENDING_RESOURCE_LONG_TEXT_THRESHOLD} from '../ui/pendingResourcePolicy.js';
+import {ZeusSelect} from '../ZeusSelect.js';
+import {TaskAttachmentPreviewList} from './TaskAttachmentPreviewList.js';
+import {
+    mergeTaskAttachments,
+    parseTaskAttachments,
+    type TaskAttachmentCandidate,
+    taskAttachmentsForField,
+    type TaskAttachmentView,
+    type TaskResourceAuthorizationResult,
+    type TaskResourcePayload,
+    toPersistedTaskAttachment,
 } from './taskAttachments.js';
-import { formatTaskSource, formatTaskType, formatTaskUpdatedAt, resolveTaskManagementStatus, taskTypes, type TaskSourceLabels } from './taskWorkspaceModel.js';
+import {
+    formatTaskSource,
+    formatTaskType,
+    formatTaskUpdatedAt,
+    resolveTaskManagementStatus,
+    type TaskSourceLabels,
+    taskTypes
+} from './taskWorkspaceModel.js';
 
 export interface TaskDetailPaneCopy {
   requestTitle: string;
@@ -637,11 +667,6 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
     language: zh ? 'zh-CN' : 'en',
     title: props.copy.conversationError,
     source: 'TaskDetailPaneContent.loadConversations',
-  });
-  useApplicationErrorDialog(modelPushFailed ? props.modelPushOperation?.error : null, {
-    language: zh ? 'zh-CN' : 'en',
-    title: zh ? '会话创建失败' : 'Conversation creation failed',
-    source: 'TaskDetailPaneContent.modelPush',
   });
   useEffect(() => {
     setAttachmentSaveState({ kind: 'idle' });
