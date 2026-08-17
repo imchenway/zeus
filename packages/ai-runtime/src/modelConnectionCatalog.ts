@@ -254,7 +254,7 @@ export function modelConnectionRoute(
   if (isOfficialDeepSeekResponsesModel(connection, modelId)) return { runtimeAdapter: 'codex_app_server', protocolFamily: 'openai_responses' };
   return {
     runtimeAdapter: 'pi_sdk',
-    protocolFamily: configuredProtocol === 'anthropic_messages' ? 'anthropic_messages' : 'openai_completions',
+    protocolFamily: configuredProtocol,
   };
 }
 

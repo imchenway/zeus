@@ -77,6 +77,41 @@ export interface StartAgentRunInput {
   durableTransactionSync?: (acceptance: AcceptedAgentRun) => void;
   /** 同步持久接纳完成后、Pi 可能开始 Provider 写入前的边界通知。 */
   providerWriteMayStart?: () => void;
+  /** Provider 适配器完成最终请求体序列化后的脱敏缓存证据。 */
+  providerPayloadObserved?: (diagnostic: AgentProviderPayloadDiagnostic) => void;
+}
+
+export interface AgentProviderPayloadFingerprint {
+  fingerprint: string;
+  byteLength: number;
+}
+
+export interface AgentProviderPayloadMessageFingerprint extends AgentProviderPayloadFingerprint {
+  index: number;
+  role: string;
+  cacheBreakpointCount: number;
+  /** 忽略缓存控制元数据后的正文指纹，用于判断历史前缀是否真实变化。 */
+  contentFingerprint: string;
+}
+
+export interface AgentProviderPayloadDiagnostic {
+  schemaVersion: 1;
+  api: string;
+  modelId: string;
+  request: AgentProviderPayloadFingerprint;
+  sections: {
+    system: AgentProviderPayloadFingerprint | null;
+    tools: (AgentProviderPayloadFingerprint & { count: number }) | null;
+    messages: AgentProviderPayloadFingerprint & { count: number; entries: AgentProviderPayloadMessageFingerprint[] };
+  };
+  cache: {
+    promptCacheKey: { present: boolean; fingerprint: string | null; byteLength: number | null };
+    retention: string | null;
+    explicitMode: string | null;
+    explicitTtl: string | null;
+    breakpointCount: number;
+    breakpointPaths: string[];
+  };
 }
 
 export interface SteerAgentRunInput extends StartAgentRunInput {
