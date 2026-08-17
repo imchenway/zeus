@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { createProvider, envApiKeyAuth, type Api, type Model, type ProviderStreams, type StreamOptions } from '@earendil-works/pi-ai';
 import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy';
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
+import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy';
 import { type AgentSession, type AgentSessionEvent, createAgentSession, DefaultResourceLoader, defineTool, ModelRuntime, SessionManager, SettingsManager, type ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import type {
@@ -27,6 +28,7 @@ import type {
   SteerAgentRunInput,
 } from './agentRuntimeContracts.js';
 import { modelConnectionRuntimeBaseUrl, type ConfiguredModelDefinition, type ModelAuthenticationScheme, type ModelConnectionRecord, type PiThinkingLevel } from './modelConnectionCatalog.js';
+import { buildProviderCacheDiagnostic } from './providerCacheDiagnostics.js';
 
 export interface PiRuntimeConnection extends ModelConnectionRecord {
   apiKey?: string;
@@ -94,6 +96,7 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
   const runtimeInstanceId = options.runtimeInstanceId ?? `pi_runtime_${randomUUID()}`;
   const sessions = new Map<string, PiSessionEntry>();
   const listeners = new Set<(event: AgentRuntimeEvent) => void>();
+  const payloadObservers = new Map<string, NonNullable<StartAgentRunInput['providerPayloadObserved']>>();
   let modelRuntimePromise: Promise<{ runtime: ModelRuntime; connections: PiRuntimeConnection[] }> | null = null;
   let closed = false;
 
@@ -103,7 +106,7 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
       const connections = await options.loadConnections();
       const runtime = await ModelRuntime.create({ modelsPath: null, allowModelNetwork: false });
       for (const connection of connections) {
-        const piModels = connection.models.filter((model) => model.runtimeAdapter === 'pi_sdk' && (model.protocolFamily === 'openai_completions' || model.protocolFamily === 'anthropic_messages'));
+        const piModels = connection.models.filter((model) => model.runtimeAdapter === 'pi_sdk');
         if (!connection.enabled || piModels.length === 0) continue;
         const providerId = piProviderId(connection.id);
         const authenticationSchemes = new Map(piModels.map((model) => [model.id, model.authenticationScheme]));
@@ -115,8 +118,9 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
             auth: { apiKey: envApiKeyAuth(`${connection.name} API Key`, []) },
             models: piModels.map((model) => toPiModel(model, providerId, connection.baseUrl)),
             api: {
-              'openai-completions': withModelAuthentication(openAICompletionsApi(), authenticationSchemes),
-              'anthropic-messages': withModelAuthentication(anthropicMessagesApi(), authenticationSchemes),
+              'openai-completions': withModelTransport(openAICompletionsApi(), authenticationSchemes, observePayload),
+              'openai-responses': withModelTransport(openAIResponsesApi(), authenticationSchemes, observePayload),
+              'anthropic-messages': withModelTransport(anthropicMessagesApi(), authenticationSchemes, observePayload),
             },
           }),
         );
@@ -125,6 +129,11 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
       return { runtime, connections };
     })();
     return modelRuntimePromise;
+  }
+
+  function observePayload(sessionId: string | undefined, model: Model<Api>, payload: unknown): void {
+    if (!sessionId) return;
+    payloadObservers.get(sessionId)?.(buildProviderCacheDiagnostic(model, payload));
   }
 
   async function createSession(input: OpenAgentSessionInput | (ResumeAgentSessionInput & { cwd: string }), sessionManager: SessionManager): Promise<PiSessionEntry> {
@@ -233,6 +242,7 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
     const acceptedAt = now();
     const images = input.images?.map((image): { type: 'image'; data: string; mimeType: string } => ({ type: 'image', data: image.data, mimeType: image.mimeType }));
     const acceptance = { nativeRunId, acceptedAt };
+    if (input.providerPayloadObserved) payloadObservers.set(entry.identity.nativeSessionId, input.providerPayloadObserved);
     let resolvePreflight: (() => void) | null = null;
     let rejectPreflight: ((error: unknown) => void) | null = null;
     let preflightSettled = false;
@@ -299,11 +309,13 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
     }
     void operation.then(
       () => {
+        if (payloadObservers.get(entry.identity.nativeSessionId) === input.providerPayloadObserved) payloadObservers.delete(entry.identity.nativeSessionId);
         if (!preflight || preflightSettled) return;
         rejectPendingPreflight(runtimeError('ZEUS_PI_PREFLIGHT_CALLBACK_MISSING', 'Pi 已结束本轮，但没有返回预检结果。'));
         if (entry.activeRunId === nativeRunId) entry.activeRunId = null;
       },
       (error: unknown) => {
+        if (payloadObservers.get(entry.identity.nativeSessionId) === input.providerPayloadObserved) payloadObservers.delete(entry.identity.nativeSessionId);
         rejectPendingPreflight(error);
         const payload = {
           message: error instanceof Error ? error.message : String(error),
@@ -471,6 +483,7 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
       }
       sessions.clear();
       listeners.clear();
+      payloadObservers.clear();
     },
     subscribe(listener: (event: AgentRuntimeEvent) => void): () => void {
       listeners.add(listener);
@@ -554,11 +567,12 @@ function toPiModel(model: ConfiguredModelDefinition, providerId: string, connect
     }),
   );
   const anthropicMessages = model.protocolFamily === 'anthropic_messages';
+  const openAIResponses = model.protocolFamily === 'openai_responses';
   return {
     id: model.id,
     name: model.displayName,
     provider: providerId,
-    api: anthropicMessages ? ('anthropic-messages' as const) : ('openai-completions' as const),
+    api: anthropicMessages ? ('anthropic-messages' as const) : openAIResponses ? ('openai-responses' as const) : ('openai-completions' as const),
     baseUrl: modelConnectionRuntimeBaseUrl(connectionBaseUrl, model.protocolFamily),
     reasoning: model.capability.reasoning.state === 'supported',
     thinkingLevelMap,
@@ -569,16 +583,26 @@ function toPiModel(model: ConfiguredModelDefinition, providerId: string, connect
     maxTokens: model.maxTokens,
     ...(anthropicMessages
       ? {}
-      : {
-          compat: {
-            thinkingFormat: model.capability.reasoning.thinkingFormat,
-            // 外部 OpenAI 兼容端点普遍支持 system，但不一定接受 OpenAI 专有的 developer 角色。
-            supportsDeveloperRole: false,
-            supportsReasoningEffort: model.capability.reasoning.state === 'supported',
-            supportsUsageInStreaming: model.capability.usage.state !== 'unsupported',
-            supportsStrictMode: false,
-          },
-        }),
+      : openAIResponses
+        ? {
+            compat: {
+              // 第三方 Responses 只使用标准基线；长时效和显式缓存待模型能力证据确认。
+              supportsDeveloperRole: false,
+              supportsLongCacheRetention: false,
+              supportsStrictMode: false,
+              supportsExplicitPromptCacheMode: false,
+            },
+          }
+        : {
+            compat: {
+              thinkingFormat: model.capability.reasoning.thinkingFormat,
+              // 外部 OpenAI 兼容端点普遍支持 system，但不一定接受 OpenAI 专有的 developer 角色。
+              supportsDeveloperRole: false,
+              supportsReasoningEffort: model.capability.reasoning.state === 'supported',
+              supportsUsageInStreaming: model.capability.usage.state !== 'unsupported',
+              supportsStrictMode: false,
+            },
+          }),
   };
 }
 
@@ -586,13 +610,26 @@ function toPiModel(model: ConfiguredModelDefinition, providerId: string, connect
  * Pi 先解析一份钥匙，再在模型 API 分发边界决定请求头的摆放方式。
  * Bearer 模式会清空 SDK 的 apiKey 入口，避免 Anthropic SDK 额外再发 x-api-key。
  */
-function withModelAuthentication(streams: ProviderStreams, authenticationSchemes: ReadonlyMap<string, ModelAuthenticationScheme>): ProviderStreams {
+function withModelTransport(streams: ProviderStreams, authenticationSchemes: ReadonlyMap<string, ModelAuthenticationScheme>, observePayload: (sessionId: string | undefined, model: Model<Api>, payload: unknown) => void): ProviderStreams {
+  const optionsFor = (model: Model<Api>, options: StreamOptions | undefined): StreamOptions => {
+    const authenticated = applyModelAuthentication(options, authenticationSchemes.get(model.id) ?? 'protocol_default') ?? {};
+    const originalOnPayload = authenticated.onPayload;
+    return {
+      ...authenticated,
+      onPayload: async (payload, observedModel) => {
+        const replacement = await originalOnPayload?.(payload, observedModel);
+        const serialized = replacement === undefined ? payload : replacement;
+        observePayload(authenticated.sessionId, observedModel, serialized);
+        return serialized;
+      },
+    };
+  };
   return {
     stream(model, context, options) {
-      return streams.stream(model, context, applyModelAuthentication(options, authenticationSchemes.get(model.id) ?? 'protocol_default'));
+      return streams.stream(model, context, optionsFor(model, options));
     },
     streamSimple(model, context, options) {
-      return streams.streamSimple(model, context, applyModelAuthentication(options, authenticationSchemes.get(model.id) ?? 'protocol_default'));
+      return streams.streamSimple(model, context, optionsFor(model, options));
     },
   };
 }

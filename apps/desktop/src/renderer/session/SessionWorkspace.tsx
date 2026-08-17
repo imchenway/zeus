@@ -40,6 +40,7 @@ import type {
   NativeConversationStage,
   NativeOperationAcceptance,
   NativeNextTurnSettings,
+  NativeModelRequestUsageObservation,
   NativePendingRequest,
   NativePermissionMode,
   NativePlanImplementationRequest,
@@ -3025,10 +3026,14 @@ function SessionReconnectNotice(props: { language: SessionUiLanguage; attempt: n
 
 function SessionRuntimeDetails(props: { state: NativeSessionState; conversation: NativeConversationChoice | null; language: SessionUiLanguage; capabilities?: CodexConversationCapabilities | null }) {
   const copy = labels[props.language];
-  const model = props.state.providerSettings?.model?.trim() || copy.unsynced;
-  const effort = props.state.providerSettings?.effort?.trim() || copy.unsynced;
-  const rawServiceTier = props.state.providerSettings?.serviceTier;
-  const hasServiceTier = Boolean(props.state.providerSettings && Object.prototype.hasOwnProperty.call(props.state.providerSettings, 'serviceTier'));
+  const model = props.state.providerSettings?.model?.trim() || props.state.snapshot?.model?.id?.trim() || props.conversation?.model?.id?.trim() || copy.unsynced;
+  const effort = props.state.providerSettings?.effort?.trim() || props.state.snapshot?.nextTurnSettings?.effort?.trim() || copy.unsynced;
+  const rawServiceTier = props.state.providerSettings?.serviceTier ?? props.state.snapshot?.nextTurnSettings?.serviceTier;
+  const hasServiceTier = Boolean(
+    (props.state.providerSettings && Object.prototype.hasOwnProperty.call(props.state.providerSettings, 'serviceTier')) ||
+    (props.state.snapshot?.nextTurnSettings && Object.prototype.hasOwnProperty.call(props.state.snapshot.nextTurnSettings, 'serviceTier')) ||
+    (!props.state.providerSettings && props.state.snapshot?.model?.id),
+  );
   const serviceTier = !hasServiceTier
     ? copy.unsynced
     : !rawServiceTier || rawServiceTier === 'default'
@@ -3038,6 +3043,8 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
       : (props.capabilities?.models.flatMap((candidate) => candidate.serviceTiers).find((tier) => tier.id === rawServiceTier)?.name ?? rawServiceTier);
   const usage = props.state.tokenUsage;
   const unifiedUsage = props.state.unifiedUsage;
+  const unifiedCacheHitRate = nullableCacheHitRate(unifiedUsage?.conversationTotal.inputTokens ?? null, unifiedUsage?.conversationTotal.cachedInputTokens ?? null);
+  const latestCacheRequest = unifiedUsage?.latestModelRequest ?? null;
   const mcpStartup = props.state.mcpStartup?.value ?? null;
   const warning = runtimeValueNeedsAttention(mcpStartup);
   const modelLabel = [model, effort, serviceTier].join(' · ');
@@ -3049,6 +3056,7 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
   const nativeSessionPath = nativeSession?.path ?? copy.unavailable;
   const goalCapability = props.state.snapshot?.goalCapability;
   const reasoningEvidence = reasoningConfigurationEvidence(props.state.snapshot?.configurationEvidence ?? [], props.language);
+  const cacheEvidence = cacheConfigurationEvidence(props.state.snapshot?.configurationEvidence ?? [], props.language);
   const goalCapabilityLabel = goalCapability
     ? goalCapability.reason === 'available'
       ? props.language === 'zh-CN'
@@ -3078,7 +3086,7 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
             <span>{copy.unavailable}</span>
           )}
           <span>
-            {copy.cacheHitRate} {formatPercentage(usage?.cacheHitRate ?? null, props.language)}
+            {copy.cacheHitRate} {formatPercentage(unifiedUsage ? unifiedCacheHitRate : (usage?.cacheHitRate ?? null), props.language)}
           </span>
         </span>
       </summary>
@@ -3090,6 +3098,7 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
           </div>
         ) : null}
         {reasoningEvidence ? <RuntimeUsageRow label={props.language === 'zh-CN' ? '推理级别证据' : 'Reasoning evidence'} value={reasoningEvidence} /> : null}
+        {cacheEvidence ? <RuntimeUsageRow label={props.language === 'zh-CN' ? '缓存请求证据' : 'Cache request evidence'} value={cacheEvidence} /> : null}
         {unifiedUsage || usage ? (
           <>
             {unifiedUsage ? (
@@ -3119,6 +3128,20 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
                       : copy.unavailable
                   }
                 />
+                <RuntimeUsageRow label={props.language === 'zh-CN' ? '缓存状态' : 'Cache status'} value={cacheRequestStatus(latestCacheRequest, props.language, copy.unavailable)} />
+                <RuntimeUsageRow
+                  label={props.language === 'zh-CN' ? '最后请求缓存读取' : 'Latest cache read'}
+                  value={<NullableTokenUsageValue count={latestCacheRequest?.cachedInputTokens ?? null} language={props.language} unavailable={copy.unavailable} />}
+                />
+                <RuntimeUsageRow
+                  label={props.language === 'zh-CN' ? '最后请求缓存写入' : 'Latest cache write'}
+                  value={<NullableTokenUsageValue count={latestCacheRequest?.cacheWriteInputTokens ?? null} language={props.language} unavailable={copy.unavailable} />}
+                />
+                <RuntimeUsageRow
+                  label={props.language === 'zh-CN' ? '最后请求普通输入' : 'Latest uncached input'}
+                  value={<NullableTokenUsageValue count={nullableUncachedInput(latestCacheRequest)} language={props.language} unavailable={copy.unavailable} />}
+                />
+                <RuntimeUsageRow label={copy.cacheHitRate} value={formatPercentage(unifiedCacheHitRate, props.language)} />
               </>
             ) : null}
             {usage && !unifiedUsage ? (
@@ -3193,6 +3216,25 @@ function RuntimeUsageRow(props: { label: string; value: ReactNode }) {
   );
 }
 
+function nullableCacheHitRate(inputTokens: number | null, cachedInputTokens: number | null): number | null {
+  if (inputTokens === null || cachedInputTokens === null || inputTokens <= 0) return null;
+  return Math.min(1, Math.max(0, cachedInputTokens / inputTokens));
+}
+
+function nullableUncachedInput(usage: Pick<NativeModelRequestUsageObservation, 'inputTokens' | 'cachedInputTokens' | 'cacheWriteInputTokens'> | null): number | null {
+  if (!usage || usage.inputTokens === null || usage.cachedInputTokens === null || usage.cacheWriteInputTokens === null) return null;
+  return Math.max(0, usage.inputTokens - usage.cachedInputTokens - usage.cacheWriteInputTokens);
+}
+
+function cacheRequestStatus(usage: NativeModelRequestUsageObservation | null, language: SessionUiLanguage, unavailable: string): string {
+  if (!usage) return unavailable;
+  const zh = language === 'zh-CN';
+  if (usage.cachedInputTokens === null || usage.cacheWriteInputTokens === null) return zh ? '供应商未完整报告' : 'Provider did not fully report cache usage';
+  if (usage.cachedInputTokens > 0) return zh ? '读取命中' : 'Cache read hit';
+  if (usage.cacheWriteInputTokens > 0) return usage.requestSequence === 1 ? (zh ? '首次写入' : 'Initial cache write') : zh ? '重新写入' : 'Cache rewritten';
+  return zh ? '未命中，且未报告写入' : 'Cache miss with no reported write';
+}
+
 function reasoningConfigurationEvidence(entries: Record<string, unknown>[], language: SessionUiLanguage): string | null {
   const parsed = entries.flatMap((entry) => {
     if (typeof entry.configurationJson !== 'string' || typeof entry.layer !== 'string') return [];
@@ -3214,6 +3256,53 @@ function reasoningConfigurationEvidence(entries: Record<string, unknown>[], lang
   if (layers.has('adapter_serialized')) return zh ? 'max 已序列化到适配器请求；尚无运行时接纳证据' : 'max serialized by adapter; runtime acceptance not yet evidenced';
   if (layers.has('frozen')) return zh ? 'max 已由 Zeus 冻结；尚未传递' : 'max frozen by Zeus; not sent yet';
   return zh ? '用户选择 max' : 'User selected max';
+}
+
+function cacheConfigurationEvidence(entries: Record<string, unknown>[], language: SessionUiLanguage): string | null {
+  const diagnostics = entries.flatMap((entry) => {
+    if (entry.layer !== 'adapter_serialized' || typeof entry.evidenceJson !== 'string') return [];
+    try {
+      const evidence = JSON.parse(entry.evidenceJson) as Record<string, unknown>;
+      const diagnostic = isRecord(evidence.cacheDiagnostic) ? evidence.cacheDiagnostic : null;
+      const request = diagnostic && isRecord(diagnostic.request) ? diagnostic.request : null;
+      const sections = diagnostic && isRecord(diagnostic.sections) ? diagnostic.sections : null;
+      const cache = diagnostic && isRecord(diagnostic.cache) ? diagnostic.cache : null;
+      const messages = sections && isRecord(sections.messages) ? sections.messages : null;
+      if (!request || !sections || !cache || !messages || typeof request.fingerprint !== 'string') return [];
+      const messageEntries = Array.isArray(messages.entries)
+        ? messages.entries.flatMap((candidate) => {
+            const value = isRecord(candidate) ? candidate : null;
+            return value && typeof value.fingerprint === 'string' ? [typeof value.contentFingerprint === 'string' ? value.contentFingerprint : value.fingerprint] : [];
+          })
+        : [];
+      return [
+        {
+          request: request.fingerprint,
+          breakpointCount: typeof cache.breakpointCount === 'number' ? cache.breakpointCount : 0,
+          system: sectionFingerprint(sections.system),
+          tools: sectionFingerprint(sections.tools),
+          messages: messageEntries,
+        },
+      ];
+    } catch {
+      return [];
+    }
+  });
+  const current = diagnostics.at(-1);
+  if (!current) return null;
+  const zh = language === 'zh-CN';
+  const previous = diagnostics.at(-2);
+  const base = `${zh ? '请求' : 'Request'} ${current.request.slice(0, 10)} · ${current.breakpointCount} ${zh ? '个断点' : 'breakpoints'}`;
+  if (!previous) return `${base} · ${current.messages.length} ${zh ? '条消息' : 'messages'}`;
+  let commonMessages = 0;
+  const commonLength = Math.min(previous.messages.length, current.messages.length);
+  while (commonMessages < commonLength && previous.messages[commonMessages] === current.messages[commonMessages]) commonMessages += 1;
+  const sectionState = (left: string | null, right: string | null, label: string) => `${label}${left === right ? (zh ? '同' : '=') : zh ? '变' : '≠'}`;
+  return `${base} · ${sectionState(previous.system, current.system, 'system ')} · ${sectionState(previous.tools, current.tools, 'tools ')} · ${zh ? '共同消息前缀' : 'common message prefix'} ${commonMessages}/${current.messages.length}`;
+}
+
+function sectionFingerprint(value: unknown): string | null {
+  return isRecord(value) && typeof value.fingerprint === 'string' ? value.fingerprint : null;
 }
 
 function formatPercentage(value: number | null, language: SessionUiLanguage): string {

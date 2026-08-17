@@ -482,14 +482,14 @@ function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: Mode
                 props.onChange({
                   ...model,
                   protocolFamily,
-                  runtimeAdapter: protocolFamily === 'openai_responses' ? 'codex_app_server' : 'pi_sdk',
+                  runtimeAdapter: 'pi_sdk',
                   authenticationScheme: protocolFamily !== 'anthropic_messages' && model.authenticationScheme === 'x_api_key' ? 'protocol_default' : model.authenticationScheme,
                 })
               }
               options={[
                 { value: 'openai_completions', label: 'OpenAI Chat Completions' },
                 { value: 'anthropic_messages', label: 'Anthropic Messages' },
-                { value: 'openai_responses', label: 'OpenAI Responses', disabled: model.protocolFamily !== 'openai_responses' },
+                { value: 'openai_responses', label: 'OpenAI Responses' },
               ]}
             />
           </label>
@@ -590,7 +590,7 @@ function protocolDescription(protocolFamily: ModelProtocolFamily, zh: boolean): 
     return zh ? 'Claude 原生 Messages 链路 · 支持缓存断点与缓存用量' : 'Native Claude Messages route · cache breakpoints and usage';
   }
   if (protocolFamily === 'openai_responses') {
-    return zh ? '由已验证的官方 Responses 路由管理' : 'Managed by a verified official Responses route';
+    return zh ? 'OpenAI Responses 原生链路 · 缓存键随会话稳定' : 'Native OpenAI Responses route · stable conversation cache key';
   }
   return zh ? 'OpenAI Chat Completions 兼容链路' : 'OpenAI Chat Completions-compatible route';
 }

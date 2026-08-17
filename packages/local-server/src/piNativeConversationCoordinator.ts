@@ -142,12 +142,12 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   });
   const unsubscribe = driver.subscribe((event) => void handleRuntimeEvent(event));
 
-  function adapterRouteForModel(model: AgentModelIdentity): { api: 'anthropic-messages' | 'openai-completions'; authenticationScheme: 'protocol_default' | 'bearer' | 'x_api_key'; endpoint: string | null } {
+  function adapterRouteForModel(model: AgentModelIdentity): { api: 'anthropic-messages' | 'openai-completions' | 'openai-responses'; authenticationScheme: 'protocol_default' | 'bearer' | 'x_api_key'; endpoint: string | null } {
     const connection = model.sourceId ? options.modelConnections.listMetadata().find((candidate) => candidate.id === model.sourceId) : undefined;
     const configuredModel = connection?.models.find((candidate) => candidate.id === model.modelId);
-    const protocolFamily = configuredModel?.protocolFamily === 'anthropic_messages' ? 'anthropic_messages' : 'openai_completions';
+    const protocolFamily = configuredModel?.protocolFamily ?? 'openai_completions';
     return {
-      api: protocolFamily === 'anthropic_messages' ? 'anthropic-messages' : 'openai-completions',
+      api: protocolFamily === 'anthropic_messages' ? 'anthropic-messages' : protocolFamily === 'openai_responses' ? 'openai-responses' : 'openai-completions',
       authenticationScheme: configuredModel?.authenticationScheme ?? 'protocol_default',
       endpoint: connection ? modelConnectionRequestEndpoint(connection.baseUrl, protocolFamily) : null,
     };
@@ -349,7 +349,6 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       providerBinaryVersion: 'pi-sdk-0.83.0',
       observedAt: createdAt,
     });
-    input.segmentLifecycle?.adapterSerialized({ model: input.model.modelId, sourceId: input.model.sourceId, thinkingLevel: input.thinkingLevel ?? null }, { adapter: 'pi_sdk', ...adapterRouteForModel(input.model) }, createdAt);
     let acceptedTurnId: string | undefined;
     let run;
     let compactionFinished = false;
@@ -387,6 +386,12 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
                 });
               },
               providerWriteMayStart: () => input.segmentLifecycle!.markProviderWriteStarted(),
+              providerPayloadObserved: (cacheDiagnostic) =>
+                input.segmentLifecycle!.adapterSerialized(
+                  { model: input.model.modelId, sourceId: input.model.sourceId, thinkingLevel: input.thinkingLevel ?? null },
+                  { adapter: 'pi_sdk', ...adapterRouteForModel(input.model), cacheDiagnostic },
+                  options.now(),
+                ),
             }
           : {}),
       });
@@ -482,7 +487,6 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     await input.segmentLifecycle?.prepare(submission);
     await input.segmentLifecycle?.beginDispatch();
     input.segmentLifecycle?.nativeSessionReady({ nativeSessionId: context.session.nativeSessionId, nativeSessionPath: context.session.nativeSessionPath, observedAt: createdAt });
-    input.segmentLifecycle?.adapterSerialized({ model: input.model.modelId, sourceId: input.model.sourceId, thinkingLevel: input.thinkingLevel ?? null }, { adapter: 'pi_sdk', ...adapterRouteForModel(input.model) }, createdAt);
     let acceptedTurnId: string | undefined;
     let run;
     try {
@@ -503,6 +507,12 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
                 });
               },
               providerWriteMayStart: () => input.segmentLifecycle!.markProviderWriteStarted(),
+              providerPayloadObserved: (cacheDiagnostic) =>
+                input.segmentLifecycle!.adapterSerialized(
+                  { model: input.model.modelId, sourceId: input.model.sourceId, thinkingLevel: input.thinkingLevel ?? null },
+                  { adapter: 'pi_sdk', ...adapterRouteForModel(input.model), cacheDiagnostic },
+                  options.now(),
+                ),
             }
           : {}),
       });
@@ -724,7 +734,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           contextWindow,
           ...rawUsage,
           estimatedUsd: null,
-          usageComplete: rawUsage.totalTokens !== null,
+          usageComplete: Object.values(rawUsage).every((value) => value !== null),
           occurredAt: event.createdAt,
         });
         run.modelRequestCount += 1;
