@@ -79,6 +79,7 @@ import {
   loadLegacyConversationDetail,
   nativeConversationChoiceFromAcceptance,
   preloadCodexConversationCapabilities,
+  readCachedCodexConversationCapabilities,
   type NativeConversationStartPreparation,
   type NativeConversationStartStorage,
   type ProjectSessionWorkspaceStartInput,
@@ -90,6 +91,7 @@ import {
   startProjectConversationWithDurableAcceptance,
 } from './session/SessionWorkspace.js';
 import type {
+  CodexConversationCapabilities,
   CodexTaskPushCapabilities,
   NativeConversationAttachment,
   NativeConversationChoice,
@@ -7301,6 +7303,7 @@ export function App(props: {
   const [taskCreateError, setTaskCreateError] = useState('');
   const [taskModelPushTaskId, setTaskModelPushTaskId] = useState<string | null>(null);
   const [taskModelPushCapabilities, setTaskModelPushCapabilities] = useState<CodexTaskPushCapabilities | null>(null);
+  const [taskModelPushRuntimeCapabilities, setTaskModelPushRuntimeCapabilities] = useState<CodexConversationCapabilities | null>(null);
   const [taskModelPushForm, setTaskModelPushForm] = useState<TaskModelPushForm>({
     model: '',
     effort: '',
@@ -10179,6 +10182,7 @@ export function App(props: {
     const remembered = readTaskModelPushPreferences(browserNativeConversationStartStorage(), task.projectId);
     setTaskModelPushTaskId(task.id);
     setTaskModelPushCapabilities(null);
+    setTaskModelPushRuntimeCapabilities(client ? readCachedCodexConversationCapabilities(client, task.projectId) : null);
     setTaskModelPushConfigImportPreview(null);
     setTaskModelPushConfigImportNeedsActivation(false);
     setTaskModelPushForm({
@@ -10210,12 +10214,33 @@ export function App(props: {
       setTaskModelPushError(appShellSettings.appLanguage === 'zh-CN' ? 'Codex app-server 客户端不可用。' : 'Codex app-server client is unavailable.');
       return;
     }
+    void preloadCodexConversationCapabilities(client, task.projectId)
+      .then((capabilities) => {
+        if (taskModelPushCapabilityRequestRef.current !== requestVersion || !capabilities) return;
+        setTaskModelPushRuntimeCapabilities(capabilities);
+      })
+      .catch(() => undefined);
     try {
       // 与 Codex App 一致：打开 composer 时只连接并读取能力，不提前创建 thread/turn。
       const capabilities = normalizeTaskModelPushCapabilities(await client.loadCodexTaskPushCapabilities(task.projectId, task.id));
       if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
       setTaskModelPushCapabilities(capabilities);
-      setTaskModelPushForm(resolveTaskModelPushInitialForm(capabilities, remembered));
+      setTaskModelPushRuntimeCapabilities(capabilities);
+      setTaskModelPushForm((current) => {
+        const normalized = resolveTaskModelPushInitialForm(capabilities, {
+          model: current.model,
+          effort: current.effort,
+          serviceTier: current.serviceTier,
+          workMode: current.workMode,
+          permissionMode: current.permissionMode,
+          workspaceMode: current.workspaceMode,
+        });
+        return {
+          ...normalized,
+          supplementalInfo: current.supplementalInfo,
+          supplementalAttachments: current.supplementalAttachments,
+        };
+      });
       setTaskModelPushStatus('ready');
     } catch (error) {
       if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
@@ -10234,6 +10259,7 @@ export function App(props: {
     if (taskModelPushTaskId) taskModelPushEnvelopeRef.current.delete(taskModelPushTaskId);
     setTaskModelPushTaskId(null);
     setTaskModelPushCapabilities(null);
+    setTaskModelPushRuntimeCapabilities(null);
     setTaskModelPushConfigImportPreview(null);
     setTaskModelPushConfigImportNeedsActivation(false);
     setTaskModelPushRefreshingRepositoryId(null);
@@ -13829,6 +13855,7 @@ export function App(props: {
                 task={snapshot.tasks.find((task) => task.id === taskModelPushTaskId) ?? null}
                 projectName={snapshot.projects.find((project) => project.id === snapshot.tasks.find((task) => task.id === taskModelPushTaskId)?.projectId)?.name}
                 capabilities={taskModelPushCapabilities}
+                runtimeCapabilities={taskModelPushRuntimeCapabilities}
                 form={taskModelPushForm}
                 status={taskModelPushStatus}
                 configImportPreview={taskModelPushConfigImportPreview}

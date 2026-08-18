@@ -13,7 +13,15 @@ import {
   type TaskPushSupplementalAttachment,
 } from '@zeus/shared';
 import type { CodexConfigImportPreview, TaskRecord } from '../apiClient.js';
-import type { CodexTaskPushCapabilities, NativeConversationAttachment, NativePermissionMode, NativeServiceTierSelection, TaskPushSupplementalAttachmentDraft, TaskPushSupplementalAttachmentInput } from '../session/sessionTypes.js';
+import type {
+  CodexConversationCapabilities,
+  CodexTaskPushCapabilities,
+  NativeConversationAttachment,
+  NativePermissionMode,
+  NativeServiceTierSelection,
+  TaskPushSupplementalAttachmentDraft,
+  TaskPushSupplementalAttachmentInput,
+} from '../session/sessionTypes.js';
 import { useConversationInputResources } from '../session/useConversationInputResources.js';
 import { normalizeServiceTierSelection, serviceTierOptions, serviceTierSelectionFromValue, serviceTierSelectionValue } from '../session/serviceTierSelection.js';
 import { readConversationRuntimePreferences, writeConversationRuntimePreferences } from '../session/conversationRuntimePreferences.js';
@@ -732,6 +740,7 @@ export function TaskModelPushModal(props: {
   task: TaskRecord | null;
   projectName?: string;
   capabilities: CodexTaskPushCapabilities | null;
+  runtimeCapabilities: CodexConversationCapabilities | null;
   form: TaskModelPushForm;
   status: TaskModelPushModalStatus;
   configImportPreview: CodexConfigImportPreview | null;
@@ -775,8 +784,9 @@ export function TaskModelPushModal(props: {
   useEffect(() => {
     setSupplementalResourceError(null);
   }, [props.open, props.task?.id]);
-  const requestedModel = resolveModelCapability(props.capabilities?.models, props.form.model);
-  const modelPresentation = useMemo(() => presentModelOptions(props.capabilities?.models ?? [], requestedModel?.id ?? props.form.model, props.language), [props.capabilities?.models, props.form.model, props.language, requestedModel?.id]);
+  const runtimeCapabilities = props.capabilities ?? props.runtimeCapabilities;
+  const requestedModel = resolveModelCapability(runtimeCapabilities?.models, props.form.model);
+  const modelPresentation = useMemo(() => presentModelOptions(runtimeCapabilities?.models ?? [], requestedModel?.id ?? props.form.model, props.language), [props.form.model, props.language, requestedModel?.id, runtimeCapabilities?.models]);
   const selectedModel = resolveModelCapability(modelPresentation.models, modelPresentation.selectedId);
   useEffect(() => {
     if (!props.open || !selectedModel || props.form.model === selectedModel.id) return;
@@ -799,7 +809,7 @@ export function TaskModelPushModal(props: {
   const inspectingConfig = props.status === 'inspecting-config';
   const importingConfig = props.status === 'importing-config';
   const busy = inspectingConfig || importingConfig || authenticating || authenticated || props.status === 'submitting' || inputResources.processing;
-  const codexLoginRequired = selectedModel?.agentKind !== 'pi' && selectedModel?.sourceId === 'codex' && props.capabilities?.codexAccount.requiresOpenaiAuth === true && !props.capabilities.codexAccount.signedIn;
+  const codexLoginRequired = selectedModel?.agentKind !== 'pi' && selectedModel?.sourceId === 'codex' && runtimeCapabilities?.codexAccount.requiresOpenaiAuth === true && !runtimeCapabilities.codexAccount.signedIn;
   const repositories = props.capabilities?.repositories ?? [];
   const existingEnvironments = props.capabilities?.existingEnvironments ?? [];
   const availableEnvironments = existingEnvironments.filter((environment) => environment.available);
@@ -827,7 +837,7 @@ export function TaskModelPushModal(props: {
   );
 
   function onModelChange(model: string): void {
-    const capability = resolveModelCapability(props.capabilities?.models, model);
+    const capability = resolveModelCapability(runtimeCapabilities?.models, model);
     const normalizedTier = normalizeServiceTierSelection(props.form.serviceTier, capability);
     props.onChange({
       ...props.form,
@@ -1213,7 +1223,7 @@ export function TaskModelPushModal(props: {
                 options={modelPresentation.options}
                 triggerLabel={modelPresentation.triggerLabel}
                 onChange={onModelChange}
-                disabled={!props.capabilities || modelPresentation.options.length === 0 || busy}
+                disabled={!runtimeCapabilities || modelPresentation.options.length === 0 || busy}
                 searchPlaceholder={zh ? '搜索供应商或模型' : 'Search providers or models'}
                 emptyLabel={zh ? '没有匹配模型' : 'No matching models'}
               />
@@ -1321,7 +1331,17 @@ export function TaskModelPushModal(props: {
 
           <TaskPushLayoutPreview layout={taskPushLayout} language={props.language} />
 
-          {props.status === 'loading' ? <p className="task-model-push-message">{zh ? '正在连接 app-server 并读取可用模型…' : 'Connecting to app-server and loading models…'}</p> : null}
+          {props.status === 'loading' ? (
+            <p className="task-model-push-message">
+              {runtimeCapabilities
+                ? zh
+                  ? '模型已就绪；正在读取任务上下文和 Git 工作区…'
+                  : 'Models are ready; loading task context and the Git workspace…'
+                : zh
+                  ? '正在连接运行内核并读取可用模型…'
+                  : 'Connecting to the runtime and loading models…'}
+            </p>
+          ) : null}
         </div>
 
         <footer className="task-model-push-footer">
@@ -1345,6 +1365,7 @@ export function TaskModelPushModal(props: {
               busy={busy}
               disabled={
                 busy ||
+                !props.capabilities ||
                 props.status === 'loading' ||
                 !props.form.model ||
                 (props.form.workspaceMode === 'direct'
