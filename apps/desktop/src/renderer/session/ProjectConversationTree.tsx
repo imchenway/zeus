@@ -143,6 +143,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
   });
   const conversationIds = visibleConversations.map((entry) => conversationNavigationId(entry.conversation));
   const allConversationIds = props.groups.flatMap((project) => flattenProjectConversations(project, '').flatConversations.map((entry) => conversationNavigationId(entry.conversation)));
+  const conversationLayoutDependency = allConversationIds.join('\u0000');
   const enteringConversationIds = useNewItemMotionIds(allConversationIds);
   const fallbackTabStopId = props.selectedConversationId && conversationIds.includes(props.selectedConversationId) ? null : (conversationIds[0] ?? null);
 
@@ -172,6 +173,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
           className="session-conversation-tree-item"
           key={navigationId}
           layout={reduceMotion ? false : 'position'}
+          layoutDependency={conversationLayoutDependency}
           initial={false}
           animate={reduceMotion ? { opacity: 1 } : { opacity: 1, height: 'auto', overflow: 'visible' }}
           exit={reduceMotion ? { opacity: 0, transition: { duration: 0 } } : { opacity: 0, height: 0, overflow: 'hidden', transition: { duration: 0.16, ease: [0.22, 1, 0.36, 1] } }}

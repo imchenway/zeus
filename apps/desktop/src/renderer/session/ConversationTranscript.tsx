@@ -76,7 +76,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       props.state.itemOrder
         .map((key) => props.state.items[key])
         .filter((entry): entry is NativeSessionItemBuffer => Boolean(entry) && isVisibleTranscriptItem(entry) && !isUnacceptedQueuedUserItem(entry, props.state, queuedClientUserMessageIds)),
-    [props.state, queuedClientUserMessageIds],
+    [props.state.activeTurnId, props.state.itemOrder, props.state.items, queuedClientUserMessageIds],
   );
   const collapsedErrorItems = useMemo(() => collapseRepeatedErrorItems(projectedItems), [projectedItems]);
   const providerErrorItemsByTurn = useMemo(() => groupErrorItemsByTurn(collapsedErrorItems), [collapsedErrorItems]);

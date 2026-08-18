@@ -1,12 +1,18 @@
-import type { NativeSessionState } from './sessionTypes.js';
+import { createInitialSessionState, sessionReducer } from './sessionReducer.js';
+import type { NativeConversationSnapshot, NativeSessionState } from './sessionTypes.js';
 
-export const ordinarySessionHotCacheLimit = 10;
+export const ordinarySessionHotCacheLimit = 24;
 
 export interface SessionHotCacheEntry {
   state: NativeSessionState;
 }
 
 export type SessionHotCache = Map<string, SessionHotCacheEntry>;
+
+/** 把后台预读的权威快照投影为可直接首帧展示的状态，不建立 WebSocket 或会话控制器。 */
+export function createSessionHotState(snapshot: NativeConversationSnapshot): NativeSessionState {
+  return sessionReducer(createInitialSessionState(), { type: 'snapshot_hydrated', snapshot });
+}
 
 /** 关键会话不参与普通最近使用数量淘汰，确保活动现场可立即恢复。 */
 export function isCriticalSessionState(state: NativeSessionState): boolean {
