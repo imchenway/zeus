@@ -280,6 +280,66 @@ export interface ConnectedSessionWorkspaceProps {
   onLatestContentVisibilityChange?: (visible: boolean) => void;
 }
 
+interface ConversationCapabilitiesCacheEntry {
+  value: CodexConversationCapabilities | null;
+  promise: Promise<CodexConversationCapabilities> | null;
+}
+
+const conversationCapabilitiesCache = new WeakMap<SessionControllerClient, Map<string, ConversationCapabilitiesCacheEntry>>();
+
+function conversationCapabilitiesEntry(client: SessionControllerClient, projectId: string): ConversationCapabilitiesCacheEntry {
+  let projectCache = conversationCapabilitiesCache.get(client);
+  if (!projectCache) {
+    projectCache = new Map();
+    conversationCapabilitiesCache.set(client, projectCache);
+  }
+  const current = projectCache.get(projectId);
+  if (current) return current;
+  const created: ConversationCapabilitiesCacheEntry = { value: null, promise: null };
+  projectCache.set(projectId, created);
+  return created;
+}
+
+/** 项目级模型能力只读取一次并复用；会话切换不能让底部模型选择器退回空白。 */
+export function preloadCodexConversationCapabilities(client: SessionControllerClient, projectId: string): Promise<CodexConversationCapabilities | null> {
+  const load = client.loadCodexConversationCapabilities;
+  if (!load) return Promise.resolve(null);
+  const entry = conversationCapabilitiesEntry(client, projectId);
+  if (entry.value) return Promise.resolve(entry.value);
+  if (entry.promise) return entry.promise;
+  const promise = load(projectId)
+    .then((capabilities) => {
+      entry.value = capabilities;
+      return capabilities;
+    })
+    .finally(() => {
+      if (entry.promise === promise) entry.promise = null;
+    });
+  entry.promise = promise;
+  return promise;
+}
+
+function refreshCodexConversationCapabilities(client: SessionControllerClient, projectId: string): Promise<CodexConversationCapabilities | null> {
+  const load = client.loadCodexConversationCapabilities;
+  if (!load) return Promise.resolve(null);
+  const entry = conversationCapabilitiesEntry(client, projectId);
+  if (entry.promise) return entry.promise;
+  const promise = load(projectId)
+    .then((capabilities) => {
+      entry.value = capabilities;
+      return capabilities;
+    })
+    .finally(() => {
+      if (entry.promise === promise) entry.promise = null;
+    });
+  entry.promise = promise;
+  return promise;
+}
+
+function cachedCodexConversationCapabilities(client: SessionControllerClient, projectId: string): CodexConversationCapabilities | null {
+  return conversationCapabilitiesEntry(client, projectId).value;
+}
+
 export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps) {
   const controllerEnabled = props.controllerEnabled !== false;
   // 真实 id 到达时只重建内部 controller，外层工作面和输入 DOM 保持同一 React 身份。
@@ -310,25 +370,22 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       active = false;
     };
   }, [props.client, props.conversation.id, props.conversation.projectId, props.conversation.transportKind]);
-  const [capabilities, setCapabilities] = useState<CodexConversationCapabilities | null>(props.initialCapabilities ?? null);
+  const [capabilities, setCapabilities] = useState<CodexConversationCapabilities | null>(() => props.initialCapabilities ?? cachedCodexConversationCapabilities(props.client, props.conversation.projectId));
   useEffect(() => {
     let active = true;
-    const load = props.client.loadCodexConversationCapabilities;
-    if (!load)
-      return () => {
-        active = false;
-      };
-    void load(props.conversation.projectId)
+    const cached = props.initialCapabilities ?? cachedCodexConversationCapabilities(props.client, props.conversation.projectId);
+    if (cached) setCapabilities(cached);
+    void refreshCodexConversationCapabilities(props.client, props.conversation.projectId)
       .then((snapshot) => {
-        if (active) setCapabilities(snapshot);
+        if (active && snapshot) setCapabilities(snapshot);
       })
       .catch(() => {
-        if (active) setCapabilities(null);
+        // 已有能力保持可见；后台刷新失败不能让输入区和模型选择器闪回空态。
       });
     return () => {
       active = false;
     };
-  }, [props.client, props.conversation.projectId]);
+  }, [props.client, props.conversation.projectId, props.initialCapabilities]);
   useEffect(() => {
     if (!controllerEnabled) return;
     props.onStateChange?.(props.conversation.id, state);

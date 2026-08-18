@@ -78,6 +78,7 @@ import {
   isDurableNativeConversationAcceptance,
   loadLegacyConversationDetail,
   nativeConversationChoiceFromAcceptance,
+  preloadCodexConversationCapabilities,
   type NativeConversationStartPreparation,
   type NativeConversationStartStorage,
   type ProjectSessionWorkspaceStartInput,
@@ -102,7 +103,7 @@ import type {
 import { selectHasConfirmedUserMessage } from './session/sessionSelectors.js';
 import { compareConversationStageUpdatedDesc } from './session/conversationOrdering.js';
 import { conversationDisplayTitle } from './session/conversationDisplayTitle.js';
-import { rememberSessionHotState, type SessionHotCache } from './session/sessionHotCache.js';
+import { createSessionHotState, ordinarySessionHotCacheLimit, rememberSessionHotState, type SessionHotCache } from './session/sessionHotCache.js';
 import { serviceTierWireOverride } from './session/serviceTierSelection.js';
 import type { SessionControllerClient } from './session/useSessionController.js';
 import { TaskDetailPaneContent, type TaskEditResult } from './task/TaskDetailPaneContent.js';
@@ -6996,6 +6997,7 @@ export function App(props: {
   const [nativeConversationTaskRunStatuses, setNativeConversationTaskRunStatuses] = useState<Record<string, TaskAgentRunStatus>>({});
   const [nativeConversationStatusSyncState, setNativeConversationStatusSyncState] = useState<ZeusRealtimeConnectionState | 'syncing'>(() => (props.onSubscribeRealtimeEvents ? 'connecting' : 'connected'));
   const nativeConversationHotCacheRef = useRef<SessionHotCache>(new Map());
+  const prefetchingNativeConversationIdsRef = useRef(new Set<string>());
   const [projectSidebarViewportWidth, setProjectSidebarViewportWidth] = useState(() => (typeof window === 'undefined' ? 1440 : window.innerWidth));
   const [projectSidebarPreferredWidth, setProjectSidebarPreferredWidth] = useState(() => readProjectSidebarPreferredWidth(browserProjectSidebarWidthStorage()));
   const [projectSidebarResizing, setProjectSidebarResizing] = useState(false);
@@ -7811,6 +7813,43 @@ export function App(props: {
     () => resolveSelectedNativeConversationForProject(nativeConversationChoices, selectedNativeConversationId, activeProjectId),
     [activeProjectId, nativeConversationChoices, selectedNativeConversationId],
   );
+  useEffect(() => {
+    const client = props.nativeConversationClient;
+    if (!client || !activeProjectId) return;
+    let cancelled = false;
+    const projectId = activeProjectId;
+    void preloadCodexConversationCapabilities(client, projectId).catch(() => undefined);
+
+    const candidates = nativeConversationChoices
+      .filter((conversation) => conversation.projectId === projectId && conversation.transportKind === 'codex_native' && !conversation.readOnly && conversation.id !== selectedNativeConversation?.id)
+      .slice(0, ordinarySessionHotCacheLimit);
+    let nextIndex = 0;
+    const runWorker = async (): Promise<void> => {
+      while (!cancelled && nextIndex < candidates.length) {
+        const conversation = candidates[nextIndex++]!;
+        if (nativeConversationHotCacheRef.current.has(conversation.id) || prefetchingNativeConversationIdsRef.current.has(conversation.id)) continue;
+        prefetchingNativeConversationIdsRef.current.add(conversation.id);
+        try {
+          const snapshot = await client.loadNativeConversation(conversation.projectId, conversation.id);
+          if (snapshot.id !== conversation.id || snapshot.projectId !== conversation.projectId) continue;
+          // 长历史投影让出当前事件循环，不能抢占用户刚触发的页面切换首帧。
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+          rememberSessionHotState(nativeConversationHotCacheRef.current, conversation.id, createSessionHotState(snapshot));
+        } catch {
+          // 预热失败不改变会话事实；真正打开时由控制器按统一错误契约重试和反馈。
+        } finally {
+          prefetchingNativeConversationIdsRef.current.delete(conversation.id);
+        }
+      }
+    };
+    const timer = window.setTimeout(() => {
+      void Promise.all([runWorker(), runWorker()]);
+    }, 80);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [activeProjectId, nativeConversationChoices, props.nativeConversationClient, selectedNativeConversation?.id]);
   const taskConversationDrawerReady = Boolean(
     taskConversationDrawerTarget && selectedNativeConversation?.taskId === taskConversationDrawerTarget.taskId && resolveConversationNavigationId(selectedNativeConversation) === taskConversationDrawerTarget.navigationId,
   );
@@ -10135,18 +10174,19 @@ export function App(props: {
     const task = snapshot.tasks.find((candidate) => candidate.id === taskId);
     const client = props.nativeConversationClient;
     if (!task || taskModelPushPendingByTask[task.id]?.status === 'submitting') return;
+    const remembered = readTaskModelPushPreferences(browserNativeConversationStartStorage(), task.projectId);
     setTaskModelPushTaskId(task.id);
     setTaskModelPushCapabilities(null);
     setTaskModelPushConfigImportPreview(null);
     setTaskModelPushConfigImportNeedsActivation(false);
     setTaskModelPushForm({
-      model: '',
-      effort: '',
-      serviceTier: { type: 'standard' },
+      model: remembered?.model ?? '',
+      effort: remembered?.effort ?? '',
+      serviceTier: remembered?.serviceTier ?? { type: 'standard' },
       serviceTierDowngraded: false,
-      workMode: 'default',
-      permissionMode: 'read-only',
-      workspaceMode: 'direct',
+      workMode: remembered?.workMode ?? 'default',
+      permissionMode: remembered?.permissionMode ?? 'read-only',
+      workspaceMode: remembered?.workspaceMode ?? 'direct',
       directConcurrencyConfirmed: false,
       repositorySelections: {},
       currentConversationIds: [],
@@ -10170,7 +10210,6 @@ export function App(props: {
       // 与 Codex App 一致：打开 composer 时只连接并读取能力，不提前创建 thread/turn。
       const capabilities = normalizeTaskModelPushCapabilities(await client.loadCodexTaskPushCapabilities(task.projectId, task.id));
       if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
-      const remembered = readTaskModelPushPreferences(browserNativeConversationStartStorage(), task.projectId);
       setTaskModelPushCapabilities(capabilities);
       setTaskModelPushForm(resolveTaskModelPushInitialForm(capabilities, remembered));
       setTaskModelPushStatus('ready');

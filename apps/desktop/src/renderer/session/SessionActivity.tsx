@@ -268,7 +268,7 @@ export function SessionTurnProcessDisclosure(props: { language: SessionUiLanguag
         </button>
       </div>
       <div id={bodyId} className="session-turn-process-body" hidden={!open}>
-        {props.children}
+        {open ? props.children : null}
       </div>
     </section>
   );
