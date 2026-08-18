@@ -203,6 +203,11 @@
   background: var(--session-control-hover);
 }
 
+.session-codex-parity-v1 button.session-quick-actions-row:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
 .session-codex-parity-v1 .session-quick-actions-row.is-static {
   cursor: default;
 }
