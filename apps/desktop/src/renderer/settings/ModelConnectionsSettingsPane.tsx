@@ -441,6 +441,25 @@ function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: Mode
   const zh = props.language === 'zh-CN';
   const model = props.model;
   const routeDescription = protocolDescription(model.protocolFamily, zh);
+  const contextDeclaration = (
+    <>
+      <input
+        type="checkbox"
+        aria-label={zh ? '支持 1M 上下文' : 'Supports 1M context'}
+        checked={model.supports1MContext}
+        onChange={(event) =>
+          props.onChange({
+            ...model,
+            supports1MContext: event.currentTarget.checked,
+            contextWindow: event.currentTarget.checked ? 1_000_000 : 256_000,
+            // 取消 1M 后旧 maxTokens 可能超过 256K 窗口，就地收敛避免保存报错。
+            maxTokens: event.currentTarget.checked ? model.maxTokens : Math.min(model.maxTokens, 256_000),
+          })
+        }
+      />
+      <span className="model-context-declaration-label">{zh ? '支持 1M 上下文' : 'Supports 1M context'}</span>
+    </>
+  );
   return (
     <article className="model-definition-card" data-enabled={model.enabled ? 'true' : 'false'}>
       <header className="model-definition-header">
@@ -466,6 +485,12 @@ function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: Mode
           <div>
             <dt>{zh ? '认证方式' : 'Authentication'}</dt>
             <dd>{authenticationLabel(model.protocolFamily, model.authenticationScheme, zh)}</dd>
+          </div>
+          <div>
+            <dt>{zh ? '上下文窗口' : 'Context window'}</dt>
+            <dd>
+              <span className="model-context-declaration-value">{contextDeclaration}</span>
+            </dd>
           </div>
         </dl>
       ) : (
@@ -511,21 +536,7 @@ function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: Mode
           </label>
           <label className="model-context-declaration">
             <span>{zh ? '上下文窗口' : 'Context window'}</span>
-            <span className="model-context-declaration-value">
-              <input
-                type="checkbox"
-                aria-label={zh ? '支持 1M 上下文' : 'Supports 1M context'}
-                checked={model.supports1MContext}
-                onChange={(event) =>
-                  props.onChange({
-                    ...model,
-                    supports1MContext: event.currentTarget.checked,
-                    contextWindow: event.currentTarget.checked ? 1_000_000 : 256_000,
-                  })
-                }
-              />
-              <span className="model-context-declaration-label">{zh ? '支持 1M 上下文' : 'Supports 1M context'}</span>
-            </span>
+            <span className="model-context-declaration-value">{contextDeclaration}</span>
           </label>
         </div>
       )}
