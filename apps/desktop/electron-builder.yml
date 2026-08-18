@@ -2,12 +2,39 @@ appId: dev.hypha.zeus
 productName: Zeus
 artifactName: Zeus-${version}-${arch}.${ext}
 electronVersion: 42.4.0
+electronLanguages:
+  - en
+  - en_GB
+  - zh_CN
+  - zh_TW
 directories:
   output: ../../dist
 files:
   - dist/**
   - assets/**
   - package.json
+  - '!dist/**/*.map'
+  - '!dist/**/*.d.ts'
+  - '!dist/**/*.d.cts'
+  - '!node_modules/**/*.map'
+  - '!node_modules/**/*.{ts,tsx,cts,mts}'
+  - '!node_modules/**/{CHANGELOG,HISTORY,CONTRIBUTING,README}*'
+  - '!node_modules/**/{coverage,example,examples,test,tests}/**'
+  - '!node_modules/*/{doc,docs}/**'
+  - '!node_modules/@*/*/{doc,docs}/**'
+  - '!node_modules/@earendil-works/pi-coding-agent/dist/cli.js'
+  - '!node_modules/@earendil-works/pi-coding-agent/dist/core/export-html/**'
+  - '!node_modules/@earendil-works/pi-coding-agent/dist/modes/**'
+  - '!node_modules/@earendil-works/pi-coding-agent/dist/rpc-entry.js'
+  - '!node_modules/sql.js/dist/sql-asm*'
+  - '!node_modules/sql.js/dist/sql-wasm-browser*'
+  - '!node_modules/sql.js/dist/sql-wasm-debug*'
+  - '!node_modules/sql.js/dist/worker*'
+  - '!node_modules/node-pty/binding.gyp'
+  - '!node_modules/node-pty/{deps,scripts,src,typings}/**'
+  - '!node_modules/node-pty/prebuilds/!(darwin-${arch})/**'
+  - '!node_modules/node-pty/lib/**/*.test.js'
+  - '!node_modules/node-pty/lib/testUtils.test.js'
 asarUnpack:
   - dist/native/**
 mac:

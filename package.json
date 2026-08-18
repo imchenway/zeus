@@ -71,7 +71,22 @@
   "homepage": "https://github.com/imchenway/zeus#readme",
   "pnpm": {
     "overrides": {
-      "esbuild": "0.28.1"
+      "esbuild": "0.28.1",
+      "@earendil-works/pi-ai@0.83.0>@aws-sdk/client-bedrock-runtime": "-",
+      "@earendil-works/pi-ai@0.83.0>@google/genai": "-",
+      "@earendil-works/pi-ai@0.83.0>@mistralai/mistralai": "-",
+      "@earendil-works/pi-ai@0.83.0>@opentelemetry/api": "-",
+      "@earendil-works/pi-ai@0.83.0>@smithy/node-http-handler": "-",
+      "@earendil-works/pi-ai@0.83.0>http-proxy-agent": "-",
+      "@earendil-works/pi-ai@0.83.0>https-proxy-agent": "-",
+      "@earendil-works/pi-coding-agent@0.83.0>@earendil-works/pi-tui": "-",
+      "@earendil-works/pi-coding-agent@0.83.0>@mariozechner/clipboard": "-",
+      "@earendil-works/pi-coding-agent@0.83.0>@silvia-odwyer/photon-node": "-",
+      "@earendil-works/pi-coding-agent@0.83.0>highlight.js": "-"
+    },
+    "patchedDependencies": {
+      "@earendil-works/pi-ai@0.83.0": "patches/@earendil-works__pi-ai@0.83.0.patch",
+      "@earendil-works/pi-coding-agent@0.83.0": "patches/@earendil-works__pi-coding-agent@0.83.0.patch"
     }
   }
 }

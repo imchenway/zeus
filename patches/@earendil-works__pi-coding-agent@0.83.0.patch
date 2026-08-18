@@ -1,0 +1,212 @@
+diff --git a/dist/core/agent-session.js b/dist/core/agent-session.js
+index 02c3567ada40890c280a68909d9a013491219615..3ba22cfc4fa2521fb246e389ce41d2d0269fbb0e 100644
+--- a/dist/core/agent-session.js
++++ b/dist/core/agent-session.js
+@@ -16,7 +16,6 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+ import { basename, dirname } from "node:path";
+ import { contentText } from "@earendil-works/pi-ai";
+ import { clampThinkingLevel, cleanupSessionResources, getSupportedThinkingLevels, isContextOverflow, isRetryableAssistantError, modelsAreEqual, resetApiProviders, streamSimple, } from "@earendil-works/pi-ai/compat";
+-import { getThemeByName, theme } from "../modes/interactive/theme/theme.js";
+ import { stripFrontmatter } from "../utils/frontmatter.js";
+ import { resolvePath } from "../utils/paths.js";
+ import { sleep } from "../utils/sleep.js";
+@@ -24,17 +23,13 @@ import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth
+ import { executeBashWithOperations } from "./bash-executor.js";
+ import { calculateContextTokens, collectEntriesForBranchSummary, compact, estimateContextTokens, estimateTokens, generateBranchSummary, prepareCompaction, shouldCompact, } from "./compaction/index.js";
+ import { DEFAULT_THINKING_LEVEL } from "./defaults.js";
+-import { exportSessionToHtml } from "./export-html/index.js";
+-import { createToolHtmlRenderer } from "./export-html/tool-renderer.js";
+-import { ExtensionRunner, wrapRegisteredTools, } from "./extensions/index.js";
+-import { emitSessionShutdownEvent } from "./extensions/runner.js";
++import { ExtensionRunner, emitSessionShutdownEvent } from "./extensions/runner.js";
++import { wrapRegisteredTools } from "./extensions/wrapper.js";
+ import { ModelRegistry } from "./model-registry.js";
+ import { expandPromptTemplate } from "./prompt-templates.js";
+ import { CURRENT_SESSION_VERSION, getLatestCompactionEntry } from "./session-manager.js";
+ import { createSyntheticSourceInfo } from "./source-info.js";
+ import { buildSystemPrompt } from "./system-prompt.js";
+-import { createLocalBashOperations } from "./tools/bash.js";
+-import { createAllToolDefinitions } from "./tools/index.js";
+ import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.js";
+ import { addUsageToTotals, createUsageTotals } from "./usage-totals.js";
+ /**
+@@ -2023,10 +2018,9 @@ export class AgentSession {
+                 name,
+                 createToolDefinitionFromAgentTool(tool),
+             ]))
+-            : createAllToolDefinitions(this._cwd, {
+-                read: { autoResizeImages },
+-                bash: { commandPrefix: shellCommandPrefix, shellPath },
+-            });
++            : (() => {
++                throw new Error("Built-in Pi tools are unavailable in the Zeus headless runtime.");
++            })();
+         this._baseToolDefinitions = new Map(Object.entries(baseToolDefinitions).map(([name, tool]) => [name, tool]));
+         const extensionsResult = this._resourceLoader.getExtensions();
+         if (options.flagValues) {
+@@ -2202,7 +2196,11 @@ export class AgentSession {
+         const shellPath = this.settingsManager.getShellPath();
+         const resolvedCommand = prefix ? `${prefix}\n${command}` : command;
+         try {
+-            const result = await executeBashWithOperations(resolvedCommand, this.sessionManager.getCwd(), options?.operations ?? createLocalBashOperations({ shellPath }), {
++            const operations = options?.operations;
++            if (!operations) {
++                throw new Error("Pi bash operations are unavailable in the Zeus headless runtime.");
++            }
++            const result = await executeBashWithOperations(resolvedCommand, this.sessionManager.getCwd(), operations, {
+                 onChunk: (delta) => {
+                     onChunk?.(delta);
+                     this._emit({ type: "bash_execution_update", id: options?.id, delta });
+@@ -2583,20 +2581,8 @@ export class AgentSession {
+      * @param outputPath Optional output path (defaults to session directory)
+      * @returns Path to exported file
+      */
+-    async exportToHtml(outputPath) {
+-        const configuredThemeName = this.settingsManager.getTheme();
+-        const themeName = configuredThemeName && getThemeByName(configuredThemeName) ? configuredThemeName : undefined;
+-        // Create tool renderer if we have an extension runner (for custom tool HTML rendering)
+-        const toolRenderer = createToolHtmlRenderer({
+-            getToolDefinition: (name) => this.getToolDefinition(name),
+-            theme,
+-            cwd: this.sessionManager.getCwd(),
+-        });
+-        return await exportSessionToHtml(this.sessionManager, this.state, {
+-            outputPath,
+-            themeName,
+-            toolRenderer,
+-        });
++    async exportToHtml(_outputPath) {
++        throw new Error("HTML export is unavailable in the Zeus headless runtime.");
+     }
+     /**
+      * Export the current session branch to a JSONL file.
+diff --git a/dist/core/extensions/runner.js b/dist/core/extensions/runner.js
+index 265b2fa147e215080ef1fedd22c44a6199f48c23..2bc259e798ef74efaaa49b067595cdc2f0d43cc3 100644
+--- a/dist/core/extensions/runner.js
++++ b/dist/core/extensions/runner.js
+@@ -1,7 +1,6 @@
+ /**
+  * Extension runner - executes extensions and manages their lifecycle.
+  */
+-import { theme } from "../../modes/interactive/theme/theme.js";
+ // Extension shortcuts compete with canonical keybinding ids from keybindings.json.
+ // Only editor-global shortcuts are reserved here. Picker-specific bindings are not.
+ const RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS = [
+@@ -109,7 +108,7 @@ const noOpUIContext = {
+     setEditorComponent: () => { },
+     getEditorComponent: () => undefined,
+     get theme() {
+-        return theme;
++        return {};
+     },
+     getAllThemes: () => [],
+     getTheme: () => undefined,
+diff --git a/dist/core/sdk.js b/dist/core/sdk.js
+index 2e8e67c884cf254112eb67a82d8958ec61c0cfa0..a372ae8f2245d6d7127d43aa3a89b81785ec8803 100644
+--- a/dist/core/sdk.js
++++ b/dist/core/sdk.js
+@@ -10,20 +10,13 @@ import { convertToLlm } from "./messages.js";
+ import { findInitialModel } from "./model-resolver.js";
+ import { ModelRuntime } from "./model-runtime.js";
+ import { mergeProviderAttributionHeaders } from "./provider-attribution.js";
+-import { DefaultResourceLoader } from "./resource-loader.js";
+ import { getDefaultSessionDir, SessionManager } from "./session-manager.js";
+ import { SettingsManager } from "./settings-manager.js";
+ import { time } from "./timings.js";
+-import { createBashTool, createCodingTools, createEditTool, createFindTool, createGrepTool, createLsTool, createReadOnlyTools, createReadTool, createWriteTool, withFileMutationQueue, } from "./tools/index.js";
+ // Preserve the pre-0.81 fallback for extensions that construct Agent instances
+ // or invoke low-level agent loops without supplying streamFn. Agent core remains
+ // provider-agnostic and does not import pi-ai/compat itself.
+ setDefaultStreamFn(streamSimple);
+-// Re-exports
+-export * from "./agent-session-runtime.js";
+-export { withFileMutationQueue, 
+-// Tool factories (for custom cwd)
+-createCodingTools, createReadOnlyTools, createReadTool, createBashTool, createEditTool, createWriteTool, createGrepTool, createFindTool, createLsTool, };
+ // Helper Functions
+ function getDefaultAgentDir() {
+     return getAgentDir();
+@@ -73,9 +66,7 @@ export async function createAgentSession(options = {}) {
+     const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
+     const sessionManager = options.sessionManager ?? SessionManager.create(cwd, getDefaultSessionDir(cwd, agentDir));
+     if (!resourceLoader) {
+-        resourceLoader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
+-        await resourceLoader.reload();
+-        time("resourceLoader.reload");
++        throw new Error("The headless Pi runtime requires an explicit resource loader.");
+     }
+     // Check if session has existing data to restore
+     const existingSession = sessionManager.buildSessionContext();
+@@ -254,6 +245,7 @@ export async function createAgentSession(options = {}) {
+         initialActiveToolNames,
+         allowedToolNames,
+         excludedToolNames,
++        baseToolsOverride: options.noTools ? {} : undefined,
+         extensionRunnerRef,
+         sessionStartEvent: options.sessionStartEvent,
+     });
+diff --git a/dist/headless.d.ts b/dist/headless.d.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..39509f874cf5c119402d6b9c53ab2dc0340b5125
+--- /dev/null
++++ b/dist/headless.d.ts
+@@ -0,0 +1,9 @@
++export { createAgentSession } from "./core/sdk.js";
++export type { CreateAgentSessionOptions, CreateAgentSessionResult } from "./core/sdk.js";
++export type { AgentSession, AgentSessionEvent } from "./core/agent-session.js";
++export { defineTool } from "./core/extensions/types.js";
++export { ModelRuntime } from "./core/model-runtime.js";
++export type { ResourceLoader } from "./core/resource-loader.js";
++export { SessionManager } from "./core/session-manager.js";
++export { SettingsManager } from "./core/settings-manager.js";
++export type { LoadExtensionsResult, ToolDefinition } from "./core/extensions/types.js";
+diff --git a/dist/headless.js b/dist/headless.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..49bb325fc4585fee6d084ad2ed63a78900751f07
+--- /dev/null
++++ b/dist/headless.js
+@@ -0,0 +1,5 @@
++export { createAgentSession } from "./core/sdk.js";
++export { defineTool } from "./core/extensions/types.js";
++export { ModelRuntime } from "./core/model-runtime.js";
++export { SessionManager } from "./core/session-manager.js";
++export { SettingsManager } from "./core/settings-manager.js";
+diff --git a/package.json b/package.json
+index c7d8c8b41dbeaf4a551d479b713bb03d7bdf3422..c08645a64e8c73da4666d12bb536e6dc62cdacc8 100644
+--- a/package.json
++++ b/package.json
+@@ -16,6 +16,10 @@
+ 			"types": "./dist/index.d.ts",
+ 			"import": "./dist/index.js"
+ 		},
++		"./headless": {
++			"types": "./dist/headless.d.ts",
++			"import": "./dist/headless.js"
++		},
+ 		"./rpc-entry": {
+ 			"import": "./dist/rpc-entry.js"
+ 		}
+@@ -41,13 +45,10 @@
+ 	"dependencies": {
+ 		"@earendil-works/pi-agent-core": "^0.83.0",
+ 		"@earendil-works/pi-ai": "^0.83.0",
+-		"@earendil-works/pi-tui": "^0.83.0",
+-		"@silvia-odwyer/photon-node": "0.3.4",
+ 		"chalk": "5.6.2",
+ 		"cross-spawn": "7.0.6",
+ 		"diff": "8.0.4",
+ 		"glob": "13.0.6",
+-		"highlight.js": "10.7.3",
+ 		"hosted-git-info": "9.0.3",
+ 		"ignore": "7.0.5",
+ 		"jiti": "2.7.0",
+@@ -65,9 +66,6 @@
+ 			"rimraf": "6.1.2"
+ 		}
+ 	},
+-	"optionalDependencies": {
+-		"@mariozechner/clipboard": "0.3.9"
+-	},
+ 	"devDependencies": {
+ 		"@types/cross-spawn": "6.0.6",
+ 		"@types/diff": "7.0.2",
