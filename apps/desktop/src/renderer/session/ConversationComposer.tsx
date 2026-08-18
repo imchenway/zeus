@@ -475,7 +475,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
           </span>
           <span className="session-composer-trailing-actions">
             <span className="session-composer-runtime-settings">
-              <ContextUsageIndicator usage={props.state.tokenUsage} unifiedUsage={props.state.unifiedUsage} language={props.language} />
+              <ContextUsageIndicator unifiedUsage={props.state.unifiedUsage} language={props.language} />
               <ServiceTierToggle
                 language={props.language}
                 model={selectedCapability}

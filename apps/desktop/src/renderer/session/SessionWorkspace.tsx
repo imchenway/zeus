@@ -63,6 +63,7 @@ import { SafeMarkdown, type SessionUiLanguage } from './ThreadItemView.js';
 import { autosizeTextarea } from './textareaAutosize.js';
 import { conversationAttachmentIdentity, ConversationComposerAttachments } from './ConversationComposerAttachments.js';
 import { ContextUsageIndicator } from './ContextUsageIndicator.js';
+import { formatTokenCount } from './tokenUsageFormat.js';
 import { ServiceTierToggle } from './ServiceTierToggle.js';
 import { useConversationInputResources } from './useConversationInputResources.js';
 import { SessionQuickActionsCard } from './SessionQuickActionsCard.js';
@@ -1224,42 +1225,7 @@ const labels = {
   },
 } as const;
 
-const TOKEN_USAGE_UNITS = [
-  { suffix: '', divisor: 1 },
-  { suffix: 'K', divisor: 1_000 },
-  { suffix: 'M', divisor: 1_000_000 },
-  { suffix: 'B', divisor: 1_000_000_000 },
-] as const;
-const TOKEN_USAGE_SIGNIFICANT_DIGITS = 3;
-const TOKEN_USAGE_COMPACT_FORMATTER = new Intl.NumberFormat('en-US', { maximumSignificantDigits: TOKEN_USAGE_SIGNIFICANT_DIGITS, useGrouping: false });
-const TOKEN_USAGE_EXACT_FORMATTERS = {
-  'zh-CN': new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 0 }),
-  'en-US': new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }),
-} satisfies Record<SessionUiLanguage, Intl.NumberFormat>;
-
 type TokenUsageLabel = 'tokens' | 'in' | 'out';
-
-function formatTokenCount(count: number, language: SessionUiLanguage): { compact: string; exact: string } {
-  let unitIndex = 0;
-  for (let index = 1; index < TOKEN_USAGE_UNITS.length; index += 1) {
-    if (count < TOKEN_USAGE_UNITS[index].divisor) break;
-    unitIndex = index;
-  }
-
-  let unit = TOKEN_USAGE_UNITS[unitIndex];
-  let rounded = Number((count / unit.divisor).toPrecision(TOKEN_USAGE_SIGNIFICANT_DIGITS));
-  if (rounded >= 1_000 && unitIndex < TOKEN_USAGE_UNITS.length - 1) {
-    unitIndex += 1;
-    unit = TOKEN_USAGE_UNITS[unitIndex];
-    rounded = Number((count / unit.divisor).toPrecision(TOKEN_USAGE_SIGNIFICANT_DIGITS));
-  }
-
-  const exact = TOKEN_USAGE_EXACT_FORMATTERS[language].format(count);
-  return {
-    compact: unitIndex === 0 ? exact : `${TOKEN_USAGE_COMPACT_FORMATTER.format(rounded)}${unit.suffix}`,
-    exact,
-  };
-}
 
 function TokenUsageValue(props: { count: number; label: TokenUsageLabel; language: SessionUiLanguage }) {
   const display = formatTokenCount(props.count, props.language);
@@ -2855,7 +2821,7 @@ function NewConversationComposer(props: {
           </span>
           <span className="session-composer-trailing-actions">
             <span className="session-composer-runtime-settings">
-              <ContextUsageIndicator usage={null} unifiedUsage={null} language={props.language} />
+              <ContextUsageIndicator unifiedUsage={null} language={props.language} />
               <ServiceTierToggle language={props.language} model={selectedModel} value={serviceTierSelection} disabled={submitting || !props.owner} onChange={setServiceTierSelection} />
               <ComposerDropdown
                 label={props.language === 'zh-CN' ? '模型' : 'Model'}
@@ -3114,8 +3080,9 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
                 <RuntimeUsageRow
                   label={copy.contextUsage}
                   value={
-                    unifiedUsage.latestModelRequest?.inputTokens !== null && unifiedUsage.latestModelRequest?.inputTokens !== undefined && unifiedUsage.latestModelRequest.contextWindow
-                      ? `${formatPercentage(unifiedUsage.latestModelRequest.inputTokens / unifiedUsage.latestModelRequest.contextWindow, props.language)} · ${formatTokenCount(unifiedUsage.latestModelRequest.inputTokens, props.language).exact} / ${formatTokenCount(unifiedUsage.latestModelRequest.contextWindow, props.language).exact} Token`
+                    // 与输入框圆环同口径：最后一次真实请求的 totalTokens 才是下一次请求要携带的上下文。
+                    unifiedUsage.latestModelRequest?.totalTokens !== null && unifiedUsage.latestModelRequest?.totalTokens !== undefined && unifiedUsage.latestModelRequest.contextWindow
+                      ? `${formatPercentage(unifiedUsage.latestModelRequest.totalTokens / unifiedUsage.latestModelRequest.contextWindow, props.language)} · ${formatTokenCount(unifiedUsage.latestModelRequest.totalTokens, props.language).compact} / ${formatTokenCount(unifiedUsage.latestModelRequest.contextWindow, props.language).compact} Token`
                       : copy.unavailable
                   }
                 />
@@ -3134,8 +3101,9 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
                 <RuntimeUsageRow
                   label={copy.contextUsage}
                   value={
+                    // 旧快照口径下 last 就是最后一次请求；同样按 totalTokens 计算并使用 K/M 单位。
                     usage.modelContextWindow
-                      ? `${formatPercentage(usage.last.inputTokens / usage.modelContextWindow, props.language)} · ${formatTokenCount(usage.last.inputTokens, props.language).exact} / ${formatTokenCount(usage.modelContextWindow, props.language).exact}`
+                      ? `${formatPercentage(usage.last.totalTokens / usage.modelContextWindow, props.language)} · ${formatTokenCount(usage.last.totalTokens, props.language).compact} / ${formatTokenCount(usage.modelContextWindow, props.language).compact}`
                       : copy.unavailable
                   }
                 />
