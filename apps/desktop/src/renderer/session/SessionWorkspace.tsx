@@ -2205,12 +2205,13 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     : undefined
                 }
                 onStartCodeReview={(selection: SessionCodeReviewSelection) => {
-                  if (!props.task || !actions.onStartConversation) return false;
+                  if (!props.task || !props.conversation || !actions.onStartConversation) return false;
+                  if (props.conversation.projectId !== props.task.projectId || props.conversation.taskId !== props.task.id) return false;
                   return actions.onStartConversation({
                     mode: 'create',
                     source: 'code_review',
                     task: props.task,
-                    inheritConversationId: props.conversation?.id,
+                    inheritConversationId: props.conversation.id,
                     content: props.language === 'zh-CN' ? '请审查当前工作区的完整代码变化。' : 'Review all code changes in the current workspace.',
                     permissionMode: selection.permissionMode,
                     collaborationMode: 'default',
