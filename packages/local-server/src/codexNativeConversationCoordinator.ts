@@ -1006,8 +1006,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     options.conversations.updateNextTurnSettings(conversation.id, nextTurnSettingsFromContext(context));
     contexts.set(conversation.id, context);
     runStates.set(conversation.id, { type: 'idle' });
-    if (!input.holdDispatch) releaseHeldSubmissions(conversation.id, context);
-    const submission = createSubmission(conversation.id, input.prompt, input, context);
+    // 解除等待会生成替换记录；本次准备必须绑定新记录，不能再拿旧预留编号校验新的派发上下文。
+    const releasedSubmissions = input.holdDispatch ? new Map<string, ZeusConversationSubmissionRecord>() : releaseHeldSubmissions(conversation.id, context);
+    const submission = (input.submissionId ? releasedSubmissions.get(input.submissionId) : undefined) ?? createSubmission(conversation.id, input.prompt, input, context);
     await input.segmentLifecycle?.prepare(submission);
     await persist();
     await input.providerWriteLifecycle?.markPrepared(submission.id);
@@ -3255,15 +3256,17 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     return [...heads.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
   }
 
-  function releaseHeldSubmissions(conversationId: string, context: ConversationDispatchContext): void {
+  function releaseHeldSubmissions(conversationId: string, context: ConversationDispatchContext): Map<string, ZeusConversationSubmissionRecord> {
+    const replacements = new Map<string, ZeusConversationSubmissionRecord>();
     for (const submission of options.submissions.listByConversation(conversationId)) {
       if (submission.providerTurnId || (submission.status !== 'queued' && submission.status !== 'paused' && submission.status !== 'failed')) continue;
       const input = parseJsonRecord(submission.inputJson) as unknown as PersistedSubmissionInput;
-      if (!isRecord(input.context)) continue;
+      if (!isRecord(input.context) || input.context.holdDispatch !== true) continue;
       const nextInput: PersistedSubmissionInput = { ...input, context: { ...input.context, ...context } };
       delete nextInput.context.holdDispatch;
-      options.submissions.createReplacement(submission.id, { requestHash: requestHash(nextInput), input: nextInput, reason: 'release_hold', updatedAt: now() });
+      replacements.set(submission.id, options.submissions.createReplacement(submission.id, { requestHash: requestHash(nextInput), input: nextInput, reason: 'release_hold', updatedAt: now() }));
     }
+    return replacements;
   }
 
   function compareConversationQueueOrder(left: ZeusConversationSubmissionRecord, right: ZeusConversationSubmissionRecord): number {
