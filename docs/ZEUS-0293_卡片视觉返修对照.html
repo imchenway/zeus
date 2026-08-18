@@ -1,0 +1,245 @@
+<!doctype html>
+<!-- ZEUS-0293 卡片视觉返修：改前（正式版 v0.3.17）与改后的静态对照示意。仅为设计说明，非真实运行截图。 -->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>ZEUS-0293 看板卡片改前改后对照</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --panel: #ffffff;
+        --panel-muted: #f2f2f0;
+        --text: #26251f;
+        --muted: #7d7c74;
+        --line: #e4e3de;
+        --blue: oklch(48% 0.11 252);
+        --violet: oklch(50% 0.12 300);
+        --green: oklch(50% 0.1 155);
+        --amber: oklch(55% 0.1 85);
+        --orange: oklch(56% 0.12 55);
+        --red: oklch(54% 0.14 25);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --panel: #262624;
+          --panel-muted: #31302d;
+          --text: #e8e6e0;
+          --muted: #9d9b92;
+          --line: #3d3c38;
+          --blue: oklch(78% 0.1 252);
+          --violet: oklch(78% 0.1 300);
+          --green: oklch(78% 0.1 155);
+          --amber: oklch(80% 0.09 85);
+          --orange: oklch(78% 0.1 55);
+          --red: oklch(72% 0.12 25);
+        }
+        body {
+          background: #1d1c1a;
+        }
+      }
+      body {
+        margin: 0;
+        padding: 36px 28px;
+        background: #faf9f5;
+        color: var(--text);
+        font:
+          13px/1.5 -apple-system,
+          'PingFang SC',
+          sans-serif;
+      }
+      h1 {
+        margin: 0 0 6px;
+        font-size: 18px;
+      }
+      p.note {
+        margin: 0 0 26px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .compare {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 36px;
+      }
+      .side {
+        width: 300px;
+      }
+      .side > h2 {
+        margin: 0 0 12px;
+        font-size: 13px;
+        color: var(--muted);
+        font-weight: 600;
+      }
+      .card {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 9px 10px;
+        border: 1px solid var(--line);
+        border-inline-start: 3px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        box-shadow: 0 1px 2px rgb(0 0 0 / 5%);
+        margin-block-end: 12px;
+      }
+      .card .title {
+        min-height: 24px;
+        padding: 2px 28px 2px 1px;
+        font-size: 13px;
+        font-weight: 650;
+        line-height: 1.38;
+      }
+      .card .handle {
+        position: absolute;
+        inset-block-start: 5px;
+        inset-inline-end: 6px;
+        width: 26px;
+        height: 26px;
+        display: grid;
+        place-items: center;
+        color: var(--muted);
+        border-radius: 6px;
+        font-size: 13px;
+        letter-spacing: 1px;
+      }
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        align-items: center;
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        min-height: 19px;
+        padding: 2px 5px;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        background: var(--panel-muted);
+        color: var(--muted);
+        font-size: 10.5px;
+        line-height: 1.2;
+      }
+      .chip.code {
+        border-color: transparent;
+        background: transparent;
+        padding-inline: 1px;
+        font-family: ui-monospace, Menlo, monospace;
+        font-size: 10px;
+      }
+      .chip.bold {
+        font-weight: 680;
+        color: var(--text);
+      }
+      /* ---- 改后 ---- */
+      .after .chip {
+        border-radius: 999px;
+        padding: 2px 7px;
+      }
+      .after .chip.code {
+        padding-inline: 1px;
+      }
+      .after .chip.toned {
+        border-color: color-mix(in srgb, var(--tone) 32%, transparent);
+        color: color-mix(in oklab, var(--tone) 82%, var(--text));
+        background: color-mix(in srgb, var(--tone) 11%, var(--panel));
+        font-weight: 600;
+      }
+      .after .card .handle {
+        opacity: 0;
+        transition: opacity 120ms ease;
+      }
+      .after .card:hover .handle {
+        opacity: 1;
+      }
+      .tone-red {
+        --tone: var(--red);
+      }
+      .tone-orange {
+        --tone: var(--orange);
+      }
+      .tone-amber {
+        --tone: var(--amber);
+      }
+      .tone-blue {
+        --tone: var(--blue);
+      }
+      .tone-violet {
+        --tone: var(--violet);
+      }
+      .tone-green {
+        --tone: var(--green);
+      }
+      .legend {
+        margin-top: 22px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .legend li {
+        margin-block: 3px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>看板卡片：改前 / 改后对照</h1>
+    <p class="note">左侧为正式版 v0.3.17 的样式复刻，右侧为本轮返修后的样式复刻。右侧把鼠标移到卡片上可以体验拖动把手的悬停显现。跟随系统明暗主题。</p>
+    <div class="compare">
+      <section class="side before">
+        <h2>改前（当前正式版）</h2>
+        <article class="card">
+          <div class="title">任务页的看板模式</div>
+          <span class="handle">⠿</span>
+          <div class="chips">
+            <span class="chip code">ZEUS-0293</span>
+            <span class="chip bold">P0</span>
+            <span class="chip">开发中</span>
+            <span class="chip">需求</span>
+            <span class="chip">运行中</span>
+          </div>
+        </article>
+        <article class="card">
+          <div class="title">选项框自定义输入崩溃</div>
+          <span class="handle">⠿</span>
+          <div class="chips">
+            <span class="chip code">ZEUS-0048</span>
+            <span class="chip bold">P2</span>
+            <span class="chip">待开始</span>
+            <span class="chip">缺陷</span>
+            <span class="chip">未启动</span>
+          </div>
+        </article>
+      </section>
+      <section class="side after">
+        <h2>改后（本轮返修）</h2>
+        <article class="card">
+          <div class="title">任务页的看板模式</div>
+          <span class="handle">⠿</span>
+          <div class="chips">
+            <span class="chip code">ZEUS-0293</span>
+            <span class="chip toned tone-red bold">P0</span>
+            <span class="chip toned tone-blue">开发中</span>
+            <span class="chip toned tone-violet">需求</span>
+            <span class="chip toned tone-blue">运行中</span>
+          </div>
+        </article>
+        <article class="card">
+          <div class="title">选项框自定义输入崩溃</div>
+          <span class="handle">⠿</span>
+          <div class="chips">
+            <span class="chip code">ZEUS-0048</span>
+            <span class="chip toned tone-amber bold">P2</span>
+            <span class="chip">待开始</span>
+            <span class="chip toned tone-red">缺陷</span>
+            <span class="chip">未启动</span>
+          </div>
+        </article>
+      </section>
+    </div>
+    <ul class="legend">
+      <li>改后：优先级 P0 红 / P1 橙 / P2 黄 / P3 蓝 / P4 灰；类型 需求紫 / 缺陷红 / 优化绿；任务状态用用户配置的主色；执行状态按运行态着色（未启动、已取消等中性态保持灰色）。</li>
+      <li>改后：胶囊由直角方块改为圆角药丸；拖动把手默认隐藏，悬停才出现。</li>
+      <li>标签、父任务、来源、时间等中性信息两版都保持灰色。</li>
+    </ul>
+  </body>
+</html>

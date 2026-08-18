@@ -1,8 +1,34 @@
 import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
 import type { MouseEventHandler } from 'react';
-import type { TaskAgentRunStatus } from '../apiClient.js';
+import type { TaskAgentRunStatus, TaskType } from '../apiClient.js';
+import type { TaskBranchStatus } from './taskWorkspaceModel.js';
 
 export type TaskSemanticTone = 'neutral' | 'blue' | 'violet' | 'green' | 'amber' | 'orange' | 'red';
+
+/** 分支状态的语义色调：与任务列表、看板卡片共用同一套映射。 */
+export function taskBranchStatusTone(status: TaskBranchStatus): TaskSemanticTone {
+  if (status === 'action_required') return 'red';
+  if (status === 'active') return 'blue';
+  if (status === 'pushed') return 'amber';
+  if (status === 'merged') return 'green';
+  return 'neutral';
+}
+
+/** 优先级的语义色调：P0 最紧急为红，逐级降温。 */
+export function taskPriorityTone(priority: string | number | null): TaskSemanticTone {
+  if (priority === 'p0') return 'red';
+  if (priority === 'p1') return 'orange';
+  if (priority === 'p2') return 'amber';
+  if (priority === 'p3') return 'blue';
+  return 'neutral';
+}
+
+/** 任务类型的语义色调：需求紫、缺陷红、优化绿。 */
+export function taskTypeTone(taskType: TaskType): TaskSemanticTone {
+  if (taskType === 'requirement') return 'violet';
+  if (taskType === 'defect') return 'red';
+  return 'green';
+}
 
 export const taskAgentRunStatusLabels: Record<'zh-CN' | 'en-US', Record<TaskAgentRunStatus, string>> = {
   'zh-CN': {

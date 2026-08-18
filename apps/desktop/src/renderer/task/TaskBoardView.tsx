@@ -43,6 +43,7 @@ import { ModalPortal } from '../ui/ModalPortal.js';
 import { parseTaskAttachments } from './taskAttachments.js';
 import { buildTaskBoardGroups, taskBoardActiveContent, taskBoardCardPropertyValues, taskBoardGroupOptions, type TaskBoardCardModel, type TaskBoardGroupModel, type TaskBoardProjectionContext } from './taskBoardModel.js';
 import { formatTaskType, type TaskBranchStatus } from './taskWorkspaceModel.js';
+import { taskBranchStatusTone, taskPriorityTone, taskRunStatusTone, taskTypeTone, type TaskSemanticTone } from './TaskRunStatusChip.js';
 
 export interface TaskBoardViewProps {
   projectId: string;
@@ -151,6 +152,19 @@ function taskBoardPropertyLabel(property: TaskBoardCardProperty, task: TaskRecor
   return values.filter((value) => value !== taskBoardEmptyGroupId).join(' · ') || '—';
 }
 
+/** 卡片属性胶囊的语义配色：任务状态跟随用户自定义主色，其余属性复用全应用统一的语义色调，保持与任务列表一致。 */
+function taskBoardPropertyAccent(property: TaskBoardCardProperty, task: TaskRecord, context: TaskBoardProjectionContext): { tone: TaskSemanticTone; color?: string } {
+  if (property === 'managementStatus') {
+    const color = context.statusDefinitions.find((status) => status.id === (task.managementStatus ?? 'todo'))?.color;
+    return { tone: 'neutral', color };
+  }
+  if (property === 'priority') return { tone: taskPriorityTone(task.priority ?? null) };
+  if (property === 'taskType') return { tone: taskTypeTone(task.taskType) };
+  if (property === 'runStatus') return { tone: taskRunStatusTone(context.runStatuses[task.id] ?? 'not_started') };
+  if (property === 'branchStatus') return { tone: taskBranchStatusTone(context.branchStatuses[task.id] ?? 'not_created') };
+  return { tone: 'neutral' };
+}
+
 function TaskBoardImagePreview(props: { task: TaskRecord; settings: TaskBoardViewSettings; loadPreview?: TaskBoardViewProps['onLoadAttachmentPreview'] }) {
   const image = parseTaskAttachments(props.task.sourceContextJson).find((attachment) => attachment.kind === 'image');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -214,12 +228,21 @@ const TaskBoardCard = memo(function TaskBoardCard(props: {
         </button>
       </div>
       <div className="task-board-card-properties">
-        {visibleProperties.map((property) => (
-          <span className={`task-board-card-property task-board-card-property-${property}`} key={property} title={translate(cardPropertyLabels[property], props.context.language)}>
-            <small>{translate(cardPropertyLabels[property], props.context.language)}</small>
-            <span>{taskBoardPropertyLabel(property, props.card.task, props.context)}</span>
-          </span>
-        ))}
+        {visibleProperties.map((property) => {
+          const accent = taskBoardPropertyAccent(property, props.card.task, props.context);
+          const toned = Boolean(accent.color) || accent.tone !== 'neutral';
+          return (
+            <span
+              className={`task-board-card-property task-board-card-property-${property}${toned ? ` is-toned task-board-card-property-tone-${accent.tone}` : ''}`}
+              style={accent.color ? ({ '--task-board-property-color': accent.color } as CSSProperties) : undefined}
+              key={property}
+              title={translate(cardPropertyLabels[property], props.context.language)}
+            >
+              <small>{translate(cardPropertyLabels[property], props.context.language)}</small>
+              <span>{taskBoardPropertyLabel(property, props.card.task, props.context)}</span>
+            </span>
+          );
+        })}
       </div>
       <label className="task-board-move-menu">
         <span className="sr-only">{props.context.language === 'zh-CN' ? '移动到分组' : 'Move to group'}</span>

@@ -17,7 +17,6 @@ import type {
   TaskTableColumnKey,
   TaskTableEnumSortOrders,
   TaskTableColumnPreferences,
-  TaskType,
   UpdateTaskRequest,
 } from '../apiClient.js';
 import type { NativeConversationChoice } from '../session/sessionTypes.js';
@@ -47,32 +46,10 @@ import {
   taskManagementStatuses,
   toggleTaskTableColumn,
 } from './taskWorkspaceModel.js';
-import { TaskRunStatusChip, type TaskSemanticTone } from './TaskRunStatusChip.js';
+import { TaskRunStatusChip, taskBranchStatusTone, taskPriorityTone, taskTypeTone } from './TaskRunStatusChip.js';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
 const LazyTaskBoardView = lazy(() => import('./TaskBoardView.js').then((module) => ({ default: module.TaskBoardView })));
-
-function taskBranchStatusTone(status: TaskBranchStatus): TaskSemanticTone {
-  if (status === 'action_required') return 'red';
-  if (status === 'active') return 'blue';
-  if (status === 'pushed') return 'amber';
-  if (status === 'merged') return 'green';
-  return 'neutral';
-}
-
-function taskPriorityTone(priority: string | number | null): TaskSemanticTone {
-  if (priority === 'p0') return 'red';
-  if (priority === 'p1') return 'orange';
-  if (priority === 'p2') return 'amber';
-  if (priority === 'p3') return 'blue';
-  return 'neutral';
-}
-
-function taskTypeTone(taskType: TaskType): TaskSemanticTone {
-  if (taskType === 'requirement') return 'violet';
-  if (taskType === 'defect') return 'red';
-  return 'green';
-}
 
 type TaskPriorityEditResult = { kind: 'updated'; task: TaskRecord } | { kind: 'conflict'; latest: TaskRecord };
 type TaskPrioritySaveState = { kind: 'idle' } | { kind: 'saving' } | { kind: 'error'; message: string } | { kind: 'conflict'; latest: TaskRecord };
