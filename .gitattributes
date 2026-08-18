@@ -1,0 +1,2 @@
+# pnpm 补丁保留上游文件的原始缩进，补丁载荷不参与仓库空白错误判定。
+patches/*.patch -whitespace
