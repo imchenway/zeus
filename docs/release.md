@@ -1,7 +1,7 @@
 # 发布工程
 
-Zeus 发布工程必须基于真实构建、真实运行检查和真实产物。公开发布必须使用同一 Developer ID 完成签名并通过 Apple
-公证；Apple 凭据未配置时只能生成本地候选或 Actions artifact，不得创建 GitHub Release 或更新 Homebrew Tap。
+Zeus 发布工程必须基于真实构建、真实运行检查和真实产物。Apple signing / notarization 未配置时，可以公开交付
+ad-hoc 签名的 unsigned DMG，但必须显式标注签名、公证和 Gatekeeper 限制，不得伪造 Apple 分发认证。
 
 ## 发布脚本
 
@@ -309,21 +309,21 @@ PR 与手工完整发布门禁继续覆盖变更文件格式、Git 空白错误�
 
 ## 签名与 notarization
 
-macOS 使用代码签名的指定要求识别同一应用并继承隐私授权。ad-hoc 签名只绑定某一份具体代码，升级后可能再次触发“文稿”、
-“下载”等目录授权，因此不能继续作为公开分发身份。
+Apple signing / notarization 未配置时，允许进行明确标注的实用发布；这不等同于 Developer ID 正式签名或 Apple 公证。
 
 - 本地没有证书时，electron-builder 在生成 DMG 前对 App 执行 ad-hoc 签名，保证归档内外是同一签名阶段；这不等同于 Developer ID 签名。
 - CI/release workflow 支持 `MACOS_CERTIFICATE`、`MACOS_CERTIFICATE_PASSWORD`、Apple ID，或
   `APPLE_API_KEY_P8` / `APPLE_API_KEY_ID` / `APPLE_API_ISSUER` App Store Connect API Key 公证凭据，以及
   `HOMEBREW_TAP_TOKEN`。
-- `publish_release=true` 无条件要求最终 App 同时具备 Developer ID 签名与 Apple 公证票据；工作流输入
-  `require_apple_distribution` 只用于让非公开候选也采用相同门禁，不能关闭公开发布门禁。
+- `publish_release=true` 默认允许发布真实验证过的 ad-hoc 产物；只有显式设置
+  `require_apple_distribution=true` 时，才强制最终 App 同时具备 Developer ID 签名与 Apple 公证票据。
 - GitHub Actions 注入空 Apple secret 时，打包脚本会移除空值，避免 electron-builder 把空 `CSC_LINK` 误判成证书路径。
-- 已经公开的历史版本可能仍记录 `signed=false`、`notarized=false`；本规则不改写既有资产，只阻止后续版本继续发布相同身份不稳定的产物。
+- 当前公开版本的 manifest 明确记录 `signed=false`、`notarized=false`；`spctl --assess` 返回 rejected，但本机普通
+  `open` 已成功启动。其他 Mac 仍可能需要在 Finder 中右键“打开”并确认系统提示。
 - 不得把 ad-hoc 产物描述为已完成 Developer ID 签名或 Apple 公证。
 
-优点是后续版本具备可跨升级验证的应用身份，macOS 能稳定继承用户已经作出的目录授权；缺点是缺少 Apple Developer 凭据时公开
-发布会被阻断，本地 ad-hoc 候选只能用于结构校验，不能冒充可分发版本。
+当前方案优点是无需等待 Apple Developer 凭据即可稳定形成 Release、Tap 和一键安装链路；缺点是首次启动体验不如已公证应用，
+升级后也可能再次触发目录授权。Developer ID 签名和公证保留为后续增强。
 
 ## Homebrew cask
 
@@ -340,13 +340,12 @@ sha256 由 release 脚本从真实 DMG 计算，不允许 sha256 :no_check。
 - Actions 自动同步远端 Tap 需要只对 `imchenway/homebrew-tap` 有 Contents 写权限的 token；明确授权的人工发布也可通过
   GitHub API 同步，不影响 Cask 生成和安装。
 
-## 分发凭据与自动化
+## 可选增强与自动化凭据
 
-- Apple Developer 证书和 notarization 凭据是公开发布门禁；缺失时保留本地候选能力，但不能创建或更新公开资产。
+- Apple Developer 证书和 notarization 凭据只用于改善 Gatekeeper 体验及启用严格 Apple 分发，不阻塞实用发布。
 - `HOMEBREW_TAP_TOKEN` 用于 Actions 自动同步 Tap；当前公开版本已在用户明确授权下完成 Release 与 Tap 人工发布。
 - `publish_release=false` 时只上传 DMG 和 manifest 的 Actions artifact，不创建 Release、不更新 Tap。
-- `publish_release=true` 时，既有 tag 必须与 `package.json` 版本一致，且 manifest 必须同时为 `signed=true`、
-  `notarized=true`；workflow 完成发布门禁后创建非草稿 GitHub Release，
+- `publish_release=true` 时，既有 tag 必须与 `package.json` 版本一致；workflow 完成发布门禁后创建非草稿 GitHub Release，
   最后把 `dist/homebrew/zeus.rb` 同步为 Tap 仓库的 `Casks/zeus.rb`。
 - 每个新版本必须在 `docs/releases/v<version>.md` 提供面向用户的 Release notes；文件缺失或为空时拒绝公开发布。
 - 同名 Release 已存在时只允许 DMG SHA256 完全一致的幂等续跑，禁止用同一版本静默替换二进制。

@@ -410,6 +410,18 @@ electron-builder 官方说明 `maximum` 通常不会带来明显体积差异，�
 - 优点：消除嵌套补丁载荷造成的假阳性，不放宽 Zeus 源码和配置的发布门禁，也无需篡改上游补丁上下文。
 - 缺点：Git 不再单独报告补丁载荷内部的空白问题；升级 Pi 补丁时必须继续以补丁能否实际应用、构建和打包为准。
 
+## `v0.3.24` 发布恢复（2026-08-18）
+
+补丁空白误报修正后，发布链路成功创建并推送 `v0.3.24` 候选提交，但在创建公开 Release 前被 ZEUS-0332 的强制 Apple 分发门禁阻断。
+现场确认仓库只有 `HOMEBREW_TAP_TOKEN`，没有 Developer ID 证书、证书密码或任一完整公证凭据；本机也没有有效代码签名身份。
+
+用户明确授权恢复 ad-hoc 公开发布。实现保留严格 Apple 分发开关，但默认发布恢复为 `REQUIRE_APPLE_DISTRIBUTION=false`；Workflow
+仅在显式严格模式下要求 Apple Secrets，公开 manifest 与回验结果继续如实记录签名和公证状态。已推送但尚未创建标签／Release 的
+`v0.3.24` 将使用既有候选重绑定机制续跑，不删除恢复状态、不强推、不复用旧二进制，也不创建另一个版本号。
+
+- 优点：保持 `v0.3.24`、远端 main、Release notes、DMG 与 Homebrew Cask 的同一提交一致性，并可在没有 Apple 凭据时完成发布。
+- 缺点：公开 App 仍是 ad-hoc 签名且未公证，Gatekeeper 与跨升级目录授权体验不会因本次发布得到改善。
+
 ## 参考
 
 - electron-builder `electronLanguages`、`files`、`asarUnpack` 与压缩配置：<https://www.electron.build/docs/configuration/>

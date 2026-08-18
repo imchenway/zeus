@@ -19,10 +19,7 @@ main().catch((error) => {
 async function main() {
   const releaseVersion = requiredVersion(process.env.RELEASE_VERSION);
   const applyRemote = parseBoolean('APPLY_REMOTE', process.env.APPLY_REMOTE, false);
-  const requireAppleDistribution = parseBoolean('REQUIRE_APPLE_DISTRIBUTION', process.env.REQUIRE_APPLE_DISTRIBUTION, true);
-  if (!requireAppleDistribution) {
-    throw new Error('公开发布必须使用 Developer ID 签名并完成 Apple 公证；REQUIRE_APPLE_DISTRIBUTION 不允许关闭。');
-  }
+  const requireAppleDistribution = parseBoolean('REQUIRE_APPLE_DISTRIBUTION', process.env.REQUIRE_APPLE_DISTRIBUTION, false);
   const waitForCompletion = parseBoolean('WAIT_FOR_COMPLETION', process.env.WAIT_FOR_COMPLETION, true);
   const deepVerifyPublicDmg = parseBoolean('DEEP_VERIFY_PUBLIC_DMG', process.env.DEEP_VERIFY_PUBLIC_DMG, false);
   const confirmation = process.env.PUBLISH_CONFIRMATION?.trim() ?? '';
@@ -274,8 +271,8 @@ async function verifyPublishedRelease(input) {
     if (manifest.version !== input.releaseVersion || manifest.channel !== 'stable' || !manifestArtifact) {
       throw new Error('公开 manifest 的版本、通道或 DMG 记录不一致。');
     }
-    if (!manifest.signed || !manifest.notarized) {
-      throw new Error('公开 manifest 未同时记录 Developer ID 签名和 Apple 公证，拒绝把身份不稳定的产物视为发布完成。');
+    if (input.requireAppleDistribution && (!manifest.signed || !manifest.notarized)) {
+      throw new Error('本次强制 Apple 正式分发，但公开 manifest 未同时记录 Developer ID 签名和 Apple 公证。');
     }
     const dmgSha256 = dmgAsset.digest.slice('sha256:'.length);
     const dmgSize = dmgAsset.size;

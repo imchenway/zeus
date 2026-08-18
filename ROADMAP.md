@@ -29,14 +29,14 @@
 
 - AI CLI 登录：等待用户在本机完成 Codex / Claude / Gemini 等 CLI 安装与登录。
 - Telegram Bot Token 与 whitelist：等待用户提供真实 token 和允许的 Telegram user id。
-- Apple signing / notarization：后续公开发布的阻断项；用于保持跨升级应用身份稳定，并改善 Gatekeeper 首次启动体验。
+- Apple signing / notarization：可选增强；用于改善 Gatekeeper 首次启动体验和启用严格 Apple 分发。
 - Homebrew tap token：Actions 自动同步 Tap 时需要；不再是当前版本人工授权发布的阻塞项。
 - Postgres / MySQL driver：可选连接器，不属于 Zeus 本地核心依赖；仅在用户项目显式配置外部数据库 introspection 时启用，当前只允许安全记录连接意图和拒绝明文密码 URI。
 
 ## 后续增强边界
 
 - 大图 Sigma/WebGL 与局部 React Flow 已接入；Postgres/MySQL 真实连接扫描作为可选连接器按用户项目配置单独启用。
-- 配置长期稳定的 Developer ID 与公证凭据后恢复公开发布，并用连续两个签名版本验收目录授权继承；可信自动更新另行评估。
+- 在用户提供 Apple 凭据后补齐 Developer ID 签名与公证，并评估启用可信自动更新。
 - 持续增强复杂 Java/Spring/MyBatis/SQL/TypeScript AST 精度；相关结论必须通过真实项目扫描取证，所有图谱节点和边仍必须可追溯到真实源码、SQL、DDL、Git 或用户明确创建的记录。
 
 ## 不做的降级
