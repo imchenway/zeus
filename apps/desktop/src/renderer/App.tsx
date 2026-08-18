@@ -78,6 +78,7 @@ import {
   isDurableNativeConversationAcceptance,
   loadLegacyConversationDetail,
   nativeConversationChoiceFromAcceptance,
+  type NativeConversationStartFailure,
   preloadCodexConversationCapabilities,
   type NativeConversationStartPreparation,
   type NativeConversationStartStorage,
@@ -9873,10 +9874,12 @@ export function App(props: {
     return props.onChooseConversationResources?.() ?? [];
   }
 
-  async function startNativeConversation(input: SessionWorkspaceStartInput): Promise<boolean | NativeConversationStartPreparation> {
+  async function startNativeConversation(input: SessionWorkspaceStartInput): Promise<boolean | NativeConversationStartPreparation | NativeConversationStartFailure> {
     const client = props.nativeConversationClient;
     if (!client) {
-      recordLocalError('native-conversation-start', new Error('Codex native app-server client is unavailable.'));
+      const message = 'Codex native app-server client is unavailable.';
+      if (input.source === 'code_review') return { state: 'failed', message };
+      recordLocalError('native-conversation-start', new Error(message));
       return false;
     }
     setNativeConversationChoiceTaskStates((current) => ({ ...current, [input.task.id]: beginNativeConversationChoiceTaskLoad(current[input.task.id]) }));
@@ -9892,9 +9895,8 @@ export function App(props: {
         };
       } catch (error) {
         const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error));
-        setNativeConversationChoiceTaskStates((current) => ({ ...current, [input.task.id]: failNativeConversationChoiceTaskLoad(current[input.task.id], message) }));
-        recordLocalError('native-code-review-prepare', error);
-        return false;
+        setNativeConversationChoiceTaskStates((current) => ({ ...current, [input.task.id]: completeNativeConversationChoiceTaskLoad(current[input.task.id]) }));
+        return { state: 'failed', message };
       }
     }
     let refreshError: unknown | null = null;
@@ -9934,6 +9936,10 @@ export function App(props: {
       refreshError = result.refreshError;
     } catch (error) {
       const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error));
+      if (input.source === 'code_review') {
+        setNativeConversationChoiceTaskStates((current) => ({ ...current, [input.task.id]: completeNativeConversationChoiceTaskLoad(current[input.task.id]) }));
+        return { state: 'failed', message };
+      }
       setNativeConversationChoiceTaskStates((current) => ({ ...current, [input.task.id]: failNativeConversationChoiceTaskLoad(current[input.task.id], message) }));
       recordLocalError('native-conversation-start', error);
       return false;

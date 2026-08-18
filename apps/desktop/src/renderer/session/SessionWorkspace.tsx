@@ -123,7 +123,9 @@ export interface ProjectSessionWorkspaceStartInput {
 }
 
 export interface SessionWorkspaceActions {
-  onStartConversation?: (input: SessionWorkspaceStartInput) => void | boolean | NativeConversationStartPreparation | Promise<void | boolean | NativeConversationStartPreparation>;
+  onStartConversation?: (
+    input: SessionWorkspaceStartInput,
+  ) => void | boolean | NativeConversationStartPreparation | NativeConversationStartFailure | Promise<void | boolean | NativeConversationStartPreparation | NativeConversationStartFailure>;
   onStartProjectConversation?: (input: ProjectSessionWorkspaceStartInput) => void | boolean | Promise<void | boolean>;
   onLoadCapabilities?: (projectId: string) => Promise<CodexConversationCapabilities>;
   onSelectNewConversationProject?: (projectId: string) => void;
@@ -187,6 +189,11 @@ export interface SessionWorkspaceActions {
 export interface NativeConversationStartPreparation {
   state: 'preparing';
   cancel: () => void;
+}
+
+export interface NativeConversationStartFailure {
+  state: 'failed';
+  message: string;
 }
 
 export interface ConversationResourceOpenActionResult {
@@ -2205,7 +2212,12 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     : undefined
                 }
                 onStartCodeReview={(selection: SessionCodeReviewSelection) => {
-                  if (!props.task || !actions.onStartConversation) return false;
+                  if (!props.task || !actions.onStartConversation) {
+                    return {
+                      state: 'failed',
+                      message: props.language === 'zh-CN' ? '当前会话没有可用于代码审查的任务 Worktree。' : 'This conversation does not have a task worktree available for code review.',
+                    };
+                  }
                   return actions.onStartConversation({
                     mode: 'create',
                     source: 'code_review',
@@ -2731,7 +2743,7 @@ function NewConversationComposer(props: {
     setSubmitting(true);
     setLocalError(null);
     try {
-      let accepted: void | boolean | NativeConversationStartPreparation;
+      let accepted: void | boolean | NativeConversationStartPreparation | NativeConversationStartFailure;
       if (props.owner.kind === 'project') {
         if (!props.onStartProject) throw new Error('Project conversation start is unavailable.');
         accepted = await props.onStartProject({
@@ -2762,6 +2774,10 @@ function NewConversationComposer(props: {
         });
       }
       if (accepted === false) return;
+      if (accepted && typeof accepted === 'object' && accepted.state === 'failed') {
+        setLocalError(accepted.message);
+        return;
+      }
       await props.onAccepted?.();
     } catch (error) {
       setLocalError(error instanceof Error ? error.message : String(error));

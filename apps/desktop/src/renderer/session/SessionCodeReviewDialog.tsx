@@ -34,7 +34,9 @@ interface SessionCodeReviewDialogProps {
   capabilities: CodexConversationCapabilities | null;
   onLoadCapabilities?: (projectId: string) => Promise<CodexConversationCapabilities>;
   onClose: () => void;
-  onStart?: (selection: SessionCodeReviewSelection) => void | boolean | { state: 'preparing'; cancel: () => void } | Promise<void | boolean | { state: 'preparing'; cancel: () => void }>;
+  onStart?: (
+    selection: SessionCodeReviewSelection,
+  ) => void | boolean | { state: 'preparing'; cancel: () => void } | { state: 'failed'; message: string } | Promise<void | boolean | { state: 'preparing'; cancel: () => void } | { state: 'failed'; message: string }>;
 }
 
 export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
@@ -164,6 +166,7 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
         permissionMode,
       });
       if (accepted === false) throw new Error(zh ? '代码审查会话未被接受，请查看当前错误提示。' : 'The code review conversation was not accepted. Check the current error notice.');
+      if (accepted && typeof accepted === 'object' && accepted.state === 'failed') throw new Error(accepted.message);
       if (accepted && typeof accepted === 'object' && accepted.state === 'preparing') {
         setCancelPreparation(() => accepted.cancel);
         setStatus('preparing');

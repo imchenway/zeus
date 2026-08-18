@@ -46,7 +46,9 @@ interface SessionQuickActionsCardProps {
   onOpenProjectCommands?: () => void;
   subagentCount?: number;
   onOpenSubagents?: (trigger: HTMLButtonElement) => void;
-  onStartCodeReview?: (selection: SessionCodeReviewSelection) => void | boolean | { state: 'preparing'; cancel: () => void } | Promise<void | boolean | { state: 'preparing'; cancel: () => void }>;
+  onStartCodeReview?: (
+    selection: SessionCodeReviewSelection,
+  ) => void | boolean | { state: 'preparing'; cancel: () => void } | { state: 'failed'; message: string } | Promise<void | boolean | { state: 'preparing'; cancel: () => void } | { state: 'failed'; message: string }>;
   onAddSources?: () => void | Promise<void>;
   onOpenSource?: (resource: ConversationResource) => void | Promise<void>;
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
@@ -82,6 +84,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   });
   const taskId = props.task?.id ?? props.conversation.taskId;
   const workspace = resolveConversationWorkspace(workspaces, props.conversation, props.state);
+  const exactReviewWorkspace = workspace && workspace.id === props.conversation.workspaceId && workspace.environmentId === props.conversation.environmentId ? workspace : null;
   const executionContext = props.state.snapshot?.executionContext;
   const cwd = executionContext?.cwd ?? workspace?.review?.cwd ?? workspace?.worktreePath ?? null;
   const branch = executionContext?.cwd ? executionContext.branch : (workspace?.review?.branch ?? workspace?.branchName ?? null);
@@ -91,6 +94,15 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const dirty = workspace?.review ? !workspace.review.clean : false;
   const canOpenReview = Boolean(taskId && workspace && props.onOpenGitReview);
   const canOpenDelivery = Boolean(taskId && props.onOpenGitDelivery);
+  const codeReviewUnavailableReason = resolveCodeReviewUnavailableReason({
+    zh,
+    taskId,
+    conversation: props.conversation,
+    workspace: exactReviewWorkspace,
+    workspaceState,
+    startAvailable: Boolean(props.onStartCodeReview),
+  });
+  const canStartCodeReview = codeReviewUnavailableReason === null;
   const subagentCount = props.subagentCount ?? 0;
   const persistent = hasPersistentSpace && !props.forceCollapsed;
   const cardVisible = !props.suppressed && (persistent || open);
@@ -250,6 +262,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   }
 
   function openCodeReview(): void {
+    if (!canStartCodeReview) return;
     setOpen(false);
     setReviewDialogOpen(true);
   }
@@ -354,11 +367,11 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                 <ArrowSquareOut aria-hidden="true" weight="regular" />
               </button>
 
-              <button type="button" className="session-quick-actions-row" onClick={openCodeReview}>
+              <button type="button" className="session-quick-actions-row" disabled={!canStartCodeReview} title={codeReviewUnavailableReason ?? undefined} onClick={openCodeReview}>
                 <FileCode aria-hidden="true" weight="regular" />
                 <span className="session-quick-actions-copy">
                   <strong>{zh ? '代码审查' : 'Code review'}</strong>
-                  <small>{zh ? '新建 AI 会话审查当前完整变化' : 'Review all current changes in a new AI conversation'}</small>
+                  <small>{codeReviewUnavailableReason ?? (zh ? '新建 AI 会话审查当前完整变化' : 'Review all current changes in a new AI conversation')}</small>
                 </span>
                 <ArrowSquareOut aria-hidden="true" weight="regular" />
               </button>
@@ -440,7 +453,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
         language={props.language}
         conversation={props.conversation}
         state={props.state}
-        workspace={workspace}
+        workspace={exactReviewWorkspace}
         capabilities={props.capabilities ?? null}
         onLoadCapabilities={props.onLoadCapabilities}
         onClose={() => setReviewDialogOpen(false)}
@@ -548,6 +561,24 @@ function resolveConversationWorkspace(workspaces: TaskWorkspacesSnapshot | null,
     workspaces.items[0] ??
     null
   );
+}
+
+function resolveCodeReviewUnavailableReason(input: {
+  zh: boolean;
+  taskId: string | null | undefined;
+  conversation: NativeConversationChoice;
+  workspace: TaskWorkspaceSnapshot | null;
+  workspaceState: 'idle' | 'loading' | 'ready' | 'error';
+  startAvailable: boolean;
+}): string | null {
+  if (!input.startAvailable) return input.zh ? '当前版本没有可用的代码审查入口' : 'Code review is unavailable in this version';
+  if (!input.taskId) return input.zh ? '项目对话没有可用于代码审查的任务 Worktree' : 'Project conversations do not have a task worktree for code review';
+  if (!input.conversation.workspaceId || !input.conversation.environmentId) {
+    return input.zh ? '直接目录会话没有冻结审查基线，请从 Worktree 任务会话启动' : 'Direct-directory conversations have no frozen review baseline; start from a task worktree conversation';
+  }
+  if (input.workspaceState === 'idle' || input.workspaceState === 'loading') return input.zh ? '正在确认代码审查 Worktree…' : 'Checking the code review worktree…';
+  if (!input.workspace || input.workspace.state !== 'ready') return input.zh ? '当前会话的精确任务 Worktree 不可用' : 'The exact task worktree for this conversation is unavailable';
+  return null;
 }
 
 function summarizeWorkspaceChanges(workspace: TaskWorkspaceSnapshot | null): { files: number; additions: number; deletions: number } {
