@@ -24141,7 +24141,15 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   position: absolute;
   inset-block-start: -2px;
   inset-inline-end: -4px;
-  opacity: 0.58;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+/* 拖动把手默认隐藏，悬停、键盘聚焦或拖动中才显现，减少卡片常驻噪音。 */
+.macos-ai-app .task-board-card:hover .task-board-drag-handle,
+.macos-ai-app .task-board-card.is-dragging .task-board-drag-handle,
+.macos-ai-app .task-board-drag-handle:focus-visible {
+  opacity: 1;
 }
 
 .macos-ai-app .task-board-card-properties {
@@ -24150,12 +24158,40 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 
 .macos-ai-app .task-board-card-property {
   min-block-size: 19px;
-  padding: 2px 5px;
+  padding: 2px 7px;
   border: 1px solid color-mix(in oklab, var(--zeus-product-line-soft, var(--zeus-control-border)) 74%, transparent);
-  border-radius: 5px;
+  border-radius: 999px;
   background: color-mix(in oklab, var(--zeus-product-panel-muted) 72%, transparent);
   font-size: 10.5px;
   line-height: 1.2;
+}
+
+/* 语义色胶囊：文字、边框、浅底均由单一主色派生，配色体系与任务列表的状态胶囊同源。 */
+.macos-ai-app .task-board-card-property.is-toned {
+  --task-board-property-color: var(--zeus-product-muted);
+  border-color: color-mix(in srgb, var(--task-board-property-color) 32%, transparent);
+  color: color-mix(in oklab, var(--task-board-property-color) 82%, var(--zeus-product-text));
+  background: color-mix(in srgb, var(--task-board-property-color) 11%, var(--zeus-product-panel));
+  font-weight: 600;
+}
+
+.macos-ai-app .task-board-card-property-tone-blue {
+  --task-board-property-color: var(--zeus-task-status-blue);
+}
+.macos-ai-app .task-board-card-property-tone-violet {
+  --task-board-property-color: var(--zeus-task-status-violet);
+}
+.macos-ai-app .task-board-card-property-tone-green {
+  --task-board-property-color: var(--zeus-task-status-green);
+}
+.macos-ai-app .task-board-card-property-tone-amber {
+  --task-board-property-color: var(--zeus-task-status-amber);
+}
+.macos-ai-app .task-board-card-property-tone-orange {
+  --task-board-property-color: var(--zeus-task-status-orange);
+}
+.macos-ai-app .task-board-card-property-tone-red {
+  --task-board-property-color: var(--zeus-danger-text, oklch(54% 0.14 25));
 }
 
 .macos-ai-app .task-board-card-property-code {
@@ -24238,6 +24274,11 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   .macos-ai-app .task-board-column-hide,
   .macos-ai-app .task-board-move-menu {
     opacity: 1;
+  }
+
+  /* 触屏没有悬停态，拖动把手保持半透明常显。 */
+  .macos-ai-app .task-board-drag-handle {
+    opacity: 0.58;
   }
 }
 
