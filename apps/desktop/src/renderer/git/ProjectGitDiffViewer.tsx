@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type UIEvent as ReactUIEvent } from 'react';
 import { ColumnsIcon as Columns } from '@phosphor-icons/react/dist/csr/Columns';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
 import { RowsIcon as Rows } from '@phosphor-icons/react/dist/csr/Rows';
@@ -115,6 +115,9 @@ export function ProjectGitDiffWindow(props: {
 
 export function SideBySideDiff(props: { diff: GitDiffSummary | null; zh: boolean; title?: string; fill?: boolean }) {
   const [mode, setMode] = useState<DiffViewMode>('side-by-side');
+  const leftPaneRef = useRef<HTMLDivElement>(null);
+  const rightPaneRef = useRef<HTMLDivElement>(null);
+  const syncingVerticalScrollRef = useRef(false);
   const file = props.diff?.fileDiffs[0] ?? null;
   const alignedRows = useMemo(() => (file ? file.hunks.flatMap((hunk, index) => alignHunk(hunk, index)) : []), [file]);
   if (!file) return <p className="project-git-empty-copy">{props.zh ? '选择一个文件查看差异。' : 'Select a file to inspect its diff.'}</p>;
@@ -142,18 +145,28 @@ export function SideBySideDiff(props: { diff: GitDiffSummary | null; zh: boolean
             <span title={newPath}>{newPath}</span>
           </div>
           <div className="project-git-diff-side-scroll">
-            {alignedRows.map((row) =>
-              row.metadata ? (
-                <div key={row.key} className="project-git-diff-side-metadata">
-                  {row.metadata}
-                </div>
-              ) : (
-                <div key={row.key} className="project-git-diff-side-row">
-                  <DiffSideCell side={row.left ?? emptySide()} />
-                  <DiffSideCell side={row.right ?? emptySide()} />
-                </div>
-              ),
-            )}
+            <div ref={leftPaneRef} className="project-git-diff-side-pane" onScroll={(event) => syncVerticalScroll(event, rightPaneRef.current, syncingVerticalScrollRef)}>
+              {alignedRows.map((row) =>
+                row.metadata ? (
+                  <div key={row.key} className="project-git-diff-side-metadata">
+                    {row.metadata}
+                  </div>
+                ) : (
+                  <DiffSideCell key={row.key} side={row.left ?? emptySide()} />
+                ),
+              )}
+            </div>
+            <div ref={rightPaneRef} className="project-git-diff-side-pane" onScroll={(event) => syncVerticalScroll(event, leftPaneRef.current, syncingVerticalScrollRef)}>
+              {alignedRows.map((row) =>
+                row.metadata ? (
+                  <div key={row.key} className="project-git-diff-side-metadata">
+                    {row.metadata}
+                  </div>
+                ) : (
+                  <DiffSideCell key={row.key} side={row.right ?? emptySide()} />
+                ),
+              )}
+            </div>
           </div>
         </div>
       ) : (
@@ -177,6 +190,15 @@ export function SideBySideDiff(props: { diff: GitDiffSummary | null; zh: boolean
       )}
     </section>
   );
+}
+
+function syncVerticalScroll(event: ReactUIEvent<HTMLDivElement>, target: HTMLDivElement | null, syncingRef: { current: boolean }) {
+  if (!target || syncingRef.current || target.scrollTop === event.currentTarget.scrollTop) return;
+  syncingRef.current = true;
+  target.scrollTop = event.currentTarget.scrollTop;
+  requestAnimationFrame(() => {
+    syncingRef.current = false;
+  });
 }
 
 function DiffSideCell(props: { side: DiffSide }) {

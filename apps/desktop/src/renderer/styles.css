@@ -3330,14 +3330,42 @@ a {
 }
 
 .project-git-changes-layout {
-  grid-template-columns: clamp(250px, 26%, 340px) minmax(520px, 1fr) clamp(190px, 20%, 250px);
+  grid-template-areas:
+    'tree diff'
+    'commit commit';
+  grid-template-columns: clamp(260px, 26%, 340px) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
 }
 .project-git-change-tree {
+  grid-area: tree;
   padding: 8px 6px;
 }
 .project-git-change-repository {
   border-radius: 6px;
-  min-height: 31px;
+  grid-template-areas:
+    'icon name'
+    'icon branch';
+  grid-template-columns: 14px minmax(0, 1fr);
+  min-height: 42px;
+}
+.project-git-change-repository > svg {
+  align-self: start;
+  grid-area: icon;
+  margin-top: 2px;
+}
+.project-git-change-repository > strong {
+  grid-area: name;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-git-change-repository > small {
+  grid-area: branch;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .project-git-change-repository:hover {
   background: var(--zeus-source-list-hover);
@@ -3431,7 +3459,47 @@ a {
 }
 
 .project-git-change-diff {
+  grid-area: diff;
   overflow: hidden;
+}
+.project-git-commit-rail {
+  align-items: center;
+  border-left: 0;
+  border-top: 1px solid var(--zeus-product-line);
+  display: grid;
+  gap: 12px;
+  grid-area: commit;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  min-height: 58px;
+  overflow: hidden;
+  padding: 8px 12px;
+}
+.project-git-commit-summary {
+  align-items: center;
+  display: flex;
+  gap: 18px;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+}
+.project-git-commit-summary > span {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 1px;
+  max-width: 220px;
+}
+.project-git-commit-summary b,
+.project-git-commit-summary small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-git-commit-summary small {
+  color: var(--zeus-product-muted);
+}
+.project-git-commit-rail .zeus-button {
+  margin-top: 0;
 }
 .project-git-diff-preview {
   background: var(--zeus-product-panel);
@@ -3503,24 +3571,29 @@ a {
   border-left: 1px solid var(--zeus-product-line);
 }
 .project-git-diff-side-scroll {
+  display: grid;
   flex: 1;
   font: 11px/19px var(--zeus-font-mono);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.project-git-diff-side-pane {
   min-height: 0;
   min-width: 0;
   overflow: auto;
+  overscroll-behavior: contain;
 }
-.project-git-diff-side-row {
-  display: grid;
-  grid-template-columns: minmax(max-content, 1fr) minmax(max-content, 1fr);
-  min-width: 900px;
+.project-git-diff-side-pane + .project-git-diff-side-pane {
+  border-left: 1px solid var(--zeus-product-line);
 }
 .project-git-diff-side-cell {
   display: grid;
   grid-template-columns: 44px minmax(max-content, 1fr);
   min-height: 19px;
-}
-.project-git-diff-side-cell + .project-git-diff-side-cell {
-  border-left: 1px solid var(--zeus-product-line);
+  min-width: 100%;
+  width: max-content;
 }
 .project-git-diff-side-cell i {
   color: var(--zeus-product-muted);
@@ -3546,8 +3619,10 @@ a {
   background: color-mix(in oklch, var(--zeus-control-accent, #1473e6) 7%, transparent);
   color: var(--zeus-control-accent, #1473e6);
   font: 10.5px/22px var(--zeus-font-mono);
-  min-width: 900px;
+  min-width: 100%;
   padding: 0 8px;
+  white-space: nowrap;
+  width: max-content;
 }
 .project-git-diff-unified {
   flex: 1;
@@ -3690,9 +3765,19 @@ body[data-surface='project-git-diff'] #root {
     display: none;
   }
   .project-git-changes-layout {
-    grid-template-columns: 270px minmax(520px, 1fr);
+    grid-template-columns: clamp(230px, 32%, 280px) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
+  .project-git-changes-layout {
+    grid-template-columns: 220px minmax(0, 1fr);
   }
   .project-git-commit-rail {
+    gap: 8px;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .project-git-commit-rail > strong {
     display: none;
   }
 }

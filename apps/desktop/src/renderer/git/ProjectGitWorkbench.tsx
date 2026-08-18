@@ -97,6 +97,29 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   }, [props.project.id, tab]);
 
   useEffect(() => {
+    if (tab !== 'changes' || !snapshot) return;
+    const repository = snapshot.repositories.find((candidate) => candidate.id === selectedRepositoryId && candidate.snapshot.fileStatuses.length > 0) ?? snapshot.repositories.find((candidate) => candidate.snapshot.fileStatuses.length > 0);
+    if (!repository) {
+      if (selectedFilePath) setSelectedFilePath('');
+      return;
+    }
+    if (repository.id !== selectedRepositoryId) setSelectedRepositoryId(repository.id);
+    const unstagedPaths = new Set(repository.snapshot.fileStatuses.filter((file) => file.workingTreeStatus !== ' ' || file.indexStatus === '?').map((file) => file.path));
+    const stagedPaths = new Set(repository.snapshot.fileStatuses.filter((file) => file.indexStatus !== ' ' && file.indexStatus !== '?').map((file) => file.path));
+    const selectedPaths = selectedFileStage === 'staged' ? stagedPaths : unstagedPaths;
+    if (selectedPaths.has(selectedFilePath)) return;
+    const otherStagePaths = selectedFileStage === 'staged' ? unstagedPaths : stagedPaths;
+    if (otherStagePaths.has(selectedFilePath)) {
+      setSelectedFileStage(selectedFileStage === 'staged' ? 'unstaged' : 'staged');
+      return;
+    }
+    const firstUnstagedPath = unstagedPaths.values().next().value;
+    const firstStagedPath = stagedPaths.values().next().value;
+    setSelectedFilePath(firstUnstagedPath ?? firstStagedPath ?? '');
+    setSelectedFileStage(firstUnstagedPath ? 'unstaged' : 'staged');
+  }, [snapshot, tab, selectedRepositoryId, selectedFilePath, selectedFileStage]);
+
+  useEffect(() => {
     if (!selectedRepository) {
       setSelectedCommitHash('');
       setCommitDetail(null);
@@ -1294,6 +1317,11 @@ function LocalChangesSurface(props: {
 }) {
   const stageDiff = props.selectedFileStage === 'staged' ? props.selectedRepository?.snapshot.stagedDiff : props.selectedRepository?.snapshot.unstagedDiff;
   const selectedDiff = stageDiff?.fileDiffs.find((file) => file.newPath === props.selectedFilePath || file.oldPath === props.selectedFilePath) ?? stageDiff?.fileDiffs[0] ?? null;
+  const changedRepositories = props.repositories.filter((repository) => repository.snapshot.fileStatuses.length > 0);
+  const stagedRepositories = props.repositories.flatMap((repository) => {
+    const count = repository.snapshot.fileStatuses.filter((file) => file.indexStatus !== ' ' && file.indexStatus !== '?').length;
+    return count > 0 ? [{ repository, count }] : [];
+  });
   return (
     <div className="project-git-changes-layout">
       <aside className="project-git-change-tree">
@@ -1301,15 +1329,15 @@ function LocalChangesSurface(props: {
           <strong>{props.zh ? '变更文件' : 'Changed files'}</strong>
           <span>{props.repositories.reduce((total, repository) => total + repository.snapshot.fileStatuses.length, 0)}</span>
         </header>
-        {props.repositories.map((repository) => {
+        {changedRepositories.map((repository) => {
           const staged = repository.snapshot.fileStatuses.filter((file) => file.indexStatus !== ' ' && file.indexStatus !== '?');
           const unstaged = repository.snapshot.fileStatuses.filter((file) => file.workingTreeStatus !== ' ' || file.indexStatus === '?');
           return (
             <section key={repository.id}>
               <button className="project-git-change-repository" type="button" onClick={() => props.onSelectRepository(repository.id)}>
                 <GitBranch aria-hidden="true" />
-                <strong>{repository.name}</strong>
-                <small>{repository.snapshot.branch}</small>
+                <strong title={repository.name}>{repository.name}</strong>
+                <small title={repository.snapshot.branch}>{repository.snapshot.branch}</small>
               </button>
               {unstaged.length > 0 ? <span className="project-git-change-group-title">{props.zh ? '未暂存' : 'Unstaged'}</span> : null}
               <ChangeDirectoryTree
@@ -1350,16 +1378,19 @@ function LocalChangesSurface(props: {
       </main>
       <aside className="project-git-commit-rail">
         <strong>{props.zh ? '提交' : 'Commit'}</strong>
-        {props.repositories.map((repository) => {
-          const count = repository.snapshot.fileStatuses.filter((file) => file.indexStatus !== ' ' && file.indexStatus !== '?').length;
-          return (
-            <span key={repository.id}>
-              <b>{repository.name}</b>
-              <small>{props.zh ? `${count} 个已暂存文件` : `${count} staged files`}</small>
-            </span>
-          );
-        })}
-        <Button variant="primary" onClick={props.onCommit} disabled={props.repositories.every((repository) => repository.snapshot.fileStatuses.every((file) => file.indexStatus === ' ' || file.indexStatus === '?'))}>
+        <div className="project-git-commit-summary" role="status">
+          {stagedRepositories.length > 0 ? (
+            stagedRepositories.map(({ repository, count }) => (
+              <span key={repository.id} title={`${repository.name} · ${repository.snapshot.branch}`}>
+                <b>{repository.name}</b>
+                <small>{props.zh ? `${count} 个已暂存文件` : `${count} staged files`}</small>
+              </span>
+            ))
+          ) : (
+            <small>{props.zh ? '暂存文件后可在这里逐仓创建提交。' : 'Stage files to create a commit for each repository.'}</small>
+          )}
+        </div>
+        <Button variant="primary" onClick={props.onCommit} disabled={stagedRepositories.length === 0}>
           {props.zh ? '提交已暂存变更' : 'Commit staged changes'}
         </Button>
       </aside>
