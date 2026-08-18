@@ -838,6 +838,11 @@ function browserNativeConversationStartStorage(): NativeConversationStartStorage
   }
 }
 
+function isDefinitiveNativeConversationStartRejection(error: unknown): error is ZeusApiError {
+  // 只有服务端明确拒绝且无需恢复时才结束重试；网络错误、服务端故障和结果未知仍保留原幂等身份。
+  return error instanceof ZeusApiError && error.status >= 400 && error.status < 500 && !error.recoveryRequired;
+}
+
 const codexConfigImportPromptStorageKey = 'zeus.codex-config-import-prompt';
 type CodexConfigImportPromptPreference = 'answered' | 'activation-required';
 
@@ -7674,10 +7679,12 @@ export function App(props: {
       const request = nativeConversationStartEnvelopeManager.pending({ id: task.id, projectId: task.projectId });
       if (!request || request.mode !== 'create' || request.source !== 'code_review' || recoveringNativeConversationStartsRef.current.has(request.idempotencyKey)) continue;
       recoveringNativeConversationStartsRef.current.add(request.idempotencyKey);
+      let startAccepted = false;
       void client
         .startNativeConversation(task.id, request)
         .then(async (acceptance) => {
           if (!isDurableNativeConversationAcceptance(request, acceptance)) throw new Error('代码审查会话尚未获得持久接受结果。');
+          startAccepted = true;
           nativeConversationStartEnvelopeManager.clearPending({ id: task.id, projectId: task.projectId }, request, acceptance);
           const choice = await client.loadNativeConversationChoice(task.projectId, acceptance.conversation.id);
           if (disposed) return;
@@ -7695,6 +7702,12 @@ export function App(props: {
           }
         })
         .catch((error) => {
+          if (!startAccepted && isDefinitiveNativeConversationStartRejection(error)) {
+            nativeConversationStartEnvelopeManager.discardPending({ id: task.id, projectId: task.projectId }, request);
+            if (disposed) return;
+            setNativeConversationChoiceTaskStates((current) => ({ ...current, [task.id]: completeNativeConversationChoiceTaskLoad(current[task.id]) }));
+            return;
+          }
           if (disposed) return;
           const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error));
           setNativeConversationChoiceTaskStates((current) => ({ ...current, [task.id]: failNativeConversationChoiceTaskLoad(current[task.id], message) }));
@@ -9933,6 +9946,10 @@ export function App(props: {
       });
       refreshError = result.refreshError;
     } catch (error) {
+      if (isDefinitiveNativeConversationStartRejection(error)) {
+        const rejectedRequest = nativeConversationStartEnvelopeManager.pending(input.task);
+        if (rejectedRequest) nativeConversationStartEnvelopeManager.discardPending(input.task, rejectedRequest);
+      }
       const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error));
       setNativeConversationChoiceTaskStates((current) => ({ ...current, [input.task.id]: failNativeConversationChoiceTaskLoad(current[input.task.id], message) }));
       recordLocalError('native-conversation-start', error);
