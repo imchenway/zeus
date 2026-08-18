@@ -101,7 +101,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ inputs.commit_sha != '' && inputs.commit_sha || github.ref }}
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.31.0
       - uses: actions/setup-node@v4
@@ -131,7 +131,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ inputs.commit_sha != '' && inputs.commit_sha || github.ref }}
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.31.0
       - uses: actions/setup-node@v4
