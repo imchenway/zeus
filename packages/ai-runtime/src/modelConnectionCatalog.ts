@@ -45,6 +45,7 @@ export interface ConfiguredModelDefinition {
   id: string;
   displayName: string;
   enabled: boolean;
+  supports1MContext: boolean;
   contextWindow: number;
   maxTokens: number;
   speedLabel: 'standard' | 'high_speed' | 'flash' | 'turbo';
@@ -103,6 +104,7 @@ export interface SelectableConnectionModel {
   runtimeAdapter: ConfiguredModelDefinition['runtimeAdapter'];
   protocolFamily: ConfiguredModelDefinition['protocolFamily'];
   authenticationScheme: ConfiguredModelDefinition['authenticationScheme'];
+  supports1MContext: boolean;
   contextWindow: number;
 }
 
@@ -296,6 +298,7 @@ export function listSelectableConnectionModels(connections: readonly ModelConnec
         runtimeAdapter: model.runtimeAdapter,
         protocolFamily: model.protocolFamily,
         authenticationScheme: model.authenticationScheme,
+        supports1MContext: model.supports1MContext,
         contextWindow: model.contextWindow,
       };
     }),
@@ -309,7 +312,8 @@ export function createConfiguredModelDefinition(id: string, input: Partial<Confi
       id: normalizedId,
       displayName: input.displayName ?? normalizedId,
       enabled: input.enabled ?? true,
-      contextWindow: input.contextWindow ?? 128_000,
+      supports1MContext: input.supports1MContext ?? false,
+      contextWindow: input.contextWindow ?? 256_000,
       maxTokens: input.maxTokens ?? 8_192,
       speedLabel: input.speedLabel ?? inferSpeedLabel(normalizedId),
       runtimeAdapter: input.runtimeAdapter ?? 'pi_sdk',
@@ -402,7 +406,9 @@ function normalizeConfiguredModel(value: ConfiguredModelDefinition, fallbackThin
   if (!isRecord(value)) throw new Error('模型配置必须是对象。');
   const id = normalizeSingleLine(value.id, '模型 ID', 200);
   const displayName = normalizeSingleLine(value.displayName || id, '模型名称', 200);
-  const contextWindow = normalizePositiveInteger(value.contextWindow, '上下文窗口', 1_000, 10_000_000);
+  const legacyDeclared1M = value.supports1MContext === undefined && typeof value.contextWindow === 'number' && value.contextWindow >= 1_000_000;
+  const supports1MContext = value.supports1MContext === true || legacyDeclared1M;
+  const contextWindow = supports1MContext ? 1_000_000 : normalizePositiveInteger(value.contextWindow ?? 256_000, '上下文窗口', 1_000, 10_000_000);
   const maxTokens = normalizePositiveInteger(value.maxTokens, '最大输出 Token', 1, contextWindow);
   const speedLabel = speedLabels.has(value.speedLabel) ? value.speedLabel : inferSpeedLabel(id);
   const capability = normalizeCapability(value.capability, fallbackThinkingFormat);
@@ -410,7 +416,7 @@ function normalizeConfiguredModel(value: ConfiguredModelDefinition, fallbackThin
   const protocolFamily: ModelProtocolFamily = value.protocolFamily === 'openai_responses' ? 'openai_responses' : value.protocolFamily === 'anthropic_messages' ? 'anthropic_messages' : 'openai_completions';
   const requestedAuthenticationScheme: ModelAuthenticationScheme = value.authenticationScheme === 'bearer' ? 'bearer' : value.authenticationScheme === 'x_api_key' ? 'x_api_key' : 'protocol_default';
   const authenticationScheme: ModelAuthenticationScheme = protocolFamily === 'anthropic_messages' || requestedAuthenticationScheme !== 'x_api_key' ? requestedAuthenticationScheme : 'protocol_default';
-  return { id, displayName, enabled: value.enabled !== false, contextWindow, maxTokens, speedLabel, runtimeAdapter, protocolFamily, authenticationScheme, capability };
+  return { id, displayName, enabled: value.enabled !== false, supports1MContext, contextWindow, maxTokens, speedLabel, runtimeAdapter, protocolFamily, authenticationScheme, capability };
 }
 
 function applyModelRoute(model: ConfiguredModelDefinition, connection: Pick<ModelConnectionRecord, 'templateId' | 'baseUrl'>): ConfiguredModelDefinition {

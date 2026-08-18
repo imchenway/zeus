@@ -520,6 +520,7 @@ export interface CodexTaskPushModelCapability {
   sourceId?: string;
   sourceName?: string;
   available?: boolean;
+  supports1MContext?: boolean;
   availabilityReason?: string;
   speedLabel?: 'standard' | 'high_speed' | 'flash' | 'turbo';
   tools?: 'supported' | 'unsupported' | 'unverified';

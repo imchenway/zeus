@@ -509,6 +509,24 @@ function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: Mode
               ]}
             />
           </label>
+          <label className="model-context-declaration">
+            <span>{zh ? '上下文窗口' : 'Context window'}</span>
+            <span className="model-context-declaration-value">
+              <input
+                type="checkbox"
+                checked={model.supports1MContext}
+                onChange={(event) =>
+                  props.onChange({
+                    ...model,
+                    supports1MContext: event.currentTarget.checked,
+                    contextWindow: event.currentTarget.checked ? 1_000_000 : 256_000,
+                  })
+                }
+              />
+              <span>{zh ? '支持 1M 上下文' : 'Supports 1M context'}</span>
+              <small>{model.contextWindow >= 1_000_000 ? '1M' : `${Math.round(model.contextWindow / 1000)}K`}</small>
+            </span>
+          </label>
         </div>
       )}
       <p className="model-route-description">{routeDescription}</p>
@@ -560,7 +578,8 @@ function createModel(id: string, thinkingFormat: ModelThinkingFormat): ModelConn
     id,
     displayName: id,
     enabled: true,
-    contextWindow: 128_000,
+    supports1MContext: false,
+    contextWindow: 256_000,
     maxTokens: 8_192,
     speedLabel,
     runtimeAdapter: 'pi_sdk',

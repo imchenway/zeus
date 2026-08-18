@@ -298,6 +298,7 @@ export interface ModelConnectionModel {
   id: string;
   displayName: string;
   enabled: boolean;
+  supports1MContext: boolean;
   contextWindow: number;
   maxTokens: number;
   speedLabel: 'standard' | 'high_speed' | 'flash' | 'turbo';
@@ -364,6 +365,7 @@ export interface SelectablePiModel {
   agentKind: 'pi';
   enabled: boolean;
   available: boolean;
+  supports1MContext: boolean;
   availabilityReason: string;
   supportedReasoningEfforts: ModelThinkingLevel[];
   defaultReasoningEffort: ModelThinkingLevel | null;
