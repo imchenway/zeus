@@ -395,6 +395,21 @@ electron-builder 官方说明 `maximum` 通常不会带来明显体积差异，�
 - 缺点：打包过滤、架构宏和两个上游补丁成为升级维护点；升级 Electron、`sql.js`、`node-pty` 或 Pi 时必须重新执行 ASAR 反向导入和包内容门禁。
 - 剩余风险：没有三种真实付费模型协议的在线请求证据，也没有本任务包的完整 GUI 页面回归。发布前仍需在没有其他 `Zeus Test.app` 占用单实例锁的环境中，使用独立数据目录覆盖数据库、终端、编辑器、图谱、内置浏览器、Pi 新建/续接、图片、工具审批、中断、压缩、重试和用量链路。
 
+## 发布失败修正（2026-08-18）
+
+本地 `main` 合入后执行“一键升级发布 Zeus”，在“检查本地发布条件”阶段退出。发布命令没有创建下一版本提交、没有推送，也没有触发新的远端 Release Workflow。
+
+### 根因
+
+两份 `pnpm patch` 补丁保留了上游 `package.json` 的 Tab 缩进，以及上游被删除行中的尾随空格。`git diff --check` 检查补丁文件本身时，会把这些补丁载荷再次解释成 Zeus 仓库源码的空白错误，因此形成误报。补丁已在安装和打包阶段成功应用，失败点不是补丁失效，也不是正式 DMG、签名或 GitHub Workflow。
+
+### 修正方案
+
+在仓库根目录新增 `.gitattributes`，对 `patches/*.patch` 关闭 Git 空白错误判定。源代码、配置和普通文档仍保留原有空白门禁；补丁正确性继续由 `pnpm install --frozen-lockfile --offline` 的实际应用和后续构建、打包验证负责。
+
+- 优点：消除嵌套补丁载荷造成的假阳性，不放宽 Zeus 源码和配置的发布门禁，也无需篡改上游补丁上下文。
+- 缺点：Git 不再单独报告补丁载荷内部的空白问题；升级 Pi 补丁时必须继续以补丁能否实际应用、构建和打包为准。
+
 ## 参考
 
 - electron-builder `electronLanguages`、`files`、`asarUnpack` 与压缩配置：<https://www.electron.build/docs/configuration/>
