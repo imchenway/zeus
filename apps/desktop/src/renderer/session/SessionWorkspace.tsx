@@ -285,6 +285,16 @@ interface ConversationCapabilitiesCacheEntry {
   promise: Promise<CodexConversationCapabilities> | null;
 }
 
+interface ScopedSubagentSnapshot {
+  conversationId: string;
+  snapshot: NativeSubagentListSnapshot | null;
+}
+
+interface ScopedConversationCapabilities {
+  projectId: string;
+  value: CodexConversationCapabilities | null;
+}
+
 const conversationCapabilitiesCache = new WeakMap<SessionControllerClient, Map<string, ConversationCapabilitiesCacheEntry>>();
 
 function conversationCapabilitiesEntry(client: SessionControllerClient, projectId: string): ConversationCapabilitiesCacheEntry {
@@ -353,15 +363,16 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     initialOptimisticState,
     enabled: controllerEnabled,
   });
-  const [subagentListSnapshot, setSubagentListSnapshot] = useState<NativeSubagentListSnapshot | null>(null);
+  const [subagentScope, setSubagentScope] = useState<ScopedSubagentSnapshot>(() => ({ conversationId: props.conversation.id, snapshot: null }));
+  const subagentListSnapshot = subagentScope.conversationId === props.conversation.id ? subagentScope.snapshot : null;
   useEffect(() => {
-    setSubagentListSnapshot(null);
     const loadSubagents = props.client.loadNativeSubagents;
     if (!loadSubagents || props.conversation.transportKind !== 'codex_native') return;
+    const conversationId = props.conversation.id;
     let active = true;
-    void loadSubagents(props.conversation.projectId, props.conversation.id)
+    void loadSubagents(props.conversation.projectId, conversationId)
       .then((snapshot) => {
-        if (active) setSubagentListSnapshot(snapshot);
+        if (active) setSubagentScope({ conversationId, snapshot });
       })
       .catch(() => {
         // 智能体预读失败不影响主会话；用户打开面板时仍可手动重试。
@@ -370,14 +381,19 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       active = false;
     };
   }, [props.client, props.conversation.id, props.conversation.projectId, props.conversation.transportKind]);
-  const [capabilities, setCapabilities] = useState<CodexConversationCapabilities | null>(() => props.initialCapabilities ?? cachedCodexConversationCapabilities(props.client, props.conversation.projectId));
+  const [capabilitiesScope, setCapabilitiesScope] = useState<ScopedConversationCapabilities>(() => ({
+    projectId: props.conversation.projectId,
+    value: props.initialCapabilities ?? cachedCodexConversationCapabilities(props.client, props.conversation.projectId),
+  }));
+  const capabilities = props.initialCapabilities ?? (capabilitiesScope.projectId === props.conversation.projectId ? capabilitiesScope.value : cachedCodexConversationCapabilities(props.client, props.conversation.projectId));
   useEffect(() => {
+    const projectId = props.conversation.projectId;
     let active = true;
-    const cached = props.initialCapabilities ?? cachedCodexConversationCapabilities(props.client, props.conversation.projectId);
-    if (cached) setCapabilities(cached);
-    void refreshCodexConversationCapabilities(props.client, props.conversation.projectId)
+    const cached = props.initialCapabilities ?? cachedCodexConversationCapabilities(props.client, projectId);
+    if (cached) setCapabilitiesScope({ projectId, value: cached });
+    void refreshCodexConversationCapabilities(props.client, projectId)
       .then((snapshot) => {
-        if (active && snapshot) setCapabilities(snapshot);
+        if (active && snapshot) setCapabilitiesScope({ projectId, value: snapshot });
       })
       .catch(() => {
         // 已有能力保持可见；后台刷新失败不能让输入区和模型选择器闪回空态。
@@ -421,6 +437,119 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       : controllerVisible && props.creationStatus?.state !== 'warning'
         ? undefined
         : props.creationStatus;
+  const connectedActions = useMemo(() => createConnectedSessionActions({ controller, onChooseAttachments: props.onChooseAttachments }), [controller, props.onChooseAttachments]);
+  const workspaceActions = useMemo<SessionWorkspaceActions>(() => {
+    const projectId = props.conversation.projectId;
+    const conversationId = props.conversation.id;
+    return {
+      ...(controllerInteractive ? connectedActions : props.localActions),
+      ...(controllerInteractive
+        ? {
+            onOpenResource: async (resource, target, location) => {
+              const result = await openConversationResourceInMain({
+                zeus: window.zeus,
+                projectId,
+                conversationId,
+                resourceId: resource.id,
+                target,
+                ...(location ? { location } : {}),
+              });
+              if (!result.opened) throw new Error(result.error ?? 'conversation_resource_open_failed');
+              if (result.mode !== 'zeus_source') return { opened: true, mode: result.mode };
+              if (!props.client.loadConversationResourcePreview) throw new Error('conversation_resource_preview_unavailable');
+              const preview = await props.client.loadConversationResourcePreview(projectId, conversationId, resource.id);
+              return { opened: true, mode: result.mode, preview: location ? { ...preview, location } : preview };
+            },
+            onLoadResourcePreview: async (resource) => {
+              if (!props.client.loadConversationResourcePreview) throw new Error('conversation_resource_preview_unavailable');
+              return props.client.loadConversationResourcePreview(projectId, conversationId, resource.id);
+            },
+            onOpenTurnChangeFile: async (changeSet, file, target, location) => {
+              const result = await openTurnChangeFileInMain({
+                zeus: window.zeus,
+                projectId,
+                conversationId,
+                turnId: changeSet.providerTurnId,
+                changeSetId: changeSet.id,
+                fileId: file.id,
+                target,
+                ...(location ? { location } : {}),
+              });
+              if (!result.opened) throw new Error(result.error ?? 'turn_change_file_open_failed');
+              if (result.mode !== 'zeus_source') return { opened: true, mode: result.mode };
+              if (!props.client.loadTurnChangeFilePreview) throw new Error('conversation_resource_preview_unavailable');
+              const preview = await props.client.loadTurnChangeFilePreview(projectId, conversationId, changeSet.providerTurnId, changeSet.id, file.id);
+              return { opened: true, mode: result.mode, preview: location ? { ...preview, location } : preview };
+            },
+            onOperateTurnChangeSet: async (changeSet, action) => {
+              if (!props.client.operateTurnChangeSet) throw new Error('turn_change_set_operation_unavailable');
+              return props.client.operateTurnChangeSet(projectId, conversationId, changeSet.providerTurnId, action, {
+                changeSetId: changeSet.id,
+                expectedState: action === 'undo' ? 'applied' : 'undone',
+                idempotencyKey: crypto.randomUUID(),
+              });
+            },
+            onSetGoal: async (objective) => {
+              await props.client.setNativeGoal(projectId, conversationId, objective);
+              await controller.reconnect();
+            },
+            onPauseGoal: async () => {
+              await props.client.pauseNativeGoal(projectId, conversationId);
+              await controller.reconnect();
+            },
+            onResumeGoal: async () => {
+              await props.client.resumeNativeGoal(projectId, conversationId);
+              await controller.reconnect();
+            },
+            onClearGoal: async (confirmUnfinished) => {
+              await props.client.clearNativeGoal(projectId, conversationId, confirmUnfinished);
+              await controller.reconnect();
+            },
+            ...(props.client.askNativeSideChat
+              ? {
+                  onAskSideChat: async (selectedText: string, question: string) => {
+                    const result = await props.client.askNativeSideChat!(projectId, conversationId, { selectedText, question });
+                    return result.answer;
+                  },
+                }
+              : {}),
+          }
+        : {}),
+      ...(props.client.loadNativeSubagents && props.client.loadNativeSubagentThread
+        ? {
+            onLoadSubagents: () => props.client.loadNativeSubagents!(projectId, conversationId),
+            onLoadSubagentThread: (threadId: string) => props.client.loadNativeSubagentThread!(projectId, conversationId, threadId),
+          }
+        : {}),
+      onStartConversation: props.onStartConversation,
+      onStartProjectConversation: props.onStartProjectConversation,
+      onOpenTaskDetail: props.onOpenTaskDetail,
+      onTaskManagementStatusChange: props.onTaskManagementStatusChange,
+      onLoadTaskWorkspaces: props.onLoadTaskWorkspaces,
+      onOpenTaskGitReview: props.onOpenTaskGitReview,
+      onOpenTaskGitDelivery: props.onOpenTaskGitDelivery,
+      onOpenProjectCommands: props.onOpenProjectCommands,
+      onLoadCapabilities: props.client.loadCodexConversationCapabilities,
+      onChooseStartAttachments: props.onChooseAttachments,
+    };
+  }, [
+    connectedActions,
+    controller,
+    controllerInteractive,
+    props.client,
+    props.conversation.id,
+    props.conversation.projectId,
+    props.localActions,
+    props.onChooseAttachments,
+    props.onLoadTaskWorkspaces,
+    props.onOpenProjectCommands,
+    props.onOpenTaskDetail,
+    props.onOpenTaskGitDelivery,
+    props.onOpenTaskGitReview,
+    props.onStartConversation,
+    props.onStartProjectConversation,
+    props.onTaskManagementStatusChange,
+  ]);
   return (
     <SessionWorkspace
       language={props.language}
@@ -437,105 +566,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       subagentListSnapshot={subagentListSnapshot}
       creationStatus={displayedCreationStatus}
       onLatestContentVisibilityChange={props.onLatestContentVisibilityChange}
-      actions={{
-        ...(controllerInteractive ? createConnectedSessionActions({ controller, state, onChooseAttachments: props.onChooseAttachments }) : props.localActions),
-        ...(controllerInteractive
-          ? {
-              onOpenResource: async (resource, target, location) => {
-                const result = await openConversationResourceInMain({
-                  zeus: window.zeus,
-                  projectId: props.conversation.projectId,
-                  conversationId: props.conversation.id,
-                  resourceId: resource.id,
-                  target,
-                  ...(location ? { location } : {}),
-                });
-                if (!result.opened) throw new Error(result.error ?? 'conversation_resource_open_failed');
-                if (result.mode !== 'zeus_source') return { opened: true, mode: result.mode };
-                if (!props.client.loadConversationResourcePreview) throw new Error('conversation_resource_preview_unavailable');
-                const preview = await props.client.loadConversationResourcePreview(props.conversation.projectId, props.conversation.id, resource.id);
-                return {
-                  opened: true,
-                  mode: result.mode,
-                  preview: location ? { ...preview, location } : preview,
-                };
-              },
-              onLoadResourcePreview: async (resource) => {
-                if (!props.client.loadConversationResourcePreview) throw new Error('conversation_resource_preview_unavailable');
-                return props.client.loadConversationResourcePreview(props.conversation.projectId, props.conversation.id, resource.id);
-              },
-              onOpenTurnChangeFile: async (changeSet, file, target, location) => {
-                const result = await openTurnChangeFileInMain({
-                  zeus: window.zeus,
-                  projectId: props.conversation.projectId,
-                  conversationId: props.conversation.id,
-                  turnId: changeSet.providerTurnId,
-                  changeSetId: changeSet.id,
-                  fileId: file.id,
-                  target,
-                  ...(location ? { location } : {}),
-                });
-                if (!result.opened) throw new Error(result.error ?? 'turn_change_file_open_failed');
-                if (result.mode !== 'zeus_source') return { opened: true, mode: result.mode };
-                if (!props.client.loadTurnChangeFilePreview) throw new Error('conversation_resource_preview_unavailable');
-                const preview = await props.client.loadTurnChangeFilePreview(props.conversation.projectId, props.conversation.id, changeSet.providerTurnId, changeSet.id, file.id);
-                return {
-                  opened: true,
-                  mode: result.mode,
-                  preview: location ? { ...preview, location } : preview,
-                };
-              },
-              onOperateTurnChangeSet: async (changeSet, action) => {
-                if (!props.client.operateTurnChangeSet) throw new Error('turn_change_set_operation_unavailable');
-                return props.client.operateTurnChangeSet(props.conversation.projectId, props.conversation.id, changeSet.providerTurnId, action, {
-                  changeSetId: changeSet.id,
-                  expectedState: action === 'undo' ? 'applied' : 'undone',
-                  idempotencyKey: crypto.randomUUID(),
-                });
-              },
-              onSetGoal: async (objective) => {
-                await props.client.setNativeGoal(props.conversation.projectId, props.conversation.id, objective);
-                await controller.reconnect();
-              },
-              onPauseGoal: async () => {
-                await props.client.pauseNativeGoal(props.conversation.projectId, props.conversation.id);
-                await controller.reconnect();
-              },
-              onResumeGoal: async () => {
-                await props.client.resumeNativeGoal(props.conversation.projectId, props.conversation.id);
-                await controller.reconnect();
-              },
-              onClearGoal: async (confirmUnfinished) => {
-                await props.client.clearNativeGoal(props.conversation.projectId, props.conversation.id, confirmUnfinished);
-                await controller.reconnect();
-              },
-              ...(props.client.askNativeSideChat
-                ? {
-                    onAskSideChat: async (selectedText: string, question: string) => {
-                      const result = await props.client.askNativeSideChat!(props.conversation.projectId, props.conversation.id, { selectedText, question });
-                      return result.answer;
-                    },
-                  }
-                : {}),
-            }
-          : {}),
-        ...(props.client.loadNativeSubagents && props.client.loadNativeSubagentThread
-          ? {
-              onLoadSubagents: () => props.client.loadNativeSubagents!(props.conversation.projectId, props.conversation.id),
-              onLoadSubagentThread: (threadId: string) => props.client.loadNativeSubagentThread!(props.conversation.projectId, props.conversation.id, threadId),
-            }
-          : {}),
-        onStartConversation: props.onStartConversation,
-        onStartProjectConversation: props.onStartProjectConversation,
-        onOpenTaskDetail: props.onOpenTaskDetail,
-        onTaskManagementStatusChange: props.onTaskManagementStatusChange,
-        onLoadTaskWorkspaces: props.onLoadTaskWorkspaces,
-        onOpenTaskGitReview: props.onOpenTaskGitReview,
-        onOpenTaskGitDelivery: props.onOpenTaskGitDelivery,
-        onOpenProjectCommands: props.onOpenProjectCommands,
-        onLoadCapabilities: props.client.loadCodexConversationCapabilities,
-        onChooseStartAttachments: props.onChooseAttachments,
-      }}
+      actions={workspaceActions}
     />
   );
 }
@@ -562,7 +593,7 @@ export function resolveSessionWorkspaceEscape(input: {
   });
 }
 
-export function createConnectedSessionActions(input: { controller: SessionController; state: NativeSessionState; onChooseAttachments?: () => Promise<NativeConversationAttachment[]> }): SessionWorkspaceActions {
+export function createConnectedSessionActions(input: { controller: SessionController; onChooseAttachments?: () => Promise<NativeConversationAttachment[]> }): SessionWorkspaceActions {
   const settle = async (operation: Promise<unknown>): Promise<void> => {
     try {
       await operation;
@@ -580,8 +611,9 @@ export function createConnectedSessionActions(input: { controller: SessionContro
     onReconnect: () => settle(input.controller.reconnect()),
     onDraftChange: input.controller.setDraft,
     onSubmit: (delivery, settings) => {
-      const effectiveDelivery = delivery === 'steer_now' && canSteerActiveTurn(input.state) ? 'steer_now' : 'queue';
-      return settle(input.controller.send(effectiveDelivery, effectiveDelivery === 'steer_now' ? (input.state.activeTurnId ?? undefined) : undefined, effectiveDelivery === 'queue' ? settings : undefined));
+      const currentState = input.controller.getState();
+      const effectiveDelivery = delivery === 'steer_now' && canSteerActiveTurn(currentState) ? 'steer_now' : 'queue';
+      return settle(input.controller.send(effectiveDelivery, effectiveDelivery === 'steer_now' ? (currentState.activeTurnId ?? undefined) : undefined, effectiveDelivery === 'queue' ? settings : undefined));
     },
     onStageBrowserComments: (prepared) => input.controller.setBrowserSubmission(prepared),
     onRemoveBrowserSubmission: () => input.controller.setBrowserSubmission(null),
@@ -1349,6 +1381,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const actions = props.actions ?? {};
   const owner: SessionConversationOwner | undefined = props.owner ?? (props.task ? { kind: 'task', projectId: props.task.projectId, projectName: props.task.projectId, taskId: props.task.id, taskTitle: props.task.title } : undefined);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const workspaceIdentityRef = useRef(props.conversation?.id ?? null);
+  workspaceIdentityRef.current = props.conversation?.id ?? null;
   const responseGuard = useRef(createRequestResponseGuard()).current;
   const escapeController = useRef(createSessionEscapeController()).current;
   const interruptResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1380,10 +1414,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const sessionReady = props.state != null;
   const resolvedBrowserTargetWidth = resolveBrowserTargetWidth(browserLayoutWidth, browserPaneShare, contextFullWidth);
   const currentHeader = useMemo(() => createSessionHeaderSnapshot(props.conversation, props.task, props.state, props.loadState, props.language, owner), [owner, props.conversation, props.language, props.loadState, props.state, props.task]);
-  const currentHeaderRef = useRef(currentHeader);
-  currentHeaderRef.current = currentHeader;
-  const [displayedHeader, setDisplayedHeader] = useState(currentHeader);
-  const [titleMotion, setTitleMotion] = useState<'entered' | 'exiting'>('entered');
+  const displayedHeader = currentHeader;
   // 本地缓存只支撑会话重挂载的首帧；没有待确认用户修改时，后续以服务端快照为权威。
   const [composerRuntimeSettings, setComposerRuntimeSettings] = useState<ComposerRuntimeSettings | null>(() =>
     readConversationNextTurnSettings(browserConversationStorage(), props.conversation?.projectId ?? '', props.conversation?.id ?? ''),
@@ -1439,14 +1470,21 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const subagentSignature = subagentThreadIds.join(',');
   const autoOpenedSubagentSignatureRef = useRef('');
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     contextReturnFocusRef.current = null;
     setComposerRuntimeSettings(readConversationNextTurnSettings(browserConversationStorage(), props.conversation?.projectId ?? '', props.conversation?.id ?? ''));
     composerRuntimeSettingsDirtyRef.current = false;
     lastNextTurnSettingsSyncRef.current = null;
+    setRequestErrors({});
+    setInterruptArmed(false);
+    escapeController.reset();
+    clearInterruptResetTimer(interruptResetTimerRef);
+    previousBlockingInteractionCountRef.current = 0;
+    composerFocusRestorationPendingRef.current = false;
     setContextWorkspace({ kind: 'none' });
     setContextFullWidth(false);
     setGoalPanelOpen(false);
+    setGoalBusy(false);
     setGoalError(null);
     autoOpenedSubagentSignatureRef.current = '';
     browserMotionStopRef.current?.();
@@ -1455,7 +1493,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     setContextMounted(false);
     setBrowserResizing(false);
     browserResizeActiveRef.current = false;
-  }, [browserVisibilityProgress, props.conversation?.id]);
+  }, [browserVisibilityProgress, escapeController, props.conversation?.id]);
 
   useEffect(() => {
     if (!subagentSignature || subagentSignature === autoOpenedSubagentSignatureRef.current) return;
@@ -1478,20 +1516,23 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
 
   useEffect(() => {
     if (!props.state || legacy || interactionReadOnly || !composerRuntimeSettings || !composerRuntimeSettingsDirtyRef.current || !actions.onNextTurnSettingsChange) return;
+    const conversationId = props.conversation?.id ?? null;
     const signature = JSON.stringify(composerRuntimeSettings);
     if (lastNextTurnSettingsSyncRef.current === signature) return;
     lastNextTurnSettingsSyncRef.current = signature;
     void Promise.resolve(actions.onNextTurnSettingsChange(composerRuntimeSettings))
       .then(() => {
+        if (workspaceIdentityRef.current !== conversationId) return;
         if (lastNextTurnSettingsSyncRef.current !== signature) return;
         composerRuntimeSettingsDirtyRef.current = false;
         // 触发一次权威快照对账，接收服务端可能做出的规范化结果。
         setComposerRuntimeSettings((current) => (current ? { ...current } : current));
       })
       .catch(() => {
+        if (workspaceIdentityRef.current !== conversationId) return;
         if (lastNextTurnSettingsSyncRef.current === signature) lastNextTurnSettingsSyncRef.current = null;
       });
-  }, [actions, composerRuntimeSettings, interactionReadOnly, legacy, props.state?.transportState]);
+  }, [actions, composerRuntimeSettings, interactionReadOnly, legacy, props.conversation?.id, props.state?.transportState]);
 
   function updateComposerRuntimeSettings(settings: ComposerRuntimeSettings): void {
     const projectId = props.state?.projectId ?? props.conversation?.projectId;
@@ -1615,25 +1656,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   );
 
   useEffect(() => {
-    if (displayedHeader?.conversationId === currentHeader?.conversationId) return;
-    if (sessionPrefersReducedMotion()) {
-      setDisplayedHeader(currentHeader);
-      setTitleMotion('entered');
-      return;
-    }
-    setTitleMotion('exiting');
-    const timer = setTimeout(() => {
-      setDisplayedHeader(currentHeaderRef.current);
-      setTitleMotion('entered');
-    }, 180);
-    return () => clearTimeout(timer);
-  }, [currentHeader?.conversationId, displayedHeader?.conversationId]);
-
-  useEffect(() => {
-    if (displayedHeader?.conversationId === currentHeader?.conversationId) setDisplayedHeader(currentHeader);
-  }, [currentHeader, displayedHeader?.conversationId]);
-
-  useEffect(() => {
     const previous = previousBlockingInteractionCountRef.current;
     previousBlockingInteractionCountRef.current = blockingInteractionCount;
     const resolution = resolveComposerFocusRestoration({
@@ -1732,6 +1754,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
 
   async function respond(request: NativePendingRequest, response: Record<string, unknown>): Promise<void> {
     if (!actions.onRespondToRequest || !responseGuard.begin(request.id)) return;
+    const conversationId = workspaceIdentityRef.current;
     setRequestErrors((current) => {
       const next = { ...current };
       delete next[request.id];
@@ -1740,6 +1763,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     try {
       await actions.onRespondToRequest(request.id, response);
     } catch (error) {
+      if (workspaceIdentityRef.current !== conversationId) return;
       setRequestErrors((current) => ({ ...current, [request.id]: error instanceof Error ? error.message : String(error) }));
     } finally {
       responseGuard.finish(request.id);
@@ -1793,6 +1817,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     },
   ): Promise<void> {
     if (!actions.onRespondToPlanImplementationRequest || !responseGuard.begin(request.id)) return;
+    const conversationId = workspaceIdentityRef.current;
     setRequestErrors((current) => {
       const next = { ...current };
       delete next[request.id];
@@ -1801,6 +1826,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     try {
       await actions.onRespondToPlanImplementationRequest(request.id, input);
     } catch (error) {
+      if (workspaceIdentityRef.current !== conversationId) return;
       setRequestErrors((current) => ({
         ...current,
         [request.id]: error instanceof Error ? error.message : String(error),
@@ -1812,8 +1838,10 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
 
   async function openConversationResource(resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation): Promise<void> {
     if (!actions.onOpenResource) throw new Error('conversation_resource_open_unavailable');
+    const conversationId = workspaceIdentityRef.current;
     contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const result = await actions.onOpenResource(resource, target, location);
+    if (workspaceIdentityRef.current !== conversationId) return;
     if (!result.opened) throw new Error('conversation_resource_open_failed');
     if (result.mode === 'zeus_source' && result.preview) {
       setContextFullWidth(false);
@@ -1828,8 +1856,10 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
 
   async function openTurnChangeFile(changeSet: TurnChangeSet, file: TurnChangeFile, line?: number): Promise<void> {
     if (!actions.onOpenTurnChangeFile) throw new Error('turn_change_file_open_unavailable');
+    const conversationId = workspaceIdentityRef.current;
     contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const result = await actions.onOpenTurnChangeFile(changeSet, file, line ? 'zeus_source' : 'preferred', line ? { line } : undefined);
+    if (workspaceIdentityRef.current !== conversationId) return;
     if (!result.opened) throw new Error('turn_change_file_open_failed');
     if (result.mode === 'zeus_source' && result.preview) {
       setContextFullWidth(false);
@@ -1844,6 +1874,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
 
   async function operateTurnChangeSet(changeSet: TurnChangeSet, action: 'undo' | 'reapply'): Promise<TurnChangeSetOperationResult> {
     if (!actions.onOperateTurnChangeSet) throw new Error('turn_change_set_operation_unavailable');
+    const conversationId = workspaceIdentityRef.current;
     const activeSource = contextWorkspace.kind === 'source' ? contextWorkspace.preview : null;
     let result: TurnChangeSetOperationResult | null = null;
     let operationFailed = false;
@@ -1853,6 +1884,11 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     } catch (error) {
       operationFailed = true;
       operationError = error;
+    }
+    if (workspaceIdentityRef.current !== conversationId) {
+      if (operationFailed) throw operationError;
+      if (!result) throw new Error('turn_change_set_operation_missing_result');
+      return result;
     }
     if (activeSource?.resource.kind === 'file') {
       const activePath = normalizeProjectRelativePath(activeSource.resource.projectRelativePath);
@@ -1894,17 +1930,20 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
 
   async function runGoalAction(action: (() => void | Promise<void>) | undefined, closeAfter = false): Promise<boolean> {
     if (!action || goalBusy) return false;
+    const conversationId = workspaceIdentityRef.current;
     setGoalBusy(true);
     setGoalError(null);
     try {
       await action();
+      if (workspaceIdentityRef.current !== conversationId) return false;
       if (closeAfter) setGoalPanelOpen(false);
       return true;
     } catch (error) {
+      if (workspaceIdentityRef.current !== conversationId) return false;
       setGoalError(error instanceof Error ? error.message : String(error));
       return false;
     } finally {
-      setGoalBusy(false);
+      if (workspaceIdentityRef.current === conversationId) setGoalBusy(false);
     }
   }
 
@@ -2061,8 +2100,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       }}
     >
       {displayedHeader ? (
-        <header className="session-thread-header" data-motion-title={titleMotion}>
-          <span className="session-thread-title-copy">
+        <header className="session-thread-header">
+          <span key={displayedHeader.conversationId} className="session-thread-title-copy" data-conversation-transition="true">
             <span className="session-thread-title-row">
               {displayedHeader.taskId && actions.onOpenTaskDetail ? (
                 <button
@@ -2254,7 +2293,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
               >
                 <div className="session-conversation-pane">
                   <SessionRuntimeDetails state={props.state} conversation={props.conversation} language={props.language} capabilities={props.capabilities} />
-                  {(props.state.transportState === 'hydrating' || props.state.transportState === 'connecting') && !props.state.snapshot ? <SessionLoading language={props.language} /> : null}
                   {props.state.transportState === 'reconnecting' ? <SessionReconnectNotice language={props.language} attempt={props.state.reconnectAttempt} onReconnect={actions.onReconnect} /> : null}
                   {props.state.transportState === 'failed' ? (
                     <section className="session-transport-failure" role="status" data-retained-content={Boolean(props.state.snapshot) || undefined}>
@@ -2272,8 +2310,10 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                   ) : null}
                   <div ref={setQuickActionsPersistentHost} className="session-quick-actions-persistent-host" />
                   <ConversationTranscript
+                    key={props.state.conversationId ?? props.conversation?.id ?? 'empty'}
                     state={props.state}
                     language={props.language}
+                    historyLoading={(props.state.transportState === 'hydrating' || props.state.transportState === 'connecting') && !props.state.snapshot}
                     onLatestContentVisibilityChange={props.onLatestContentVisibilityChange}
                     creationStatus={props.creationStatus}
                     onEditUserItem={interactionReadOnly ? undefined : actions.onEditUserItem}
@@ -3024,17 +3064,6 @@ function mergeConversationAttachments(current: NativeConversationAttachment[], a
   const byIdentity = new Map(current.map((attachment) => [conversationAttachmentIdentity(attachment), attachment]));
   added.forEach((attachment) => byIdentity.set(conversationAttachmentIdentity(attachment), attachment));
   return [...byIdentity.values()];
-}
-
-function SessionLoading(props: { language: SessionUiLanguage }) {
-  const copy = labels[props.language];
-  return (
-    <section className="session-loading" role="status" aria-live="polite">
-      <span className="session-loading-line" />
-      <span className="session-loading-line" />
-      <strong>{copy.loading}</strong>
-    </section>
-  );
 }
 
 function SessionReconnectNotice(props: { language: SessionUiLanguage; attempt: number; onReconnect?: () => void | Promise<void> }) {

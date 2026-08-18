@@ -18,8 +18,8 @@ export interface ThreadScrollController {
   getState(): ThreadScrollState;
   onUserScroll(metrics: ThreadScrollMetrics): ThreadScrollState;
   onExplicitLatestRequest(): ThreadScrollEffect;
-  onDelta(metrics: ThreadScrollMetrics, now: number): ThreadScrollEffect;
-  onMessageSubmitted(metrics: ThreadScrollMetrics, now: number): ThreadScrollEffect;
+  onDelta(): ThreadScrollEffect;
+  onMessageSubmitted(): ThreadScrollEffect;
   onTurnStarted(metrics: ThreadScrollMetrics, now: number): ThreadScrollEffect;
 }
 

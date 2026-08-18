@@ -5230,6 +5230,90 @@
   }
 }
 
+/* 会话外壳保持常驻；切换时只让新标题轻微落位，避免整块页头先消失再闪回。 */
+.session-codex-parity-v1 .session-thread-title-copy[data-conversation-transition='true'] {
+  animation: session-title-flow-in 140ms var(--session-ease-out) both;
+}
+
+/* 冷会话在消息区原位接管，骨架层和记录区共享同一尺寸，不触发布局跳变。 */
+.session-codex-parity-v1 .session-transcript-loading {
+  align-content: center;
+  background: var(--session-canvas);
+  display: grid;
+  gap: 10px;
+  inset: 0;
+  justify-items: center;
+  opacity: 0;
+  padding: 48px var(--session-gutter);
+  pointer-events: none;
+  position: absolute;
+  visibility: hidden;
+  z-index: 3;
+}
+
+.session-codex-parity-v1 .session-transcript-loading[data-visible='true'] {
+  animation: session-history-takeover 140ms var(--session-ease-out) both;
+  opacity: 1;
+  visibility: visible;
+}
+
+.session-codex-parity-v1 .session-transcript-loading .session-loading-line {
+  inline-size: min(32rem, 74%);
+}
+
+.session-codex-parity-v1 .session-transcript-loading .session-loading-line:nth-child(2) {
+  inline-size: min(24rem, 56%);
+}
+
+/* 已完成且离开视口的长历史交给浏览器跳过绘制，活动内容和键盘焦点始终完整渲染。 */
+.session-codex-parity-v1
+  .session-transcript
+  > :where(.session-thread-item, .session-activity-group, .session-reasoning-summary, .session-plan-summary, .session-turn-change-card, .session-turn-process, .session-turn-duration, .session-answered-request) {
+  contain-intrinsic-block-size: auto 96px;
+  content-visibility: auto;
+}
+
+.session-codex-parity-v1
+  .session-transcript
+  > :where(.session-thread-item, .session-activity-group, .session-reasoning-summary, .session-plan-summary, .session-turn-change-card, .session-turn-process, .session-turn-duration, .session-answered-request):where(
+    [data-motion-active='true'],
+    [data-active='true'],
+    [data-open='true'],
+    :focus-within,
+    .is-entering
+  ) {
+  contain-intrinsic-block-size: none;
+  content-visibility: visible;
+}
+
+@keyframes session-title-flow-in {
+  from {
+    opacity: 0.72;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes session-history-takeover {
+  from {
+    opacity: 0.9;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-codex-parity-v1 .session-thread-title-copy[data-conversation-transition='true'],
+  .session-codex-parity-v1 .session-transcript-loading[data-visible='true'] {
+    animation: none;
+    transform: none;
+  }
+}
+
 @media (max-width: 559px) {
   .session-codex-parity-v1 .session-new-conversation-context {
     align-items: stretch;

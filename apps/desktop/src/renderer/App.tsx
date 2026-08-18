@@ -12583,7 +12583,6 @@ export function App(props: {
       const pending = selectedTaskModelPushOperation;
       return (
         <ConnectedSessionWorkspace
-          key={pending.navigationId}
           language={appShellSettings.appLanguage}
           client={props.nativeConversationClient}
           controllerEnabled={false}
@@ -12626,7 +12625,6 @@ export function App(props: {
     if (selectedNativeConversation && props.nativeConversationClient && selectedNativeConversation.transportKind === 'codex_native' && !selectedNativeConversation.readOnly && nativeSessionOwner) {
       const targetWorkspace = (
         <ConnectedSessionWorkspace
-          key={selectedNativeConversation.navigationId ?? selectedNativeConversation.id}
           language={appShellSettings.appLanguage}
           client={props.nativeConversationClient}
           controllerEnabled={!selectedTaskModelPushOperation || (selectedTaskModelPushOperation.status === 'accepted' && taskModelPushHasRealChoice(selectedTaskModelPushOperation))}

@@ -1,5 +1,5 @@
 import React, { useLayoutEffect, useState } from 'react';
-import { createRoot } from 'react-dom/client';
+import { createRoot, type Root } from 'react-dom/client';
 import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import '../src/renderer/styles.css';
@@ -13,6 +13,12 @@ import { SafeMarkdown, ThreadItemView } from '../src/renderer/session/ThreadItem
 import { ConversationTranscript } from '../src/renderer/session/ConversationTranscript.js';
 import { PlanSummary } from '../src/renderer/session/PlanSummary.js';
 import { createInitialSessionState } from '../src/renderer/session/sessionReducer.js';
+
+declare global {
+  interface Window {
+    __zeusSessionStylesRoot?: Root;
+  }
+}
 
 const referenceBase = 'http://127.0.0.1:4181';
 
@@ -200,6 +206,14 @@ const startingSessionState: NativeSessionState = {
   providerThreadId: 'motion-starting-thread',
 };
 
+const coldHistorySessionState: NativeSessionState = {
+  ...createInitialSessionState(),
+  transportState: 'hydrating',
+  conversationState: 'native_idle',
+  projectId: 'project-zeus',
+  conversationId: 'motion-cold-history',
+};
+
 const incompleteFenceItem = motionItem('fence', 'agentMessage', 'in_progress', '正在整理代码：\n\n```ts\nconst focus =', { phase: 'final_answer' }, 'final_answer');
 const incompleteTableItem = motionItem('table', 'agentMessage', 'in_progress', '| 状态 | 表现 |\n| --- | --- |\n| 回答中 |', { phase: 'final_answer' }, 'final_answer');
 const motionPlanItem = motionItem('plan', 'plan', 'in_progress', '1. 统一活动焦点\n2. 验证减少动态效果');
@@ -254,10 +268,8 @@ function MotionPreview(props: { dark?: boolean }) {
         </section>
         <section className="qa-motion-loading">
           <h3>冷加载骨架</h3>
-          <div className="session-loading" role="status">
-            <span className="session-loading-line" />
-            <span className="session-loading-line" />
-            <strong>正在加载会话</strong>
+          <div className="qa-motion-cold-history ai-workspace" data-testid="motion-cold-history">
+            <ConversationTranscript state={coldHistorySessionState} language="zh-CN" historyLoading />
           </div>
         </section>
       </div>
@@ -443,4 +455,7 @@ function App() {
 }
 
 const motionQa = new URLSearchParams(window.location.search).has('motion');
-createRoot(document.getElementById('root')!).render(motionQa ? <MotionApp /> : <App />);
+// 开发态热更新复用同一根节点，避免视觉验收页重复挂载并制造无关控制台错误。
+const qaRoot = window.__zeusSessionStylesRoot ?? createRoot(document.getElementById('root')!);
+window.__zeusSessionStylesRoot = qaRoot;
+qaRoot.render(motionQa ? <MotionApp /> : <App />);
