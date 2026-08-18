@@ -205,14 +205,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   const totalCommittedFiles = useMemo(() => Object.values(workspaceDetails).reduce((total, workspace) => total + (workspace.branchComparison?.files.length ?? 0), 0), [workspaceDetails]);
   const selectedWorkspaceIdSet = useMemo(() => new Set(selectedWorkspaceIds), [selectedWorkspaceIds]);
   const selectedCommitFileCount = useMemo(() => selectedWorkspaceIds.reduce((total, selectedId) => total + (selectedPathsByWorkspace[selectedId]?.length ?? 0), 0), [selectedWorkspaceIds, selectedPathsByWorkspace]);
-  const selectedMergeCandidateCount = useMemo(
-    () =>
-      selectedWorkspaceIds.filter((selectedId) => {
-        const workspace = workspaceDetails[selectedId];
-        return Boolean(workspace?.branchComparison && collectWorkingFiles(workspace).length === 0 && !findDeliveredIntegration(workspace, integrations) && !findRecoverableIntegration(integrations, selectedId));
-      }).length,
-    [selectedWorkspaceIds, workspaceDetails, integrations],
-  );
+  const selectedMergeCandidateCount = useMemo(() => selectedWorkspaceIds.filter((selectedId) => mergeWorkspaceAction(workspaceDetails[selectedId], integrations) !== null).length, [selectedWorkspaceIds, workspaceDetails, integrations]);
   const selectedPushCandidateCount = useMemo(
     () => selectedWorkspaceIds.filter((selectedId) => Boolean(workspaceDetails[selectedId]?.remoteName && findDeliveredIntegration(workspaceDetails[selectedId], integrations))).length,
     [selectedWorkspaceIds, workspaceDetails, integrations],
@@ -473,17 +466,40 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
           const workspace = workspaceDetails[selectedId];
           if (!workspace) return { result: { workspaceId: selectedId, repositoryName: selectedId, status: 'skipped', message: zh ? '仓库详情尚未读取。' : 'Repository details are not loaded.' } };
           const label = repositoryLabel(workspace, zh);
-          if (collectWorkingFiles(workspace).length > 0) return { result: { workspaceId: workspace.id, repositoryName: label, status: 'skipped', message: zh ? '仍有未提交文件。' : 'Uncommitted files remain.' } };
-          const recoverable = findRecoverableIntegration(integrations, workspace.id);
-          if (recoverable)
+          const action = mergeWorkspaceAction(workspace, integrations);
+          if (action?.type === 'resolve_conflict')
             return {
-              integration: recoverable,
-              result: { workspaceId: workspace.id, repositoryName: label, status: 'attention', message: zh ? '已有合入冲突或本地同步现场，需继续处理。' : 'An existing merge conflict or local sync needs attention.' },
+              integration: action.integration,
+              result: {
+                workspaceId: workspace.id,
+                repositoryName: label,
+                status: 'attention',
+                message: zh ? `已有 ${action.integration.conflictFiles.length} 个合入冲突，已进入原处理现场。` : `${action.integration.conflictFiles.length} merge conflict(s) remain. The existing workspace was opened.`,
+              },
             };
-          if (!workspace.branchComparison || !workspace.sourceBranch || workspace.sourceBranch === workspace.branchName)
+          if (action?.type === 'finalize') {
+            try {
+              const response = await client.finalizeTaskIntegration(taskId, action.integration.id);
+              const resultFeedback = deliveryFeedback(response.result, zh);
+              return {
+                integration: response.integration,
+                result: {
+                  workspaceId: workspace.id,
+                  repositoryName: label,
+                  status: response.integration.state === 'merged' ? 'succeeded' : 'attention',
+                  message: resultFeedback.text,
+                },
+              };
+            } catch (reason) {
+              return { result: { workspaceId: workspace.id, repositoryName: label, status: 'failed', message: errorMessage(reason, zh) } };
+            }
+          }
+          if (!action) {
+            if (collectWorkingFiles(workspace).length > 0) return { result: { workspaceId: workspace.id, repositoryName: label, status: 'skipped', message: zh ? '仍有未提交文件。' : 'Uncommitted files remain.' } };
+            if (findDeliveredIntegration(workspace, integrations))
+              return { result: { workspaceId: workspace.id, repositoryName: label, status: 'skipped', message: zh ? '当前任务提交已经合入。' : 'The current task commit is already merged.' } };
             return { result: { workspaceId: workspace.id, repositoryName: label, status: 'skipped', message: zh ? '没有可合入的任务分支成果。' : 'No task branch result is ready to merge.' } };
-          if (findDeliveredIntegration(workspace, integrations))
-            return { result: { workspaceId: workspace.id, repositoryName: label, status: 'skipped', message: zh ? '当前任务提交已经合入。' : 'The current task commit is already merged.' } };
+          }
           try {
             const response = await client.startTaskIntegration(taskId, workspace.id, { targetBranch: workspace.sourceBranch, mode });
             if (response.integration.state === 'conflicted') {
@@ -514,6 +530,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
         setWorkspaceId(firstAttention.result.workspaceId);
         setIntegration(firstAttention.integration);
         setConflictPath(firstAttention.integration.conflictFiles[0] ?? '');
+        setConflictWorkspaceOpen(firstAttention.integration.state === 'conflicted');
       }
       await props.onChanged?.();
       setFeedback(batchDeliveryFeedback('merge', results, zh));
@@ -879,8 +896,8 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                     <strong>{zh ? '③ 合入来源分支' : '③ Merge into source branch'}</strong>
                     <small>
                       {zh
-                        ? `对 ${selectedMergeCandidateCount} 个已选且可合入仓库执行本地合入；未提交或已合入仓库会跳过。`
-                        : `Locally merge ${selectedMergeCandidateCount} selected eligible repositories; dirty or already merged repositories are skipped.`}
+                        ? `对 ${selectedMergeCandidateCount} 个已选仓库新建或继续本地合入；待同步和待确认现场也从这里继续。`
+                        : `Start or continue local merges for ${selectedMergeCandidateCount} selected repositories, including pending sync and confirmation states.`}
                     </small>
                     <ZeusSelect
                       size="compact"
@@ -915,12 +932,14 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                     ) : null}
                     {pendingLocalSync ? (
                       <small className="task-git-delivery-local-pending">
-                        {zh ? '合入结果已保留；来源分支存在未提交改动。处理原目录后，在底部重新同步。' : 'The integration result is preserved. Clean the source worktree, then retry local sync below.'}
+                        {zh ? '合入结果已保留；来源分支存在未提交改动。处理原目录后，再点“合入所选仓库”继续。' : 'The integration result is preserved. Clean the source worktree, then use “Merge selected repositories” again.'}
                       </small>
                     ) : null}
                     {integrationResult?.localSyncStatus === 'pending' ? (
                       <small className="task-git-delivery-local-pending">
-                        {zh ? '来源分支工作区有未提交代码，合入结果已保留；处理后再重新同步本地分支。' : 'The source worktree has uncommitted changes. The merge result is preserved; clean it before retrying local sync.'}
+                        {zh
+                          ? '来源分支工作区有未提交代码，合入结果已保留；处理后再点“合入所选仓库”继续。'
+                          : 'The source worktree has uncommitted changes. The merge result is preserved; clean it, then use “Merge selected repositories” again.'}
                       </small>
                     ) : null}
                   </section>
@@ -970,10 +989,6 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                 {zh ? '完成合入来源分支' : 'Finish merging into source branch'}
               </Button>
             )
-          ) : pendingLocalSync ? (
-            <Button variant="primary" size="regular" busy={busyAction === 'merge'} onClick={() => void finalize()}>
-              {zh ? '重新同步本地来源分支' : 'Retry local source sync'}
-            </Button>
           ) : null}
         </footer>
       </section>
@@ -1296,6 +1311,19 @@ function workspaceStateLabel(workspace: TaskWorkspaceIndexSnapshot, detail: Task
 function findRecoverableIntegration(integrations: TaskIntegrationRecord[], workspaceId?: string): TaskIntegrationRecord | undefined {
   if (!workspaceId) return undefined;
   return integrations.find((candidate) => candidate.workspaceId === workspaceId && (candidate.state === 'conflicted' || candidate.state === 'pending_local_sync'));
+}
+
+type MergeWorkspaceAction = { type: 'start' } | { type: 'resolve_conflict' | 'finalize'; integration: TaskIntegrationRecord };
+
+function mergeWorkspaceAction(workspace: TaskWorkspaceSnapshot | undefined, integrations: TaskIntegrationRecord[]): MergeWorkspaceAction | null {
+  if (!workspace || collectWorkingFiles(workspace).length > 0) return null;
+  const recoverable = findRecoverableIntegration(integrations, workspace.id);
+  if (recoverable) {
+    if (recoverable.state === 'pending_local_sync' || recoverable.conflictFiles.length === 0) return { type: 'finalize', integration: recoverable };
+    return { type: 'resolve_conflict', integration: recoverable };
+  }
+  if (!workspace.branchComparison || !workspace.sourceBranch || workspace.sourceBranch === workspace.branchName || findDeliveredIntegration(workspace, integrations)) return null;
+  return { type: 'start' };
 }
 
 function confirmActiveSessionRisk(activeConversationCount: number, zh: boolean): boolean {
