@@ -408,7 +408,9 @@ function normalizeConfiguredModel(value: ConfiguredModelDefinition, fallbackThin
   const displayName = normalizeSingleLine(value.displayName || id, '模型名称', 200);
   const supports1MContext = value.supports1MContext === true;
   const contextWindow = supports1MContext ? 1_000_000 : 256_000;
-  const maxTokens = normalizePositiveInteger(value.maxTokens, '最大输出 Token', 1, contextWindow);
+  // 有效窗口是权威值：历史配置可能保留超过 256K 的 maxTokens，取消 1M 后不应让整条连接不可保存。
+  const requestedMaxTokens = normalizePositiveInteger(value.maxTokens, '最大输出 Token', 1, 10_000_000);
+  const maxTokens = Math.min(requestedMaxTokens, contextWindow);
   const speedLabel = speedLabels.has(value.speedLabel) ? value.speedLabel : inferSpeedLabel(id);
   const capability = normalizeCapability(value.capability, fallbackThinkingFormat);
   const runtimeAdapter = value.runtimeAdapter === 'codex_app_server' ? 'codex_app_server' : 'pi_sdk';
