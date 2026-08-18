@@ -256,10 +256,12 @@
   grid-column: 1 / -1;
 }
 
-.qa-motion-loading .session-loading {
-  inline-size: 100%;
-  margin: 0;
-  padding-block: 10px;
+.qa-motion-cold-history {
+  block-size: 150px;
+  border: 1px solid var(--session-line-soft);
+  border-radius: 9px;
+  min-block-size: 0;
+  overflow: hidden;
 }
 
 @media (max-width: 760px) {

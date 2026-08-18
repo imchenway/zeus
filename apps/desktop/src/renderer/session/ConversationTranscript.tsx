@@ -14,7 +14,7 @@ import type {
   TurnChangeSet,
   TurnChangeSetOperationResult,
 } from './sessionTypes.js';
-import type { ConversationFileLocation, ConversationOpenTarget, ConversationResponseTextAnchor } from '@zeus/shared';
+import type { ConversationFileLocation, ConversationOpenTarget, ConversationResponseAnnotation, ConversationResponseTextAnchor } from '@zeus/shared';
 import { useThreadScrollController } from './useThreadScrollController.js';
 import { TurnChangeCard } from './TurnChanges.js';
 import { visibleQueuedSubmissions } from './QueuedConversationMessages.js';
@@ -34,6 +34,7 @@ export interface ConversationTranscriptProps {
   onReviewTurnChanges?: (changeSet: TurnChangeSet, fileId?: string) => void;
   onOperateTurnChangeSet?: (changeSet: TurnChangeSet, action: 'undo' | 'reapply') => Promise<TurnChangeSetOperationResult>;
   onLatestContentVisibilityChange?: (visible: boolean) => void;
+  historyLoading?: boolean;
   creationStatus?: SessionCreationStatus;
   onAddResponseAnnotation?: (anchor: ConversationResponseTextAnchor) => string;
   onUpdateResponseAnnotation?: (id: string, note: string) => void;
@@ -57,9 +58,24 @@ const sessionConnectionSymbol = (
   </span>
 );
 
+const emptyResponseAnnotations: ConversationResponseAnnotation[] = [];
+
+function useStableOptionalCallback<Arguments extends unknown[], Result>(callback: ((...args: Arguments) => Result) | undefined): ((...args: Arguments) => Result) | undefined {
+  const callbackRef = useRef(callback);
+  callbackRef.current = callback;
+  const stableCallback = useCallback((...args: Arguments): Result => callbackRef.current!(...args), []);
+  return callback ? stableCallback : undefined;
+}
+
 export function ConversationTranscript(props: ConversationTranscriptProps) {
   const containerRef = useRef<HTMLElement | null>(null);
   const latestContentMarkerRef = useRef<HTMLSpanElement | null>(null);
+  const latestMarkerIntersectingRef = useRef(true);
+  const latestPositionFrameRef = useRef<number | null>(null);
+  const latestVisibilityFrameRef = useRef<number | null>(null);
+  const lastReportedLatestVisibilityRef = useRef<boolean | null>(null);
+  const latestVisibilityCallbackRef = useRef(props.onLatestContentVisibilityChange);
+  latestVisibilityCallbackRef.current = props.onLatestContentVisibilityChange;
   const previousTurnIdRef = useRef<string | null>(null);
   const activeTurnTrackingInitializedRef = useRef(false);
   const scrollController = useThreadScrollController();
@@ -124,32 +140,91 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     .join('\u0000');
   const awaitingReplyMessageIds = useMemo(() => (awaitingReplyMessageIdsKey ? awaitingReplyMessageIdsKey.split('\u0000') : []), [awaitingReplyMessageIdsKey]);
   const latestSubmittedMessageId = awaitingReplyMessageIds.at(-1) ?? null;
-  const maintainLatestPosition = useCallback(() => {
+  const responseAnnotationsByItemId = useMemo(() => {
+    const byItemId = new Map<string, ConversationResponseAnnotation[]>();
+    for (const annotation of props.state.contextDraft.responseAnnotations) {
+      const annotations = byItemId.get(annotation.anchor.itemId);
+      if (annotations) annotations.push(annotation);
+      else byItemId.set(annotation.anchor.itemId, [annotation]);
+    }
+    return byItemId;
+  }, [props.state.contextDraft.responseAnnotations]);
+  const renderProps: ConversationTranscriptProps = {
+    ...props,
+    onEditUserItem: useStableOptionalCallback(props.onEditUserItem),
+    onRetryItem: useStableOptionalCallback(props.onRetryItem),
+    onOpenPlan: useStableOptionalCallback(props.onOpenPlan),
+    onOpenResource: useStableOptionalCallback(props.onOpenResource),
+    onLoadResourcePreview: useStableOptionalCallback(props.onLoadResourcePreview),
+    onReviewTurnChanges: useStableOptionalCallback(props.onReviewTurnChanges),
+    onOperateTurnChangeSet: useStableOptionalCallback(props.onOperateTurnChangeSet),
+    onAddResponseAnnotation: useStableOptionalCallback(props.onAddResponseAnnotation),
+    onUpdateResponseAnnotation: useStableOptionalCallback(props.onUpdateResponseAnnotation),
+    onRemoveResponseAnnotation: useStableOptionalCallback(props.onRemoveResponseAnnotation),
+    onOpenSideChat: useStableOptionalCallback(props.onOpenSideChat),
+  };
+
+  const publishLatestContentVisibility = useCallback(() => {
     const container = containerRef.current;
     if (!container) return;
-    const effect = scrollController.onDelta(metrics(container), Date.now());
-    if (effect.type !== 'scroll_to_bottom') return;
-    scrollToLatest(container);
-    setReturnToLatestVisible(false);
-  }, [scrollController]);
+    const current = metrics(container);
+    const visible = current.scrollHeight - current.scrollTop - current.clientHeight <= 24 && latestMarkerIntersectingRef.current;
+    if (lastReportedLatestVisibilityRef.current === visible) return;
+    lastReportedLatestVisibilityRef.current = visible;
+    latestVisibilityCallbackRef.current?.(visible);
+  }, []);
 
-  const reportLatestContentVisibility = useCallback(
-    (container: HTMLElement) => {
-      const current = metrics(container);
-      const marker = latestContentMarkerRef.current;
-      const markerRect = marker?.getBoundingClientRect();
-      const topElement = markerRect ? document.elementFromPoint(markerRect.left + Math.max(0.5, markerRect.width / 2), markerRect.top + Math.max(0.25, markerRect.height / 2)) : null;
-      const markerVisible = Boolean(markerRect && markerRect.bottom >= 0 && markerRect.top <= window.innerHeight && topElement && (topElement === marker || marker?.contains(topElement) || container.contains(topElement)));
-      props.onLatestContentVisibilityChange?.(current.scrollHeight - current.scrollTop - current.clientHeight <= 24 && markerVisible);
-    },
-    [props.onLatestContentVisibilityChange],
-  );
+  const scheduleLatestContentVisibility = useCallback(() => {
+    if (latestVisibilityFrameRef.current !== null) return;
+    latestVisibilityFrameRef.current = requestAnimationFrame(() => {
+      latestVisibilityFrameRef.current = null;
+      publishLatestContentVisibility();
+    });
+  }, [publishLatestContentVisibility]);
+
+  const maintainLatestPosition = useCallback(() => {
+    if (latestPositionFrameRef.current !== null) return;
+    latestPositionFrameRef.current = requestAnimationFrame(() => {
+      latestPositionFrameRef.current = null;
+      const container = containerRef.current;
+      if (!container) return;
+      const effect = scrollController.onDelta();
+      if (effect.type === 'scroll_to_bottom') {
+        scrollToLatest(container);
+        setReturnToLatestVisible(false);
+      }
+      scheduleLatestContentVisibility();
+    });
+  }, [scheduleLatestContentVisibility, scrollController]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    const marker = latestContentMarkerRef.current;
+    if (!container || !marker || typeof IntersectionObserver === 'undefined') {
+      latestMarkerIntersectingRef.current = true;
+      scheduleLatestContentVisibility();
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        latestMarkerIntersectingRef.current = entries[0]?.isIntersecting ?? false;
+        scheduleLatestContentVisibility();
+      },
+      { root: container, threshold: 0 },
+    );
+    observer.observe(marker);
+    scheduleLatestContentVisibility();
+    return () => observer.disconnect();
+  }, [scheduleLatestContentVisibility]);
 
   useEffect(
     () => () => {
-      props.onLatestContentVisibilityChange?.(false);
+      if (latestPositionFrameRef.current !== null) cancelAnimationFrame(latestPositionFrameRef.current);
+      if (latestVisibilityFrameRef.current !== null) cancelAnimationFrame(latestVisibilityFrameRef.current);
+      lastReportedLatestVisibilityRef.current = false;
+      latestVisibilityCallbackRef.current?.(false);
     },
-    [props.onLatestContentVisibilityChange],
+    [],
   );
 
   useLayoutEffect(() => {
@@ -175,7 +250,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     if (!container || !newestSubmittedMessageId) return;
     // 首次水合带回的旧排队消息只按普通历史定位；只有当前工作面明确提交的新消息才建立新轮次锚点。
     if (historyHydrated && !activeTurnTrackingInitializedRef.current) return;
-    const effect = scrollController.onMessageSubmitted(metrics(container), Date.now());
+    const effect = scrollController.onMessageSubmitted();
     if (effect.type === 'scroll_to_bottom') {
       scrollToLatest(container);
       setReturnToLatestVisible(false);
@@ -209,9 +284,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
 
   useLayoutEffect(() => {
     maintainLatestPosition();
-    const container = containerRef.current;
-    if (container) reportLatestContentVisibility(container);
-  }, [maintainLatestPosition, props.creationStatus?.error, props.creationStatus?.state, props.state.transcriptRevision, reportLatestContentVisibility]);
+  }, [maintainLatestPosition, props.creationStatus?.error, props.creationStatus?.state, props.state.transcriptRevision]);
 
   return (
     <>
@@ -228,7 +301,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           onScroll={(event) => {
             const mode = scrollController.onUserScroll(metrics(event.currentTarget));
             setReturnToLatestVisible(mode.mode === 'static');
-            reportLatestContentVisibility(event.currentTarget);
+            scheduleLatestContentVisibility();
           }}
         >
           {turnRows.length > 0 ? (
@@ -242,7 +315,9 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                   return (
                     <Fragment key={row.key}>
                       {row.rows.map((child) => (
-                        <Fragment key={child.key}>{renderTranscriptRow(child, transcriptRowRenderOptions(props, items, showActiveStatus, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition))}</Fragment>
+                        <Fragment key={child.key}>
+                          {renderTranscriptRow(child, transcriptRowRenderOptions(renderProps, items, showActiveStatus, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId))}
+                        </Fragment>
                       ))}
                     </Fragment>
                   );
@@ -251,7 +326,10 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                 const active = isActiveSessionTurn(turn);
                 const process = row.rows.map((child) => (
                   <Fragment key={child.key}>
-                    {renderTranscriptRow(child, transcriptRowRenderOptions(props, items, showActiveStatus && props.state.activeTurnId === row.turnId, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition))}
+                    {renderTranscriptRow(
+                      child,
+                      transcriptRowRenderOptions(renderProps, items, showActiveStatus && props.state.activeTurnId === row.turnId, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId),
+                    )}
                   </Fragment>
                 ));
                 return (
@@ -265,7 +343,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                     )}
                     {!active && containsLastItem ? (
                       <>
-                        {renderTurnArtifacts(row.turnId, props, lastItemKeyByTurn[row.turnId], providerErrorItemsByTurn.get(row.turnId))}
+                        {renderTurnArtifacts(row.turnId, renderProps, lastItemKeyByTurn[row.turnId], providerErrorItemsByTurn.get(row.turnId))}
                         <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} />
                       </>
                     ) : null}
@@ -278,8 +356,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
               const closesVisibleTurn = lastItemKeyByTurn[lastRowItem.turnId] === lastRowItem.key;
               return (
                 <Fragment key={row.key}>
-                  {renderTranscriptRow(row, transcriptRowRenderOptions(props, items, showActiveStatus, motionFocus, lastUserKey, false, enteringItemIds, maintainLatestPosition))}
-                  {closesVisibleTurn ? renderTurnArtifacts(lastRowItem.turnId, props, lastRowItem.key, providerErrorItemsByTurn.get(lastRowItem.turnId)) : null}
+                  {renderTranscriptRow(row, transcriptRowRenderOptions(renderProps, items, showActiveStatus, motionFocus, lastUserKey, false, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId))}
+                  {closesVisibleTurn ? renderTurnArtifacts(lastRowItem.turnId, renderProps, lastRowItem.key, providerErrorItemsByTurn.get(lastRowItem.turnId)) : null}
                   {closesVisibleTurn && turn && !isActiveSessionTurn(turn) ? <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} /> : null}
                 </Fragment>
               );
@@ -315,8 +393,19 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
         >
           {props.language === 'zh-CN' ? '返回最新消息' : 'Return to latest'}
         </button>
+        <TranscriptHistoryLoading visible={Boolean(props.historyLoading)} language={props.language} />
       </div>
     </>
+  );
+}
+
+function TranscriptHistoryLoading(props: { visible: boolean; language: SessionUiLanguage }) {
+  return (
+    <section className="session-transcript-loading" data-visible={props.visible || undefined} role={props.visible ? 'status' : undefined} aria-hidden={!props.visible} aria-live={props.visible ? 'polite' : undefined}>
+      <span className="session-loading-line" />
+      <span className="session-loading-line" />
+      <strong>{props.language === 'zh-CN' ? '正在加载会话' : 'Loading conversation'}</strong>
+    </section>
   );
 }
 
@@ -513,6 +602,7 @@ interface TranscriptRowRenderOptions {
   insideWork: boolean;
   enteringItemIds: ReadonlySet<string>;
   onVisibleContentChange: () => void;
+  responseAnnotationsByItemId: ReadonlyMap<string, ConversationResponseAnnotation[]>;
 }
 
 function transcriptRowRenderOptions(
@@ -524,8 +614,9 @@ function transcriptRowRenderOptions(
   insideWork: boolean,
   enteringItemIds: ReadonlySet<string>,
   onVisibleContentChange: () => void,
+  responseAnnotationsByItemId: ReadonlyMap<string, ConversationResponseAnnotation[]>,
 ): TranscriptRowRenderOptions {
-  return { props, items, showThinking, motionFocus, lastUserKey, insideWork, enteringItemIds, onVisibleContentChange };
+  return { props, items, showThinking, motionFocus, lastUserKey, insideWork, enteringItemIds, onVisibleContentChange, responseAnnotationsByItemId };
 }
 
 function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOptions): ReactNode {
@@ -563,7 +654,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         onOpenResource={options.props.onOpenResource}
         onLoadResourcePreview={options.props.onLoadResourcePreview}
         onVisibleContentChange={options.onVisibleContentChange}
-        responseAnnotations={options.props.state.contextDraft.responseAnnotations.filter((annotation) => annotation.anchor.itemId === row.item.itemId)}
+        responseAnnotations={options.responseAnnotationsByItemId.get(row.item.itemId) ?? emptyResponseAnnotations}
         onAddResponseAnnotation={options.props.onAddResponseAnnotation}
         onUpdateResponseAnnotation={options.props.onUpdateResponseAnnotation}
         onRemoveResponseAnnotation={options.props.onRemoveResponseAnnotation}
