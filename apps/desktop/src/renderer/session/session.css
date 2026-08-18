@@ -6181,6 +6181,15 @@
   min-inline-size: 0;
 }
 
+/* 非图片资源需要同时容纳文件名和打开方式；用户消息附件还需覆盖自身的紧凑图片列宽。 */
+.session-codex-parity-v1 .session-resource-card-list[data-layout='files'],
+.session-codex-parity-v1 .session-resource-card-list[data-layout='mixed'],
+.session-codex-parity-v1 .session-user-message-attachments > .session-resource-card-list[data-layout='files'],
+.session-codex-parity-v1 .session-user-message-attachments > .session-resource-card-list[data-layout='mixed'] {
+  grid-template-columns: minmax(0, 1fr);
+  max-inline-size: 420px;
+}
+
 .session-codex-parity-v1 .session-resource-image {
   align-items: center;
   appearance: none;

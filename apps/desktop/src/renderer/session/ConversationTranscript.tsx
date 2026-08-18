@@ -790,7 +790,12 @@ function renderTurnArtifacts(turnId: string, props: ConversationTranscriptProps,
 
 export function projectTranscriptTurnRows(rows: readonly TranscriptRow[], activeTurnId: string | null = null): TranscriptTurnRow[] {
   const finalAnswerTurnIds = new Set(rows.flatMap((row) => (row.kind === 'item' && isFinalAnswerItem(row.item) ? [row.item.turnId] : [])));
-  const activeTurnOpeningUserRowKey = activeTurnId ? rows.find((row) => row.kind === 'item' && row.item.turnId === activeTurnId && itemRole(row.item) === 'user')?.key : undefined;
+  const openingUserRowKeyByTurn = new Map<string, string>();
+  for (const row of rows) {
+    if (row.kind !== 'item' || itemRole(row.item) !== 'user' || openingUserRowKeyByTurn.has(row.item.turnId)) continue;
+    openingUserRowKeyByTurn.set(row.item.turnId, row.key);
+  }
+  const activeTurnOpeningUserRowKey = activeTurnId ? openingUserRowKeyByTurn.get(activeTurnId) : undefined;
   const liveTurnRows = activeTurnId && !finalAnswerTurnIds.has(activeTurnId) ? rows.filter((row) => row.key !== activeTurnOpeningUserRowKey && transcriptRowTurnId(row) === activeTurnId && isLiveTurnTimelineRow(row)) : [];
   const liveTurnRowKeys = new Set(liveTurnRows.map((row) => row.key));
   const firstLiveTurnRowKey = liveTurnRows[0]?.key;
@@ -810,18 +815,27 @@ export function projectTranscriptTurnRows(rows: readonly TranscriptRow[], active
   const projected: TranscriptTurnRow[] = [];
   const emittedFinalWorkTurns = new Set<string>();
   for (const row of rows) {
-    if (activeTurnId && firstLiveTurnRowKey === row.key) {
+    if (activeTurnId && !activeTurnOpeningUserRowKey && firstLiveTurnRowKey === row.key) {
       projected.push({ kind: 'turn_work', key: `turn-work-live:${activeTurnId}`, turnId: activeTurnId, rows: liveTurnRows });
     }
     if (liveTurnRowKeys.has(row.key)) continue;
     const turnId = transcriptRowTurnId(row);
     const finalWorkRows = turnId ? workRowsByFinalTurn.get(turnId) : undefined;
-    if (turnId && finalWorkRows && firstWorkRowKeyByFinalTurn.get(turnId) === row.key && !emittedFinalWorkTurns.has(turnId)) {
+    const openingUserRowKey = turnId ? openingUserRowKeyByTurn.get(turnId) : undefined;
+    if (turnId && finalWorkRows && !openingUserRowKey && firstWorkRowKeyByFinalTurn.get(turnId) === row.key && !emittedFinalWorkTurns.has(turnId)) {
       projected.push({ kind: 'turn_work', key: `turn-work-final:${turnId}`, turnId, rows: finalWorkRows });
       emittedFinalWorkTurns.add(turnId);
     }
     if (finalWorkRowKeys.has(row.key)) continue;
     projected.push(row);
+    // Provider 的过程事件可能先于用户消息落库；展示顺序必须以轮次语义为准，不能把处理过程放到开场消息上方。
+    if (activeTurnId && activeTurnOpeningUserRowKey === row.key && liveTurnRows.length > 0) {
+      projected.push({ kind: 'turn_work', key: `turn-work-live:${activeTurnId}`, turnId: activeTurnId, rows: liveTurnRows });
+    }
+    if (turnId && finalWorkRows && openingUserRowKey === row.key && !emittedFinalWorkTurns.has(turnId)) {
+      projected.push({ kind: 'turn_work', key: `turn-work-final:${turnId}`, turnId, rows: finalWorkRows });
+      emittedFinalWorkTurns.add(turnId);
+    }
   }
   return projected;
 }

@@ -264,6 +264,23 @@
   overflow: hidden;
 }
 
+.qa-defect-page {
+  background: var(--session-canvas);
+}
+
+.qa-defect-transcript {
+  block-size: 720px;
+  inline-size: min(920px, 100%);
+  justify-self: center;
+  overflow: hidden;
+  padding: 0;
+}
+
+.qa-defect-transcript .session-transcript {
+  block-size: 720px;
+  padding-block: 32px;
+}
+
 @media (max-width: 760px) {
   .macos-ai-app.zeus-shell.qa-motion-page {
     padding: 16px;
