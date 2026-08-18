@@ -345,7 +345,8 @@ function refreshCodexConversationCapabilities(client: SessionControllerClient, p
   return promise;
 }
 
-function cachedCodexConversationCapabilities(client: SessionControllerClient, projectId: string): CodexConversationCapabilities | null {
+/** 同步读取已有项目能力，只用于首帧展示；提交仍由服务端重新复验。 */
+export function readCachedCodexConversationCapabilities(client: SessionControllerClient, projectId: string): CodexConversationCapabilities | null {
   return conversationCapabilitiesEntry(client, projectId).value;
 }
 
@@ -382,13 +383,13 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
   }, [props.client, props.conversation.id, props.conversation.projectId, props.conversation.transportKind]);
   const [capabilitiesScope, setCapabilitiesScope] = useState<ScopedConversationCapabilities>(() => ({
     projectId: props.conversation.projectId,
-    value: props.initialCapabilities ?? cachedCodexConversationCapabilities(props.client, props.conversation.projectId),
+    value: props.initialCapabilities ?? readCachedCodexConversationCapabilities(props.client, props.conversation.projectId),
   }));
-  const capabilities = props.initialCapabilities ?? (capabilitiesScope.projectId === props.conversation.projectId ? capabilitiesScope.value : cachedCodexConversationCapabilities(props.client, props.conversation.projectId));
+  const capabilities = props.initialCapabilities ?? (capabilitiesScope.projectId === props.conversation.projectId ? capabilitiesScope.value : readCachedCodexConversationCapabilities(props.client, props.conversation.projectId));
   useEffect(() => {
     const projectId = props.conversation.projectId;
     let active = true;
-    const cached = props.initialCapabilities ?? cachedCodexConversationCapabilities(props.client, projectId);
+    const cached = props.initialCapabilities ?? readCachedCodexConversationCapabilities(props.client, projectId);
     if (cached) setCapabilitiesScope({ projectId, value: cached });
     void refreshCodexConversationCapabilities(props.client, projectId)
       .then((snapshot) => {
