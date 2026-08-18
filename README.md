@@ -42,4 +42,7 @@ brew upgrade --cask imchenway/tap/zeus
 如果没有看到“仍要打开”，请先再次尝试启动 Zeus，然后返回该页面。此操作只会为当前 Mac 添加一次例外，具体说明见
 [Apple 官方帮助](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac)。
 
+这是既有公开版本的真实状态。后续公开发布已经改为强制 Developer ID 签名与 Apple 公证；在发布凭据配置完成前不会继续发布
+新的 ad-hoc 版本，以免 macOS 因应用身份随升级变化而重复询问“文稿”“下载”等隐私权限。
+
 更多技术信息参见[发布说明](docs/release.md)和[架构文档](docs/architecture.md)。

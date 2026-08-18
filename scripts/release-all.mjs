@@ -769,7 +769,7 @@ async function ensurePublished(state) {
     LOCAL_GATE_SUMMARY_FILE: state.gateSummaryPath,
     APPLY_REMOTE: 'true',
     PUBLISH_CONFIRMATION: `PUBLISH_${state.tag}`,
-    REQUIRE_APPLE_DISTRIBUTION: 'false',
+    REQUIRE_APPLE_DISTRIBUTION: 'true',
     WAIT_FOR_COMPLETION: 'true',
     ZEUS_COMMAND_RUN_DIR: publishDirectory,
   });
@@ -796,7 +796,7 @@ function buildFinalResult(state) {
     `- GitHub Release：https://github.com/${repository}/releases/tag/${state.tag}`,
     `- 本地快速检查摘要：${state.gateSummaryPath}`,
     `- 公开资产回验：${state.publishResultPath}`,
-    '- 本次允许 ad-hoc、未公证产物；真实签名与公证状态以公开 manifest 和回验结果为准。',
+    '- 公开产物已通过 Developer ID 签名与 Apple 公证门禁；真实状态以公开 manifest 和回验结果为准。',
     '- 未自动安装、升级或随 Zeus 分发 Codex CLI。',
     '',
   ].join('\n');
