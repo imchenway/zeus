@@ -340,7 +340,13 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
     const timelineAt = item.startedAt ?? item.updatedAt;
     const itemClientId = isUserMessageType(item.type) ? (stringValue(item.payload.clientId) ?? stringValue(item.payload.clientUserMessageId)) : null;
     const previousUserItem = itemClientId ? previousUserItemsByClientId.get(itemClientId) : undefined;
-    if (itemClientId && providerUserItemKeyByClientId.has(itemClientId)) continue;
+    const existingProviderUserKey = itemClientId ? providerUserItemKeyByClientId.get(itemClientId) : undefined;
+    if (existingProviderUserKey) {
+      // Provider 可能用多个 item 回放同一客户端用户消息；别名也要指向已有可见项，
+      // 否则其持久消息会失去身份并以原始纯文本再次进入时间线。
+      if (item.providerItemId) providerItemKeyById.set(item.providerItemId, existingProviderUserKey);
+      continue;
+    }
     // 同一条用户消息从本地发送态交接为 Provider item 时沿用可见身份，避免气泡被卸载后重建。
     const key = (itemClientId ? previousUserItemKeys.get(itemClientId) : undefined) ?? nativeSessionItemKey(snapshot.id, threadId, turnId, itemId);
     items[key] = {

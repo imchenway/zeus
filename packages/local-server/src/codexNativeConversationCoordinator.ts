@@ -2196,11 +2196,26 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   }
 
   function submissionForProviderUserItem(conversationId: string, turn: ZeusConversationTurnRecord, itemPayload: Record<string, unknown>): ZeusConversationSubmissionRecord | undefined {
-    const submissions = options.submissions.listByConversation(conversationId);
-    const providerClientId = typeof itemPayload.clientId === 'string' && itemPayload.clientId.trim() ? itemPayload.clientId : null;
-    // 同一 turn 可以被远端继续引导；Provider 已给 clientId 时只能精确匹配，不能误绑到该 turn 的首条本机 submission。
-    if (providerClientId) return submissions.find((candidate) => candidate.clientMessageId === providerClientId);
-    return turn.clientSubmissionId ? submissions.find((candidate) => candidate.id === turn.clientSubmissionId) : undefined;
+    const conversation = options.conversations.getById(conversationId);
+    if (!conversation) return undefined;
+    const providerItemId = typeof itemPayload.id === 'string' && itemPayload.id.trim() ? itemPayload.id : null;
+    const existingProviderMessage = providerItemId ? conversation.messages.find((message) => message.providerItemId === providerItemId) : undefined;
+    const existingClientMessageIds = new Set(
+      conversation.messages
+        .filter((message) => message.providerItemId !== providerItemId)
+        .map(conversationMessageClientId)
+        .filter((value): value is string => Boolean(value)),
+    );
+    // 同一轮可以有首发消息和多条引导。缺少 Provider clientId 时，只有尚未被其他用户项占用的首发提交可以回退关联。
+    // 否则会把后续引导套上首发任务的展示正文、附件和布局，形成一条重复的首发消息。
+    return resolveNativeUserMessageSubmission({
+      submissions: options.submissions.listByConversation(conversation.id),
+      providerClientId: typeof itemPayload.clientId === 'string' ? itemPayload.clientId : null,
+      clientSubmissionId: turn.clientSubmissionId,
+      providerTurnId: turn.providerTurnId,
+      existingMessage: existingProviderMessage ? { clientMessageId: conversationMessageClientId(existingProviderMessage) } : undefined,
+      existingClientMessageIds,
+    }).submission;
   }
 
   function submissionPresentation(conversationId: string, turn: ZeusConversationTurnRecord, itemPayload: Record<string, unknown>): Record<string, unknown> {
