@@ -406,9 +406,8 @@ function normalizeConfiguredModel(value: ConfiguredModelDefinition, fallbackThin
   if (!isRecord(value)) throw new Error('模型配置必须是对象。');
   const id = normalizeSingleLine(value.id, '模型 ID', 200);
   const displayName = normalizeSingleLine(value.displayName || id, '模型名称', 200);
-  const legacyDeclared1M = value.supports1MContext === undefined && typeof value.contextWindow === 'number' && value.contextWindow >= 1_000_000;
-  const supports1MContext = value.supports1MContext === true || legacyDeclared1M;
-  const contextWindow = supports1MContext ? 1_000_000 : normalizePositiveInteger(value.contextWindow ?? 256_000, '上下文窗口', 1_000, 10_000_000);
+  const supports1MContext = value.supports1MContext === true;
+  const contextWindow = supports1MContext ? 1_000_000 : 256_000;
   const maxTokens = normalizePositiveInteger(value.maxTokens, '最大输出 Token', 1, contextWindow);
   const speedLabel = speedLabels.has(value.speedLabel) ? value.speedLabel : inferSpeedLabel(id);
   const capability = normalizeCapability(value.capability, fallbackThinkingFormat);
