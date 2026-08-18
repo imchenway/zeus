@@ -57,10 +57,11 @@ AI Runtime、Git 操作、文件操作必须限制在项目路径内。
 
 ## 远程入口与发布配置状态
 
-远程入口与发布配置包括 Telegram 白名单、可选的 Apple signing / notarization、Actions 自动同步使用的 Homebrew tap token。
+远程入口与发布配置包括 Telegram 白名单、公开发布必需的 Apple signing / notarization、Actions 自动同步使用的 Homebrew tap token。
 
 - Telegram Bot Token 未配置时，long polling 与通知保持未启用。
 - 非白名单 Telegram user id 必须拒绝，不能返回项目、任务、日志或 diff 详情。
-- Apple signing / notarization 未配置时，只能声明 unsigned DMG/ZIP；不得伪装成已签名或已公证。
+- Apple signing / notarization 未配置时，只能生成本地候选或 Actions artifact；不得创建 GitHub Release、更新 Homebrew Tap，
+  也不得伪装成已签名或已公证。
 - Homebrew tap token 未配置时，Actions 不能自动同步 Tap；只有用户明确授权并取得真实远端结果后，才能声明人工发布成功。
 - 外部配置状态必须在 README、CHANGELOG、ROADMAP、实现报告和 PR 模板中保持一致。

@@ -17,7 +17,7 @@ on:
         type: boolean
         default: false
       require_apple_distribution:
-        description: 强制要求 Developer ID 签名和 Apple 公证（可选增强）
+        description: 非公开候选也强制 Developer ID 签名和 Apple 公证；公开发布始终强制
         required: true
         type: boolean
         default: false
@@ -44,7 +44,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_COMMIT: ${{ inputs.commit_sha }}
           RELEASE_TAG: ${{ inputs.tag }}
-          REQUIRE_APPLE_DISTRIBUTION: ${{ inputs.require_apple_distribution }}
           CSC_LINK: ${{ secrets.MACOS_CERTIFICATE }}
           CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -80,16 +79,14 @@ jobs:
             echo "目标 tag 已指向其他提交：tag=$RELEASE_TAG expected=$RELEASE_COMMIT actual=$remote_tag_commit" >&2
             exit 1
           fi
-          if [ "$REQUIRE_APPLE_DISTRIBUTION" = "true" ]; then
-            if [ -z "$CSC_LINK" ] || [ -z "$CSC_KEY_PASSWORD" ]; then
-              echo '严格 Apple 分发缺少 Developer ID 证书或证书密码。' >&2
-              exit 1
-            fi
-            if ! { [ -n "$APPLE_ID" ] && [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; } &&
-               ! { [ -n "$APPLE_API_KEY_P8" ] && [ -n "$APPLE_API_KEY_ID" ] && [ -n "$APPLE_API_ISSUER" ]; }; then
-              echo '严格 Apple 分发缺少完整公证凭据。' >&2
-              exit 1
-            fi
+          if [ -z "$CSC_LINK" ] || [ -z "$CSC_KEY_PASSWORD" ]; then
+            echo '公开发布缺少 Developer ID 证书或证书密码；为保持 macOS 隐私授权身份稳定，禁止发布 ad-hoc 产物。' >&2
+            exit 1
+          fi
+          if ! { [ -n "$APPLE_ID" ] && [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; } &&
+             ! { [ -n "$APPLE_API_KEY_P8" ] && [ -n "$APPLE_API_KEY_ID" ] && [ -n "$APPLE_API_ISSUER" ]; }; then
+            echo '公开发布缺少完整公证凭据。' >&2
+            exit 1
           fi
           if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
             echo '公开 Homebrew 发布缺少 HOMEBREW_TAP_TOKEN。' >&2
@@ -127,7 +124,7 @@ jobs:
       APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
       APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
       APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-      ZEUS_REQUIRE_DISTRIBUTABLE_RELEASE: ${{ inputs.publish_release && inputs.require_apple_distribution && '1' || '0' }}
+      ZEUS_REQUIRE_DISTRIBUTABLE_RELEASE: ${{ (inputs.publish_release || inputs.require_apple_distribution) && '1' || '0' }}
     steps:
       - name: 检出固定发布候选
         uses: actions/checkout@v4
