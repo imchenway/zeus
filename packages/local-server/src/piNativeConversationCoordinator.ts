@@ -58,6 +58,8 @@ interface PiRunContext {
   sourceId: string;
   modelId: string;
   usage: TokenUsageBreakdown;
+  /** 最后一次真实模型请求的用量；上下文规模只能来自它，不能用整轮累加值。 */
+  lastRequestUsage: TokenUsageBreakdown | null;
   modelRequestCount: number;
 }
 
@@ -445,6 +447,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       sourceId: input.model.sourceId ?? 'custom',
       modelId: input.model.modelId,
       usage: emptyTokenUsageBreakdown(),
+      lastRequestUsage: null,
       modelRequestCount: 0,
     });
     await options.db.save();
@@ -571,6 +574,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       sourceId: input.model.sourceId ?? 'custom',
       modelId: input.model.modelId,
       usage: emptyTokenUsageBreakdown(),
+      lastRequestUsage: null,
       modelRequestCount: 0,
     });
     await options.db.save();
@@ -720,6 +724,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       if (message.role !== 'assistant') return;
       const requestUsage = readPiUsage(message.usage);
       addUsage(run.usage, requestUsage);
+      // 账本累加整轮消耗，快照的 last 只保留最后一次请求，两者口径不能互相冒充。
+      if (requestUsage) run.lastRequestUsage = { ...requestUsage };
       if (segment) {
         const connection = options.modelConnections.listMetadata().find((candidate) => candidate.id === run.sourceId);
         const contextWindow = connection?.models.find((model) => model.id === run.modelId)?.contextWindow ?? null;
@@ -861,7 +867,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         });
         usageSnapshot = buildPiUsageSnapshot({
           rows: options.usageLedger.list({ conversationId: run.conversationId }),
-          last: run.usage,
+          // last 的既定语义是"最后一次真实模型请求"，与 Codex 路径保持一致；缺失时退回整轮累加值。
+          last: run.lastRequestUsage ?? run.usage,
           lastEstimate: estimate,
           modelContextWindow: connection?.models.find((model) => model.id === run.modelId)?.contextWindow ?? null,
           generationId: options.conversations.getById(run.conversationId)?.nativeSessionId ?? 'pi-sdk',
