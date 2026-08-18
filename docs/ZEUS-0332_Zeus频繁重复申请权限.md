@@ -83,3 +83,14 @@ Developer ID 签名并已公证的 Zeus 版本：首版允许访问隔离的受�
 本次未执行 `pnpm verify:release`、`pnpm package:mac` 或真实 GUI：前者会执行不属于本任务的外部 AI CLI 探针并生成生产候选，
 后两者也无法代替连续两个 Developer ID 版本的 TCC 授权继承验收。当前结论只证明发布源码门禁已收紧，不声称系统弹窗已经在真实
 升级现场消失。
+
+## 产品策略调整（2026-08-18）
+
+`v0.3.24` 已形成并推送发布提交后，公开发布前置检查确认仓库没有 Developer ID 证书和 Apple 公证凭据。用户明确说明当前没有
+Apple 凭据，并授权恢复 ad-hoc 公开发布。因此本任务原先的“公开发布强制稳定身份”改回可选严格模式：默认允许如实标记的 ad-hoc、
+未公证公开包；只有显式设置 `require_apple_distribution=true` 时才要求 Developer ID 和公证凭据。
+
+- 优点：无需等待外部 Apple 账号即可继续形成 GitHub Release 与 Homebrew 安装链路。
+- 缺点：ZEUS-0332 的跨升级稳定身份目标没有达成；升级后 macOS 仍可能再次询问“文稿”“下载”等目录权限，也不能启用可信静默更新。
+- 安全边界：manifest、Release 结果与公开文档必须保持 `signed=false`、`notarized=false` 的真实状态，不得宣称 Apple 已认证。
+- 后续恢复：取得 Apple Developer 凭据后，可显式开启严格模式，并用连续两个同一 Developer ID 签名且已公证的版本完成 TCC 继承验收。
