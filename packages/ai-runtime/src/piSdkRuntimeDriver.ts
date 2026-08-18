@@ -5,7 +5,7 @@ import { createProvider, envApiKeyAuth, type Api, type Model, type ProviderStrea
 import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy';
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
 import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy';
-import { type AgentSession, type AgentSessionEvent, createAgentSession, DefaultResourceLoader, defineTool, ModelRuntime, SessionManager, SettingsManager, type ToolDefinition } from '@earendil-works/pi-coding-agent';
+import { type AgentSession, type AgentSessionEvent, createAgentSession, defineTool, ModelRuntime, SessionManager, SettingsManager, type ToolDefinition } from '@earendil-works/pi-coding-agent/headless';
 import { Type } from 'typebox';
 import type {
   AcceptedAgentRun,
@@ -29,6 +29,7 @@ import type {
 } from './agentRuntimeContracts.js';
 import { modelConnectionRuntimeBaseUrl, type ConfiguredModelDefinition, type ModelAuthenticationScheme, type ModelConnectionRecord, type PiThinkingLevel } from './modelConnectionCatalog.js';
 import { buildProviderCacheDiagnostic } from './providerCacheDiagnostics.js';
+import { PiHeadlessResourceLoader } from './piHeadlessResourceLoader.js';
 
 export interface PiRuntimeConnection extends ModelConnectionRecord {
   apiKey?: string;
@@ -156,14 +157,9 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
       },
       { projectTrusted: false },
     );
-    const resourceLoader = new DefaultResourceLoader({
+    const resourceLoader = new PiHeadlessResourceLoader({
       cwd: input.cwd,
       agentDir: options.agentDirectory,
-      settingsManager,
-      noExtensions: true,
-      noSkills: true,
-      noPromptTemplates: true,
-      noThemes: true,
     });
     await resourceLoader.reload();
     if ('metadata' in input) seedPortableContext(sessionManager, input.metadata);

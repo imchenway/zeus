@@ -11,6 +11,14 @@
     "package:mac:release": "ZEUS_PACKAGE_VARIANT=release ZEUS_RELEASE_BUILD=1 node ../../scripts/package-mac.mjs"
   },
   "dependencies": {
+    "@zeus/ai-runtime": "workspace:*",
+    "@zeus/diagram-engine": "workspace:*",
+    "@zeus/git-core": "workspace:*",
+    "@zeus/local-server": "workspace:*",
+    "@zeus/shared": "workspace:*",
+    "@zeus/terminal-core": "workspace:*"
+  },
+  "devDependencies": {
     "@codemirror/commands": "^6.10.4",
     "@codemirror/lang-css": "^6.3.1",
     "@codemirror/lang-html": "^6.4.12",
@@ -29,12 +37,6 @@
     "@phosphor-icons/react": "^2.1.10",
     "@xterm/xterm": "^6.0.0",
     "@xyflow/react": "^12.11.0",
-    "@zeus/ai-runtime": "workspace:*",
-    "@zeus/diagram-engine": "workspace:*",
-    "@zeus/git-core": "workspace:*",
-    "@zeus/local-server": "workspace:*",
-    "@zeus/shared": "workspace:*",
-    "@zeus/terminal-core": "workspace:*",
     "codemirror": "^6.0.2",
     "framer-motion": "12.42.0",
     "graphology": "^0.26.0",
