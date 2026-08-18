@@ -808,10 +808,16 @@ export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[],
       continue;
     }
     if (!isCommandActivityItem(item)) {
-      // MCP、网页、图片和文件变更各自拥有独立生命周期，不能与命令混成一个数量摘要。
-      flushActivity();
+      // MCP、网页、图片和文件变更等非命令工具可合并相邻工具，但不能与命令混成一个数量摘要。
+      if (!isMergeableToolActivity(item)) {
+        flushActivity();
+        activity.push(item);
+        flushActivity();
+        continue;
+      }
+      if (!canJoinToolActivity(activity, item)) flushActivity();
       activity.push(item);
-      flushActivity();
+      if (item.status === 'failed' || activity.length >= MAX_GROUPED_TOOL_ACTIVITY) flushActivity();
       continue;
     }
     if (!canJoinCommandActivity(activity, item)) flushActivity();
@@ -833,6 +839,21 @@ function canJoinCommandActivity(activity: readonly NativeSessionItemBuffer[], it
   if (!isGroupableCommandSource(item) || activity.some((candidate) => !isCommandActivityItem(candidate) || !isGroupableCommandSource(candidate) || candidate.status === 'failed')) return false;
   const hasRunningCommand = activity.some((candidate) => candidate.status !== 'completed');
   return !hasRunningCommand || (isExploringCommand(item) && activity.every(isExploringCommand));
+}
+
+const MAX_GROUPED_TOOL_ACTIVITY = 32;
+
+function canJoinToolActivity(activity: readonly NativeSessionItemBuffer[], item: NativeSessionItemBuffer): boolean {
+  if (activity.length === 0) return true;
+  if (activity.length >= MAX_GROUPED_TOOL_ACTIVITY || activity[0]!.turnId !== item.turnId) return false;
+  if (!isMergeableToolActivity(item) || activity.some((candidate) => !isMergeableToolActivity(candidate) || candidate.status === 'failed')) return false;
+  return true;
+}
+
+function isMergeableToolActivity(item: NativeSessionItemBuffer): boolean {
+  const type = normalizeItemType(item.type);
+  // 上下文整理有独立摘要口径，Provider 事件属于技术事件，均不与普通工具合并计数。
+  return isOperationalActivityItem(item) && !isCommandActivityItem(item) && type !== 'contextcompaction' && type !== 'providerevent';
 }
 
 function isCommandActivityItem(item: NativeSessionItemBuffer): boolean {
