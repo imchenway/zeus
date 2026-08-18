@@ -514,6 +514,7 @@ function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: Mode
             <span className="model-context-declaration-value">
               <input
                 type="checkbox"
+                aria-label={zh ? '支持 1M 上下文' : 'Supports 1M context'}
                 checked={model.supports1MContext}
                 onChange={(event) =>
                   props.onChange({
@@ -523,8 +524,7 @@ function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: Mode
                   })
                 }
               />
-              <span>{zh ? '支持 1M 上下文' : 'Supports 1M context'}</span>
-              <small>{model.contextWindow >= 1_000_000 ? '1M' : `${Math.round(model.contextWindow / 1000)}K`}</small>
+              <span className="model-context-declaration-label">{zh ? '支持 1M 上下文' : 'Supports 1M context'}</span>
             </span>
           </label>
         </div>
