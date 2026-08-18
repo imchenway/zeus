@@ -15549,6 +15549,35 @@ body[data-surface='project-git-diff'] #root {
   box-shadow: 0 24px 64px oklch(20% 0.01 255 / 0.25);
 }
 
+.macos-ai-app .task-model-push-step-modal {
+  pointer-events: auto;
+  inline-size: min(520px, calc(100vw - 40px));
+  max-block-size: min(680px, calc(100vh - 48px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 16px;
+  background: var(--zeus-solid-surface-bg);
+  color: var(--zeus-product-text);
+  box-shadow: 0 24px 64px oklch(20% 0.01 255 / 0.25);
+}
+
+.macos-ai-app .task-model-push-step-body {
+  min-block-size: 0;
+  overflow-y: auto;
+  display: grid;
+  gap: 12px;
+  padding: 18px var(--zeus-solid-surface-edge);
+}
+
+.macos-ai-app .task-model-push-step-body > p,
+.macos-ai-app .task-model-push-step-body > small {
+  margin: 0;
+  color: var(--zeus-product-muted);
+  line-height: 1.5;
+}
+
 .macos-ai-app .task-model-push-header,
 .macos-ai-app .task-model-push-footer {
   display: flex;
@@ -16258,31 +16287,6 @@ body[data-surface='project-git-diff'] #root {
 .macos-ai-app .task-model-push-message {
   margin: 0;
   color: var(--zeus-product-muted);
-}
-.macos-ai-app .task-model-push-account {
-  display: grid;
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid var(--zeus-warning-line, var(--zeus-product-line-soft));
-  border-radius: 12px;
-  background: var(--zeus-product-panel-muted);
-}
-.macos-ai-app .task-model-push-account > span {
-  display: grid;
-  gap: 3px;
-}
-.macos-ai-app .task-model-push-account.is-success {
-  border-color: color-mix(in oklab, var(--zeus-status-success-text) 36%, var(--zeus-product-line-soft));
-}
-.macos-ai-app .task-model-push-account.is-success strong {
-  color: var(--zeus-status-success-text);
-}
-.macos-ai-app .task-model-push-account small,
-.macos-ai-app .task-model-push-account p {
-  margin: 0;
-  color: var(--zeus-product-muted);
-  font-size: 12px;
-  line-height: 1.5;
 }
 .macos-ai-app .task-model-push-config-import ul {
   display: grid;

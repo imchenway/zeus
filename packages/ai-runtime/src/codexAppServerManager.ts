@@ -926,7 +926,8 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       return parseChatGptLogin(
         await rpc(capabilities.generationId, 'account/login/start', {
           type: 'chatgpt',
-          useHostedLoginSuccessPage: true,
+          // Zeus 自己轮询权威登录状态并回到原窗口；不让托管成功页把本次流程收口到 ChatGPT。
+          useHostedLoginSuccessPage: false,
           appBrand: 'chatgpt',
         }),
         capabilities.generationId,
@@ -1754,7 +1755,7 @@ function nullableNonNegativeSafeInteger(value: unknown, label: string): number |
 function parseChatGptLogin(value: unknown, generationId: string): CodexChatGptLogin {
   const response = asRecord(value);
   if (response.type !== 'chatgpt' || typeof response.loginId !== 'string' || !response.loginId || typeof response.authUrl !== 'string') {
-    throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex account/login/start returned an invalid ChatGPT login.');
+    throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex account/login/start returned an invalid account login.');
   }
   let authUrl: URL;
   try {
