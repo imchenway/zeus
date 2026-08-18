@@ -142,7 +142,7 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
     const { runtime } = await loadModelRuntime();
     const requestedModel = 'model' in input ? input.model : undefined;
     const model = requestedModel ? resolveModel(runtime, requestedModel) : undefined;
-    const compactionContextWindow = model?.contextWindow ?? 128_000;
+    const compactionContextWindow = model?.contextWindow ?? 256_000;
     const compactionReserveTokens = Math.min(16_384, Math.max(1_024, Math.floor(compactionContextWindow * 0.125)));
     const compactionKeepRecentTokens = Math.min(20_000, Math.max(1_000, Math.floor((compactionContextWindow - compactionReserveTokens) * 0.45)));
     const settingsManager = SettingsManager.inMemory(

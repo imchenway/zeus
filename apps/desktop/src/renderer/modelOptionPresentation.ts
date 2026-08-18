@@ -4,6 +4,7 @@ export interface ModelOptionSource {
   displayName?: string;
   sourceName?: string;
   available?: boolean;
+  supports1MContext?: boolean;
   speedLabel?: 'standard' | 'high_speed' | 'flash' | 'turbo';
 }
 
@@ -97,11 +98,13 @@ export function presentModelOptions<Model extends ModelOptionSource>(
     group.models.map((model) => {
       const displayName = modelName(model);
       const speed = speedLabel(model, zh);
+      const contextBadge = model.supports1MContext ? '1M' : null;
+      const badges = [speed, contextBadge].filter((item): item is string => Boolean(item));
       return {
         value: model.id,
-        label: speed ? `${displayName} · ${speed}` : displayName,
+        label: badges.length > 0 ? `${displayName} · ${badges.join(' · ')}` : displayName,
         ...(showProviderGroups ? { group: group.providerName } : {}),
-        searchText: `${group.providerName} ${displayName} ${model.model}`,
+        searchText: `${group.providerName} ${displayName} ${model.model}${contextBadge ? ' 1M' : ''}`,
       } satisfies PresentedModelOption;
     }),
   );
@@ -113,7 +116,7 @@ export function presentModelOptions<Model extends ModelOptionSource>(
     options,
     selectedId: resolvedSelectedId,
     triggerLabel: resolvedSelectedModel
-      ? `${providerName(resolvedSelectedModel, zh)} / ${modelName(resolvedSelectedModel)}`
+      ? `${providerName(resolvedSelectedModel, zh)} / ${modelName(resolvedSelectedModel)}${resolvedSelectedModel.supports1MContext ? ' · 1M' : ''}`
       : resolvedSelectedId
         ? zh
           ? '当前选择不可用'
