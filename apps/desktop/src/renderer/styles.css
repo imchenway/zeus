@@ -19537,6 +19537,7 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
 
 /* 2026-07-02 任务页多场景原型高还原最终覆盖：分组工具条优先，默认 7 列不画假横条，列设置与新任务保持悬浮 overlay。 */
 .macos-ai-app .task-table-workbench {
+  align-content: start;
   block-size: auto;
   gap: 6px;
   grid-auto-flow: row;
