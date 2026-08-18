@@ -12,6 +12,7 @@ import { GithubLogoIcon as GithubLogo } from '@phosphor-icons/react/dist/csr/Git
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { ShareNetworkIcon as ShareNetwork } from '@phosphor-icons/react/dist/csr/ShareNetwork';
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
+import { UsersThreeIcon as UsersThree } from '@phosphor-icons/react/dist/csr/UsersThree';
 import { conversationAttachmentIdentity } from './ConversationComposerAttachments.js';
 import { isImageResource, isPendingImageAttachment, ResourceIcon } from './ConversationResources.js';
 import { SessionCodeReviewDialog, type SessionCodeReviewSelection } from './SessionCodeReviewDialog.js';
@@ -43,6 +44,8 @@ interface SessionQuickActionsCardProps {
   onOpenGitReview?: (taskId: string, workspaceId: string | null, mode: 'commit' | 'push-only') => void;
   onOpenGitDelivery?: (taskId: string, workspaceId: string | null) => void;
   onOpenProjectCommands?: () => void;
+  subagentCount?: number;
+  onOpenSubagents?: (trigger: HTMLButtonElement) => void;
   onStartCodeReview?: (selection: SessionCodeReviewSelection) => void | boolean | { state: 'preparing'; cancel: () => void } | Promise<void | boolean | { state: 'preparing'; cancel: () => void }>;
   onAddSources?: () => void | Promise<void>;
   onOpenSource?: (resource: ConversationResource) => void | Promise<void>;
@@ -88,6 +91,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const dirty = workspace?.review ? !workspace.review.clean : false;
   const canOpenReview = Boolean(taskId && workspace && props.onOpenGitReview);
   const canOpenDelivery = Boolean(taskId && props.onOpenGitDelivery);
+  const subagentCount = props.subagentCount ?? 0;
   const persistent = hasPersistentSpace && !props.forceCollapsed;
   const cardVisible = !props.suppressed && (persistent || open);
   const cardMounted = cardVisible || Boolean(props.suppressed && persistent);
@@ -250,6 +254,11 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
     setReviewDialogOpen(true);
   }
 
+  function openSubagents(trigger: HTMLButtonElement): void {
+    setOpen(false);
+    props.onOpenSubagents?.(trigger);
+  }
+
   return (
     <div className="session-quick-actions-anchor" ref={rootRef} data-presentation={persistent ? 'persistent' : 'collapsed'}>
       {persistent || props.suppressed ? null : (
@@ -324,6 +333,17 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                   {workspace?.sourceBranch ? <small>{zh ? `来源 ${workspace.sourceBranch}` : `Source ${workspace.sourceBranch}`}</small> : null}
                 </span>
               </div>
+
+              {subagentCount > 0 && props.onOpenSubagents ? (
+                <button type="button" className="session-quick-actions-row" onClick={(event) => openSubagents(event.currentTarget)}>
+                  <UsersThree aria-hidden="true" weight="regular" />
+                  <span className="session-quick-actions-copy">
+                    <strong>{zh ? '智能体' : 'Agents'}</strong>
+                    <small>{zh ? `${subagentCount} 个线程` : `${subagentCount} ${subagentCount === 1 ? 'thread' : 'threads'}`}</small>
+                  </span>
+                  <ArrowSquareOut aria-hidden="true" weight="regular" />
+                </button>
+              ) : null}
 
               <button type="button" className="session-quick-actions-row" onClick={openCommands}>
                 <TerminalWindow aria-hidden="true" weight="regular" />
