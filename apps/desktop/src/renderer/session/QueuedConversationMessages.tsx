@@ -28,6 +28,7 @@ const labels = {
     waitingPlanConfirmation: '完成上方计划确认后按顺序自动发送。',
     preparingExecutionContext: '正在准备会话执行现场，完成后按顺序自动发送。',
     dispatchPending: '队首消息正在等待发送。',
+    steering: '正在引导当前回复，等待当前轮次确认。',
     interrupted: '当前回复已中断，后续消息已暂停。',
     transportUnavailable: '连接恢复后继续处理后续消息。',
     providerArchived: '原会话已归档，恢复后由你确认发送。',
@@ -71,6 +72,7 @@ const labels = {
     waitingPlanConfirmation: 'Sends automatically in order after you confirm the plan above.',
     preparingExecutionContext: 'Preparing the conversation workspace, then sends automatically in order.',
     dispatchPending: 'The first follow-up is waiting to be sent.',
+    steering: 'Steering the current response; waiting for turn confirmation.',
     interrupted: 'The current response was interrupted. Follow-ups are paused.',
     transportUnavailable: 'Follow-ups continue after the connection recovers.',
     providerArchived: 'The original conversation is archived. Restore it to confirm sending.',
@@ -256,6 +258,7 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                   <p className="session-queued-message-reference">
                     <strong>{copy.item(index + 1)}</strong>
                     <span>{queuedMessagePreview(submission, copy.attachmentOnly)}</span>
+                    {submission.status === 'steering' ? <small>{copy.steering}</small> : null}
                     {submission.controlAction ? <small>{copy.planControl}</small> : null}
                     {!submission.controlAction && (submission.attachments?.length ?? 0) > 0 ? <small>{copy.attachmentCount(submission.attachments!.length)}</small> : null}
                   </p>
@@ -314,17 +317,17 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                           setEditDraft(queuedMessageEditDraft(submission));
                           setEditError(null);
                         }}
-                        disabled={!writable || busy || !props.onEdit}
+                        disabled={!writable || busy || !props.onEdit || submission.status === 'steering'}
                       >
                         {copy.edit}
                       </button>
-                      <button type="button" onClick={() => void props.onDelete?.(submission.id)} disabled={!writable || busy || !props.onDelete}>
+                      <button type="button" onClick={() => void props.onDelete?.(submission.id)} disabled={!writable || busy || !props.onDelete || submission.status === 'steering'}>
                         {copy.remove}
                       </button>
-                      <button type="button" onClick={() => reorder(submission, -1)} disabled={!writable || busy || !props.onReorder || index === 0 || Boolean(queue[index - 1]?.controlAction)}>
+                      <button type="button" onClick={() => reorder(submission, -1)} disabled={!writable || busy || !props.onReorder || submission.status === 'steering' || index === 0 || Boolean(queue[index - 1]?.controlAction)}>
                         {copy.moveUp}
                       </button>
-                      <button type="button" onClick={() => reorder(submission, 1)} disabled={!writable || busy || !props.onReorder || index === queue.length - 1}>
+                      <button type="button" onClick={() => reorder(submission, 1)} disabled={!writable || busy || !props.onReorder || submission.status === 'steering' || index === queue.length - 1}>
                         {copy.moveDown}
                       </button>
                     </>
@@ -409,7 +412,7 @@ function inferLegacyQueueWaitReason(state: NativeSessionState, queue: readonly N
 
 export function visibleQueuedSubmissions(queue: NativeQueueSnapshot | null): NativeQueuedSubmission[] {
   return [...(queue?.submissions ?? [])]
-    .filter((submission) => (submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'paused') && !submission.providerTurnId)
+    .filter((submission) => (submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'steering' || submission.status === 'paused') && !submission.providerTurnId)
     .sort((left, right) => left.position - right.position || (left.createdAt ?? '').localeCompare(right.createdAt ?? '') || left.id.localeCompare(right.id));
 }
 

@@ -176,6 +176,51 @@
   gap: 3px;
 }
 
+.qa-motion-send-preview {
+  background: var(--session-canvas);
+  border: 1px solid var(--session-line);
+  border-radius: 16px;
+  color: var(--session-text);
+  display: grid;
+  gap: 12px;
+  padding: 20px;
+}
+
+.qa-motion-send-preview > div:first-child {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.qa-motion-send-preview h3 {
+  font-size: 13px;
+  margin: 0;
+}
+
+.qa-motion-send-preview button {
+  background: var(--session-accent);
+  border: 0;
+  border-radius: 8px;
+  color: white;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 7px 12px;
+}
+
+.qa-send-transcript {
+  border: 1px solid var(--session-line-soft);
+  border-radius: 12px;
+  min-block-size: 280px;
+  overflow: hidden;
+}
+
+.qa-send-transcript .session-transcript {
+  block-size: 230px;
+  padding-block: 18px;
+}
+
 .qa-motion-theme > header small,
 .qa-motion-theme h3 {
   color: var(--session-text-muted);

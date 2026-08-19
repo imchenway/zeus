@@ -8,11 +8,12 @@ import './session-styles.css';
 import type { ConversationResource, ConversationResourcePreview } from '@zeus/shared';
 import { PendingRequestSurface } from '../src/renderer/session/PendingRequestSurface.js';
 import { type ConversationTreeRuntimeState, type ProjectConversationGroup, ProjectConversationTree } from '../src/renderer/session/ProjectConversationTree.js';
-import type { NativeConversationChoice, NativePendingRequest, NativeSessionItemBuffer, NativeSessionState } from '../src/renderer/session/sessionTypes.js';
+import type { NativeConversationChoice, NativePendingRequest, NativeQueuedSubmission, NativeSessionItemBuffer, NativeSessionState } from '../src/renderer/session/sessionTypes.js';
 import { SafeMarkdown, ThreadItemView } from '../src/renderer/session/ThreadItemView.js';
 import { ConversationTranscript } from '../src/renderer/session/ConversationTranscript.js';
+import { QueuedConversationMessages } from '../src/renderer/session/QueuedConversationMessages.js';
 import { PlanSummary } from '../src/renderer/session/PlanSummary.js';
-import { createInitialSessionState } from '../src/renderer/session/sessionReducer.js';
+import { createInitialSessionState, sessionReducer } from '../src/renderer/session/sessionReducer.js';
 
 declare global {
   interface Window {
@@ -193,6 +194,122 @@ const motionSessionState: NativeSessionState = {
       createdAt: '2026-08-15T04:00:00.000Z',
       updatedAt: '2026-08-15T04:00:14.000Z',
     },
+  },
+  transcriptRevision: 1,
+};
+
+const executionPhasePreviousReasoning = motionItem('phase-reasoning-previous', 'reasoning', 'completed', '先检查上一阶段的工作结果。', {
+  summary: ['先检查上一阶段的工作结果。'],
+});
+const executionPhaseReasoning = motionItem('phase-reasoning-current', 'reasoning', 'in_progress', '现在按类别聚合工具、命令和文件活动，完成后再继续输出。', {
+  summary: ['现在按类别聚合工具、命令和文件活动，完成后再继续输出。'],
+});
+const executionPhaseActivities = [
+  motionItem('phase-read', 'commandExecution', 'completed', '', {
+    command: ['sed', '-n', '1,160p', 'ConversationTranscript.tsx'],
+    commandActions: [{ type: 'read', path: 'apps/desktop/src/renderer/session/ConversationTranscript.tsx' }],
+  }),
+  motionItem('phase-search', 'commandExecution', 'completed', '', {
+    command: ['rg', 'SessionActivityGroup'],
+    commandActions: [{ type: 'search', pattern: 'SessionActivityGroup', path: 'apps/desktop/src/renderer/session' }],
+  }),
+  motionItem('phase-tool', 'dynamicToolCall', 'completed', '', { toolName: 'browser' }),
+  motionItem('phase-command', 'commandExecution', 'in_progress', '', { command: ['pnpm', 'typecheck'] }),
+];
+const executionPhaseItems = [executionPhasePreviousReasoning, executionPhaseReasoning, ...executionPhaseActivities];
+const executionPhaseSessionState: NativeSessionState = {
+  ...createInitialSessionState(),
+  transportState: 'ready',
+  conversationState: 'active_prework',
+  projectId: 'project-zeus',
+  conversationId: motionConversationId,
+  providerThreadId: motionThreadId,
+  activeTurnId: motionTurnId,
+  startedTurnId: motionTurnId,
+  // 视觉夹具只需要证明已水合后的滚动与新增消息路径，快照其余字段不参与渲染。
+  snapshot: { id: motionConversationId } as NonNullable<NativeSessionState['snapshot']>,
+  items: Object.fromEntries(executionPhaseItems.map((item) => [item.key, item])),
+  itemOrder: executionPhaseItems.map((item) => item.key),
+  turnsByProviderId: motionSessionState.turnsByProviderId,
+  transcriptRevision: 1,
+};
+
+const sendScrollConversationId = 'send-scroll-conversation';
+const sendScrollTurnId = 'send-scroll-turn';
+const sendScrollSnapshot = { id: sendScrollConversationId } as NonNullable<NativeSessionState['snapshot']>;
+const sendScrollItems = Array.from({ length: 8 }, (_, index) => motionItem(`send-history-${index}`, 'agentMessage', 'completed', `历史回答 ${index + 1}：用于制造可滚动的会话内容。`, { phase: 'final_answer' })).map((item) => ({
+  ...item,
+  conversationId: sendScrollConversationId,
+  threadId: 'send-scroll-thread',
+  turnId: sendScrollTurnId,
+}));
+const sendScrollInitialState: NativeSessionState = {
+  ...createInitialSessionState(),
+  transportState: 'ready',
+  conversationState: 'ready',
+  projectId: 'project-zeus',
+  conversationId: sendScrollConversationId,
+  providerThreadId: 'send-scroll-thread',
+  snapshot: sendScrollSnapshot,
+  items: Object.fromEntries(sendScrollItems.map((item) => [item.key, item])),
+  itemOrder: sendScrollItems.map((item) => item.key),
+  turnsByProviderId: {
+    [sendScrollTurnId]: {
+      id: sendScrollTurnId,
+      providerTurnId: sendScrollTurnId,
+      submissionId: null,
+      status: 'completed',
+      startedAt: '2026-08-15T04:00:00.000Z',
+      completedAt: '2026-08-15T04:01:00.000Z',
+      createdAt: '2026-08-15T04:00:00.000Z',
+      updatedAt: '2026-08-15T04:01:00.000Z',
+    },
+  },
+  transcriptRevision: 1,
+};
+
+const steeringConversationId = 'steering-conversation';
+const steeringThreadId = 'steering-thread';
+const steeringTurnId = 'steering-turn';
+const steeringSubmission: NativeQueuedSubmission = {
+  id: 'queued-steering-message',
+  conversationId: steeringConversationId,
+  content: '点击引导后立即进入思考过程。',
+  status: 'queued',
+  delivery: 'queue',
+  position: 0,
+  providerTurnId: null,
+  clientUserMessageId: 'queued-steering-client',
+  pausedReason: null,
+  createdAt: '2026-08-15T04:02:00.000Z',
+  updatedAt: '2026-08-15T04:02:00.000Z',
+};
+const steeringReasoning: NativeSessionItemBuffer = {
+  ...motionReasoning,
+  key: 'steering:reasoning',
+  conversationId: steeringConversationId,
+  threadId: steeringThreadId,
+  turnId: steeringTurnId,
+  itemId: 'steering-reasoning',
+  text: '当前回复仍在执行，等待新的引导内容接管。',
+  payload: { summary: ['当前回复仍在执行，等待新的引导内容接管。'] },
+};
+const steeringInitialState: NativeSessionState = {
+  ...createInitialSessionState(),
+  transportState: 'ready',
+  conversationState: 'active_prework',
+  projectId: 'project-zeus',
+  conversationId: steeringConversationId,
+  providerThreadId: steeringThreadId,
+  activeTurnId: steeringTurnId,
+  startedTurnId: steeringTurnId,
+  snapshot: { id: steeringConversationId } as NonNullable<NativeSessionState['snapshot']>,
+  items: { [steeringReasoning.key]: steeringReasoning },
+  itemOrder: [steeringReasoning.key],
+  queue: {
+    state: { type: 'active', turnId: steeringTurnId, phase: 'prework' },
+    waitReason: 'current_turn',
+    submissions: [steeringSubmission],
   },
   transcriptRevision: 1,
 };
@@ -394,10 +511,125 @@ function MotionPreview(props: { dark?: boolean }) {
   );
 }
 
+function SendScrollPreview() {
+  const [state, setState] = useState(sendScrollInitialState);
+  const [sendCount, setSendCount] = useState(0);
+  const [scrollMetrics, setScrollMetrics] = useState('等待测量');
+
+  useLayoutEffect(() => {
+    const transcript = document.querySelector<HTMLElement>('[data-testid="send-scroll-preview"] .session-transcript');
+    if (!transcript) return;
+    const distance = Math.max(0, transcript.scrollHeight - transcript.clientHeight - transcript.scrollTop);
+    setScrollMetrics(`scrollTop ${Math.round(transcript.scrollTop)} / max ${Math.round(transcript.scrollHeight - transcript.clientHeight)}，距底部 ${Math.round(distance)}px`);
+  }, [state]);
+
+  function sendImmediately(): void {
+    const clientUserMessageId = `qa-send-${sendCount + 1}`;
+    const startedAt = new Date().toISOString();
+    setState((previous) => {
+      const started = sessionReducer(previous, {
+        type: 'send_started',
+        clientUserMessageId,
+        durableClientUserMessageId: clientUserMessageId,
+        draft: `第 ${sendCount + 1} 条新消息，应立即出现在底部。`,
+        attachments: [],
+        submittedAttachments: [],
+        browserSubmission: null,
+        contextDraft: previous.contextDraft,
+        browserComments: [],
+        delivery: 'steer_now',
+        previousConversationState: previous.conversationState,
+        startedAt,
+      });
+      // 模拟极快的 accepted/完成路径，验证不依赖 awaitingReply 列表也会立即到底。
+      return sessionReducer(started, {
+        type: 'send_accepted',
+        clientUserMessageId,
+        status: 'completed',
+        providerTurnId: sendScrollTurnId,
+      });
+    });
+    setSendCount((value) => value + 1);
+  }
+
+  return (
+    <section className="qa-motion-send-preview session-codex-parity-v1" data-testid="send-scroll-preview">
+      <div>
+        <h3>发送后自动到底</h3>
+        <button type="button" data-testid="send-scroll-button" onClick={sendImmediately}>
+          发送新消息
+        </button>
+      </div>
+      <small data-testid="send-scroll-metrics">{scrollMetrics}</small>
+      <div className="qa-send-transcript ai-workspace">
+        <ConversationTranscript state={state} language="zh-CN" />
+      </div>
+    </section>
+  );
+}
+
+function SteeringPreview() {
+  const [state, setState] = useState(steeringInitialState);
+
+  function steerImmediately(): void {
+    setState((previous) => {
+      const submission = previous.queue?.submissions.find((entry) => entry.id === steeringSubmission.id);
+      if (!submission || !previous.activeTurnId) return previous;
+      const steeringPending = {
+        ...submission,
+        status: 'steering',
+        delivery: 'queue' as const,
+        providerTurnId: null,
+        updatedAt: new Date().toISOString(),
+      };
+      const next = sessionReducer(previous, {
+        type: 'queue_hydrated',
+        queue: previous.queue
+          ? { ...previous.queue, submissions: previous.queue.submissions.map((entry) => (entry.id === submission.id ? steeringPending : entry)) }
+          : { state: { type: 'active', turnId: previous.activeTurnId, phase: 'prework' }, waitReason: 'current_turn', submissions: [steeringPending] },
+      });
+      window.setTimeout(() => {
+        setState((current) => {
+          const currentSubmission = current.queue?.submissions.find((entry) => entry.id === steeringSubmission.id);
+          if (!currentSubmission || currentSubmission.status !== 'steering' || !current.activeTurnId) return current;
+          return sessionReducer(current, {
+            type: 'steering_submission_hydrated',
+            submission: {
+              ...currentSubmission,
+              status: 'active',
+              delivery: 'steer_now',
+              providerTurnId: current.activeTurnId,
+              updatedAt: new Date().toISOString(),
+            },
+            queue: current.queue ? { ...current.queue, submissions: current.queue.submissions.filter((entry) => entry.id !== steeringSubmission.id) } : undefined,
+          });
+        });
+      }, 3000);
+      return next;
+    });
+  }
+
+  const steeringState = state.queue?.submissions.find((entry) => entry.id === steeringSubmission.id)?.status;
+
+  return (
+    <section className="qa-motion-send-preview session-codex-parity-v1" data-testid="steering-preview">
+      <div>
+        <h3>排队消息引导立即接管</h3>
+        <small data-testid="steering-status">{steeringState === 'steering' ? '引导中，消息保留在队列，等待当前轮次确认' : state.queue?.submissions.length ? '排队中' : '已按正常引导进入当前思考过程'}</small>
+      </div>
+      <QueuedConversationMessages state={state} language="zh-CN" onSendNow={steerImmediately} />
+      <div className="qa-send-transcript ai-workspace">
+        <ConversationTranscript state={state} language="zh-CN" />
+      </div>
+    </section>
+  );
+}
+
 interface MotionDiagnosticsSnapshot {
   viewport: string;
   reducedMotion: string;
   focusAnimations: string;
+  focusAnimationDurations: string;
   tailAnchor: string;
   tailSize: string;
   tailAnimation: string;
@@ -417,10 +649,14 @@ function MotionDiagnostics() {
     const focusAnimationNames = [tailStyle?.animationName, reasoningIcon ? window.getComputedStyle(reasoningIcon).animationName : null, activityIcon ? window.getComputedStyle(activityIcon).animationName : null].filter(
       (name): name is string => Boolean(name && name !== 'none'),
     );
+    const focusAnimationDurations = [tailStyle?.animationDuration, reasoningIcon ? window.getComputedStyle(reasoningIcon).animationDuration : null, activityIcon ? window.getComputedStyle(activityIcon).animationDuration : null].filter(
+      (duration): duration is string => Boolean(duration && duration !== '0s'),
+    );
     setSnapshot({
       viewport: `${window.innerWidth}×${window.innerHeight}`,
       reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? '开启' : '关闭',
       focusAnimations: `${focusAnimationNames.length}（${focusAnimationNames.join('、') || '无'}）`,
+      focusAnimationDurations: focusAnimationDurations.join('、') || '无',
       tailAnchor: tailAnchor?.tagName.toLocaleLowerCase() ?? '未找到',
       tailSize: tailStyle ? `${tailStyle.inlineSize} × ${tailStyle.blockSize}` : '未找到',
       tailAnimation: tailStyle?.animationName ?? '未找到',
@@ -455,6 +691,17 @@ function MotionApp() {
       <MotionDiagnostics />
       <MotionPreview />
       <MotionPreview dark />
+      <section className="qa-motion-theme session-codex-parity-v1 theme-light" data-testid="execution-phase-preview">
+        <header>
+          <strong>摘要之间的执行段</strong>
+          <small>按类别折叠命令、工具和文件活动，展开后保留类别内明细</small>
+        </header>
+        <div className="qa-motion-transcript ai-workspace">
+          <ConversationTranscript state={executionPhaseSessionState} language="zh-CN" />
+        </div>
+      </section>
+      <SendScrollPreview />
+      <SteeringPreview />
     </main>
   );
 }

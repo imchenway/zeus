@@ -1,5 +1,5 @@
 import { Fragment, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { isActiveSessionTurn, isOperationalActivityItem, SessionActivityGroup, SessionTurnDuration, SessionTurnProcessDisclosure } from './SessionActivity.js';
+import { activityCategory, isActiveSessionTurn, isLiveActivityItem, isOperationalActivityItem, SessionActivityGroup, SessionTurnDuration, SessionTurnProcessDisclosure, type SessionActivityCategory } from './SessionActivity.js';
 import { itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText } from './ThreadItemView.js';
 import { PlanSummary } from './PlanSummary.js';
 import { isAssistantDeliverableItem } from './sessionTypes.js';
@@ -72,6 +72,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const latestContentMarkerRef = useRef<HTMLSpanElement | null>(null);
   const latestMarkerIntersectingRef = useRef(true);
   const latestPositionFrameRef = useRef<number | null>(null);
+  const latestPositionSettleFrameRef = useRef<number | null>(null);
   const latestVisibilityFrameRef = useRef<number | null>(null);
   const lastReportedLatestVisibilityRef = useRef<boolean | null>(null);
   const latestVisibilityCallbackRef = useRef(props.onLatestContentVisibilityChange);
@@ -83,6 +84,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const [completedAnnouncement, setCompletedAnnouncement] = useState<{ key: string; text: string } | null>(null);
   const completedAnnouncementTrackerRef = useRef<CompletedItemAnnouncementTracker>({ hydrated: false, lastCompletedKey: null });
   const positionedConversationIdRef = useRef<string | null>(null);
+  const trackedUserMessageRef = useRef<{ conversationId: string | null; key: string | null; initialized: boolean }>({ conversationId: null, key: null, initialized: false });
   const awaitingReplyMessageIdsRef = useRef<Set<string>>(new Set());
   const awaitingReplyConversationIdRef = useRef<string | null>(null);
   const queuedSubmissions = useMemo(() => visibleQueuedSubmissions(props.state.queue), [props.state.queue]);
@@ -190,11 +192,30 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       if (!container) return;
       const effect = scrollController.onDelta();
       if (effect.type === 'scroll_to_bottom') {
-        scrollToLatest(container);
+        scrollToLatest(container, latestContentMarkerRef.current);
         setReturnToLatestVisible(false);
       }
       scheduleLatestContentVisibility();
     });
+  }, [scheduleLatestContentVisibility, scrollController]);
+
+  const settleLatestPosition = useCallback(() => {
+    if (latestPositionSettleFrameRef.current !== null) cancelAnimationFrame(latestPositionSettleFrameRef.current);
+    let remainingFrames = 3;
+    const settle = (): void => {
+      latestPositionSettleFrameRef.current = null;
+      const container = containerRef.current;
+      if (!container) return;
+      const effect = scrollController.onDelta();
+      if (effect.type === 'scroll_to_bottom') {
+        scrollToLatest(container, latestContentMarkerRef.current);
+        setReturnToLatestVisible(false);
+      }
+      scheduleLatestContentVisibility();
+      remainingFrames -= 1;
+      if (remainingFrames > 0) latestPositionSettleFrameRef.current = requestAnimationFrame(settle);
+    };
+    latestPositionSettleFrameRef.current = requestAnimationFrame(settle);
   }, [scheduleLatestContentVisibility, scrollController]);
 
   useEffect(() => {
@@ -220,6 +241,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   useEffect(
     () => () => {
       if (latestPositionFrameRef.current !== null) cancelAnimationFrame(latestPositionFrameRef.current);
+      if (latestPositionSettleFrameRef.current !== null) cancelAnimationFrame(latestPositionSettleFrameRef.current);
       if (latestVisibilityFrameRef.current !== null) cancelAnimationFrame(latestVisibilityFrameRef.current);
       lastReportedLatestVisibilityRef.current = false;
       latestVisibilityCallbackRef.current?.(false);
@@ -232,9 +254,10 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     const conversationId = props.state.conversationId;
     if (!container || !historyHydrated || !conversationId || positionedConversationIdRef.current === conversationId) return;
     positionedConversationIdRef.current = conversationId;
-    scrollToLatest(container);
+    scrollToLatest(container, latestContentMarkerRef.current);
+    settleLatestPosition();
     setReturnToLatestVisible(false);
-  }, [historyHydrated, props.state.conversationId, props.state.transcriptRevision]);
+  }, [historyHydrated, props.state.conversationId, props.state.transcriptRevision, settleLatestPosition]);
 
   useLayoutEffect(() => {
     const container = containerRef.current;
@@ -252,10 +275,32 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     if (historyHydrated && !activeTurnTrackingInitializedRef.current) return;
     const effect = scrollController.onMessageSubmitted();
     if (effect.type === 'scroll_to_bottom') {
-      scrollToLatest(container);
+      scrollToLatest(container, latestContentMarkerRef.current);
       setReturnToLatestVisible(false);
     }
   }, [awaitingReplyMessageIds, historyHydrated, props.state.conversationId, scrollController]);
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    const conversationId = props.state.conversationId;
+    if (!container || !historyHydrated || !conversationId) return;
+    const tracked = trackedUserMessageRef.current;
+    if (!tracked.initialized || tracked.conversationId !== conversationId) {
+      trackedUserMessageRef.current = { conversationId, key: lastUserKey ?? null, initialized: true };
+      return;
+    }
+    const previousKey = tracked.key;
+    tracked.key = lastUserKey ?? null;
+    if (!lastUserKey || lastUserKey === previousKey) return;
+
+    // 以可见用户消息身份作为发送锚点，覆盖“发送后很快被 accepted/完成，来不及进入 awaitingReply 列表”的快速路径。
+    const effect = scrollController.onMessageSubmitted();
+    if (effect.type === 'scroll_to_bottom') {
+      scrollToLatest(container, latestContentMarkerRef.current);
+      setReturnToLatestVisible(false);
+      settleLatestPosition();
+    }
+  }, [historyHydrated, lastUserKey, props.state.conversationId, scrollController, settleLatestPosition]);
 
   useEffect(() => {
     const resolution = resolveCompletedItemAnnouncement(completedAnnouncementTrackerRef.current, items, props.language);
@@ -275,7 +320,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     if (props.state.activeTurnId && previousTurnIdRef.current !== props.state.activeTurnId) {
       const effect = scrollController.onTurnStarted(metrics(container), Date.now());
       if (effect.type === 'scroll_to_bottom') {
-        scrollToLatest(container);
+        scrollToLatest(container, latestContentMarkerRef.current);
         setReturnToLatestVisible(false);
       }
     }
@@ -387,7 +432,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             if (!container) return;
             const effect = scrollController.onExplicitLatestRequest();
             if (effect.type !== 'scroll_to_bottom') return;
-            scrollToLatest(container);
+            scrollToLatest(container, latestContentMarkerRef.current);
             setReturnToLatestVisible(false);
           }}
         >
@@ -527,6 +572,7 @@ export type TranscriptRow =
       kind: 'activity';
       key: string;
       items: NativeSessionItemBuffer[];
+      category: SessionActivityCategory;
     };
 
 function collapseRepeatedErrorItems(items: readonly NativeSessionItemBuffer[]): NativeSessionItemBuffer[] {
@@ -622,7 +668,7 @@ function transcriptRowRenderOptions(
 function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOptions): ReactNode {
   if (row.kind === 'answered_request') return <AnsweredRequestHistory request={row.request} language={options.props.language} />;
   if (row.kind === 'activity') {
-    return <SessionActivityGroup items={row.items} language={options.props.language} motionActive={row.items.some((item) => item.key === options.motionFocus?.itemKey)} />;
+    return <SessionActivityGroup items={row.items} category={row.category} language={options.props.language} motionActive={row.items.some(isLiveActivityItem) || row.items.some((item) => item.key === options.motionFocus?.itemKey)} />;
   }
   if (row.item.type === 'plan') {
     return <PlanSummary item={row.item} language={options.props.language} motionActive={row.item.key === options.motionFocus?.itemKey} panelOpen={options.props.openPlanItemKey === row.item.key} onOpenPanel={options.props.onOpenPlan} />;
@@ -869,20 +915,27 @@ export function isFinalAnswerItem(item: NativeSessionItemBuffer): boolean {
   return itemRole(item) === 'assistant' && (providerPhase === 'final_answer' || providerPhase === 'finalAnswer');
 }
 
-const MAX_GROUPED_COMMAND_ACTIVITY = 32;
-
 export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[], answeredRequests: readonly NativePendingRequest[] = [], activeTurnId: string | null = null): TranscriptRow[] {
   const rows: TranscriptRow[] = [];
-  let activity: NativeSessionItemBuffer[] = [];
+  let activityTurnId: string | null = null;
+  const activityByCategory = new Map<SessionActivityCategory, NativeSessionItemBuffer[]>();
+  const activityCategoryOrder: SessionActivityCategory[] = [];
   const currentReasoningItemKey = latestCurrentReasoningItemKey(items, activeTurnId);
-  const flushActivity = () => {
-    if (activity.length === 0) return;
-    rows.push({
-      kind: 'activity',
-      key: `activity:${activity[0]!.key}`,
-      items: activity,
-    });
-    activity = [];
+  const flushActivity = (): void => {
+    if (activityCategoryOrder.length === 0 || !activityTurnId) return;
+    for (const category of activityCategoryOrder) {
+      const groupedItems = activityByCategory.get(category);
+      if (!groupedItems || groupedItems.length === 0) continue;
+      rows.push({
+        kind: 'activity',
+        key: `activity:${activityTurnId}:${category}:${groupedItems[0]!.key}`,
+        items: groupedItems,
+        category,
+      });
+    }
+    activityTurnId = null;
+    activityByCategory.clear();
+    activityCategoryOrder.length = 0;
   };
   const timeline: Array<{ kind: 'item'; item: NativeSessionItemBuffer } | { kind: 'answered_request'; request: NativePendingRequest }> = items.map((item) => ({ kind: 'item', item }));
   for (const request of [...answeredRequests].sort((left, right) => (left.resolvedAt ?? left.createdAt).localeCompare(right.resolvedAt ?? right.createdAt))) {
@@ -912,22 +965,17 @@ export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[],
       rows.push({ kind: 'item', key: transcriptItemRenderKey(item), item });
       continue;
     }
-    if (!isCommandActivityItem(item)) {
-      // MCP、网页、图片和文件变更等非命令工具可合并相邻工具，但不能与命令混成一个数量摘要。
-      if (!isMergeableToolActivity(item)) {
-        flushActivity();
-        activity.push(item);
-        flushActivity();
-        continue;
-      }
-      if (!canJoinToolActivity(activity, item)) flushActivity();
-      activity.push(item);
-      if (item.status === 'failed' || activity.length >= MAX_GROUPED_TOOL_ACTIVITY) flushActivity();
-      continue;
+    // 两条思考摘要之间属于同一工作阶段，但折叠摘要按类别分组；命令、工具、文件变更和上下文整理
+    // 各自聚合，展开后仍保留每个类别内的原始明细，避免把不同语义压成一个混合数量。
+    if (activityTurnId && activityTurnId !== item.turnId) flushActivity();
+    activityTurnId ??= item.turnId;
+    const category = activityCategory(item);
+    const groupedItems = activityByCategory.get(category);
+    if (groupedItems) groupedItems.push(item);
+    else {
+      activityByCategory.set(category, [item]);
+      activityCategoryOrder.push(category);
     }
-    if (!canJoinCommandActivity(activity, item)) flushActivity();
-    activity.push(item);
-    if (item.status === 'failed' || activity.length >= MAX_GROUPED_COMMAND_ACTIVITY || !isGroupableCommandSource(item)) flushActivity();
   }
   flushActivity();
   return rows;
@@ -936,48 +984,6 @@ export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[],
 function latestCurrentReasoningItemKey(items: readonly NativeSessionItemBuffer[], activeTurnId: string | null): string | null {
   if (!activeTurnId || items.some((item) => item.turnId === activeTurnId && isFinalAnswerItem(item))) return null;
   return [...items].reverse().find((item) => item.turnId === activeTurnId && normalizeItemType(item.type) === 'reasoning' && item.status !== 'failed' && item.status !== 'interrupted')?.key ?? null;
-}
-
-function canJoinCommandActivity(activity: readonly NativeSessionItemBuffer[], item: NativeSessionItemBuffer): boolean {
-  if (activity.length === 0) return true;
-  if (activity.length >= MAX_GROUPED_COMMAND_ACTIVITY || activity[0]!.turnId !== item.turnId) return false;
-  if (!isGroupableCommandSource(item) || activity.some((candidate) => !isCommandActivityItem(candidate) || !isGroupableCommandSource(candidate) || candidate.status === 'failed')) return false;
-  const hasRunningCommand = activity.some((candidate) => candidate.status !== 'completed');
-  return !hasRunningCommand || (isExploringCommand(item) && activity.every(isExploringCommand));
-}
-
-const MAX_GROUPED_TOOL_ACTIVITY = 32;
-
-function canJoinToolActivity(activity: readonly NativeSessionItemBuffer[], item: NativeSessionItemBuffer): boolean {
-  if (activity.length === 0) return true;
-  if (activity.length >= MAX_GROUPED_TOOL_ACTIVITY || activity[0]!.turnId !== item.turnId) return false;
-  if (!isMergeableToolActivity(item) || activity.some((candidate) => !isMergeableToolActivity(candidate) || candidate.status === 'failed')) return false;
-  return true;
-}
-
-function isMergeableToolActivity(item: NativeSessionItemBuffer): boolean {
-  const type = normalizeItemType(item.type);
-  // 上下文整理有独立摘要口径，Provider 事件属于技术事件，均不与普通工具合并计数。
-  return isOperationalActivityItem(item) && !isCommandActivityItem(item) && type !== 'contextcompaction' && type !== 'providerevent';
-}
-
-function isCommandActivityItem(item: NativeSessionItemBuffer): boolean {
-  return ['commandexecution', 'command'].includes(normalizeItemType(item.type));
-}
-
-function isGroupableCommandSource(item: NativeSessionItemBuffer): boolean {
-  const source = typeof item.payload.source === 'string' ? normalizeItemType(item.payload.source) : '';
-  return source !== 'usershell' && source !== 'unifiedexecinteraction';
-}
-
-function isExploringCommand(item: NativeSessionItemBuffer): boolean {
-  if (!Array.isArray(item.payload.commandActions) || item.payload.commandActions.length === 0) return false;
-  return item.payload.commandActions.every((value) => {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-    const rawType = (value as Record<string, unknown>).type;
-    const type = typeof rawType === 'string' ? normalizeItemType(rawType) : '';
-    return type === 'read' || type === 'listfiles' || type === 'search';
-  });
 }
 
 function lastVisibleItemKeyByTurn(rows: readonly TranscriptRow[]): Record<string, string> {
@@ -1100,9 +1106,11 @@ function metrics(element: HTMLElement) {
   return { scrollTop: element.scrollTop, scrollHeight: element.scrollHeight, clientHeight: element.clientHeight };
 }
 
-function scrollToLatest(container: Pick<HTMLElement, 'scrollHeight' | 'scrollTo'>): void {
+function scrollToLatest(container: Pick<HTMLElement, 'clientHeight' | 'scrollHeight' | 'scrollTop'>, marker?: Pick<HTMLElement, 'scrollIntoView'> | null): void {
+  // 先让底部锚点参与布局，唤醒 content-visibility 跳过的历史高度，再做无动画定位。
+  marker?.scrollIntoView({ block: 'end', inline: 'nearest', behavior: 'auto' });
   // 自动跟随必须即时定位，避免程序滚动事件被误判为用户主动阅读历史。
-  container.scrollTo({ top: container.scrollHeight, behavior: 'instant' });
+  container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
 }
 
 function normalizeItemType(value: string): string {

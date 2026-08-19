@@ -31,6 +31,7 @@ export type NativeSessionAction =
   | { type: 'queue_hydrated'; queue: NativeQueueSnapshot }
   | { type: 'queued_submission_deleted'; submissionId: string; clientUserMessageId?: string; queue: NativeQueueSnapshot }
   | { type: 'steering_submission_hydrated'; submission: NativeQueuedSubmission; queue?: NativeQueueSnapshot }
+  | { type: 'steering_submission_failed'; submissionId: string; clientUserMessageId?: string; error: NativeSessionError }
   | { type: 'operation_started'; operation: string }
   | { type: 'operation_finished'; operation: string; error?: NativeSessionError | null }
   | { type: 'interrupt_started'; turnId: string }
@@ -173,6 +174,8 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
       return removeQueuedSubmissionProjection(state, action.submissionId, action.clientUserMessageId, action.queue);
     case 'steering_submission_hydrated':
       return projectSteeringSubmission(state, action.submission, action.queue);
+    case 'steering_submission_failed':
+      return markSteeringSubmissionUnconfirmed(state, action.submissionId, action.clientUserMessageId, action.error);
     case 'operation_started':
       return { ...state, busyOperation: action.operation, error: null };
     case 'operation_finished':
@@ -1028,9 +1031,15 @@ function projectQueueSubmissionMessages(state: NativeSessionState, queue: Native
   let transcriptChanged = false;
   const conversationId = state.conversationId;
   const threadId = state.providerThreadId ?? state.snapshot?.providerThreadId ?? 'unbound-thread';
+  // send-now 的本地交接先于 HTTP/事件确认完成。旧的 queued/dispatching 快照不能把
+  // 已经进入当前 turn 的 steer 消息重新画回队列，否则会出现“队列消失后又闪回”的断层。
+  const projectedQueue: NativeQueueSnapshot = {
+    ...queue,
+    submissions: queue.submissions.filter((submission) => !hasPendingSteeringProjection(state.items, submission)),
+  };
 
   if (conversationId) {
-    for (const submission of queue.submissions) {
+    for (const submission of projectedQueue.submissions) {
       const clientUserMessageId = submission.clientUserMessageId;
       if (!clientUserMessageId || !shouldProjectSubmissionMessage(submission)) continue;
       const matchedEntry = Object.entries(items).find(([, item]) => isUserMessageItem(item) && userMessageClientIds(item).includes(clientUserMessageId));
@@ -1061,8 +1070,8 @@ function projectQueueSubmissionMessages(state: NativeSessionState, queue: Native
     ...state,
     items,
     itemOrder,
-    queue,
-    conversationState: conversationStateFromQueue(queue, state),
+    queue: projectedQueue,
+    conversationState: conversationStateFromQueue(projectedQueue, state),
     transcriptRevision: state.transcriptRevision + (transcriptChanged ? 1 : 0),
   };
 }
@@ -1083,7 +1092,11 @@ function shouldRecoverSubmissionToComposer(submission: NativeQueuedSubmission): 
 }
 
 function projectSteeringSubmission(state: NativeSessionState, submission: NativeQueuedSubmission, authoritativeQueue?: NativeQueueSnapshot): NativeSessionState {
-  const queue = authoritativeQueue ?? (state.queue ? { ...state.queue, submissions: state.queue.submissions.filter((entry) => entry.id !== submission.id) } : null);
+  const queue = authoritativeQueue
+    ? { ...authoritativeQueue, submissions: authoritativeQueue.submissions.filter((entry) => entry.id !== submission.id) }
+    : state.queue
+      ? { ...state.queue, submissions: state.queue.submissions.filter((entry) => entry.id !== submission.id) }
+      : null;
   const clientUserMessageId = submission.clientUserMessageId;
   const turnId = submission.providerTurnId;
   const conversationId = state.conversationId;
@@ -1116,6 +1129,44 @@ function projectSteeringSubmission(state: NativeSessionState, submission: Native
     ...(queue ? { queue, conversationState: conversationStateFromQueue(queue, state) } : {}),
     transcriptRevision: state.transcriptRevision + 1,
   };
+}
+
+function markSteeringSubmissionUnconfirmed(state: NativeSessionState, submissionId: string, clientUserMessageId: string | undefined, error: NativeSessionError): NativeSessionState {
+  const matchedEntry = Object.entries(state.items).find(
+    ([, item]) => item.optimistic && isUserMessageItem(item) && ((clientUserMessageId ? userMessageClientIds(item).includes(clientUserMessageId) : false) || stringValue(item.payload.submissionId) === submissionId),
+  );
+  if (!matchedEntry) return { ...state, error };
+  const [key, previous] = matchedEntry;
+  return {
+    ...state,
+    items: {
+      ...state.items,
+      [key]: {
+        ...previous,
+        status: 'unconfirmed',
+        payload: {
+          ...previous.payload,
+          deliveryError: error,
+        },
+      },
+    },
+    transcriptRevision: state.transcriptRevision + 1,
+    error,
+  };
+}
+
+function hasPendingSteeringProjection(items: Record<string, NativeSessionItemBuffer>, submission: NativeQueuedSubmission): boolean {
+  if (submission.status !== 'queued' && submission.status !== 'dispatching') return false;
+  if (submission.providerTurnId) return false;
+  return Object.values(items).some(
+    (item) =>
+      item.optimistic &&
+      isUserMessageItem(item) &&
+      stringValue(item.payload.delivery) === 'steer_now' &&
+      item.status !== 'failed' &&
+      item.status !== 'unconfirmed' &&
+      ((submission.clientUserMessageId ? userMessageClientIds(item).includes(submission.clientUserMessageId) : false) || stringValue(item.payload.submissionId) === submission.id),
+  );
 }
 
 function removeQueuedSubmissionProjection(state: NativeSessionState, submissionId: string, requestedClientUserMessageId: string | undefined, queue: NativeQueueSnapshot): NativeSessionState {

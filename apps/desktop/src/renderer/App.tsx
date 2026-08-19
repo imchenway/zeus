@@ -1028,7 +1028,7 @@ const graphEdgeTypeFilterValues = [
 
 const languageCopy = {
   'zh-CN': {
-    shellAriaLabel: 'Zeus macOS AI 原生研发工作台 · 已遵循减少动态效果',
+    shellAriaLabel: 'Zeus macOS AI 原生研发工作台 · 支持减少动态效果',
     documentLang: 'zh-CN',
     languages: {
       'zh-CN': '简体中文',
@@ -2493,7 +2493,7 @@ const languageCopy = {
     },
   },
   'en-US': {
-    shellAriaLabel: 'Zeus macOS AI native development workbench · Motion respects reduced motion',
+    shellAriaLabel: 'Zeus macOS AI native development workbench · Reduced motion supported',
     documentLang: 'en',
     languages: {
       'zh-CN': 'Simplified Chinese',
