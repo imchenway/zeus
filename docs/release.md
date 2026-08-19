@@ -1,7 +1,8 @@
 # 发布工程
 
 Zeus 发布工程必须基于真实构建、真实运行检查和真实产物。Apple signing / notarization 未配置时，可以公开交付
-ad-hoc 签名的 unsigned DMG，但必须显式标注签名、公证和 Gatekeeper 限制，不得伪造 Apple 分发认证。
+ad-hoc 签名的 unsigned DMG，但必须显式标注签名、公证和 Gatekeeper 限制，不得伪造 Apple 分发认证。生产 ad-hoc 包额外写入稳定的
+`assets/zeus-adhoc.requirement`，用于避免应用代码变化后 macOS 仅按 `cdhash` 识别出新的 TCC 主体；这不会改变 ad-hoc 的信任边界。
 
 ## 发布脚本
 

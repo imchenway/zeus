@@ -1,0 +1,12 @@
+// 生产 ad-hoc 包保持 Zeus 主 App 与其嵌套代码的稳定 designated requirement。
+designated => (
+  (
+    info [CFBundlePackageType] = "APPL"
+    and (
+      info [CFBundleIdentifier] = "dev.hypha.zeus"
+      or info [CFBundleIdentifier] = "dev.hypha.zeus.helper"*
+    )
+  )
+  or info [CFBundlePackageType] = "FMWK"
+  or !info [CFBundleIdentifier] exists
+)

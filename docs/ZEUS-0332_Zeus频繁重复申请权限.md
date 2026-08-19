@@ -27,23 +27,21 @@ Zeus 当前公开发布链路默认允许 ad-hoc、未公证产物：`publish_re
 
 ## 实现
 
-### 公开发布强制稳定身份
+### 保留 ad-hoc 公开发布并稳定 TCC 身份
 
-- `pnpm release` 和 `pnpm release:publish` 固定要求 Developer ID 签名与 Apple 公证，不允许通过环境变量关闭。
-- Release Workflow 在公开发布前检查 Developer ID 证书、公证凭据和 Homebrew Tap 凭据；任一缺失都会在创建标签、Release 或更新
-  Tap 前失败。
-- 公开打包作业无条件启用可分发产物门禁；生成的 manifest 必须同时记录 `signed=true`、`notarized=true`。
-- 发布后回验不再把 `signed=false` 或 `notarized=false` 的公开 manifest 视为成功。
+- 公开发布链路继续默认使用 `identity=-` 的 ad-hoc 签名，manifest 如实记录 `signed=false`、`notarized=false`；没有把发布方式改成
+  Developer ID 或 Apple 公证。
+- 生产身份 `Zeus.app` 在没有 Developer ID 凭据时额外使用 `assets/zeus-adhoc.requirement`。该 requirement 以稳定的 Zeus
+  bundle 标识和嵌套 Electron 代码类型建立 designated requirement，不再让 macOS 只记录每一版具体的 `cdhash`。
+- 只有 `ZEUS_PACKAGE_VARIANT=release` 的 ad-hoc 打包注入该 requirement；日常 `Zeus Test.app` 继续使用独立的
+  `dev.hypha.zeus.test` 身份，不与正式 Zeus 共享 TCC 主体。
+- 一旦配置 Developer ID 签名，打包继续走原有正式签名路径，不套用 ad-hoc requirement。
 
-### 保留本地候选能力
+优点：不需要 Apple 账号、不扩大“文稿”、下载或全盘访问 entitlement，并且在保留 ad-hoc 公开发布的前提下，为后续版本提供稳定的
+TCC designated requirement。
 
-`publish_release=false` 时仍可生成 ad-hoc 的本地候选或 Actions artifact，用于包结构和非 GUI 检查。该产物不能创建公开 Release，
-也不能更新 Homebrew Tap。
-
-优点：不需要扩大文稿、下载或全盘访问 entitlement；后续升级沿用同一 Developer ID 时，macOS 可以稳定识别 Zeus 并继承用户授权。
-
-代价：配置 Developer ID 与公证凭据前不能发布新公开版本；已有 ad-hoc 版本第一次升级到正式签名版本时，应用身份发生一次迁移，仍可能
-需要用户重新授权一次，此后连续签名版本才应稳定继承。
+代价：ad-hoc 没有可验证的开发者证书，不能获得 Gatekeeper 信任或公证；稳定 requirement 只能改善同一 bundle 身份的权限继承，不能把
+ad-hoc 产物描述成 Apple 已认证。已有旧版 `cdhash` 授权首次迁移到新 requirement 时，仍可能需要用户确认一次。
 
 ## 不采用的方案
 
@@ -56,41 +54,30 @@ Zeus 当前公开发布链路默认允许 ad-hoc、未公证产物：`publish_re
 3. 禁止用户选择文稿等受保护目录。
    - 优点：不会触发对应访问。
    - 缺点：破坏开发者把真实仓库放在常用目录中的核心工作流。
-4. 继续公开 ad-hoc 包，只在 Release notes 中提醒。
-   - 优点：不等待 Apple 凭据即可发布。
-   - 缺点：无法提供可跨版本验证的应用身份，重复授权根因继续存在。
+4. 强制把公开发布改成 Developer ID 签名与公证。
+   - 优点：身份和分发信任最完整。
+   - 缺点：超出当前 ad-hoc 发布约束，需要 Apple 凭据；不应作为本任务的实现前提。
 
 ## 验证边界
 
-代码交付需要完成格式、lint、typecheck、build 和发布脚本静态检查。真实问题的最终验收必须在同一台隔离 Mac 上连续安装两个由同一
-Developer ID 签名并已公证的 Zeus 版本：首版允许访问隔离的受保护测试目录，升级后再次访问时不应出现重复授权。
+代码交付需要完成格式、lint、typecheck、build 和发布脚本静态检查。真实问题的最终验收应在同一台隔离 Mac 上连续安装两个由本改动生成的
+ad-hoc 生产包：首版允许访问隔离的受保护测试目录，升级后再次访问时不应因为代码 hash 变化而重复授权。
 
-不得用 `Zeus Test.app` 的独立 bundle ID、ad-hoc 候选、单次 `codesign --verify` 或静态构建通过冒充这项跨版本 TCC 验收。验收也
-不需要重置或修改用户正式 Zeus 的 TCC 记录。
+不得用 `Zeus Test.app` 的独立 bundle ID、单次 `codesign --verify` 或静态构建通过冒充这项跨版本 TCC 验收。验收也不需要重置或修改
+用户正式 Zeus 的 TCC 记录。
 
 ## 验证记录
 
-2026-08-18 已完成：
+2026-08-19 已完成：
 
-- 目标文件 Prettier 检查：通过。
-- 两个发布脚本 `node --check`：通过。
-- 显式设置 `REQUIRE_APPLE_DISTRIBUTION=false` 的发布门禁探针：在读取远端或执行写操作前按预期拒绝。
-- `pnpm lint`：通过。
-- `pnpm typecheck`：通过。
-- `pnpm build`：通过，桌面端和全部 workspace 构建完成。
-- `git diff --check`：通过。
+- `pnpm exec prettier --check`：目标脚本、README 和发布文档通过。
+- `pnpm lint`、`pnpm typecheck`：通过。
+- `pnpm build`：通过，全部 workspace 和桌面端构建完成。
+- `pnpm package:mac`：通过；生成的仅是 `dev.hypha.zeus.test`、ad-hoc 的 `Zeus Test.app`，并通过最终签名校验。
+- `node --check scripts/package-mac.mjs`、`git diff --check`：通过。
+- macOS `codesign` 探针：ad-hoc 签名在两份代码 hash 不同的二进制上保留相同的显式 requirement，且均通过 designated requirement 校验。
+- 当前正式 `/Applications/Zeus.app` 只含 `cdhash` requirement 的只读检查：确认了本次问题的现状根因；没有修改或重签正式应用。
+- 公开发布仍保留 ad-hoc 的源码路径；稳定 requirement 只在生产 ad-hoc 打包命令中注入，测试包路径不变。
 
-本次未执行 `pnpm verify:release`、`pnpm package:mac` 或真实 GUI：前者会执行不属于本任务的外部 AI CLI 探针并生成生产候选，
-后两者也无法代替连续两个 Developer ID 版本的 TCC 授权继承验收。当前结论只证明发布源码门禁已收紧，不声称系统弹窗已经在真实
-升级现场消失。
-
-## 产品策略调整（2026-08-18）
-
-`v0.3.24` 已形成并推送发布提交后，公开发布前置检查确认仓库没有 Developer ID 证书和 Apple 公证凭据。用户明确说明当前没有
-Apple 凭据，并授权恢复 ad-hoc 公开发布。因此本任务原先的“公开发布强制稳定身份”改回可选严格模式：默认允许如实标记的 ad-hoc、
-未公证公开包；只有显式设置 `require_apple_distribution=true` 时才要求 Developer ID 和公证凭据。
-
-- 优点：无需等待外部 Apple 账号即可继续形成 GitHub Release 与 Homebrew 安装链路。
-- 缺点：ZEUS-0332 的跨升级稳定身份目标没有达成；升级后 macOS 仍可能再次询问“文稿”“下载”等目录权限，也不能启用可信静默更新。
-- 安全边界：manifest、Release 结果与公开文档必须保持 `signed=false`、`notarized=false` 的真实状态，不得宣称 Apple 已认证。
-- 后续恢复：取得 Apple Developer 凭据后，可显式开启严格模式，并用连续两个同一 Developer ID 签名且已公证的版本完成 TCC 继承验收。
+尚未完成的部分：没有执行生产身份打包或真实 GUI/TCC 升级验收；按项目约束，本任务 worktree 不启动或登记生产身份 `Zeus.app`。因此当前
+证据证明 requirement 注入和 ad-hoc 签名层的静态可行性，不声称 macOS 弹窗已经在真实连续升级现场消失。

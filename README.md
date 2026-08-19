@@ -42,7 +42,8 @@ brew upgrade --cask imchenway/tap/zeus
 如果没有看到“仍要打开”，请先再次尝试启动 Zeus，然后返回该页面。此操作只会为当前 Mac 添加一次例外，具体说明见
 [Apple 官方帮助](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac)。
 
-未配置 Apple Developer 凭据时，公开包仍采用 ad-hoc 签名且不做公证；发布清单会如实标记该状态。此类升级可能再次询问
-“文稿”“下载”等隐私权限。配置 Developer ID 与公证凭据后，可显式启用严格 Apple 分发。
+未配置 Apple Developer 凭据时，公开包仍采用 ad-hoc 签名且不做公证；发布清单会如实标记该状态。生产 ad-hoc 包包含稳定的代码
+requirement，用于减少升级后因代码身份变化而重复询问“文稿”“下载”等隐私权限。用户主动选择项目、附件或导出位置时，macOS 仍可能
+按真实目录访问边界请求授权。配置 Developer ID 与公证凭据后，仍可显式启用严格 Apple 分发。
 
 更多技术信息参见[发布说明](docs/release.md)和[架构文档](docs/architecture.md)。

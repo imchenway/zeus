@@ -51,9 +51,12 @@ function omitEmptyAppleReleaseEnvironment(env) {
   return normalizedEnv;
 }
 
-function buildElectronBuilderSigningArgs(env) {
+function buildElectronBuilderSigningArgs(env, variant) {
   if (!hasDeveloperIdSigningConfiguration(env)) {
-    return ['--config.mac.identity=-', '--config.mac.notarize=false'];
+    const signingArgs = ['--config.mac.identity=-', '--config.mac.notarize=false'];
+    // 正式 ad-hoc 需要跨版本稳定 DR；测试包保持独立 cdhash 身份，避免污染测试 TCC。
+    if (variant === 'release') signingArgs.push('--config.mac.requirements=assets/zeus-adhoc.requirement');
+    return signingArgs;
   }
 
   return [`--config.mac.notarize=${hasNotarizationConfiguration(env) ? 'true' : 'false'}`, '--config.forceCodeSigning=true'];
@@ -218,7 +221,7 @@ export async function packageMac() {
   // 打包必须从当前源码构建全部工作区依赖，不能依赖本机残留的包级 dist 目录。
   await run('pnpm', ['build'], { cwd: rootDir });
   const packageEnv = buildMacNativeDependencyEnv(omitEmptyAppleReleaseEnvironment(process.env));
-  const signingArgs = buildElectronBuilderSigningArgs(packageEnv);
+  const signingArgs = buildElectronBuilderSigningArgs(packageEnv, variant);
   const electronDistArgs = electronDist ? [`--config.electronDist=${electronDist}`] : [];
   const outputArgs = configuredOutputRoot ? [`--config.directories.output=${outputRoot}`] : [];
   await run('pnpm', ['--filter', '@zeus/desktop', 'exec', 'electron-builder', '--mac', 'dmg', '--config', builderConfig, ...electronDistArgs, ...outputArgs, ...signingArgs], {
