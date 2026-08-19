@@ -46,6 +46,9 @@ const labels = {
     remove: '删除',
     steer: '引导',
     steerHelp: '补充给当前回复，不中断当前执行',
+    steerHeadOnly: '请先把消息上移到队首，再引导',
+    steerUnavailable: '当前回复还未准备好接受引导',
+    steerFailedFallback: '无法引导这条排队消息。',
     moveUp: '上移',
     moveDown: '下移',
     resume: '继续发送',
@@ -86,6 +89,9 @@ const labels = {
     remove: 'Delete',
     steer: 'Steer',
     steerHelp: 'Add to the current response without interrupting it',
+    steerHeadOnly: 'Move this message to the front before steering it',
+    steerUnavailable: 'The current response is not ready to accept a steer',
+    steerFailedFallback: 'Unable to steer this queued message.',
     moveUp: 'Move up',
     moveDown: 'Move down',
     resume: 'Resume sending',
@@ -106,8 +112,10 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
   const [editError, setEditError] = useState<string | null>(null);
+  const [steerError, setSteerError] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState('');
   const [saving, setSaving] = useState(false);
+  const [steeringId, setSteeringId] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const busy = Boolean(props.state.busyOperation);
   const writable = props.state.transportState === 'ready' && props.state.conversationState !== 'legacy_readonly';
@@ -130,6 +138,12 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
     title: props.language === 'zh-CN' ? '队列消息保存失败' : 'Queued message failed to save',
     source: 'QueuedConversationMessages.saveEdit',
+  });
+
+  useApplicationErrorDialog(steerError, {
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+    title: props.language === 'zh-CN' ? '排队消息引导失败' : 'Queued message steer failed',
+    source: 'QueuedConversationMessages.steer',
   });
 
   useEffect(() => {
@@ -183,6 +197,19 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
     event.preventDefault();
     event.stopPropagation();
     cancelEdit();
+  }
+
+  async function steer(submissionId: string): Promise<void> {
+    if (!props.onSendNow || steeringId) return;
+    setSteeringId(submissionId);
+    setSteerError(null);
+    try {
+      await props.onSendNow(submissionId);
+    } catch (error) {
+      setSteerError(error instanceof Error ? error.message : typeof error === 'string' ? error : copy.steerFailedFallback);
+    } finally {
+      setSteeringId(null);
+    }
   }
 
   return (
@@ -272,10 +299,10 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                         <button
                           type="button"
                           className="session-queued-message-steer"
-                          title={copy.steerHelp}
-                          aria-label={`${copy.steer}. ${copy.steerHelp}`}
-                          onClick={() => void props.onSendNow?.(submission.id)}
-                          disabled={!writable || busy || !props.onSendNow}
+                          title={queuedSteerHelp(props.state, index, copy)}
+                          aria-label={`${copy.steer}. ${queuedSteerHelp(props.state, index, copy)}`}
+                          onClick={() => void steer(submission.id)}
+                          disabled={!writable || busy || !props.onSendNow || !canSteerQueuedSubmission(props.state, index) || steeringId !== null}
                         >
                           {copy.steer}
                         </button>
@@ -320,6 +347,15 @@ function canReplaceFailedQueueHead(submission: NativeQueuedSubmission, index: nu
 
 function canRetrySameRoute(submission: NativeQueuedSubmission): boolean {
   return submission.pausedReason !== 'semantic_route_changed' && submission.pausedReason !== 'upgrade_interrupted' && submission.pausedReason !== 'configuration_mismatch';
+}
+
+function canSteerQueuedSubmission(state: NativeSessionState, index: number): boolean {
+  return index === 0 && Boolean(state.activeTurnId) && state.startedTurnId === state.activeTurnId;
+}
+
+function queuedSteerHelp(state: NativeSessionState, index: number, copy: (typeof labels)[SessionUiLanguage]): string {
+  if (canSteerQueuedSubmission(state, index)) return copy.steerHelp;
+  return index === 0 ? copy.steerUnavailable : copy.steerHeadOnly;
 }
 
 function queuedMessagePreview(submission: NativeQueuedSubmission, attachmentOnly: string): string {
