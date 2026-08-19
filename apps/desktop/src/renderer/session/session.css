@@ -13725,6 +13725,15 @@
   padding-block-end: 6px;
 }
 
+/* 活动轮次的行保留稳定布局层，由合成器承接同一状态行在时间线中的位置变化。 */
+.session-codex-parity-v1 .session-live-turn-row {
+  display: grid;
+  inline-size: 100%;
+  min-inline-size: 0;
+  transform-origin: center top;
+  will-change: transform;
+}
+
 .session-codex-parity-v1
   :where(.session-turn-duration-body, .session-turn-process-body)
   > :where(.session-thread-item, .session-activity-group, .session-reasoning-summary, .session-plan-summary, .session-plan-entry, .session-question-panel, .session-plan-progress, .session-transcript-thinking) {
@@ -13732,8 +13741,16 @@
   margin-inline: 0;
 }
 
+.session-codex-parity-v1
+  .session-live-turn-row
+  > :where(.session-thread-item, .session-activity-group, .session-reasoning-summary, .session-plan-summary, .session-plan-entry, .session-question-panel, .session-plan-progress, .session-transcript-thinking) {
+  inline-size: 100%;
+  margin-inline: 0;
+}
+
 /* 用户中途引导仍是用户消息；进入当前轮次的网格过程区后继续保持右对齐。 */
-.session-codex-parity-v1 .session-turn-duration-body > .session-thread-item-user {
+.session-codex-parity-v1 .session-turn-duration-body > .session-thread-item-user,
+.session-codex-parity-v1 .session-live-turn-row > .session-thread-item-user {
   justify-self: end;
   margin-inline: 0 !important;
 }
@@ -15056,12 +15073,12 @@
   white-space: pre-wrap;
 }
 
-/* ZEUS-0307：会话工作态共享低饱和蓝灰与慢节奏；正文区由唯一活动焦点决定谁可以循环动画。 */
+/* ZEUS-0307、ZEUS-0338：会话工作态共享低饱和蓝灰；正文流焦点与工具状态各自保持连续反馈。 */
 .session-codex-parity-v1 {
   --session-working-color: color-mix(in oklab, var(--session-accent) 38%, var(--session-text-muted));
   --session-working-halo: color-mix(in oklab, var(--session-working-color) 15%, transparent);
   --session-working-soft: color-mix(in oklab, var(--session-working-color) 12%, var(--session-selected));
-  --session-working-cycle: 1800ms;
+  --session-working-cycle: 1600ms;
   --session-working-spinner-cycle: 1200ms;
 }
 
@@ -15099,14 +15116,24 @@
   inline-size: 17px;
 }
 
-.session-codex-parity-v1 .session-reasoning-summary[data-motion-active='true'] .session-reasoning-summary-icon,
+.session-codex-parity-v1 .session-reasoning-summary[data-status='active'] .session-reasoning-summary-icon {
+  animation: session-working-spin var(--session-working-spinner-cycle) linear infinite;
+  backface-visibility: hidden;
+  color: var(--session-working-color);
+  transform-origin: center;
+  will-change: transform;
+}
+
 .session-codex-parity-v1 .session-activity-group[data-motion-active='true'] > .session-activity-live .session-activity-item-icon,
 .session-codex-parity-v1 .session-activity-group[data-motion-active='true'] .session-activity-body li[data-motion-active='true'] > .session-activity-item-icon,
 .session-codex-parity-v1 .session-plan-summary[data-motion-active='true'] .session-plan-summary-symbol {
-  animation: session-working-breathe var(--session-working-cycle) var(--session-ease-out) infinite;
+  animation: session-working-breathe var(--session-working-cycle) ease-in-out infinite;
+  backface-visibility: hidden;
   background: var(--session-working-halo);
   box-shadow: 0 0 0 3px var(--session-working-halo);
   color: var(--session-working-color);
+  transform-origin: center;
+  will-change: opacity, transform;
 }
 
 .session-codex-parity-v1 .session-transcript-thinking[data-motion-active='true'] .session-thinking-pulse {
@@ -15257,14 +15284,12 @@
 
 @keyframes session-working-breathe {
   0%,
-  20%,
-  72%,
   100% {
-    opacity: 0.44;
+    opacity: 0.5;
     transform: scale(0.96);
   }
-  48% {
-    opacity: 0.94;
+  50% {
+    opacity: 1;
     transform: scale(1);
   }
 }

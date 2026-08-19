@@ -217,6 +217,49 @@
   margin: 0;
 }
 
+.qa-motion-activity-flow {
+  grid-column: 1 / -1;
+}
+
+.qa-motion-activity-flow > header {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.qa-motion-activity-flow > header > div {
+  display: grid;
+  gap: 3px;
+}
+
+.qa-motion-activity-flow > header small {
+  color: var(--session-text-muted);
+  font-size: 11px;
+}
+
+.qa-motion-activity-flow > header button {
+  background: var(--session-selected);
+  border: 1px solid var(--session-line);
+  border-radius: 8px;
+  color: var(--session-text);
+  flex: 0 0 auto;
+  font: inherit;
+  padding: 6px 10px;
+}
+
+.qa-motion-activity-flow > .ai-workspace {
+  border: 1px solid var(--session-line-soft);
+  border-radius: 9px;
+  block-size: 240px;
+  overflow: hidden;
+}
+
+.qa-motion-activity-flow .session-transcript {
+  block-size: 240px;
+  padding-block: 14px;
+}
+
 .qa-motion-grid .session-transcript {
   block-size: 110px;
   padding: 10px 0;
@@ -299,6 +342,10 @@
   }
 
   .qa-motion-loading {
+    grid-column: auto;
+  }
+
+  .qa-motion-activity-flow {
     grid-column: auto;
   }
 }

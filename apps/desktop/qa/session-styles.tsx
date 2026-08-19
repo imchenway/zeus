@@ -197,6 +197,37 @@ const motionSessionState: NativeSessionState = {
   transcriptRevision: 1,
 };
 
+const flowCompletedCommand = motionItem('flow-completed-command', 'commandExecution', 'completed', '', {
+  command: ['/bin/zsh', '-lc', 'pnpm install --frozen-lockfile --offline'],
+});
+const flowReasoningMiddle = motionItem('flow-reasoning-middle', 'reasoning', 'in_progress', 'Formatting and typechecking code', {
+  summary: ['Formatting and typechecking code'],
+});
+const flowRunningCommand = motionItem('flow-running-command', 'commandExecution', 'in_progress', '', {
+  command: ['/bin/zsh', '-lc', 'pnpm exec prettier --write apps/desktop/src/renderer/App.tsx apps/desktop/src/renderer/session/ConversationTranscript.tsx'],
+});
+const flowReasoningLatest = motionItem('flow-reasoning-latest', 'reasoning', 'in_progress', 'Checking the formatted output', {
+  summary: ['Checking the formatted output'],
+});
+
+function activityFlowState(latest: boolean): NativeSessionState {
+  const items = latest ? [flowCompletedCommand, flowReasoningMiddle, flowRunningCommand, flowReasoningLatest] : [flowCompletedCommand, flowReasoningMiddle, flowRunningCommand];
+  return {
+    ...createInitialSessionState(),
+    transportState: 'ready',
+    conversationState: 'active_prework',
+    projectId: 'project-zeus',
+    conversationId: motionConversationId,
+    providerThreadId: motionThreadId,
+    activeTurnId: motionTurnId,
+    startedTurnId: motionTurnId,
+    items: Object.fromEntries(items.map((item) => [item.key, item])),
+    itemOrder: items.map((item) => item.key),
+    turnsByProviderId: motionSessionState.turnsByProviderId,
+    transcriptRevision: latest ? 3 : 2,
+  };
+}
+
 const startingSessionState: NativeSessionState = {
   ...createInitialSessionState(),
   transportState: 'ready',
@@ -338,6 +369,7 @@ function ConversationDefectApp() {
 
 function MotionPreview(props: { dark?: boolean }) {
   const theme = props.dark ? 'theme-dark' : 'theme-light';
+  const [flowLatest, setFlowLatest] = useState(false);
   return (
     <section className={`macos-ai-app session-codex-parity-v1 qa-motion-theme ${theme}`} data-testid={props.dark ? 'motion-dark' : 'motion-light'}>
       <header>
@@ -348,6 +380,20 @@ function MotionPreview(props: { dark?: boolean }) {
         <ConversationTranscript state={motionSessionState} language="zh-CN" />
       </div>
       <div className="qa-motion-grid">
+        <section className="qa-motion-activity-flow">
+          <header>
+            <div>
+              <h3>活动行连续更新</h3>
+              <small>同一思考状态换条目、移动到底部时保留节点与动效</small>
+            </div>
+            <button type="button" onClick={() => setFlowLatest((value) => !value)}>
+              {flowLatest ? '恢复中间位置' : '推进到底部'}
+            </button>
+          </header>
+          <div className="ai-workspace" data-testid="motion-active-flow">
+            <ConversationTranscript state={activityFlowState(flowLatest)} language="zh-CN" />
+          </div>
+        </section>
         <section>
           <h3>等待思考</h3>
           <ConversationTranscript state={startingSessionState} language="zh-CN" />
@@ -401,15 +447,15 @@ interface MotionDiagnosticsSnapshot {
   tailAnchor: string;
   tailSize: string;
   tailAnimation: string;
-  previousReasoningAnimation: string;
-  previousActivityAnimation: string;
+  reasoningAnimation: string;
+  activityAnimation: string;
 }
 
 function MotionDiagnostics() {
   const [snapshot, setSnapshot] = useState<MotionDiagnosticsSnapshot | null>(null);
 
   useLayoutEffect(() => {
-    const transcript = document.querySelector<HTMLElement>("[data-testid='motion-light'] [data-testid='motion-single-focus']");
+    const transcript = document.querySelector<HTMLElement>("[data-testid='motion-light'] [data-testid='motion-active-flow']");
     const tailAnchor = transcript?.querySelector<HTMLElement>("[data-streaming-tail-anchor='true']") ?? null;
     const tailStyle = tailAnchor ? window.getComputedStyle(tailAnchor, '::after') : null;
     const reasoningIcon = transcript?.querySelector<HTMLElement>('.session-reasoning-summary-icon') ?? null;
@@ -424,8 +470,8 @@ function MotionDiagnostics() {
       tailAnchor: tailAnchor?.tagName.toLocaleLowerCase() ?? '未找到',
       tailSize: tailStyle ? `${tailStyle.inlineSize} × ${tailStyle.blockSize}` : '未找到',
       tailAnimation: tailStyle?.animationName ?? '未找到',
-      previousReasoningAnimation: reasoningIcon ? window.getComputedStyle(reasoningIcon).animationName : '未找到',
-      previousActivityAnimation: activityIcon ? window.getComputedStyle(activityIcon).animationName : '未找到',
+      reasoningAnimation: reasoningIcon ? window.getComputedStyle(reasoningIcon).animationName : '未找到',
+      activityAnimation: activityIcon ? window.getComputedStyle(activityIcon).animationName : '未找到',
     });
   }, []);
 

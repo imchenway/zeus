@@ -39,7 +39,7 @@ export const SessionActivityGroup = memo(function SessionActivityGroup(props: { 
   }, [active]);
 
   return (
-    <section className="session-activity-group" data-active={active || undefined} data-motion-active={props.motionActive || undefined} aria-label={props.language === 'zh-CN' ? '工作活动' : 'Work activity'}>
+    <section className="session-activity-group" data-active={active || undefined} data-motion-active={(active && props.motionActive) || undefined} aria-label={props.language === 'zh-CN' ? '工作活动' : 'Work activity'}>
       <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
         <summary>
           <span className="session-activity-group-icon" aria-hidden="true">
@@ -60,7 +60,7 @@ export const SessionActivityGroup = memo(function SessionActivityGroup(props: { 
             ) : null}
             <ol>
               {props.items.map((item) => (
-                <ActivityItemRow key={item.key} item={item} language={props.language} motionActive={Boolean(props.motionActive && item.key === liveItem?.key)} />
+                <ActivityItemRow key={item.key} item={item} language={props.language} motionActive={Boolean(active && props.motionActive && item.key === liveItem?.key)} />
               ))}
             </ol>
           </div>
@@ -86,7 +86,7 @@ function sameActivityGroupProps(
 function ActivityLiveRow(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage }) {
   const Icon = activityItemIcon(props.item);
   return (
-    <p className="session-activity-live" key={`${props.item.key}:${props.item.updatedAt ?? props.item.status}`} role="status" aria-live="polite" aria-atomic="true">
+    <p className="session-activity-live" role="status" aria-live="polite" aria-atomic="true">
       <span className="session-activity-item-icon" aria-hidden="true">
         <Icon weight="regular" />
       </span>
