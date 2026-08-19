@@ -6511,6 +6511,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         message: 'The recorded source branch is unavailable.',
       });
     }
+    try {
+      await assertTaskIntegrationTargetWorktreeClean(project, workspace, targetBranch);
+    } catch (error) {
+      return sendTaskGitApiError(reply, error);
+    }
     const mode = request.body?.mode === 'squash' ? 'squash' : 'merge';
     let targetHeadSha: string;
     let taskHeadSha: string;
@@ -6589,6 +6594,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         await db.save();
         return reply.code(202).send({ integration: updated });
       }
+      await assertTaskIntegrationTargetWorktreeClean(project, workspace, targetBranch);
       const finalized = await finalizeTaskBranchIntegration({
         repositoryPath,
         integrationPath: started.integrationPath,
@@ -6730,6 +6736,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (!integration.integrationPath) return reply.code(409).send({ error: 'ZEUS_TASK_INTEGRATION_PATH_UNAVAILABLE', message: 'Integration worktree is unavailable.' });
     try {
       await assertTaskIntegrationStillCurrent(project, workspace, integration);
+      await assertTaskIntegrationTargetWorktreeClean(project, workspace, integration.targetBranch);
       const commit = await completeTaskIntegrationCommit({
         integrationPath: integration.integrationPath,
         mode: integration.mode,
@@ -6780,8 +6787,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       await db.save();
       return { integration: updated, result: finalized };
     } catch (error) {
+      const targetWorktreeDirty = taskGitErrorCode(error) === 'ZEUS_TARGET_BRANCH_DIRTY';
       taskIntegrations.update(integration.id, {
-        state: isStaleTaskIntegrationError(error) ? 'failed' : integration.conflictFiles.length > 0 ? 'conflicted' : 'failed',
+        state: targetWorktreeDirty ? integration.state : isStaleTaskIntegrationError(error) ? 'failed' : integration.conflictFiles.length > 0 ? 'conflicted' : 'failed',
         lastError: error instanceof Error ? error.message : 'Task integration finalization failed.',
       });
       await db.save();
@@ -18240,6 +18248,18 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (targetHeadSha !== integration.targetHeadSha) throw nativeApiError('ZEUS_TARGET_HEAD_CHANGED', 'Local target branch advanced while the integration was being prepared.');
   }
 
+  async function assertTaskIntegrationTargetWorktreeClean(project: ZeusProjectRecord, workspace: ZeusTaskWorkspaceRecord, targetBranch: string): Promise<void> {
+    const repositoryPath = workspace.repositoryPath || project.localPath;
+    const repository = await getGitRepositoryContext(repositoryPath);
+    if (!repository.isRepository) throw nativeApiError('ZEUS_TARGET_BRANCH_UNAVAILABLE', 'The recorded source branch is unavailable.');
+    const targetWorktree = repository.worktrees.find((entry) => entry.branch === targetBranch);
+    if (!targetWorktree) return;
+    const ignoredPaths = projectRepositoryIgnoredPaths(workspace.projectId, workspace.repositoryId, repositoryPath);
+    if (!(await getGitWorktreeClean(targetWorktree.path, ignoredPaths))) {
+      throw nativeApiError('ZEUS_TARGET_BRANCH_DIRTY', '来源分支所在工作区存在未提交代码，请先处理后再合入。');
+    }
+  }
+
   function isStaleTaskIntegrationError(error: unknown): boolean {
     const code =
       error instanceof Error &&
@@ -18507,6 +18527,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       if (attempt.targetHeadSha !== latestTargetHeadSha || attempt.taskHeadSha !== latestTaskHeadSha) {
         throw nativeApiError('ZEUS_TASK_INTEGRATION_ATTEMPT_STALE', '来源分支或任务分支已推进，继续准备最新执行代次。');
       }
+      await assertTaskIntegrationTargetWorktreeClean(project, workspace, integration.targetBranch);
       const commit = await completeTaskIntegrationCommit({
         integrationPath: attempt.worktreePath,
         mode: integration.mode,
@@ -18610,6 +18631,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       const { task, project, integration, workspace } = resolved;
       if (!integration.integrationPath) throw nativeApiError('ZEUS_TASK_INTEGRATION_PATH_UNAVAILABLE', 'Integration worktree is unavailable.');
       await assertTaskIntegrationStillCurrent(project, workspace, integration);
+      await assertTaskIntegrationTargetWorktreeClean(project, workspace, integration.targetBranch);
       const commit = await completeTaskIntegrationCommit({
         integrationPath: integration.integrationPath,
         mode: integration.mode,
