@@ -1,4 +1,5 @@
 import { Fragment, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { motion, useReducedMotion } from 'framer-motion';
 import { isActiveSessionTurn, isOperationalActivityItem, SessionActivityGroup, SessionTurnDuration, SessionTurnProcessDisclosure } from './SessionActivity.js';
 import { itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText } from './ThreadItemView.js';
 import { PlanSummary } from './PlanSummary.js';
@@ -59,6 +60,7 @@ const sessionConnectionSymbol = (
 );
 
 const emptyResponseAnnotations: ConversationResponseAnnotation[] = [];
+const liveTurnLayoutTransition = { duration: 0.22, ease: [0.22, 1, 0.36, 1] as const };
 
 function useStableOptionalCallback<Arguments extends unknown[], Result>(callback: ((...args: Arguments) => Result) | undefined): ((...args: Arguments) => Result) | undefined {
   const callbackRef = useRef(callback);
@@ -68,6 +70,7 @@ function useStableOptionalCallback<Arguments extends unknown[], Result>(callback
 }
 
 export function ConversationTranscript(props: ConversationTranscriptProps) {
+  const reduceMotion = useReducedMotion();
   const containerRef = useRef<HTMLElement | null>(null);
   const latestContentMarkerRef = useRef<HTMLSpanElement | null>(null);
   const latestMarkerIntersectingRef = useRef(true);
@@ -324,14 +327,19 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                 }
                 const containsLastItem = row.rows.some((child) => transcriptRowContainsItemKey(child, lastItemKeyByTurn[row.turnId]));
                 const active = isActiveSessionTurn(turn);
-                const process = row.rows.map((child) => (
-                  <Fragment key={child.key}>
-                    {renderTranscriptRow(
-                      child,
-                      transcriptRowRenderOptions(renderProps, items, showActiveStatus && props.state.activeTurnId === row.turnId, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId),
-                    )}
-                  </Fragment>
-                ));
+                const process = row.rows.map((child) => {
+                  const content = renderTranscriptRow(
+                    child,
+                    transcriptRowRenderOptions(renderProps, items, showActiveStatus && props.state.activeTurnId === row.turnId, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId),
+                  );
+                  return active ? (
+                    <motion.div className="session-live-turn-row" key={child.key} layout={reduceMotion ? false : 'position'} transition={reduceMotion ? { duration: 0 } : liveTurnLayoutTransition}>
+                      {content}
+                    </motion.div>
+                  ) : (
+                    <Fragment key={child.key}>{content}</Fragment>
+                  );
+                });
                 return (
                   <Fragment key={row.key}>
                     {active ? (
@@ -527,6 +535,7 @@ export type TranscriptRow =
       kind: 'activity';
       key: string;
       items: NativeSessionItemBuffer[];
+      motionActive: boolean;
     };
 
 function collapseRepeatedErrorItems(items: readonly NativeSessionItemBuffer[]): NativeSessionItemBuffer[] {
@@ -622,7 +631,7 @@ function transcriptRowRenderOptions(
 function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOptions): ReactNode {
   if (row.kind === 'answered_request') return <AnsweredRequestHistory request={row.request} language={options.props.language} />;
   if (row.kind === 'activity') {
-    return <SessionActivityGroup items={row.items} language={options.props.language} motionActive={row.items.some((item) => item.key === options.motionFocus?.itemKey)} />;
+    return <SessionActivityGroup items={row.items} language={options.props.language} motionActive={row.motionActive} />;
   }
   if (row.item.type === 'plan') {
     return <PlanSummary item={row.item} language={options.props.language} motionActive={row.item.key === options.motionFocus?.itemKey} panelOpen={options.props.openPlanItemKey === row.item.key} onOpenPanel={options.props.onOpenPlan} />;
@@ -861,12 +870,14 @@ export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[],
   const rows: TranscriptRow[] = [];
   let activity: NativeSessionItemBuffer[] = [];
   const currentReasoningItemKey = latestCurrentReasoningItemKey(items, activeTurnId);
+  const currentActivityItemKey = latestCurrentActivityItemKey(items, activeTurnId);
   const flushActivity = () => {
     if (activity.length === 0) return;
     rows.push({
       kind: 'activity',
       key: `activity:${activity[0]!.key}`,
       items: activity,
+      motionActive: activity.some((item) => item.key === currentActivityItemKey),
     });
     activity = [];
   };
@@ -888,9 +899,10 @@ export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[],
     if (isSubagentCoordinationItem(item)) continue;
     if (normalizeItemType(item.type) === 'reasoning') {
       // 思考摘要是当前工作状态，不是会话历史正文。每个摘要仍会截断前一批命令，
-      // 但只有活动轮次最新一条可见，避免长任务留下逐阶段状态瀑布。
+      // 但只有活动轮次最新一条可见。它代表同一个轮次的实时状态，因此使用轮次级身份，
+      // Provider 更换摘要条目时沿用 DOM 节点，让文字与位置更新保持连续。
       flushActivity();
-      if (item.key === currentReasoningItemKey) rows.push({ kind: 'item', key: transcriptItemRenderKey(item), item });
+      if (item.key === currentReasoningItemKey) rows.push({ kind: 'item', key: `current-reasoning:${item.turnId}`, item });
       continue;
     }
     if (!isOperationalActivityItem(item)) {
@@ -922,6 +934,15 @@ export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[],
 function latestCurrentReasoningItemKey(items: readonly NativeSessionItemBuffer[], activeTurnId: string | null): string | null {
   if (!activeTurnId || items.some((item) => item.turnId === activeTurnId && isFinalAnswerItem(item))) return null;
   return [...items].reverse().find((item) => item.turnId === activeTurnId && normalizeItemType(item.type) === 'reasoning' && item.status !== 'failed' && item.status !== 'interrupted')?.key ?? null;
+}
+
+function latestCurrentActivityItemKey(items: readonly NativeSessionItemBuffer[], activeTurnId: string | null): string | null {
+  if (!activeTurnId) return null;
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index]!;
+    if (item.turnId === activeTurnId && isOperationalActivityItem(item) && item.status !== 'completed' && item.status !== 'failed') return item.key;
+  }
+  return null;
 }
 
 function canJoinCommandActivity(activity: readonly NativeSessionItemBuffer[], item: NativeSessionItemBuffer): boolean {
