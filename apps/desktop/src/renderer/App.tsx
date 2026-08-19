@@ -48,6 +48,7 @@ import {
   defaultTaskManagementStatusConfig,
   isTaskStatusFilter,
   normalizeTaskManagementStatusConfig,
+  renderTaskPushLayoutText,
   type ProjectCodeWorkspacePreference,
   type TaskManagementStatusConfig,
   type TaskManagementStatusDefinition,
@@ -114,7 +115,6 @@ import { TaskGitReviewModal } from './task/TaskGitReviewModal.js';
 import { clearPendingConflictAiStart, listPendingConflictAiStarts, persistPendingConflictAiStart, TaskGitMergeModal } from './task/TaskGitMergeModal.js';
 import {
   buildTaskModelPushLayout,
-  buildTaskModelPushMessage,
   normalizeTaskModelPushCapabilities,
   readTaskModelPushPreferences,
   resolveTaskModelPushInitialForm,
@@ -10618,7 +10618,7 @@ export function App(props: {
           projectName: targetProject?.name ?? task.projectId,
           request,
           form,
-          prompt: buildTaskModelPushMessage(task, form.supplementalInfo, capabilities.currentAttachmentOptions, currentConversationPaths, parentContexts, relatedContexts, supplementalAttachments),
+          prompt: renderTaskPushLayoutText(layout),
           layout,
           currentAttachmentOptions: capabilities.currentAttachmentOptions,
           capabilities,
@@ -10653,8 +10653,6 @@ export function App(props: {
     }
     if (!prepared) return;
     const { pending, targetProject } = prepared;
-    // 本地待处理态建立后立即发出真实请求，界面导航不得成为创建任务的前置条件。
-    void dispatchTaskModelPush(pending);
     setTaskModelPushAnnouncement(appShellSettings.appLanguage === 'zh-CN' ? `${task.title}：正在后台创建会话。` : `${task.title}: Creating conversation in the background.`);
     // 用户确认后立即进入稳定工作面；此后的真实身份接管不得再导航、滚动或夺取焦点。
     taskModelPushCapabilityRequestRef.current += 1;
@@ -10669,6 +10667,14 @@ export function App(props: {
     void selectNativeConversation(pending.choice);
     if (typeof window !== 'undefined') window.history.replaceState(null, '', '#project-sessions');
     workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'auto' });
+    // 先让 pending 工作面和首条消息完成一次绘制，再启动真实会话创建，避免后台请求阻塞首帧。
+    if (typeof window === 'undefined') {
+      void dispatchTaskModelPush(pending);
+    } else {
+      window.requestAnimationFrame(() => {
+        window.setTimeout(() => void dispatchTaskModelPush(pending), 0);
+      });
+    }
   }
 
   async function dispatchTaskModelPush(pending: TrackedTaskModelPushState): Promise<void> {
