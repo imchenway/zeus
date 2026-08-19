@@ -646,7 +646,10 @@ export function createConnectedSessionActions(input: { controller: SessionContro
     onRerouteQueuedSubmission: (submissionId, settings) => settle(input.controller.rerouteQueuedSubmission(submissionId, settings)),
     // 删除未进入 provider turn 的内容是本地软删除，不会触发 Provider 重发。
     onDeleteQueuedSubmission: (submissionId) => settle(input.controller.deleteQueuedSubmission(submissionId)),
-    onSendQueuedNow: (submissionId) => settle(input.controller.sendQueuedNow(submissionId)),
+    // 引导失败必须交给队列气泡处理并进入统一错误弹窗，不能像后台刷新一样静默吞掉。
+    onSendQueuedNow: async (submissionId) => {
+      await input.controller.sendQueuedNow(submissionId);
+    },
     onReorderQueue: (orderedSubmissionIds) => settle(input.controller.reorderQueue(orderedSubmissionIds)),
     onResumeQueue: () => settle(input.controller.resumeQueue()),
     onRecoverQueue: () => settle(input.controller.recoverQueue()),
