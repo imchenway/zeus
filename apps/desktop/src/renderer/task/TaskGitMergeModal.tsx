@@ -184,6 +184,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   useApplicationErrorDialog(error ?? workspaceError, {
     language: zh ? 'zh-CN' : 'en',
     title: zh ? '代码交付操作失败' : 'Code delivery operation failed',
+    summary: error === targetBranchDirtyMessage(zh) ? error : undefined,
     source: 'TaskGitMergeModal',
   });
   const targetBranch = selectedWorkspace?.sourceBranch ?? '';
@@ -461,6 +462,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     setFeedback(null);
     setBatchResults([]);
     try {
+      let mergeBlockingError: string | null = null;
       const outcomes = await Promise.all(
         selectedWorkspaceIds.map(async (selectedId): Promise<{ result: BatchDeliveryResult; integration?: TaskIntegrationRecord }> => {
           const workspace = workspaceDetails[selectedId];
@@ -491,7 +493,9 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                 },
               };
             } catch (reason) {
-              return { result: { workspaceId: workspace.id, repositoryName: label, status: 'failed', message: errorMessage(reason, zh) } };
+              const message = errorMessage(reason, zh);
+              if (isTargetBranchDirty(reason)) mergeBlockingError = mergeBlockingError ?? message;
+              return { result: { workspaceId: workspace.id, repositoryName: label, status: 'failed', message } };
             }
           }
           if (!action) {
@@ -515,15 +519,23 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
             }
             return {
               integration: response.integration,
-              result: { workspaceId: workspace.id, repositoryName: label, status: 'succeeded', message: response.result ? deliveryFeedback(response.result, zh).text : zh ? '已准备合入结果。' : 'Merge result prepared.' },
+              result: {
+                workspaceId: workspace.id,
+                repositoryName: label,
+                status: response.integration.state === 'merged' ? 'succeeded' : 'attention',
+                message: response.result ? deliveryFeedback(response.result, zh).text : zh ? '已准备合入结果。' : 'Merge result prepared.',
+              },
             };
           } catch (reason) {
-            return { result: { workspaceId: workspace.id, repositoryName: label, status: 'failed', message: errorMessage(reason, zh) } };
+            const message = errorMessage(reason, zh);
+            if (isTargetBranchDirty(reason)) mergeBlockingError = mergeBlockingError ?? message;
+            return { result: { workspaceId: workspace.id, repositoryName: label, status: 'failed', message } };
           }
         }),
       );
       const results = outcomes.map((outcome) => outcome.result);
       setBatchResults(results);
+      if (mergeBlockingError) setError(mergeBlockingError);
       const firstAttention = outcomes.find((outcome) => outcome.result.status === 'attention' && outcome.integration);
       await reload(firstAttention?.result.workspaceId ?? workspaceId);
       if (firstAttention?.integration) {
@@ -932,14 +944,16 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                     ) : null}
                     {pendingLocalSync ? (
                       <small className="task-git-delivery-local-pending">
-                        {zh ? '合入结果已保留；来源分支存在未提交改动。处理原目录后，再点“合入所选仓库”继续。' : 'The integration result is preserved. Clean the source worktree, then use “Merge selected repositories” again.'}
+                        {zh
+                          ? '来源分支存在未提交代码，当前不能继续合入。处理原目录后，再点“合入所选仓库”。'
+                          : 'The source worktree has uncommitted changes, so the merge is blocked. Clean the source worktree, then use “Merge selected repositories” again.'}
                       </small>
                     ) : null}
                     {integrationResult?.localSyncStatus === 'pending' ? (
                       <small className="task-git-delivery-local-pending">
                         {zh
-                          ? '来源分支工作区有未提交代码，合入结果已保留；处理后再点“合入所选仓库”继续。'
-                          : 'The source worktree has uncommitted changes. The merge result is preserved; clean it, then use “Merge selected repositories” again.'}
+                          ? '来源分支存在未提交代码，当前不能继续合入。处理原目录后，再点“合入所选仓库”。'
+                          : 'The source worktree has uncommitted changes, so the merge is blocked. Clean the source worktree, then use “Merge selected repositories” again.'}
                       </small>
                     ) : null}
                   </section>
@@ -1293,7 +1307,7 @@ function workspaceStateLabel(workspace: TaskWorkspaceIndexSnapshot, detail: Task
     const status = recovery.conflictFiles.length > 0 ? (zh ? `${recovery.conflictFiles.length} 个冲突待处理` : `${recovery.conflictFiles.length} conflict(s) pending`) : zh ? '冲突已处理 · 待确认' : 'Conflicts resolved · confirm';
     return `${status}${activeSuffix}`;
   }
-  if (recovery?.state === 'pending_local_sync') return `${zh ? '合入完成 · 待同步' : 'Merged · sync pending'}${activeSuffix}`;
+  if (recovery?.state === 'pending_local_sync') return `${zh ? '来源分支有未提交代码 · 待处理' : 'Source worktree dirty · merge blocked'}${activeSuffix}`;
   if (workspace.state === 'merged') {
     if (!workspace.remoteName) return `${zh ? '已合入 · 无远端' : 'Merged · no remote'}${activeSuffix}`;
     if (!detail) return `${zh ? '已合入 · 远端待读取' : 'Merged · remote not loaded'}${activeSuffix}`;
@@ -1444,6 +1458,7 @@ function isTargetHeadChanged(error: unknown): boolean {
 }
 
 function errorMessage(error: unknown, zh: boolean): string {
+  if (error instanceof ZeusApiError && error.error === 'ZEUS_TARGET_BRANCH_DIRTY') return targetBranchDirtyMessage(zh);
   if (zh && error instanceof ZeusApiError) {
     const localizedMessages: Record<string, string> = {
       ZEUS_TASK_WORKSPACE_NOT_FOUND: '当前任务工作区已不存在，请关闭后重新打开该任务的代码交付。',
@@ -1461,4 +1476,12 @@ function errorMessage(error: unknown, zh: boolean): string {
     if (error.error && localizedMessages[error.error]) return localizedMessages[error.error];
   }
   return error instanceof Error ? error.message : String(error);
+}
+
+function targetBranchDirtyMessage(zh: boolean): string {
+  return zh ? '来源分支存在未提交代码，请先处理后再合入。' : 'The source branch has uncommitted changes. Resolve them before merging.';
+}
+
+function isTargetBranchDirty(error: unknown): boolean {
+  return error instanceof ZeusApiError && error.error === 'ZEUS_TARGET_BRANCH_DIRTY';
 }
