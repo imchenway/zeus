@@ -83,7 +83,7 @@ interface BrowserToolElementInfo {
   submitter: boolean;
 }
 
-const browserPartition = 'persist:zeus-browser';
+export const browserPartition = 'persist:zeus-browser';
 const maxPersistedCommentsPerTab = 200;
 const maxCommentBodyLength = 20_000;
 const approvalTimeoutMs = 5 * 60_000;

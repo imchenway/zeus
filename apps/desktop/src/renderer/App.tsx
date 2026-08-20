@@ -46,12 +46,14 @@ import {
 import {
   cloneTaskManagementStatusConfig,
   defaultTaskManagementStatusConfig,
+  extractZentaoTaskLink,
   isTaskStatusFilter,
   normalizeTaskManagementStatusConfig,
   renderTaskPushLayoutText,
   type ProjectCodeWorkspacePreference,
   type TaskManagementStatusConfig,
   type TaskManagementStatusDefinition,
+  type ZentaoTaskExtract,
 } from '@zeus/shared';
 import '@xterm/xterm/css/xterm.css';
 import '@xyflow/react/dist/style.css';
@@ -147,6 +149,7 @@ import { CodexConfigImportSettings } from './settings/CodexConfigImportSettings.
 import { BrowserSettingsPane } from './settings/BrowserSettingsPane.js';
 import { CodexRemoteControlSettings } from './settings/CodexRemoteControlSettings.js';
 import { ModelConnectionsSettingsPane } from './settings/ModelConnectionsSettingsPane.js';
+import { ZentaoSettingsPane } from './settings/ZentaoSettingsPane.js';
 import { ProjectModelsSettings } from './settings/ProjectModelsSettings.js';
 import { TaskManagementStatusEditor } from './settings/TaskManagementStatusEditor.js';
 import { CodexUsageSettingsPane } from './settings/CodexUsageSettingsPane.js';
@@ -306,8 +309,8 @@ type TaskConversationDrawerTarget =
     }>
   | undefined;
 type TaskConversationReopenState = Readonly<{ conversationId: string; status: 'busy' | 'error'; error?: string }> | undefined;
-type SettingsCategory = 'general' | 'usage' | 'tasks' | 'runtime' | 'models' | 'browser' | 'telegram' | 'security' | 'commands' | 'git' | 'release' | 'data';
-const SETTINGS_CATEGORIES = ['general', 'usage', 'tasks', 'runtime', 'models', 'browser', 'telegram', 'security', 'commands', 'git', 'release', 'data'] as const satisfies readonly SettingsCategory[];
+type SettingsCategory = 'general' | 'usage' | 'tasks' | 'runtime' | 'models' | 'browser' | 'telegram' | 'zentao' | 'security' | 'commands' | 'git' | 'release' | 'data';
+const SETTINGS_CATEGORIES = ['general', 'usage', 'tasks', 'runtime', 'models', 'browser', 'telegram', 'zentao', 'security', 'commands', 'git', 'release', 'data'] as const satisfies readonly SettingsCategory[];
 type DataPortabilityStatusState = { kind: 'idle' } | { kind: 'exported'; target: string } | { kind: 'imported'; target: string; changedSettings: string[] };
 type TaskBulkActionStatusState = { kind: 'idle' | 'running' | 'done' | 'failed'; message?: string };
 type RuntimeLogExportStatusState = { kind: 'idle' } | { kind: 'empty' } | { kind: 'cancelled' } | { kind: 'saved'; filePath: string } | { kind: 'failed' };
@@ -401,6 +404,12 @@ type NativeConversationAppClient = SessionControllerClient &
     | 'clearModelConnectionApiKey'
     | 'refreshModelConnectionModels'
     | 'diagnoseModelConnection'
+    | 'loadZentaoInstances'
+    | 'createZentaoInstance'
+    | 'updateZentaoInstance'
+    | 'deleteZentaoInstance'
+    | 'clearZentaoInstancePassword'
+    | 'verifyZentaoInstance'
     | 'loadSelectablePiModels'
     | 'loadProjectModelSelection'
     | 'saveProjectModelSelection'
@@ -1284,6 +1293,18 @@ const languageCopy = {
       taskCreateDialogTitle: '创建任务',
       taskCreateTitleLabel: '任务标题',
       taskCreateTitlePlaceholder: '例如：修复任务表格列可见性',
+      taskCreateZentaoLinkLabel: '禅道链接',
+      taskCreateZentaoLinkPlaceholder: '粘贴禅道缺陷、需求或任务详情页链接',
+      taskCreateZentaoLinkHelp: '粘贴链接后自动解析并填入标题、类型和描述；在设置中配置禅道账号后优先通过 REST 接口解析。',
+      taskCreateZentaoParse: '解析并填入',
+      taskCreateZentaoParsing: '解析中…',
+      taskCreateZentaoApplied: (title: string) => `已从禅道解析并填入：${title}`,
+      taskCreateZentaoLoginRequired: '需要登录禅道才能读取内容。请在设置中配置禅道账号，或在 Zeus 内置浏览器中登录后重试；也可以手动填写任务信息。',
+      taskCreateZentaoCredentialMissing: '该禅道实例已配置但还没有保存密码，无法自动解析。请到设置中补全密码，或在内置浏览器登录后重试。',
+      taskCreateZentaoAuthFailed: '禅道账号密码验证失败，无法自动解析。请到设置中检查账号密码，或手动填写任务信息。',
+      taskCreateZentaoUnsupported: '不是可识别的禅道链接，请粘贴缺陷、需求或任务的详情页地址。',
+      taskCreateZentaoFailed: '解析失败：无法访问该页面，请检查网络或链接后重试。',
+      taskCreateZentaoOpenLink: '在浏览器中打开',
       taskCreateTypeLabel: '任务类型',
       taskCreateTypePlaceholder: '请选择类型',
       taskCreateTypeOptions: [
@@ -1932,6 +1953,7 @@ const languageCopy = {
         models: '模型供应商',
         browser: '内置浏览器',
         telegram: 'Telegram',
+        zentao: '禅道',
         security: '安全与钥匙串',
         commands: '命令',
         git: 'Git 确认',
@@ -2749,6 +2771,18 @@ const languageCopy = {
       taskCreateDialogTitle: 'Create task',
       taskCreateTitleLabel: 'Task title',
       taskCreateTitlePlaceholder: 'For example: Fix task table column visibility',
+      taskCreateZentaoLinkLabel: 'ZenTao link',
+      taskCreateZentaoLinkPlaceholder: 'Paste a ZenTao bug, story, or task detail link',
+      taskCreateZentaoLinkHelp: 'Paste a link to parse and fill the title, type, and description automatically. After configuring a ZenTao account in Settings, links are parsed through the REST API first.',
+      taskCreateZentaoParse: 'Parse and fill',
+      taskCreateZentaoParsing: 'Parsing…',
+      taskCreateZentaoApplied: (title: string) => `Filled from ZenTao: ${title}`,
+      taskCreateZentaoLoginRequired: 'Sign in to ZenTao to read the content. Configure a ZenTao account in Settings, or sign in through the Zeus built-in browser; you can also fill the task manually.',
+      taskCreateZentaoCredentialMissing: 'This ZenTao instance is configured but has no saved password, so automatic parsing is unavailable. Add the password in Settings, or sign in through the built-in browser.',
+      taskCreateZentaoAuthFailed: 'ZenTao account verification failed, so automatic parsing is unavailable. Check the account and password in Settings, or fill the task manually.',
+      taskCreateZentaoUnsupported: 'This is not a recognizable ZenTao link. Paste a bug, story, or task detail page URL.',
+      taskCreateZentaoFailed: 'Parsing failed: the page could not be reached. Check your network or the link and try again.',
+      taskCreateZentaoOpenLink: 'Open in browser',
       taskCreateTypeLabel: 'Task type',
       taskCreateTypePlaceholder: 'Choose a type',
       taskCreateTypeOptions: [
@@ -3397,6 +3431,7 @@ const languageCopy = {
         models: 'Model providers',
         browser: 'Built-in browser',
         telegram: 'Telegram',
+        zentao: 'ZenTao',
         security: 'Security & Keychain',
         commands: 'Commands',
         git: 'Git confirmation',
@@ -4065,6 +4100,18 @@ const languageCopy = {
       taskCreateDialogTitle: string;
       taskCreateTitleLabel: string;
       taskCreateTitlePlaceholder: string;
+      taskCreateZentaoLinkLabel: string;
+      taskCreateZentaoLinkPlaceholder: string;
+      taskCreateZentaoLinkHelp: string;
+      taskCreateZentaoParse: string;
+      taskCreateZentaoParsing: string;
+      taskCreateZentaoApplied: (title: string) => string;
+      taskCreateZentaoLoginRequired: string;
+      taskCreateZentaoCredentialMissing: string;
+      taskCreateZentaoAuthFailed: string;
+      taskCreateZentaoUnsupported: string;
+      taskCreateZentaoFailed: string;
+      taskCreateZentaoOpenLink: string;
       taskCreateTypeLabel: string;
       taskCreateTypePlaceholder: string;
       taskCreateTypeOptions: readonly { value: TaskType; label: string }[];
@@ -5890,6 +5937,9 @@ function TaskCreateModal(props: {
   onAuthorizeFiles: (files: File[], source: 'paste' | 'drop') => Promise<TaskResourceAuthorizationResult>;
   onMaterializeResources: (resources: TaskResourcePayload[]) => Promise<TaskCreateAttachmentCandidate[]>;
   onReadClipboardResources: () => Promise<{ resources: TaskCreateAttachmentCandidate[]; text: string }>;
+  onParseZentaoLink: (url: string) => Promise<ZentaoTaskExtract>;
+  onApplyZentaoTaskInfo: (info: ZentaoTaskExtract) => void;
+  onOpenZentaoLink: (url: string) => Promise<boolean>;
   onAddAttachments: (attachments: TaskCreateAttachment[]) => void;
   onLoadAttachmentPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
   onOpenAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }>;
@@ -5899,7 +5949,19 @@ function TaskCreateModal(props: {
 }) {
   const pasteShortcutFallbackTokenRef = useRef(0);
   const [resourceProcessingCount, setResourceProcessingCount] = useState(0);
+  const [zentaoLinkInput, setZentaoLinkInput] = useState('');
+  const [zentaoParsing, setZentaoParsing] = useState(false);
+  const [zentaoHint, setZentaoHint] = useState<{ tone: 'ok' | 'error'; text: string; openUrl?: string } | null>(null);
+  const lastAutoParsedUrlRef = useRef('');
   const taskTypeOptions = useMemo(() => [{ value: '' as const, label: props.copy.taskCreateTypePlaceholder, disabled: true }, ...props.copy.taskCreateTypeOptions], [props.copy.taskCreateTypeOptions, props.copy.taskCreateTypePlaceholder]);
+  useEffect(() => {
+    if (props.open) {
+      setZentaoLinkInput('');
+      setZentaoParsing(false);
+      setZentaoHint(null);
+      lastAutoParsedUrlRef.current = '';
+    }
+  }, [props.open]);
   if (!props.open) return null;
   const describedBy = props.error ? 'task-create-error' : undefined;
   const resourcesBusy = resourceProcessingCount > 0;
@@ -5972,7 +6034,48 @@ function TaskCreateModal(props: {
     }
   }
 
+  async function handleZentaoLinkParse(rawUrl: string): Promise<void> {
+    const url = rawUrl.trim();
+    if (!url || interactionBusy) return;
+    lastAutoParsedUrlRef.current = url;
+    setZentaoParsing(true);
+    setZentaoHint(null);
+    try {
+      const result = await props.onParseZentaoLink(url);
+      if (result.kind === 'ok') {
+        props.onApplyZentaoTaskInfo(result);
+        setZentaoHint({ tone: 'ok', text: props.copy.taskCreateZentaoApplied(result.title || result.objectId) });
+      } else if (result.kind === 'login_required') {
+        // 外部打开只接受 HTTPS；内网 HTTP 禅道不提供跳转按钮，避免点了没反应。
+        setZentaoHint({ tone: 'error', text: props.copy.taskCreateZentaoLoginRequired, ...(url.startsWith('https://') ? { openUrl: url } : {}) });
+      } else if (result.kind === 'unsupported') {
+        setZentaoHint({ tone: 'error', text: props.copy.taskCreateZentaoUnsupported });
+      } else if (result.kind === 'failed' && result.cause === 'credential_missing') {
+        setZentaoHint({ tone: 'error', text: props.copy.taskCreateZentaoCredentialMissing, ...(url.startsWith('https://') ? { openUrl: url } : {}) });
+      } else if (result.kind === 'failed' && result.cause === 'auth_failed') {
+        setZentaoHint({ tone: 'error', text: props.copy.taskCreateZentaoAuthFailed, ...(url.startsWith('https://') ? { openUrl: url } : {}) });
+      } else {
+        setZentaoHint({ tone: 'error', text: props.copy.taskCreateZentaoFailed });
+      }
+    } catch {
+      setZentaoHint({ tone: 'error', text: props.copy.taskCreateZentaoFailed });
+    } finally {
+      setZentaoParsing(false);
+    }
+  }
+
   async function handleTaskCreateClipboardPaste(event: ReactClipboardEvent<HTMLFormElement>): Promise<void> {
+    // 标题栏直接粘贴禅道链接时，自动转入链接解析并填入，不把链接当作标题正文。
+    if (!interactionBusy && event.target instanceof HTMLInputElement && event.target.id === 'task-create-title-input') {
+      const pastedLink = extractZentaoTaskLink(safelyReadClipboardData(event.clipboardData, 'text/plain'));
+      if (pastedLink) {
+        event.preventDefault();
+        pasteShortcutFallbackTokenRef.current += 1;
+        setZentaoLinkInput(pastedLink);
+        void handleZentaoLinkParse(pastedLink);
+        return;
+      }
+    }
     const pasteTarget = resolveTaskCreatePasteField(event.target);
     if (!pasteTarget || interactionBusy) return;
     pasteShortcutFallbackTokenRef.current += 1;
@@ -6065,6 +6168,54 @@ function TaskCreateModal(props: {
         </header>
         <div className="task-create-modal-body">
           {/* 创建任务只收集 Zeus 本地任务 draft，避免复制 giraffe 的负责人、迭代、附件和富文本团队字段。 */}
+          <div className="task-create-field task-create-zentao-field">
+            <span id="task-create-zentao-label">{props.copy.taskCreateZentaoLinkLabel}</span>
+            <div className="task-create-zentao-row">
+              <input
+                id="task-create-zentao-input"
+                className="task-create-title-input task-create-zentao-input"
+                value={zentaoLinkInput}
+                placeholder={props.copy.taskCreateZentaoLinkPlaceholder}
+                aria-labelledby="task-create-zentao-label"
+                onChange={(event) => {
+                  const nextValue = event.currentTarget.value;
+                  setZentaoLinkInput(nextValue);
+                  // 粘贴完整链接后自动解析，手动逐字输入时在 URL 完整后才触发。
+                  const pastedLink = extractZentaoTaskLink(nextValue);
+                  if (pastedLink && pastedLink !== lastAutoParsedUrlRef.current) void handleZentaoLinkParse(pastedLink);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !interactionBusy) {
+                    event.preventDefault();
+                    void handleZentaoLinkParse(zentaoLinkInput);
+                  }
+                }}
+                disabled={interactionBusy}
+              />
+              <Button
+                variant="secondary"
+                size="regular"
+                className="task-create-zentao-parse-button"
+                busy={zentaoParsing}
+                disabled={interactionBusy || zentaoParsing || !zentaoLinkInput.trim()}
+                onClick={() => void handleZentaoLinkParse(zentaoLinkInput)}
+              >
+                {zentaoParsing ? props.copy.taskCreateZentaoParsing : props.copy.taskCreateZentaoParse}
+              </Button>
+            </div>
+            <small className={`task-create-zentao-hint${zentaoHint ? ` task-create-zentao-hint-${zentaoHint.tone}` : ''}`} role={zentaoHint ? 'status' : undefined}>
+              {zentaoHint
+                ? [
+                    zentaoHint.text,
+                    zentaoHint.openUrl ? (
+                      <button key="open" type="button" className="task-create-zentao-open-button" onClick={() => void props.onOpenZentaoLink(zentaoHint.openUrl as string)} disabled={interactionBusy}>
+                        {props.copy.taskCreateZentaoOpenLink}
+                      </button>
+                    ) : null,
+                  ]
+                : props.copy.taskCreateZentaoLinkHelp}
+            </small>
+          </div>
           <div className="task-create-field task-create-title-field">
             <span id="task-create-title-label">{props.copy.taskCreateTitleLabel}</span>
             <input
@@ -6792,6 +6943,7 @@ export function App(props: {
   onAuthorizeTaskFiles?: (files: File[], source: 'paste' | 'drop') => Promise<TaskResourceAuthorizationResult>;
   onMaterializeTaskResources?: (resources: TaskResourcePayload[]) => Promise<TaskCreateAttachmentCandidate[]>;
   onReadTaskClipboardResources?: () => Promise<{ resources: TaskCreateAttachmentCandidate[]; text: string }>;
+  onParseZentaoTaskLink?: (url: string) => Promise<ZentaoTaskExtract>;
   onLoadTaskAttachmentPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
   onOpenTaskAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }>;
   onCreateTaskDraft?: (projectId: string, draft: TaskCreateDraft, idempotencyKey: string) => Promise<DashboardSnapshot>;
@@ -9534,6 +9686,29 @@ export function App(props: {
 
   function updateTaskCreatePriority(priority: TaskPriority): void {
     setTaskCreateForm((current) => ({ ...current, priority }));
+  }
+
+  function applyZentaoTaskExtract(extract: ZentaoTaskExtract): void {
+    if (extract.kind !== 'ok') return;
+    // 只回填解析出的非空字段，保留用户已填写的父任务、优先级、标签和附件。
+    setTaskCreateForm((current) => ({
+      ...current,
+      taskType: extract.taskType,
+      title: extract.title.trim() ? extract.title : current.title,
+      description: extract.description.trim() ? extract.description : current.description,
+      defectCurrentState: extract.currentState.trim() ? extract.currentState : current.defectCurrentState,
+      defectExpectedOutcome: extract.expectedOutcome.trim() ? extract.expectedOutcome : current.defectExpectedOutcome,
+      defectReproductionSteps: extract.reproductionSteps.trim() ? extract.reproductionSteps : current.defectReproductionSteps,
+    }));
+    setTaskCreateError('');
+  }
+
+  async function openZentaoLinkInBrowser(url: string): Promise<boolean> {
+    const opened = await openExternalHttpsUrlInMain({
+      zeus: typeof window === 'undefined' ? undefined : window.zeus,
+      url,
+    });
+    return opened.opened;
   }
 
   function mergeTaskCreateAttachments(attachments: TaskCreateAttachment[]): void {
@@ -13802,6 +13977,9 @@ export function App(props: {
                     onAuthorizeFiles={authorizeTaskCreateFiles}
                     onMaterializeResources={materializeTaskCreateResources}
                     onReadClipboardResources={readTaskCreateClipboardResources}
+                    onParseZentaoLink={(url) => props.onParseZentaoTaskLink?.(url) ?? Promise.resolve({ kind: 'unsupported', sourceUrl: url })}
+                    onApplyZentaoTaskInfo={applyZentaoTaskExtract}
+                    onOpenZentaoLink={openZentaoLinkInBrowser}
                     onAddAttachments={addTaskCreateAttachments}
                     onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
                     onOpenAttachment={props.onOpenTaskAttachment}
@@ -14489,6 +14667,7 @@ export function App(props: {
                         ['models', settingsWorkspaceCopy.categories.models, settingsWorkspaceCopy.localStatus],
                         ['browser', settingsWorkspaceCopy.categories.browser, settingsWorkspaceCopy.localStatus],
                         ['telegram', settingsWorkspaceCopy.categories.telegram, runtime.telegram.enabled ? settingsWorkspaceCopy.protectedStatus : settingsWorkspaceCopy.waitingStatus],
+                        ['zentao', settingsWorkspaceCopy.categories.zentao, settingsWorkspaceCopy.localStatus],
                       ],
                     },
                     {
@@ -14980,6 +15159,7 @@ export function App(props: {
                 ) : null}
                 {settingsCategory === 'browser' ? <BrowserSettingsPane language={appShellSettings.appLanguage} /> : null}
                 {settingsCategory === 'models' ? <ModelConnectionsSettingsPane language={appShellSettings.appLanguage} client={props.nativeConversationClient ?? null} /> : null}
+                {settingsCategory === 'zentao' ? <ZentaoSettingsPane language={appShellSettings.appLanguage} client={props.nativeConversationClient ?? null} /> : null}
                 {settingsCategory === 'telegram' ? (
                   <section className="settings-product-pane" aria-label={settingsWorkspaceCopy.categories.telegram}>
                     <NativeSettingsPane label={settingsWorkspaceCopy.telegram.paneTitle} className="deep-settings-pane telegram-settings-pane">

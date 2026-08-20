@@ -121,6 +121,9 @@ importers:
       '@zeus/local-server':
         specifier: workspace:*
         version: link:../../packages/local-server
+      '@zeus/security-core':
+        specifier: workspace:*
+        version: link:../../packages/security-core
       '@zeus/shared':
         specifier: workspace:*
         version: link:../../packages/shared

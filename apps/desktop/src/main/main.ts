@@ -23,6 +23,7 @@ import { buildAppShellMenuTemplate, buildLoginItemSettings, buildMenuBarTrayTemp
 import { createSystemNotificationBridge, type SystemNotificationBridge } from './systemNotifications.js';
 import { openLocalLogDirectory } from './localLogDirectory.js';
 import { openExternalHttpsUrl } from './externalOpen.js';
+import { extractZentaoTaskInfo } from './zentaoTaskExtract.js';
 import { createPersistedMainWindowState, findSavedWindowDisplay, type PersistedMainWindowState, readPersistedMainWindowState, resolveMainWindowState, writePersistedMainWindowState } from './windowState.js';
 import { applyRestoredMainWindowPlacement, createWindowStatePersistenceGate, waitForSavedWindowDisplay, type WindowStatePersistenceGate } from './windowRestoration.js';
 import {
@@ -51,7 +52,9 @@ import { readUnifiedConversationStoreMigrationStatus } from '@zeus/local-server'
 import { prepareZeusDataRoot } from './zeusDataMigration.js';
 import { ProjectSourceWorkspaceService } from './projectSourceWorkspace.js';
 import { ProjectGitWorkbenchService, type ProjectGitProjectIdentity } from './projectGitWorkbench.js';
-import type { CreateProjectSourceEntryInput, MoveProjectSourceEntryInput, SaveProjectSourceFileInput, TrashProjectSourceEntryInput } from '@zeus/shared';
+import { zentaoSecretAccount, type CreateProjectSourceEntryInput, type MoveProjectSourceEntryInput, type SaveProjectSourceFileInput, type TrashProjectSourceEntryInput, type ZentaoInstanceRecord } from '@zeus/shared';
+import { createMacOSKeychainStore } from '@zeus/security-core';
+import type { ZentaoExtractServices } from './zentaoTaskExtract.js';
 
 let mainWindow: BrowserWindow | undefined;
 const windows = new Set<BrowserWindow>();
@@ -969,6 +972,25 @@ async function loadProjectIdentity(projectId: string): Promise<ProjectGitProject
   return { id: projectId, name: payload.name, localPath: payload.localPath };
 }
 
+async function loadZentaoExtractServices(): Promise<ZentaoExtractServices | undefined> {
+  if (!localServerRuntime) return undefined;
+  const secretStore = createMacOSKeychainStore();
+  return {
+    loadInstances: async () => {
+      if (!localServerRuntime) return [];
+      const config = await localServerRuntime.refreshConfig();
+      const response = await fetch(`${config.baseUrl}/api/zentao-instances`, {
+        headers: { authorization: `Bearer ${config.apiToken}` },
+      });
+      if (!response.ok) return [];
+      const payload = (await response.json().catch(() => ({}))) as { items?: unknown };
+      if (!Array.isArray(payload.items)) return [];
+      return payload.items.filter((item): item is ZentaoInstanceRecord => typeof item === 'object' && item !== null && typeof (item as ZentaoInstanceRecord).id === 'string' && typeof (item as ZentaoInstanceRecord).host === 'string');
+    },
+    readPassword: async (instanceId) => secretStore.getSecret(zentaoSecretAccount(instanceId)),
+  };
+}
+
 function requireProjectSourceWorkspace(event: Electron.IpcMainInvokeEvent): ProjectSourceWorkspaceService {
   const requestingWindow = BrowserWindow.fromWebContents(event.sender);
   if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || !projectSourceWorkspace) {
@@ -1540,6 +1562,10 @@ function setupIpc(): void {
   });
   ipcMain.handle('zeus:get-task-attachment-preview', (_event, path: string) => loadSavedTaskAttachmentPreview(path));
   ipcMain.handle('zeus:open-task-attachment', (_event, path: string) => openSavedTaskAttachment(path));
+  ipcMain.handle('zeus:zentao:parse-link', async (_event, url: unknown) => {
+    if (typeof url !== 'string' || !url.trim()) return { kind: 'unsupported', sourceUrl: typeof url === 'string' ? url : '' };
+    return extractZentaoTaskInfo(url.trim(), await loadZentaoExtractServices());
+  });
   ipcMain.handle('zeus:export-settings-snapshot', (_event, snapshot: unknown) =>
     exportSettingsSnapshotToFile({
       snapshot,

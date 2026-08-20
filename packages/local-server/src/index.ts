@@ -43,6 +43,7 @@ import {
   type TaskPushRelatedContextSelection,
   type TaskPushSupplementalAttachment,
   type TaskStatusFilter,
+  type SaveZentaoInstanceRequest,
   validateCommandDefinitionInput,
 } from '@zeus/shared';
 import { type ProjectScanResult, scanProjectSource } from '@zeus/code-indexer';
@@ -88,6 +89,7 @@ import {
 import type { BrowserAutomationPort } from './browserAutomation.js';
 import { resolveConversationAttachmentGrant } from './conversationAttachmentGrant.js';
 import { createModelConnectionService, type SaveModelConnectionRequest } from './modelConnectionService.js';
+import { createZentaoCredentialService } from './zentaoCredentialService.js';
 import { createPiNativeConversationCoordinator } from './piNativeConversationCoordinator.js';
 import { generateReleaseNotesWithDeepSeek } from './releaseNotesGeneration.js';
 import { buildTaskConflictAiConversationTitle, buildTaskConflictAiPrompt, matchesTaskConflictAiConversationTitle } from './taskConflictAi.js';
@@ -2346,6 +2348,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     secretStore,
     save: () => db.save(),
     listProjectIds: () => projects.list().map((project) => project.id),
+    now: () => now().toISOString(),
+  });
+  const zentaoCredentials = createZentaoCredentialService({
+    settings,
+    secretStore,
+    save: () => db.save(),
     now: () => now().toISOString(),
   });
   const piAgentDirectory = migrateRuntimeDirectory(join(dataLayout.root, 'pi-agent'), dataLayout.piConfig);
@@ -9498,6 +9506,62 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   });
 
   server.post('/api/model-connections/:connectionId/diagnose', async (request: FastifyRequest<{ Params: { connectionId: string } }>) => modelConnections.diagnose(request.params.connectionId));
+
+  server.get('/api/zentao-instances', async () => ({ items: await zentaoCredentials.list() }));
+
+  server.post('/api/zentao-instances', async (request: FastifyRequest<{ Body: SaveZentaoInstanceRequest }>, reply) => {
+    try {
+      const instance = await zentaoCredentials.create(request.body ?? ({} as SaveZentaoInstanceRequest));
+      appendAuditLog({
+        actorType: 'local_api',
+        action: 'zentao.instance.created',
+        resourceType: 'zentao_instance',
+        resourceId: instance.id,
+        payload: { host: instance.host, basePath: instance.basePath, accountConfigured: Boolean(instance.account), passwordConfigured: instance.passwordConfigured },
+      });
+      return reply.code(201).send(instance);
+    } catch (error) {
+      return sendZentaoError(reply, error);
+    }
+  });
+
+  server.put('/api/zentao-instances/:instanceId', async (request: FastifyRequest<{ Params: { instanceId: string }; Body: SaveZentaoInstanceRequest }>, reply) => {
+    try {
+      const instance = await zentaoCredentials.update(request.params.instanceId, request.body ?? ({} as SaveZentaoInstanceRequest));
+      appendAuditLog({
+        actorType: 'local_api',
+        action: 'zentao.instance.updated',
+        resourceType: 'zentao_instance',
+        resourceId: instance.id,
+        payload: { host: instance.host, basePath: instance.basePath, accountConfigured: Boolean(instance.account), passwordConfigured: instance.passwordConfigured },
+      });
+      return instance;
+    } catch (error) {
+      return sendZentaoError(reply, error);
+    }
+  });
+
+  server.delete('/api/zentao-instances/:instanceId', async (request: FastifyRequest<{ Params: { instanceId: string } }>, reply) => {
+    try {
+      await zentaoCredentials.remove(request.params.instanceId);
+      appendAuditLog({ actorType: 'local_api', action: 'zentao.instance.deleted', resourceType: 'zentao_instance', resourceId: request.params.instanceId, payload: {} });
+      return reply.code(204).send();
+    } catch (error) {
+      return sendZentaoError(reply, error);
+    }
+  });
+
+  server.delete('/api/zentao-instances/:instanceId/password', async (request: FastifyRequest<{ Params: { instanceId: string } }>, reply) => {
+    try {
+      const instance = await zentaoCredentials.clearPassword(request.params.instanceId);
+      appendAuditLog({ actorType: 'local_api', action: 'zentao.instance.password.cleared', resourceType: 'zentao_instance', resourceId: instance.id, payload: {} });
+      return instance;
+    } catch (error) {
+      return sendZentaoError(reply, error);
+    }
+  });
+
+  server.post('/api/zentao-instances/:instanceId/verify', async (request: FastifyRequest<{ Params: { instanceId: string } }>) => zentaoCredentials.verify(request.params.instanceId));
 
   server.get('/api/models/catalog', async () => ({ items: await modelConnections.listSelectableModels() }));
 
@@ -17229,6 +17293,14 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     const code = typeof candidate?.code === 'string' ? candidate.code : 'ZEUS_MODEL_CONNECTION_FAILED';
     const statusCode = typeof candidate?.statusCode === 'number' && candidate.statusCode >= 400 && candidate.statusCode <= 599 ? candidate.statusCode : code.endsWith('_NOT_FOUND') ? 404 : 400;
     const message = typeof candidate?.message === 'string' && candidate.message.trim() ? candidate.message : '模型连接操作失败。';
+    return reply.code(statusCode).send({ error: code, message });
+  }
+
+  function sendZentaoError(reply: FastifyReply, error: unknown) {
+    const candidate = error as { code?: unknown; statusCode?: unknown; message?: unknown };
+    const code = typeof candidate?.code === 'string' ? candidate.code : 'ZEUS_ZENTAO_INSTANCE_FAILED';
+    const statusCode = typeof candidate?.statusCode === 'number' && candidate.statusCode >= 400 && candidate.statusCode <= 599 ? candidate.statusCode : code.endsWith('_NOT_FOUND') ? 404 : 400;
+    const message = typeof candidate?.message === 'string' && candidate.message.trim() ? candidate.message : '禅道实例操作失败。';
     return reply.code(statusCode).send({ error: code, message });
   }
 
