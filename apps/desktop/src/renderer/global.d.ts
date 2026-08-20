@@ -1,5 +1,6 @@
 import type { DashboardClientOptions, LocalBusinessDataSnapshot, LocalSettingsExportSnapshot } from './apiClient.js';
 import type { ZeusBrowserApprovalDecision, ZeusBrowserCommand, ZeusBrowserConversationSnapshot, ZeusBrowserEvent, ZeusBrowserPreparedSubmission, ZeusBrowserSettings } from '@zeus/shared';
+import type { ZentaoTaskExtract } from '@zeus/shared';
 import type { ConversationFileLocation, ConversationOpenTarget, ConversationResourceOpenTarget } from '@zeus/shared';
 import type {
   CreateProjectSourceEntryInput,
@@ -154,6 +155,7 @@ declare global {
       ) => Promise<TaskInputResourceBridge[]>;
       getTaskAttachmentPreview: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
       openTaskAttachment: (path: string) => Promise<{ opened: boolean; error?: string }>;
+      parseZentaoTaskLink: (url: string) => Promise<ZentaoTaskExtract>;
       exportSettingsSnapshotToFile: (snapshot: unknown) => Promise<{ saved: boolean; filePath: string | null }>;
       importSettingsSnapshotFromFile: () => Promise<{
         imported: boolean;

@@ -61,7 +61,10 @@ import type {
   CodexUsageAnalyticsSnapshot,
   CodexUsageRange,
   CodexUsageSummarySnapshot,
+  SaveZentaoInstanceRequest,
   UsageOverviewSnapshot,
+  ZentaoInstanceRecord,
+  ZentaoInstanceVerifyResult,
 } from '@zeus/shared';
 
 export type {
@@ -82,6 +85,9 @@ export type {
   TaskPriority,
   TaskStatusFilter,
   TaskType,
+  SaveZentaoInstanceRequest,
+  ZentaoInstanceRecord,
+  ZentaoInstanceVerifyResult,
 } from '@zeus/shared';
 
 export type TaskStatus = 'draft' | 'ready' | 'running' | 'paused' | 'waiting_confirmation' | 'completed' | 'failed' | 'cancelled';
@@ -1603,6 +1609,12 @@ export interface DashboardClient {
   clearModelConnectionApiKey: (connectionId: string) => Promise<ModelConnectionRecord>;
   refreshModelConnectionModels: (connectionId: string) => Promise<{ connection: ModelConnectionRecord; discoveredModelIds: string[]; addedModelIds: string[]; checkedAt: string }>;
   diagnoseModelConnection: (connectionId: string) => Promise<ModelConnectionDiagnostic>;
+  loadZentaoInstances: () => Promise<ZentaoInstanceRecord[]>;
+  createZentaoInstance: (input: SaveZentaoInstanceRequest) => Promise<ZentaoInstanceRecord>;
+  updateZentaoInstance: (instanceId: string, input: SaveZentaoInstanceRequest) => Promise<ZentaoInstanceRecord>;
+  deleteZentaoInstance: (instanceId: string) => Promise<void>;
+  clearZentaoInstancePassword: (instanceId: string) => Promise<ZentaoInstanceRecord>;
+  verifyZentaoInstance: (instanceId: string) => Promise<ZentaoInstanceVerifyResult>;
   loadSelectablePiModels: () => Promise<SelectablePiModel[]>;
   loadProjectModelSelection: (projectId: string) => Promise<ProjectModelSelection>;
   saveProjectModelSelection: (projectId: string, input: ProjectModelSelection) => Promise<ProjectModelSelection>;
@@ -2079,6 +2091,12 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
     refreshModelConnectionModels: (connectionId) =>
       request<{ connection: ModelConnectionRecord; discoveredModelIds: string[]; addedModelIds: string[]; checkedAt: string }>(`/api/model-connections/${encodeURIComponent(connectionId)}/models/refresh`, { method: 'POST' }),
     diagnoseModelConnection: (connectionId) => request<ModelConnectionDiagnostic>(`/api/model-connections/${encodeURIComponent(connectionId)}/diagnose`, { method: 'POST' }),
+    loadZentaoInstances: async () => (await request<{ items: ZentaoInstanceRecord[] }>('/api/zentao-instances')).items,
+    createZentaoInstance: (input) => request<ZentaoInstanceRecord>('/api/zentao-instances', { method: 'POST', body: JSON.stringify(input) }),
+    updateZentaoInstance: (instanceId, input) => request<ZentaoInstanceRecord>(`/api/zentao-instances/${encodeURIComponent(instanceId)}`, { method: 'PUT', body: JSON.stringify(input) }),
+    deleteZentaoInstance: (instanceId) => request<void>(`/api/zentao-instances/${encodeURIComponent(instanceId)}`, { method: 'DELETE' }),
+    clearZentaoInstancePassword: (instanceId) => request<ZentaoInstanceRecord>(`/api/zentao-instances/${encodeURIComponent(instanceId)}/password`, { method: 'DELETE' }),
+    verifyZentaoInstance: (instanceId) => request<ZentaoInstanceVerifyResult>(`/api/zentao-instances/${encodeURIComponent(instanceId)}/verify`, { method: 'POST' }),
     loadSelectablePiModels: async () => (await request<{ items: SelectablePiModel[] }>('/api/models/catalog')).items,
     loadProjectModelSelection: (projectId) => request<ProjectModelSelection>(`/api/projects/${encodeURIComponent(projectId)}/model-selection`),
     saveProjectModelSelection: (projectId, input) => request<ProjectModelSelection>(`/api/projects/${encodeURIComponent(projectId)}/model-selection`, { method: 'PUT', body: JSON.stringify(input) }),

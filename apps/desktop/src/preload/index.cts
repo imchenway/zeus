@@ -148,6 +148,7 @@ contextBridge.exposeInMainWorld('zeus', {
   saveTaskPastedAttachments: (attachments: Array<{ name?: string; type?: string; data?: ArrayBuffer; text?: string; kind?: 'image' | 'file' | 'pasted_text' }>) => ipcRenderer.invoke('zeus:save-task-pasted-attachments', attachments),
   getTaskAttachmentPreview: (path: string) => ipcRenderer.invoke('zeus:get-task-attachment-preview', path),
   openTaskAttachment: (path: string) => ipcRenderer.invoke('zeus:open-task-attachment', path),
+  parseZentaoTaskLink: (url: string) => ipcRenderer.invoke('zeus:zentao:parse-link', url),
   exportSettingsSnapshotToFile: (snapshot: unknown) => ipcRenderer.invoke('zeus:export-settings-snapshot', snapshot),
   importSettingsSnapshotFromFile: () => ipcRenderer.invoke('zeus:import-settings-snapshot'),
   importBusinessDataSnapshotFromFile: () => ipcRenderer.invoke('zeus:import-business-data-snapshot'),

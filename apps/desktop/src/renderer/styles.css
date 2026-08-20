@@ -18301,6 +18301,8 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
 .macos-ai-app .task-create-attachment-picker:focus-visible,
 .macos-ai-app .task-create-attachment-row button:focus-visible,
 .macos-ai-app .task-create-title-input:focus-visible,
+.macos-ai-app .task-create-zentao-input:focus-visible,
+.macos-ai-app .task-create-zentao-open-button:focus-visible,
 .macos-ai-app .task-create-description-input:focus-visible,
 .macos-ai-app .task-create-tags-input:focus-visible {
   outline: 0;
@@ -18320,6 +18322,58 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
   display: grid;
   gap: 6px;
   min-inline-size: 0;
+}
+
+.macos-ai-app .task-create-zentao-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+}
+
+.macos-ai-app .task-create-zentao-input {
+  min-inline-size: 0;
+}
+
+.macos-ai-app .task-create-zentao-parse-button {
+  min-block-size: 34px;
+  white-space: nowrap;
+}
+
+.macos-ai-app .task-create-zentao-hint {
+  margin: 0;
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+  line-height: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.macos-ai-app .task-create-zentao-hint-ok {
+  color: var(--zeus-success-text, #267a4c);
+}
+
+.macos-ai-app .task-create-zentao-hint-error {
+  color: var(--zeus-danger-text);
+}
+
+.macos-ai-app .task-create-zentao-open-button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  color: var(--zeus-accent);
+  font: inherit;
+  font-size: 12px;
+  line-height: 16px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.macos-ai-app .task-create-zentao-open-button:hover {
+  opacity: 0.82;
 }
 
 .macos-ai-app .task-create-title-input,

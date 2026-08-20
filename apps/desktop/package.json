@@ -15,6 +15,7 @@
     "@zeus/diagram-engine": "workspace:*",
     "@zeus/git-core": "workspace:*",
     "@zeus/local-server": "workspace:*",
+    "@zeus/security-core": "workspace:*",
     "@zeus/shared": "workspace:*",
     "@zeus/terminal-core": "workspace:*"
   },
