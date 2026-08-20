@@ -166,6 +166,8 @@ export class ConversationExecutionCoordinator {
         if (activeLease && activeLease !== submissionId) throw executionError('ZEUS_CONVERSATION_EXECUTION_LEASE_HELD', '产品会话已有一个活动切换操作。');
         this.leases.set(input.conversationId, submissionId);
         try {
+          // 同一路由续发也必须先收口已终态 submission 遗留的开放切换，不能只在创建新分段时自愈。
+          this.options.execution.ensureSwitchSlotAvailable({ conversationId: input.conversationId, submissionId, occurredAt: this.options.now() });
           // 只有真实队首开始派发时才固定模型历史水位；入队阶段只冻结路由与权限配置。
           if (portableContext && !portableContextId) {
             portableContextId = this.options.execution.recordPortableContext({

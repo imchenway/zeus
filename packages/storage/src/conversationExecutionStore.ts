@@ -531,10 +531,11 @@ export class ConversationExecutionRepository {
     const existing = this.getSwitchBySubmission(input.submissionId);
     if (existing) return existing;
     if (!this.getExecutionSnapshot(input.executionSnapshotId)) throw new Error(`执行快照不存在：${input.executionSnapshotId}`);
-    const source = this.currentSegment(input.conversationId);
     const segmentId = `conversation_segment_${nanoid(12)}`;
     const operationId = `conversation_switch_${nanoid(12)}`;
     this.db.transaction(() => {
+      this.reconcileSwitchSlot(input.conversationId, input.createdAt);
+      const source = this.currentSegment(input.conversationId);
       this.db.execute(
         `INSERT INTO conversation_runtime_segments
          (id, conversation_id, runtime_kind, state, execution_snapshot_id, provider_id,
@@ -574,6 +575,19 @@ export class ConversationExecutionRepository {
       );
     });
     return this.getSwitch(operationId)!;
+  }
+
+  ensureSwitchSlotAvailable(input: { conversationId: string; submissionId: string; occurredAt: string }): void {
+    this.db.transaction(() => this.reconcileSwitchSlot(input.conversationId, input.occurredAt, input.submissionId));
+  }
+
+  cancelOpenSwitchForSubmission(input: { conversationId: string; submissionId: string; reason: 'submission_deleted' | 'submission_cancelled'; occurredAt: string }): ConversationSwitchOperationRecord | null {
+    const operation = this.getSwitchBySubmission(input.submissionId);
+    if (!operation) return null;
+    if (operation.conversationId !== input.conversationId) throw new Error(`运行分段切换不属于产品会话：${input.submissionId}`);
+    if (!isOpenSwitch(operation)) return operation;
+    this.db.transaction(() => this.cancelOpenSwitch(operation, input.reason, input.occurredAt));
+    return this.getSwitch(operation.id)!;
   }
 
   updateProvisionalNativeIdentity(
@@ -1145,8 +1159,65 @@ export class ConversationExecutionRepository {
 
   private requireOpenSwitch(operationId: string): ConversationSwitchOperationRecord {
     const operation = this.getSwitch(operationId);
-    if (!operation || !['preflight', 'provisional', 'outcome_unknown'].includes(operation.state)) throw new Error(`运行分段切换操作不可继续：${operationId}`);
+    if (!operation || !isOpenSwitch(operation)) throw new Error(`运行分段切换操作不可继续：${operationId}`);
     return operation;
+  }
+
+  private openSwitchByConversation(conversationId: string): ConversationSwitchOperationRecord | undefined {
+    const row = this.db.get<SwitchOperationRow>(
+      `SELECT * FROM conversation_switch_operations
+        WHERE conversation_id = ? AND state IN ('preflight', 'provisional', 'outcome_unknown')
+        ORDER BY created_at, id
+        LIMIT 1`,
+      [conversationId],
+    );
+    return row ? mapSwitchOperation(row) : undefined;
+  }
+
+  private reconcileSwitchSlot(conversationId: string, occurredAt: string, allowedSubmissionId?: string): void {
+    const openSwitch = this.openSwitchByConversation(conversationId);
+    if (openSwitch) {
+      if (openSwitch.submissionId === allowedSubmissionId) return;
+      const owner = this.db.get<{ status: string }>(`SELECT status FROM conversation_submissions WHERE id = ? AND conversation_id = ?`, [openSwitch.submissionId, conversationId]);
+      if (owner && (owner.status === 'cancelled' || owner.status === 'deleted')) {
+        this.cancelOpenSwitch(openSwitch, 'terminal_submission_recovery', occurredAt);
+      } else {
+        throw conversationSwitchBusyError(conversationId);
+      }
+    }
+    const staleProvisional = this.provisionalSegment(conversationId);
+    if (!staleProvisional) return;
+    const owner = staleProvisional.provisionalForSubmissionId
+      ? this.db.get<{ status: string }>(`SELECT status FROM conversation_submissions WHERE id = ? AND conversation_id = ?`, [staleProvisional.provisionalForSubmissionId, conversationId])
+      : undefined;
+    if (!owner || (owner.status !== 'cancelled' && owner.status !== 'deleted')) throw conversationSwitchBusyError(conversationId);
+    this.db.execute(
+      `UPDATE conversation_runtime_segments
+          SET state = 'abandoned', sealed_at = ?, seal_reason = 'terminal_submission_recovery', updated_at = ?
+        WHERE id = ? AND state = 'provisional'`,
+      [occurredAt, occurredAt, staleProvisional.id],
+    );
+  }
+
+  private cancelOpenSwitch(operation: ConversationSwitchOperationRecord, reason: 'submission_deleted' | 'submission_cancelled' | 'terminal_submission_recovery', occurredAt: string): void {
+    const target = this.segmentById(operation.targetSegmentId);
+    if (!target || target.conversationId !== operation.conversationId || (target.state !== 'provisional' && target.state !== 'abandoned')) {
+      throw Object.assign(new Error('开放切换的候选运行分段状态不一致，不能安全取消。'), { code: 'ZEUS_CONVERSATION_SWITCH_STATE_CONFLICT' as const });
+    }
+    if (target.state === 'provisional') {
+      this.db.execute(
+        `UPDATE conversation_runtime_segments
+            SET state = 'abandoned', sealed_at = ?, seal_reason = ?, updated_at = ?
+          WHERE id = ? AND state = 'provisional'`,
+        [occurredAt, reason, occurredAt, target.id],
+      );
+    }
+    this.db.execute(
+      `UPDATE conversation_switch_operations
+          SET state = 'cancelled', failure_json = ?, updated_at = ?, resolved_at = ?
+        WHERE id = ? AND state IN ('preflight', 'provisional', 'outcome_unknown')`,
+      [JSON.stringify({ code: 'ZEUS_CONVERSATION_SWITCH_CANCELLED', reason }), occurredAt, occurredAt, operation.id],
+    );
   }
 
   private nextSequence(conversationId: string, column: 'timeline_sequence' | 'model_history_sequence' | 'sync_event_sequence' | 'process_sequence' | 'model_request_sequence'): number {
@@ -1669,6 +1740,14 @@ function mapSwitchOperation(row: SwitchOperationRow): ConversationSwitchOperatio
     updatedAt: row.updated_at,
     resolvedAt: row.resolved_at,
   };
+}
+
+function isOpenSwitch(operation: ConversationSwitchOperationRecord): boolean {
+  return operation.state === 'preflight' || operation.state === 'provisional' || operation.state === 'outcome_unknown';
+}
+
+function conversationSwitchBusyError(conversationId: string): Error {
+  return Object.assign(new Error(`产品会话已有一个尚未结束的运行分段切换：${conversationId}`), { code: 'ZEUS_CONVERSATION_SWITCH_IN_PROGRESS' as const });
 }
 
 function mapModelHistory(row: ModelHistoryRow): ConversationModelHistoryRecord {

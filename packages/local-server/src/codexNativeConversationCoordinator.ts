@@ -2299,14 +2299,22 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     }
     const queuedBeforeDelete = options.submissions.listByConversation(input.conversationId).filter((entry) => entry.status === 'queued' || entry.status === 'paused' || entry.status === 'failed');
     const deletedAt = now();
-    options.submissions.updateStatus(submission.id, 'deleted', { resolvedAt: deletedAt });
-    if (queuedBeforeDelete[0]?.id === submission.id) options.execution.resumeQueueBlockedByHead(input.conversationId, deletedAt);
-    const remaining = options.submissions.listByConversation(input.conversationId).filter((entry) => entry.status === 'queued' || entry.status === 'paused' || entry.status === 'failed');
-    options.submissions.reorderQueued(
-      input.conversationId,
-      remaining.map((entry) => entry.id),
-      now(),
-    );
+    options.db.transaction(() => {
+      options.execution.cancelOpenSwitchForSubmission({
+        conversationId: input.conversationId,
+        submissionId: submission.id,
+        reason: 'submission_deleted',
+        occurredAt: deletedAt,
+      });
+      options.submissions.updateStatus(submission.id, 'deleted', { resolvedAt: deletedAt });
+      if (queuedBeforeDelete[0]?.id === submission.id) options.execution.resumeQueueBlockedByHead(input.conversationId, deletedAt);
+      const remaining = options.submissions.listByConversation(input.conversationId).filter((entry) => entry.status === 'queued' || entry.status === 'paused' || entry.status === 'failed');
+      options.submissions.reorderQueued(
+        input.conversationId,
+        remaining.map((entry) => entry.id),
+        deletedAt,
+      );
+    });
     await persist();
     return toQueueSnapshot(input.conversationId);
   }
