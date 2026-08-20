@@ -7677,6 +7677,10 @@
   font-weight: 590;
 }
 
+.session-answered-request.is-answer-unavailable .session-answered-request-heading > :where(svg, strong) {
+  color: var(--session-danger);
+}
+
 .session-answered-request-body {
   border-inline-start: 1px solid var(--session-line-soft);
   display: grid;
@@ -7709,6 +7713,15 @@
   margin: 0;
   overflow-wrap: anywhere;
   white-space: break-spaces;
+}
+
+.session-answered-request.is-answer-unavailable .session-answered-request-body {
+  border-inline-start-color: color-mix(in srgb, var(--session-danger) 34%, var(--session-line-soft));
+}
+
+.session-answered-request-body .session-answered-request-sync-error {
+  color: var(--session-danger);
+  font-weight: 540;
 }
 
 .session-answered-request-options {

@@ -1069,7 +1069,17 @@ export type NativeConversationEvent =
         request?: NativePendingRequest;
       }
     >
-  | NativeEvent<'conversation.request.resolved', NativeEventIdentity & { turnId?: string; requestId: string; requestKind?: string }>
+  | NativeEvent<
+      'conversation.request.resolved',
+      NativeEventIdentity & {
+        turnId?: string;
+        requestId: string;
+        requestKind?: string;
+        resolvedBy?: string;
+        answerAvailability?: 'complete' | 'unavailable' | 'not_applicable';
+        request?: NativePendingRequest;
+      }
+    >
   | NativeEvent<'conversation.request.snoozed', NativeEventIdentity & { requestId: string }>
   | NativeEvent<
       'conversation.plan_implementation_request.changed',

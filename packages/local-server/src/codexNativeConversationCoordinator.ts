@@ -72,6 +72,7 @@ import type {
   WaitForNativeTurnResultInput,
 } from './codexNativeConversationContracts.js';
 import { parseCanonicalRequestUserInputQuestions, validateCanonicalRequestUserInputAnswers } from './codexNativeRuiValidation.js';
+import { recoverRequestUserInputAnswersFromCodexRollout, type CodexRolloutRequestUserInputRecovery } from './codexRolloutRequestUserInput.js';
 import { chooseNativeUserMessageContent, type ResolvedNativeUserMessageSubmission, resolveNativeUserMessageSubmission } from './codexNativeUserMessageProjection.js';
 import type { BrowserAutomationPort } from './browserAutomation.js';
 import { zeusBrowserDynamicTools } from './browserDynamicTools.js';
@@ -289,6 +290,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   const failedTurnResults = new Map<string, Error & { code: string }>();
   const turnResultWaiters = new Map<string, NativeTurnResultWaiter[]>();
   const autoResolutionTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const externalAnswerRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const externalAnswerRecoveryDelaysMs = [200, 800, 4_000] as const;
   // 敏感回答不能落入 submission JSON；仅在当前宿主内存中保留到新 turn 被 app-server 接受。
   const volatileSubmissionText = new Map<string, string>();
   let closing = false;
@@ -421,6 +424,116 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     }
     scheduledPersistDirty = false;
     await enqueuePersist();
+  }
+
+  async function recoverExternalRequestUserInputAnswer(
+    conversation: ZeusConversationWithMessagesRecord,
+    request: ZeusConversationServerRequestRecord,
+    resolvedAt: string,
+  ): Promise<{ request: ZeusConversationServerRequestRecord; recovery: CodexRolloutRequestUserInputRecovery }> {
+    const turn = request.turnId ? options.turns.getById(request.turnId) : undefined;
+    const recovery = await recoverRequestUserInputAnswersFromCodexRollout({
+      rolloutPath: conversation.nativeSessionPath,
+      providerThreadId: requireString(conversation.providerThreadId, 'provider thread id'),
+      providerTurnId: turn?.providerTurnId ?? null,
+      providerItemId: request.itemId,
+      requestPayload: parseJsonRecord(request.payloadJson),
+    });
+    if (recovery.status !== 'found') return { request, recovery };
+    const payload = parseJsonRecord(request.payloadJson);
+    const validationError = validateCanonicalRequestUserInputAnswers(payload, recovery.answers);
+    if (validationError) return { request, recovery: { status: 'invalid', reason: 'answer_output_invalid' } };
+    return {
+      request: options.requests.resolve(request.id, {
+        response: { type: 'request_user_input', answers: recovery.answers },
+        isSecret: request.containsSecret,
+        questionIds: Object.keys(recovery.answers),
+        answerCount: Object.values(recovery.answers).reduce((total, answer) => total + answer.answers.length, 0),
+        resolvedAt: recovery.occurredAt ?? resolvedAt,
+      }),
+      recovery,
+    };
+  }
+
+  function requestHasExternalResolution(request: ZeusConversationServerRequestRecord): boolean {
+    if (request.status !== 'resolved' || !request.responseJson) return false;
+    try {
+      const response = JSON.parse(request.responseJson) as unknown;
+      return isRecord(response) && response.type === 'external_resolution';
+    } catch {
+      return false;
+    }
+  }
+
+  function clearExternalAnswerRecoveryTimer(requestId: string): void {
+    const timer = externalAnswerRecoveryTimers.get(requestId);
+    if (timer) clearTimeout(timer);
+    externalAnswerRecoveryTimers.delete(requestId);
+  }
+
+  function clearExternalAnswerRecoveryTimers(): void {
+    for (const requestId of [...externalAnswerRecoveryTimers.keys()]) clearExternalAnswerRecoveryTimer(requestId);
+  }
+
+  function scheduleExternalAnswerRecovery(conversationId: string, requestId: string, attempt = 0): void {
+    if (closing || closed || attempt >= externalAnswerRecoveryDelaysMs.length) return;
+    clearExternalAnswerRecoveryTimer(requestId);
+    const timer = setTimeout(() => {
+      externalAnswerRecoveryTimers.delete(requestId);
+      providerEventChain = providerEventChain
+        .then(async () => {
+          if (closing || closed) return;
+          const request = options.requests.getById(requestId);
+          const conversation = options.conversations.getById(conversationId);
+          if (!request || !conversation || request.requestKind !== 'request_user_input' || !requestHasExternalResolution(request)) return;
+          const recovered = await recoverExternalRequestUserInputAnswer(conversation, request, request.resolvedAt ?? now());
+          if (recovered.recovery.status === 'found') {
+            clearExternalAnswerRecoveryTimer(requestId);
+            await persist();
+            options.broadcast('conversation.request.resolved', {
+              conversationId,
+              requestId,
+              requestKind: request.requestKind,
+              resolvedBy: 'provider_rollout_retry',
+              answerAvailability: 'complete',
+              request: nativePendingRequestProjection(recovered.request),
+            });
+            return;
+          }
+          if (recovered.recovery.reason === 'answer_output_missing') scheduleExternalAnswerRecovery(conversationId, requestId, attempt + 1);
+        })
+        .catch((error) => {
+          options.broadcast('codex.native.error', {
+            conversationId,
+            requestId,
+            error: 'ZEUS_CODEX_EXTERNAL_ANSWER_RECOVERY_FAILED',
+            message: error instanceof Error ? error.message : String(error),
+          });
+        });
+    }, externalAnswerRecoveryDelaysMs[attempt]);
+    externalAnswerRecoveryTimers.set(requestId, timer);
+  }
+
+  async function recoverExternallyResolvedRequestUserInputAnswers(conversation: ZeusConversationWithMessagesRecord, providerTurnId?: string): Promise<number> {
+    let recoveredCount = 0;
+    for (const request of options.requests.listByConversation(conversation.id)) {
+      if (request.requestKind !== 'request_user_input' || !requestHasExternalResolution(request)) continue;
+      const turn = request.turnId ? options.turns.getById(request.turnId) : undefined;
+      if (providerTurnId && turn?.providerTurnId !== providerTurnId) continue;
+      const recovered = await recoverExternalRequestUserInputAnswer(conversation, request, request.resolvedAt ?? now());
+      if (recovered.recovery.status !== 'found') continue;
+      clearExternalAnswerRecoveryTimer(request.id);
+      recoveredCount += 1;
+      options.broadcast('conversation.request.resolved', {
+        conversationId: conversation.id,
+        requestId: request.id,
+        requestKind: request.requestKind,
+        resolvedBy: 'provider_rollout',
+        answerAvailability: 'complete',
+        request: nativePendingRequestProjection(recovered.request),
+      });
+    }
+    return recoveredCount;
   }
 
   function reportScheduledPersistFailure(error: unknown): void {
@@ -2645,6 +2758,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       });
       runStates.set(conversation.id, { type: 'idle' });
       reconcileConversationSnapshot(conversation, snapshot, requireString(readyGenerationId(), 'transport generation id'));
+      await recoverExternallyResolvedRequestUserInputAnswers(requireConversation(conversation.id));
       await persist();
       options.broadcast('conversation.thread.changed', {
         conversationId: conversation.id,
@@ -3340,6 +3454,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         await enqueueProviderTurnReconciliation(requireConversation(conversation.id));
         const snapshot = await options.manager.readThread({ threadId: providerThreadId });
         reconcileConversationSnapshot(conversation, snapshot, authoritativeGenerationId);
+        await recoverExternallyResolvedRequestUserInputAnswers(requireConversation(conversation.id));
         restoreRecoverableInteractionState(conversation.id);
       } catch (error) {
         if (isProviderThreadArchivedError(error)) markConversationProviderArchived(conversation.id, error);
@@ -4009,7 +4124,16 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         const durableConversation = options.conversations.getById(request.conversationId);
         if (durableConversation) {
           clearAutoResolutionTimer(request.id);
-          options.requests.resolveExternally(request.id, { source: 'provider', resolvedAt: event.receivedAt });
+          const recovered = request.requestKind === 'request_user_input' ? await recoverExternalRequestUserInputAnswer(durableConversation, request, event.receivedAt) : null;
+          const resolvedRequest =
+            recovered?.recovery.status === 'found'
+              ? recovered.request
+              : options.requests.resolveExternally(request.id, {
+                  source: 'provider',
+                  resolvedAt: event.receivedAt,
+                  ...(recovered ? { answerRecovery: recovered.recovery.reason } : {}),
+                });
+          if (recovered && recovered.recovery.status !== 'found' && recovered.recovery.reason === 'answer_output_missing') scheduleExternalAnswerRecovery(durableConversation.id, request.id);
           const turn = request.turnId ? options.turns.getById(request.turnId) : undefined;
           if (turn?.providerTurnId) {
             const nextPending = options.requests
@@ -4047,6 +4171,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
               requestId: request.id,
               requestKind: request.requestKind,
               resolvedBy: 'provider',
+              answerAvailability: recovered?.recovery.status === 'found' ? 'complete' : request.requestKind === 'request_user_input' ? 'unavailable' : 'not_applicable',
+              request: nativePendingRequestProjection(resolvedRequest),
             },
           };
         }
@@ -4185,6 +4311,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       if (!providerTurnId) return;
       const turn = options.turns.listByConversation(conversation.id).find((candidate) => candidate.providerTurnId === providerTurnId);
       if (!turn) return;
+      await recoverExternallyResolvedRequestUserInputAnswers(conversation, providerTurnId);
       if (turn.status === 'completed' || turn.status === 'interrupted' || turn.status === 'failed') return;
       const terminalStatus = providerTurnTerminalStatus(params);
       const interrupted = terminalStatus === 'interrupted';
@@ -5180,6 +5307,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     if (handoffPromise) return handoffPromise;
     closing = true;
     for (const requestId of [...autoResolutionTimers.keys()]) clearAutoResolutionTimer(requestId);
+    clearExternalAnswerRecoveryTimers();
     unsubscribe();
     flushReadableDeltas();
     // unsubscribe 后冻结已接收链；这些 handler 仍可完整持久化和广播，closed 只能在 drain 之后设置。
@@ -5230,6 +5358,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       finalizationPromise = (async () => {
         const error = coordinatorError('ZEUS_CODEX_COORDINATOR_CLOSED', 'Codex native conversation coordinator is closed.');
         for (const requestId of [...autoResolutionTimers.keys()]) clearAutoResolutionTimer(requestId);
+        clearExternalAnswerRecoveryTimers();
         await beginHandoff(error);
         const interrupts: Promise<void>[] = [];
         const interruptedTurns = new Set<string>();

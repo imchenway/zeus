@@ -767,7 +767,15 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
     case 'conversation.request.resolved': {
       const requestId = stringValue(payload.requestId);
       const wasPending = requestId ? state.pendingRequests.some((request) => request.id === requestId) : false;
-      const pendingRequests = requestId ? state.pendingRequests.filter((request) => request.id !== requestId) : state.pendingRequests;
+      const rawEventRequest = requestId ? pendingRequestFromEvent(payload.request, requestId) : null;
+      const eventRequest = rawEventRequest ? normalizePendingRequests(base, [rawEventRequest])[0] : null;
+      const pendingRequests = requestId
+        ? eventRequest
+          ? state.pendingRequests.some((request) => request.id === requestId)
+            ? state.pendingRequests.map((request) => (request.id === requestId ? eventRequest : request))
+            : [...state.pendingRequests, eventRequest]
+          : state.pendingRequests.filter((request) => request.id !== requestId)
+        : state.pendingRequests;
       return {
         ...base,
         pendingRequests,
