@@ -24,7 +24,17 @@ export function isOperationalActivityItem(item: NativeSessionItemBuffer): boolea
   return operationalTypes.has(type);
 }
 
-export const SessionActivityGroup = memo(function SessionActivityGroup(props: { items: NativeSessionItemBuffer[]; language: SessionUiLanguage; motionActive?: boolean }) {
+export type SessionActivityCategory = 'commands' | 'tools' | 'files' | 'context';
+
+export function activityCategory(item: NativeSessionItemBuffer): SessionActivityCategory {
+  const type = normalizeType(item.type);
+  if (type === 'commandexecution' || type === 'command') return 'commands';
+  if (type === 'filechange' || type === 'file') return 'files';
+  if (type === 'contextcompaction') return 'context';
+  return 'tools';
+}
+
+export const SessionActivityGroup = memo(function SessionActivityGroup(props: { items: NativeSessionItemBuffer[]; language: SessionUiLanguage; category: SessionActivityCategory; motionActive?: boolean }) {
   const liveItem = [...props.items].reverse().find((item) => item.status !== 'completed' && item.status !== 'failed') ?? null;
   const active = Boolean(liveItem);
   const summary = activitySummary(props.items, props.language, active);
@@ -39,7 +49,7 @@ export const SessionActivityGroup = memo(function SessionActivityGroup(props: { 
   }, [active]);
 
   return (
-    <section className="session-activity-group" data-active={active || undefined} data-motion-active={(active && props.motionActive) || undefined} aria-label={props.language === 'zh-CN' ? '工作活动' : 'Work activity'}>
+    <section className="session-activity-group" data-active={active || undefined} data-activity-category={props.category} data-item-count={props.items.length} data-motion-active={props.motionActive || undefined} aria-label={summary}>
       <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
         <summary>
           <span className="session-activity-group-icon" aria-hidden="true">
@@ -75,12 +85,17 @@ function sameActivityGroupProps(
   previous: Readonly<{
     items: NativeSessionItemBuffer[];
     language: SessionUiLanguage;
+    category: SessionActivityCategory;
     motionActive?: boolean;
   }>,
-  next: Readonly<{ items: NativeSessionItemBuffer[]; language: SessionUiLanguage; motionActive?: boolean }>,
+  next: Readonly<{ items: NativeSessionItemBuffer[]; language: SessionUiLanguage; category: SessionActivityCategory; motionActive?: boolean }>,
 ): boolean {
-  if (previous.language !== next.language || previous.motionActive !== next.motionActive || previous.items.length !== next.items.length) return false;
+  if (previous.language !== next.language || previous.category !== next.category || previous.motionActive !== next.motionActive || previous.items.length !== next.items.length) return false;
   return previous.items.every((item, index) => item === next.items[index]);
+}
+
+export function isLiveActivityItem(item: Pick<NativeSessionItemBuffer, 'status'>): boolean {
+  return item.status !== 'completed' && item.status !== 'failed';
 }
 
 function ActivityLiveRow(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage }) {
@@ -278,6 +293,10 @@ function activitySummary(items: NativeSessionItemBuffer[], language: SessionUiLa
   const compactions = items.filter((item) => normalizeType(item.type) === 'contextcompaction');
   if (compactions.length === items.length) {
     return language === 'zh-CN' ? (active ? '正在整理较早对话以继续工作' : '已整理较早对话') : active ? 'Organizing earlier conversation to continue' : 'Organized earlier conversation';
+  }
+  const fileChanges = items.filter((item) => ['filechange', 'file'].includes(normalizeType(item.type))).length;
+  if (fileChanges === items.length && fileChanges > 0) {
+    return language === 'zh-CN' ? `${active ? '正在变更' : '已变更'} ${fileChanges} 个文件` : `${active ? 'Changing' : 'Changed'} ${fileChanges} ${fileChanges === 1 ? 'file' : 'files'}`;
   }
   const skills = activitySkillNames(items);
   if (skills.length > 0) {

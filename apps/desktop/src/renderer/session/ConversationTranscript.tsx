@@ -1,6 +1,6 @@
 import { Fragment, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
-import { isActiveSessionTurn, isOperationalActivityItem, SessionActivityGroup, SessionTurnDuration, SessionTurnProcessDisclosure } from './SessionActivity.js';
+import { activityCategory, isActiveSessionTurn, isLiveActivityItem, isOperationalActivityItem, SessionActivityGroup, SessionTurnDuration, SessionTurnProcessDisclosure, type SessionActivityCategory } from './SessionActivity.js';
 import { itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText } from './ThreadItemView.js';
 import { PlanSummary } from './PlanSummary.js';
 import { isAssistantDeliverableItem } from './sessionTypes.js';
@@ -75,6 +75,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const latestContentMarkerRef = useRef<HTMLSpanElement | null>(null);
   const latestMarkerIntersectingRef = useRef(true);
   const latestPositionFrameRef = useRef<number | null>(null);
+  const latestPositionSettleFrameRef = useRef<number | null>(null);
   const latestVisibilityFrameRef = useRef<number | null>(null);
   const lastReportedLatestVisibilityRef = useRef<boolean | null>(null);
   const latestVisibilityCallbackRef = useRef(props.onLatestContentVisibilityChange);
@@ -86,6 +87,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const [completedAnnouncement, setCompletedAnnouncement] = useState<{ key: string; text: string } | null>(null);
   const completedAnnouncementTrackerRef = useRef<CompletedItemAnnouncementTracker>({ hydrated: false, lastCompletedKey: null });
   const positionedConversationIdRef = useRef<string | null>(null);
+  const trackedUserMessageRef = useRef<{ conversationId: string | null; key: string | null; initialized: boolean }>({ conversationId: null, key: null, initialized: false });
   const awaitingReplyMessageIdsRef = useRef<Set<string>>(new Set());
   const awaitingReplyConversationIdRef = useRef<string | null>(null);
   const queuedSubmissions = useMemo(() => visibleQueuedSubmissions(props.state.queue), [props.state.queue]);
@@ -193,11 +195,30 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       if (!container) return;
       const effect = scrollController.onDelta();
       if (effect.type === 'scroll_to_bottom') {
-        scrollToLatest(container);
+        scrollToLatest(container, latestContentMarkerRef.current);
         setReturnToLatestVisible(false);
       }
       scheduleLatestContentVisibility();
     });
+  }, [scheduleLatestContentVisibility, scrollController]);
+
+  const settleLatestPosition = useCallback(() => {
+    if (latestPositionSettleFrameRef.current !== null) cancelAnimationFrame(latestPositionSettleFrameRef.current);
+    let remainingFrames = 3;
+    const settle = (): void => {
+      latestPositionSettleFrameRef.current = null;
+      const container = containerRef.current;
+      if (!container) return;
+      const effect = scrollController.onDelta();
+      if (effect.type === 'scroll_to_bottom') {
+        scrollToLatest(container, latestContentMarkerRef.current);
+        setReturnToLatestVisible(false);
+      }
+      scheduleLatestContentVisibility();
+      remainingFrames -= 1;
+      if (remainingFrames > 0) latestPositionSettleFrameRef.current = requestAnimationFrame(settle);
+    };
+    latestPositionSettleFrameRef.current = requestAnimationFrame(settle);
   }, [scheduleLatestContentVisibility, scrollController]);
 
   useEffect(() => {
@@ -223,6 +244,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   useEffect(
     () => () => {
       if (latestPositionFrameRef.current !== null) cancelAnimationFrame(latestPositionFrameRef.current);
+      if (latestPositionSettleFrameRef.current !== null) cancelAnimationFrame(latestPositionSettleFrameRef.current);
       if (latestVisibilityFrameRef.current !== null) cancelAnimationFrame(latestVisibilityFrameRef.current);
       lastReportedLatestVisibilityRef.current = false;
       latestVisibilityCallbackRef.current?.(false);
@@ -235,9 +257,10 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     const conversationId = props.state.conversationId;
     if (!container || !historyHydrated || !conversationId || positionedConversationIdRef.current === conversationId) return;
     positionedConversationIdRef.current = conversationId;
-    scrollToLatest(container);
+    scrollToLatest(container, latestContentMarkerRef.current);
+    settleLatestPosition();
     setReturnToLatestVisible(false);
-  }, [historyHydrated, props.state.conversationId, props.state.transcriptRevision]);
+  }, [historyHydrated, props.state.conversationId, props.state.transcriptRevision, settleLatestPosition]);
 
   useLayoutEffect(() => {
     const container = containerRef.current;
@@ -255,10 +278,32 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     if (historyHydrated && !activeTurnTrackingInitializedRef.current) return;
     const effect = scrollController.onMessageSubmitted();
     if (effect.type === 'scroll_to_bottom') {
-      scrollToLatest(container);
+      scrollToLatest(container, latestContentMarkerRef.current);
       setReturnToLatestVisible(false);
     }
   }, [awaitingReplyMessageIds, historyHydrated, props.state.conversationId, scrollController]);
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    const conversationId = props.state.conversationId;
+    if (!container || !historyHydrated || !conversationId) return;
+    const tracked = trackedUserMessageRef.current;
+    if (!tracked.initialized || tracked.conversationId !== conversationId) {
+      trackedUserMessageRef.current = { conversationId, key: lastUserKey ?? null, initialized: true };
+      return;
+    }
+    const previousKey = tracked.key;
+    tracked.key = lastUserKey ?? null;
+    if (!lastUserKey || lastUserKey === previousKey) return;
+
+    // 以可见用户消息身份作为发送锚点，覆盖“发送后很快被 accepted/完成，来不及进入 awaitingReply 列表”的快速路径。
+    const effect = scrollController.onMessageSubmitted();
+    if (effect.type === 'scroll_to_bottom') {
+      scrollToLatest(container, latestContentMarkerRef.current);
+      setReturnToLatestVisible(false);
+      settleLatestPosition();
+    }
+  }, [historyHydrated, lastUserKey, props.state.conversationId, scrollController, settleLatestPosition]);
 
   useEffect(() => {
     const resolution = resolveCompletedItemAnnouncement(completedAnnouncementTrackerRef.current, items, props.language);
@@ -278,7 +323,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     if (props.state.activeTurnId && previousTurnIdRef.current !== props.state.activeTurnId) {
       const effect = scrollController.onTurnStarted(metrics(container), Date.now());
       if (effect.type === 'scroll_to_bottom') {
-        scrollToLatest(container);
+        scrollToLatest(container, latestContentMarkerRef.current);
         setReturnToLatestVisible(false);
       }
     }
@@ -395,7 +440,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             if (!container) return;
             const effect = scrollController.onExplicitLatestRequest();
             if (effect.type !== 'scroll_to_bottom') return;
-            scrollToLatest(container);
+            scrollToLatest(container, latestContentMarkerRef.current);
             setReturnToLatestVisible(false);
           }}
         >
@@ -535,6 +580,7 @@ export type TranscriptRow =
       kind: 'activity';
       key: string;
       items: NativeSessionItemBuffer[];
+      category: SessionActivityCategory;
       motionActive: boolean;
     };
 
@@ -631,7 +677,14 @@ function transcriptRowRenderOptions(
 function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOptions): ReactNode {
   if (row.kind === 'answered_request') return <AnsweredRequestHistory request={row.request} language={options.props.language} />;
   if (row.kind === 'activity') {
-    return <SessionActivityGroup items={row.items} language={options.props.language} motionActive={row.motionActive} />;
+    return (
+      <SessionActivityGroup
+        items={row.items}
+        category={row.category}
+        language={options.props.language}
+        motionActive={row.motionActive || row.items.some(isLiveActivityItem) || row.items.some((item) => item.key === options.motionFocus?.itemKey)}
+      />
+    );
   }
   if (row.item.type === 'plan') {
     return <PlanSummary item={row.item} language={options.props.language} motionActive={row.item.key === options.motionFocus?.itemKey} panelOpen={options.props.openPlanItemKey === row.item.key} onOpenPanel={options.props.onOpenPlan} />;
@@ -882,18 +935,31 @@ const MAX_GROUPED_COMMAND_ACTIVITY = 32;
 
 export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[], answeredRequests: readonly NativePendingRequest[] = [], activeTurnId: string | null = null): TranscriptRow[] {
   const rows: TranscriptRow[] = [];
-  let activity: NativeSessionItemBuffer[] = [];
+  let activityTurnId: string | null = null;
+  const activityByCategory = new Map<SessionActivityCategory, NativeSessionItemBuffer[]>();
+  const activityCategoryOrder: SessionActivityCategory[] = [];
   const currentReasoningItemKey = latestCurrentReasoningItemKey(items, activeTurnId);
   const currentActivityItemKey = latestCurrentActivityItemKey(items, activeTurnId);
-  const flushActivity = () => {
-    if (activity.length === 0) return;
+  const flushCategory = (category: SessionActivityCategory): void => {
+    if (!activityTurnId) return;
+    const groupedItems = activityByCategory.get(category);
+    if (!groupedItems || groupedItems.length === 0) return;
     rows.push({
       kind: 'activity',
-      key: `activity:${activity[0]!.key}`,
-      items: activity,
-      motionActive: activity.some((item) => item.key === currentActivityItemKey),
+      key: `activity:${activityTurnId}:${category}:${groupedItems[0]!.key}`,
+      items: groupedItems,
+      category,
+      motionActive: groupedItems.some((item) => item.key === currentActivityItemKey),
     });
-    activity = [];
+    activityByCategory.delete(category);
+    const categoryIndex = activityCategoryOrder.indexOf(category);
+    if (categoryIndex >= 0) activityCategoryOrder.splice(categoryIndex, 1);
+  };
+  const flushActivity = (): void => {
+    for (const category of [...activityCategoryOrder]) flushCategory(category);
+    activityTurnId = null;
+    activityByCategory.clear();
+    activityCategoryOrder.length = 0;
   };
   const timeline: Array<{ kind: 'item'; item: NativeSessionItemBuffer } | { kind: 'answered_request'; request: NativePendingRequest }> = items.map((item) => ({ kind: 'item', item }));
   for (const request of [...answeredRequests].sort((left, right) => (left.resolvedAt ?? left.createdAt).localeCompare(right.resolvedAt ?? right.createdAt))) {
@@ -924,22 +990,47 @@ export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[],
       rows.push({ kind: 'item', key: transcriptItemRenderKey(item), item });
       continue;
     }
-    if (!isCommandActivityItem(item)) {
-      // MCP、网页、图片和文件变更等非命令工具可合并相邻工具，但不能与命令混成一个数量摘要。
-      if (!isMergeableToolActivity(item)) {
-        flushActivity();
-        activity.push(item);
-        flushActivity();
-        continue;
-      }
-      if (!canJoinToolActivity(activity, item)) flushActivity();
-      activity.push(item);
-      if (item.status === 'failed' || activity.length >= MAX_GROUPED_TOOL_ACTIVITY) flushActivity();
+    // 两条思考摘要之间属于同一工作阶段，但折叠摘要按类别分组；命令、工具、文件变更和上下文整理
+    // 各自聚合，展开后仍保留每个类别内的原始明细，避免把不同语义压成一个混合数量。
+    const category = activityCategory(item);
+    if (category !== 'commands' && !isMergeableToolActivity(item)) {
+      // 上下文整理和 Provider 技术事件保留独立摘要，但仍带有明确的分类身份。
+      flushActivity();
+      activityTurnId = item.turnId;
+      activityByCategory.set(category, [item]);
+      activityCategoryOrder.push(category);
+      flushActivity();
       continue;
     }
-    if (!canJoinCommandActivity(activity, item)) flushActivity();
-    activity.push(item);
-    if (item.status === 'failed' || activity.length >= MAX_GROUPED_COMMAND_ACTIVITY || !isGroupableCommandSource(item)) flushActivity();
+    if (activityTurnId && activityTurnId !== item.turnId) flushActivity();
+    activityTurnId ??= item.turnId;
+    let groupedItems = activityByCategory.get(category);
+    if (!groupedItems) {
+      groupedItems = [];
+      activityByCategory.set(category, groupedItems);
+      activityCategoryOrder.push(category);
+    }
+    if (category === 'commands') {
+      if (!canJoinCommandActivity(groupedItems, item)) {
+        flushCategory(category);
+        groupedItems = [item];
+        activityByCategory.set(category, groupedItems);
+        activityCategoryOrder.push(category);
+      } else {
+        groupedItems.push(item);
+      }
+      if (item.status === 'failed' || groupedItems.length >= MAX_GROUPED_COMMAND_ACTIVITY || !isGroupableCommandSource(item)) flushCategory(category);
+      continue;
+    }
+    if (!canJoinToolActivity(groupedItems, item)) {
+      flushCategory(category);
+      groupedItems = [item];
+      activityByCategory.set(category, groupedItems);
+      activityCategoryOrder.push(category);
+    } else {
+      groupedItems.push(item);
+    }
+    if (item.status === 'failed' || groupedItems.length >= MAX_GROUPED_TOOL_ACTIVITY) flushCategory(category);
   }
   flushActivity();
   return rows;
@@ -1121,9 +1212,11 @@ function metrics(element: HTMLElement) {
   return { scrollTop: element.scrollTop, scrollHeight: element.scrollHeight, clientHeight: element.clientHeight };
 }
 
-function scrollToLatest(container: Pick<HTMLElement, 'scrollHeight' | 'scrollTo'>): void {
+function scrollToLatest(container: Pick<HTMLElement, 'clientHeight' | 'scrollHeight' | 'scrollTop'>, marker?: Pick<HTMLElement, 'scrollIntoView'> | null): void {
+  // 先让底部锚点参与布局，唤醒 content-visibility 跳过的历史高度，再做无动画定位。
+  marker?.scrollIntoView({ block: 'end', inline: 'nearest', behavior: 'auto' });
   // 自动跟随必须即时定位，避免程序滚动事件被误判为用户主动阅读历史。
-  container.scrollTo({ top: container.scrollHeight, behavior: 'instant' });
+  container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
 }
 
 function normalizeItemType(value: string): string {

@@ -427,11 +427,19 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
   const controllerHasSnapshot = controllerEnabled && state.snapshot?.id === props.conversation.id;
   const controllerFailed = controllerEnabled && state.transportState === 'failed';
   // 已经取得的完整正文始终优先于首发本地投影；后台校准只更新状态，不能让消息区退回第一条消息。
-  const controllerVisible = controllerHasSnapshot || (controllerFailed && !props.creationStatus);
+  const controllerVisible = controllerHasSnapshot || (controllerFailed && !props.creationStatus && Boolean(state.snapshot));
   // 普通会话冷切换时直接使用目标 controller；其 send 会在快照就绪前安全排队。
   // 创建期仍优先使用 localActions，避免临时会话身份提前连接服务端。
   const controllerInteractive = controllerVisible || (controllerEnabled && !props.localState);
   const displayedState = controllerVisible ? state : (props.localState ?? state);
+  const previousReadyTranscriptStateRef = useRef<NativeSessionState | null>(null);
+  useLayoutEffect(() => {
+    if (controllerEnabled && controllerVisible && state.snapshot?.id === props.conversation.id) {
+      previousReadyTranscriptStateRef.current = state;
+    }
+  }, [controllerEnabled, controllerVisible, props.conversation.id, state]);
+  const retainedTranscriptState = controllerEnabled && !controllerVisible && !state.snapshot && previousReadyTranscriptStateRef.current?.snapshot?.id !== props.conversation.id ? previousReadyTranscriptStateRef.current : null;
+  const transcriptLoading = controllerEnabled && !controllerVisible && !state.snapshot && ['connecting', 'hydrating', 'reconnecting'].includes(state.transportState);
   const displayedCreationStatus: SessionCreationStatus | undefined =
     controllerFailed && props.creationStatus
       ? {
@@ -571,6 +579,8 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       taskManagementStatusChangeBusy={props.taskManagementStatusChangeBusy}
       readOnlyGate={props.readOnlyGate}
       subagentListSnapshot={subagentListSnapshot}
+      transcriptState={retainedTranscriptState}
+      transcriptLoading={transcriptLoading}
       creationStatus={displayedCreationStatus}
       onLatestContentVisibilityChange={props.onLatestContentVisibilityChange}
       actions={workspaceActions}
@@ -1179,6 +1189,10 @@ export interface SessionWorkspaceProps {
   capabilities?: CodexConversationCapabilities | null;
   /** 权威子线程预读结果；实时连接失败时仍允许只读打开智能体。 */
   subagentListSnapshot?: NativeSubagentListSnapshot | null;
+  /** 冷切换期间暂留上一条已水合正文，目标快照就绪后再原位接管。 */
+  transcriptState?: NativeSessionState | null;
+  /** 目标正文尚未水合时，在输入区上方显示轻量状态。 */
+  transcriptLoading?: boolean;
   choicesKnown?: boolean;
   legacyMessages?: Record<string, Array<{ id: string; role: string; content: string }>>;
   loadState?: 'empty' | 'loading' | 'error';
@@ -1434,6 +1448,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const composerFocusRestorationPendingRef = useRef(false);
   const legacy = props.conversation && (props.conversation.readOnly || props.conversation.transportKind !== 'codex_native');
   const interactionReadOnly = Boolean(props.readOnlyGate);
+  const transcriptState = props.transcriptState ?? props.state;
+  const transcriptIsRetained = Boolean(props.transcriptState && props.transcriptState !== props.state);
+  const transcriptInteractionsEnabled = !interactionReadOnly && !transcriptIsRetained;
   const effectiveProviderState = props.state?.snapshot?.providerState ?? props.conversation?.providerState ?? null;
   const transportError = props.state?.transportState === 'failed' ? (errorMessage(props.state.error) ?? props.loadError ?? copy.failed) : null;
   useApplicationErrorDialog(props.readOnlyGate?.error, {
@@ -2313,15 +2330,15 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                   ) : null}
                   <div ref={setQuickActionsPersistentHost} className="session-quick-actions-persistent-host" />
                   <ConversationTranscript
-                    key={props.state.conversationId ?? props.conversation?.id ?? 'empty'}
-                    state={props.state}
+                    key={transcriptState?.conversationId ?? props.conversation?.id ?? 'empty'}
+                    state={transcriptState ?? props.state}
                     language={props.language}
-                    historyLoading={(props.state.transportState === 'hydrating' || props.state.transportState === 'connecting') && !props.state.snapshot}
-                    onLatestContentVisibilityChange={props.onLatestContentVisibilityChange}
-                    creationStatus={props.creationStatus}
-                    onEditUserItem={interactionReadOnly ? undefined : actions.onEditUserItem}
+                    historyLoading={Boolean(props.transcriptLoading ?? ((props.state.transportState === 'hydrating' || props.state.transportState === 'connecting') && !props.state.snapshot)) && !(transcriptState ?? props.state).snapshot}
+                    onLatestContentVisibilityChange={transcriptIsRetained ? undefined : props.onLatestContentVisibilityChange}
+                    creationStatus={transcriptIsRetained ? undefined : props.creationStatus}
+                    onEditUserItem={transcriptInteractionsEnabled ? actions.onEditUserItem : undefined}
                     onRetryItem={
-                      interactionReadOnly
+                      !transcriptInteractionsEnabled
                         ? undefined
                         : (item) => {
                             if (actions.onRetryItem) {
@@ -2331,29 +2348,37 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                             composerRef.current?.focus();
                           }
                     }
-                    openPlanItemKey={planWorkspaceItemKey}
-                    onOpenPlan={(item) => {
-                      contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-                      setContextFullWidth(false);
-                      setContextWorkspace({ kind: 'plan', itemKey: item.key });
-                    }}
-                    onOpenResource={openConversationResource}
-                    onLoadResourcePreview={actions.onLoadResourcePreview}
-                    onReviewTurnChanges={(changeSet, fileId) => {
-                      contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-                      setContextFullWidth(false);
-                      setContextWorkspace({
-                        kind: 'turn_diff',
-                        turnId: changeSet.providerTurnId,
-                        ...(fileId ? { initialFileId: fileId } : {}),
-                      });
-                    }}
-                    onOperateTurnChangeSet={!interactionReadOnly && actions.onOperateTurnChangeSet ? operateTurnChangeSet : undefined}
-                    onAddResponseAnnotation={!interactionReadOnly && actions.onContextDraftChange ? addResponseAnnotation : undefined}
-                    onUpdateResponseAnnotation={!interactionReadOnly && actions.onContextDraftChange ? updateResponseAnnotation : undefined}
-                    onRemoveResponseAnnotation={!interactionReadOnly && actions.onContextDraftChange ? removeResponseAnnotation : undefined}
+                    openPlanItemKey={transcriptIsRetained ? null : planWorkspaceItemKey}
+                    onOpenPlan={
+                      transcriptInteractionsEnabled
+                        ? (item) => {
+                            contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+                            setContextFullWidth(false);
+                            setContextWorkspace({ kind: 'plan', itemKey: item.key });
+                          }
+                        : undefined
+                    }
+                    onOpenResource={transcriptInteractionsEnabled ? openConversationResource : undefined}
+                    onLoadResourcePreview={transcriptInteractionsEnabled ? actions.onLoadResourcePreview : undefined}
+                    onReviewTurnChanges={
+                      transcriptInteractionsEnabled
+                        ? (changeSet, fileId) => {
+                            contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+                            setContextFullWidth(false);
+                            setContextWorkspace({
+                              kind: 'turn_diff',
+                              turnId: changeSet.providerTurnId,
+                              ...(fileId ? { initialFileId: fileId } : {}),
+                            });
+                          }
+                        : undefined
+                    }
+                    onOperateTurnChangeSet={transcriptInteractionsEnabled && actions.onOperateTurnChangeSet ? operateTurnChangeSet : undefined}
+                    onAddResponseAnnotation={transcriptInteractionsEnabled && actions.onContextDraftChange ? addResponseAnnotation : undefined}
+                    onUpdateResponseAnnotation={transcriptInteractionsEnabled && actions.onContextDraftChange ? updateResponseAnnotation : undefined}
+                    onRemoveResponseAnnotation={transcriptInteractionsEnabled && actions.onContextDraftChange ? removeResponseAnnotation : undefined}
                     onOpenSideChat={
-                      !interactionReadOnly && actions.onAskSideChat
+                      transcriptInteractionsEnabled && actions.onAskSideChat
                         ? (selectedText) => {
                             contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
                             setContextFullWidth(false);
@@ -2362,6 +2387,12 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                         : undefined
                     }
                   />
+                  {props.transcriptLoading ? (
+                    <p className="session-transcript-transition-status" role="status" aria-live="polite">
+                      <span className="session-command-spinner" aria-hidden="true" />
+                      <span>{copy.loading}</span>
+                    </p>
+                  ) : null}
                   {props.suppressComposer || !dockedPlan ? null : <SessionPlanProgress plan={dockedPlan} language={props.language} />}
                   {renderBlockingInteraction()}
                   {props.suppressComposer || blockingPendingRequest || blockingPlanImplementationRequest ? null : (

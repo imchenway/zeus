@@ -337,6 +337,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
   let targetedHydrationBuffer: NativeConversationEvent[] | null = null;
   let lastAppliedSyncEventSequence = 0;
   const pendingRenderDeltas = new Map<string, NativeConversationEvent>();
+  // steer 请求确认前保留队列中的可见占位；只有 steering 事件或明确回队事件到达后才交给正常投影。
+  const pendingSteeringSubmissions = new Map<string, NativeQueuedSubmission>();
   let renderDeltaTimer: ReturnType<typeof setTimeout> | null = null;
   let activeOperation: { key: string; promise: Promise<unknown> } | null = null;
   let browserCommentMarkFlush: Promise<void> | null = null;
@@ -480,8 +482,9 @@ export function createSessionController(options: CreateSessionControllerOptions)
   }
 
   async function applyAuthoritativeQueue(queue: NativeQueueSnapshot): Promise<void> {
-    dispatch({ type: 'queue_hydrated', queue });
-    await recoverManualConfirmationQueue(queue);
+    const projectedQueue = queueWithPendingSteering(queue);
+    dispatch({ type: 'queue_hydrated', queue: projectedQueue });
+    await recoverManualConfirmationQueue(projectedQueue);
   }
 
   async function applyAuthoritativeSnapshot(snapshot: NativeConversationSnapshot): Promise<void> {
@@ -489,9 +492,54 @@ export function createSessionController(options: CreateSessionControllerOptions)
       throw new Error('Zeus Renderer 与本地服务的会话结构代次不匹配，已拒绝猜测旧新字段。');
     }
     lastAppliedSyncEventSequence = snapshot.throughEventSeq;
-    dispatch({ type: 'snapshot_hydrated', snapshot: withoutResolvedRequests(snapshot) });
-    await recoverManualConfirmationQueue(snapshot.queue);
-    retireRecoveredBrowserCommentMarks(snapshot);
+    const settledSnapshot = settlePendingSteeringFromSnapshot(snapshot);
+    const projectedSnapshot = {
+      ...withoutResolvedRequests(settledSnapshot),
+      queue: queueWithPendingSteering(settledSnapshot.queue),
+    };
+    dispatch({ type: 'snapshot_hydrated', snapshot: projectedSnapshot });
+    await recoverManualConfirmationQueue(projectedSnapshot.queue);
+    retireRecoveredBrowserCommentMarks(projectedSnapshot);
+  }
+
+  function queueWithPendingSteering(queue: NativeQueueSnapshot): NativeQueueSnapshot {
+    if (pendingSteeringSubmissions.size === 0) return queue;
+    const submissions = [...queue.submissions];
+    let changed = false;
+    for (const [submissionId, pending] of pendingSteeringSubmissions) {
+      const index = submissions.findIndex((submission) => submission.id === submissionId);
+      if (index >= 0) {
+        const authoritative = submissions[index]!;
+        // queued/paused 是 send-now 明确回队或恢复的结果；不要再用本地“引导中”覆盖它。
+        if (authoritative.status !== 'dispatching' || authoritative.providerTurnId) {
+          pendingSteeringSubmissions.delete(submissionId);
+          continue;
+        }
+        if (submissions[index] !== pending) {
+          submissions[index] = pending;
+          changed = true;
+        }
+        continue;
+      }
+      submissions.push(pending);
+      changed = true;
+    }
+    return changed ? { ...queue, submissions } : queue;
+  }
+
+  function settlePendingSteeringFromSnapshot(snapshot: NativeConversationSnapshot): NativeConversationSnapshot {
+    if (pendingSteeringSubmissions.size === 0) return snapshot;
+    for (const [submissionId] of pendingSteeringSubmissions) {
+      const submission = snapshot.submissions.find((candidate) => candidate.id === submissionId);
+      // dispatching 且尚无 provider turn 仍是确认空窗；其他状态已经足以决定下一步投影。
+      if (submission && (submission.status !== 'dispatching' || submission.providerTurnId)) pendingSteeringSubmissions.delete(submissionId);
+    }
+    return snapshot;
+  }
+
+  function queueWithSubmission(queue: NativeQueueSnapshot, submission: NativeQueuedSubmission): NativeQueueSnapshot {
+    const submissions = queue.submissions.some((entry) => entry.id === submission.id) ? queue.submissions.map((entry) => (entry.id === submission.id ? submission : entry)) : [...queue.submissions, submission];
+    return { ...queue, submissions };
   }
 
   function flushRenderDeltas(): void {
@@ -542,9 +590,15 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return;
     }
     const suppressRequestAuthority = event.type === 'conversation.request.created' && requestId !== null && resolvedRequestIds.has(requestId);
-    dispatch({ type: 'event_received', event, ...(suppressRequestAuthority ? { suppressRequestAuthority: true } : {}) });
+    if (event.type === 'conversation.submission.steering') {
+      const submissionId = typeof event.payload.submissionId === 'string' ? event.payload.submissionId : null;
+      if (submissionId) pendingSteeringSubmissions.delete(submissionId);
+    }
+    const eventQueue = event.type === 'conversation.queue.changed' ? nativeQueueSnapshotFrom(event.payload.queue) : null;
+    const projectedEvent: NativeConversationEvent = event.type === 'conversation.queue.changed' && eventQueue ? { ...event, payload: { ...event.payload, queue: queueWithPendingSteering(eventQueue) } } : event;
+    dispatch({ type: 'event_received', event: projectedEvent, ...(suppressRequestAuthority ? { suppressRequestAuthority: true } : {}) });
     if (event.type === 'conversation.queue.changed') {
-      const queue = nativeQueueSnapshotFrom(event.payload.queue);
+      const queue = eventQueue ? queueWithPendingSteering(eventQueue) : null;
       if (queue) void recoverManualConfirmationQueue(queue);
     }
     if (event.type === 'conversation.request.created' && !suppressRequestAuthority && requestId) {
@@ -1095,9 +1149,15 @@ export function createSessionController(options: CreateSessionControllerOptions)
         if (ready) scheduleReconnect(token);
       });
       socketLifecycle = lifecycle;
+      // 快照读取与 WebSocket 建连互不依赖；并行启动可以把冷切换的等待时间收敛到较慢的一条链路。
+      dispatch({ type: 'transport_changed', transportState: 'hydrating' });
+      const snapshotPromise = options.client.loadNativeConversation(options.projectId, options.conversationId);
+      void snapshotPromise.catch(() => undefined);
       try {
         await lifecycle.opened;
       } catch (socketError) {
+        // 刷新本地服务地址时，前面的并行读取可能仍在等待；显式接住它，避免重连期间产生未处理 rejection。
+        void snapshotPromise.catch(() => undefined);
         lifecycle.markInactive();
         if (socket === nextSocket) socket = null;
         nextSocket.close();
@@ -1110,8 +1170,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       }
 
       if (lifecycle.isDisconnected()) throw new SocketDisconnectedDuringHydrationError();
-      dispatch({ type: 'transport_changed', transportState: 'hydrating' });
-      const snapshot = await options.client.loadNativeConversation(options.projectId, options.conversationId);
+      const snapshot = await snapshotPromise;
       if (disposed || token !== connectionToken) return;
       if (lifecycle.isDisconnected()) throw new SocketDisconnectedDuringHydrationError();
       await applyAuthoritativeSnapshot(snapshot);
@@ -1293,6 +1352,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       if (renderDeltaTimer) clearTimeout(renderDeltaTimer);
       renderDeltaTimer = null;
       pendingRenderDeltas.clear();
+      pendingSteeringSubmissions.clear();
       cancelPendingRequestRefreshRetry();
       requestsAwaitingDetails.clear();
       cancelReconnectLoop();
@@ -1528,14 +1588,83 @@ export function createSessionController(options: CreateSessionControllerOptions)
       );
     },
     sendQueuedNow(submissionId) {
-      return runOperation(
-        `queue:send-now:${submissionId}`,
+      const operation = `queue:send-now:${submissionId}`;
+      if (activeOperation && activeOperation.key === operation) return activeOperation.promise as Promise<NativeOperationAcceptance>;
+      if (activeOperation) return Promise.reject(new Error(`Session operation already in progress: ${activeOperation.key}`));
+
+      const queuedSubmission = state.queue?.submissions.find((submission) => submission.id === submissionId);
+      const pendingSubmission = queuedSubmission
+        ? {
+            ...queuedSubmission,
+            status: 'steering',
+            delivery: 'queue' as const,
+            providerTurnId: null,
+            updatedAt: new Date().toISOString(),
+          }
+        : null;
+      if (pendingSubmission) {
+        pendingSteeringSubmissions.set(submissionId, pendingSubmission);
+        dispatch({
+          type: 'queue_hydrated',
+          queue: state.queue
+            ? queueWithSubmission(state.queue, pendingSubmission)
+            : {
+                state: { type: 'active', turnId: state.activeTurnId ?? '', phase: 'prework' },
+                waitReason: 'current_turn',
+                submissions: [pendingSubmission],
+              },
+        });
+      }
+
+      const promise = runOperation(
+        operation,
         () => options.client.sendNativeQueuedNow(options.projectId, options.conversationId, submissionId),
         (acceptance) => {
           if (!acceptance.submission) return;
-          dispatch({ type: 'steering_submission_hydrated', submission: acceptance.submission as unknown as NativeQueuedSubmission });
+          const accepted = acceptance.submission as unknown as Partial<NativeQueuedSubmission>;
+          // acceptance 只代表 Provider 接受 steer RPC；消息真正进入当前轮次仍以 steering 事件为准。
+          // 若服务端明确回队，则立即恢复正常队列投影，不能把它误画成当前轮次消息。
+          if (pendingSubmission && (accepted.status === 'queued' || accepted.status === 'paused' || accepted.status === 'failed')) {
+            pendingSteeringSubmissions.delete(submissionId);
+            const requeued = {
+              ...pendingSubmission,
+              ...accepted,
+              status: accepted.status,
+              delivery: 'queue' as const,
+              providerTurnId: accepted.providerTurnId ?? null,
+            } as NativeQueuedSubmission;
+            if (state.queue) dispatch({ type: 'queue_hydrated', queue: queueWithSubmission(state.queue, requeued) });
+          }
         },
       );
+      return promise.catch((error) => {
+        const stillPending = pendingSteeringSubmissions.get(submissionId);
+        if (!disposed && stillPending) {
+          pendingSteeringSubmissions.delete(submissionId);
+          const sessionError = toSessionError(error, true);
+          const unconfirmed = {
+            ...stillPending,
+            status: 'paused',
+            delivery: 'queue' as const,
+            providerTurnId: null,
+            pausedReason: 'recovery_required',
+            error: {
+              code: sessionError.code ?? 'ZEUS_NATIVE_STEER_OUTCOME_UNKNOWN',
+              message: sessionError.message,
+              recoveryRequired: true,
+            },
+            updatedAt: new Date().toISOString(),
+          } as NativeQueuedSubmission;
+          if (state.queue) dispatch({ type: 'queue_hydrated', queue: queueWithSubmission(state.queue, unconfirmed) });
+          dispatch({
+            type: 'steering_submission_failed',
+            submissionId,
+            ...(stillPending.clientUserMessageId ? { clientUserMessageId: stillPending.clientUserMessageId } : {}),
+            error: sessionError,
+          });
+        }
+        throw error;
+      });
     },
     resumeQueue() {
       return runOperation(
