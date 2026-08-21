@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join, relative, resolve } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { nanoid } from 'nanoid';
 import type { CodexBootstrapAdditionalContext, PortableConversationContext, PortableHistoryEntry } from '@zeus/shared';
 import type { CodexDynamicToolSpec } from '@zeus/ai-runtime';
-import type { ConversationExecutionRepository, ConversationToolResultRecord } from '@zeus/storage';
+import { artifactStoreGeneration, type ArtifactRef, type ArtifactStore, type ConversationExecutionRepository, type ConversationToolResultRecord } from '@zeus/storage';
 
 const maximumProjectionCharacters = 16_384;
 const commandProjectionHeadCharacters = 12_288;
@@ -209,19 +209,32 @@ export class ManagedConversationToolResultStore {
   constructor(
     root: string,
     private readonly execution: ConversationExecutionRepository,
+    private readonly artifacts: ArtifactStore,
   ) {
     this.root = resolve(root);
   }
 
   async store(input: StoreConversationToolResultInput): Promise<{ record: ConversationToolResultRecord; projection: string }> {
     const handle = `conversation_tool_result_${nanoid(32)}`;
-    const conversationDirectory = join(this.root, safePathPart(input.conversationId));
-    const path = join(conversationDirectory, `${handle}.txt`);
-    await mkdir(conversationDirectory, { recursive: true, mode: 0o700 });
-    await chmod(conversationDirectory, 0o700);
-    await writeFile(path, input.text, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
-    await chmod(path, 0o600);
-    const bytes = Buffer.from(input.text, 'utf8');
+    const artifactRef = await this.artifacts.putText({
+      text: input.text,
+      mimeType: input.mimeType ?? 'text/plain; charset=utf-8',
+      compression: 'gzip-v1',
+      owner: {
+        kind: 'conversation_tool_result',
+        id: handle,
+        generationId: 'conversation-tool-result-artifact-v1',
+        conversationId: input.conversationId,
+      },
+      createdAt: input.createdAt,
+    });
+    this.artifacts.hold({
+      sha256: artifactRef.sha256,
+      owner: artifactRef.owner,
+      ownerClass: 'active_conversation',
+      reason: '完整工具结果随产品会话保留；归档、导出、恢复或删除时由生命周期服务显式转换。',
+      createdAt: input.createdAt,
+    });
     const projection = projectToolResult(input.toolKind, input.text, handle);
     const record = this.execution.recordToolResult({
       handle,
@@ -229,11 +242,11 @@ export class ManagedConversationToolResultStore {
       turnId: input.turnId,
       segmentId: input.segmentId,
       toolPairId: input.toolPairId,
-      relativePath: relative(this.root, path),
-      sha256: createHash('sha256').update(bytes).digest('hex'),
-      byteLength: bytes.byteLength,
-      mimeType: input.mimeType ?? 'text/plain; charset=utf-8',
-      projectionJson: JSON.stringify({ text: projection, truncated: projection !== input.text }),
+      relativePath: artifactRef.relativePath,
+      sha256: artifactRef.sha256,
+      byteLength: artifactRef.contentByteLength,
+      mimeType: artifactRef.mimeType,
+      projectionJson: JSON.stringify({ text: projection, truncated: projection !== input.text, artifactRef }),
       createdAt: input.createdAt,
     });
     return { record, projection };
@@ -242,16 +255,33 @@ export class ManagedConversationToolResultStore {
   async readPage(input: { conversationId: string; handle: string; offset?: number; limit?: number }): Promise<{ text: string; offset: number; nextOffset: number | null; totalCharacters: number; sha256: string }> {
     const record = this.execution.getToolResult(input.handle);
     if (!record || record.conversationId !== input.conversationId) throw toolResultError('ZEUS_CONVERSATION_TOOL_RESULT_NOT_FOUND', '工具结果句柄不存在或不属于当前产品会话。');
-    const absolute = resolve(this.root, record.relativePath);
-    if (absolute !== this.root && !absolute.startsWith(`${this.root}/`)) throw toolResultError('ZEUS_CONVERSATION_TOOL_RESULT_PATH_INVALID', '工具结果路径越过了 Zeus 托管目录。');
-    const text = await readFile(absolute, 'utf8');
-    const sha256 = createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex');
-    if (sha256 !== record.sha256) throw toolResultError('ZEUS_CONVERSATION_TOOL_RESULT_HASH_MISMATCH', '工具结果完整性校验失败。');
+    const artifactRef = toolResultArtifactRef(record.projectionJson);
+    let text: string;
+    let contentSha256: string;
+    if (artifactRef) {
+      if (artifactRef.sha256 !== record.sha256 || artifactRef.owner.kind !== 'conversation_tool_result' || artifactRef.owner.id !== record.handle) {
+        throw toolResultError('ZEUS_CONVERSATION_TOOL_RESULT_HASH_MISMATCH', '工具结果 ArtifactRef 与数据库句柄不一致。');
+      }
+      const resolved = await this.artifacts.readAuthorized({
+        sha256: artifactRef.sha256,
+        owner: artifactRef.owner,
+        maximumContentBytes: Math.min(1024 * 1024 * 1024, Math.max(record.byteLength, 1)),
+      });
+      text = Buffer.from(resolved.bytes).toString('utf8');
+      contentSha256 = resolved.ref.contentSha256;
+    } else {
+      // 仅供切换前的只读历史；所有新写入都必须包含 ArtifactRef。
+      const absolute = resolve(this.root, record.relativePath);
+      if (absolute !== this.root && !absolute.startsWith(`${this.root}/`)) throw toolResultError('ZEUS_CONVERSATION_TOOL_RESULT_PATH_INVALID', '工具结果路径越过了 Zeus 托管目录。');
+      text = await readFile(absolute, 'utf8');
+      contentSha256 = createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex');
+      if (contentSha256 !== record.sha256) throw toolResultError('ZEUS_CONVERSATION_TOOL_RESULT_HASH_MISMATCH', '旧工具结果完整性校验失败。');
+    }
     const offset = clampInteger(input.offset ?? 0, 0, text.length);
     const limit = clampInteger(input.limit ?? maximumPageCharacters, 1, maximumPageCharacters);
     const page = text.slice(offset, offset + limit);
     const nextOffset = offset + page.length < text.length ? offset + page.length : null;
-    return { text: page, offset, nextOffset, totalCharacters: text.length, sha256 };
+    return { text: page, offset, nextOffset, totalCharacters: text.length, sha256: contentSha256 };
   }
 }
 
@@ -291,13 +321,32 @@ function projectToolResult(kind: StoreConversationToolResultInput['toolKind'], t
   return `${head}\n\n[中间结果已截断；使用 read_conversation_tool_result(handle="${handle}", offset=${commandProjectionHeadCharacters}, limit=${maximumPageCharacters}) 分页读取]\n\n${tail}`;
 }
 
-function safePathPart(value: string): string {
-  return createHash('sha256').update(value).digest('hex');
-}
-
 function clampInteger(value: number, minimum: number, maximum: number): number {
   if (!Number.isFinite(value)) return minimum;
   return Math.min(maximum, Math.max(minimum, Math.trunc(value)));
+}
+
+function toolResultArtifactRef(value: string): ArtifactRef | null {
+  try {
+    const candidate = (JSON.parse(value) as { artifactRef?: unknown }).artifactRef;
+    if (!candidate || typeof candidate !== 'object') return null;
+    const ref = candidate as Partial<ArtifactRef>;
+    if (
+      ref.storageGeneration !== artifactStoreGeneration ||
+      typeof ref.sha256 !== 'string' ||
+      typeof ref.contentSha256 !== 'string' ||
+      typeof ref.relativePath !== 'string' ||
+      typeof ref.contentByteLength !== 'number' ||
+      !ref.owner ||
+      typeof ref.owner.kind !== 'string' ||
+      typeof ref.owner.id !== 'string'
+    ) {
+      return null;
+    }
+    return ref as ArtifactRef;
+  } catch {
+    return null;
+  }
 }
 
 function estimatePortableTokens(entries: PortableHistoryEntry[], currentInputCharacters: number): number {

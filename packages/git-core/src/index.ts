@@ -7,6 +7,37 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * Git Core 对外暴露的真实 mutation capability 单一来源。
+ *
+ * 上层机器清单按这里的名字动态发现调用点；新增 Git 写能力若未进入该表，或进入该表后
+ * 没有在独立内部副作用清单中取得精确恢复边界，架构门禁都会失败关闭。
+ */
+export const gitMutatingCapabilityNames = [
+  'prepareTaskWorktree',
+  'cleanupPreparedTaskWorktree',
+  'refreshConflictTaskWorkspace',
+  'fetchGitRemote',
+  'commitTaskWorkspace',
+  'pushTaskWorkspace',
+  'pushLocalBranch',
+  'reclaimTaskWorktree',
+  'reclaimDeliveredTaskWorktree',
+  'removeTaskWorktreeForTerminalStatus',
+  'discardTaskWorktree',
+  'startTaskBranchIntegration',
+  'startTaskIntegrationAttempt',
+  'writeTaskIntegrationResolution',
+  'writeTaskIntegrationDraft',
+  'completeTaskIntegrationCommit',
+  'finalizeTaskBranchIntegration',
+  'cleanupTaskIntegrationWorktree',
+  'executeHighRiskGitOperation',
+  'executeProjectGitAction',
+] as const;
+
+export type GitMutatingCapabilityName = (typeof gitMutatingCapabilityNames)[number];
+
 export interface GitStatusSummary {
   isRepository: boolean;
   branch: string;

@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { nanoid } from 'nanoid';
-import type { ZeusDatabase } from './index.js';
+import type { ArtifactRef } from './artifactStore.js';
+import type { ZeusDatabasePort } from './databasePort.js';
 
 export const conversationSchemaGeneration = '2026-08-16-unified-conversation-segments';
 
@@ -235,7 +236,7 @@ interface AcceptCurrentSegmentInput {
 const schemaMigrationId = '20260816_0311_unified_conversation_segments';
 
 /** 建立统一会话语义表，并把所有旧 Provider 身份一次性封存为只读分段。 */
-export function migrateUnifiedConversationStoreSchema(db: ZeusDatabase): void {
+export function migrateUnifiedConversationStoreSchema(db: ZeusDatabasePort): void {
   db.execute(`
     CREATE TABLE IF NOT EXISTS conversation_store_metadata (
       singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -321,10 +322,15 @@ export function migrateUnifiedConversationStoreSchema(db: ZeusDatabase): void {
     CREATE TABLE IF NOT EXISTS conversation_portable_contexts (
       id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, through_model_history_sequence INTEGER NOT NULL,
       target_execution_snapshot_id TEXT NOT NULL, status TEXT NOT NULL,
-      content_json TEXT NOT NULL, capability_loss_json TEXT NOT NULL,
+      content_json TEXT NOT NULL, artifact_ref_json TEXT, capability_loss_json TEXT NOT NULL,
       estimated_input_tokens INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     )
   `);
+  try {
+    db.execute(`ALTER TABLE conversation_portable_contexts ADD COLUMN artifact_ref_json TEXT`);
+  } catch {
+    // 既有库已有列时保持幂等；正式内容迁移由受控候选流程执行。
+  }
   db.execute(`
     CREATE TABLE IF NOT EXISTS conversation_context_checkpoints (
       id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, portable_context_id TEXT NOT NULL,
@@ -462,12 +468,20 @@ export function migrateUnifiedConversationStoreSchema(db: ZeusDatabase): void {
         SELECT RAISE(ABORT, 'ZEUS_DOWNGRADE_REQUIRES_SAFE_ROLLBACK_DATABASE');
       END
     `);
+    db.execute(`
+      CREATE TRIGGER IF NOT EXISTS reject_legacy_conversation_items_${action.toLowerCase()}
+      BEFORE ${action} ON conversation_items
+      WHEN (SELECT current_writer_open FROM conversation_legacy_write_fence WHERE singleton = 1) = 0
+      BEGIN
+        SELECT RAISE(ABORT, 'ZEUS_LEGACY_CONVERSATION_ITEMS_WRITE_FENCED');
+      END
+    `);
   }
 }
 
 /** 统一会话账本仓储；运行适配器不得自行维护产品队列或切换状态。 */
 export class ConversationExecutionRepository {
-  constructor(private readonly db: ZeusDatabase) {}
+  constructor(private readonly db: ZeusDatabasePort) {}
 
   setDispatchEnabled(enabled: boolean): void {
     this.db.execute(`UPDATE conversation_store_metadata SET dispatch_enabled = ? WHERE singleton = 1 AND schema_generation = ?`, [enabled ? 1 : 0, conversationSchemaGeneration]);
@@ -606,7 +620,7 @@ export class ConversationExecutionRepository {
     return this.segmentById(operation.targetSegmentId)!;
   }
 
-  acceptSwitchDurably(input: AcceptSwitchInput): ConversationSwitchOperationRecord {
+  acceptSwitchDurably(input: AcceptSwitchInput, settleExternalReceipt?: () => void): ConversationSwitchOperationRecord {
     return this.db.durableTransactionSync(() => {
       const operation = this.requireOpenSwitch(input.operationId);
       const target = this.segmentById(operation.targetSegmentId);
@@ -665,6 +679,8 @@ export class ConversationExecutionRepository {
       );
       this.resumeQueueBlockedByHead(operation.conversationId, input.acceptedAt);
       this.projectCurrentSegmentToLegacyConversation(target, input.acceptedAt);
+      // Provider 接纳回执必须与业务接纳事实共用这次 COMMIT，避免再次产生双写窗口。
+      settleExternalReceipt?.();
       return this.getSwitch(operation.id)!;
     });
   }
@@ -675,7 +691,7 @@ export class ConversationExecutionRepository {
     this.db.execute(`UPDATE conversation_submissions SET execution_snapshot_id = ?, segment_id = ? WHERE id = ? AND conversation_id = ?`, [input.executionSnapshotId, input.segmentId, input.submissionId, input.conversationId]);
   }
 
-  acceptOnCurrentSegmentDurably(input: AcceptCurrentSegmentInput): void {
+  acceptOnCurrentSegmentDurably(input: AcceptCurrentSegmentInput, settleExternalReceipt?: () => void): void {
     this.db.durableTransactionSync(() => {
       const segment = this.currentSegment(input.conversationId);
       if (!segment || segment.id !== input.segmentId || !segment.nativeSessionId) throw new Error('当前运行分段无法接受该提交。');
@@ -712,6 +728,7 @@ export class ConversationExecutionRepository {
         [`conversation_model_history_${nanoid(12)}`, input.conversationId, modelHistorySequence, input.turnId, input.submissionId, segment.id, JSON.stringify(input.userHistoryContent), input.acceptedAt],
       );
       this.resumeQueueBlockedByHead(input.conversationId, input.acceptedAt);
+      settleExternalReceipt?.();
     });
   }
 
@@ -903,21 +920,23 @@ export class ConversationExecutionRepository {
   }
 
   recordPortableContext(input: {
+    id?: string;
     conversationId: string;
     throughModelHistorySequence: number;
     targetExecutionSnapshotId: string;
     status: 'ready' | 'compacting' | 'compacted' | 'failed';
     content: unknown;
+    artifactRef?: ArtifactRef | null;
     capabilityLosses: unknown;
     estimatedInputTokens: number | null;
     occurredAt: string;
   }): string {
-    const id = `conversation_portable_context_${nanoid(12)}`;
+    const id = input.id ?? `conversation_portable_context_${nanoid(12)}`;
     this.db.execute(
       `INSERT INTO conversation_portable_contexts
        (id, conversation_id, through_model_history_sequence, target_execution_snapshot_id, status,
-        content_json, capability_loss_json, estimated_input_tokens, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        content_json, artifact_ref_json, capability_loss_json, estimated_input_tokens, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         input.conversationId,
@@ -925,6 +944,7 @@ export class ConversationExecutionRepository {
         input.targetExecutionSnapshotId,
         input.status,
         JSON.stringify(input.content),
+        input.artifactRef ? JSON.stringify(input.artifactRef) : null,
         JSON.stringify(input.capabilityLosses),
         input.estimatedInputTokens,
         input.occurredAt,
@@ -934,8 +954,24 @@ export class ConversationExecutionRepository {
     return id;
   }
 
-  updatePortableContext(input: { id: string; status: 'ready' | 'compacting' | 'compacted' | 'failed'; content: unknown; updatedAt: string }): void {
-    this.db.execute(`UPDATE conversation_portable_contexts SET status = ?, content_json = ?, updated_at = ? WHERE id = ?`, [input.status, JSON.stringify(input.content), input.updatedAt, input.id]);
+  portableContextArtifact(inputId: string): { conversationId: string; artifactRef: ArtifactRef | null } | undefined {
+    const row = this.db.get<{ conversation_id: string; artifact_ref_json: string | null }>(`SELECT conversation_id, artifact_ref_json FROM conversation_portable_contexts WHERE id = ?`, [inputId]);
+    if (!row) return undefined;
+    return { conversationId: row.conversation_id, artifactRef: row.artifact_ref_json ? (JSON.parse(row.artifact_ref_json) as ArtifactRef) : null };
+  }
+
+  updatePortableContext(input: { id: string; status: 'ready' | 'compacting' | 'compacted' | 'failed'; content: unknown; artifactRef?: ArtifactRef | null; updatedAt: string }): void {
+    if (input.artifactRef === undefined) {
+      this.db.execute(`UPDATE conversation_portable_contexts SET status = ?, content_json = ?, updated_at = ? WHERE id = ?`, [input.status, JSON.stringify(input.content), input.updatedAt, input.id]);
+      return;
+    }
+    this.db.execute(`UPDATE conversation_portable_contexts SET status = ?, content_json = ?, artifact_ref_json = ?, updated_at = ? WHERE id = ?`, [
+      input.status,
+      JSON.stringify(input.content),
+      input.artifactRef ? JSON.stringify(input.artifactRef) : null,
+      input.updatedAt,
+      input.id,
+    ]);
   }
 
   recordContextCheckpoint(input: {
@@ -1104,6 +1140,23 @@ export class ConversationExecutionRepository {
     return this.warningById(id)!;
   }
 
+  resolveWarning(conversationId: string, warningKind: string, occurredAt: string): boolean {
+    const existing = this.db.get<PersistentWarningRow>(
+      `SELECT * FROM conversation_persistent_warnings
+        WHERE conversation_id = ? AND warning_kind = ? AND resolved_at IS NULL`,
+      [conversationId, warningKind],
+    );
+    if (!existing) return false;
+    const sequence = this.nextSequence(conversationId, 'sync_event_sequence');
+    this.db.execute(
+      `UPDATE conversation_persistent_warnings
+          SET last_event_seq = ?, updated_at = ?, resolved_at = ?
+        WHERE id = ? AND resolved_at IS NULL`,
+      [sequence, occurredAt, occurredAt, existing.id],
+    );
+    return true;
+  }
+
   nextSyncEventSequence(conversationId: string): number {
     return this.nextSequence(conversationId, 'sync_event_sequence');
   }
@@ -1244,7 +1297,7 @@ export class ConversationExecutionRepository {
         segment.providerProtocolVersion,
         segment.providerBinaryVersion,
         segment.runtimeKind,
-        segment.runtimeKind === 'codex' ? 'app_server' : 'sdk',
+        segment.runtimeKind === 'codex' ? 'app_server' : 'rpc',
         snapshot?.connectionId ?? null,
         snapshot?.modelId ?? segment.providerModel,
         segment.nativeSessionId,
@@ -1291,7 +1344,7 @@ export class ConversationExecutionRepository {
   }
 }
 
-function sealLegacyProviderSessions(db: ZeusDatabase, migratedAt: string): void {
+function sealLegacyProviderSessions(db: ZeusDatabasePort, migratedAt: string): void {
   const rows = db.select<{
     id: string;
     agent_kind: string | null;
@@ -1346,7 +1399,7 @@ function sealLegacyProviderSessions(db: ZeusDatabase, migratedAt: string): void 
   }
 }
 
-function migrateLegacyConversationHistory(db: ZeusDatabase, migratedAt: string): void {
+function migrateLegacyConversationHistory(db: ZeusDatabasePort, migratedAt: string): void {
   const messages = db.select<{
     id: string;
     conversation_id: string;
@@ -1484,7 +1537,7 @@ function migrateLegacyConversationHistory(db: ZeusDatabase, migratedAt: string):
   }
 }
 
-function inspectPiMigrationSource(db: ZeusDatabase, conversationId: string, sessionPath: string | null, migratedAt: string): void {
+function inspectPiMigrationSource(db: ZeusDatabasePort, conversationId: string, sessionPath: string | null, migratedAt: string): void {
   let warning: Record<string, unknown> | null = null;
   if (!sessionPath || !existsSync(sessionPath)) warning = { sessionPath, reason: 'missing_pi_jsonl' };
   else {
@@ -1512,7 +1565,7 @@ function inspectPiMigrationSource(db: ZeusDatabase, conversationId: string, sess
   );
 }
 
-function nextMigrationSequence(db: ZeusDatabase, conversationId: string, column: 'model_history_sequence' | 'process_sequence' | 'sync_event_sequence'): number {
+function nextMigrationSequence(db: ZeusDatabasePort, conversationId: string, column: 'model_history_sequence' | 'process_sequence' | 'sync_event_sequence'): number {
   db.execute(`INSERT OR IGNORE INTO conversation_sequence_counters (conversation_id) VALUES (?)`, [conversationId]);
   db.execute(`UPDATE conversation_sequence_counters SET ${column} = ${column} + 1 WHERE conversation_id = ?`, [conversationId]);
   return db.get<Record<typeof column, number>>(`SELECT ${column} FROM conversation_sequence_counters WHERE conversation_id = ?`, [conversationId])![column];
@@ -1526,7 +1579,7 @@ function safeJson(value: string): unknown {
   }
 }
 
-function migrationManifest(db: ZeusDatabase): string {
+function migrationManifest(db: ZeusDatabasePort): string {
   const payload = {
     conversations: db.countRows('conversations'),
     sealedSegments: db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM conversation_runtime_segments WHERE state = 'sealed'`)?.count ?? 0,
@@ -1536,7 +1589,7 @@ function migrationManifest(db: ZeusDatabase): string {
   return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
 }
 
-function addColumn(db: ZeusDatabase, table: string, column: string, definition: string): void {
+function addColumn(db: ZeusDatabasePort, table: string, column: string, definition: string): void {
   const exists = db.select<{ name: string }>(`PRAGMA table_info(${table})`).some((row) => row.name === column);
   if (!exists) db.execute(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }

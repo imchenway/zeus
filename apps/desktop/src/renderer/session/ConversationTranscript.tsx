@@ -7,6 +7,8 @@ import { isAssistantDeliverableItem } from './sessionTypes.js';
 import type {
   ConversationResource,
   ConversationResourcePreview,
+  NativeConversationContentV2Page,
+  NativeConversationToolResultPage,
   NativePendingRequest,
   NativeSessionError,
   NativeSessionItemBuffer,
@@ -22,6 +24,7 @@ import { visibleQueuedSubmissions } from './QueuedConversationMessages.js';
 import { reasoningSummaryStatus, SessionReasoningSummary } from './SessionReasoningSummary.js';
 import { AnsweredRequestHistory, isAnsweredUserInputRequest } from './AnsweredRequestHistory.js';
 import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
+import { useTranscriptViewportVirtualizer } from './transcriptViewportVirtualizer.js';
 
 export interface ConversationTranscriptProps {
   state: NativeSessionState;
@@ -41,6 +44,11 @@ export interface ConversationTranscriptProps {
   onUpdateResponseAnnotation?: (id: string, note: string) => void;
   onRemoveResponseAnnotation?: (id: string) => void;
   onOpenSideChat?: (selectedText: string) => void;
+  onLoadEarlierHistory?: () => void | Promise<void>;
+  onLoadTurnProcess?: (turnId: string) => void | Promise<void>;
+  onLoadTurnArtifacts?: (turnId: string) => void | Promise<void>;
+  onLoadV2Content?: (handle: string, offset?: number) => Promise<NativeConversationContentV2Page>;
+  onLoadV2ToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage>;
 }
 
 export interface SessionCreationStatus {
@@ -80,6 +88,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const lastReportedLatestVisibilityRef = useRef<boolean | null>(null);
   const latestVisibilityCallbackRef = useRef(props.onLatestContentVisibilityChange);
   latestVisibilityCallbackRef.current = props.onLatestContentVisibilityChange;
+  const historyPrependAnchorRef = useRef<{ frozenCursor: string; rowKey: string | null; topOffset: number | null; scrollHeight: number; scrollTop: number } | null>(null);
   const previousTurnIdRef = useRef<string | null>(null);
   const activeTurnTrackingInitializedRef = useRef(false);
   const scrollController = useThreadScrollController();
@@ -90,6 +99,9 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const trackedUserMessageRef = useRef<{ conversationId: string | null; key: string | null; initialized: boolean }>({ conversationId: null, key: null, initialized: false });
   const awaitingReplyMessageIdsRef = useRef<Set<string>>(new Set());
   const awaitingReplyConversationIdRef = useRef<string | null>(null);
+  const [expandedRowKeys, setExpandedRowKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const [focusedRowKey, setFocusedRowKey] = useState<string | null>(null);
+  const [historyAnchorRowKey, setHistoryAnchorRowKey] = useState<string | null>(null);
   const queuedSubmissions = useMemo(() => visibleQueuedSubmissions(props.state.queue), [props.state.queue]);
   const queuedClientUserMessageIds = useMemo(() => new Set(queuedSubmissions.map((submission) => submission.clientUserMessageId).filter((value): value is string => Boolean(value))), [queuedSubmissions]);
   const projectedItems = useMemo(
@@ -122,6 +134,22 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const answeredRequests = useMemo(() => props.state.pendingRequests.filter(isAnsweredUserInputRequest), [props.state.pendingRequests]);
   const transcriptRows = useMemo(() => projectTranscriptRows(items, answeredRequests, props.state.activeTurnId), [answeredRequests, items, props.state.activeTurnId]);
   const turnRows = useMemo(() => projectTranscriptTurnRows(transcriptRows, props.state.activeTurnId), [props.state.activeTurnId, transcriptRows]);
+  const turnRowKeys = useMemo(() => turnRows.map((row) => row.key), [turnRows]);
+  const turnRowsByKey = useMemo(() => new Map(turnRows.map((row) => [row.key, row])), [turnRows]);
+  const activeTurnRowKeys = useMemo(() => new Set(turnRows.filter((row) => props.state.activeTurnId && transcriptTurnRowTurnId(row) === props.state.activeTurnId).map((row) => row.key)), [props.state.activeTurnId, turnRows]);
+  const pinnedRowKeys = useMemo(() => {
+    const pinned = new Set([...activeTurnRowKeys, ...expandedRowKeys]);
+    if (focusedRowKey) pinned.add(focusedRowKey);
+    if (historyAnchorRowKey) pinned.add(historyAnchorRowKey);
+    return pinned;
+  }, [activeTurnRowKeys, expandedRowKeys, focusedRowKey, historyAnchorRowKey]);
+  const viewportVirtualizer = useTranscriptViewportVirtualizer({
+    scopeKey: props.state.conversationId,
+    rowKeys: turnRowKeys,
+    pinnedRowKeys,
+    containerRef,
+  });
+  const projectedTurnWorkIds = useMemo(() => new Set(turnRows.filter((row): row is TranscriptTurnWorkRow => row.kind === 'turn_work').map((row) => row.turnId)), [turnRows]);
   const lastItemKeyByTurn = useMemo(() => lastVisibleItemKeyByTurn(transcriptRows), [transcriptRows]);
   const orphanFailedTurns = useMemo(() => {
     const visibleTurnIds = new Set(transcriptRows.map(transcriptRowTurnId).filter((turnId): turnId is string => Boolean(turnId)));
@@ -167,7 +195,55 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     onUpdateResponseAnnotation: useStableOptionalCallback(props.onUpdateResponseAnnotation),
     onRemoveResponseAnnotation: useStableOptionalCallback(props.onRemoveResponseAnnotation),
     onOpenSideChat: useStableOptionalCallback(props.onOpenSideChat),
+    onLoadEarlierHistory: useStableOptionalCallback(props.onLoadEarlierHistory),
+    onLoadTurnProcess: useStableOptionalCallback(props.onLoadTurnProcess),
+    onLoadTurnArtifacts: useStableOptionalCallback(props.onLoadTurnArtifacts),
+    onLoadV2Content: useStableOptionalCallback(props.onLoadV2Content),
+    onLoadV2ToolResult: useStableOptionalCallback(props.onLoadV2ToolResult),
   };
+  const loadEarlierHistoryWithAnchor = useCallback(async (): Promise<void> => {
+    const loadEarlier = renderProps.onLoadEarlierHistory;
+    const container = containerRef.current;
+    const frozenCursor = props.state.snapshot?.v2Paging?.history.nextCursor;
+    if (!loadEarlier || !container || !frozenCursor || historyPrependAnchorRef.current) return;
+    const anchorElement = firstVisibleTranscriptWindowRow(container);
+    const containerTop = container.getBoundingClientRect().top;
+    const rowKey = anchorElement?.dataset.transcriptRowKey ?? null;
+    const anchor = {
+      frozenCursor,
+      rowKey,
+      topOffset: anchorElement ? anchorElement.getBoundingClientRect().top - containerTop : null,
+      scrollHeight: container.scrollHeight,
+      scrollTop: container.scrollTop,
+    };
+    historyPrependAnchorRef.current = anchor;
+    setHistoryAnchorRowKey(rowKey);
+    try {
+      await loadEarlier();
+    } catch (error) {
+      if (historyPrependAnchorRef.current === anchor) {
+        historyPrependAnchorRef.current = null;
+        setHistoryAnchorRowKey(null);
+      }
+      throw error;
+    }
+  }, [props.state.snapshot?.v2Paging?.history.nextCursor, renderProps.onLoadEarlierHistory]);
+
+  useLayoutEffect(() => {
+    const anchor = historyPrependAnchorRef.current;
+    const container = containerRef.current;
+    if (!anchor || !container || props.state.snapshot?.v2Paging?.history.loading) return;
+    const anchorElement = anchor.rowKey ? transcriptWindowRow(container, anchor.rowKey) : null;
+    if (anchorElement && anchor.topOffset !== null) {
+      const nextOffset = anchorElement.getBoundingClientRect().top - container.getBoundingClientRect().top;
+      container.scrollTop += nextOffset - anchor.topOffset;
+    } else {
+      container.scrollTop = anchor.scrollTop + Math.max(0, container.scrollHeight - anchor.scrollHeight);
+    }
+    historyPrependAnchorRef.current = null;
+    setHistoryAnchorRowKey(null);
+    viewportVirtualizer.synchronizeViewport(container);
+  }, [props.state.itemOrder.length, props.state.snapshot?.v2Paging?.history.loading, props.state.snapshot?.v2Paging?.history.nextCursor]);
 
   const publishLatestContentVisibility = useCallback(() => {
     const container = containerRef.current;
@@ -334,6 +410,131 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     maintainLatestPosition();
   }, [maintainLatestPosition, props.creationStatus?.error, props.creationStatus?.state, props.state.transcriptRevision]);
 
+  const setTranscriptRowExpanded = useCallback((rowKey: string, open: boolean): void => {
+    setExpandedRowKeys((current) => {
+      if (current.has(rowKey) === open) return current;
+      const next = new Set(current);
+      if (open) next.add(rowKey);
+      else next.delete(rowKey);
+      return next;
+    });
+  }, []);
+
+  const renderTranscriptTurnRow = (row: TranscriptTurnRow): ReactNode => {
+    if (row.kind === 'answered_request') return <AnsweredRequestHistory request={row.request} language={props.language} />;
+    if (row.kind === 'turn_work') {
+      const turn = props.state.turnsByProviderId[row.turnId];
+      if (!turn) {
+        return row.rows.map((child) => (
+          <Fragment key={child.key}>
+            {renderTranscriptRow(child, transcriptRowRenderOptions(renderProps, items, showActiveStatus, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId))}
+          </Fragment>
+        ));
+      }
+      const containsLastItem = row.rows.some((child) => transcriptRowContainsItemKey(child, lastItemKeyByTurn[row.turnId]));
+      const active = isActiveSessionTurn(turn);
+      const v2PagingKey = turn.providerTurnId ?? turn.id;
+      const processPaging = props.state.snapshot?.v2Paging?.processByTurn[v2PagingKey];
+      const changePaging = props.state.snapshot?.v2Paging?.changeSetsByTurn[v2PagingKey];
+      const process = row.rows.map((child) => {
+        const content = renderTranscriptRow(
+          child,
+          transcriptRowRenderOptions(renderProps, items, showActiveStatus && props.state.activeTurnId === row.turnId, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId),
+        );
+        return active ? (
+          <motion.div className="session-live-turn-row" key={child.key} layout={reduceMotion ? false : 'position'} transition={reduceMotion ? { duration: 0 } : liveTurnLayoutTransition}>
+            {content}
+          </motion.div>
+        ) : (
+          <Fragment key={child.key}>{content}</Fragment>
+        );
+      });
+      return (
+        <>
+          {active ? (
+            <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language}>
+              {process}
+            </SessionTurnDuration>
+          ) : (
+            <SessionTurnProcessDisclosure
+              language={props.language}
+              loading={Boolean(processPaging?.loading || changePaging?.loading || props.state.snapshot?.v2Paging?.resources.loading)}
+              error={processPaging?.error ?? changePaging?.error ?? props.state.snapshot?.v2Paging?.resources.error}
+              open={expandedRowKeys.has(row.key)}
+              onOpenChange={(open) => setTranscriptRowExpanded(row.key, open)}
+              onOpen={() => Promise.all([renderProps.onLoadTurnProcess?.(row.turnId), renderProps.onLoadTurnArtifacts?.(row.turnId)]).then(() => undefined)}
+            >
+              {process}
+              {processPaging?.loaded && processPaging.hasMore && renderProps.onLoadTurnProcess ? (
+                <button className="session-v2-page-action" type="button" disabled={processPaging.loading} onClick={() => void renderProps.onLoadTurnProcess?.(row.turnId)}>
+                  {props.language === 'zh-CN' ? '加载更多处理过程' : 'Load more process'}
+                </button>
+              ) : null}
+              <V2TurnDeferredArtifacts
+                state={props.state}
+                localTurnId={turn.id}
+                pagingKey={v2PagingKey}
+                language={props.language}
+                onLoadMore={renderProps.onLoadTurnArtifacts ? () => renderProps.onLoadTurnArtifacts?.(row.turnId) : undefined}
+                onLoadContent={renderProps.onLoadV2Content}
+                onLoadToolResult={renderProps.onLoadV2ToolResult}
+              />
+            </SessionTurnProcessDisclosure>
+          )}
+          {!active && containsLastItem ? (
+            <>
+              {renderTurnArtifacts(row.turnId, renderProps, lastItemKeyByTurn[row.turnId], providerErrorItemsByTurn.get(row.turnId))}
+              <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} />
+            </>
+          ) : null}
+        </>
+      );
+    }
+    const rowItems = row.kind === 'item' ? [row.item] : row.items;
+    const lastRowItem = rowItems[rowItems.length - 1]!;
+    const turn = props.state.turnsByProviderId[lastRowItem.turnId];
+    const closesVisibleTurn = lastItemKeyByTurn[lastRowItem.turnId] === lastRowItem.key;
+    const v2PagingKey = turn?.providerTurnId ?? turn?.id ?? lastRowItem.turnId;
+    const v2ProcessPaging = props.state.snapshot?.v2Paging?.processByTurn[v2PagingKey];
+    const v2ChangePaging = props.state.snapshot?.v2Paging?.changeSetsByTurn[v2PagingKey];
+    const v2Turn = props.state.snapshot?.snapshotV2
+      ? [...props.state.snapshot.snapshotV2.recentClosedTurns, ...(props.state.snapshot.snapshotV2.activeTurn ? [props.state.snapshot.snapshotV2.activeTurn] : [])].find(
+          (candidate) => candidate.id === turn?.id || (turn?.providerTurnId && candidate.providerTurnId === turn.providerTurnId),
+        )
+      : undefined;
+    const showV2DeferredDetails = Boolean(
+      closesVisibleTurn && turn && v2Turn && !isActiveSessionTurn(turn) && !projectedTurnWorkIds.has(lastRowItem.turnId) && (v2Turn.process.available || v2Turn.resourcesAvailable || v2Turn.changeSetAvailable),
+    );
+    return (
+      <>
+        {renderTranscriptRow(row, transcriptRowRenderOptions(renderProps, items, showActiveStatus, motionFocus, lastUserKey, false, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId))}
+        {showV2DeferredDetails && turn ? (
+          <SessionTurnProcessDisclosure
+            language={props.language}
+            labelKind="details"
+            loading={Boolean(v2ProcessPaging?.loading || v2ChangePaging?.loading || props.state.snapshot?.v2Paging?.resources.loading)}
+            error={v2ProcessPaging?.error ?? v2ChangePaging?.error ?? props.state.snapshot?.v2Paging?.resources.error}
+            open={expandedRowKeys.has(row.key)}
+            onOpenChange={(open) => setTranscriptRowExpanded(row.key, open)}
+            onOpen={() => Promise.all([renderProps.onLoadTurnProcess?.(lastRowItem.turnId), renderProps.onLoadTurnArtifacts?.(lastRowItem.turnId)]).then(() => undefined)}
+          >
+            <V2TurnDeferredArtifacts
+              state={props.state}
+              localTurnId={turn.id}
+              pagingKey={v2PagingKey}
+              language={props.language}
+              onLoadMore={renderProps.onLoadTurnArtifacts ? () => renderProps.onLoadTurnArtifacts?.(lastRowItem.turnId) : undefined}
+              onLoadContent={renderProps.onLoadV2Content}
+              onLoadToolResult={renderProps.onLoadV2ToolResult}
+            />
+          </SessionTurnProcessDisclosure>
+        ) : null}
+        {closesVisibleTurn ? renderTurnArtifacts(lastRowItem.turnId, renderProps, lastRowItem.key, providerErrorItemsByTurn.get(lastRowItem.turnId)) : null}
+        {closesVisibleTurn && turn && !isActiveSessionTurn(turn) ? <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} /> : null}
+      </>
+    );
+  };
+
   return (
     <>
       <output className="session-sr-only session-transcript-announcement" aria-live="polite" aria-atomic="true">
@@ -349,72 +550,36 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           onScroll={(event) => {
             const mode = scrollController.onUserScroll(metrics(event.currentTarget));
             setReturnToLatestVisible(mode.mode === 'static');
+            viewportVirtualizer.synchronizeViewport(event.currentTarget);
             scheduleLatestContentVisibility();
           }}
         >
+          <V2HistoryPageControl state={props.state} language={props.language} onLoadEarlier={renderProps.onLoadEarlierHistory ? loadEarlierHistoryWithAnchor : undefined} />
           {turnRows.length > 0 ? (
-            turnRows.map((row) => {
-              if (row.kind === 'answered_request') {
-                return <AnsweredRequestHistory key={row.key} request={row.request} language={props.language} />;
-              }
-              if (row.kind === 'turn_work') {
-                const turn = props.state.turnsByProviderId[row.turnId];
-                if (!turn) {
-                  return (
-                    <Fragment key={row.key}>
-                      {row.rows.map((child) => (
-                        <Fragment key={child.key}>
-                          {renderTranscriptRow(child, transcriptRowRenderOptions(renderProps, items, showActiveStatus, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId))}
-                        </Fragment>
-                      ))}
-                    </Fragment>
-                  );
+            <div className="session-transcript-window" data-rendered-row-count={viewportVirtualizer.projection.renderedRowCount} data-total-row-count={turnRows.length} data-measurement-cache-count={viewportVirtualizer.measurementCacheSize}>
+              {viewportVirtualizer.projection.slots.map((slot) => {
+                if (slot.kind === 'spacer') {
+                  return <div key={slot.key} className="session-transcript-window-spacer" style={{ blockSize: slot.height }} aria-hidden="true" />;
                 }
-                const containsLastItem = row.rows.some((child) => transcriptRowContainsItemKey(child, lastItemKeyByTurn[row.turnId]));
-                const active = isActiveSessionTurn(turn);
-                const process = row.rows.map((child) => {
-                  const content = renderTranscriptRow(
-                    child,
-                    transcriptRowRenderOptions(renderProps, items, showActiveStatus && props.state.activeTurnId === row.turnId, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId),
-                  );
-                  return active ? (
-                    <motion.div className="session-live-turn-row" key={child.key} layout={reduceMotion ? false : 'position'} transition={reduceMotion ? { duration: 0 } : liveTurnLayoutTransition}>
-                      {content}
-                    </motion.div>
-                  ) : (
-                    <Fragment key={child.key}>{content}</Fragment>
-                  );
-                });
+                const row = turnRowsByKey.get(slot.rowKey);
+                if (!row) return null;
                 return (
-                  <Fragment key={row.key}>
-                    {active ? (
-                      <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language}>
-                        {process}
-                      </SessionTurnDuration>
-                    ) : (
-                      <SessionTurnProcessDisclosure language={props.language}>{process}</SessionTurnProcessDisclosure>
-                    )}
-                    {!active && containsLastItem ? (
-                      <>
-                        {renderTurnArtifacts(row.turnId, renderProps, lastItemKeyByTurn[row.turnId], providerErrorItemsByTurn.get(row.turnId))}
-                        <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} />
-                      </>
-                    ) : null}
-                  </Fragment>
+                  <div
+                    key={slot.key}
+                    ref={viewportVirtualizer.rowRef(row.key)}
+                    className="session-transcript-window-row"
+                    data-transcript-row-key={row.key}
+                    data-pinned={pinnedRowKeys.has(row.key) || undefined}
+                    onFocusCapture={() => setFocusedRowKey(row.key)}
+                    onBlurCapture={(event) => {
+                      if (!event.currentTarget.contains(event.relatedTarget)) setFocusedRowKey((current) => (current === row.key ? null : current));
+                    }}
+                  >
+                    {renderTranscriptTurnRow(row)}
+                  </div>
                 );
-              }
-              const rowItems = row.kind === 'item' ? [row.item] : row.items;
-              const lastRowItem = rowItems[rowItems.length - 1]!;
-              const turn = props.state.turnsByProviderId[lastRowItem.turnId];
-              const closesVisibleTurn = lastItemKeyByTurn[lastRowItem.turnId] === lastRowItem.key;
-              return (
-                <Fragment key={row.key}>
-                  {renderTranscriptRow(row, transcriptRowRenderOptions(renderProps, items, showActiveStatus, motionFocus, lastUserKey, false, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId))}
-                  {closesVisibleTurn ? renderTurnArtifacts(lastRowItem.turnId, renderProps, lastRowItem.key, providerErrorItemsByTurn.get(lastRowItem.turnId)) : null}
-                  {closesVisibleTurn && turn && !isActiveSessionTurn(turn) ? <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} /> : null}
-                </Fragment>
-              );
-            })
+              })}
+            </div>
           ) : !showActiveStatus && queuedSubmissions.length === 0 && historyHydrated ? (
             <p className="session-transcript-empty">{props.language === 'zh-CN' ? '发送第一条消息后，真实 app-server 对话会显示在这里。' : 'Send the first message to begin the real app-server transcript.'}</p>
           ) : !showActiveStatus && historyUnavailable ? (
@@ -460,6 +625,199 @@ function TranscriptHistoryLoading(props: { visible: boolean; language: SessionUi
       <strong>{props.language === 'zh-CN' ? '正在加载会话' : 'Loading conversation'}</strong>
     </section>
   );
+}
+
+function V2HistoryPageControl(props: { state: NativeSessionState; language: SessionUiLanguage; onLoadEarlier?: () => void | Promise<void> }) {
+  const paging = props.state.snapshot?.v2Paging?.history;
+  if (!props.state.snapshot?.snapshotV2 || !paging || (!paging.hasMore && !paging.error)) return null;
+  return (
+    <section className="session-v2-history-control" aria-busy={paging.loading || undefined}>
+      {paging.hasMore && props.onLoadEarlier ? (
+        <button type="button" disabled={paging.loading} onClick={() => void Promise.resolve(props.onLoadEarlier?.()).catch(() => undefined)}>
+          {paging.loading ? (props.language === 'zh-CN' ? '正在读取更早消息…' : 'Loading earlier messages…') : props.language === 'zh-CN' ? '加载更早消息' : 'Load earlier messages'}
+        </button>
+      ) : null}
+      {paging.error ? (
+        <small className="session-v2-page-error" role="alert">
+          {paging.error}
+        </small>
+      ) : null}
+    </section>
+  );
+}
+
+function V2TurnDeferredArtifacts(props: {
+  state: NativeSessionState;
+  localTurnId: string;
+  pagingKey: string;
+  language: SessionUiLanguage;
+  onLoadMore?: () => void | Promise<void>;
+  onLoadContent?: (handle: string, offset?: number) => Promise<NativeConversationContentV2Page>;
+  onLoadToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage>;
+}) {
+  const paging = props.state.snapshot?.v2Paging;
+  if (!props.state.snapshot?.snapshotV2 || !paging) return null;
+  const resources = paging.resources.items.filter((resource) => resource.turnId === props.localTurnId);
+  const change = paging.changeSetsByTurn[props.pagingKey];
+  const deferredContent = deferredContentHandles(props.state, props.pagingKey);
+  const onLoadContent = props.onLoadContent;
+  const onLoadToolResult = props.onLoadToolResult;
+  const visible = resources.length > 0 || Boolean(change?.summary) || (change?.files.length ?? 0) > 0 || deferredContent.length > 0;
+  if (!visible && !change?.error && !paging.resources.error) return null;
+  const canLoadMore = Boolean(props.onLoadMore && (paging.resources.hasMore || change?.hasMore));
+  return (
+    <section className="session-v2-deferred-artifacts" aria-label={props.language === 'zh-CN' ? '按需加载的轮次详情' : 'On-demand turn details'}>
+      {resources.length > 0 ? (
+        <div>
+          <strong>{props.language === 'zh-CN' ? '资源元数据' : 'Resource metadata'}</strong>
+          <ul>
+            {resources.map((resource) => (
+              <li key={resource.id}>
+                <span>{resource.displayName}</span>
+                <small>{resource.kind}</small>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {change?.summary ? (
+        <div>
+          <strong>{props.language === 'zh-CN' ? '变更集' : 'Change set'}</strong>
+          <p>
+            {props.language === 'zh-CN'
+              ? `${change.summary.fileCount} 个文件 · +${change.summary.addedLines} / -${change.summary.deletedLines}`
+              : `${change.summary.fileCount} files · +${change.summary.addedLines} / -${change.summary.deletedLines}`}
+          </p>
+          {change.files.length > 0 ? (
+            <ul>
+              {change.files.map((file) => (
+                <li key={file.id}>
+                  <span>{file.newPath ?? file.oldPath ?? file.id}</span>
+                  <small>
+                    +{file.addedLines} / -{file.deletedLines}
+                  </small>
+                  {file.diffHandle && onLoadContent ? <V2DeferredContent handle={file.diffHandle} label={props.language === 'zh-CN' ? '查看差异' : 'View diff'} language={props.language} onLoad={onLoadContent} /> : null}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+      {deferredContent.some((content) => (content.kind === 'tool_result' ? Boolean(onLoadToolResult) : Boolean(onLoadContent))) ? (
+        <div>
+          <strong>{props.language === 'zh-CN' ? '完整过程与工具结果' : 'Full process and tool results'}</strong>
+          <ul>
+            {deferredContent.flatMap((content) => {
+              const onLoad = content.kind === 'tool_result' ? onLoadToolResult : onLoadContent;
+              return onLoad
+                ? [
+                    <li key={`${content.kind}:${content.handle}`}>
+                      <span>{content.label}</span>
+                      <V2DeferredContent handle={content.handle} label={props.language === 'zh-CN' ? '读取正文' : 'Load content'} language={props.language} onLoad={onLoad} />
+                    </li>,
+                  ]
+                : [];
+            })}
+          </ul>
+        </div>
+      ) : null}
+      {canLoadMore ? (
+        <button className="session-v2-page-action" type="button" disabled={Boolean(change?.loading || paging.resources.loading)} onClick={() => void Promise.resolve(props.onLoadMore?.()).catch(() => undefined)}>
+          {props.language === 'zh-CN' ? '加载更多资源与变更' : 'Load more resources and changes'}
+        </button>
+      ) : null}
+    </section>
+  );
+}
+
+interface V2DeferredContentPage {
+  text: string;
+  offset: number;
+  nextOffset: number | null;
+  totalCharacters: number;
+  redacted?: boolean;
+}
+
+function V2DeferredContent(props: { handle: string; label: string; language: SessionUiLanguage; onLoad: (handle: string, offset?: number) => Promise<V2DeferredContentPage> }) {
+  const [content, setContent] = useState<V2DeferredContentPage | null>(null);
+  const [previousOffsets, setPreviousOffsets] = useState<number[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    setContent(null);
+    setPreviousOffsets([]);
+    setLoading(false);
+    setError(null);
+  }, [props.handle]);
+  const load = async (offset: number | undefined, navigation: 'initial' | 'next' | 'previous'): Promise<void> => {
+    if (loading) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const page = await props.onLoad(props.handle, offset);
+      if (navigation === 'next' && content) setPreviousOffsets((current) => [...current, content.offset]);
+      if (navigation === 'previous') setPreviousOffsets((current) => current.slice(0, -1));
+      setContent(page);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setLoading(false);
+    }
+  };
+  return (
+    <div className="session-v2-content">
+      {!content ? (
+        <button type="button" disabled={loading} onClick={() => void load(undefined, 'initial')}>
+          {loading ? (props.language === 'zh-CN' ? '正在读取…' : 'Loading…') : props.label}
+        </button>
+      ) : null}
+      {content ? (
+        <>
+          <span className="session-v2-content-navigation">
+            {previousOffsets.length > 0 ? (
+              <button type="button" disabled={loading} onClick={() => void load(previousOffsets.at(-1), 'previous')}>
+                {props.language === 'zh-CN' ? '上一页' : 'Previous page'}
+              </button>
+            ) : null}
+            {content.nextOffset !== null ? (
+              <button type="button" disabled={loading} onClick={() => void load(content.nextOffset ?? undefined, 'next')}>
+                {loading ? (props.language === 'zh-CN' ? '正在读取…' : 'Loading…') : props.language === 'zh-CN' ? '下一页' : 'Next page'}
+              </button>
+            ) : null}
+          </span>
+          <pre>{content.text}</pre>
+          <small>
+            {content.redacted === true ? (props.language === 'zh-CN' ? '敏感内容已脱敏 · ' : 'Sensitive content redacted · ') : ''}
+            {content.offset + 1}–{content.nextOffset ?? content.totalCharacters}/{content.totalCharacters}
+          </small>
+        </>
+      ) : null}
+      {error ? (
+        <small className="session-v2-page-error" role="alert">
+          {error}
+        </small>
+      ) : null}
+    </div>
+  );
+}
+
+function deferredContentHandles(state: NativeSessionState, turnId: string): Array<{ handle: string; label: string; kind: 'content' | 'tool_result' }> {
+  const byHandle = new Map<string, { handle: string; label: string; kind: 'content' | 'tool_result' }>();
+  for (const item of Object.values(state.items)) {
+    if (item.turnId !== turnId) continue;
+    const detailHandle = primitiveValue(item.payload.v2ContentHandle);
+    if (detailHandle && item.payload.v2ContentTruncated === true) {
+      byHandle.set(detailHandle, { handle: detailHandle, label: primitiveValue(item.payload.title) ?? item.text ?? item.type, kind: 'content' });
+    }
+    const toolResult = recordValue(item.payload.toolResult);
+    const toolHandle = primitiveValue(toolResult?.handle);
+    if (toolHandle) byHandle.set(toolHandle, { handle: toolHandle, label: propsLabelForToolResult(item), kind: 'tool_result' });
+  }
+  return [...byHandle.values()];
+}
+
+function propsLabelForToolResult(item: NativeSessionItemBuffer): string {
+  return primitiveValue(item.payload.title) ?? item.text ?? 'Tool result';
 }
 
 function SessionCreationNotice(props: { status: SessionCreationStatus; language: SessionUiLanguage }) {
@@ -919,6 +1277,26 @@ function isTurnProcessRow(row: TranscriptRow): boolean {
 function transcriptRowTurnId(row: TranscriptRow): string | null {
   if (row.kind === 'answered_request') return row.request.turnId;
   return row.kind === 'item' ? row.item.turnId : (row.items[0]?.turnId ?? null);
+}
+
+function transcriptTurnRowTurnId(row: TranscriptTurnRow): string | null {
+  return row.kind === 'turn_work' ? row.turnId : transcriptRowTurnId(row);
+}
+
+function firstVisibleTranscriptWindowRow(container: HTMLElement): HTMLElement | null {
+  const containerRect = container.getBoundingClientRect();
+  for (const row of container.querySelectorAll<HTMLElement>('.session-transcript-window-row[data-transcript-row-key]')) {
+    const rowRect = row.getBoundingClientRect();
+    if (rowRect.bottom >= containerRect.top && rowRect.top <= containerRect.bottom) return row;
+  }
+  return null;
+}
+
+function transcriptWindowRow(container: HTMLElement, rowKey: string): HTMLElement | null {
+  for (const row of container.querySelectorAll<HTMLElement>('.session-transcript-window-row[data-transcript-row-key]')) {
+    if (row.dataset.transcriptRowKey === rowKey) return row;
+  }
+  return null;
 }
 
 function transcriptRowContainsItemKey(row: TranscriptRow, itemKey: string | undefined): boolean {

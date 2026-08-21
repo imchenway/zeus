@@ -1,8 +1,9 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { extname, isAbsolute, join, relative, resolve } from 'node:path';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
+  assertExpectedRevision,
   commandNeedsHighRiskConfirmation,
   commandParameterValueMatchesType,
   defaultCommandRiskFlags,
@@ -18,8 +19,10 @@ import {
 import { projectTerminalOutput, type AiRuntimeLogEntry, type AiRuntimeSession, type AiRuntimeSessionManager } from '@zeus/ai-runtime';
 import {
   CommandArtifactRepository,
+  CommandDeliveryRepository,
   CommandDefinitionRepository,
   CommandRunRepository,
+  type ArtifactStore,
   type AppendAuditLogInput,
   type ProjectRepository,
   type RuntimeSessionRepository,
@@ -27,6 +30,14 @@ import {
   type ZeusRuntimeLogRecord,
   type ZeusRuntimeSessionRecord,
 } from '@zeus/storage';
+import {
+  CommandCenterCommandApplication,
+  CommandCenterCommandApplicationError,
+  commandCenterCommandTypes,
+  isCommandCenterCommandError,
+  type CommandCenterMutationRequest,
+  type ParsedCommandCenterMutation,
+} from './commandCenterCommandApplication.js';
 
 const MAX_COMMAND_RUN_LOG_PAYLOAD_BYTES = 4 * 1024 * 1024;
 const MAX_COMMAND_RUN_CLIPBOARD_BYTES = 32 * 1024 * 1024;
@@ -35,11 +46,14 @@ const COMMAND_RUN_LOG_COPY_PAGE_SIZE = 2_000;
 interface CommandCenterOptions {
   server: FastifyInstance;
   db: ZeusDatabase;
+  commandDeliveries: CommandDeliveryRepository;
+  artifactStore: ArtifactStore;
   projects: ProjectRepository;
   runtimeSessions: RuntimeSessionRepository;
   aiRuntimeManager: AiRuntimeSessionManager;
   commandScriptsDirectory: string;
   commandRunsDirectory: string;
+  resolveRuntimeSessionLogFiles?: (sessionId: string) => Array<{ relativePath: string; sourcePath: string; mimeType: string }>;
   readProjectSecurity: (projectId: string) => { allowShell: boolean; allowGitWrite: boolean };
   buildRuntimeProcessEnv: () => NodeJS.ProcessEnv;
   createReleaseNotesCapability?: (input: { runId: string; projectId: string }) => { url: string; token: string };
@@ -49,6 +63,8 @@ interface CommandCenterOptions {
   save: () => Promise<void>;
   now?: () => Date;
   confirmationTtlMs?: number;
+  /** 正式副本验证只注册查询面；不建目录、不恢复运行、不接纳 mutation。 */
+  readOnlyValidation?: boolean;
 }
 
 interface StoredCommandConfirmation extends CommandConfirmation {
@@ -63,9 +79,12 @@ interface CommandConfirmationBody {
 }
 
 interface CommandRunBody {
+  runId?: string;
   confirmationId?: string;
   parameters?: Record<string, unknown>;
 }
+
+type EmptyCommandCenterInput = Record<string, never>;
 
 export interface CommandCenterController {
   handleRuntimeSessionChange: (session: AiRuntimeSession) => void;
@@ -78,59 +97,63 @@ export interface CommandCenterController {
 export function createCommandCenter(options: CommandCenterOptions): CommandCenterController {
   const definitions = new CommandDefinitionRepository(options.db);
   const runs = new CommandRunRepository(options.db);
-  const artifacts = new CommandArtifactRepository(options.db);
+  const artifacts = new CommandArtifactRepository(options.db, options.artifactStore);
   const confirmations = new Map<string, StoredCommandConfirmation>();
   const timeoutHandles = new Map<string, ReturnType<typeof setTimeout>>();
   const forceKillHandles = new Map<string, ReturnType<typeof setTimeout>>();
   const artifactBuffers = new Map<string, string>();
   const now = options.now ?? (() => new Date());
   const confirmationTtlMs = options.confirmationTtlMs ?? 10 * 60 * 1000;
+  const commandApplication = new CommandCenterCommandApplication({ db: options.db, deliveries: options.commandDeliveries, now });
 
-  mkdirSync(options.commandScriptsDirectory, { recursive: true, mode: 0o700 });
-  mkdirSync(options.commandRunsDirectory, { recursive: true, mode: 0o700 });
-  recoverInterruptedRuns();
+  if (!options.readOnlyValidation) {
+    mkdirSync(options.commandScriptsDirectory, { recursive: true, mode: 0o700 });
+    mkdirSync(options.commandRunsDirectory, { recursive: true, mode: 0o700 });
+    recoverInterruptedRuns();
+  }
 
   options.server.get('/api/commands/global', async () => definitions.listGlobal());
 
-  options.server.post('/api/commands/global', async (request: FastifyRequest<{ Body: CommandDefinitionInput }>, reply) => createDefinition('global', null, request.body, reply));
+  options.server.post('/api/commands/global', async (request: FastifyRequest<{ Body: CommandCenterMutationRequest<CommandDefinitionInput> }>, reply) => runCommandRoute(reply, () => createDefinition('global', null, request.body, reply)));
 
-  options.server.patch('/api/commands/global/:commandId', async (request: FastifyRequest<{ Params: { commandId: string }; Body: Partial<CommandDefinitionInput> }>, reply) =>
-    updateDefinition('global', null, request.params.commandId, request.body, reply),
+  options.server.patch('/api/commands/global/:commandId', async (request: FastifyRequest<{ Params: { commandId: string }; Body: CommandCenterMutationRequest<Partial<CommandDefinitionInput>> }>, reply) =>
+    runCommandRoute(reply, () => updateDefinition('global', null, request.params.commandId, request.body, reply)),
   );
 
-  options.server.delete('/api/commands/global/:commandId', async (request: FastifyRequest<{ Params: { commandId: string } }>, reply) => deleteDefinition('global', null, request.params.commandId, reply));
+  options.server.delete('/api/commands/global/:commandId', async (request: FastifyRequest<{ Params: { commandId: string }; Body: CommandCenterMutationRequest<EmptyCommandCenterInput> }>, reply) =>
+    runCommandRoute(reply, () => deleteDefinition('global', null, request.params.commandId, request.body, reply)),
+  );
 
   options.server.get('/api/projects/:projectId/commands', async (request: FastifyRequest<{ Params: { projectId: string } }>, reply) => {
     if (!requireProject(request.params.projectId, reply)) return;
     return definitions.listMerged(request.params.projectId);
   });
 
-  options.server.post('/api/projects/:projectId/commands', async (request: FastifyRequest<{ Params: { projectId: string }; Body: CommandDefinitionInput }>, reply) => {
+  options.server.post('/api/projects/:projectId/commands', async (request: FastifyRequest<{ Params: { projectId: string }; Body: CommandCenterMutationRequest<CommandDefinitionInput> }>, reply) => {
     if (!requireProject(request.params.projectId, reply)) return;
-    return createDefinition('project', request.params.projectId, request.body, reply);
+    return runCommandRoute(reply, () => createDefinition('project', request.params.projectId, request.body, reply));
   });
 
-  options.server.patch('/api/projects/:projectId/commands/:commandId', async (request: FastifyRequest<{ Params: { projectId: string; commandId: string }; Body: Partial<CommandDefinitionInput> }>, reply) => {
+  options.server.patch('/api/projects/:projectId/commands/:commandId', async (request: FastifyRequest<{ Params: { projectId: string; commandId: string }; Body: CommandCenterMutationRequest<Partial<CommandDefinitionInput>> }>, reply) => {
     if (!requireProject(request.params.projectId, reply)) return;
-    return updateDefinition('project', request.params.projectId, request.params.commandId, request.body, reply);
+    return runCommandRoute(reply, () => updateDefinition('project', request.params.projectId, request.params.commandId, request.body, reply));
   });
 
-  options.server.delete('/api/projects/:projectId/commands/:commandId', async (request: FastifyRequest<{ Params: { projectId: string; commandId: string } }>, reply) => {
+  options.server.delete('/api/projects/:projectId/commands/:commandId', async (request: FastifyRequest<{ Params: { projectId: string; commandId: string }; Body: CommandCenterMutationRequest<EmptyCommandCenterInput> }>, reply) => {
     if (!requireProject(request.params.projectId, reply)) return;
-    return deleteDefinition('project', request.params.projectId, request.params.commandId, reply);
+    return runCommandRoute(reply, () => deleteDefinition('project', request.params.projectId, request.params.commandId, request.body, reply));
   });
 
-  options.server.post('/api/projects/:projectId/commands/:commandId/confirmations', async (request: FastifyRequest<{ Params: { projectId: string; commandId: string }; Body: CommandConfirmationBody }>, reply) =>
-    createConfirmation(request.params.projectId, request.params.commandId, request.body, reply),
+  options.server.post('/api/projects/:projectId/commands/:commandId/confirmations', async (request: FastifyRequest<{ Params: { projectId: string; commandId: string }; Body: CommandCenterMutationRequest<CommandConfirmationBody> }>, reply) =>
+    runCommandRoute(reply, () => createConfirmation(request.params.projectId, request.params.commandId, request.body, reply)),
   );
 
-  options.server.post('/api/projects/:projectId/commands/:commandId/runs', async (request: FastifyRequest<{ Params: { projectId: string; commandId: string }; Body: CommandRunBody }>, reply) =>
-    startRun(request.params.projectId, request.params.commandId, request.body, reply),
+  options.server.post('/api/projects/:projectId/commands/:commandId/runs', async (request: FastifyRequest<{ Params: { projectId: string; commandId: string }; Body: CommandCenterMutationRequest<CommandRunBody> }>, reply) =>
+    runCommandRoute(reply, () => startRun(request.params.projectId, request.params.commandId, request.body, reply)),
   );
 
   options.server.get('/api/projects/:projectId/command-runs', async (request: FastifyRequest<{ Params: { projectId: string }; Querystring: { limit?: string } }>, reply) => {
     if (!requireProject(request.params.projectId, reply)) return;
-    expireConfirmations();
     const requestedLimit = Number(request.query.limit ?? 100);
     return runs.listByProject(request.params.projectId, Number.isFinite(requestedLimit) ? requestedLimit : 100);
   });
@@ -172,38 +195,41 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
     return { content: projection.content, byteLength: projection.byteLength };
   });
 
-  options.server.post('/api/command-runs/:runId/stop', async (request: FastifyRequest<{ Params: { runId: string } }>, reply) => {
-    const run = runs.getById(request.params.runId);
-    if (!run) return notFound(reply, 'ZEUS_COMMAND_RUN_NOT_FOUND', 'Command run not found');
-    if (run.status !== 'running' || !run.runtimeSessionId) {
-      return reply.code(409).send({ error: 'ZEUS_COMMAND_RUN_NOT_RUNNING', message: 'Command run is not running' });
-    }
-    clearRunTimeout(run.id);
-    options.revokeReleaseNotesCapability?.(run.id);
-    const endedAt = now().toISOString();
-    const updated = runs.update(run.id, { status: 'cancelled', endedAt, failureReason: '用户停止执行' });
-    options.aiRuntimeManager.stopSession(run.runtimeSessionId);
-    scheduleForceKill(run.id, run.runtimeSessionId);
-    appendRunAudit('command.run.cancelled', updated);
-    publishRun('command.run.cancelled', updated);
-    await options.save();
-    return updated;
-  });
+  options.server.post('/api/command-runs/:runId/stop', async (request: FastifyRequest<{ Params: { runId: string }; Body: CommandCenterMutationRequest<EmptyCommandCenterInput> }>, reply) =>
+    runCommandRoute(reply, () => stopRun(request.params.runId, request.body, reply)),
+  );
 
   options.server.get('/api/command-artifacts/:artifactId/content', async (request: FastifyRequest<{ Params: { artifactId: string } }>, reply) => {
     const artifact = findArtifactById(request.params.artifactId);
     if (!artifact) return notFound(reply, 'ZEUS_COMMAND_ARTIFACT_NOT_FOUND', 'Command artifact not found');
     const run = runs.getById(artifact.runId);
     if (!run) return notFound(reply, 'ZEUS_COMMAND_RUN_NOT_FOUND', 'Command run not found');
-    const runDirectory = commandRunDirectory(run.id);
-    const verified = verifyArtifactPath(artifact.absolutePath, runDirectory);
+    if (artifact.artifactRef) {
+      const resolved = await options.artifactStore.readAuthorized({
+        sha256: artifact.artifactRef.sha256,
+        owner: { kind: 'command_artifact', id: artifact.id },
+        maximumContentBytes: 1024 * 1024 * 1024,
+      });
+      reply.type(artifact.mimeType ?? 'application/octet-stream');
+      return reply.send(Buffer.from(resolved.bytes));
+    }
+    const verified = verifyArtifactPath(artifact.absolutePath, commandRunDirectory(run.id));
     if (!verified) return reply.code(410).send({ error: 'ZEUS_COMMAND_ARTIFACT_UNAVAILABLE', message: 'Command artifact is no longer available' });
     reply.type(artifact.mimeType ?? 'application/octet-stream');
     return reply.send(readFileSync(verified));
   });
 
-  async function createDefinition(scope: CommandScope, projectId: string | null, rawInput: CommandDefinitionInput, reply: FastifyReply): Promise<CommandDefinition | unknown> {
-    const input = normalizeDefinitionInput(rawInput);
+  async function createDefinition(scope: CommandScope, projectId: string | null, request: CommandCenterMutationRequest<CommandDefinitionInput>, reply: FastifyReply): Promise<CommandDefinition | unknown> {
+    const parsed = commandApplication.parse<CommandDefinitionInput>({
+      value: request,
+      commandType: commandCenterCommandTypes.definitionCreate,
+      scopeKind: 'command_definition',
+      expectedScopeId: ({ operationIdentity }) => definitionCreateScopeId(scope, projectId, operationIdentity),
+    });
+    assertCreateRevision(parsed);
+    const replay = replayAcceptedCoreCommand<CommandDefinition>(parsed, parsed.operationIdentity);
+    if (replay) return reply.code(201).send(replay.result);
+    const input = normalizeDefinitionInput(parsed.input);
     if (!input) return invalidDefinition(reply, [{ field: 'body', message: '命令定义格式无效。' }]);
     const issues = validateCommandDefinitionInput(input);
     if (scope === 'global' && projectId !== null) issues.push({ field: 'projectId', message: '全局命令不能绑定项目。' });
@@ -211,6 +237,7 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
       scope,
       projectId,
       tokens: [input.name, ...(input.aliases ?? [])],
+      excludeCommandId: parsed.operationIdentity,
     });
     if (conflicts.length > 0) {
       return reply.code(409).send({
@@ -220,24 +247,50 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
       });
     }
     if (issues.length > 0) return invalidDefinition(reply, issues);
-    const created = definitions.create({ ...input, scope, projectId });
-    options.appendAuditLog({
-      actorType: 'local_api',
-      action: 'command.definition.created',
-      resourceType: 'command_definition',
-      resourceId: created.id,
-      payload: definitionAuditPayload(created),
+    const mutation = commandApplication.executeCore({
+      parsed,
+      destinationId: 'command-center-definition-application',
+      resourceId: parsed.operationIdentity,
+      mutateBusinessState: () => {
+        const created = definitions.create({ ...input, id: parsed.operationIdentity, scope, projectId });
+        options.appendAuditLog({
+          ...commandAuditActor(parsed),
+          action: 'command.definition.created',
+          resourceType: 'command_definition',
+          resourceId: created.id,
+          payload: definitionAuditPayload(created),
+        });
+        return created;
+      },
     });
-    options.publishRealtimeEvent('command.definition.created', definitionEventPayload(created));
-    await options.save();
-    return reply.code(201).send(created);
+    if (!mutation.replayed) {
+      options.publishRealtimeEvent('command.definition.created', definitionEventPayload(mutation.result));
+      await options.save();
+    }
+    return reply.code(201).send(mutation.result);
   }
 
-  async function updateDefinition(expectedScope: CommandScope, expectedProjectId: string | null, commandId: string, patch: Partial<CommandDefinitionInput>, reply: FastifyReply): Promise<CommandDefinition | unknown> {
+  async function updateDefinition(
+    expectedScope: CommandScope,
+    expectedProjectId: string | null,
+    commandId: string,
+    request: CommandCenterMutationRequest<Partial<CommandDefinitionInput>>,
+    reply: FastifyReply,
+  ): Promise<CommandDefinition | unknown> {
+    const parsed = commandApplication.parse<Partial<CommandDefinitionInput>>({
+      value: request,
+      commandType: commandCenterCommandTypes.definitionUpdate,
+      scopeKind: 'command_definition',
+      expectedScopeId: () => commandId,
+    });
+    const replay = replayAcceptedCoreCommand<CommandDefinition>(parsed, commandId);
+    if (replay) return replay.result;
     const existing = definitions.getById(commandId);
     if (!existing || existing.scope !== expectedScope || existing.projectId !== expectedProjectId) {
       return notFound(reply, 'ZEUS_COMMAND_NOT_FOUND', 'Command definition not found');
     }
+    assertExpectedRevision(existing.revision, parsed.command.expectedRevision, parsed.command.scope);
+    const patch = parsed.input;
     const input = normalizeDefinitionInput({
       name: patch.name ?? existing.name,
       aliases: patch.aliases ?? existing.aliases,
@@ -266,41 +319,78 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
       });
     }
     if (issues.length > 0) return invalidDefinition(reply, issues);
-    const updated = definitions.update(existing.id, { ...input, revision: existing.revision + 1 });
-    invalidateCommandConfirmations(existing.id, '命令定义已变化');
-    options.appendAuditLog({
-      actorType: 'local_api',
-      action: 'command.definition.updated',
-      resourceType: 'command_definition',
-      resourceId: updated.id,
-      payload: definitionAuditPayload(updated),
+    const mutation = commandApplication.executeCore({
+      parsed,
+      destinationId: 'command-center-definition-application',
+      resourceId: existing.id,
+      mutateBusinessState: () => {
+        const updated = definitions.update(existing.id, { ...input, revision: existing.revision + 1 });
+        options.appendAuditLog({
+          ...commandAuditActor(parsed),
+          action: 'command.definition.updated',
+          resourceType: 'command_definition',
+          resourceId: updated.id,
+          payload: definitionAuditPayload(updated),
+        });
+        return updated;
+      },
     });
-    options.publishRealtimeEvent('command.definition.updated', definitionEventPayload(updated));
-    await options.save();
-    return updated;
+    if (!mutation.replayed) {
+      invalidateCommandConfirmations(existing.id, '命令定义已变化');
+      options.publishRealtimeEvent('command.definition.updated', definitionEventPayload(mutation.result));
+      await options.save();
+    }
+    return mutation.result;
   }
 
-  async function deleteDefinition(expectedScope: CommandScope, expectedProjectId: string | null, commandId: string, reply: FastifyReply): Promise<CommandDefinition | unknown> {
+  async function deleteDefinition(expectedScope: CommandScope, expectedProjectId: string | null, commandId: string, request: CommandCenterMutationRequest<EmptyCommandCenterInput>, reply: FastifyReply): Promise<CommandDefinition | unknown> {
+    const parsed = commandApplication.parse<EmptyCommandCenterInput>({
+      value: request,
+      commandType: commandCenterCommandTypes.definitionDelete,
+      scopeKind: 'command_definition',
+      expectedScopeId: () => commandId,
+    });
+    const replay = replayAcceptedCoreCommand<CommandDefinition>(parsed, commandId);
+    if (replay) return replay.result;
     const existing = definitions.getById(commandId);
     if (!existing || existing.scope !== expectedScope || existing.projectId !== expectedProjectId) {
       return notFound(reply, 'ZEUS_COMMAND_NOT_FOUND', 'Command definition not found');
     }
-    definitions.delete(existing.id);
-    invalidateCommandConfirmations(existing.id, '命令定义已删除');
-    options.appendAuditLog({
-      actorType: 'local_api',
-      action: 'command.definition.deleted',
-      resourceType: 'command_definition',
-      resourceId: existing.id,
-      payload: definitionAuditPayload(existing),
+    assertExpectedRevision(existing.revision, parsed.command.expectedRevision, parsed.command.scope);
+    const mutation = commandApplication.executeCore({
+      parsed,
+      destinationId: 'command-center-definition-application',
+      resourceId: commandId,
+      mutateBusinessState: () => {
+        definitions.delete(existing.id);
+        options.appendAuditLog({
+          ...commandAuditActor(parsed),
+          action: 'command.definition.deleted',
+          resourceType: 'command_definition',
+          resourceId: existing.id,
+          payload: definitionAuditPayload(existing),
+        });
+        return existing;
+      },
     });
-    options.publishRealtimeEvent('command.definition.deleted', definitionEventPayload(existing));
-    await options.save();
-    return existing;
+    if (!mutation.replayed) {
+      invalidateCommandConfirmations(commandId, '命令定义已删除');
+      options.publishRealtimeEvent('command.definition.deleted', definitionEventPayload(mutation.result));
+      await options.save();
+    }
+    return mutation.result;
   }
 
-  async function createConfirmation(projectId: string, commandId: string, body: CommandConfirmationBody | undefined, reply: FastifyReply): Promise<CommandConfirmation | unknown> {
-    expireConfirmations();
+  async function createConfirmation(projectId: string, commandId: string, request: CommandCenterMutationRequest<CommandConfirmationBody>, reply: FastifyReply): Promise<CommandConfirmation | unknown> {
+    const parsed = commandApplication.parse<CommandConfirmationBody>({
+      value: request,
+      commandType: commandCenterCommandTypes.confirmationCreate,
+      scopeKind: 'command_run',
+      expectedScopeId: ({ operationIdentity }) => operationIdentity,
+    });
+    assertCreateRevision(parsed);
+    const replay = replayAcceptedCoreCommand<CommandConfirmation & { runId: string }>(parsed, parsed.operationIdentity);
+    if (replay) return reply.code(201).send(replay.result);
     const project = requireProject(projectId, reply);
     if (!project) return;
     const command = definitions.getById(commandId);
@@ -310,25 +400,15 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
     if (!command.enabled) return reply.code(409).send({ error: 'ZEUS_COMMAND_DISABLED', message: 'Command is disabled' });
     const permissionError = commandPermissionError(projectId, command);
     if (permissionError) return reply.code(403).send(permissionError);
-    const parameters = normalizeRunParameters(command.parameters, body?.parameters ?? {});
+    const parameters = normalizeRunParameters(command.parameters, parsed.input.parameters ?? {});
     if ('issues' in parameters) return reply.code(400).send({ error: 'ZEUS_INVALID_COMMAND_PARAMETERS', message: 'Command parameters are invalid', issues: parameters.issues });
     const riskLevel = commandNeedsHighRiskConfirmation(command.riskFlags) ? 'high' : 'normal';
-    const trigger = body?.trigger === 'telegram' ? 'telegram' : 'desktop';
+    const trigger = parsed.input.trigger === 'telegram' ? 'telegram' : 'desktop';
     const parameterSnapshot = nonSensitiveParameterSnapshot(command.parameters, parameters.values);
-    const run = runs.create({
-      commandId: command.id,
-      projectId,
-      trigger,
-      status: 'pending_confirmation',
-      commandSnapshot: command,
-      parameterSnapshot,
-      cwd: project.localPath,
-      timeoutSeconds: command.timeoutSeconds,
-    });
     const createdAt = now();
     const confirmation: StoredCommandConfirmation = {
-      id: randomUUID(),
-      runId: run.id,
+      id: stableConfirmationId(parsed.operationIdentity),
+      runId: parsed.operationIdentity,
       commandId: command.id,
       projectId,
       commandRevision: command.revision,
@@ -339,51 +419,129 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
       normalizedParameters: parameters.values,
       sensitiveValues: sensitiveParameterValues(command.parameters, parameters.values),
     };
-    confirmations.set(confirmation.id, confirmation);
-    options.appendAuditLog({
-      actorType: trigger,
-      action: 'command.confirmation.created',
-      resourceType: 'command_confirmation',
-      resourceId: confirmation.id,
-      payload: {
-        runId: run.id,
-        commandId: command.id,
-        commandRevision: command.revision,
-        projectId,
-        cwd: project.localPath,
-        parameterKeys: Object.keys(parameters.values),
-        riskLevel,
-        expiresAt: confirmation.expiresAt,
+    const publicConfirmation = toPublicConfirmation(confirmation);
+    const mutation = commandApplication.executeCore({
+      parsed,
+      destinationId: 'command-center-confirmation-application',
+      resourceId: parsed.operationIdentity,
+      mutateBusinessState: () => {
+        runs.create({
+          id: parsed.operationIdentity,
+          commandId: command.id,
+          projectId,
+          trigger,
+          status: 'pending_confirmation',
+          commandSnapshot: command,
+          parameterSnapshot,
+          cwd: project.localPath,
+          timeoutSeconds: command.timeoutSeconds,
+        });
+        options.appendAuditLog({
+          ...commandAuditActor(parsed),
+          action: 'command.confirmation.created',
+          resourceType: 'command_confirmation',
+          resourceId: confirmation.id,
+          payload: {
+            runId: confirmation.runId,
+            commandId: command.id,
+            commandRevision: command.revision,
+            projectId,
+            cwd: project.localPath,
+            parameterKeys: Object.keys(parameters.values),
+            riskLevel,
+            expiresAt: confirmation.expiresAt,
+          },
+        });
+        return publicConfirmation;
       },
     });
-    options.publishRealtimeEvent('command.confirmation.created', {
-      confirmationId: confirmation.id,
-      runId: run.id,
-      commandId: command.id,
-      projectId,
-      riskLevel,
-    });
-    await options.save();
-    return reply.code(201).send(toPublicConfirmation(confirmation));
+    if (!mutation.replayed) {
+      confirmations.set(confirmation.id, confirmation);
+      options.publishRealtimeEvent('command.confirmation.created', {
+        confirmationId: confirmation.id,
+        runId: confirmation.runId,
+        commandId: command.id,
+        projectId,
+        riskLevel,
+      });
+      await options.save();
+    }
+    return reply.code(201).send(mutation.result);
   }
 
-  async function startRun(projectId: string, commandId: string, body: CommandRunBody | undefined, reply: FastifyReply): Promise<CommandRun | unknown> {
-    expireConfirmations();
+  async function startRun(projectId: string, commandId: string, request: CommandCenterMutationRequest<CommandRunBody>, reply: FastifyReply): Promise<CommandRun | unknown> {
+    const parsed = commandApplication.parse<CommandRunBody>({
+      value: request,
+      commandType: commandCenterCommandTypes.runStart,
+      scopeKind: 'command_run',
+    });
+    const runId = requiredInputIdentity(parsed.input.runId, 'input.runId');
+    if (parsed.command.scope.id !== runId) throw new CommandCenterCommandApplicationError('ZEUS_COMMAND_CENTER_COMMAND_INVALID', 'Run start command scope must match input.runId.', 400);
+    assertCreateRevision(parsed);
+    const externalOperationId = `command-run-start:${runId}`;
+    const acceptedReplay = replayAcceptedExternalCommand<CommandRun>(parsed, runId, externalOperationId);
+    if (acceptedReplay) return reply.code(201).send(acceptedReplay.result);
     const project = requireProject(projectId, reply);
     if (!project) return;
     const command = definitions.getById(commandId);
     if (!command || (command.scope === 'project' && command.projectId !== projectId)) {
       return notFound(reply, 'ZEUS_COMMAND_NOT_FOUND', 'Command definition not found');
     }
-    const confirmation = body?.confirmationId ? confirmations.get(body.confirmationId) : undefined;
+    const confirmationId = requiredInputIdentity(parsed.input.confirmationId, 'input.confirmationId');
+    const confirmation = confirmations.get(confirmationId);
+    const pendingRun = runs.getById(runId);
     if (!confirmation) {
-      return reply.code(400).send({ error: 'ZEUS_COMMAND_CONFIRMATION_REQUIRED', message: 'A valid command confirmation is required' });
+      return rejectRunStart({
+        parsed,
+        run: pendingRun,
+        externalOperationId,
+        error: 'ZEUS_COMMAND_CONFIRMATION_REQUIRED',
+        message: 'A valid command confirmation is required',
+        statusCode: 400,
+        reason: '命令确认不存在或 Zeus 重启后已失效',
+        reply,
+      });
     }
-    const parameters = normalizeRunParameters(command.parameters, body?.parameters ?? {});
+    if (confirmation.runId !== runId || !pendingRun || pendingRun.id !== confirmation.runId) {
+      return rejectRunStart({
+        parsed,
+        run: pendingRun,
+        confirmation,
+        externalOperationId,
+        error: 'ZEUS_COMMAND_CONFIRMATION_STALE',
+        message: 'Command confirmation does not match the addressed run',
+        statusCode: 409,
+        reason: '命令确认与执行身份不一致',
+        reply,
+      });
+    }
+    if (Date.parse(confirmation.expiresAt) <= now().getTime()) {
+      return rejectRunStart({
+        parsed,
+        run: pendingRun,
+        confirmation,
+        externalOperationId,
+        error: 'ZEUS_COMMAND_CONFIRMATION_STALE',
+        message: 'Command confirmation has expired',
+        statusCode: 409,
+        reason: '命令确认已过期',
+        reply,
+      });
+    }
+    const parameters = normalizeRunParameters(command.parameters, parsed.input.parameters ?? {});
     if ('issues' in parameters) {
-      rejectConfirmation(confirmation, '命令参数已变化');
-      await options.save();
-      return reply.code(400).send({ error: 'ZEUS_INVALID_COMMAND_PARAMETERS', message: 'Command parameters are invalid', issues: parameters.issues });
+      return rejectRunStart({
+        parsed,
+        run: pendingRun,
+        confirmation,
+        externalOperationId,
+        error: 'ZEUS_INVALID_COMMAND_PARAMETERS',
+        message: 'Command parameters are invalid',
+        statusCode: 400,
+        reason: '命令参数已变化',
+        details: { issues: parameters.issues },
+        reply,
+      });
     }
     const unchanged =
       command.enabled &&
@@ -393,37 +551,69 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
       confirmation.cwd === project.localPath &&
       confirmation.parameterDigest === digestParameters(parameters.values);
     if (!unchanged) {
-      rejectConfirmation(confirmation, '命令、项目、目录或参数在确认后发生变化');
-      await options.save();
-      return reply.code(409).send({ error: 'ZEUS_COMMAND_CONFIRMATION_STALE', message: 'Command confirmation is no longer valid' });
+      return rejectRunStart({
+        parsed,
+        run: pendingRun,
+        confirmation,
+        externalOperationId,
+        error: 'ZEUS_COMMAND_CONFIRMATION_STALE',
+        message: 'Command confirmation is no longer valid',
+        statusCode: 409,
+        reason: '命令、项目、目录或参数在确认后发生变化',
+        reply,
+      });
     }
     const permissionError = commandPermissionError(projectId, command);
     if (permissionError) {
-      rejectConfirmation(confirmation, permissionError.message);
-      await options.save();
-      return reply.code(403).send(permissionError);
+      return rejectRunStart({
+        parsed,
+        run: pendingRun,
+        confirmation,
+        externalOperationId,
+        error: permissionError.error,
+        message: permissionError.message,
+        statusCode: 403,
+        reason: permissionError.message,
+        reply,
+      });
     }
+    const preparation = commandApplication.prepareExternal<CommandRunBody, CommandRun>({
+      parsed,
+      destinationId: 'command-center-runtime',
+      resourceId: runId,
+      externalOperationId,
+      mutatePreparedBusinessState: () => {
+        const starting = runs.update(runId, { status: 'starting', failureReason: null });
+        appendRunAudit('command.run.starting', starting, parsed);
+      },
+    });
+    if (preparation.state === 'accepted_replay') return reply.code(201).send(preparation.acceptedReplayResult);
+    const starting = runs.getById(runId)!;
+    commandApplication.markExternalWriteStarted(preparation);
     confirmations.delete(confirmation.id);
-    const runDirectory = commandRunDirectory(confirmation.runId);
-    mkdirSync(runDirectory, { recursive: true, mode: 0o700 });
-    const releaseNotesCapability = isReleaseCommand(command.command) ? options.createReleaseNotesCapability?.({ runId: confirmation.runId, projectId }) : undefined;
-    const environment = {
-      ...options.buildRuntimeProcessEnv(),
-      ...parameterEnvironment(command.parameters, parameters.values),
-      ZEUS_PROJECT_ROOT: project.localPath,
-      ZEUS_COMMAND_SCRIPTS_DIR: options.commandScriptsDirectory,
-      ZEUS_COMMAND_RUN_DIR: runDirectory,
-      ZEUS_COMMAND_ID: command.id,
-      ZEUS_COMMAND_RUN_ID: confirmation.runId,
-      ...(releaseNotesCapability
-        ? {
-            ZEUS_RELEASE_NOTES_API_URL: releaseNotesCapability.url,
-            ZEUS_RELEASE_NOTES_CAPABILITY: releaseNotesCapability.token,
-          }
-        : {}),
-    };
+    let releaseNotesCapability: { url: string; token: string } | undefined;
+    let session: AiRuntimeSession;
     try {
-      const session = await options.aiRuntimeManager.startSession({
+      publishRun('command.run.starting', starting);
+      const runDirectory = commandRunDirectory(runId);
+      mkdirSync(runDirectory, { recursive: true, mode: 0o700 });
+      releaseNotesCapability = isReleaseCommand(command.command) ? options.createReleaseNotesCapability?.({ runId, projectId }) : undefined;
+      const environment = {
+        ...options.buildRuntimeProcessEnv(),
+        ...parameterEnvironment(command.parameters, parameters.values),
+        ZEUS_PROJECT_ROOT: project.localPath,
+        ZEUS_COMMAND_SCRIPTS_DIR: options.commandScriptsDirectory,
+        ZEUS_COMMAND_RUN_DIR: runDirectory,
+        ZEUS_COMMAND_ID: command.id,
+        ZEUS_COMMAND_RUN_ID: runId,
+        ...(releaseNotesCapability
+          ? {
+              ZEUS_RELEASE_NOTES_API_URL: releaseNotesCapability.url,
+              ZEUS_RELEASE_NOTES_CAPABILITY: releaseNotesCapability.token,
+            }
+          : {}),
+      };
+      session = await options.aiRuntimeManager.startSession({
         projectId,
         command: 'sh',
         args: ['-lc', command.command],
@@ -431,30 +621,144 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
         env: environment,
         redactValues: [...confirmation.sensitiveValues, ...(releaseNotesCapability ? [releaseNotesCapability.token] : [])],
       });
-      const startedAt = now().toISOString();
-      const updated = runs.update(confirmation.runId, {
-        status: 'running',
-        runtimeSessionId: session.id,
-        startedAt,
-      });
-      appendRunAudit('command.run.started', updated);
-      publishRun('command.run.started', updated);
-      scheduleRunTimeout(updated);
-      handleRuntimeSessionChange(session);
-      await options.save();
-      return reply.code(201).send(updated);
     } catch (error) {
-      options.revokeReleaseNotesCapability?.(confirmation.runId);
-      const failed = runs.update(confirmation.runId, {
-        status: 'failed',
-        failureReason: error instanceof Error ? error.message : String(error),
-        endedAt: now().toISOString(),
+      options.revokeReleaseNotesCapability?.(runId);
+      const failureMessage = error instanceof Error ? error.message : String(error);
+      const unknown = commandApplication.resolveExternal({
+        preparation,
+        outcome: 'outcome_unknown_after_write',
+        evidence: { failureMessage, boundary: 'after_external_write_marker' },
+        mutateBusinessState: () => {
+          const unresolved = runs.update(runId, { status: 'starting', failureReason: `启动结果未知：${failureMessage}` });
+          appendRunAudit('command.run.start_outcome_unknown', unresolved, parsed);
+          return unresolved;
+        },
       });
-      appendRunAudit('command.run.failed', failed);
-      publishRun('command.run.failed', failed);
+      publishRun('command.run.start_outcome_unknown', unknown.result);
       await options.save();
-      return reply.code(400).send({ error: 'ZEUS_COMMAND_RUN_REJECTED', message: failed.failureReason, run: failed });
+      return reply.code(503).send({ error: 'ZEUS_COMMAND_RUN_OUTCOME_UNKNOWN', message: unknown.result.failureReason, run: unknown.result });
     }
+    const startedAt = now().toISOString();
+    const accepted = commandApplication.resolveExternal({
+      preparation,
+      outcome: 'accepted',
+      evidence: { runtimeSessionId: session.id, startedAt },
+      mutateBusinessState: () => {
+        const updated = runs.update(runId, { status: 'running', runtimeSessionId: session.id, startedAt, failureReason: null });
+        appendRunAudit('command.run.started', updated, parsed);
+        return updated;
+      },
+    });
+    publishRun('command.run.started', accepted.result);
+    scheduleRunTimeout(accepted.result);
+    handleRuntimeSessionChange(session);
+    await options.save();
+    return reply.code(201).send(accepted.result);
+  }
+
+  async function stopRun(runId: string, request: CommandCenterMutationRequest<EmptyCommandCenterInput>, reply: FastifyReply): Promise<CommandRun | unknown> {
+    const parsed = commandApplication.parse<EmptyCommandCenterInput>({
+      value: request,
+      commandType: commandCenterCommandTypes.runStop,
+      scopeKind: 'command_run',
+      expectedScopeId: () => runId,
+    });
+    assertCreateRevision(parsed);
+    const externalOperationId = `command-run-stop:${runId}`;
+    const acceptedReplay = replayAcceptedExternalCommand<CommandRun>(parsed, runId, externalOperationId);
+    if (acceptedReplay) return acceptedReplay.result;
+    const run = runs.getById(runId);
+    if (!run) return notFound(reply, 'ZEUS_COMMAND_RUN_NOT_FOUND', 'Command run not found');
+    if (run.status !== 'running' || !run.runtimeSessionId) {
+      return reply.code(409).send({ error: 'ZEUS_COMMAND_RUN_NOT_RUNNING', message: 'Command run is not running' });
+    }
+    const runtimeSessionId = run.runtimeSessionId;
+    const preparation = commandApplication.prepareExternal<EmptyCommandCenterInput, CommandRun>({
+      parsed,
+      destinationId: 'command-center-runtime',
+      resourceId: runId,
+      externalOperationId,
+      mutatePreparedBusinessState: () => {
+        const stopping = runs.update(runId, { status: 'stopping', failureReason: null });
+        appendRunAudit('command.run.stopping', stopping, parsed);
+      },
+    });
+    if (preparation.state === 'accepted_replay') return preparation.acceptedReplayResult;
+    const stopping = runs.getById(runId)!;
+    commandApplication.markExternalWriteStarted(preparation);
+    clearRunTimeout(run.id);
+    options.revokeReleaseNotesCapability?.(run.id);
+    try {
+      publishRun('command.run.stopping', stopping);
+      options.aiRuntimeManager.stopSession(runtimeSessionId);
+    } catch (error) {
+      const failureMessage = error instanceof Error ? error.message : String(error);
+      const unknown = commandApplication.resolveExternal({
+        preparation,
+        outcome: 'outcome_unknown_after_write',
+        evidence: { runtimeSessionId, failureMessage, boundary: 'after_external_write_marker' },
+        mutateBusinessState: () => {
+          const unresolved = runs.update(runId, { status: 'stopping', failureReason: `停止结果未知：${failureMessage}` });
+          appendRunAudit('command.run.stop_outcome_unknown', unresolved, parsed);
+          return unresolved;
+        },
+      });
+      publishRun('command.run.stop_outcome_unknown', unknown.result);
+      await options.save();
+      return reply.code(503).send({ error: 'ZEUS_COMMAND_RUN_OUTCOME_UNKNOWN', message: unknown.result.failureReason, run: unknown.result });
+    }
+    const endedAt = now().toISOString();
+    const accepted = commandApplication.resolveExternal({
+      preparation,
+      outcome: 'accepted',
+      evidence: { runtimeSessionId, endedAt },
+      mutateBusinessState: () => {
+        const updated = runs.update(runId, { status: 'cancelled', endedAt, failureReason: '用户停止执行' });
+        appendRunAudit('command.run.cancelled', updated, parsed);
+        return updated;
+      },
+    });
+    scheduleForceKill(run.id, runtimeSessionId);
+    publishRun('command.run.cancelled', accepted.result);
+    await options.save();
+    return accepted.result;
+  }
+
+  async function rejectRunStart(input: {
+    parsed: ParsedCommandCenterMutation<CommandRunBody>;
+    run: CommandRun | undefined;
+    confirmation?: StoredCommandConfirmation;
+    externalOperationId: string;
+    error: string;
+    message: string;
+    statusCode: 400 | 403 | 409;
+    reason: string;
+    details?: Record<string, unknown>;
+    reply: FastifyReply;
+  }): Promise<unknown> {
+    const preparation = commandApplication.prepareExternal<CommandRunBody, { run: CommandRun | null }>({
+      parsed: input.parsed,
+      destinationId: 'command-center-runtime',
+      resourceId: input.parsed.command.scope.id,
+      externalOperationId: input.externalOperationId,
+    });
+    if (preparation.state === 'accepted_replay') return input.reply.code(201).send(preparation.acceptedReplayResult.run);
+    const rejected = commandApplication.resolveExternal({
+      preparation,
+      outcome: 'explicitly_rejected',
+      evidence: { error: input.error, reason: input.reason },
+      mutateBusinessState: () => {
+        const current = input.run ? runs.getById(input.run.id) : undefined;
+        if (!current || current.status !== 'pending_confirmation') return { run: current ?? null };
+        const updated = runs.update(current.id, { status: 'rejected', failureReason: input.reason, endedAt: now().toISOString() });
+        appendRunAudit('command.confirmation.rejected', updated, input.parsed);
+        return { run: updated };
+      },
+    });
+    if (input.confirmation) confirmations.delete(input.confirmation.id);
+    if (rejected.result.run) publishRun('command.confirmation.rejected', rejected.result.run);
+    await options.save();
+    return input.reply.code(input.statusCode).send({ error: input.error, message: input.message, ...(input.details ?? {}), run: rejected.result.run });
   }
 
   function handleRuntimeSessionChange(session: AiRuntimeSession): void {
@@ -480,6 +784,7 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
               failureReason: readableFailure ?? (session.status === 'failed' ? 'Runtime 执行失败；请展开原始日志查看失败命令和恢复建议。' : `命令退出码 ${session.exitCode ?? 'unknown'}；请展开原始日志查看原因。`),
             };
     const updated = runs.update(run.id, next);
+    registerRuntimeLogArtifacts(updated, session.id);
     appendRunAudit(`command.run.${updated.status}`, updated);
     publishRun(`command.run.${updated.status}`, updated);
   }
@@ -510,14 +815,13 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
       });
       return;
     }
-    const file = statSync(verified);
     const relativePath = relative(realpathSync(runDirectory), verified).replace(/\\/gu, '/');
-    const artifact = artifacts.create({
+    const artifact = artifacts.createFromFile({
       runId: run.id,
+      projectId: run.projectId,
       relativePath,
-      absolutePath: verified,
+      sourcePath: verified,
       mimeType: mimeTypeForPath(verified),
-      byteLength: file.size,
     });
     options.appendAuditLog({
       actorType: 'runtime',
@@ -532,6 +836,41 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
       relativePath: artifact.relativePath,
       mimeType: artifact.mimeType,
     });
+  }
+
+  function registerRuntimeLogArtifacts(run: CommandRun, sessionId: string): void {
+    for (const descriptor of options.resolveRuntimeSessionLogFiles?.(sessionId) ?? []) {
+      try {
+        const artifact = artifacts.createFromFile({
+          runId: run.id,
+          projectId: run.projectId,
+          relativePath: descriptor.relativePath,
+          sourcePath: descriptor.sourcePath,
+          mimeType: descriptor.mimeType,
+        });
+        options.appendAuditLog({
+          actorType: 'runtime',
+          action: 'command.log_artifact.registered',
+          resourceType: 'command_artifact',
+          resourceId: artifact.id,
+          payload: { runId: run.id, sessionId, relativePath: artifact.relativePath, byteLength: artifact.byteLength },
+        });
+        options.publishRealtimeEvent('command.log_artifact.registered', {
+          runId: run.id,
+          sessionId,
+          artifactId: artifact.id,
+          relativePath: artifact.relativePath,
+        });
+      } catch (error) {
+        options.appendAuditLog({
+          actorType: 'runtime',
+          action: 'command.log_artifact.failed',
+          resourceType: 'command_run',
+          resourceId: run.id,
+          payload: { runId: run.id, sessionId, relativePath: descriptor.relativePath, message: error instanceof Error ? error.message : String(error) },
+        });
+      }
+    }
   }
 
   function scheduleRunTimeout(run: CommandRun): void {
@@ -584,6 +923,46 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
     timeoutHandles.delete(runId);
   }
 
+  async function runCommandRoute(reply: FastifyReply, operation: () => unknown | Promise<unknown>): Promise<unknown> {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!isCommandCenterCommandError(error)) throw error;
+      const statusCode = commandCenterCommandErrorStatus(error);
+      return reply.code(statusCode).send({
+        error: error.code,
+        message: error.message,
+        ...('details' in error ? { details: error.details } : {}),
+      });
+    }
+  }
+
+  function replayAcceptedCoreCommand<TResult>(parsed: ParsedCommandCenterMutation<object>, resourceId: string) {
+    const latest = options.commandDeliveries.get(parsed.command.commandId)?.attempts.at(-1);
+    if (latest?.destinationKind !== 'core_application' || latest.outcome !== 'accepted' || !latest.receipt) return undefined;
+    return commandApplication.executeCore({
+      parsed,
+      destinationId: latest.destinationId,
+      resourceId,
+      mutateBusinessState: () => {
+        throw new Error('Accepted Core command replay must never execute its mutation.');
+      },
+    }) as ReturnType<CommandCenterCommandApplication['executeCore']> & { result: TResult };
+  }
+
+  function replayAcceptedExternalCommand<TResult>(parsed: ParsedCommandCenterMutation<object>, resourceId: string, externalOperationId: string) {
+    const latest = options.commandDeliveries.get(parsed.command.commandId)?.attempts.at(-1);
+    if (latest?.destinationKind !== 'external_operation' || latest.outcome !== 'accepted' || !latest.receipt) return undefined;
+    const replay = commandApplication.prepareExternal<object, TResult>({
+      parsed,
+      destinationId: latest.destinationId,
+      resourceId,
+      externalOperationId,
+    });
+    if (replay.state !== 'accepted_replay') throw new Error('Accepted external command did not return its immutable replay result.');
+    return { result: replay.acceptedReplayResult };
+  }
+
   function invalidateCommandConfirmations(commandId: string, reason: string): void {
     for (const confirmation of confirmations.values()) {
       if (confirmation.commandId === commandId) rejectConfirmation(confirmation, reason);
@@ -597,13 +976,6 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
     const rejected = runs.update(run.id, { status: 'rejected', failureReason: reason, endedAt: now().toISOString() });
     appendRunAudit('command.confirmation.rejected', rejected);
     publishRun('command.confirmation.rejected', rejected);
-  }
-
-  function expireConfirmations(): void {
-    const currentTime = now().getTime();
-    for (const confirmation of confirmations.values()) {
-      if (Date.parse(confirmation.expiresAt) <= currentTime) rejectConfirmation(confirmation, '命令确认已过期');
-    }
   }
 
   function requireProject(projectId: string, reply: FastifyReply) {
@@ -626,9 +998,9 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
     return null;
   }
 
-  function appendRunAudit(action: string, run: CommandRun): void {
+  function appendRunAudit(action: string, run: CommandRun, parsed?: ParsedCommandCenterMutation<object>): void {
     options.appendAuditLog({
-      actorType: run.trigger,
+      ...(parsed ? commandAuditActor(parsed) : { actorType: run.trigger }),
       action,
       resourceType: 'command_run',
       resourceId: run.id,
@@ -660,30 +1032,7 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
   }
 
   function findArtifactById(artifactId: string) {
-    for (const run of runs.listActive()) {
-      const artifact = artifacts.listByRun(run.id).find((candidate) => candidate.id === artifactId);
-      if (artifact) return artifact;
-    }
-    const row = options.db.get<{
-      id: string;
-      run_id: string;
-      relative_path: string;
-      absolute_path: string;
-      mime_type: string | null;
-      byte_length: number;
-      created_at: string;
-    }>(`SELECT id, run_id, relative_path, absolute_path, mime_type, byte_length, created_at FROM command_artifacts WHERE id = ?`, [artifactId]);
-    return row
-      ? {
-          id: row.id,
-          runId: row.run_id,
-          relativePath: row.relative_path,
-          absolutePath: row.absolute_path,
-          mimeType: row.mime_type,
-          byteLength: row.byte_length,
-          createdAt: row.created_at,
-        }
-      : undefined;
+    return artifacts.getById(artifactId);
   }
 
   function commandRunDirectory(runId: string): string {
@@ -743,24 +1092,26 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
 
   function close(): void {
     for (const timeout of timeoutHandles.values()) clearTimeout(timeout);
-    for (const [runId, timeout] of forceKillHandles) {
-      clearTimeout(timeout);
-      const run = runs.getById(runId);
-      if (run?.runtimeSessionId) {
+    for (const timeout of forceKillHandles.values()) clearTimeout(timeout);
+    if (!options.readOnlyValidation) {
+      for (const runId of forceKillHandles.keys()) {
+        const run = runs.getById(runId);
+        if (run?.runtimeSessionId) {
+          try {
+            options.aiRuntimeManager.killSession(run.runtimeSessionId, 'SIGKILL');
+          } catch {
+            // 已退出的子进程无需在关闭流程中升级成错误。
+          }
+        }
+      }
+      for (const run of runs.listActive()) {
+        options.revokeReleaseNotesCapability?.(run.id);
+        if (run.status !== 'running' || !run.runtimeSessionId) continue;
         try {
           options.aiRuntimeManager.killSession(run.runtimeSessionId, 'SIGKILL');
         } catch {
           // 已退出的子进程无需在关闭流程中升级成错误。
         }
-      }
-    }
-    for (const run of runs.listActive()) {
-      options.revokeReleaseNotesCapability?.(run.id);
-      if (run.status !== 'running' || !run.runtimeSessionId) continue;
-      try {
-        options.aiRuntimeManager.killSession(run.runtimeSessionId, 'SIGKILL');
-      } catch {
-        // 已退出的子进程无需在关闭流程中升级成错误。
       }
     }
     timeoutHandles.clear();
@@ -770,6 +1121,50 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
   }
 
   return { handleRuntimeSessionChange, handleRuntimeLog, stopActiveRuns, close };
+}
+
+function definitionCreateScopeId(scope: CommandScope, projectId: string | null, operationIdentity: string): string {
+  return scope === 'global' ? `global:${operationIdentity}` : `project:${projectId ?? 'missing'}:${operationIdentity}`;
+}
+
+function assertCreateRevision(parsed: ParsedCommandCenterMutation<object>): void {
+  if (parsed.command.expectedRevision === null) return;
+  throw new CommandCenterCommandApplicationError('ZEUS_COMMAND_CENTER_COMMAND_INVALID', 'Create/action Command expectedRevision must be null.', 409);
+}
+
+function requiredInputIdentity(value: unknown, field: string): string {
+  if (
+    typeof value !== 'string' ||
+    value.trim() !== value ||
+    value.length < 1 ||
+    value.length > 512 ||
+    Array.from(value).some((character) => {
+      const codePoint = character.codePointAt(0);
+      return codePoint !== undefined && (codePoint <= 0x1f || codePoint === 0x7f);
+    })
+  ) {
+    throw new CommandCenterCommandApplicationError('ZEUS_COMMAND_CENTER_COMMAND_INVALID', `${field} is invalid.`, 400);
+  }
+  return value;
+}
+
+function stableConfirmationId(operationIdentity: string): string {
+  return `command_confirmation_${createHash('sha256').update(operationIdentity).digest('hex').slice(0, 32)}`;
+}
+
+function commandAuditActor(parsed: ParsedCommandCenterMutation<object>): { actorType: string; actorRef?: string } {
+  return {
+    actorType: parsed.command.actor.kind,
+    ...(parsed.command.actor.id ? { actorRef: parsed.command.actor.id } : {}),
+  };
+}
+
+function commandCenterCommandErrorStatus(error: { code: string }): 400 | 404 | 409 | 500 | 503 {
+  if (error instanceof CommandCenterCommandApplicationError) return error.statusCode;
+  if (error.code === 'ZEUS_COMMAND_ENVELOPE_INVALID' || error.code === 'ZEUS_COMMAND_ENVELOPE_SCHEMA_MISMATCH' || error.code === 'ZEUS_COMMAND_DELIVERY_INVALID_ARGUMENT') return 400;
+  if (error.code === 'ZEUS_COMMAND_DELIVERY_NOT_FOUND') return 404;
+  if (error.code === 'ZEUS_COMMAND_DELIVERY_SCHEMA_CONFLICT') return 503;
+  return error.code === 'ZEUS_COMMAND_CENTER_RESULT_MISSING' ? 500 : 409;
 }
 
 function extractReadableReleaseFailure(raw: string): string | null {

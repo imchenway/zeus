@@ -1,0 +1,335 @@
+import type { AgentPreflightTokenCountCapability, AgentPreflightTokenCountResult } from '@zeus/ai-runtime';
+import type { CodexBootstrapAdditionalContext } from '@zeus/shared';
+import { ColdEvidenceRepository, LongTermMemoryRepository, type LongTermMemoryResolution } from '@zeus/storage';
+import {
+  compileContext,
+  longTermMemoryContextFragment,
+  renderCompiledContext,
+  type CompiledContext,
+  type CompileContextInput,
+  type ContextBudget,
+  type ContextFragment,
+  type ContextOperationRisk,
+  type ContextTokenCounter,
+} from './contextCompiler.js';
+import { ContextSourceCatalog, type ProjectTaskDocumentCandidate } from './contextSourceCatalog.js';
+
+export const contextDispatchSchemaVersion = 'zeus-context-dispatch-v1' as const;
+
+export interface ContextDispatchProject {
+  id: string;
+  localPath: string;
+}
+
+export interface ContextDispatchTask {
+  id: string;
+  code: string;
+}
+
+export interface ContextDispatchProviderSnapshot {
+  id: string;
+  modelId: string;
+  contextWindowTokens: number;
+  reservedOutputTokens: number;
+  currentInputTokens: number;
+  capabilities?: CompileContextInput['provider']['capabilities'];
+  /** 只有真实、同步、本地 tokenizer 才能传 exact；当前 Codex/Pi 均不提供。 */
+  tokenCounter?: ContextTokenCounter;
+  preflightTokenCount: AgentPreflightTokenCountCapability;
+}
+
+export interface CompileDispatchContextInput {
+  project: ContextDispatchProject;
+  task?: ContextDispatchTask | null;
+  provider: ContextDispatchProviderSnapshot;
+  operationRisk: ContextOperationRisk;
+  asOf?: string;
+  maximumCompiledTokens?: number;
+  budgets?: Partial<ContextBudget>;
+  minimumMemoryConfidence?: number;
+  maximumTaskDocumentBytes?: number;
+  includeColdEvidence?: boolean;
+  /** 只接纳上游已精确选择的非权威片段；本服务不会主动扫描代码、会话或 rollout。 */
+  selectedFragments?: ContextFragment[];
+  sourceWatermarks?: Readonly<Record<string, string | number | boolean | null>>;
+  auditIdentity?: {
+    actorType: string;
+    actorRef?: string | null;
+    conversationId?: string | null;
+    submissionId?: string | null;
+  };
+}
+
+export interface ContextDispatchAuditRecord {
+  schemaVersion: typeof contextDispatchSchemaVersion;
+  compiledAt: string;
+  projectId: string;
+  taskId: string | null;
+  taskCode: string | null;
+  providerId: string;
+  modelId: string;
+  operationRisk: ContextOperationRisk;
+  fingerprint: string;
+  usedTokens: number;
+  availableTokens: number;
+  tokenAccounting: CompiledContext['tokenAccounting'];
+  preflightTokenCount: AgentPreflightTokenCountCapability;
+  watermarks: CompiledContext['watermarks'];
+  decisions: CompiledContext['decisions'];
+  actorType: string;
+  actorRef: string | null;
+  conversationId: string | null;
+  submissionId: string | null;
+}
+
+export interface ContextProviderPreflightAuditRecord {
+  schemaVersion: typeof contextDispatchSchemaVersion;
+  fingerprint: string;
+  providerId: string;
+  modelId: string;
+  contextWindowTokens: number;
+  reservedOutputTokens: number;
+  result: AgentPreflightTokenCountResult;
+  accepted: boolean;
+  remainingTokens: number;
+}
+
+export interface ContextDispatchAuditPort {
+  /** 必须在 Provider 写入前耐久提交；payload 不包含上下文正文。 */
+  recordCompilation(record: ContextDispatchAuditRecord): Promise<void>;
+  /** 只有 Adapter 提供真实完整请求计数时调用。 */
+  recordProviderPreflight?(record: ContextProviderPreflightAuditRecord): Promise<void>;
+}
+
+export interface ContextDispatchApplicationServiceOptions {
+  memory: LongTermMemoryRepository;
+  coldEvidence: ColdEvidenceRepository;
+  now(): Date;
+  audit?: ContextDispatchAuditPort;
+}
+
+export interface ContextDispatchEnvelope {
+  schemaVersion: typeof contextDispatchSchemaVersion;
+  compiled: CompiledContext;
+  rendered: ReturnType<typeof renderCompiledContext>;
+  codexAdditionalContext: CodexBootstrapAdditionalContext;
+  provider: {
+    id: string;
+    modelId: string;
+    preflightTokenCount: AgentPreflightTokenCountCapability;
+  };
+  taskDocument: {
+    selected: ProjectTaskDocumentCandidate | null;
+    candidates: ProjectTaskDocumentCandidate[];
+    truncatedDirectory: boolean;
+    nextByteOffset: number | null;
+  };
+  memory: {
+    selectedIds: string[];
+    reviewRequiredIds: string[];
+    exclusions: Array<{ id: string; reason: LongTermMemoryResolution['excluded'][number]['reason'] }>;
+  };
+}
+
+/**
+ * 真实派发的 Context Application Service。
+ *
+ * 它只读取当前项目 `/docs` 主文档和 Zeus 自己治理的 Memory；代码、已证实历史、运行证据与
+ * 冷证据必须由各自 owner 有界选择后显式传入，构造服务和普通派发都不会扫描 rollout/history。
+ */
+export class ContextDispatchApplicationService {
+  constructor(private readonly options: ContextDispatchApplicationServiceOptions) {}
+
+  async preview(input: CompileDispatchContextInput): Promise<ContextDispatchEnvelope> {
+    return this.compile(input, false);
+  }
+
+  async compileForDispatch(input: CompileDispatchContextInput): Promise<ContextDispatchEnvelope> {
+    if (!this.options.audit) throw dispatchError('ZEUS_CONTEXT_AUDIT_UNAVAILABLE', '真实派发必须配置可耐久提交的 Context 审计端口。');
+    return this.compile(input, true);
+  }
+
+  private async compile(input: CompileDispatchContextInput, persistAudit: boolean): Promise<ContextDispatchEnvelope> {
+    const asOf = input.asOf ?? this.options.now().toISOString();
+    const project = normalizeProject(input.project);
+    const task = normalizeTask(input.task);
+    const selectedFragments = normalizeSelectedFragments(input.selectedFragments);
+    const memory = this.options.memory.resolveForContext({ projectId: project.id, asOf, minimumConfidence: input.minimumMemoryConfidence });
+    const rootId = `project:${project.id}`;
+    const catalog = new ContextSourceCatalog([{ id: rootId, path: project.localPath, owner: 'project' }], this.options.coldEvidence, () => false);
+    const taskDocument = task
+      ? await catalog.primaryTaskDocumentFragment({
+          rootId,
+          projectId: project.id,
+          taskId: task.id,
+          taskCode: task.code,
+          maximumBytes: input.maximumTaskDocumentBytes,
+        })
+      : { fragment: null, selection: { primary: null, candidates: [], truncatedDirectory: false }, page: null };
+    const fragments = [taskDocument.fragment, ...memory.selected.map(longTermMemoryContextFragment), ...selectedFragments].filter((fragment): fragment is ContextFragment => fragment !== null);
+    const compiled = compileContext({
+      asOf,
+      operationRisk: input.operationRisk,
+      provider: {
+        id: input.provider.id,
+        contextWindowTokens: input.provider.contextWindowTokens,
+        reservedOutputTokens: input.provider.reservedOutputTokens,
+        currentInputTokens: input.provider.currentInputTokens,
+        capabilities: input.provider.capabilities,
+      },
+      projectId: project.id,
+      task: task ? { projectId: project.id, taskId: task.id, taskCode: task.code } : null,
+      maximumCompiledTokens: input.maximumCompiledTokens,
+      budgets: input.budgets,
+      includeColdEvidence: input.includeColdEvidence === true,
+      watermarks: {
+        ...(input.sourceWatermarks ?? {}),
+        'docs.primary': taskDocument.fragment?.sourceVersion ?? (task ? 'missing' : 'not_applicable'),
+        'memory.latest': latestMemoryWatermark(memory.selected.map((record) => record.updatedAt)),
+        'provider.preflight_token_count': preflightWatermark(input.provider.preflightTokenCount),
+      },
+      fragments,
+      tokenCounter: input.provider.tokenCounter,
+    });
+    const rendered = renderCompiledContext(compiled);
+    const envelope: ContextDispatchEnvelope = {
+      schemaVersion: contextDispatchSchemaVersion,
+      compiled,
+      rendered,
+      codexAdditionalContext: toCodexAdditionalContext(rendered),
+      provider: {
+        id: input.provider.id,
+        modelId: input.provider.modelId,
+        preflightTokenCount: { ...input.provider.preflightTokenCount },
+      },
+      taskDocument: {
+        selected: taskDocument.selection.primary,
+        candidates: taskDocument.selection.candidates,
+        truncatedDirectory: taskDocument.selection.truncatedDirectory,
+        nextByteOffset: taskDocument.page?.nextByteOffset ?? null,
+      },
+      memory: {
+        selectedIds: memory.selected.map((record) => record.id),
+        reviewRequiredIds: memory.reviewRequired.map((record) => record.id),
+        exclusions: memory.excluded.map(({ record, reason }) => ({ id: record.id, reason })),
+      },
+    };
+    if (persistAudit) {
+      const identity = input.auditIdentity;
+      await this.options.audit!.recordCompilation({
+        schemaVersion: contextDispatchSchemaVersion,
+        compiledAt: asOf,
+        projectId: project.id,
+        taskId: task?.id ?? null,
+        taskCode: task?.code ?? null,
+        providerId: input.provider.id,
+        modelId: input.provider.modelId,
+        operationRisk: input.operationRisk,
+        fingerprint: compiled.fingerprint,
+        usedTokens: compiled.usedTokens,
+        availableTokens: compiled.availableTokens,
+        tokenAccounting: compiled.tokenAccounting,
+        preflightTokenCount: { ...input.provider.preflightTokenCount },
+        watermarks: compiled.watermarks,
+        decisions: compiled.decisions,
+        actorType: identity?.actorType ?? 'zeus_context_compiler',
+        actorRef: identity?.actorRef ?? null,
+        conversationId: identity?.conversationId ?? null,
+        submissionId: identity?.submissionId ?? null,
+      });
+    }
+    return envelope;
+  }
+}
+
+/** 对 Provider 已序列化完整请求的真实计数做最终窗口门禁；估算结果不能调用此函数。 */
+export async function verifyExactProviderContextBudget(input: {
+  envelope: ContextDispatchEnvelope;
+  contextWindowTokens: number;
+  reservedOutputTokens: number;
+  result: AgentPreflightTokenCountResult;
+  audit?: ContextDispatchAuditPort;
+}): Promise<{ accepted: boolean; remainingTokens: number }> {
+  const contextWindowTokens = positiveSafeInteger(input.contextWindowTokens, 'contextWindowTokens');
+  const reservedOutputTokens = nonNegativeSafeInteger(input.reservedOutputTokens, 'reservedOutputTokens');
+  if (reservedOutputTokens > contextWindowTokens) throw dispatchError('ZEUS_CONTEXT_INVALID_ARGUMENT', 'reservedOutputTokens 不能超过 contextWindowTokens。');
+  const inputTokens = nonNegativeSafeInteger(input.result.inputTokens, 'result.inputTokens');
+  if (input.result.exact !== true) throw dispatchError('ZEUS_CONTEXT_INVALID_ARGUMENT', 'Provider preflight 结果必须明确为 exact=true。');
+  const remainingTokens = contextWindowTokens - reservedOutputTokens - inputTokens;
+  const accepted = remainingTokens >= 0;
+  if (input.audit?.recordProviderPreflight) {
+    await input.audit.recordProviderPreflight({
+      schemaVersion: contextDispatchSchemaVersion,
+      fingerprint: input.envelope.compiled.fingerprint,
+      providerId: input.envelope.provider.id,
+      modelId: input.envelope.provider.modelId,
+      contextWindowTokens,
+      reservedOutputTokens,
+      result: input.result,
+      accepted,
+      remainingTokens,
+    });
+  }
+  return { accepted, remainingTokens };
+}
+
+function toCodexAdditionalContext(rendered: ReturnType<typeof renderCompiledContext>): CodexBootstrapAdditionalContext {
+  const result: CodexBootstrapAdditionalContext = {
+    zeus_context_manifest: { kind: 'application', value: rendered.manifest },
+  };
+  if (rendered.application) result.zeus_application_context = { kind: 'application', value: rendered.application };
+  if (rendered.untrusted) result.zeus_untrusted_context = { kind: 'untrusted', value: rendered.untrusted };
+  return result;
+}
+
+function normalizeProject(project: ContextDispatchProject): ContextDispatchProject {
+  if (!project || typeof project !== 'object') throw dispatchError('ZEUS_CONTEXT_INVALID_ARGUMENT', 'project is required.');
+  const id = boundedText(project.id, 'project.id', 512);
+  const localPath = boundedText(project.localPath, 'project.localPath', 16_384);
+  return { id, localPath };
+}
+
+function normalizeTask(task: ContextDispatchTask | null | undefined): ContextDispatchTask | null {
+  if (task === undefined || task === null) return null;
+  return { id: boundedText(task.id, 'task.id', 512), code: boundedText(task.code, 'task.code', 160).toUpperCase() };
+}
+
+function normalizeSelectedFragments(fragments: ContextFragment[] | undefined): ContextFragment[] {
+  if (fragments === undefined) return [];
+  if (!Array.isArray(fragments)) throw dispatchError('ZEUS_CONTEXT_INVALID_ARGUMENT', 'selectedFragments 必须是数组。');
+  for (const fragment of fragments) {
+    if (fragment.category === 'safety_boundary' || fragment.category === 'task_document' || fragment.category === 'long_term_memory') {
+      throw dispatchError('ZEUS_CONTEXT_AUTHORITY_SPOOFING', 'selectedFragments 不能覆盖安全边界、任务主文档或长期记忆；这些来源只能由其 owner 组装。');
+    }
+  }
+  return fragments;
+}
+
+function latestMemoryWatermark(values: string[]): string {
+  return [...values].sort().at(-1) ?? 'none';
+}
+
+function preflightWatermark(capability: AgentPreflightTokenCountCapability): string {
+  return capability.state === 'available' ? `available:${capability.source}:${capability.checkedAt}` : `unavailable:${capability.checkedAt ?? 'unknown'}`;
+}
+
+function boundedText(value: string, field: string, maximum: number): string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > maximum || value.includes('\0')) {
+    throw dispatchError('ZEUS_CONTEXT_INVALID_ARGUMENT', `${field} 必须是 1 到 ${maximum} 个字符且不含 NUL 的字符串。`);
+  }
+  return value;
+}
+
+function positiveSafeInteger(value: number, field: string): number {
+  if (!Number.isSafeInteger(value) || value <= 0) throw dispatchError('ZEUS_CONTEXT_INVALID_ARGUMENT', `${field} 必须是正安全整数。`);
+  return value;
+}
+
+function nonNegativeSafeInteger(value: number, field: string): number {
+  if (!Number.isSafeInteger(value) || value < 0) throw dispatchError('ZEUS_CONTEXT_INVALID_ARGUMENT', `${field} 必须是非负安全整数。`);
+  return value;
+}
+
+function dispatchError(code: 'ZEUS_CONTEXT_INVALID_ARGUMENT' | 'ZEUS_CONTEXT_AUTHORITY_SPOOFING' | 'ZEUS_CONTEXT_AUDIT_UNAVAILABLE', message: string): Error & { code: string } {
+  return Object.assign(new Error(message), { code });
+}

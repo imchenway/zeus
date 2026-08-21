@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { extname, isAbsolute, relative, resolve, sep } from 'node:path';
@@ -6,13 +7,15 @@ import { promisify } from 'node:util';
 import {
   type AgentImageInput,
   type AgentModelIdentity,
+  type AgentProviderPayloadDiagnostic,
   type AgentRuntimeEvent,
   type AgentSessionIdentity,
-  createPiSdkRuntimeDriver,
+  createPiRuntimeWorkerDriver,
   isOfficialDeepSeekApiConnection,
   modelConnectionRequestEndpoint,
   modelRef,
   parseModelRef,
+  piRuntimeWorkerProtocolVersion,
   type PiZeusToolBroker,
   type PiZeusToolRequest,
   type PiZeusToolResult,
@@ -20,13 +23,15 @@ import {
 import { buildTaskPushInputParts, calculateCacheHitRate, emptyTokenUsageBreakdown, estimateDeepSeekUsage, type CodexUsageEstimate, type NativeTokenUsageSnapshot, type TaskPushMessageLayout, type TokenUsageBreakdown } from '@zeus/shared';
 import type {
   CodexUsageLedgerRepository,
-  ConversationItemRepository,
+  CommandDeliveryRepository,
+  ConversationProviderItemRepository,
   ConversationExecutionRepository,
   ConversationRepository,
   ConversationServerRequestRepository,
   ConversationSubmissionRepository,
   ConversationTurnRepository,
   ZeusConversationServerRequestRecord,
+  ZeusConversationSubmissionRecord,
   ZeusConversationWithMessagesRecord,
   ZeusDatabase,
 } from '@zeus/storage';
@@ -35,6 +40,8 @@ import type { NativeConversationAttachmentInput } from './codexNativeConversatio
 import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
 import type { ManagedConversationToolResultStore } from './conversationPortableContext.js';
 import { TurnProcessProjector } from './turnProcessProjector.js';
+import type { ContextDispatchEnvelope } from './contextDispatchService.js';
+import { PiProviderCommandApplicationService, type PiProviderCommandAttempt } from './piProviderCommandDelivery.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -65,9 +72,10 @@ interface PiRunContext {
 
 export interface CreatePiNativeConversationCoordinatorOptions {
   db: ZeusDatabase;
+  commandDeliveries: CommandDeliveryRepository;
   conversations: ConversationRepository;
   turns: ConversationTurnRepository;
-  items: ConversationItemRepository;
+  providerItems: ConversationProviderItemRepository;
   submissions: ConversationSubmissionRepository;
   requests: ConversationServerRequestRepository;
   modelConnections: ModelConnectionService;
@@ -76,8 +84,22 @@ export interface CreatePiNativeConversationCoordinatorOptions {
   sessionDirectory: string;
   now: () => string;
   publish: (type: string, payload: Record<string, unknown>) => void;
+  redactSensitiveText: (value: string) => { text: string };
   execution: ConversationExecutionRepository;
   toolResults: ManagedConversationToolResultStore;
+  compileDispatchContext?: (input: {
+    provider: 'pi';
+    conversationId: string;
+    submissionId: string;
+    projectId: string;
+    projectLocalPath: string;
+    taskId: string | null;
+    modelId: string;
+    modelSourceId: string | null;
+    operationRisk: 'read_only' | 'local_write';
+    currentInputCharacters: number;
+    providerGenerationId: string | null;
+  }) => Promise<ContextDispatchEnvelope>;
 }
 
 export interface StartPiConversationInput {
@@ -122,6 +144,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   const runs = new Map<string, PiRunContext>();
   const interruptedRuns = new Set<string>();
   const processProjector = new TurnProcessProjector(options.execution);
+  const providerCommands = new PiProviderCommandApplicationService(options.commandDeliveries, options.now, options.redactSensitiveText);
   const pendingApprovals = new Map<string, { resolve: (allowed: boolean) => void; session: AgentSessionIdentity; conversationId: string }>();
   let eventSequence = 0;
 
@@ -134,8 +157,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       pending.resolve(readApprovalDecision(input.response));
     },
   };
-  const driver = createPiSdkRuntimeDriver({
-    adapterVersion: 'zeus-pi-sdk',
+  const driver = createPiRuntimeWorkerDriver({
+    adapterVersion: 'zeus-pi-worker',
     agentDirectory: options.agentDirectory,
     sessionDirectory: options.sessionDirectory,
     loadConnections: () => options.modelConnections.loadRuntimeConnections(),
@@ -196,7 +219,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           permissionMode: input.permissionMode,
           collaborationMode: 'default',
           agentKind: 'pi',
-          agentTransport: 'sdk',
+          agentTransport: 'rpc',
           modelSourceId: input.model.sourceId ?? undefined,
           modelId: input.model.modelId,
         });
@@ -245,59 +268,174 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     const currentPrompt = input.taskPushLayout ? renderPiTaskPushPrompt(input.taskPushLayout, attachmentInput.attachments) : appendPiAttachmentReferences(input.prompt, attachmentInput.pathReferences);
     // 便携历史通过 Pi SessionManager 的隐藏上下文条目导入；当前用户消息始终单独进入 prompt。
     const providerPrompt = currentPrompt;
+    const providerCommandIssuedAt = options.submissions.getById(input.submissionId)?.createdAt ?? options.now();
+    const compiledDispatchContext = options.compileDispatchContext
+      ? await options.compileDispatchContext({
+          provider: 'pi',
+          conversationId: input.conversationId,
+          submissionId: input.submissionId,
+          projectId: input.projectId,
+          projectLocalPath: input.cwd,
+          taskId: input.taskId ?? null,
+          modelId: input.model.modelId,
+          modelSourceId: input.model.sourceId,
+          operationRisk: input.permissionMode === 'read-only' ? 'read_only' : 'local_write',
+          currentInputCharacters: providerPrompt.length + JSON.stringify(attachmentInput.images).length,
+          providerGenerationId: driver.getRuntimeHealth().generationId,
+        })
+      : null;
     await input.providerWriteLifecycle?.markPrepared(input.submissionId);
     input.providerWriteLifecycle?.markRpcStarted(input.submissionId);
-    const session = await driver.openSession({
-      cwd: input.cwd,
-      model: input.model,
-      ...(input.segmentLifecycle?.portableContext ? { metadata: { portableConversationContext: input.segmentLifecycle.portableContext } } : {}),
+    const sessionCommand = providerCommands.prepare({
+      operation: 'session_open',
+      commandKey: input.submissionId,
+      scope: { kind: 'product_conversation', id: input.conversationId },
+      idempotencyKey: input.idempotencyKey,
+      issuedAt: providerCommandIssuedAt,
+      resourceId: input.conversationId,
+      requestIdentity: {
+        cwd: input.cwd,
+        model: input.model,
+        portableContext: input.segmentLifecycle?.portableContext ?? null,
+      },
+      providerGenerationId: driver.getRuntimeHealth().generationId,
     });
-    const createdAt = options.now();
-    if (existingConversation && !input.segmentLifecycle) {
-      options.conversations.bindPiProvider(input.conversationId, {
-        providerId: `pi:${input.model.sourceId ?? 'custom'}`,
-        providerThreadId: session.nativeSessionId,
-        ...(session.nativeSessionPath ? { providerThreadPath: session.nativeSessionPath } : {}),
-        providerModel: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
-        providerState: 'active',
-        providerProtocolVersion: 'sdk',
-        providerBinaryVersion: 'pi-sdk-0.83.0',
-        modelSourceId: input.model.sourceId,
-        modelId: input.model.modelId,
+    let session: AgentSessionIdentity;
+    try {
+      sessionCommand.markProviderWriteStarted();
+      // Session Command 持有真实 write marker；Segment Lifecycle 同步记住本次切换已经越过外部写边界，
+      // 这样 openSession 返回后的任何本地投影失败都只能收敛为 outcome_unknown。
+      input.segmentLifecycle?.markProviderWriteStarted();
+      session = await driver.openSession({
+        cwd: input.cwd,
+        model: input.model,
+        traceIdentity: sessionCommand.traceIdentity,
+        ...(input.segmentLifecycle?.portableContext ? { metadata: { portableConversationContext: input.segmentLifecycle.portableContext } } : {}),
       });
-    } else if (!existingConversation) {
-      options.conversations.create({
-        id: input.conversationId,
-        projectId: input.projectId,
-        ...(input.taskId ? { taskId: input.taskId } : {}),
-        ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
-        ...(input.environmentId ? { environmentId: input.environmentId } : {}),
-        title: input.conversationTitle?.trim().slice(0, 80) || input.taskTitle || input.prompt.slice(0, 80) || 'Pi 会话',
-        status: 'running',
-        transportKind: 'codex_native',
-        providerId: `pi:${input.model.sourceId ?? 'custom'}`,
-        providerThreadId: session.nativeSessionId,
-        ...(session.nativeSessionPath ? { providerThreadPath: session.nativeSessionPath } : {}),
-        providerModel: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
-        providerState: 'active',
-        providerProtocolVersion: 'sdk',
-        providerBinaryVersion: 'pi-sdk-0.83.0',
+    } catch (error) {
+      sessionCommand.recordFailure(error, { explicitlyRejected: false });
+      throw error;
+    }
+    const createdAt = options.now();
+    let submission: ZeusConversationSubmissionRecord;
+    try {
+      if (!existingConversation) {
+        // Provider session 尚未与 Core 原生身份投影原子提交前，只允许建立 unbound 预备记录。
+        options.conversations.create({
+          id: input.conversationId,
+          projectId: input.projectId,
+          ...(input.taskId ? { taskId: input.taskId } : {}),
+          ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+          ...(input.environmentId ? { environmentId: input.environmentId } : {}),
+          title: input.conversationTitle?.trim().slice(0, 80) || input.taskTitle || input.prompt.slice(0, 80) || 'Pi 会话',
+          status: 'starting',
+          transportKind: 'codex_native',
+          providerId: `pi:${input.model.sourceId ?? 'custom'}`,
+          providerModel: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
+          providerState: 'unbound',
+          permissionMode: input.permissionMode,
+          collaborationMode: 'default',
+          agentKind: 'pi',
+          agentTransport: 'rpc',
+          modelSourceId: input.model.sourceId ?? undefined,
+          modelId: input.model.modelId,
+        });
+      }
+      options.conversations.updateNextTurnSettings(input.conversationId, {
+        model: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
+        ...(input.thinkingLevel ? { effort: input.thinkingLevel } : {}),
         permissionMode: input.permissionMode,
         collaborationMode: 'default',
-        agentKind: 'pi',
-        agentTransport: 'sdk',
-        modelSourceId: input.model.sourceId ?? undefined,
-        modelId: input.model.modelId,
-        ...(!input.segmentLifecycle ? { nativeSessionId: session.nativeSessionId } : {}),
-        ...(!input.segmentLifecycle && session.nativeSessionPath ? { nativeSessionPath: session.nativeSessionPath } : {}),
       });
+      const existingSubmission = options.submissions.getById(input.submissionId);
+      if (existingSubmission && (existingSubmission.conversationId !== input.conversationId || existingSubmission.idempotencyKey !== input.idempotencyKey)) {
+        throw piError('ZEUS_PI_SUBMISSION_IDENTITY_MISMATCH', 'Pi 派发提交与已持久化的不可变 submission 身份不一致。');
+      }
+      submission =
+        existingSubmission ??
+        options.submissions.createOrGet({
+          id: input.submissionId,
+          conversationId: input.conversationId,
+          idempotencyKey: input.idempotencyKey,
+          requestHash: input.idempotencyKey,
+          clientMessageId: input.clientUserMessageId,
+          kind: 'message',
+          requestedDelivery: 'queue',
+          status: 'dispatching',
+          input: {
+            text: providerPrompt,
+            ...(attachmentInput.attachments.length > 0 ? { attachments: attachmentInput.attachments } : {}),
+            ...(input.taskPushLayout ? { taskPushLayout: input.taskPushLayout } : {}),
+            context: {
+              projectLocalPath: input.cwd,
+              model: input.model.modelId,
+              modelSourceId: input.model.sourceId,
+              agentKind: 'pi',
+              thinkingLevel: input.thinkingLevel,
+              ...(attachmentInput.allowedRoots.length > 0 ? { allowedAttachmentRoots: attachmentInput.allowedRoots } : {}),
+            },
+            ...(input.internalOperation ? { internalOperation: true } : {}),
+          },
+          createdAt,
+          dispatchedAt: createdAt,
+        });
+      if (submission.status === 'queued' || submission.status === 'paused' || submission.status === 'failed') {
+        submission = options.submissions.updateStatus(submission.id, 'dispatching', { dispatchedAt: createdAt, updatedAt: createdAt });
+      }
+      await input.segmentLifecycle?.prepare(submission);
+      await input.segmentLifecycle?.beginDispatch();
+      sessionCommand.recordSessionAcceptedAtomically(
+        {
+          nativeSessionId: session.nativeSessionId,
+          runtimeInstanceId: session.runtimeInstanceId,
+          nativeSessionPath: session.nativeSessionPath,
+        },
+        {
+          durableTransactionSync: (operation) => {
+            options.db.durableTransactionSync(operation);
+          },
+          projectNativeSession: () => {
+            if (input.segmentLifecycle) {
+              input.segmentLifecycle.nativeSessionReady({
+                nativeSessionId: session.nativeSessionId,
+                nativeSessionPath: session.nativeSessionPath,
+                providerId: `pi:${input.model.sourceId ?? 'custom'}`,
+                providerModel: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
+                providerProtocolVersion: piRuntimeWorkerProtocolVersion,
+                providerBinaryVersion: 'pi-sdk-0.83.0',
+                observedAt: createdAt,
+              });
+              return;
+            }
+            options.conversations.bindPiProvider(input.conversationId, {
+              providerId: `pi:${input.model.sourceId ?? 'custom'}`,
+              providerThreadId: session.nativeSessionId,
+              ...(session.nativeSessionPath ? { providerThreadPath: session.nativeSessionPath } : {}),
+              providerModel: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
+              providerState: 'active',
+              providerProtocolVersion: piRuntimeWorkerProtocolVersion,
+              providerBinaryVersion: 'pi-sdk-0.83.0',
+              modelSourceId: input.model.sourceId,
+              modelId: input.model.modelId,
+            });
+          },
+        },
+      );
+    } catch (error) {
+      const settlementErrors: unknown[] = [];
+      try {
+        sessionCommand.recordFailure(error, { explicitlyRejected: false, nativeSessionId: session.nativeSessionId });
+      } catch (receiptError) {
+        settlementErrors.push(receiptError);
+      }
+      try {
+        await input.segmentLifecycle?.fail(error, options.now());
+      } catch (lifecycleError) {
+        settlementErrors.push(lifecycleError);
+      }
+      if (settlementErrors.length > 0) throw new AggregateError([error, ...settlementErrors], 'Pi session 本地投影失败且保守恢复状态未能完整收口。');
+      throw error;
     }
-    options.conversations.updateNextTurnSettings(input.conversationId, {
-      model: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
-      ...(input.thinkingLevel ? { effort: input.thinkingLevel } : {}),
-      permissionMode: input.permissionMode,
-      collaborationMode: 'default',
-    });
     contexts.set(session.nativeSessionId, {
       conversationId: input.conversationId,
       projectId: input.projectId,
@@ -307,52 +445,10 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       attachmentRoots: attachmentInput.allowedRoots,
       session,
     });
-    let submission = options.submissions.getById(input.submissionId);
-    if (submission && (submission.conversationId !== input.conversationId || submission.idempotencyKey !== input.idempotencyKey)) {
-      throw piError('ZEUS_PI_SUBMISSION_IDENTITY_MISMATCH', 'Pi 派发提交与已持久化的不可变 submission 身份不一致。');
-    }
-    submission ??= options.submissions.createOrGet({
-      id: input.submissionId,
-      conversationId: input.conversationId,
-      idempotencyKey: input.idempotencyKey,
-      requestHash: input.idempotencyKey,
-      clientMessageId: input.clientUserMessageId,
-      kind: 'message',
-      requestedDelivery: 'queue',
-      status: 'dispatching',
-      input: {
-        text: providerPrompt,
-        ...(attachmentInput.attachments.length > 0 ? { attachments: attachmentInput.attachments } : {}),
-        ...(input.taskPushLayout ? { taskPushLayout: input.taskPushLayout } : {}),
-        context: {
-          projectLocalPath: input.cwd,
-          model: input.model.modelId,
-          modelSourceId: input.model.sourceId,
-          agentKind: 'pi',
-          thinkingLevel: input.thinkingLevel,
-          ...(attachmentInput.allowedRoots.length > 0 ? { allowedAttachmentRoots: attachmentInput.allowedRoots } : {}),
-        },
-        ...(input.internalOperation ? { internalOperation: true } : {}),
-      },
-      createdAt,
-      dispatchedAt: createdAt,
-    });
-    if (submission.status === 'queued' || submission.status === 'paused' || submission.status === 'failed') {
-      submission = options.submissions.updateStatus(submission.id, 'dispatching', { dispatchedAt: createdAt, updatedAt: createdAt });
-    }
-    await input.segmentLifecycle?.prepare(submission);
-    await input.segmentLifecycle?.beginDispatch();
-    input.segmentLifecycle?.nativeSessionReady({
-      nativeSessionId: session.nativeSessionId,
-      nativeSessionPath: session.nativeSessionPath,
-      providerId: `pi:${input.model.sourceId ?? 'custom'}`,
-      providerModel: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
-      providerProtocolVersion: 'sdk',
-      providerBinaryVersion: 'pi-sdk-0.83.0',
-      observedAt: createdAt,
-    });
     let acceptedTurnId: string | undefined;
+    let acceptedTurnProjection: ReturnType<typeof options.turns.upsert> | undefined;
     let run;
+    let runCommand: PiProviderCommandAttempt | null = null;
     let compactionFinished = false;
     try {
       if (input.segmentLifecycle?.contextCompactionPlan) {
@@ -370,25 +466,94 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         });
         compactionFinished = true;
       }
+      runCommand = providerCommands.prepare({
+        operation: 'run_start',
+        commandKey: input.submissionId,
+        scope: { kind: 'submission', id: input.submissionId },
+        idempotencyKey: input.idempotencyKey,
+        issuedAt: submission.createdAt,
+        resourceId: input.submissionId,
+        requestIdentity: {
+          nativeSessionId: session.nativeSessionId,
+          contentSha256: stableSha256(providerPrompt),
+          clientRequestId: input.clientUserMessageId,
+          model: input.model,
+          thinkingLevel: input.thinkingLevel ?? null,
+          imagesSha256: stableSha256(JSON.stringify(attachmentInput.images)),
+          contextFingerprint: compiledDispatchContext?.compiled.fingerprint ?? null,
+        },
+        providerGenerationId: session.runtimeInstanceId,
+      });
+      input.segmentLifecycle?.bindCommandDelivery({ outboxId: runCommand.outboxId, providerId: 'pi', providerGenerationId: session.runtimeInstanceId });
+      if (input.segmentLifecycle) input.segmentLifecycle.markProviderWriteStarted();
+      else runCommand.markProviderWriteStarted();
       run = await driver.startRun({
         session,
+        traceIdentity: runCommand.traceIdentity,
         content: providerPrompt,
         clientRequestId: input.clientUserMessageId,
         model: input.model,
+        ...toPiRunDispatchContext(compiledDispatchContext),
         ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),
         ...(attachmentInput.images.length > 0 ? { images: attachmentInput.images } : {}),
+        preflightResult: () => undefined,
+        durableTransactionSync: (acceptance) => {
+          if (input.segmentLifecycle) {
+            acceptedTurnId = input.segmentLifecycle.acceptSynchronously({
+              providerTurnId: acceptance.nativeRunId,
+              acceptedAt: acceptance.acceptedAt,
+              runtimeEvidence: { source: 'pi_preflight_result', accepted: true },
+            });
+          } else {
+            runCommand!.recordTurnAcceptedAtomically(
+              {
+                nativeSessionId: session.nativeSessionId,
+                nativeTurnId: acceptance.nativeRunId,
+                acceptedAt: acceptance.acceptedAt,
+                evidence: { source: 'pi_preflight_result', accepted: true },
+              },
+              {
+                durableTransactionSync: (operation) => options.db.durableTransactionSync(operation),
+                projectTurn: () => {
+                  acceptedTurnProjection = options.turns.upsert({
+                    conversationId: input.conversationId,
+                    providerThreadId: session.nativeSessionId,
+                    providerTurnId: acceptance.nativeRunId,
+                    clientSubmissionId: submission.id,
+                    status: 'running',
+                    startedAt: acceptance.acceptedAt,
+                    completedAt: null,
+                    createdAt,
+                    updatedAt: acceptance.acceptedAt,
+                    agentKind: 'pi',
+                    nativeRunId: acceptance.nativeRunId,
+                  });
+                  if (!input.internalOperation) {
+                    appendUserProjection(
+                      input.conversationId,
+                      session.nativeSessionId,
+                      acceptedTurnProjection.id,
+                      acceptance.nativeRunId,
+                      input.prompt,
+                      input.clientUserMessageId,
+                      createdAt,
+                      attachmentInput.attachments,
+                      input.taskPushLayout,
+                    );
+                  }
+                  options.submissions.updateStatus(submission.id, 'active', { providerTurnId: acceptance.nativeRunId, updatedAt: acceptance.acceptedAt });
+                },
+              },
+            );
+          }
+        },
+        providerWriteMayStart: () => {
+          if (input.segmentLifecycle) input.segmentLifecycle.markProviderWriteStarted();
+          else runCommand!.markProviderWriteStarted();
+        },
         ...(input.segmentLifecycle
           ? {
-              preflightResult: () => undefined,
-              durableTransactionSync: (acceptance) => {
-                acceptedTurnId = input.segmentLifecycle!.acceptSynchronously({
-                  providerTurnId: acceptance.nativeRunId,
-                  acceptedAt: acceptance.acceptedAt,
-                  runtimeEvidence: { source: 'pi_preflight_result', accepted: true },
-                });
-              },
-              providerWriteMayStart: () => input.segmentLifecycle!.markProviderWriteStarted(),
-              providerPayloadObserved: (cacheDiagnostic) =>
+              providerPayloadObserved: (cacheDiagnostic: AgentProviderPayloadDiagnostic) =>
                 input.segmentLifecycle!.adapterSerialized(
                   { model: input.model.modelId, sourceId: input.model.sourceId, thinkingLevel: input.thinkingLevel ?? null },
                   { adapter: 'pi_sdk', ...adapterRouteForModel(input.model), cacheDiagnostic },
@@ -400,43 +565,47 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     } catch (error) {
       if (input.segmentLifecycle?.contextCompactionPlan && !compactionFinished) await input.segmentLifecycle.failContextCompaction(error, options.now());
       const runtimeRejected = isPiRuntimeRejected(error) && input.segmentLifecycle !== undefined;
-      if (runtimeRejected && input.segmentLifecycle) await input.segmentLifecycle.rejectBeforeAcceptance(error, options.now());
-      else await input.segmentLifecycle?.fail(error, options.now());
+      if (runCommand) {
+        if (runtimeRejected && input.segmentLifecycle) await input.segmentLifecycle.rejectBeforeAcceptance(error, options.now());
+        else if (input.segmentLifecycle) await input.segmentLifecycle.fail(error, options.now());
+        else runCommand.recordFailure(error, { explicitlyRejected: isPiProviderExplicitRejection(error), nativeSessionId: session.nativeSessionId });
+      } else {
+        await input.segmentLifecycle?.fail(error, options.now());
+      }
       if (runtimeRejected) {
         publish('conversation.queue.changed', input.conversationId, { submissionId: submission.id });
         return { conversationId: input.conversationId, submissionId: submission.id, providerThreadId: session.nativeSessionId, providerTurnId: null, status: 'queued' as const };
       }
       throw error;
     }
-    if (input.segmentLifecycle && existingConversation) {
-      options.conversations.bindPiProvider(input.conversationId, {
-        providerId: `pi:${input.model.sourceId ?? 'custom'}`,
+    const turn =
+      acceptedTurnProjection ??
+      options.turns.upsert({
+        ...(acceptedTurnId ? { id: acceptedTurnId } : {}),
+        conversationId: input.conversationId,
         providerThreadId: session.nativeSessionId,
-        ...(session.nativeSessionPath ? { providerThreadPath: session.nativeSessionPath } : {}),
-        providerModel: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
-        providerState: 'active',
-        providerProtocolVersion: 'sdk',
-        providerBinaryVersion: 'pi-sdk-0.83.0',
-        modelSourceId: input.model.sourceId,
-        modelId: input.model.modelId,
+        providerTurnId: run.nativeRunId,
+        clientSubmissionId: submission.id,
+        status: 'running',
+        startedAt: run.acceptedAt,
+        completedAt: null,
+        createdAt,
+        updatedAt: run.acceptedAt,
+        agentKind: 'pi',
+        nativeRunId: run.nativeRunId,
       });
+    if (!acceptedTurnProjection) {
+      if (!input.internalOperation) appendUserProjection(input.conversationId, session.nativeSessionId, turn.id, run.nativeRunId, input.prompt, input.clientUserMessageId, createdAt, attachmentInput.attachments, input.taskPushLayout);
+      options.submissions.updateStatus(submission.id, 'active', { providerTurnId: run.nativeRunId, updatedAt: run.acceptedAt });
     }
-    const turn = options.turns.upsert({
-      ...(acceptedTurnId ? { id: acceptedTurnId } : {}),
-      conversationId: input.conversationId,
-      providerThreadId: session.nativeSessionId,
-      providerTurnId: run.nativeRunId,
-      clientSubmissionId: submission.id,
+    // 统一 Segment 已在 run acceptance 事务中成为权威 current；这里仅刷新可重建的 legacy 会话状态。
+    options.conversations.updateAgentRuntime(input.conversationId, {
+      providerState: 'active',
       status: 'running',
-      startedAt: run.acceptedAt,
-      completedAt: null,
-      createdAt,
-      updatedAt: run.acceptedAt,
-      agentKind: 'pi',
-      nativeRunId: run.nativeRunId,
+      modelSourceId: input.model.sourceId,
+      modelId: input.model.modelId,
+      providerModel: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
     });
-    if (!input.internalOperation) appendUserProjection(input.conversationId, session.nativeSessionId, turn.id, run.nativeRunId, input.prompt, input.clientUserMessageId, createdAt, attachmentInput.attachments, input.taskPushLayout);
-    options.submissions.updateStatus(submission.id, 'active', { providerTurnId: run.nativeRunId, updatedAt: run.acceptedAt });
     runs.set(run.nativeRunId, {
       conversationId: input.conversationId,
       projectId: input.projectId,
@@ -490,27 +659,109 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     await input.segmentLifecycle?.prepare(submission);
     await input.segmentLifecycle?.beginDispatch();
     input.segmentLifecycle?.nativeSessionReady({ nativeSessionId: context.session.nativeSessionId, nativeSessionPath: context.session.nativeSessionPath, observedAt: createdAt });
+    let compiledDispatchContext: ContextDispatchEnvelope | null = null;
     let acceptedTurnId: string | undefined;
+    let acceptedTurnProjection: ReturnType<typeof options.turns.upsert> | undefined;
     let run;
+    let runCommand: PiProviderCommandAttempt | null = null;
+    const providerModel = input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId;
     try {
+      compiledDispatchContext = options.compileDispatchContext
+        ? await options.compileDispatchContext({
+            provider: 'pi',
+            conversationId: input.conversation.id,
+            submissionId: submission.id,
+            projectId: context.projectId,
+            projectLocalPath: context.cwd,
+            taskId: context.taskId,
+            modelId: input.model.modelId,
+            modelSourceId: input.model.sourceId,
+            operationRisk: context.permissionMode === 'read-only' ? 'read_only' : 'local_write',
+            currentInputCharacters: input.content.length,
+            providerGenerationId: driver.getRuntimeHealth().generationId,
+          })
+        : null;
+      runCommand = providerCommands.prepare({
+        operation: 'run_start',
+        commandKey: submission.id,
+        scope: { kind: 'submission', id: submission.id },
+        idempotencyKey: input.idempotencyKey,
+        issuedAt: submission.createdAt,
+        resourceId: submission.id,
+        requestIdentity: {
+          nativeSessionId: context.session.nativeSessionId,
+          contentSha256: stableSha256(input.content),
+          clientRequestId: input.clientUserMessageId,
+          model: input.model,
+          thinkingLevel: input.thinkingLevel ?? null,
+          contextFingerprint: compiledDispatchContext?.compiled.fingerprint ?? null,
+        },
+        providerGenerationId: context.session.runtimeInstanceId,
+      });
+      input.segmentLifecycle?.bindCommandDelivery({ outboxId: runCommand.outboxId, providerId: 'pi', providerGenerationId: context.session.runtimeInstanceId });
+      if (input.segmentLifecycle) input.segmentLifecycle.markProviderWriteStarted();
+      else runCommand.markProviderWriteStarted();
       run = await driver.startRun({
         session: context.session,
+        traceIdentity: runCommand.traceIdentity,
         content: input.content,
         clientRequestId: input.clientUserMessageId,
         model: input.model,
+        ...toPiRunDispatchContext(compiledDispatchContext),
         ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),
+        preflightResult: () => undefined,
+        durableTransactionSync: (acceptance) => {
+          if (input.segmentLifecycle) {
+            acceptedTurnId = input.segmentLifecycle.acceptSynchronously({
+              providerTurnId: acceptance.nativeRunId,
+              acceptedAt: acceptance.acceptedAt,
+              runtimeEvidence: { source: 'pi_preflight_result', accepted: true },
+            });
+          } else {
+            runCommand!.recordTurnAcceptedAtomically(
+              {
+                nativeSessionId: context.session.nativeSessionId,
+                nativeTurnId: acceptance.nativeRunId,
+                acceptedAt: acceptance.acceptedAt,
+                evidence: { source: 'pi_preflight_result', accepted: true },
+              },
+              {
+                durableTransactionSync: (operation) => options.db.durableTransactionSync(operation),
+                projectTurn: () => {
+                  acceptedTurnProjection = options.turns.upsert({
+                    conversationId: input.conversation.id,
+                    providerThreadId: context.session.nativeSessionId,
+                    providerTurnId: acceptance.nativeRunId,
+                    clientSubmissionId: submission.id,
+                    status: 'running',
+                    startedAt: acceptance.acceptedAt,
+                    completedAt: null,
+                    createdAt,
+                    updatedAt: acceptance.acceptedAt,
+                    agentKind: 'pi',
+                    nativeRunId: acceptance.nativeRunId,
+                  });
+                  appendUserProjection(input.conversation.id, context.session.nativeSessionId, acceptedTurnProjection.id, acceptance.nativeRunId, input.content, input.clientUserMessageId, createdAt);
+                  options.submissions.updateStatus(submission.id, 'active', { providerTurnId: acceptance.nativeRunId, updatedAt: acceptance.acceptedAt });
+                  options.conversations.updateAgentRuntime(input.conversation.id, {
+                    providerState: 'active',
+                    status: 'running',
+                    modelSourceId: input.model.sourceId,
+                    modelId: input.model.modelId,
+                    providerModel,
+                  });
+                },
+              },
+            );
+          }
+        },
+        providerWriteMayStart: () => {
+          if (input.segmentLifecycle) input.segmentLifecycle.markProviderWriteStarted();
+          else runCommand!.markProviderWriteStarted();
+        },
         ...(input.segmentLifecycle
           ? {
-              preflightResult: () => undefined,
-              durableTransactionSync: (acceptance) => {
-                acceptedTurnId = input.segmentLifecycle!.acceptSynchronously({
-                  providerTurnId: acceptance.nativeRunId,
-                  acceptedAt: acceptance.acceptedAt,
-                  runtimeEvidence: { source: 'pi_preflight_result', accepted: true },
-                });
-              },
-              providerWriteMayStart: () => input.segmentLifecycle!.markProviderWriteStarted(),
-              providerPayloadObserved: (cacheDiagnostic) =>
+              providerPayloadObserved: (cacheDiagnostic: AgentProviderPayloadDiagnostic) =>
                 input.segmentLifecycle!.adapterSerialized(
                   { model: input.model.modelId, sourceId: input.model.sourceId, thinkingLevel: input.thinkingLevel ?? null },
                   { adapter: 'pi_sdk', ...adapterRouteForModel(input.model), cacheDiagnostic },
@@ -521,49 +772,59 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       });
     } catch (error) {
       const runtimeRejected = isPiRuntimeRejected(error) && input.segmentLifecycle !== undefined;
-      if (runtimeRejected && input.segmentLifecycle) await input.segmentLifecycle.rejectBeforeAcceptance(error, options.now());
-      else await input.segmentLifecycle?.fail(error, options.now());
+      if (runCommand) {
+        if (runtimeRejected && input.segmentLifecycle) await input.segmentLifecycle.rejectBeforeAcceptance(error, options.now());
+        else if (input.segmentLifecycle) await input.segmentLifecycle.fail(error, options.now());
+        else runCommand.recordFailure(error, { explicitlyRejected: isPiProviderExplicitRejection(error), nativeSessionId: context.session.nativeSessionId });
+      } else {
+        await input.segmentLifecycle?.fail(error, options.now());
+      }
       if (runtimeRejected) {
         publish('conversation.queue.changed', input.conversation.id, { submissionId: submission.id });
         return { conversationId: input.conversation.id, submissionId: submission.id, providerThreadId: context.session.nativeSessionId, providerTurnId: null, status: 'queued' as const };
       }
       throw error;
     }
-    const providerModel = input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId;
-    options.conversations.updateAgentRuntime(input.conversation.id, {
-      modelSourceId: input.model.sourceId,
-      modelId: input.model.modelId,
-      providerModel,
-    });
+    if (!acceptedTurnProjection) {
+      options.conversations.updateAgentRuntime(input.conversation.id, {
+        modelSourceId: input.model.sourceId,
+        modelId: input.model.modelId,
+        providerModel,
+      });
+    }
     options.conversations.updateNextTurnSettings(input.conversation.id, {
       model: providerModel,
       ...(input.thinkingLevel ? { effort: input.thinkingLevel } : {}),
       permissionMode: input.conversation.permissionMode,
       collaborationMode: input.conversation.collaborationMode,
     });
-    const turn = options.turns.upsert({
-      ...(acceptedTurnId ? { id: acceptedTurnId } : {}),
-      conversationId: input.conversation.id,
-      providerThreadId: context.session.nativeSessionId,
-      providerTurnId: run.nativeRunId,
-      clientSubmissionId: submission.id,
-      status: 'running',
-      startedAt: run.acceptedAt,
-      completedAt: null,
-      createdAt,
-      updatedAt: run.acceptedAt,
-      agentKind: 'pi',
-      nativeRunId: run.nativeRunId,
-    });
-    appendUserProjection(input.conversation.id, context.session.nativeSessionId, turn.id, run.nativeRunId, input.content, input.clientUserMessageId, createdAt);
-    options.submissions.updateStatus(submission.id, 'active', { providerTurnId: run.nativeRunId, updatedAt: run.acceptedAt });
-    options.conversations.updateAgentRuntime(input.conversation.id, {
-      providerState: 'active',
-      status: 'running',
-      modelSourceId: input.model.sourceId,
-      modelId: input.model.modelId,
-      providerModel: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
-    });
+    const turn =
+      acceptedTurnProjection ??
+      options.turns.upsert({
+        ...(acceptedTurnId ? { id: acceptedTurnId } : {}),
+        conversationId: input.conversation.id,
+        providerThreadId: context.session.nativeSessionId,
+        providerTurnId: run.nativeRunId,
+        clientSubmissionId: submission.id,
+        status: 'running',
+        startedAt: run.acceptedAt,
+        completedAt: null,
+        createdAt,
+        updatedAt: run.acceptedAt,
+        agentKind: 'pi',
+        nativeRunId: run.nativeRunId,
+      });
+    if (!acceptedTurnProjection) {
+      appendUserProjection(input.conversation.id, context.session.nativeSessionId, turn.id, run.nativeRunId, input.content, input.clientUserMessageId, createdAt);
+      options.submissions.updateStatus(submission.id, 'active', { providerTurnId: run.nativeRunId, updatedAt: run.acceptedAt });
+      options.conversations.updateAgentRuntime(input.conversation.id, {
+        providerState: 'active',
+        status: 'running',
+        modelSourceId: input.model.sourceId,
+        modelId: input.model.modelId,
+        providerModel,
+      });
+    }
     runs.set(run.nativeRunId, {
       conversationId: input.conversation.id,
       projectId: input.conversation.projectId,
@@ -679,10 +940,56 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       createdAt,
       dispatchedAt: createdAt,
     });
-    const accepted = await driver.steerRun({ session: context.session, nativeRunId: input.expectedTurnId, content: input.content, clientRequestId: input.clientUserMessageId });
-    appendUserProjection(input.conversation.id, context.session.nativeSessionId, run.turnId, run.providerTurnId, input.content, input.clientUserMessageId, createdAt);
-    options.submissions.updateStatus(submission.id, 'resolved', { providerTurnId: accepted.nativeRunId, resolvedAt: accepted.acceptedAt, updatedAt: accepted.acceptedAt });
-    await options.db.save();
+    const command = providerCommands.prepare({
+      operation: 'run_steer',
+      commandKey: submission.id,
+      scope: { kind: 'submission', id: submission.id },
+      idempotencyKey: input.idempotencyKey,
+      issuedAt: submission.createdAt,
+      resourceId: submission.id,
+      requestIdentity: {
+        nativeSessionId: context.session.nativeSessionId,
+        nativeRunId: input.expectedTurnId,
+        contentSha256: stableSha256(input.content),
+        clientRequestId: input.clientUserMessageId,
+      },
+      providerGenerationId: context.session.runtimeInstanceId,
+    });
+    let accepted;
+    try {
+      command.markProviderWriteStarted();
+      accepted = await driver.steerRun({ session: context.session, nativeRunId: input.expectedTurnId, content: input.content, clientRequestId: input.clientUserMessageId, traceIdentity: command.traceIdentity });
+    } catch (error) {
+      command.recordFailure(error, {
+        explicitlyRejected: isPiProviderExplicitRejection(error),
+        nativeSessionId: context.session.nativeSessionId,
+        nativeTurnId: input.expectedTurnId,
+      });
+      throw error;
+    }
+    try {
+      command.recordTurnAcceptedAtomically(
+        {
+          nativeSessionId: context.session.nativeSessionId,
+          nativeTurnId: accepted.nativeRunId,
+          acceptedAt: accepted.acceptedAt,
+        },
+        {
+          durableTransactionSync: (operation) => options.db.durableTransactionSync(operation),
+          projectTurn: () => {
+            appendUserProjection(input.conversation.id, context.session.nativeSessionId, run.turnId, run.providerTurnId, input.content, input.clientUserMessageId, createdAt);
+            options.submissions.updateStatus(submission.id, 'resolved', { providerTurnId: accepted.nativeRunId, resolvedAt: accepted.acceptedAt, updatedAt: accepted.acceptedAt });
+          },
+        },
+      );
+    } catch (error) {
+      command.recordFailure(error, {
+        explicitlyRejected: false,
+        nativeSessionId: context.session.nativeSessionId,
+        nativeTurnId: accepted.nativeRunId,
+      });
+      throw error;
+    }
     publish('conversation.queue.changed', input.conversation.id, { turnId: run.providerTurnId, submissionId: submission.id });
     return { conversationId: input.conversation.id, submissionId: submission.id, providerThreadId: context.session.nativeSessionId, providerTurnId: accepted.nativeRunId, status: 'active' as const };
   }
@@ -763,8 +1070,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         agentKind: 'pi' as const,
         nativeItemId: itemId,
       };
-      if (isToolUseStage) options.items.upsertProgress({ ...itemInput, status: 'in_progress' });
-      else options.items.upsertCompleted({ ...itemInput, status: 'completed', completedAt: event.createdAt });
+      if (isToolUseStage) options.providerItems.upsertProgress({ ...itemInput, status: 'in_progress' });
+      else options.providerItems.upsertCompleted({ ...itemInput, status: 'completed', completedAt: event.createdAt });
       options.conversations.appendMessage({
         conversationId: run.conversationId,
         role: 'assistant',
@@ -814,6 +1121,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     if (event.type === 'agent_settled' || event.type === 'runtime_error') {
       const failed = event.type === 'runtime_error';
       const warning = failed && payload.code === 'ZEUS_PI_MODEL_REQUEST_FAILED';
+      const outcomeUnknown = failed && payload.code === 'ZEUS_PROVIDER_WORKER_RESULT_UNKNOWN';
       const interrupted = interruptedRuns.delete(event.nativeRunId);
       const status = interrupted ? 'interrupted' : failed ? 'failed' : 'completed';
       const existingTurn = options.turns.getById(run.turnId);
@@ -834,6 +1142,12 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       });
       if (interrupted) {
         settleInterruptedRun(run, event.createdAt);
+      } else if (outcomeUnknown) {
+        options.submissions.updateStatus(run.submissionId, 'paused', { pausedReason: 'recovery_required', error: payload, updatedAt: event.createdAt });
+        options.conversations.updateAgentRuntime(run.conversationId, {
+          providerState: 'paused',
+          status: 'open',
+        });
       } else {
         options.submissions.updateStatus(run.submissionId, failed ? 'failed' : 'completed', { ...(failed ? { error: payload } : {}), resolvedAt: event.createdAt, updatedAt: event.createdAt });
         options.conversations.updateAgentRuntime(run.conversationId, {
@@ -842,7 +1156,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         });
       }
       options.conversations.markAttentionUnread(run.conversationId, {
-        // 供应商拒绝单次模型请求只提醒用户，不把仍可继续的 Pi 会话标成失败。
+        // 供应商拒绝单次模型请求只提醒用户；Worker 结果未知则保留失败注意项和显式恢复门禁。
         kind: warning ? 'unread' : status,
         turnId: run.providerTurnId,
         occurredAt: event.createdAt,
@@ -908,7 +1222,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   ): void {
     const itemId = `pi_user_${clientMessageId}`;
     const attachmentMetadata = persistedPiAttachmentMetadata(attachments);
-    options.items.upsertCompleted({
+    options.providerItems.upsertCompleted({
       conversationId,
       turnId,
       providerThreadId: threadId,
@@ -1044,9 +1358,9 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     for (const conversation of options.conversations.listNativeBound()) {
       for (const message of conversation.messages) {
         if (message.role !== 'assistant' || message.source !== 'pi_sdk' || !message.providerThreadId || !message.providerItemId) continue;
-        const item = options.items.getByProvider(message.providerThreadId, message.providerItemId);
+        const item = options.providerItems.getByProvider(message.providerThreadId, message.providerItemId);
         if (!item || item.agentKind !== 'pi' || item.itemType !== 'agentMessage' || item.status !== 'completed' || item.textContent === message.content) continue;
-        options.items.replaceCompletedPiAgentMessage({
+        options.providerItems.replaceCompletedPiAgentMessage({
           providerThreadId: message.providerThreadId,
           providerItemId: message.providerItemId,
           textContent: message.content,
@@ -1187,8 +1501,14 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   return {
     repairPersistedConversationIdentities,
     repairPersistedAgentMessageProjections,
-    refreshModelRuntime(): void {
-      driver.invalidateModelRuntime();
+    async refreshModelRuntime(): Promise<void> {
+      await driver.invalidateModelRuntime();
+    },
+    runtimeHealth() {
+      return driver.getRuntimeHealth();
+    },
+    async recoverRuntime() {
+      return driver.recoverRuntime({ reason: 'explicit_user_action' });
     },
     startConversation,
     submitMessage,
@@ -1201,28 +1521,79 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       if (!run || run.conversationId !== input.conversation.id) throw piError('ZEUS_PI_RUN_NOT_ACTIVE', '目标 Pi 轮次当前未在执行。');
       const context = input.conversation.nativeSessionId ? contexts.get(input.conversation.nativeSessionId) : undefined;
       if (!context) throw piError('ZEUS_PI_SESSION_NOT_LOADED', '目标 Pi 会话当前未载入运行内核。');
+      const persistedTurn = options.turns.getById(run.turnId);
+      const command = providerCommands.prepare({
+        operation: 'run_interrupt',
+        commandKey: input.providerTurnId,
+        scope: { kind: 'turn', id: run.turnId },
+        idempotencyKey: `interrupt:${input.providerTurnId}`,
+        issuedAt: persistedTurn?.createdAt ?? persistedTurn?.startedAt ?? options.now(),
+        resourceId: run.turnId,
+        requestIdentity: {
+          nativeSessionId: context.session.nativeSessionId,
+          nativeRunId: input.providerTurnId,
+        },
+        providerGenerationId: context.session.runtimeInstanceId,
+      });
       interruptedRuns.add(input.providerTurnId);
       for (const [requestId, pending] of pendingApprovals) {
         if (pending.conversationId !== input.conversation.id) continue;
         pendingApprovals.delete(requestId);
         pending.resolve(false);
       }
-      await driver.interruptRun({ session: context.session, nativeRunId: input.providerTurnId });
+      try {
+        command.markProviderWriteStarted();
+        await driver.interruptRun({ session: context.session, nativeRunId: input.providerTurnId, traceIdentity: command.traceIdentity });
+      } catch (error) {
+        command.recordFailure(error, {
+          explicitlyRejected: isPiProviderExplicitRejection(error),
+          nativeSessionId: context.session.nativeSessionId,
+          nativeTurnId: input.providerTurnId,
+        });
+        interruptedRuns.delete(input.providerTurnId);
+        throw error;
+      }
       if (runs.has(input.providerTurnId)) {
         const timestamp = options.now();
-        const turn = options.turns.getById(run.turnId);
-        if (turn) options.turns.upsert({ ...turn, status: 'interrupted', completedAt: timestamp, updatedAt: timestamp, agentKind: 'pi', nativeRunId: input.providerTurnId });
-        settleInterruptedRun(run, timestamp);
-        options.conversations.markAttentionUnread(run.conversationId, {
-          kind: 'interrupted',
-          turnId: run.providerTurnId,
-          occurredAt: timestamp,
-        });
+        try {
+          command.recordTurnAcceptedAtomically(
+            {
+              nativeSessionId: context.session.nativeSessionId,
+              nativeTurnId: input.providerTurnId,
+              acceptedAt: timestamp,
+            },
+            {
+              durableTransactionSync: (operation) => options.db.durableTransactionSync(operation),
+              projectTurn: () => {
+                const turn = options.turns.getById(run.turnId);
+                if (turn) options.turns.upsert({ ...turn, status: 'interrupted', completedAt: timestamp, updatedAt: timestamp, agentKind: 'pi', nativeRunId: input.providerTurnId });
+                settleInterruptedRun(run, timestamp);
+                options.conversations.markAttentionUnread(run.conversationId, {
+                  kind: 'interrupted',
+                  turnId: run.providerTurnId,
+                  occurredAt: timestamp,
+                });
+              },
+            },
+          );
+        } catch (error) {
+          command.recordFailure(error, {
+            explicitlyRejected: false,
+            nativeSessionId: context.session.nativeSessionId,
+            nativeTurnId: input.providerTurnId,
+          });
+          throw error;
+        }
         runs.delete(input.providerTurnId);
         interruptedRuns.delete(input.providerTurnId);
-        await options.db.save();
         publish('conversation.turn.completed', run.conversationId, { turnId: run.providerTurnId, submissionId: run.submissionId, status: 'interrupted', completedAt: timestamp, notificationEligible: true });
         publish('conversation.queue.changed', run.conversationId, { turnId: run.providerTurnId, submissionId: run.submissionId });
+      } else {
+        command.recordTurnAccepted({
+          nativeSessionId: context.session.nativeSessionId,
+          nativeTurnId: input.providerTurnId,
+          acceptedAt: options.now(),
+        });
       }
       return { submissionId: run.submissionId };
     },
@@ -1558,6 +1929,25 @@ function nativePendingRequestProjection(request: ZeusConversationServerRequestRe
   };
 }
 
+function toPiRunDispatchContext(envelope: ContextDispatchEnvelope | null) {
+  if (!envelope) return {};
+  return {
+    applicationContext: {
+      fingerprint: envelope.compiled.fingerprint,
+      manifest: envelope.rendered.manifest,
+      content: envelope.rendered.application,
+    },
+    ...(envelope.rendered.untrusted
+      ? {
+          untrustedContext: {
+            fingerprint: envelope.compiled.fingerprint,
+            content: envelope.rendered.untrusted,
+          },
+        }
+      : {}),
+  };
+}
+
 function redactArgs(args: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(args).map(([key, value]) => [key, key.toLowerCase().includes('content') || key === 'newText' || key === 'oldText' ? '[内容已隐藏]' : value]));
 }
@@ -1582,6 +1972,15 @@ function readExitStdout(error: unknown): string {
 
 function isPiRuntimeRejected(error: unknown): boolean {
   return asRecord(error).code === 'ZEUS_PI_PREFLIGHT_REJECTED';
+}
+
+function isPiProviderExplicitRejection(error: unknown): boolean {
+  const code = asRecord(error).code;
+  return code === 'ZEUS_PI_PREFLIGHT_REJECTED' || code === 'ZEUS_PI_RUN_NOT_ACTIVE' || code === 'ZEUS_PI_SESSION_NOT_LOADED';
+}
+
+function stableSha256(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
 }
 
 function processText(title: string, detailJson: string): string {

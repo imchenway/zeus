@@ -1,15 +1,28 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { chmodSync, closeSync, copyFileSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createLegacyFlatZeusDataLayout, createZeusDataLayout, type ZeusDataLayout } from '@zeus/local-server/zeus-data-layout';
+import {
+  prepareZeusDataRootIdentity,
+  withZeusDataRootPreparationLock,
+  zeusDataRootIdentityFileName,
+  type ExpectedZeusDataRootIdentity,
+  type ZeusDataRootIdentityMarker,
+} from './dataRootIdentity.js';
 
 export type ZeusDataPreparationStatus = 'initialized' | 'already-layered' | 'migrated' | 'legacy-host-active';
 
 export interface ZeusDataPreparationResult {
   status: ZeusDataPreparationStatus;
   layout: ZeusDataLayout;
+  rootIdentity: ZeusDataRootIdentityMarker;
   migrationManifestPath: string | null;
+}
+
+export interface ZeusDataPreparationIdentityOptions extends ExpectedZeusDataRootIdentity {
+  /** 仅限 Main 已知的正式默认根和历史 Application Support 根。 */
+  knownProductionAdoptionRoots?: readonly string[];
 }
 
 interface PathMapping {
@@ -109,27 +122,29 @@ const jsonPathColumns = [
 ] as const;
 
 const contentMirroredLegacyTopLevels = new Set(['task-attachments', 'conversation-attachments', 'browser-comments', 'browser-downloads', 'sessions', 'turn-change-sets', 'command-runs', 'command-scripts', 'pi-sessions', 'agent-runtimes']);
-const dataRootPreparationTimeoutMs = 15_000;
-const staleDataRootPreparationLockMs = 30_000;
-const dataRootPreparationWaitBuffer = new Int32Array(new SharedArrayBuffer(4));
-
 /**
  * 在 Electron 建立 profile 前准备 Zeus 本机资料目录。
  * 旧执行宿主仍存活时只返回兼容布局，绝不与它争抢数据库或移动文件。
  */
-export function prepareZeusDataRoot(rootPath: string, legacyRoots: readonly string[] = []): ZeusDataPreparationResult {
+export function prepareZeusDataRoot(rootPath: string, legacyRoots: readonly string[] = [], identity: ZeusDataPreparationIdentityOptions): ZeusDataPreparationResult {
   const root = normalizeAbsolutePath(rootPath, 'Zeus 数据根目录');
-  const releasePreparationLock = acquireDataRootPreparationLock(root);
-  try {
-    return prepareZeusDataRootWithoutLock(root, legacyRoots);
-  } finally {
-    releasePreparationLock();
-  }
+  return withZeusDataRootPreparationLock(root, () => prepareZeusDataRootWithoutLock(root, legacyRoots, identity));
 }
 
-function prepareZeusDataRootWithoutLock(root: string, legacyRoots: readonly string[] = []): ZeusDataPreparationResult {
+function prepareZeusDataRootWithoutLock(root: string, legacyRoots: readonly string[], identity: ZeusDataPreparationIdentityOptions): ZeusDataPreparationResult {
   const layered = createZeusDataLayout(root);
   const flat = createLegacyFlatZeusDataLayout(root);
+  // 标记验证/发布发生在目录迁移、Core、Browser profile 或业务文件写入之前。
+  // 无标记正式根只有在数据根准备锁内、且分层/旧 Host 都不可能持有 writer 时才允许补标。
+  const writerMayExist = executionHostMayOwnData(layered.executionHost) || executionHostMayOwnData(flat.executionHost);
+  const rootIdentity = prepareZeusDataRootIdentity({
+    rootPath: root,
+    profile: identity.profile,
+    bundleId: identity.bundleId,
+    keychainService: identity.keychainService,
+    knownProductionAdoptionRoots: identity.knownProductionAdoptionRoots,
+    writerAbsenceConfirmed: !writerMayExist,
+  });
   const hasLayeredDatabase = existsSync(layered.database);
   const hasFlatDatabase = existsSync(flat.database);
   if (hasLayeredDatabase && hasFlatDatabase) throw new Error('Zeus 同时存在分层与平铺数据库，已停止启动以避免选错数据源。');
@@ -138,96 +153,19 @@ function prepareZeusDataRootWithoutLock(root: string, legacyRoots: readonly stri
     ensureLayeredDirectories(layered);
     // 正常分层目录已经完成过迁移校验；每次启动再全库 quick_check 会随历史数据线性变慢。
     // SQLite 打开、迁移和业务读写仍会显式报错，完整校验保留给迁移、维护与正式发布验证。
-    return { status: 'already-layered', layout: layered, migrationManifestPath: null };
+    return { status: 'already-layered', layout: layered, rootIdentity, migrationManifestPath: null };
   }
 
   if (!hasFlatDatabase) {
     ensureLayeredDirectories(layered);
-    return { status: 'initialized', layout: layered, migrationManifestPath: null };
+    return { status: 'initialized', layout: layered, rootIdentity, migrationManifestPath: null };
   }
 
-  if (executionHostIsRunning(flat.executionHost)) {
-    return { status: 'legacy-host-active', layout: flat, migrationManifestPath: null };
+  if (executionHostMayOwnData(flat.executionHost)) {
+    return { status: 'legacy-host-active', layout: flat, rootIdentity, migrationManifestPath: null };
   }
 
-  return migrateFlatRoot({ flat, layered, legacyRoots });
-}
-
-function acquireDataRootPreparationLock(root: string): () => void {
-  const lockPath = join(dirname(root), `.${basename(root)}.zeus-data-preparation.lock`);
-  mkdirSync(dirname(lockPath), { recursive: true, mode: 0o700 });
-  const deadline = Date.now() + dataRootPreparationTimeoutMs;
-  const ownerToken = randomUUID();
-
-  while (Date.now() < deadline) {
-    try {
-      const fileDescriptor = openSync(lockPath, 'wx', 0o600);
-      try {
-        writeSync(
-          fileDescriptor,
-          JSON.stringify({
-            pid: process.pid,
-            root,
-            ownerToken,
-            startedAt: new Date().toISOString(),
-          }),
-        );
-      } finally {
-        closeSync(fileDescriptor);
-      }
-
-      let released = false;
-      return () => {
-        if (released) return;
-        released = true;
-        try {
-          const owner = JSON.parse(readFileSync(lockPath, 'utf8')) as { pid?: unknown; ownerToken?: unknown };
-          if (owner.pid === process.pid && owner.ownerToken === ownerToken) unlinkSync(lockPath);
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-        }
-      };
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      if (isStaleDataRootPreparationLock(lockPath)) {
-        try {
-          unlinkSync(lockPath);
-        } catch (unlinkError) {
-          if ((unlinkError as NodeJS.ErrnoException).code !== 'ENOENT') throw unlinkError;
-        }
-        continue;
-      }
-      Atomics.wait(dataRootPreparationWaitBuffer, 0, 0, 50);
-    }
-  }
-
-  throw new Error(`Zeus 数据根正在被另一个进程准备：${root}`);
-}
-
-function isStaleDataRootPreparationLock(lockPath: string): boolean {
-  let lockStat;
-  try {
-    lockStat = statSync(lockPath);
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'ENOENT';
-  }
-
-  try {
-    const owner = JSON.parse(readFileSync(lockPath, 'utf8')) as { pid?: unknown };
-    if (typeof owner.pid === 'number' && Number.isInteger(owner.pid) && owner.pid > 0) {
-      try {
-        process.kill(owner.pid, 0);
-        return false;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'EPERM') return false;
-        return true;
-      }
-    }
-  } catch {
-    // 文件可能正处于写入阶段，先按时间窗口保护它，避免误删别的进程刚创建的锁。
-  }
-
-  return Date.now() - lockStat.mtimeMs > staleDataRootPreparationLockMs;
+  return migrateFlatRoot({ flat, layered, legacyRoots, rootIdentity });
 }
 
 export function readLatestZeusDataMigrationManifest(rootPath: string): MigrationManifest | null {
@@ -258,7 +196,7 @@ export function retireVerifiedLegacyRoot(rootPath: string, legacyRootPath: strin
   if (legacyRoot === root || isPathInside(legacyRoot, root) || isPathInside(root, legacyRoot)) throw new Error('Zeus 旧根与正式根存在包含关系，拒绝删除。');
   const layout = createZeusDataLayout(root);
   if (!existsSync(layout.database)) throw new Error('Zeus 分层数据库不存在，拒绝回收旧根。');
-  if (executionHostIsRunning(layout.executionHost) || executionHostIsRunning(join(legacyRoot, 'execution-host'))) {
+  if (executionHostMayOwnData(layout.executionHost) || executionHostMayOwnData(join(legacyRoot, 'execution-host'))) {
     throw new Error('Zeus 执行宿主仍在运行，拒绝回收旧根。');
   }
   assertDatabaseQuickCheck(layout.database);
@@ -295,7 +233,7 @@ export function retireVerifiedLegacyRoot(rootPath: string, legacyRootPath: strin
   return { removedBytes: inventory.bytes, removedFiles: inventory.files };
 }
 
-function migrateFlatRoot(input: { flat: ZeusDataLayout; layered: ZeusDataLayout; legacyRoots: readonly string[] }): ZeusDataPreparationResult {
+function migrateFlatRoot(input: { flat: ZeusDataLayout; layered: ZeusDataLayout; legacyRoots: readonly string[]; rootIdentity: ZeusDataRootIdentityMarker }): ZeusDataPreparationResult {
   const { flat, layered } = input;
   const migrationId = randomUUID();
   const createdAt = new Date().toISOString();
@@ -349,7 +287,7 @@ function migrateFlatRoot(input: { flat: ZeusDataLayout; layered: ZeusDataLayout;
     }
     for (const name of electronProfileEntries) moveIfPresent(join(flat.root, name), join(layered.electronUserData, name), moves);
 
-    const remaining = readdirSync(flat.root).filter((name) => !structuredRootNames.has(name));
+    const remaining = readdirSync(flat.root).filter((name) => !structuredRootNames.has(name) && name !== zeusDataRootIdentityFileName);
     if (remaining.length > 0) throw new Error(`Zeus 平铺根仍有未分类内容：${remaining.join('、')}`);
     ensureLayeredDirectories(layered);
 
@@ -357,7 +295,6 @@ function migrateFlatRoot(input: { flat: ZeusDataLayout; layered: ZeusDataLayout;
     const rewrittenRowCount = rebindDatabasePaths(layered.database, mappings);
     rewriteJsonFilePaths(layered.localConfig, mappings);
     checkpointAndCheckDatabase(layered.database);
-    cleanupStaleExecutionHostFiles(layered.executionHost);
     const cleanup = cleanupSupersededBackups(layered, databaseBackupPath);
 
     const manifest: MigrationManifest = {
@@ -374,7 +311,7 @@ function migrateFlatRoot(input: { flat: ZeusDataLayout; layered: ZeusDataLayout;
     };
     const manifestPath = join(layered.migrationState, `${createdAt.replaceAll(':', '-')}-${migrationId}.json`);
     writeJsonFile(manifestPath, manifest);
-    return { status: 'migrated', layout: layered, migrationManifestPath: manifestPath };
+    return { status: 'migrated', layout: layered, rootIdentity: input.rootIdentity, migrationManifestPath: manifestPath };
   } catch (error) {
     restoreMigration(databaseBackupPath, flat, layered, moves);
     throw error;
@@ -575,7 +512,7 @@ function collectJsonPaths(value: unknown, roots: readonly string[], output: Set<
 }
 
 function validateLegacyRootMirror(db: DatabaseSync, legacyRoot: string, authoritativeRoot: string): LegacyRootValidation {
-  if (executionHostIsRunning(join(legacyRoot, 'execution-host'))) throw new Error(`Zeus 旧根执行宿主仍在运行：${legacyRoot}`);
+  if (executionHostMayOwnData(join(legacyRoot, 'execution-host'))) throw new Error(`Zeus 旧根执行宿主仍可能持有数据：${legacyRoot}`);
   const managedPaths = [...collectManagedPaths(db, [legacyRoot])];
   let fileCount = 0;
   let directoryCount = 0;
@@ -765,23 +702,21 @@ function quoteIdentifier(value: string): string {
   return `"${value.replaceAll('"', '""')}"`;
 }
 
-function executionHostIsRunning(executionHostDirectory: string): boolean {
+function executionHostMayOwnData(executionHostDirectory: string): boolean {
+  // 过渡期旧 Host 与当前 Host 都会发布 host.lock。任何 lock/rendezvous 存在都不是
+  // 启动迁移器可以自动删除的“垃圾”；它也可能正处于旧版 open(wx) 后的写入窗口。
+  if (existsSync(join(executionHostDirectory, 'host.lock')) || existsSync(join(executionHostDirectory, 'rendezvous.json'))) return true;
+  const kernelLeasePath = join(executionHostDirectory, 'owner-lease.sqlite');
+  if (!existsSync(kernelLeasePath)) return false;
+  const lease = new DatabaseSync(kernelLeasePath);
   try {
-    const value = JSON.parse(readFileSync(join(executionHostDirectory, 'rendezvous.json'), 'utf8')) as { pid?: unknown };
-    if (typeof value.pid !== 'number' || !Number.isInteger(value.pid) || value.pid <= 0) return false;
-    process.kill(value.pid, 0);
-    return true;
-  } catch {
+    lease.exec('PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE');
+    lease.exec('ROLLBACK');
     return false;
-  }
-}
-
-function cleanupStaleExecutionHostFiles(directory: string): void {
-  if (!existsSync(directory)) return;
-  for (const name of readdirSync(directory)) {
-    if (name === 'rendezvous.json' || name === 'host.lock' || name.startsWith('bootstrap-') || name.startsWith('.rendezvous-')) {
-      rmSync(join(directory, name), { force: true });
-    }
+  } catch {
+    return true;
+  } finally {
+    lease.close();
   }
 }
 

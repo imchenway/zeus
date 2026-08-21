@@ -16,6 +16,9 @@ export * from './agentRuntimeContracts.js';
 export * from './agentRuntimeRegistry.js';
 export * from './agentCapabilityCatalog.js';
 export * from './piRpcProtocol.js';
+export * from './piRuntimeWorkerProtocol.js';
+export * from './piRuntimeWorkerDriver.js';
+export * from './providerRuntimeHealth.js';
 export * from './modelConnectionCatalog.js';
 export * from './piSdkRuntimeDriver.js';
 export { expandCliSearchPath } from './cliSearchPath.js';
@@ -286,6 +289,8 @@ export interface AiRuntimeSession {
 }
 
 export interface StartAiRuntimeSessionInput {
+  /** 公开 Command 在写出前生成的稳定会话身份；省略时只供内部非命令调用生成新身份。 */
+  id?: string;
   projectId: string;
   taskId?: string;
   command: string;
@@ -945,8 +950,10 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
       if (closing || closed) throw new Error('AI Runtime 正在关闭，不能启动新会话。');
       assertCwdInsideAllowedRoots(input.cwd, resolveAllowedRoots());
       pruneCompletedRuntimeSessions();
+      const sessionId = input.id ?? `ai-session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      if (!sessionId.trim() || sessionId.length > 256 || sessions.has(sessionId)) throw new Error('AI Runtime 会话身份无效或已经存在。');
       const session: AiRuntimeSession = {
-        id: `ai-session-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        id: sessionId,
         projectId: input.projectId,
         taskId: input.taskId,
         command: input.command,

@@ -7,6 +7,12 @@ interface PiHeadlessResourceLoaderOptions {
   agentDir: string;
 }
 
+export interface PiApplicationContextResource {
+  fingerprint: string;
+  manifest: string;
+  content: string;
+}
+
 interface ContextFile {
   path: string;
   content: string;
@@ -25,6 +31,7 @@ export class PiHeadlessResourceLoader implements ResourceLoader {
   private readonly agentDir: string;
   private readonly extensionsResult: LoadExtensionsResult;
   private agentsFiles: ContextFile[] = [];
+  private applicationContext: PiApplicationContextResource | null = null;
 
   constructor(options: PiHeadlessResourceLoaderOptions) {
     this.cwd = resolve(options.cwd);
@@ -65,11 +72,25 @@ export class PiHeadlessResourceLoader implements ResourceLoader {
   }
 
   getAppendSystemPrompt(): string[] {
-    return [];
+    if (!this.applicationContext) return [];
+    return [
+      `Zeus application context manifest (application-owned):\n${this.applicationContext.manifest}`,
+      ...(this.applicationContext.content ? [`Zeus application context (application-owned):\n${this.applicationContext.content}`] : []),
+    ];
   }
 
   getAppendSystemPromptSources(): Array<{ path: string }> {
-    return [];
+    if (!this.applicationContext) return [];
+    return [
+      { path: `zeus-context://${this.applicationContext.fingerprint}/manifest` },
+      ...(this.applicationContext.content ? [{ path: `zeus-context://${this.applicationContext.fingerprint}/application` }] : []),
+    ];
+  }
+
+  replaceApplicationContext(input: PiApplicationContextResource | null): PiApplicationContextResource | null {
+    const previous = this.applicationContext;
+    this.applicationContext = input ? { ...input } : null;
+    return previous ? { ...previous } : null;
   }
 
   extendResources(): void {

@@ -1,6 +1,8 @@
 import { prepareZeusDataRoot, retireVerifiedLegacyRoot } from '../apps/desktop/src/main/zeusDataMigration.js';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { expectedBundleIdForDataRootProfile } from '../apps/desktop/src/main/dataRootIdentity.js';
+import { resolveDesktopKeychainService } from '../apps/desktop/src/main/secretServiceIdentity.js';
 
 const [action, root, ...argumentsAfterRoot] = process.argv.slice(2);
 if (!action || !root || !['migrate', 'retire-legacy-root'].includes(action)) {
@@ -24,7 +26,12 @@ for (let index = 0; index < argumentsAfterRoot.length; index += 1) {
 if (action === 'migrate') {
   if (!copyRoot) throw new Error('脚本迁移只允许隔离副本，并且必须显式传入 --copy-root；正式根必须由已安装的新 Zeus 在启动执行宿主前迁移。');
   if (resolve(root) === resolve(join(homedir(), '.zeus'))) throw new Error('禁止用 worktree 维护脚本迁移正式 ~/.zeus；请先发布并安装包含相同布局代码的新 Zeus。');
-  const result = prepareZeusDataRoot(root, legacyRoots);
+  const canonicalRoot = resolve(root);
+  const result = prepareZeusDataRoot(canonicalRoot, legacyRoots, {
+    profile: 'development',
+    bundleId: expectedBundleIdForDataRootProfile('development'),
+    keychainService: resolveDesktopKeychainService({ profile: 'development', dataRootPath: canonicalRoot }),
+  });
   console.log(
     JSON.stringify(
       {

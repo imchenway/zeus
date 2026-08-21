@@ -3,7 +3,7 @@ import { basename } from 'node:path';
 import type { CodexAppServerManager, CodexThreadSnapshot } from '@zeus/ai-runtime';
 import type {
   ConversationItemPhase,
-  ConversationItemRepository,
+  ConversationProviderItemRepository,
   ConversationItemStatus,
   ConversationItemType,
   ConversationRepository,
@@ -31,7 +31,7 @@ export interface LegacyCodexThreadMigrationInput {
   runtimeSessions: RuntimeSessionRepository;
   conversations: ConversationRepository;
   turns: ConversationTurnRepository;
-  items: ConversationItemRepository;
+  providerItems: ConversationProviderItemRepository;
   submissions: ConversationSubmissionRepository;
   manager: CodexAppServerManager;
   commandPath: string;
@@ -368,7 +368,7 @@ function importProviderSnapshot(input: LegacyCodexThreadMigrationInput, candidat
       const textContent = itemText(providerItem);
       const itemTimestamp = epochToIso(providerItem.startedAt) ?? addMilliseconds(timestamp, itemIndex);
       const itemCompletedAt = epochToIso(providerItem.completedAt) ?? (completedAt ? addMilliseconds(completedAt, itemIndex) : itemTimestamp);
-      input.items.upsertCompleted({
+      input.providerItems.upsertCompleted({
         conversationId: conversation.id,
         turnId: turn.id,
         providerThreadId: candidate.providerThreadId,

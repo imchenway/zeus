@@ -1,6 +1,6 @@
-import {createHmac, timingSafeEqual} from 'node:crypto';
-import {realpathSync} from 'node:fs';
-import {isAbsolute} from 'node:path';
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import { realpathSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
 
 const grantPrefix = 'zeus-conversation-path-v1';
 
@@ -16,10 +16,7 @@ interface ConversationAttachmentGrantPayload {
 export function createConversationAttachmentGrant(path: string, secret: string): string {
   if (!isAbsolute(path) || path.includes('\0')) throw new TypeError('Conversation attachment grant path must be absolute.');
   const canonicalPath = realpathSync(path);
-  const payload = Buffer.from(
-    JSON.stringify({version: 1, path: canonicalPath} satisfies ConversationAttachmentGrantPayload),
-    'utf8',
-  ).toString('base64url');
+  const payload = Buffer.from(JSON.stringify({ version: 1, path: canonicalPath } satisfies ConversationAttachmentGrantPayload), 'utf8').toString('base64url');
   return `${grantPrefix}.${payload}.${signPayload(payload, secret)}`;
 }
 

@@ -18,6 +18,7 @@ import { conversationDisplayTitle } from './conversationDisplayTitle.js';
 import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
 import type { TaskAgentRunStatus } from '../apiClient.js';
 import { taskAgentRunStatusLabels } from '../task/TaskRunStatusChip.js';
+import { beginConversationNavigationTrace } from '../performanceTraceContext.js';
 
 export interface ProjectConversationTaskGroup {
   taskId: string;
@@ -188,7 +189,12 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
             tabIndex={current || navigationId === fallbackTabStopId ? 0 : -1}
             data-conversation-tree-item="true"
             data-conversation-runtime-state={runtimeState}
-            onClick={() => props.onSelectConversation(conversation)}
+            onClick={() => {
+              if (!current && !conversation.readOnly && conversation.transportKind === 'codex_native' && !conversation.taskPushCreating) {
+                beginConversationNavigationTrace(conversation.projectId, conversation.id);
+              }
+              props.onSelectConversation(conversation);
+            }}
           >
             <span className="session-conversation-title" title={displayTitle}>
               {displayTitle}

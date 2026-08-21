@@ -51,7 +51,7 @@ export interface CommandDefinitionInput {
   riskFlags?: Partial<CommandRiskFlags>;
 }
 
-export type CommandRunStatus = 'pending_confirmation' | 'running' | 'succeeded' | 'failed' | 'timed_out' | 'cancelled' | 'rejected';
+export type CommandRunStatus = 'pending_confirmation' | 'starting' | 'running' | 'stopping' | 'succeeded' | 'failed' | 'timed_out' | 'cancelled' | 'rejected';
 export type CommandRunTrigger = 'desktop' | 'telegram';
 
 export interface CommandRun {
@@ -78,6 +78,17 @@ export interface CommandArtifact {
   runId: string;
   relativePath: string;
   absolutePath: string;
+  artifactRef: {
+    storageGeneration: string;
+    sha256: string;
+    contentSha256: string;
+    byteLength: number;
+    contentByteLength: number;
+    mimeType: string;
+    encoding: string;
+    generationId: string;
+    relativePath: string;
+  } | null;
   mimeType: string | null;
   byteLength: number;
   createdAt: string;
@@ -125,52 +136,52 @@ export function validateCommandDefinitionInput(input: CommandDefinitionInput): C
   const parameters = input.parameters ?? [];
 
   if (!commandNamePattern.test(name)) {
-    issues.push({field: 'name', message: '名称必须以字母开头，只能包含字母、数字、下划线或连字符，长度为 3–64。'});
+    issues.push({ field: 'name', message: '名称必须以字母开头，只能包含字母、数字、下划线或连字符，长度为 3–64。' });
   }
-  if (aliases.length > 10) issues.push({field: 'aliases', message: '别名最多 10 个。'});
+  if (aliases.length > 10) issues.push({ field: 'aliases', message: '别名最多 10 个。' });
   const normalizedAliases = new Set<string>();
   for (const alias of aliases) {
     if (!commandAliasPattern.test(alias)) {
-      issues.push({field: 'aliases', message: `别名 ${alias || '（空）'} 不符合格式要求。`});
+      issues.push({ field: 'aliases', message: `别名 ${alias || '（空）'} 不符合格式要求。` });
       continue;
     }
     const normalized = alias.toLocaleLowerCase();
-    if (normalized === name.toLocaleLowerCase()) issues.push({field: 'aliases', message: `别名 ${alias} 不能与命令名称相同。`});
-    if (normalizedAliases.has(normalized)) issues.push({field: 'aliases', message: `别名 ${alias} 重复。`});
+    if (normalized === name.toLocaleLowerCase()) issues.push({ field: 'aliases', message: `别名 ${alias} 不能与命令名称相同。` });
+    if (normalizedAliases.has(normalized)) issues.push({ field: 'aliases', message: `别名 ${alias} 重复。` });
     normalizedAliases.add(normalized);
   }
-  if (!title) issues.push({field: 'title', message: '标题不能为空。'});
-  if (title.length > 80) issues.push({field: 'title', message: '标题最多 80 个字符。'});
-  if (description.length > 400) issues.push({field: 'description', message: '说明最多 400 个字符。'});
-  if (!command) issues.push({field: 'command', message: '命令不能为空。'});
-  if (command.length > 1024) issues.push({field: 'command', message: '命令最多 1024 个字符。'});
+  if (!title) issues.push({ field: 'title', message: '标题不能为空。' });
+  if (title.length > 80) issues.push({ field: 'title', message: '标题最多 80 个字符。' });
+  if (description.length > 400) issues.push({ field: 'description', message: '说明最多 400 个字符。' });
+  if (!command) issues.push({ field: 'command', message: '命令不能为空。' });
+  if (command.length > 1024) issues.push({ field: 'command', message: '命令最多 1024 个字符。' });
   if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 5 || timeoutSeconds > 3600) {
-    issues.push({field: 'timeoutSeconds', message: '超时必须是 5–3600 秒的整数。'});
+    issues.push({ field: 'timeoutSeconds', message: '超时必须是 5–3600 秒的整数。' });
   }
 
   const parameterKeys = new Set<string>();
   for (const parameter of parameters) {
     const key = parameter.key?.trim() ?? '';
     if (!commandParameterKeyPattern.test(key)) {
-      issues.push({field: 'parameters', message: `参数 ${key || '（空）'} 必须使用大写环境变量格式。`});
+      issues.push({ field: 'parameters', message: `参数 ${key || '（空）'} 必须使用大写环境变量格式。` });
     }
-    if (key.startsWith('ZEUS_')) issues.push({field: 'parameters', message: `参数 ${key} 不能覆盖 ZEUS_* 保留变量。`});
-    if (parameterKeys.has(key)) issues.push({field: 'parameters', message: `参数 ${key} 重复。`});
+    if (key.startsWith('ZEUS_')) issues.push({ field: 'parameters', message: `参数 ${key} 不能覆盖 ZEUS_* 保留变量。` });
+    if (parameterKeys.has(key)) issues.push({ field: 'parameters', message: `参数 ${key} 重复。` });
     parameterKeys.add(key);
     if (!parameter.label?.trim() || parameter.label.trim().length > 80) {
-      issues.push({field: 'parameters', message: `参数 ${key || '（空）'} 的标签不能为空且最多 80 个字符。`});
+      issues.push({ field: 'parameters', message: `参数 ${key || '（空）'} 的标签不能为空且最多 80 个字符。` });
     }
     if ((parameter.description?.trim() ?? '').length > 200) {
-      issues.push({field: 'parameters', message: `参数 ${key || '（空）'} 的说明最多 200 个字符。`});
+      issues.push({ field: 'parameters', message: `参数 ${key || '（空）'} 的说明最多 200 个字符。` });
     }
     if (!['string', 'number', 'boolean'].includes(parameter.type)) {
-      issues.push({field: 'parameters', message: `参数 ${key || '（空）'} 类型不受支持。`});
+      issues.push({ field: 'parameters', message: `参数 ${key || '（空）'} 类型不受支持。` });
     }
     if (parameter.sensitive && parameter.defaultValue !== undefined) {
-      issues.push({field: 'parameters', message: `敏感参数 ${key || '（空）'} 不能配置默认值。`});
+      issues.push({ field: 'parameters', message: `敏感参数 ${key || '（空）'} 不能配置默认值。` });
     }
     if (parameter.defaultValue !== undefined && !commandParameterValueMatchesType(parameter.defaultValue, parameter.type)) {
-      issues.push({field: 'parameters', message: `参数 ${key || '（空）'} 的默认值类型不匹配。`});
+      issues.push({ field: 'parameters', message: `参数 ${key || '（空）'} 的默认值类型不匹配。` });
     }
   }
   return issues;

@@ -23,6 +23,37 @@ export interface AgentDescriptor {
   supportStatus: AgentSupportStatus;
   visibleToUsers: boolean;
   capabilities: Partial<Record<AgentCapabilityId, AgentCapabilityEvidence>>;
+  /** 请求发出前是否存在 Provider/Runtime 自己提供的精确 token count；不可用时不得用字符估算冒充。 */
+  preflightTokenCount: AgentPreflightTokenCountCapability;
+}
+
+export type AgentPreflightTokenCountCapability =
+  | {
+      state: 'available';
+      exact: true;
+      source: 'provider_api' | 'runtime_rpc' | 'runtime_sdk';
+      checkedAt: string;
+      reason: string;
+    }
+  | {
+      state: 'unavailable';
+      exact: false;
+      source: null;
+      checkedAt: string | null;
+      reason: string;
+    };
+
+export interface AgentPreflightTokenCountInput {
+  model: AgentModelIdentity;
+  /** 必须是即将发送给 Provider 的完整序列化请求；只数正文会低估 system、tools 与媒体开销。 */
+  serializedRequest: unknown;
+}
+
+export interface AgentPreflightTokenCountResult {
+  inputTokens: number;
+  exact: true;
+  source: Exclude<AgentPreflightTokenCountCapability, { state: 'unavailable' }>['source'];
+  countedAt: string;
 }
 
 export interface AgentModelIdentity {
@@ -51,17 +82,32 @@ export interface OpenAgentSessionInput {
   cwd: string;
   model: AgentModelIdentity;
   metadata?: Record<string, unknown>;
+  traceIdentity?: string | null;
 }
 
 export interface ResumeAgentSessionInput {
   nativeSessionId: string;
   nativeSessionPath?: string | null;
   cwd?: string;
+  traceIdentity?: string | null;
 }
 
 export interface AgentImageInput {
   data: string;
   mimeType: string;
+}
+
+/** Core 已编译并审计的应用级上下文；只有 Runtime 的正式 system/application 通道可以消费。 */
+export interface AgentRunApplicationContext {
+  fingerprint: string;
+  manifest: string;
+  content: string;
+}
+
+/** Core 已编译的不可信上下文；必须留在当前 user/custom message，禁止升格为 system。 */
+export interface AgentRunUntrustedContext {
+  fingerprint: string;
+  content: string;
 }
 
 export interface StartAgentRunInput {
@@ -71,6 +117,10 @@ export interface StartAgentRunInput {
   model?: AgentModelIdentity;
   thinkingLevel?: string;
   images?: AgentImageInput[];
+  applicationContext?: AgentRunApplicationContext;
+  untrustedContext?: AgentRunUntrustedContext;
+  /** 仅用于 Zeus 内部 Command/Worker/RPC/回执性能关联，不进入 Provider 正文。 */
+  traceIdentity?: string | null;
   /** Pi 在进入 agent run 前同步返回预检结论；false 表示请求不会写给模型。 */
   preflightResult?: (accepted: boolean) => void;
   /** 只在预检成功时同步执行，回调抛错必须阻止 agent run。 */
@@ -123,12 +173,14 @@ export type FollowUpAgentRunInput = StartAgentRunInput;
 export interface InterruptAgentRunInput {
   session: AgentSessionIdentity;
   nativeRunId: string;
+  traceIdentity?: string | null;
 }
 
 export interface RespondAgentInteractionInput {
   session: AgentSessionIdentity;
   requestId: string;
   response: unknown;
+  traceIdentity?: string | null;
 }
 
 export interface ReadAgentSessionInput {
@@ -144,6 +196,7 @@ export interface CompactAgentSessionInput {
   session: AgentSessionIdentity;
   thinkingLevel?: string;
   customInstructions: string;
+  traceIdentity?: string | null;
 }
 
 export interface CompactAgentSessionResult {
@@ -177,9 +230,43 @@ export interface AgentRuntimeEvent {
   createdAt: string;
 }
 
+export type AgentRuntimeLifecycleState = 'stopped' | 'starting' | 'healthy' | 'degraded' | 'circuit_open' | 'recovering' | 'closing';
+
+export type AgentRuntimeFailureKind = 'startup' | 'timeout' | 'authentication' | 'rate_limit' | 'protocol_incompatible' | 'process_exit' | 'unknown';
+
+export interface AgentRuntimeFailureSnapshot {
+  kind: AgentRuntimeFailureKind;
+  code: string;
+  message: string;
+  occurredAt: string;
+  resultUnknown: boolean;
+}
+
+export interface AgentRuntimeCircuitSnapshot {
+  state: 'closed' | 'open' | 'half_open';
+  openedAt: string | null;
+  reason: AgentRuntimeFailureKind | null;
+  /** 熔断后只能由明确恢复动作进入新代次；不得在原请求内部自动重发。 */
+  recovery: 'explicit' | 'automatic_supervised';
+}
+
+/** Provider 进程的统一只读运行态；业务会话状态仍由会话编排拥有。 */
+export interface AgentRuntimeHealthSnapshot {
+  agentKind: AgentKind;
+  transport: AgentTransportKind;
+  generationId: string | null;
+  lifecycle: AgentRuntimeLifecycleState;
+  protocolVersion: string | null;
+  processId: number | null;
+  checkedAt: string;
+  consecutiveFailures: number;
+  circuit: AgentRuntimeCircuitSnapshot;
+  lastFailure: AgentRuntimeFailureSnapshot | null;
+}
+
 /**
  * Agent 驱动只描述 Zeus 需要的共同动作；每次调用前仍必须检查能力证据。
- * 当前公共框架没有提供 Pi 的实现，也不会启动 Pi 进程。
+ * 具体 Provider 可在 Core 内代理受监督的独立运行代次，但不得把业务状态所有权交给 Worker。
  */
 export interface AgentRuntimeDriver {
   readonly kind: AgentKind;
@@ -187,6 +274,9 @@ export interface AgentRuntimeDriver {
   probe(): Promise<AgentRuntimeProbe>;
 
   readCapabilities(): Promise<AgentDescriptor>;
+
+  /** 仅在 descriptor.preflightTokenCount.state=available 时存在；无真实端口的 Adapter 必须省略。 */
+  countInputTokens?(input: AgentPreflightTokenCountInput): Promise<AgentPreflightTokenCountResult>;
 
   openSession(input: OpenAgentSessionInput): Promise<AgentSessionIdentity>;
 
@@ -211,4 +301,11 @@ export interface AgentRuntimeDriver {
   close(input: { mode: 'handoff' | 'final' }): Promise<void>;
 
   subscribe(listener: (event: AgentRuntimeEvent) => void): () => void;
+}
+
+export interface SupervisedAgentRuntimeDriver extends AgentRuntimeDriver {
+  getRuntimeHealth(): AgentRuntimeHealthSnapshot;
+
+  /** 只创建新运行代次并恢复原生身份；绝不重放导致故障的上一条命令。 */
+  recoverRuntime(input: { reason: 'explicit_user_action' | 'explicit_runtime_need' }): Promise<AgentRuntimeHealthSnapshot>;
 }
