@@ -1,31 +1,49 @@
 import type {
-  AgentCatalogSnapshot,
-  BatchTaskWorkspaceResponse,
-  CodexAccountSnapshot,
-  CodexChatGptLogin,
-  CodexTaskPushCapabilities,
-  CodexTaskRepositoryCapability,
-  NativeOperationAcceptance,
-  StartTaskModelPushRequest,
-  TaskGitDiffSummary,
-  TaskIntegrationConflictAiSession,
-  TaskIntegrationConflictFile,
-  TaskIntegrationConflictPermissionMode,
-  TaskIntegrationPushResult,
-  TaskIntegrationRecord,
-  TaskIntegrationResult,
-  TaskWorkspaceCommitResult,
-  TaskWorkspaceIndexCollection,
-  TaskWorkspacePushResult,
-  TaskWorkspaceSnapshotResponse,
-  TaskWorkspacesSnapshot,
+    AgentCatalogSnapshot,
+    BatchTaskWorkspaceResponse,
+    CodexAccountSnapshot,
+    CodexChatGptLogin,
+    CodexTaskPushCapabilities,
+    CodexTaskRepositoryCapability,
+    NativeOperationAcceptance,
+    StartTaskModelPushRequest,
+    TaskGitDiffSummary,
+    TaskIntegrationConflictAiSession,
+    TaskIntegrationConflictFile,
+    TaskIntegrationConflictPermissionMode,
+    TaskIntegrationPushResult,
+    TaskIntegrationRecord,
+    TaskIntegrationResult,
+    TaskWorkspaceCommitResult,
+    TaskWorkspaceIndexCollection,
+    TaskWorkspacePushResult,
+    TaskWorkspaceSnapshotResponse,
+    TaskWorkspacesSnapshot,
 } from '../../session/sessionTypes.js';
-import type { CodexUsageAnalyticsSnapshot, CodexUsageRange, CodexUsageSummarySnapshot, UsageOverviewSnapshot } from '@zeus/shared';
-import type { CodexConfigActivationResult, CodexConfigImportPreview, CodexConfigImportResult, CodexLegacyImportResult, CodexLegacyImportSnapshot } from './codexContracts.js';
-import { buildCodexPublicCommandRequest, codexPublicClientCommandTypes, codexPublicClientScopeIds } from './codexPublicCommandClient.js';
-import { buildGraphConversationCommandRequest, graphConversationClientCommandTypes } from '../conversations/graphConversationCommandClient.js';
-import { buildWorkspaceGitCommandRequest, workspaceGitClientCommandTypes } from '../git/workspaceGitCommandClient.js';
-import { ZeusApiError, type LocalApiTransport } from '../../transport/localApiTransport.js';
+import type {
+    CodexUsageAnalyticsSnapshot,
+    CodexUsageRange,
+    CodexUsageSummarySnapshot,
+    UsageOverviewSnapshot
+} from '@zeus/shared';
+import type {
+    CodexConfigActivationResult,
+    CodexConfigImportPreview,
+    CodexConfigImportResult,
+    CodexLegacyImportResult,
+    CodexLegacyImportSnapshot
+} from './codexContracts.js';
+import {
+    buildCodexPublicCommandRequest,
+    codexPublicClientCommandTypes,
+    codexPublicClientScopeIds
+} from './codexPublicCommandClient.js';
+import {
+    buildGraphConversationCommandRequest,
+    graphConversationClientCommandTypes
+} from '../conversations/graphConversationCommandClient.js';
+import {buildWorkspaceGitCommandRequest, workspaceGitClientCommandTypes} from '../git/workspaceGitCommandClient.js';
+import {type LocalApiTransport, ZeusApiError} from '../../transport/localApiTransport.js';
 
 export interface CodexApiClient {
   loadAgents: () => Promise<AgentCatalogSnapshot>;
@@ -37,7 +55,10 @@ export interface CodexApiClient {
   loadCodexUsageAnalytics: (input: { range: CodexUsageRange; projectId?: string; model?: string }) => Promise<CodexUsageAnalyticsSnapshot>;
   startCodexChatGptLogin: () => Promise<CodexChatGptLogin>;
   cancelCodexChatGptLogin: (loginId: string) => Promise<void>;
-  startTaskModelPush: (taskId: string, input: StartTaskModelPushRequest) => Promise<NativeOperationAcceptance>;
+    startTaskModelPush: (taskId: string, input: StartTaskModelPushRequest) => Promise<{
+        acceptance: NativeOperationAcceptance;
+        operationIdentity: string
+    }>;
   loadTaskGitWorkspaces: (taskId: string) => Promise<TaskWorkspacesSnapshot>;
   loadTaskGitWorkspaceIndex: (taskId: string) => Promise<TaskWorkspaceIndexCollection>;
   loadTaskGitWorkspaceSnapshot: (taskId: string, workspaceId: string) => Promise<TaskWorkspaceSnapshotResponse>;
@@ -159,10 +180,11 @@ export function createCodexApiClient(transport: LocalApiTransport): CodexApiClie
         reconnectIdentity: idempotencyKey,
         value: body,
       });
-      return transport.request<NativeOperationAcceptance>(`/api/tasks/${encodeURIComponent(taskId)}/conversations`, {
+        const acceptance = await transport.request<NativeOperationAcceptance>(`/api/tasks/${encodeURIComponent(taskId)}/conversations`, {
         method: 'POST',
         body: JSON.stringify(commandBody),
       });
+        return {acceptance, operationIdentity: commandBody.command.payload.operationIdentity};
     },
     loadTaskGitWorkspaces: (taskId) => transport.request<TaskWorkspacesSnapshot>(`/api/tasks/${encodeURIComponent(taskId)}/git-workspaces`),
     loadTaskGitWorkspaceIndex: (taskId) => transport.request<TaskWorkspaceIndexCollection>(`/api/tasks/${encodeURIComponent(taskId)}/git-workspaces/index`),

@@ -1,45 +1,56 @@
-import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
-import { type ConversationContextDraft, emptyConversationContextDraft, hasConversationContext, serializeConversationContext, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
-import { createInitialSessionState, sessionReducer } from './sessionReducer.js';
+import {useCallback, useEffect, useMemo, useSyncExternalStore} from 'react';
 import {
-  type CodexConversationCapabilities,
-  type ConversationResourcePreview,
-  isNativeConversationEvent,
-  type NativeCollaborationMode,
-  type NativeConversationAttachment,
-  type NativeConversationChangeFileV2Item,
-  type NativeConversationChangeSetV2Summary,
-  type NativeConversationChoice,
-  type NativeConversationContentV2Page,
-  type NativeConversationEvent,
-  type NativeConversationEventPage,
-  type NativeConversationModelHistoryV2Item,
-  type NativeConversationProcessV2Item,
-  type NativeConversationResourceV2Item,
-  type NativeConversationSnapshot,
-  type NativeConversationSnapshotV2,
-  type NativeConversationSnapshotV2Page,
-  type NativeConversationToolResultPage,
-  type NativeGoalResponse,
-  type NativeNextTurnSettings,
-  type NativeOperationAcceptance,
-  type NativePendingRequest,
-  type NativePermissionMode,
-  type NativePlanImplementationRequest,
-  type NativeQueuedSubmission,
-  type NativeQueueSnapshot,
-  type NativeRealtimeEventEnvelope,
-  type NativeSessionError,
-  type NativeSessionState,
-  type NativeSubagentListSnapshot,
-  type NativeSubagentThreadSnapshot,
-  type NativeTurnSettingsSelection,
-  type SendNativeMessageRequest,
-  type TurnChangeSet,
-  type TurnChangeSetOperationResult,
+    type ConversationContextDraft,
+    emptyConversationContextDraft,
+    hasConversationContext,
+    serializeConversationContext,
+    type ZeusBrowserPreparedSubmission
+} from '@zeus/shared';
+import {createInitialSessionState, sessionReducer} from './sessionReducer.js';
+import {
+    type CodexConversationCapabilities,
+    type ConversationResourcePreview,
+    isNativeConversationEvent,
+    type NativeCollaborationMode,
+    type NativeConversationAttachment,
+    type NativeConversationChangeFileV2Item,
+    type NativeConversationChangeSetV2Summary,
+    type NativeConversationChoice,
+    type NativeConversationContentV2Page,
+    type NativeConversationEvent,
+    type NativeConversationEventPage,
+    type NativeConversationModelHistoryV2Item,
+    type NativeConversationProcessV2Item,
+    type NativeConversationResourceV2Item,
+    type NativeConversationSnapshot,
+    type NativeConversationSnapshotV2,
+    type NativeConversationSnapshotV2Page,
+    type NativeConversationToolResultPage,
+    type NativeGoalResponse,
+    type NativeNextTurnSettings,
+    type NativeOperationAcceptance,
+    type NativePendingRequest,
+    type NativePermissionMode,
+    type NativePlanImplementationRequest,
+    type NativeQueuedSubmission,
+    type NativeQueueSnapshot,
+    type NativeRealtimeEventEnvelope,
+    type NativeSessionError,
+    type NativeSessionState,
+    type NativeSubagentListSnapshot,
+    type NativeSubagentThreadSnapshot,
+    type NativeTurnSettingsSelection,
+    type SendNativeMessageRequest,
+    type TurnChangeSet,
+    type TurnChangeSetOperationResult,
 } from './sessionTypes.js';
-import { adaptConversationSnapshotV2, mergeConversationHistoryV2, mergeConversationProcessV2, updateConversationV2Paging } from './conversationSnapshotV2Adapter.js';
-import { markConversationNavigationRenderReady } from '../performanceTraceContext.js';
+import {
+    adaptConversationSnapshotV2,
+    mergeConversationHistoryV2,
+    mergeConversationProcessV2,
+    updateConversationV2Paging
+} from './conversationSnapshotV2Adapter.js';
+import {markConversationNavigationRenderReady} from '../performanceTraceContext.js';
 
 export const reconnectBackoffMs = [250, 500, 1_000, 2_000, 5_000] as const;
 // 同一个会话项的增量按一帧窗口合并，兼顾 Markdown 成本与首字可见延迟。
@@ -1518,7 +1529,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
     try {
       // 冷打开时先取得完整快照及其事件水位，再从该水位订阅增量。
       // 这样既不会遗漏快照读取期间发生的事件，也不会从 0 重放整段历史并反复撞上 WebSocket 高水位。
-      dispatch({ type: 'transport_changed', transportState: 'hydrating' });
+      // 已有权威快照时保持稳定的重连状态，不能在 reconnecting/hydrating 间反复切换并触发整页同步闪烁。
+      if (!reconnecting || !state.snapshot) dispatch({type: 'transport_changed', transportState: 'hydrating'});
       const snapshot = await loadConversationForHydration();
       if (disposed || token !== connectionToken) return;
       const eventOptions = {
@@ -1549,9 +1561,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
 
       if (lifecycle.isDisconnected()) throw new SocketDisconnectedDuringHydrationError();
       if (hydrationOverflowError) throw hydrationOverflowError;
-      // 在权威快照进入外部 store 前开放首帧门；snapshot_hydrated 的下一次 commit 才是内容首帧。
-      markConversationNavigationRenderReady(options.projectId, options.conversationId);
-      await applyAuthoritativeSnapshot(snapshot);
+      // 只有冷打开需要开放内容首帧；后台重连不能重置已经可见的导航和滚动状态。
+      if (!state.snapshot) markConversationNavigationRenderReady(options.projectId, options.conversationId);
+      const snapshotAlreadyApplied = reconnecting && state.snapshot?.id === snapshot.id && state.snapshot.throughEventSeq === snapshot.throughEventSeq && state.snapshot.syncStreamGeneration === snapshot.syncStreamGeneration;
+      if (!snapshotAlreadyApplied) await applyAuthoritativeSnapshot(snapshot);
       await reconcilePersistedAcceptance(snapshot);
       syncProjectionSuspended = false;
       for (const event of buffered.events) applyRealtimeEvent(event);
@@ -1571,7 +1584,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         const failedSocket = socket;
         socket = null;
         failedSocket?.close();
-        markConversationNavigationRenderReady(options.projectId, options.conversationId);
+        if (!state.snapshot) markConversationNavigationRenderReady(options.projectId, options.conversationId);
         dispatch({ type: 'transport_changed', transportState: 'failed', error: toSessionError(error, true) });
       }
       if (shouldScheduleReconnect) scheduleReconnect(token);
