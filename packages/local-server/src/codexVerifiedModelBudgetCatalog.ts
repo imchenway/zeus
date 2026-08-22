@@ -12,15 +12,15 @@ export interface CodexVerifiedModelBudget {
  */
 const verifiedBudgets = new Map<string, CodexVerifiedModelBudget>([
   [
-      catalogKey('0.149.0', 'gpt-5.6-sol'),
-      {
-          contextWindowTokens: 1_050_000,
-          reservedOutputTokens: 128_000,
-          evidenceSource: 'openai_official_model_catalog:gpt-5.6-sol:codex-cli-0.149.0',
-          checkedAt: '2026-08-22T00:00:00.000Z',
-      },
+    catalogKey('0.149.0', 'gpt-5.6-sol'),
+    {
+      contextWindowTokens: 1_050_000,
+      reservedOutputTokens: 128_000,
+      evidenceSource: 'openai_official_model_catalog:gpt-5.6-sol:codex-cli-0.149.0',
+      checkedAt: '2026-08-22T00:00:00.000Z',
+    },
   ],
-    [
+  [
     catalogKey('0.149.0', 'gpt-5.4-mini'),
     {
       contextWindowTokens: 400_000,

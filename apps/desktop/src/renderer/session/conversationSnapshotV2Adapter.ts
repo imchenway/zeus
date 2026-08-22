@@ -1,16 +1,16 @@
 import type {
-    NativeConversationChoice,
-    NativeConversationModelHistoryV2Item,
-    NativeConversationProcessV2Item,
-    NativeConversationSnapshot,
-    NativeConversationSnapshotV2,
-    NativeConversationSnapshotV2Page,
-    NativeGoalResponse,
-    NativeItemSnapshot,
-    NativePendingRequest,
-    NativeQueueSnapshot,
-    NativeTurnSnapshot,
-    NativeUnifiedUsageSnapshot,
+  NativeConversationChoice,
+  NativeConversationModelHistoryV2Item,
+  NativeConversationProcessV2Item,
+  NativeConversationSnapshot,
+  NativeConversationSnapshotV2,
+  NativeConversationSnapshotV2Page,
+  NativeGoalResponse,
+  NativeItemSnapshot,
+  NativePendingRequest,
+  NativeQueueSnapshot,
+  NativeTurnSnapshot,
+  NativeUnifiedUsageSnapshot,
 } from './sessionTypes.js';
 
 const syncStreamProtocolGeneration = 'zeus-conversation-sync-v1' as const;
@@ -217,9 +217,9 @@ function historyItems(items: NativeConversationModelHistoryV2Item[]): NativeItem
   return items.flatMap((item) => {
     const content = parseProjection(item.content.preview, item.content.truncated);
     const contentRecord = recordValue(content);
-      // 工具调用正文可能超过 Snapshot V2 的 2,048 字符预览上限；此时 JSON 不完整，
-      // 不能依赖 content.type 分类。toolPairId 是模型历史中调用与结果的稳定结构身份。
-      const isToolCall = item.role === 'tool' || Boolean(item.toolPairId) || contentRecord?.type === 'tool_call';
+    // 工具调用正文可能超过 Snapshot V2 的 2,048 字符预览上限；此时 JSON 不完整，
+    // 不能依赖 content.type 分类。toolPairId 是模型历史中调用与结果的稳定结构身份。
+    const isToolCall = item.role === 'tool' || Boolean(item.toolPairId) || contentRecord?.type === 'tool_call';
     if (isToolCall) return [];
     const reasoning = typeof contentRecord?.provenance === 'string';
     const text = projectionText(content, item.content.preview, item.content.truncated);

@@ -1,15 +1,6 @@
-import type {DesktopReleaseUpdateStatus} from './releaseUpdateService.js';
-import {
-    type HomebrewPreparedUpdate,
-    type HomebrewUpdateProgress,
-    type HomebrewUpdateService,
-    isTransientHomebrewDownloadError
-} from './homebrewUpdateService.js';
-import {
-    createNativeUpdateProgressHost,
-    type NativeUpdateProgressHost,
-    type NativeUpdateProgressState
-} from './nativeUpdateProgress.js';
+import type { DesktopReleaseUpdateStatus } from './releaseUpdateService.js';
+import { type HomebrewPreparedUpdate, type HomebrewUpdateProgress, type HomebrewUpdateService, isTransientHomebrewDownloadError } from './homebrewUpdateService.js';
+import { createNativeUpdateProgressHost, type NativeUpdateProgressHost, type NativeUpdateProgressState } from './nativeUpdateProgress.js';
 
 export type HomebrewUpdateIndicatorPhase = 'idle' | 'available' | 'preparing' | 'retrying' | 'ready' | 'failed';
 
@@ -426,33 +417,33 @@ function progressCopy(language: 'zh-CN' | 'en-US', progress: HomebrewUpdateProgr
       progressCaption: zh ? '正在校验下载内容' : 'Verifying downloaded update',
     };
   }
-    if (progress.phase === 'reconnecting') {
-        return {
-            state: 'downloading',
-            title: zh ? '正在重新连接' : 'Reconnecting Download',
-            detail: zh
-                ? `Zeus 正在为 ${update.artifact?.fileName ?? update.latestVersion} 建立新的下载连接，并保留已下载内容。`
-                : `Zeus is opening a new download connection for ${update.artifact?.fileName ?? update.latestVersion} while keeping downloaded data.`,
-            progressCaption: zh ? `第 ${progress.reconnectCount ?? 1} 次重新连接` : `Reconnect ${progress.reconnectCount ?? 1}`,
-        };
-    }
+  if (progress.phase === 'reconnecting') {
+    return {
+      state: 'downloading',
+      title: zh ? '正在重新连接' : 'Reconnecting Download',
+      detail: zh
+        ? `Zeus 正在为 ${update.artifact?.fileName ?? update.latestVersion} 建立新的下载连接，并保留已下载内容。`
+        : `Zeus is opening a new download connection for ${update.artifact?.fileName ?? update.latestVersion} while keeping downloaded data.`,
+      progressCaption: zh ? `第 ${progress.reconnectCount ?? 1} 次重新连接` : `Reconnect ${progress.reconnectCount ?? 1}`,
+    };
+  }
   if (progress.phase === 'installing') return copyFor(language, 'installing', update.currentVersion, update);
   const totalBytes = progress.totalBytes;
   const downloadedBytes = progress.downloadedBytes;
   const ratio = downloadedBytes !== undefined && totalBytes !== undefined && totalBytes > 0 ? Math.min(1, downloadedBytes / totalBytes) : undefined;
-    const reconnectCount = progress.reconnectCount ?? 0;
-    const speedText = progress.bytesPerSecond === undefined ? null : formatByteRate(progress.bytesPerSecond);
-    const percentText = ratio === undefined ? null : formatPercent(ratio);
+  const reconnectCount = progress.reconnectCount ?? 0;
+  const speedText = progress.bytesPerSecond === undefined ? null : formatByteRate(progress.bytesPerSecond);
+  const percentText = ratio === undefined ? null : formatPercent(ratio);
   return {
     state: 'downloading',
     title: zh ? '正在下载 Zeus 更新' : 'Downloading Zeus Update',
-      detail: zh
-          ? `正在通过 Homebrew 下载 Zeus ${update.latestVersion}${reconnectCount > 0 ? `；已重新连接 ${reconnectCount} 次` : ''}。你可以继续使用 Zeus。`
-          : `Downloading Zeus ${update.latestVersion} with Homebrew${reconnectCount > 0 ? `; reconnected ${reconnectCount} time${reconnectCount === 1 ? '' : 's'}` : ''}. You can keep using Zeus.`,
+    detail: zh
+      ? `正在通过 Homebrew 下载 Zeus ${update.latestVersion}${reconnectCount > 0 ? `；已重新连接 ${reconnectCount} 次` : ''}。你可以继续使用 Zeus。`
+      : `Downloading Zeus ${update.latestVersion} with Homebrew${reconnectCount > 0 ? `; reconnected ${reconnectCount} time${reconnectCount === 1 ? '' : 's'}` : ''}. You can keep using Zeus.`,
     progressCaption: zh ? `正在下载 Zeus ${update.latestVersion}` : `Downloading Zeus ${update.latestVersion}`,
-      canReconnect: true,
-      ...(ratio === undefined ? {} : {progress: ratio}),
-      ...(percentText === null ? {} : {progressText: speedText === null ? percentText : `${percentText} · ${speedText}`}),
+    canReconnect: true,
+    ...(ratio === undefined ? {} : { progress: ratio }),
+    ...(percentText === null ? {} : { progressText: speedText === null ? percentText : `${percentText} · ${speedText}` }),
   };
 }
 
@@ -538,14 +529,14 @@ function formatPercent(ratio: number): string {
 }
 
 function formatByteRate(bytesPerSecond: number): string {
-    const normalized = Math.max(0, bytesPerSecond);
-    if (normalized >= 1024 ** 2) return `${formatRateNumber(normalized / 1024 ** 2)} MiB/s`;
-    if (normalized >= 1024) return `${formatRateNumber(normalized / 1024)} KiB/s`;
-    return `${Math.round(normalized)} B/s`;
+  const normalized = Math.max(0, bytesPerSecond);
+  if (normalized >= 1024 ** 2) return `${formatRateNumber(normalized / 1024 ** 2)} MiB/s`;
+  if (normalized >= 1024) return `${formatRateNumber(normalized / 1024)} KiB/s`;
+  return `${Math.round(normalized)} B/s`;
 }
 
 function formatRateNumber(value: number): string {
-    return value >= 10 ? String(Math.round(value)) : value.toFixed(1);
+  return value >= 10 ? String(Math.round(value)) : value.toFixed(1);
 }
 
 function formatLocalTime(value: string, language: 'zh-CN' | 'en-US'): string {
