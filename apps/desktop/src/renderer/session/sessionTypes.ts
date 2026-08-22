@@ -1,14 +1,14 @@
 import type {
-    ConversationContextDraft,
-    ConversationResource,
-    NativeTokenUsageSnapshot as SharedNativeTokenUsageSnapshot,
-    TaskPushParentContextOption,
-    TaskPushParentContextSelection,
-    TaskPushRelatedContextOption,
-    TaskPushRelatedContextSelection,
-    TurnChangeSet,
-    ZeusBrowserComment,
-    ZeusBrowserPreparedSubmission,
+  ConversationContextDraft,
+  ConversationResource,
+  NativeTokenUsageSnapshot as SharedNativeTokenUsageSnapshot,
+  TaskPushParentContextOption,
+  TaskPushParentContextSelection,
+  TaskPushRelatedContextOption,
+  TaskPushRelatedContextSelection,
+  TurnChangeSet,
+  ZeusBrowserComment,
+  ZeusBrowserPreparedSubmission,
 } from '@zeus/shared';
 
 export type { ConversationResource, ConversationResourcePreview, TurnChangeSet, TurnChangeSetOperationResult } from '@zeus/shared';
@@ -417,7 +417,7 @@ export interface NativeConversationSnapshotV2Turn {
   status: string;
   hasError: boolean;
   hasPlan: boolean;
-    plan: NativeTurnPlanSnapshot | null;
+  plan: NativeTurnPlanSnapshot | null;
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
@@ -447,8 +447,8 @@ export interface NativeConversationSnapshotV2 {
     transportKind: string;
     providerState: string;
     providerModel: string | null;
-      providerSettings: NativeProviderSettingsSnapshot | null;
-      nextTurnSettings: NativeNextTurnSettings | null;
+    providerSettings: NativeProviderSettingsSnapshot | null;
+    nextTurnSettings: NativeNextTurnSettings | null;
     agentKind: string | null;
     createdAt: string;
     updatedAt: string;

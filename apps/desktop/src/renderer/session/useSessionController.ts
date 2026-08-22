@@ -1,56 +1,45 @@
-import {useCallback, useEffect, useMemo, useSyncExternalStore} from 'react';
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
+import { type ConversationContextDraft, emptyConversationContextDraft, hasConversationContext, serializeConversationContext, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import { createInitialSessionState, sessionReducer } from './sessionReducer.js';
 import {
-    type ConversationContextDraft,
-    emptyConversationContextDraft,
-    hasConversationContext,
-    serializeConversationContext,
-    type ZeusBrowserPreparedSubmission
-} from '@zeus/shared';
-import {createInitialSessionState, sessionReducer} from './sessionReducer.js';
-import {
-    type CodexConversationCapabilities,
-    type ConversationResourcePreview,
-    isNativeConversationEvent,
-    type NativeCollaborationMode,
-    type NativeConversationAttachment,
-    type NativeConversationChangeFileV2Item,
-    type NativeConversationChangeSetV2Summary,
-    type NativeConversationChoice,
-    type NativeConversationContentV2Page,
-    type NativeConversationEvent,
-    type NativeConversationEventPage,
-    type NativeConversationModelHistoryV2Item,
-    type NativeConversationProcessV2Item,
-    type NativeConversationResourceV2Item,
-    type NativeConversationSnapshot,
-    type NativeConversationSnapshotV2,
-    type NativeConversationSnapshotV2Page,
-    type NativeConversationToolResultPage,
-    type NativeGoalResponse,
-    type NativeNextTurnSettings,
-    type NativeOperationAcceptance,
-    type NativePendingRequest,
-    type NativePermissionMode,
-    type NativePlanImplementationRequest,
-    type NativeQueuedSubmission,
-    type NativeQueueSnapshot,
-    type NativeRealtimeEventEnvelope,
-    type NativeSessionError,
-    type NativeSessionState,
-    type NativeSubagentListSnapshot,
-    type NativeSubagentThreadSnapshot,
-    type NativeTurnSettingsSelection,
-    type SendNativeMessageRequest,
-    type TurnChangeSet,
-    type TurnChangeSetOperationResult,
+  type CodexConversationCapabilities,
+  type ConversationResourcePreview,
+  isNativeConversationEvent,
+  type NativeCollaborationMode,
+  type NativeConversationAttachment,
+  type NativeConversationChangeFileV2Item,
+  type NativeConversationChangeSetV2Summary,
+  type NativeConversationChoice,
+  type NativeConversationContentV2Page,
+  type NativeConversationEvent,
+  type NativeConversationEventPage,
+  type NativeConversationModelHistoryV2Item,
+  type NativeConversationProcessV2Item,
+  type NativeConversationResourceV2Item,
+  type NativeConversationSnapshot,
+  type NativeConversationSnapshotV2,
+  type NativeConversationSnapshotV2Page,
+  type NativeConversationToolResultPage,
+  type NativeGoalResponse,
+  type NativeNextTurnSettings,
+  type NativeOperationAcceptance,
+  type NativePendingRequest,
+  type NativePermissionMode,
+  type NativePlanImplementationRequest,
+  type NativeQueuedSubmission,
+  type NativeQueueSnapshot,
+  type NativeRealtimeEventEnvelope,
+  type NativeSessionError,
+  type NativeSessionState,
+  type NativeSubagentListSnapshot,
+  type NativeSubagentThreadSnapshot,
+  type NativeTurnSettingsSelection,
+  type SendNativeMessageRequest,
+  type TurnChangeSet,
+  type TurnChangeSetOperationResult,
 } from './sessionTypes.js';
-import {
-    adaptConversationSnapshotV2,
-    mergeConversationHistoryV2,
-    mergeConversationProcessV2,
-    updateConversationV2Paging
-} from './conversationSnapshotV2Adapter.js';
-import {markConversationNavigationRenderReady} from '../performanceTraceContext.js';
+import { adaptConversationSnapshotV2, mergeConversationHistoryV2, mergeConversationProcessV2, updateConversationV2Paging } from './conversationSnapshotV2Adapter.js';
+import { markConversationNavigationRenderReady } from '../performanceTraceContext.js';
 
 export const reconnectBackoffMs = [250, 500, 1_000, 2_000, 5_000] as const;
 // 同一个会话项的增量按一帧窗口合并，兼顾 Markdown 成本与首字可见延迟。
@@ -1406,16 +1395,16 @@ export function createSessionController(options: CreateSessionControllerOptions)
   }
 
   function scheduleReconnect(token: number): void {
-      if (disposed || token !== connectionToken || reconnectLoopPromise || !stateNeedsRealtime()) {
-          if (!disposed && token === connectionToken && state.snapshot && !stateNeedsRealtime()) {
-              dispatch({type: 'transport_changed', transportState: 'ready', error: null});
-          }
-          return;
+    if (disposed || token !== connectionToken || reconnectLoopPromise || !stateNeedsRealtime()) {
+      if (!disposed && token === connectionToken && state.snapshot && !stateNeedsRealtime()) {
+        dispatch({ type: 'transport_changed', transportState: 'ready', error: null });
       }
+      return;
+    }
     const epoch = ++reconnectLoopEpoch;
     const loop = (async () => {
       let attempt = 0;
-        while (!disposed && epoch === reconnectLoopEpoch && stateNeedsRealtime()) {
+      while (!disposed && epoch === reconnectLoopEpoch && stateNeedsRealtime()) {
         dispatch({ type: 'transport_changed', transportState: 'reconnecting', reconnectAttempt: attempt + 1 });
         const delayMs = reconnectDelayMs(attempt + 1);
         if (!(await waitForReconnectDelay(delayMs, epoch))) return;
@@ -2214,7 +2203,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
           queuedUntilHydrated: true,
         });
         persistDraft();
-          if (state.transportState === 'ready' || state.transportState === 'failed' || state.transportState === 'disconnected') {
+        if (state.transportState === 'ready' || state.transportState === 'failed' || state.transportState === 'disconnected') {
           void ensureRealtimeConnection().catch(() => undefined);
         }
         return Promise.resolve();

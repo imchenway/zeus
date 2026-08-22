@@ -1,44 +1,30 @@
-import {Fragment, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
-import {motion, useReducedMotion} from 'framer-motion';
-import {
-    activityCategory,
-    isActiveSessionTurn,
-    isLiveActivityItem,
-    isOperationalActivityItem,
-    type SessionActivityCategory,
-    SessionActivityGroup,
-    SessionTurnDuration,
-    SessionTurnProcessDisclosure
-} from './SessionActivity.js';
-import {itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText} from './ThreadItemView.js';
-import {PlanSummary} from './PlanSummary.js';
+import { Fragment, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { motion, useReducedMotion } from 'framer-motion';
+import { activityCategory, isActiveSessionTurn, isLiveActivityItem, isOperationalActivityItem, type SessionActivityCategory, SessionActivityGroup, SessionTurnDuration, SessionTurnProcessDisclosure } from './SessionActivity.js';
+import { itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText } from './ThreadItemView.js';
+import { PlanSummary } from './PlanSummary.js';
 import type {
-    ConversationResource,
-    ConversationResourcePreview,
-    NativeConversationContentV2Page,
-    NativeConversationToolResultPage,
-    NativePendingRequest,
-    NativeSessionError,
-    NativeSessionItemBuffer,
-    NativeSessionState,
-    NativeTurnFailureSnapshot,
-    TurnChangeSet,
-    TurnChangeSetOperationResult,
+  ConversationResource,
+  ConversationResourcePreview,
+  NativeConversationContentV2Page,
+  NativeConversationToolResultPage,
+  NativePendingRequest,
+  NativeSessionError,
+  NativeSessionItemBuffer,
+  NativeSessionState,
+  NativeTurnFailureSnapshot,
+  TurnChangeSet,
+  TurnChangeSetOperationResult,
 } from './sessionTypes.js';
-import {isAssistantDeliverableItem} from './sessionTypes.js';
-import type {
-    ConversationFileLocation,
-    ConversationOpenTarget,
-    ConversationResponseAnnotation,
-    ConversationResponseTextAnchor
-} from '@zeus/shared';
-import {useThreadScrollController} from './useThreadScrollController.js';
-import {TurnChangeCard} from './TurnChanges.js';
-import {visibleQueuedSubmissions} from './QueuedConversationMessages.js';
-import {reasoningSummaryStatus, SessionReasoningSummary} from './SessionReasoningSummary.js';
-import {AnsweredRequestHistory, isAnsweredUserInputRequest} from './AnsweredRequestHistory.js';
-import {useNewItemMotionIds} from '../ui/useNewItemMotion.js';
-import {useTranscriptViewportVirtualizer} from './transcriptViewportVirtualizer.js';
+import { isAssistantDeliverableItem } from './sessionTypes.js';
+import type { ConversationFileLocation, ConversationOpenTarget, ConversationResponseAnnotation, ConversationResponseTextAnchor } from '@zeus/shared';
+import { useThreadScrollController } from './useThreadScrollController.js';
+import { TurnChangeCard } from './TurnChanges.js';
+import { visibleQueuedSubmissions } from './QueuedConversationMessages.js';
+import { reasoningSummaryStatus, SessionReasoningSummary } from './SessionReasoningSummary.js';
+import { AnsweredRequestHistory, isAnsweredUserInputRequest } from './AnsweredRequestHistory.js';
+import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
+import { useTranscriptViewportVirtualizer } from './transcriptViewportVirtualizer.js';
 
 export interface ConversationTranscriptProps {
   state: NativeSessionState;
@@ -147,7 +133,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const lastUserKey = [...items].reverse().find((entry) => `${entry.type}`.toLocaleLowerCase().includes('user'))?.key;
   const answeredRequests = useMemo(() => props.state.pendingRequests.filter(isAnsweredUserInputRequest), [props.state.pendingRequests]);
   const transcriptRows = useMemo(() => projectTranscriptRows(items, answeredRequests, props.state.activeTurnId), [answeredRequests, items, props.state.activeTurnId]);
-    const turnRows = useMemo(() => projectTranscriptTurnRows(transcriptRows, props.state.activeTurnId, props.state.terminalTurnIds), [props.state.activeTurnId, props.state.terminalTurnIds, transcriptRows]);
+  const turnRows = useMemo(() => projectTranscriptTurnRows(transcriptRows, props.state.activeTurnId, props.state.terminalTurnIds), [props.state.activeTurnId, props.state.terminalTurnIds, transcriptRows]);
   const turnRowKeys = useMemo(() => turnRows.map((row) => row.key), [turnRows]);
   const turnRowsByKey = useMemo(() => new Map(turnRows.map((row) => [row.key, row])), [turnRows]);
   const activeTurnRowKeys = useMemo(() => new Set(turnRows.filter((row) => props.state.activeTurnId && transcriptTurnRowTurnId(row) === props.state.activeTurnId).map((row) => row.key)), [props.state.activeTurnId, turnRows]);
@@ -439,15 +425,13 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     if (row.kind === 'turn_work') {
       const turn = props.state.turnsByProviderId[row.turnId];
       if (!turn) {
-          return (
-              <SessionTurnProcessDisclosure language={props.language} open={expandedRowKeys.has(row.key)}
-                                            onOpenChange={(open) => setTranscriptRowExpanded(row.key, open)}>
-                  {row.rows.map((child) => (
-                      <Fragment
-                          key={child.key}>{renderTranscriptRow(child, transcriptRowRenderOptions(renderProps, items, false, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId))}</Fragment>
-                  ))}
-              </SessionTurnProcessDisclosure>
-          );
+        return (
+          <SessionTurnProcessDisclosure language={props.language} open={expandedRowKeys.has(row.key)} onOpenChange={(open) => setTranscriptRowExpanded(row.key, open)}>
+            {row.rows.map((child) => (
+              <Fragment key={child.key}>{renderTranscriptRow(child, transcriptRowRenderOptions(renderProps, items, false, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId))}</Fragment>
+            ))}
+          </SessionTurnProcessDisclosure>
+        );
       }
       const containsLastItem = row.rows.some((child) => transcriptRowContainsItemKey(child, lastItemKeyByTurn[row.turnId]));
       const active = isActiveSessionTurn(turn);
@@ -600,15 +584,14 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             <p className="session-transcript-empty">{props.language === 'zh-CN' ? '发送第一条消息后，真实 app-server 对话会显示在这里。' : 'Send the first message to begin the real app-server transcript.'}</p>
           ) : !showActiveStatus && historyUnavailable ? (
             <p className="session-transcript-empty" role="status">
-                {props.language === 'zh-CN' ? '会话暂时未加载；重新进入或发送消息时会自动读取。' : 'The conversation is not loaded yet. It will be read automatically when you return or send a message.'}
+              {props.language === 'zh-CN' ? '会话暂时未加载；重新进入或发送消息时会自动读取。' : 'The conversation is not loaded yet. It will be read automatically when you return or send a message.'}
             </p>
           ) : null}
           {orphanFailedTurns.map((turn) => (
             <TurnFailureCard key={`turn-failure:${turn.providerTurnId ?? turn.id}`} failure={turn.error!} language={props.language} providerErrors={providerErrorItemsByTurn.get(turn.providerTurnId ?? '')} />
           ))}
           {showCreationStatus && props.creationStatus ? <SessionCreationNotice status={props.creationStatus} language={props.language} /> : null}
-            {showStandaloneActiveStatus ?
-                <TranscriptActiveStatus language={props.language} kind={activeStatusKind}/> : null}
+          {showStandaloneActiveStatus ? <TranscriptActiveStatus language={props.language} kind={activeStatusKind} /> : null}
           <span ref={latestContentMarkerRef} className="session-latest-content-marker" aria-hidden="true" />
         </section>
         <button
@@ -1179,8 +1162,7 @@ function TranscriptActiveStatus(props: { language: SessionUiLanguage; kind: 'sta
   return (
     <p className="session-transcript-thinking" data-motion-active="true" role="status" aria-live="polite">
       <span className="session-thinking-pulse" aria-hidden="true" />
-        <span
-            className="session-current-status-text">{props.kind === 'starting' ? (props.language === 'zh-CN' ? '正在启动处理' : 'Starting processing') : props.language === 'zh-CN' ? '正在思考' : 'Thinking'}</span>
+      <span className="session-current-status-text">{props.kind === 'starting' ? (props.language === 'zh-CN' ? '正在启动处理' : 'Starting processing') : props.language === 'zh-CN' ? '正在思考' : 'Thinking'}</span>
     </p>
   );
 }
@@ -1299,7 +1281,7 @@ function renderTurnArtifacts(turnId: string, props: ConversationTranscriptProps,
 
 export function projectTranscriptTurnRows(rows: readonly TranscriptRow[], activeTurnId: string | null = null, terminalTurnIds: Readonly<Record<string, 'completed' | 'interrupted' | 'failed'>> = {}): TranscriptTurnRow[] {
   const finalAnswerTurnIds = new Set(rows.flatMap((row) => (row.kind === 'item' && isFinalAnswerItem(row.item) ? [row.item.turnId] : [])));
-    const collapsibleTurnIds = new Set([...finalAnswerTurnIds, ...Object.keys(terminalTurnIds)]);
+  const collapsibleTurnIds = new Set([...finalAnswerTurnIds, ...Object.keys(terminalTurnIds)]);
   const openingUserRowKeyByTurn = new Map<string, string>();
   for (const row of rows) {
     if (row.kind !== 'item' || itemRole(row.item) !== 'user' || openingUserRowKeyByTurn.has(row.item.turnId)) continue;
@@ -1314,7 +1296,7 @@ export function projectTranscriptTurnRows(rows: readonly TranscriptRow[], active
   const finalWorkRowKeys = new Set<string>();
   for (const row of rows) {
     const turnId = transcriptRowTurnId(row);
-      if (!turnId || !collapsibleTurnIds.has(turnId) || !isTurnProcessRow(row)) continue;
+    if (!turnId || !collapsibleTurnIds.has(turnId) || !isTurnProcessRow(row)) continue;
     const workRows = workRowsByFinalTurn.get(turnId) ?? [];
     workRows.push(row);
     workRowsByFinalTurn.set(turnId, workRows);
@@ -1401,18 +1383,18 @@ export function isFinalAnswerItem(item: NativeSessionItemBuffer): boolean {
 
 export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[], answeredRequests: readonly NativePendingRequest[] = [], activeTurnId: string | null = null): TranscriptRow[] {
   const rows: TranscriptRow[] = [];
-    const effectiveActiveTurnId = activeTurnId && items.some((item) => item.turnId === activeTurnId) ? activeTurnId : latestLiveTurnId(items);
-    const currentReasoningItemKey = latestCurrentReasoningItemKey(items, effectiveActiveTurnId);
-    const currentActivityItemKey = latestCurrentActivityItemKey(items, effectiveActiveTurnId);
-    const activitiesByTurn = new Map<string, NativeSessionItemBuffer[]>();
-    for (const item of items) {
-        if (isSubagentCoordinationItem(item) || !isOperationalActivityItem(item)) continue;
-        const activity = activitiesByTurn.get(item.turnId) ?? [];
-        activity.push(item);
-        activitiesByTurn.set(item.turnId, activity);
-    }
-    const emittedActivityTurns = new Set<string>();
-    let currentReasoningRow: TranscriptRow | null = null;
+  const effectiveActiveTurnId = activeTurnId && items.some((item) => item.turnId === activeTurnId) ? activeTurnId : latestLiveTurnId(items);
+  const currentReasoningItemKey = latestCurrentReasoningItemKey(items, effectiveActiveTurnId);
+  const currentActivityItemKey = latestCurrentActivityItemKey(items, effectiveActiveTurnId);
+  const activitiesByTurn = new Map<string, NativeSessionItemBuffer[]>();
+  for (const item of items) {
+    if (isSubagentCoordinationItem(item) || !isOperationalActivityItem(item)) continue;
+    const activity = activitiesByTurn.get(item.turnId) ?? [];
+    activity.push(item);
+    activitiesByTurn.set(item.turnId, activity);
+  }
+  const emittedActivityTurns = new Set<string>();
+  let currentReasoningRow: TranscriptRow | null = null;
   const timeline: Array<{ kind: 'item'; item: NativeSessionItemBuffer } | { kind: 'answered_request'; request: NativePendingRequest }> = items.map((item) => ({ kind: 'item', item }));
   for (const request of [...answeredRequests].sort((left, right) => (left.resolvedAt ?? left.createdAt).localeCompare(right.resolvedAt ?? right.createdAt))) {
     const requestTimelineAt = request.resolvedAt ?? request.createdAt;
@@ -1429,12 +1411,13 @@ export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[],
     // 多智能体协调事件统一进入右侧智能体面板，不在主会话重复暴露协议载荷。
     if (isSubagentCoordinationItem(item)) continue;
     if (normalizeItemType(item.type) === 'reasoning') {
-        // 活动轮次只显示最新摘要，并固定到全部过程项之后；新命令、网页搜索或技能调用到达时，
-        // 摘要不会被挤到中间，也不会为每个摘要切出新的活动组。
-        if (item.key === currentReasoningItemKey) currentReasoningRow = {
-            kind: 'item',
-            key: `current-reasoning:${item.turnId}`,
-            item
+      // 活动轮次只显示最新摘要，并固定到全部过程项之后；新命令、网页搜索或技能调用到达时，
+      // 摘要不会被挤到中间，也不会为每个摘要切出新的活动组。
+      if (item.key === currentReasoningItemKey)
+        currentReasoningRow = {
+          kind: 'item',
+          key: `current-reasoning:${item.turnId}`,
+          item,
         };
       continue;
     }
@@ -1442,20 +1425,20 @@ export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[],
       rows.push({ kind: 'item', key: transcriptItemRenderKey(item), item });
       continue;
     }
-      if (emittedActivityTurns.has(item.turnId)) continue;
-      const groupedItems = activitiesByTurn.get(item.turnId) ?? [item];
-      const categories = new Set(groupedItems.map(activityCategory));
-      const category = categories.size === 1 ? activityCategory(groupedItems[0]!) : 'mixed';
-      rows.push({
-          kind: 'activity',
-          key: `activity:${item.turnId}`,
-          items: groupedItems,
-          category,
-          motionActive: groupedItems.some((candidate) => candidate.key === currentActivityItemKey),
-      });
-      emittedActivityTurns.add(item.turnId);
+    if (emittedActivityTurns.has(item.turnId)) continue;
+    const groupedItems = activitiesByTurn.get(item.turnId) ?? [item];
+    const categories = new Set(groupedItems.map(activityCategory));
+    const category = categories.size === 1 ? activityCategory(groupedItems[0]!) : 'mixed';
+    rows.push({
+      kind: 'activity',
+      key: `activity:${item.turnId}`,
+      items: groupedItems,
+      category,
+      motionActive: groupedItems.some((candidate) => candidate.key === currentActivityItemKey),
+    });
+    emittedActivityTurns.add(item.turnId);
   }
-    if (currentReasoningRow) rows.push(currentReasoningRow);
+  if (currentReasoningRow) rows.push(currentReasoningRow);
   return rows;
 }
 
@@ -1474,7 +1457,7 @@ function latestCurrentActivityItemKey(items: readonly NativeSessionItemBuffer[],
 }
 
 function latestLiveTurnId(items: readonly NativeSessionItemBuffer[]): string | null {
-    return [...items].reverse().find((item) => item.status !== 'completed' && item.status !== 'failed' && item.status !== 'interrupted')?.turnId ?? null;
+  return [...items].reverse().find((item) => item.status !== 'completed' && item.status !== 'failed' && item.status !== 'interrupted')?.turnId ?? null;
 }
 
 function lastVisibleItemKeyByTurn(rows: readonly TranscriptRow[]): Record<string, string> {
@@ -1557,18 +1540,18 @@ function sessionMotionKind(item: NativeSessionItemBuffer): Exclude<SessionMotion
 
 export function shouldShowTranscriptThinking(state: NativeSessionState, items: readonly NativeSessionItemBuffer[] = Object.values(state.items)): boolean {
   if (state.conversationState !== 'starting_turn' && state.conversationState !== 'active_prework' && state.conversationState !== 'active_final_answer') return false;
-    if (state.conversationState === 'starting_turn') return true;
-    const effectiveActiveTurnId = state.activeTurnId && items.some((item) => item.turnId === state.activeTurnId) ? state.activeTurnId : latestLiveTurnId(items);
-    if (!effectiveActiveTurnId) return true;
-    return !items.some((item) => item.turnId === effectiveActiveTurnId && itemProvidesCurrentModelStatus(item, state));
+  if (state.conversationState === 'starting_turn') return true;
+  const effectiveActiveTurnId = state.activeTurnId && items.some((item) => item.turnId === state.activeTurnId) ? state.activeTurnId : latestLiveTurnId(items);
+  if (!effectiveActiveTurnId) return true;
+  return !items.some((item) => item.turnId === effectiveActiveTurnId && itemProvidesCurrentModelStatus(item, state));
 }
 
 function itemProvidesCurrentModelStatus(item: NativeSessionItemBuffer, state: NativeSessionState): boolean {
-    // 只有“模型当前在做什么”的思考摘要或已经开始的最终回答可以替代底部状态行；
-    // 命令、文件、网页和技能只是过程明细，不能让进行中状态消失。
+  // 只有“模型当前在做什么”的思考摘要或已经开始的最终回答可以替代底部状态行；
+  // 命令、文件、网页和技能只是过程明细，不能让进行中状态消失。
   if (normalizeItemType(item.type) === 'reasoning' && reasoningSummaryStatus(item, state) === 'active' && transcriptItemText(item).trim().length > 0) return true;
   if (item.status === 'completed' || item.status === 'failed' || item.status === 'interrupted') return false;
-    return isFinalAnswerItem(item);
+  return isFinalAnswerItem(item);
 }
 
 export interface CompletedItemAnnouncementTracker {

@@ -1,16 +1,16 @@
 import type {
-    NativeConversationChoice,
-    NativeConversationModelHistoryV2Item,
-    NativeConversationProcessV2Item,
-    NativeConversationSnapshot,
-    NativeConversationSnapshotV2,
-    NativeConversationSnapshotV2Page,
-    NativeGoalResponse,
-    NativeItemSnapshot,
-    NativePendingRequest,
-    NativeQueueSnapshot,
-    NativeTurnSnapshot,
-    NativeUnifiedUsageSnapshot,
+  NativeConversationChoice,
+  NativeConversationModelHistoryV2Item,
+  NativeConversationProcessV2Item,
+  NativeConversationSnapshot,
+  NativeConversationSnapshotV2,
+  NativeConversationSnapshotV2Page,
+  NativeGoalResponse,
+  NativeItemSnapshot,
+  NativePendingRequest,
+  NativeQueueSnapshot,
+  NativeTurnSnapshot,
+  NativeUnifiedUsageSnapshot,
 } from './sessionTypes.js';
 
 const syncStreamProtocolGeneration = 'zeus-conversation-sync-v1' as const;
@@ -33,17 +33,17 @@ export function adaptConversationSnapshotV2(input: ConversationSnapshotV2Bootstr
   const snapshot = input.snapshot;
   const choice = input.choice;
   const turns = snapshotTurns(snapshot);
-    const permissionMode = snapshot.conversation.nextTurnSettings?.permissionMode ?? choice.permissionMode ?? 'read-only';
-    const collaborationMode = snapshot.conversation.nextTurnSettings?.collaborationMode ?? choice.collaborationMode ?? 'default';
-    const nextTurnSettings =
-        snapshot.conversation.nextTurnSettings ??
-        (snapshot.conversation.providerModel
-            ? {
-                model: snapshot.conversation.providerModel,
-                permissionMode,
-                collaborationMode,
-            }
-            : undefined);
+  const permissionMode = snapshot.conversation.nextTurnSettings?.permissionMode ?? choice.permissionMode ?? 'read-only';
+  const collaborationMode = snapshot.conversation.nextTurnSettings?.collaborationMode ?? choice.collaborationMode ?? 'default';
+  const nextTurnSettings =
+    snapshot.conversation.nextTurnSettings ??
+    (snapshot.conversation.providerModel
+      ? {
+          model: snapshot.conversation.providerModel,
+          permissionMode,
+          collaborationMode,
+        }
+      : undefined);
   const usage = emptyUnifiedUsage();
   return {
     conversationSchemaGeneration: snapshot.conversationSchemaGeneration,
@@ -60,7 +60,7 @@ export function adaptConversationSnapshotV2(input: ConversationSnapshotV2Bootstr
     },
     openSegment: snapshot.openSegment,
     segments: snapshot.openSegment ? [snapshot.openSegment] : [],
-      composerPreset: nextTurnSettings ? {...nextTurnSettings} : {},
+    composerPreset: nextTurnSettings ? { ...nextTurnSettings } : {},
     executionQueue: input.queue,
     process: [],
     usage,
@@ -117,7 +117,7 @@ export function adaptConversationSnapshotV2(input: ConversationSnapshotV2Bootstr
     queue: input.queue,
     requests: input.requests,
     planImplementationRequests: [],
-      ...(snapshot.conversation.providerSettings ? {providerSettings: snapshot.conversation.providerSettings} : snapshot.conversation.providerModel ? {providerSettings: {model: snapshot.conversation.providerModel}} : {}),
+    ...(snapshot.conversation.providerSettings ? { providerSettings: snapshot.conversation.providerSettings } : snapshot.conversation.providerModel ? { providerSettings: { model: snapshot.conversation.providerModel } } : {}),
     ...(nextTurnSettings ? { nextTurnSettings } : {}),
     permissionMode,
     collaborationMode,
@@ -206,7 +206,7 @@ function snapshotTurns(snapshot: NativeConversationSnapshotV2): NativeTurnSnapsh
       submissionId: turn.submissionId,
       status: turn.status,
       error: null,
-        plan: turn.plan,
+      plan: turn.plan,
       startedAt: turn.startedAt,
       completedAt: turn.completedAt,
       createdAt: turn.createdAt,

@@ -1,7 +1,4 @@
-import {
-    currentConversationNavigationTraceId,
-    markConversationNavigationSnapshotSettled
-} from '../performanceTraceContext.js';
+import { currentConversationNavigationTraceId, markConversationNavigationSnapshotSettled } from '../performanceTraceContext.js';
 
 /**
  * Renderer 各 bounded context 共享的公开传输端口。
@@ -53,12 +50,12 @@ export class ZeusApiError extends Error {
 const localApiReadTimeoutMs = 8_000;
 
 class LocalApiReadTimeoutError extends Error {
-    readonly code = 'ZEUS_LOCAL_API_READ_TIMEOUT';
+  readonly code = 'ZEUS_LOCAL_API_READ_TIMEOUT';
 
-    constructor(path: string) {
-        super(`Zeus 本地服务读取超时：${apiRouteFamily(path)}`);
-        this.name = 'LocalApiReadTimeoutError';
-    }
+  constructor(path: string) {
+    super(`Zeus 本地服务读取超时：${apiRouteFamily(path)}`);
+    this.name = 'LocalApiReadTimeoutError';
+  }
 }
 
 export function createLocalApiTransport(options: { getConnection(): LocalApiConnection; refreshConnection?: () => Promise<LocalApiConnection>; onPerformanceSpan?: (span: ZeusClientPerformanceSpan) => void }): LocalApiTransport {
@@ -92,20 +89,20 @@ export function createLocalApiTransport(options: { getConnection(): LocalApiConn
       const startedAt = performance.now();
       let response: Response | null = null;
       try {
-          const blob = await runWithReadTimeout(
-              {
-                  headers: {
-                      authorization: `Bearer ${connection.apiToken}`,
-                      'x-zeus-trace-id': traceId,
-                  },
-              },
-              path,
-              async (timedInit) => {
-                  response = await fetch(`${connection.baseUrl}${path}`, timedInit);
-                  if (!response.ok) throw await responseError(response, path);
-                  return response.blob();
-              },
-          );
+        const blob = await runWithReadTimeout(
+          {
+            headers: {
+              authorization: `Bearer ${connection.apiToken}`,
+              'x-zeus-trace-id': traceId,
+            },
+          },
+          path,
+          async (timedInit) => {
+            response = await fetch(`${connection.baseUrl}${path}`, timedInit);
+            if (!response.ok) throw await responseError(response, path);
+            return response.blob();
+          },
+        );
         recordClientPerformanceSpan(options.onPerformanceSpan, blobPerformanceSpan(response, traceId, attempt, startedAt, true));
         return blob;
       } catch (error) {
@@ -147,25 +144,25 @@ async function requestOnce<T>(connection: LocalApiConnection, path: string, init
   headers.set('x-zeus-trace-id', traceId);
   if (init?.body) headers.set('content-type', 'application/json');
   const startedAt = performance.now();
-    const readState: { response: Response | null; responseReceivedAt: number | null } = {
-        response: null,
-        responseReceivedAt: null
-    };
+  const readState: { response: Response | null; responseReceivedAt: number | null } = {
+    response: null,
+    responseReceivedAt: null,
+  };
   let completedSuccessfully = false;
   try {
-      const result = await runWithReadTimeout({...init, headers}, path, async (timedInit) => {
-          readState.response = await fetch(`${connection.baseUrl}${path}`, timedInit);
-          readState.responseReceivedAt = performance.now();
-          if (!readState.response.ok) throw await responseError(readState.response, path);
-          if (readState.response.status === 204 || readState.response.headers.get('content-length') === '0') return undefined as T;
-          return (await readState.response.json()) as T;
-      });
+    const result = await runWithReadTimeout({ ...init, headers }, path, async (timedInit) => {
+      readState.response = await fetch(`${connection.baseUrl}${path}`, timedInit);
+      readState.responseReceivedAt = performance.now();
+      if (!readState.response.ok) throw await responseError(readState.response, path);
+      if (readState.response.status === 204 || readState.response.headers.get('content-length') === '0') return undefined as T;
+      return (await readState.response.json()) as T;
+    });
     completedSuccessfully = true;
     return result;
   } finally {
     const completedAt = performance.now();
-      const response = readState.response;
-      const responseReceivedAt = readState.responseReceivedAt;
+    const response = readState.response;
+    const responseReceivedAt = readState.responseReceivedAt;
     recordClientPerformanceSpan(observer, {
       traceId,
       attempt,
@@ -219,7 +216,7 @@ function blobPerformanceSpan(response: Response | null, traceId: string, attempt
 
 function isLikelyLocalServerConnectionError(error: unknown): boolean {
   if (error instanceof ZeusApiError) return false;
-    if (error instanceof LocalApiReadTimeoutError) return true;
+  if (error instanceof LocalApiReadTimeoutError) return true;
   if (error instanceof TypeError) return true;
   if (!(error instanceof Error)) return false;
   const code = (error as Error & { code?: unknown }).code;
@@ -228,29 +225,29 @@ function isLikelyLocalServerConnectionError(error: unknown): boolean {
 }
 
 async function runWithReadTimeout<T>(init: RequestInit, path: string, operation: (timedInit: RequestInit) => Promise<T>): Promise<T> {
-    const method = (init.method ?? 'GET').toUpperCase();
-    if (method !== 'GET') return operation(init);
+  const method = (init.method ?? 'GET').toUpperCase();
+  if (method !== 'GET') return operation(init);
 
-    const controller = new AbortController();
-    const callerSignal = init.signal;
-    let timedOut = false;
-    const forwardAbort = (): void => controller.abort(callerSignal?.reason);
-    if (callerSignal?.aborted) forwardAbort();
-    else callerSignal?.addEventListener('abort', forwardAbort, {once: true});
-    const timer = globalThis.setTimeout(() => {
-        timedOut = true;
-        controller.abort();
-    }, localApiReadTimeoutMs);
-    try {
-        // 超时覆盖响应头和正文解析，避免本地服务只返回响应头后让 JSON/Blob 读取永久悬挂。
-        return await operation({...init, signal: controller.signal});
-    } catch (error) {
-        if (timedOut) throw new LocalApiReadTimeoutError(path);
-        throw error;
-    } finally {
-        globalThis.clearTimeout(timer);
-        callerSignal?.removeEventListener('abort', forwardAbort);
-    }
+  const controller = new AbortController();
+  const callerSignal = init.signal;
+  let timedOut = false;
+  const forwardAbort = (): void => controller.abort(callerSignal?.reason);
+  if (callerSignal?.aborted) forwardAbort();
+  else callerSignal?.addEventListener('abort', forwardAbort, { once: true });
+  const timer = globalThis.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, localApiReadTimeoutMs);
+  try {
+    // 超时覆盖响应头和正文解析，避免本地服务只返回响应头后让 JSON/Blob 读取永久悬挂。
+    return await operation({ ...init, signal: controller.signal });
+  } catch (error) {
+    if (timedOut) throw new LocalApiReadTimeoutError(path);
+    throw error;
+  } finally {
+    globalThis.clearTimeout(timer);
+    callerSignal?.removeEventListener('abort', forwardAbort);
+  }
 }
 
 function createClientTraceId(path: string): string {

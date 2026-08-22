@@ -1,13 +1,6 @@
-import {
-    createSessionController,
-    type SessionControllerClient,
-    sessionRealtimeBufferBudget
-} from '../apps/desktop/src/renderer/session/useSessionController.ts';
-import {
-    adaptConversationSnapshotV2,
-    mergeConversationProcessV2
-} from '../apps/desktop/src/renderer/session/conversationSnapshotV2Adapter.ts';
-import type {NativeRealtimeEventEnvelope} from '../apps/desktop/src/renderer/session/sessionTypes.ts';
+import { createSessionController, type SessionControllerClient, sessionRealtimeBufferBudget } from '../apps/desktop/src/renderer/session/useSessionController.ts';
+import { adaptConversationSnapshotV2, mergeConversationProcessV2 } from '../apps/desktop/src/renderer/session/conversationSnapshotV2Adapter.ts';
+import type { NativeRealtimeEventEnvelope } from '../apps/desktop/src/renderer/session/sessionTypes.ts';
 
 const projectId = 'renderer-event-flow-project';
 const conversationId = 'renderer-event-flow-conversation';
@@ -34,8 +27,8 @@ const snapshotV2 = {
     transportKind: 'codex_native',
     providerState: 'idle',
     providerModel: 'probe-model',
-      providerSettings: null,
-      nextTurnSettings: null,
+    providerSettings: null,
+    nextTurnSettings: null,
     agentKind: 'codex',
     createdAt: occurredAt,
     updatedAt: occurredAt,
@@ -332,69 +325,69 @@ function verifyInternalPayloadsStayOutOfTranscript() {
 }
 
 function verifySnapshotV2SettingsAndPlanRestoration() {
-    const plan = {
-        explanation: '保留已完成的开发计划',
-        steps: [
-            {step: '读取历史快照', status: 'completed' as const},
-            {step: '继续实施', status: 'inProgress' as const},
-        ],
-    };
-    const adapted = adaptConversationSnapshotV2({
-        snapshot: {
-            ...snapshotV2,
-            conversation: {
-                ...snapshotV2.conversation,
-                providerSettings: {
-                    generationId: 'generation-xhigh',
-                    sequence: 7,
-                    model: 'probe-model',
-                    effort: 'xhigh',
-                    serviceTier: 'priority'
-                },
-                nextTurnSettings: {
-                    model: 'probe-model',
-                    effort: 'xhigh',
-                    serviceTier: 'priority',
-                    permissionMode: 'full-access',
-                    collaborationMode: 'plan'
-                },
-            },
-            recentClosedTurns: [
-                {
-                    id: 'plan-turn',
-                    providerTurnId: 'provider-plan-turn',
-                    submissionId: null,
-                    status: 'completed',
-                    hasError: false,
-                    hasPlan: true,
-                    plan,
-                    startedAt: occurredAt,
-                    completedAt: occurredAt,
-                    createdAt: occurredAt,
-                    updatedAt: occurredAt,
-                    agentKind: 'codex',
-                    process: {available: false, latestSequence: 0},
-                    resourcesAvailable: false,
-                    changeSetAvailable: false,
-                },
-            ],
-            limits: {...snapshotV2.limits, returnedTurnCount: 1},
+  const plan = {
+    explanation: '保留已完成的开发计划',
+    steps: [
+      { step: '读取历史快照', status: 'completed' as const },
+      { step: '继续实施', status: 'inProgress' as const },
+    ],
+  };
+  const adapted = adaptConversationSnapshotV2({
+    snapshot: {
+      ...snapshotV2,
+      conversation: {
+        ...snapshotV2.conversation,
+        providerSettings: {
+          generationId: 'generation-xhigh',
+          sequence: 7,
+          model: 'probe-model',
+          effort: 'xhigh',
+          serviceTier: 'priority',
         },
-        history: historyV2,
-        queue,
-        requests: [],
-        choice,
-        goal,
-    });
-    assert(adapted.providerSettings?.effort === 'xhigh', 'Snapshot V2 must restore the authoritative provider effort.');
-    assert(adapted.nextTurnSettings?.effort === 'xhigh' && adapted.nextTurnSettings.collaborationMode === 'plan', 'Snapshot V2 must restore the next-turn PLAN settings without falling back to low/default.');
-    assert(adapted.turns[0]?.plan?.steps[1]?.status === 'inProgress', 'Snapshot V2 must restore the persisted development plan after the active turn closes.');
-    return {
-        providerEffort: adapted.providerSettings.effort,
-        nextTurnEffort: adapted.nextTurnSettings.effort,
-        collaborationMode: adapted.nextTurnSettings.collaborationMode,
-        restoredPlanSteps: adapted.turns[0]?.plan?.steps.length ?? 0
-    };
+        nextTurnSettings: {
+          model: 'probe-model',
+          effort: 'xhigh',
+          serviceTier: 'priority',
+          permissionMode: 'full-access',
+          collaborationMode: 'plan',
+        },
+      },
+      recentClosedTurns: [
+        {
+          id: 'plan-turn',
+          providerTurnId: 'provider-plan-turn',
+          submissionId: null,
+          status: 'completed',
+          hasError: false,
+          hasPlan: true,
+          plan,
+          startedAt: occurredAt,
+          completedAt: occurredAt,
+          createdAt: occurredAt,
+          updatedAt: occurredAt,
+          agentKind: 'codex',
+          process: { available: false, latestSequence: 0 },
+          resourcesAvailable: false,
+          changeSetAvailable: false,
+        },
+      ],
+      limits: { ...snapshotV2.limits, returnedTurnCount: 1 },
+    },
+    history: historyV2,
+    queue,
+    requests: [],
+    choice,
+    goal,
+  });
+  assert(adapted.providerSettings?.effort === 'xhigh', 'Snapshot V2 must restore the authoritative provider effort.');
+  assert(adapted.nextTurnSettings?.effort === 'xhigh' && adapted.nextTurnSettings.collaborationMode === 'plan', 'Snapshot V2 must restore the next-turn PLAN settings without falling back to low/default.');
+  assert(adapted.turns[0]?.plan?.steps[1]?.status === 'inProgress', 'Snapshot V2 must restore the persisted development plan after the active turn closes.');
+  return {
+    providerEffort: adapted.providerSettings.effort,
+    nextTurnEffort: adapted.nextTurnSettings.effort,
+    collaborationMode: adapted.nextTurnSettings.collaborationMode,
+    restoredPlanSteps: adapted.turns[0]?.plan?.steps.length ?? 0,
+  };
 }
 
 async function verifyActiveSnapshotWatermarkSubscription() {
@@ -532,7 +525,7 @@ async function verifyContiguousGapReplay() {
 const result = {
   budget: sessionRealtimeBufferBudget,
   internalPayloadVisibility: verifyInternalPayloadsStayOutOfTranscript(),
-    snapshotV2SettingsAndPlanRestoration: verifySnapshotV2SettingsAndPlanRestoration(),
+  snapshotV2SettingsAndPlanRestoration: verifySnapshotV2SettingsAndPlanRestoration(),
   idleHistoryWithoutSubscription: await verifyIdleHistoryDoesNotSubscribe(),
   activeSnapshotWatermarkSubscription: await verifyActiveSnapshotWatermarkSubscription(),
   idleTransitionReleasesSubscription: await verifyIdleTransitionReleasesSubscription(),
