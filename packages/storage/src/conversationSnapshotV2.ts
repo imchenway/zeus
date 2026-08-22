@@ -1,6 +1,6 @@
-import type { ZeusDatabasePort } from './databasePort.js';
-import { artifactStoreGeneration, type ArtifactRef, type ArtifactStore } from './artifactStore.js';
-import { conversationSchemaGeneration } from './conversationExecutionStore.js';
+import type {ZeusDatabasePort} from './databasePort.js';
+import {type ArtifactRef, type ArtifactStore, artifactStoreGeneration} from './artifactStore.js';
+import {conversationSchemaGeneration} from './conversationExecutionStore.js';
 
 export const conversationSnapshotV2StructureGeneration = '2026-08-21-conversation-snapshot-v2';
 
@@ -29,6 +29,14 @@ export const conversationSnapshotV2Limits = {
 type ConversationPageKind = 'timeline' | 'model_history' | 'process' | 'commands' | 'resources' | 'change_files';
 type ConversationContentKind = 'timeline_payload' | 'model_content' | 'process_detail' | 'change_file_diff';
 type ConversationProcessKind = 'reasoning' | 'tool' | 'command' | 'retry' | 'context_compaction' | 'waiting' | 'warning';
+
+// 模型历史持久化的是结构化 JSON；会话正文只读取其中的可见文本，绝不能把内部 tool_call 包装层当作消息正文。
+// 工具调用没有 text 字段，继续保留原 JSON 预览供结构分类，Renderer 会按 toolPairId/type 将其从消息流排除。
+const modelHistoryVisibleContentSql = `CASE
+  WHEN json_valid(content_json) AND json_type(content_json, '$.text') = 'text'
+    THEN json_extract(content_json, '$.text')
+  ELSE content_json
+END`;
 
 export type ConversationSnapshotV2ErrorCode =
   | 'ZEUS_CONVERSATION_SNAPSHOT_V2_INVALID_ARGUMENT'
@@ -550,9 +558,9 @@ export class ConversationSnapshotV2Repository {
     const context = this.sequencePageContext(input, 'model_history', '');
     const rows = this.db.select<ModelHistoryProjectionRow>(
       `SELECT id, sequence, turn_id, submission_id, segment_id, role, tool_pair_id, confirmed_at,
-              substr(content_json, 1, ?) AS content_preview,
-              length(CAST(content_json AS BLOB)) AS content_bytes,
-              length(content_json) AS content_characters
+              substr(${modelHistoryVisibleContentSql}, 1, ?)         AS content_preview,
+              length(CAST(${modelHistoryVisibleContentSql} AS BLOB)) AS content_bytes,
+              length(${modelHistoryVisibleContentSql})               AS content_characters
          FROM conversation_model_history
         WHERE conversation_id = ? AND sequence > ? AND sequence <= ?
         ORDER BY sequence
@@ -577,9 +585,9 @@ export class ConversationSnapshotV2Repository {
     if (throughSequence === 0) return emptyPage(conversationId, 'model_history', throughEventSeq, limits);
     const rows = this.db.select<ModelHistoryProjectionRow>(
       `SELECT id, sequence, turn_id, submission_id, segment_id, role, tool_pair_id, confirmed_at,
-              substr(content_json, 1, ?) AS content_preview,
-              length(CAST(content_json AS BLOB)) AS content_bytes,
-              length(content_json) AS content_characters
+              substr(${modelHistoryVisibleContentSql}, 1, ?)         AS content_preview,
+              length(CAST(${modelHistoryVisibleContentSql} AS BLOB)) AS content_bytes,
+              length(${modelHistoryVisibleContentSql})               AS content_characters
          FROM conversation_model_history
         WHERE conversation_id = ? AND sequence < ? AND sequence <= ?
         ORDER BY sequence DESC
@@ -946,7 +954,7 @@ export class ConversationSnapshotV2Repository {
       structureGeneration: conversationSnapshotV2StructureGeneration,
       conversationId,
       kind: payload.kind,
-      mimeType: payload.kind === 'change_file_diff' ? 'text/x-diff; charset=utf-8' : 'application/json; charset=utf-8',
+        mimeType: payload.kind === 'change_file_diff' ? 'text/x-diff; charset=utf-8' : payload.kind === 'model_content' ? 'text/plain; charset=utf-8' : 'application/json; charset=utf-8',
       text: redacted.text,
       offset,
       nextOffset,
@@ -1142,9 +1150,9 @@ export class ConversationSnapshotV2Repository {
     }
     if (payload.kind === 'model_content') {
       return this.db.get(
-        `SELECT substr(content_json, ?, ?) AS content_slice,
-                length(content_json) AS total_characters,
-                length(CAST(content_json AS BLOB)) AS total_bytes,
+          `SELECT substr(${modelHistoryVisibleContentSql}, ?, ?)         AS content_slice,
+                  length(${modelHistoryVisibleContentSql})               AS total_characters,
+                  length(CAST(${modelHistoryVisibleContentSql} AS BLOB)) AS total_bytes,
                 confirmed_at AS revision,
                 0 AS transitioning
            FROM conversation_model_history

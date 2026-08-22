@@ -1,6 +1,10 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { ConversationSnapshotV2Error, type ConversationSnapshotV2Repository, conversationSnapshotV2StructureGeneration } from '@zeus/storage';
-import type { ConversationSnapshotCompatibilityTracker } from './conversationSnapshotCompatibility.js';
+import type {FastifyInstance, FastifyReply, FastifyRequest} from 'fastify';
+import {
+    ConversationSnapshotV2Error,
+    type ConversationSnapshotV2Repository,
+    conversationSnapshotV2StructureGeneration
+} from '@zeus/storage';
+import type {ConversationSnapshotCompatibilityTracker} from './conversationSnapshotCompatibility.js';
 
 interface ConversationOwnershipRecord {
   id: string;
@@ -34,6 +38,12 @@ interface PageQuery {
   limit?: string;
   byteLimit?: string;
   direction?: string;
+}
+
+interface ContentQuery {
+    handle?: string;
+    offset?: string;
+    byteLimit?: string;
 }
 
 type ProcessKind = 'reasoning' | 'tool' | 'command' | 'retry' | 'context_compaction' | 'waiting' | 'warning';
@@ -167,28 +177,46 @@ export function registerConversationSnapshotV2Api(options: ConversationSnapshotV
     }
   });
 
-  server.get(
-    '/api/projects/:projectId/conversations/:conversationId/content/:handle',
-    async (
-      request: FastifyRequest<{
-        Params: ConversationParams & { handle: string };
-        Querystring: { offset?: string; byteLimit?: string };
-      }>,
-      reply,
+    const readContent = async (
+        request: FastifyRequest<{
+            Params: ConversationParams & { handle?: string };
+            Querystring: ContentQuery;
+        }>,
+        reply: FastifyReply,
     ) => {
-      if (!hasConversationAccess(options, request.params)) return conversationNotFound(reply);
-      markV2Response(reply);
-      try {
-        return repository.readContentPage({
-          conversationId: request.params.conversationId,
-          handle: request.params.handle,
-          ...(request.query.offset === undefined ? {} : { offset: Number(request.query.offset) }),
-          ...(request.query.byteLimit === undefined ? {} : { byteLimit: Number(request.query.byteLimit) }),
-        });
-      } catch (error) {
-        return sendSnapshotV2Error(reply, error);
-      }
-    },
+        if (!hasConversationAccess(options, request.params)) return conversationNotFound(reply);
+        markV2Response(reply);
+        const handle = request.query.handle ?? request.params.handle;
+        if (!handle) {
+            return reply.code(400).send({
+                error: 'ZEUS_CONVERSATION_SNAPSHOT_V2_INVALID_ARGUMENT',
+                message: '正文句柄不能为空。'
+            });
+        }
+        try {
+            return repository.readContentPage({
+                conversationId: request.params.conversationId,
+                handle,
+                ...(request.query.offset === undefined ? {} : {offset: Number(request.query.offset)}),
+                ...(request.query.byteLimit === undefined ? {} : {byteLimit: Number(request.query.byteLimit)}),
+            });
+        } catch (error) {
+            return sendSnapshotV2Error(reply, error);
+        }
+    };
+
+    // 签名正文句柄可能超过 Fastify 路径参数的默认长度上限，因此新客户端统一走查询参数。
+    // 旧路径继续保留，兼容长度较短的历史客户端。
+    server.get('/api/projects/:projectId/conversations/:conversationId/content', readContent);
+    server.get(
+        '/api/projects/:projectId/conversations/:conversationId/content/:handle',
+        async (
+            request: FastifyRequest<{
+                Params: ConversationParams & { handle: string };
+                Querystring: ContentQuery;
+            }>,
+            reply,
+        ) => readContent(request, reply),
   );
 
   server.get('/api/diagnostics/conversation-snapshot-compatibility', async (_request, reply) => {

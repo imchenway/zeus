@@ -1,43 +1,49 @@
 import type {
-  ArchivedConversationChoicesSnapshot,
-  CodexConversationCapabilities,
-  ConversationResourcePreview,
-  NativeCollaborationMode,
-  NativeConversationChoice,
-  NativeConversationChoicesSnapshot,
-  NativeConversationChangeFileV2Item,
-  NativeConversationChangeSetV2Summary,
-  NativeConversationContentV2Page,
-  NativeConversationEventPage,
-  NativeConversationModelHistoryV2Item,
-  NativeConversationProcessV2Item,
-  NativeConversationResourceV2Item,
-  NativeConversationSnapshotV2,
-  NativeConversationSnapshotV2Page,
-  NativeConversationToolResultPage,
-  NativeGoalResponse,
-  NativeNextTurnSettings,
-  NativeOperationAcceptance,
-  NativePendingRequest,
-  NativePermissionMode,
-  NativePlanImplementationRequest,
-  NativeProjectConversationChoicesSnapshot,
-  NativeQueueSnapshot,
-  NativeSubagentListSnapshot,
-  NativeSubagentThreadSnapshot,
-  SendNativeMessageRequest,
-  StartNativeConversationRequest,
-  StartProjectConversationRequest,
-  TurnChangeSet,
-  TurnChangeSetOperationResult,
+    ArchivedConversationChoicesSnapshot,
+    CodexConversationCapabilities,
+    ConversationResourcePreview,
+    NativeCollaborationMode,
+    NativeConversationChangeFileV2Item,
+    NativeConversationChangeSetV2Summary,
+    NativeConversationChoice,
+    NativeConversationChoicesSnapshot,
+    NativeConversationContentV2Page,
+    NativeConversationEventPage,
+    NativeConversationModelHistoryV2Item,
+    NativeConversationProcessV2Item,
+    NativeConversationResourceV2Item,
+    NativeConversationSnapshotV2,
+    NativeConversationSnapshotV2Page,
+    NativeConversationToolResultPage,
+    NativeGoalResponse,
+    NativeNextTurnSettings,
+    NativeOperationAcceptance,
+    NativePendingRequest,
+    NativePermissionMode,
+    NativePlanImplementationRequest,
+    NativeProjectConversationChoicesSnapshot,
+    NativeQueueSnapshot,
+    NativeSubagentListSnapshot,
+    NativeSubagentThreadSnapshot,
+    SendNativeMessageRequest,
+    StartNativeConversationRequest,
+    StartProjectConversationRequest,
+    TurnChangeSet,
+    TurnChangeSetOperationResult,
 } from '../../session/sessionTypes.js';
-import type { GraphConversationHistoryItem } from '../graph/graphContracts.js';
-import type { ZeusRealtimeEvent } from '../../transport/dashboardClientContracts.js';
-import type { NativeProjectConversationChoiceGroupsSnapshot } from './conversationContracts.js';
-import { jsonRequest, type LocalApiTransport } from '../../transport/localApiTransport.js';
-import { buildConversationCommandRequest, conversationClientCommandTypes } from './conversationCommandClient.js';
-import { buildConversationDispatchCommandRequest, conversationDispatchClientCommandTypes } from './conversationDispatchCommandClient.js';
-import { buildGraphConversationCommandRequest, graphConversationClientCommandTypes } from './graphConversationCommandClient.js';
+import type {GraphConversationHistoryItem} from '../graph/graphContracts.js';
+import type {ZeusRealtimeEvent} from '../../transport/dashboardClientContracts.js';
+import type {NativeProjectConversationChoiceGroupsSnapshot} from './conversationContracts.js';
+import {jsonRequest, type LocalApiTransport} from '../../transport/localApiTransport.js';
+import {buildConversationCommandRequest, conversationClientCommandTypes} from './conversationCommandClient.js';
+import {
+    buildConversationDispatchCommandRequest,
+    conversationDispatchClientCommandTypes
+} from './conversationDispatchCommandClient.js';
+import {
+    buildGraphConversationCommandRequest,
+    graphConversationClientCommandTypes
+} from './graphConversationCommandClient.js';
 
 export interface ConversationApiClient {
   loadArchivedConversations: () => Promise<ArchivedConversationChoicesSnapshot>;
@@ -180,10 +186,8 @@ export function createConversationApiClient(transport: LocalApiTransport): Conve
       transport.request<NativeConversationSnapshotV2Page<NativeConversationChangeFileV2Item>>(
         `${conversationPath(projectId, conversationId)}/turns/${encodeURIComponent(turnId)}/change-set/${encodeURIComponent(changeSetId)}/files${pageQuery(options)}`,
       ),
-    loadNativeConversationContentV2: (projectId, conversationId, handle, options) =>
-      transport.request<NativeConversationContentV2Page>(`${conversationPath(projectId, conversationId)}/content/${encodeURIComponent(handle)}${contentQuery(options)}`),
-    loadNativeConversationToolResult: (projectId, conversationId, handle, options) =>
-      transport.request<NativeConversationToolResultPage>(`${conversationPath(projectId, conversationId)}/tool-results/${encodeURIComponent(handle)}${toolResultQuery(options)}`),
+      loadNativeConversationContentV2: (projectId, conversationId, handle, options) => transport.request<NativeConversationContentV2Page>(`${conversationPath(projectId, conversationId)}/content${contentQuery(handle, options)}`),
+      loadNativeConversationToolResult: (projectId, conversationId, handle, options) => transport.request<NativeConversationToolResultPage>(`${conversationPath(projectId, conversationId)}/tool-results${toolResultQuery(handle, options)}`),
     loadNativeConversationQueueV2: (projectId, conversationId) => transport.request<NativeQueueSnapshot>(`${conversationPath(projectId, conversationId)}/queue-state`),
     loadNativeConversationEvents: (projectId, conversationId, options) => {
       const query = new URLSearchParams({ afterSequence: String(options.afterSequence) });
@@ -356,18 +360,18 @@ function pageQuery(options?: { cursor?: string; limit?: number; byteLimit?: numb
   return query.size > 0 ? `?${query.toString()}` : '';
 }
 
-function contentQuery(options?: { offset?: number; byteLimit?: number }): string {
-  const query = new URLSearchParams();
+function contentQuery(handle: string, options?: { offset?: number; byteLimit?: number }): string {
+    const query = new URLSearchParams({handle});
   if (options?.offset !== undefined) query.set('offset', String(options.offset));
   if (options?.byteLimit !== undefined) query.set('byteLimit', String(options.byteLimit));
-  return query.size > 0 ? `?${query.toString()}` : '';
+    return `?${query.toString()}`;
 }
 
-function toolResultQuery(options?: { offset?: number; limit?: number }): string {
-  const query = new URLSearchParams();
+function toolResultQuery(handle: string, options?: { offset?: number; limit?: number }): string {
+    const query = new URLSearchParams({handle});
   if (options?.offset !== undefined) query.set('offset', String(options.offset));
   if (options?.limit !== undefined) query.set('limit', String(options.limit));
-  return query.size > 0 ? `?${query.toString()}` : '';
+    return `?${query.toString()}`;
 }
 
 function normalizeCapabilities(capabilities: CodexConversationCapabilities): CodexConversationCapabilities {

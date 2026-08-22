@@ -13962,6 +13962,12 @@
   justify-self: start;
 }
 
+.session-codex-parity-v1 .session-v2-auto-page {
+    color: var(--session-text-muted);
+    font-size: 11px;
+    min-block-size: 1px;
+}
+
 .session-codex-parity-v1 .session-v2-deferred-artifacts {
   background: color-mix(in oklab, var(--session-surface-subtle) 70%, transparent);
   border: 1px solid var(--session-line-soft);

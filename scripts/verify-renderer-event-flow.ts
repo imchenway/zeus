@@ -1,5 +1,13 @@
-import { createSessionController, type SessionControllerClient, sessionRealtimeBufferBudget } from '../apps/desktop/src/renderer/session/useSessionController.ts';
-import type { NativeRealtimeEventEnvelope } from '../apps/desktop/src/renderer/session/sessionTypes.ts';
+import {
+    createSessionController,
+    type SessionControllerClient,
+    sessionRealtimeBufferBudget
+} from '../apps/desktop/src/renderer/session/useSessionController.ts';
+import {
+    adaptConversationSnapshotV2,
+    mergeConversationProcessV2
+} from '../apps/desktop/src/renderer/session/conversationSnapshotV2Adapter.ts';
+import type {NativeRealtimeEventEnvelope} from '../apps/desktop/src/renderer/session/sessionTypes.ts';
 
 const projectId = 'renderer-event-flow-project';
 const conversationId = 'renderer-event-flow-conversation';
@@ -122,9 +130,10 @@ class VerifierSocket {
 
 type EventPageLoader = SessionControllerClient['loadNativeConversationEvents'];
 
-function createHarness(eventPageLoader?: EventPageLoader, snapshotSequence = 0) {
+function createHarness(eventPageLoader?: EventPageLoader, snapshotSequence = 0, live = true) {
   let eventSink: ((event: NativeRealtimeEventEnvelope) => void) | null = null;
   let snapshotReads = 0;
+    let sendCalls = 0;
   const sockets: VerifierSocket[] = [];
   const requestedAfterSequences: number[] = [];
   const connectedAfterSequences: number[] = [];
@@ -137,7 +146,10 @@ function createHarness(eventPageLoader?: EventPageLoader, snapshotSequence = 0) 
       return { ...historyV2, throughEventSeq: snapshotSequence };
     },
     async loadNativeConversationQueueV2() {
-      return queue;
+        return live ? {
+            state: {type: 'active' as const, turnId: 'turn', phase: 'prework' as const},
+            submissions: []
+        } : queue;
     },
     async loadNativeConversationChoice() {
       return choice;
@@ -170,6 +182,10 @@ function createHarness(eventPageLoader?: EventPageLoader, snapshotSequence = 0) 
       sockets.push(socket);
       return socket as unknown as WebSocket;
     },
+      async sendNativeMessage() {
+          sendCalls += 1;
+          return {operation: {status: 'accepted'}, conversation: {id: conversationId}};
+      },
   } as unknown as SessionControllerClient;
   const controller = createSessionController({
     client,
@@ -188,16 +204,142 @@ function createHarness(eventPageLoader?: EventPageLoader, snapshotSequence = 0) 
     connectedAfterSequences,
     requestedAfterSequences,
     snapshotReads: () => snapshotReads,
+      sendCalls: () => sendCalls,
   };
 }
 
-async function verifySnapshotWatermarkSubscription() {
+async function verifyIdleHistoryDoesNotSubscribe() {
+    const harness = createHarness(undefined, 0, false);
+    await harness.controller.start();
+    assert(harness.connectedAfterSequences.length === 0, 'Idle history hydration must not establish a realtime subscription.');
+    assert(harness.controller.getState().transportState === 'ready', 'Idle history must remain readable and send-ready without a realtime socket.');
+    harness.controller.setDraft('continue');
+    await harness.controller.send('queue');
+    await waitUntil(() => harness.connectedAfterSequences.length === 1 && harness.sendCalls() === 1, 'idle history lazy send connection');
+    harness.controller.dispose();
+    return {
+        initialConnections: 0,
+        sendTriggeredConnections: harness.connectedAfterSequences.length,
+        sendCalls: harness.sendCalls(),
+        transportState: 'ready'
+    };
+}
+
+function verifyInternalPayloadsStayOutOfTranscript() {
+    const history = {
+        ...historyV2,
+        throughSequence: 2,
+        items: [
+            {
+                id: 'tool-call-history',
+                sequence: 1,
+                turnId: 'turn',
+                submissionId: null,
+                segmentId: 'segment',
+                role: 'assistant',
+                toolPairId: null,
+                confirmedAt: occurredAt,
+                content: {
+                    preview: '{"type":"tool_call","itemType":"commandExecution","payload":{"command":"pwd"',
+                    byteLength: 4_096,
+                    truncated: true,
+                    redacted: false,
+                    contentHandle: 'tool-call-handle',
+                    refreshRequired: false,
+                },
+                toolResult: null,
+            },
+            {
+                id: 'assistant-history',
+                sequence: 2,
+                turnId: 'turn',
+                submissionId: null,
+                segmentId: 'segment',
+                role: 'assistant',
+                toolPairId: null,
+                confirmedAt: occurredAt,
+                content: {
+                    preview: '最终回答',
+                    byteLength: 12,
+                    truncated: false,
+                    redacted: false,
+                    contentHandle: null,
+                    refreshRequired: false,
+                },
+                toolResult: null,
+            },
+        ],
+        limits: {...historyV2.limits, returnedItems: 2},
+    };
+    const adapted = adaptConversationSnapshotV2({
+        snapshot: {
+            ...snapshotV2,
+            collections: {...snapshotV2.collections, modelHistory: {throughSequence: 2}}
+        }, history, queue, requests: [], choice, goal
+    });
+    assert(adapted.items.length === 1 && adapted.items[0]?.text === '最终回答', 'Internal tool_call projections must never become visible assistant transcript rows.');
+    const merged = mergeConversationProcessV2(adapted, 'turn', {
+        schemaVersion: 2,
+        structureGeneration: '2026-08-21-conversation-snapshot-v2',
+        conversationId,
+        kind: 'process',
+        throughEventSeq: 0,
+        throughSequence: 1,
+        items: [
+            {
+                id: 'command-process',
+                sequence: 1,
+                turnId: 'turn',
+                segmentId: 'segment',
+                kind: 'command',
+                status: 'completed',
+                title: '执行命令',
+                sourceEventId: 'codex:item:command-process',
+                startedAt: occurredAt,
+                completedAt: occurredAt,
+                detail: {
+                    preview: '{"provider":"codex","itemType":"commandExecution","payload":{"command":"pwd","aggregatedOutput":"internal"',
+                    byteLength: 4_096,
+                    truncated: true,
+                    redacted: false,
+                    contentHandle: 'process-detail-handle',
+                    refreshRequired: false,
+                },
+                toolResult: null,
+            },
+        ],
+        hasMore: false,
+        nextCursor: null,
+        limits: {entryLimit: 64, byteLimit: 128 * 1024, returnedItems: 1, responseBytes: 512},
+    });
+    const command = Object.values(merged.items).find((item) => item.id === 'command-process');
+    assert(command?.text === 'pwd', 'Truncated process JSON must project a readable command instead of the internal JSON wrapper.');
+    assert(command.payload.command === 'pwd' && !Object.prototype.hasOwnProperty.call(command.payload, 'detail'), 'Process items must expose presentation fields without retaining the internal detail wrapper.');
+    return {
+        visibleHistoryItems: adapted.items.map((item) => item.id),
+        commandText: command.text,
+        internalDetailExposed: false
+    };
+}
+
+async function verifyActiveSnapshotWatermarkSubscription() {
   const snapshotSequence = 483;
   const harness = createHarness(undefined, snapshotSequence);
   await harness.controller.start();
-  assert(harness.connectedAfterSequences.length === 1 && harness.connectedAfterSequences[0] === snapshotSequence, 'Cold hydration must subscribe after the authoritative snapshot watermark.');
+    assert(harness.connectedAfterSequences.length === 1 && harness.connectedAfterSequences[0] === snapshotSequence, 'Active hydration must subscribe after the authoritative snapshot watermark.');
   harness.controller.dispose();
   return { snapshotSequence, connectedAfterSequences: harness.connectedAfterSequences };
+}
+
+async function verifyIdleTransitionReleasesSubscription() {
+    const harness = createHarness();
+    await harness.controller.start();
+    harness.emit(conversationEvent(1, 'conversation.queue.changed', {queue}));
+    await waitUntil(() => harness.sockets[0]?.closeCount === 1, 'idle transition realtime release');
+    assert(harness.controller.getState().transportState === 'ready', 'Releasing an idle subscription must not mark the readable history disconnected.');
+    assert(harness.connectedAfterSequences.length === 1, 'Intentional idle release must not schedule a reconnect loop.');
+    harness.controller.dispose();
+    return {socketClosed: 1, connections: harness.connectedAfterSequences.length, transportState: 'ready'};
 }
 
 function conversationEvent(sequence: number, type: string, fields: Record<string, unknown> = {}): NativeRealtimeEventEnvelope {
@@ -314,7 +456,10 @@ async function verifyContiguousGapReplay() {
 
 const result = {
   budget: sessionRealtimeBufferBudget,
-  snapshotWatermarkSubscription: await verifySnapshotWatermarkSubscription(),
+    internalPayloadVisibility: verifyInternalPayloadsStayOutOfTranscript(),
+    idleHistoryWithoutSubscription: await verifyIdleHistoryDoesNotSubscribe(),
+    activeSnapshotWatermarkSubscription: await verifyActiveSnapshotWatermarkSubscription(),
+    idleTransitionReleasesSubscription: await verifyIdleTransitionReleasesSubscription(),
   renderDeltaOverflow: await verifyRenderDeltaOverflow(),
   syncGapByteOverflow: await verifyGapByteOverflow(),
   contiguousGapReplay: await verifyContiguousGapReplay(),
