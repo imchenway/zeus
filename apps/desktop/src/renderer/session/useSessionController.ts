@@ -1,56 +1,45 @@
-import {useCallback, useEffect, useMemo, useSyncExternalStore} from 'react';
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
+import { type ConversationContextDraft, emptyConversationContextDraft, hasConversationContext, serializeConversationContext, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import { createInitialSessionState, sessionReducer } from './sessionReducer.js';
 import {
-    type ConversationContextDraft,
-    emptyConversationContextDraft,
-    hasConversationContext,
-    serializeConversationContext,
-    type ZeusBrowserPreparedSubmission
-} from '@zeus/shared';
-import {createInitialSessionState, sessionReducer} from './sessionReducer.js';
-import {
-    type CodexConversationCapabilities,
-    type ConversationResourcePreview,
-    isNativeConversationEvent,
-    type NativeCollaborationMode,
-    type NativeConversationAttachment,
-    type NativeConversationChangeFileV2Item,
-    type NativeConversationChangeSetV2Summary,
-    type NativeConversationChoice,
-    type NativeConversationContentV2Page,
-    type NativeConversationEvent,
-    type NativeConversationEventPage,
-    type NativeConversationModelHistoryV2Item,
-    type NativeConversationProcessV2Item,
-    type NativeConversationResourceV2Item,
-    type NativeConversationSnapshot,
-    type NativeConversationSnapshotV2,
-    type NativeConversationSnapshotV2Page,
-    type NativeConversationToolResultPage,
-    type NativeGoalResponse,
-    type NativeNextTurnSettings,
-    type NativeOperationAcceptance,
-    type NativePendingRequest,
-    type NativePermissionMode,
-    type NativePlanImplementationRequest,
-    type NativeQueuedSubmission,
-    type NativeQueueSnapshot,
-    type NativeRealtimeEventEnvelope,
-    type NativeSessionError,
-    type NativeSessionState,
-    type NativeSubagentListSnapshot,
-    type NativeSubagentThreadSnapshot,
-    type NativeTurnSettingsSelection,
-    type SendNativeMessageRequest,
-    type TurnChangeSet,
-    type TurnChangeSetOperationResult,
+  type CodexConversationCapabilities,
+  type ConversationResourcePreview,
+  isNativeConversationEvent,
+  type NativeCollaborationMode,
+  type NativeConversationAttachment,
+  type NativeConversationChangeFileV2Item,
+  type NativeConversationChangeSetV2Summary,
+  type NativeConversationChoice,
+  type NativeConversationContentV2Page,
+  type NativeConversationEvent,
+  type NativeConversationEventPage,
+  type NativeConversationModelHistoryV2Item,
+  type NativeConversationProcessV2Item,
+  type NativeConversationResourceV2Item,
+  type NativeConversationSnapshot,
+  type NativeConversationSnapshotV2,
+  type NativeConversationSnapshotV2Page,
+  type NativeConversationToolResultPage,
+  type NativeGoalResponse,
+  type NativeNextTurnSettings,
+  type NativeOperationAcceptance,
+  type NativePendingRequest,
+  type NativePermissionMode,
+  type NativePlanImplementationRequest,
+  type NativeQueuedSubmission,
+  type NativeQueueSnapshot,
+  type NativeRealtimeEventEnvelope,
+  type NativeSessionError,
+  type NativeSessionState,
+  type NativeSubagentListSnapshot,
+  type NativeSubagentThreadSnapshot,
+  type NativeTurnSettingsSelection,
+  type SendNativeMessageRequest,
+  type TurnChangeSet,
+  type TurnChangeSetOperationResult,
 } from './sessionTypes.js';
-import {
-    adaptConversationSnapshotV2,
-    mergeConversationHistoryV2,
-    mergeConversationProcessV2,
-    updateConversationV2Paging
-} from './conversationSnapshotV2Adapter.js';
-import {markConversationNavigationRenderReady} from '../performanceTraceContext.js';
+import { adaptConversationSnapshotV2, mergeConversationHistoryV2, mergeConversationProcessV2, updateConversationV2Paging } from './conversationSnapshotV2Adapter.js';
+import { markConversationNavigationRenderReady } from '../performanceTraceContext.js';
 
 export const reconnectBackoffMs = [250, 500, 1_000, 2_000, 5_000] as const;
 // 同一个会话项的增量按一帧窗口合并，兼顾 Markdown 成本与首字可见延迟。
@@ -456,8 +445,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
   }
   let socket: WebSocket | null = null;
   let socketLifecycle: SocketLifecycle | null = null;
-    let realtimeSubscribed = false;
-    let realtimeConnectionPromise: Promise<void> | null = null;
+  let realtimeSubscribed = false;
+  let realtimeConnectionPromise: Promise<void> | null = null;
   let connectionToken = 0;
   let identityEpoch = 0;
   let disposed = false;
@@ -838,7 +827,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     // 完成态、请求态和 turn 边界必须先看到之前所有增量；完成事件本身仍立即到达 reducer。
     flushRenderDeltas();
     applyEventImmediately(event);
-      queueMicrotask(releaseIdleRealtimeSubscription);
+    queueMicrotask(releaseIdleRealtimeSubscription);
   }
 
   function scheduleConversationSyncGapRecovery(): void {
@@ -922,7 +911,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const token = connectionToken;
     socketLifecycle?.markInactive();
     socketLifecycle = null;
-      realtimeSubscribed = false;
+    realtimeSubscribed = false;
     const failedSocket = socket;
     socket = null;
     failedSocket?.close();
@@ -972,7 +961,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     // 回答成功后重新建立事件流并读取权威快照，保证行为与 Codex App 一致：
     // 请求解除后继续接收同一轮的后续事件，直到 turn/completed。
     cancelReconnectLoop();
-      const attempt = hydrate(true, 'required');
+    const attempt = hydrate(true, 'required');
     const token = connectionToken;
     void attempt.catch(() => scheduleReconnect(token));
   }
@@ -1415,7 +1404,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         const delayMs = reconnectDelayMs(attempt + 1);
         if (!(await waitForReconnectDelay(delayMs, epoch))) return;
         try {
-            await hydrate(true, 'required');
+          await hydrate(true, 'required');
           if (!disposed && epoch === reconnectLoopEpoch && state.transportState === 'ready') return;
         } catch {
           // Keep retrying with capped exponential backoff until a connection succeeds,
@@ -1498,54 +1487,54 @@ export function createSessionController(options: CreateSessionControllerOptions)
     throw new Error('Snapshot V2 结构与尾部历史未能在同一事件水位稳定读取，请重试。');
   }
 
-    function snapshotNeedsRealtime(snapshot: NativeConversationSnapshot): boolean {
-        if (snapshot.requests.some((request) => request.status === 'pending')) return true;
-        if (snapshot.queue.state.type === 'dispatching' || snapshot.queue.state.type === 'active' || snapshot.queue.state.type === 'waiting') return true;
-        if (snapshot.queue.submissions.some((submission) => submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active')) return true;
-        return snapshot.turns.some((turn) => turn.status === 'running' || turn.status === 'waiting' || turn.status === 'dispatching');
-    }
+  function snapshotNeedsRealtime(snapshot: NativeConversationSnapshot): boolean {
+    if (snapshot.requests.some((request) => request.status === 'pending')) return true;
+    if (snapshot.queue.state.type === 'dispatching' || snapshot.queue.state.type === 'active' || snapshot.queue.state.type === 'waiting') return true;
+    if (snapshot.queue.submissions.some((submission) => submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active')) return true;
+    return snapshot.turns.some((turn) => turn.status === 'running' || turn.status === 'waiting' || turn.status === 'dispatching');
+  }
 
-    function stateNeedsRealtime(): boolean {
-        if (pendingSend || deferredSends.length > 0) return true;
-        if (state.pendingRequests.some((request) => request.status === 'pending')) return true;
-        if (state.queue?.state.type === 'dispatching' || state.queue?.state.type === 'active' || state.queue?.state.type === 'waiting') return true;
-        if (state.queue?.submissions.some((submission) => submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active')) return true;
-        return (
-            state.conversationState === 'starting_turn' ||
-            state.conversationState === 'active_prework' ||
-            state.conversationState === 'active_final_answer' ||
-            state.conversationState === 'waiting_approval' ||
-            state.conversationState === 'waiting_user_input'
-        );
-    }
+  function stateNeedsRealtime(): boolean {
+    if (pendingSend || deferredSends.length > 0) return true;
+    if (state.pendingRequests.some((request) => request.status === 'pending')) return true;
+    if (state.queue?.state.type === 'dispatching' || state.queue?.state.type === 'active' || state.queue?.state.type === 'waiting') return true;
+    if (state.queue?.submissions.some((submission) => submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active')) return true;
+    return (
+      state.conversationState === 'starting_turn' ||
+      state.conversationState === 'active_prework' ||
+      state.conversationState === 'active_final_answer' ||
+      state.conversationState === 'waiting_approval' ||
+      state.conversationState === 'waiting_user_input'
+    );
+  }
 
-    function releaseIdleRealtimeSubscription(): void {
-        if (disposed || !realtimeSubscribed || stateNeedsRealtime()) return;
-        cancelReconnectLoop();
-        connectionToken += 1;
-        socketLifecycle?.markInactive();
-        socketLifecycle = null;
-        const idleSocket = socket;
-        socket = null;
-        realtimeSubscribed = false;
-        idleSocket?.close();
-        // 本地快照仍然可读且可发送，释放实时订阅不等于会话断线。
-        dispatch({type: 'transport_changed', transportState: 'ready', error: null});
-    }
+  function releaseIdleRealtimeSubscription(): void {
+    if (disposed || !realtimeSubscribed || stateNeedsRealtime()) return;
+    cancelReconnectLoop();
+    connectionToken += 1;
+    socketLifecycle?.markInactive();
+    socketLifecycle = null;
+    const idleSocket = socket;
+    socket = null;
+    realtimeSubscribed = false;
+    idleSocket?.close();
+    // 本地快照仍然可读且可发送，释放实时订阅不等于会话断线。
+    dispatch({ type: 'transport_changed', transportState: 'ready', error: null });
+  }
 
-    function ensureRealtimeConnection(): Promise<void> {
-        if (disposed || realtimeSubscribed) return Promise.resolve();
-        if (realtimeConnectionPromise) return realtimeConnectionPromise;
-        cancelReconnectLoop();
-        const attempt = hydrate(true, 'required');
-        const tracked = attempt.finally(() => {
-            if (realtimeConnectionPromise === tracked) realtimeConnectionPromise = null;
-        });
-        realtimeConnectionPromise = tracked;
-        return tracked;
-    }
+  function ensureRealtimeConnection(): Promise<void> {
+    if (disposed || realtimeSubscribed) return Promise.resolve();
+    if (realtimeConnectionPromise) return realtimeConnectionPromise;
+    cancelReconnectLoop();
+    const attempt = hydrate(true, 'required');
+    const tracked = attempt.finally(() => {
+      if (realtimeConnectionPromise === tracked) realtimeConnectionPromise = null;
+    });
+    realtimeConnectionPromise = tracked;
+    return tracked;
+  }
 
-    async function hydrate(reconnecting: boolean, realtimeMode: 'auto' | 'required' = 'auto'): Promise<void> {
+  async function hydrate(reconnecting: boolean, realtimeMode: 'auto' | 'required' = 'auto'): Promise<void> {
     if (disposed) return;
     flushRenderDeltas();
     const token = ++connectionToken;
@@ -1553,7 +1542,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     socket?.close();
     socket = null;
     socketLifecycle = null;
-        realtimeSubscribed = false;
+    realtimeSubscribed = false;
     dispatch({ type: 'transport_changed', transportState: reconnecting ? 'reconnecting' : 'connecting', error: null });
 
     const buffered = createRealtimeEventBuffer('hydration');
@@ -1585,18 +1574,18 @@ export function createSessionController(options: CreateSessionControllerOptions)
       if (!reconnecting || !state.snapshot) dispatch({ type: 'transport_changed', transportState: 'hydrating' });
       const snapshot = await loadConversationForHydration();
       if (disposed || token !== connectionToken) return;
-        const subscribeRealtime = realtimeMode === 'required' || snapshotNeedsRealtime(snapshot) || Boolean(pendingSend) || deferredSends.length > 0;
-        if (!subscribeRealtime) {
-            if (!state.snapshot) markConversationNavigationRenderReady(options.projectId, options.conversationId);
-            await applyAuthoritativeSnapshot(snapshot);
-            await reconcilePersistedAcceptance(snapshot);
-            syncProjectionSuspended = false;
-            hydrating = false;
-            ready = true;
-            dispatch({type: 'transport_changed', transportState: 'ready', error: null});
-            void flushPendingBrowserCommentMarks();
-            return;
-        }
+      const subscribeRealtime = realtimeMode === 'required' || snapshotNeedsRealtime(snapshot) || Boolean(pendingSend) || deferredSends.length > 0;
+      if (!subscribeRealtime) {
+        if (!state.snapshot) markConversationNavigationRenderReady(options.projectId, options.conversationId);
+        await applyAuthoritativeSnapshot(snapshot);
+        await reconcilePersistedAcceptance(snapshot);
+        syncProjectionSuspended = false;
+        hydrating = false;
+        ready = true;
+        dispatch({ type: 'transport_changed', transportState: 'ready', error: null });
+        void flushPendingBrowserCommentMarks();
+        return;
+      }
       const eventOptions = {
         conversationId: options.conversationId,
         afterSequence: snapshot.throughEventSeq,
@@ -1606,7 +1595,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       const nextSocket = options.client.connectEvents(onEvent, eventOptions);
       socket = nextSocket;
       const lifecycle = observeSocket(nextSocket, token, () => {
-          realtimeSubscribed = false;
+        realtimeSubscribed = false;
         if (ready) scheduleReconnect(token);
       });
       socketLifecycle = lifecycle;
@@ -1626,7 +1615,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
 
       if (lifecycle.isDisconnected()) throw new SocketDisconnectedDuringHydrationError();
       if (hydrationOverflowError) throw hydrationOverflowError;
-        realtimeSubscribed = true;
+      realtimeSubscribed = true;
       // 只有冷打开需要开放内容首帧；后台重连不能重置已经可见的导航和滚动状态。
       if (!state.snapshot) markConversationNavigationRenderReady(options.projectId, options.conversationId);
       const snapshotAlreadyApplied = reconnecting && state.snapshot?.id === snapshot.id && state.snapshot.throughEventSeq === snapshot.throughEventSeq && state.snapshot.syncStreamGeneration === snapshot.syncStreamGeneration;
@@ -1649,7 +1638,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         socketLifecycle = null;
         const failedSocket = socket;
         socket = null;
-          realtimeSubscribed = false;
+        realtimeSubscribed = false;
         failedSocket?.close();
         if (!state.snapshot) markConversationNavigationRenderReady(options.projectId, options.conversationId);
         dispatch({ type: 'transport_changed', transportState: 'failed', error: toSessionError(error, true) });
@@ -1987,7 +1976,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     reconnect() {
       cancelReconnectLoop();
       dispatch({ type: 'transport_changed', transportState: 'reconnecting', reconnectAttempt: 1 });
-        return hydrate(true, 'required');
+      return hydrate(true, 'required');
     },
     dispose() {
       if (disposed) return;
@@ -2011,8 +2000,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
       socketLifecycle = null;
       socket?.close();
       socket = null;
-        realtimeSubscribed = false;
-        realtimeConnectionPromise = null;
+      realtimeSubscribed = false;
+      realtimeConnectionPromise = null;
       listeners.clear();
     },
     subscribe(listener) {
@@ -2190,7 +2179,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         };
       }
       const envelope = pendingSend;
-        if (state.transportState !== 'ready' || state.snapshot?.id !== options.conversationId || !realtimeSubscribed) {
+      if (state.transportState !== 'ready' || state.snapshot?.id !== options.conversationId || !realtimeSubscribed) {
         pendingSend = null;
         deferredSends = [...deferredSends, envelope];
         dispatch({
@@ -2209,9 +2198,9 @@ export function createSessionController(options: CreateSessionControllerOptions)
           queuedUntilHydrated: true,
         });
         persistDraft();
-            if (state.snapshot?.id === options.conversationId && state.transportState === 'ready') {
-                void ensureRealtimeConnection().catch(() => undefined);
-            }
+        if (state.snapshot?.id === options.conversationId && state.transportState === 'ready') {
+          void ensureRealtimeConnection().catch(() => undefined);
+        }
         return Promise.resolve();
       }
       return submitEnvelope(envelope).then((acceptance) => {

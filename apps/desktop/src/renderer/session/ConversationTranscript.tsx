@@ -1,44 +1,30 @@
-import {Fragment, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
-import {motion, useReducedMotion} from 'framer-motion';
-import {
-    activityCategory,
-    isActiveSessionTurn,
-    isLiveActivityItem,
-    isOperationalActivityItem,
-    type SessionActivityCategory,
-    SessionActivityGroup,
-    SessionTurnDuration,
-    SessionTurnProcessDisclosure
-} from './SessionActivity.js';
-import {itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText} from './ThreadItemView.js';
-import {PlanSummary} from './PlanSummary.js';
+import { Fragment, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { motion, useReducedMotion } from 'framer-motion';
+import { activityCategory, isActiveSessionTurn, isLiveActivityItem, isOperationalActivityItem, type SessionActivityCategory, SessionActivityGroup, SessionTurnDuration, SessionTurnProcessDisclosure } from './SessionActivity.js';
+import { itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText } from './ThreadItemView.js';
+import { PlanSummary } from './PlanSummary.js';
 import type {
-    ConversationResource,
-    ConversationResourcePreview,
-    NativeConversationContentV2Page,
-    NativeConversationToolResultPage,
-    NativePendingRequest,
-    NativeSessionError,
-    NativeSessionItemBuffer,
-    NativeSessionState,
-    NativeTurnFailureSnapshot,
-    TurnChangeSet,
-    TurnChangeSetOperationResult,
+  ConversationResource,
+  ConversationResourcePreview,
+  NativeConversationContentV2Page,
+  NativeConversationToolResultPage,
+  NativePendingRequest,
+  NativeSessionError,
+  NativeSessionItemBuffer,
+  NativeSessionState,
+  NativeTurnFailureSnapshot,
+  TurnChangeSet,
+  TurnChangeSetOperationResult,
 } from './sessionTypes.js';
-import {isAssistantDeliverableItem} from './sessionTypes.js';
-import type {
-    ConversationFileLocation,
-    ConversationOpenTarget,
-    ConversationResponseAnnotation,
-    ConversationResponseTextAnchor
-} from '@zeus/shared';
-import {useThreadScrollController} from './useThreadScrollController.js';
-import {TurnChangeCard} from './TurnChanges.js';
-import {visibleQueuedSubmissions} from './QueuedConversationMessages.js';
-import {reasoningSummaryStatus, SessionReasoningSummary} from './SessionReasoningSummary.js';
-import {AnsweredRequestHistory, isAnsweredUserInputRequest} from './AnsweredRequestHistory.js';
-import {useNewItemMotionIds} from '../ui/useNewItemMotion.js';
-import {useTranscriptViewportVirtualizer} from './transcriptViewportVirtualizer.js';
+import { isAssistantDeliverableItem } from './sessionTypes.js';
+import type { ConversationFileLocation, ConversationOpenTarget, ConversationResponseAnnotation, ConversationResponseTextAnchor } from '@zeus/shared';
+import { useThreadScrollController } from './useThreadScrollController.js';
+import { TurnChangeCard } from './TurnChanges.js';
+import { visibleQueuedSubmissions } from './QueuedConversationMessages.js';
+import { reasoningSummaryStatus, SessionReasoningSummary } from './SessionReasoningSummary.js';
+import { AnsweredRequestHistory, isAnsweredUserInputRequest } from './AnsweredRequestHistory.js';
+import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
+import { useTranscriptViewportVirtualizer } from './transcriptViewportVirtualizer.js';
 
 export interface ConversationTranscriptProps {
   state: NativeSessionState;
@@ -480,9 +466,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             >
               {process}
               {processPaging?.loaded && processPaging.hasMore && renderProps.onLoadTurnProcess ? (
-                  <V2AutoPageSentinel loading={processPaging.loading} error={processPaging.error} kind="process"
-                                      language={props.language}
-                                      onLoad={() => renderProps.onLoadTurnProcess?.(row.turnId)}/>
+                <V2AutoPageSentinel loading={processPaging.loading} error={processPaging.error} kind="process" language={props.language} onLoad={() => renderProps.onLoadTurnProcess?.(row.turnId)} />
               ) : null}
               <V2TurnDeferredArtifacts
                 state={props.state}
@@ -643,38 +627,37 @@ function TranscriptHistoryLoading(props: { visible: boolean; language: SessionUi
 
 function V2HistoryPageControl(props: { state: NativeSessionState; language: SessionUiLanguage; onLoadEarlier?: () => void | Promise<void> }) {
   const paging = props.state.snapshot?.v2Paging?.history;
-    const sentinelRef = useRef<HTMLElement | null>(null);
-    const cursor = paging?.nextCursor ?? null;
-    useEffect(() => {
-        const sentinel = sentinelRef.current;
-        if (!sentinel || !cursor || !paging?.hasMore || paging.loading || paging.error || !props.onLoadEarlier) return;
-        let requested = false;
-        const requestPage = (): void => {
-            if (requested) return;
-            requested = true;
-            void Promise.resolve(props.onLoadEarlier?.()).catch(() => undefined);
-        };
-        if (typeof IntersectionObserver === 'undefined') {
-            requestPage();
-            return;
-        }
-        const observer = new IntersectionObserver(
-            (entries) => {
-                if (entries.some((entry) => entry.isIntersecting)) requestPage();
-            },
-            {root: sentinel.closest('.session-transcript'), rootMargin: '180px 0px 0px'},
-        );
-        observer.observe(sentinel);
-        return () => observer.disconnect();
-    }, [cursor, paging?.error, paging?.hasMore, paging?.loading, props.onLoadEarlier]);
+  const sentinelRef = useRef<HTMLElement | null>(null);
+  const cursor = paging?.nextCursor ?? null;
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel || !cursor || !paging?.hasMore || paging.loading || paging.error || !props.onLoadEarlier) return;
+    let requested = false;
+    const requestPage = (): void => {
+      if (requested) return;
+      requested = true;
+      void Promise.resolve(props.onLoadEarlier?.()).catch(() => undefined);
+    };
+    if (typeof IntersectionObserver === 'undefined') {
+      requestPage();
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) requestPage();
+      },
+      { root: sentinel.closest('.session-transcript'), rootMargin: '180px 0px 0px' },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [cursor, paging?.error, paging?.hasMore, paging?.loading, props.onLoadEarlier]);
   if (!props.state.snapshot?.snapshotV2 || !paging || (!paging.hasMore && !paging.error)) return null;
   return (
-      <section ref={sentinelRef} className="session-v2-history-control" aria-busy={paging.loading || undefined}>
-          {paging.loading ? <small
-              className="session-v2-page-status">{props.language === 'zh-CN' ? '正在读取更早消息…' : 'Loading earlier messages…'}</small> : null}
+    <section ref={sentinelRef} className="session-v2-history-control" aria-busy={paging.loading || undefined}>
+      {paging.loading ? <small className="session-v2-page-status">{props.language === 'zh-CN' ? '正在读取更早消息…' : 'Loading earlier messages…'}</small> : null}
       {paging.error ? (
         <small className="session-v2-page-error" role="alert">
-            {props.language === 'zh-CN' ? '更早消息暂时无法读取。' : 'Earlier messages are temporarily unavailable.'}
+          {props.language === 'zh-CN' ? '更早消息暂时无法读取。' : 'Earlier messages are temporarily unavailable.'}
         </small>
       ) : null}
     </section>
@@ -740,7 +723,7 @@ function V2TurnDeferredArtifacts(props: {
       ) : null}
       {deferredContent.some((content) => (content.kind === 'tool_result' ? Boolean(onLoadToolResult) : Boolean(onLoadContent))) ? (
         <div>
-            <strong>{props.language === 'zh-CN' ? '完整正文与工具结果' : 'Full content and tool results'}</strong>
+          <strong>{props.language === 'zh-CN' ? '完整正文与工具结果' : 'Full content and tool results'}</strong>
           <ul>
             {deferredContent.flatMap((content) => {
               const onLoad = content.kind === 'tool_result' ? onLoadToolResult : onLoadContent;
@@ -756,52 +739,44 @@ function V2TurnDeferredArtifacts(props: {
           </ul>
         </div>
       ) : null}
-        {canLoadMore ? <V2AutoPageSentinel loading={Boolean(change?.loading || paging.resources.loading)}
-                                           error={change?.error ?? paging.resources.error} kind="artifacts"
-                                           language={props.language} onLoad={props.onLoadMore!}/> : null}
+      {canLoadMore ? <V2AutoPageSentinel loading={Boolean(change?.loading || paging.resources.loading)} error={change?.error ?? paging.resources.error} kind="artifacts" language={props.language} onLoad={props.onLoadMore!} /> : null}
     </section>
   );
 }
 
-function V2AutoPageSentinel(props: {
-    loading: boolean;
-    error: string | null | undefined;
-    kind: 'process' | 'artifacts';
-    language: SessionUiLanguage;
-    onLoad: () => void | Promise<void>
-}) {
-    const sentinelRef = useRef<HTMLSpanElement | null>(null);
-    useEffect(() => {
-        const sentinel = sentinelRef.current;
-        if (!sentinel || props.loading || props.error) return;
-        let requested = false;
-        const requestPage = (): void => {
-            if (requested) return;
-            requested = true;
-            void Promise.resolve(props.onLoad()).catch(() => undefined);
-        };
-        if (typeof IntersectionObserver === 'undefined') {
-            requestPage();
-            return;
-        }
-        const observer = new IntersectionObserver(
-            (entries) => {
-                if (entries.some((entry) => entry.isIntersecting)) requestPage();
-            },
-            {root: sentinel.closest('.session-transcript'), rootMargin: '240px 0px'},
-        );
-        observer.observe(sentinel);
-        return () => observer.disconnect();
-    }, [props.error, props.loading, props.onLoad]);
-    const loadingLabel = props.kind === 'process' ? (props.language === 'zh-CN' ? '正在补齐处理过程…' : 'Loading process…') : props.language === 'zh-CN' ? '正在补齐资源与变更…' : 'Loading resources and changes…';
-    const errorLabel =
-        props.kind === 'process' ? (props.language === 'zh-CN' ? '处理过程暂时无法读取。' : 'Process is temporarily unavailable.') : props.language === 'zh-CN' ? '资源与变更暂时无法读取。' : 'Resources and changes are temporarily unavailable.';
-    return (
-        <span ref={sentinelRef} className="session-v2-auto-page" role={props.loading ? 'status' : undefined}>
-      {props.loading ? loadingLabel : null}
-            {props.error ? errorLabel : null}
-    </span>
+function V2AutoPageSentinel(props: { loading: boolean; error: string | null | undefined; kind: 'process' | 'artifacts'; language: SessionUiLanguage; onLoad: () => void | Promise<void> }) {
+  const sentinelRef = useRef<HTMLSpanElement | null>(null);
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel || props.loading || props.error) return;
+    let requested = false;
+    const requestPage = (): void => {
+      if (requested) return;
+      requested = true;
+      void Promise.resolve(props.onLoad()).catch(() => undefined);
+    };
+    if (typeof IntersectionObserver === 'undefined') {
+      requestPage();
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) requestPage();
+      },
+      { root: sentinel.closest('.session-transcript'), rootMargin: '240px 0px' },
     );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [props.error, props.loading, props.onLoad]);
+  const loadingLabel = props.kind === 'process' ? (props.language === 'zh-CN' ? '正在补齐处理过程…' : 'Loading process…') : props.language === 'zh-CN' ? '正在补齐资源与变更…' : 'Loading resources and changes…';
+  const errorLabel =
+    props.kind === 'process' ? (props.language === 'zh-CN' ? '处理过程暂时无法读取。' : 'Process is temporarily unavailable.') : props.language === 'zh-CN' ? '资源与变更暂时无法读取。' : 'Resources and changes are temporarily unavailable.';
+  return (
+    <span ref={sentinelRef} className="session-v2-auto-page" role={props.loading ? 'status' : undefined}>
+      {props.loading ? loadingLabel : null}
+      {props.error ? errorLabel : null}
+    </span>
+  );
 }
 
 interface V2DeferredContentPage {
@@ -813,81 +788,79 @@ interface V2DeferredContentPage {
 }
 
 function V2DeferredContent(props: { handle: string; label: string; language: SessionUiLanguage; onLoad: (handle: string, offset?: number) => Promise<V2DeferredContentPage> }) {
-    const rootRef = useRef<HTMLDivElement | null>(null);
-    const loadingRef = useRef(false);
-    const [pages, setPages] = useState<V2DeferredContentPage[]>([]);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const loadingRef = useRef(false);
+  const [pages, setPages] = useState<V2DeferredContentPage[]>([]);
   const [loading, setLoading] = useState(false);
-    const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
-      loadingRef.current = false;
-      setPages([]);
+    loadingRef.current = false;
+    setPages([]);
     setLoading(false);
-      setFailed(false);
+    setFailed(false);
   }, [props.handle]);
-    const load = useCallback(
-        async (offset?: number): Promise<void> => {
-            if (loadingRef.current) return;
-            loadingRef.current = true;
-            setLoading(true);
-            setFailed(false);
-            try {
-                const page = await props.onLoad(props.handle, offset);
-                setPages((current) => (offset === undefined ? [page] : [...current.filter((candidate) => candidate.offset !== page.offset), page].sort((left, right) => left.offset - right.offset)));
-            } catch {
-                setFailed(true);
-            } finally {
-                loadingRef.current = false;
-                setLoading(false);
-            }
-        },
-        [props.handle, props.onLoad],
+  const load = useCallback(
+    async (offset?: number): Promise<void> => {
+      if (loadingRef.current) return;
+      loadingRef.current = true;
+      setLoading(true);
+      setFailed(false);
+      try {
+        const page = await props.onLoad(props.handle, offset);
+        setPages((current) => (offset === undefined ? [page] : [...current.filter((candidate) => candidate.offset !== page.offset), page].sort((left, right) => left.offset - right.offset)));
+      } catch {
+        setFailed(true);
+      } finally {
+        loadingRef.current = false;
+        setLoading(false);
+      }
+    },
+    [props.handle, props.onLoad],
+  );
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || pages.length > 0 || loading || failed) return;
+    let requested = false;
+    const requestContent = (): void => {
+      if (requested) return;
+      requested = true;
+      void load();
+    };
+    if (typeof IntersectionObserver === 'undefined') {
+      requestContent();
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) requestContent();
+      },
+      { root: root.closest('.session-transcript'), rootMargin: '240px 0px' },
     );
-    useEffect(() => {
-        const root = rootRef.current;
-        if (!root || pages.length > 0 || loading || failed) return;
-        let requested = false;
-        const requestContent = (): void => {
-            if (requested) return;
-            requested = true;
-            void load();
-        };
-        if (typeof IntersectionObserver === 'undefined') {
-            requestContent();
-            return;
-        }
-        const observer = new IntersectionObserver(
-            (entries) => {
-                if (entries.some((entry) => entry.isIntersecting)) requestContent();
-            },
-            {root: root.closest('.session-transcript'), rootMargin: '240px 0px'},
-        );
-        observer.observe(root);
-        return () => observer.disconnect();
-    }, [failed, load, loading, pages.length]);
-    const lastPage = pages.at(-1) ?? null;
-    const text = pages.map((page) => page.text).join('');
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, [failed, load, loading, pages.length]);
+  const lastPage = pages.at(-1) ?? null;
+  const text = pages.map((page) => page.text).join('');
   return (
-      <div ref={rootRef} className="session-v2-content" aria-label={props.label} aria-busy={loading || undefined}>
-          {loading && pages.length === 0 ? <small
-              className="session-v2-page-status">{props.language === 'zh-CN' ? '正在读取正文…' : 'Loading content…'}</small> : null}
-          {lastPage ? (
-              <>
-                  <pre>{text}</pre>
-                  <small>
-                      {pages.some((page) => page.redacted === true) ? (props.language === 'zh-CN' ? '敏感内容已脱敏 · ' : 'Sensitive content redacted · ') : ''}
-                      {lastPage.nextOffset ?? lastPage.totalCharacters}/{lastPage.totalCharacters}
-                  </small>
-                  {lastPage.nextOffset !== null ? (
-                      <button type="button" disabled={loading}
-                              onClick={() => void load(lastPage.nextOffset ?? undefined)}>
-                          {loading ? (props.language === 'zh-CN' ? '正在展开…' : 'Expanding…') : props.language === 'zh-CN' ? '展开剩余内容' : 'Expand remaining content'}
-                      </button>
-                  ) : null}
-              </>
+    <div ref={rootRef} className="session-v2-content" aria-label={props.label} aria-busy={loading || undefined}>
+      {loading && pages.length === 0 ? <small className="session-v2-page-status">{props.language === 'zh-CN' ? '正在读取正文…' : 'Loading content…'}</small> : null}
+      {lastPage ? (
+        <>
+          <pre>{text}</pre>
+          <small>
+            {pages.some((page) => page.redacted === true) ? (props.language === 'zh-CN' ? '敏感内容已脱敏 · ' : 'Sensitive content redacted · ') : ''}
+            {lastPage.nextOffset ?? lastPage.totalCharacters}/{lastPage.totalCharacters}
+          </small>
+          {lastPage.nextOffset !== null ? (
+            <button type="button" disabled={loading} onClick={() => void load(lastPage.nextOffset ?? undefined)}>
+              {loading ? (props.language === 'zh-CN' ? '正在展开…' : 'Expanding…') : props.language === 'zh-CN' ? '展开剩余内容' : 'Expand remaining content'}
+            </button>
           ) : null}
-          {failed ? (
+        </>
+      ) : null}
+      {failed ? (
         <small className="session-v2-page-error" role="alert">
-            {props.language === 'zh-CN' ? '正文暂时无法读取。' : 'Content is temporarily unavailable.'}
+          {props.language === 'zh-CN' ? '正文暂时无法读取。' : 'Content is temporarily unavailable.'}
         </small>
       ) : null}
     </div>
@@ -899,8 +872,8 @@ function deferredContentHandles(state: NativeSessionState, turnId: string): Arra
   for (const item of Object.values(state.items)) {
     if (item.turnId !== turnId) continue;
     const detailHandle = primitiveValue(item.payload.v2ContentHandle);
-      const contentKind = primitiveValue(item.payload.v2ContentKind);
-      if (detailHandle && contentKind === 'model_history' && item.payload.v2ContentTruncated === true) {
+    const contentKind = primitiveValue(item.payload.v2ContentKind);
+    if (detailHandle && contentKind === 'model_history' && item.payload.v2ContentTruncated === true) {
       byHandle.set(detailHandle, { handle: detailHandle, label: primitiveValue(item.payload.title) ?? item.text ?? item.type, kind: 'content' });
     }
     const toolResult = recordValue(item.payload.toolResult);

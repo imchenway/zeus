@@ -1,24 +1,24 @@
-import {type KeyboardEvent, useEffect, useRef, useState} from 'react';
-import {AnimatePresence, motion, useReducedMotion} from 'framer-motion';
-import {ArchiveIcon as Archive} from '@phosphor-icons/react/dist/csr/Archive';
-import {ChatCircleIcon as ChatCircle} from '@phosphor-icons/react/dist/csr/ChatCircle';
-import {CheckCircleIcon as CheckCircle} from '@phosphor-icons/react/dist/csr/CheckCircle';
-import {CircleNotchIcon as CircleNotch} from '@phosphor-icons/react/dist/csr/CircleNotch';
-import {ClockIcon as Clock} from '@phosphor-icons/react/dist/csr/Clock';
-import {EyeSlashIcon as EyeSlash} from '@phosphor-icons/react/dist/csr/EyeSlash';
-import {FolderIcon as Folder} from '@phosphor-icons/react/dist/csr/Folder';
-import {PauseCircleIcon as PauseCircle} from '@phosphor-icons/react/dist/csr/PauseCircle';
-import {PlusIcon as Plus} from '@phosphor-icons/react/dist/csr/Plus';
-import {ShieldCheckIcon as ShieldCheck} from '@phosphor-icons/react/dist/csr/ShieldCheck';
-import {WarningIcon as Warning} from '@phosphor-icons/react/dist/csr/Warning';
-import type {NativeConversationChoice, NativeConversationSnapshot, NativeSessionState} from './sessionTypes.js';
-import {compareConversationStageUpdatedDesc} from './conversationOrdering.js';
-import type {SessionUiLanguage} from './ThreadItemView.js';
-import {conversationDisplayTitle} from './conversationDisplayTitle.js';
-import {useNewItemMotionIds} from '../ui/useNewItemMotion.js';
-import type {TaskAgentRunStatus} from '../apiClient.js';
-import {taskAgentRunStatusLabels} from '../task/TaskRunStatusChip.js';
-import {beginConversationNavigationTrace} from '../performanceTraceContext.js';
+import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { ArchiveIcon as Archive } from '@phosphor-icons/react/dist/csr/Archive';
+import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
+import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
+import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
+import { ClockIcon as Clock } from '@phosphor-icons/react/dist/csr/Clock';
+import { EyeSlashIcon as EyeSlash } from '@phosphor-icons/react/dist/csr/EyeSlash';
+import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
+import { PauseCircleIcon as PauseCircle } from '@phosphor-icons/react/dist/csr/PauseCircle';
+import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
+import { ShieldCheckIcon as ShieldCheck } from '@phosphor-icons/react/dist/csr/ShieldCheck';
+import { WarningIcon as Warning } from '@phosphor-icons/react/dist/csr/Warning';
+import type { NativeConversationChoice, NativeConversationSnapshot, NativeSessionState } from './sessionTypes.js';
+import { compareConversationStageUpdatedDesc } from './conversationOrdering.js';
+import type { SessionUiLanguage } from './ThreadItemView.js';
+import { conversationDisplayTitle } from './conversationDisplayTitle.js';
+import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
+import type { TaskAgentRunStatus } from '../apiClient.js';
+import { taskAgentRunStatusLabels } from '../task/TaskRunStatusChip.js';
+import { beginConversationNavigationTrace } from '../performanceTraceContext.js';
 
 export interface ProjectConversationTaskGroup {
   taskId: string;
@@ -489,14 +489,14 @@ function visibleConversationCount(group: Pick<FlattenedProjectConversations, 'fl
 
 /** 将当前已连接 controller 的权威状态映射为全局 source tree 的可读状态。 */
 export function conversationTreeRuntimeStateFromSession(state: NativeSessionState): ConversationTreeRuntimeState {
-    if (state.conversationState === 'turn_failed') return 'error';
-    // 侧栏表达会话本身的运行态，不表达当前窗口读取本地快照或建立实时订阅的短暂状态。
-    // 已有权威快照时，即使视图正在水合/重连，也继续投影任务、队列和待处理请求的真实状态。
-    if (!state.snapshot) {
-        if (state.transportState === 'failed') return 'error';
-        if (state.transportState === 'reconnecting') return 'reconnecting';
-        if (state.transportState === 'connecting' || state.transportState === 'hydrating' || state.transportState === 'disconnected') return 'connecting';
-    }
+  if (state.conversationState === 'turn_failed') return 'error';
+  // 侧栏表达会话本身的运行态，不表达当前窗口读取本地快照或建立实时订阅的短暂状态。
+  // 已有权威快照时，即使视图正在水合/重连，也继续投影任务、队列和待处理请求的真实状态。
+  if (!state.snapshot) {
+    if (state.transportState === 'failed') return 'error';
+    if (state.transportState === 'reconnecting') return 'reconnecting';
+    if (state.transportState === 'connecting' || state.transportState === 'hydrating' || state.transportState === 'disconnected') return 'connecting';
+  }
   if (state.snapshot?.providerState === 'archived' || (state.queue?.state.type === 'paused' && state.queue.state.reason === 'provider_archived')) {
     return (state.queue?.submissions.length ?? 0) > 0 ? 'queued' : 'ready';
   }

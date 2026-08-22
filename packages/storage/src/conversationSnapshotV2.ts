@@ -1,6 +1,6 @@
-import type {ZeusDatabasePort} from './databasePort.js';
-import {type ArtifactRef, type ArtifactStore, artifactStoreGeneration} from './artifactStore.js';
-import {conversationSchemaGeneration} from './conversationExecutionStore.js';
+import type { ZeusDatabasePort } from './databasePort.js';
+import { type ArtifactRef, type ArtifactStore, artifactStoreGeneration } from './artifactStore.js';
+import { conversationSchemaGeneration } from './conversationExecutionStore.js';
 
 export const conversationSnapshotV2StructureGeneration = '2026-08-21-conversation-snapshot-v2';
 
@@ -954,7 +954,7 @@ export class ConversationSnapshotV2Repository {
       structureGeneration: conversationSnapshotV2StructureGeneration,
       conversationId,
       kind: payload.kind,
-        mimeType: payload.kind === 'change_file_diff' ? 'text/x-diff; charset=utf-8' : payload.kind === 'model_content' ? 'text/plain; charset=utf-8' : 'application/json; charset=utf-8',
+      mimeType: payload.kind === 'change_file_diff' ? 'text/x-diff; charset=utf-8' : payload.kind === 'model_content' ? 'text/plain; charset=utf-8' : 'application/json; charset=utf-8',
       text: redacted.text,
       offset,
       nextOffset,
@@ -1150,7 +1150,7 @@ export class ConversationSnapshotV2Repository {
     }
     if (payload.kind === 'model_content') {
       return this.db.get(
-          `SELECT substr(${modelHistoryVisibleContentSql}, ?, ?)         AS content_slice,
+        `SELECT substr(${modelHistoryVisibleContentSql}, ?, ?)         AS content_slice,
                   length(${modelHistoryVisibleContentSql})               AS total_characters,
                   length(CAST(${modelHistoryVisibleContentSql} AS BLOB)) AS total_bytes,
                 confirmed_at AS revision,

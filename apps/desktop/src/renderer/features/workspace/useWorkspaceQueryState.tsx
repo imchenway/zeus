@@ -1,167 +1,145 @@
-import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
-import {projectTerminalOutput} from '@zeus/terminal-core';
-import {cloneTaskManagementStatusConfig, defaultTaskManagementStatusConfig} from '@zeus/shared';
-import {type AutomaticUpdateIndicatorState, loadAutomaticUpdateIndicatorFromMain} from '../../appShellBridge.js';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { projectTerminalOutput } from '@zeus/terminal-core';
+import { cloneTaskManagementStatusConfig, defaultTaskManagementStatusConfig } from '@zeus/shared';
+import { type AutomaticUpdateIndicatorState, loadAutomaticUpdateIndicatorFromMain } from '../../appShellBridge.js';
+import { type ConversationTreeRuntimeState, conversationTreeRuntimeStateFromConversation, conversationTreeRuntimeStateFromSession, type ProjectConversationGroup } from '../../session/ProjectConversationTree.js';
+import { createNativeConversationStartEnvelopeManager, createProjectConversationStartEnvelopeManager, preloadCodexConversationCapabilities, type SessionWorkspaceTask } from '../../session/SessionWorkspace.js';
+import type { CodexConversationCapabilities, CodexTaskPushCapabilities, NativeConversationChoice, NativeSessionState, SessionConversationOwner, StartTaskModelPushRequest } from '../../session/sessionTypes.js';
+import { compareConversationStageUpdatedDesc } from '../../session/conversationOrdering.js';
+import { rememberSessionHotState, type SessionHotCache } from '../../session/sessionHotCache.js';
+import { type TaskModelPushForm, type TaskModelPushModalStatus } from '../../task/TaskModelPushModal.js';
+import { useConversationFeatureController } from '../conversations/useConversationFeatureController.js';
+import { useGitFeatureController } from '../git/useGitFeatureController.js';
+import { useProjectFeatureController } from '../projects/useProjectFeatureController.js';
+import { useSettingsFeatureController } from '../settings/useSettingsFeatureController.js';
+import { useTaskFeatureController } from '../tasks/useTaskFeatureController.js';
 import {
-    type ConversationTreeRuntimeState,
-    conversationTreeRuntimeStateFromConversation,
-    conversationTreeRuntimeStateFromSession,
-    type ProjectConversationGroup
-} from '../../session/ProjectConversationTree.js';
-import {
-    createNativeConversationStartEnvelopeManager,
-    createProjectConversationStartEnvelopeManager,
-    preloadCodexConversationCapabilities,
-    type SessionWorkspaceTask
-} from '../../session/SessionWorkspace.js';
-import type {
-    CodexConversationCapabilities,
-    CodexTaskPushCapabilities,
-    NativeConversationChoice,
-    NativeSessionState,
-    SessionConversationOwner,
-    StartTaskModelPushRequest
-} from '../../session/sessionTypes.js';
-import {compareConversationStageUpdatedDesc} from '../../session/conversationOrdering.js';
-import {rememberSessionHotState, type SessionHotCache} from '../../session/sessionHotCache.js';
-import {type TaskModelPushForm, type TaskModelPushModalStatus} from '../../task/TaskModelPushModal.js';
-import {useConversationFeatureController} from '../conversations/useConversationFeatureController.js';
-import {useGitFeatureController} from '../git/useGitFeatureController.js';
-import {useProjectFeatureController} from '../projects/useProjectFeatureController.js';
-import {useSettingsFeatureController} from '../settings/useSettingsFeatureController.js';
-import {useTaskFeatureController} from '../tasks/useTaskFeatureController.js';
-import {
-    defaultTaskTableEnumSortOrders,
-    filterVisibleTasks,
-    normalizeTaskTableColumnPreferences,
-    resolveTaskManagementStatus,
-    taskAgentRunStatusFromConversation,
-    taskAgentRunStatusFromSession,
-    type TaskWorkspaceViewMode,
+  defaultTaskTableEnumSortOrders,
+  filterVisibleTasks,
+  normalizeTaskTableColumnPreferences,
+  resolveTaskManagementStatus,
+  taskAgentRunStatusFromConversation,
+  taskAgentRunStatusFromSession,
+  type TaskWorkspaceViewMode,
 } from '../../task/taskWorkspaceModel.js';
-import {useApplicationErrorDialog} from '../../ui/ApplicationErrorDialog.js';
-import {createSessionOperationId} from '../../sessionOperationIdentity.js';
-import {type ProjectSourceWorkspaceHandle} from '../../code/ProjectSourceWorkspace.js';
+import { useApplicationErrorDialog } from '../../ui/ApplicationErrorDialog.js';
+import { createSessionOperationId } from '../../sessionOperationIdentity.js';
+import { type ProjectSourceWorkspaceHandle } from '../../code/ProjectSourceWorkspace.js';
 import {
-    type AiRuntimeAdapterDescriptor,
-    type AiRuntimeAdapterStatus,
-    type AiRuntimeLogEntry,
-    type AiRuntimeSession,
-    type CodeMapSettings,
-    type CodexConfigImportPreview,
-    type CodexConfigImportResult,
-    type CodexLegacyImportSnapshot,
-    createEmptyDashboardSnapshot,
-    type DashboardSnapshot,
-    type GitDiffSummary,
-    type GitOperationConfirmation,
-    type GraphConversationHistoryItem,
-    type GraphConversationHistoryPage,
-    type GraphQuestionAnswer,
-    type GraphSearchResult,
-    type GraphViewSnapshot,
-    type GraphViewType,
-    type ProjectConfig,
-    type ProjectDatabaseSecretSnapshot,
-    type ProjectRecord,
-    type ReleaseStatusSnapshot,
-    type ReleaseUpdateStatusSnapshot,
-    type RuntimeOperationConfirmation,
-    type RuntimeSettings,
-    type RuntimeStatusSnapshot,
-    type SecurityAuditLogEntry,
-    type SecuritySecretsSnapshot,
-    type TaskAgentRunStatus,
-    type TaskBoardOpenMode,
-    type TaskBoardViewSnapshot,
-    type TaskEventRecord,
-    type TaskManagementStatus,
-    type TaskPageViewMode,
-    type TaskRecord,
-    type TaskStatusFilter,
-    type TaskTableColumnPreferences,
-    type TaskTemplateRecord,
-    type TelegramNotificationSettings,
-    type TelegramPollingLogEntry,
-    type TelegramPollingStatus,
-    type TelegramSecuritySettings,
-    type ZeusRealtimeConnectionState,
+  type AiRuntimeAdapterDescriptor,
+  type AiRuntimeAdapterStatus,
+  type AiRuntimeLogEntry,
+  type AiRuntimeSession,
+  type CodeMapSettings,
+  type CodexConfigImportPreview,
+  type CodexConfigImportResult,
+  type CodexLegacyImportSnapshot,
+  createEmptyDashboardSnapshot,
+  type DashboardSnapshot,
+  type GitDiffSummary,
+  type GitOperationConfirmation,
+  type GraphConversationHistoryItem,
+  type GraphConversationHistoryPage,
+  type GraphQuestionAnswer,
+  type GraphSearchResult,
+  type GraphViewSnapshot,
+  type GraphViewType,
+  type ProjectConfig,
+  type ProjectDatabaseSecretSnapshot,
+  type ProjectRecord,
+  type ReleaseStatusSnapshot,
+  type ReleaseUpdateStatusSnapshot,
+  type RuntimeOperationConfirmation,
+  type RuntimeSettings,
+  type RuntimeStatusSnapshot,
+  type SecurityAuditLogEntry,
+  type SecuritySecretsSnapshot,
+  type TaskAgentRunStatus,
+  type TaskBoardOpenMode,
+  type TaskBoardViewSnapshot,
+  type TaskEventRecord,
+  type TaskManagementStatus,
+  type TaskPageViewMode,
+  type TaskRecord,
+  type TaskStatusFilter,
+  type TaskTableColumnPreferences,
+  type TaskTemplateRecord,
+  type TelegramNotificationSettings,
+  type TelegramPollingLogEntry,
+  type TelegramPollingStatus,
+  type TelegramSecuritySettings,
+  type ZeusRealtimeConnectionState,
 } from '../../apiClient.js';
 import {
-    errorToLocalUiMessage,
-    formatGenericShellRisk,
-    formatRuntimeConfirmationStatus,
-    normalizeCodeMapSettings,
-    normalizeLocalUiError,
-    normalizeProjectConfig,
-    normalizeRuntimeSettings,
-    type ProjectConfigFormState,
-    toProjectConfigForm,
+  errorToLocalUiMessage,
+  formatGenericShellRisk,
+  formatRuntimeConfirmationStatus,
+  normalizeCodeMapSettings,
+  normalizeLocalUiError,
+  normalizeProjectConfig,
+  normalizeRuntimeSettings,
+  type ProjectConfigFormState,
+  toProjectConfigForm,
 } from './WorkspaceChrome.js';
+import { classifyGenericShellCommandRisk, isGenericShellCriticalConfirmationSatisfied, joinRuntimeLogEntries, runtimeLogMatches } from './workspaceFormatters.js';
 import {
-    classifyGenericShellCommandRisk,
-    isGenericShellCriticalConfirmationSatisfied,
-    joinRuntimeLogEntries,
-    runtimeLogMatches
-} from './workspaceFormatters.js';
-import {
-    beginNativeConversationChoiceTaskLoad,
-    browserNativeConversationStartStorage,
-    browserProjectSidebarWidthStorage,
-    buildConfiguredTaskManagementStatusLabels,
-    buildTaskCreateInitialForm,
-    completeNativeConversationChoiceTaskLoad,
-    type ConversationDrawer,
-    createNativeConversationChoiceLoadCoordinator,
-    createNativeProjectConversationChoiceLoadCoordinator,
-    createSessionWorkspaceTask,
-    type DataPortabilityStatusState,
-    dedupeProjectRecordsByLocalPath,
-    failNativeConversationChoiceTaskLoad,
-    formatConfiguredTaskManagementStatus,
-    formatDataPortabilityStatus,
-    formatRuntimeLogCopyStatus,
-    formatRuntimeLogExportStatus,
-    getLanguageCopy,
-    GRAPH_NODE_TASK_SUCCESS_DISMISS_MS,
-    GRAPH_SOURCE_OPEN_FEEDBACK_DISMISS_MS,
-    type GraphNodeTaskFeedback,
-    type GraphSourceOpenFeedback,
-    inferInitialMainNavTarget,
-    inferInitialProjectSection,
-    isProjectGraphViewForProject,
-    type LocalUiErrorSnapshot,
-    type MainNavTarget,
-    type NativeConversationChoiceTaskLoadState,
-    normalizeRendererAppShellSettings,
-    orderProjectsByPinnedIds,
-    type ProjectCodeWorkspaceMode,
-    type ProjectCreateFormState,
-    type ProjectDetailPanel,
-    type ProjectWorkspaceSection,
-    readCurrentMainNavTarget,
-    readProjectSidebarPreferredWidth,
-    readSettingsCategoryFromHash,
-    resolveConversationNavigationId,
-    resolveInitialGraphProjectId,
-    resolveSelectedNativeConversationForProject,
-    resolveTaskManagementStatusConfig,
-    resolveTaskStatusFilterForProject,
-    resolveTaskTableColumnsForProject,
-    type RuntimeConfirmationStatusState,
-    type RuntimeLogCopyStatusState,
-    type RuntimeLogExportStatusState,
-    type SettingsCategory,
-    syncRecordFromSnapshot,
-    type TaskBulkActionStatusState,
-    type TaskConversationDrawerTarget,
-    type TaskConversationReopenState,
-    type TaskCreateFormState,
-    type TaskModelPushNavigationTarget,
-    taskTableColumnPreferencesEqual,
-    type TrackedTaskModelPushState,
+  beginNativeConversationChoiceTaskLoad,
+  browserNativeConversationStartStorage,
+  browserProjectSidebarWidthStorage,
+  buildConfiguredTaskManagementStatusLabels,
+  buildTaskCreateInitialForm,
+  completeNativeConversationChoiceTaskLoad,
+  type ConversationDrawer,
+  createNativeConversationChoiceLoadCoordinator,
+  createNativeProjectConversationChoiceLoadCoordinator,
+  createSessionWorkspaceTask,
+  type DataPortabilityStatusState,
+  dedupeProjectRecordsByLocalPath,
+  failNativeConversationChoiceTaskLoad,
+  formatConfiguredTaskManagementStatus,
+  formatDataPortabilityStatus,
+  formatRuntimeLogCopyStatus,
+  formatRuntimeLogExportStatus,
+  getLanguageCopy,
+  GRAPH_NODE_TASK_SUCCESS_DISMISS_MS,
+  GRAPH_SOURCE_OPEN_FEEDBACK_DISMISS_MS,
+  type GraphNodeTaskFeedback,
+  type GraphSourceOpenFeedback,
+  inferInitialMainNavTarget,
+  inferInitialProjectSection,
+  isProjectGraphViewForProject,
+  type LocalUiErrorSnapshot,
+  type MainNavTarget,
+  type NativeConversationChoiceTaskLoadState,
+  normalizeRendererAppShellSettings,
+  orderProjectsByPinnedIds,
+  type ProjectCodeWorkspaceMode,
+  type ProjectCreateFormState,
+  type ProjectDetailPanel,
+  type ProjectWorkspaceSection,
+  readCurrentMainNavTarget,
+  readProjectSidebarPreferredWidth,
+  readSettingsCategoryFromHash,
+  resolveConversationNavigationId,
+  resolveInitialGraphProjectId,
+  resolveSelectedNativeConversationForProject,
+  resolveTaskManagementStatusConfig,
+  resolveTaskStatusFilterForProject,
+  resolveTaskTableColumnsForProject,
+  type RuntimeConfirmationStatusState,
+  type RuntimeLogCopyStatusState,
+  type RuntimeLogExportStatusState,
+  type SettingsCategory,
+  syncRecordFromSnapshot,
+  type TaskBulkActionStatusState,
+  type TaskConversationDrawerTarget,
+  type TaskConversationReopenState,
+  type TaskCreateFormState,
+  type TaskModelPushNavigationTarget,
+  taskTableColumnPreferencesEqual,
+  type TrackedTaskModelPushState,
 } from './workspaceSupport.js';
-import type {WorkspacePageProps} from './workspaceContracts.js';
+import type { WorkspacePageProps } from './workspaceContracts.js';
 
 export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const [localActiveNavTarget, setLocalActiveNavTarget] = useState<MainNavTarget>(() => inferInitialMainNavTarget(props));
@@ -1053,9 +1031,9 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     });
   }, []);
   const recordNativeConversationRuntimeState = useCallback((conversationId: string, state: NativeSessionState): void => {
-      // 冷切换的 controller 只有视图加载态，不能覆盖服务端已经给出的会话运行态；
-      // 否则用户快速切走后该临时状态无人收尾，会在侧栏永久留下假转圈。
-      if (!state.snapshot && (state.transportState === 'connecting' || state.transportState === 'hydrating' || state.transportState === 'reconnecting' || state.transportState === 'disconnected')) return;
+    // 冷切换的 controller 只有视图加载态，不能覆盖服务端已经给出的会话运行态；
+    // 否则用户快速切走后该临时状态无人收尾，会在侧栏永久留下假转圈。
+    if (!state.snapshot && (state.transportState === 'connecting' || state.transportState === 'hydrating' || state.transportState === 'reconnecting' || state.transportState === 'disconnected')) return;
     rememberSessionHotState(nativeConversationHotCacheRef.current, conversationId, state);
     const runtimeState = conversationTreeRuntimeStateFromSession(state);
     setNativeConversationRuntimeStates((current) => (current[conversationId] === runtimeState ? current : { ...current, [conversationId]: runtimeState }));
