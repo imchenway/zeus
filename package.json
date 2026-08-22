@@ -19,6 +19,7 @@
     "release:prepare": "node scripts/prepare-release-candidate.mjs",
     "release:publish": "node scripts/publish-release.mjs",
     "verify:publish": "node scripts/verify-publish.mjs",
+    "verify:release-remote-read": "node scripts/verify-release-remote-read-resilience.mjs",
     "verify:release": "bash scripts/verify-release.sh",
     "verify:acceptance-matrix": "node scripts/verify-acceptance-matrix.mjs --check",
     "verify:architecture": "tsx scripts/verify-architecture-governance.ts",

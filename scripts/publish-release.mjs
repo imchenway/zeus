@@ -6,6 +6,7 @@ import { copyFileSync, createReadStream, existsSync, mkdirSync, mkdtempSync, rea
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { commandFailureDetail, commandResultSucceeded, releaseRemoteReadAttempts, releaseRemoteReadTimeoutMs, runRemoteReadWithRetrySync } from './release-remote-read.mjs';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const repository = 'imchenway/zeus';
@@ -73,6 +74,7 @@ async function main() {
     workflowRun = await waitForWorkflowRun(workflowRun);
     release = readRelease(tag);
   }
+  if (release.error) throw new Error(`Release Workflow 结束后无法读取 GitHub Release：${release.error}`);
   if (!release.exists) throw new Error(`Release Workflow 结束后仍未找到 GitHub Release：${tag}`);
 
   const verification = await verifyPublishedRelease({ releaseVersion, tag, headSha: preflight.headSha, release, outputDirectory, workflowRun, requireAppleDistribution, deepVerifyPublicDmg });
@@ -93,11 +95,12 @@ function collectPreflight(input) {
   const remoteMainSha = resolveRemoteReference('refs/heads/main');
   const localTagSha = resolveLocalTagSha(input.tag);
   const remoteTagSha = resolveRemoteTagSha(input.tag);
-  const ghAuth = capture('gh', ['auth', 'status', '--hostname', 'github.com'], true);
+  const ghAuth = captureRemoteRead('检查 GitHub CLI 登录状态', 'gh', ['auth', 'status', '--hostname', 'github.com'], { allowFailure: true });
   const release = readRelease(input.tag);
   const ciRun = findSuccessfulCiRun(headSha);
   const workflow = readReleaseWorkflow();
-  const secretNames = readActionSecretNames();
+  const secretsRead = readActionSecretNames();
+  const secretNames = secretsRead.names;
   const releaseNotesPath = join(repositoryRoot, 'docs', 'releases', `${input.tag}.md`);
   let packageVersion = null;
   let desktopVersion = null;
@@ -107,7 +110,7 @@ function collectPreflight(input) {
   if (!isExpectedOrigin(originUrl)) blockers.push(`origin 不是 ${repository}：${originUrl}`);
   if (!remoteMainSha) blockers.push('无法读取 origin/main 远程提交');
   else if (remoteMainSha !== headSha) blockers.push(`本地 HEAD 与 origin/main 不一致：local=${headSha} remote=${remoteMainSha}`);
-  if (ghAuth.status !== 0) blockers.push(`GitHub CLI 未完成可用登录：${ghAuth.stderr.trim() || ghAuth.stdout.trim() || `退出码 ${ghAuth.status}`}`);
+  if (ghAuth.status !== 0) blockers.push(`GitHub CLI 未完成可用登录：${commandFailureDetail(ghAuth)}`);
 
   try {
     packageVersion = JSON.parse(readFileSync(join(repositoryRoot, 'package.json'), 'utf8')).version;
@@ -134,14 +137,18 @@ function collectPreflight(input) {
   }
 
   if (!workflow.active) blockers.push(`Release Workflow 不可用：${workflow.detail}`);
-  if (!secretNames.has('HOMEBREW_TAP_TOKEN')) blockers.push('GitHub Actions 缺少 HOMEBREW_TAP_TOKEN');
-  if (input.requireAppleDistribution) {
-    for (const name of ['MACOS_CERTIFICATE', 'MACOS_CERTIFICATE_PASSWORD']) {
-      if (!secretNames.has(name)) blockers.push(`严格 Apple 分发缺少 ${name}`);
+  if (secretsRead.error) {
+    blockers.push(`无法读取 GitHub Actions Secrets：${secretsRead.error}`);
+  } else {
+    if (!secretNames.has('HOMEBREW_TAP_TOKEN')) blockers.push('GitHub Actions 缺少 HOMEBREW_TAP_TOKEN');
+    if (input.requireAppleDistribution) {
+      for (const name of ['MACOS_CERTIFICATE', 'MACOS_CERTIFICATE_PASSWORD']) {
+        if (!secretNames.has(name)) blockers.push(`严格 Apple 分发缺少 ${name}`);
+      }
+      const hasAppleId = ['APPLE_ID', 'APPLE_APP_SPECIFIC_PASSWORD', 'APPLE_TEAM_ID'].every((name) => secretNames.has(name));
+      const hasApiKey = ['APPLE_API_KEY_P8', 'APPLE_API_KEY_ID', 'APPLE_API_ISSUER'].every((name) => secretNames.has(name));
+      if (!hasAppleId && !hasApiKey) blockers.push('严格 Apple 分发缺少一组完整公证凭据');
     }
-    const hasAppleId = ['APPLE_ID', 'APPLE_APP_SPECIFIC_PASSWORD', 'APPLE_TEAM_ID'].every((name) => secretNames.has(name));
-    const hasApiKey = ['APPLE_API_KEY_P8', 'APPLE_API_KEY_ID', 'APPLE_API_ISSUER'].every((name) => secretNames.has(name));
-    if (!hasAppleId && !hasApiKey) blockers.push('严格 Apple 分发缺少一组完整公证凭据');
   }
 
   if (localTagSha && localTagSha !== headSha) blockers.push(`本地标签 ${input.tag} 指向其他提交：${localTagSha}`);
@@ -259,7 +266,7 @@ async function verifyPublishedRelease(input) {
 
   const downloadDirectory = mkdtempSync(join(tmpdir(), `zeus-release-public-${input.releaseVersion}-`));
   try {
-    run('gh', ['release', 'download', input.tag, '--repo', repository, '--pattern', 'zeus-release-manifest.json', '--dir', downloadDirectory]);
+    downloadReleaseAsset(input.tag, 'zeus-release-manifest.json', downloadDirectory);
     const manifestPath = join(downloadDirectory, 'zeus-release-manifest.json');
     const manifestSha256 = await sha256File(manifestPath);
     const manifestSize = statSync(manifestPath).size;
@@ -281,7 +288,7 @@ async function verifyPublishedRelease(input) {
     }
 
     if (input.deepVerifyPublicDmg) {
-      run('gh', ['release', 'download', input.tag, '--repo', repository, '--pattern', expectedDmgName, '--dir', downloadDirectory]);
+      downloadReleaseAsset(input.tag, expectedDmgName, downloadDirectory, 15 * 60_000);
       const dmgPath = join(downloadDirectory, expectedDmgName);
       run('/usr/bin/hdiutil', ['verify', dmgPath]);
       const downloadedDmgSha256 = await sha256File(dmgPath);
@@ -411,14 +418,17 @@ function readReleaseWorkflow() {
 }
 
 function readActionSecretNames() {
-  const result = capture('gh', ['secret', 'list', '--repo', repository, '--app', 'actions'], true);
-  if (result.status !== 0) return new Set();
-  return new Set(
-    result.stdout
-      .split(/\r?\n/u)
-      .map((line) => line.split(/\s+/u)[0]?.trim())
-      .filter(Boolean),
-  );
+  const result = captureRemoteRead('读取 GitHub Actions Secrets', 'gh', ['secret', 'list', '--repo', repository, '--app', 'actions'], { allowFailure: true });
+  if (result.status !== 0) return { names: new Set(), error: commandFailureDetail(result) };
+  return {
+    names: new Set(
+      result.stdout
+        .split(/\r?\n/u)
+        .map((line) => line.split(/\s+/u)[0]?.trim())
+        .filter(Boolean),
+    ),
+    error: null,
+  };
 }
 
 function readRelease(tag) {
@@ -441,7 +451,12 @@ function findLatestReleaseRun(headSha) {
 }
 
 function listReleaseRuns(headSha) {
-  return ghJson(['run', 'list', '--repo', repository, '--workflow', 'Release', '--event', 'workflow_dispatch', '--commit', headSha, '--limit', '20', '--json', 'databaseId,status,conclusion,event,headSha,url,createdAt,workflowName'], true);
+  const result = ghJson(
+    ['run', 'list', '--repo', repository, '--workflow', 'Release', '--event', 'workflow_dispatch', '--commit', headSha, '--limit', '20', '--json', 'databaseId,status,conclusion,event,headSha,url,createdAt,workflowName'],
+    true,
+  );
+  if (!result.ok) throw new Error(`无法确认候选提交是否已有 Release Workflow：${result.error}`);
+  return result;
 }
 
 function dispatchReleaseWorkflow(tag, commitSha, requireAppleDistribution) {
@@ -548,16 +563,15 @@ function resolveLocalTagSha(tag) {
 }
 
 function resolveRemoteTagSha(tag) {
-  const result = capture('git', ['ls-remote', '--tags', 'origin', `refs/tags/${tag}`, `refs/tags/${tag}^{}`], true);
-  if (result.status !== 0) return null;
+  const result = captureRemoteRead(`读取远程标签 ${tag}`, 'git', ['ls-remote', '--tags', 'origin', `refs/tags/${tag}`, `refs/tags/${tag}^{}`]);
   const lines = result.stdout.trim().split(/\r?\n/u).filter(Boolean);
   const peeled = lines.find((line) => line.endsWith(`refs/tags/${tag}^{}`));
   return (peeled ?? lines[0])?.split(/\s+/u)[0] ?? null;
 }
 
 function resolveRemoteReference(reference) {
-  const result = capture('git', ['ls-remote', 'origin', reference], true);
-  return result.status === 0 ? result.stdout.trim().split(/\s+/u)[0] || null : null;
+  const result = captureRemoteRead(`读取远程引用 ${reference}`, 'git', ['ls-remote', 'origin', reference]);
+  return result.stdout.trim().split(/\s+/u)[0] || null;
 }
 
 function isExpectedOrigin(url) {
@@ -576,13 +590,13 @@ function git(args) {
 }
 
 function gh(args) {
-  const result = capture('gh', args);
+  const result = captureRemoteRead('读取 GitHub 公开事实', 'gh', args);
   return result.stdout;
 }
 
 function ghJson(args, allowFailure = false) {
-  const result = capture('gh', args, allowFailure);
-  if (result.status !== 0) return { ok: false, error: [result.stdout, result.stderr].filter(Boolean).join('\n') };
+  const result = captureRemoteRead('读取 GitHub 公开事实', 'gh', args, { allowFailure });
+  if (result.status !== 0) return { ok: false, error: [result.stdout, result.stderr].filter(Boolean).join('\n') || commandFailureDetail(result) };
   try {
     return { ok: true, value: JSON.parse(result.stdout) };
   } catch (error) {
@@ -600,6 +614,29 @@ function run(command, args) {
   if (result.status !== 0) throw new Error(`${command} ${args.join(' ')} 执行失败，退出码 ${result.status ?? 'unknown'}。`);
 }
 
+function downloadReleaseAsset(tag, assetName, destinationDirectory, timeout = releaseRemoteReadTimeoutMs) {
+  const destination = join(destinationDirectory, assetName);
+  const args = ['release', 'download', tag, '--repo', repository, '--pattern', assetName, '--dir', destinationDirectory];
+  const outcome = runRemoteReadWithRetrySync({
+    execute: () => {
+      rmSync(destination, { force: true });
+      return spawnSync('gh', args, {
+        cwd: repositoryRoot,
+        encoding: 'utf8',
+        maxBuffer: 16 * 1024 * 1024,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout,
+      });
+    },
+    onRetry: (retry) => {
+      console.warn(`公开资产下载暂时失败：${assetName}；${retry.delayMs / 1_000} 秒后重试（第 ${retry.nextAttempt}/${retry.attempts} 次）：${retry.detail}`);
+    },
+  });
+  if (!commandResultSucceeded(outcome.result)) {
+    throw new Error(`下载 GitHub Release 资产 ${assetName} 失败：${commandFailureDetail(outcome.result)}`);
+  }
+}
+
 function capture(command, args, allowFailure = false) {
   const result = spawnSync(command, args, {
     cwd: repositoryRoot,
@@ -612,6 +649,35 @@ function capture(command, args, allowFailure = false) {
     throw new Error(`${command} ${args.join(' ')} 执行失败：${result.stderr.trim() || `退出码 ${result.status ?? 'unknown'}`}`);
   }
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+function captureRemoteRead(label, command, args, options = {}) {
+  const timeout = options.timeout ?? releaseRemoteReadTimeoutMs;
+  const attempts = options.attempts ?? releaseRemoteReadAttempts;
+  const outcome = runRemoteReadWithRetrySync({
+    attempts,
+    execute: () =>
+      spawnSync(command, args, {
+        cwd: repositoryRoot,
+        encoding: 'utf8',
+        maxBuffer: 16 * 1024 * 1024,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout,
+      }),
+    onRetry: (retry) => {
+      console.warn(`远程只读操作暂时失败：${label}；${retry.delayMs / 1_000} 秒后重试（第 ${retry.nextAttempt}/${retry.attempts} 次）：${retry.detail}`);
+    },
+  });
+  const result = {
+    status: outcome.result.status,
+    stdout: outcome.result.stdout ?? '',
+    stderr: outcome.result.stderr ?? '',
+    error: outcome.result.error ?? null,
+  };
+  if (!options.allowFailure && !commandResultSucceeded(result)) {
+    throw new Error(`${label}失败：${commandFailureDetail(result)}`);
+  }
+  return result;
 }
 
 function normalizeText(value) {
