@@ -170,6 +170,14 @@ const projectSourceWatchers = new Map<number, { projectId: string; watcher: FSWa
 let taskTableLayoutQuitPending = false;
 let taskTableLayoutQuitApproved = false;
 let upgradeHandoffRequested = false;
+
+/** 更新辅助程序已经拿到精确新版路径后，立即进入既有安全退出编排。 */
+function requestUpgradeHandoffQuit(): void {
+  upgradeHandoffRequested = true;
+  taskTableLayoutQuitApproved = true;
+  setImmediate(() => app.quit());
+}
+
 const storageRecoveryRestart = new StorageRecoveryRestartCoordinator();
 const execFile = promisify(execFileCallback);
 const windowStateSaveDelayMs = 250;
@@ -2648,10 +2656,7 @@ async function initializeApplication(): Promise<void> {
         isPackaged: true,
         testMode: isTestDistribution(),
         allowUntrustedTestUpdate: allowUntrustedReleaseUpdateTest,
-        onInstallReady: () => {
-          upgradeHandoffRequested = true;
-          taskTableLayoutQuitApproved = true;
-        },
+        onInstallReady: requestUpgradeHandoffQuit,
       });
       homebrewUpdateController = createHomebrewUpdateController({
         helperPath: nativeUpdateProgressHelperPath(),
@@ -2675,10 +2680,7 @@ async function initializeApplication(): Promise<void> {
             throw new Error('存在尚未提交的敏感回答。请先提交或清空敏感内容，再安装更新。');
           }
         },
-        onInstallReady: () => {
-          upgradeHandoffRequested = true;
-          taskTableLayoutQuitApproved = true;
-        },
+        onInstallReady: requestUpgradeHandoffQuit,
       });
     }
     appShellSettings = await loadMainAppShellSettings(localServerRuntime.config);

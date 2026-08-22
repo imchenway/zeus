@@ -1342,7 +1342,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
           if (requestRefreshAgain) continue;
           return;
         }
-        const requests = snapshot.requests.filter((request) => !resolvedRequestIds.has(request.id));
+        const requests = snapshot.requests.filter((request) => request.status !== 'pending' || !resolvedRequestIds.has(request.id));
         dispatch({
           type: 'pending_requests_hydrated',
           requests,
@@ -1861,8 +1861,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const current = state.snapshot;
     if (!load || !current?.snapshotV2 || !current.v2Paging) return;
     const turn = current.turns.find((candidate) => candidate.id === turnIdentity || candidate.providerTurnId === turnIdentity);
-    if (!turn) return;
-    const pagingKey = turn.providerTurnId ?? turn.id;
+    // Snapshot V2 的固定首屏只携带最近闭合轮次；更早模型历史仍保留本地 turn id，
+    // 服务端过程入口同时接受本地和 Provider 身份，因此旧轮次可以直接按历史身份读取。
+    const localTurnId = turn?.id ?? turnIdentity;
+    const pagingKey = turn?.providerTurnId ?? turnIdentity;
     const currentPage = current.v2Paging.processByTurn[pagingKey];
     if (currentPage?.loading || (currentPage?.loaded && !currentPage.hasMore)) return;
     dispatchV2Snapshot(
@@ -1875,7 +1877,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       })),
     );
     try {
-      const page = await load(options.projectId, options.conversationId, turn.id, {
+      const page = await load(options.projectId, options.conversationId, localTurnId, {
         ...(currentPage?.nextCursor ? { cursor: currentPage.nextCursor } : {}),
         limit: 32,
         byteLimit: 96 * 1024,

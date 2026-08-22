@@ -407,7 +407,7 @@ function activitySummary(items: NativeSessionItemBuffer[], language: SessionUiLa
       genericCommandCount > 0 ? '运行了命令' : null,
       otherTools > 0 ? '使用了工具' : null,
     ].filter(Boolean);
-    return completedParts.join('') || '完成了处理';
+    return completedParts.join('、') || '完成了处理';
   }
   const englishParts = [
     fileChanges > 0 ? (active ? 'editing files' : 'edited files') : null,

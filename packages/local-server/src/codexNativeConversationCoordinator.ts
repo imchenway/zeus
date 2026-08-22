@@ -3076,6 +3076,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       status: refinement ? 'refinement_requested' : 'implemented',
       submissionId: submission.id,
       collaborationMode: nextMode,
+      // 确认卡消失与用户消息进入时间线必须是同一个投影事件；否则队列事件稍晚到达时，
+      // PLAN -> 开发模式切换会短暂只剩一片空白。
+      queue: toQueueSnapshot(conversation.id),
     });
     const refreshed = requireConversation(conversation.id);
     const state = runStates.get(conversation.id) ?? inferRunState(refreshed);

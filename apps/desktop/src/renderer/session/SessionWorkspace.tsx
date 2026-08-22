@@ -1539,6 +1539,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const transcriptState = props.transcriptState ?? props.state;
   const transcriptIsRetained = Boolean(props.transcriptState && props.transcriptState !== props.state);
   const transcriptInteractionsEnabled = !interactionReadOnly && !transcriptIsRetained;
+  // 历史分页、过程与截断正文都是本地只读查询。会话只读时仍必须允许查看，
+  // 只有切换期间保留的旧投影没有对应 controller，才应禁用这些读取入口。
+  const transcriptReadActionsEnabled = !transcriptIsRetained;
   const effectiveProviderState = props.state?.snapshot?.providerState ?? props.conversation?.providerState ?? null;
   const realtimeExpected = sessionStateNeedsRealtime(props.state);
   // 空闲历史会话只读本地快照，不存在“连接失败”；只有真实轮次、排队或待处理请求需要实时连接时才报告连接错误。
@@ -2454,11 +2457,11 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     }
                     onOpenResource={transcriptInteractionsEnabled ? openConversationResource : undefined}
                     onLoadResourcePreview={transcriptInteractionsEnabled ? actions.onLoadResourcePreview : undefined}
-                    onLoadEarlierHistory={transcriptInteractionsEnabled ? actions.onLoadEarlierHistory : undefined}
-                    onLoadTurnProcess={transcriptInteractionsEnabled ? actions.onLoadTurnProcess : undefined}
-                    onLoadTurnArtifacts={transcriptInteractionsEnabled ? actions.onLoadTurnArtifacts : undefined}
-                    onLoadV2Content={transcriptInteractionsEnabled ? actions.onLoadV2Content : undefined}
-                    onLoadV2ToolResult={transcriptInteractionsEnabled ? actions.onLoadV2ToolResult : undefined}
+                    onLoadEarlierHistory={transcriptReadActionsEnabled ? actions.onLoadEarlierHistory : undefined}
+                    onLoadTurnProcess={transcriptReadActionsEnabled ? actions.onLoadTurnProcess : undefined}
+                    onLoadTurnArtifacts={transcriptReadActionsEnabled ? actions.onLoadTurnArtifacts : undefined}
+                    onLoadV2Content={transcriptReadActionsEnabled ? actions.onLoadV2Content : undefined}
+                    onLoadV2ToolResult={transcriptReadActionsEnabled ? actions.onLoadV2ToolResult : undefined}
                     onReviewTurnChanges={
                       transcriptInteractionsEnabled
                         ? (changeSet, fileId) => {

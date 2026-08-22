@@ -1267,9 +1267,12 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         return reply.code(404).send({ error: 'ZEUS_CONVERSATION_NOT_FOUND', message: 'Conversation not found' });
       }
       const pendingPlanAction = conversationPlanActions.getLatestPending(conversation.id);
+      // 询问回答是用户参与会话的正文历史，不是一次性 pending UI。只补回已经解决的
+      // request_user_input；命令审批等协议请求仍由处理过程承载，避免扩大首屏载荷。
+      const visibleRequests = conversationRequests.listByConversation(conversation.id).filter((request) => request.status === 'pending' || (request.requestKind === 'request_user_input' && request.status === 'resolved'));
       return {
         conversationId: conversation.id,
-        requests: conversationRequests.listPendingByConversation(conversation.id).map((persistedRequest) => {
+        requests: visibleRequests.map((persistedRequest) => {
           const snapshot = toNativeServerRequest(persistedRequest);
           const turn = persistedRequest.turnId ? conversationTurns.getById(persistedRequest.turnId) : undefined;
           const item = persistedRequest.itemId ? conversationProviderItems.getById(persistedRequest.itemId) : undefined;

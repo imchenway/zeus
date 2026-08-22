@@ -323,6 +323,7 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
   const threadId = snapshot.providerThreadId ?? 'unbound-thread';
   const previousUserItemKeys = new Map<string, string>();
   const previousUserStableIndexes = new Map<string, number>();
+  const previousItemStableIndexes = new Map(state.itemOrder.map((key, index) => [key, index]));
   const previousUserItemsByClientId = new Map<string, NativeSessionItemBuffer>();
   const previousUserItemsBySubmissionId = new Map<string, NativeSessionItemBuffer>();
   state.itemOrder.forEach((key, index) => {
@@ -391,6 +392,40 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
       durableClientIds.add(itemClientId);
       providerUserItemKeyByClientId.set(itemClientId, key);
     }
+  }
+
+  // Snapshot V2 的权威首屏只重新拥有有界历史，不代表已经分页取得的旧正文和过程被删除。
+  // 普通水合必须保留稳定页与仍属当前活动轮次的过程项，否则每次新轮次对账都会让旧命令消失。
+  const activeTurnIdentities = new Set(
+    snapshot.turns.filter((turn) => turn.status === 'running' || turn.status === 'dispatching' || turn.status === 'waiting').flatMap((turn) => [turn.id, turn.providerTurnId].filter((identity): identity is string => Boolean(identity))),
+  );
+  const projectedLocalItemIds = new Set(
+    Object.values(items)
+      .map((item) => item.localItemId)
+      .filter((identity): identity is string => Boolean(identity)),
+  );
+  const projectedProviderItemIds = new Set(
+    Object.values(items)
+      .map((item) => item.providerItemId)
+      .filter((identity): identity is string => Boolean(identity)),
+  );
+  for (const key of state.itemOrder) {
+    const previous = state.items[key];
+    if (
+      !previous ||
+      previous.conversationId !== snapshot.id ||
+      key in items ||
+      (previous.localItemId ? projectedLocalItemIds.has(previous.localItemId) : false) ||
+      (previous.providerItemId ? projectedProviderItemIds.has(previous.providerItemId) : false) ||
+      !shouldPreserveBoundedTranscriptItem(previous, activeTurnIdentities)
+    )
+      continue;
+    items[key] = previous;
+    orderedItems.push({
+      key,
+      timestamp: previous.timelineAt ?? previous.updatedAt ?? snapshot.updatedAt,
+      stableIndex: previousItemStableIndexes.get(key) ?? stableIndex++,
+    });
   }
 
   for (const message of snapshot.messages) {
@@ -530,6 +565,17 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
     visibleFeedbackEpoch: hasVisibleActiveFeedback ? feedbackEpoch : Math.min(state.visibleFeedbackEpoch, feedbackEpoch),
     error: null,
   };
+}
+
+const boundedProcessItemTypes = new Set(['commandexecution', 'command', 'mcptoolcall', 'dynamictoolcall', 'websearch', 'imageview', 'toolcall', 'tool', 'filechange', 'file', 'contextcompaction', 'providerevent']);
+
+function shouldPreserveBoundedTranscriptItem(item: NativeSessionItemBuffer, activeTurnIdentities: ReadonlySet<string>): boolean {
+  if (item.optimistic) return false;
+  const contentKind = stringValue(item.payload.v2ContentKind);
+  if (contentKind === 'model_history') return isTerminalItemStatus(item.status);
+  const type = item.type.toLocaleLowerCase().replace(/[\s_\-/]+/gu, '');
+  const processItem = contentKind === 'process_detail' || boundedProcessItemTypes.has(type);
+  return processItem && (isTerminalItemStatus(item.status) || activeTurnIdentities.has(item.turnId));
 }
 
 /**
@@ -908,7 +954,7 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
             resolvedAt: status === 'pending' ? null : event.createdAt,
             updatedAt: event.createdAt,
           };
-      return {
+      const nextState: NativeSessionState = {
         ...base,
         planImplementationRequests: [...base.planImplementationRequests.filter((request) => request.id !== requestId), updated],
         snapshot: base.snapshot
@@ -918,6 +964,8 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
             }
           : base.snapshot,
       };
+      const queue = isRecord(payload.queue) ? (payload.queue as unknown as NativeQueueSnapshot) : null;
+      return queue ? projectQueueSubmissionMessages(nextState, queue) : nextState;
     }
     case 'conversation.collaboration_mode.changed':
       return base.snapshot && (payload.collaborationMode === 'default' || payload.collaborationMode === 'plan')

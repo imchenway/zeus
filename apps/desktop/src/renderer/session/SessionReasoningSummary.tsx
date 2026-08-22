@@ -70,8 +70,15 @@ function stringSegments(value: unknown): string[] {
 function cleanReasoningSummary(value: string): string {
   const text = value.trim();
   if (!text) return '';
-  const bold = /^\*\*([^\n]+)\*\*$/u.exec(text);
-  return bold?.[1] ?? value;
+  // Provider 可能把连续更新的多个动作标题合并进同一摘要项。活动区只应表达
+  // 最新动作，否则一个转圈图标会带出两三行“同时进行中”的错觉。
+  const latest = text
+    .split(/\n\s*\n/gu)
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+    .at(-1)!;
+  const bold = /^\*\*([^\n]+)\*\*$/u.exec(latest);
+  return bold?.[1] ?? latest;
 }
 
 function reasoningStatusIcon(status: ReasoningSummaryStatus) {

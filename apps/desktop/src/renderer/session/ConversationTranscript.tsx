@@ -426,11 +426,23 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       const turn = props.state.turnsByProviderId[row.turnId];
       const expansionKey = turnProcessExpansionKey(row.turnId);
       if (!turn) {
+        const processPaging = props.state.snapshot?.v2Paging?.processByTurn[row.turnId];
         return (
-          <SessionTurnProcessDisclosure language={props.language} open={expandedRowKeys.has(expansionKey)} onOpenChange={(open) => setTranscriptRowExpanded(expansionKey, open)}>
+          <SessionTurnProcessDisclosure
+            language={props.language}
+            loading={Boolean(processPaging?.loading)}
+            error={processPaging?.error}
+            open={expandedRowKeys.has(expansionKey)}
+            onOpenChange={(open) => setTranscriptRowExpanded(expansionKey, open)}
+            onOpen={() => renderProps.onLoadTurnProcess?.(row.turnId)}
+          >
             {row.rows.map((child) => (
               <Fragment key={child.key}>{renderTranscriptRow(child, transcriptRowRenderOptions(renderProps, items, false, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId))}</Fragment>
             ))}
+            {processPaging?.loaded && processPaging.hasMore && renderProps.onLoadTurnProcess ? (
+              <V2AutoPageSentinel loading={processPaging.loading} error={processPaging.error} kind="process" language={props.language} onLoad={() => renderProps.onLoadTurnProcess?.(row.turnId)} />
+            ) : null}
+            <V2TurnDeferredArtifacts state={props.state} localTurnId={row.turnId} pagingKey={row.turnId} language={props.language} onLoadContent={renderProps.onLoadV2Content} onLoadToolResult={renderProps.onLoadV2ToolResult} />
           </SessionTurnProcessDisclosure>
         );
       }
@@ -504,16 +516,19 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           (candidate) => candidate.id === turn?.id || (turn?.providerTurnId && candidate.providerTurnId === turn.providerTurnId),
         )
       : undefined;
+    const historicalProcessAvailable = Boolean(v2Turn?.process.available || (!turn && props.state.snapshot?.snapshotV2 && isFinalAnswerItem(lastRowItem)));
     const showV2DeferredDetails = Boolean(
-      closesVisibleTurn && turn && v2Turn && !isActiveSessionTurn(turn) && !projectedTurnWorkIds.has(lastRowItem.turnId) && (v2Turn.process.available || v2Turn.resourcesAvailable || v2Turn.changeSetAvailable),
+      closesVisibleTurn &&
+      !projectedTurnWorkIds.has(lastRowItem.turnId) &&
+      ((!turn && historicalProcessAvailable) || (turn && !isActiveSessionTurn(turn) && v2Turn && (historicalProcessAvailable || v2Turn.resourcesAvailable || v2Turn.changeSetAvailable))),
     );
     return (
       <>
         {renderTranscriptRow(row, transcriptRowRenderOptions(renderProps, items, showActiveStatus, motionFocus, lastUserKey, false, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId))}
-        {showV2DeferredDetails && turn ? (
+        {showV2DeferredDetails ? (
           <SessionTurnProcessDisclosure
             language={props.language}
-            labelKind="details"
+            labelKind={historicalProcessAvailable ? 'process' : 'details'}
             loading={Boolean(v2ProcessPaging?.loading || v2ChangePaging?.loading || props.state.snapshot?.v2Paging?.resources.loading)}
             error={v2ProcessPaging?.error ?? v2ChangePaging?.error ?? props.state.snapshot?.v2Paging?.resources.error}
             open={expandedRowKeys.has(expansionKey)}
@@ -522,7 +537,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           >
             <V2TurnDeferredArtifacts
               state={props.state}
-              localTurnId={turn.id}
+              localTurnId={turn?.id ?? lastRowItem.turnId}
               pagingKey={v2PagingKey}
               language={props.language}
               onLoadMore={renderProps.onLoadTurnArtifacts ? () => renderProps.onLoadTurnArtifacts?.(lastRowItem.turnId) : undefined}
@@ -792,7 +807,6 @@ interface V2DeferredContentPage {
 }
 
 function V2DeferredContent(props: { handle: string; label: string; language: SessionUiLanguage; onLoad: (handle: string, offset?: number) => Promise<V2DeferredContentPage> }) {
-  const rootRef = useRef<HTMLDivElement | null>(null);
   const loadingRef = useRef(false);
   const [pages, setPages] = useState<V2DeferredContentPage[]>([]);
   const [loading, setLoading] = useState(false);
@@ -821,33 +835,21 @@ function V2DeferredContent(props: { handle: string; label: string; language: Ses
     },
     [props.handle, props.onLoad],
   );
-  useEffect(() => {
-    const root = rootRef.current;
-    if (!root || pages.length > 0 || loading || failed) return;
-    let requested = false;
-    const requestContent = (): void => {
-      if (requested) return;
-      requested = true;
-      void load();
-    };
-    if (typeof IntersectionObserver === 'undefined') {
-      requestContent();
-      return;
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) requestContent();
-      },
-      { root: root.closest('.session-transcript'), rootMargin: '240px 0px' },
-    );
-    observer.observe(root);
-    return () => observer.disconnect();
-  }, [failed, load, loading, pages.length]);
   const lastPage = pages.at(-1) ?? null;
   const text = pages.map((page) => page.text).join('');
   return (
-    <div ref={rootRef} className="session-v2-content" aria-label={props.label} aria-busy={loading || undefined}>
+    <div className="session-v2-content" aria-label={props.label} aria-busy={loading || undefined}>
+      {!lastPage && !loading && !failed ? (
+        <button type="button" onClick={() => void load()}>
+          {props.label}
+        </button>
+      ) : null}
       {loading && pages.length === 0 ? <small className="session-v2-page-status">{props.language === 'zh-CN' ? '正在读取正文…' : 'Loading content…'}</small> : null}
+      {failed && pages.length === 0 ? (
+        <button type="button" onClick={() => void load()}>
+          {props.language === 'zh-CN' ? '重试读取正文' : 'Retry loading content'}
+        </button>
+      ) : null}
       {lastPage ? (
         <>
           <pre>{text}</pre>
