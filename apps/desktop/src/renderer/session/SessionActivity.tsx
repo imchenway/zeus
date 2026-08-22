@@ -1,18 +1,41 @@
-import { type FocusEvent, type KeyboardEvent, type ReactNode, memo, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
-import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
-import { CircleIcon as Circle } from '@phosphor-icons/react/dist/csr/Circle';
-import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
-import { BookOpenIcon as BookOpen } from '@phosphor-icons/react/dist/csr/BookOpen';
-import { ImageIcon as Image } from '@phosphor-icons/react/dist/csr/Image';
-import { ListChecksIcon as ListChecks } from '@phosphor-icons/react/dist/csr/ListChecks';
-import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
-import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
-import { PlugsIcon as Plugs } from '@phosphor-icons/react/dist/csr/Plugs';
-import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
-import { WrenchIcon as Wrench } from '@phosphor-icons/react/dist/csr/Wrench';
-import { isAssistantDeliverableItem, type NativePendingRequest, type NativeSessionItemBuffer, type NativeTurnPlanSnapshot, type NativeTurnSnapshot } from './sessionTypes.js';
-import type { SessionUiLanguage } from './ThreadItemView.js';
+import {
+    type FocusEvent,
+    type KeyboardEvent,
+    memo,
+    type ReactNode,
+    useEffect,
+    useId,
+    useMemo,
+    useRef,
+    useState
+} from 'react';
+import {CaretDownIcon as CaretDown} from '@phosphor-icons/react/dist/csr/CaretDown';
+import {CheckCircleIcon as CheckCircle} from '@phosphor-icons/react/dist/csr/CheckCircle';
+import {CircleIcon as Circle} from '@phosphor-icons/react/dist/csr/Circle';
+import {CircleNotchIcon as CircleNotch} from '@phosphor-icons/react/dist/csr/CircleNotch';
+import {BookOpenIcon as BookOpen} from '@phosphor-icons/react/dist/csr/BookOpen';
+import {ImageIcon as Image} from '@phosphor-icons/react/dist/csr/Image';
+import {ListChecksIcon as ListChecks} from '@phosphor-icons/react/dist/csr/ListChecks';
+import {MagnifyingGlassIcon as MagnifyingGlass} from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
+import {PencilSimpleIcon as PencilSimple} from '@phosphor-icons/react/dist/csr/PencilSimple';
+import {PlugsIcon as Plugs} from '@phosphor-icons/react/dist/csr/Plugs';
+import {TerminalWindowIcon as TerminalWindow} from '@phosphor-icons/react/dist/csr/TerminalWindow';
+import {WrenchIcon as Wrench} from '@phosphor-icons/react/dist/csr/Wrench';
+import type {
+    ConversationFileLocation,
+    ConversationOpenTarget,
+    ConversationResource,
+    ConversationResourcePreview
+} from '@zeus/shared';
+import {ConversationResourceCards, defaultOpenTarget, isImageResource} from './ConversationResources.js';
+import {
+    isAssistantDeliverableItem,
+    type NativePendingRequest,
+    type NativeSessionItemBuffer,
+    type NativeTurnPlanSnapshot,
+    type NativeTurnSnapshot
+} from './sessionTypes.js';
+import type {SessionUiLanguage} from './ThreadItemView.js';
 
 const operationalTypes = new Set(['commandexecution', 'command', 'mcptoolcall', 'dynamictoolcall', 'websearch', 'imageview', 'toolcall', 'tool', 'filechange', 'file', 'contextcompaction', 'providerevent']);
 const MAX_ACTIVITY_OUTPUT_CHARACTERS = 40_000;
@@ -24,7 +47,7 @@ export function isOperationalActivityItem(item: NativeSessionItemBuffer): boolea
   return operationalTypes.has(type);
 }
 
-export type SessionActivityCategory = 'commands' | 'tools' | 'files' | 'context';
+export type SessionActivityCategory = 'commands' | 'tools' | 'files' | 'context' | 'mixed';
 
 export function activityCategory(item: NativeSessionItemBuffer): SessionActivityCategory {
   const type = normalizeType(item.type);
@@ -34,14 +57,24 @@ export function activityCategory(item: NativeSessionItemBuffer): SessionActivity
   return 'tools';
 }
 
-export const SessionActivityGroup = memo(function SessionActivityGroup(props: { items: NativeSessionItemBuffer[]; language: SessionUiLanguage; category: SessionActivityCategory; motionActive?: boolean }) {
+interface SessionActivityGroupProps {
+    items: NativeSessionItemBuffer[];
+    language: SessionUiLanguage;
+    category: SessionActivityCategory;
+    motionActive?: boolean;
+    onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
+    onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
+}
+
+export const SessionActivityGroup = memo(function SessionActivityGroup(props: SessionActivityGroupProps) {
   const liveItem = [...props.items].reverse().find((item) => item.status !== 'completed' && item.status !== 'failed') ?? null;
   const active = Boolean(liveItem);
   const summary = activitySummary(props.items, props.language, active);
-  const skillNames = activitySkillNames(props.items);
+    const imageResources = activityImageResources(props.items);
+    const detailItems = imageResources.length > 0 ? props.items.filter((item) => normalizeType(item.type) !== 'imageview' || item.resources.length === 0) : props.items;
   const [open, setOpen] = useState(false);
   const previousActiveRef = useRef(active);
-  const GroupIcon = activityItemIcon(liveItem ?? props.items[props.items.length - 1]!);
+    const GroupIcon = activityGroupIcon(props.items, liveItem);
 
   useEffect(() => {
     if (previousActiveRef.current && !active) setOpen(false);
@@ -60,19 +93,22 @@ export const SessionActivityGroup = memo(function SessionActivityGroup(props: { 
         </summary>
         {open ? (
           <div className="session-activity-body">
-            {skillNames.length > 0 ? (
-              <p className="session-activity-skills">
-                <span>{props.language === 'zh-CN' ? '技能' : 'Skills'}</span>
-                {skillNames.map((name) => (
-                  <code key={name}>{name}</code>
-                ))}
-              </p>
-            ) : null}
-            <ol>
-              {props.items.map((item) => (
-                <ActivityItemRow key={item.key} item={item} language={props.language} motionActive={Boolean(active && props.motionActive && item.key === liveItem?.key)} />
-              ))}
-            </ol>
+              {detailItems.length > 0 ? (
+                  <ol>
+                      {detailItems.map((item) => (
+                          <ActivityItemRow key={item.key} item={item} language={props.language}
+                                           motionActive={Boolean(active && props.motionActive && item.key === liveItem?.key)}
+                                           onOpenResource={props.onOpenResource}/>
+                      ))}
+                  </ol>
+              ) : null}
+              {imageResources.length > 0 ? (
+                  <div className="session-activity-images">
+                      <ConversationResourceCards resources={imageResources} language={props.language}
+                                                 onOpenResource={props.onOpenResource}
+                                                 onLoadResourcePreview={props.onLoadResourcePreview}/>
+                  </div>
+              ) : null}
           </div>
         ) : null}
       </details>
@@ -81,16 +117,16 @@ export const SessionActivityGroup = memo(function SessionActivityGroup(props: { 
   );
 }, sameActivityGroupProps);
 
-function sameActivityGroupProps(
-  previous: Readonly<{
-    items: NativeSessionItemBuffer[];
-    language: SessionUiLanguage;
-    category: SessionActivityCategory;
-    motionActive?: boolean;
-  }>,
-  next: Readonly<{ items: NativeSessionItemBuffer[]; language: SessionUiLanguage; category: SessionActivityCategory; motionActive?: boolean }>,
-): boolean {
-  if (previous.language !== next.language || previous.category !== next.category || previous.motionActive !== next.motionActive || previous.items.length !== next.items.length) return false;
+function sameActivityGroupProps(previous: Readonly<SessionActivityGroupProps>, next: Readonly<SessionActivityGroupProps>): boolean {
+    if (
+        previous.language !== next.language ||
+        previous.category !== next.category ||
+        previous.motionActive !== next.motionActive ||
+        previous.onOpenResource !== next.onOpenResource ||
+        previous.onLoadResourcePreview !== next.onLoadResourcePreview ||
+        previous.items.length !== next.items.length
+    )
+        return false;
   return previous.items.every((item, index) => item === next.items[index]);
 }
 
@@ -110,12 +146,29 @@ function ActivityLiveRow(props: { item: NativeSessionItemBuffer; language: Sessi
   );
 }
 
-const ActivityItemRow = memo(function ActivityItemRow(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage; motionActive?: boolean }) {
+const ActivityItemRow = memo(function ActivityItemRow(props: {
+    item: NativeSessionItemBuffer;
+    language: SessionUiLanguage;
+    motionActive?: boolean;
+    onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
+}) {
   const title = activityItemTitle(props.item, props.language);
   const detail = activityItemDetail(props.item);
+    const target = activityItemTarget(props.item, props.language);
   const [open, setOpen] = useState(false);
   const Icon = activityItemIcon(props.item);
   const outputPreview = open && detail?.output ? activityOutputPreview(detail.output) : null;
+    const titleNode = target ? (
+        <span className="session-activity-item-title">
+      <span>{target.prefix}</span>{' '}
+            <button type="button" className="session-activity-resource-link" title={target.title}
+                    onClick={() => void props.onOpenResource?.(target.resource, defaultOpenTarget(target.resource))}>
+        {target.label}
+      </button>
+    </span>
+    ) : (
+        <span className="session-activity-item-title">{title}</span>
+    );
   return (
     <li data-status={props.item.status} data-motion-active={props.motionActive || undefined}>
       <span className="session-activity-item-icon" aria-hidden="true">
@@ -125,7 +178,7 @@ const ActivityItemRow = memo(function ActivityItemRow(props: { item: NativeSessi
         {detail ? (
           <details className="session-activity-item-detail" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
             <summary className="session-activity-item-summary">
-              <span className="session-activity-item-title">{title}</span>
+                {titleNode}
               <CaretDown className="session-activity-item-caret" aria-hidden="true" weight="bold" />
             </summary>
             {open ? (
@@ -144,7 +197,7 @@ const ActivityItemRow = memo(function ActivityItemRow(props: { item: NativeSessi
             ) : null}
           </details>
         ) : (
-          <span className="session-activity-item-title">{title}</span>
+            titleNode
         )}
       </div>
     </li>
@@ -344,29 +397,75 @@ function activitySummary(items: NativeSessionItemBuffer[], language: SessionUiLa
     return language === 'zh-CN' ? (active ? '正在整理较早对话以继续工作' : '已整理较早对话') : active ? 'Organizing earlier conversation to continue' : 'Organized earlier conversation';
   }
   const fileChanges = items.filter((item) => ['filechange', 'file'].includes(normalizeType(item.type))).length;
-  if (fileChanges === items.length && fileChanges > 0) {
-    return language === 'zh-CN' ? `${active ? '正在变更' : '已变更'} ${fileChanges} 个文件` : `${active ? 'Changing' : 'Changed'} ${fileChanges} ${fileChanges === 1 ? 'file' : 'files'}`;
-  }
   const skills = activitySkillNames(items);
-  if (skills.length > 0) {
-    if (language === 'zh-CN') return `${active ? '正在加载' : '已加载'} ${skills.length} 个技能`;
-    return `${active ? 'Loading' : 'Loaded'} ${skills.length} ${skills.length === 1 ? 'skill' : 'skills'}`;
-  }
-  const commands = items.filter((item) => ['commandexecution', 'command'].includes(normalizeType(item.type))).length;
-  const tools = items.length - commands;
-  const actionTypes = new Set(items.flatMap((item) => commandActions(item).map((action) => primitive(action.type))).filter((value): value is string => Boolean(value)));
-  if (commands > 0 && tools === 0) {
+    const commandItems = items.filter((item) => ['commandexecution', 'command'].includes(normalizeType(item.type)));
+    const webSearches = items.filter((item) => normalizeType(item.type) === 'websearch').length;
+    const imageViews = items.filter((item) => normalizeType(item.type) === 'imageview').length;
+    const actionTypes = new Set(commandItems.flatMap((item) => commandActions(item).map((action) => normalizeType(primitive(action.type) ?? ''))));
+    const genericCommandCount = commandItems.filter((item) => {
+        const actions = commandActions(item);
+        if (actions.length === 0) return true;
+        if (activitySkillNames([item]).length > 0 && actions.every((action) => ['read', 'listfiles'].includes(normalizeType(primitive(action.type) ?? '')))) return false;
+        return actions.some((action) => !['read', 'listfiles', 'search'].includes(normalizeType(primitive(action.type) ?? '')));
+    }).length;
+    const otherTools = items.filter((item) => !['commandexecution', 'command', 'websearch', 'imageview', 'filechange', 'file', 'contextcompaction'].includes(normalizeType(item.type))).length;
     if (language === 'zh-CN') {
-      if (actionTypes.has('search')) return `${active ? '正在搜索文件并运行' : '已搜索文件并运行'} ${commands} 个命令`;
-      if (actionTypes.has('read') || actionTypes.has('listFiles')) return `${active ? '正在读取文件并运行' : '已读取文件并运行'} ${commands} 个命令`;
-      return `${active ? '正在运行' : '已运行'} ${commands} 个命令`;
+        if (active) {
+            const activeParts = [
+                fileChanges > 0 ? '编辑文件' : null,
+                actionTypes.has('read') || actionTypes.has('listfiles') ? '读取文件' : null,
+                actionTypes.has('search') ? '搜索文件' : null,
+                webSearches > 0 ? '搜索网页' : null,
+                skills.length > 0 ? '读取技能' : null,
+                imageViews > 0 ? '查看图像' : null,
+                genericCommandCount > 0 ? '运行命令' : null,
+                otherTools > 0 ? '使用工具' : null,
+            ].filter(Boolean);
+            return `正在处理：${activeParts.join('、')}`;
+        }
+        const completedParts = [
+            fileChanges > 0 ? '编辑了文件' : null,
+            actionTypes.has('read') || actionTypes.has('listfiles') ? '读取文件' : null,
+            actionTypes.has('search') ? '搜索文件' : null,
+            webSearches > 0 ? '搜索了网页' : null,
+            skills.length > 0 ? `读取了${skills.length === 1 ? skills[0] : `${skills.length} 个`}技能` : null,
+            imageViews > 0 ? `查看了 ${imageViews} 张图像` : null,
+            genericCommandCount > 0 ? '运行了命令' : null,
+            otherTools > 0 ? '使用了工具' : null,
+        ].filter(Boolean);
+        return completedParts.join('') || '完成了处理';
     }
-    if (actionTypes.has('search')) return `${active ? 'Searching files and running' : 'Searched files and ran'} ${commands} ${commands === 1 ? 'command' : 'commands'}`;
-    if (actionTypes.has('read') || actionTypes.has('listFiles')) return `${active ? 'Reading files and running' : 'Read files and ran'} ${commands} ${commands === 1 ? 'command' : 'commands'}`;
-    return `${active ? 'Running' : 'Ran'} ${commands} ${commands === 1 ? 'command' : 'commands'}`;
-  }
-  if (commands === 0) return language === 'zh-CN' ? `${active ? '正在使用' : '已使用'} ${tools} 个工具` : `${active ? 'Using' : 'Used'} ${tools} ${tools === 1 ? 'tool' : 'tools'}`;
-  return language === 'zh-CN' ? `${active ? '正在运行' : '已运行'} ${commands} 个命令并使用 ${tools} 个工具` : `${active ? 'Running' : 'Ran'} ${commands} commands and ${active ? 'using' : 'used'} ${tools} tools`;
+    const englishParts = [
+        fileChanges > 0 ? (active ? 'editing files' : 'edited files') : null,
+        actionTypes.has('read') || actionTypes.has('listfiles') ? (active ? 'reading files' : 'read files') : null,
+        actionTypes.has('search') ? (active ? 'searching files' : 'searched files') : null,
+        webSearches > 0 ? (active ? 'searching the web' : 'searched the web') : null,
+        skills.length > 0 ? `${active ? 'reading' : 'read'} ${skills.length === 1 ? skills[0] : `${skills.length} skills`}` : null,
+        imageViews > 0 ? `${active ? 'viewing' : 'viewed'} ${imageViews} ${imageViews === 1 ? 'image' : 'images'}` : null,
+        genericCommandCount > 0 ? (active ? 'running commands' : 'ran commands') : null,
+        otherTools > 0 ? (active ? 'using tools' : 'used tools') : null,
+    ].filter(Boolean);
+    return `${active ? 'Working: ' : ''}${englishParts.join(', ') || (active ? 'processing' : 'completed work')}`;
+}
+
+function activityImageResources(items: NativeSessionItemBuffer[]): ConversationResource[] {
+    const resources = items.flatMap((item) => item.resources).filter(isImageResource);
+    const unique = new Map<string, ConversationResource>();
+    for (const resource of resources) unique.set(resource.id, resource.presentation === 'card' ? resource : {
+        ...resource,
+        presentation: 'card'
+    });
+    return [...unique.values()];
+}
+
+function activityGroupIcon(items: NativeSessionItemBuffer[], liveItem: NativeSessionItemBuffer | null) {
+    if (items.some((item) => ['filechange', 'file'].includes(normalizeType(item.type)))) return PencilSimple;
+    if (items.every((item) => normalizeType(item.type) === 'imageview')) return Image;
+    if (items.every((item) => activitySkillNames([item]).length > 0)) return Wrench;
+    if (liveItem) return activityItemIcon(liveItem);
+    if (items.some((item) => commandActions(item).some((action) => normalizeType(primitive(action.type) ?? '') === 'search') || normalizeType(item.type) === 'websearch')) return MagnifyingGlass;
+    if (items.some((item) => commandActions(item).some((action) => ['read', 'listfiles'].includes(normalizeType(primitive(action.type) ?? ''))))) return BookOpen;
+    return activityItemIcon(items[items.length - 1]!);
 }
 
 function activitySkillNames(items: NativeSessionItemBuffer[]): string[] {
@@ -410,12 +509,12 @@ function activityItemTitle(item: NativeSessionItemBuffer, language: SessionUiLan
     const active = item.status !== 'completed' && item.status !== 'failed';
     return path
       ? language === 'zh-CN'
-        ? `${active ? '正在变更' : '已变更'} ${path}`
+            ? `${active ? '正在编辑' : '已编辑'} ${path}`
         : `${active ? 'Changing' : 'Changed'} ${path}`
       : language === 'zh-CN'
         ? active
-          ? '正在变更文件'
-          : '已变更文件'
+                ? '正在编辑文件'
+                : '已编辑文件'
         : active
           ? 'Changing file'
           : 'Changed file';
@@ -425,6 +524,57 @@ function activityItemTitle(item: NativeSessionItemBuffer, language: SessionUiLan
   if (progress) return progress;
   const active = item.status !== 'completed' && item.status !== 'failed';
   return tool ? (language === 'zh-CN' ? `${active ? '正在使用' : '已使用'} ${tool}` : `${active ? 'Using' : 'Used'} ${tool}`) : language === 'zh-CN' ? (active ? '正在使用工具' : '已使用工具') : active ? 'Using tool' : 'Used tool';
+}
+
+function activityItemTarget(item: NativeSessionItemBuffer, language: SessionUiLanguage): {
+    prefix: string;
+    label: string;
+    title: string;
+    resource: ConversationResource
+} | null {
+    const resource = item.resources.find((candidate) => candidate.kind === 'file' || candidate.kind === 'website');
+    if (!resource) return null;
+    const type = normalizeType(item.type);
+    const actionType = normalizeType(primitive(commandActions(item)[0]?.type) ?? '');
+    const active = isLiveActivityItem(item);
+    const prefix =
+        language === 'zh-CN'
+            ? type === 'filechange' || type === 'file'
+                ? active
+                    ? '正在编辑'
+                    : '已编辑'
+                : actionType === 'read' || actionType === 'listfiles'
+                    ? active
+                        ? '正在读取'
+                        : '已读取'
+                    : type === 'websearch' || actionType === 'search'
+                        ? active
+                            ? '正在搜索'
+                            : '已搜索'
+                        : active
+                            ? '正在使用'
+                            : '已使用'
+            : type === 'filechange' || type === 'file'
+                ? active
+                    ? 'Editing'
+                    : 'Edited'
+                : actionType === 'read' || actionType === 'listfiles'
+                    ? active
+                        ? 'Reading'
+                        : 'Read'
+                    : type === 'websearch' || actionType === 'search'
+                        ? active
+                            ? 'Searching'
+                            : 'Searched'
+                        : active
+                            ? 'Using'
+                            : 'Used';
+    return {
+        prefix,
+        label: resource.displayName,
+        title: resource.kind === 'file' ? resource.projectRelativePath : resource.url,
+        resource,
+    };
 }
 
 function activityItemIcon(item: NativeSessionItemBuffer) {

@@ -5239,6 +5239,91 @@
   }
 }
 
+/* TASK-20260822-004：复刻 Codex 的轮次操作组；摘要保持一行，展开后显示明细和图片缩略图。 */
+.session-codex-parity-v1 .session-activity-group > details > summary {
+    justify-content: flex-start;
+}
+
+.session-codex-parity-v1 .session-activity-group > details > summary > span:nth-child(2) {
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-activity-group > details > summary .session-activity-caret {
+    margin-inline-start: 0;
+}
+
+.session-codex-parity-v1 .session-activity-resource-link {
+    appearance: none;
+    background: transparent;
+    border: 0;
+    border-block-end: 1px dotted currentColor;
+    color: var(--session-text);
+    cursor: pointer;
+    font: inherit;
+    max-inline-size: min(72ch, 100%);
+    overflow: hidden;
+    padding: 0;
+    text-overflow: ellipsis;
+    vertical-align: baseline;
+    white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-activity-resource-link:hover {
+    border-block-end-style: solid;
+}
+
+.session-codex-parity-v1 .session-activity-resource-link:focus-visible {
+    border-radius: 3px;
+    outline: 2px solid var(--session-focus-outline);
+    outline-offset: 2px;
+}
+
+.session-codex-parity-v1 .session-activity-images {
+    margin-block-start: 5px;
+}
+
+.session-codex-parity-v1 .session-activity-images .session-resource-card-list[data-layout='images'] {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.session-codex-parity-v1 .session-activity-images .session-resource-image {
+    block-size: 112px;
+    inline-size: 112px;
+    max-inline-size: 112px;
+}
+
+/* 计划、命令、文件、技能和上下文整理是语义图标，不得作为加载环旋转。 */
+.session-codex-parity-v1 :where(.session-activity-group-icon, .session-activity-item-icon, .session-plan-summary-symbol) {
+    animation: none !important;
+    transform: none !important;
+    will-change: auto !important;
+}
+
+/* 最新模型状态固定在过程底部，用 Codex 同类的低饱和扫光表达持续进行。 */
+.session-codex-parity-v1 .session-reasoning-summary[data-status='active'] > .zeus-fidelity-text,
+.session-codex-parity-v1 .session-current-status-text {
+    animation: session-working-sweep 1.7s linear infinite;
+    background: linear-gradient(90deg, var(--session-text-muted) 0%, var(--session-text-muted) 36%, color-mix(in oklab, var(--session-text) 28%, transparent) 50%, var(--session-text-muted) 64%, var(--session-text-muted) 100%);
+    background-clip: text;
+    background-size: 240% 100%;
+    color: transparent;
+    -webkit-background-clip: text;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .session-codex-parity-v1 .session-reasoning-summary[data-status='active'] > .zeus-fidelity-text,
+    .session-codex-parity-v1 .session-current-status-text {
+        animation: none;
+        background: none;
+        color: var(--session-text-muted);
+    }
+}
+
 /* 会话外壳保持常驻；切换时只让新标题轻微落位，避免整块页头先消失再闪回。 */
 .session-codex-parity-v1 .session-thread-title-copy[data-conversation-transition='true'] {
   animation: session-title-flow-in 140ms var(--session-ease-out) both;
@@ -15331,9 +15416,16 @@
 }
 
 .session-codex-parity-v1 .session-reasoning-summary[data-status='active'] .session-reasoning-summary-icon {
+    aspect-ratio: 1;
   animation: session-working-spin var(--session-working-spinner-cycle) linear infinite;
   backface-visibility: hidden;
+    block-size: 19px;
   color: var(--session-working-color);
+    inline-size: 19px;
+    max-block-size: 19px;
+    max-inline-size: 19px;
+    min-block-size: 19px;
+    min-inline-size: 19px;
   transform-origin: center;
   will-change: transform;
 }
@@ -15588,4 +15680,11 @@
   .session-codex-parity-v1 .session-markdown > .session-streaming-cursor {
     opacity: 0.72;
   }
+}
+
+/* 最终覆盖：语义图标保持静止，只有专用 CircleNotch / CSS 加载环旋转。 */
+.session-codex-parity-v1 :where(.session-activity-group-icon, .session-activity-item-icon, .session-plan-summary-symbol) {
+    animation: none !important;
+    transform: none !important;
+    will-change: auto !important;
 }

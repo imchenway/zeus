@@ -1,83 +1,141 @@
-import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
-import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
-import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
-import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
-import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paperclip';
-import { TargetIcon as Target } from '@phosphor-icons/react/dist/csr/Target';
-import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
-import { animate as animateMotion, motion, useMotionValue, useTransform } from 'framer-motion';
-import { calculateUncachedInputTokens, type ConversationContextDraft, type ConversationFileLocation, type ConversationOpenTarget, type TurnChangeFile, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
-import type { ProjectGitAction, ProjectGitActionResponse, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
-import { openConversationResourceInMain, openTurnChangeFileInMain } from '../appShellBridge.js';
-import { ZeusSelect } from '../ZeusSelect.js';
-import { canSteerActiveTurn, type ComposerRuntimeSettings, ConversationComposer, type ConversationComposerProps, resolveComposerKeyIntent } from './ConversationComposer.js';
-import { ConversationTranscript, type ConversationTranscriptProps, type SessionCreationStatus } from './ConversationTranscript.js';
-import { QueuedConversationMessages, type QueuedConversationMessagesProps } from './QueuedConversationMessages.js';
-import { SessionPlanProgress } from './SessionActivity.js';
-import { LegacyConversationBanner } from './LegacyConversationBanner.js';
-import { hasPendingRequestDetails, PendingRequestSurface, requestKind } from './PendingRequestSurface.js';
-import { PermissionModeControl } from './PermissionModeControl.js';
-import { CollaborationModeControl } from './CollaborationModeControl.js';
-import { ComposerDropdown } from './ComposerDropdown.js';
-import { PlanImplementationRequestSurface } from './PlanImplementationRequestSurface.js';
-import { PlanWorkspace } from './PlanWorkspace.js';
-import { BrowserWorkspace } from './BrowserWorkspace.js';
-import { SourceWorkspace } from './SourceWorkspace.js';
-import { TurnDiffWorkspace } from './TurnChanges.js';
-import { SideChatWorkspace } from './SideChatWorkspace.js';
-import { SubagentWorkspace } from './SubagentWorkspace.js';
-import { defaultOpenTarget } from './ConversationResources.js';
+import {
+    type CSSProperties,
+    type KeyboardEvent as ReactKeyboardEvent,
+    type PointerEvent as ReactPointerEvent,
+    type ReactNode,
+    useCallback,
+    useEffect,
+    useLayoutEffect,
+    useMemo,
+    useRef,
+    useState,
+    useSyncExternalStore
+} from 'react';
+import {ArrowUpIcon as ArrowUp} from '@phosphor-icons/react/dist/csr/ArrowUp';
+import {ArrowsClockwiseIcon as ArrowsClockwise} from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
+import {WarningCircleIcon as WarningCircle} from '@phosphor-icons/react/dist/csr/WarningCircle';
+import {GlobeSimpleIcon as GlobeSimple} from '@phosphor-icons/react/dist/csr/GlobeSimple';
+import {PaperclipIcon as Paperclip} from '@phosphor-icons/react/dist/csr/Paperclip';
+import {TargetIcon as Target} from '@phosphor-icons/react/dist/csr/Target';
+import {XIcon as X} from '@phosphor-icons/react/dist/csr/X';
+import {animate as animateMotion, motion, useMotionValue, useTransform} from 'framer-motion';
+import {
+    calculateUncachedInputTokens,
+    type ConversationContextDraft,
+    type ConversationFileLocation,
+    type ConversationOpenTarget,
+    type TurnChangeFile,
+    type ZeusBrowserPreparedSubmission
+} from '@zeus/shared';
 import type {
-  CodexConversationCapabilities,
-  ConversationResource,
-  ConversationResourcePreview,
-  NativeCollaborationMode,
-  NativeConversationAttachment,
-  NativeConversationAttentionKind,
-  NativeConversationChoice,
-  NativeConversationContentV2Page,
-  NativeConversationStage,
-  NativeConversationToolResultPage,
-  NativeModelRequestUsageObservation,
-  NativeNextTurnSettings,
-  NativeOperationAcceptance,
-  NativePendingRequest,
-  NativePermissionMode,
-  NativePlanImplementationRequest,
-  NativeServiceTierSelection,
-  NativeSessionItemBuffer,
-  NativeSessionState,
-  NativeSubagentListSnapshot,
-  NativeSubagentThreadSnapshot,
-  NativeTurnSettingsSelection,
-  SessionConversationOwner,
-  StartNativeConversationRequest,
-  StartProjectConversationRequest,
-  TaskWorkspacesSnapshot,
-  TurnChangeSet,
-  TurnChangeSetOperationResult,
+    ProjectGitAction,
+    ProjectGitActionResponse,
+    ProjectGitWorkbenchSnapshot,
+    ProjectRecord
+} from '../apiClient.js';
+import {openConversationResourceInMain, openTurnChangeFileInMain} from '../appShellBridge.js';
+import {ZeusSelect} from '../ZeusSelect.js';
+import {
+    canSteerActiveTurn,
+    type ComposerRuntimeSettings,
+    ConversationComposer,
+    type ConversationComposerProps,
+    resolveComposerKeyIntent
+} from './ConversationComposer.js';
+import {
+    ConversationTranscript,
+    type ConversationTranscriptProps,
+    type SessionCreationStatus
+} from './ConversationTranscript.js';
+import {QueuedConversationMessages, type QueuedConversationMessagesProps} from './QueuedConversationMessages.js';
+import {SessionPlanProgress} from './SessionActivity.js';
+import {LegacyConversationBanner} from './LegacyConversationBanner.js';
+import {hasPendingRequestDetails, PendingRequestSurface, requestKind} from './PendingRequestSurface.js';
+import {PermissionModeControl} from './PermissionModeControl.js';
+import {CollaborationModeControl} from './CollaborationModeControl.js';
+import {ComposerDropdown} from './ComposerDropdown.js';
+import {PlanImplementationRequestSurface} from './PlanImplementationRequestSurface.js';
+import {PlanWorkspace} from './PlanWorkspace.js';
+import {BrowserWorkspace} from './BrowserWorkspace.js';
+import {SourceWorkspace} from './SourceWorkspace.js';
+import {TurnDiffWorkspace} from './TurnChanges.js';
+import {SideChatWorkspace} from './SideChatWorkspace.js';
+import {SubagentWorkspace} from './SubagentWorkspace.js';
+import {defaultOpenTarget} from './ConversationResources.js';
+import type {
+    CodexConversationCapabilities,
+    ConversationResource,
+    ConversationResourcePreview,
+    NativeCollaborationMode,
+    NativeConversationAttachment,
+    NativeConversationAttentionKind,
+    NativeConversationChoice,
+    NativeConversationContentV2Page,
+    NativeConversationStage,
+    NativeConversationToolResultPage,
+    NativeModelRequestUsageObservation,
+    NativeNextTurnSettings,
+    NativeOperationAcceptance,
+    NativePendingRequest,
+    NativePermissionMode,
+    NativePlanImplementationRequest,
+    NativeServiceTierSelection,
+    NativeSessionItemBuffer,
+    NativeSessionState,
+    NativeSubagentListSnapshot,
+    NativeSubagentThreadSnapshot,
+    NativeTurnSettingsSelection,
+    SessionConversationOwner,
+    StartNativeConversationRequest,
+    StartProjectConversationRequest,
+    TaskWorkspacesSnapshot,
+    TurnChangeSet,
+    TurnChangeSetOperationResult,
 } from './sessionTypes.js';
-import { normalizeServiceTierSelection, selectionFromEffectiveServiceTier, serviceTierWireOverride } from './serviceTierSelection.js';
-import { reconnectDelayMs, type SessionController, type SessionControllerClient, useSessionControllerInstance, useSessionControllerSelector } from './useSessionController.js';
-import { createConversationComposerStateSelector, createConversationQueueStateSelector, createConversationTranscriptStateSelector, createSessionWorkspaceStateSelector } from './sessionStateSlices.js';
-import { createSessionEscapeController, type SessionEscapeController, type SessionEscapeLayer, type SessionEscapeResult } from './useThreadScrollController.js';
-import { SafeMarkdown, type SessionUiLanguage } from './ThreadItemView.js';
-import { autosizeTextarea } from './textareaAutosize.js';
-import { conversationAttachmentIdentity, ConversationComposerAttachments } from './ConversationComposerAttachments.js';
-import { ContextUsageIndicator } from './ContextUsageIndicator.js';
-import { formatTokenCount } from './tokenUsageFormat.js';
-import { ServiceTierToggle } from './ServiceTierToggle.js';
-import { useConversationInputResources } from './useConversationInputResources.js';
-import { SessionQuickActionsCard } from './SessionQuickActionsCard.js';
-import type { SessionCodeReviewSelection } from './SessionCodeReviewDialog.js';
-import { conversationDisplayTitle } from './conversationDisplayTitle.js';
-import { conversationRuntimePreferenceKind, readConversationRuntimePreferences, writeConversationRuntimePreferences } from './conversationRuntimePreferences.js';
-import { resolveModelCapability } from './modelSelection.js';
-import { GoalPanel, GoalRail } from './GoalPanel.js';
-import { presentModelOptions } from '../modelOptionPresentation.js';
-import { NewConversationExecutionContext } from './NewConversationExecutionContext.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import {
+    normalizeServiceTierSelection,
+    selectionFromEffectiveServiceTier,
+    serviceTierWireOverride
+} from './serviceTierSelection.js';
+import {
+    reconnectDelayMs,
+    type SessionController,
+    type SessionControllerClient,
+    useSessionControllerInstance,
+    useSessionControllerSelector
+} from './useSessionController.js';
+import {
+    createConversationComposerStateSelector,
+    createConversationQueueStateSelector,
+    createConversationTranscriptStateSelector,
+    createSessionWorkspaceStateSelector
+} from './sessionStateSlices.js';
+import {
+    createSessionEscapeController,
+    type SessionEscapeController,
+    type SessionEscapeLayer,
+    type SessionEscapeResult
+} from './useThreadScrollController.js';
+import {SafeMarkdown, type SessionUiLanguage} from './ThreadItemView.js';
+import {autosizeTextarea} from './textareaAutosize.js';
+import {conversationAttachmentIdentity, ConversationComposerAttachments} from './ConversationComposerAttachments.js';
+import {ContextUsageIndicator} from './ContextUsageIndicator.js';
+import {formatTokenCount} from './tokenUsageFormat.js';
+import {ServiceTierToggle} from './ServiceTierToggle.js';
+import {useConversationInputResources} from './useConversationInputResources.js';
+import {SessionQuickActionsCard} from './SessionQuickActionsCard.js';
+import type {SessionCodeReviewSelection} from './SessionCodeReviewDialog.js';
+import {conversationDisplayTitle} from './conversationDisplayTitle.js';
+import {
+    conversationRuntimePreferenceKind,
+    readConversationRuntimePreferences,
+    writeConversationRuntimePreferences
+} from './conversationRuntimePreferences.js';
+import {resolveModelCapability} from './modelSelection.js';
+import {GoalPanel, GoalRail} from './GoalPanel.js';
+import {presentModelOptions} from '../modelOptionPresentation.js';
+import {NewConversationExecutionContext} from './NewConversationExecutionContext.js';
+import {useApplicationErrorDialog} from '../ui/ApplicationErrorDialog.js';
 
 export interface SessionWorkspaceTaskManagementStatus {
   id: string;
@@ -1518,8 +1576,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const transcriptIsRetained = Boolean(props.transcriptState && props.transcriptState !== props.state);
   const transcriptInteractionsEnabled = !interactionReadOnly && !transcriptIsRetained;
   const effectiveProviderState = props.state?.snapshot?.providerState ?? props.conversation?.providerState ?? null;
-  // 连接失败已经由会话工作面持续展示并自动重连；可重试错误不得在每轮重连时重复进入全局弹窗。
-  const transportError = props.state?.transportState === 'failed' && props.state.error?.retryable === false ? (errorMessage(props.state.error) ?? props.loadError ?? copy.failed) : null;
+    const realtimeExpected = sessionStateNeedsRealtime(props.state);
+    // 空闲历史会话只读本地快照，不存在“连接失败”；只有真实轮次、排队或待处理请求需要实时连接时才报告连接错误。
+    const transportError = realtimeExpected && props.state?.transportState === 'failed' && props.state.error?.retryable === false ? (errorMessage(props.state.error) ?? props.loadError ?? copy.failed) : null;
   useApplicationErrorDialog(props.readOnlyGate?.error, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
     title: props.language === 'zh-CN' ? '会话重新打开失败' : 'Conversation failed to reopen',
@@ -2382,8 +2441,11 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
               >
                 <div className="session-conversation-pane">
                   <SessionRuntimeDetails state={props.state} conversation={props.conversation} language={props.language} capabilities={props.capabilities} />
-                  {props.state.transportState === 'reconnecting' ? <SessionReconnectNotice language={props.language} attempt={props.state.reconnectAttempt} onReconnect={actions.onReconnect} /> : null}
-                  {props.state.transportState === 'failed' ? (
+                    {props.state.transportState === 'reconnecting' && sessionStateNeedsRealtime(props.state) ? (
+                        <SessionReconnectNotice language={props.language} attempt={props.state.reconnectAttempt}
+                                                onReconnect={actions.onReconnect}/>
+                    ) : null}
+                    {props.state.transportState === 'failed' && sessionStateNeedsRealtime(props.state) ? (
                     <section className="session-transport-failure" role="status" data-retained-content={Boolean(props.state.snapshot) || undefined}>
                       <WarningCircle aria-hidden="true" weight="regular" />
                       <span className="session-transport-failure-copy">
@@ -2613,8 +2675,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
 }
 
 export function selectDockedTurnPlan(state: NativeSessionState): NativeSessionState['turnsByProviderId'][string]['plan'] {
-  if (!state.activeTurnId) return null;
-  return state.turnsByProviderId[state.activeTurnId]?.plan ?? null;
+    const activePlan = state.activeTurnId ? state.turnsByProviderId[state.activeTurnId]?.plan : null;
+    if (activePlan) return activePlan;
+    return [...Object.values(state.turnsByProviderId)].filter((turn) => turn.plan).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id))[0]?.plan ?? null;
 }
 
 function contextWorkspaceLabel(workspace: SessionContextWorkspace, language: SessionUiLanguage): string {
@@ -3545,15 +3608,20 @@ function sessionStatus(state: NativeSessionState | null, loadState: SessionWorks
       kind: 'busy',
       label: state.snapshot ? copy.refreshing : copy.loading,
     };
-  if (state.transportState === 'reconnecting')
+    const realtimeExpected = sessionStateNeedsRealtime(state);
+    if (state.transportState === 'reconnecting' && realtimeExpected)
     return {
       kind: 'warning',
       label: copy.reconnectingAttempt(state.reconnectAttempt),
     };
-  if (state.transportState === 'failed')
+    if (state.transportState === 'failed' && realtimeExpected)
     return {
       kind: 'error',
       label: isServerBusyError(state.error) ? copy.serverBusy : copy.failed,
+    };
+    if (state.transportState === 'failed' || state.transportState === 'reconnecting') return {
+        kind: 'ready',
+        label: copy.ready
     };
   if ((state.snapshot?.providerState === 'archived' || (state.queue?.state.type === 'paused' && state.queue.state.reason === 'provider_archived')) && (state.queue?.submissions.length ?? 0) > 0)
     return {
@@ -3587,6 +3655,20 @@ function sessionStatus(state: NativeSessionState | null, loadState: SessionWorks
     case 'legacy_readonly':
       return { kind: 'warning', label: copy.legacyTranscript };
   }
+}
+
+function sessionStateNeedsRealtime(state: NativeSessionState | null | undefined): boolean {
+    if (!state) return false;
+    if (state.pendingRequests.some((request) => request.status === 'pending')) return true;
+    if (state.queue?.state.type === 'dispatching' || state.queue?.state.type === 'active' || state.queue?.state.type === 'waiting') return true;
+    if (state.queue?.submissions.some((submission) => submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active')) return true;
+    return (
+        state.conversationState === 'starting_turn' ||
+        state.conversationState === 'active_prework' ||
+        state.conversationState === 'active_final_answer' ||
+        state.conversationState === 'waiting_approval' ||
+        state.conversationState === 'waiting_user_input'
+    );
 }
 
 function errorMessage(error: NativeSessionState['error']): string | null {

@@ -1,6 +1,6 @@
-import type { ZeusDatabasePort } from './databasePort.js';
-import { type ArtifactRef, type ArtifactStore, artifactStoreGeneration } from './artifactStore.js';
-import { conversationSchemaGeneration } from './conversationExecutionStore.js';
+import type {ZeusDatabasePort} from './databasePort.js';
+import {type ArtifactRef, type ArtifactStore, artifactStoreGeneration} from './artifactStore.js';
+import {conversationSchemaGeneration} from './conversationExecutionStore.js';
 
 export const conversationSnapshotV2StructureGeneration = '2026-08-21-conversation-snapshot-v2';
 
@@ -68,6 +68,7 @@ export interface ConversationSnapshotV2TurnSummary {
   status: string;
   hasError: boolean;
   hasPlan: boolean;
+    plan: ConversationSnapshotV2TurnPlan | null;
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
@@ -79,6 +80,11 @@ export interface ConversationSnapshotV2TurnSummary {
   };
   resourcesAvailable: boolean;
   changeSetAvailable: boolean;
+}
+
+export interface ConversationSnapshotV2TurnPlan {
+    explanation: string | null;
+    steps: Array<{ step: string; status: 'pending' | 'inProgress' | 'completed' }>;
 }
 
 export interface ConversationSnapshotV2 {
@@ -100,6 +106,8 @@ export interface ConversationSnapshotV2 {
     transportKind: string;
     providerState: string;
     providerModel: string | null;
+      providerSettings: ConversationSnapshotV2ProviderSettings | null;
+      nextTurnSettings: ConversationSnapshotV2NextTurnSettings | null;
     agentKind: string | null;
     createdAt: string;
     updatedAt: string;
@@ -128,6 +136,22 @@ export interface ConversationSnapshotV2 {
     returnedTurnCount: number;
     responseBytes: number;
   };
+}
+
+export interface ConversationSnapshotV2ProviderSettings {
+    generationId?: string;
+    sequence?: number;
+    model: string;
+    effort?: string;
+    serviceTier?: string | null;
+}
+
+export interface ConversationSnapshotV2NextTurnSettings {
+    model: string;
+    effort?: string;
+    serviceTier?: string | null;
+    permissionMode: 'read-only' | 'auto' | 'full-access';
+    collaborationMode: 'default' | 'plan';
 }
 
 export interface ConversationSnapshotV2Page<T> {
@@ -291,6 +315,10 @@ interface ConversationRow {
   transport_kind: string;
   provider_state: string;
   provider_model: string | null;
+    provider_settings_json: string;
+    next_turn_settings_json: string;
+    permission_mode: string;
+    collaboration_mode: string;
   agent_kind: string | null;
   created_at: string;
   updated_at: string;
@@ -303,6 +331,7 @@ interface TurnRow {
   status: string;
   has_error: number;
   has_plan: number;
+    plan_json: string | null;
   started_at: string | null;
   completed_at: string | null;
   created_at: string;
@@ -413,6 +442,10 @@ export class ConversationSnapshotV2Repository {
       `SELECT id, project_id, task_id, substr(title, 1, 512) AS title,
               status, stage, stage_updated_at, archived, transport_kind, provider_state,
               CASE WHEN provider_model IS NULL THEN NULL ELSE substr(provider_model, 1, 256) END AS provider_model,
+              substr(provider_settings_json, 1, 4096)  AS provider_settings_json,
+              substr(next_turn_settings_json, 1, 4096) AS next_turn_settings_json,
+              permission_mode,
+              collaboration_mode,
               agent_kind, created_at, updated_at
          FROM conversations
         WHERE id = ?`,
@@ -449,6 +482,8 @@ export class ConversationSnapshotV2Repository {
     );
     const turnRows = [...(activeTurn ? [activeTurn] : []), ...recentClosedTurns];
     const title = redactSensitivePreview(conversation.title);
+      const providerSettings = parseProviderSettings(conversation.provider_settings_json);
+      const nextTurnSettings = parseNextTurnSettings(conversation.next_turn_settings_json, conversation.permission_mode, conversation.collaboration_mode);
     const snapshotWithoutMetrics = {
       schemaVersion: 2 as const,
       structureGeneration: conversationSnapshotV2StructureGeneration as typeof conversationSnapshotV2StructureGeneration,
@@ -468,6 +503,8 @@ export class ConversationSnapshotV2Repository {
         transportKind: conversation.transport_kind,
         providerState: conversation.provider_state,
         providerModel: conversation.provider_model,
+          providerSettings,
+          nextTurnSettings,
         agentKind: conversation.agent_kind,
         createdAt: conversation.created_at,
         updatedAt: conversation.updated_at,
@@ -989,6 +1026,7 @@ export class ConversationSnapshotV2Repository {
       status: row.status,
       hasError: row.has_error === 1,
       hasPlan: row.has_plan === 1,
+        plan: parseTurnPlan(row.plan_json),
       startedAt: row.started_at,
       completedAt: row.completed_at,
       createdAt: row.created_at,
@@ -1234,6 +1272,7 @@ function turnSummarySelectSql(): string {
   return `SELECT id, provider_turn_id, client_submission_id, status,
                  CASE WHEN error_json IS NULL THEN 0 ELSE 1 END AS has_error,
                  CASE WHEN plan_json IS NULL THEN 0 ELSE 1 END AS has_plan,
+                 plan_json,
                  started_at, completed_at, created_at, updated_at, agent_kind`;
 }
 
@@ -1574,6 +1613,85 @@ function compareChangeFileOrderKey(left: ChangeFileOrderKey, right: ChangeFileOr
 
 function validNonNegativeSequence(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+function parseProviderSettings(value: string): ConversationSnapshotV2ProviderSettings | null {
+    const settings = parseSettingsRecord(value);
+    const model = boundedSettingString(settings?.model, 256);
+    if (!settings || !model) return null;
+    const generationId = boundedSettingString(settings.generationId, 256);
+    const effort = boundedSettingString(settings.effort, 64);
+    const serviceTier = settings.serviceTier === null ? null : boundedSettingString(settings.serviceTier, 64);
+    return {
+        ...(generationId ? {generationId} : {}),
+        ...(validNonNegativeSequence(settings.sequence) ? {sequence: settings.sequence} : {}),
+        model,
+        ...(effort ? {effort} : {}),
+        ...(settings.serviceTier === null || serviceTier ? {serviceTier} : {}),
+    };
+}
+
+function parseNextTurnSettings(value: string, permissionModeValue: string, collaborationModeValue: string): ConversationSnapshotV2NextTurnSettings | null {
+    const settings = parseSettingsRecord(value);
+    const model = boundedSettingString(settings?.model, 256);
+    if (!settings || !model) return null;
+    const permissionMode = ['read-only', 'auto', 'full-access'].includes(String(settings.permissionMode))
+        ? (settings.permissionMode as ConversationSnapshotV2NextTurnSettings['permissionMode'])
+        : ['read-only', 'auto', 'full-access'].includes(permissionModeValue)
+            ? (permissionModeValue as ConversationSnapshotV2NextTurnSettings['permissionMode'])
+            : null;
+    const collaborationMode = ['default', 'plan'].includes(String(settings.collaborationMode))
+        ? (settings.collaborationMode as ConversationSnapshotV2NextTurnSettings['collaborationMode'])
+        : ['default', 'plan'].includes(collaborationModeValue)
+            ? (collaborationModeValue as ConversationSnapshotV2NextTurnSettings['collaborationMode'])
+            : null;
+    if (!permissionMode || !collaborationMode) return null;
+    const effort = boundedSettingString(settings.effort, 64);
+    const serviceTier = settings.serviceTier === null ? null : boundedSettingString(settings.serviceTier, 64);
+    return {
+        model,
+        ...(effort ? {effort} : {}),
+        ...(settings.serviceTier === null || serviceTier ? {serviceTier} : {}),
+        permissionMode,
+        collaborationMode,
+    };
+}
+
+function parseSettingsRecord(value: string): Record<string, unknown> | null {
+    try {
+        const parsed = JSON.parse(value) as unknown;
+        return isRecord(parsed) ? parsed : null;
+    } catch {
+        return null;
+    }
+}
+
+function parseTurnPlan(value: string | null): ConversationSnapshotV2TurnPlan | null {
+    if (!value) return null;
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(value) as unknown;
+    } catch {
+        return null;
+    }
+    if (!isRecord(parsed) || !Array.isArray(parsed.steps)) return null;
+    const explanation = parsed.explanation === null ? null : boundedSettingString(parsed.explanation, 4_000);
+    // 计划进入 Snapshot V2 首屏，必须受固定字节预算约束，不能让异常长计划挤掉最近消息。
+    const steps = parsed.steps.slice(0, 32).flatMap((entry) => {
+        if (!isRecord(entry)) return [];
+        const step = boundedSettingString(entry.step, 512);
+        const status = entry.status;
+        if (!step || (status !== 'pending' && status !== 'inProgress' && status !== 'completed')) return [];
+        return [{step, status: status as ConversationSnapshotV2TurnPlan['steps'][number]['status']}];
+    });
+    if (steps.length === 0 && !explanation) return null;
+    return {explanation, steps};
+}
+
+function boundedSettingString(value: unknown, maximumLength: number): string | null {
+    if (typeof value !== 'string') return null;
+    const normalized = value.trim();
+    return normalized && normalized.length <= maximumLength ? normalized : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
