@@ -1,9 +1,5 @@
-import {
-    createSessionController,
-    type SessionControllerClient,
-    sessionRealtimeBufferBudget
-} from '../apps/desktop/src/renderer/session/useSessionController.ts';
-import type {NativeRealtimeEventEnvelope} from '../apps/desktop/src/renderer/session/sessionTypes.ts';
+import { createSessionController, type SessionControllerClient, sessionRealtimeBufferBudget } from '../apps/desktop/src/renderer/session/useSessionController.ts';
+import type { NativeRealtimeEventEnvelope } from '../apps/desktop/src/renderer/session/sessionTypes.ts';
 
 const projectId = 'renderer-event-flow-project';
 const conversationId = 'renderer-event-flow-conversation';
@@ -131,14 +127,14 @@ function createHarness(eventPageLoader?: EventPageLoader, snapshotSequence = 0) 
   let snapshotReads = 0;
   const sockets: VerifierSocket[] = [];
   const requestedAfterSequences: number[] = [];
-    const connectedAfterSequences: number[] = [];
+  const connectedAfterSequences: number[] = [];
   const client = {
     async loadNativeConversationV2() {
       snapshotReads += 1;
-        return {...snapshotV2, throughEventSeq: snapshotSequence};
+      return { ...snapshotV2, throughEventSeq: snapshotSequence };
     },
     async loadNativeConversationModelHistoryV2() {
-        return {...historyV2, throughEventSeq: snapshotSequence};
+      return { ...historyV2, throughEventSeq: snapshotSequence };
     },
     async loadNativeConversationQueueV2() {
       return queue;
@@ -167,9 +163,9 @@ function createHarness(eventPageLoader?: EventPageLoader, snapshotSequence = 0) 
         events: [],
       };
     },
-      connectEvents(nextEventSink: (event: NativeRealtimeEventEnvelope) => void, options: { afterSequence: number }) {
+    connectEvents(nextEventSink: (event: NativeRealtimeEventEnvelope) => void, options: { afterSequence: number }) {
       eventSink = nextEventSink;
-          connectedAfterSequences.push(options.afterSequence);
+      connectedAfterSequences.push(options.afterSequence);
       const socket = new VerifierSocket();
       sockets.push(socket);
       return socket as unknown as WebSocket;
@@ -189,19 +185,19 @@ function createHarness(eventPageLoader?: EventPageLoader, snapshotSequence = 0) 
       eventSink(event);
     },
     sockets,
-      connectedAfterSequences,
+    connectedAfterSequences,
     requestedAfterSequences,
     snapshotReads: () => snapshotReads,
   };
 }
 
 async function verifySnapshotWatermarkSubscription() {
-    const snapshotSequence = 483;
-    const harness = createHarness(undefined, snapshotSequence);
-    await harness.controller.start();
-    assert(harness.connectedAfterSequences.length === 1 && harness.connectedAfterSequences[0] === snapshotSequence, 'Cold hydration must subscribe after the authoritative snapshot watermark.');
-    harness.controller.dispose();
-    return {snapshotSequence, connectedAfterSequences: harness.connectedAfterSequences};
+  const snapshotSequence = 483;
+  const harness = createHarness(undefined, snapshotSequence);
+  await harness.controller.start();
+  assert(harness.connectedAfterSequences.length === 1 && harness.connectedAfterSequences[0] === snapshotSequence, 'Cold hydration must subscribe after the authoritative snapshot watermark.');
+  harness.controller.dispose();
+  return { snapshotSequence, connectedAfterSequences: harness.connectedAfterSequences };
 }
 
 function conversationEvent(sequence: number, type: string, fields: Record<string, unknown> = {}): NativeRealtimeEventEnvelope {
@@ -318,7 +314,7 @@ async function verifyContiguousGapReplay() {
 
 const result = {
   budget: sessionRealtimeBufferBudget,
-    snapshotWatermarkSubscription: await verifySnapshotWatermarkSubscription(),
+  snapshotWatermarkSubscription: await verifySnapshotWatermarkSubscription(),
   renderDeltaOverflow: await verifyRenderDeltaOverflow(),
   syncGapByteOverflow: await verifyGapByteOverflow(),
   contiguousGapReplay: await verifyContiguousGapReplay(),

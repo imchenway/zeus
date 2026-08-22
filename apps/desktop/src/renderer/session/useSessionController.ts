@@ -1,56 +1,45 @@
-import {useCallback, useEffect, useMemo, useSyncExternalStore} from 'react';
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
+import { type ConversationContextDraft, emptyConversationContextDraft, hasConversationContext, serializeConversationContext, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import { createInitialSessionState, sessionReducer } from './sessionReducer.js';
 import {
-    type ConversationContextDraft,
-    emptyConversationContextDraft,
-    hasConversationContext,
-    serializeConversationContext,
-    type ZeusBrowserPreparedSubmission
-} from '@zeus/shared';
-import {createInitialSessionState, sessionReducer} from './sessionReducer.js';
-import {
-    type CodexConversationCapabilities,
-    type ConversationResourcePreview,
-    isNativeConversationEvent,
-    type NativeCollaborationMode,
-    type NativeConversationAttachment,
-    type NativeConversationChangeFileV2Item,
-    type NativeConversationChangeSetV2Summary,
-    type NativeConversationChoice,
-    type NativeConversationContentV2Page,
-    type NativeConversationEvent,
-    type NativeConversationEventPage,
-    type NativeConversationModelHistoryV2Item,
-    type NativeConversationProcessV2Item,
-    type NativeConversationResourceV2Item,
-    type NativeConversationSnapshot,
-    type NativeConversationSnapshotV2,
-    type NativeConversationSnapshotV2Page,
-    type NativeConversationToolResultPage,
-    type NativeGoalResponse,
-    type NativeNextTurnSettings,
-    type NativeOperationAcceptance,
-    type NativePendingRequest,
-    type NativePermissionMode,
-    type NativePlanImplementationRequest,
-    type NativeQueuedSubmission,
-    type NativeQueueSnapshot,
-    type NativeRealtimeEventEnvelope,
-    type NativeSessionError,
-    type NativeSessionState,
-    type NativeSubagentListSnapshot,
-    type NativeSubagentThreadSnapshot,
-    type NativeTurnSettingsSelection,
-    type SendNativeMessageRequest,
-    type TurnChangeSet,
-    type TurnChangeSetOperationResult,
+  type CodexConversationCapabilities,
+  type ConversationResourcePreview,
+  isNativeConversationEvent,
+  type NativeCollaborationMode,
+  type NativeConversationAttachment,
+  type NativeConversationChangeFileV2Item,
+  type NativeConversationChangeSetV2Summary,
+  type NativeConversationChoice,
+  type NativeConversationContentV2Page,
+  type NativeConversationEvent,
+  type NativeConversationEventPage,
+  type NativeConversationModelHistoryV2Item,
+  type NativeConversationProcessV2Item,
+  type NativeConversationResourceV2Item,
+  type NativeConversationSnapshot,
+  type NativeConversationSnapshotV2,
+  type NativeConversationSnapshotV2Page,
+  type NativeConversationToolResultPage,
+  type NativeGoalResponse,
+  type NativeNextTurnSettings,
+  type NativeOperationAcceptance,
+  type NativePendingRequest,
+  type NativePermissionMode,
+  type NativePlanImplementationRequest,
+  type NativeQueuedSubmission,
+  type NativeQueueSnapshot,
+  type NativeRealtimeEventEnvelope,
+  type NativeSessionError,
+  type NativeSessionState,
+  type NativeSubagentListSnapshot,
+  type NativeSubagentThreadSnapshot,
+  type NativeTurnSettingsSelection,
+  type SendNativeMessageRequest,
+  type TurnChangeSet,
+  type TurnChangeSetOperationResult,
 } from './sessionTypes.js';
-import {
-    adaptConversationSnapshotV2,
-    mergeConversationHistoryV2,
-    mergeConversationProcessV2,
-    updateConversationV2Paging
-} from './conversationSnapshotV2Adapter.js';
-import {markConversationNavigationRenderReady} from '../performanceTraceContext.js';
+import { adaptConversationSnapshotV2, mergeConversationHistoryV2, mergeConversationProcessV2, updateConversationV2Paging } from './conversationSnapshotV2Adapter.js';
+import { markConversationNavigationRenderReady } from '../performanceTraceContext.js';
 
 export const reconnectBackoffMs = [250, 500, 1_000, 2_000, 5_000] as const;
 // 同一个会话项的增量按一帧窗口合并，兼顾 Markdown 成本与首字可见延迟。
@@ -968,7 +957,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     // 回答成功后重新建立事件流并读取权威快照，保证行为与 Codex App 一致：
     // 请求解除后继续接收同一轮的后续事件，直到 turn/completed。
     cancelReconnectLoop();
-      const attempt = hydrate(true);
+    const attempt = hydrate(true);
     const token = connectionToken;
     void attempt.catch(() => scheduleReconnect(token));
   }
@@ -1411,7 +1400,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         const delayMs = reconnectDelayMs(attempt + 1);
         if (!(await waitForReconnectDelay(delayMs, epoch))) return;
         try {
-            await hydrate(true);
+          await hydrate(true);
           if (!disposed && epoch === reconnectLoopEpoch && state.transportState === 'ready') return;
         } catch {
           // Keep retrying with capped exponential backoff until a connection succeeds,
@@ -1494,7 +1483,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     throw new Error('Snapshot V2 结构与尾部历史未能在同一事件水位稳定读取，请重试。');
   }
 
-    async function hydrate(reconnecting: boolean): Promise<void> {
+  async function hydrate(reconnecting: boolean): Promise<void> {
     if (disposed) return;
     flushRenderDeltas();
     const token = ++connectionToken;
@@ -1526,18 +1515,18 @@ export function createSessionController(options: CreateSessionControllerOptions)
         failConversationSync(hydrationOverflowError);
       }
     };
-        try {
-            // 冷打开时先取得完整快照及其事件水位，再从该水位订阅增量。
-            // 这样既不会遗漏快照读取期间发生的事件，也不会从 0 重放整段历史并反复撞上 WebSocket 高水位。
-            dispatch({type: 'transport_changed', transportState: 'hydrating'});
-            const snapshot = await loadConversationForHydration();
-            if (disposed || token !== connectionToken) return;
-            const eventOptions = {
-                conversationId: options.conversationId,
-                afterSequence: snapshot.throughEventSeq,
-                syncStreamGeneration: CONVERSATION_SYNC_STREAM_GENERATION,
-                ...(reconnecting && state.lastEventId ? {afterEventId: state.lastEventId} : {}),
-            };
+    try {
+      // 冷打开时先取得完整快照及其事件水位，再从该水位订阅增量。
+      // 这样既不会遗漏快照读取期间发生的事件，也不会从 0 重放整段历史并反复撞上 WebSocket 高水位。
+      dispatch({ type: 'transport_changed', transportState: 'hydrating' });
+      const snapshot = await loadConversationForHydration();
+      if (disposed || token !== connectionToken) return;
+      const eventOptions = {
+        conversationId: options.conversationId,
+        afterSequence: snapshot.throughEventSeq,
+        syncStreamGeneration: CONVERSATION_SYNC_STREAM_GENERATION,
+        ...(reconnecting && state.lastEventId ? { afterEventId: state.lastEventId } : {}),
+      };
       const nextSocket = options.client.connectEvents(onEvent, eventOptions);
       socket = nextSocket;
       const lifecycle = observeSocket(nextSocket, token, () => {
@@ -1555,7 +1544,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         lifecycle.markInactive();
         if (socket === nextSocket) socket = null;
         nextSocket.close();
-          throw socketError;
+        throw socketError;
       }
 
       if (lifecycle.isDisconnected()) throw new SocketDisconnectedDuringHydrationError();
@@ -1907,7 +1896,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       if (state.transportState === 'ready') return Promise.resolve();
       if (!startPromise) {
         cancelReconnectLoop();
-          const attempt = hydrate(false);
+        const attempt = hydrate(false);
         const tracked = attempt.finally(() => {
           if (startPromise === tracked) startPromise = null;
         });
@@ -1918,7 +1907,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     reconnect() {
       cancelReconnectLoop();
       dispatch({ type: 'transport_changed', transportState: 'reconnecting', reconnectAttempt: 1 });
-        return hydrate(true);
+      return hydrate(true);
     },
     dispose() {
       if (disposed) return;
