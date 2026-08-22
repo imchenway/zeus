@@ -1,57 +1,46 @@
-import {useCallback, useEffect, useMemo, useSyncExternalStore} from 'react';
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
+import { type ConversationContextDraft, emptyConversationContextDraft, hasConversationContext, serializeConversationContext, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import { createInitialSessionState, sessionReducer } from './sessionReducer.js';
 import {
-    type ConversationContextDraft,
-    emptyConversationContextDraft,
-    hasConversationContext,
-    serializeConversationContext,
-    type ZeusBrowserPreparedSubmission
-} from '@zeus/shared';
-import {createInitialSessionState, sessionReducer} from './sessionReducer.js';
-import {
-    type CodexConversationCapabilities,
-    type ConversationResourcePreview,
-    isNativeConversationEvent,
-    type NativeCollaborationMode,
-    type NativeConversationAttachment,
-    type NativeConversationChangeFileV2Item,
-    type NativeConversationChangeSetV2Summary,
-    type NativeConversationChoice,
-    type NativeConversationContentV2Page,
-    type NativeConversationEvent,
-    type NativeConversationEventPage,
-    type NativeConversationModelHistoryV2Item,
-    type NativeConversationProcessV2Item,
-    type NativeConversationResourceV2Item,
-    type NativeConversationSnapshot,
-    type NativeConversationSnapshotV2,
-    type NativeConversationSnapshotV2Page,
-    type NativeConversationToolResultPage,
-    type NativeGoalResponse,
-    type NativeNextTurnSettings,
-    type NativeOperationAcceptance,
-    type NativePendingInteractionsSnapshot,
-    type NativePendingRequest,
-    type NativePermissionMode,
-    type NativePlanImplementationRequest,
-    type NativeQueuedSubmission,
-    type NativeQueueSnapshot,
-    type NativeRealtimeEventEnvelope,
-    type NativeSessionError,
-    type NativeSessionState,
-    type NativeSubagentListSnapshot,
-    type NativeSubagentThreadSnapshot,
-    type NativeTurnSettingsSelection,
-    type SendNativeMessageRequest,
-    type TurnChangeSet,
-    type TurnChangeSetOperationResult,
+  type CodexConversationCapabilities,
+  type ConversationResourcePreview,
+  isNativeConversationEvent,
+  type NativeCollaborationMode,
+  type NativeConversationAttachment,
+  type NativeConversationChangeFileV2Item,
+  type NativeConversationChangeSetV2Summary,
+  type NativeConversationChoice,
+  type NativeConversationContentV2Page,
+  type NativeConversationEvent,
+  type NativeConversationEventPage,
+  type NativeConversationModelHistoryV2Item,
+  type NativeConversationProcessV2Item,
+  type NativeConversationResourceV2Item,
+  type NativeConversationSnapshot,
+  type NativeConversationSnapshotV2,
+  type NativeConversationSnapshotV2Page,
+  type NativeConversationToolResultPage,
+  type NativeGoalResponse,
+  type NativeNextTurnSettings,
+  type NativeOperationAcceptance,
+  type NativePendingInteractionsSnapshot,
+  type NativePendingRequest,
+  type NativePermissionMode,
+  type NativePlanImplementationRequest,
+  type NativeQueuedSubmission,
+  type NativeQueueSnapshot,
+  type NativeRealtimeEventEnvelope,
+  type NativeSessionError,
+  type NativeSessionState,
+  type NativeSubagentListSnapshot,
+  type NativeSubagentThreadSnapshot,
+  type NativeTurnSettingsSelection,
+  type SendNativeMessageRequest,
+  type TurnChangeSet,
+  type TurnChangeSetOperationResult,
 } from './sessionTypes.js';
-import {
-    adaptConversationSnapshotV2,
-    mergeConversationHistoryV2,
-    mergeConversationProcessV2,
-    updateConversationV2Paging
-} from './conversationSnapshotV2Adapter.js';
-import {markConversationNavigationRenderReady} from '../performanceTraceContext.js';
+import { adaptConversationSnapshotV2, mergeConversationHistoryV2, mergeConversationProcessV2, updateConversationV2Paging } from './conversationSnapshotV2Adapter.js';
+import { markConversationNavigationRenderReady } from '../performanceTraceContext.js';
 
 export const reconnectBackoffMs = [250, 500, 1_000, 2_000, 5_000] as const;
 // 同一个会话项的增量按一帧窗口合并，兼顾 Markdown 成本与首字可见延迟。
@@ -159,7 +148,7 @@ export interface SessionControllerClient {
   loadNativeConversationToolResult?(projectId: string, conversationId: string, handle: string, options?: { offset?: number; limit?: number }): Promise<NativeConversationToolResultPage>;
   loadNativeConversationEvents(projectId: string, conversationId: string, options: { afterSequence: number; limit?: number; byteLimit?: number; syncStreamGeneration?: string }): Promise<NativeConversationEventPage>;
 
-    loadNativePendingRequests(projectId: string, conversationId: string): Promise<NativePendingInteractionsSnapshot>;
+  loadNativePendingRequests(projectId: string, conversationId: string): Promise<NativePendingInteractionsSnapshot>;
   loadNativeSubagents?(projectId: string, conversationId: string): Promise<NativeSubagentListSnapshot>;
   loadNativeSubagentThread?(projectId: string, conversationId: string, threadId: string): Promise<NativeSubagentThreadSnapshot>;
   loadConversationResourcePreview?(projectId: string, conversationId: string, resourceId: string): Promise<ConversationResourcePreview>;
@@ -186,7 +175,7 @@ export interface SessionControllerClient {
   connectEvents(onEvent: (event: NativeRealtimeEventEnvelope) => void, options?: { afterEventId?: string; conversationId?: string; afterSequence?: number; syncStreamGeneration?: string }): WebSocket;
   sendNativeMessage(projectId: string, conversationId: string, input: SendNativeMessageRequest): Promise<NativeOperationAcceptance>;
 
-    forgetNativeMessageCommand?(projectId: string, conversationId: string, idempotencyKey: string): void;
+  forgetNativeMessageCommand?(projectId: string, conversationId: string, idempotencyKey: string): void;
   askNativeSideChat?(projectId: string, conversationId: string, input: { selectedText: string; question: string }): Promise<{ answer: string; status: 'completed' | 'interrupted' }>;
   editNativeQueuedSubmission(projectId: string, conversationId: string, submissionId: string, content: string): Promise<NativeQueueSnapshot>;
   retryNativeQueuedSubmission(projectId: string, conversationId: string, submissionId: string): Promise<NativeQueueSnapshot>;
@@ -1027,7 +1016,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     pendingSend = null;
     dispatch({ type: 'send_succeeded' });
     persistDraft();
-      options.client.forgetNativeMessageCommand?.(options.projectId, options.conversationId, envelope.idempotencyKey);
+    options.client.forgetNativeMessageCommand?.(options.projectId, options.conversationId, envelope.idempotencyKey);
   }
 
   function acceptedStatus(acceptance: NativeOperationAcceptance): string {
@@ -1127,7 +1116,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     pendingSend = null;
     dispatch({ type: 'send_succeeded' });
     persistDraft();
-      options.client.forgetNativeMessageCommand?.(options.projectId, options.conversationId, envelope.idempotencyKey);
+    options.client.forgetNativeMessageCommand?.(options.projectId, options.conversationId, envelope.idempotencyKey);
     void flushPendingBrowserCommentMarks();
   }
 
@@ -1189,8 +1178,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
   }
 
   async function reconcilePersistedAcceptance(snapshot: NativeConversationSnapshot): Promise<void> {
-      if (!pendingSend) return;
-      let envelope = pendingSend;
+    if (!pendingSend) return;
+    let envelope = pendingSend;
     if (envelopeWasRecoveredToComposer(snapshot, envelope)) {
       finalizeRecoveredEnvelope(envelope);
       return;
@@ -1200,20 +1189,20 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return;
     }
     if (acceptedEnvelopeIsDurable(snapshot, envelope)) {
-        // Renderer 可能在 HTTP acceptance 返回前重载。Snapshot 已有同一 client identity 时，
-        // 从耐久 submission 派生 acceptance，不能把已经送达的正文继续留在 Composer。
-        if (envelope.deliveryState !== 'accepted' || !envelope.acceptance) {
-            const acceptance = acceptanceFromDurableSnapshot(snapshot, envelope);
-            envelope = {...envelope, deliveryState: 'accepted', acceptance};
-            pendingSend = envelope;
-            dispatchSendAccepted(envelope.clientUserMessageId, acceptance);
-        }
+      // Renderer 可能在 HTTP acceptance 返回前重载。Snapshot 已有同一 client identity 时，
+      // 从耐久 submission 派生 acceptance，不能把已经送达的正文继续留在 Composer。
+      if (envelope.deliveryState !== 'accepted' || !envelope.acceptance) {
+        const acceptance = acceptanceFromDurableSnapshot(snapshot, envelope);
+        envelope = { ...envelope, deliveryState: 'accepted', acceptance };
+        pendingSend = envelope;
+        dispatchSendAccepted(envelope.clientUserMessageId, acceptance);
+      }
       finalizeDurableEnvelope(envelope);
       return;
     }
     // 确认恢复尚未成功持久化时保留 envelope，不能把未进入 Provider 的输入重新投影为已接受消息。
     if (snapshotRequiresManualConfirmation(snapshot, envelope.clientUserMessageId)) return;
-      if (envelope.deliveryState !== 'accepted' || !envelope.acceptance) return;
+    if (envelope.deliveryState !== 'accepted' || !envelope.acceptance) return;
     if (!hasNativeOptimisticItem(state, envelope.clientUserMessageId)) projectAcceptedEnvelope(envelope);
   }
 
@@ -1354,11 +1343,11 @@ export function createSessionController(options: CreateSessionControllerOptions)
           return;
         }
         const requests = snapshot.requests.filter((request) => !resolvedRequestIds.has(request.id));
-          dispatch({
-              type: 'pending_requests_hydrated',
-              requests,
-              ...(snapshot.planImplementationRequests ? {planImplementationRequests: snapshot.planImplementationRequests} : {}),
-          });
+        dispatch({
+          type: 'pending_requests_hydrated',
+          requests,
+          ...(snapshot.planImplementationRequests ? { planImplementationRequests: snapshot.planImplementationRequests } : {}),
+        });
         for (const request of requests) requestsAwaitingDetails.delete(request.id);
       } while (requestRefreshAgain && !disposed && token === connectionToken);
     })()
@@ -1507,7 +1496,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const loadHistory = options.client.loadNativeConversationModelHistoryV2;
     const loadQueue = options.client.loadNativeConversationQueueV2;
     const loadChoice = options.client.loadNativeConversationChoice;
-      let missingPlanConfirmation = false;
+    let missingPlanConfirmation = false;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const snapshot = await loadSnapshot(options.projectId, options.conversationId);
       const [history, queue, pending, choice, goal] = await Promise.all([
@@ -1518,28 +1507,28 @@ export function createSessionController(options: CreateSessionControllerOptions)
         options.client.loadNativeGoal(options.projectId, options.conversationId),
       ]);
       if (history.throughEventSeq !== snapshot.throughEventSeq) continue;
-        const planImplementationRequests = pending.planImplementationRequests ?? [];
-        if (queue.waitReason === 'plan_confirmation' && !planImplementationRequests.some((request) => request.status === 'pending')) {
-            missingPlanConfirmation = true;
-            continue;
-        }
-        return adaptConversationSnapshotV2({
-            snapshot,
-            history,
-            queue,
-            requests: pending.requests,
-            planImplementationRequests,
-            choice,
-            goal
-        });
+      const planImplementationRequests = pending.planImplementationRequests ?? [];
+      if (queue.waitReason === 'plan_confirmation' && !planImplementationRequests.some((request) => request.status === 'pending')) {
+        missingPlanConfirmation = true;
+        continue;
+      }
+      return adaptConversationSnapshotV2({
+        snapshot,
+        history,
+        queue,
+        requests: pending.requests,
+        planImplementationRequests,
+        choice,
+        goal,
+      });
     }
-      if (missingPlanConfirmation) throw new Error('会话正在等待计划确认，但计划操作没有随首屏恢复；已停止显示不可操作的排队状态，请重试加载会话。');
+    if (missingPlanConfirmation) throw new Error('会话正在等待计划确认，但计划操作没有随首屏恢复；已停止显示不可操作的排队状态，请重试加载会话。');
     throw new Error('Snapshot V2 结构与尾部历史未能在同一事件水位稳定读取，请重试。');
   }
 
   function snapshotNeedsRealtime(snapshot: NativeConversationSnapshot): boolean {
     if (snapshot.requests.some((request) => request.status === 'pending')) return true;
-      if (snapshot.planImplementationRequests.some((request) => request.status === 'pending')) return true;
+    if (snapshot.planImplementationRequests.some((request) => request.status === 'pending')) return true;
     if (snapshot.queue.state.type === 'dispatching' || snapshot.queue.state.type === 'active' || snapshot.queue.state.type === 'waiting') return true;
     if (snapshot.queue.submissions.some((submission) => submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active')) return true;
     return snapshot.turns.some((turn) => turn.status === 'running' || turn.status === 'waiting' || turn.status === 'dispatching');
@@ -1548,7 +1537,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
   function stateNeedsRealtime(): boolean {
     if (pendingSend || deferredSends.length > 0) return true;
     if (state.pendingRequests.some((request) => request.status === 'pending')) return true;
-      if (state.planImplementationRequests.some((request) => request.status === 'pending')) return true;
+    if (state.planImplementationRequests.some((request) => request.status === 'pending')) return true;
     if (state.queue?.state.type === 'dispatching' || state.queue?.state.type === 'active' || state.queue?.state.type === 'waiting') return true;
     if (state.queue?.submissions.some((submission) => submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active')) return true;
     return (
@@ -1834,7 +1823,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
   function dispatchV2Snapshot(snapshot: NativeConversationSnapshot): void {
     if (disposed || state.snapshot?.id !== snapshot.id || snapshot.id !== options.conversationId) return;
     // 按需页不拥有 durable event 水位，只合并展示投影；不得重置 gap-recovery 游标。
-      dispatch({type: 'snapshot_v2_page_merged', snapshot});
+    dispatch({ type: 'snapshot_v2_page_merged', snapshot });
   }
 
   async function loadEarlierHistoryV2(): Promise<void> {
@@ -2448,12 +2437,12 @@ export function createSessionController(options: CreateSessionControllerOptions)
           await options.client.respondToPlanImplementationRequest(options.projectId, options.conversationId, requestId, input);
           return loadConversationForHydration();
         },
-          async (snapshot) => {
-              await applyAuthoritativeSnapshot(snapshot);
-              // 计划动作会先解除 pending 确认，空闲释放可能已经关闭原事件流。
-              // implement/refine 若启动新轮次或生成下一张确认卡，必须从权威水位重建实时订阅。
-              if (snapshotNeedsRealtime(snapshot)) await ensureRealtimeConnection();
-          },
+        async (snapshot) => {
+          await applyAuthoritativeSnapshot(snapshot);
+          // 计划动作会先解除 pending 确认，空闲释放可能已经关闭原事件流。
+          // implement/refine 若启动新轮次或生成下一张确认卡，必须从权威水位重建实时订阅。
+          if (snapshotNeedsRealtime(snapshot)) await ensureRealtimeConnection();
+        },
       ).then(() => undefined);
     },
     loadEarlierHistory: loadEarlierHistoryV2,

@@ -1,15 +1,9 @@
-import {readdir, readFile} from 'node:fs/promises';
-import {relative, resolve} from 'node:path';
+import { readdir, readFile } from 'node:fs/promises';
+import { relative, resolve } from 'node:path';
 import process from 'node:process';
 import ts from 'typescript';
-import {gitMutatingCapabilityNames} from '../packages/git-core/src/index.js';
-import {
-    coreInternalSideEffectCapabilities,
-    gitInternalSideEffectCapabilities,
-    internalSideEffectCapabilityRegistry,
-    internalSideEffectPolicies,
-    processInternalSideEffectCapabilities
-} from './internal-side-effect-registry.mjs';
+import { gitMutatingCapabilityNames } from '../packages/git-core/src/index.js';
+import { coreInternalSideEffectCapabilities, gitInternalSideEffectCapabilities, internalSideEffectCapabilityRegistry, internalSideEffectPolicies, processInternalSideEffectCapabilities } from './internal-side-effect-registry.mjs';
 
 interface RegistryPolicy {
   id: string;
@@ -296,7 +290,7 @@ function isProcessCandidate(file: string, callee: string, method: string, childP
   if (callee === 'process.kill' || callee === 'process.send') return file.startsWith('packages/ai-runtime/src/') || file === 'packages/local-server/src/index.ts' || file === 'packages/local-server/src/runtimeProcessIdentity.ts';
   if (file === 'packages/ai-runtime/src/index.ts') return callee === 'pty.spawn' || method === 'kill';
   if (file === 'packages/ai-runtime/src/codexAppServerManager.ts') return method === 'kill' || callee === 'socket.send' || callee === 'socket.terminate';
-    if (file === 'packages/ai-runtime/src/codexRuntimeGenerationManager.ts') return method === 'kill';
+  if (file === 'packages/ai-runtime/src/codexRuntimeGenerationManager.ts') return method === 'kill';
   if (file === 'packages/ai-runtime/src/piRuntimeWorkerDriver.ts') return method === 'send' || method === 'kill';
   return false;
 }

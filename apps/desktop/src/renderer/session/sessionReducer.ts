@@ -1,40 +1,40 @@
 import type {
-    ConversationState,
-    NativeConversationAttachment,
-    NativeConversationEvent,
-    NativeConversationSnapshot,
-    NativeItemSnapshot,
-    NativeNextTurnSettings,
-    NativePendingRequest,
-    NativePlanImplementationRequest,
-    NativeProviderSettingsSnapshot,
-    NativeProviderValueSnapshot,
-    NativeQueuedSubmission,
-    NativeQueueSnapshot,
-    NativeSessionError,
-    NativeSessionItemBuffer,
-    NativeSessionState,
-    NativeTokenUsageSnapshot,
-    NativeTurnPlanSnapshot,
-    NativeTurnSnapshot,
-    NativeUnifiedUsageSnapshot,
-    TransportState,
+  ConversationState,
+  NativeConversationAttachment,
+  NativeConversationEvent,
+  NativeConversationSnapshot,
+  NativeItemSnapshot,
+  NativeNextTurnSettings,
+  NativePendingRequest,
+  NativePlanImplementationRequest,
+  NativeProviderSettingsSnapshot,
+  NativeProviderValueSnapshot,
+  NativeQueuedSubmission,
+  NativeQueueSnapshot,
+  NativeSessionError,
+  NativeSessionItemBuffer,
+  NativeSessionState,
+  NativeTokenUsageSnapshot,
+  NativeTurnPlanSnapshot,
+  NativeTurnSnapshot,
+  NativeUnifiedUsageSnapshot,
+  TransportState,
 } from './sessionTypes.js';
-import type {ZeusBrowserComment, ZeusBrowserPreparedSubmission} from '@zeus/shared';
-import {type ConversationContextDraft, emptyConversationContextDraft, type TaskPushMessageLayout} from '@zeus/shared';
+import type { ZeusBrowserComment, ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import { type ConversationContextDraft, emptyConversationContextDraft, type TaskPushMessageLayout } from '@zeus/shared';
 
 export type NativeSessionAction =
   | { type: 'transport_changed'; transportState: TransportState; reconnectAttempt?: number; error?: NativeSessionError | null }
   | { type: 'snapshot_hydrated'; snapshot: NativeConversationSnapshot }
-    | { type: 'snapshot_v2_page_merged'; snapshot: NativeConversationSnapshot }
+  | { type: 'snapshot_v2_page_merged'; snapshot: NativeConversationSnapshot }
   | { type: 'next_turn_settings_changed'; settings: NativeNextTurnSettings }
-    | {
-    type: 'pending_requests_hydrated';
-    requests: NativePendingRequest[];
-    planImplementationRequests?: NativePlanImplementationRequest[];
-    turns?: NativeTurnSnapshot[];
-    items?: NativeItemSnapshot[];
-}
+  | {
+      type: 'pending_requests_hydrated';
+      requests: NativePendingRequest[];
+      planImplementationRequests?: NativePlanImplementationRequest[];
+      turns?: NativeTurnSnapshot[];
+      items?: NativeItemSnapshot[];
+    }
   | { type: 'queue_hydrated'; queue: NativeQueueSnapshot }
   | { type: 'queued_submission_deleted'; submissionId: string; clientUserMessageId?: string; queue: NativeQueueSnapshot }
   | { type: 'steering_submission_hydrated'; submission: NativeQueuedSubmission; queue?: NativeQueueSnapshot }
@@ -156,8 +156,8 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
       };
     case 'snapshot_hydrated':
       return hydrateSnapshot(state, action.snapshot);
-      case 'snapshot_v2_page_merged':
-          return mergeSnapshotV2Page(state, action.snapshot);
+    case 'snapshot_v2_page_merged':
+      return mergeSnapshotV2Page(state, action.snapshot);
     case 'next_turn_settings_changed':
       return state.snapshot
         ? {
@@ -173,7 +173,7 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
       return {
         ...state,
         pendingRequests: requests,
-          planImplementationRequests: action.planImplementationRequests ?? state.planImplementationRequests,
+        planImplementationRequests: action.planImplementationRequests ?? state.planImplementationRequests,
         conversationState: requestConversationState(requests) ?? conversationStateWithoutRequests(state),
       };
     }
@@ -324,12 +324,12 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
   const previousUserItemKeys = new Map<string, string>();
   const previousUserStableIndexes = new Map<string, number>();
   const previousUserItemsByClientId = new Map<string, NativeSessionItemBuffer>();
-    const previousUserItemsBySubmissionId = new Map<string, NativeSessionItemBuffer>();
+  const previousUserItemsBySubmissionId = new Map<string, NativeSessionItemBuffer>();
   state.itemOrder.forEach((key, index) => {
     const item = state.items[key];
     if (!item || item.conversationId !== snapshot.id || !isUserMessageItem(item)) return;
-      const submissionId = stringValue(item.payload.submissionId);
-      if (submissionId) previousUserItemsBySubmissionId.set(submissionId, item);
+    const submissionId = stringValue(item.payload.submissionId);
+    if (submissionId) previousUserItemsBySubmissionId.set(submissionId, item);
     for (const clientId of userMessageClientIds(item)) {
       previousUserItemKeys.set(clientId, key);
       previousUserStableIndexes.set(clientId, index);
@@ -354,10 +354,10 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
     const turnId = providerTurnIdByLocalId.get(item.turnId) ?? item.turnId;
     const itemId = item.providerItemId ?? item.id;
     const timelineAt = item.startedAt ?? item.updatedAt;
-      const itemSubmissionId = isUserMessageType(item.type) ? stringValue(item.payload.submissionId) : null;
-      let itemClientId = isUserMessageType(item.type) ? (stringValue(item.payload.clientId) ?? stringValue(item.payload.clientUserMessageId)) : null;
-      const previousUserItem = (itemClientId ? previousUserItemsByClientId.get(itemClientId) : undefined) ?? (itemSubmissionId ? previousUserItemsBySubmissionId.get(itemSubmissionId) : undefined);
-      itemClientId ??= previousUserItem ? (userMessageClientIds(previousUserItem)[0] ?? null) : null;
+    const itemSubmissionId = isUserMessageType(item.type) ? stringValue(item.payload.submissionId) : null;
+    let itemClientId = isUserMessageType(item.type) ? (stringValue(item.payload.clientId) ?? stringValue(item.payload.clientUserMessageId)) : null;
+    const previousUserItem = (itemClientId ? previousUserItemsByClientId.get(itemClientId) : undefined) ?? (itemSubmissionId ? previousUserItemsBySubmissionId.get(itemSubmissionId) : undefined);
+    itemClientId ??= previousUserItem ? (userMessageClientIds(previousUserItem)[0] ?? null) : null;
     const existingProviderUserKey = itemClientId ? providerUserItemKeyByClientId.get(itemClientId) : undefined;
     if (existingProviderUserKey) {
       // Provider 可能用多个 item 回放同一客户端用户消息；别名也要指向已有可见项，
@@ -537,67 +537,67 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
  * 若用普通水合处理，较早的分页基准会把刚完成的轮次降回运行中并丢掉实时最终答复。
  */
 function mergeSnapshotV2Page(state: NativeSessionState, snapshot: NativeConversationSnapshot): NativeSessionState {
-    const hydrated = hydrateSnapshot(state, snapshot);
-    const items = {...hydrated.items};
-    for (const [key, previous] of Object.entries(state.items)) {
-        const projected = items[key];
-        if (!projected) {
-            items[key] = previous;
-            continue;
-        }
-        items[key] = {
-            ...previous,
-            ...projected,
-            status: isTerminalItemStatus(previous.status) && !isTerminalItemStatus(projected.status) ? previous.status : projected.status,
-            payload: {...previous.payload, ...projected.payload},
-            resources: projected.resources.length > 0 ? projected.resources : previous.resources,
-            timelineAt: previous.timelineAt ?? projected.timelineAt,
-            updatedAt: (previous.updatedAt ?? previous.timelineAt ?? '').localeCompare(projected.updatedAt ?? projected.timelineAt ?? '') > 0 ? previous.updatedAt : projected.updatedAt,
-        };
+  const hydrated = hydrateSnapshot(state, snapshot);
+  const items = { ...hydrated.items };
+  for (const [key, previous] of Object.entries(state.items)) {
+    const projected = items[key];
+    if (!projected) {
+      items[key] = previous;
+      continue;
     }
-
-    const previousOrder = new Map(state.itemOrder.map((key, index) => [key, index]));
-    const itemOrder = [...new Set([...state.itemOrder, ...hydrated.itemOrder])].sort((leftKey, rightKey) => {
-        const left = items[leftKey];
-        const right = items[rightKey];
-        if (!left || !right) return left ? -1 : right ? 1 : 0;
-        const chronology = (left.timelineAt ?? left.updatedAt ?? '').localeCompare(right.timelineAt ?? right.updatedAt ?? '');
-        if (chronology !== 0) return chronology;
-        return (previousOrder.get(leftKey) ?? Number.MAX_SAFE_INTEGER) - (previousOrder.get(rightKey) ?? Number.MAX_SAFE_INTEGER) || leftKey.localeCompare(rightKey);
-    });
-
-    const turnsByProviderId = {...hydrated.turnsByProviderId};
-    for (const [turnId, previous] of Object.entries(state.turnsByProviderId)) {
-        const projected = turnsByProviderId[turnId];
-        if (!projected || (isTerminalTurnStatus(previous.status) && !isTerminalTurnStatus(projected.status)) || previous.updatedAt.localeCompare(projected.updatedAt) > 0) turnsByProviderId[turnId] = previous;
-    }
-    const turns = [...new Map([...snapshot.turns, ...Object.values(turnsByProviderId)].map((turn) => [turn.providerTurnId ?? turn.id, turn])).values()].sort(
-        (left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
-    );
-
-    return {
-        ...hydrated,
-        snapshot: {...snapshot, turns},
-        turnsByProviderId,
-        terminalTurnIds: {...hydrated.terminalTurnIds, ...state.terminalTurnIds},
-        items,
-        itemOrder,
-        activeTurnId: state.activeTurnId,
-        startedTurnId: state.startedTurnId,
-        queue: state.queue,
-        pendingRequests: state.pendingRequests,
-        planImplementationRequests: state.planImplementationRequests,
-        providerSettings: state.providerSettings,
-        tokenUsage: state.tokenUsage,
-        unifiedUsage: state.unifiedUsage,
-        rateLimits: state.rateLimits,
-        mcpStartup: state.mcpStartup,
-        conversationState: state.conversationState,
-        transcriptRevision: state.transcriptRevision + 1,
-        feedbackEpoch: state.feedbackEpoch,
-        visibleFeedbackEpoch: state.visibleFeedbackEpoch,
-        error: state.error,
+    items[key] = {
+      ...previous,
+      ...projected,
+      status: isTerminalItemStatus(previous.status) && !isTerminalItemStatus(projected.status) ? previous.status : projected.status,
+      payload: { ...previous.payload, ...projected.payload },
+      resources: projected.resources.length > 0 ? projected.resources : previous.resources,
+      timelineAt: previous.timelineAt ?? projected.timelineAt,
+      updatedAt: (previous.updatedAt ?? previous.timelineAt ?? '').localeCompare(projected.updatedAt ?? projected.timelineAt ?? '') > 0 ? previous.updatedAt : projected.updatedAt,
     };
+  }
+
+  const previousOrder = new Map(state.itemOrder.map((key, index) => [key, index]));
+  const itemOrder = [...new Set([...state.itemOrder, ...hydrated.itemOrder])].sort((leftKey, rightKey) => {
+    const left = items[leftKey];
+    const right = items[rightKey];
+    if (!left || !right) return left ? -1 : right ? 1 : 0;
+    const chronology = (left.timelineAt ?? left.updatedAt ?? '').localeCompare(right.timelineAt ?? right.updatedAt ?? '');
+    if (chronology !== 0) return chronology;
+    return (previousOrder.get(leftKey) ?? Number.MAX_SAFE_INTEGER) - (previousOrder.get(rightKey) ?? Number.MAX_SAFE_INTEGER) || leftKey.localeCompare(rightKey);
+  });
+
+  const turnsByProviderId = { ...hydrated.turnsByProviderId };
+  for (const [turnId, previous] of Object.entries(state.turnsByProviderId)) {
+    const projected = turnsByProviderId[turnId];
+    if (!projected || (isTerminalTurnStatus(previous.status) && !isTerminalTurnStatus(projected.status)) || previous.updatedAt.localeCompare(projected.updatedAt) > 0) turnsByProviderId[turnId] = previous;
+  }
+  const turns = [...new Map([...snapshot.turns, ...Object.values(turnsByProviderId)].map((turn) => [turn.providerTurnId ?? turn.id, turn])).values()].sort(
+    (left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+  );
+
+  return {
+    ...hydrated,
+    snapshot: { ...snapshot, turns },
+    turnsByProviderId,
+    terminalTurnIds: { ...hydrated.terminalTurnIds, ...state.terminalTurnIds },
+    items,
+    itemOrder,
+    activeTurnId: state.activeTurnId,
+    startedTurnId: state.startedTurnId,
+    queue: state.queue,
+    pendingRequests: state.pendingRequests,
+    planImplementationRequests: state.planImplementationRequests,
+    providerSettings: state.providerSettings,
+    tokenUsage: state.tokenUsage,
+    unifiedUsage: state.unifiedUsage,
+    rateLimits: state.rateLimits,
+    mcpStartup: state.mcpStartup,
+    conversationState: state.conversationState,
+    transcriptRevision: state.transcriptRevision + 1,
+    feedbackEpoch: state.feedbackEpoch,
+    visibleFeedbackEpoch: state.visibleFeedbackEpoch,
+    error: state.error,
+  };
 }
 
 /** 权威快照内容未变化时复用历史条目，避免后台校准重新解析整段 Markdown。 */
@@ -1066,7 +1066,7 @@ function mergeStableUserMessagePresentation(previous: Record<string, unknown> | 
   if (!previous) return next;
   return {
     ...next,
-      ...(next.submissionId === undefined && previous.submissionId !== undefined ? {submissionId: previous.submissionId} : {}),
+    ...(next.submissionId === undefined && previous.submissionId !== undefined ? { submissionId: previous.submissionId } : {}),
     ...(next.taskPushLayout === undefined && previous.taskPushLayout !== undefined ? { taskPushLayout: previous.taskPushLayout } : {}),
     ...(next.attachments === undefined && previous.attachments !== undefined ? { attachments: previous.attachments } : {}),
   };

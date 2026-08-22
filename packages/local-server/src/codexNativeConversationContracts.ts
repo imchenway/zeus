@@ -1,11 +1,7 @@
-import type {CodexServerRequestResponse} from '@zeus/ai-runtime';
-import type {CodexBootstrapAdditionalContext, TaskPushMessageLayout} from '@zeus/shared';
-import type {
-    ConversationCollaborationMode,
-    ConversationPermissionMode,
-    ZeusConversationGoalRecord
-} from '@zeus/storage';
-import type {ConversationSegmentLifecycle} from './conversationExecutionCoordinator.js';
+import type { CodexServerRequestResponse } from '@zeus/ai-runtime';
+import type { CodexBootstrapAdditionalContext, TaskPushMessageLayout } from '@zeus/shared';
+import type { ConversationCollaborationMode, ConversationPermissionMode, ZeusConversationGoalRecord } from '@zeus/storage';
+import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
 
 export type NativeConversationRunState =
   | { type: 'idle' }
@@ -202,10 +198,10 @@ export interface SubmitNativeMessageInput {
 }
 
 export interface DispatchQueuedNativeMessageInput {
-    conversationId: string;
-    submissionId: string;
-    /** 统一执行层根据提交已冻结的路由创建；协调器只复用原提交，不重新生成持久化输入。 */
-    segmentLifecycle: ConversationSegmentLifecycle;
+  conversationId: string;
+  submissionId: string;
+  /** 统一执行层根据提交已冻结的路由创建；协调器只复用原提交，不重新生成持久化输入。 */
+  segmentLifecycle: ConversationSegmentLifecycle;
 }
 
 export interface SteerNativeMessageInput {
@@ -332,7 +328,7 @@ export interface CodexNativeConversationCoordinator {
   startProjectConversation(input: StartProjectConversationInput): Promise<NativeAcceptedOperation>;
   submitMessage(input: SubmitNativeMessageInput): Promise<NativeAcceptedOperation>;
 
-    dispatchQueuedMessage(input: DispatchQueuedNativeMessageInput): Promise<NativeAcceptedOperation>;
+  dispatchQueuedMessage(input: DispatchQueuedNativeMessageInput): Promise<NativeAcceptedOperation>;
   steerMessage(input: SteerNativeMessageInput): Promise<NativeAcceptedOperation>;
   editQueuedSubmission(input: EditQueuedSubmissionInput): Promise<NativeQueueSnapshot>;
   retryQueuedSubmission(input: RetryQueuedSubmissionInput): Promise<NativeQueueSnapshot>;

@@ -1,17 +1,7 @@
-import {
-    createSessionController,
-    type SessionControllerClient,
-    sessionRealtimeBufferBudget
-} from '../apps/desktop/src/renderer/session/useSessionController.ts';
-import {
-    adaptConversationSnapshotV2,
-    mergeConversationProcessV2
-} from '../apps/desktop/src/renderer/session/conversationSnapshotV2Adapter.ts';
-import {createHydratedSessionState, sessionReducer} from '../apps/desktop/src/renderer/session/sessionReducer.ts';
-import type {
-    NativePlanImplementationRequest,
-    NativeRealtimeEventEnvelope
-} from '../apps/desktop/src/renderer/session/sessionTypes.ts';
+import { createSessionController, type SessionControllerClient, sessionRealtimeBufferBudget } from '../apps/desktop/src/renderer/session/useSessionController.ts';
+import { adaptConversationSnapshotV2, mergeConversationProcessV2 } from '../apps/desktop/src/renderer/session/conversationSnapshotV2Adapter.ts';
+import { createHydratedSessionState, sessionReducer } from '../apps/desktop/src/renderer/session/sessionReducer.ts';
+import type { NativePlanImplementationRequest, NativeRealtimeEventEnvelope } from '../apps/desktop/src/renderer/session/sessionTypes.ts';
 
 const projectId = 'renderer-event-flow-project';
 const conversationId = 'renderer-event-flow-conversation';
@@ -152,13 +142,13 @@ function createHarness(eventPageLoader?: EventPageLoader, snapshotSequence = 0, 
       return { ...historyV2, throughEventSeq: snapshotSequence };
     },
     async loadNativeConversationQueueV2() {
-        if (planImplementationRequests.some((request) => request.status === 'pending')) {
-            return {
-                state: {type: 'idle' as const},
-                waitReason: 'plan_confirmation' as const,
-                submissions: [],
-            };
-        }
+      if (planImplementationRequests.some((request) => request.status === 'pending')) {
+        return {
+          state: { type: 'idle' as const },
+          waitReason: 'plan_confirmation' as const,
+          submissions: [],
+        };
+      }
       return live
         ? {
             state: { type: 'active' as const, turnId: 'turn', phase: 'prework' as const },
@@ -170,7 +160,7 @@ function createHarness(eventPageLoader?: EventPageLoader, snapshotSequence = 0, 
       return choice;
     },
     async loadNativePendingRequests() {
-        return {conversationId, requests: [], planImplementationRequests};
+      return { conversationId, requests: [], planImplementationRequests };
     },
     async loadNativeGoal() {
       return goal;
@@ -250,10 +240,10 @@ function verifyInternalPayloadsStayOutOfTranscript() {
         sequence: 1,
         turnId: 'turn',
         submissionId: null,
-          clientUserMessageId: null,
-          providerItemId: null,
-          reasoningSummary: false,
-          phase: null,
+        clientUserMessageId: null,
+        providerItemId: null,
+        reasoningSummary: false,
+        phase: null,
         segmentId: 'segment',
         role: 'assistant',
         toolPairId: null,
@@ -269,37 +259,37 @@ function verifyInternalPayloadsStayOutOfTranscript() {
         toolResult: null,
       },
       {
-          id: 'reasoning-history',
+        id: 'reasoning-history',
         sequence: 2,
         turnId: 'turn',
         submissionId: null,
-          clientUserMessageId: null,
-          providerItemId: 'reasoning-history-provider-item',
-          reasoningSummary: true,
-          phase: null,
-          segmentId: 'segment',
-          role: 'assistant',
-          toolPairId: null,
-          confirmedAt: occurredAt,
-          content: {
-              preview: '**等待命令完成**',
-              byteLength: 24,
-              truncated: false,
-              redacted: false,
-              contentHandle: null,
-              refreshRequired: false,
-          },
-          toolResult: null,
+        clientUserMessageId: null,
+        providerItemId: 'reasoning-history-provider-item',
+        reasoningSummary: true,
+        phase: null,
+        segmentId: 'segment',
+        role: 'assistant',
+        toolPairId: null,
+        confirmedAt: occurredAt,
+        content: {
+          preview: '**等待命令完成**',
+          byteLength: 24,
+          truncated: false,
+          redacted: false,
+          contentHandle: null,
+          refreshRequired: false,
+        },
+        toolResult: null,
       },
-        {
-            id: 'assistant-history',
-            sequence: 3,
-            turnId: 'turn',
-            submissionId: null,
-            clientUserMessageId: null,
-            providerItemId: 'assistant-history-provider-item',
-            reasoningSummary: false,
-            phase: 'final_answer',
+      {
+        id: 'assistant-history',
+        sequence: 3,
+        turnId: 'turn',
+        submissionId: null,
+        clientUserMessageId: null,
+        providerItemId: 'assistant-history-provider-item',
+        reasoningSummary: false,
+        phase: 'final_answer',
         segmentId: 'segment',
         role: 'assistant',
         toolPairId: null,
@@ -315,22 +305,22 @@ function verifyInternalPayloadsStayOutOfTranscript() {
         toolResult: null,
       },
     ],
-      limits: {...historyV2.limits, returnedItems: 3},
+    limits: { ...historyV2.limits, returnedItems: 3 },
   };
   const adapted = adaptConversationSnapshotV2({
     snapshot: {
       ...snapshotV2,
-        collections: {...snapshotV2.collections, modelHistory: {throughSequence: 3}},
+      collections: { ...snapshotV2.collections, modelHistory: { throughSequence: 3 } },
     },
     history,
     queue,
     requests: [],
-      planImplementationRequests: [],
+    planImplementationRequests: [],
     choice,
     goal,
   });
-    assert(adapted.items.length === 2 && adapted.items[0]?.type === 'reasoning' && adapted.items[0]?.phase === 'prework', 'Snapshot V2 reasoning identity must survive a plain-text history projection.');
-    assert(adapted.items[1]?.text === '最终回答' && adapted.items[1]?.type === 'agentMessage', 'Internal tool_call projections must never become visible assistant transcript rows.');
+  assert(adapted.items.length === 2 && adapted.items[0]?.type === 'reasoning' && adapted.items[0]?.phase === 'prework', 'Snapshot V2 reasoning identity must survive a plain-text history projection.');
+  assert(adapted.items[1]?.text === '最终回答' && adapted.items[1]?.type === 'agentMessage', 'Internal tool_call projections must never become visible assistant transcript rows.');
   const merged = mergeConversationProcessV2(adapted, 'turn', {
     schemaVersion: 2,
     structureGeneration: '2026-08-21-conversation-snapshot-v2',
@@ -344,7 +334,7 @@ function verifyInternalPayloadsStayOutOfTranscript() {
         sequence: 1,
         turnId: 'turn',
         segmentId: 'segment',
-          providerItemId: 'command-process',
+        providerItemId: 'command-process',
         kind: 'command',
         status: 'completed',
         title: '执行命令',
@@ -371,128 +361,128 @@ function verifyInternalPayloadsStayOutOfTranscript() {
   assert(command.payload.command === 'pwd' && !Object.prototype.hasOwnProperty.call(command.payload, 'detail'), 'Process items must expose presentation fields without retaining the internal detail wrapper.');
   return {
     visibleHistoryItems: adapted.items.map((item) => item.id),
-      reasoningHistoryType: adapted.items[0]?.type,
+    reasoningHistoryType: adapted.items[0]?.type,
     commandText: command.text,
     internalDetailExposed: false,
   };
 }
 
 function verifyProcessPageDoesNotDowngradeLiveTerminalState() {
-    const providerTurnId = 'provider-terminal-turn';
-    const localTurnId = 'local-terminal-turn';
-    const activeSnapshot = {
-        ...snapshotV2,
-        activeTurn: {
-            id: localTurnId,
-            providerTurnId,
-            submissionId: null,
-            status: 'running',
-            hasError: false,
-            hasPlan: false,
-            plan: null,
-            startedAt: occurredAt,
-            completedAt: null,
-            createdAt: occurredAt,
-            updatedAt: occurredAt,
-            agentKind: 'codex',
-            process: {available: true, latestSequence: 1},
-            resourcesAvailable: false,
-            changeSetAvailable: false,
-        },
-        limits: {...snapshotV2.limits, returnedTurnCount: 1},
-    };
-    const adapted = adaptConversationSnapshotV2({
-        snapshot: activeSnapshot,
-        history: historyV2,
-        queue,
-        requests: [],
-        planImplementationRequests: [],
-        choice,
-        goal
-    });
-    let state = createHydratedSessionState(adapted);
-    state = sessionReducer(state, {
-        type: 'event_received',
-        event: conversationEvent(1, 'conversation.item.completed', {
-            turnId: providerTurnId,
-            itemId: 'command-process',
-            itemType: 'commandExecution',
-            itemPayload: {command: 'pwd'},
-            status: 'completed',
-            textContent: 'pwd',
-        }),
-    });
-    state = sessionReducer(state, {
-        type: 'event_received',
-        event: conversationEvent(2, 'conversation.item.completed', {
-            turnId: providerTurnId,
-            itemId: 'final-answer',
-            itemType: 'agentMessage',
-            itemPayload: {},
-            phase: 'final_answer',
-            status: 'completed',
-            textContent: 'FINAL-OK',
-        }),
-    });
-    state = sessionReducer(state, {
-        type: 'event_received',
-        event: conversationEvent(3, 'conversation.turn.completed', {
-            turnId: providerTurnId,
-            status: 'completed',
-            completedAt: '2026-08-21T00:00:03.000Z',
-        }),
-    });
+  const providerTurnId = 'provider-terminal-turn';
+  const localTurnId = 'local-terminal-turn';
+  const activeSnapshot = {
+    ...snapshotV2,
+    activeTurn: {
+      id: localTurnId,
+      providerTurnId,
+      submissionId: null,
+      status: 'running',
+      hasError: false,
+      hasPlan: false,
+      plan: null,
+      startedAt: occurredAt,
+      completedAt: null,
+      createdAt: occurredAt,
+      updatedAt: occurredAt,
+      agentKind: 'codex',
+      process: { available: true, latestSequence: 1 },
+      resourcesAvailable: false,
+      changeSetAvailable: false,
+    },
+    limits: { ...snapshotV2.limits, returnedTurnCount: 1 },
+  };
+  const adapted = adaptConversationSnapshotV2({
+    snapshot: activeSnapshot,
+    history: historyV2,
+    queue,
+    requests: [],
+    planImplementationRequests: [],
+    choice,
+    goal,
+  });
+  let state = createHydratedSessionState(adapted);
+  state = sessionReducer(state, {
+    type: 'event_received',
+    event: conversationEvent(1, 'conversation.item.completed', {
+      turnId: providerTurnId,
+      itemId: 'command-process',
+      itemType: 'commandExecution',
+      itemPayload: { command: 'pwd' },
+      status: 'completed',
+      textContent: 'pwd',
+    }),
+  });
+  state = sessionReducer(state, {
+    type: 'event_received',
+    event: conversationEvent(2, 'conversation.item.completed', {
+      turnId: providerTurnId,
+      itemId: 'final-answer',
+      itemType: 'agentMessage',
+      itemPayload: {},
+      phase: 'final_answer',
+      status: 'completed',
+      textContent: 'FINAL-OK',
+    }),
+  });
+  state = sessionReducer(state, {
+    type: 'event_received',
+    event: conversationEvent(3, 'conversation.turn.completed', {
+      turnId: providerTurnId,
+      status: 'completed',
+      completedAt: '2026-08-21T00:00:03.000Z',
+    }),
+  });
 
-    const staleProcessPage = mergeConversationProcessV2(adapted, providerTurnId, {
-        schemaVersion: 2,
-        structureGeneration: '2026-08-21-conversation-snapshot-v2',
-        conversationId,
-        kind: 'process',
-        throughEventSeq: 0,
-        throughSequence: 1,
-        items: [
-            {
-                id: 'durable-command-process',
-                sequence: 1,
-                turnId: localTurnId,
-                segmentId: 'segment',
-                providerItemId: 'command-process',
-                kind: 'command',
-                status: 'completed',
-                title: '执行命令',
-                sourceEventId: 'codex:item:command-process',
-                startedAt: occurredAt,
-                completedAt: '2026-08-21T00:00:01.000Z',
-                detail: {
-                    preview: '{"provider":"codex","itemType":"commandExecution","payload":{"command":"pwd"}}',
-                    byteLength: 84,
-                    truncated: false,
-                    redacted: false,
-                    contentHandle: null,
-                    refreshRequired: false,
-                },
-                toolResult: null,
-            },
-        ],
-        hasMore: false,
-        nextCursor: null,
-        limits: {entryLimit: 32, byteLimit: 96 * 1024, returnedItems: 1, responseBytes: 256},
-    });
-    state = sessionReducer(state, {type: 'snapshot_v2_page_merged', snapshot: staleProcessPage});
-    const commandItems = Object.values(state.items).filter((item) => item.providerItemId === 'command-process');
-    assert(state.activeTurnId === null && state.conversationState === 'native_idle', 'A stale process page must not downgrade a completed realtime turn to active.');
-    assert(state.turnsByProviderId[providerTurnId]?.status === 'completed', 'A stale process page must preserve the stronger realtime terminal turn.');
-    assert(commandItems.length === 1, 'The durable process row and realtime Provider item must merge by provider item identity.');
-    assert(
-        Object.values(state.items).some((item) => item.providerItemId === 'final-answer' && item.text === 'FINAL-OK'),
-        'A process page must not erase a realtime final answer.',
-    );
-    return {
-        commandItems: commandItems.length,
-        finalAnswerPreserved: true,
-        conversationState: state.conversationState,
-        turnStatus: state.turnsByProviderId[providerTurnId]?.status,
-    };
+  const staleProcessPage = mergeConversationProcessV2(adapted, providerTurnId, {
+    schemaVersion: 2,
+    structureGeneration: '2026-08-21-conversation-snapshot-v2',
+    conversationId,
+    kind: 'process',
+    throughEventSeq: 0,
+    throughSequence: 1,
+    items: [
+      {
+        id: 'durable-command-process',
+        sequence: 1,
+        turnId: localTurnId,
+        segmentId: 'segment',
+        providerItemId: 'command-process',
+        kind: 'command',
+        status: 'completed',
+        title: '执行命令',
+        sourceEventId: 'codex:item:command-process',
+        startedAt: occurredAt,
+        completedAt: '2026-08-21T00:00:01.000Z',
+        detail: {
+          preview: '{"provider":"codex","itemType":"commandExecution","payload":{"command":"pwd"}}',
+          byteLength: 84,
+          truncated: false,
+          redacted: false,
+          contentHandle: null,
+          refreshRequired: false,
+        },
+        toolResult: null,
+      },
+    ],
+    hasMore: false,
+    nextCursor: null,
+    limits: { entryLimit: 32, byteLimit: 96 * 1024, returnedItems: 1, responseBytes: 256 },
+  });
+  state = sessionReducer(state, { type: 'snapshot_v2_page_merged', snapshot: staleProcessPage });
+  const commandItems = Object.values(state.items).filter((item) => item.providerItemId === 'command-process');
+  assert(state.activeTurnId === null && state.conversationState === 'native_idle', 'A stale process page must not downgrade a completed realtime turn to active.');
+  assert(state.turnsByProviderId[providerTurnId]?.status === 'completed', 'A stale process page must preserve the stronger realtime terminal turn.');
+  assert(commandItems.length === 1, 'The durable process row and realtime Provider item must merge by provider item identity.');
+  assert(
+    Object.values(state.items).some((item) => item.providerItemId === 'final-answer' && item.text === 'FINAL-OK'),
+    'A process page must not erase a realtime final answer.',
+  );
+  return {
+    commandItems: commandItems.length,
+    finalAnswerPreserved: true,
+    conversationState: state.conversationState,
+    turnStatus: state.turnsByProviderId[providerTurnId]?.status,
+  };
 }
 
 function verifySnapshotV2SettingsAndPlanRestoration() {
@@ -547,7 +537,7 @@ function verifySnapshotV2SettingsAndPlanRestoration() {
     history: historyV2,
     queue,
     requests: [],
-      planImplementationRequests: [],
+    planImplementationRequests: [],
     choice,
     goal,
   });
@@ -563,28 +553,28 @@ function verifySnapshotV2SettingsAndPlanRestoration() {
 }
 
 async function verifyPendingPlanConfirmationRestoration() {
-    const request: NativePlanImplementationRequest = {
-        id: 'plan-request',
-        conversationId,
-        turnId: 'plan-turn',
-        planItemId: 'plan-item',
-        status: 'pending',
-        submissionId: null,
-        createdAt: occurredAt,
-        resolvedAt: null,
-        updatedAt: occurredAt,
-    };
-    const harness = createHarness(undefined, 0, false, [request]);
-    await harness.controller.start();
-    const state = harness.controller.getState();
-    assert(state.planImplementationRequests.length === 1 && state.planImplementationRequests[0]?.id === request.id, 'Snapshot V2 hydration must restore the pending plan confirmation card.');
-    assert(harness.connectedAfterSequences.length === 1, 'A pending plan confirmation must keep realtime synchronization active.');
-    harness.controller.dispose();
-    return {
-        restoredRequestId: request.id,
-        waitReason: state.queue?.waitReason,
-        realtimeConnections: harness.connectedAfterSequences.length,
-    };
+  const request: NativePlanImplementationRequest = {
+    id: 'plan-request',
+    conversationId,
+    turnId: 'plan-turn',
+    planItemId: 'plan-item',
+    status: 'pending',
+    submissionId: null,
+    createdAt: occurredAt,
+    resolvedAt: null,
+    updatedAt: occurredAt,
+  };
+  const harness = createHarness(undefined, 0, false, [request]);
+  await harness.controller.start();
+  const state = harness.controller.getState();
+  assert(state.planImplementationRequests.length === 1 && state.planImplementationRequests[0]?.id === request.id, 'Snapshot V2 hydration must restore the pending plan confirmation card.');
+  assert(harness.connectedAfterSequences.length === 1, 'A pending plan confirmation must keep realtime synchronization active.');
+  harness.controller.dispose();
+  return {
+    restoredRequestId: request.id,
+    waitReason: state.queue?.waitReason,
+    realtimeConnections: harness.connectedAfterSequences.length,
+  };
 }
 
 async function verifyActiveSnapshotWatermarkSubscription() {
@@ -722,9 +712,9 @@ async function verifyContiguousGapReplay() {
 const result = {
   budget: sessionRealtimeBufferBudget,
   internalPayloadVisibility: verifyInternalPayloadsStayOutOfTranscript(),
-    processPageTerminalPreservation: verifyProcessPageDoesNotDowngradeLiveTerminalState(),
+  processPageTerminalPreservation: verifyProcessPageDoesNotDowngradeLiveTerminalState(),
   snapshotV2SettingsAndPlanRestoration: verifySnapshotV2SettingsAndPlanRestoration(),
-    pendingPlanConfirmationRestoration: await verifyPendingPlanConfirmationRestoration(),
+  pendingPlanConfirmationRestoration: await verifyPendingPlanConfirmationRestoration(),
   idleHistoryWithoutSubscription: await verifyIdleHistoryDoesNotSubscribe(),
   activeSnapshotWatermarkSubscription: await verifyActiveSnapshotWatermarkSubscription(),
   idleTransitionReleasesSubscription: await verifyIdleTransitionReleasesSubscription(),

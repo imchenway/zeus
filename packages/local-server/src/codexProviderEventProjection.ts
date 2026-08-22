@@ -1,47 +1,44 @@
-import type {CodexAppServerEvent} from '@zeus/ai-runtime';
-import {calculateCacheHitRate, type NativeTokenUsageSnapshot} from '@zeus/shared';
-import {ConversationPlanActionRepository, type ZeusConversationSubmissionRecord} from '@zeus/storage';
-import {parseCanonicalRequestUserInputQuestions} from './codexNativeRuiValidation.js';
-import {sanitizeConversationItemPayload} from './conversationResources.js';
-import {codexProviderEventIdentity, isCodexReadableItemTextDeltaEvent} from './codexProviderEventFlow.js';
-import type {NativeTurnResult} from './codexNativeConversationContracts.js';
-import type {
-    ConversationDispatchContext,
-    CreateCodexNativeConversationCoordinatorOptions
-} from './codexNativeConversationCoordinator.js';
+import type { CodexAppServerEvent } from '@zeus/ai-runtime';
+import { calculateCacheHitRate, type NativeTokenUsageSnapshot } from '@zeus/shared';
+import { ConversationPlanActionRepository, type ZeusConversationSubmissionRecord } from '@zeus/storage';
+import { parseCanonicalRequestUserInputQuestions } from './codexNativeRuiValidation.js';
+import { sanitizeConversationItemPayload } from './conversationResources.js';
+import { codexProviderEventIdentity, isCodexReadableItemTextDeltaEvent } from './codexProviderEventFlow.js';
+import type { NativeTurnResult } from './codexNativeConversationContracts.js';
+import type { ConversationDispatchContext, CreateCodexNativeConversationCoordinatorOptions } from './codexNativeConversationCoordinator.js';
 import {
-    completedItemProjection,
-    coordinatorError,
-    hasAuditableFileApprovalTarget,
-    hasSecretQuestion,
-    integerValue,
-    isRecord,
-    isToolResultItem,
-    itemText,
-    itemTypeFromMethod,
-    itemTypeFromValue,
-    liveProgressProjection,
-    nativePendingRequestProjection,
-    normalizeMcpStartupStatusMap,
-    normalizeSingleMcpStartupStatus,
-    normalizeTurnPlan,
-    parseJsonRecord,
-    phaseFromItem,
-    providerEventReceipt,
-    providerItemIdFrom,
-    providerTimestamp,
-    providerTurnFailure,
-    providerTurnFailureRecord,
-    providerTurnIdFrom,
-    providerTurnTerminalStatus,
-    providerTurnUserClientId,
-    reasoningSummaryProjection,
-    replayResolvedRequest,
-    requestKindFromMethod,
-    requireNumber,
-    requireString,
-    serializeError,
-    tokenUsageBreakdown,
+  completedItemProjection,
+  coordinatorError,
+  hasAuditableFileApprovalTarget,
+  hasSecretQuestion,
+  integerValue,
+  isRecord,
+  isToolResultItem,
+  itemText,
+  itemTypeFromMethod,
+  itemTypeFromValue,
+  liveProgressProjection,
+  nativePendingRequestProjection,
+  normalizeMcpStartupStatusMap,
+  normalizeSingleMcpStartupStatus,
+  normalizeTurnPlan,
+  parseJsonRecord,
+  phaseFromItem,
+  providerEventReceipt,
+  providerItemIdFrom,
+  providerTimestamp,
+  providerTurnFailure,
+  providerTurnFailureRecord,
+  providerTurnIdFrom,
+  providerTurnTerminalStatus,
+  providerTurnUserClientId,
+  reasoningSummaryProjection,
+  replayResolvedRequest,
+  requestKindFromMethod,
+  requireNumber,
+  requireString,
+  serializeError,
+  tokenUsageBreakdown,
 } from './codexNativeConversationPolicy.js';
 
 // 拆分期间保留结构化工厂依赖，后续按领域端口继续收窄。
@@ -1207,17 +1204,17 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
   } else {
     schedulePersist();
   }
-    // Plan 终态会把会话从 active 收敛为 idle。先发布耐久的计划确认请求，
-    // 避免 Renderer 收到 turn completed 后释放实时连接，错过随后才到的确认动作。
-    if (createdPlanImplementationRequest) {
-        options.broadcast('conversation.plan_implementation_request.changed', {
-            conversationId: createdPlanImplementationRequest.conversationId,
-            requestId: createdPlanImplementationRequest.id,
-            status: createdPlanImplementationRequest.status,
-            turnId: createdPlanImplementationRequest.turnId,
-            planItemId: createdPlanImplementationRequest.planItemId,
-        });
-    }
+  // Plan 终态会把会话从 active 收敛为 idle。先发布耐久的计划确认请求，
+  // 避免 Renderer 收到 turn completed 后释放实时连接，错过随后才到的确认动作。
+  if (createdPlanImplementationRequest) {
+    options.broadcast('conversation.plan_implementation_request.changed', {
+      conversationId: createdPlanImplementationRequest.conversationId,
+      requestId: createdPlanImplementationRequest.id,
+      status: createdPlanImplementationRequest.status,
+      turnId: createdPlanImplementationRequest.turnId,
+      planItemId: createdPlanImplementationRequest.planItemId,
+    });
+  }
   if (broadcast) {
     options.broadcast(broadcast.type, {
       ...broadcast.payload,

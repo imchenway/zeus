@@ -1,18 +1,12 @@
-import {useEffect} from 'react';
-import {isDurableNativeConversationAcceptance} from '../../session/SessionWorkspace.js';
-import {clearPendingConflictAiStart, listPendingConflictAiStarts} from '../../task/TaskGitMergeModal.js';
-import {ZeusApiError} from '../../apiClient.js';
-import {errorToLocalUiMessage, redactLocalUiErrorMessage} from './WorkspaceChrome.js';
-import {
-    completeNativeConversationChoiceTaskLoad,
-    executionHostSupportsConversationSource,
-    failNativeConversationChoiceTaskLoad,
-    isDefinitiveNativeConversationStartRejection,
-    PROJECT_WORKSPACE_ENTRIES
-} from './workspaceSupport.js';
-import type {WorkspaceQueryState} from './useWorkspaceQueryState.js';
-import type {WorkspaceDomainActions} from './useWorkspaceDomainActions.js';
-import type {WorkspaceOperations} from './useWorkspaceOperations.js';
+import { useEffect } from 'react';
+import { isDurableNativeConversationAcceptance } from '../../session/SessionWorkspace.js';
+import { clearPendingConflictAiStart, listPendingConflictAiStarts } from '../../task/TaskGitMergeModal.js';
+import { ZeusApiError } from '../../apiClient.js';
+import { errorToLocalUiMessage, redactLocalUiErrorMessage } from './WorkspaceChrome.js';
+import { completeNativeConversationChoiceTaskLoad, executionHostSupportsConversationSource, failNativeConversationChoiceTaskLoad, isDefinitiveNativeConversationStartRejection, PROJECT_WORKSPACE_ENTRIES } from './workspaceSupport.js';
+import type { WorkspaceQueryState } from './useWorkspaceQueryState.js';
+import type { WorkspaceDomainActions } from './useWorkspaceDomainActions.js';
+import type { WorkspaceOperations } from './useWorkspaceOperations.js';
 
 export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions: WorkspaceDomainActions, operations: WorkspaceOperations): void {
   const {
@@ -90,13 +84,18 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
       let startAccepted = false;
       void client
         .startNativeConversation(task.id, request)
-          .then(async ({acceptance, operationIdentity}) => {
-              if (!isDurableNativeConversationAcceptance(request, acceptance, operationIdentity)) throw new Error('代码审查会话尚未获得持久接受结果。');
+        .then(async ({ acceptance, operationIdentity }) => {
+          if (!isDurableNativeConversationAcceptance(request, acceptance, operationIdentity)) throw new Error('代码审查会话尚未获得持久接受结果。');
           startAccepted = true;
-              nativeConversationStartEnvelopeManager.clearPending({
-                  id: task.id,
-                  projectId: task.projectId
-              }, request, acceptance, operationIdentity);
+          nativeConversationStartEnvelopeManager.clearPending(
+            {
+              id: task.id,
+              projectId: task.projectId,
+            },
+            request,
+            acceptance,
+            operationIdentity,
+          );
           const choice = await client.loadNativeConversationChoice(task.projectId, acceptance.conversation.id);
           if (disposed) return;
           nativeConversationChoiceLoadCoordinator.preserveAccepted(choice);

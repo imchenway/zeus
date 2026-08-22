@@ -1,61 +1,54 @@
 import type {
-    ArchivedConversationChoicesSnapshot,
-    CodexConversationCapabilities,
-    ConversationResourcePreview,
-    NativeCollaborationMode,
-    NativeConversationChangeFileV2Item,
-    NativeConversationChangeSetV2Summary,
-    NativeConversationChoice,
-    NativeConversationChoicesSnapshot,
-    NativeConversationContentV2Page,
-    NativeConversationEventPage,
-    NativeConversationModelHistoryV2Item,
-    NativeConversationProcessV2Item,
-    NativeConversationResourceV2Item,
-    NativeConversationSnapshotV2,
-    NativeConversationSnapshotV2Page,
-    NativeConversationStartDispatchResult,
-    NativeConversationToolResultPage,
-    NativeGoalResponse,
-    NativeNextTurnSettings,
-    NativeOperationAcceptance,
-    NativePendingInteractionsSnapshot,
-    NativePendingRequest,
-    NativePermissionMode,
-    NativePlanImplementationRequest,
-    NativeProjectConversationChoicesSnapshot,
-    NativeQueueSnapshot,
-    NativeSubagentListSnapshot,
-    NativeSubagentThreadSnapshot,
-    SendNativeMessageRequest,
-    StartNativeConversationRequest,
-    StartProjectConversationRequest,
-    TurnChangeSet,
-    TurnChangeSetOperationResult,
+  ArchivedConversationChoicesSnapshot,
+  CodexConversationCapabilities,
+  ConversationResourcePreview,
+  NativeCollaborationMode,
+  NativeConversationChangeFileV2Item,
+  NativeConversationChangeSetV2Summary,
+  NativeConversationChoice,
+  NativeConversationChoicesSnapshot,
+  NativeConversationContentV2Page,
+  NativeConversationEventPage,
+  NativeConversationModelHistoryV2Item,
+  NativeConversationProcessV2Item,
+  NativeConversationResourceV2Item,
+  NativeConversationSnapshotV2,
+  NativeConversationSnapshotV2Page,
+  NativeConversationStartDispatchResult,
+  NativeConversationToolResultPage,
+  NativeGoalResponse,
+  NativeNextTurnSettings,
+  NativeOperationAcceptance,
+  NativePendingInteractionsSnapshot,
+  NativePendingRequest,
+  NativePermissionMode,
+  NativePlanImplementationRequest,
+  NativeProjectConversationChoicesSnapshot,
+  NativeQueueSnapshot,
+  NativeSubagentListSnapshot,
+  NativeSubagentThreadSnapshot,
+  SendNativeMessageRequest,
+  StartNativeConversationRequest,
+  StartProjectConversationRequest,
+  TurnChangeSet,
+  TurnChangeSetOperationResult,
 } from '../../session/sessionTypes.js';
-import type {GraphConversationHistoryItem} from '../graph/graphContracts.js';
-import type {ZeusRealtimeEvent} from '../../transport/dashboardClientContracts.js';
-import type {NativeProjectConversationChoiceGroupsSnapshot} from './conversationContracts.js';
-import {jsonRequest, type LocalApiTransport} from '../../transport/localApiTransport.js';
-import {buildConversationCommandRequest, conversationClientCommandTypes} from './conversationCommandClient.js';
-import {
-    buildConversationDispatchCommandRequest,
-    conversationDispatchClientCommandTypes,
-    forgetConversationDispatchCommandRequest
-} from './conversationDispatchCommandClient.js';
-import {
-    buildGraphConversationCommandRequest,
-    graphConversationClientCommandTypes
-} from './graphConversationCommandClient.js';
+import type { GraphConversationHistoryItem } from '../graph/graphContracts.js';
+import type { ZeusRealtimeEvent } from '../../transport/dashboardClientContracts.js';
+import type { NativeProjectConversationChoiceGroupsSnapshot } from './conversationContracts.js';
+import { jsonRequest, type LocalApiTransport } from '../../transport/localApiTransport.js';
+import { buildConversationCommandRequest, conversationClientCommandTypes } from './conversationCommandClient.js';
+import { buildConversationDispatchCommandRequest, conversationDispatchClientCommandTypes, forgetConversationDispatchCommandRequest } from './conversationDispatchCommandClient.js';
+import { buildGraphConversationCommandRequest, graphConversationClientCommandTypes } from './graphConversationCommandClient.js';
 
 export interface ConversationApiClient {
   loadArchivedConversations: () => Promise<ArchivedConversationChoicesSnapshot>;
   loadProjectConversationChoices: (projectId: string) => Promise<NativeProjectConversationChoicesSnapshot>;
   loadProjectConversationChoiceGroups: (projectId: string) => Promise<NativeProjectConversationChoiceGroupsSnapshot>;
-    startProjectConversation: (projectId: string, input: StartProjectConversationRequest) => Promise<NativeConversationStartDispatchResult>;
+  startProjectConversation: (projectId: string, input: StartProjectConversationRequest) => Promise<NativeConversationStartDispatchResult>;
   loadTaskConversationChoices: (taskId: string) => Promise<NativeConversationChoicesSnapshot>;
   loadCodexConversationCapabilities: (projectId: string) => Promise<CodexConversationCapabilities>;
-    startNativeConversation: (taskId: string, input: StartNativeConversationRequest) => Promise<NativeConversationStartDispatchResult>;
+  startNativeConversation: (taskId: string, input: StartNativeConversationRequest) => Promise<NativeConversationStartDispatchResult>;
   loadNativeConversationV2: (projectId: string, conversationId: string) => Promise<NativeConversationSnapshotV2>;
   loadNativeConversationModelHistoryV2: (
     projectId: string,
@@ -81,7 +74,7 @@ export interface ConversationApiClient {
   loadNativeConversationToolResult: (projectId: string, conversationId: string, handle: string, options?: { offset?: number; limit?: number }) => Promise<NativeConversationToolResultPage>;
   loadNativeConversationQueueV2: (projectId: string, conversationId: string) => Promise<NativeQueueSnapshot>;
   loadNativeConversationEvents: (projectId: string, conversationId: string, options: { afterSequence: number; limit?: number; byteLimit?: number; syncStreamGeneration?: string }) => Promise<NativeConversationEventPage>;
-    loadNativePendingRequests: (projectId: string, conversationId: string) => Promise<NativePendingInteractionsSnapshot>;
+  loadNativePendingRequests: (projectId: string, conversationId: string) => Promise<NativePendingInteractionsSnapshot>;
   loadNativeSubagents: (projectId: string, conversationId: string) => Promise<NativeSubagentListSnapshot>;
   loadNativeSubagentThread: (projectId: string, conversationId: string, threadId: string) => Promise<NativeSubagentThreadSnapshot>;
   loadNativeConversationChoice: (projectId: string, conversationId: string) => Promise<NativeConversationChoice>;
@@ -108,7 +101,7 @@ export interface ConversationApiClient {
   clearNativeGoal: (projectId: string, conversationId: string, confirmUnfinished: boolean) => Promise<NativeGoalResponse & { cleared: boolean }>;
   updateNativeNextTurnSettings: (projectId: string, conversationId: string, settings: NativeNextTurnSettings) => Promise<NativeNextTurnSettings>;
   sendNativeMessage: (projectId: string, conversationId: string, input: SendNativeMessageRequest) => Promise<NativeOperationAcceptance>;
-    forgetNativeMessageCommand: (projectId: string, conversationId: string, idempotencyKey: string) => void;
+  forgetNativeMessageCommand: (projectId: string, conversationId: string, idempotencyKey: string) => void;
   askNativeSideChat: (projectId: string, conversationId: string, input: { selectedText: string; question: string }) => Promise<{ answer: string; status: 'completed' | 'interrupted' }>;
   editNativeQueuedSubmission: (projectId: string, conversationId: string, submissionId: string, content: string) => Promise<NativeQueueSnapshot>;
   retryNativeQueuedSubmission: (projectId: string, conversationId: string, submissionId: string) => Promise<NativeQueueSnapshot>;
@@ -155,10 +148,10 @@ export function createConversationApiClient(transport: LocalApiTransport): Conve
         reconnectIdentity: idempotencyKey,
         value: body,
       });
-        const acceptance = await transport.request<NativeOperationAcceptance>(`${conversationCollectionPath(projectId)}`, {
+      const acceptance = await transport.request<NativeOperationAcceptance>(`${conversationCollectionPath(projectId)}`, {
         ...jsonRequest('POST', commandBody),
       });
-        return {acceptance, operationIdentity: commandBody.command.payload.operationIdentity};
+      return { acceptance, operationIdentity: commandBody.command.payload.operationIdentity };
     },
     loadTaskConversationChoices: (taskId) => transport.request(`/api/tasks/${encodeURIComponent(taskId)}/conversation-choices`),
     loadCodexConversationCapabilities: async (projectId) => normalizeCapabilities(await transport.request<CodexConversationCapabilities>(`/api/projects/${encodeURIComponent(projectId)}/codex-conversation-capabilities`)),
@@ -172,10 +165,10 @@ export function createConversationApiClient(transport: LocalApiTransport): Conve
         reconnectIdentity: idempotencyKey,
         value: body,
       });
-        const acceptance = await transport.request<NativeOperationAcceptance>(`/api/tasks/${encodeURIComponent(taskId)}/conversations`, {
+      const acceptance = await transport.request<NativeOperationAcceptance>(`/api/tasks/${encodeURIComponent(taskId)}/conversations`, {
         ...jsonRequest('POST', commandBody),
       });
-        return {acceptance, operationIdentity: commandBody.command.payload.operationIdentity};
+      return { acceptance, operationIdentity: commandBody.command.payload.operationIdentity };
     },
     loadNativeConversationV2: (projectId, conversationId) =>
       transport.request<NativeConversationSnapshotV2>(`${conversationPath(projectId, conversationId)}/snapshot-v2`, {
@@ -202,7 +195,7 @@ export function createConversationApiClient(transport: LocalApiTransport): Conve
       if (options.syncStreamGeneration) query.set('syncStreamGeneration', options.syncStreamGeneration);
       return transport.request<NativeConversationEventPage>(`${conversationPath(projectId, conversationId)}/events?${query.toString()}`);
     },
-      loadNativePendingRequests: (projectId, conversationId) => transport.request<NativePendingInteractionsSnapshot>(`${conversationPath(projectId, conversationId)}/pending-requests`),
+    loadNativePendingRequests: (projectId, conversationId) => transport.request<NativePendingInteractionsSnapshot>(`${conversationPath(projectId, conversationId)}/pending-requests`),
     loadNativeSubagents: (projectId, conversationId) => transport.request<NativeSubagentListSnapshot>(`${conversationPath(projectId, conversationId)}/subagents`),
     loadNativeSubagentThread: (projectId, conversationId, threadId) => transport.request<NativeSubagentThreadSnapshot>(`${conversationPath(projectId, conversationId)}/subagents/${encodeURIComponent(threadId)}`),
     loadNativeConversationChoice: (projectId, conversationId) => transport.request(`${conversationPath(projectId, conversationId)}/choice`),
@@ -284,13 +277,13 @@ export function createConversationApiClient(transport: LocalApiTransport): Conve
       });
       return transport.request<NativeOperationAcceptance>(`${conversationPath(projectId, conversationId)}/messages`, jsonRequest('POST', body));
     },
-      forgetNativeMessageCommand: (_projectId, conversationId, idempotencyKey) =>
-          forgetConversationDispatchCommandRequest({
-              commandType: conversationDispatchClientCommandTypes.messageSubmit,
-              scopeKind: 'product_conversation',
-              scopeId: conversationId,
-              reconnectIdentity: idempotencyKey,
-          }),
+    forgetNativeMessageCommand: (_projectId, conversationId, idempotencyKey) =>
+      forgetConversationDispatchCommandRequest({
+        commandType: conversationDispatchClientCommandTypes.messageSubmit,
+        scopeKind: 'product_conversation',
+        scopeId: conversationId,
+        reconnectIdentity: idempotencyKey,
+      }),
     askNativeSideChat: async (projectId, conversationId, input) => {
       const body = await buildConversationDispatchCommandRequest({ commandType: conversationDispatchClientCommandTypes.sideChatAsk, scopeKind: 'product_conversation', scopeId: conversationId, value: input });
       return transport.request(`${conversationPath(projectId, conversationId)}/side-chat`, jsonRequest('POST', body));

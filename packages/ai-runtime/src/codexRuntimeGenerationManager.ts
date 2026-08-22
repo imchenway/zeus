@@ -1,15 +1,15 @@
 import {
-    type CodexAppServerEvent,
-    type CodexAppServerManager,
-    type CodexCapabilitiesSnapshot,
-    type CodexResponsesModelProvider,
-    type CodexResponsesRuntime,
-    type CodexServerRequestResponse,
-    type CodexTransportState,
-    createCodexAppServerManager,
-    type ExternalAgentImportEvent,
+  type CodexAppServerEvent,
+  type CodexAppServerManager,
+  type CodexCapabilitiesSnapshot,
+  type CodexResponsesModelProvider,
+  type CodexResponsesRuntime,
+  type CodexServerRequestResponse,
+  type CodexTransportState,
+  createCodexAppServerManager,
+  type ExternalAgentImportEvent,
 } from './codexAppServerManager.js';
-import {spawn as nodeSpawn} from 'node:child_process';
+import { spawn as nodeSpawn } from 'node:child_process';
 
 interface RuntimeEntry {
   manager: CodexAppServerManager;
@@ -85,12 +85,12 @@ const supportedServerRequestMethods = new Set([
  * 新线程进入配置匹配的当前运行时；已经绑定的线程继续由持有 writer 的原运行时处理，直至该进程完全退出并释放锁。
  */
 export function createCodexRuntimeGenerationManager(
-    options: {
-        accountFingerprintSalt?: string;
-        codexHome?: string;
-        runtimeEnvironment?: Record<string, string>;
-        providerVersionProbe?: (commandPath: string) => Promise<string | null>;
-    } = {},
+  options: {
+    accountFingerprintSalt?: string;
+    codexHome?: string;
+    runtimeEnvironment?: Record<string, string>;
+    providerVersionProbe?: (commandPath: string) => Promise<string | null>;
+  } = {},
 ): CodexAppServerManager {
   const entries = new Set<RuntimeEntry>();
   const entriesByGeneration = new Map<string, RuntimeEntry>();
@@ -408,13 +408,13 @@ export function createCodexRuntimeGenerationManager(
       return capabilities;
     }
 
-      const providerVersionFallback = await (options.providerVersionProbe ?? probeCodexProviderVersion)(input.commandPath);
+    const providerVersionFallback = await (options.providerVersionProbe ?? probeCodexProviderVersion)(input.commandPath);
     const manager = createCodexAppServerManager({
       ...(options.accountFingerprintSalt ? { accountFingerprintSalt: options.accountFingerprintSalt } : {}),
       ...(options.codexHome ? { codexHome: options.codexHome } : {}),
       ...(options.runtimeEnvironment ? { runtimeEnvironment: options.runtimeEnvironment } : {}),
       ...(requestedResponsesProvider ? { appServerFlags: responsesProviderFlags(requestedResponsesProvider) } : {}),
-        providerVersionFallback,
+      providerVersionFallback,
     });
     const provisional: RuntimeEntry = {
       manager,
@@ -738,31 +738,31 @@ export function createCodexRuntimeGenerationManager(
 
 /** initialize 已不稳定携带 serverInfo；只读执行同一二进制的 --version，不按路径或文件名猜版本。 */
 function probeCodexProviderVersion(commandPath: string): Promise<string | null> {
-    return new Promise((resolve) => {
-        const child = nodeSpawn(commandPath, ['--version'], {shell: false, stdio: ['ignore', 'pipe', 'pipe']});
-        const stdout: Buffer[] = [];
-        const stderr: Buffer[] = [];
-        let settled = false;
-        const finish = (value: string | null): void => {
-            if (settled) return;
-            settled = true;
-            clearTimeout(timeout);
-            resolve(value);
-        };
-        const timeout = setTimeout(() => {
-            child.kill('SIGTERM');
-            finish(null);
-        }, 5_000);
-        child.stdout?.on('data', (chunk) => stdout.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))));
-        child.stderr?.on('data', (chunk) => stderr.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))));
-        child.on('error', () => finish(null));
-        child.on('close', (code) => {
-            if (code !== 0) return finish(null);
-            const output = `${Buffer.concat(stdout).toString('utf8')}\n${Buffer.concat(stderr).toString('utf8')}`;
-            const match = output.match(/(?:v|version\s*)?(\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?)/iu);
-            finish(match?.[1] ?? null);
-        });
+  return new Promise((resolve) => {
+    const child = nodeSpawn(commandPath, ['--version'], { shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    let settled = false;
+    const finish = (value: string | null): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve(value);
+    };
+    const timeout = setTimeout(() => {
+      child.kill('SIGTERM');
+      finish(null);
+    }, 5_000);
+    child.stdout?.on('data', (chunk) => stdout.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))));
+    child.stderr?.on('data', (chunk) => stderr.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))));
+    child.on('error', () => finish(null));
+    child.on('close', (code) => {
+      if (code !== 0) return finish(null);
+      const output = `${Buffer.concat(stdout).toString('utf8')}\n${Buffer.concat(stderr).toString('utf8')}`;
+      const match = output.match(/(?:v|version\s*)?(\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?)/iu);
+      finish(match?.[1] ?? null);
     });
+  });
 }
 
 function requestKey(generationId: string, requestId: string | number): string {

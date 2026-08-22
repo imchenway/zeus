@@ -1,10 +1,5 @@
-import type {FastifyInstance, FastifyReply, FastifyRequest} from 'fastify';
-import {
-    GraphConversationCommandApplication,
-    graphConversationCommandHttpError,
-    graphConversationCommandTypes,
-    type GraphConversationMutationRequest
-} from './graphConversationCommandApplication.js';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { GraphConversationCommandApplication, graphConversationCommandHttpError, graphConversationCommandTypes, type GraphConversationMutationRequest } from './graphConversationCommandApplication.js';
 
 type EmptyInput = Record<string, never>;
 type ProjectParams = { projectId: string };
@@ -35,20 +30,10 @@ export interface GraphConversationRouteResponse {
 export interface GraphConversationCommandRouteOperations {
   prepareProjectConversation(input: { projectId: string; value: Record<string, unknown>; operationIdentity: string }): Promise<unknown>;
 
-    startProjectConversation(input: {
-        prepared: unknown;
-        value: Record<string, unknown>;
-        operationIdentity: string;
-        markExternalWriteStarted(): void
-    }): Promise<GraphConversationRouteResponse>;
+  startProjectConversation(input: { prepared: unknown; value: Record<string, unknown>; operationIdentity: string; markExternalWriteStarted(): void }): Promise<GraphConversationRouteResponse>;
   prepareTaskConversation(input: { taskId: string; value: Record<string, unknown>; operationIdentity: string }): Promise<unknown>;
 
-    startTaskConversation(input: {
-        prepared: unknown;
-        value: Record<string, unknown>;
-        operationIdentity: string;
-        markExternalWriteStarted(): void
-    }): Promise<GraphConversationRouteResponse>;
+  startTaskConversation(input: { prepared: unknown; value: Record<string, unknown>; operationIdentity: string; markExternalWriteStarted(): void }): Promise<GraphConversationRouteResponse>;
   prepareProjectScan(input: { projectId: string; operationIdentity: string; commandType: typeof graphConversationCommandTypes.projectGraphScan | typeof graphConversationCommandTypes.projectGraphViewsGenerate }): Promise<unknown>;
   runProjectScan(input: { prepared: unknown; operationIdentity: string; commandType: typeof graphConversationCommandTypes.projectGraphScan | typeof graphConversationCommandTypes.projectGraphViewsGenerate }): Promise<unknown>;
   commitProjectScanAccepted(input: { prepared: unknown; result: unknown }): void;
@@ -89,12 +74,13 @@ export function registerGraphConversationCommandRoutes(options: {
         beforeWrite: async () => {
           prepared = await operations.prepareProjectConversation({ projectId: request.params.projectId, value: parsed.input, operationIdentity: parsed.operationIdentity });
         },
-          manualExternalWriteStart: true,
-          invoke: (markExternalWriteStarted) => operations.startProjectConversation({
-              prepared: requirePrepared(prepared),
-              value: parsed.input,
-              operationIdentity: parsed.operationIdentity,
-              markExternalWriteStarted
+        manualExternalWriteStart: true,
+        invoke: (markExternalWriteStarted) =>
+          operations.startProjectConversation({
+            prepared: requirePrepared(prepared),
+            value: parsed.input,
+            operationIdentity: parsed.operationIdentity,
+            markExternalWriteStarted,
           }),
         isExplicitRejection: operations.isExplicitRejection,
       });
@@ -151,12 +137,13 @@ export function registerGraphConversationCommandRoutes(options: {
         beforeWrite: async () => {
           prepared = await operations.prepareTaskConversation({ taskId: request.params.taskId, value: parsed.input, operationIdentity: parsed.operationIdentity });
         },
-          manualExternalWriteStart: true,
-          invoke: (markExternalWriteStarted) => operations.startTaskConversation({
-              prepared: requirePrepared(prepared),
-              value: parsed.input,
-              operationIdentity: parsed.operationIdentity,
-              markExternalWriteStarted
+        manualExternalWriteStart: true,
+        invoke: (markExternalWriteStarted) =>
+          operations.startTaskConversation({
+            prepared: requirePrepared(prepared),
+            value: parsed.input,
+            operationIdentity: parsed.operationIdentity,
+            markExternalWriteStarted,
           }),
         isExplicitRejection: operations.isExplicitRejection,
       });

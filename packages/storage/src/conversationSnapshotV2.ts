@@ -1,6 +1,6 @@
-import type {ZeusDatabasePort} from './databasePort.js';
-import {type ArtifactRef, type ArtifactStore, artifactStoreGeneration} from './artifactStore.js';
-import {conversationSchemaGeneration} from './conversationExecutionStore.js';
+import type { ZeusDatabasePort } from './databasePort.js';
+import { type ArtifactRef, type ArtifactStore, artifactStoreGeneration } from './artifactStore.js';
+import { conversationSchemaGeneration } from './conversationExecutionStore.js';
 
 export const conversationSnapshotV2StructureGeneration = '2026-08-21-conversation-snapshot-v2';
 
@@ -224,10 +224,10 @@ export interface ConversationModelHistoryPageItem {
   sequence: number;
   turnId: string;
   submissionId: string | null;
-    clientUserMessageId: string | null;
-    providerItemId: string | null;
-    reasoningSummary: boolean;
-    phase: string | null;
+  clientUserMessageId: string | null;
+  providerItemId: string | null;
+  reasoningSummary: boolean;
+  phase: string | null;
   segmentId: string;
   role: string;
   toolPairId: string | null;
@@ -241,7 +241,7 @@ export interface ConversationProcessPageItem {
   sequence: number;
   turnId: string;
   segmentId: string;
-    providerItemId: string | null;
+  providerItemId: string | null;
   kind: ConversationProcessKind;
   status: string;
   title: string;
@@ -452,10 +452,10 @@ interface ModelHistoryProjectionRow {
   sequence: number;
   turn_id: string;
   submission_id: string | null;
-    client_user_message_id: string | null;
-    provider_item_id: string | null;
-    reasoning_summary: number;
-    assistant_phase: string | null;
+  client_user_message_id: string | null;
+  provider_item_id: string | null;
+  reasoning_summary: number;
+  assistant_phase: string | null;
   segment_id: string;
   role: string;
   tool_pair_id: string | null;
@@ -639,7 +639,7 @@ export class ConversationSnapshotV2Repository {
   listModelHistoryPage(input: { conversationId: string; cursor?: string; entryLimit?: number; byteLimit?: number }): ConversationSnapshotV2Page<ConversationModelHistoryPageItem> {
     const context = this.sequencePageContext(input, 'model_history', '');
     const rows = this.db.select<ModelHistoryProjectionRow>(
-        `SELECT id,
+      `SELECT id,
                 sequence,
                 turn_id,
                 submission_id,
@@ -679,7 +679,7 @@ export class ConversationSnapshotV2Repository {
     const throughEventSeq = cursor?.throughEventSeq ?? this.throughEventSeq(conversationId);
     if (throughSequence === 0) return emptyPage(conversationId, 'model_history', throughEventSeq, limits);
     const rows = this.db.select<ModelHistoryProjectionRow>(
-        `SELECT id, sequence, turn_id, submission_id,
+      `SELECT id, sequence, turn_id, submission_id,
               (SELECT client_message_id FROM conversation_submissions WHERE id = conversation_model_history.submission_id) AS client_user_message_id,
               ${modelHistoryProviderItemSql} AS provider_item_id,
               ${modelHistoryReasoningSummarySql} AS reasoning_summary,
@@ -752,7 +752,7 @@ export class ConversationSnapshotV2Repository {
         sequence: row.process_sequence,
         turnId: row.turn_id,
         segmentId: row.segment_id,
-          providerItemId: pairId,
+        providerItemId: pairId,
         kind: row.kind,
         status: row.status,
         title: row.title,
@@ -1159,10 +1159,10 @@ export class ConversationSnapshotV2Repository {
       sequence: row.sequence,
       turnId: row.turn_id,
       submissionId: row.submission_id,
-        clientUserMessageId: row.client_user_message_id,
-        providerItemId: row.provider_item_id,
-        reasoningSummary: row.reasoning_summary === 1,
-        phase: row.assistant_phase,
+      clientUserMessageId: row.client_user_message_id,
+      providerItemId: row.provider_item_id,
+      reasoningSummary: row.reasoning_summary === 1,
+      phase: row.assistant_phase,
       segmentId: row.segment_id,
       role: row.role,
       toolPairId: row.tool_pair_id,

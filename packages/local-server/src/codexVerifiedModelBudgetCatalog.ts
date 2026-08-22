@@ -14,48 +14,48 @@ const verifiedBudgets = new Map<string, CodexVerifiedModelBudget>([
   [
     catalogKey('0.149.0', 'gpt-5.6-sol'),
     {
-        contextWindowTokens: 272_000,
-        reservedOutputTokens: 128_000,
-        evidenceSource: 'codex_cli_model_registry:gpt-5.6-sol:codex-cli-0.149.0',
-        checkedAt: '2026-08-22T00:00:00.000Z',
+      contextWindowTokens: 272_000,
+      reservedOutputTokens: 128_000,
+      evidenceSource: 'codex_cli_model_registry:gpt-5.6-sol:codex-cli-0.149.0',
+      checkedAt: '2026-08-22T00:00:00.000Z',
     },
   ],
-    ...['gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'].map(
-        (modelId) =>
-            [
-                catalogKey('0.149.0', modelId),
-                {
-                    contextWindowTokens: 272_000,
-                    reservedOutputTokens: 128_000,
-                    evidenceSource: `codex_cli_model_registry:${modelId}:codex-cli-0.149.0`,
-                    checkedAt: '2026-08-22T00:00:00.000Z',
-                },
-            ] as const,
-    ),
+  ...['gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'].map(
+    (modelId) =>
+      [
+        catalogKey('0.149.0', modelId),
+        {
+          contextWindowTokens: 272_000,
+          reservedOutputTokens: 128_000,
+          evidenceSource: `codex_cli_model_registry:${modelId}:codex-cli-0.149.0`,
+          checkedAt: '2026-08-22T00:00:00.000Z',
+        },
+      ] as const,
+  ),
   [
     catalogKey('0.149.0', 'gpt-5.4-mini'),
     {
-        contextWindowTokens: 272_000,
+      contextWindowTokens: 272_000,
       reservedOutputTokens: 128_000,
-        evidenceSource: 'codex_cli_model_registry:gpt-5.4-mini:codex-cli-0.149.0',
-        checkedAt: '2026-08-22T00:00:00.000Z',
+      evidenceSource: 'codex_cli_model_registry:gpt-5.4-mini:codex-cli-0.149.0',
+      checkedAt: '2026-08-22T00:00:00.000Z',
     },
   ],
-    [
-        catalogKey('0.149.0', 'gpt-5.4'),
-        {
-            contextWindowTokens: 272_000,
-            reservedOutputTokens: 128_000,
-            evidenceSource: 'codex_cli_model_registry:gpt-5.4:codex-cli-0.149.0',
-            checkedAt: '2026-08-22T00:00:00.000Z',
-        },
-    ],
-    [
-        catalogKey('0.149.0', 'gpt-5.3-codex-spark'),
-        {
-            contextWindowTokens: 128_000,
-            reservedOutputTokens: 64_000,
-            evidenceSource: 'codex_cli_model_registry:gpt-5.3-codex-spark:codex-cli-0.149.0',
+  [
+    catalogKey('0.149.0', 'gpt-5.4'),
+    {
+      contextWindowTokens: 272_000,
+      reservedOutputTokens: 128_000,
+      evidenceSource: 'codex_cli_model_registry:gpt-5.4:codex-cli-0.149.0',
+      checkedAt: '2026-08-22T00:00:00.000Z',
+    },
+  ],
+  [
+    catalogKey('0.149.0', 'gpt-5.3-codex-spark'),
+    {
+      contextWindowTokens: 128_000,
+      reservedOutputTokens: 64_000,
+      evidenceSource: 'codex_cli_model_registry:gpt-5.3-codex-spark:codex-cli-0.149.0',
       checkedAt: '2026-08-22T00:00:00.000Z',
     },
   ],

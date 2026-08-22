@@ -1,142 +1,84 @@
-import {
-    type CSSProperties,
-    type KeyboardEvent as ReactKeyboardEvent,
-    type PointerEvent as ReactPointerEvent,
-    type ReactNode,
-    useCallback,
-    useEffect,
-    useLayoutEffect,
-    useMemo,
-    useRef,
-    useState,
-    useSyncExternalStore
-} from 'react';
-import {ArrowUpIcon as ArrowUp} from '@phosphor-icons/react/dist/csr/ArrowUp';
-import {ArrowsClockwiseIcon as ArrowsClockwise} from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
-import {WarningCircleIcon as WarningCircle} from '@phosphor-icons/react/dist/csr/WarningCircle';
-import {GlobeSimpleIcon as GlobeSimple} from '@phosphor-icons/react/dist/csr/GlobeSimple';
-import {PaperclipIcon as Paperclip} from '@phosphor-icons/react/dist/csr/Paperclip';
-import {TargetIcon as Target} from '@phosphor-icons/react/dist/csr/Target';
-import {XIcon as X} from '@phosphor-icons/react/dist/csr/X';
-import {animate as animateMotion, motion, useMotionValue, useTransform} from 'framer-motion';
-import {
-    calculateUncachedInputTokens,
-    type ConversationContextDraft,
-    type ConversationFileLocation,
-    type ConversationOpenTarget,
-    type TurnChangeFile,
-    type ZeusBrowserPreparedSubmission
-} from '@zeus/shared';
+import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
+import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
+import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
+import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
+import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paperclip';
+import { TargetIcon as Target } from '@phosphor-icons/react/dist/csr/Target';
+import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
+import { animate as animateMotion, motion, useMotionValue, useTransform } from 'framer-motion';
+import { calculateUncachedInputTokens, type ConversationContextDraft, type ConversationFileLocation, type ConversationOpenTarget, type TurnChangeFile, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import type { ProjectGitAction, ProjectGitActionResponse, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
+import { openConversationResourceInMain, openTurnChangeFileInMain } from '../appShellBridge.js';
+import { ZeusSelect } from '../ZeusSelect.js';
+import { canSteerActiveTurn, type ComposerRuntimeSettings, ConversationComposer, type ConversationComposerProps, resolveComposerKeyIntent } from './ConversationComposer.js';
+import { ConversationTranscript, type ConversationTranscriptProps, type SessionCreationStatus } from './ConversationTranscript.js';
+import { QueuedConversationMessages, type QueuedConversationMessagesProps } from './QueuedConversationMessages.js';
+import { SessionPlanProgress } from './SessionActivity.js';
+import { LegacyConversationBanner } from './LegacyConversationBanner.js';
+import { hasPendingRequestDetails, PendingRequestSurface, requestKind } from './PendingRequestSurface.js';
+import { PermissionModeControl } from './PermissionModeControl.js';
+import { CollaborationModeControl } from './CollaborationModeControl.js';
+import { ComposerDropdown } from './ComposerDropdown.js';
+import { PlanImplementationRequestSurface } from './PlanImplementationRequestSurface.js';
+import { PlanWorkspace } from './PlanWorkspace.js';
+import { BrowserWorkspace } from './BrowserWorkspace.js';
+import { SourceWorkspace } from './SourceWorkspace.js';
+import { TurnDiffWorkspace } from './TurnChanges.js';
+import { SideChatWorkspace } from './SideChatWorkspace.js';
+import { SubagentWorkspace } from './SubagentWorkspace.js';
+import { defaultOpenTarget } from './ConversationResources.js';
 import type {
-    ProjectGitAction,
-    ProjectGitActionResponse,
-    ProjectGitWorkbenchSnapshot,
-    ProjectRecord
-} from '../apiClient.js';
-import {openConversationResourceInMain, openTurnChangeFileInMain} from '../appShellBridge.js';
-import {ZeusSelect} from '../ZeusSelect.js';
-import {
-    canSteerActiveTurn,
-    type ComposerRuntimeSettings,
-    ConversationComposer,
-    type ConversationComposerProps,
-    resolveComposerKeyIntent
-} from './ConversationComposer.js';
-import {
-    ConversationTranscript,
-    type ConversationTranscriptProps,
-    type SessionCreationStatus
-} from './ConversationTranscript.js';
-import {QueuedConversationMessages, type QueuedConversationMessagesProps} from './QueuedConversationMessages.js';
-import {SessionPlanProgress} from './SessionActivity.js';
-import {LegacyConversationBanner} from './LegacyConversationBanner.js';
-import {hasPendingRequestDetails, PendingRequestSurface, requestKind} from './PendingRequestSurface.js';
-import {PermissionModeControl} from './PermissionModeControl.js';
-import {CollaborationModeControl} from './CollaborationModeControl.js';
-import {ComposerDropdown} from './ComposerDropdown.js';
-import {PlanImplementationRequestSurface} from './PlanImplementationRequestSurface.js';
-import {PlanWorkspace} from './PlanWorkspace.js';
-import {BrowserWorkspace} from './BrowserWorkspace.js';
-import {SourceWorkspace} from './SourceWorkspace.js';
-import {TurnDiffWorkspace} from './TurnChanges.js';
-import {SideChatWorkspace} from './SideChatWorkspace.js';
-import {SubagentWorkspace} from './SubagentWorkspace.js';
-import {defaultOpenTarget} from './ConversationResources.js';
-import type {
-    CodexConversationCapabilities,
-    ConversationResource,
-    ConversationResourcePreview,
-    NativeCollaborationMode,
-    NativeConversationAttachment,
-    NativeConversationAttentionKind,
-    NativeConversationChoice,
-    NativeConversationContentV2Page,
-    NativeConversationStage,
-    NativeConversationStartDispatchResult,
-    NativeConversationToolResultPage,
-    NativeModelRequestUsageObservation,
-    NativeNextTurnSettings,
-    NativeOperationAcceptance,
-    NativePendingRequest,
-    NativePermissionMode,
-    NativePlanImplementationRequest,
-    NativeServiceTierSelection,
-    NativeSessionItemBuffer,
-    NativeSessionState,
-    NativeSubagentListSnapshot,
-    NativeSubagentThreadSnapshot,
-    NativeTurnSettingsSelection,
-    SessionConversationOwner,
-    StartNativeConversationRequest,
-    StartProjectConversationRequest,
-    TaskWorkspacesSnapshot,
-    TurnChangeSet,
-    TurnChangeSetOperationResult,
+  CodexConversationCapabilities,
+  ConversationResource,
+  ConversationResourcePreview,
+  NativeCollaborationMode,
+  NativeConversationAttachment,
+  NativeConversationAttentionKind,
+  NativeConversationChoice,
+  NativeConversationContentV2Page,
+  NativeConversationStage,
+  NativeConversationStartDispatchResult,
+  NativeConversationToolResultPage,
+  NativeModelRequestUsageObservation,
+  NativeNextTurnSettings,
+  NativeOperationAcceptance,
+  NativePendingRequest,
+  NativePermissionMode,
+  NativePlanImplementationRequest,
+  NativeServiceTierSelection,
+  NativeSessionItemBuffer,
+  NativeSessionState,
+  NativeSubagentListSnapshot,
+  NativeSubagentThreadSnapshot,
+  NativeTurnSettingsSelection,
+  SessionConversationOwner,
+  StartNativeConversationRequest,
+  StartProjectConversationRequest,
+  TaskWorkspacesSnapshot,
+  TurnChangeSet,
+  TurnChangeSetOperationResult,
 } from './sessionTypes.js';
-import {
-    normalizeServiceTierSelection,
-    selectionFromEffectiveServiceTier,
-    serviceTierWireOverride
-} from './serviceTierSelection.js';
-import {
-    reconnectDelayMs,
-    type SessionController,
-    type SessionControllerClient,
-    useSessionControllerInstance,
-    useSessionControllerSelector
-} from './useSessionController.js';
-import {
-    createConversationComposerStateSelector,
-    createConversationQueueStateSelector,
-    createConversationTranscriptStateSelector,
-    createSessionWorkspaceStateSelector
-} from './sessionStateSlices.js';
-import {
-    createSessionEscapeController,
-    type SessionEscapeController,
-    type SessionEscapeLayer,
-    type SessionEscapeResult
-} from './useThreadScrollController.js';
-import {SafeMarkdown, type SessionUiLanguage} from './ThreadItemView.js';
-import {autosizeTextarea} from './textareaAutosize.js';
-import {conversationAttachmentIdentity, ConversationComposerAttachments} from './ConversationComposerAttachments.js';
-import {ContextUsageIndicator} from './ContextUsageIndicator.js';
-import {formatTokenCount} from './tokenUsageFormat.js';
-import {ServiceTierToggle} from './ServiceTierToggle.js';
-import {useConversationInputResources} from './useConversationInputResources.js';
-import {SessionQuickActionsCard} from './SessionQuickActionsCard.js';
-import type {SessionCodeReviewSelection} from './SessionCodeReviewDialog.js';
-import {conversationDisplayTitle} from './conversationDisplayTitle.js';
-import {
-    conversationRuntimePreferenceKind,
-    readConversationRuntimePreferences,
-    writeConversationRuntimePreferences
-} from './conversationRuntimePreferences.js';
-import {resolveModelCapability} from './modelSelection.js';
-import {GoalPanel, GoalRail} from './GoalPanel.js';
-import {presentModelOptions} from '../modelOptionPresentation.js';
-import {NewConversationExecutionContext} from './NewConversationExecutionContext.js';
-import {useApplicationErrorDialog} from '../ui/ApplicationErrorDialog.js';
+import { normalizeServiceTierSelection, selectionFromEffectiveServiceTier, serviceTierWireOverride } from './serviceTierSelection.js';
+import { reconnectDelayMs, type SessionController, type SessionControllerClient, useSessionControllerInstance, useSessionControllerSelector } from './useSessionController.js';
+import { createConversationComposerStateSelector, createConversationQueueStateSelector, createConversationTranscriptStateSelector, createSessionWorkspaceStateSelector } from './sessionStateSlices.js';
+import { createSessionEscapeController, type SessionEscapeController, type SessionEscapeLayer, type SessionEscapeResult } from './useThreadScrollController.js';
+import { SafeMarkdown, type SessionUiLanguage } from './ThreadItemView.js';
+import { autosizeTextarea } from './textareaAutosize.js';
+import { conversationAttachmentIdentity, ConversationComposerAttachments } from './ConversationComposerAttachments.js';
+import { ContextUsageIndicator } from './ContextUsageIndicator.js';
+import { formatTokenCount } from './tokenUsageFormat.js';
+import { ServiceTierToggle } from './ServiceTierToggle.js';
+import { useConversationInputResources } from './useConversationInputResources.js';
+import { SessionQuickActionsCard } from './SessionQuickActionsCard.js';
+import type { SessionCodeReviewSelection } from './SessionCodeReviewDialog.js';
+import { conversationDisplayTitle } from './conversationDisplayTitle.js';
+import { conversationRuntimePreferenceKind, readConversationRuntimePreferences, writeConversationRuntimePreferences } from './conversationRuntimePreferences.js';
+import { resolveModelCapability } from './modelSelection.js';
+import { GoalPanel, GoalRail } from './GoalPanel.js';
+import { presentModelOptions } from '../modelOptionPresentation.js';
+import { NewConversationExecutionContext } from './NewConversationExecutionContext.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
 export interface SessionWorkspaceTaskManagementStatus {
   id: string;
@@ -188,7 +130,7 @@ export interface SessionWorkspaceActions {
   onStartConversation?: (
     input: SessionWorkspaceStartInput,
   ) => void | boolean | NativeConversationStartPreparation | NativeConversationStartFailure | Promise<void | boolean | NativeConversationStartPreparation | NativeConversationStartFailure>;
-    onStartProjectConversation?: (input: ProjectSessionWorkspaceStartInput) => void | boolean | NativeConversationStartFailure | Promise<void | boolean | NativeConversationStartFailure>;
+  onStartProjectConversation?: (input: ProjectSessionWorkspaceStartInput) => void | boolean | NativeConversationStartFailure | Promise<void | boolean | NativeConversationStartFailure>;
   onLoadCapabilities?: (projectId: string) => Promise<CodexConversationCapabilities>;
   onSelectNewConversationProject?: (projectId: string) => void;
   onLoadNewConversationProjectGit?: (projectId: string) => Promise<ProjectGitWorkbenchSnapshot>;
@@ -309,10 +251,10 @@ interface PersistedNativeConversationStartEnvelope {
 export interface NativeConversationStartEnvelopeManager {
   prepare(input: SessionWorkspaceStartInput): StartNativeConversationRequest;
 
-    clearAccepted(input: SessionWorkspaceStartInput, request: StartNativeConversationRequest, acceptance: NativeOperationAcceptance, operationIdentity: string): boolean;
+  clearAccepted(input: SessionWorkspaceStartInput, request: StartNativeConversationRequest, acceptance: NativeOperationAcceptance, operationIdentity: string): boolean;
   pending(task: Pick<SessionWorkspaceTask, 'id' | 'projectId'>): StartNativeConversationRequest | null;
 
-    clearPending(task: Pick<SessionWorkspaceTask, 'id' | 'projectId'>, request: StartNativeConversationRequest, acceptance: NativeOperationAcceptance, operationIdentity: string): boolean;
+  clearPending(task: Pick<SessionWorkspaceTask, 'id' | 'projectId'>, request: StartNativeConversationRequest, acceptance: NativeOperationAcceptance, operationIdentity: string): boolean;
   discardPending(task: Pick<SessionWorkspaceTask, 'id' | 'projectId'>, request: StartNativeConversationRequest): boolean;
 }
 
@@ -832,14 +774,14 @@ export function nativeConversationChoiceFromAcceptance(acceptance: NativeOperati
 export async function startNativeConversationWithDurableAcceptance<T>(options: {
   input: SessionWorkspaceStartInput;
   envelopeManager: NativeConversationStartEnvelopeManager;
-    dispatch: (taskId: string, request: StartNativeConversationRequest) => Promise<NativeConversationStartDispatchResult>;
+  dispatch: (taskId: string, request: StartNativeConversationRequest) => Promise<NativeConversationStartDispatchResult>;
   onAccepted: (choice: NativeConversationChoice) => void | Promise<void>;
   refresh: (taskId: string) => Promise<T>;
 }): Promise<{ choice: NativeConversationChoice; request: StartNativeConversationRequest; acceptance: NativeOperationAcceptance; refreshResult: T | null; refreshError: unknown | null }> {
   const request = options.envelopeManager.prepare(options.input);
-    const {acceptance, operationIdentity} = await options.dispatch(options.input.task.id, request);
-    if (!isDurableNativeConversationAcceptance(request, acceptance, operationIdentity)) throw new Error('Native conversation start did not return a durable accepted operation.');
-    options.envelopeManager.clearAccepted(options.input, request, acceptance, operationIdentity);
+  const { acceptance, operationIdentity } = await options.dispatch(options.input.task.id, request);
+  if (!isDurableNativeConversationAcceptance(request, acceptance, operationIdentity)) throw new Error('Native conversation start did not return a durable accepted operation.');
+  options.envelopeManager.clearAccepted(options.input, request, acceptance, operationIdentity);
   const choice = nativeConversationChoiceFromAcceptance(acceptance, options.input.task);
   // acceptance 导航属于 durable 边界，必须先于摘要刷新发生。
   await options.onAccepted(choice);
@@ -859,14 +801,14 @@ interface PersistedProjectConversationStartEnvelope {
 export interface ProjectConversationStartEnvelopeManager {
   prepare(input: ProjectSessionWorkspaceStartInput): StartProjectConversationRequest;
 
-    clearAccepted(input: ProjectSessionWorkspaceStartInput, request: StartProjectConversationRequest, acceptance: NativeOperationAcceptance, operationIdentity: string): boolean;
+  clearAccepted(input: ProjectSessionWorkspaceStartInput, request: StartProjectConversationRequest, acceptance: NativeOperationAcceptance, operationIdentity: string): boolean;
 }
 
 /** 项目级首发在请求前持久化完整输入 envelope，重载或未知结果重试时复用同一组身份。 */
 export function createProjectConversationStartEnvelopeManager(options: {
-    storage?: NativeConversationStartStorage;
-    createId: () => string;
-    releaseRequest?: (projectId: string, request: StartProjectConversationRequest) => void;
+  storage?: NativeConversationStartStorage;
+  createId: () => string;
+  releaseRequest?: (projectId: string, request: StartProjectConversationRequest) => void;
 }): ProjectConversationStartEnvelopeManager {
   return {
     prepare(input) {
@@ -884,8 +826,8 @@ export function createProjectConversationStartEnvelopeManager(options: {
       }
       return request;
     },
-      clearAccepted(input, request, acceptance, operationIdentity) {
-          if (!options.storage || !isDurableNativeConversationAcceptance(request, acceptance, operationIdentity)) return false;
+    clearAccepted(input, request, acceptance, operationIdentity) {
+      if (!options.storage || !isDurableNativeConversationAcceptance(request, acceptance, operationIdentity)) return false;
       const requestPayload = buildProjectConversationStartPayload(input);
       const fingerprint = JSON.stringify({ projectId: input.owner.projectId, payload: requestPayload });
       const storageKey = projectConversationStartStorageKey(input.owner.projectId);
@@ -893,7 +835,7 @@ export function createProjectConversationStartEnvelopeManager(options: {
       if (!persisted || persisted.fingerprint !== fingerprint || persisted.request.idempotencyKey !== request.idempotencyKey || persisted.request.clientUserMessageId !== request.clientUserMessageId) return false;
       try {
         options.storage.removeItem(storageKey);
-          options.releaseRequest?.(input.owner.projectId, request);
+        options.releaseRequest?.(input.owner.projectId, request);
         return true;
       } catch {
         return false;
@@ -944,14 +886,14 @@ export function projectConversationChoiceFromAcceptance(acceptance: NativeOperat
 export async function startProjectConversationWithDurableAcceptance<T>(options: {
   input: ProjectSessionWorkspaceStartInput;
   envelopeManager: ProjectConversationStartEnvelopeManager;
-    dispatch: (projectId: string, request: StartProjectConversationRequest) => Promise<NativeConversationStartDispatchResult>;
+  dispatch: (projectId: string, request: StartProjectConversationRequest) => Promise<NativeConversationStartDispatchResult>;
   onAccepted: (choice: NativeConversationChoice) => void | Promise<void>;
   refresh: (projectId: string) => Promise<T>;
 }): Promise<{ choice: NativeConversationChoice; request: StartProjectConversationRequest; acceptance: NativeOperationAcceptance; refreshResult: T | null; refreshError: unknown | null }> {
   const request = options.envelopeManager.prepare(options.input);
-    const {acceptance, operationIdentity} = await options.dispatch(options.input.owner.projectId, request);
-    if (!isDurableNativeConversationAcceptance(request, acceptance, operationIdentity)) throw new Error('Project conversation start did not return a durable accepted operation.');
-    options.envelopeManager.clearAccepted(options.input, request, acceptance, operationIdentity);
+  const { acceptance, operationIdentity } = await options.dispatch(options.input.owner.projectId, request);
+  if (!isDurableNativeConversationAcceptance(request, acceptance, operationIdentity)) throw new Error('Project conversation start did not return a durable accepted operation.');
+  options.envelopeManager.clearAccepted(options.input, request, acceptance, operationIdentity);
   const choice = projectConversationChoiceFromAcceptance(acceptance, options.input.owner);
   await options.onAccepted(choice);
   try {
@@ -1080,9 +1022,9 @@ function conversationStageField(value: unknown): NativeConversationStage | undef
  * 同一输入即使刷新页面也复用相同 IDs；输入变化才替换 envelope，避免 unknown-outcome 重试创建重复 thread。
  */
 export function createNativeConversationStartEnvelopeManager(options: {
-    storage?: NativeConversationStartStorage;
-    createId: () => string;
-    releaseRequest?: (task: Pick<SessionWorkspaceTask, 'id' | 'projectId'>, request: StartNativeConversationRequest) => void;
+  storage?: NativeConversationStartStorage;
+  createId: () => string;
+  releaseRequest?: (task: Pick<SessionWorkspaceTask, 'id' | 'projectId'>, request: StartNativeConversationRequest) => void;
 }): NativeConversationStartEnvelopeManager {
   return {
     prepare(input) {
@@ -1102,8 +1044,8 @@ export function createNativeConversationStartEnvelopeManager(options: {
       }
       return request;
     },
-      clearAccepted(input, request, acceptance, operationIdentity) {
-          if (!options.storage || !isDurableNativeConversationAcceptance(request, acceptance, operationIdentity)) return false;
+    clearAccepted(input, request, acceptance, operationIdentity) {
+      if (!options.storage || !isDurableNativeConversationAcceptance(request, acceptance, operationIdentity)) return false;
       const payload = buildStartNativeConversationPayload(input);
       const fingerprint = startNativeConversationFingerprint(input, payload);
       const storageKey = startNativeConversationStorageKey(input.task);
@@ -1111,7 +1053,7 @@ export function createNativeConversationStartEnvelopeManager(options: {
       if (!persisted || persisted.fingerprint !== fingerprint || persisted.request.idempotencyKey !== request.idempotencyKey || persisted.request.clientUserMessageId !== request.clientUserMessageId) return false;
       try {
         options.storage.removeItem(storageKey);
-          options.releaseRequest?.(input.task, request);
+        options.releaseRequest?.(input.task, request);
         return true;
       } catch {
         // 接受结果已经 durable；保留旧 envelope 只会安全地复用同一 idempotency key。
@@ -1122,14 +1064,14 @@ export function createNativeConversationStartEnvelopeManager(options: {
       if (!options.storage) return null;
       return readPersistedNativeConversationStartEnvelope(options.storage, startNativeConversationStorageKey(task))?.request ?? null;
     },
-      clearPending(task, request, acceptance, operationIdentity) {
-          if (!options.storage || !isDurableNativeConversationAcceptance(request, acceptance, operationIdentity)) return false;
+    clearPending(task, request, acceptance, operationIdentity) {
+      if (!options.storage || !isDurableNativeConversationAcceptance(request, acceptance, operationIdentity)) return false;
       const storageKey = startNativeConversationStorageKey(task);
       const persisted = readPersistedNativeConversationStartEnvelope(options.storage, storageKey);
       if (!persisted || persisted.request.idempotencyKey !== request.idempotencyKey || persisted.request.clientUserMessageId !== request.clientUserMessageId) return false;
       try {
         options.storage.removeItem(storageKey);
-          options.releaseRequest?.(task, request);
+        options.releaseRequest?.(task, request);
         return true;
       } catch {
         return false;
@@ -1142,7 +1084,7 @@ export function createNativeConversationStartEnvelopeManager(options: {
       if (!persisted || persisted.request.idempotencyKey !== request.idempotencyKey || persisted.request.clientUserMessageId !== request.clientUserMessageId) return false;
       try {
         options.storage.removeItem(storageKey);
-          options.releaseRequest?.(task, request);
+        options.releaseRequest?.(task, request);
         return true;
       } catch {
         return false;
@@ -1264,9 +1206,9 @@ function requestMatchesPayload(request: StartNativeConversationRequest, payload:
 }
 
 export function isDurableNativeConversationAcceptance(
-    request: Pick<StartNativeConversationRequest | StartProjectConversationRequest, 'idempotencyKey'>,
-    acceptance: NativeOperationAcceptance,
-    operationIdentity = request.idempotencyKey,
+  request: Pick<StartNativeConversationRequest | StartProjectConversationRequest, 'idempotencyKey'>,
+  acceptance: NativeOperationAcceptance,
+  operationIdentity = request.idempotencyKey,
 ): boolean {
   return (
     acceptance.operation.status === 'accepted' &&
@@ -3682,7 +3624,7 @@ function sessionStatus(state: NativeSessionState | null, loadState: SessionWorks
 function sessionStateNeedsRealtime(state: NativeSessionState | null | undefined): boolean {
   if (!state) return false;
   if (state.pendingRequests.some((request) => request.status === 'pending')) return true;
-    if (state.planImplementationRequests.some((request) => request.status === 'pending')) return true;
+  if (state.planImplementationRequests.some((request) => request.status === 'pending')) return true;
   if (state.queue?.state.type === 'dispatching' || state.queue?.state.type === 'active' || state.queue?.state.type === 'waiting') return true;
   if (state.queue?.submissions.some((submission) => submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active')) return true;
   return (
