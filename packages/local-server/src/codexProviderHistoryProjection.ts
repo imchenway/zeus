@@ -1,27 +1,32 @@
-import type { CodexThreadSnapshot, CodexTurnSnapshot } from '@zeus/ai-runtime';
-import type { ZeusConversationItemRecord, ZeusConversationSubmissionRecord, ZeusConversationTurnRecord, ZeusConversationWithMessagesRecord } from '@zeus/storage';
-import type { CreateCodexNativeConversationCoordinatorOptions } from './codexNativeConversationCoordinator.js';
+import type {CodexThreadSnapshot, CodexTurnSnapshot} from '@zeus/ai-runtime';
+import type {
+    ZeusConversationItemRecord,
+    ZeusConversationSubmissionRecord,
+    ZeusConversationTurnRecord,
+    ZeusConversationWithMessagesRecord
+} from '@zeus/storage';
+import type {CreateCodexNativeConversationCoordinatorOptions} from './codexNativeConversationCoordinator.js';
 import {
-  classifySnapshotTurn,
-  completedItemProjection,
-  coordinatorError,
-  findSnapshotTurn,
-  isRecord,
-  isRejectedHistoricalFileChangeError,
-  itemText,
-  itemTypeFromValue,
-  parseJsonRecord,
-  phaseFromItem,
-  providerTimestamp,
-  providerTurnFailure,
-  providerTurnFailureRecord,
-  providerTurnUserClientId,
-  requireString,
-  snapshotConfirmsIdleProviderThread,
-  snapshotConfirmsSafeResumeBoundary,
+    classifySnapshotTurn,
+    completedItemProjection,
+    coordinatorError,
+    findSnapshotTurn,
+    isRecord,
+    isRejectedHistoricalFileChangeError,
+    itemText,
+    itemTypeFromValue,
+    parseJsonRecord,
+    phaseFromItem,
+    providerTimestamp,
+    providerTurnFailure,
+    providerTurnFailureRecord,
+    providerTurnUserClientId,
+    requireString,
+    snapshotConfirmsIdleProviderThread,
+    snapshotConfirmsSafeResumeBoundary,
 } from './codexNativeConversationPolicy.js';
-import { appendProviderSyncAudit, type ProviderSyncAuditOutcome } from './providerSyncAudit.js';
-import { sanitizeConversationItemPayload } from './conversationResources.js';
+import {appendProviderSyncAudit, type ProviderSyncAuditOutcome} from './providerSyncAudit.js';
+import {sanitizeConversationItemPayload} from './conversationResources.js';
 
 const compatibilitySnapshotItemIdPattern = /^item-\d+$/u;
 
@@ -514,7 +519,11 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     }
     const submissions = options.submissions.listByConversation(conversation.id);
     const pendingSteering = submissions.filter((submission) => isSteeringSubmission(submission) && (submission.status === 'dispatching' || (submission.status === 'paused' && submission.pausedReason === 'recovery_required')));
-    const inFlight = submissions.filter((submission) => !isSteeringSubmission(submission) && (submission.status === 'dispatching' || submission.status === 'active'));
+      const inFlight = submissions.filter(
+          (submission) =>
+              !isSteeringSubmission(submission) &&
+              (submission.status === 'dispatching' || submission.status === 'active' || (submission.status === 'paused' && submission.pausedReason === 'recovery_required' && Boolean(submission.providerTurnId))),
+      );
     for (const submission of pendingSteering) {
       const snapshotTurn = findSnapshotTurn(snapshot, submission);
       const providerTurnId = snapshotTurn && typeof snapshotTurn.id === 'string' ? snapshotTurn.id : submission.providerTurnId;
@@ -587,7 +596,13 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     }
     for (const submission of inFlight) {
       const currentSubmission = options.submissions.getById(submission.id);
-      if (!currentSubmission || (currentSubmission.status !== 'dispatching' && currentSubmission.status !== 'active')) continue;
+        if (
+            !currentSubmission ||
+            (currentSubmission.status !== 'dispatching' &&
+                currentSubmission.status !== 'active' &&
+                !(currentSubmission.status === 'paused' && currentSubmission.pausedReason === 'recovery_required' && Boolean(currentSubmission.providerTurnId)))
+        )
+            continue;
       const snapshotTurn = findSnapshotTurn(snapshot, submission);
       const providerTurnId = snapshotTurn && typeof snapshotTurn.id === 'string' ? snapshotTurn.id : submission.providerTurnId;
       const classification = classifySnapshotTurn(snapshotTurn);
@@ -654,8 +669,68 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     }
   }
 
+    /** 执行宿主启动时先用本地终态轮次和消息身份修复历史残留，不依赖 Provider 联机。 */
+    function reconcilePersistedTerminalTurnSubmissions(): number {
+        const candidatesByConversation = new Map<string, ZeusConversationSubmissionRecord[]>();
+        for (const submission of options.submissions.listRecoverable()) {
+            if (
+                (submission.status !== 'dispatching' && submission.status !== 'active' && !(submission.status === 'paused' && submission.pausedReason === 'recovery_required')) ||
+                !submission.providerTurnId
+            )
+                continue;
+            const entries = candidatesByConversation.get(submission.conversationId) ?? [];
+            entries.push(submission);
+            candidatesByConversation.set(submission.conversationId, entries);
+        }
+
+        let reconciledCount = 0;
+        for (const [conversationId, candidates] of candidatesByConversation) {
+            const conversation = options.conversations.getById(conversationId);
+            if (!conversation || conversation.agentKind !== 'codex' || conversation.transportKind !== 'codex_native') continue;
+            const candidateTurnIds = new Set(candidates.map((submission) => submission.providerTurnId).filter((providerTurnId): providerTurnId is string => Boolean(providerTurnId)));
+            const terminalTurns = options.turns
+                .listByConversation(conversationId)
+                .filter((turn) => Boolean(turn.providerTurnId && candidateTurnIds.has(turn.providerTurnId)) && (turn.status === 'completed' || turn.status === 'interrupted' || turn.status === 'failed'));
+            let requiresRecovery = false;
+            for (const turn of terminalTurns) {
+                const result = reconcileTerminalTurnSubmissions(conversation, turn, turn.completedAt ?? turn.updatedAt);
+                reconciledCount += result.reconciledCount;
+                requiresRecovery ||= result.recoveryRequired.length > 0;
+            }
+            if (requiresRecovery && conversation.providerThreadId && conversation.providerState !== 'archived' && conversation.providerState !== 'closed' && conversation.providerState !== 'failed') {
+                options.conversations.bindProvider(conversation.id, {
+                    providerId: 'codex',
+                    providerThreadId: conversation.providerThreadId,
+                    providerModel: conversation.providerModel,
+                    providerState: 'paused',
+                });
+                runStates.set(conversation.id, {type: 'paused', reason: 'recovery_required'});
+            } else if (terminalTurns.length > 0 && conversation.providerThreadId && conversation.providerState === 'paused') {
+                const unresolvedAcceptedDelivery = options.submissions
+                    .listByConversation(conversation.id)
+                    .some(
+                        (submission) =>
+                            submission.status === 'dispatching' ||
+                            submission.status === 'active' ||
+                            (submission.status === 'paused' && submission.pausedReason === 'recovery_required' && Boolean(submission.providerTurnId)),
+                    );
+                if (!unresolvedAcceptedDelivery) {
+                    options.conversations.bindProvider(conversation.id, {
+                        providerId: 'codex',
+                        providerThreadId: conversation.providerThreadId,
+                        providerModel: conversation.providerModel,
+                        providerState: 'ready',
+                    });
+                    runStates.set(conversation.id, {type: 'idle'});
+                }
+            }
+        }
+        return reconciledCount;
+    }
+
   return {
     ensureProviderSyncCheckpoint,
+      reconcilePersistedTerminalTurnSubmissions,
     reconcileProviderTurnsSinceCheckpoint,
     projectedProviderThreadSnapshot,
     reconcileConversationSnapshot,

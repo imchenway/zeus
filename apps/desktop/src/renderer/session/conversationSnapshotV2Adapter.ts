@@ -1,16 +1,17 @@
 import type {
-  NativeConversationChoice,
-  NativeConversationModelHistoryV2Item,
-  NativeConversationProcessV2Item,
-  NativeConversationSnapshot,
-  NativeConversationSnapshotV2,
-  NativeConversationSnapshotV2Page,
-  NativeGoalResponse,
-  NativeItemSnapshot,
-  NativePendingRequest,
-  NativeQueueSnapshot,
-  NativeTurnSnapshot,
-  NativeUnifiedUsageSnapshot,
+    NativeConversationChoice,
+    NativeConversationModelHistoryV2Item,
+    NativeConversationProcessV2Item,
+    NativeConversationSnapshot,
+    NativeConversationSnapshotV2,
+    NativeConversationSnapshotV2Page,
+    NativeGoalResponse,
+    NativeItemSnapshot,
+    NativePendingRequest,
+    NativePlanImplementationRequest,
+    NativeQueueSnapshot,
+    NativeTurnSnapshot,
+    NativeUnifiedUsageSnapshot,
 } from './sessionTypes.js';
 
 const syncStreamProtocolGeneration = 'zeus-conversation-sync-v1' as const;
@@ -20,6 +21,7 @@ export interface ConversationSnapshotV2BootstrapInput {
   history: NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>;
   queue: NativeQueueSnapshot;
   requests: NativePendingRequest[];
+    planImplementationRequests: NativePlanImplementationRequest[];
   choice: NativeConversationChoice;
   goal: NativeGoalResponse;
 }
@@ -116,7 +118,7 @@ export function adaptConversationSnapshotV2(input: ConversationSnapshotV2Bootstr
     submissions: input.queue.submissions,
     queue: input.queue,
     requests: input.requests,
-    planImplementationRequests: [],
+      planImplementationRequests: input.planImplementationRequests,
     ...(snapshot.conversation.providerSettings ? { providerSettings: snapshot.conversation.providerSettings } : snapshot.conversation.providerModel ? { providerSettings: { model: snapshot.conversation.providerModel } } : {}),
     ...(nextTurnSettings ? { nextTurnSettings } : {}),
     permissionMode,
@@ -158,7 +160,13 @@ export function mergeConversationHistoryV2(snapshot: NativeConversationSnapshot,
 export function mergeConversationProcessV2(snapshot: NativeConversationSnapshot, turnId: string, page: NativeConversationSnapshotV2Page<NativeConversationProcessV2Item>): NativeConversationSnapshot {
   if (!snapshot.snapshotV2 || !snapshot.v2Paging || page.conversationId !== snapshot.id || (page.kind !== 'process' && page.kind !== 'commands')) throw new Error('会话 V2 过程页与当前快照不匹配。');
   const byId = new Map(snapshot.items.map((item) => [item.id, item]));
-  for (const item of processItems(page.items)) byId.set(item.id, item);
+    const byProviderItemId = new Map(snapshot.items.flatMap((item) => (item.providerItemId ? [[item.providerItemId, item] as const] : [])));
+    for (const item of processItems(page.items)) {
+        const previous = item.providerItemId ? byProviderItemId.get(item.providerItemId) : undefined;
+        if (previous && previous.id !== item.id) byId.delete(previous.id);
+        byId.set(item.id, item);
+        if (item.providerItemId) byProviderItemId.set(item.providerItemId, item);
+    }
   return {
     ...snapshot,
     items: [...byId.values()].sort(compareNativeItems),
@@ -223,19 +231,28 @@ function historyItems(items: NativeConversationModelHistoryV2Item[]): NativeItem
     // 不能只依赖 content.type 分类。toolPairId 是稳定结构身份，前缀检查为缺失配对身份的旧数据兜底。
     const isToolCall = item.role === 'tool' || Boolean(item.toolPairId) || contentRecord?.type === 'tool_call' || startsWithToolCallProjection(item.content.preview);
     if (isToolCall) return [];
-    const reasoning = typeof contentRecord?.provenance === 'string';
+      // Snapshot V2 为控制首屏体积会把结构化模型正文投影为纯文本，reasoningSummary
+      // 是跨分页、冷启动仍稳定的语义身份；provenance 只用于兼容旧服务端返回。
+      const reasoning = item.reasoningSummary || typeof contentRecord?.provenance === 'string';
     const text = projectionText(content, item.content.preview, item.content.truncated);
+      const phase = item.role === 'user' || reasoning || item.phase === 'prework' || item.phase === 'commentary' ? 'prework' : 'final_answer';
     return [
       {
         id: item.id,
         turnId: item.turnId,
-        providerItemId: null,
+          providerItemId: item.providerItemId,
         type: item.role === 'user' ? 'userMessage' : reasoning ? 'reasoning' : 'agentMessage',
         status: 'completed',
-        phase: item.role === 'user' || reasoning ? 'prework' : 'final_answer',
+          phase,
         text,
         payload: {
           content,
+            ...(item.submissionId ? {submissionId: item.submissionId} : {}),
+            ...(item.clientUserMessageId ? {
+                clientId: item.clientUserMessageId,
+                clientUserMessageId: item.clientUserMessageId
+            } : {}),
+            ...(item.phase ? {phase: item.phase} : {}),
           v2ContentKind: 'model_history',
           v2Sequence: item.sequence,
           v2ContentHandle: item.content.contentHandle,
@@ -260,7 +277,7 @@ function processItems(items: NativeConversationProcessV2Item[]): NativeItemSnaps
     return {
       id: item.id,
       turnId: item.turnId,
-      providerItemId: null,
+        providerItemId: item.providerItemId,
       type,
       status: item.status,
       phase: 'prework',

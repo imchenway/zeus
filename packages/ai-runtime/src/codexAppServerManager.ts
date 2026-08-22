@@ -1,26 +1,26 @@
-import { spawn as nodeSpawn } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
-import { EventEmitter } from 'node:events';
-import { createConnection } from 'node:net';
-import { isAbsolute, join } from 'node:path';
-import { WebSocket, type RawData } from 'ws';
-import type { CodexBootstrapAdditionalContext } from '@zeus/shared';
+import {spawn as nodeSpawn} from 'node:child_process';
+import {createHash, randomUUID} from 'node:crypto';
+import {EventEmitter} from 'node:events';
+import {createConnection} from 'node:net';
+import {isAbsolute, join} from 'node:path';
+import {type RawData, WebSocket} from 'ws';
+import type {CodexBootstrapAdditionalContext} from '@zeus/shared';
 import {
-  CodexJsonLineDecoder,
-  type CodexWireId,
-  type CodexWireMessage,
-  type ExternalAgentConfigDetectParams,
-  type ExternalAgentConfigDetectResponse,
-  type ExternalAgentConfigImportHistory,
-  type ExternalAgentConfigImportParams,
-  type ExternalAgentConfigImportResponse,
-  type ExternalAgentImportNotification,
-  parseExternalAgentConfigDetectResponse,
-  parseExternalAgentConfigImportHistoriesResponse,
-  parseExternalAgentConfigImportResponse,
-  parseExternalAgentImportNotification,
+    CodexJsonLineDecoder,
+    type CodexWireId,
+    type CodexWireMessage,
+    type ExternalAgentConfigDetectParams,
+    type ExternalAgentConfigDetectResponse,
+    type ExternalAgentConfigImportHistory,
+    type ExternalAgentConfigImportParams,
+    type ExternalAgentConfigImportResponse,
+    type ExternalAgentImportNotification,
+    parseExternalAgentConfigDetectResponse,
+    parseExternalAgentConfigImportHistoriesResponse,
+    parseExternalAgentConfigImportResponse,
+    parseExternalAgentImportNotification,
 } from './codexAppServerProtocol.js';
-import { expandCliSearchPath } from './cliSearchPath.js';
+import {expandCliSearchPath} from './cliSearchPath.js';
 
 export type {
   ExternalAgentConfigDetectParams,
@@ -73,7 +73,7 @@ export interface CodexModelCapability {
 export interface CodexCapabilitiesSnapshot {
   generationId: string;
   initializedAt: string;
-  /** 来自 initialize 回执的 Provider 版本；协议未返回时保持 null，绝不猜测 CLI 版本。 */
+    /** 来自 initialize 回执或同一真实可执行文件 `--version` 的 Provider 版本；两者都缺失时保持 null。 */
   providerVersion: string | null;
   protocolVersion: 'codex-app-server-v2';
   models: CodexModelCapability[];
@@ -459,6 +459,8 @@ interface CreateCodexAppServerManagerOptions {
   shutdownTimeoutMs?: number;
   accountFingerprintSalt?: string;
   runtimeEnvironment?: Record<string, string>;
+    /** initialize 不再报告版本时，仅接纳同一可执行文件的只读版本探测结果。 */
+    providerVersionFallback?: string | null;
 }
 
 type ProcessExitTracker = { promise: Promise<void>; resolve: () => void; exited: boolean };
@@ -499,6 +501,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
   const accountFingerprintSalt = options.accountFingerprintSalt?.trim() || 'zeus-local-account-scope';
   const runtimeEnvironment = { ...options.runtimeEnvironment };
   const codexHome = options.codexHome?.trim() || null;
+    const providerVersionFallback = normalizeProviderVersion(options.providerVersionFallback);
   if (codexHome !== null && !isAbsolute(codexHome)) throw managerError('ZEUS_CODEX_HOME_INVALID', 'Codex home must be an absolute path.');
   const listeners = new Set<(event: CodexAppServerEvent) => void | Promise<void>>();
   const externalAgentImportListeners = new Set<(event: ExternalAgentImportEvent) => void>();
@@ -603,7 +606,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       const capabilities: CodexCapabilitiesSnapshot = {
         generationId,
         initializedAt: now(),
-        providerVersion: providerVersionFromInitialize(initializeResponse),
+          providerVersion: providerVersionFromInitialize(initializeResponse) ?? providerVersionFallback,
         protocolVersion: 'codex-app-server-v2',
         models,
         supportedModels: models.map((model) => model.model),
@@ -2057,6 +2060,10 @@ function providerVersionFromInitialize(value: unknown): string | null {
     if (match?.[1]) return match[1];
   }
   return null;
+}
+
+function normalizeProviderVersion(value: unknown): string | null {
+    return typeof value === 'string' && value.trim() ? value.trim().slice(0, 120) : null;
 }
 
 function serverRequestKey(generationId: string, id: CodexWireId): string {

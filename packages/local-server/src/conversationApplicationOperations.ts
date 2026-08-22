@@ -1,55 +1,76 @@
-import { type AiRuntimeSession, createAiRuntimeSessionManager, modelConnectionCredentialSlotId, modelRef, parseModelRef, piRuntimeWorkerProtocolVersion } from '@zeus/ai-runtime';
-import { getGitBranchHead, getGitRepositoryContext, type ProjectGitAction } from '@zeus/git-core';
 import {
-  parseCanonicalRequestUserInputQuestions,
-  renderTaskPushLayoutText,
-  type TaskPushMessageLayout,
-  type TaskPushPromptAttachment,
-  type TaskPushPromptParentContext,
-  type TaskPushPromptRelatedContext,
-  type TaskPushSupplementalAttachment,
+    type AiRuntimeSession,
+    createAiRuntimeSessionManager,
+    modelConnectionCredentialSlotId,
+    modelRef,
+    parseModelRef,
+    piRuntimeWorkerProtocolVersion
+} from '@zeus/ai-runtime';
+import {getGitBranchHead, getGitRepositoryContext, type ProjectGitAction} from '@zeus/git-core';
+import {
+    parseCanonicalRequestUserInputQuestions,
+    renderTaskPushLayoutText,
+    type TaskPushMessageLayout,
+    type TaskPushPromptAttachment,
+    type TaskPushPromptParentContext,
+    type TaskPushPromptRelatedContext,
+    type TaskPushSupplementalAttachment,
 } from '@zeus/shared';
 import {
-  type ConversationCollaborationMode,
-  ConversationExecutionRepository,
-  type ConversationPermissionMode,
-  ConversationPlanActionRepository,
-  ConversationRepository,
-  ConversationServerRequestRepository,
-  ConversationSubmissionRepository,
-  ConversationTurnRepository,
-  IdempotencyRequestRepository,
-  ProjectRepository,
-  ProjectRepositoryRegistrationRepository,
-  ProjectSharedPathRepository,
-  TaskEnvironmentRepository,
-  TaskIntegrationAttemptRepository,
-  TaskIntegrationRepository,
-  TaskRepository,
-  TaskWorkspaceRepository,
-  type ZeusConversationRecord,
-  type ZeusConversationWithMessagesRecord,
-  type ZeusDatabase,
-  type ZeusProjectRecord,
-  type ZeusTaskRecord,
-  type ZeusTaskWorkspaceRecord,
+    type ConversationCollaborationMode,
+    ConversationExecutionRepository,
+    type ConversationPermissionMode,
+    ConversationPlanActionRepository,
+    ConversationRepository,
+    ConversationServerRequestRepository,
+    ConversationSubmissionRepository,
+    ConversationTurnRepository,
+    IdempotencyRequestRepository,
+    ProjectRepository,
+    ProjectRepositoryRegistrationRepository,
+    ProjectSharedPathRepository,
+    TaskEnvironmentRepository,
+    TaskIntegrationAttemptRepository,
+    TaskIntegrationRepository,
+    TaskRepository,
+    TaskWorkspaceRepository,
+    type ZeusConversationRecord,
+    type ZeusConversationWithMessagesRecord,
+    type ZeusDatabase,
+    type ZeusProjectRecord,
+    type ZeusTaskRecord,
+    type ZeusTaskWorkspaceRecord,
 } from '@zeus/storage';
-import { type FastifyReply } from 'fastify';
-import { createHash } from 'node:crypto';
-import { existsSync, realpathSync, statSync } from 'node:fs';
-import { isAbsolute } from 'node:path';
-import { parseJsonObject } from './codeIntelligenceGraphStore.js';
-import { createCodexNativeConversationCoordinator } from './codexNativeConversationCoordinator.js';
-import { resolveConversationAttachmentGrant } from './conversationAttachmentGrant.js';
-import { type ConversationCapabilitiesSnapshot, ConversationCapabilityQueryApplication } from './conversationCapabilityQueryApplication.js';
-import { ConversationChoiceQueryApplication } from './conversationChoiceQueryApplication.js';
-import { ConversationExecutionCoordinator, type ConversationExecutionRoute } from './conversationExecutionCoordinator.js';
-import type { CreateConversationMessageBody, NativeConversationAttachment, ProjectConversationAcceptanceReservation, StartProjectConversationBody, StartTaskConversationBody, TaskConversationAcceptanceReservation } from './index.js';
-import { createModelConnectionService } from './modelConnectionService.js';
-import { resolveWritableNonCodexLegacyConversation, type WritableNonCodexLegacyConversationContext } from './nonCodexLegacyRuntime.js';
-import { createPiNativeConversationCoordinator } from './piNativeConversationCoordinator.js';
-import { type RuntimeSettingsSnapshot } from './runtimeQueryApplication.js';
-import { buildTaskConflictAiConversationTitle, buildTaskConflictAiPrompt } from './taskConflictAi.js';
+import {type FastifyReply} from 'fastify';
+import {createHash} from 'node:crypto';
+import {existsSync, realpathSync, statSync} from 'node:fs';
+import {isAbsolute} from 'node:path';
+import {parseJsonObject} from './codeIntelligenceGraphStore.js';
+import {createCodexNativeConversationCoordinator} from './codexNativeConversationCoordinator.js';
+import {resolveConversationAttachmentGrant} from './conversationAttachmentGrant.js';
+import {
+    type ConversationCapabilitiesSnapshot,
+    ConversationCapabilityQueryApplication
+} from './conversationCapabilityQueryApplication.js';
+import {ConversationChoiceQueryApplication} from './conversationChoiceQueryApplication.js';
+import {ConversationExecutionCoordinator, type ConversationExecutionRoute} from './conversationExecutionCoordinator.js';
+import type {
+    CreateConversationMessageBody,
+    NativeConversationAttachment,
+    ProjectConversationAcceptanceReservation,
+    StartProjectConversationBody,
+    StartTaskConversationBody,
+    TaskConversationAcceptanceReservation
+} from './index.js';
+import {createModelConnectionService} from './modelConnectionService.js';
+import {
+    resolveWritableNonCodexLegacyConversation,
+    type WritableNonCodexLegacyConversationContext
+} from './nonCodexLegacyRuntime.js';
+import {createPiNativeConversationCoordinator} from './piNativeConversationCoordinator.js';
+import {type RuntimeSettingsSnapshot} from './runtimeQueryApplication.js';
+import {buildTaskConflictAiConversationTitle, buildTaskConflictAiPrompt} from './taskConflictAi.js';
+
 export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, type ReadOnlyValidationApplicationIdentity } from './readOnlyValidation.js';
 
 // 拆分期间保留结构化工厂依赖，后续按领域端口继续收窄。
@@ -1280,7 +1301,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     throw nativeApiError('ZEUS_INVALID_SERVER_REQUEST_RESPONSE', `Response type does not match pending ${requestKind} request.`);
   }
 
-  async function executeProjectConversationIdempotent(project: ZeusProjectRecord, body: StartProjectConversationBody | Record<string, unknown>, idempotencyKey: string) {
+    async function executeProjectConversationIdempotent(project: ZeusProjectRecord, body: StartProjectConversationBody | Record<string, unknown>, idempotencyKey: string, markExternalWriteStarted?: () => void) {
     assertRequestedAgentIsCodex(body);
     const scope = `project-conversation:${project.id}`;
     const requestHash = nativeIdempotencyRequestHash(body);
@@ -1300,6 +1321,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       },
       (_ownedOperationId, persistedResourceId) => recoverProjectConversationAcceptance(project, idempotencyKey, reservation, persistedResourceId),
       resourceId,
+        markExternalWriteStarted,
     );
   }
 
@@ -1454,7 +1476,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     return undefined;
   }
 
-  async function executeTaskConversationIdempotent(project: ZeusProjectRecord, task: ZeusTaskRecord, body: StartTaskConversationBody | Record<string, unknown>, idempotencyKey: string) {
+    async function executeTaskConversationIdempotent(project: ZeusProjectRecord, task: ZeusTaskRecord, body: StartTaskConversationBody | Record<string, unknown>, idempotencyKey: string, markExternalWriteStarted?: () => void) {
     assertRequestedAgentKind(body);
     const scope = `task-conversation:${task.id}`;
     const requestHash = nativeIdempotencyRequestHash(body);
@@ -1474,6 +1496,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       },
       (_ownedOperationId, persistedResourceId) => recoverTaskConversationAcceptance(project, task, idempotencyKey, reservation, persistedResourceId),
       resourceId,
+        markExternalWriteStarted,
     );
   }
 
@@ -2376,6 +2399,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     execute: (stableOperationId: string, lifecycle: { markPrepared(resourceId: string): Promise<void>; markRpcStarted(resourceId: string): void }) => Promise<T>,
     recover?: (stableOperationId: string, persistedResourceId: string | null) => { statusCode: number; body: T } | undefined | Promise<{ statusCode: number; body: T } | undefined>,
     preparedResourceId?: string,
+    markExternalWriteStarted?: () => void,
   ): Promise<{ statusCode: number; body: T }> {
     if (!codexNativeEnabled) throw nativeApiError('ZEUS_CODEX_NATIVE_DISABLED', 'Codex native conversation writes are disabled by ZEUS_CODEX_NATIVE_ENABLED.');
     const hash = nativeIdempotencyRequestHash(requestBody);
@@ -2386,7 +2410,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       if (inFlight.requestHash !== hash) throw nativeApiError('ZEUS_IDEMPOTENCY_CONFLICT', `Idempotency-Key ${idempotencyKey} was already used with a different request body.`);
       return (await inFlight.promise) as { statusCode: number; body: T };
     }
-    const promise = Promise.resolve().then(() => executeOwnedIdempotentJson(scope, idempotencyKey, hash, stableOperationId, statusCode, execute, recover, preparedResourceId));
+      const promise = Promise.resolve().then(() => executeOwnedIdempotentJson(scope, idempotencyKey, hash, stableOperationId, statusCode, execute, recover, preparedResourceId, markExternalWriteStarted));
     nativeIdempotentInFlight.set(inFlightKey, { requestHash: hash, promise: promise as Promise<{ statusCode: number; body: unknown }> });
     try {
       return await promise;
@@ -2404,6 +2428,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     execute: (stableOperationId: string, lifecycle: { markPrepared(resourceId: string): Promise<void>; markRpcStarted(resourceId: string): void }) => Promise<T>,
     recover: ((stableOperationId: string, persistedResourceId: string | null) => { statusCode: number; body: T } | undefined | Promise<{ statusCode: number; body: T } | undefined>) | undefined,
     initialPreparedResourceId: string | undefined,
+    markExternalWriteStarted: (() => void) | undefined,
   ): Promise<{ statusCode: number; body: T }> {
     const existing = db.get<{ request_hash: string; status: string; http_status: number | null; response_json: string | null; resource_id: string | null }>(
       'SELECT request_hash, status, http_status, response_json, resource_id FROM idempotency_requests WHERE scope = ? AND idempotency_key = ?',
@@ -2459,7 +2484,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
           updateMarker('prepared', nextResourceId);
           await db.save();
         },
-        markRpcStarted: (nextResourceId) => updateMarker('rpc_started', nextResourceId),
+          markRpcStarted: (nextResourceId) => {
+              updateMarker('rpc_started', nextResourceId);
+              markExternalWriteStarted?.();
+          },
       });
       await checkpointCompletedIdempotentResponse(scope, idempotencyKey, statusCode, body);
       return { statusCode, body };

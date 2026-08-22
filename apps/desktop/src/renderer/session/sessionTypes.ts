@@ -1,14 +1,14 @@
 import type {
-  ConversationContextDraft,
-  ConversationResource,
-  NativeTokenUsageSnapshot as SharedNativeTokenUsageSnapshot,
-  TaskPushParentContextOption,
-  TaskPushParentContextSelection,
-  TaskPushRelatedContextOption,
-  TaskPushRelatedContextSelection,
-  TurnChangeSet,
-  ZeusBrowserComment,
-  ZeusBrowserPreparedSubmission,
+    ConversationContextDraft,
+    ConversationResource,
+    NativeTokenUsageSnapshot as SharedNativeTokenUsageSnapshot,
+    TaskPushParentContextOption,
+    TaskPushParentContextSelection,
+    TaskPushRelatedContextOption,
+    TaskPushRelatedContextSelection,
+    TurnChangeSet,
+    ZeusBrowserComment,
+    ZeusBrowserPreparedSubmission,
 } from '@zeus/shared';
 
 export type { ConversationResource, ConversationResourcePreview, TurnChangeSet, TurnChangeSetOperationResult } from '@zeus/shared';
@@ -268,6 +268,12 @@ export interface NativePlanImplementationRequest {
   updatedAt: string;
 }
 
+export interface NativePendingInteractionsSnapshot {
+    conversationId: string;
+    requests: NativePendingRequest[];
+    planImplementationRequests?: NativePlanImplementationRequest[];
+}
+
 export interface NativeProviderSettingsSnapshot {
   generationId?: string;
   sequence?: number;
@@ -492,6 +498,10 @@ export interface NativeConversationModelHistoryV2Item {
   sequence: number;
   turnId: string;
   submissionId: string | null;
+    clientUserMessageId: string | null;
+    providerItemId: string | null;
+    reasoningSummary: boolean;
+    phase: string | null;
   segmentId: string;
   role: string;
   toolPairId: string | null;
@@ -513,6 +523,7 @@ export interface NativeConversationProcessV2Item {
   sequence: number;
   turnId: string;
   segmentId: string;
+    providerItemId: string | null;
   kind: 'reasoning' | 'tool' | 'command' | 'retry' | 'context_compaction' | 'waiting' | 'warning';
   status: string;
   title: string;
@@ -1223,6 +1234,12 @@ export interface NativeOperationAcceptance {
   operation: Record<string, unknown> & { status: string };
   conversation: Record<string, unknown> & { id: string };
   submission?: Record<string, unknown> & { id: string };
+}
+
+/** Graph Command 会把本地重连 id 派生为外部 operation identity；两者必须同时保留并分别校验。 */
+export interface NativeConversationStartDispatchResult {
+    acceptance: NativeOperationAcceptance;
+    operationIdentity: string;
 }
 
 export interface NativeRealtimeEventEnvelope {

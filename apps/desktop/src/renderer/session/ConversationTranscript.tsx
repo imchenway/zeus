@@ -1,30 +1,44 @@
-import { Fragment, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { motion, useReducedMotion } from 'framer-motion';
-import { activityCategory, isActiveSessionTurn, isLiveActivityItem, isOperationalActivityItem, type SessionActivityCategory, SessionActivityGroup, SessionTurnDuration, SessionTurnProcessDisclosure } from './SessionActivity.js';
-import { itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText } from './ThreadItemView.js';
-import { PlanSummary } from './PlanSummary.js';
+import {Fragment, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
+import {motion, useReducedMotion} from 'framer-motion';
+import {
+    activityCategory,
+    isActiveSessionTurn,
+    isLiveActivityItem,
+    isOperationalActivityItem,
+    type SessionActivityCategory,
+    SessionActivityGroup,
+    SessionTurnDuration,
+    SessionTurnProcessDisclosure
+} from './SessionActivity.js';
+import {itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText} from './ThreadItemView.js';
+import {PlanSummary} from './PlanSummary.js';
 import type {
-  ConversationResource,
-  ConversationResourcePreview,
-  NativeConversationContentV2Page,
-  NativeConversationToolResultPage,
-  NativePendingRequest,
-  NativeSessionError,
-  NativeSessionItemBuffer,
-  NativeSessionState,
-  NativeTurnFailureSnapshot,
-  TurnChangeSet,
-  TurnChangeSetOperationResult,
+    ConversationResource,
+    ConversationResourcePreview,
+    NativeConversationContentV2Page,
+    NativeConversationToolResultPage,
+    NativePendingRequest,
+    NativeSessionError,
+    NativeSessionItemBuffer,
+    NativeSessionState,
+    NativeTurnFailureSnapshot,
+    TurnChangeSet,
+    TurnChangeSetOperationResult,
 } from './sessionTypes.js';
-import { isAssistantDeliverableItem } from './sessionTypes.js';
-import type { ConversationFileLocation, ConversationOpenTarget, ConversationResponseAnnotation, ConversationResponseTextAnchor } from '@zeus/shared';
-import { useThreadScrollController } from './useThreadScrollController.js';
-import { TurnChangeCard } from './TurnChanges.js';
-import { visibleQueuedSubmissions } from './QueuedConversationMessages.js';
-import { reasoningSummaryStatus, SessionReasoningSummary } from './SessionReasoningSummary.js';
-import { AnsweredRequestHistory, isAnsweredUserInputRequest } from './AnsweredRequestHistory.js';
-import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
-import { useTranscriptViewportVirtualizer } from './transcriptViewportVirtualizer.js';
+import {isAssistantDeliverableItem} from './sessionTypes.js';
+import type {
+    ConversationFileLocation,
+    ConversationOpenTarget,
+    ConversationResponseAnnotation,
+    ConversationResponseTextAnchor
+} from '@zeus/shared';
+import {useThreadScrollController} from './useThreadScrollController.js';
+import {TurnChangeCard} from './TurnChanges.js';
+import {visibleQueuedSubmissions} from './QueuedConversationMessages.js';
+import {reasoningSummaryStatus, SessionReasoningSummary} from './SessionReasoningSummary.js';
+import {AnsweredRequestHistory, isAnsweredUserInputRequest} from './AnsweredRequestHistory.js';
+import {useNewItemMotionIds} from '../ui/useNewItemMotion.js';
+import {useTranscriptViewportVirtualizer} from './transcriptViewportVirtualizer.js';
 
 export interface ConversationTranscriptProps {
   state: NativeSessionState;
@@ -424,9 +438,11 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     if (row.kind === 'answered_request') return <AnsweredRequestHistory request={row.request} language={props.language} />;
     if (row.kind === 'turn_work') {
       const turn = props.state.turnsByProviderId[row.turnId];
+        const expansionKey = turnProcessExpansionKey(row.turnId);
       if (!turn) {
         return (
-          <SessionTurnProcessDisclosure language={props.language} open={expandedRowKeys.has(row.key)} onOpenChange={(open) => setTranscriptRowExpanded(row.key, open)}>
+            <SessionTurnProcessDisclosure language={props.language} open={expandedRowKeys.has(expansionKey)}
+                                          onOpenChange={(open) => setTranscriptRowExpanded(expansionKey, open)}>
             {row.rows.map((child) => (
               <Fragment key={child.key}>{renderTranscriptRow(child, transcriptRowRenderOptions(renderProps, items, false, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId))}</Fragment>
             ))}
@@ -462,8 +478,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
               language={props.language}
               loading={Boolean(processPaging?.loading || changePaging?.loading || props.state.snapshot?.v2Paging?.resources.loading)}
               error={processPaging?.error ?? changePaging?.error ?? props.state.snapshot?.v2Paging?.resources.error}
-              open={expandedRowKeys.has(row.key)}
-              onOpenChange={(open) => setTranscriptRowExpanded(row.key, open)}
+              open={expandedRowKeys.has(expansionKey)}
+              onOpenChange={(open) => setTranscriptRowExpanded(expansionKey, open)}
               onOpen={() => Promise.all([renderProps.onLoadTurnProcess?.(row.turnId), renderProps.onLoadTurnArtifacts?.(row.turnId)]).then(() => undefined)}
             >
               {process}
@@ -495,6 +511,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     const turn = props.state.turnsByProviderId[lastRowItem.turnId];
     const closesVisibleTurn = lastItemKeyByTurn[lastRowItem.turnId] === lastRowItem.key;
     const v2PagingKey = turn?.providerTurnId ?? turn?.id ?? lastRowItem.turnId;
+      const expansionKey = turnProcessExpansionKey(v2PagingKey);
     const v2ProcessPaging = props.state.snapshot?.v2Paging?.processByTurn[v2PagingKey];
     const v2ChangePaging = props.state.snapshot?.v2Paging?.changeSetsByTurn[v2PagingKey];
     const v2Turn = props.state.snapshot?.snapshotV2
@@ -514,8 +531,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             labelKind="details"
             loading={Boolean(v2ProcessPaging?.loading || v2ChangePaging?.loading || props.state.snapshot?.v2Paging?.resources.loading)}
             error={v2ProcessPaging?.error ?? v2ChangePaging?.error ?? props.state.snapshot?.v2Paging?.resources.error}
-            open={expandedRowKeys.has(row.key)}
-            onOpenChange={(open) => setTranscriptRowExpanded(row.key, open)}
+            open={expandedRowKeys.has(expansionKey)}
+            onOpenChange={(open) => setTranscriptRowExpanded(expansionKey, open)}
             onOpen={() => Promise.all([renderProps.onLoadTurnProcess?.(lastRowItem.turnId), renderProps.onLoadTurnArtifacts?.(lastRowItem.turnId)]).then(() => undefined)}
           >
             <V2TurnDeferredArtifacts
@@ -1349,6 +1366,10 @@ function isTurnProcessRow(row: TranscriptRow): boolean {
 function transcriptRowTurnId(row: TranscriptRow): string | null {
   if (row.kind === 'answered_request') return row.request.turnId;
   return row.kind === 'item' ? row.item.turnId : (row.items[0]?.turnId ?? null);
+}
+
+function turnProcessExpansionKey(turnId: string): string {
+    return `turn-process:${turnId}`;
 }
 
 function transcriptTurnRowTurnId(row: TranscriptTurnRow): string | null {

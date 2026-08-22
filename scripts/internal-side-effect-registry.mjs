@@ -268,6 +268,14 @@ export const processInternalSideEffectCapabilities = [
   { id: 'process:codex-app-server.process.kill', selector: { file: 'packages/ai-runtime/src/codexAppServerManager.ts', callee: 'process.kill' } },
   { id: 'process:codex-app-server.socket.send', selector: { file: 'packages/ai-runtime/src/codexAppServerManager.ts', callee: 'socket.send' } },
   { id: 'process:codex-app-server.socket.terminate', selector: { file: 'packages/ai-runtime/src/codexAppServerManager.ts', callee: 'socket.terminate' } },
+    {
+        id: 'process:codex-runtime-generation.nodeSpawn',
+        selector: {file: 'packages/ai-runtime/src/codexRuntimeGenerationManager.ts', callee: 'nodeSpawn'}
+    },
+    {
+        id: 'process:codex-runtime-generation.child.kill',
+        selector: {file: 'packages/ai-runtime/src/codexRuntimeGenerationManager.ts', callee: 'child.kill'}
+    },
   { id: 'process:pi-worker.fork', selector: { file: 'packages/ai-runtime/src/piRuntimeWorkerDriver.ts', callee: 'fork' } },
   { id: 'process:pi-worker.child.send', selector: { file: 'packages/ai-runtime/src/piRuntimeWorkerDriver.ts', callee: 'child.send' } },
   { id: 'process:pi-worker.current.kill', selector: { file: 'packages/ai-runtime/src/piRuntimeWorkerDriver.ts', callee: 'current.kill' } },

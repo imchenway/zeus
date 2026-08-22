@@ -1,4 +1,13 @@
-import { canonicalCommandInputJson, commandEnvelopeSchemaGeneration, type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
+import {
+    canonicalCommandInputJson,
+    type CommandEnvelope,
+    commandEnvelopeSchemaGeneration,
+    type CommandScopeKind
+} from '@zeus/shared';
+import {
+    durableConversationCommandEnvelope,
+    forgetDurableConversationCommandEnvelope
+} from './durableCommandEnvelopeCache.js';
 
 export const conversationDispatchClientCommandTypes = {
   changeSetUndo: 'conversation.turn.change_set.undo',
@@ -24,6 +33,7 @@ type ConversationDispatchClientScopeKind = Extract<CommandScopeKind, 'product_co
 type ConversationDispatchCommandPayload = { operationIdentity: string; inputSha256: string };
 const stableRequests = new Map<string, Promise<{ command: CommandEnvelope<ConversationDispatchCommandPayload>; input: object }>>();
 const maximumStableRequests = 256;
+const conversationDispatchCommandNamespace = 'conversation-dispatch';
 
 /** Transport 重连与 HTTP 重试必须复用此处一次构造的不可变 Envelope 与正文。 */
 export async function buildConversationDispatchCommandRequest<TInput extends object>(input: {
@@ -43,7 +53,16 @@ export async function buildConversationDispatchCommandRequest<TInput extends obj
       if (request.command.payload.inputSha256 !== currentSha256) throw new Error('A reconnect identity cannot be reused with different conversation command input.');
       return request;
     }
-    const created = createConversationDispatchCommandRequest(input);
+      const inputSha256 = await sha256(canonicalCommandInputJson(input.value));
+      const created = durableConversationCommandEnvelope({
+          namespace: conversationDispatchCommandNamespace,
+          stableIdentity: cacheKey,
+          inputSha256,
+          commandType: input.commandType,
+          scopeKind: input.scopeKind,
+          scopeId: input.scopeId,
+          create: () => createConversationDispatchCommandEnvelope(input, inputSha256),
+      }).then((command) => ({command, input: input.value}));
     stableRequests.set(cacheKey, created as Promise<{ command: CommandEnvelope<ConversationDispatchCommandPayload>; input: object }>);
     while (stableRequests.size > maximumStableRequests) stableRequests.delete(stableRequests.keys().next().value!);
     return created;
@@ -57,22 +76,41 @@ async function createConversationDispatchCommandRequest<TInput extends object>(i
   scopeId: string;
   value: TInput;
 }): Promise<{ command: CommandEnvelope<ConversationDispatchCommandPayload>; input: TInput }> {
-  const operationIdentity = `conversation_dispatch_operation_${randomIdentity()}`;
   const inputSha256 = await sha256(canonicalCommandInputJson(input.value));
+    return {command: createConversationDispatchCommandEnvelope(input, inputSha256), input: input.value};
+}
+
+function createConversationDispatchCommandEnvelope(
+    input: {
+        commandType: ConversationDispatchClientCommandType;
+        scopeKind: ConversationDispatchClientScopeKind;
+        scopeId: string;
+    },
+    inputSha256: string,
+): CommandEnvelope<ConversationDispatchCommandPayload> {
+    const operationIdentity = `conversation_dispatch_operation_${randomIdentity()}`;
   return {
-    command: {
       schemaGeneration: commandEnvelopeSchemaGeneration,
       commandId: `command_conversation_dispatch_${randomIdentity()}`,
       commandType: input.commandType,
-      actor: { kind: 'local_api', id: 'zeus-desktop-conversation-dispatch' },
-      scope: { kind: input.scopeKind, id: input.scopeId },
+      actor: {kind: 'local_api', id: 'zeus-desktop-conversation-dispatch'},
+      scope: {kind: input.scopeKind, id: input.scopeId},
       expectedRevision: null,
       idempotencyKey: `${input.commandType}:${operationIdentity}`,
       issuedAt: new Date().toISOString(),
-      payload: { operationIdentity, inputSha256 },
-    },
-    input: input.value,
+      payload: {operationIdentity, inputSha256},
   };
+}
+
+export function forgetConversationDispatchCommandRequest(input: {
+    commandType: ConversationDispatchClientCommandType;
+    scopeKind: ConversationDispatchClientScopeKind;
+    scopeId: string;
+    reconnectIdentity: string
+}): void {
+    const cacheKey = `${input.commandType}\0${input.scopeKind}\0${input.scopeId}\0${input.reconnectIdentity}`;
+    stableRequests.delete(cacheKey);
+    forgetDurableConversationCommandEnvelope(conversationDispatchCommandNamespace, cacheKey);
 }
 
 async function sha256(value: string): Promise<string> {

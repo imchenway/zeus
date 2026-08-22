@@ -1,6 +1,21 @@
-import { createHash } from 'node:crypto';
-import { canonicalCommandInputJson, CommandEnvelopeError, parseCommandEnvelope, type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
-import { ArtifactStore, CommandDeliveryRepository, CommandDeliveryStoreError, type ArtifactRef, type CommandDeliveryOutcome, type CommandDeliveryReceiptRecord, type CommandOutboxRecord, type ZeusDatabase } from '@zeus/storage';
+import {createHash} from 'node:crypto';
+import {
+    canonicalCommandInputJson,
+    type CommandEnvelope,
+    CommandEnvelopeError,
+    type CommandScopeKind,
+    parseCommandEnvelope
+} from '@zeus/shared';
+import {
+    type ArtifactRef,
+    ArtifactStore,
+    type CommandDeliveryOutcome,
+    type CommandDeliveryReceiptRecord,
+    CommandDeliveryRepository,
+    CommandDeliveryStoreError,
+    type CommandOutboxRecord,
+    type ZeusDatabase
+} from '@zeus/storage';
 
 export const graphConversationCommandTypes = {
   projectConversationCreate: 'conversation.project.create',
@@ -100,7 +115,9 @@ export class GraphConversationCommandApplication {
     resourceId: string;
     externalOperationId: string;
     beforeWrite?(): Promise<void>;
-    invoke(): Promise<TResult>;
+      /** 会话首发由内部 Provider 生命周期精确标记；其他外部操作仍在 invoke 前标记。 */
+      manualExternalWriteStart?: boolean;
+      invoke(markExternalWriteStarted: () => void): Promise<TResult>;
     mutateAcceptedBusinessState?(result: TResult): void;
     mutateFailureBusinessState?(outcome: Exclude<CommandDeliveryOutcome, 'accepted'>, error: unknown): void;
     isExplicitRejection?(error: unknown): boolean;
@@ -119,7 +136,8 @@ export class GraphConversationCommandApplication {
     resourceId: string;
     externalOperationId: string;
     beforeWrite?(): Promise<void>;
-    invoke(): Promise<TResult>;
+      manualExternalWriteStart?: boolean;
+      invoke(markExternalWriteStarted: () => void): Promise<TResult>;
     mutateAcceptedBusinessState?(result: TResult): void;
     mutateFailureBusinessState?(outcome: Exclude<CommandDeliveryOutcome, 'accepted'>, error: unknown): void;
     isExplicitRejection?(error: unknown): boolean;
@@ -141,11 +159,15 @@ export class GraphConversationCommandApplication {
     }
 
     let writeStarted = false;
-    try {
-      await input.beforeWrite?.();
+      const markExternalWriteStarted = (): void => {
+          if (writeStarted) return;
       this.options.deliveries.markExternalWriteStarted({ outboxId: preparation.outbox.id, occurredAt: this.options.now().toISOString() });
       writeStarted = true;
-      const result = await input.invoke();
+      };
+      try {
+          await input.beforeWrite?.();
+          if (!input.manualExternalWriteStart) markExternalWriteStarted();
+          const result = await input.invoke(markExternalWriteStarted);
       assertReplayableResultSize(result);
       const resultArtifact = await this.options.artifacts.putJson({
         value: result,
