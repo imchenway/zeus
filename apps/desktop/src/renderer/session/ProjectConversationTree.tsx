@@ -1,24 +1,24 @@
-import {type KeyboardEvent, useEffect, useRef, useState} from 'react';
-import {AnimatePresence, motion, useReducedMotion} from 'framer-motion';
-import {ArchiveIcon as Archive} from '@phosphor-icons/react/dist/csr/Archive';
-import {ChatCircleIcon as ChatCircle} from '@phosphor-icons/react/dist/csr/ChatCircle';
-import {CheckCircleIcon as CheckCircle} from '@phosphor-icons/react/dist/csr/CheckCircle';
-import {CircleNotchIcon as CircleNotch} from '@phosphor-icons/react/dist/csr/CircleNotch';
-import {ClockIcon as Clock} from '@phosphor-icons/react/dist/csr/Clock';
-import {EyeSlashIcon as EyeSlash} from '@phosphor-icons/react/dist/csr/EyeSlash';
-import {FolderIcon as Folder} from '@phosphor-icons/react/dist/csr/Folder';
-import {PauseCircleIcon as PauseCircle} from '@phosphor-icons/react/dist/csr/PauseCircle';
-import {PlusIcon as Plus} from '@phosphor-icons/react/dist/csr/Plus';
-import {ShieldCheckIcon as ShieldCheck} from '@phosphor-icons/react/dist/csr/ShieldCheck';
-import {WarningIcon as Warning} from '@phosphor-icons/react/dist/csr/Warning';
-import type {NativeConversationChoice, NativeConversationSnapshot, NativeSessionState} from './sessionTypes.js';
-import {compareConversationStageUpdatedDesc} from './conversationOrdering.js';
-import type {SessionUiLanguage} from './ThreadItemView.js';
-import {conversationDisplayTitle} from './conversationDisplayTitle.js';
-import {useNewItemMotionIds} from '../ui/useNewItemMotion.js';
-import type {TaskAgentRunStatus} from '../apiClient.js';
-import {taskAgentRunStatusLabels} from '../task/TaskRunStatusChip.js';
-import {beginConversationNavigationTrace} from '../performanceTraceContext.js';
+import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { ArchiveIcon as Archive } from '@phosphor-icons/react/dist/csr/Archive';
+import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
+import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
+import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
+import { ClockIcon as Clock } from '@phosphor-icons/react/dist/csr/Clock';
+import { EyeSlashIcon as EyeSlash } from '@phosphor-icons/react/dist/csr/EyeSlash';
+import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
+import { PauseCircleIcon as PauseCircle } from '@phosphor-icons/react/dist/csr/PauseCircle';
+import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
+import { ShieldCheckIcon as ShieldCheck } from '@phosphor-icons/react/dist/csr/ShieldCheck';
+import { WarningIcon as Warning } from '@phosphor-icons/react/dist/csr/Warning';
+import type { NativeConversationChoice, NativeConversationSnapshot, NativeSessionState } from './sessionTypes.js';
+import { compareConversationStageUpdatedDesc } from './conversationOrdering.js';
+import type { SessionUiLanguage } from './ThreadItemView.js';
+import { conversationDisplayTitle } from './conversationDisplayTitle.js';
+import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
+import type { TaskAgentRunStatus } from '../apiClient.js';
+import { taskAgentRunStatusLabels } from '../task/TaskRunStatusChip.js';
+import { beginConversationNavigationTrace } from '../performanceTraceContext.js';
 
 export interface ProjectConversationTaskGroup {
   taskId: string;
@@ -190,7 +190,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
             data-conversation-tree-item="true"
             data-conversation-runtime-state={runtimeState}
             onClick={() => {
-                if (!current && conversation.transportKind === 'codex_native' && !conversation.taskPushCreating) {
+              if (!current && conversation.transportKind === 'codex_native' && !conversation.taskPushCreating) {
                 beginConversationNavigationTrace(conversation.projectId, conversation.id);
               }
               props.onSelectConversation(conversation);
@@ -534,7 +534,7 @@ export function conversationTreeRuntimeStateFromConversation(
   conversation: Pick<NativeConversationChoice, 'status' | 'transportKind' | 'providerState' | 'pendingRequestKind' | 'listRuntimeState'> & { readOnly?: boolean },
 ): ConversationTreeRuntimeState {
   if (conversation.listRuntimeState) return conversation.listRuntimeState;
-    if (conversation.transportKind !== 'codex_native') return 'legacy_readonly';
+  if (conversation.transportKind !== 'codex_native') return 'legacy_readonly';
   const providerState = `${conversation.providerState ?? ''}`.toLocaleLowerCase();
   const recordState = conversation.status.toLocaleLowerCase();
   if (providerState.includes('failed') || providerState.includes('error') || recordState.includes('failed') || recordState.includes('error')) return 'error';

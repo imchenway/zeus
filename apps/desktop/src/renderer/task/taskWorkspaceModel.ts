@@ -1,20 +1,20 @@
 import type {
-    AiRuntimeSession,
-    AiRuntimeSessionStatus,
-    TaskAgentRunStatus,
-    TaskManagementStatus,
-    TaskRecord,
-    TaskStatus,
-    TaskStatusFilter,
-    TaskTableColumnKey,
-    TaskTableColumnPreferences,
-    TaskTableColumnWidth,
-    TaskTableEnumSortOrders,
-    TaskTableSortState,
-    TaskType,
+  AiRuntimeSession,
+  AiRuntimeSessionStatus,
+  TaskAgentRunStatus,
+  TaskManagementStatus,
+  TaskRecord,
+  TaskStatus,
+  TaskStatusFilter,
+  TaskTableColumnKey,
+  TaskTableColumnPreferences,
+  TaskTableColumnWidth,
+  TaskTableEnumSortOrders,
+  TaskTableSortState,
+  TaskType,
 } from '../apiClient.js';
-import type {NativeConversationChoice, NativeSessionState} from '../session/sessionTypes.js';
-import {compareConversationStageUpdatedDesc} from '../session/conversationOrdering.js';
+import type { NativeConversationChoice, NativeSessionState } from '../session/sessionTypes.js';
+import { compareConversationStageUpdatedDesc } from '../session/conversationOrdering.js';
 
 export type TaskWorkspaceEmptyState = 'empty' | 'no-results' | undefined;
 export type TaskWorkspaceViewMode = 'hierarchy' | 'flat';
@@ -809,7 +809,7 @@ export function taskAgentRunStatusFromSession(state: NativeSessionState): TaskAg
 
 export function taskAgentRunStatusFromConversation(conversation: Pick<NativeConversationChoice, 'status' | 'transportKind' | 'providerState' | 'pendingRequestKind' | 'taskRunStatus'> & { readOnly?: boolean }): TaskAgentRunStatus {
   if (conversation.taskRunStatus) return conversation.taskRunStatus;
-    if (conversation.transportKind !== 'codex_native') return 'legacy_readonly';
+  if (conversation.transportKind !== 'codex_native') return 'legacy_readonly';
   const providerState = `${conversation.providerState ?? ''}`.toLowerCase();
   const recordState = conversation.status.toLowerCase();
   if (providerState.includes('failed') || providerState.includes('error') || recordState.includes('failed') || recordState.includes('error')) return 'failed';

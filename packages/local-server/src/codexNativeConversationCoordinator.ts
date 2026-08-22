@@ -1,146 +1,128 @@
 import {
-    type CodexAppServerEvent,
-    type CodexAppServerManager,
-    type CodexResponsesRuntime,
-    type CodexServerRequestResponse,
-    type CodexThreadGoal,
-    type CodexThreadSnapshot,
-    modelRef,
-    parseModelRef,
-    toCodexWireReasoningEffort,
+  type CodexAppServerEvent,
+  type CodexAppServerManager,
+  type CodexResponsesRuntime,
+  type CodexServerRequestResponse,
+  type CodexThreadGoal,
+  type CodexThreadSnapshot,
+  modelRef,
+  parseModelRef,
+  toCodexWireReasoningEffort,
 } from '@zeus/ai-runtime';
+import { buildTaskPushInputParts, type CodexAdditionalContextEntry, type CodexBootstrapAdditionalContext, type TaskPushMessageLayout } from '@zeus/shared';
 import {
-    buildTaskPushInputParts,
-    type CodexAdditionalContextEntry,
-    type CodexBootstrapAdditionalContext,
-    type TaskPushMessageLayout
-} from '@zeus/shared';
-import {
-    CommandDeliveryRepository,
-    type ConversationCollaborationMode,
-    ConversationExecutionRepository,
-    type ConversationGoalEventKind,
-    ConversationGoalRepository,
-    type ConversationNextTurnSettings,
-    type ConversationPermissionMode,
-    ConversationPlanActionRepository,
-    ConversationProviderItemRepository,
-    ConversationProviderSyncCheckpointRepository,
-    ConversationRepository,
-    ConversationResourceRepository,
-    ConversationServerRequestRepository,
-    ConversationSubmissionRepository,
-    ConversationTurnRepository,
-    ProviderEventReceiptRepository,
-    SettingRepository,
-    type ZeusConversationItemRecord,
-    type ZeusConversationServerRequestRecord,
-    type ZeusConversationSubmissionRecord,
-    type ZeusConversationTurnRecord,
-    type ZeusConversationWithMessagesRecord,
-    type ZeusDatabase,
+  CommandDeliveryRepository,
+  type ConversationCollaborationMode,
+  ConversationExecutionRepository,
+  type ConversationGoalEventKind,
+  ConversationGoalRepository,
+  type ConversationNextTurnSettings,
+  type ConversationPermissionMode,
+  ConversationPlanActionRepository,
+  ConversationProviderItemRepository,
+  ConversationProviderSyncCheckpointRepository,
+  ConversationRepository,
+  ConversationResourceRepository,
+  ConversationServerRequestRepository,
+  ConversationSubmissionRepository,
+  ConversationTurnRepository,
+  ProviderEventReceiptRepository,
+  SettingRepository,
+  type ZeusConversationItemRecord,
+  type ZeusConversationServerRequestRecord,
+  type ZeusConversationSubmissionRecord,
+  type ZeusConversationTurnRecord,
+  type ZeusConversationWithMessagesRecord,
+  type ZeusDatabase,
 } from '@zeus/storage';
-import {randomUUID} from 'node:crypto';
-import {realpathSync, statSync} from 'node:fs';
-import {isAbsolute, resolve} from 'node:path';
-import type {BrowserAutomationPort} from './browserAutomation.js';
-import {zeusBrowserDynamicTools} from './browserDynamicTools.js';
-import {createCodexDynamicToolApplication} from './codexDynamicToolApplication.js';
-import {finalizeCodexPendingInteractionsForShutdown} from './codexFinalShutdownApplication.js';
-import {createCodexGoalApplication} from './codexGoalApplication.js';
+import { randomUUID } from 'node:crypto';
+import { realpathSync, statSync } from 'node:fs';
+import { isAbsolute, resolve } from 'node:path';
+import type { BrowserAutomationPort } from './browserAutomation.js';
+import { zeusBrowserDynamicTools } from './browserDynamicTools.js';
+import { createCodexDynamicToolApplication } from './codexDynamicToolApplication.js';
+import { finalizeCodexPendingInteractionsForShutdown } from './codexFinalShutdownApplication.js';
+import { createCodexGoalApplication } from './codexGoalApplication.js';
 import type {
-    ArchiveConversationInput,
-    CodexNativeConversationCoordinator,
-    InterruptNativeTurnInput,
-    NativeAcceptedOperation,
-    NativeConversationAttachmentInput,
-    NativeConversationRunState,
-    NativeProviderWriteLifecycle,
-    NativeQuestionAnswerAttachmentInput,
-    NativeQueueSnapshot,
-    NativeQueueWaitReason,
-    NativeTurnResult,
-    RecoverNativeQueueInput,
-    RespondNativeRequestInput,
-    RespondPlanImplementationRequestInput,
-    RestoreArchivedConversationInput,
-    SendQueuedNowInput,
-    SnoozeNativeRequestInput,
-    StartNativeEphemeralConversationInput,
-    StartProjectConversationInput,
-    StartTaskConversationInput,
-    SteerNativeMessageInput,
-    SubmitNativeMessageInput,
-    WaitForNativeTurnResultInput,
+  ArchiveConversationInput,
+  CodexNativeConversationCoordinator,
+  InterruptNativeTurnInput,
+  NativeAcceptedOperation,
+  NativeConversationAttachmentInput,
+  NativeConversationRunState,
+  NativeProviderWriteLifecycle,
+  NativeQuestionAnswerAttachmentInput,
+  NativeQueueSnapshot,
+  NativeQueueWaitReason,
+  NativeTurnResult,
+  RecoverNativeQueueInput,
+  RespondNativeRequestInput,
+  RespondPlanImplementationRequestInput,
+  RestoreArchivedConversationInput,
+  SendQueuedNowInput,
+  SnoozeNativeRequestInput,
+  StartNativeEphemeralConversationInput,
+  StartProjectConversationInput,
+  StartTaskConversationInput,
+  SteerNativeMessageInput,
+  SubmitNativeMessageInput,
+  WaitForNativeTurnResultInput,
 } from './codexNativeConversationContracts.js';
 import {
-    buildInteractionRecoveryContinuation,
-    buildInteractionRecoveryDisplayText,
-    conversationSubmissionDispatchEnvelope,
-    coordinatorError,
-    developerInstructionsFor,
-    evaluateCommandApproval,
-    existingDirectoryRealpath,
-    failedTurnErrorFromRecord,
-    hasAuditableFileApprovalTarget,
-    invalidServerRequestResponse,
-    isAdvertisedCommandDecision,
-    isExecpolicyAmendmentDecision,
-    isGrantDecision,
-    isInsideRoot,
-    isProviderThreadAlreadyAvailableError,
-    isProviderThreadArchivedError,
-    isProviderTurnAlreadyEndedSteerError,
-    isRecord,
-    isSupportedLocalImageAttachment,
-    isSupportedPermissionGrant,
-    isSupportedPermissionRequest,
-    isValidMcpElicitationResponse,
-    parseJsonRecord,
-    permissionModeFromValue,
-    providerEventReceipt,
-    providerPermissionProfile,
-    providerTurnIdFrom,
-    requestHash,
-    requireString,
-    serializeError,
-    snapshotConfirmsIdleProviderThread,
-    snapshotConfirmsSafeResumeBoundary,
-    stripRequestTransport,
-    submissionErrorSnapshot,
-    toRecoverySubmissionError,
-    validatePermissionGrant,
+  buildInteractionRecoveryContinuation,
+  buildInteractionRecoveryDisplayText,
+  conversationSubmissionDispatchEnvelope,
+  coordinatorError,
+  developerInstructionsFor,
+  evaluateCommandApproval,
+  existingDirectoryRealpath,
+  failedTurnErrorFromRecord,
+  hasAuditableFileApprovalTarget,
+  invalidServerRequestResponse,
+  isAdvertisedCommandDecision,
+  isExecpolicyAmendmentDecision,
+  isGrantDecision,
+  isInsideRoot,
+  isProviderThreadAlreadyAvailableError,
+  isProviderThreadArchivedError,
+  isProviderTurnAlreadyEndedSteerError,
+  isRecord,
+  isSupportedLocalImageAttachment,
+  isSupportedPermissionGrant,
+  isSupportedPermissionRequest,
+  isValidMcpElicitationResponse,
+  parseJsonRecord,
+  permissionModeFromValue,
+  providerEventReceipt,
+  providerPermissionProfile,
+  providerTurnIdFrom,
+  requestHash,
+  requireString,
+  serializeError,
+  snapshotConfirmsIdleProviderThread,
+  snapshotConfirmsSafeResumeBoundary,
+  stripRequestTransport,
+  submissionErrorSnapshot,
+  toRecoverySubmissionError,
+  validatePermissionGrant,
 } from './codexNativeConversationPolicy.js';
-import {
-    parseCanonicalRequestUserInputQuestions,
-    validateCanonicalRequestUserInputAnswers
-} from './codexNativeRuiValidation.js';
-import {createCodexExternalRequestAnswerRecovery} from './codexExternalRequestAnswerRecovery.js';
-import {
-    chooseNativeUserMessageContent,
-    type ResolvedNativeUserMessageSubmission,
-    resolveNativeUserMessageSubmission
-} from './codexNativeUserMessageProjection.js';
-import {runCodexPortableContextCompaction} from './codexPortableContextCompaction.js';
-import {
-    CodexProviderCommandApplicationService,
-    type CodexProviderCommandOperation
-} from './codexProviderCommandApplication.js';
-import {codexProviderEventIdentity, createCodexProviderEventFlow} from './codexProviderEventFlow.js';
-import {projectCodexProviderEvent} from './codexProviderEventProjection.js';
-import {createCodexProviderHistoryProjection} from './codexProviderHistoryProjection.js';
-import type {CodexUsageService} from './codexUsageService.js';
-import type {ContextDispatchEnvelope} from './contextDispatchService.js';
-import type {ConversationSegmentLifecycle} from './conversationExecutionCoordinator.js';
-import {
-    conversationToolResultDynamicTools,
-    type ManagedConversationToolResultStore
-} from './conversationPortableContext.js';
-import {ConversationQueueCoreMutationApplication} from './conversationQueueCoreMutationApplication.js';
-import {normalizeConversationResources, toConversationResource} from './conversationResources.js';
-import type {ConversationEventFlowControl} from './eventFlowControl.js';
-import type {TurnChangeSetService} from './turnChangeSets.js';
-import {TurnProcessProjector} from './turnProcessProjector.js';
+import { parseCanonicalRequestUserInputQuestions, validateCanonicalRequestUserInputAnswers } from './codexNativeRuiValidation.js';
+import { createCodexExternalRequestAnswerRecovery } from './codexExternalRequestAnswerRecovery.js';
+import { chooseNativeUserMessageContent, type ResolvedNativeUserMessageSubmission, resolveNativeUserMessageSubmission } from './codexNativeUserMessageProjection.js';
+import { runCodexPortableContextCompaction } from './codexPortableContextCompaction.js';
+import { CodexProviderCommandApplicationService, type CodexProviderCommandOperation } from './codexProviderCommandApplication.js';
+import { codexProviderEventIdentity, createCodexProviderEventFlow } from './codexProviderEventFlow.js';
+import { projectCodexProviderEvent } from './codexProviderEventProjection.js';
+import { createCodexProviderHistoryProjection } from './codexProviderHistoryProjection.js';
+import type { CodexUsageService } from './codexUsageService.js';
+import type { ContextDispatchEnvelope } from './contextDispatchService.js';
+import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
+import { conversationToolResultDynamicTools, type ManagedConversationToolResultStore } from './conversationPortableContext.js';
+import { ConversationQueueCoreMutationApplication } from './conversationQueueCoreMutationApplication.js';
+import { normalizeConversationResources, toConversationResource } from './conversationResources.js';
+import type { ConversationEventFlowControl } from './eventFlowControl.js';
+import type { TurnChangeSetService } from './turnChangeSets.js';
+import { TurnProcessProjector } from './turnProcessProjector.js';
 
 export { filterCompatibilitySnapshotItemAliases } from './codexProviderHistoryProjection.js';
 
@@ -3807,7 +3789,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         for (const requestId of [...autoResolutionTimers.keys()]) clearAutoResolutionTimer(requestId);
         externalAnswerRecovery.close();
         await beginHandoff(error);
-          const providerShutdownActions: Promise<void>[] = [];
+        const providerShutdownActions: Promise<void>[] = [];
         const interruptedTurns = new Set<string>();
         const pendingRequestIds: string[] = [];
         const providerActionEvidence = new Map<string, Record<string, unknown>>();
@@ -3827,7 +3809,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
             if (interruptedTurns.has(interruptKey)) continue;
             interruptedTurns.add(interruptKey);
             try {
-                providerShutdownActions.push(
+              providerShutdownActions.push(
                 executeTurnCommand({
                   operation: 'turn_interrupt',
                   conversationId,
@@ -3872,34 +3854,35 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
                 generationId: request.transportGenerationId,
                 requestId: providerRequestId,
               } as CodexServerRequestResponse;
-                providerShutdownActions.push(
-                    (requestProviderTurnId && requestProviderThreadId
-                            ? executeTurnCommand({
-                                operation: 'server_request_response',
-                                conversationId: conversation.id,
-                                threadId: requestProviderThreadId,
-                                turnId: requestProviderTurnId,
-                                commandKey: `server-request:${request.id}`,
-                                requestIdentity: response,
-                                issuedAt: request.createdAt,
-                                providerGenerationId: request.transportGenerationId,
-                                invoke: (traceIdentity) => options.manager.respondToServerRequest({
-                                    ...response,
-                                    traceIdentity
-                                }),
-                            })
-                            : Promise.reject(coordinatorError('ZEUS_CODEX_SERVER_REQUEST_TURN_REQUIRED', 'Pending Codex request lacks auditable native turn identity.'))
-                    )
-                        .then(() => {
-                            providerActionEvidence.set(request.id, {requestCancellation: 'accepted'});
-                        })
-                        .catch((cancelError) => {
-                            providerActionEvidence.set(request.id, {
-                                requestCancellation: 'outcome_unconfirmed',
-                                cause: serializeError(cancelError)
-                            });
+              providerShutdownActions.push(
+                (requestProviderTurnId && requestProviderThreadId
+                  ? executeTurnCommand({
+                      operation: 'server_request_response',
+                      conversationId: conversation.id,
+                      threadId: requestProviderThreadId,
+                      turnId: requestProviderTurnId,
+                      commandKey: `server-request:${request.id}`,
+                      requestIdentity: response,
+                      issuedAt: request.createdAt,
+                      providerGenerationId: request.transportGenerationId,
+                      invoke: (traceIdentity) =>
+                        options.manager.respondToServerRequest({
+                          ...response,
+                          traceIdentity,
                         }),
-                );
+                    })
+                  : Promise.reject(coordinatorError('ZEUS_CODEX_SERVER_REQUEST_TURN_REQUIRED', 'Pending Codex request lacks auditable native turn identity.'))
+                )
+                  .then(() => {
+                    providerActionEvidence.set(request.id, { requestCancellation: 'accepted' });
+                  })
+                  .catch((cancelError) => {
+                    providerActionEvidence.set(request.id, {
+                      requestCancellation: 'outcome_unconfirmed',
+                      cause: serializeError(cancelError),
+                    });
+                  }),
+              );
               continue;
             }
 
@@ -3907,7 +3890,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
             const interruptKey = `${requestProviderThreadId}\0${requestProviderTurnId}`;
             if (interruptedTurns.has(interruptKey)) continue;
             interruptedTurns.add(interruptKey);
-              providerShutdownActions.push(
+            providerShutdownActions.push(
               executeTurnCommand({
                 operation: 'turn_interrupt',
                 conversationId: conversation.id,
@@ -3934,9 +3917,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
             );
           }
         }
-          // 退出时所有 Provider 收口动作并行等待；逐个等待会把多个 30 秒超时串成数分钟，
-          // 触发 Main 的安全退出失败弹窗，而对应结果本来就会按 outcome_unconfirmed 审计。
-          await Promise.all(providerShutdownActions);
+        // 退出时所有 Provider 收口动作并行等待；逐个等待会把多个 30 秒超时串成数分钟，
+        // 触发 Main 的安全退出失败弹窗，而对应结果本来就会按 outcome_unconfirmed 审计。
+        await Promise.all(providerShutdownActions);
         const terminalized = finalizeCodexPendingInteractionsForShutdown(
           {
             db: options.db,

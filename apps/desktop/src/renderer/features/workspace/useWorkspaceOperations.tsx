@@ -1,79 +1,56 @@
+import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { cloneTaskManagementStatusConfig, type TaskManagementStatusConfig } from '@zeus/shared';
+import { notifyMainAppShellSettingsChanged, recordManualUpdateCheckInMain } from '../../appShellBridge.js';
+import { ConnectedSessionWorkspace, SessionWorkspace } from '../../session/SessionWorkspace.js';
+import { selectHasConfirmedUserMessage } from '../../session/sessionSelectors.js';
+import { TaskDetailPaneContent } from '../../task/TaskDetailPaneContent.js';
+import { writeTaskModelPushPreferences } from '../../task/TaskModelPushModal.js';
+import { taskModelPushHasRealChoice } from '../../task/TaskModelPushPendingWorkspace.js';
+import { normalizeTaskTableColumnPreferences, normalizeTaskTableEnumSortOrders, resolveTaskManagementStatus, type TaskWorkspaceViewMode } from '../../task/taskWorkspaceModel.js';
+import { createSessionOperationId } from '../../sessionOperationIdentity.js';
 import {
-    type CSSProperties,
-    type KeyboardEvent as ReactKeyboardEvent,
-    type PointerEvent as ReactPointerEvent,
-    type ReactNode
-} from 'react';
-import {cloneTaskManagementStatusConfig, type TaskManagementStatusConfig} from '@zeus/shared';
-import {notifyMainAppShellSettingsChanged, recordManualUpdateCheckInMain} from '../../appShellBridge.js';
-import {ConnectedSessionWorkspace, SessionWorkspace} from '../../session/SessionWorkspace.js';
-import {selectHasConfirmedUserMessage} from '../../session/sessionSelectors.js';
-import {TaskDetailPaneContent} from '../../task/TaskDetailPaneContent.js';
-import {writeTaskModelPushPreferences} from '../../task/TaskModelPushModal.js';
-import {taskModelPushHasRealChoice} from '../../task/TaskModelPushPendingWorkspace.js';
-import {
-    normalizeTaskTableColumnPreferences,
-    normalizeTaskTableEnumSortOrders,
-    resolveTaskManagementStatus,
-    type TaskWorkspaceViewMode
-} from '../../task/taskWorkspaceModel.js';
-import {createSessionOperationId} from '../../sessionOperationIdentity.js';
-import {
-    type AiRuntimeSession,
-    type DeleteTaskRequest,
-    type GitDiffHunk,
-    type HighRiskGitOperation,
-    type ProjectRecord,
-    type TaskBoardMoveRequest,
-    type TaskBoardViewSettings,
-    type TaskBoardViewSnapshot,
-    type TaskManagementStatus,
-    type TaskPageViewMode,
-    type TaskRecord,
-    type TaskStatusFilter,
-    ZeusApiError,
+  type AiRuntimeSession,
+  type DeleteTaskRequest,
+  type GitDiffHunk,
+  type HighRiskGitOperation,
+  type ProjectRecord,
+  type TaskBoardMoveRequest,
+  type TaskBoardViewSettings,
+  type TaskBoardViewSnapshot,
+  type TaskManagementStatus,
+  type TaskPageViewMode,
+  type TaskRecord,
+  type TaskStatusFilter,
+  ZeusApiError,
 } from '../../apiClient.js';
+import { normalizeCodeMapSettings, normalizeProjectConfig, normalizeRuntimeSettings, parseNumericList, resolveRuntimeNormalizedLogPath, toProjectConfigForm } from './WorkspaceChrome.js';
+import { CodeMapView } from '../graph/CodeMapView.js';
+import { buildGitHunkReviewKey, buildGitOperationExecutionInput, formatGitOperationLabel, formatRuntimeLogLine, toSafeAppShellImport } from './workspaceFormatters.js';
 import {
-    normalizeCodeMapSettings,
-    normalizeProjectConfig,
-    normalizeRuntimeSettings,
-    parseNumericList,
-    resolveRuntimeNormalizedLogPath,
-    toProjectConfigForm
-} from './WorkspaceChrome.js';
-import {CodeMapView} from '../graph/CodeMapView.js';
-import {
-    buildGitHunkReviewKey,
-    buildGitOperationExecutionInput,
-    formatGitOperationLabel,
-    formatRuntimeLogLine,
-    toSafeAppShellImport
-} from './workspaceFormatters.js';
-import {
-    adjustProjectSidebarWidthForKeyboard,
-    browserNativeConversationStartStorage,
-    buildRuntimeSessionTaskDraft,
-    clampProjectSidebarWidth,
-    createSessionWorkspaceTask,
-    formatConfiguredTaskManagementStatus,
-    mergeAppShellSettingsSaveResponse,
-    normalizeProjectSidebarPreferredWidth,
-    normalizeRendererAppShellSettings,
-    normalizeTaskStatusFilterByProject,
-    persistProjectSidebarPreferredWidth,
-    PROJECT_SIDEBAR_DEFAULT_WIDTH,
-    PROJECT_SIDEBAR_MAX_WIDTH,
-    type ProjectCodeWorkspaceMode,
-    type ProjectSidebarDragState,
-    type ProjectWorkspaceSection,
-    resolveTaskManagementStatusConfig,
-    resolveTaskTableColumnsForProject,
-    toAppShellSettingsSavePayload,
-    transitionProjectSidebarDrag,
-    type WorkspaceViewId,
+  adjustProjectSidebarWidthForKeyboard,
+  browserNativeConversationStartStorage,
+  buildRuntimeSessionTaskDraft,
+  clampProjectSidebarWidth,
+  createSessionWorkspaceTask,
+  formatConfiguredTaskManagementStatus,
+  mergeAppShellSettingsSaveResponse,
+  normalizeProjectSidebarPreferredWidth,
+  normalizeRendererAppShellSettings,
+  normalizeTaskStatusFilterByProject,
+  persistProjectSidebarPreferredWidth,
+  PROJECT_SIDEBAR_DEFAULT_WIDTH,
+  PROJECT_SIDEBAR_MAX_WIDTH,
+  type ProjectCodeWorkspaceMode,
+  type ProjectSidebarDragState,
+  type ProjectWorkspaceSection,
+  resolveTaskManagementStatusConfig,
+  resolveTaskTableColumnsForProject,
+  toAppShellSettingsSavePayload,
+  transitionProjectSidebarDrag,
+  type WorkspaceViewId,
 } from './workspaceSupport.js';
-import type {WorkspaceQueryState} from './useWorkspaceQueryState.js';
-import type {WorkspaceDomainActions} from './useWorkspaceDomainActions.js';
+import type { WorkspaceQueryState } from './useWorkspaceQueryState.js';
+import type { WorkspaceDomainActions } from './useWorkspaceDomainActions.js';
 
 export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions: WorkspaceDomainActions) {
   const {
@@ -1935,7 +1912,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
         />
       );
     }
-      if (selectedNativeConversation && props.nativeConversationClient && selectedNativeConversation.transportKind === 'codex_native' && nativeSessionOwner) {
+    if (selectedNativeConversation && props.nativeConversationClient && selectedNativeConversation.transportKind === 'codex_native' && nativeSessionOwner) {
       const targetWorkspace = (
         <ConnectedSessionWorkspace
           language={appShellSettings.appLanguage}
@@ -2002,7 +1979,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
         legacyMessages={nativeLegacyMessages}
         choicesKnown={selectedNativeConversation && selectedNativeConversation.transportKind !== 'codex_native' ? true : props.nativeConversationClient ? (nativeSessionChoiceTaskState?.choicesKnown ?? false) : true}
         loadState={
-            selectedNativeConversation && selectedNativeConversation.transportKind !== 'codex_native'
+          selectedNativeConversation && selectedNativeConversation.transportKind !== 'codex_native'
             ? nativeLegacyMessageLoadState
             : props.nativeConversationClient
               ? nativeSessionChoiceTaskState?.status === 'ready'
