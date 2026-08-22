@@ -1,4 +1,4 @@
-import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
 import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
@@ -11,9 +11,9 @@ import { calculateUncachedInputTokens, type ConversationContextDraft, type Conve
 import type { ProjectGitAction, ProjectGitActionResponse, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
 import { openConversationResourceInMain, openTurnChangeFileInMain } from '../appShellBridge.js';
 import { ZeusSelect } from '../ZeusSelect.js';
-import { canSteerActiveTurn, type ComposerRuntimeSettings, ConversationComposer, resolveComposerKeyIntent } from './ConversationComposer.js';
+import { canSteerActiveTurn, type ComposerRuntimeSettings, ConversationComposer, type ConversationComposerProps, resolveComposerKeyIntent } from './ConversationComposer.js';
 import { ConversationTranscript, type ConversationTranscriptProps, type SessionCreationStatus } from './ConversationTranscript.js';
-import { QueuedConversationMessages } from './QueuedConversationMessages.js';
+import { QueuedConversationMessages, type QueuedConversationMessagesProps } from './QueuedConversationMessages.js';
 import { SessionPlanProgress } from './SessionActivity.js';
 import { LegacyConversationBanner } from './LegacyConversationBanner.js';
 import { hasPendingRequestDetails, PendingRequestSurface, requestKind } from './PendingRequestSurface.js';
@@ -36,6 +36,8 @@ import type {
   NativeConversationAttachment,
   NativeConversationAttentionKind,
   NativeConversationChoice,
+  NativeConversationContentV2Page,
+  NativeConversationToolResultPage,
   NativeConversationStage,
   NativeOperationAcceptance,
   NativeNextTurnSettings,
@@ -57,7 +59,8 @@ import type {
   TurnChangeSetOperationResult,
 } from './sessionTypes.js';
 import { normalizeServiceTierSelection, selectionFromEffectiveServiceTier, serviceTierWireOverride } from './serviceTierSelection.js';
-import { reconnectDelayMs, type SessionController, type SessionControllerClient, useSessionController } from './useSessionController.js';
+import { reconnectDelayMs, type SessionController, type SessionControllerClient, useSessionControllerInstance, useSessionControllerSelector } from './useSessionController.js';
+import { createConversationComposerStateSelector, createConversationQueueStateSelector, createConversationTranscriptStateSelector, createSessionWorkspaceStateSelector } from './sessionStateSlices.js';
 import { createSessionEscapeController, type SessionEscapeController, type SessionEscapeLayer, type SessionEscapeResult } from './useThreadScrollController.js';
 import { SafeMarkdown, type SessionUiLanguage } from './ThreadItemView.js';
 import { autosizeTextarea } from './textareaAutosize.js';
@@ -184,6 +187,11 @@ export interface SessionWorkspaceActions {
   onLoadSubagents?: () => Promise<NativeSubagentListSnapshot>;
   onLoadSubagentThread?: (threadId: string) => Promise<NativeSubagentThreadSnapshot>;
   onOperateTurnChangeSet?: (changeSet: TurnChangeSet, action: 'undo' | 'reapply') => Promise<TurnChangeSetOperationResult>;
+  onLoadEarlierHistory?: () => void | Promise<void>;
+  onLoadTurnProcess?: (turnId: string) => void | Promise<void>;
+  onLoadTurnArtifacts?: (turnId: string) => void | Promise<void>;
+  onLoadV2Content?: (handle: string, offset?: number) => Promise<NativeConversationContentV2Page>;
+  onLoadV2ToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage>;
 }
 
 export interface NativeConversationStartPreparation {
@@ -362,7 +370,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
   // 真实 id 到达时只重建内部 controller，外层工作面和输入 DOM 保持同一 React 身份。
   const initialCachedState = useMemo(() => props.initialCachedState, [props.conversation.id, props.conversation.projectId]);
   const initialOptimisticState = useMemo(() => props.initialOptimisticState, [props.conversation.id, props.conversation.projectId]);
-  const { state, controller } = useSessionController({
+  const controller = useSessionControllerInstance({
     client: props.client,
     projectId: props.conversation.projectId,
     conversationId: props.conversation.id,
@@ -370,6 +378,8 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     initialOptimisticState,
     enabled: controllerEnabled,
   });
+  const workspaceStateSelector = useMemo(createSessionWorkspaceStateSelector, [controller]);
+  const state = useSessionControllerSelector(controller, workspaceStateSelector);
   const [subagentScope, setSubagentScope] = useState<ScopedSubagentSnapshot>(() => ({ conversationId: props.conversation.id, snapshot: null }));
   const subagentListSnapshot = subagentScope.conversationId === props.conversation.id ? subagentScope.snapshot : null;
   useEffect(() => {
@@ -410,9 +420,11 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     };
   }, [props.client, props.conversation.projectId, props.initialCapabilities]);
   useEffect(() => {
-    if (!controllerEnabled) return;
-    props.onStateChange?.(props.conversation.id, state);
-  }, [controllerEnabled, props.conversation.id, props.onStateChange, state]);
+    if (!controllerEnabled || !props.onStateChange) return;
+    const publish = (): void => props.onStateChange?.(props.conversation.id, controller.getState());
+    publish();
+    return controller.subscribe(publish);
+  }, [controller, controllerEnabled, props.conversation.id, props.onStateChange]);
   useEffect(() => {
     if (!controllerEnabled || !props.localState) return;
     // 权威会话已经接管后，创建期 localState 只能作为历史展示，不能再把旧草稿写回真实会话。
@@ -435,9 +447,18 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
   const previousReadyTranscriptStateRef = useRef<NativeSessionState | null>(null);
   useLayoutEffect(() => {
     if (controllerEnabled && controllerVisible && state.snapshot?.id === props.conversation.id) {
-      previousReadyTranscriptStateRef.current = state;
+      previousReadyTranscriptStateRef.current = controller.getState();
     }
-  }, [controllerEnabled, controllerVisible, props.conversation.id, state]);
+  }, [controller, controllerEnabled, controllerVisible, props.conversation.id, state]);
+  useEffect(() => {
+    if (!controllerEnabled) return;
+    const retainReadyTranscript = (): void => {
+      const current = controller.getState();
+      if (current.snapshot?.id === props.conversation.id) previousReadyTranscriptStateRef.current = current;
+    };
+    retainReadyTranscript();
+    return controller.subscribe(retainReadyTranscript);
+  }, [controller, controllerEnabled, props.conversation.id]);
   const retainedTranscriptState = controllerEnabled && !controllerVisible && !state.snapshot && previousReadyTranscriptStateRef.current?.snapshot?.id !== props.conversation.id ? previousReadyTranscriptStateRef.current : null;
   const transcriptLoading = controllerEnabled && !controllerVisible && !state.snapshot && ['connecting', 'hydrating', 'reconnecting'].includes(state.transportState);
   const displayedCreationStatus: SessionCreationStatus | undefined =
@@ -569,6 +590,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     <SessionWorkspace
       language={props.language}
       state={displayedState}
+      stateController={displayedState === state ? controller : undefined}
       conversation={displayedConversation}
       task={props.task}
       owner={props.owner}
@@ -670,6 +692,11 @@ export function createConnectedSessionActions(input: { controller: SessionContro
     onNextTurnSettingsChange: (settings) => input.controller.setNextTurnSettings(settings).then(() => undefined),
     onPermissionModeChange: (permissionMode) => settle(input.controller.setPermissionMode(permissionMode)),
     onCollaborationModeChange: (collaborationMode) => settle(input.controller.setCollaborationMode(collaborationMode)),
+    onLoadEarlierHistory: () => settle(input.controller.loadEarlierHistory()),
+    onLoadTurnProcess: (turnId) => settle(input.controller.loadTurnProcess(turnId)),
+    onLoadTurnArtifacts: (turnId) => settle(input.controller.loadTurnArtifacts(turnId)),
+    onLoadV2Content: (handle, offset) => input.controller.loadV2Content(handle, offset),
+    onLoadV2ToolResult: (handle, offset) => input.controller.loadV2ToolResult(handle, offset),
     onEditUserItem: async (_item, content) => {
       const current = input.controller.getState();
       const active = current.conversationState === 'active_prework' || current.conversationState === 'active_final_answer';
@@ -1176,6 +1203,8 @@ export function isDurableNativeConversationAcceptance(request: Pick<StartNativeC
 export interface SessionWorkspaceProps {
   language: SessionUiLanguage;
   state: NativeSessionState | null;
+  /** 真实会话用 selector 子组件订阅；本地创建态继续直接使用 state。 */
+  stateController?: SessionController;
   conversation: NativeConversationChoice | null;
   task: SessionWorkspaceTask | null;
   owner?: SessionConversationOwner;
@@ -1210,6 +1239,43 @@ export interface SessionReadOnlyGate {
   busy?: boolean;
   error?: string | null;
   onAction: () => void | Promise<void>;
+}
+
+type SessionStateSelectorFactory = () => (state: NativeSessionState) => NativeSessionState;
+
+function useOptionalSessionStateSlice(controller: SessionController | undefined, fallbackState: NativeSessionState, selectorFactory: SessionStateSelectorFactory): NativeSessionState {
+  const selector = useMemo(selectorFactory, [controller, selectorFactory]);
+  const fallbackRef = useRef(fallbackState);
+  fallbackRef.current = fallbackState;
+  const cache = useMemo<{ source: NativeSessionState | null; selection: NativeSessionState | null }>(() => ({ source: null, selection: null }), [controller, selector]);
+  const subscribe = useCallback((listener: () => void) => controller?.subscribe(listener) ?? (() => undefined), [controller]);
+  const getSnapshot = useCallback(() => {
+    const source = controller?.getState() ?? fallbackRef.current;
+    if (cache.source !== source || cache.selection === null) {
+      cache.source = source;
+      cache.selection = selector(source);
+    }
+    return cache.selection;
+  }, [cache, controller, selector]);
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
+
+function SessionTranscriptProjection(props: Omit<ConversationTranscriptProps, 'state'> & { state: NativeSessionState; controller?: SessionController }) {
+  const { controller, state: fallbackState, ...transcriptProps } = props;
+  const state = useOptionalSessionStateSlice(controller, fallbackState, createConversationTranscriptStateSelector);
+  return <ConversationTranscript {...transcriptProps} state={state} />;
+}
+
+function SessionComposerProjection(props: Omit<ConversationComposerProps, 'state'> & { state: NativeSessionState; controller?: SessionController }) {
+  const { controller, state: fallbackState, ...composerProps } = props;
+  const state = useOptionalSessionStateSlice(controller, fallbackState, createConversationComposerStateSelector);
+  return <ConversationComposer {...composerProps} state={state} />;
+}
+
+function SessionQueueProjection(props: Omit<QueuedConversationMessagesProps, 'state'> & { state: NativeSessionState; controller?: SessionController }) {
+  const { controller, state: fallbackState, ...queueProps } = props;
+  const state = useOptionalSessionStateSlice(controller, fallbackState, createConversationQueueStateSelector);
+  return <QueuedConversationMessages {...queueProps} state={state} />;
 }
 
 const labels = {
@@ -2005,9 +2071,10 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   function renderConversationComposer(): ReactNode {
     if (!props.state) return null;
     return (
-      <ConversationComposer
+      <SessionComposerProjection
         textareaRef={composerRef}
         state={props.state}
+        controller={props.stateController}
         language={props.language}
         capabilities={props.capabilities}
         onDraftChange={(draft) => actions.onDraftChange?.(draft)}
@@ -2039,8 +2106,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   function renderQueuedConversationMessages(): ReactNode {
     if (!props.state) return null;
     return (
-      <QueuedConversationMessages
+      <SessionQueueProjection
         state={props.state}
+        controller={props.stateController}
         language={props.language}
         onEdit={actions.onEditQueuedSubmission}
         onDelete={actions.onDeleteQueuedSubmission}
@@ -2329,9 +2397,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     </section>
                   ) : null}
                   <div ref={setQuickActionsPersistentHost} className="session-quick-actions-persistent-host" />
-                  <ConversationTranscript
-                    key={transcriptState?.conversationId ?? props.conversation?.id ?? 'empty'}
+                  <SessionTranscriptProjection
                     state={transcriptState ?? props.state}
+                    controller={transcriptIsRetained ? undefined : props.stateController}
                     language={props.language}
                     historyLoading={Boolean(props.transcriptLoading ?? ((props.state.transportState === 'hydrating' || props.state.transportState === 'connecting') && !props.state.snapshot)) && !(transcriptState ?? props.state).snapshot}
                     onLatestContentVisibilityChange={transcriptIsRetained ? undefined : props.onLatestContentVisibilityChange}
@@ -2360,6 +2428,11 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     }
                     onOpenResource={transcriptInteractionsEnabled ? openConversationResource : undefined}
                     onLoadResourcePreview={transcriptInteractionsEnabled ? actions.onLoadResourcePreview : undefined}
+                    onLoadEarlierHistory={transcriptInteractionsEnabled ? actions.onLoadEarlierHistory : undefined}
+                    onLoadTurnProcess={transcriptInteractionsEnabled ? actions.onLoadTurnProcess : undefined}
+                    onLoadTurnArtifacts={transcriptInteractionsEnabled ? actions.onLoadTurnArtifacts : undefined}
+                    onLoadV2Content={transcriptInteractionsEnabled ? actions.onLoadV2Content : undefined}
+                    onLoadV2ToolResult={transcriptInteractionsEnabled ? actions.onLoadV2ToolResult : undefined}
                     onReviewTurnChanges={
                       transcriptInteractionsEnabled
                         ? (changeSet, fileId) => {

@@ -1,15 +1,16 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, screen, session, shell, Tray } from 'electron';
 import { execFile as execFileCallback } from 'node:child_process';
-import { chmodSync, constants as fsConstants, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, type FSWatcher } from 'node:fs';
+import { constants as fsConstants, existsSync, readFileSync, type FSWatcher } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { access, copyFile, cp, lstat, mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { access, chmod, copyFile, cp, link, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { performance } from 'node:perf_hooks';
 import { createBeforeQuitCleanupHandler } from './beforeQuitCleanup.js';
 import type { DesktopLocalServerRuntime } from './localServerRuntime.js';
+import type { ExecutionHostMaintenanceStatus } from './localServerRuntime.js';
 import { createStartupCoordinator } from './startupCoordinator.js';
 import { terminateAfterFatalStartup } from './fatalStartup.js';
 import { createRendererBootstrapMonitor } from './rendererBootstrapMonitor.js';
@@ -24,8 +25,19 @@ import { createSystemNotificationBridge, type SystemNotificationBridge } from '.
 import { openLocalLogDirectory } from './localLogDirectory.js';
 import { openExternalHttpsUrl } from './externalOpen.js';
 import { extractZentaoTaskInfo } from './zentaoTaskExtract.js';
-import { createPersistedMainWindowState, findSavedWindowDisplay, type PersistedMainWindowState, readPersistedMainWindowState, resolveMainWindowState, writePersistedMainWindowState } from './windowState.js';
+import {
+  createPersistedMainWindowState,
+  defaultMainWindowSize,
+  findSavedWindowDisplay,
+  minimumMainWindowSize,
+  type PersistedMainWindowState,
+  type ResolvedMainWindowState,
+  readPersistedMainWindowState,
+  resolveMainWindowState,
+  writePersistedMainWindowState,
+} from './windowState.js';
 import { applyRestoredMainWindowPlacement, createWindowStatePersistenceGate, waitForSavedWindowDisplay, type WindowStatePersistenceGate } from './windowRestoration.js';
+import { resolveTestDisplayPlacement } from './testDisplayPlacement.js';
 import {
   buildTaskAttachmentPreviewDataUrl,
   coerceTaskClipboardAttachmentBuffer,
@@ -47,14 +59,30 @@ import { cleanupStaleReleaseBackups, createReleaseUpdateService, type ReleaseUpd
 import { createHomebrewUpdateService } from './homebrewUpdateService.js';
 import { createHomebrewUpdateController, type HomebrewUpdateController, type HomebrewUpdateIndicatorState } from './homebrewUpdateController.js';
 import { createAutomaticUpdateScheduler, type AutomaticUpdateScheduler } from './automaticUpdateScheduler.js';
-import type { ZeusDataLayout } from '@zeus/local-server/zeus-data-layout';
+import { createZeusDataLayout, type ZeusDataLayout } from '@zeus/local-server/zeus-data-layout';
 import { readUnifiedConversationStoreMigrationStatus } from '@zeus/local-server';
 import { prepareZeusDataRoot } from './zeusDataMigration.js';
+import { loadDesktopReadOnlyValidationDescriptor, readOnlyValidationManifestEnvironmentName, verifyDesktopReadOnlyValidationDescriptor } from './readOnlyValidationManifest.js';
+import { installReadOnlyValidationIpcFence } from './readOnlyValidationIpcFence.js';
 import { ProjectSourceWorkspaceService } from './projectSourceWorkspace.js';
 import { ProjectGitWorkbenchService, type ProjectGitProjectIdentity } from './projectGitWorkbench.js';
-import { zentaoSecretAccount, type CreateProjectSourceEntryInput, type MoveProjectSourceEntryInput, type SaveProjectSourceFileInput, type TrashProjectSourceEntryInput, type ZentaoInstanceRecord } from '@zeus/shared';
+import { ElectronRecoveryBackupDestinationPort } from './recoveryBackupDestinationPort.js';
+import {
+  zentaoSecretAccount,
+  type CreateProjectSourceEntryInput,
+  type MoveProjectSourceEntryInput,
+  type ReadOnlyValidationDescriptor,
+  type SaveProjectSourceFileInput,
+  type TrashProjectSourceEntryInput,
+  type ZentaoInstanceRecord,
+} from '@zeus/shared';
 import { createMacOSKeychainStore } from '@zeus/security-core';
 import type { ZentaoExtractServices } from './zentaoTaskExtract.js';
+import { resolveDesktopKeychainService } from './secretServiceIdentity.js';
+import { createSystemMainCommandEnvelope, MainCommandLedger, type MainCommandRequest } from './mainCommandLedger.js';
+import { StorageRecoveryRestartCoordinator } from './storageRecoveryRestartCoordinator.js';
+import { assertTestDataRootIsolation } from './testDataRootIsolation.js';
+import { expectedBundleIdForDataRootProfile, readAndVerifyZeusDataRootIdentity, zeusDataRootHostIdentity, type ZeusDataRootIdentityMarker, type ZeusDataRootProfile } from './dataRootIdentity.js';
 
 let mainWindow: BrowserWindow | undefined;
 const windows = new Set<BrowserWindow>();
@@ -80,6 +108,14 @@ const rendererRuntimeReady = new Promise<DesktopLocalServerRuntime>((resolve, re
 });
 // 启动失败会由统一致命错误流程退出；提前挂接拒绝处理，避免没有 Renderer 等待时产生未处理拒绝。
 void rendererRuntimeReady.catch(() => undefined);
+let executionHostMaintenance: ExecutionHostMaintenanceStatus | null = null;
+let resolveRendererStartupDisposition!: () => void;
+let rejectRendererStartupDisposition!: (error: unknown) => void;
+const rendererStartupDisposition = new Promise<void>((resolve, reject) => {
+  resolveRendererStartupDisposition = resolve;
+  rejectRendererStartupDisposition = reject;
+});
+void rendererStartupDisposition.catch(() => undefined);
 let releaseUpdateService: ReleaseUpdateService | undefined;
 let homebrewUpdateController: HomebrewUpdateController | undefined;
 let automaticUpdateScheduler: AutomaticUpdateScheduler | undefined;
@@ -89,13 +125,28 @@ let conversationInputResources: ConversationInputResourceBroker | undefined;
 let systemNotificationBridge: SystemNotificationBridge | undefined;
 let zeusDataRootPath: string | undefined;
 let zeusDataLayout: ZeusDataLayout | undefined;
+let zeusDataRootIdentity: ZeusDataRootIdentityMarker | undefined;
+let readOnlyValidationDescriptor: ReadOnlyValidationDescriptor | undefined;
 let projectSourceWorkspace: ProjectSourceWorkspaceService | undefined;
 let projectGitWorkbench: ProjectGitWorkbenchService | undefined;
+let mainCommandLedger: MainCommandLedger | undefined;
+const recoveryBackupDestinationPort = new ElectronRecoveryBackupDestinationPort();
 let fatalStartup = false;
 const applicationStartupStartedAt = performance.now();
 function traceApplicationStartup(stage: string): void {
   if (process.env.ZEUS_STARTUP_TIMING !== '1') return;
   console.info(`[Zeus app startup] ${stage} ${Math.round(performance.now() - applicationStartupStartedAt)}ms`);
+}
+
+function activeMainCommandLedger(): MainCommandLedger {
+  if (readOnlyValidationDescriptor) {
+    throw Object.assign(new Error('只读验证模式禁止创建 Main Command ledger。'), {
+      code: 'ZEUS_READ_ONLY_VALIDATION_CAPABILITY_BLOCKED',
+      statusCode: 503,
+    });
+  }
+  mainCommandLedger ??= new MainCommandLedger({ root: join(activeZeusDataLayout().root, 'main-command-ledger-v1') });
+  return mainCommandLedger;
 }
 traceApplicationStartup('main_module_loaded');
 let appShellSettings: MainAppShellSettings = {
@@ -119,6 +170,7 @@ const projectSourceWatchers = new Map<number, { projectId: string; watcher: FSWa
 let taskTableLayoutQuitPending = false;
 let taskTableLayoutQuitApproved = false;
 let upgradeHandoffRequested = false;
+const storageRecoveryRestart = new StorageRecoveryRestartCoordinator();
 const execFile = promisify(execFileCallback);
 const windowStateSaveDelayMs = 250;
 const windowStateActivationDelayMs = 500;
@@ -197,61 +249,69 @@ function applyExplicitUserDataDirectory(): void {
   if (isTestDistribution()) app.setName(testDistributionName);
 
   const configured = process.env.ZEUS_USER_DATA_DIR?.trim();
+  readOnlyValidationDescriptor = loadDesktopReadOnlyValidationDescriptor({
+    manifestPath: process.env[readOnlyValidationManifestEnvironmentName],
+    packaged: app.isPackaged,
+    executablePath: process.execPath,
+  });
+  if (readOnlyValidationDescriptor) {
+    if (!configured || resolve(configured) !== readOnlyValidationDescriptor.validationRoot) {
+      throw Object.assign(new Error('只读验证要求 ZEUS_USER_DATA_DIR 与 manifest 的 validationRoot 完全一致。'), {
+        code: 'ZEUS_READ_ONLY_VALIDATION_ROOT_MISMATCH',
+        failClosed: true as const,
+      });
+    }
+    applyReadOnlyValidationDataRoot(readOnlyValidationDescriptor);
+    return;
+  }
   if (configured) {
-    applyPreparedDataRoot(resolve(configured));
+    const configuredRoot = isTestDistribution() ? assertTestDataRootIsolation({ requestedRoot: resolve(configured), homeDirectory: homedir(), appDataDirectory: app.getPath('appData') }) : resolve(configured);
+    applyPreparedDataRoot(configuredRoot, [], knownProductionDataRoots());
     return;
   }
 
-  const profileName = isTestDistribution() ? 'test' : app.isPackaged ? 'production' : 'development';
+  const profileName = activeDataRootProfile();
   const target = join(homedir(), profileName === 'production' ? '.zeus' : profileName === 'test' ? defaultTestDataRoot() : '.zeus-development');
   const legacyCandidates = profileName === 'production' ? [join(app.getPath('appData'), '@zeus', 'desktop'), join(app.getPath('appData'), desktopDisplayName())].filter((path, index, paths) => paths.indexOf(path) === index) : [];
   const targetInitialized = profileName === 'production' ? existsSync(join(target, 'data', 'zeus.db')) || existsSync(join(target, 'zeus.db')) || existsSync(join(target, 'zeus.config.json')) : existsSync(target);
   const legacy = legacyCandidates.find((path) => existsSync(join(path, 'zeus.db')) || existsSync(join(path, 'zeus.config.json')));
   if (app.isPackaged && !targetInitialized && legacy) {
-    if (legacyExecutionHostIsRunning(legacy)) {
-      // 旧执行宿主仍可能写数据库；本次继续使用旧目录，待正常退出后的下一次启动再安全迁移。
-      applyPreparedDataRoot(legacy);
-      return;
-    }
-    mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
-    chmodSync(dirname(target), 0o700);
-    const staging = join(dirname(target), `.${profileName}.migrating-${process.pid}`);
-    rmSync(staging, { recursive: true, force: true });
-    // 首次切换只复制旧目录并保留原件，出现异常时仍可回退到旧版本 Zeus。
-    cpSync(legacy, staging, {
-      recursive: true,
-      errorOnExist: true,
-      force: false,
-      filter: (source) => {
-        const firstSegment = relative(legacy, source).split(sep)[0];
-        return firstSegment !== 'execution-host' && !['SingletonCookie', 'SingletonLock', 'SingletonSocket'].includes(firstSegment);
-      },
-    });
-    if (!existsSync(target)) {
-      renameSync(staging, target);
-    } else {
-      const movedEntries: string[] = [];
-      try {
-        for (const entryName of readdirSync(staging)) {
-          const destination = join(target, entryName);
-          if (existsSync(destination)) throw new Error(`Zeus 正式目录迁移遇到同名文件：${destination}`);
-          renameSync(join(staging, entryName), destination);
-          movedEntries.push(entryName);
-        }
-        rmSync(staging, { recursive: true, force: true });
-      } catch (error) {
-        for (const entryName of movedEntries.reverse()) renameSync(join(target, entryName), join(staging, entryName));
-        throw error;
-      }
-    }
+    // 跨根目录的原始递归复制无法与 WAL 写入、平铺/分层宿主身份及控制凭据做原子仲裁。
+    // 兼容发布先继续使用唯一旧根；后续只允许显式维护流程通过 SQLite Backup API
+    // 生成一致候选库、校验资产清单后再切换，启动链不再拷贝活动数据或 runtime token。
+    applyPreparedDataRoot(legacy, [], [target, ...legacyCandidates]);
+    return;
   }
-  applyPreparedDataRoot(target, legacyCandidates);
+  applyPreparedDataRoot(target, legacyCandidates, [target, ...legacyCandidates]);
 }
 
-function applyPreparedDataRoot(root: string, legacyRoots: readonly string[] = []): void {
-  const preparation = prepareZeusDataRoot(root, legacyRoots);
+function applyReadOnlyValidationDataRoot(descriptor: ReadOnlyValidationDescriptor): void {
+  const layout = createZeusDataLayout(descriptor.validationRoot);
+  if (layout.database !== descriptor.database.path) throw new Error('只读验证 manifest 与 Zeus 分层数据路径不一致。');
+  const keychainService = resolveDesktopKeychainService({ profile: 'test', dataRootPath: layout.root });
+  zeusDataRootIdentity = readAndVerifyZeusDataRootIdentity(layout.root, {
+    profile: 'test',
+    bundleId: expectedBundleIdForDataRootProfile('test'),
+    keychainService,
+  });
+  zeusDataRootPath = layout.root;
+  zeusDataLayout = layout;
+  // 不调用 prepareZeusDataRoot：验证进程禁止迁移、chmod、复制或创建正式数据目录。
+  app.setPath('userData', layout.electronUserData);
+}
+
+function applyPreparedDataRoot(root: string, legacyRoots: readonly string[] = [], knownProductionAdoptionRoots: readonly string[] = []): void {
+  const profile = activeDataRootProfile();
+  const keychainService = resolveDesktopKeychainService({ profile, dataRootPath: root });
+  const preparation = prepareZeusDataRoot(root, legacyRoots, {
+    profile,
+    bundleId: expectedBundleIdForDataRootProfile(profile),
+    keychainService,
+    knownProductionAdoptionRoots,
+  });
   zeusDataRootPath = preparation.layout.root;
   zeusDataLayout = preparation.layout;
+  zeusDataRootIdentity = preparation.rootIdentity;
   app.setPath('userData', preparation.layout.electronUserData);
 }
 
@@ -260,15 +320,26 @@ function activeZeusDataLayout(): ZeusDataLayout {
   return zeusDataLayout;
 }
 
-function legacyExecutionHostIsRunning(legacyUserDataPath: string): boolean {
-  try {
-    const value = JSON.parse(readFileSync(join(legacyUserDataPath, 'execution-host', 'rendezvous.json'), 'utf8')) as { pid?: unknown };
-    if (typeof value.pid !== 'number' || !Number.isInteger(value.pid) || value.pid <= 0) return false;
-    process.kill(value.pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
+function activeDataRootIdentity(): ZeusDataRootIdentityMarker {
+  if (!zeusDataRootIdentity) throw new Error('Zeus 本机数据根身份尚未准备完成。');
+  return zeusDataRootIdentity;
+}
+
+function activeDataRootProfile(): ZeusDataRootProfile {
+  return isTestDistribution() ? 'test' : app.isPackaged ? 'production' : 'development';
+}
+
+function knownProductionDataRoots(): string[] {
+  if (activeDataRootProfile() !== 'production') return [];
+  return [join(homedir(), '.zeus'), join(app.getPath('appData'), '@zeus', 'desktop'), join(app.getPath('appData'), 'Zeus')].map((path) => resolve(path));
+}
+
+/** 正式版固定复用历史 `Zeus` service；Test 只按已规范化的数据根派生隔离 service。 */
+function activeDesktopKeychainService(): string {
+  return resolveDesktopKeychainService({
+    profile: activeDataRootIdentity().profile,
+    dataRootPath: activeZeusDataLayout().root,
+  });
 }
 
 // 打包验收可用隔离资料目录运行，禁止污染用户正在使用的 Zeus 数据。
@@ -423,8 +494,26 @@ function activateMainWindowStatePersistence(window: BrowserWindow): void {
   windowStateActivationTimers.set(window.id, timer);
 }
 
-async function resolveMainWindowStateForLaunch(persisted: PersistedMainWindowState | undefined) {
+async function resolveMainWindowStateForLaunch(persisted: PersistedMainWindowState | undefined): Promise<ResolvedMainWindowState> {
   const displays = screen.getAllDisplays();
+  const requestedTestDisplayId = process.env.ZEUS_TEST_DISPLAY_ID;
+  if (isTestDistribution() && requestedTestDisplayId !== undefined) {
+    const placement = resolveTestDisplayPlacement({
+      requestedDisplayId: requestedTestDisplayId,
+      displays,
+      primaryDisplayId: screen.getPrimaryDisplay().id,
+      preferredSize: persisted?.bounds ?? defaultMainWindowSize,
+      minimumSize: minimumMainWindowSize,
+    });
+    return {
+      bounds: placement.bounds,
+      isMaximized: false,
+      isFullScreen: false,
+      targetDisplayId: placement.targetDisplayId,
+      matchedSavedDisplay: false,
+      matchKind: 'first-launch',
+    };
+  }
   if (persisted && !findSavedWindowDisplay(persisted, displays)) {
     await waitForSavedWindowDisplay({
       persisted,
@@ -881,9 +970,16 @@ async function openSettingsFromMenuBarUsage(category: 'usage' | 'runtime'): Prom
 
 /** 从 macOS 原生菜单触发真实更新检查；结果、预取和重启决策全部留在非阻断原生窗口。 */
 async function checkForUpdatesFromMenu(): Promise<void> {
-  await requestMainWindow();
-  if (fatalStartup) return;
-  await homebrewUpdateController?.showOrCheck();
+  const envelope = createSystemMainCommandEnvelope('desktop.automatic_update.menu_check', 'desktop-update');
+  await activeMainCommandLedger().execute({ envelope, body: null }, 'desktop.automatic_update.menu_check', async (_body, command) => {
+    await requestMainWindow();
+    if (fatalStartup) throw new Error('Zeus 启动失败，无法检查更新。');
+    if (!homebrewUpdateController) throw new Error('Zeus 更新控制器尚未就绪。');
+    await command.markWriteStarted();
+    await homebrewUpdateController.showOrCheck();
+    return { opened: true, externalOperationId: command.externalOperationId };
+  });
+  if (upgradeHandoffRequested) setImmediate(() => app.quit());
 }
 
 /** 打开本机日志目录；长日志和导出文件留在用户 Mac 上，不发送到远端渠道。 */
@@ -974,7 +1070,7 @@ async function loadProjectIdentity(projectId: string): Promise<ProjectGitProject
 
 async function loadZentaoExtractServices(): Promise<ZentaoExtractServices | undefined> {
   if (!localServerRuntime) return undefined;
-  const secretStore = createMacOSKeychainStore();
+  const secretStore = createMacOSKeychainStore({ service: activeDesktopKeychainService() });
   return {
     loadInstances: async () => {
       if (!localServerRuntime) return [];
@@ -1013,9 +1109,12 @@ function auditProjectSourceStructure(action: 'create' | 'move' | 'trash', projec
 
 function setupIpc(): void {
   ipcMain.handle('zeus:conversation-store-migration:get-status', () => readUnifiedConversationStoreMigrationStatus(activeZeusDataLayout()));
-  ipcMain.handle('zeus:conversation-store-migration:retry', async () => {
-    const { prepareDesktopConversationStoreMigration } = await import('./localServerRuntime.js');
-    const status = await prepareDesktopConversationStoreMigration(activeZeusDataLayout().root, activeZeusDataLayout());
+  ipcMain.handle('zeus:conversation-store-migration:retry', async (_event, request: MainCommandRequest) => {
+    const status = await activeMainCommandLedger().execute(request, 'desktop.conversation_store_migration.retry', async (_body, command) => {
+      const { prepareDesktopConversationStoreMigration } = await import('./localServerRuntime.js');
+      await command.markWriteStarted();
+      return prepareDesktopConversationStoreMigration(activeZeusDataLayout().root, zeusDataRootHostIdentity(activeDataRootIdentity()), activeZeusDataLayout());
+    });
     if (status.phase === 'completed' || status.phase === 'not_required') {
       app.relaunch();
       app.exit(0);
@@ -1028,9 +1127,108 @@ function setupIpc(): void {
     return shell.showItemInFolder(status.diagnosticPath);
   });
   ipcMain.handle('zeus:conversation-store-migration:exit', () => app.quit());
+  ipcMain.handle('zeus:execution-host-maintenance:get-status', async () => {
+    await rendererStartupDisposition;
+    return executionHostMaintenance;
+  });
+  ipcMain.handle('zeus:execution-host-maintenance:retry', (event) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !isTrustedZeusRendererWindow(requestingWindow) || !executionHostMaintenance) {
+      throw new Error('执行宿主维护重试来自不受信任窗口或当前不在维护模式。');
+    }
+    app.relaunch();
+    app.exit(0);
+  });
+  ipcMain.handle('zeus:execution-host-maintenance:exit', (event) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !isTrustedZeusRendererWindow(requestingWindow) || !executionHostMaintenance) {
+      throw new Error('执行宿主维护退出来自不受信任窗口或当前不在维护模式。');
+    }
+    app.quit();
+  });
   ipcMain.handle('zeus:get-local-server-config', async () => {
     const runtime = localServerRuntime ?? (await rendererRuntimeReady);
     return runtime.refreshConfig();
+  });
+  ipcMain.handle('zeus:storage-recovery:preflight-and-restart', async (event, request: MainCommandRequest) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !isTrustedZeusRendererWindow(requestingWindow)) {
+      throw new Error('存储恢复请求来自不受信任的 Zeus 窗口。');
+    }
+    try {
+      return await activeMainCommandLedger().execute(request, 'desktop.storage_recovery.preflight_restart', async (_body, command) => {
+        if (storageRecoveryRestart.isRequested()) throw new Error('Zeus Core 恢复重启已经安排。');
+        const runtime = localServerRuntime ?? (await rendererRuntimeReady);
+        const config = await runtime.refreshConfig();
+        await command.markWriteStarted();
+        const response = await fetch(`${config.baseUrl}/api/diagnostics/storage/recovery-preflight`, {
+          method: 'POST',
+          headers: {
+            accept: 'application/json',
+            authorization: `Bearer ${config.apiToken}`,
+          },
+        });
+        const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+        if (!response.ok) {
+          throw new Error(typeof payload.message === 'string' ? payload.message : `存储恢复预检失败（HTTP ${response.status}）。`);
+        }
+        const artifacts = payload.artifacts && typeof payload.artifacts === 'object' && !Array.isArray(payload.artifacts) ? (payload.artifacts as Record<string, unknown>) : null;
+        const eligible =
+          payload.eligibleForCoreRestart === true &&
+          payload.coreRestartRequired === true &&
+          payload.transactionRolledBack === true &&
+          payload.quickCheck === 'ok' &&
+          payload.walCheckpoint === 'ok' &&
+          payload.foreignKeyCheck === 'ok' &&
+          payload.commandLedgerCheck === 'ok' &&
+          payload.commandLedgerViolations === 0 &&
+          typeof payload.preparedCommands === 'number' &&
+          Number.isSafeInteger(payload.preparedCommands) &&
+          payload.preparedCommands >= 0 &&
+          typeof payload.providerWritesAwaitingReconciliation === 'number' &&
+          Number.isSafeInteger(payload.providerWritesAwaitingReconciliation) &&
+          payload.providerWritesAwaitingReconciliation >= 0 &&
+          typeof payload.recoveryRequiredCommands === 'number' &&
+          Number.isSafeInteger(payload.recoveryRequiredCommands) &&
+          payload.recoveryRequiredCommands >= 0 &&
+          artifacts?.stagingWrite === 'ok' &&
+          artifacts.freeSpace === 'ok' &&
+          artifacts.eligibleForCoreRestart === true &&
+          typeof payload.faultId === 'string' &&
+          payload.faultId.length > 0 &&
+          typeof payload.checkedAt === 'string';
+        if (!eligible) {
+          throw new Error('存储恢复预检未全部通过；Zeus 将继续保持只读，不会退出或重启 Core。');
+        }
+        storageRecoveryRestart.request();
+        return {
+          faultId: payload.faultId,
+          transactionRolledBack: true as const,
+          quickCheck: 'ok' as const,
+          walCheckpoint: 'ok' as const,
+          foreignKeyCheck: 'ok' as const,
+          commandLedgerCheck: 'ok' as const,
+          commandLedgerViolations: 0 as const,
+          preparedCommands: payload.preparedCommands as number,
+          providerWritesAwaitingReconciliation: payload.providerWritesAwaitingReconciliation as number,
+          recoveryRequiredCommands: payload.recoveryRequiredCommands as number,
+          artifactStagingWrite: 'ok' as const,
+          artifactFreeSpace: 'ok' as const,
+          eligibleForCoreRestart: true as const,
+          coreRestartRequired: true as const,
+          checkedAt: payload.checkedAt,
+          restartScheduled: true as const,
+        };
+      });
+    } finally {
+      // 预检一旦通过，即使 Main receipt 的最后一次持久化再次失败，也不能留下“已安排但没有 timer”的假状态。
+      storageRecoveryRestart.ensureScheduled(() => {
+        setTimeout(() => {
+          app.relaunch();
+          app.quit();
+        }, 0);
+      });
+    }
   });
   ipcMain.handle('zeus:task-git-delivery:open', async (event, input: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
@@ -1082,13 +1280,17 @@ function setupIpc(): void {
     }
     return requireProjectGitWorkbench(event).loadComparison(candidate.projectId, candidate.repositoryId, candidate.ref, candidate.mode);
   });
-  ipcMain.handle('zeus:project-git:execute-action', (event, input: unknown) => {
-    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('项目 Git 动作请求无效。');
-    const candidate = input as Record<string, unknown>;
-    if (typeof candidate.projectId !== 'string' || typeof candidate.repositoryId !== 'string' || !candidate.action || typeof candidate.action !== 'object' || Array.isArray(candidate.action)) {
-      throw new TypeError('项目 Git 动作请求身份无效。');
-    }
-    return requireProjectGitWorkbench(event).execute(candidate.projectId, candidate.repositoryId, candidate.action);
+  ipcMain.handle('zeus:project-git:execute-action', (event, request: MainCommandRequest) => {
+    const workbench = requireProjectGitWorkbench(event);
+    return activeMainCommandLedger().execute(request, 'desktop.project_git.execute_action', async (input, command) => {
+      if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('项目 Git 动作请求无效。');
+      const candidate = input as Record<string, unknown>;
+      if (typeof candidate.projectId !== 'string' || typeof candidate.repositoryId !== 'string' || !candidate.action || typeof candidate.action !== 'object' || Array.isArray(candidate.action)) {
+        throw new TypeError('项目 Git 动作请求身份无效。');
+      }
+      await command.markWriteStarted();
+      return workbench.execute(candidate.projectId, candidate.repositoryId, candidate.action);
+    });
   });
   ipcMain.handle('zeus:task-git-delivery:close', (event) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
@@ -1167,33 +1369,49 @@ function setupIpc(): void {
     if (typeof input?.projectId !== 'string' || typeof input.relativePath !== 'string') throw new TypeError('项目源码读取请求无效。');
     return service.readFile(input.projectId, input.relativePath);
   });
-  ipcMain.handle('zeus:project-source:save-file', (event, input: SaveProjectSourceFileInput) => {
-    if (!input || typeof input.projectId !== 'string' || typeof input.relativePath !== 'string' || typeof input.content !== 'string' || !input.expectedRevision || typeof input.expectedRevision.sha256 !== 'string') {
-      throw new TypeError('项目源码保存请求无效。');
-    }
-    return requireProjectSourceWorkspace(event).saveFile(input);
+  ipcMain.handle('zeus:project-source:save-file', (event, request: MainCommandRequest<SaveProjectSourceFileInput>) => {
+    const workspace = requireProjectSourceWorkspace(event);
+    return activeMainCommandLedger().execute(request, 'desktop.project_source.save_file', async (input, command) => {
+      if (!input || typeof input.projectId !== 'string' || typeof input.relativePath !== 'string' || typeof input.content !== 'string' || !input.expectedRevision || typeof input.expectedRevision.sha256 !== 'string') {
+        throw new TypeError('项目源码保存请求无效。');
+      }
+      await command.markWriteStarted();
+      return workspace.saveFile(input);
+    });
   });
-  ipcMain.handle('zeus:project-source:create-entry', async (event, input: CreateProjectSourceEntryInput) => {
-    if (!input || typeof input.projectId !== 'string' || typeof input.parentRelativePath !== 'string' || typeof input.name !== 'string' || (input.kind !== 'file' && input.kind !== 'directory')) {
-      throw new TypeError('项目源码新建请求无效。');
-    }
-    const entry = await requireProjectSourceWorkspace(event).createEntry(input);
-    auditProjectSourceStructure('create', input.projectId, entry.relativePath);
-    return entry;
+  ipcMain.handle('zeus:project-source:create-entry', async (event, request: MainCommandRequest<CreateProjectSourceEntryInput>) => {
+    const workspace = requireProjectSourceWorkspace(event);
+    return activeMainCommandLedger().execute(request, 'desktop.project_source.create_entry', async (input, command) => {
+      if (!input || typeof input.projectId !== 'string' || typeof input.parentRelativePath !== 'string' || typeof input.name !== 'string' || (input.kind !== 'file' && input.kind !== 'directory')) {
+        throw new TypeError('项目源码新建请求无效。');
+      }
+      await command.markWriteStarted();
+      const entry = await workspace.createEntry(input);
+      auditProjectSourceStructure('create', input.projectId, entry.relativePath);
+      return entry;
+    });
   });
-  ipcMain.handle('zeus:project-source:move-entry', async (event, input: MoveProjectSourceEntryInput) => {
-    if (!input || typeof input.projectId !== 'string' || typeof input.relativePath !== 'string' || typeof input.targetParentRelativePath !== 'string' || typeof input.targetName !== 'string') {
-      throw new TypeError('项目源码移动请求无效。');
-    }
-    const entry = await requireProjectSourceWorkspace(event).moveEntry(input);
-    auditProjectSourceStructure('move', input.projectId, input.relativePath, entry.relativePath);
-    return entry;
+  ipcMain.handle('zeus:project-source:move-entry', async (event, request: MainCommandRequest<MoveProjectSourceEntryInput>) => {
+    const workspace = requireProjectSourceWorkspace(event);
+    return activeMainCommandLedger().execute(request, 'desktop.project_source.move_entry', async (input, command) => {
+      if (!input || typeof input.projectId !== 'string' || typeof input.relativePath !== 'string' || typeof input.targetParentRelativePath !== 'string' || typeof input.targetName !== 'string') {
+        throw new TypeError('项目源码移动请求无效。');
+      }
+      await command.markWriteStarted();
+      const entry = await workspace.moveEntry(input);
+      auditProjectSourceStructure('move', input.projectId, input.relativePath, entry.relativePath);
+      return entry;
+    });
   });
-  ipcMain.handle('zeus:project-source:trash-entry', async (event, input: TrashProjectSourceEntryInput) => {
-    if (!input || typeof input.projectId !== 'string' || typeof input.relativePath !== 'string') throw new TypeError('项目源码删除请求无效。');
-    const result = await requireProjectSourceWorkspace(event).trashEntry(input.projectId, input.relativePath);
-    auditProjectSourceStructure('trash', input.projectId, input.relativePath);
-    return result;
+  ipcMain.handle('zeus:project-source:trash-entry', async (event, request: MainCommandRequest<TrashProjectSourceEntryInput>) => {
+    const workspace = requireProjectSourceWorkspace(event);
+    return activeMainCommandLedger().execute(request, 'desktop.project_source.trash_entry', async (input, command) => {
+      if (!input || typeof input.projectId !== 'string' || typeof input.relativePath !== 'string') throw new TypeError('项目源码删除请求无效。');
+      await command.markWriteStarted();
+      const result = await workspace.trashEntry(input.projectId, input.relativePath);
+      auditProjectSourceStructure('trash', input.projectId, input.relativePath);
+      return result;
+    });
   });
   ipcMain.handle('zeus:project-source:reveal-entry', async (event, input: { projectId?: unknown; relativePath?: unknown }) => {
     const service = requireProjectSourceWorkspace(event);
@@ -1361,13 +1579,17 @@ function setupIpc(): void {
     revealMainWindow(requestingWindow);
     return { activated: true };
   });
-  ipcMain.handle('zeus:release:download-update', (event) => {
+  ipcMain.handle('zeus:release:download-update', (event, request: MainCommandRequest) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('Release update request came from an untrusted window.');
     if (!releaseUpdateService) throw new Error('Zeus release update service is not ready.');
-    return releaseUpdateService.download();
+    const service = releaseUpdateService;
+    return activeMainCommandLedger().execute(request, 'desktop.release.download_update', async (_body, command) => {
+      await command.markWriteStarted();
+      return service.download();
+    });
   });
-  ipcMain.handle('zeus:release:install-update', (event) => {
+  ipcMain.handle('zeus:release:install-update', async (event, request: MainCommandRequest) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('Release update request came from an untrusted window.');
     if (!releaseUpdateService) throw new Error('Zeus release update service is not ready.');
@@ -1377,24 +1599,42 @@ function setupIpc(): void {
     if ([...sensitiveRequestDraftIdsByWindow.values()].some((requestIds) => requestIds.size > 0)) {
       throw new Error('存在尚未提交的敏感回答。请先提交或清空敏感内容，再安装更新。');
     }
-    return releaseUpdateService.install();
+    const service = releaseUpdateService;
+    const result = await activeMainCommandLedger().execute(request, 'desktop.release.install_update', async (_body, command) => {
+      await command.markWriteStarted();
+      return service.install();
+    });
+    if (result.accepted && upgradeHandoffRequested) setImmediate(() => app.quit());
+    return result;
   });
   ipcMain.handle('zeus:automatic-update-indicator:get', (event) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('Automatic update status request came from an untrusted window.');
     return automaticUpdateIndicatorState ?? homebrewUpdateController?.getIndicatorState() ?? null;
   });
-  ipcMain.handle('zeus:automatic-update-indicator:open', async (event) => {
+  ipcMain.handle('zeus:automatic-update-indicator:open', async (event, request: MainCommandRequest) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('Automatic update open request came from an untrusted window.');
-    await homebrewUpdateController?.showOrCheck();
-    return { opened: Boolean(homebrewUpdateController) };
+    const controller = homebrewUpdateController;
+    const result = await activeMainCommandLedger().execute(request, 'desktop.automatic_update.open', async (_body, command) => {
+      if (!controller) throw new Error('Automatic update controller is unavailable.');
+      await command.markWriteStarted();
+      await controller.showOrCheck();
+      return { opened: true, externalOperationId: command.externalOperationId };
+    });
+    if (upgradeHandoffRequested) setImmediate(() => app.quit());
+    return result;
   });
-  ipcMain.handle('zeus:automatic-update-indicator:record-manual-check', (event) => {
+  ipcMain.handle('zeus:automatic-update-indicator:record-manual-check', (event, request: MainCommandRequest) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('Automatic update scheduling request came from an untrusted window.');
-    automaticUpdateScheduler?.recordCheckCompleted();
-    return { recorded: Boolean(automaticUpdateScheduler) };
+    const scheduler = automaticUpdateScheduler;
+    return activeMainCommandLedger().execute(request, 'desktop.automatic_update.record_manual_check', async (_body, command) => {
+      if (!scheduler) throw new Error('Automatic update scheduler is unavailable.');
+      await command.markWriteStarted();
+      scheduler.recordCheckCompleted();
+      return { recorded: true };
+    });
   });
   ipcMain.handle('zeus:conversation-resource:list-open-targets', (event, request: ConversationResourceRequest) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
@@ -1454,6 +1694,13 @@ function setupIpc(): void {
       }),
     ),
   );
+  ipcMain.handle('zeus:choose-recovery-backup-destinations', (event) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) {
+      throw new Error('恢复包目的地选择请求来自不受信任窗口。');
+    }
+    return recoveryBackupDestinationPort.chooseExactlyTwoDirectories(requestingWindow);
+  });
   ipcMain.handle('zeus:reveal-project-in-finder', (event, projectPath: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) {
@@ -1482,20 +1729,28 @@ function setupIpc(): void {
     const normalizedSource: ConversationInputResourceSource = source === 'drop' ? 'drop' : 'paste';
     return conversationInputResources.describePaths(filePaths, normalizedSource);
   });
-  ipcMain.handle('zeus:materialize-conversation-resources', async (event, payloads: unknown) => {
+  ipcMain.handle('zeus:materialize-conversation-resources', async (event, request: MainCommandRequest) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || !conversationInputResources) {
       throw new Error('Conversation resource materialization is unavailable for this window.');
     }
-    const normalized = Array.isArray(payloads) ? payloads.filter((payload): payload is ConversationResourcePayload => Boolean(payload) && typeof payload === 'object' && !Array.isArray(payload)) : [];
-    return conversationInputResources.materialize(normalized);
+    const broker = conversationInputResources;
+    return activeMainCommandLedger().execute(request, 'desktop.conversation_resources.materialize', async (payloads, command) => {
+      const normalized = Array.isArray(payloads) ? payloads.filter((payload): payload is ConversationResourcePayload => Boolean(payload) && typeof payload === 'object' && !Array.isArray(payload)) : [];
+      await command.markWriteStarted();
+      return broker.materialize(normalized, command.envelope.commandId);
+    });
   });
-  ipcMain.handle('zeus:read-conversation-clipboard-resources', async (event) => {
+  ipcMain.handle('zeus:read-conversation-clipboard-resources', async (event, request: MainCommandRequest) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || !conversationInputResources) {
       throw new Error('Conversation clipboard access is unavailable for this window.');
     }
-    return conversationInputResources.readClipboard();
+    const broker = conversationInputResources;
+    return activeMainCommandLedger().execute(request, 'desktop.conversation_resources.read_clipboard', async (_body, command) => {
+      await command.markWriteStarted();
+      return broker.readClipboard(command.envelope.commandId);
+    });
   });
   ipcMain.handle('zeus:get-conversation-resource-preview', async (event, resource: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
@@ -1520,33 +1775,67 @@ function setupIpc(): void {
       return { opened: false, error: error instanceof Error ? error.message : 'open_conversation_input_resource_failed' };
     }
   });
-  ipcMain.handle('zeus:discard-conversation-resources', async (event, resources: unknown) => {
+  ipcMain.handle('zeus:discard-conversation-resources', async (event, request: MainCommandRequest) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || !conversationInputResources) {
       throw new Error('Conversation resource cleanup is unavailable for this window.');
     }
-    const records = Array.isArray(resources) ? resources.flatMap((resource) => (resource && typeof resource === 'object' && !Array.isArray(resource) ? [resource as { localPath?: string; uploadRef?: string }] : [])) : [];
-    return conversationInputResources.discard(records);
-  });
-  ipcMain.handle('zeus:choose-task-attachments', async () => {
-    const selected = await dialog.showOpenDialog({
-      title: '选择文件或文件夹',
-      properties: ['openFile', 'openDirectory', 'multiSelections'],
+    const broker = conversationInputResources;
+    return activeMainCommandLedger().execute(request, 'desktop.conversation_resources.discard', async (resources, command) => {
+      const records = Array.isArray(resources) ? resources.flatMap((resource) => (resource && typeof resource === 'object' && !Array.isArray(resource) ? [resource as { localPath?: string; uploadRef?: string }] : [])) : [];
+      await command.markWriteStarted();
+      return broker.discard(records);
     });
-    if (selected.canceled) return [];
-    const resources = await saveTaskResourcePaths(selected.filePaths);
-    if (selected.filePaths.length > 0 && resources.length === 0) {
-      throw new Error('No selected task resources could be copied into Zeus storage.');
-    }
-    return resources;
   });
-  ipcMain.handle('zeus:store-task-resource-paths', (_event, paths: unknown) => saveTaskResourcePaths(Array.isArray(paths) ? paths.filter((path): path is string => typeof path === 'string') : []));
-  ipcMain.handle('zeus:materialize-task-resources', (_event, resources: unknown) => saveTaskAttachmentPayloads(Array.isArray(resources) ? (resources as TaskResourcePayload[]) : []));
-  ipcMain.handle('zeus:read-task-clipboard-resources', () => readTaskClipboardResourcesFromNativeClipboard());
+  ipcMain.handle('zeus:choose-task-attachments', async (event, request: MainCommandRequest) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('任务附件选择来自不受信任窗口。');
+    return activeMainCommandLedger().execute(request, 'desktop.task_resources.choose', async (_body, command) => {
+      await command.markWriteStarted();
+      const selected = await dialog.showOpenDialog(requestingWindow, {
+        title: '选择文件或文件夹',
+        properties: ['openFile', 'openDirectory', 'multiSelections'],
+      });
+      if (selected.canceled) return [];
+      const resources = await saveTaskResourcePaths(selected.filePaths, command.envelope.commandId);
+      if (selected.filePaths.length > 0 && resources.length === 0) {
+        throw new Error('No selected task resources could be copied into Zeus storage.');
+      }
+      return resources;
+    });
+  });
+  ipcMain.handle('zeus:store-task-resource-paths', (event, request: MainCommandRequest) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('任务附件存储来自不受信任窗口。');
+    return activeMainCommandLedger().execute(request, 'desktop.task_resources.store_paths', async (paths, command) => {
+      await command.markWriteStarted();
+      return saveTaskResourcePaths(Array.isArray(paths) ? paths.filter((path): path is string => typeof path === 'string') : [], command.envelope.commandId);
+    });
+  });
+  ipcMain.handle('zeus:materialize-task-resources', (event, request: MainCommandRequest) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('任务附件物化来自不受信任窗口。');
+    return activeMainCommandLedger().execute(request, 'desktop.task_resources.materialize', async (resources, command) => {
+      await command.markWriteStarted();
+      return saveTaskAttachmentPayloads(Array.isArray(resources) ? (resources as TaskResourcePayload[]) : [], command.envelope.commandId);
+    });
+  });
+  ipcMain.handle('zeus:read-task-clipboard-resources', (event) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('任务剪贴板读取来自不受信任窗口。');
+    return readTaskClipboardResourcesFromNativeClipboard();
+  });
   ipcMain.handle('zeus:read-task-clipboard-attachments', () => readTaskClipboardAttachmentsFromNativeClipboard());
-  ipcMain.handle('zeus:save-task-clipboard-attachments', async () => {
-    const result = await readTaskClipboardResourcesFromNativeClipboard();
-    return result.resources;
+  ipcMain.handle('zeus:save-task-clipboard-attachments', async (event, request: MainCommandRequest) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('任务剪贴板存储来自不受信任窗口。');
+    return activeMainCommandLedger().execute(request, 'desktop.task_resources.save_clipboard', async (_body, command) => {
+      const result = await readTaskClipboardResourcesFromNativeClipboard();
+      await command.markWriteStarted();
+      if (result.paths.length > 0) return saveTaskResourcePaths(result.paths, command.envelope.commandId);
+      if (result.attachments.length > 0) return saveTaskAttachmentPayloads(result.attachments, command.envelope.commandId);
+      return [];
+    });
   });
   ipcMain.handle('zeus:write-clipboard-text', (_event, text: unknown) => {
     if (typeof text !== 'string') throw new TypeError('Clipboard text must be a string.');
@@ -1557,8 +1846,13 @@ function setupIpc(): void {
     const [firstAttachment] = await readTaskClipboardAttachmentsFromNativeClipboard();
     return firstAttachment ?? null;
   });
-  ipcMain.handle('zeus:save-task-pasted-attachments', async (_event, attachments: TaskResourcePayload[]) => {
-    return saveTaskAttachmentPayloads(Array.isArray(attachments) ? attachments : []);
+  ipcMain.handle('zeus:save-task-pasted-attachments', async (event, request: MainCommandRequest<TaskResourcePayload[]>) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('任务粘贴附件存储来自不受信任窗口。');
+    return activeMainCommandLedger().execute(request, 'desktop.task_resources.save_pasted', async (attachments, command) => {
+      await command.markWriteStarted();
+      return saveTaskAttachmentPayloads(Array.isArray(attachments) ? attachments : [], command.envelope.commandId);
+    });
   });
   ipcMain.handle('zeus:get-task-attachment-preview', (_event, path: string) => loadSavedTaskAttachmentPreview(path));
   ipcMain.handle('zeus:open-task-attachment', (_event, path: string) => openSavedTaskAttachment(path));
@@ -1885,6 +2179,12 @@ type TaskResourcePayload = {
   kind?: TaskStoredResourceKind;
 };
 
+type TaskClipboardResourceRead = {
+  paths: string[];
+  attachments: TaskResourcePayload[];
+  text: string;
+};
+
 const maximumTaskResourceCount = 100;
 const maximumTaskResourceBytes = 100 * 1024 * 1024;
 const maximumTaskResourceBatchBytes = 256 * 1024 * 1024;
@@ -1928,7 +2228,7 @@ function readTaskClipboardAttachmentsFromNativeClipboard(): Promise<TaskClipboar
   );
 }
 
-async function readTaskClipboardResourcesFromNativeClipboard(): Promise<{ resources: TaskStoredResource[]; text: string }> {
+async function readTaskClipboardResourcesFromNativeClipboard(): Promise<TaskClipboardResourceRead> {
   const clipboardReader = {
     readImage: () => clipboard.readImage(),
     availableFormats: () => clipboard.availableFormats(),
@@ -1939,11 +2239,11 @@ async function readTaskClipboardResourcesFromNativeClipboard(): Promise<{ resour
   const readOptions = { readSystemFileReferences: readMacOSClipboardFileReferences };
   const referencedPaths = await readTaskClipboardFileReferencesFromClipboard(clipboardReader, readOptions);
   if (referencedPaths.length > 0) {
-    return { resources: await saveTaskResourcePaths(referencedPaths), text: '' };
+    return { paths: referencedPaths, attachments: [], text: '' };
   }
   const attachments = await readTaskClipboardAttachmentsFromClipboard(clipboardReader, readOptions);
   if (attachments.length > 0) {
-    return { resources: await saveTaskAttachmentPayloads(attachments), text: '' };
+    return { paths: [], attachments, text: '' };
   }
   let text = '';
   try {
@@ -1953,11 +2253,12 @@ async function readTaskClipboardResourcesFromNativeClipboard(): Promise<{ resour
   }
   if (text.length >= taskLongPasteThreshold) {
     return {
-      resources: await saveTaskAttachmentPayloads([{ name: 'Pasted text.txt', type: 'text/plain', text, kind: 'pasted_text' }]),
+      paths: [],
+      attachments: [{ name: 'Pasted text.txt', type: 'text/plain', text, kind: 'pasted_text' }],
       text: '',
     };
   }
-  return { resources: [], text };
+  return { paths: [], attachments: [], text };
 }
 
 async function readMacOSClipboardFileReferences(): Promise<string[]> {
@@ -2005,14 +2306,101 @@ async function openSavedTaskAttachment(path: string): Promise<{ opened: boolean;
   }
 }
 
-async function saveTaskResourcePaths(paths: string[]): Promise<TaskStoredResource[]> {
+function taskCommandResourceKey(commandId: string): string {
+  if (typeof commandId !== 'string' || !commandId.trim() || commandId.length > 256 || commandId.includes('\0')) throw new TypeError('Task resource command identity is invalid.');
+  return `command-${createHash('sha256').update(commandId).digest('hex').slice(0, 24)}`;
+}
+
+async function syncFile(path: string): Promise<void> {
+  const handle = await open(path, 'r');
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+async function syncDirectory(path: string): Promise<void> {
+  const handle = await open(path, 'r');
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+async function publishTaskResourceFile(staging: string, destination: string, parentDirectory: string): Promise<void> {
+  // 同一目录 hard-link 发布是原子 no-replace；不会覆盖检查后被并发创建的目标。
+  await link(staging, destination);
+  await unlink(staging);
+  await syncDirectory(parentDirectory);
+}
+
+async function publishTaskResourceDirectory(staging: string, destination: string, parentDirectory: string): Promise<void> {
+  // Node 没有暴露 renameat2(RENAME_NOREPLACE)。以同目录 O_EXCL claim 串行化协作写者，
+  // 在 claim 内再次核对目标不存在，再原子 rename 发布完整目录树。
+  const claimPath = join(parentDirectory, `.${basename(destination)}.cas-lock`);
+  const claim = await open(claimPath, 'wx', 0o600);
+  try {
+    await claim.writeFile(`${basename(destination)}\n`);
+    await claim.sync();
+  } finally {
+    await claim.close();
+  }
+  await syncDirectory(parentDirectory);
+  try {
+    const destinationExists = await lstat(destination).then(
+      () => true,
+      (error: unknown) => {
+        if (error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+        throw error;
+      },
+    );
+    if (destinationExists) {
+      throw Object.assign(new Error('Task resource directory CAS destination already exists.'), { code: 'EEXIST' });
+    }
+    await rename(staging, destination);
+    await syncDirectory(parentDirectory);
+  } finally {
+    await unlink(claimPath).catch(() => undefined);
+    await syncDirectory(parentDirectory);
+  }
+}
+
+async function hardenAndSyncTaskResourceTree(root: string): Promise<void> {
+  const directories = [root];
+  const pending = [root];
+  while (pending.length > 0) {
+    const directory = pending.pop();
+    if (!directory) continue;
+    await chmod(directory, 0o700);
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      const entryStat = await lstat(path);
+      if (entryStat.isSymbolicLink()) throw new Error('Task attachment staging tree contains a symbolic link.');
+      if (entryStat.isDirectory()) {
+        directories.push(path);
+        pending.push(path);
+      } else if (entryStat.isFile()) {
+        await chmod(path, 0o600);
+        await syncFile(path);
+      } else {
+        throw new Error('Task attachment staging tree contains an unsupported entry.');
+      }
+    }
+  }
+  for (const directory of directories.reverse()) await syncDirectory(directory);
+}
+
+async function saveTaskResourcePaths(paths: string[], commandId: string): Promise<TaskStoredResource[]> {
   if (paths.length === 0) return [];
   const attachmentDirectory = taskAttachmentDirectory();
   await mkdir(attachmentDirectory, { recursive: true, mode: 0o700 });
+  const operationKey = taskCommandResourceKey(commandId);
   const resources: TaskStoredResource[] = [];
   const seen = new Set<string>();
   let batchBytes = 0;
-  for (const path of paths.slice(0, maximumTaskResourceCount)) {
+  for (const [index, path] of paths.slice(0, maximumTaskResourceCount).entries()) {
     if (typeof path !== 'string' || !isAbsolute(path) || path.includes('\0')) continue;
     try {
       const canonicalPath = await realpath(path);
@@ -2026,14 +2414,22 @@ async function saveTaskResourcePaths(paths: string[]): Promise<TaskStoredResourc
       }
       batchBytes += summary.bytes;
       const safeName = sanitizeTaskAttachmentFileName(basename(canonicalPath) || 'task-resource');
-      const destination = join(attachmentDirectory, `${Date.now()}-${randomUUID()}-${safeName}`);
+      const destination = join(attachmentDirectory, `${operationKey}-${index + 1}-${safeName}`);
+      const staging = join(attachmentDirectory, `.${basename(destination)}.${randomUUID()}.tmp`);
       if (sourceStat.isDirectory()) {
-        await cp(canonicalPath, destination, {
-          recursive: true,
-          errorOnExist: true,
-          force: false,
-          filter: async (source) => !(await lstat(source)).isSymbolicLink(),
-        });
+        try {
+          await cp(canonicalPath, staging, {
+            recursive: true,
+            errorOnExist: true,
+            force: false,
+            filter: async (source) => !(await lstat(source)).isSymbolicLink(),
+          });
+          await hardenAndSyncTaskResourceTree(staging);
+          await publishTaskResourceDirectory(staging, destination, attachmentDirectory);
+        } catch (error) {
+          await rm(staging, { recursive: true, force: true }).catch(() => undefined);
+          throw error;
+        }
         resources.push({
           path: destination,
           name: safeName,
@@ -2043,7 +2439,15 @@ async function saveTaskResourcePaths(paths: string[]): Promise<TaskStoredResourc
         });
         continue;
       }
-      await copyFile(canonicalPath, destination, fsConstants.COPYFILE_EXCL);
+      try {
+        await copyFile(canonicalPath, staging, fsConstants.COPYFILE_EXCL);
+        await chmod(staging, 0o600);
+        await syncFile(staging);
+        await publishTaskResourceFile(staging, destination, attachmentDirectory);
+      } catch (error) {
+        await unlink(staging).catch(() => undefined);
+        throw error;
+      }
       const mimeType = inferTaskClipboardAttachmentMimeType(destination);
       const kind = mimeType.startsWith('image/') || isImageAttachmentPath(destination) ? 'image' : 'file';
       const previewUrl = kind === 'image' && sourceStat.size <= maximumTaskResourceBytes ? buildTaskAttachmentPreviewDataUrl(await readFile(destination), mimeType) : undefined;
@@ -2084,10 +2488,11 @@ async function inspectTaskResourceTree(rootPath: string): Promise<{ bytes: numbe
   return { bytes, entries };
 }
 
-async function saveTaskAttachmentPayloads(attachments: TaskResourcePayload[]): Promise<TaskStoredResource[]> {
+async function saveTaskAttachmentPayloads(attachments: TaskResourcePayload[], commandId: string): Promise<TaskStoredResource[]> {
   if (attachments.length === 0) return [];
   const attachmentDirectory = taskAttachmentDirectory();
   await mkdir(attachmentDirectory, { recursive: true, mode: 0o700 });
+  const operationKey = taskCommandResourceKey(commandId);
   const savedAttachments: TaskStoredResource[] = [];
   let batchBytes = 0;
   for (const [index, attachment] of attachments.slice(0, maximumTaskResourceCount).entries()) {
@@ -2099,9 +2504,23 @@ async function saveTaskAttachmentPayloads(attachments: TaskResourcePayload[]): P
     }
     batchBytes += attachmentBuffer.byteLength;
     const safeName = sanitizeTaskAttachmentFileName(attachment.name || `pasted-task-attachment-${index + 1}`);
-    const filePath = join(attachmentDirectory, `${Date.now()}-${randomUUID()}-${safeName}`);
+    const contentHash = createHash('sha256').update(attachmentBuffer).digest('hex');
+    const filePath = join(attachmentDirectory, `${operationKey}-${index + 1}-${contentHash.slice(0, 16)}-${safeName}`);
+    const staging = join(attachmentDirectory, `.${basename(filePath)}.${randomUUID()}.tmp`);
     // 粘贴得到的是剪贴板二进制内容；Main 进程落到本机 userData 后，只把路径回传给任务上下文。
-    await writeFile(filePath, attachmentBuffer, { flag: 'wx', mode: 0o600 });
+    const handle = await open(staging, 'wx', 0o600);
+    try {
+      await handle.writeFile(attachmentBuffer);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    try {
+      await publishTaskResourceFile(staging, filePath, attachmentDirectory);
+    } catch (error) {
+      await unlink(staging).catch(() => undefined);
+      throw error;
+    }
     const mimeType = attachment.type || inferTaskClipboardAttachmentMimeType(filePath);
     const pastedText = text !== undefined || attachment.kind === 'pasted_text';
     const kind: TaskStoredResourceKind = pastedText ? 'pasted_text' : mimeType.startsWith('image/') || isImageAttachmentPath(filePath) ? 'image' : 'file';
@@ -2123,6 +2542,11 @@ async function initializeApplication(): Promise<void> {
   traceApplicationStartup('initialization_started');
   await app.whenReady();
   traceApplicationStartup('electron_ready');
+  if (readOnlyValidationDescriptor) {
+    await verifyDesktopReadOnlyValidationDescriptor(readOnlyValidationDescriptor);
+    installReadOnlyValidationIpcFence(ipcMain, readOnlyValidationDescriptor);
+    traceApplicationStartup('read_only_validation_verified');
+  }
   setupIpc();
   // 窗口与本地服务并行启动：HTML 启动界面先出现，Renderer 会等待真实服务配置后再挂载业务界面。
   const initialWindowPromise = createWindow();
@@ -2134,47 +2558,56 @@ async function initializeApplication(): Promise<void> {
     const browserAttachmentRoot = dataLayout.browserComments;
     const conversationAttachmentRoot = dataLayout.conversationAttachments;
     const conversationAttachmentGrantSecretPath = dataLayout.conversationAttachmentGrantSecret;
-    const conversationAttachmentGrantSecret = await readOrCreateConversationAttachmentGrantSecret(conversationAttachmentGrantSecretPath);
-    conversationInputResources = createConversationInputResourceBroker({
-      attachmentRoot: conversationAttachmentRoot,
-      grantSecret: conversationAttachmentGrantSecret,
-      clipboard: {
-        readImage: () => clipboard.readImage(),
-        availableFormats: () => clipboard.availableFormats(),
-        readBuffer: (format) => clipboard.readBuffer(format),
-        readText: () => clipboard.readText(),
-        readHTML: () => clipboard.readHTML(),
-      },
-      clipboardReadOptions: { readSystemFileReferences: readMacOSClipboardFileReferences },
-    });
+    const conversationAttachmentGrantSecret = readOnlyValidationDescriptor
+      ? createHash('sha256').update(`zeus-read-only-validation-grant:${readOnlyValidationDescriptor.runId}:${readOnlyValidationDescriptor.manifestHash}`).digest('base64url')
+      : await readOrCreateConversationAttachmentGrantSecret(conversationAttachmentGrantSecretPath);
+    if (!readOnlyValidationDescriptor) {
+      conversationInputResources = createConversationInputResourceBroker({
+        attachmentRoot: conversationAttachmentRoot,
+        grantSecret: conversationAttachmentGrantSecret,
+        clipboard: {
+          readImage: () => clipboard.readImage(),
+          availableFormats: () => clipboard.availableFormats(),
+          readBuffer: (format) => clipboard.readBuffer(format),
+          readText: () => clipboard.readText(),
+          readHTML: () => clipboard.readHTML(),
+        },
+        clipboardReadOptions: { readSystemFileReferences: readMacOSClipboardFileReferences },
+      });
+    }
     browserHost = createBrowserHost({
       statePath: dataLayout.browserState,
       preloadPath: join(desktopRoot(), 'dist/preload/browser-page.cjs'),
       attachmentRoot: browserAttachmentRoot,
       defaultDownloadDirectory: dataLayout.browserDownloads,
       openExternal: (url) => shell.openExternal(url),
+      mainCommandLedger: activeMainCommandLedger,
       legacySystemDownloadDirectory: app.getPath('downloads'),
+      readOnlyValidation: Boolean(readOnlyValidationDescriptor),
     });
     for (const window of windows) browserHost.registerWindow(window);
     browserHost.registerIpc();
     traceApplicationStartup('local_resources_ready');
-    const mainProjectRoot = resolveMainProjectRoot();
-    const codexNativeEnabled = process.env.ZEUS_CODEX_NATIVE_ENABLED !== '0';
-    const allowUntrustedReleaseUpdateTest = isTestDistribution() && process.env.ZEUS_ALLOW_UNTRUSTED_UPDATE_TEST === '1';
-    // Local Server、SQLite 与 Agent 调度直接由主进程持有，不再拉起同名 Zeus execution-host。
-    const { startEmbeddedDesktopLocalServer } = await import('./localServerRuntime.js');
+    const mainProjectRoot = readOnlyValidationDescriptor?.validationRoot ?? resolveMainProjectRoot();
+    const codexNativeEnabled = !readOnlyValidationDescriptor && process.env.ZEUS_CODEX_NATIVE_ENABLED !== '0';
+    const allowUntrustedReleaseUpdateTest = !readOnlyValidationDescriptor && isTestDistribution() && process.env.ZEUS_ALLOW_UNTRUSTED_UPDATE_TEST === '1';
+    const keychainService = activeDesktopKeychainService();
+    // Main 只持有窗口、BrowserHost 与短期连接凭据；独立 Zeus Core 是唯一业务 SQLite 写入者。
+    const { startDesktopLocalServer } = await import('./localServerRuntime.js');
     traceApplicationStartup('local_server_module_ready');
-    localServerRuntime = await startEmbeddedDesktopLocalServer({
+    localServerRuntime = await startDesktopLocalServer({
       userDataPath,
       dataLayout,
       projectRoot: mainProjectRoot,
+      dataRootIdentity: zeusDataRootHostIdentity(activeDataRootIdentity()),
       appVersion: app.getVersion(),
-      telegramToken: process.env.ZEUS_TELEGRAM_BOT_TOKEN,
-      telegramAllowedUserIds: parseTelegramAllowedUserIds(process.env.ZEUS_TELEGRAM_ALLOWED_USER_IDS),
+      keychainService,
+      telegramToken: readOnlyValidationDescriptor ? undefined : process.env.ZEUS_TELEGRAM_BOT_TOKEN,
+      telegramAllowedUserIds: readOnlyValidationDescriptor ? undefined : parseTelegramAllowedUserIds(process.env.ZEUS_TELEGRAM_ALLOWED_USER_IDS),
       codexNativeEnabled,
-      codexLegacyImportRoot: dataLayout.codexLegacyImports,
-      codexHome: dataLayout.codexHome,
-      codexConfigImportSourceRoot: join(homedir(), '.codex'),
+      codexLegacyImportRoot: readOnlyValidationDescriptor ? undefined : dataLayout.codexLegacyImports,
+      codexHome: readOnlyValidationDescriptor ? undefined : dataLayout.codexHome,
+      codexConfigImportSourceRoot: readOnlyValidationDescriptor ? undefined : join(homedir(), '.codex'),
       releaseUpdateManifestUrl: allowUntrustedReleaseUpdateTest ? process.env.ZEUS_RELEASE_UPDATE_MANIFEST_URL : undefined,
       allowUntrustedReleaseUpdateTest,
       taskAttachmentRoot: dataLayout.taskAttachments,
@@ -2183,9 +2616,10 @@ async function initializeApplication(): Promise<void> {
       conversationAttachmentGrantSecret,
       conversationAttachmentGrantSecretPath,
       browserAutomation: browserHost,
+      readOnlyValidation: readOnlyValidationDescriptor,
       onRestarted: () => {
         // 本地服务异常重启后，依赖旧 WebSocket 的系统通知桥必须重建，避免继续挂在旧端口。
-        applySystemNotificationBridge();
+        if (!readOnlyValidationDescriptor) applySystemNotificationBridge();
         for (const window of [...windows, ...taskGitDeliveryWindows.values()]) {
           if (window.isDestroyed() || window.webContents.isDestroyed()) continue;
           // 宿主端点完成交接后由 Main 刷新真实 BrowserWindow，避免 Renderer 自导航留下空白页。
@@ -2194,12 +2628,14 @@ async function initializeApplication(): Promise<void> {
       },
     });
     traceApplicationStartup('local_server_ready');
-    projectSourceWorkspace = new ProjectSourceWorkspaceService({
-      loadProjectRoot: loadProjectRootForSourceWorkspace,
-      trashItem: (path) => shell.trashItem(path),
-    });
-    projectGitWorkbench = new ProjectGitWorkbenchService(loadProjectIdentity);
-    if (app.isPackaged) {
+    if (!readOnlyValidationDescriptor) {
+      projectSourceWorkspace = new ProjectSourceWorkspaceService({
+        loadProjectRoot: loadProjectRootForSourceWorkspace,
+        trashItem: (path) => shell.trashItem(path),
+      });
+      projectGitWorkbench = new ProjectGitWorkbenchService(loadProjectIdentity);
+    }
+    if (app.isPackaged && !readOnlyValidationDescriptor) {
       releaseUpdateService = createReleaseUpdateService({
         userDataPath,
         currentAppPath: currentAppBundlePath(),
@@ -2215,7 +2651,6 @@ async function initializeApplication(): Promise<void> {
         onInstallReady: () => {
           upgradeHandoffRequested = true;
           taskTableLayoutQuitApproved = true;
-          setImmediate(() => app.quit());
         },
       });
       homebrewUpdateController = createHomebrewUpdateController({
@@ -2243,7 +2678,6 @@ async function initializeApplication(): Promise<void> {
         onInstallReady: () => {
           upgradeHandoffRequested = true;
           taskTableLayoutQuitApproved = true;
-          setImmediate(() => app.quit());
         },
       });
     }
@@ -2271,11 +2705,16 @@ async function initializeApplication(): Promise<void> {
       powerMonitor.on('resume', handleAutomaticUpdateResume);
     }
     traceApplicationStartup('update_scheduler_ready');
-    applyLoginItemSettings();
-    setupMenu();
-    setupTraySafely();
-    applySystemNotificationBridge();
+    if (!readOnlyValidationDescriptor) applyLoginItemSettings();
+    if (readOnlyValidationDescriptor) {
+      Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'Zeus Test · 只读验证', submenu: [{ role: 'quit' }] }]));
+    } else setupMenu();
+    if (!readOnlyValidationDescriptor) {
+      setupTraySafely();
+      applySystemNotificationBridge();
+    }
     resolveRendererRuntimeReady(localServerRuntime);
+    resolveRendererStartupDisposition();
     await initialWindowPromise;
     traceApplicationStartup('initialization_finished');
   } catch (error) {
@@ -2283,9 +2722,49 @@ async function initializeApplication(): Promise<void> {
       console.error('Zeus unified conversation store migration paused startup', error);
       return;
     }
+    const maintenance = normalizeExecutionHostMaintenanceStatus(error);
+    if (maintenance) {
+      executionHostMaintenance = maintenance;
+      resolveRendererStartupDisposition();
+      console.error('Zeus execution-host protocol is incompatible; startup entered maintenance mode', maintenance);
+      await initialWindowPromise;
+      traceApplicationStartup('execution_host_maintenance_ready');
+      return;
+    }
+    rejectRendererStartupDisposition(error);
     rejectRendererRuntimeReady(error);
     throw error;
   }
+}
+
+function normalizeExecutionHostMaintenanceStatus(error: unknown): ExecutionHostMaintenanceStatus | null {
+  if (!error || typeof error !== 'object' || Array.isArray(error)) return null;
+  const candidate = error as { code?: unknown; maintenance?: unknown };
+  const maintenanceCodes = new Set([
+    'ZEUS_EXECUTION_HOST_PROTOCOL_INCOMPATIBLE',
+    'ZEUS_EXECUTION_HOST_DATA_ROOT_IDENTITY_MISMATCH',
+    'ZEUS_EXECUTION_HOST_OWNER_METADATA_CONFLICT',
+    'ZEUS_EXECUTION_HOST_OWNER_UNCONFIRMED',
+    'ZEUS_EXECUTION_HOST_STARTUP_TIMEOUT',
+  ]);
+  if (typeof candidate.code !== 'string' || !maintenanceCodes.has(candidate.code) || !candidate.maintenance || typeof candidate.maintenance !== 'object' || Array.isArray(candidate.maintenance)) return null;
+  const maintenance = candidate.maintenance as Record<string, unknown>;
+  if (
+    typeof maintenance.code !== 'string' ||
+    !maintenanceCodes.has(maintenance.code) ||
+    !Number.isInteger(maintenance.currentProtocolVersion) ||
+    !(maintenance.hostProtocolVersion === null || Number.isInteger(maintenance.hostProtocolVersion)) ||
+    !(maintenance.hostAppVersion === null || (typeof maintenance.hostAppVersion === 'string' && Boolean(maintenance.hostAppVersion.trim()))) ||
+    !(maintenance.hostPid === null || (Number.isInteger(maintenance.hostPid) && Number(maintenance.hostPid) > 1)) ||
+    !(maintenance.hostGenerationId === null || (typeof maintenance.hostGenerationId === 'string' && Boolean(maintenance.hostGenerationId.trim()))) ||
+    !(maintenance.stage === null || (typeof maintenance.stage === 'string' && Boolean(maintenance.stage.trim()))) ||
+    typeof maintenance.detectedAt !== 'string' ||
+    !Number.isFinite(Date.parse(maintenance.detectedAt)) ||
+    typeof maintenance.message !== 'string' ||
+    !maintenance.message.trim()
+  )
+    return null;
+  return maintenance as unknown as ExecutionHostMaintenanceStatus;
 }
 
 function isConversationStoreMigrationError(error: unknown): boolean {
@@ -2330,6 +2809,9 @@ if (!hasSingleInstanceLock) {
 }
 
 async function resolveDesktopQuitMode(): Promise<'continue_in_background' | 'upgrade_handoff' | 'final_quit' | 'force_quit' | 'cancel'> {
+  // 只读验收副本不得使用正式数据投影中的历史活动计数阻塞退出。
+  if (readOnlyValidationDescriptor) return 'final_quit';
+  if (storageRecoveryRestart.isRequested()) return 'final_quit';
   if (upgradeHandoffRequested) return 'upgrade_handoff';
   const runtime = localServerRuntime;
   if (!runtime) return 'final_quit';
@@ -2337,23 +2819,28 @@ async function resolveDesktopQuitMode(): Promise<'continue_in_background' | 'upg
   try {
     status = await runtime.getStatus();
   } catch {
-    // 执行已收回主进程；状态不明时保持应用打开，不能再假装界面退出后任务仍会继续。
+    // 控制面状态不明时无法证明 Core 会继续运行，保持应用打开并等待监督恢复。
     return 'cancel';
   }
   if (!status.hasActiveWork) return 'final_quit';
+  const mayContinueInBackground = !isTestDistribution() && appShellSettings.backgroundModeEnabled;
   const options = {
     type: 'warning' as const,
     title: '仍有任务正在运行',
     message: '退出 Zeus 时如何处理正在运行的任务？',
     detail: `正在执行的轮次 ${status.activeTurnCount} 个，等待交互 ${status.waitingRequestCount} 个，其他 Runtime ${status.activeRuntimeCount} 个，命令执行 ${status.activeCommandRunCount} 个。`,
-    buttons: ['停止活动工作并退出', '取消'],
-    defaultId: 1,
-    cancelId: 1,
+    buttons: mayContinueInBackground ? ['关闭界面，任务继续运行', '停止活动工作并退出', '取消'] : ['停止活动工作并退出', '取消'],
+    defaultId: mayContinueInBackground ? 2 : 1,
+    cancelId: mayContinueInBackground ? 2 : 1,
     noLink: true,
   };
   const targetWindow = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
   const result = targetWindow ? await dialog.showMessageBox(targetWindow, options) : await dialog.showMessageBox(options);
-  if (result.response === 1) return 'cancel';
+  if (mayContinueInBackground && result.response === 0) return 'continue_in_background';
+  const stopResponse = mayContinueInBackground ? 1 : 0;
+  const cancelResponse = mayContinueInBackground ? 2 : 1;
+  if (result.response === cancelResponse) return 'cancel';
+  if (result.response !== stopResponse) return 'cancel';
   try {
     await runtime.stopActiveWork();
     return 'force_quit';
@@ -2377,26 +2864,78 @@ app.on(
       }
     },
     closeSystemNotifications: () => {
-      systemNotificationBridge?.close();
-      systemNotificationBridge = undefined;
+      const cleanupErrors: unknown[] = [];
+      try {
+        systemNotificationBridge?.close();
+        systemNotificationBridge = undefined;
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      try {
+        recoveryBackupDestinationPort.releaseAll();
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'Zeus 系统通知或恢复目的地资源未能完整关闭。');
     },
     resolveQuitMode: resolveDesktopQuitMode,
     closeLocalServer: async (mode) => {
-      automaticUpdateScheduler?.stop();
-      automaticUpdateScheduler = undefined;
-      powerMonitor.removeListener('resume', handleAutomaticUpdateResume);
-      if (mode !== 'upgrade_handoff') homebrewUpdateController?.close();
-      homebrewUpdateController = undefined;
-      await browserHost?.close();
-      browserHost = undefined;
+      const cleanupErrors: unknown[] = [];
+      const attemptCleanup = async (label: string, operation: () => void | Promise<void>): Promise<void> => {
+        try {
+          await operation();
+        } catch (error) {
+          cleanupErrors.push(Object.assign(new Error(`Zeus 退出清理失败：${label}`), { cause: error }));
+        }
+      };
+      await attemptCleanup('自动更新调度器', () => {
+        automaticUpdateScheduler?.stop();
+        automaticUpdateScheduler = undefined;
+      });
+      await attemptCleanup('电源监听器', () => {
+        powerMonitor.removeListener('resume', handleAutomaticUpdateResume);
+      });
+      await attemptCleanup('Homebrew 更新控制器', () => {
+        if (mode !== 'upgrade_handoff') homebrewUpdateController?.close();
+        homebrewUpdateController = undefined;
+      });
+      await attemptCleanup('内置浏览器宿主', async () => {
+        await browserHost?.close();
+        browserHost = undefined;
+      });
       conversationInputResources = undefined;
-      await localServerRuntime?.close(mode);
-      localServerRuntime = undefined;
-      if ((mode === 'final_quit' || mode === 'force_quit') && app.isPackaged) {
-        await cleanupStaleReleaseBackups(currentAppBundlePath()).catch((error: unknown) => {
-          console.warn('Zeus 未能在执行宿主关闭后清理旧 App 备份。', error);
+      // 即使任一前序 UI/平台资源清理失败，Detached Core 关闭也必须独立尝试。
+      await attemptCleanup('Detached Core', async () => {
+        await localServerRuntime?.close(mode);
+        localServerRuntime = undefined;
+      });
+      if (!readOnlyValidationDescriptor && (mode === 'final_quit' || mode === 'force_quit') && app.isPackaged) {
+        await attemptCleanup('旧 App 备份', async () => {
+          await cleanupStaleReleaseBackups(currentAppBundlePath());
         });
       }
+      if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'Zeus 退出时一个或多个资源未能完整关闭。');
+    },
+    onCleanupError: async (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      if (readOnlyValidationDescriptor) {
+        console.error('只读验收关闭失败；禁止以成功状态退出。', error);
+        dialog.showErrorBox('Zeus 只读验收关闭失败', `Core 或本机资源未能完整释放，本次验收将以失败状态退出。\n\n${message}`);
+        return 'force_quit';
+      }
+      const options = {
+        type: 'error' as const,
+        title: 'Zeus 安全退出失败',
+        message: '本地 Core 或本机资源尚未完整释放。',
+        detail: `${message}\n\n可重试安全退出；强制退出可能遗留运行中的 Core 或未完成收据。`,
+        buttons: ['重试安全退出', '强制退出'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      };
+      const targetWindow = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+      const result = targetWindow ? await dialog.showMessageBox(targetWindow, options) : await dialog.showMessageBox(options);
+      return result.response === 1 ? 'force_quit' : 'retry';
     },
     exitApp: (code) => app.exit(code),
   }),

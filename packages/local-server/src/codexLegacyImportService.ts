@@ -60,7 +60,6 @@ export function createCodexLegacyImportService(options: CreateCodexLegacyImportS
 
   async function detect(): Promise<CodexLegacyImportSnapshot> {
     assertOpen();
-    const canonicalSourceRoot = await ready();
     const allowedRoots = await canonicalAllowedRoots(typeof options.allowedProjectRoots === 'function' ? options.allowedProjectRoots() : options.allowedProjectRoots);
     const candidates = options.db.select<{ id: string; local_path: string }>(
       `SELECT conversations.id, projects.local_path
@@ -75,11 +74,9 @@ export function createCodexLegacyImportService(options: CreateCodexLegacyImportS
       if (!conversation || !conversation.messages.some((message) => message.role === 'user' && message.content.trim().length > 0)) continue;
       const cwd = await canonicalEligibleProjectRoot(candidate.local_path, allowedRoots);
       if (!cwd) continue;
-      const snapshot = await writeConversationSnapshot(canonicalSourceRoot, cwd, conversation);
+      const snapshot = renderConversationSnapshot(resolve(options.sourceRoot), cwd, conversation);
       eligible.push({ sourceConversationId: conversation.id, title: conversation.title, cwd, ...snapshot });
     }
-    const cwds = [...new Set(eligible.map((entry) => entry.cwd))].sort();
-    await options.manager.detectExternalAgentConfig({ includeHome: true, cwds });
     return {
       eligible,
       runs: options.imports.listRecent(),
@@ -104,8 +101,18 @@ export function createCodexLegacyImportService(options: CreateCodexLegacyImportS
     if (sourceConversationIds.some((id) => !eligibleById.has(id))) {
       throw importError('ZEUS_CODEX_LEGACY_IMPORT_SOURCE_INELIGIBLE', 'Every selected legacy conversation must be eligible for import.');
     }
+    const canonicalSourceRoot = await ready();
+    const materializedById = new Map<string, CodexLegacyImportEligibleSession>();
+    for (const sourceConversationId of sourceConversationIds) {
+      const eligible = eligibleById.get(sourceConversationId)!;
+      const conversation = options.conversations.getById(sourceConversationId);
+      if (!conversation) throw importError('ZEUS_CODEX_LEGACY_IMPORT_SOURCE_INELIGIBLE', 'Selected legacy conversation no longer exists.');
+      const snapshot = await writeConversationSnapshot(canonicalSourceRoot, eligible.cwd, conversation);
+      materializedById.set(sourceConversationId, { ...eligible, ...snapshot });
+    }
+    await options.manager.detectExternalAgentConfig({ includeHome: true, cwds: [...new Set([...materializedById.values()].map((entry) => entry.cwd))].sort() });
     const runs = sourceConversationIds.map((id) => {
-      const eligible = eligibleById.get(id)!;
+      const eligible = materializedById.get(id)!;
       const run = options.imports.createRun({
         sourceConversationId: id,
         snapshotPath: eligible.snapshotPath,
@@ -118,7 +125,7 @@ export function createCodexLegacyImportService(options: CreateCodexLegacyImportS
     if (alreadyStartedIds.length === 1 && runs.every((run) => run.status !== 'prepared')) return buildResult(alreadyStartedIds[0]!);
     if (runs.some((run) => run.status !== 'prepared')) throw importError('ZEUS_CODEX_LEGACY_IMPORT_STATE_CONFLICT', 'Selected legacy imports are not in one recoverable state.');
     const sessions = sourceConversationIds.map((id) => {
-      const eligible = eligibleById.get(id)!;
+      const eligible = materializedById.get(id)!;
       return { path: eligible.snapshotPath, cwd: eligible.cwd, title: eligible.title || null };
     });
     const migrationItems: ExternalAgentConfigMigrationItem[] = [
@@ -230,20 +237,15 @@ export function createCodexLegacyImportService(options: CreateCodexLegacyImportS
 }
 
 async function writeConversationSnapshot(sourceRoot: string, cwd: string, conversation: ZeusConversationWithMessagesRecord): Promise<{ snapshotPath: string; snapshotSha256: string }> {
-  const projectDirectory = join(sourceRoot, 'projects', `project-${createHash('sha256').update(cwd).digest('hex').slice(0, 24)}`);
+  const rendered = renderConversationSnapshot(sourceRoot, cwd, conversation);
+  const projectDirectory = resolve(rendered.snapshotPath, '..');
   await mkdir(projectDirectory, { recursive: true, mode: 0o700 });
-  const fileName = `${safeFileName(conversation.id)}.jsonl`;
-  const finalPath = join(projectDirectory, fileName);
+  const finalPath = rendered.snapshotPath;
+  const fileName = basename(finalPath);
   const temporaryPath = join(projectDirectory, `.${fileName}.${process.pid}.tmp`);
-  const records: Record<string, unknown>[] = [{ type: 'custom-title', customTitle: conversation.title }];
-  for (const message of conversation.messages) {
-    if ((message.role !== 'user' && message.role !== 'assistant') || !message.content.trim()) continue;
-    records.push({ type: message.role, cwd, timestamp: message.createdAt, message: { content: message.content } });
-  }
-  const bytes = Buffer.from(`${records.map((record) => JSON.stringify(record)).join('\n')}\n`, 'utf8');
   const handle = await open(temporaryPath, 'wx', 0o600);
   try {
-    await handle.writeFile(bytes);
+    await handle.writeFile(rendered.bytes);
     await handle.sync();
   } catch (error) {
     await handle.close().catch(() => undefined);
@@ -254,7 +256,20 @@ async function writeConversationSnapshot(sourceRoot: string, cwd: string, conver
   await chmod(temporaryPath, 0o600);
   await rename(temporaryPath, finalPath);
   const snapshotPath = await realpath(finalPath);
-  return { snapshotPath, snapshotSha256: createHash('sha256').update(bytes).digest('hex') };
+  return { snapshotPath, snapshotSha256: rendered.snapshotSha256 };
+}
+
+/** GET detect 只能在内存中生成摘要；真实 snapshot 文件只在 Command write marker 后落盘。 */
+function renderConversationSnapshot(sourceRoot: string, cwd: string, conversation: ZeusConversationWithMessagesRecord): { snapshotPath: string; snapshotSha256: string; bytes: Buffer } {
+  const projectDirectory = join(sourceRoot, 'projects', `project-${createHash('sha256').update(cwd).digest('hex').slice(0, 24)}`);
+  const snapshotPath = join(projectDirectory, `${safeFileName(conversation.id)}.jsonl`);
+  const records: Record<string, unknown>[] = [{ type: 'custom-title', customTitle: conversation.title }];
+  for (const message of conversation.messages) {
+    if ((message.role !== 'user' && message.role !== 'assistant') || !message.content.trim()) continue;
+    records.push({ type: message.role, cwd, timestamp: message.createdAt, message: { content: message.content } });
+  }
+  const bytes = Buffer.from(`${records.map((record) => JSON.stringify(record)).join('\n')}\n`, 'utf8');
+  return { snapshotPath, snapshotSha256: createHash('sha256').update(bytes).digest('hex'), bytes };
 }
 
 async function canonicalAllowedRoots(roots: string[]): Promise<string[]> {

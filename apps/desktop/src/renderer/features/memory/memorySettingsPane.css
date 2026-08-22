@@ -1,0 +1,148 @@
+.memory-settings-pane {
+  display: grid;
+  gap: 18px;
+  min-inline-size: 0;
+}
+
+.memory-settings-header,
+.memory-record header,
+.memory-inline-actions,
+.memory-record-actions,
+.memory-scope-controls {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.memory-settings-header h2,
+.memory-settings-header p,
+.memory-record p {
+  margin: 0;
+}
+
+.memory-settings-header span {
+  display: grid;
+  gap: 5px;
+}
+
+.memory-settings-header p {
+  color: var(--text-secondary, #69707b);
+  max-inline-size: 760px;
+}
+
+.memory-scope-controls {
+  justify-content: flex-start;
+}
+
+.memory-scope-controls label,
+.memory-editor label,
+.memory-tombstone-confirmation label {
+  display: grid;
+  gap: 5px;
+}
+
+.memory-scope-controls label {
+  grid-template-columns: auto minmax(160px, 260px);
+}
+
+.memory-editor,
+.memory-tombstone-confirmation,
+.memory-record {
+  background: var(--surface-raised, rgba(127, 127, 127, 0.06));
+  border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.2));
+  border-radius: 12px;
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.memory-editor {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.memory-editor-content,
+.memory-explicit-confirmation,
+.memory-editor .memory-inline-actions {
+  grid-column: 1 / -1;
+}
+
+.memory-editor textarea {
+  min-block-size: 120px;
+  resize: vertical;
+}
+
+.memory-explicit-confirmation {
+  align-items: start;
+  background: color-mix(in srgb, #d68700 9%, transparent);
+  border-radius: 8px;
+  grid-template-columns: auto 1fr;
+  padding: 10px;
+}
+
+.memory-inline-actions {
+  justify-content: flex-end;
+}
+
+.memory-record-list {
+  display: grid;
+  gap: 12px;
+}
+
+.memory-record[data-status='review_due'] {
+  border-color: color-mix(in srgb, #d68700 55%, transparent);
+}
+
+.memory-record[data-status='superseded'],
+.memory-record[data-status='tombstone'] {
+  opacity: 0.7;
+}
+
+.memory-record header > span:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.memory-record dl {
+  display: grid;
+  gap: 8px 16px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+
+.memory-record dl div {
+  display: grid;
+  gap: 2px;
+  min-inline-size: 0;
+}
+
+.memory-record dt {
+  color: var(--text-secondary, #69707b);
+  font-size: 12px;
+}
+
+.memory-record dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.memory-settings-error {
+  color: var(--danger-text, #b42318);
+}
+
+.memory-load-more {
+  justify-self: center;
+}
+
+@media (max-width: 860px) {
+  .memory-editor,
+  .memory-record dl {
+    grid-template-columns: 1fr;
+  }
+
+  .memory-settings-header,
+  .memory-scope-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

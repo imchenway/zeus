@@ -15,6 +15,7 @@ export interface ZeusDataPathDescriptor {
 }
 
 export type ZeusDataPathKey =
+  | 'rootIdentity'
   | 'database'
   | 'localConfig'
   | 'localLogs'
@@ -50,6 +51,7 @@ export interface ZeusDataLayout {
   electronUserData: string;
   migrationState: string;
   migrationQuarantine: string;
+  rootIdentity: string;
   database: string;
   localConfig: string;
   localLogs: string;
@@ -103,6 +105,7 @@ export function createZeusDataLayout(rootPath: string): ZeusDataLayout {
     electronUserData,
     migrationState: join(runtimeDirectory, 'migrations'),
     migrationQuarantine: join(runtimeDirectory, 'quarantine'),
+    rootIdentity: join(root, '.zeus-root-identity.json'),
     database,
     localConfig: join(dataDirectory, 'zeus.config.json'),
     localLogs: join(dataDirectory, 'logs', 'local-server'),
@@ -149,6 +152,7 @@ export function createLegacyFlatZeusDataLayout(rootPath: string): ZeusDataLayout
     electronUserData: root,
     migrationState: join(root, '.layout-migrations'),
     migrationQuarantine: join(root, '.layout-quarantine'),
+    rootIdentity: join(root, '.zeus-root-identity.json'),
     database,
     localConfig: join(root, 'zeus.config.json'),
     localLogs: `${database}.logs`,
@@ -202,6 +206,7 @@ function finalizeLayout(layout: Omit<ZeusDataLayout, 'entries'>): ZeusDataLayout
   return {
     ...layout,
     entries: [
+      entry('rootIdentity', 'zeus', 'core', false, false, null),
       entry('database', 'zeus', 'core', false, false, null),
       entry('localConfig', 'zeus', 'core', false, false, null),
       entry('localLogs', 'zeus', 'managed', false, false, null),

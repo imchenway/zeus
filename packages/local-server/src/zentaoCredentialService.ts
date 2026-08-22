@@ -11,6 +11,7 @@ export interface ZentaoCredentialService {
   list(): Promise<ZentaoInstanceRecord[]>;
   get(id: string): Promise<ZentaoInstanceRecord | undefined>;
   create(input: SaveZentaoInstanceRequest): Promise<ZentaoInstanceRecord>;
+  createWithId(id: string, input: SaveZentaoInstanceRequest): Promise<ZentaoInstanceRecord>;
   update(id: string, input: SaveZentaoInstanceRequest): Promise<ZentaoInstanceRecord>;
   remove(id: string): Promise<void>;
   clearPassword(id: string): Promise<ZentaoInstanceRecord>;
@@ -117,6 +118,11 @@ export function createZentaoCredentialService(options: { settings: SettingReposi
     },
     async create(input) {
       return saveInstance(`zentao_instance_${randomUUID().replace(/-/gu, '')}`, input);
+    },
+    async createWithId(id, input) {
+      if (!/^zentao_instance_[a-zA-Z0-9_-]{8,200}$/u.test(id)) throw serviceError('ZEUS_ZENTAO_INSTANCE_ID_INVALID', '禅道实例身份无效。', 400);
+      if (readStored().some((candidate) => candidate.id === id)) throw serviceError('ZEUS_ZENTAO_INSTANCE_ALREADY_EXISTS', '禅道实例已存在。', 409);
+      return saveInstance(id, input);
     },
     async update(id, input) {
       const existing = await requireInstance(id);

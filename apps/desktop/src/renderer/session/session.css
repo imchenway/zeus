@@ -5336,6 +5336,60 @@
   }
 }
 
+/* 长历史只挂载视口、前后缓冲和显式保留行；占位层维持完整滚动尺度。 */
+.session-codex-parity-v1 .session-transcript-window {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 14px;
+  inline-size: 100%;
+  min-block-size: 0;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-transcript-window-row {
+  contain: layout style;
+  contain-intrinsic-block-size: auto 132px;
+  content-visibility: auto;
+  display: grid;
+  flex: 0 0 auto;
+  gap: 14px;
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-transcript-window-row:where([data-pinned='true'], :focus-within) {
+  contain-intrinsic-block-size: none;
+  content-visibility: visible;
+}
+
+.session-codex-parity-v1 .session-transcript-window-spacer {
+  flex: 0 0 auto;
+  inline-size: 1px;
+  min-block-size: 0;
+  pointer-events: none;
+}
+
+.session-codex-parity-v1
+  .session-transcript-window-row
+  > :where(
+    .session-thread-item,
+    .session-activity-group,
+    .session-reasoning-summary,
+    .session-plan-summary,
+    .session-plan-entry,
+    .session-question-panel,
+    .session-plan-progress,
+    .session-turn-change-card,
+    .session-turn-process,
+    .session-turn-duration,
+    .session-answered-request
+  ) {
+  inline-size: min(var(--session-thread-max), 100%);
+  margin-inline: auto;
+  min-inline-size: 0;
+}
+
 @media (max-width: 559px) {
   .session-codex-parity-v1 .session-new-conversation-context {
     align-items: stretch;
@@ -13854,6 +13908,130 @@
 
 .session-codex-parity-v1 .session-turn-process-body[hidden] {
   display: none;
+}
+
+.session-codex-parity-v1 .session-v2-history-control {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  inline-size: min(var(--session-thread-max), 100%);
+  justify-self: center;
+  min-block-size: 28px;
+}
+
+.session-codex-parity-v1 :where(.session-v2-history-control, .session-v2-content, .session-v2-deferred-artifacts) button {
+  background: var(--session-control);
+  border: 1px solid var(--session-line-soft);
+  border-radius: 7px;
+  color: var(--session-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  min-block-size: 26px;
+  padding: 3px 9px;
+}
+
+.session-codex-parity-v1 :where(.session-v2-history-control, .session-v2-content, .session-v2-deferred-artifacts) button:hover:not(:disabled) {
+  background: var(--session-control-hover);
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 :where(.session-v2-history-control, .session-v2-content, .session-v2-deferred-artifacts) button:focus-visible {
+  outline: 2px solid var(--session-focus-outline);
+  outline-offset: 2px;
+}
+
+.session-codex-parity-v1 :where(.session-v2-history-control, .session-v2-content, .session-v2-deferred-artifacts) button:disabled {
+  cursor: wait;
+  opacity: 0.64;
+}
+
+.session-codex-parity-v1 .session-v2-page-status,
+.session-codex-parity-v1 .session-v2-page-error {
+  color: var(--session-text-muted);
+  font-size: 11px;
+  margin: 2px 0;
+}
+
+.session-codex-parity-v1 .session-v2-page-error {
+  color: var(--session-danger);
+}
+
+.session-codex-parity-v1 .session-v2-page-action {
+  justify-self: start;
+}
+
+.session-codex-parity-v1 .session-v2-deferred-artifacts {
+  background: color-mix(in oklab, var(--session-surface-subtle) 70%, transparent);
+  border: 1px solid var(--session-line-soft);
+  border-radius: 9px;
+  display: grid;
+  gap: 10px;
+  margin-block-start: 4px;
+  min-inline-size: 0;
+  padding: 10px;
+}
+
+.session-codex-parity-v1 .session-v2-deferred-artifacts > div {
+  display: grid;
+  gap: 5px;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-v2-deferred-artifacts :where(p, ul) {
+  margin: 0;
+}
+
+.session-codex-parity-v1 .session-v2-deferred-artifacts ul {
+  display: grid;
+  gap: 6px;
+  list-style: none;
+  padding: 0;
+}
+
+.session-codex-parity-v1 .session-v2-deferred-artifacts li {
+  align-items: baseline;
+  display: grid;
+  gap: 5px 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-v2-deferred-artifacts li > span {
+  overflow-wrap: anywhere;
+}
+
+.session-codex-parity-v1 .session-v2-deferred-artifacts li > small {
+  color: var(--session-text-muted);
+}
+
+.session-codex-parity-v1 .session-v2-content {
+  display: grid;
+  gap: 5px;
+  grid-column: 1 / -1;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-v2-content > button {
+  justify-self: start;
+}
+
+.session-codex-parity-v1 .session-v2-content-navigation {
+  display: flex;
+  gap: 6px;
+}
+
+.session-codex-parity-v1 .session-v2-content > pre {
+  background: var(--session-code);
+  border-radius: 7px;
+  font-size: 11px;
+  margin: 0;
+  max-block-size: 360px;
+  max-inline-size: 100%;
+  overflow: auto;
+  padding: 9px;
+  white-space: pre-wrap;
 }
 
 @media (prefers-reduced-motion: reduce) {

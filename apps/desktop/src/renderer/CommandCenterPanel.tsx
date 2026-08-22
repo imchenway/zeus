@@ -459,9 +459,9 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
         if (props.mode === 'global') await props.client.createGlobalCommand(input);
         else if (props.project) await props.client.createProjectCommand(props.project.id, input);
       } else if (editing.scope === 'global') {
-        await props.client.updateGlobalCommand(editing.id, input);
+        await props.client.updateGlobalCommand(editing.id, input, editing.revision);
       } else if (props.project) {
-        await props.client.updateProjectCommand(props.project.id, editing.id, input);
+        await props.client.updateProjectCommand(props.project.id, editing.id, input, editing.revision);
       }
       await reloadCommands();
       setEditing(null);
@@ -481,8 +481,8 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
     setBusy(true);
     setError(null);
     try {
-      if (command.scope === 'global') await props.client.deleteGlobalCommand(command.id);
-      else if (props.project) await props.client.deleteProjectCommand(props.project.id, command.id);
+      if (command.scope === 'global') await props.client.deleteGlobalCommand(command.id, command.revision);
+      else if (props.project) await props.client.deleteProjectCommand(props.project.id, command.id, command.revision);
       await reloadCommands();
       setPendingDeleteId(null);
       setNotice(zh ? '命令定义已删除，历史记录仍保留。' : 'Command deleted; history remains available.');
@@ -555,6 +555,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
         trigger: 'desktop',
       });
       const run = await props.client.startCommandRun(props.project.id, runningCommand.id, {
+        runId: confirmation.runId,
         confirmationId: confirmation.id,
         parameters: runParameters,
       });
@@ -1227,7 +1228,9 @@ function commandRiskLabels(riskFlags: CommandRiskFlags, zh: boolean): string[] {
 function runStatusLabel(status: CommandRun['status'], zh: boolean): string {
   const labels: Record<CommandRun['status'], [string, string]> = {
     pending_confirmation: ['待确认', 'Pending'],
+    starting: ['启动中', 'Starting'],
     running: ['运行中', 'Running'],
+    stopping: ['停止中', 'Stopping'],
     succeeded: ['成功', 'Succeeded'],
     failed: ['失败', 'Failed'],
     timed_out: ['超时', 'Timed out'],

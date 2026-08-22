@@ -112,7 +112,7 @@ try {
   await db.close();
 
   const apiToken = 'zeus-0159-api-token';
-  server = await createLocalServer({ dbPath, apiToken, codexNativeEnabled: false, projectRoot: projectPath, localConfigPath: join(root, 'local-config.json') });
+  server = await createLocalServer({ dbPath, apiToken, keychainService: 'Zeus Test ZEUS-0159 API Verifier', codexNativeEnabled: false, projectRoot: projectPath, localConfigPath: join(root, 'local-config.json') });
   await server.ready();
   const inject = (method, url, payload) =>
     server.inject({

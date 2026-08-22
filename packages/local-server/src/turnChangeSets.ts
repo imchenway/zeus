@@ -67,6 +67,8 @@ export interface CreateTurnChangeSetServiceOptions {
   now?: () => string;
   maxFileBytes?: number;
   maxChangeSetBytes?: number;
+  /** 正式副本验证只开放历史读取，不创建 recovery 目录，也不接受任何变更集写操作。 */
+  readOnlyValidation?: boolean;
 }
 
 const absentDigest = 'sha256:absent';
@@ -175,7 +177,16 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
   const maxFileBytes = options.maxFileBytes ?? 20 * 1024 * 1024;
   const maxChangeSetBytes = options.maxChangeSetBytes ?? 100 * 1024 * 1024;
   const busy = new Set<string>();
-  mkdirSync(options.recoveryRoot, { recursive: true, mode: 0o700 });
+  if (!options.readOnlyValidation) mkdirSync(options.recoveryRoot, { recursive: true, mode: 0o700 });
+
+  function assertMutationAllowed(): void {
+    if (!options.readOnlyValidation) return;
+    throw Object.assign(new Error('正式数据只读验证不允许变更文件或写入变更集。'), {
+      code: 'ZEUS_READ_ONLY_VALIDATION_CAPABILITY_BLOCKED',
+      statusCode: 503,
+      recoveryRequired: false,
+    });
+  }
 
   function ensureChangeSet(conversation: ZeusConversationWithMessagesRecord, turn: ZeusConversationTurnRecord, timestamp: string): ZeusTurnChangeSetRecord {
     const existing = options.changeSets.getByTurn(conversation.id, turn.id);
@@ -198,6 +209,7 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
   }
 
   function capture(input: TurnChangeSetCaptureInput): TurnChangeSet | null {
+    assertMutationAllowed();
     const changes = normalizeProviderChanges(input.changes);
     if (changes.length === 0) return null;
     const project = options.projects.getById(input.conversation.projectId);
@@ -332,6 +344,7 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
   }
 
   function updateUnifiedDiff(input: { conversation: ZeusConversationWithMessagesRecord; turn: ZeusConversationTurnRecord; diff: string; timestamp: string }): TurnChangeSet {
+    assertMutationAllowed();
     const changeSet = ensureChangeSet(input.conversation, input.turn, input.timestamp);
     const updated = options.changeSets.upsert({
       ...changeSet,
@@ -344,6 +357,7 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
   }
 
   function seal(input: { conversation: ZeusConversationWithMessagesRecord; turn: ZeusConversationTurnRecord; timestamp: string }): TurnChangeSet | null {
+    assertMutationAllowed();
     const changeSet = options.changeSets.getByTurn(input.conversation.id, input.turn.id);
     if (!changeSet) return null;
     const files = aggregateChangeFiles(options.files.listByChangeSet(changeSet.id));
@@ -388,6 +402,7 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
   }
 
   async function operate(input: { projectId: string; conversationId: string; turnId: string; action: 'undo' | 'reapply'; request: TurnChangeSetOperationRequest }): Promise<TurnChangeSetOperationResult> {
+    assertMutationAllowed();
     const changeSet = options.changeSets.getById(input.request.changeSetId);
     if (!changeSet || changeSet.projectId !== input.projectId || changeSet.conversationId !== input.conversationId || changeSet.turnId !== input.turnId) {
       throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_NOT_FOUND', 'Turn change set not found.');
@@ -556,6 +571,7 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
   }
 
   async function recoverInterruptedOperations(): Promise<void> {
+    assertMutationAllowed();
     for (const changeSet of options.changeSets.listInProgress()) {
       const project = options.projects.getById(changeSet.projectId);
       const files = aggregateChangeFiles(options.files.listByChangeSet(changeSet.id));

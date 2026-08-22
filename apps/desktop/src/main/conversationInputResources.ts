@@ -1,5 +1,5 @@
-import { randomBytes, randomUUID } from 'node:crypto';
-import { chmod, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { chmod, link, mkdir, open, readFile, realpath, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { createConversationAttachmentGrant, resolveConversationAttachmentGrant } from '@zeus/local-server/conversation-attachment-grant';
 import {
@@ -36,8 +36,8 @@ export interface ConversationResourcePayload {
 
 export interface ConversationInputResourceBroker {
   describePaths(paths: string[], source: ConversationInputResourceSource): Promise<ConversationInputResource[]>;
-  materialize(payloads: ConversationResourcePayload[]): Promise<ConversationInputResource[]>;
-  readClipboard(): Promise<{ resources: ConversationInputResource[]; text: string }>;
+  materialize(payloads: ConversationResourcePayload[], commandId: string): Promise<ConversationInputResource[]>;
+  readClipboard(commandId: string): Promise<{ resources: ConversationInputResource[]; text: string }>;
   resolve(resource: { localPath?: string; uploadRef?: string }): Promise<string | null>;
   preview(resource: { localPath?: string; uploadRef?: string }): Promise<{ previewUrl: string; mimeType: string } | null>;
   discard(resources: Array<{ localPath?: string; uploadRef?: string }>): Promise<{ discardedCount: number }>;
@@ -88,8 +88,9 @@ export function createConversationInputResourceBroker(options: CreateConversatio
       return resources;
     },
 
-    async materialize(payloads) {
+    async materialize(payloads, commandId) {
       await mkdir(attachmentRoot, { recursive: true, mode: 0o700 });
+      const operationKey = commandResourceKey(commandId);
       const resources: ConversationInputResource[] = [];
       let batchBytes = 0;
       for (const [index, payload] of payloads.slice(0, maximumResourceCount).entries()) {
@@ -100,8 +101,9 @@ export function createConversationInputResourceBroker(options: CreateConversatio
         batchBytes += data.byteLength;
         const pastedText = text !== undefined || payload.kind === 'pasted_text';
         const safeName = sanitizeResourceName(payload.name || (pastedText ? 'Pasted text.txt' : `pasted-resource-${index + 1}`));
-        const filePath = join(attachmentRoot, `${Date.now()}-${randomUUID()}-${safeName}`);
-        await writeFile(filePath, data, { mode: 0o600, flag: 'wx' });
+        const contentHash = createHash('sha256').update(data).digest('hex');
+        const filePath = join(attachmentRoot, `${operationKey}-${index + 1}-${contentHash.slice(0, 16)}-${safeName}`);
+        await writeAtomicResourceFile(filePath, data, contentHash);
         const mime = pastedText ? 'text/plain' : normalizeMime(payload.type, filePath);
         resources.push({
           name: safeName,
@@ -117,7 +119,7 @@ export function createConversationInputResourceBroker(options: CreateConversatio
       return resources;
     },
 
-    async readClipboard() {
+    async readClipboard(commandId) {
       const referencedPaths = await readTaskClipboardFileReferencesFromClipboard(options.clipboard, options.clipboardReadOptions);
       if (referencedPaths.length > 0) {
         return { resources: await this.describePaths(referencedPaths, 'paste'), text: '' };
@@ -125,14 +127,17 @@ export function createConversationInputResourceBroker(options: CreateConversatio
       const binaryResources = await readTaskClipboardAttachmentsFromClipboard(options.clipboard, options.clipboardReadOptions);
       if (binaryResources.length > 0) {
         return {
-          resources: await this.materialize(binaryResources.map((resource) => ({ ...resource, source: 'paste' }))),
+          resources: await this.materialize(
+            binaryResources.map((resource) => ({ ...resource, source: 'paste' })),
+            commandId,
+          ),
           text: '',
         };
       }
       const text = safelyReadClipboardText(options.clipboard);
       if (text.length >= longPasteThreshold) {
         return {
-          resources: await this.materialize([{ name: 'Pasted text.txt', type: 'text/plain', text, source: 'paste', kind: 'pasted_text' }]),
+          resources: await this.materialize([{ name: 'Pasted text.txt', type: 'text/plain', text, source: 'paste', kind: 'pasted_text' }], commandId),
           text: '',
         };
       }
@@ -175,6 +180,52 @@ export function createConversationInputResourceBroker(options: CreateConversatio
       return { discardedCount };
     },
   };
+}
+
+function commandResourceKey(commandId: string): string {
+  if (typeof commandId !== 'string' || !commandId.trim() || commandId.length > 256 || commandId.includes('\0')) throw new TypeError('Conversation resource command identity is invalid.');
+  return `command-${createHash('sha256').update(commandId).digest('hex').slice(0, 24)}`;
+}
+
+async function writeAtomicResourceFile(destination: string, data: Buffer, expectedSha256: string): Promise<void> {
+  const existing = await readFile(destination).catch((error: unknown) => {
+    if (isMissingFileError(error)) return null;
+    throw error;
+  });
+  if (existing) {
+    if (createHash('sha256').update(existing).digest('hex') !== expectedSha256) throw new Error('Conversation resource CAS destination contains different bytes.');
+    return;
+  }
+  const temporaryPath = join(dirname(destination), `.${basename(destination)}.${randomUUID()}.tmp`);
+  const handle = await open(temporaryPath, 'wx', 0o600);
+  try {
+    await handle.writeFile(data);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  try {
+    try {
+      // hard-link 发布同时具备原子可见与 no-replace 语义；同 command 的并发只允许相同内容胜出。
+      await link(temporaryPath, destination);
+    } catch (error) {
+      if (!isExistingFileError(error)) throw error;
+      const concurrentWinner = await readFile(destination);
+      if (createHash('sha256').update(concurrentWinner).digest('hex') !== expectedSha256) {
+        throw new Error('Conversation resource CAS destination contains different bytes.');
+      }
+    }
+    await unlink(temporaryPath);
+    const directory = await open(dirname(destination), 'r');
+    try {
+      await directory.sync();
+    } finally {
+      await directory.close();
+    }
+  } catch (error) {
+    await unlink(temporaryPath).catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function readOrCreateConversationAttachmentGrantSecret(filePath: string): Promise<string> {

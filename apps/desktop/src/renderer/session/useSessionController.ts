@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { emptyConversationContextDraft, hasConversationContext, serializeConversationContext, type ConversationContextDraft, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { createInitialSessionState, sessionReducer } from './sessionReducer.js';
 import {
@@ -7,8 +7,19 @@ import {
   isNativeConversationEvent,
   type NativeCollaborationMode,
   type NativeConversationAttachment,
+  type NativeConversationChangeFileV2Item,
+  type NativeConversationChangeSetV2Summary,
+  type NativeConversationContentV2Page,
   type NativeConversationEvent,
+  type NativeConversationEventPage,
+  type NativeConversationModelHistoryV2Item,
+  type NativeConversationProcessV2Item,
+  type NativeConversationResourceV2Item,
   type NativeConversationSnapshot,
+  type NativeConversationSnapshotV2,
+  type NativeConversationSnapshotV2Page,
+  type NativeConversationToolResultPage,
+  type NativeConversationChoice,
   type NativeNextTurnSettings,
   type NativeGoalResponse,
   type NativeOperationAcceptance,
@@ -27,19 +38,114 @@ import {
   type TurnChangeSet,
   type TurnChangeSetOperationResult,
 } from './sessionTypes.js';
+import { adaptConversationSnapshotV2, mergeConversationHistoryV2, mergeConversationProcessV2, updateConversationV2Paging } from './conversationSnapshotV2Adapter.js';
+import { markConversationNavigationRenderReady } from '../performanceTraceContext.js';
 
 export const reconnectBackoffMs = [250, 500, 1_000, 2_000, 5_000] as const;
 // 同一个会话项的增量按一帧窗口合并，兼顾 Markdown 成本与首字可见延迟。
 const RENDER_DELTA_COALESCE_MS = 16;
 const CONVERSATION_SCHEMA_GENERATION = '2026-08-16-unified-conversation-segments' as const;
+const CONVERSATION_SYNC_STREAM_GENERATION = 'zeus-conversation-sync-v1' as const;
+
+export const sessionRealtimeBufferBudget = Object.freeze({
+  maxEntries: 2_048,
+  maxBytes: 8 * 1024 * 1024,
+});
+
+type RealtimeBufferKind = 'hydration' | 'targeted-hydration' | 'sync-gap' | 'render-delta';
+
+interface BufferedRealtimeEvents {
+  readonly kind: RealtimeBufferKind;
+  readonly events: NativeRealtimeEventEnvelope[];
+  bytes: number;
+  overflowed: boolean;
+}
 
 export function reconnectDelayMs(attempt: number): number {
   return reconnectBackoffMs[Math.min(Math.max(0, Math.floor(attempt) - 1), reconnectBackoffMs.length - 1)]!;
 }
 
+/**
+ * 返回可保守用于硬预算的 JSON 传输字节上界。字符串按每个 UTF-16 code unit
+ * 最多 3 个 UTF-8 字节计，不复制可能很大的累计流式正文。
+ */
+export function estimateNativeRealtimeEventBytes(event: NativeRealtimeEventEnvelope): number {
+  return estimateJsonBytes(event, new WeakSet<object>(), sessionRealtimeBufferBudget.maxBytes + 1);
+}
+
+function estimateJsonBytes(value: unknown, seen: WeakSet<object>, stopAfter: number): number {
+  if (value === null) return 4;
+  if (typeof value === 'string') return 2 + value.length * 3;
+  if (typeof value === 'number') return 24;
+  if (typeof value === 'boolean') return 5;
+  if (typeof value !== 'object') return 4;
+  if (seen.has(value)) return stopAfter;
+  seen.add(value);
+  let bytes = 2;
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      bytes += 1 + estimateJsonBytes(entry, seen, stopAfter - bytes);
+      if (bytes >= stopAfter) return stopAfter;
+    }
+    return bytes;
+  }
+  for (const [key, entry] of Object.entries(value)) {
+    bytes += 4 + key.length * 3 + estimateJsonBytes(entry, seen, stopAfter - bytes);
+    if (bytes >= stopAfter) return stopAfter;
+  }
+  return bytes;
+}
+
+function createRealtimeEventBuffer(kind: BufferedRealtimeEvents['kind']): BufferedRealtimeEvents {
+  return { kind, events: [], bytes: 0, overflowed: false };
+}
+
+function appendRealtimeEvent(buffer: BufferedRealtimeEvents, event: NativeRealtimeEventEnvelope): boolean {
+  if (buffer.overflowed) return false;
+  const bytes = estimateNativeRealtimeEventBytes(event);
+  if (buffer.events.length >= sessionRealtimeBufferBudget.maxEntries || bytes > sessionRealtimeBufferBudget.maxBytes - buffer.bytes) {
+    buffer.overflowed = true;
+    return false;
+  }
+  buffer.events.push(event);
+  buffer.bytes += bytes;
+  return true;
+}
+
+function realtimeBufferBudgetError(kind: RealtimeBufferKind): Error {
+  const error = new Error(`会话 ${kind} 缓冲已达到 ${sessionRealtimeBufferBudget.maxEntries} 条或 ${sessionRealtimeBufferBudget.maxBytes} 字节硬上限；已停止增量投影并回到权威 Snapshot V2。`);
+  error.name = 'ZeusRealtimeBufferBudgetExceededError';
+  return error;
+}
+
 export interface SessionControllerClient {
   loadCodexConversationCapabilities?(projectId: string): Promise<CodexConversationCapabilities>;
-  loadNativeConversation(projectId: string, conversationId: string): Promise<NativeConversationSnapshot>;
+  loadNativeConversationV2(projectId: string, conversationId: string): Promise<NativeConversationSnapshotV2>;
+  loadNativeConversationChoice(projectId: string, conversationId: string): Promise<NativeConversationChoice>;
+  loadNativeConversationQueueV2(projectId: string, conversationId: string): Promise<NativeQueueSnapshot>;
+  loadNativeConversationModelHistoryV2(
+    projectId: string,
+    conversationId: string,
+    options?: { cursor?: string; limit?: number; byteLimit?: number; direction?: 'forward' | 'tail' },
+  ): Promise<NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>>;
+  loadNativeConversationProcessV2?(
+    projectId: string,
+    conversationId: string,
+    turnId: string,
+    options?: { cursor?: string; limit?: number; byteLimit?: number; kind?: NativeConversationProcessV2Item['kind'] },
+  ): Promise<NativeConversationSnapshotV2Page<NativeConversationProcessV2Item>>;
+  loadNativeConversationResourcesV2?(projectId: string, conversationId: string, options?: { cursor?: string; limit?: number; byteLimit?: number }): Promise<NativeConversationSnapshotV2Page<NativeConversationResourceV2Item>>;
+  loadNativeConversationChangeSetV2?(projectId: string, conversationId: string, turnId: string): Promise<NativeConversationChangeSetV2Summary>;
+  loadNativeConversationChangeFilesV2?(
+    projectId: string,
+    conversationId: string,
+    turnId: string,
+    changeSetId: string,
+    options?: { cursor?: string; limit?: number; byteLimit?: number },
+  ): Promise<NativeConversationSnapshotV2Page<NativeConversationChangeFileV2Item>>;
+  loadNativeConversationContentV2?(projectId: string, conversationId: string, handle: string, options?: { offset?: number; byteLimit?: number }): Promise<NativeConversationContentV2Page>;
+  loadNativeConversationToolResult?(projectId: string, conversationId: string, handle: string, options?: { offset?: number; limit?: number }): Promise<NativeConversationToolResultPage>;
+  loadNativeConversationEvents(projectId: string, conversationId: string, options: { afterSequence: number; limit?: number; byteLimit?: number; syncStreamGeneration?: string }): Promise<NativeConversationEventPage>;
   loadNativePendingRequests(projectId: string, conversationId: string): Promise<{ conversationId: string; requests: NativePendingRequest[] }>;
   loadNativeSubagents?(projectId: string, conversationId: string): Promise<NativeSubagentListSnapshot>;
   loadNativeSubagentThread?(projectId: string, conversationId: string, threadId: string): Promise<NativeSubagentThreadSnapshot>;
@@ -54,17 +160,17 @@ export interface SessionControllerClient {
     input: { changeSetId: string; expectedState: 'applied' | 'undone'; idempotencyKey: string },
   ): Promise<TurnChangeSetOperationResult>;
 
-  restoreArchivedNativeConversation(projectId: string, conversationId: string): Promise<NativeConversationSnapshot>;
-  updateNativePermissionMode(projectId: string, conversationId: string, permissionMode: NativePermissionMode): Promise<NativeConversationSnapshot>;
+  restoreArchivedNativeConversation(projectId: string, conversationId: string): Promise<{ acknowledged: true }>;
+  updateNativePermissionMode(projectId: string, conversationId: string, permissionMode: NativePermissionMode): Promise<{ acknowledged: true }>;
 
-  updateNativeCollaborationMode(projectId: string, conversationId: string, collaborationMode: NativeCollaborationMode): Promise<NativeConversationSnapshot>;
+  updateNativeCollaborationMode(projectId: string, conversationId: string, collaborationMode: NativeCollaborationMode): Promise<{ acknowledged: true }>;
   loadNativeGoal(projectId: string, conversationId: string): Promise<NativeGoalResponse>;
   setNativeGoal(projectId: string, conversationId: string, objective: string): Promise<NativeGoalResponse>;
   pauseNativeGoal(projectId: string, conversationId: string): Promise<NativeGoalResponse>;
   resumeNativeGoal(projectId: string, conversationId: string): Promise<NativeGoalResponse>;
   clearNativeGoal(projectId: string, conversationId: string, confirmUnfinished: boolean): Promise<NativeGoalResponse & { cleared: boolean }>;
   updateNativeNextTurnSettings(projectId: string, conversationId: string, settings: NativeNextTurnSettings): Promise<NativeNextTurnSettings>;
-  connectEvents(onEvent: (event: NativeRealtimeEventEnvelope) => void, options?: { afterEventId?: string }): WebSocket;
+  connectEvents(onEvent: (event: NativeRealtimeEventEnvelope) => void, options?: { afterEventId?: string; conversationId?: string; afterSequence?: number; syncStreamGeneration?: string }): WebSocket;
   sendNativeMessage(projectId: string, conversationId: string, input: SendNativeMessageRequest): Promise<NativeOperationAcceptance>;
   askNativeSideChat?(projectId: string, conversationId: string, input: { selectedText: string; question: string }): Promise<{ answer: string; status: 'completed' | 'interrupted' }>;
   editNativeQueuedSubmission(projectId: string, conversationId: string, submissionId: string, content: string): Promise<NativeQueueSnapshot>;
@@ -94,7 +200,7 @@ export interface SessionControllerClient {
   ): Promise<{
     operation: NativeOperationAcceptance['operation'];
     request: NativePlanImplementationRequest;
-    conversation: NativeConversationSnapshot;
+    acknowledged: true;
   }>;
 }
 
@@ -124,6 +230,8 @@ export interface SessionController {
   dispose(): void;
   subscribe(listener: () => void): () => void;
   getState(): NativeSessionState;
+  /** 只读、有界且不含正文的实时同步诊断，用于现场确认 fail-closed 与恢复水位。 */
+  getDiagnostics(): SessionControllerDiagnostics;
   setDraft(draft: string): void;
   setAttachments(attachments: NativeConversationAttachment[]): void;
   setBrowserSubmission(browserSubmission: ZeusBrowserPreparedSubmission | null): void;
@@ -156,6 +264,23 @@ export interface SessionController {
 
   setCollaborationMode(collaborationMode: NativeCollaborationMode): Promise<NativeConversationSnapshot>;
   setNextTurnSettings(settings: NativeNextTurnSettings): Promise<NativeNextTurnSettings>;
+  loadEarlierHistory(): Promise<void>;
+  loadTurnProcess(turnId: string): Promise<void>;
+  loadTurnArtifacts(turnId: string): Promise<void>;
+  loadV2Content(handle: string, offset?: number): Promise<NativeConversationContentV2Page>;
+  loadV2ToolResult(handle: string, offset?: number): Promise<NativeConversationToolResultPage>;
+}
+
+export interface SessionControllerDiagnostics {
+  syncProjectionSuspended: boolean;
+  lastAppliedSyncEventSequence: number;
+  pendingSyncGapEntries: number;
+  pendingSyncGapBytes: number;
+  pendingRenderDeltaEntries: number;
+  pendingRenderDeltaBytes: number;
+  hydrationBufferEntries: number;
+  hydrationBufferBytes: number;
+  realtimeBufferWatermarks: Readonly<Record<string, { entries: number; bytes: number }>>;
 }
 
 interface PendingSendEnvelope {
@@ -334,9 +459,16 @@ export function createSessionController(options: CreateSessionControllerOptions)
   let requestRefreshRetryAttempt = 0;
   const requestsAwaitingDetails = new Set<string>();
   const resolvedRequestIds = new Set<string>();
-  let targetedHydrationBuffer: NativeConversationEvent[] | null = null;
+  let targetedHydrationBuffer: BufferedRealtimeEvents | null = null;
   let lastAppliedSyncEventSequence = 0;
+  let syncProjectionSuspended = false;
+  const pendingSyncGapEvents = new Map<number, NativeRealtimeEventEnvelope>();
+  const pendingSyncGapEventBytes = new Map<number, number>();
+  let pendingSyncGapBytes = 0;
+  let syncGapRecoveryPromise: Promise<void> | null = null;
   const pendingRenderDeltas = new Map<string, NativeConversationEvent>();
+  const pendingRenderDeltaBytes = new Map<string, number>();
+  let pendingRenderBytes = 0;
   // steer 请求确认前保留队列中的可见占位；只有 steering 事件或明确回队事件到达后才交给正常投影。
   const pendingSteeringSubmissions = new Map<string, NativeQueuedSubmission>();
   let renderDeltaTimer: ReturnType<typeof setTimeout> | null = null;
@@ -346,6 +478,66 @@ export function createSessionController(options: CreateSessionControllerOptions)
   let nextTurnSettingsRevision = 0;
   const listeners = new Set<() => void>();
   const createId = options.createId ?? defaultCreateId;
+  const realtimeBufferWatermarks = new Map<RealtimeBufferKind, { entries: number; bytes: number; entryBucket: number; byteBucket: number }>();
+
+  function observeRealtimeBufferWatermark(kind: RealtimeBufferKind, entries: number, bytes: number): void {
+    const entryBucket = entries > 0 ? Math.floor(Math.log2(entries)) : 0;
+    const byteBucket = bytes > 0 ? Math.floor(Math.log2(bytes)) : 0;
+    const previous = realtimeBufferWatermarks.get(kind);
+    const next = {
+      entries: Math.max(previous?.entries ?? 0, entries),
+      bytes: Math.max(previous?.bytes ?? 0, bytes),
+      entryBucket: Math.max(previous?.entryBucket ?? 0, entryBucket),
+      byteBucket: Math.max(previous?.byteBucket ?? 0, byteBucket),
+    };
+    realtimeBufferWatermarks.set(kind, next);
+    if (previous && entryBucket <= previous.entryBucket && byteBucket <= previous.byteBucket) return;
+    try {
+      performance.measure('zeus.session.realtime_buffer.high_watermark', {
+        start: performance.now(),
+        duration: 0,
+        detail: { kind, entries: next.entries, bytes: next.bytes, ...sessionRealtimeBufferBudget },
+      });
+    } catch {
+      // Performance Timeline 不可用时不改变会话投影语义。
+    }
+  }
+
+  function clearPendingSyncGapEvents(): void {
+    pendingSyncGapEvents.clear();
+    pendingSyncGapEventBytes.clear();
+    pendingSyncGapBytes = 0;
+  }
+
+  function deletePendingSyncGapEvent(sequence: number): void {
+    const bytes = pendingSyncGapEventBytes.get(sequence) ?? 0;
+    if (!pendingSyncGapEvents.delete(sequence)) return;
+    pendingSyncGapEventBytes.delete(sequence);
+    pendingSyncGapBytes = Math.max(0, pendingSyncGapBytes - bytes);
+  }
+
+  function queuePendingSyncGapEvent(sequence: number, event: NativeRealtimeEventEnvelope): boolean {
+    const existingBytes = pendingSyncGapEventBytes.get(sequence) ?? 0;
+    const bytes = estimateNativeRealtimeEventBytes(event);
+    const nextEntries = pendingSyncGapEvents.has(sequence) ? pendingSyncGapEvents.size : pendingSyncGapEvents.size + 1;
+    const nextBytes = pendingSyncGapBytes - existingBytes + bytes;
+    if (nextEntries > sessionRealtimeBufferBudget.maxEntries || nextBytes > sessionRealtimeBufferBudget.maxBytes) {
+      clearPendingSyncGapEvents();
+      failConversationSync(realtimeBufferBudgetError('sync-gap'));
+      return false;
+    }
+    pendingSyncGapEvents.set(sequence, event);
+    pendingSyncGapEventBytes.set(sequence, bytes);
+    pendingSyncGapBytes = nextBytes;
+    observeRealtimeBufferWatermark('sync-gap', nextEntries, nextBytes);
+    return true;
+  }
+
+  function clearPendingRenderDeltas(): void {
+    pendingRenderDeltas.clear();
+    pendingRenderDeltaBytes.clear();
+    pendingRenderBytes = 0;
+  }
 
   function dispatch(action: Parameters<typeof sessionReducer>[1]): void {
     const previousThreadId = state.providerThreadId;
@@ -488,10 +680,13 @@ export function createSessionController(options: CreateSessionControllerOptions)
   }
 
   async function applyAuthoritativeSnapshot(snapshot: NativeConversationSnapshot): Promise<void> {
-    if (snapshot.conversationSchemaGeneration !== CONVERSATION_SCHEMA_GENERATION || !Number.isSafeInteger(snapshot.throughEventSeq) || snapshot.throughEventSeq < 0) {
+    if (snapshot.conversationSchemaGeneration !== CONVERSATION_SCHEMA_GENERATION || snapshot.syncStreamGeneration !== CONVERSATION_SYNC_STREAM_GENERATION || !Number.isSafeInteger(snapshot.throughEventSeq) || snapshot.throughEventSeq < 0) {
       throw new Error('Zeus Renderer 与本地服务的会话结构代次不匹配，已拒绝猜测旧新字段。');
     }
     lastAppliedSyncEventSequence = snapshot.throughEventSeq;
+    for (const sequence of pendingSyncGapEvents.keys()) {
+      if (sequence <= snapshot.throughEventSeq) deletePendingSyncGapEvent(sequence);
+    }
     const settledSnapshot = settlePendingSteeringFromSnapshot(snapshot);
     const projectedSnapshot = {
       ...withoutResolvedRequests(settledSnapshot),
@@ -547,7 +742,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     renderDeltaTimer = null;
     if (pendingRenderDeltas.size === 0) return;
     const events = [...pendingRenderDeltas.values()];
-    pendingRenderDeltas.clear();
+    clearPendingRenderDeltas();
     for (const event of events) applyEventImmediately(event);
   }
 
@@ -560,16 +755,69 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return;
     }
     // Map 的删除再写入保留“最后一次到达”的顺序，避免合并后出现跨 item 的旧顺序。
+    const existingBytes = pendingRenderDeltaBytes.get(key) ?? 0;
+    const eventBytes = estimateNativeRealtimeEventBytes(event);
+    const nextEntries = pendingRenderDeltas.has(key) ? pendingRenderDeltas.size : pendingRenderDeltas.size + 1;
+    const nextBytes = pendingRenderBytes - existingBytes + eventBytes;
+    if (nextEntries > sessionRealtimeBufferBudget.maxEntries || nextBytes > sessionRealtimeBufferBudget.maxBytes) {
+      clearPendingRenderDeltas();
+      failConversationSync(realtimeBufferBudgetError('render-delta'));
+      return;
+    }
     pendingRenderDeltas.delete(key);
     pendingRenderDeltas.set(key, event);
+    pendingRenderDeltaBytes.set(key, eventBytes);
+    pendingRenderBytes = nextBytes;
+    observeRealtimeBufferWatermark('render-delta', nextEntries, nextBytes);
     if (!renderDeltaTimer) renderDeltaTimer = setTimeout(flushRenderDeltas, RENDER_DELTA_COALESCE_MS);
   }
 
-  function applyEvent(event: NativeConversationEvent): void {
+  function applyRealtimeEvent(event: NativeRealtimeEventEnvelope): void {
+    if (syncProjectionSuspended) return;
     if (targetedHydrationBuffer) {
-      targetedHydrationBuffer.push(event);
+      if (!appendRealtimeEvent(targetedHydrationBuffer, event)) {
+        failConversationSync(realtimeBufferBudgetError('targeted-hydration'));
+      } else {
+        observeRealtimeBufferWatermark('targeted-hydration', targetedHydrationBuffer.events.length, targetedHydrationBuffer.bytes);
+      }
       return;
     }
+    if (event.type === 'conversation.sync.baseline_required' || event.type === 'conversation.sync.catch_up_required') {
+      if (event.payload.conversationId === options.conversationId) scheduleConversationSyncGapRecovery();
+      return;
+    }
+    if (event.payload.projectId !== options.projectId || event.payload.conversationId !== options.conversationId) return;
+    const syncSequence = event.payload.sequence;
+    if (!Number.isSafeInteger(syncSequence) || (syncSequence as number) <= 0 || event.payload.conversationSchemaGeneration !== CONVERSATION_SCHEMA_GENERATION || event.payload.syncStreamGeneration !== CONVERSATION_SYNC_STREAM_GENERATION) {
+      failConversationSync(new Error('收到无法验证结构代次或连续序号的会话事件，已拒绝继续投影。'));
+      return;
+    }
+    const sequence = syncSequence as number;
+    if (sequence <= lastAppliedSyncEventSequence) return;
+    if (syncGapRecoveryPromise || sequence !== lastAppliedSyncEventSequence + 1) {
+      if (!queuePendingSyncGapEvent(sequence, event)) return;
+      flushRenderDeltas();
+      scheduleConversationSyncGapRecovery();
+      return;
+    }
+    acceptContiguousRealtimeEvent(event);
+  }
+
+  function acceptContiguousRealtimeEvent(event: NativeRealtimeEventEnvelope): void {
+    if (
+      event.payload.conversationId !== options.conversationId ||
+      event.payload.projectId !== options.projectId ||
+      event.payload.conversationSchemaGeneration !== CONVERSATION_SCHEMA_GENERATION ||
+      event.payload.syncStreamGeneration !== CONVERSATION_SYNC_STREAM_GENERATION ||
+      !((typeof event.payload.entityRevision === 'number' && Number.isSafeInteger(event.payload.entityRevision)) || (typeof event.payload.entityRevision === 'string' && event.payload.entityRevision.length > 0))
+    ) {
+      throw new Error('会话增量事件的会话身份或协议代次不一致。');
+    }
+    const sequence = event.payload.sequence;
+    if (!Number.isSafeInteger(sequence) || (sequence as number) <= lastAppliedSyncEventSequence) return;
+    if ((sequence as number) !== lastAppliedSyncEventSequence + 1) throw new Error('会话增量事件序号不连续，已拒绝越过缺口。');
+    lastAppliedSyncEventSequence = sequence as number;
+    if (!isNativeConversationEvent(event) || !isEventForController(event)) return;
     if (event.type === 'conversation.item.delta') {
       queueRenderDelta(event);
       return;
@@ -579,11 +827,96 @@ export function createSessionController(options: CreateSessionControllerOptions)
     applyEventImmediately(event);
   }
 
+  function scheduleConversationSyncGapRecovery(): void {
+    if (disposed || syncGapRecoveryPromise) return;
+    const token = connectionToken;
+    const recovery = recoverConversationSyncGap(token);
+    syncGapRecoveryPromise = recovery;
+    void recovery
+      .catch((error) => {
+        if (!disposed && token === connectionToken) failConversationSync(error);
+      })
+      .finally(() => {
+        if (syncGapRecoveryPromise === recovery) syncGapRecoveryPromise = null;
+      });
+  }
+
+  async function recoverConversationSyncGap(token: number): Promise<void> {
+    let stalledReads = 0;
+    while (!disposed && token === connectionToken) {
+      const page = await options.client.loadNativeConversationEvents(options.projectId, options.conversationId, {
+        afterSequence: lastAppliedSyncEventSequence,
+        limit: 1_000,
+        byteLimit: 4 * 1024 * 1024,
+        syncStreamGeneration: CONVERSATION_SYNC_STREAM_GENERATION,
+      });
+      if (disposed || token !== connectionToken || syncProjectionSuspended) return;
+      if (
+        page.conversationId !== options.conversationId ||
+        page.conversationSchemaGeneration !== CONVERSATION_SCHEMA_GENERATION ||
+        page.syncStreamGeneration !== CONVERSATION_SYNC_STREAM_GENERATION ||
+        !Number.isSafeInteger(page.throughEventSeq) ||
+        !Number.isSafeInteger(page.nextCursor)
+      ) {
+        throw new Error('会话增量补拉响应的身份、代次或游标无效。');
+      }
+      let progressed = false;
+      if (page.requestedBeforeBaseline) {
+        const snapshot = await loadConversationForHydration();
+        if (disposed || token !== connectionToken || syncProjectionSuspended) return;
+        await applyAuthoritativeSnapshot(snapshot);
+        progressed = true;
+      } else {
+        for (const event of page.events) {
+          const sequence = event.payload.sequence;
+          if (!Number.isSafeInteger(sequence)) throw new Error('会话增量补拉响应包含无效序号。');
+          if ((sequence as number) <= lastAppliedSyncEventSequence) continue;
+          acceptContiguousRealtimeEvent(event);
+          progressed = true;
+        }
+      }
+      if (page.hasMore) {
+        stalledReads = progressed ? 0 : stalledReads + 1;
+        if (stalledReads >= 2) throw new Error('会话增量补拉没有推进游标。');
+        continue;
+      }
+
+      const buffered = [...pendingSyncGapEvents.entries()].sort(([left], [right]) => left - right);
+      clearPendingSyncGapEvents();
+      for (const [sequence, event] of buffered) {
+        if (sequence <= lastAppliedSyncEventSequence) continue;
+        if (sequence !== lastAppliedSyncEventSequence + 1) {
+          if (!queuePendingSyncGapEvent(sequence, event)) return;
+          continue;
+        }
+        acceptContiguousRealtimeEvent(event);
+        progressed = true;
+      }
+      if (pendingSyncGapEvents.size === 0) return;
+      stalledReads = progressed ? 0 : stalledReads + 1;
+      if (stalledReads >= 2) throw new Error('会话增量补拉后仍存在不可跨越的序号缺口。');
+    }
+  }
+
+  function failConversationSync(error: unknown): void {
+    if (disposed || syncProjectionSuspended) return;
+    syncProjectionSuspended = true;
+    if (renderDeltaTimer) clearTimeout(renderDeltaTimer);
+    renderDeltaTimer = null;
+    clearPendingRenderDeltas();
+    clearPendingSyncGapEvents();
+    const token = connectionToken;
+    socketLifecycle?.markInactive();
+    socketLifecycle = null;
+    const failedSocket = socket;
+    socket = null;
+    failedSocket?.close();
+    dispatch({ type: 'transport_changed', transportState: 'failed', error: toSessionError(error, true) });
+    scheduleReconnect(token);
+  }
+
   function applyEventImmediately(event: NativeConversationEvent): void {
     if (!isEventForController(event)) return;
-    const syncSequence = event.payload.sequence;
-    if (!Number.isSafeInteger(syncSequence) || syncSequence <= lastAppliedSyncEventSequence) return;
-    lastAppliedSyncEventSequence = syncSequence;
     const requestId = eventRequestId(event);
     if (event.type === 'conversation.request.resolved' && requestId) {
       markRequestResolved(requestId, event);
@@ -857,10 +1190,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
   async function reconcileAcceptedSend(): Promise<void> {
     const envelope = pendingSend;
     if (!envelope || envelope.deliveryState !== 'accepted' || !envelope.acceptance || disposed) return;
-    const buffered: NativeConversationEvent[] = [];
+    const buffered = createRealtimeEventBuffer('targeted-hydration');
     targetedHydrationBuffer = buffered;
     try {
-      const snapshot = await options.client.loadNativeConversation(options.projectId, options.conversationId);
+      const snapshot = await loadConversationForHydration();
       if (disposed || pendingSend !== envelope) return;
       await applyAuthoritativeSnapshot(snapshot);
       if (envelopeWasRecoveredToComposer(snapshot, envelope)) {
@@ -901,7 +1234,11 @@ export function createSessionController(options: CreateSessionControllerOptions)
       }
     } finally {
       if (targetedHydrationBuffer === buffered) targetedHydrationBuffer = null;
-      for (const event of buffered) applyEvent(event);
+      if (!buffered.overflowed) {
+        for (const event of buffered.events) applyRealtimeEvent(event);
+      }
+      buffered.events.length = 0;
+      buffered.bytes = 0;
       flushRenderDeltas();
     }
   }
@@ -932,10 +1269,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
   }
 
   async function reconcileFailedSend(envelope: PendingSendEnvelope): Promise<FailedSendReconciliation> {
-    const buffered: NativeConversationEvent[] = [];
+    const buffered = createRealtimeEventBuffer('targeted-hydration');
     targetedHydrationBuffer = buffered;
     try {
-      const snapshot = await options.client.loadNativeConversation(options.projectId, options.conversationId);
+      const snapshot = await loadConversationForHydration();
       if (disposed || pendingSend !== envelope) return { kind: 'unknown' };
       await applyAuthoritativeSnapshot(snapshot);
       if (envelopeWasRecoveredToComposer(snapshot, envelope)) {
@@ -954,7 +1291,11 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return { kind: 'unknown' };
     } finally {
       if (targetedHydrationBuffer === buffered) targetedHydrationBuffer = null;
-      for (const event of buffered) applyEvent(event);
+      if (!buffered.overflowed) {
+        for (const event of buffered.events) applyRealtimeEvent(event);
+      }
+      buffered.events.length = 0;
+      buffered.bytes = 0;
       flushRenderDeltas();
     }
   }
@@ -1122,6 +1463,26 @@ export function createSessionController(options: CreateSessionControllerOptions)
     };
   }
 
+  async function loadConversationForHydration(): Promise<NativeConversationSnapshot> {
+    const loadSnapshot = options.client.loadNativeConversationV2;
+    const loadHistory = options.client.loadNativeConversationModelHistoryV2;
+    const loadQueue = options.client.loadNativeConversationQueueV2;
+    const loadChoice = options.client.loadNativeConversationChoice;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const snapshot = await loadSnapshot(options.projectId, options.conversationId);
+      const [history, queue, pending, choice, goal] = await Promise.all([
+        loadHistory(options.projectId, options.conversationId, { direction: 'tail', limit: 48, byteLimit: 96 * 1024 }),
+        loadQueue(options.projectId, options.conversationId),
+        options.client.loadNativePendingRequests(options.projectId, options.conversationId),
+        loadChoice(options.projectId, options.conversationId),
+        options.client.loadNativeGoal(options.projectId, options.conversationId),
+      ]);
+      if (history.throughEventSeq !== snapshot.throughEventSeq) continue;
+      return adaptConversationSnapshotV2({ snapshot, history, queue, requests: pending.requests, choice, goal });
+    }
+    throw new Error('Snapshot V2 结构与尾部历史未能在同一事件水位稳定读取，请重试。');
+  }
+
   async function hydrate(reconnecting: boolean, canRefreshSocketConfig: boolean): Promise<void> {
     if (disposed) return;
     flushRenderDeltas();
@@ -1132,15 +1493,34 @@ export function createSessionController(options: CreateSessionControllerOptions)
     socketLifecycle = null;
     dispatch({ type: 'transport_changed', transportState: reconnecting ? 'reconnecting' : 'connecting', error: null });
 
-    const buffered: NativeConversationEvent[] = [];
+    const buffered = createRealtimeEventBuffer('hydration');
+    let hydrationOverflowError: Error | null = null;
     let hydrating = true;
     let ready = false;
     const onEvent = (event: NativeRealtimeEventEnvelope): void => {
-      if (disposed || token !== connectionToken || !isNativeConversationEvent(event)) return;
-      if (hydrating) buffered.push(event);
-      else applyEvent(event);
+      if (disposed || token !== connectionToken) return;
+      const isConversationControl = event.type === 'conversation.sync.baseline_required' || event.type === 'conversation.sync.catch_up_required';
+      const isConversationEvent = event.payload.conversationId === options.conversationId && event.payload.projectId === options.projectId;
+      if (!isConversationControl && !isConversationEvent) return;
+      if (!hydrating) {
+        applyRealtimeEvent(event);
+        return;
+      }
+      if (appendRealtimeEvent(buffered, event)) {
+        observeRealtimeBufferWatermark('hydration', buffered.events.length, buffered.bytes);
+        return;
+      }
+      if (!hydrationOverflowError) {
+        hydrationOverflowError = realtimeBufferBudgetError('hydration');
+        failConversationSync(hydrationOverflowError);
+      }
     };
-    const eventOptions = reconnecting && state.lastEventId ? { afterEventId: state.lastEventId } : undefined;
+    const eventOptions = {
+      conversationId: options.conversationId,
+      afterSequence: lastAppliedSyncEventSequence,
+      syncStreamGeneration: CONVERSATION_SYNC_STREAM_GENERATION,
+      ...(reconnecting && state.lastEventId ? { afterEventId: state.lastEventId } : {}),
+    };
 
     try {
       const nextSocket = options.client.connectEvents(onEvent, eventOptions);
@@ -1149,9 +1529,14 @@ export function createSessionController(options: CreateSessionControllerOptions)
         if (ready) scheduleReconnect(token);
       });
       socketLifecycle = lifecycle;
+      if (hydrationOverflowError) {
+        lifecycle.markInactive();
+        nextSocket.close();
+        throw hydrationOverflowError;
+      }
       // 快照读取与 WebSocket 建连互不依赖；并行启动可以把冷切换的等待时间收敛到较慢的一条链路。
       dispatch({ type: 'transport_changed', transportState: 'hydrating' });
-      const snapshotPromise = options.client.loadNativeConversation(options.projectId, options.conversationId);
+      const snapshotPromise = loadConversationForHydration();
       void snapshotPromise.catch(() => undefined);
       try {
         await lifecycle.opened;
@@ -1164,7 +1549,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         if (!canRefreshSocketConfig || disposed || token !== connectionToken) throw socketError;
         // An HTTP read refreshes Electron Main's rotated local-server base URL. Discard
         // this unbuffered read, reconnect the socket, then perform the authoritative GET.
-        await options.client.loadNativeConversation(options.projectId, options.conversationId);
+        await loadConversationForHydration();
         if (disposed || token !== connectionToken) return;
         return hydrate(true, false);
       }
@@ -1173,9 +1558,15 @@ export function createSessionController(options: CreateSessionControllerOptions)
       const snapshot = await snapshotPromise;
       if (disposed || token !== connectionToken) return;
       if (lifecycle.isDisconnected()) throw new SocketDisconnectedDuringHydrationError();
+      if (hydrationOverflowError) throw hydrationOverflowError;
+      // 在权威快照进入外部 store 前开放首帧门；snapshot_hydrated 的下一次 commit 才是内容首帧。
+      markConversationNavigationRenderReady(options.projectId, options.conversationId);
       await applyAuthoritativeSnapshot(snapshot);
       await reconcilePersistedAcceptance(snapshot);
-      for (const event of buffered) applyEvent(event);
+      syncProjectionSuspended = false;
+      for (const event of buffered.events) applyRealtimeEvent(event);
+      buffered.events.length = 0;
+      buffered.bytes = 0;
       hydrating = false;
       ready = true;
       dispatch({ type: 'transport_changed', transportState: 'ready', error: null });
@@ -1190,6 +1581,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         const failedSocket = socket;
         socket = null;
         failedSocket?.close();
+        markConversationNavigationRenderReady(options.projectId, options.conversationId);
         dispatch({ type: 'transport_changed', transportState: 'failed', error: toSessionError(error, true) });
       }
       if (shouldScheduleReconnect) scheduleReconnect(token);
@@ -1328,6 +1720,187 @@ export function createSessionController(options: CreateSessionControllerOptions)
     }
   }
 
+  function dispatchV2Snapshot(snapshot: NativeConversationSnapshot): void {
+    if (disposed || state.snapshot?.id !== snapshot.id || snapshot.id !== options.conversationId) return;
+    // 按需页不拥有 durable event 水位，只合并展示投影；不得重置 gap-recovery 游标。
+    dispatch({ type: 'snapshot_hydrated', snapshot });
+  }
+
+  async function loadEarlierHistoryV2(): Promise<void> {
+    const load = options.client.loadNativeConversationModelHistoryV2;
+    const current = state.snapshot;
+    const history = current?.v2Paging?.history;
+    if (!load || !current?.snapshotV2 || !history || history.loading || !history.hasMore || !history.nextCursor) return;
+    dispatchV2Snapshot(
+      updateConversationV2Paging(current, (paging) => ({
+        ...paging,
+        history: { ...paging.history, loading: true, error: null },
+      })),
+    );
+    try {
+      const page = await load(options.projectId, options.conversationId, { cursor: history.nextCursor, direction: 'tail', limit: 48, byteLimit: 96 * 1024 });
+      const latest = state.snapshot;
+      if (!latest?.snapshotV2 || !latest.v2Paging) return;
+      dispatchV2Snapshot(mergeConversationHistoryV2(latest, page));
+    } catch (error) {
+      const latest = state.snapshot;
+      if (latest?.v2Paging) {
+        dispatchV2Snapshot(
+          updateConversationV2Paging(latest, (paging) => ({
+            ...paging,
+            history: { ...paging.history, loading: false, error: errorMessage(error) },
+          })),
+        );
+      }
+      throw error;
+    }
+  }
+
+  async function loadTurnProcessV2(turnIdentity: string): Promise<void> {
+    const load = options.client.loadNativeConversationProcessV2;
+    const current = state.snapshot;
+    if (!load || !current?.snapshotV2 || !current.v2Paging) return;
+    const turn = current.turns.find((candidate) => candidate.id === turnIdentity || candidate.providerTurnId === turnIdentity);
+    if (!turn) return;
+    const pagingKey = turn.providerTurnId ?? turn.id;
+    const currentPage = current.v2Paging.processByTurn[pagingKey];
+    if (currentPage?.loading || (currentPage?.loaded && !currentPage.hasMore)) return;
+    dispatchV2Snapshot(
+      updateConversationV2Paging(current, (paging) => ({
+        ...paging,
+        processByTurn: {
+          ...paging.processByTurn,
+          [pagingKey]: { nextCursor: currentPage?.nextCursor ?? null, hasMore: currentPage?.hasMore ?? true, loading: true, loaded: currentPage?.loaded ?? false, error: null },
+        },
+      })),
+    );
+    try {
+      const page = await load(options.projectId, options.conversationId, turn.id, {
+        ...(currentPage?.nextCursor ? { cursor: currentPage.nextCursor } : {}),
+        limit: 32,
+        byteLimit: 96 * 1024,
+      });
+      const latest = state.snapshot;
+      if (!latest?.snapshotV2 || !latest.v2Paging) return;
+      dispatchV2Snapshot(mergeConversationProcessV2(latest, pagingKey, page));
+    } catch (error) {
+      const latest = state.snapshot;
+      if (latest?.v2Paging) {
+        dispatchV2Snapshot(
+          updateConversationV2Paging(latest, (paging) => ({
+            ...paging,
+            processByTurn: {
+              ...paging.processByTurn,
+              [pagingKey]: { nextCursor: currentPage?.nextCursor ?? null, hasMore: currentPage?.hasMore ?? true, loading: false, loaded: currentPage?.loaded ?? false, error: errorMessage(error) },
+            },
+          })),
+        );
+      }
+      throw error;
+    }
+  }
+
+  async function loadTurnArtifactsV2(turnIdentity: string): Promise<void> {
+    const current = state.snapshot;
+    if (!current?.snapshotV2 || !current.v2Paging) return;
+    const turn = current.turns.find((candidate) => candidate.id === turnIdentity || candidate.providerTurnId === turnIdentity);
+    if (!turn) return;
+    const pagingKey = turn.providerTurnId ?? turn.id;
+    const currentChange = current.v2Paging.changeSetsByTurn[pagingKey];
+    const resources = current.v2Paging.resources;
+    if (currentChange?.loading || resources.loading) return;
+    const v2Turn = [...current.snapshotV2.recentClosedTurns, ...(current.snapshotV2.activeTurn ? [current.snapshotV2.activeTurn] : [])].find((candidate) => candidate.id === turn.id);
+    const shouldLoadResources = Boolean(options.client.loadNativeConversationResourcesV2 && (!resources.loaded || resources.hasMore));
+    const shouldLoadChange = Boolean(v2Turn?.changeSetAvailable && options.client.loadNativeConversationChangeSetV2 && options.client.loadNativeConversationChangeFilesV2 && (!currentChange?.loaded || currentChange.hasMore));
+    if (!shouldLoadResources && !shouldLoadChange) return;
+    dispatchV2Snapshot(
+      updateConversationV2Paging(current, (paging) => ({
+        ...paging,
+        resources: shouldLoadResources ? { ...paging.resources, loading: true, error: null } : paging.resources,
+        changeSetsByTurn: {
+          ...paging.changeSetsByTurn,
+          [pagingKey]: shouldLoadChange
+            ? {
+                loading: true,
+                loaded: currentChange?.loaded ?? false,
+                error: null,
+                summary: currentChange?.summary ?? null,
+                files: currentChange?.files ?? [],
+                nextCursor: currentChange?.nextCursor ?? null,
+                hasMore: currentChange?.hasMore ?? true,
+              }
+            : (currentChange ?? { loading: false, loaded: true, error: null, summary: null, files: [], nextCursor: null, hasMore: false }),
+        },
+      })),
+    );
+    try {
+      const resourcePromise = shouldLoadResources
+        ? options.client.loadNativeConversationResourcesV2!(options.projectId, options.conversationId, {
+            ...(resources.nextCursor ? { cursor: resources.nextCursor } : {}),
+            limit: 32,
+            byteLimit: 64 * 1024,
+          })
+        : Promise.resolve(null);
+      const changePromise = shouldLoadChange
+        ? (async () => {
+            const summary = currentChange?.summary ?? (await options.client.loadNativeConversationChangeSetV2!(options.projectId, options.conversationId, turn.id));
+            const files = await options.client.loadNativeConversationChangeFilesV2!(options.projectId, options.conversationId, turn.id, summary.id, {
+              ...(currentChange?.nextCursor ? { cursor: currentChange.nextCursor } : {}),
+              limit: 32,
+              byteLimit: 64 * 1024,
+            });
+            return { summary, files };
+          })()
+        : Promise.resolve(null);
+      const [resourcePage, changePage] = await Promise.all([resourcePromise, changePromise]);
+      const latest = state.snapshot;
+      if (!latest?.snapshotV2 || !latest.v2Paging) return;
+      dispatchV2Snapshot(
+        updateConversationV2Paging(latest, (paging) => {
+          const resourceItems = resourcePage ? dedupeById([...paging.resources.items, ...resourcePage.items]) : paging.resources.items;
+          const previousChange = paging.changeSetsByTurn[pagingKey];
+          return {
+            ...paging,
+            resources: resourcePage ? { nextCursor: resourcePage.nextCursor, hasMore: resourcePage.hasMore, loading: false, loaded: true, error: null, items: resourceItems } : paging.resources,
+            changeSetsByTurn: {
+              ...paging.changeSetsByTurn,
+              [pagingKey]: changePage
+                ? {
+                    loading: false,
+                    loaded: true,
+                    error: null,
+                    summary: changePage.summary,
+                    files: dedupeById([...(previousChange?.files ?? []), ...changePage.files.items]),
+                    nextCursor: changePage.files.nextCursor,
+                    hasMore: changePage.files.hasMore,
+                  }
+                : (previousChange ?? { loading: false, loaded: true, error: null, summary: null, files: [], nextCursor: null, hasMore: false }),
+            },
+          };
+        }),
+      );
+    } catch (error) {
+      const latest = state.snapshot;
+      if (latest?.v2Paging) {
+        dispatchV2Snapshot(
+          updateConversationV2Paging(latest, (paging) => ({
+            ...paging,
+            resources: shouldLoadResources ? { ...paging.resources, loading: false, error: errorMessage(error) } : paging.resources,
+            changeSetsByTurn: {
+              ...paging.changeSetsByTurn,
+              [pagingKey]: {
+                ...(paging.changeSetsByTurn[pagingKey] ?? { loaded: false, summary: null, files: [], nextCursor: null, hasMore: true }),
+                loading: false,
+                error: errorMessage(error),
+              },
+            },
+          })),
+        );
+      }
+      throw error;
+    }
+  }
+
   const controller: SessionController = {
     start() {
       if (state.transportState === 'ready') return Promise.resolve();
@@ -1351,7 +1924,14 @@ export function createSessionController(options: CreateSessionControllerOptions)
       disposed = true;
       if (renderDeltaTimer) clearTimeout(renderDeltaTimer);
       renderDeltaTimer = null;
-      pendingRenderDeltas.clear();
+      clearPendingRenderDeltas();
+      clearPendingSyncGapEvents();
+      if (targetedHydrationBuffer) {
+        targetedHydrationBuffer.events.length = 0;
+        targetedHydrationBuffer.bytes = 0;
+      }
+      targetedHydrationBuffer = null;
+      syncGapRecoveryPromise = null;
       pendingSteeringSubmissions.clear();
       cancelPendingRequestRefreshRetry();
       requestsAwaitingDetails.clear();
@@ -1368,6 +1948,17 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return () => listeners.delete(listener);
     },
     getState: () => state,
+    getDiagnostics: () => ({
+      syncProjectionSuspended,
+      lastAppliedSyncEventSequence,
+      pendingSyncGapEntries: pendingSyncGapEvents.size,
+      pendingSyncGapBytes,
+      pendingRenderDeltaEntries: pendingRenderDeltas.size,
+      pendingRenderDeltaBytes: pendingRenderBytes,
+      hydrationBufferEntries: targetedHydrationBuffer?.events.length ?? 0,
+      hydrationBufferBytes: targetedHydrationBuffer?.bytes ?? 0,
+      realtimeBufferWatermarks: Object.fromEntries([...realtimeBufferWatermarks].map(([kind, value]) => [kind, { entries: value.entries, bytes: value.bytes }])),
+    }),
     setDraft(draft) {
       if (pendingSend && pendingSend.deliveryState !== 'accepted' && pendingSend.draft !== draft) pendingSend = null;
       dispatch({ type: 'draft_changed', draft });
@@ -1400,14 +1991,20 @@ export function createSessionController(options: CreateSessionControllerOptions)
       if (state.conversationState !== 'native_idle' || state.transportState !== 'ready') return Promise.reject(new Error('Conversation permission mode can change only while the conversation is idle.'));
       return runOperation(
         `permission-mode:${permissionMode}`,
-        () => options.client.updateNativePermissionMode(options.projectId, options.conversationId, permissionMode),
+        async () => {
+          await options.client.updateNativePermissionMode(options.projectId, options.conversationId, permissionMode);
+          return loadConversationForHydration();
+        },
         (snapshot) => applyAuthoritativeSnapshot(snapshot),
       );
     },
     setCollaborationMode(collaborationMode) {
       return runOperation(
         `collaboration-mode:${collaborationMode}`,
-        () => options.client.updateNativeCollaborationMode(options.projectId, options.conversationId, collaborationMode),
+        async () => {
+          await options.client.updateNativeCollaborationMode(options.projectId, options.conversationId, collaborationMode);
+          return loadConversationForHydration();
+        },
         (snapshot) => applyAuthoritativeSnapshot(snapshot),
       );
     },
@@ -1684,7 +2281,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
     restoreArchivedConversation() {
       return runOperation(
         'provider-thread:restore',
-        () => options.client.restoreArchivedNativeConversation(options.projectId, options.conversationId),
+        async () => {
+          await options.client.restoreArchivedNativeConversation(options.projectId, options.conversationId);
+          return loadConversationForHydration();
+        },
         (snapshot) => applyAuthoritativeSnapshot(snapshot),
       );
     },
@@ -1728,9 +2328,25 @@ export function createSessionController(options: CreateSessionControllerOptions)
     respondToPlanImplementationRequest(requestId, input) {
       return runOperation(
         `plan-request:${requestId}:${JSON.stringify(input)}`,
-        () => options.client.respondToPlanImplementationRequest(options.projectId, options.conversationId, requestId, input),
-        ({ conversation }) => applyAuthoritativeSnapshot(conversation),
+        async () => {
+          await options.client.respondToPlanImplementationRequest(options.projectId, options.conversationId, requestId, input);
+          return loadConversationForHydration();
+        },
+        (snapshot) => applyAuthoritativeSnapshot(snapshot),
       ).then(() => undefined);
+    },
+    loadEarlierHistory: loadEarlierHistoryV2,
+    loadTurnProcess: loadTurnProcessV2,
+    loadTurnArtifacts: loadTurnArtifactsV2,
+    loadV2Content(handle, offset) {
+      const load = options.client.loadNativeConversationContentV2;
+      if (!load || !state.snapshot?.snapshotV2) return Promise.reject(new Error('当前会话不支持 Snapshot V2 正文分页。'));
+      return load(options.projectId, options.conversationId, handle, { ...(offset === undefined ? {} : { offset }), byteLimit: 64 * 1024 });
+    },
+    loadV2ToolResult(handle, offset) {
+      const load = options.client.loadNativeConversationToolResult;
+      if (!load || !state.snapshot?.snapshotV2) return Promise.reject(new Error('当前会话不支持完整工具结果分页。'));
+      return load(options.projectId, options.conversationId, handle, { ...(offset === undefined ? {} : { offset }), limit: 16_384 });
     },
   };
   return controller;
@@ -1741,19 +2357,56 @@ export interface UseSessionControllerResult {
   controller: SessionController;
 }
 
-export function useSessionController(options: CreateSessionControllerOptions): UseSessionControllerResult {
+/**
+ * 只管理 controller 生命周期，不订阅完整会话状态。正文、输入、队列等高频区域应在各自
+ * 组件边界通过 useSessionControllerSelector 订阅所需 slice。
+ */
+export function useSessionControllerInstance(options: CreateSessionControllerOptions): SessionController {
   const controller = useMemo(
     () => createSessionController(options),
     [options.client, options.projectId, options.conversationId, options.enabled, options.initialCachedState, options.initialOptimisticState, options.storage, options.createId],
   );
-  const state = useSyncExternalStore(controller.subscribe, controller.getState, controller.getState);
   useEffect(() => {
     // 尚未启动的控制器没有连接资源可释放；启用时会按新状态构造可工作的实例。
     if (options.enabled === false) return;
     void controller.start().catch(() => undefined);
     return () => controller.dispose();
   }, [controller, options.enabled]);
+  return controller;
+}
+
+/** useSyncExternalStore 的有缓存 selector；未命中的 store 更新不会触发该组件 commit。 */
+export function useSessionControllerSelector<Selection>(
+  controller: SessionController,
+  selector: (state: NativeSessionState) => Selection,
+  isEqual: (left: Selection, right: Selection) => boolean = Object.is,
+): Selection {
+  const selectionCache = useMemo<{ state: NativeSessionState | null; selection?: Selection }>(() => ({ state: null }), [controller, selector, isEqual]);
+  const getSnapshot = useCallback(() => {
+    const nextState = controller.getState();
+    if (selectionCache.state === nextState && selectionCache.selection !== undefined) return selectionCache.selection;
+    const nextSelection = selector(nextState);
+    if (selectionCache.selection === undefined || !isEqual(selectionCache.selection, nextSelection)) selectionCache.selection = nextSelection;
+    selectionCache.state = nextState;
+    return selectionCache.selection;
+  }, [controller, isEqual, selectionCache, selector]);
+  return useSyncExternalStore(controller.subscribe, getSnapshot, getSnapshot);
+}
+
+const selectCompleteSessionState = (state: NativeSessionState): NativeSessionState => state;
+
+export function useSessionController(options: CreateSessionControllerOptions): UseSessionControllerResult {
+  const controller = useSessionControllerInstance(options);
+  const state = useSessionControllerSelector(controller, selectCompleteSessionState);
   return { state, controller };
+}
+
+function dedupeById<T extends { id: string }>(items: T[]): T[] {
+  return [...new Map(items.map((item) => [item.id, item])).values()];
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error && error.message.trim() ? error.message : '按需读取失败。';
 }
 
 function browserStorage(): SessionDraftStorage | undefined {

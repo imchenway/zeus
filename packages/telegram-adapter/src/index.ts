@@ -56,6 +56,19 @@ export interface TelegramSentMessage {
   messageId: number;
 }
 
+/** Telegram 已回应未接纳；与无响应的网络超时严格分开，供上层收口四态回执。 */
+export class TelegramApiRejectedError extends Error {
+  readonly name = 'TelegramApiRejectedError';
+  readonly dispatchDisposition = 'explicitly_rejected' as const;
+
+  constructor(
+    message: string,
+    readonly status: number | null = null,
+  ) {
+    super(message);
+  }
+}
+
 interface TelegramApiMessage {
   chat?: { id?: number };
   from?: { id?: number };
@@ -68,7 +81,7 @@ interface TelegramApiUpdate {
   message?: TelegramApiMessage;
   callback_query?: {
     id?: string;
-    from?: {id?: number};
+    from?: { id?: number };
     message?: TelegramApiMessage;
     data?: string;
   };
@@ -82,7 +95,7 @@ interface TelegramApiGetUpdatesResponse {
 
 interface TelegramApiSendMessageResponse {
   ok: boolean;
-  result?: {message_id?: number};
+  result?: { message_id?: number };
   description?: string;
 }
 
@@ -119,38 +132,34 @@ export function createTelegramBotMessageClient(options: { token: string; fetch?:
         body: JSON.stringify({
           chat_id: chatId,
           text: formatTelegramMessage(text, { maxLength: options.maxLength }),
-          ...(messageOptions?.inlineKeyboard?.length
-            ? {reply_markup: {inline_keyboard: toTelegramInlineKeyboard(messageOptions.inlineKeyboard)}}
-            : {}),
+          ...(messageOptions?.inlineKeyboard?.length ? { reply_markup: { inline_keyboard: toTelegramInlineKeyboard(messageOptions.inlineKeyboard) } } : {}),
         }),
       });
       if (!response.ok) {
-        throw new Error(`Telegram sendMessage failed: ${response.status}`);
+        throw new TelegramApiRejectedError(`Telegram sendMessage failed: ${response.status}`, response.status);
       }
       const body = (await response.json()) as TelegramApiSendMessageResponse;
       if (!body.ok) {
-        throw new Error(body.description ?? 'Telegram sendMessage returned ok=false');
+        throw new TelegramApiRejectedError(body.description ?? 'Telegram sendMessage returned ok=false');
       }
-      return typeof body.result?.message_id === 'number' ? {messageId: body.result.message_id} : undefined;
+      return typeof body.result?.message_id === 'number' ? { messageId: body.result.message_id } : undefined;
     },
     async editMessage(chatId: number, messageId: number, text: string, messageOptions?: TelegramMessageOptions): Promise<void> {
       const url = `https://api.telegram.org/bot${options.token}/editMessageText`;
       const response = await fetchImpl(url, {
         method: 'POST',
-        headers: {'content-type': 'application/json'},
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           chat_id: chatId,
           message_id: messageId,
-          text: formatTelegramMessage(text, {maxLength: options.maxLength}),
-          ...(messageOptions?.inlineKeyboard?.length
-            ? {reply_markup: {inline_keyboard: toTelegramInlineKeyboard(messageOptions.inlineKeyboard)}}
-            : {reply_markup: {inline_keyboard: []}}),
+          text: formatTelegramMessage(text, { maxLength: options.maxLength }),
+          ...(messageOptions?.inlineKeyboard?.length ? { reply_markup: { inline_keyboard: toTelegramInlineKeyboard(messageOptions.inlineKeyboard) } } : { reply_markup: { inline_keyboard: [] } }),
         }),
       });
-      if (!response.ok) throw new Error(`Telegram editMessageText failed: ${response.status}`);
+      if (!response.ok) throw new TelegramApiRejectedError(`Telegram editMessageText failed: ${response.status}`, response.status);
       const body = (await response.json()) as TelegramApiSendMessageResponse;
       if (!body.ok && !body.description?.includes('message is not modified')) {
-        throw new Error(body.description ?? 'Telegram editMessageText returned ok=false');
+        throw new TelegramApiRejectedError(body.description ?? 'Telegram editMessageText returned ok=false');
       }
     },
     async sendDocument(chatId: number, filePath: string, caption?: string): Promise<void> {
@@ -159,11 +168,11 @@ export function createTelegramBotMessageClient(options: { token: string; fetch?:
       const form = new FormData();
       form.set('chat_id', String(chatId));
       form.set('document', new Blob([bytes]), basename(filePath));
-      if (caption) form.set('caption', formatTelegramMessage(caption, {maxLength: 900}));
-      const response = await fetchImpl(url, {method: 'POST', body: form});
-      if (!response.ok) throw new Error(`Telegram sendDocument failed: ${response.status}`);
+      if (caption) form.set('caption', formatTelegramMessage(caption, { maxLength: 900 }));
+      const response = await fetchImpl(url, { method: 'POST', body: form });
+      if (!response.ok) throw new TelegramApiRejectedError(`Telegram sendDocument failed: ${response.status}`, response.status);
       const body = (await response.json()) as TelegramApiSendMessageResponse;
-      if (!body.ok) throw new Error(body.description ?? 'Telegram sendDocument returned ok=false');
+      if (!body.ok) throw new TelegramApiRejectedError(body.description ?? 'Telegram sendDocument returned ok=false');
     },
   };
 }
@@ -257,27 +266,24 @@ function normalizeTelegramUpdate(update: TelegramApiUpdate): TelegramUpdate[] {
   const userId = update.message?.from?.id;
   const text = update.message?.text;
   if (typeof updateId === 'number' && typeof chatId === 'number' && typeof userId === 'number' && typeof text === 'string') {
-    return [{updateId, chatId, userId, text, messageId: update.message?.message_id}];
+    return [{ updateId, chatId, userId, text, messageId: update.message?.message_id }];
   }
   const callback = update.callback_query;
   const callbackChatId = callback?.message?.chat?.id;
   const callbackUserId = callback?.from?.id;
   const callbackData = callback?.data;
-  if (
-    typeof updateId === 'number' &&
-    typeof callbackChatId === 'number' &&
-    typeof callbackUserId === 'number' &&
-    typeof callbackData === 'string'
-  ) {
-    return [{
-      updateId,
-      chatId: callbackChatId,
-      userId: callbackUserId,
-      text: callbackData,
-      messageId: callback?.message?.message_id,
-      callbackQueryId: callback?.id,
-      callbackData,
-    }];
+  if (typeof updateId === 'number' && typeof callbackChatId === 'number' && typeof callbackUserId === 'number' && typeof callbackData === 'string') {
+    return [
+      {
+        updateId,
+        chatId: callbackChatId,
+        userId: callbackUserId,
+        text: callbackData,
+        messageId: callback?.message?.message_id,
+        callbackQueryId: callback?.id,
+        callbackData,
+      },
+    ];
   }
   return [];
 }
@@ -408,13 +414,13 @@ export function createTelegramPollingService(options: {
 function parseTelegramCallbackData(data: string): TelegramCommand {
   const [namespace, action, ...parts] = data.split('|');
   if (namespace !== 'zc') throw new Error('Unsupported Zeus Telegram callback');
-  if (action === 'ps') return {command: 'commands', args: []};
-  if (action === 'p' && parts[0]) return {command: 'commands', args: [decodeCallbackPart(parts[0])]};
+  if (action === 'ps') return { command: 'commands', args: [] };
+  if (action === 'p' && parts[0]) return { command: 'commands', args: [decodeCallbackPart(parts[0])] };
   if (action === 'd' && parts[0] && parts[1]) {
-    return {command: 'command', args: ['detail', decodeCallbackPart(parts[0]), decodeCallbackPart(parts[1])]};
+    return { command: 'command', args: ['detail', decodeCallbackPart(parts[0]), decodeCallbackPart(parts[1])] };
   }
   if (action === 'r' && parts[0] && parts[1]) {
-    return {command: 'command', args: ['run', decodeCallbackPart(parts[0]), decodeCallbackPart(parts[1])]};
+    return { command: 'command', args: ['run', decodeCallbackPart(parts[0]), decodeCallbackPart(parts[1])] };
   }
   throw new Error('Unsupported Zeus Telegram callback');
 }
@@ -423,7 +429,7 @@ function decodeCallbackPart(value: string): string {
   return Buffer.from(value, 'base64url').toString('utf8');
 }
 
-function toTelegramInlineKeyboard(rows: TelegramInlineKeyboardButton[][]): Array<Array<{text: string; callback_data: string}>> {
+function toTelegramInlineKeyboard(rows: TelegramInlineKeyboardButton[][]): Array<Array<{ text: string; callback_data: string }>> {
   return rows.map((row) =>
     row.map((button) => ({
       text: button.text.slice(0, 64),
@@ -431,5 +437,5 @@ function toTelegramInlineKeyboard(rows: TelegramInlineKeyboardButton[][]): Array
     })),
   );
 }
-import {readFile} from 'node:fs/promises';
-import {basename} from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { basename } from 'node:path';

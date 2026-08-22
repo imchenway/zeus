@@ -1,7 +1,7 @@
 import { BrowserWindow, clipboard, dialog, ipcMain, type IpcMainInvokeEvent, type Rectangle, session, type Session, type WebContents, WebContentsView } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { mkdir, readFile, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, realpath, rename, rm, stat, unlink } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import type {
   ZeusBrowserApprovalDecision,
@@ -17,6 +17,7 @@ import type {
   ZeusBrowserTabSnapshot,
 } from '@zeus/shared';
 import type { BrowserAutomationContentItem, BrowserAutomationPort, BrowserAutomationToolCall } from '@zeus/local-server';
+import type { MainCommandLedger, MainCommandRequest } from './mainCommandLedger.js';
 
 interface PersistedBrowserTab {
   snapshot: ZeusBrowserTabSnapshot;
@@ -58,7 +59,10 @@ interface CreateBrowserHostOptions {
   attachmentRoot: string;
   defaultDownloadDirectory: string;
   openExternal: (url: string) => Promise<void>;
+  mainCommandLedger: () => MainCommandLedger;
   legacySystemDownloadDirectory?: string;
+  /** 正式数据隔离副本只恢复静态 snapshot；禁止创建 WebContentsView、导航、下载或持久化。 */
+  readOnlyValidation?: boolean;
   now?: () => string;
 }
 
@@ -198,11 +202,17 @@ export class BrowserHost implements BrowserAutomationPort {
       await this.closeTab(window, requireNonEmptyString(value.conversationId, 'conversationId'), requireNonEmptyString(value.tabId, 'tabId'));
       return this.snapshotFor(requireNonEmptyString(value.conversationId, 'conversationId'));
     });
-    ipcMain.handle('zeus:browser:command', async (event, input: unknown) => {
+    ipcMain.handle('zeus:browser:command', async (event, request: MainCommandRequest) => {
       const window = this.requireRendererWindow(event);
-      const value = asRecord(input);
-      await this.runManualCommand(window, requireNonEmptyString(value.conversationId, 'conversationId'), requireNonEmptyString(value.tabId, 'tabId'), value.command as ZeusBrowserCommand);
-      return this.snapshotFor(requireNonEmptyString(value.conversationId, 'conversationId'));
+      return this.options.mainCommandLedger().execute(request, 'desktop.browser.command', async (input, command) => {
+        const value = asRecord(input);
+        const conversationId = requireNonEmptyString(value.conversationId, 'conversationId');
+        const tabId = requireNonEmptyString(value.tabId, 'tabId');
+        await command.markWriteStarted();
+        await this.runManualCommand(window, conversationId, tabId, value.command as ZeusBrowserCommand);
+        await this.flushPersistence();
+        return this.snapshotFor(conversationId);
+      });
     });
     ipcMain.handle('zeus:browser:set-layout', async (event, input: unknown) => {
       const window = this.requireRendererWindow(event);
@@ -227,33 +237,50 @@ export class BrowserHost implements BrowserAutomationPort {
       this.requireRendererWindow(event);
       return this.loadCommentPreview(path);
     });
-    ipcMain.handle('zeus:browser:mark-comments-sent', async (event, input: unknown) => {
+    ipcMain.handle('zeus:browser:mark-comments-sent', async (event, request: MainCommandRequest) => {
       this.requireRendererWindow(event);
-      const value = asRecord(input);
-      const conversationId = requireNonEmptyString(value.conversationId, 'conversationId');
-      const tabId = requireNonEmptyString(value.tabId, 'tabId');
-      const commentIds = Array.isArray(value.commentIds) ? value.commentIds.filter((id): id is string => typeof id === 'string') : [];
-      await this.markCommentsSent(conversationId, tabId, commentIds);
-      return this.snapshotFor(conversationId);
+      return this.options.mainCommandLedger().execute(request, 'desktop.browser.mark_comments_sent', async (input, command) => {
+        const value = asRecord(input);
+        const conversationId = requireNonEmptyString(value.conversationId, 'conversationId');
+        const tabId = requireNonEmptyString(value.tabId, 'tabId');
+        const commentIds = Array.isArray(value.commentIds) ? value.commentIds.filter((id): id is string => typeof id === 'string') : [];
+        await command.markWriteStarted();
+        await this.markCommentsSent(conversationId, tabId, commentIds);
+        return this.snapshotFor(conversationId);
+      });
     });
-    ipcMain.handle('zeus:browser:respond-approval', (event, input: unknown) => {
+    ipcMain.handle('zeus:browser:respond-approval', (event, request: MainCommandRequest) => {
       this.requireRendererWindow(event);
-      const value = asRecord(input);
-      return this.respondToApproval(requireNonEmptyString(value.requestId, 'requestId'), normalizeApprovalDecision(value.decision));
+      return this.options.mainCommandLedger().execute(request, 'desktop.browser.respond_approval', async (input, command) => {
+        const value = asRecord(input);
+        const requestId = requireNonEmptyString(value.requestId, 'requestId');
+        const decision = normalizeApprovalDecision(value.decision);
+        await command.markWriteStarted();
+        const result = this.respondToApproval(requestId, decision);
+        await this.flushPersistence();
+        return result;
+      });
     });
     ipcMain.handle('zeus:browser:get-settings', (event) => {
       this.requireRendererWindow(event);
       return { ...this.settings };
     });
-    ipcMain.handle('zeus:browser:update-settings', async (event, input: unknown) => {
+    ipcMain.handle('zeus:browser:update-settings', async (event, request: MainCommandRequest) => {
       this.requireRendererWindow(event);
-      await this.updateSettings(input);
-      return { ...this.settings };
+      return this.options.mainCommandLedger().execute(request, 'desktop.browser.update_settings', async (input, command) => {
+        await command.markWriteStarted();
+        await this.updateSettings(input);
+        await this.flushPersistence();
+        return { ...this.settings };
+      });
     });
-    ipcMain.handle('zeus:browser:clear-data', async (event) => {
+    ipcMain.handle('zeus:browser:clear-data', async (event, request: MainCommandRequest) => {
       this.requireRendererWindow(event);
-      await this.clearBrowsingData();
-      return { cleared: true };
+      return this.options.mainCommandLedger().execute(request, 'desktop.browser.clear_data', async (_body, command) => {
+        await command.markWriteStarted();
+        await this.clearBrowsingData();
+        return { cleared: true };
+      });
     });
     ipcMain.handle('zeus:browser-page:get-state', (event) => {
       const tab = this.requirePageTab(event);
@@ -273,12 +300,18 @@ export class BrowserHost implements BrowserAutomationPort {
       this.emitSnapshot(tab.snapshot.conversationId);
       return { annotationMode: tab.snapshot.annotationMode };
     });
-    ipcMain.handle('zeus:browser-page:save-comment', async (event, input: unknown) => {
+    ipcMain.handle('zeus:browser-page:save-comment', async (event, request: MainCommandRequest<BrowserPageCommentInput>) => {
       const tab = this.requirePageTab(event);
-      return this.savePageComment(tab, input as BrowserPageCommentInput);
+      return this.options.mainCommandLedger().execute(request, 'desktop.browser.save_comment', async (input, command) => {
+        await command.markWriteStarted();
+        const comment = await this.savePageComment(tab, input);
+        await this.flushPersistence();
+        return comment;
+      });
     });
     ipcMain.handle('zeus:browser-page:open-system-browser-link', async (event, input: unknown) => {
       this.requirePageTab(event);
+      this.assertWritableBrowserCapability();
       const url = normalizeExternalWebUrl(input);
       if (!url) return { opened: false, error: 'external_url_not_allowed' };
       try {
@@ -399,7 +432,7 @@ export class BrowserHost implements BrowserAutomationPort {
     for (const tab of this.tabs.values()) {
       if (tab.view && !tab.view.webContents.isDestroyed()) tab.view.webContents.close();
     }
-    await this.persist();
+    if (!this.options.readOnlyValidation) await this.persist();
   }
 
   private restorePersistedState(): void {
@@ -615,6 +648,12 @@ export class BrowserHost implements BrowserAutomationPort {
   }
 
   private ensureView(tab: LiveBrowserTab, loadSnapshotUrl = true): WebContentsView {
+    if (this.options.readOnlyValidation) {
+      throw Object.assign(new Error('只读验证模式禁止创建浏览器 WebContentsView 或访问网页。'), {
+        code: 'ZEUS_READ_ONLY_VALIDATION_CAPABILITY_BLOCKED',
+        statusCode: 503,
+      });
+    }
     if (tab.view && !tab.view.webContents.isDestroyed()) return tab.view;
     const view = new WebContentsView({
       webPreferences: {
@@ -716,9 +755,7 @@ export class BrowserHost implements BrowserAutomationPort {
           comments: tab.snapshot.comments.filter((comment) => comment.status !== 'draft'),
           updatedAt: this.now(),
         };
-        for (const comment of draftComments) {
-          if (comment.screenshotPath) void unlink(comment.screenshotPath).catch(() => undefined);
-        }
+        await Promise.all(draftComments.map((comment) => (comment.screenshotPath ? unlink(comment.screenshotPath).catch(() => undefined) : Promise.resolve())));
         this.syncPageComments(tab);
         this.schedulePersist();
         this.emitSnapshot(conversationId);
@@ -732,7 +769,7 @@ export class BrowserHost implements BrowserAutomationPort {
           comments: tab.snapshot.comments.filter((candidate) => candidate.id !== command.commentId),
           updatedAt: this.now(),
         };
-        if (comment.screenshotPath) void unlink(comment.screenshotPath).catch(() => undefined);
+        if (comment.screenshotPath) await unlink(comment.screenshotPath).catch(() => undefined);
         this.syncPageComments(tab);
         this.schedulePersist();
         this.emitSnapshot(conversationId);
@@ -745,6 +782,7 @@ export class BrowserHost implements BrowserAutomationPort {
   }
 
   private async savePageComment(tab: LiveBrowserTab, input: BrowserPageCommentInput): Promise<ZeusBrowserComment> {
+    this.assertWritableBrowserCapability();
     if (tab.snapshot.comments.filter((comment) => comment.status === 'draft').length >= maxPersistedCommentsPerTab) throw new Error('This browser tab already has the maximum number of draft comments.');
     const body = typeof input.body === 'string' ? input.body.trim().slice(0, maxCommentBodyLength) : '';
     if (!body) throw new Error('Browser comment text is required.');
@@ -771,8 +809,17 @@ export class BrowserHost implements BrowserAutomationPort {
         await mkdir(this.attachmentRoot, { recursive: true, mode: 0o700 });
         await new Promise((resolveDelay) => setTimeout(resolveDelay, 40));
         const screenshotPath = join(this.attachmentRoot, `${comment.id}.png`);
+        const temporaryPath = join(this.attachmentRoot, `.${comment.id}.${randomUUID()}.tmp`);
         const image = await tab.view.webContents.capturePage();
-        await writeFile(screenshotPath, image.toPNG(), { mode: 0o600 });
+        const screenshot = await open(temporaryPath, 'wx', 0o600);
+        try {
+          await screenshot.writeFile(image.toPNG());
+          await screenshot.sync();
+        } finally {
+          await screenshot.close();
+        }
+        await rename(temporaryPath, screenshotPath);
+        await syncDirectory(this.attachmentRoot);
         comment.screenshotPath = screenshotPath;
         comment.updatedAt = this.now();
         tab.snapshot = {
@@ -1248,6 +1295,7 @@ export class BrowserHost implements BrowserAutomationPort {
   }
 
   private async updateSettings(input: unknown): Promise<void> {
+    this.assertWritableBrowserCapability();
     const previousDownloadDirectory = this.settings.downloadDirectory;
     this.settings = normalizeSettings(input, this.settings);
     if (this.settings.allowAgentAllSites) this.originRules.set('*', 'allow');
@@ -1263,6 +1311,7 @@ export class BrowserHost implements BrowserAutomationPort {
   }
 
   private async clearBrowsingData(): Promise<void> {
+    this.assertWritableBrowserCapability();
     await this.browserSession.clearCache();
     await this.browserSession.clearStorageData();
     await this.browserSession.clearAuthCache();
@@ -1300,7 +1349,7 @@ export class BrowserHost implements BrowserAutomationPort {
   }
 
   private schedulePersist(): void {
-    if (this.closed) return;
+    if (this.closed || this.options.readOnlyValidation) return;
     if (this.persistenceTimer) clearTimeout(this.persistenceTimer);
     this.persistenceTimer = setTimeout(() => {
       this.persistenceTimer = undefined;
@@ -1309,7 +1358,16 @@ export class BrowserHost implements BrowserAutomationPort {
     this.persistenceTimer.unref();
   }
 
+  private async flushPersistence(): Promise<void> {
+    if (this.persistenceTimer) {
+      clearTimeout(this.persistenceTimer);
+      this.persistenceTimer = undefined;
+    }
+    await this.persist();
+  }
+
   private persist(): Promise<void> {
+    if (this.options.readOnlyValidation) return Promise.resolve();
     const operation = this.persistenceChain.then(() => this.writePersistedState());
     this.persistenceChain = operation.catch(() => undefined);
     return operation;
@@ -1323,15 +1381,40 @@ export class BrowserHost implements BrowserAutomationPort {
       activeTabByConversation: Object.fromEntries(this.activeTabByConversation),
       tabs: [...this.tabs.values()].map((tab) => ({ snapshot: tab.snapshot })),
     };
-    await mkdir(dirname(this.statePath), { recursive: true });
-    const temporaryPath = `${this.statePath}.tmp`;
-    await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    const directoryPath = dirname(this.statePath);
+    await mkdir(directoryPath, { recursive: true, mode: 0o700 });
+    const temporaryPath = `${this.statePath}.${randomUUID()}.tmp`;
+    const handle = await open(temporaryPath, 'wx', 0o600);
+    try {
+      await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, 'utf8');
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
     await rename(temporaryPath, this.statePath);
+    await syncDirectory(directoryPath);
+  }
+
+  private assertWritableBrowserCapability(): void {
+    if (!this.options.readOnlyValidation) return;
+    throw Object.assign(new Error('只读验证模式禁止浏览器导航、下载、自动化和状态修改。'), {
+      code: 'ZEUS_READ_ONLY_VALIDATION_CAPABILITY_BLOCKED',
+      statusCode: 503,
+    });
   }
 }
 
 export function createBrowserHost(options: CreateBrowserHostOptions): BrowserHost {
   return new BrowserHost(options);
+}
+
+async function syncDirectory(path: string): Promise<void> {
+  const handle = await open(path, 'r');
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
 }
 
 function normalizeBrowserUrl(value: string): string {

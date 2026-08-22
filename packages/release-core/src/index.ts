@@ -1,3 +1,5 @@
+export const currentExecutionHostProtocolVersion = 2;
+
 export interface ReleaseArtifactManifestInput {
   version: string;
   arch: string;
@@ -223,7 +225,8 @@ export function buildReleaseUpdateManifest(input: ReleaseUpdateManifestInput): R
     signed: Boolean(input.signed),
     notarized: Boolean(input.notarized),
     minimumSystemVersion: input.minimumSystemVersion?.trim() || '13.0',
-    executionHostProtocolVersion: typeof input.executionHostProtocolVersion === 'number' && Number.isInteger(input.executionHostProtocolVersion) && input.executionHostProtocolVersion > 0 ? input.executionHostProtocolVersion : 1,
+    executionHostProtocolVersion:
+      typeof input.executionHostProtocolVersion === 'number' && Number.isInteger(input.executionHostProtocolVersion) && input.executionHostProtocolVersion > 0 ? input.executionHostProtocolVersion : currentExecutionHostProtocolVersion,
     artifacts,
     homebrew: {
       tap: homebrewTap,
@@ -272,7 +275,7 @@ export function evaluateReleaseUpdateAvailability(input: EvaluateReleaseUpdateAv
       checkedAt,
     };
   }
-  const protocolCompatible = input.manifest.executionHostProtocolVersion === (input.executionHostProtocolVersion ?? 1);
+  const protocolCompatible = input.manifest.executionHostProtocolVersion === (input.executionHostProtocolVersion ?? currentExecutionHostProtocolVersion);
   const automaticInstallEnabled = input.manifest.signed && input.manifest.notarized && protocolCompatible;
   return {
     status: 'available',

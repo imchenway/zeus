@@ -270,20 +270,69 @@ export function SessionTurnDuration(props: { turn: NativeTurnSnapshot; requests:
   );
 }
 
-export function SessionTurnProcessDisclosure(props: { language: SessionUiLanguage; children: ReactNode }) {
-  const [open, setOpen] = useState(false);
+export function SessionTurnProcessDisclosure(props: {
+  language: SessionUiLanguage;
+  children: ReactNode;
+  onOpen?: () => void | Promise<void>;
+  loading?: boolean;
+  error?: string | null;
+  labelKind?: 'process' | 'details';
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+}) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = props.open ?? internalOpen;
   const bodyId = useId();
-  const label = props.language === 'zh-CN' ? (open ? '收起处理过程' : '查看处理过程') : open ? 'Hide process' : 'View process';
+  const label =
+    props.labelKind === 'details'
+      ? props.language === 'zh-CN'
+        ? open
+          ? '收起轮次详情'
+          : '查看轮次详情'
+        : open
+          ? 'Hide turn details'
+          : 'View turn details'
+      : props.language === 'zh-CN'
+        ? open
+          ? '收起处理过程'
+          : '查看处理过程'
+        : open
+          ? 'Hide process'
+          : 'View process';
   return (
-    <section className="session-turn-process" data-open={open || undefined}>
+    <section className="session-turn-process" data-open={open || undefined} aria-busy={props.loading || undefined}>
       <div className="session-turn-process-control">
-        <button type="button" aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen((value) => !value)}>
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={bodyId}
+          onClick={() => {
+            const nextOpen = !open;
+            if (props.open === undefined) setInternalOpen(nextOpen);
+            props.onOpenChange?.(nextOpen);
+            if (nextOpen) void Promise.resolve(props.onOpen?.()).catch(() => undefined);
+          }}
+        >
           <span>{label}</span>
           <CaretDown className="session-turn-process-caret" aria-hidden="true" weight="bold" />
         </button>
       </div>
       <div id={bodyId} className="session-turn-process-body" hidden={!open}>
-        {open ? props.children : null}
+        {open ? (
+          <>
+            {props.children}
+            {props.loading ? (
+              <p className="session-v2-page-status" role="status">
+                {props.labelKind === 'details' ? (props.language === 'zh-CN' ? '正在读取这轮的详情…' : 'Loading this turn’s details…') : props.language === 'zh-CN' ? '正在读取这轮的处理过程…' : 'Loading this turn’s process…'}
+              </p>
+            ) : null}
+            {props.error ? (
+              <p className="session-v2-page-error" role="alert">
+                {props.error}
+              </p>
+            ) : null}
+          </>
+        ) : null}
       </div>
     </section>
   );

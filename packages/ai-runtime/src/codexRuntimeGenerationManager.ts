@@ -90,7 +90,7 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
   const responsesProvidersByThread = new Map<string, CodexResponsesModelProvider>();
   const responsesProviderEnvironmentsByThread = new Map<string, Record<string, string>>();
   const threadHandoffChains = new Map<string, Promise<void>>();
-  const listeners = new Set<(event: CodexAppServerEvent) => void>();
+  const listeners = new Set<(event: CodexAppServerEvent) => void | Promise<void>>();
   const externalImportListeners = new Set<(event: ExternalAgentImportEvent) => void>();
   let activeEntry: RuntimeEntry | null = null;
   let preparingForShutdown = false;
@@ -294,7 +294,7 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
     else entry.activeGoals.delete(threadId);
   }
 
-  function forwardEvent(entry: RuntimeEntry, event: CodexAppServerEvent): void {
+  function forwardEvent(entry: RuntimeEntry, event: CodexAppServerEvent): void | Promise<void> {
     rememberGeneration(entry, event.generationId);
     const params = isRecord(event.params) ? event.params : {};
     const threadId = typeof params.threadId === 'string' ? params.threadId : null;
@@ -342,13 +342,16 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
       entry.activeGoals.delete(threadId);
       void tryDrain(entry);
     }
+    const pendingDeliveries: Promise<void>[] = [];
     for (const listener of listeners) {
       try {
-        listener(event);
+        const delivery = listener(event);
+        if (delivery && typeof delivery.then === 'function') pendingDeliveries.push(delivery);
       } catch {
         // 单个消费者异常不能中断其他世代的事件转发。
       }
     }
+    if (pendingDeliveries.length > 0) return Promise.allSettled(pendingDeliveries).then(() => undefined);
   }
 
   function forwardExternalImport(event: ExternalAgentImportEvent): void {
@@ -413,8 +416,15 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
       capabilities: {
         generationId: '',
         initializedAt: '',
+        providerVersion: null,
+        protocolVersion: 'codex-app-server-v2',
         models: [],
         supportedModels: [],
+        preflightTokenCount: {
+          state: 'unavailable',
+          exact: false,
+          reason: '尚未建立 Codex app-server generation；没有请求前 token-count RPC 能力证据。',
+        },
         goals: { supported: false, enabled: false, stage: null },
       },
       threads: new Set<string>(),

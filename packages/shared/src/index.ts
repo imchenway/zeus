@@ -1,6 +1,10 @@
 /** Zeus 任务状态：只描述真实任务生命周期，不承载任何示例或 mock 业务数据。 */
 export * from './taskPush.js';
 export * from './codexUsage.js';
+export * from './commandEnvelope.js';
+export * from './commandGovernance.js';
+export * from './executionHostStopCommand.js';
+export * from './readOnlyValidation.js';
 
 export type TaskStatus = 'draft' | 'ready' | 'running' | 'paused' | 'waiting_confirmation' | 'completed' | 'failed' | 'cancelled';
 

@@ -157,11 +157,18 @@ export class ProjectSourceWorkspaceService {
     assertSafeRelativePath(relativePath, false);
     const absolutePath = resolveLexicalPath(root, relativePath);
     await assertMissing(absolutePath);
-    if (input.kind === 'directory') await mkdir(absolutePath, { mode: 0o755 });
-    else {
+    if (input.kind === 'directory') {
+      await mkdir(absolutePath, { mode: 0o755 });
+      await syncDirectory(absolutePath);
+    } else {
       const handle = await open(absolutePath, 'wx', 0o644);
-      await handle.close();
+      try {
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
     }
+    await syncDirectory(parent.absolutePath);
     return describeEntry(root, relativePath);
   }
 
@@ -180,6 +187,8 @@ export class ProjectSourceWorkspaceService {
     const targetAbsolutePath = resolveLexicalPath(root, targetRelativePath);
     await assertMissing(targetAbsolutePath);
     await rename(source.absolutePath, targetAbsolutePath);
+    await syncDirectory(dirname(source.absolutePath));
+    if (dirname(source.absolutePath) !== dirname(targetAbsolutePath)) await syncDirectory(dirname(targetAbsolutePath));
     return describeEntry(root, targetRelativePath);
   }
 
@@ -220,6 +229,15 @@ export class ProjectSourceWorkspaceService {
     const root = await realpath(await this.#services.loadProjectRoot(projectId));
     if (!(await stat(root)).isDirectory()) throw workspaceError('ZEUS_PROJECT_SOURCE_ROOT_INVALID', '项目目录不可用。');
     return root;
+  }
+}
+
+async function syncDirectory(path: string): Promise<void> {
+  const handle = await open(path, 'r');
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
   }
 }
 

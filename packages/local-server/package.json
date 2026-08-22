@@ -13,6 +13,170 @@
       "types": "./dist/conversationAttachmentGrant.d.ts",
       "import": "./dist/conversationAttachmentGrant.js"
     },
+    "./conversation-snapshot-v2-api": {
+      "types": "./dist/conversationSnapshotV2Api.d.ts",
+      "import": "./dist/conversationSnapshotV2Api.js"
+    },
+    "./conversation-sync-routes": {
+      "types": "./dist/conversationSyncRoutes.d.ts",
+      "import": "./dist/conversationSyncRoutes.js"
+    },
+    "./context-compiler": {
+      "types": "./dist/contextCompiler.d.ts",
+      "import": "./dist/contextCompiler.js"
+    },
+    "./context-dispatch-service": {
+      "types": "./dist/contextDispatchService.d.ts",
+      "import": "./dist/contextDispatchService.js"
+    },
+    "./context-source-catalog": {
+      "types": "./dist/contextSourceCatalog.d.ts",
+      "import": "./dist/contextSourceCatalog.js"
+    },
+    "./memory-context-api": {
+      "types": "./dist/memoryContextApi.d.ts",
+      "import": "./dist/memoryContextApi.js"
+    },
+    "./project-git-query-application": {
+      "types": "./dist/projectGitQueryApplication.d.ts",
+      "import": "./dist/projectGitQueryApplication.js"
+    },
+    "./project-git-query-routes": {
+      "types": "./dist/projectGitQueryRoutes.d.ts",
+      "import": "./dist/projectGitQueryRoutes.js"
+    },
+    "./project-query-application": {
+      "types": "./dist/projectQueryApplication.d.ts",
+      "import": "./dist/projectQueryApplication.js"
+    },
+    "./project-query-routes": {
+      "types": "./dist/projectQueryRoutes.d.ts",
+      "import": "./dist/projectQueryRoutes.js"
+    },
+    "./work-management-query-application": {
+      "types": "./dist/workManagementQueryApplication.d.ts",
+      "import": "./dist/workManagementQueryApplication.js"
+    },
+    "./work-management-query-routes": {
+      "types": "./dist/workManagementQueryRoutes.d.ts",
+      "import": "./dist/workManagementQueryRoutes.js"
+    },
+    "./runtime-query-application": {
+      "types": "./dist/runtimeQueryApplication.d.ts",
+      "import": "./dist/runtimeQueryApplication.js"
+    },
+    "./runtime-query-routes": {
+      "types": "./dist/runtimeQueryRoutes.d.ts",
+      "import": "./dist/runtimeQueryRoutes.js"
+    },
+    "./code-intelligence-query-application": {
+      "types": "./dist/codeIntelligenceQueryApplication.d.ts",
+      "import": "./dist/codeIntelligenceQueryApplication.js"
+    },
+    "./code-intelligence-query-routes": {
+      "types": "./dist/codeIntelligenceQueryRoutes.d.ts",
+      "import": "./dist/codeIntelligenceQueryRoutes.js"
+    },
+    "./code-intelligence-graph-store": {
+      "types": "./dist/codeIntelligenceGraphStore.d.ts",
+      "import": "./dist/codeIntelligenceGraphStore.js"
+    },
+    "./code-intelligence-graph-cache": {
+      "types": "./dist/codeIntelligenceGraphCache.d.ts",
+      "import": "./dist/codeIntelligenceGraphCache.js"
+    },
+    "./codex-native-conversation-policy": {
+      "types": "./dist/codexNativeConversationPolicy.d.ts",
+      "import": "./dist/codexNativeConversationPolicy.js"
+    },
+    "./local-data-transfer": {
+      "types": "./dist/localDataTransfer.d.ts",
+      "import": "./dist/localDataTransfer.js"
+    },
+    "./local-server-settings-normalization": {
+      "types": "./dist/localServerSettingsNormalization.d.ts",
+      "import": "./dist/localServerSettingsNormalization.js"
+    },
+    "./runtime-log-retention": {
+      "types": "./dist/runtimeLogRetention.d.ts",
+      "import": "./dist/runtimeLogRetention.js"
+    },
+    "./runtime-process-identity": {
+      "types": "./dist/runtimeProcessIdentity.d.ts",
+      "import": "./dist/runtimeProcessIdentity.js"
+    },
+    "./task-attachment-lifecycle": {
+      "types": "./dist/taskAttachmentLifecycle.d.ts",
+      "import": "./dist/taskAttachmentLifecycle.js"
+    },
+    "./conversation-resource-preview": {
+      "types": "./dist/conversationResourcePreview.d.ts",
+      "import": "./dist/conversationResourcePreview.js"
+    },
+    "./codex-provider-event-projection": {
+      "types": "./dist/codexProviderEventProjection.d.ts",
+      "import": "./dist/codexProviderEventProjection.js"
+    },
+    "./codex-provider-history-projection": {
+      "types": "./dist/codexProviderHistoryProjection.d.ts",
+      "import": "./dist/codexProviderHistoryProjection.js"
+    },
+    "./local-server-platform-routes": {
+      "types": "./dist/localServerPlatformRoutes.d.ts",
+      "import": "./dist/localServerPlatformRoutes.js"
+    },
+    "./local-server-support-operations": {
+      "types": "./dist/localServerSupportOperations.d.ts",
+      "import": "./dist/localServerSupportOperations.js"
+    },
+    "./conversation-application-operations": {
+      "types": "./dist/conversationApplicationOperations.d.ts",
+      "import": "./dist/conversationApplicationOperations.js"
+    },
+    "./conversation-execution-context-operations": {
+      "types": "./dist/conversationExecutionContextOperations.d.ts",
+      "import": "./dist/conversationExecutionContextOperations.js"
+    },
+    "./git-integration-operations": {
+      "types": "./dist/gitIntegrationOperations.d.ts",
+      "import": "./dist/gitIntegrationOperations.js"
+    },
+    "./task-runtime-operations": {
+      "types": "./dist/taskRuntimeOperations.d.ts",
+      "import": "./dist/taskRuntimeOperations.js"
+    },
+    "./work-management-project-operations": {
+      "types": "./dist/workManagementProjectOperations.d.ts",
+      "import": "./dist/workManagementProjectOperations.js"
+    },
+    "./work-management-project-command-routes": {
+      "types": "./dist/workManagementProjectCommandRoutes.d.ts",
+      "import": "./dist/workManagementProjectCommandRoutes.js"
+    },
+    "./work-management-task-operations": {
+      "types": "./dist/workManagementTaskOperations.d.ts",
+      "import": "./dist/workManagementTaskOperations.js"
+    },
+    "./work-management-task-command-routes": {
+      "types": "./dist/workManagementTaskCommandRoutes.d.ts",
+      "import": "./dist/workManagementTaskCommandRoutes.js"
+    },
+    "./codex-subagent-query-application": {
+      "types": "./dist/codexSubagentQueryApplication.d.ts",
+      "import": "./dist/codexSubagentQueryApplication.js"
+    },
+    "./codex-subagent-query-routes": {
+      "types": "./dist/codexSubagentQueryRoutes.d.ts",
+      "import": "./dist/codexSubagentQueryRoutes.js"
+    },
+    "./conversation-capability-query-application": {
+      "types": "./dist/conversationCapabilityQueryApplication.d.ts",
+      "import": "./dist/conversationCapabilityQueryApplication.js"
+    },
+    "./conversation-capability-query-routes": {
+      "types": "./dist/conversationCapabilityQueryRoutes.d.ts",
+      "import": "./dist/conversationCapabilityQueryRoutes.js"
+    },
     "./zeus-data-layout": {
       "types": "./dist/zeusDataLayout.d.ts",
       "import": "./dist/zeusDataLayout.js"

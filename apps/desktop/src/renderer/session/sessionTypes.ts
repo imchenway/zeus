@@ -332,6 +332,7 @@ export type NativeConversationStage = 'created' | 'connecting' | 'queued' | 'run
 
 export interface NativeConversationSnapshot {
   conversationSchemaGeneration: '2026-08-16-unified-conversation-segments';
+  syncStreamGeneration: 'zeus-conversation-sync-v1';
   throughEventSeq: number;
   productConversation: Record<string, unknown>;
   openSegment: Record<string, unknown> | null;
@@ -395,6 +396,227 @@ export interface NativeConversationSnapshot {
   goal?: NativeGoalSnapshot | null;
   goalTimeline?: NativeGoalTimelineEvent[];
   goalCapability?: NativeGoalCapability;
+  /** V2 首屏与按需页的客户端游标状态；旧 V1 快照不存在该字段。 */
+  snapshotV2?: NativeConversationSnapshotV2;
+  v2Paging?: NativeConversationV2PagingState;
+}
+
+export interface NativeBoundedContentProjection {
+  preview: string;
+  byteLength: number;
+  truncated: boolean;
+  redacted: boolean;
+  contentHandle: string | null;
+  refreshRequired: boolean;
+}
+
+export interface NativeConversationSnapshotV2Turn {
+  id: string;
+  providerTurnId: string | null;
+  submissionId: string | null;
+  status: string;
+  hasError: boolean;
+  hasPlan: boolean;
+  startedAt: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  agentKind: string | null;
+  process: { available: boolean; latestSequence: number };
+  resourcesAvailable: boolean;
+  changeSetAvailable: boolean;
+}
+
+export interface NativeConversationSnapshotV2 {
+  schemaVersion: 2;
+  structureGeneration: '2026-08-21-conversation-snapshot-v2';
+  conversationSchemaGeneration: '2026-08-16-unified-conversation-segments';
+  throughEventSeq: number;
+  eventStreamGeneration: string | null;
+  conversation: {
+    id: string;
+    projectId: string;
+    taskId: string | null;
+    title: string;
+    titleRedacted: boolean;
+    status: string;
+    stage: NativeConversationStage;
+    stageUpdatedAt: string;
+    archived: boolean;
+    transportKind: string;
+    providerState: string;
+    providerModel: string | null;
+    agentKind: string | null;
+    createdAt: string;
+    updatedAt: string;
+  };
+  openSegment: {
+    id: string;
+    runtimeKind: string;
+    state: string;
+    nativeSessionId: string | null;
+    providerModel: string | null;
+    openedAt: string;
+    acceptedAt: string | null;
+    updatedAt: string;
+  } | null;
+  activeTurn: NativeConversationSnapshotV2Turn | null;
+  recentClosedTurns: NativeConversationSnapshotV2Turn[];
+  collections: {
+    timeline: { throughSequence: number };
+    modelHistory: { throughSequence: number };
+    process: { throughSequence: number };
+    resources: { available: boolean };
+  };
+  limits: { closedTurnLimit: number; byteLimit: number; returnedTurnCount: number; responseBytes: number };
+}
+
+export interface NativeConversationSnapshotV2Page<T> {
+  schemaVersion: 2;
+  structureGeneration: '2026-08-21-conversation-snapshot-v2';
+  conversationId: string;
+  kind: 'timeline' | 'model_history' | 'process' | 'commands' | 'resources' | 'change_files';
+  throughEventSeq: number;
+  throughSequence: number;
+  items: T[];
+  hasMore: boolean;
+  nextCursor: string | null;
+  limits: { entryLimit: number; byteLimit: number; returnedItems: number; responseBytes: number };
+}
+
+export interface NativeConversationModelHistoryV2Item {
+  id: string;
+  sequence: number;
+  turnId: string;
+  submissionId: string | null;
+  segmentId: string;
+  role: string;
+  toolPairId: string | null;
+  confirmedAt: string;
+  content: NativeBoundedContentProjection;
+  toolResult: {
+    handle: string;
+    sha256: string;
+    byteLength: number;
+    mimeType: string;
+    projection: string;
+    projectionTruncated: boolean;
+    redacted: boolean;
+  } | null;
+}
+
+export interface NativeConversationProcessV2Item {
+  id: string;
+  sequence: number;
+  turnId: string;
+  segmentId: string;
+  kind: 'reasoning' | 'tool' | 'command' | 'retry' | 'context_compaction' | 'waiting' | 'warning';
+  status: string;
+  title: string;
+  sourceEventId: string | null;
+  startedAt: string;
+  completedAt: string | null;
+  detail: NativeBoundedContentProjection;
+  toolResult: NativeConversationModelHistoryV2Item['toolResult'];
+}
+
+export interface NativeConversationResourceV2Item {
+  id: string;
+  turnId: string;
+  itemId: string;
+  sourceIndex: number;
+  kind: string;
+  presentation: string;
+  displayName: string;
+  mimeType: string | null;
+  previewKind: string | null;
+  iconKind: string | null;
+  createdAt: string;
+  updatedAt: string;
+  accessPolicy: 'authorized_open_intent_or_preview';
+}
+
+export interface NativeConversationChangeSetV2Summary {
+  id: string;
+  projectId: string;
+  conversationId: string;
+  turnId: string;
+  providerTurnId: string;
+  state: string;
+  preImageDigest: string | null;
+  postImageDigest: string | null;
+  hasConflict: boolean;
+  unavailableReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+  fileCount: number;
+  addedLines: number;
+  deletedLines: number;
+  diffBytes: number;
+}
+
+export interface NativeConversationChangeFileV2Item {
+  id: string;
+  changeSetId: string;
+  sourceItemId: string | null;
+  sourceIndex: number;
+  oldPath: string | null;
+  newPath: string | null;
+  changeType: string;
+  addedLines: number;
+  deletedLines: number;
+  preHash: string | null;
+  postHash: string | null;
+  preExists: boolean;
+  postExists: boolean;
+  reversible: boolean;
+  unavailableReason: string | null;
+  diffBytes: number;
+  diffHandle: string | null;
+  detailState: 'available' | 'transitioning';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NativeConversationContentV2Page {
+  schemaVersion: 2;
+  structureGeneration: '2026-08-21-conversation-snapshot-v2';
+  conversationId: string;
+  kind: 'timeline_payload' | 'model_content' | 'process_detail' | 'change_file_diff';
+  mimeType: string;
+  text: string;
+  offset: number;
+  nextOffset: number | null;
+  totalCharacters: number;
+  totalBytes: number;
+  contentByteLimit: number;
+  redacted: boolean;
+}
+
+export interface NativeConversationToolResultPage {
+  text: string;
+  offset: number;
+  nextOffset: number | null;
+  totalCharacters: number;
+  sha256: string;
+}
+
+export interface NativeConversationV2PagingState {
+  history: { nextCursor: string | null; hasMore: boolean; loading: boolean; error: string | null };
+  processByTurn: Record<string, { nextCursor: string | null; hasMore: boolean; loading: boolean; loaded: boolean; error: string | null }>;
+  resources: { nextCursor: string | null; hasMore: boolean; loading: boolean; loaded: boolean; error: string | null; items: NativeConversationResourceV2Item[] };
+  changeSetsByTurn: Record<
+    string,
+    {
+      loading: boolean;
+      loaded: boolean;
+      error: string | null;
+      summary: NativeConversationChangeSetV2Summary | null;
+      files: NativeConversationChangeFileV2Item[];
+      nextCursor: string | null;
+      hasMore: boolean;
+    }
+  >;
 }
 
 export interface NativeConversationMessage {
@@ -1007,11 +1229,26 @@ export interface NativeRealtimeEventEnvelope {
   createdAt: string;
 }
 
+export interface NativeConversationEventPage {
+  conversationId: string;
+  conversationSchemaGeneration: '2026-08-16-unified-conversation-segments';
+  syncStreamGeneration: 'zeus-conversation-sync-v1';
+  baseSequence: number | null;
+  throughEventSeq: number;
+  nextCursor: number;
+  hasMore: boolean;
+  requestedBeforeBaseline: boolean;
+  events: NativeRealtimeEventEnvelope[];
+}
+
 interface NativeEventIdentity extends Record<string, unknown> {
   projectId: string;
   conversationId: string;
   threadId?: string;
   generationId: string;
+  conversationSchemaGeneration: '2026-08-16-unified-conversation-segments';
+  syncStreamGeneration: 'zeus-conversation-sync-v1';
+  entityRevision: number | string;
   sequence: number;
 }
 

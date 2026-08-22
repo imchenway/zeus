@@ -12,7 +12,7 @@ export interface CodexAgentCatalogEvidence {
 
 const CODEX_CAPABILITIES: readonly AgentCapabilityId[] = ['session', 'streaming', 'steer', 'interrupt', 'approval', 'user_input', 'model_catalog', 'service_tier', 'usage'];
 
-const PI_DECLARED_CAPABILITIES: readonly AgentCapabilityId[] = ['session', 'streaming', 'steer', 'follow_up', 'interrupt', 'user_input', 'usage', 'compaction', 'retry'];
+const PI_DECLARED_CAPABILITIES: readonly AgentCapabilityId[] = ['session', 'streaming', 'steer', 'follow_up', 'interrupt', 'user_input', 'usage', 'compaction'];
 
 export function createAgentCapabilityCatalog(codex: CodexAgentCatalogEvidence): AgentRuntimeRegistry {
   return createAgentRuntimeRegistry([createCodexAgentDescriptor(codex), createPiFrameworkDescriptor()]);
@@ -28,6 +28,13 @@ export function createCodexAgentDescriptor(input: CodexAgentCatalogEvidence): Ag
     transport: 'app_server',
     supportStatus: verified ? 'verified' : 'unavailable',
     visibleToUsers: true,
+    preflightTokenCount: {
+      state: 'unavailable',
+      exact: false,
+      source: null,
+      checkedAt: input.checkedAt,
+      reason: '当前 Codex app-server 没有请求前 token-count RPC；只能使用请求后的真实 usage 通知。',
+    },
     capabilities: capabilityRecord(CODEX_CAPABILITIES, {
       state,
       checkedAt: input.checkedAt,
@@ -45,6 +52,13 @@ export function createPiFrameworkDescriptor(): AgentDescriptor {
     transport: 'rpc',
     supportStatus: 'framework_only',
     visibleToUsers: false,
+    preflightTokenCount: {
+      state: 'unavailable',
+      exact: false,
+      source: null,
+      checkedAt: null,
+      reason: '当前 Pi SDK 没有请求前精确 token-count 端口；不得把字符估算标记为精确计数。',
+    },
     capabilities: capabilityRecord(PI_DECLARED_CAPABILITIES, {
       state: 'unverified',
       checkedAt: null,

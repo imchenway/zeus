@@ -61,6 +61,15 @@ Zeus 采用 pnpm monorepo：`apps/desktop` 是 Electron/React 桌面应用，`pa
 - 日志、patch、Mermaid、Runtime 导出必须脱敏或写入本机文件，不把长敏感正文发到 Telegram。
 - 发布当前支持 unsigned DMG/ZIP、Homebrew cask、sha256 和包内 Electron 加载校验；Apple signing / notarization 只保留等待项，不伪装成已完成。
 
+## 在线正式数据库验收边界
+
+- 活动正式 SQLite/WAL 只通过两阶段 SQLite Backup API 生成一致时间点候选，不对运行中的主文件做文件级复制。计划与确认绑定来源规范路径、device/inode、目标、Test bundle ID 和 run ID；来源在备份窗口内被替换、目标已存在、空间不足、页边界异常或备份中断时失败关闭。
+- `online_backup_snapshot` 允许正式 writer 合法前进并记录 `sourceAdvancedAfterBackup=true`；它不要求来源 SHA-256、mtime、WAL 或 SHM 在前后相等，也不声称正式资料树零写。来源连接关闭后，结构迁移只作用于未发布候选，失败回退只丢弃候选，不修改正式库。
+- 目标必须位于当前 `Zeus Test.app` 身份派生的 `<Test基座>/read-only-validation/<runId>/data/zeus.db`，且为独立 device/inode、`nlink=1`、0600，通过 schema 摘要、页边界、SHA-256 和 `quick_check`。Test 以 `readOnly + query_only + defensive` 打开，只允许复制历史查询；Provider、Keychain、Git、Telegram、更新、BrowserHost、Worker、repair、checkpoint 与所有 mutation 均失败关闭。
+- 当前正式 run `418ad6c5-15d5-4969-a75a-5aedd85fe499` 已用 4.66GB 活动库完成上述链路。最终打包 Test 对 103 个会话全部完成 Snapshot V2，最大 7,233 条模型历史与 1,593 条单 turn 过程项完整分页无重复或缺口；退出后目标身份、SHA-256 和 manifest 保持不变且无 WAL/SHM/journal。正式来源只复核原规范路径和原文件身份，内容合法前进不判失败。
+
+收益：无需停止正式 Zeus 就能验证真实历史规模，并把只读 Test 的能力面限制为可审计查询。缺点：不能证明来源目录完全未写；外部只读 SQLite 连接还可能更新既有 SHM reader metadata，因此结论只能是“一致时间点快照”，不是静止资料树证明。
+
 ## 外部等待项
 
 - React Flow / Sigma 与 node-pty / xterm.js 已接入本地核心；AI CLI 登录、Telegram Token、Apple signing / notarization 仍依赖用户提供真实外部凭据，pg / mysql2 仅作为可选数据库连接器，不属于 Zeus 本地核心依赖。

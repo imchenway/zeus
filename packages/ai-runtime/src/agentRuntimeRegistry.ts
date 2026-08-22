@@ -40,6 +40,7 @@ export function createAgentNotAvailableError(kind: AgentKind): Error & { code: '
 function cloneAgentDescriptor(descriptor: AgentDescriptor): AgentDescriptor {
   return {
     ...descriptor,
+    preflightTokenCount: { ...descriptor.preflightTokenCount },
     capabilities: Object.fromEntries(Object.entries(descriptor.capabilities).map(([id, evidence]) => [id, evidence ? { ...evidence } : evidence])),
   };
 }

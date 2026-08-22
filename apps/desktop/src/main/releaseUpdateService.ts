@@ -6,6 +6,7 @@ import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { createLegacyFlatZeusDataLayout, createZeusDataLayout } from '@zeus/local-server/zeus-data-layout';
+import { executionHostProtocolVersion } from './executionHostProtocol.js';
 import { releaseInstallerProtocolVersion, releaseInstallerResultPath, writeReleaseInstallerBootstrap } from './releaseInstallerProtocol.js';
 
 const execFile = promisify(execFileCallback);
@@ -187,7 +188,7 @@ function assertDownloadAllowed(update: DesktopReleaseUpdateStatus, options: Crea
   if (!options.isPackaged) throw new Error('Zeus 只允许 packaged App 执行应用内安装。');
   if (update.currentVersion !== options.currentAppVersion) throw new Error('更新状态中的当前版本与正在运行的 App 不一致。');
   if (update.status !== 'available' || !update.artifact) throw new Error('当前没有可安装的更新。');
-  if (update.executionHostProtocolVersion !== 1) throw new Error('更新包与当前执行宿主协议不兼容，必须等待任务排空后手动升级。');
+  if (update.executionHostProtocolVersion !== executionHostProtocolVersion) throw new Error('更新包与当前执行宿主协议不兼容，必须等待任务排空后手动升级。');
   if (!update.automaticInstallEnabled && !(options.testMode && options.allowUntrustedTestUpdate)) {
     throw new Error('更新包未同时通过签名、公证和协议兼容门禁。');
   }

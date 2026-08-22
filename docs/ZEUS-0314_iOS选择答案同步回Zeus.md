@@ -47,3 +47,9 @@ OpenAI App Server 的 `serverRequest/resolved` 当前只携带 `threadId` 与 `r
 - 历史样本中，结构化 `function_call_output` 与 iOS 回答时间相同，原轮次在约 3.5 秒后完成。这个样本证明不需要下一条 Zeus 消息才能产生答案记录，但不构成 OpenAI 对所有网络环境的固定延迟承诺；最终桌面可见耗时仍需新的真实双端回归测量。
 - 隔离桌面运行：最终重打包后，使用独立 `ZEUS_USER_DATA_DIR=/tmp/zeus-0314-final-runtime.AZGxV0` 且显式设置 `ZEUS_CODEX_NATIVE_ENABLED=0` 启动当前测试包；Main、Renderer 和本地服务正常，`/health` 返回数据库与运行时均为 `ok`，没有启动 Codex app-server。退出后进程和监听端口消失，SQLite `PRAGMA quick_check` 为 `ok`，隔离目录已移入废纸篓。
 - 尚未执行新的 ChatGPT iOS 选项点击与 Zeus 同屏验收；该步骤需要真实登录设备和 Provider 远程接管链路，不能由历史回放、构建或空数据测试包代替。
+
+## 2026-08-22 ZARCH 合入边界
+
+ZARCH-040 把 Provider 投影和 Storage Repository 从旧巨型入口拆出后，本功能的语义已迁移到新 owner：rollout 身份匹配继续由 `codexRolloutRequestUserInput.ts` 负责；外部回答回填、三次有界补抓和关闭清理由 `codexExternalRequestAnswerRecovery.ts` 负责；Provider 事件入口只在 `codexProviderEventProjection.ts` 调用该服务；`external_resolution.answerRecovery` 由 `conversationStore.ts` 持久化。Coordinator 仅装配端口，合并后为 3,949 行，未放宽 4,000 行架构上限。
+
+合并态重新通过 65 项 ZARCH 门禁、`pnpm lint`、`pnpm typecheck`、`pnpm build` 和 `pnpm package:mac`；测试包仍只有 `dev.hypha.zeus.test` 身份。优点是 iOS 回流语义与模块 owner 同时保留；缺点是本次没有新增 iOS 双端点击，因此原文“待新的真实 iOS 双端回归”仍然成立，不能把合并门禁冒充设备验收。

@@ -219,6 +219,8 @@ export interface RespondPlanImplementationRequestInput {
   requestId: string;
   action: 'implement' | 'refine' | 'dismiss';
   feedback?: string;
+  /** 公开 Command 的稳定 operationIdentity；用于避免崩溃重入时生成不同 submission。 */
+  operationIdentity?: string;
 }
 
 export interface EditQueuedSubmissionInput {
@@ -286,6 +288,9 @@ export interface SnoozeNativeRequestInput {
 }
 
 export interface StartNativeEphemeralConversationInput {
+  /** 公开父 Command 派生的稳定子资源身份；Graph 问答不得在重连时改号。 */
+  conversationId?: string;
+  submissionId?: string;
   projectId: string;
   projectLocalPath: string;
   title: string;

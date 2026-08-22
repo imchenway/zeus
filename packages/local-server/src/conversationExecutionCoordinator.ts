@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import type { CodexBootstrapAdditionalContext, PortableConversationContext } from '@zeus/shared';
-import type { ConversationExecutionRepository, ConversationRuntimeKind, ConversationSubmissionRepository, ZeusConversationSubmissionRecord, ZeusDatabase } from '@zeus/storage';
+import type { CommandDeliveryRepository, ConversationExecutionRepository, ConversationRuntimeKind, ConversationSubmissionRepository, ZeusConversationSubmissionRecord, ZeusDatabase } from '@zeus/storage';
 import { applyPortableContextCompaction, planPortableContextCompaction, PortableConversationContextBuilder, type PortableContextCompactionPlan, type PortableContextTargetCapabilities } from './conversationPortableContext.js';
+import type { ManagedPortableContextStore } from './managedPortableContextStore.js';
 
 export interface ConversationExecutionRoute {
   runtimeKind: ConversationRuntimeKind;
@@ -53,6 +54,7 @@ export interface ConversationSegmentLifecycle {
     completedAt: string;
   }): Promise<void>;
   failContextCompaction(error: unknown, failedAt: string): Promise<void>;
+  bindCommandDelivery(input: { outboxId: string; providerId: string; providerGenerationId?: string | null }): void;
   markProviderWriteStarted(): void;
   rejectBeforeAcceptance(error: unknown, occurredAt: string): Promise<void>;
   acceptSynchronously(input: { providerTurnId: string; acceptedAt: string; runtimeEvidence: unknown; providerEcho?: unknown }): string;
@@ -63,6 +65,8 @@ interface CoordinatorOptions {
   db: ZeusDatabase;
   execution: ConversationExecutionRepository;
   submissions: ConversationSubmissionRepository;
+  portableContexts: ManagedPortableContextStore;
+  commandDeliveries?: CommandDeliveryRepository;
   now: () => string;
 }
 
@@ -91,6 +95,9 @@ export class ConversationExecutionCoordinator {
     let submissionId: string | null = null;
     let providerWriteStarted = false;
     let acceptedByRuntime = false;
+    let nativeSessionId: string | null = current?.nativeSessionId ?? null;
+    let commandDelivery: { outboxId: string; providerId: string; providerGenerationId: string | null } | null = null;
+    let commandDeliverySettled = false;
     let portableContextId: string | null = null;
     let compactionStartedAt: string | null = null;
     let compactionCompleted = false;
@@ -170,7 +177,7 @@ export class ConversationExecutionCoordinator {
           this.options.execution.ensureSwitchSlotAvailable({ conversationId: input.conversationId, submissionId, occurredAt: this.options.now() });
           // 只有真实队首开始派发时才固定模型历史水位；入队阶段只冻结路由与权限配置。
           if (portableContext && !portableContextId) {
-            portableContextId = this.options.execution.recordPortableContext({
+            portableContextId = this.options.portableContexts.record({
               conversationId: input.conversationId,
               throughModelHistorySequence: portableContext.throughModelHistorySequence,
               targetExecutionSnapshotId: executionSnapshotId,
@@ -223,6 +230,7 @@ export class ConversationExecutionCoordinator {
             throw executionError('ZEUS_CONVERSATION_SEGMENT_IDENTITY_MISMATCH', '运行时会话身份与当前分段不一致。');
           }
         }
+        nativeSessionId = native.nativeSessionId;
       },
       adapterSerialized: (configuration, evidence, observedAt) => {
         if (!submissionId) throw executionError('ZEUS_CONVERSATION_SEGMENT_NOT_PREPARED', '运行分段尚未完成本地预备。');
@@ -274,7 +282,7 @@ export class ConversationExecutionCoordinator {
           usageComplete: Object.values(completed.usage).every((value) => value !== null),
           occurredAt: completed.completedAt,
         });
-        this.options.execution.updatePortableContext({ id: portableContextId, status: 'compacted', content: portableContext, updatedAt: completed.completedAt });
+        this.options.portableContexts.update({ id: portableContextId, status: 'compacted', content: portableContext, updatedAt: completed.completedAt });
         this.options.execution.recordContextCheckpoint({
           conversationId: input.conversationId,
           portableContextId,
@@ -304,7 +312,7 @@ export class ConversationExecutionCoordinator {
         if (!contextCompactionPlan || !portableContext || !portableContextId || !submissionId || !segmentId) return;
         const failure = serializeError(error);
         const turnId = stableCompactionTurnId(input.conversationId, segmentId, submissionId);
-        this.options.execution.updatePortableContext({ id: portableContextId, status: 'failed', content: portableContext, updatedAt: failedAt });
+        this.options.portableContexts.update({ id: portableContextId, status: 'failed', content: portableContext, updatedAt: failedAt });
         this.options.execution.recordContextCheckpoint({
           conversationId: input.conversationId,
           portableContextId,
@@ -329,18 +337,52 @@ export class ConversationExecutionCoordinator {
         });
         await this.options.db.save();
       },
+      bindCommandDelivery: (delivery) => {
+        if (!this.options.commandDeliveries) throw executionError('ZEUS_COMMAND_DELIVERY_STORE_REQUIRED', '会话派发没有可用的耐久 Command Delivery Store。');
+        if (commandDelivery && commandDelivery.outboxId !== delivery.outboxId && !commandDeliverySettled) {
+          throw executionError('ZEUS_COMMAND_DELIVERY_BINDING_CONFLICT', '同一会话提交不能绑定两个活动 Outbox 尝试。');
+        }
+        commandDelivery = {
+          outboxId: delivery.outboxId,
+          providerId: delivery.providerId,
+          providerGenerationId: delivery.providerGenerationId ?? null,
+        };
+        commandDeliverySettled = false;
+        providerWriteStarted = false;
+      },
       markProviderWriteStarted: () => {
+        if (providerWriteStarted) return;
+        if (commandDelivery && this.options.commandDeliveries) {
+          this.options.commandDeliveries.markProviderWriteStarted({ outboxId: commandDelivery.outboxId, occurredAt: this.options.now() });
+        }
         providerWriteStarted = true;
       },
       rejectBeforeAcceptance: async (error, occurredAt) => {
         if (acceptedByRuntime) return;
-        if (switchOperationId) {
-          this.options.execution.rejectSwitchBeforeAcceptance(switchOperationId, serializeError(error), occurredAt);
-        } else if (submissionId) {
-          this.options.execution.rejectCurrentSubmissionBeforeAcceptance(input.conversationId, submissionId, serializeError(error), occurredAt);
+        const rejection = serializeError(error);
+        const mutateBusinessState = () => {
+          if (switchOperationId) this.options.execution.rejectSwitchBeforeAcceptance(switchOperationId, rejection, occurredAt);
+          else if (submissionId) this.options.execution.rejectCurrentSubmissionBeforeAcceptance(input.conversationId, submissionId, rejection, occurredAt);
+        };
+        if (commandDelivery && this.options.commandDeliveries) {
+          this.options.db.durableTransactionSync(() => {
+            mutateBusinessState();
+            this.options.commandDeliveries!.recordOutcomeInCurrentTransaction({
+              outboxId: commandDelivery!.outboxId,
+              outcome: 'explicitly_rejected',
+              evidence: rejection,
+              providerId: commandDelivery!.providerId,
+              providerGenerationId: commandDelivery!.providerGenerationId,
+              nativeSessionId,
+              occurredAt,
+            });
+            commandDeliverySettled = true;
+          });
+        } else {
+          mutateBusinessState();
+          await this.options.db.save();
         }
         if (submissionId) this.releaseLease(input.conversationId, submissionId);
-        await this.options.db.save();
       },
       acceptSynchronously: (accepted) => {
         if (!submissionId || !segmentId) throw executionError('ZEUS_CONVERSATION_SEGMENT_NOT_PREPARED', '运行分段尚未完成本地预备。');
@@ -372,27 +414,51 @@ export class ConversationExecutionCoordinator {
             observedAt: accepted.acceptedAt,
           });
         }
+        const settleCommandReceipt =
+          commandDelivery && this.options.commandDeliveries
+            ? () =>
+                this.options.commandDeliveries!.recordOutcomeInCurrentTransaction({
+                  outboxId: commandDelivery!.outboxId,
+                  outcome: 'accepted',
+                  evidence: {
+                    runtimeEvidence: accepted.runtimeEvidence,
+                    providerEchoObserved: accepted.providerEcho !== undefined,
+                  },
+                  providerId: commandDelivery!.providerId,
+                  providerGenerationId: commandDelivery!.providerGenerationId,
+                  nativeSessionId,
+                  nativeTurnId: accepted.providerTurnId,
+                  occurredAt: accepted.acceptedAt,
+                })
+            : undefined;
         if (switchOperationId) {
-          this.options.execution.acceptSwitchDurably({
-            operationId: switchOperationId,
-            providerTurnId: accepted.providerTurnId,
-            turnId,
-            acceptanceEvidence: accepted.runtimeEvidence,
-            userHistoryContent: input.userHistoryContent,
-            acceptedAt: accepted.acceptedAt,
-          });
+          this.options.execution.acceptSwitchDurably(
+            {
+              operationId: switchOperationId,
+              providerTurnId: accepted.providerTurnId,
+              turnId,
+              acceptanceEvidence: accepted.runtimeEvidence,
+              userHistoryContent: input.userHistoryContent,
+              acceptedAt: accepted.acceptedAt,
+            },
+            settleCommandReceipt,
+          );
         } else {
-          this.options.execution.acceptOnCurrentSegmentDurably({
-            conversationId: input.conversationId,
-            submissionId,
-            segmentId,
-            providerTurnId: accepted.providerTurnId,
-            turnId,
-            userHistoryContent: input.userHistoryContent,
-            acceptedAt: accepted.acceptedAt,
-          });
+          this.options.execution.acceptOnCurrentSegmentDurably(
+            {
+              conversationId: input.conversationId,
+              submissionId,
+              segmentId,
+              providerTurnId: accepted.providerTurnId,
+              turnId,
+              userHistoryContent: input.userHistoryContent,
+              acceptedAt: accepted.acceptedAt,
+            },
+            settleCommandReceipt,
+          );
         }
         acceptedByRuntime = true;
+        commandDeliverySettled = commandDelivery !== null;
         if (providerMismatch) {
           try {
             this.options.execution.pauseQueuedAfterConfigurationMismatch(input.conversationId, submissionId, { expected: routeConfiguration(input.route), providerEcho: accepted.providerEcho }, accepted.acceptedAt);
@@ -415,15 +481,35 @@ export class ConversationExecutionCoordinator {
       },
       fail: async (error, occurredAt) => {
         if (acceptedByRuntime) return;
-        if (switchOperationId) {
-          if (providerWriteStarted) this.options.execution.markOutcomeUnknown(switchOperationId, serializeError(error), occurredAt);
-          else this.options.execution.failBeforeProviderWrite(switchOperationId, serializeError(error), occurredAt);
-        } else if (submissionId) {
-          if (providerWriteStarted) this.options.execution.markCurrentSubmissionOutcomeUnknown(input.conversationId, submissionId, serializeError(error), occurredAt);
-          else this.options.execution.pauseCurrentSubmissionBeforeProviderWrite(input.conversationId, submissionId, serializeError(error), occurredAt);
+        const failure = serializeError(error);
+        const mutateBusinessState = () => {
+          if (switchOperationId) {
+            if (providerWriteStarted) this.options.execution.markOutcomeUnknown(switchOperationId, failure, occurredAt);
+            else this.options.execution.failBeforeProviderWrite(switchOperationId, failure, occurredAt);
+          } else if (submissionId) {
+            if (providerWriteStarted) this.options.execution.markCurrentSubmissionOutcomeUnknown(input.conversationId, submissionId, failure, occurredAt);
+            else this.options.execution.pauseCurrentSubmissionBeforeProviderWrite(input.conversationId, submissionId, failure, occurredAt);
+          }
+        };
+        if (commandDelivery && this.options.commandDeliveries) {
+          this.options.db.durableTransactionSync(() => {
+            mutateBusinessState();
+            this.options.commandDeliveries!.recordOutcomeInCurrentTransaction({
+              outboxId: commandDelivery!.outboxId,
+              outcome: providerWriteStarted ? 'outcome_unknown_after_write' : 'failed_before_write',
+              evidence: failure,
+              providerId: commandDelivery!.providerId,
+              providerGenerationId: commandDelivery!.providerGenerationId,
+              nativeSessionId,
+              occurredAt,
+            });
+            commandDeliverySettled = true;
+          });
+        } else {
+          mutateBusinessState();
+          await this.options.db.save();
         }
         if (submissionId) this.releaseLease(input.conversationId, submissionId);
-        await this.options.db.save();
       },
     };
   }

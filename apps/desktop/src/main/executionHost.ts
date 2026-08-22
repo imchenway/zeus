@@ -1,29 +1,59 @@
-import { randomBytes } from 'node:crypto';
-import { appendFile, open, readFile, unlink, writeFile } from 'node:fs/promises';
+import { createHash, randomBytes } from 'node:crypto';
+import { appendFile, readFile, unlink, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
+import { readOnlyValidationIdentity, type ExecutionHostStopActiveCommandRequest } from '@zeus/shared';
 import { createReconnectableBrowserAutomationProxy } from './browserAutomationBridge.js';
 import {
-  currentExecutionHostCapabilities,
+  acquireExecutionHostKernelLease,
+  executionHostCapabilitiesFor,
   type ExecutionHostBrowserBridgeRegistration,
   type ExecutionHostControlStatus,
+  executionHostBootstrapDataLayout,
   type ExecutionHostLeaseStatus,
-  executionHostDirectory,
-  executionHostLockPath,
+  type ExecutionHostKernelLease,
+  type ExecutionHostLockIdentity,
   executionHostProtocolVersion,
+  type ExecutionHostStartupStage,
   type ExecutionHostRendezvous,
   type ExecutionHostWorkStatus,
   readExecutionHostBootstrap,
+  removeExecutionHostLockIdentity,
   removeExecutionHostRendezvous,
+  removeExecutionHostStartupStatus,
+  writeExecutionHostLockIdentity,
   writeExecutionHostRendezvous,
+  writeExecutionHostStartupStatus,
 } from './executionHostProtocol.js';
-import { type DesktopLocalServerRuntime, startOwnedDesktopLocalServer } from './localServerRuntime.js';
+import { type DesktopLocalServerRuntime, startOwnedDesktopLocalServer, verifyReadOnlyValidationBeforeOwnedCoreLock } from './localServerRuntime.js';
+import { closeExecutionHostResources } from './executionHostClosePlan.js';
+import { isZeusDataRootHostIdentity, sameZeusDataRootHostIdentity, type ZeusDataRootHostIdentity } from './dataRootIdentity.js';
 
 const uiLeaseTimeoutMs = 15_000;
 const detachedIdleShutdownMs = 30_000;
 const monitorIntervalMs = 5_000;
 const maximumControlBodyBytes = 64 * 1024;
+
+let startupFailureContext:
+  | {
+      userDataPath: string;
+      generationId: string;
+      appVersion: string;
+      startedAt: string;
+      readOnlyValidation?: ReturnType<typeof readOnlyValidationIdentity>;
+      dataRootIdentity: ZeusDataRootHostIdentity;
+    }
+  | undefined;
+let startupKernelLease:
+  | {
+      userDataPath: string;
+      generationId: string;
+      lease: ExecutionHostKernelLease;
+      dataRootIdentity: ZeusDataRootHostIdentity;
+    }
+  | undefined;
+let startupFailureLogDirectory: string | undefined;
 
 interface UiLeaseState {
   leaseId: string;
@@ -35,14 +65,51 @@ async function runExecutionHost(): Promise<void> {
   const bootstrapPath = process.env.ZEUS_EXECUTION_HOST_BOOTSTRAP_PATH?.trim();
   if (!bootstrapPath) throw new Error('ZEUS_EXECUTION_HOST_BOOTSTRAP_PATH is required.');
   const bootstrap = await readExecutionHostBootstrap(bootstrapPath);
+  const dataLayout = executionHostBootstrapDataLayout(bootstrap);
+  if (bootstrap.readOnlyValidation) await verifyReadOnlyValidationBeforeOwnedCoreLock(bootstrap.readOnlyValidation);
+  // 只有 bootstrap 路径、descriptor 与全部 validationRoot 规范身份验证后，失败路径才允许写入该宿主目录。
+  startupFailureLogDirectory = dataLayout.executionHost;
   await unlink(bootstrapPath).catch(() => undefined);
   if (bootstrap.protocolVersion !== executionHostProtocolVersion) throw new Error('Zeus execution-host bootstrap protocol is incompatible.');
 
-  const lockPath = executionHostLockPath(bootstrap.userDataPath);
-  const lock = await acquireExecutionHostLock(lockPath);
-  const logPath = join(executionHostDirectory(bootstrap.userDataPath), 'host.log');
   const instanceId = bootstrap.requestedInstanceId;
   const startedAt = new Date().toISOString();
+  const validationIdentity = bootstrap.readOnlyValidation ? readOnlyValidationIdentity(bootstrap.readOnlyValidation) : undefined;
+  const hostCapabilities = executionHostCapabilitiesFor(bootstrap.dataRootIdentity, bootstrap.readOnlyValidation);
+  const lock = await acquireExecutionHostLock(bootstrap.userDataPath, {
+    protocolVersion: executionHostProtocolVersion,
+    generationId: instanceId,
+    pid: process.pid,
+    appVersion: bootstrap.appVersion,
+    createdAt: startedAt,
+    ownershipMode: 'kernel_lease_v1',
+    dataRootIdentity: bootstrap.dataRootIdentity,
+    readOnlyValidation: validationIdentity,
+  });
+  startupKernelLease = { userDataPath: bootstrap.userDataPath, generationId: instanceId, lease: lock, dataRootIdentity: bootstrap.dataRootIdentity };
+  startupFailureContext = {
+    userDataPath: bootstrap.userDataPath,
+    generationId: instanceId,
+    appVersion: bootstrap.appVersion,
+    startedAt,
+    dataRootIdentity: bootstrap.dataRootIdentity,
+    readOnlyValidation: validationIdentity,
+  };
+  const updateStartupStage = async (stage: ExecutionHostStartupStage): Promise<void> => {
+    await writeExecutionHostStartupStatus(bootstrap.userDataPath, {
+      protocolVersion: executionHostProtocolVersion,
+      generationId: instanceId,
+      pid: process.pid,
+      appVersion: bootstrap.appVersion,
+      stage,
+      startedAt,
+      updatedAt: new Date().toISOString(),
+      dataRootIdentity: bootstrap.dataRootIdentity,
+      readOnlyValidation: validationIdentity,
+    });
+  };
+  await updateStartupStage('lock_acquired');
+  const logPath = join(dataLayout.executionHost, 'host.log');
   const apiToken = randomBytes(32).toString('base64url');
   const controlToken = randomBytes(32).toString('base64url');
   const browserAutomation = createReconnectableBrowserAutomationProxy();
@@ -78,7 +145,7 @@ async function runExecutionHost(): Promise<void> {
       pid: process.pid,
       appVersion: bootstrap.appVersion,
       startedAt,
-      capabilities: currentExecutionHostCapabilities,
+      capabilities: hostCapabilities,
       uiLease: {
         connected: uiLease !== null,
         leaseId: uiLease?.leaseId ?? null,
@@ -96,45 +163,57 @@ async function runExecutionHost(): Promise<void> {
       connected: uiLease !== null,
       leaseId: uiLease?.leaseId ?? null,
       lastHeartbeatAt: uiLease?.lastHeartbeatAt ?? null,
-      capabilities: currentExecutionHostCapabilities,
+      capabilities: hostCapabilities,
     };
   }
 
-  async function closeHost(reason: string): Promise<void> {
+  async function closeHost(reason: string, mode: 'upgrade_handoff' | 'final_quit' = 'final_quit'): Promise<void> {
     if (closePromise) return closePromise;
     closing = true;
     closePromise = (async () => {
-      await record('execution_host.closing', { reason });
       if (monitor) clearInterval(monitor);
-      // Runtime 进程树完全退出前保留控制面；否则极端终止失败后宿主无法继续收口。
-      await runtime?.close('final_quit');
-      await closeHttpServer(controlServer).catch(() => undefined);
-      await removeExecutionHostRendezvous(bootstrap.userDataPath, instanceId);
-      await lock.close().catch(() => undefined);
-      await unlink(lockPath).catch(() => undefined);
-      await record('execution_host.closed', { reason });
+      await closeExecutionHostResources({
+        recordClosing: () => record('execution_host.closing', { reason }),
+        closeRuntime: () => runtime.close(mode),
+        closeControlServer: () => closeHttpServer(controlServer),
+        removeRendezvous: () => removeExecutionHostRendezvous(bootstrap.userDataPath, instanceId, bootstrap.dataRootIdentity),
+        removeStartupStatus: () => removeExecutionHostStartupStatus(bootstrap.userDataPath, instanceId, bootstrap.dataRootIdentity),
+        removeLockIdentity: () => removeExecutionHostLockIdentity(bootstrap.userDataPath, instanceId, bootstrap.dataRootIdentity),
+        // 发现身份在内核租约仍被持有时清理；租约最后释放，下一任宿主才可能发布新身份。
+        releaseKernelLease: () => {
+          lock.close();
+          startupKernelLease = undefined;
+        },
+        recordClosed: () => record('execution_host.closed', { reason }),
+      });
     })();
     return closePromise;
   }
 
-  const conversationAttachmentGrantSecret = (await readFile(bootstrap.conversationAttachmentGrantSecretPath, 'utf8')).trim();
+  const conversationAttachmentGrantSecret = bootstrap.readOnlyValidation
+    ? createHash('sha256').update(`zeus-read-only-validation-grant:${bootstrap.readOnlyValidation.runId}:${bootstrap.readOnlyValidation.manifestHash}`).digest('base64url')
+    : (await readFile(bootstrap.conversationAttachmentGrantSecretPath, 'utf8')).trim();
   const runtime: DesktopLocalServerRuntime = await startOwnedDesktopLocalServer({
     userDataPath: bootstrap.userDataPath,
     projectRoot: bootstrap.projectRoot,
+    keychainService: bootstrap.keychainService,
+    dataRootIdentity: bootstrap.dataRootIdentity,
     currentAppVersion: () => currentUiAppVersion,
     apiToken,
-    telegramToken: process.env.ZEUS_TELEGRAM_BOT_TOKEN,
-    telegramAllowedUserIds: bootstrap.telegramAllowedUserIds,
-    codexNativeEnabled: bootstrap.codexNativeEnabled,
-    codexLegacyImportRoot: bootstrap.codexLegacyImportRoot,
-    codexHome: bootstrap.codexHome,
-    codexConfigImportSourceRoot: bootstrap.codexConfigImportSourceRoot,
-    releaseUpdateManifestUrl: bootstrap.releaseUpdateManifestUrl,
-    allowUntrustedReleaseUpdateTest: bootstrap.allowUntrustedReleaseUpdateTest,
+    telegramToken: bootstrap.readOnlyValidation ? undefined : process.env.ZEUS_TELEGRAM_BOT_TOKEN,
+    telegramAllowedUserIds: bootstrap.readOnlyValidation ? undefined : bootstrap.telegramAllowedUserIds,
+    codexNativeEnabled: bootstrap.readOnlyValidation ? false : bootstrap.codexNativeEnabled,
+    codexLegacyImportRoot: bootstrap.readOnlyValidation ? undefined : bootstrap.codexLegacyImportRoot,
+    codexHome: bootstrap.readOnlyValidation ? undefined : bootstrap.codexHome,
+    codexConfigImportSourceRoot: bootstrap.readOnlyValidation ? undefined : bootstrap.codexConfigImportSourceRoot,
+    releaseUpdateManifestUrl: bootstrap.readOnlyValidation ? undefined : bootstrap.releaseUpdateManifestUrl,
+    allowUntrustedReleaseUpdateTest: bootstrap.readOnlyValidation ? false : bootstrap.allowUntrustedReleaseUpdateTest,
     taskAttachmentRoot: bootstrap.taskAttachmentRoot,
     browserAttachmentRoot: bootstrap.browserAttachmentRoot,
     conversationAttachmentRoot: bootstrap.conversationAttachmentRoot,
     conversationAttachmentGrantSecret,
+    conversationAttachmentGrantSecretPath: bootstrap.conversationAttachmentGrantSecretPath,
+    dataLayout,
     browserAutomation,
     executionHost: {
       instanceId,
@@ -142,6 +221,8 @@ async function runExecutionHost(): Promise<void> {
       startedAt,
       mode: 'detached',
     },
+    readOnlyValidation: bootstrap.readOnlyValidation,
+    onStartupStage: updateStartupStage,
     onRestarted: async (config) => {
       if (!rendezvous) return;
       rendezvous = { ...rendezvous, baseUrl: config.baseUrl, updatedAt: new Date().toISOString() };
@@ -149,12 +230,16 @@ async function runExecutionHost(): Promise<void> {
       await record('execution_host.local_server_restarted', { baseUrl: config.baseUrl });
     },
   });
+  await updateStartupStage('local_server_ready');
 
   const controlServer = createServer((request, response) => {
     void handleControlRequest(request, response, {
       token: controlToken,
       status: controlStatus,
       registerBrowserBridge: async (registration) => {
+        if (!sameZeusDataRootHostIdentity(registration.dataRootIdentity, bootstrap.dataRootIdentity)) {
+          throw Object.assign(new Error('Zeus Browser bridge 的数据根 profile/identity 与 Execution Host 不一致。'), { statusCode: 409 });
+        }
         assertLoopbackUrl(registration.baseUrl);
         currentUiAppVersion = registration.appVersion;
         uiLease = { leaseId: registration.leaseId, lastHeartbeatAt: new Date().toISOString(), appVersion: registration.appVersion };
@@ -177,16 +262,20 @@ async function runExecutionHost(): Promise<void> {
         }
         return controlStatus();
       },
-      stopActiveWork: async () => {
+      stopActiveWork: async (input) => {
         if (!runtime) throw new Error('Zeus execution-host runtime is not ready.');
         const response = await fetch(`${runtime.config.baseUrl}/api/execution-host/stop-active`, {
           method: 'POST',
-          headers: { authorization: `Bearer ${runtime.config.apiToken}` },
+          headers: { authorization: `Bearer ${runtime.config.apiToken}`, 'content-type': 'application/json' },
+          body: JSON.stringify(input),
           signal: AbortSignal.timeout(15_000),
         });
         const payload = (await response.json().catch(() => ({}))) as unknown;
         if (!response.ok) throw new Error(`Zeus execution-host stop failed with HTTP ${response.status}.`);
-        await record('execution_host.stop_requested');
+        await record('execution_host.stop_requested', {
+          commandId: input.command.commandId,
+          operationIdentity: input.command.payload.operationIdentity,
+        });
         return payload;
       },
       shutdown: async () => {
@@ -195,6 +284,25 @@ async function runExecutionHost(): Promise<void> {
             .then(() => process.exit(0))
             .catch(async (error: unknown) => {
               await record('execution_host.close_failed', { reason: 'final_quit', message: error instanceof Error ? error.message : String(error) }).catch(() => undefined);
+              process.exit(1);
+            });
+        });
+      },
+      handoff: async (input) => {
+        if (!runtime) throw new Error('Zeus execution-host runtime is not ready.');
+        const verificationUrl = new URL(`/api/execution-host/handoff/${encodeURIComponent(input.handoffId)}/prepared`, runtime.config.baseUrl);
+        verificationUrl.searchParams.set('checkpointSha256', input.checkpointSha256);
+        const verification = await fetch(verificationUrl, {
+          headers: { authorization: `Bearer ${runtime.config.apiToken}` },
+          signal: AbortSignal.timeout(5_000),
+        });
+        if (!verification.ok) throw Object.assign(new Error('Execution Host 持久化交接账本尚未 prepared 或 hash 不匹配。'), { statusCode: 409 });
+        await record('execution_host.handoff_accepted', { handoffId: input.handoffId, checkpointSha256: input.checkpointSha256 });
+        setImmediate(() => {
+          void closeHost('upgrade_handoff', 'upgrade_handoff')
+            .then(() => process.exit(0))
+            .catch(async (error: unknown) => {
+              await record('execution_host.close_failed', { reason: 'upgrade_handoff', message: error instanceof Error ? error.message : String(error) }).catch(() => undefined);
               process.exit(1);
             });
         });
@@ -214,10 +322,15 @@ async function runExecutionHost(): Promise<void> {
     controlToken,
     dbPath: runtime.dbPath,
     projectRoot: bootstrap.projectRoot,
+    dataRootIdentity: bootstrap.dataRootIdentity,
+    readOnlyValidation: validationIdentity,
     startedAt,
     updatedAt: new Date().toISOString(),
+    ownershipMode: 'kernel_lease_v1',
   };
   await writeExecutionHostRendezvous(bootstrap.userDataPath, rendezvous);
+  await updateStartupStage('control_ready');
+  startupFailureContext = undefined;
   await record('execution_host.ready', { baseUrl: rendezvous.baseUrl, controlUrl: rendezvous.controlUrl, appVersion: bootstrap.appVersion });
 
   monitor = setInterval(() => {
@@ -237,8 +350,14 @@ async function runExecutionHost(): Promise<void> {
       }
       detachedIdleSince ??= Date.now();
       if (Date.now() - detachedIdleSince < detachedIdleShutdownMs) return;
-      await closeHost('detached_idle');
-      process.exit(0);
+      try {
+        await closeHost('detached_idle');
+        process.exit(0);
+      } catch (error) {
+        await record('execution_host.close_failed', { reason: 'detached_idle', message: error instanceof Error ? error.message : String(error) }).catch(() => undefined);
+        // close 失败后不能让 closing=true 的宿主永久占有 writer lease；进程退出由 OS 最终释放未能收口的 fd/租约。
+        process.exit(1);
+      }
     })().catch((error: unknown) => {
       void record('execution_host.monitor_failed', { message: error instanceof Error ? error.message : String(error) });
     });
@@ -267,8 +386,9 @@ interface ControlRequestServices {
   registerBrowserBridge(input: ExecutionHostBrowserBridgeRegistration): Promise<ExecutionHostLeaseStatus>;
   heartbeat(leaseId: string): Promise<ExecutionHostLeaseStatus>;
   detach(leaseId: string): Promise<ExecutionHostControlStatus>;
-  stopActiveWork(): Promise<unknown>;
+  stopActiveWork(input: ExecutionHostStopActiveCommandRequest): Promise<unknown>;
   shutdown(): Promise<void>;
+  handoff(input: { handoffId: string; checkpointSha256: string }): Promise<void>;
 }
 
 async function handleControlRequest(request: IncomingMessage, response: ServerResponse, services: ControlRequestServices): Promise<void> {
@@ -300,12 +420,20 @@ async function handleControlRequest(request: IncomingMessage, response: ServerRe
       return;
     }
     if (request.method === 'POST' && request.url === '/work/stop') {
-      sendJson(response, 200, await services.stopActiveWork());
+      const body = await readJsonBody(request);
+      sendJson(response, 200, await services.stopActiveWork(body as ExecutionHostStopActiveCommandRequest));
       return;
     }
     if (request.method === 'POST' && request.url === '/shutdown') {
       sendJson(response, 202, { accepted: true });
       await services.shutdown();
+      return;
+    }
+    if (request.method === 'POST' && request.url === '/handoff') {
+      const body = await readJsonBody(request);
+      if (!isHandoffControlRequest(body)) throw Object.assign(new Error('Execution Host 交接控制格式无效。'), { statusCode: 400 });
+      await services.handoff(body);
+      sendJson(response, 202, { accepted: true });
       return;
     }
     sendJson(response, 404, { error: 'ZEUS_EXECUTION_HOST_CONTROL_NOT_FOUND', message: '执行宿主控制路径不存在。' });
@@ -318,44 +446,23 @@ async function handleControlRequest(request: IncomingMessage, response: ServerRe
   }
 }
 
-async function acquireExecutionHostLock(path: string) {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      const handle = await open(path, 'wx', 0o600);
-      await handle.writeFile(`${JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() })}\n`, 'utf8');
-      return handle;
-    } catch (error) {
-      if (!isNodeError(error, 'EEXIST') || attempt > 0) throw error;
-      const existing = await readLockPid(path);
-      if (existing && processExists(existing)) throw new Error(`Zeus execution-host is already running with PID ${existing}.`);
-      await unlink(path).catch((unlinkError: unknown) => {
-        if (!isNodeError(unlinkError, 'ENOENT')) throw unlinkError;
-      });
-    }
-  }
-  throw new Error('Zeus execution-host lock could not be acquired.');
-}
-
-async function readLockPid(path: string): Promise<number | null> {
+async function acquireExecutionHostLock(userDataPath: string, identity: ExecutionHostLockIdentity) {
+  const lease = acquireExecutionHostKernelLease(userDataPath, identity.dataRootIdentity);
   try {
-    const value = JSON.parse(await readFile(path, 'utf8')) as unknown;
-    return isRecord(value) && Number.isInteger(value.pid) ? Number(value.pid) : null;
-  } catch {
-    return null;
-  }
-}
-
-function processExists(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
+    await writeExecutionHostLockIdentity(userDataPath, identity, lease);
+    return lease;
   } catch (error) {
-    return isNodeError(error, 'EPERM');
+    lease.close();
+    throw error;
   }
 }
 
 function isBrowserBridgeRegistration(value: unknown): value is ExecutionHostBrowserBridgeRegistration {
-  return isRecord(value) && isNonEmptyString(value.leaseId) && isNonEmptyString(value.baseUrl) && isNonEmptyString(value.token) && isNonEmptyString(value.appVersion);
+  return isRecord(value) && isNonEmptyString(value.leaseId) && isNonEmptyString(value.baseUrl) && isNonEmptyString(value.token) && isNonEmptyString(value.appVersion) && isZeusDataRootHostIdentity(value.dataRootIdentity);
+}
+
+function isHandoffControlRequest(value: unknown): value is { handoffId: string; checkpointSha256: string } {
+  return isRecord(value) && isNonEmptyString(value.handoffId) && /^[a-f0-9]{64}$/u.test(typeof value.checkpointSha256 === 'string' ? value.checkpointSha256 : '');
 }
 
 function assertLoopbackUrl(value: string): void {
@@ -414,16 +521,30 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
-function isNodeError(error: unknown, code: string): error is NodeJS.ErrnoException {
-  return error instanceof Error && (error as NodeJS.ErrnoException).code === code;
-}
-
 void runExecutionHost().catch(async (error: unknown) => {
-  const bootstrapPath = process.env.ZEUS_EXECUTION_HOST_BOOTSTRAP_PATH?.trim();
-  const fallbackDirectory = bootstrapPath ? dirname(bootstrapPath) : process.cwd();
-  await writeFile(join(fallbackDirectory, 'host-startup-error.log'), `${new Date().toISOString()} ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`, {
-    encoding: 'utf8',
-    mode: 0o600,
-  }).catch(() => undefined);
+  if (startupFailureContext) {
+    await writeExecutionHostStartupStatus(startupFailureContext.userDataPath, {
+      protocolVersion: executionHostProtocolVersion,
+      generationId: startupFailureContext.generationId,
+      pid: process.pid,
+      appVersion: startupFailureContext.appVersion,
+      stage: 'failed',
+      startedAt: startupFailureContext.startedAt,
+      updatedAt: new Date().toISOString(),
+      dataRootIdentity: startupFailureContext.dataRootIdentity,
+      readOnlyValidation: startupFailureContext.readOnlyValidation,
+    }).catch(() => undefined);
+  }
+  if (startupKernelLease) {
+    await removeExecutionHostLockIdentity(startupKernelLease.userDataPath, startupKernelLease.generationId, startupKernelLease.dataRootIdentity).catch(() => undefined);
+    startupKernelLease.lease.close();
+    startupKernelLease = undefined;
+  }
+  if (startupFailureLogDirectory) {
+    await writeFile(join(startupFailureLogDirectory, 'host-startup-error.log'), `${new Date().toISOString()} ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`, {
+      encoding: 'utf8',
+      mode: 0o600,
+    }).catch(() => undefined);
+  }
   process.exitCode = 1;
 });

@@ -33,6 +33,9 @@ export type {
 
 export interface CodexAppServerReadable {
   on(event: 'data', listener: (chunk: Buffer | string) => void): unknown;
+  /** Node pipe 支持暂停读取；假实现可省略。用于消费者未收口时把背压传回 app-server stdout。 */
+  pause?(): unknown;
+  resume?(): unknown;
 }
 
 export interface CodexAppServerProcess {
@@ -70,8 +73,16 @@ export interface CodexModelCapability {
 export interface CodexCapabilitiesSnapshot {
   generationId: string;
   initializedAt: string;
+  /** 来自 initialize 回执的 Provider 版本；协议未返回时保持 null，绝不猜测 CLI 版本。 */
+  providerVersion: string | null;
+  protocolVersion: 'codex-app-server-v2';
   models: CodexModelCapability[];
   supportedModels: string[];
+  preflightTokenCount: {
+    state: 'unavailable';
+    exact: false;
+    reason: string;
+  };
   goals: {
     supported: boolean;
     enabled: boolean;
@@ -177,7 +188,12 @@ export interface CodexResponsesRuntime {
   environment: Record<string, string>;
 }
 
-export interface CodexThreadStartInput {
+export interface CodexPerformanceTraceContext {
+  /** Zeus 内部短期性能身份；不序列化到 Codex app-server params。 */
+  traceIdentity?: string | null;
+}
+
+export interface CodexThreadStartInput extends CodexPerformanceTraceContext {
   model: string;
   serviceTier?: string | null;
   cwd: string;
@@ -192,7 +208,7 @@ export interface CodexThreadStartInput {
   dynamicTools?: CodexDynamicToolSpec[];
 }
 
-export interface CodexThreadResumeInput {
+export interface CodexThreadResumeInput extends CodexPerformanceTraceContext {
   threadId: string;
   cwd?: string;
   responsesRuntime?: CodexResponsesRuntime;
@@ -213,7 +229,7 @@ export interface CodexThreadSnapshot {
   [key: string]: unknown;
 }
 
-export interface CodexTurnStartInput {
+export interface CodexTurnStartInput extends CodexPerformanceTraceContext {
   threadId: string;
   clientUserMessageId?: string;
   input: Array<Record<string, unknown>>;
@@ -238,7 +254,7 @@ export function toCodexWireReasoningEffort(effort: string | null | undefined): s
   return effort === 'off' ? 'none' : effort;
 }
 
-export interface CodexTurnSteerInput {
+export interface CodexTurnSteerInput extends CodexPerformanceTraceContext {
   threadId: string;
   turnId: string;
   clientUserMessageId?: string;
@@ -278,7 +294,7 @@ interface CodexServerResponseBase {
   requestId: CodexWireId;
 }
 
-export type CodexServerRequestResponse =
+export type CodexServerRequestResponse = CodexPerformanceTraceContext & (
   | (CodexServerResponseBase & { type: 'command'; decision: CodexCommandApprovalDecision })
   | (CodexServerResponseBase & { type: 'file'; decision: 'accept' | 'acceptForSession' | 'decline' | 'cancel' })
   | (CodexServerResponseBase & {
@@ -296,7 +312,8 @@ export type CodexServerRequestResponse =
       type: 'dynamic_tool';
       contentItems: Array<{ type: 'inputText'; text: string } | { type: 'inputImage'; imageUrl: string }>;
       success: boolean;
-    });
+    })
+);
 
 export type CodexCommandApprovalDecision =
   | 'accept'
@@ -384,17 +401,17 @@ export interface CodexAppServerManager {
   cancelChatGptLogin(input: { loginId: string }): Promise<void>;
   startThread(input: CodexThreadStartInput): Promise<CodexThreadSnapshot>;
   resumeThread(input: CodexThreadResumeInput): Promise<CodexThreadSnapshot>;
-  archiveThread(input: { threadId: string }): Promise<void>;
-  unarchiveThread(input: { threadId: string }): Promise<CodexThreadSnapshot>;
-  readThread(input: { threadId: string }): Promise<CodexThreadSnapshot>;
+  archiveThread(input: { threadId: string } & CodexPerformanceTraceContext): Promise<void>;
+  unarchiveThread(input: { threadId: string } & CodexPerformanceTraceContext): Promise<CodexThreadSnapshot>;
+  readThread(input: { threadId: string; includeTurns?: boolean }): Promise<CodexThreadSnapshot>;
   listThreads(input: CodexThreadListInput): Promise<CodexThreadsPage>;
   readThreadGoal(input: { threadId: string }): Promise<CodexThreadGoal | null>;
-  setThreadGoal(input: { threadId: string; objective?: string; status?: CodexThreadGoalStatus; tokenBudget?: number | null }): Promise<CodexThreadGoal>;
-  clearThreadGoal(input: { threadId: string }): Promise<{ cleared: boolean }>;
+  setThreadGoal(input: { threadId: string; objective?: string; status?: CodexThreadGoalStatus; tokenBudget?: number | null } & CodexPerformanceTraceContext): Promise<CodexThreadGoal>;
+  clearThreadGoal(input: { threadId: string } & CodexPerformanceTraceContext): Promise<{ cleared: boolean }>;
   listThreadTurns(input: { threadId: string; cursor?: string | null; limit?: number | null; sortDirection?: 'asc' | 'desc' | null; itemsView?: 'notLoaded' | 'summary' | 'full' | null }): Promise<CodexThreadTurnsPage>;
   startTurn(input: CodexTurnStartInput): Promise<CodexTurnSnapshot>;
   steerTurn(input: CodexTurnSteerInput): Promise<{ turnId: string }>;
-  interruptTurn(input: { threadId: string; turnId: string }): Promise<void>;
+  interruptTurn(input: { threadId: string; turnId: string } & CodexPerformanceTraceContext): Promise<void>;
   respondToServerRequest(input: CodexServerRequestResponse): Promise<void>;
   readRemoteControlStatus(): Promise<CodexRemoteControlStatus>;
   enableRemoteControl(input?: { ephemeral?: boolean }): Promise<CodexRemoteControlStatus>;
@@ -407,7 +424,7 @@ export interface CodexAppServerManager {
   startExternalAgentImport(input: ExternalAgentConfigImportParams): Promise<ExternalAgentConfigImportResponse>;
   readExternalAgentImportHistories(): Promise<ExternalAgentConfigImportHistory[]>;
   subscribeExternalAgentImport(listener: (event: ExternalAgentImportEvent) => void): () => void;
-  subscribe(listener: (event: CodexAppServerEvent) => void): () => void;
+  subscribe(listener: (event: CodexAppServerEvent) => void | Promise<void>): () => void;
   getState(): CodexTransportState;
   hasGeneration(generationId: string): boolean;
   generationForThread(threadId: string): string | null;
@@ -420,6 +437,8 @@ export type ExternalAgentImportEvent = ExternalAgentImportNotification & { gener
 
 type PendingRequest = {
   generationId: string;
+  method: string;
+  traceIdentity: string | null;
   resolve(value: unknown): void;
   reject(error: Error): void;
   timeout: ReturnType<typeof setTimeout>;
@@ -480,7 +499,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
   const runtimeEnvironment = { ...options.runtimeEnvironment };
   const codexHome = options.codexHome?.trim() || null;
   if (codexHome !== null && !isAbsolute(codexHome)) throw managerError('ZEUS_CODEX_HOME_INVALID', 'Codex home must be an absolute path.');
-  const listeners = new Set<(event: CodexAppServerEvent) => void>();
+  const listeners = new Set<(event: CodexAppServerEvent) => void | Promise<void>>();
   const externalAgentImportListeners = new Set<(event: ExternalAgentImportEvent) => void>();
   const eventReplayBuffer: CodexAppServerEvent[] = [];
   const pendingRequests = new Map<string, PendingRequest>();
@@ -506,6 +525,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
   let remoteControlEnabled = false;
   let preparingForShutdown = false;
   let closePromise: Promise<void> | null = null;
+  const pendingEventDeliveryCounts = new WeakMap<CodexAppServerProcess, number>();
 
   function currentGenerationId(): string {
     if (state.type === 'idle' || state.type === 'closed') throw managerError('ZEUS_CODEX_NOT_READY', 'Codex app-server is not ready.');
@@ -570,7 +590,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     });
 
     const handshake = (async () => {
-      await rpc(generationId, 'initialize', {
+      const initializeResponse = await rpc(generationId, 'initialize', {
         clientInfo: { name: 'zeus', title: 'Zeus', version: '0.1.0' },
         capabilities: { experimentalApi: true, requestAttestation: false },
       });
@@ -582,8 +602,15 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       const capabilities: CodexCapabilitiesSnapshot = {
         generationId,
         initializedAt: now(),
+        providerVersion: providerVersionFromInitialize(initializeResponse),
+        protocolVersion: 'codex-app-server-v2',
         models,
         supportedModels: models.map((model) => model.model),
+        preflightTokenCount: {
+          state: 'unavailable',
+          exact: false,
+          reason: '当前 app-server 协议没有请求前 token-count RPC；仅提供请求后的真实 usage 通知。',
+        },
         goals,
       };
       if (child !== spawned) throw managerError('ZEUS_CODEX_GENERATION_EXITED', 'Codex app-server generation changed during initialization.');
@@ -667,7 +694,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     });
   }
 
-  function rpc(generationId: string, method: string, params: unknown, input: { requestWritten?: () => void } = {}): Promise<unknown> {
+  function rpc(generationId: string, method: string, params: unknown, input: { requestWritten?: () => void; traceIdentity?: string | null } = {}): Promise<unknown> {
     if (preparingForShutdown || state.type === 'closed') return Promise.reject(managerError('ZEUS_CODEX_CLOSED', 'Codex app-server manager is closing.'));
     if (generationId !== currentGenerationId()) return Promise.reject(managerError('ZEUS_CODEX_STALE_GENERATION', 'Codex app-server generation is stale.'));
     const id = `${generationId}:${++requestSequence}`;
@@ -676,7 +703,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
         pendingRequests.delete(pendingKey(generationId, id));
         reject(managerError('ZEUS_CODEX_RPC_TIMEOUT', `Codex app-server request timed out: ${method}`));
       }, requestTimeoutMs);
-      pendingRequests.set(pendingKey(generationId, id), { generationId, resolve, reject, timeout });
+      pendingRequests.set(pendingKey(generationId, id), { generationId, method, traceIdentity: input.traceIdentity ?? null, resolve, reject, timeout });
       try {
         write({ id, method, params }, (error) => {
           if (!error) {
@@ -824,13 +851,34 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       eventReplayBuffer.push(event);
       if (eventReplayBuffer.length > eventReplayLimit) eventReplayBuffer.splice(0, eventReplayBuffer.length - eventReplayLimit);
     }
+    const pendingDeliveries: Promise<void>[] = [];
     for (const listener of listeners) {
       try {
-        listener(event);
+        const delivery = listener(event);
+        if (delivery && typeof delivery.then === 'function') pendingDeliveries.push(delivery);
       } catch {
         // Consumer failures must not break decoding, request settlement, or other listeners.
       }
     }
+    if (pendingDeliveries.length > 0) applyEventDeliveryBackpressure(generationId, pendingDeliveries);
+  }
+
+  function applyEventDeliveryBackpressure(generationId: string, deliveries: Promise<void>[]): void {
+    const source = child;
+    if (!source) return;
+    pendingEventDeliveryCounts.set(source, (pendingEventDeliveryCounts.get(source) ?? 0) + 1);
+    source.stdout.pause?.();
+    void Promise.allSettled(deliveries).then(() => {
+      const remaining = Math.max(0, (pendingEventDeliveryCounts.get(source) ?? 1) - 1);
+      if (remaining > 0) {
+        pendingEventDeliveryCounts.set(source, remaining);
+        return;
+      }
+      pendingEventDeliveryCounts.delete(source);
+      if (child !== source || state.type === 'closed') return;
+      if (state.type !== 'idle' && state.generationId !== generationId) return;
+      source.stdout.resume?.();
+    });
   }
 
   function observeTurnStarted(generationId: string, params: unknown): void {
@@ -969,6 +1017,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
             dynamicTools: input.dynamicTools,
             config: responsesProvider ? responsesProviderConfig(responsesProvider) : undefined,
           }),
+          { traceIdentity: input.traceIdentity },
         ),
       );
       const thread = parseThread(response.thread);
@@ -1000,18 +1049,18 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     },
     async archiveThread(input) {
       const capabilities = await awaitCapabilities();
-      await rpc(capabilities.generationId, 'thread/archive', { threadId: input.threadId });
+      await rpc(capabilities.generationId, 'thread/archive', { threadId: input.threadId }, { traceIdentity: input.traceIdentity });
       threadModels.delete(input.threadId);
       threadResponsesProviders.delete(input.threadId);
     },
     async unarchiveThread(input) {
       const capabilities = await awaitCapabilities();
-      const response = asRecord(await rpc(capabilities.generationId, 'thread/unarchive', { threadId: input.threadId }));
+      const response = asRecord(await rpc(capabilities.generationId, 'thread/unarchive', { threadId: input.threadId }, { traceIdentity: input.traceIdentity }));
       return parseThread(response.thread);
     },
     async readThread(input) {
       const capabilities = await awaitCapabilities();
-      const response = asRecord(await rpc(capabilities.generationId, 'thread/read', { threadId: input.threadId, includeTurns: true }));
+      const response = asRecord(await rpc(capabilities.generationId, 'thread/read', { threadId: input.threadId, includeTurns: input.includeTurns ?? false }));
       return parseThread(response.thread);
     },
     async listThreads(input) {
@@ -1035,13 +1084,13 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       const capabilities = await awaitCapabilities();
       assertGoalsEnabled(capabilities);
       if (input.objective !== undefined) validateGoalObjective(input.objective);
-      const response = asRecord(await rpc(capabilities.generationId, 'thread/goal/set', compactObject(input)));
+      const response = asRecord(await rpc(capabilities.generationId, 'thread/goal/set', compactObject({ threadId: input.threadId, objective: input.objective, status: input.status, tokenBudget: input.tokenBudget }), { traceIdentity: input.traceIdentity }));
       return parseThreadGoal(response.goal);
     },
     async clearThreadGoal(input) {
       const capabilities = await awaitCapabilities();
       assertGoalsEnabled(capabilities);
-      const response = asRecord(await rpc(capabilities.generationId, 'thread/goal/clear', input));
+      const response = asRecord(await rpc(capabilities.generationId, 'thread/goal/clear', { threadId: input.threadId }, { traceIdentity: input.traceIdentity }));
       if (typeof response.cleared !== 'boolean') throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex thread/goal/clear response omitted cleared.');
       return { cleared: response.cleared };
     },
@@ -1115,7 +1164,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
             approvalsReviewer: input.approvalsReviewer,
             sandboxPolicy,
           }),
-          { requestWritten: input.requestWritten },
+          { requestWritten: input.requestWritten, traceIdentity: input.traceIdentity },
         ),
       );
       const turn = parseTurn(response.turn, input.threadId);
@@ -1125,12 +1174,17 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     async steerTurn(input) {
       const capabilities = await awaitCapabilities();
       const response = asRecord(
-        await rpc(capabilities.generationId, 'turn/steer', {
-          threadId: input.threadId,
-          expectedTurnId: input.turnId,
-          clientUserMessageId: input.clientUserMessageId,
-          input: input.input,
-        }),
+        await rpc(
+          capabilities.generationId,
+          'turn/steer',
+          {
+            threadId: input.threadId,
+            expectedTurnId: input.turnId,
+            clientUserMessageId: input.clientUserMessageId,
+            input: input.input,
+          },
+          { traceIdentity: input.traceIdentity },
+        ),
       );
       if (typeof response.turnId !== 'string') throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex turn/steer response omitted turnId.');
       return { turnId: response.turnId };
@@ -1142,7 +1196,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
         pendingInterrupts.add(key);
         return;
       }
-      await rpc(capabilities.generationId, 'turn/interrupt', input);
+      await rpc(capabilities.generationId, 'turn/interrupt', { threadId: input.threadId, turnId: input.turnId }, { traceIdentity: input.traceIdentity });
     },
     async respondToServerRequest(input) {
       const generationId = currentGenerationId();
@@ -1240,7 +1294,14 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     },
     subscribe(listener) {
       listeners.add(listener);
-      for (const event of eventReplayBuffer) listener(event);
+      for (const event of eventReplayBuffer) {
+        try {
+          const delivery = listener(event);
+          if (delivery && typeof delivery.then === 'function') applyEventDeliveryBackpressure(event.generationId, [delivery]);
+        } catch {
+          // 回放消费者异常与实时消费者一样隔离。
+        }
+      }
       return () => listeners.delete(listener);
     },
     getState() {
@@ -1318,8 +1379,18 @@ function spawnRemoteControlCodexAppServer(command: string, options: CodexAppServ
   const pendingMessages: string[] = [];
   let inputBuffer = '';
   let socket: WebSocket | null = null;
+  let deliveryPaused = false;
   let stopping = false;
   let exited = false;
+
+  stdout.pause = () => {
+    deliveryPaused = true;
+    socket?.pause();
+  };
+  stdout.resume = () => {
+    deliveryPaused = false;
+    socket?.resume();
+  };
 
   function finishExit(code: number | null, signal: NodeJS.Signals | null): void {
     if (exited) return;
@@ -1384,6 +1455,7 @@ function spawnRemoteControlCodexAppServer(command: string, options: CodexAppServ
       perMessageDeflate: false,
     });
     socket.on('open', () => {
+      if (deliveryPaused) socket?.pause();
       for (const message of pendingMessages.splice(0)) socket?.send(message);
     });
     socket.on('message', (data: RawData) => {
@@ -1967,6 +2039,21 @@ const supportedServerRequestMethods = new Set([
 
 function pendingKey(generationId: string, id: CodexWireId): string {
   return `${generationId}\u0000${typeof id}:${String(id)}`;
+}
+
+function providerVersionFromInitialize(value: unknown): string | null {
+  const response = asRecord(value);
+  // 新版 app-server 的 initialize 响应可能只返回 userAgent/codexHome/platform，
+  // 不再保证携带旧版 serverInfo。版本字段缺失不能使已成功的握手失败。
+  const serverInfo = isRecord(response.serverInfo) ? response.serverInfo : {};
+  for (const candidate of [serverInfo.version, response.version]) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim().slice(0, 120);
+  }
+  if (typeof response.userAgent === 'string') {
+    const match = response.userAgent.match(/(?:^|\s|\/)(?:codex|codex-cli|codex\s+desktop)[/@]([A-Za-z0-9_.+-]{1,120})/iu);
+    if (match?.[1]) return match[1];
+  }
+  return null;
 }
 
 function serverRequestKey(generationId: string, id: CodexWireId): string {
