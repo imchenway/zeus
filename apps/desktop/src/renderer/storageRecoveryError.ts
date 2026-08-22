@@ -8,14 +8,7 @@ export function reportStorageReadOnlyFault(language: 'zh-CN' | 'en', readsAvaila
   const restart = window.zeus?.runStorageRecoveryPreflightAndRestart;
   reportApplicationError(new Error('ZEUS_STORAGE_READ_ONLY_FAULT'), {
     language,
-    title:
-      language === 'zh-CN'
-        ? readsAvailable
-          ? '存储已进入只读保护'
-          : '存储读写已安全停止'
-        : readsAvailable
-          ? 'Storage is now read-only'
-          : 'Storage reads and writes stopped',
+    title: language === 'zh-CN' ? (readsAvailable ? '存储已进入只读保护' : '存储读写已安全停止') : readsAvailable ? 'Storage is now read-only' : 'Storage reads and writes stopped',
     summary:
       language === 'zh-CN'
         ? readsAvailable

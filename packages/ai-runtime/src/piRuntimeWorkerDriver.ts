@@ -290,7 +290,15 @@ export function createPiRuntimeWorkerDriver(options: CreatePiRuntimeWorkerDriver
       sendToWorker({ kind: 'reverse_response', protocolVersion: piRuntimeWorkerProtocolVersion, generationId: request.generationId, traceIdentity: request.traceIdentity ?? null, id: request.id, ok: true, value });
     } catch (error) {
       try {
-        sendToWorker({ kind: 'reverse_response', protocolVersion: piRuntimeWorkerProtocolVersion, generationId: request.generationId, traceIdentity: request.traceIdentity ?? null, id: request.id, ok: false, error: serializePiRuntimeWorkerError(error) });
+        sendToWorker({
+          kind: 'reverse_response',
+          protocolVersion: piRuntimeWorkerProtocolVersion,
+          generationId: request.generationId,
+          traceIdentity: request.traceIdentity ?? null,
+          id: request.id,
+          ok: false,
+          error: serializePiRuntimeWorkerError(error),
+        });
       } catch {
         // Worker 已退出时只由进程退出路径收口 pending/unknown，不再制造第二个未处理异常。
       }

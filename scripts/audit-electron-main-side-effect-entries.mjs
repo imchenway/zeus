@@ -292,11 +292,7 @@ function createIsolatedCopyStartupRisks() {
       consequence: '每个 preparing attempt 会在启动时自动 retry；后续读取分支 HEAD、创建/复用 integration worktree、写冲突草稿并启动 Codex/Pi 会话，既触碰真实仓库，也可能触碰 Provider。',
       evidence: [
         startupEvidence('packages/local-server/src/index.ts', ["taskIntegrationAttempts.listByState('preparing')", 'void retryTaskIntegrationAiPreparation(conversation, attempt)']),
-        startupEvidence('packages/local-server/src/gitIntegrationOperations.ts', [
-          'const started = await startTaskIntegrationAttempt({',
-          'await writeTaskIntegrationDraft(',
-          'const operation = await startNativeTaskConversationFromPlan({',
-        ]),
+        startupEvidence('packages/local-server/src/gitIntegrationOperations.ts', ['const started = await startTaskIntegrationAttempt({', 'await writeTaskIntegrationDraft(', 'const operation = await startNativeTaskConversationFromPlan({']),
       ],
       fencePolicy: '验证模式必须在遍历 preparing attempts 前停止；只报告精确 attempt/integration/workspace identity，不创建 worktree、不执行 Git、不派发 Provider。',
     }),

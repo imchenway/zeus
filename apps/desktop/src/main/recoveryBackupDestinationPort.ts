@@ -54,10 +54,7 @@ export class ElectronRecoveryBackupDestinationPort {
     return { cancelled: false, destinations };
   }
 
-  async withAccess<T>(
-    grantId: string,
-    operation: (grant: { destinationId: string; displayName: string; directoryPath: string }) => Promise<T>,
-  ): Promise<T> {
+  async withAccess<T>(grantId: string, operation: (grant: { destinationId: string; displayName: string; directoryPath: string }) => Promise<T>): Promise<T> {
     const grant = this.grants.get(grantId);
     if (!grant) throw new Error('备份目录授权不存在或已经释放，请重新通过系统选择器授权。');
     let stopAccessing: (() => void) | undefined;

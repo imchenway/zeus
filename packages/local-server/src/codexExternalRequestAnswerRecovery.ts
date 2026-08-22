@@ -1,10 +1,4 @@
-import {
-  type ConversationRepository,
-  type ConversationServerRequestRepository,
-  type ConversationTurnRepository,
-  type ZeusConversationServerRequestRecord,
-  type ZeusConversationWithMessagesRecord,
-} from '@zeus/storage';
+import { type ConversationRepository, type ConversationServerRequestRepository, type ConversationTurnRepository, type ZeusConversationServerRequestRecord, type ZeusConversationWithMessagesRecord } from '@zeus/storage';
 import { nativePendingRequestProjection, isRecord, parseJsonRecord, requireString } from './codexNativeConversationPolicy.js';
 import { validateCanonicalRequestUserInputAnswers } from './codexNativeRuiValidation.js';
 import { recoverRequestUserInputAnswersFromCodexRollout, type CodexRolloutRequestUserInputRecovery } from './codexRolloutRequestUserInput.js';
@@ -21,11 +15,7 @@ export interface CodexExternalRequestAnswerRecoveryOptions {
 }
 
 export interface CodexExternalRequestAnswerRecovery {
-  recover(
-    conversation: ZeusConversationWithMessagesRecord,
-    request: ZeusConversationServerRequestRecord,
-    resolvedAt: string,
-  ): Promise<{ request: ZeusConversationServerRequestRecord; recovery: CodexRolloutRequestUserInputRecovery }>;
+  recover(conversation: ZeusConversationWithMessagesRecord, request: ZeusConversationServerRequestRecord, resolvedAt: string): Promise<{ request: ZeusConversationServerRequestRecord; recovery: CodexRolloutRequestUserInputRecovery }>;
   recoverAll(conversation: ZeusConversationWithMessagesRecord, providerTurnId?: string): Promise<number>;
   schedule(conversationId: string, requestId: string, attempt?: number): void;
   close(): void;

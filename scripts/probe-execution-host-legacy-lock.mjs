@@ -80,15 +80,19 @@ try {
   const lease = protocol.acquireExecutionHostKernelLease(probeRoot, hostDataRootIdentity);
   let collisionCode = null;
   try {
-    await protocol.writeExecutionHostLockIdentity(probeRoot, {
-      protocolVersion: protocol.executionHostProtocolVersion,
-      generationId: 'probe-new-generation',
-      pid: process.pid,
-      appVersion: '0.3.30',
-      createdAt: new Date().toISOString(),
-      ownershipMode: 'kernel_lease_v1',
-      dataRootIdentity: hostDataRootIdentity,
-    }, lease);
+    await protocol.writeExecutionHostLockIdentity(
+      probeRoot,
+      {
+        protocolVersion: protocol.executionHostProtocolVersion,
+        generationId: 'probe-new-generation',
+        pid: process.pid,
+        appVersion: '0.3.30',
+        createdAt: new Date().toISOString(),
+        ownershipMode: 'kernel_lease_v1',
+        dataRootIdentity: hostDataRootIdentity,
+      },
+      lease,
+    );
   } catch (error) {
     collisionCode = error?.code ?? null;
   } finally {

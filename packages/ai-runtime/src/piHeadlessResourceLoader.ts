@@ -73,18 +73,12 @@ export class PiHeadlessResourceLoader implements ResourceLoader {
 
   getAppendSystemPrompt(): string[] {
     if (!this.applicationContext) return [];
-    return [
-      `Zeus application context manifest (application-owned):\n${this.applicationContext.manifest}`,
-      ...(this.applicationContext.content ? [`Zeus application context (application-owned):\n${this.applicationContext.content}`] : []),
-    ];
+    return [`Zeus application context manifest (application-owned):\n${this.applicationContext.manifest}`, ...(this.applicationContext.content ? [`Zeus application context (application-owned):\n${this.applicationContext.content}`] : [])];
   }
 
   getAppendSystemPromptSources(): Array<{ path: string }> {
     if (!this.applicationContext) return [];
-    return [
-      { path: `zeus-context://${this.applicationContext.fingerprint}/manifest` },
-      ...(this.applicationContext.content ? [{ path: `zeus-context://${this.applicationContext.fingerprint}/application` }] : []),
-    ];
+    return [{ path: `zeus-context://${this.applicationContext.fingerprint}/manifest` }, ...(this.applicationContext.content ? [{ path: `zeus-context://${this.applicationContext.fingerprint}/application` }] : [])];
   }
 
   replaceApplicationContext(input: PiApplicationContextResource | null): PiApplicationContextResource | null {

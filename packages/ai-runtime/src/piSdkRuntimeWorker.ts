@@ -160,12 +160,17 @@ async function startRun(runtime: PiSdkRuntimeDriver, request: PiRuntimeWorkerReq
         preflightAccepted = accepted;
       },
     });
-    await reverseRequest('run_acceptance', {
-      commandRequestId: request.id,
-      callbackToken: input.callbackToken,
-      session: input.session,
-      acceptance,
-    }, undefined, boundary.traceIdentity);
+    await reverseRequest(
+      'run_acceptance',
+      {
+        commandRequestId: request.id,
+        callbackToken: input.callbackToken,
+        session: input.session,
+        acceptance,
+      },
+      undefined,
+      boundary.traceIdentity,
+    );
     boundary.allowProviderWrite();
     return noCommandResponse;
   } catch (error) {

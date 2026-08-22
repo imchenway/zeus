@@ -27,7 +27,10 @@ try {
   });
   const page = await catalog.readColdEvidencePage({ sourceId: source.id, limit: 100, maximumBytes: 1024 * 1024 });
   const records = page.entries.map((entry) => JSON.parse(entry.text) as Record<string, unknown>);
-  const messages = records.filter((record) => record.type === 'message').map((record) => record.message).filter(isRecord);
+  const messages = records
+    .filter((record) => record.type === 'message')
+    .map((record) => record.message)
+    .filter(isRecord);
   const assistantText = messages
     .filter((message) => message.role === 'assistant')
     .flatMap((message) => (Array.isArray(message.content) ? message.content : []))

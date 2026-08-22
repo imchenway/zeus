@@ -1365,19 +1365,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (!contextWindowTokens && !verifiedFallback) return null;
     const reportedReservedOutput = positiveIntegerOrNull(model.raw.maxOutputTokens ?? model.raw.max_output_tokens ?? model.raw.maximumOutputTokens ?? model.raw.maximum_output_tokens);
     const effectiveContextWindow = contextWindowTokens ?? verifiedFallback!.contextWindowTokens;
-    const reservedOutputTokens = Math.min(
-      effectiveContextWindow,
-      reportedReservedOutput ?? verifiedFallback?.reservedOutputTokens ?? Math.min(32_768, Math.max(8_192, Math.floor(effectiveContextWindow / 8))),
-    );
+    const reservedOutputTokens = Math.min(effectiveContextWindow, reportedReservedOutput ?? verifiedFallback?.reservedOutputTokens ?? Math.min(32_768, Math.max(8_192, Math.floor(effectiveContextWindow / 8))));
     return {
       contextWindowTokens: effectiveContextWindow,
       reservedOutputTokens,
       contextWindowSource: contextWindowTokens ? `codex_app_server:${state.capabilities.generationId}:model_catalog` : verifiedFallback!.evidenceSource,
-      reservedOutputSource: reportedReservedOutput
-        ? `codex_app_server:${state.capabilities.generationId}:model_catalog`
-        : verifiedFallback
-          ? verifiedFallback.evidenceSource
-          : 'zeus_conservative_window_eighth_max_32768',
+      reservedOutputSource: reportedReservedOutput ? `codex_app_server:${state.capabilities.generationId}:model_catalog` : verifiedFallback ? verifiedFallback.evidenceSource : 'zeus_conservative_window_eighth_max_32768',
       checkedAt: verifiedFallback?.checkedAt ?? state.capabilities.initializedAt,
     };
   };

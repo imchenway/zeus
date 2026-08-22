@@ -8,10 +8,42 @@ import type { WorkspaceQueryState } from './useWorkspaceQueryState.js';
 import type { WorkspaceDomainActions } from './useWorkspaceDomainActions.js';
 import type { WorkspaceOperations } from './useWorkspaceOperations.js';
 export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions: WorkspaceDomainActions, operations: WorkspaceOperations): void {
-  const { activeNavTarget, activeProjectId, activeProjectIdRef, archivedConversationLoadState, codexConfigImportLoading, codexConfigImportPreview, codexLegacyImportLoading, codexLegacyImportSnapshot, graphProjectId, latestConversationContentVisible, nativeConversationChoiceLoadCoordinator, nativeConversationStartEnvelopeManager, props, recoveringConflictAiStartsRef, recoveringNativeConversationStartsRef, selectedNativeConversation, selectedProject, setConversationDraftOpen, setNativeConversationChoiceTaskStates, setNativeConversationChoicesByTask, setSelectedNativeConversationId, setTaskConversationDrawerTarget, setTaskDetail, setZeusWindowForeground, settingsCategory, snapshot, sourceWorkspaceDirty, taskConversationDrawerReady, taskConversationDrawerTarget, taskTableLayoutDirty, zeusWindowForeground } = state;
+  const {
+    activeNavTarget,
+    activeProjectId,
+    activeProjectIdRef,
+    archivedConversationLoadState,
+    codexConfigImportLoading,
+    codexConfigImportPreview,
+    codexLegacyImportLoading,
+    codexLegacyImportSnapshot,
+    graphProjectId,
+    latestConversationContentVisible,
+    nativeConversationChoiceLoadCoordinator,
+    nativeConversationStartEnvelopeManager,
+    props,
+    recoveringConflictAiStartsRef,
+    recoveringNativeConversationStartsRef,
+    selectedNativeConversation,
+    selectedProject,
+    setConversationDraftOpen,
+    setNativeConversationChoiceTaskStates,
+    setNativeConversationChoicesByTask,
+    setSelectedNativeConversationId,
+    setTaskConversationDrawerTarget,
+    setTaskDetail,
+    setZeusWindowForeground,
+    settingsCategory,
+    snapshot,
+    sourceWorkspaceDirty,
+    taskConversationDrawerReady,
+    taskConversationDrawerTarget,
+    taskTableLayoutDirty,
+    zeusWindowForeground,
+  } = state;
   const { acknowledgeNativeConversationAttention, openTaskConflictAiConversation, recordLocalError, refreshArchivedConversations, resetGraphWorkspace } = domainActions;
   const { openProjectSection, refreshCodexConfigImport, refreshCodexLegacyImports, requestWorkspaceLeave } = operations;
-useEffect(() => {
+  useEffect(() => {
     if (activeNavTarget !== 'settings' || settingsCategory !== 'runtime' || codexLegacyImportSnapshot || codexLegacyImportLoading || !props.onLoadCodexLegacyImports) return;
     void refreshCodexLegacyImports();
   }, [activeNavTarget, codexLegacyImportLoading, codexLegacyImportSnapshot, props.onLoadCodexLegacyImports, settingsCategory]);

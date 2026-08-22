@@ -210,15 +210,19 @@ async function runVerificationHostChild(userDataPath: string, generationId: stri
   process.once('SIGINT', () => void closeHost(0));
 
   try {
-    await writeExecutionHostLockIdentity(userDataPath, {
-      protocolVersion: executionHostProtocolVersion,
-      generationId,
-      pid: process.pid,
-      appVersion: 'verification-host',
-      createdAt: startedAt,
-      ownershipMode: 'kernel_lease_v1',
-      dataRootIdentity,
-    }, kernelLease);
+    await writeExecutionHostLockIdentity(
+      userDataPath,
+      {
+        protocolVersion: executionHostProtocolVersion,
+        generationId,
+        pid: process.pid,
+        appVersion: 'verification-host',
+        createdAt: startedAt,
+        ownershipMode: 'kernel_lease_v1',
+        dataRootIdentity,
+      },
+      kernelLease,
+    );
 
     const work = verificationWorkStatus(generationId, startedAt);
     controlServer = createServer((request, response) => {

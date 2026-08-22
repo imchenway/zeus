@@ -163,10 +163,7 @@ try {
     observed.uncommittedRowsAfterFault = transactionVisibilityDatabase.get<{ row_count: number }>(`SELECT COUNT(*) AS row_count FROM transaction_visibility_probe`)?.row_count ?? -1;
     observed.uncommittedCallbackPublished = uncommittedCallbackPublished;
     const transactionVisibilityHealth = observed.transactionVisibilityHealth as ReturnType<typeof transactionVisibilityDatabase.storageHealthSnapshot>;
-    assertProbe(
-      transactionVisibilityHealth.readsAvailable && transactionVisibilityHealth.fault?.transactionIsolation === 'rolled_back',
-      '故障切换必须在继续提供读取前立即隔离并回滚当前事务',
-    );
+    assertProbe(transactionVisibilityHealth.readsAvailable && transactionVisibilityHealth.fault?.transactionIsolation === 'rolled_back', '故障切换必须在继续提供读取前立即隔离并回滚当前事务');
     assertProbe(observed.uncommittedRowsAfterFault === 0 && observed.uncommittedCallbackPublished === false, '未提交事实与 afterCommit 回调不得在只读故障态短暂可见或发布');
   } finally {
     await transactionVisibilityDatabase.close().catch(() => undefined);
@@ -205,10 +202,7 @@ try {
     observed.corruptedLedgerPreflight = corruptedLedgerDatabase.runWriteRecoveryPreflight();
     const corruptedPreflight = observed.corruptedLedgerPreflight as ReturnType<typeof corruptedLedgerDatabase.runWriteRecoveryPreflight>;
     assertProbe(corruptedPreflight.quickCheck === 'ok' && corruptedPreflight.foreignKeyCheck === 'ok', '账本语义损坏场景必须保持 SQLite 结构与外键完整，避免把一般数据库损坏误当成 Command 检查证据');
-    assertProbe(
-      corruptedPreflight.commandLedgerCheck === 'failed' && corruptedPreflight.commandLedgerViolations > 0 && !corruptedPreflight.eligibleForCoreRestart,
-      'Command Inbox/Outbox/receipt 状态矛盾必须独立阻断 Core 重启',
-    );
+    assertProbe(corruptedPreflight.commandLedgerCheck === 'failed' && corruptedPreflight.commandLedgerViolations > 0 && !corruptedPreflight.eligibleForCoreRestart, 'Command Inbox/Outbox/receipt 状态矛盾必须独立阻断 Core 重启');
   } finally {
     await corruptedLedgerDatabase.close().catch(() => undefined);
   }
@@ -233,10 +227,7 @@ try {
     foreignKeyViolationDatabase.reportExternalWriteFault('foreign-key-violation-probe', Object.assign(new Error('synthetic disk I/O error'), { code: 'EIO' }));
     observed.foreignKeyViolationPreflight = foreignKeyViolationDatabase.runWriteRecoveryPreflight();
     const foreignKeyPreflight = observed.foreignKeyViolationPreflight as ReturnType<typeof foreignKeyViolationDatabase.runWriteRecoveryPreflight>;
-    assertProbe(
-      foreignKeyPreflight.quickCheck === 'ok' && foreignKeyPreflight.foreignKeyCheck === 'failed' && !foreignKeyPreflight.eligibleForCoreRestart,
-      '首条外键违规必须以有界探测阻断 Core 重启，即使 quick_check 仍为 ok',
-    );
+    assertProbe(foreignKeyPreflight.quickCheck === 'ok' && foreignKeyPreflight.foreignKeyCheck === 'failed' && !foreignKeyPreflight.eligibleForCoreRestart, '首条外键违规必须以有界探测阻断 Core 重启，即使 quick_check 仍为 ok');
   } finally {
     await foreignKeyViolationDatabase.close().catch(() => undefined);
   }

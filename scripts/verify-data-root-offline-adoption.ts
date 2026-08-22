@@ -24,15 +24,7 @@ try {
 
   const productionRoot = await createSyntheticZeusRoot(join(probeRoot, 'production-cli-success'), 'layered');
   const productionBefore = await treeEvidence(productionRoot);
-  const planned = runCli([
-    '--data-root',
-    productionRoot,
-    '--profile',
-    'production',
-    '--distribution-label',
-    expectedBundleIdForDataRootProfile('production'),
-    '--plan',
-  ]);
+  const planned = runCli(['--data-root', productionRoot, '--profile', 'production', '--distribution-label', expectedBundleIdForDataRootProfile('production'), '--plan']);
   assert.equal(planned.status, 0, planned.stderr);
   const planOutput = JSON.parse(planned.stdout) as { status: string; plan: { confirmationToken: string; layoutKind: string; rootDevice: string; rootInode: string } };
   assert.equal(planOutput.status, 'confirmation-required');
@@ -40,16 +32,7 @@ try {
   assert.match(planOutput.plan.rootDevice, /^\d+$/u);
   assert.match(planOutput.plan.rootInode, /^\d+$/u);
   assert.deepEqual(await treeEvidence(productionRoot), productionBefore);
-  const adopted = runCli([
-    '--data-root',
-    productionRoot,
-    '--profile',
-    'production',
-    '--distribution-label',
-    expectedBundleIdForDataRootProfile('production'),
-    '--confirm-token',
-    planOutput.plan.confirmationToken,
-  ]);
+  const adopted = runCli(['--data-root', productionRoot, '--profile', 'production', '--distribution-label', expectedBundleIdForDataRootProfile('production'), '--confirm-token', planOutput.plan.confirmationToken]);
   assert.equal(adopted.status, 0, adopted.stderr);
   const productionMarker = readAndVerifyZeusDataRootIdentity(productionRoot, {
     profile: 'production',
@@ -59,7 +42,10 @@ try {
   const productionMarkerStats = await lstat(zeusDataRootIdentityPath(productionRoot));
   assert.equal(productionMarkerStats.mode & 0o777, 0o600);
   assert.equal(productionMarkerStats.nlink, 1);
-  assert.equal((await readdir(productionRoot)).some((name) => name.includes('.zeus-root-identity.json.') && name.endsWith('.tmp')), false);
+  assert.equal(
+    (await readdir(productionRoot)).some((name) => name.includes('.zeus-root-identity.json.') && name.endsWith('.tmp')),
+    false,
+  );
   observed.productionCliSuccess = {
     profile: productionMarker.profile,
     rootId: productionMarker.rootId,
@@ -118,11 +104,7 @@ try {
   const writerDatabase = new DatabaseSync(join(writerRoot, 'data', 'zeus.db'));
   writerDatabase.exec('BEGIN EXCLUSIVE');
   try {
-    observed.observableWriter = await expectRejectedWithoutTreeMutation(
-      writerRoot,
-      () => planZeusDataRootOfflineAdoption(requestFor(writerRoot, 'production')),
-      'ZEUS_DATA_ROOT_OFFLINE_WRITER_OBSERVED',
-    );
+    observed.observableWriter = await expectRejectedWithoutTreeMutation(writerRoot, () => planZeusDataRootOfflineAdoption(requestFor(writerRoot, 'production')), 'ZEUS_DATA_ROOT_OFFLINE_WRITER_OBSERVED');
   } finally {
     writerDatabase.exec('ROLLBACK');
     writerDatabase.close();
@@ -145,20 +127,12 @@ try {
 
   const hardlinkRoot = await createSyntheticZeusRoot(join(probeRoot, 'hardlink-root'), 'layered');
   await link(join(hardlinkRoot, 'data', 'business-sentinel.txt'), join(hardlinkRoot, 'data', 'business-sentinel-hardlink.txt'));
-  observed.hardlink = await expectRejectedWithoutTreeMutation(
-    hardlinkRoot,
-    () => planZeusDataRootOfflineAdoption(requestFor(hardlinkRoot, 'test')),
-    'ZEUS_DATA_ROOT_OFFLINE_HARDLINK_REJECTED',
-  );
+  observed.hardlink = await expectRejectedWithoutTreeMutation(hardlinkRoot, () => planZeusDataRootOfflineAdoption(requestFor(hardlinkRoot, 'test')), 'ZEUS_DATA_ROOT_OFFLINE_HARDLINK_REJECTED');
 
   const ordinaryDirectory = join(probeRoot, 'not-a-zeus-root');
   await mkdir(ordinaryDirectory, { mode: 0o700 });
   await writeFile(join(ordinaryDirectory, 'notes.txt'), 'not Zeus\n', { mode: 0o600 });
-  observed.notZeusRoot = await expectRejectedWithoutTreeMutation(
-    ordinaryDirectory,
-    () => planZeusDataRootOfflineAdoption(requestFor(ordinaryDirectory, 'production')),
-    'ZEUS_DATA_ROOT_OFFLINE_NOT_ZEUS_ROOT',
-  );
+  observed.notZeusRoot = await expectRejectedWithoutTreeMutation(ordinaryDirectory, () => planZeusDataRootOfflineAdoption(requestFor(ordinaryDirectory, 'production')), 'ZEUS_DATA_ROOT_OFFLINE_NOT_ZEUS_ROOT');
 
   const stalePlanRoot = await createSyntheticZeusRoot(join(probeRoot, 'stale-plan'), 'layered');
   const staleRequest = requestFor(stalePlanRoot, 'production');
@@ -197,7 +171,7 @@ async function createSyntheticZeusRoot(root: string, layoutKind: 'layered' | 'le
   await mkdir(dirname(databasePath), { recursive: true, mode: 0o700 });
   await chmod(root, 0o700);
   const database = new DatabaseSync(databasePath);
-  database.exec('CREATE TABLE business_evidence (id INTEGER PRIMARY KEY, value TEXT NOT NULL); INSERT INTO business_evidence(value) VALUES (\'preserve\')');
+  database.exec("CREATE TABLE business_evidence (id INTEGER PRIMARY KEY, value TEXT NOT NULL); INSERT INTO business_evidence(value) VALUES ('preserve')");
   database.close();
   await chmod(databasePath, 0o600);
   await writeFile(configPath, '{}\n', { mode: 0o600 });
@@ -230,7 +204,10 @@ async function verifyNoArgumentCli(root: string): Promise<Record<string, unknown
     return { name: item.name, exitCode: result.status };
   });
   assert.deepEqual(await treeEvidence(fakeHome), before);
-  assert.equal((await readdir(fakeHome)).some((name) => name.includes('zeus-data-preparation-lock')), false);
+  assert.equal(
+    (await readdir(fakeHome)).some((name) => name.includes('zeus-data-preparation-lock')),
+    false,
+  );
   return { cases: results, syntheticDefaultRootUnchanged: true, siblingPreparationLockAbsent: true };
 }
 

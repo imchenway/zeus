@@ -1665,8 +1665,7 @@ const inventory = {
     },
     telegramSecurityAndPollingCommandVerticalSlice: {
       ...telegramCommandMarkers,
-      discoveredRegistrationCount: entries.filter((entry) => telegramCommandOperations.includes(entry.operation) && (isLocalServerRouteAssemblyFile(entry.file) || entry.file === 'packages/local-server/src/telegramPollingApi.ts'))
-        .length,
+      discoveredRegistrationCount: entries.filter((entry) => telegramCommandOperations.includes(entry.operation) && (isLocalServerRouteAssemblyFile(entry.file) || entry.file === 'packages/local-server/src/telegramPollingApi.ts')).length,
       integratedExternalOperationCount: entries.filter((entry) => telegramCommandOperations.includes(entry.operation) && entry.status === 'integrated' && entry.commandBoundary?.includes('Telegram external operation')).length,
       integratedCoreApplicationCount: entries.filter((entry) => telegramCommandOperations.includes(entry.operation) && entry.status === 'integrated' && entry.commandBoundary?.includes('Telegram Core application')).length,
       allExpectedOperationsDiscovered: telegramCommandOperations.every((operation) => entries.some((entry) => entry.operation === operation && entry.status === 'integrated')),
@@ -1762,12 +1761,10 @@ if (requireConversationSlice && !conversationSliceReady) {
 } else if (
   requireSettingsCommandSlice &&
   (!settingsCommandSliceReady ||
-    entries.filter(
-      (entry) => isLocalServerRouteAssemblyFile(entry.file) && settingsCommandOperations.some(([operation, , classification]) => operation === entry.operation && classification === 'external') && entry.status === 'integrated',
-    ).length !== 7 ||
-    entries.filter(
-      (entry) => isLocalServerRouteAssemblyFile(entry.file) && settingsCommandOperations.some(([operation, , classification]) => operation === entry.operation && classification === 'core') && entry.status === 'integrated',
-    ).length !== 3)
+    entries.filter((entry) => isLocalServerRouteAssemblyFile(entry.file) && settingsCommandOperations.some(([operation, , classification]) => operation === entry.operation && classification === 'external') && entry.status === 'integrated')
+      .length !== 7 ||
+    entries.filter((entry) => isLocalServerRouteAssemblyFile(entry.file) && settingsCommandOperations.some(([operation, , classification]) => operation === entry.operation && classification === 'core') && entry.status === 'integrated')
+      .length !== 3)
 ) {
   process.stderr.write('Command side-effect gate failed: Settings/import/cache slice must expose 7 external operations and 3 Core applications.\n');
   process.exitCode = 2;
@@ -2476,9 +2473,9 @@ function isCodexApplicationWrappedCall(file, content, offset) {
           ? ['options.providerCommands.executeTurn({']
           : file === 'packages/local-server/src/codexProviderEventProjection.ts'
             ? ['executeTurnCommand({']
-          : file === 'packages/local-server/src/codexPortableContextCompaction.ts'
-            ? ['input.providerCommands.executeSession({', 'input.providerCommands\n      .executeSession({', 'input.providerCommands\n      .executeTurn({']
-            : [];
+            : file === 'packages/local-server/src/codexPortableContextCompaction.ts'
+              ? ['input.providerCommands.executeSession({', 'input.providerCommands\n      .executeSession({', 'input.providerCommands\n      .executeTurn({']
+              : [];
   return wrappers.some((marker) => callRangeContains(content, marker, offset));
 }
 

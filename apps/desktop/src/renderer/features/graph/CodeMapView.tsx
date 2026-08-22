@@ -5,10 +5,46 @@ import { buildMermaidDiagramExport, buildMermaidDiagramSource, buildPlantUmlDiag
 import { type AppLanguage } from '../workspace/workspaceCopy.js';
 import { ZeusSelect } from '../../ZeusSelect.js';
 import { buildArchitectureLayerModel, canRenderArchitectureLayerModel } from '../../graph/ArchitectureGraphCanvas.js';
-import { type CodeMapSettings, type GraphConversationHistoryItem, type GraphConversationHistoryPage, type GraphNeighborhood, type GraphQuestionAnswer, type GraphSearchResult, type GraphViewSnapshot, type GraphViewType } from '../../apiClient.js';
+import {
+  type CodeMapSettings,
+  type GraphConversationHistoryItem,
+  type GraphConversationHistoryPage,
+  type GraphNeighborhood,
+  type GraphQuestionAnswer,
+  type GraphSearchResult,
+  type GraphViewSnapshot,
+  type GraphViewType,
+} from '../../apiClient.js';
 import { formatGraphConversationStatus, formatGraphEdgeType, formatGraphLayoutAlgorithm, formatGraphMessageSource, formatGraphNodeType, formatGraphNodeTypeList } from '../workspace/workspaceFormatters.js';
-import { buildGraphNeighborhoodLayout, buildGraphNeighborhoodSlice, buildGraphNodeActionMenu, buildGraphQuestionRequest, buildGraphSearchRequest, buildVisibleGraphSlice, GraphCanvas, GraphEdgeDetailPanel, type GraphNodeActionMenuItem, GraphNodeDetail, GraphRuntimeCanvas, handleInlineRailKeyboardNavigation, isAggregatedGraphNode, normalizeGraphMinConfidence, resolveGraphCanvasNodeLineStart, resolveGraphCanvasNodeSourceRef } from './GraphCanvas.js';
-import { type CodeMapToolPanel, codeMapToolPanels, type DiagramExportFormat, getLanguageCopy, graphEdgeTypeFilterValues, type GraphNodeTaskFeedback, graphNodeTypeFilterValues, type GraphSourceOpenFeedback, graphViewOptions } from '../workspace/workspaceSupport.js';
+import {
+  buildGraphNeighborhoodLayout,
+  buildGraphNeighborhoodSlice,
+  buildGraphNodeActionMenu,
+  buildGraphQuestionRequest,
+  buildGraphSearchRequest,
+  buildVisibleGraphSlice,
+  GraphCanvas,
+  GraphEdgeDetailPanel,
+  type GraphNodeActionMenuItem,
+  GraphNodeDetail,
+  GraphRuntimeCanvas,
+  handleInlineRailKeyboardNavigation,
+  isAggregatedGraphNode,
+  normalizeGraphMinConfidence,
+  resolveGraphCanvasNodeLineStart,
+  resolveGraphCanvasNodeSourceRef,
+} from './GraphCanvas.js';
+import {
+  type CodeMapToolPanel,
+  codeMapToolPanels,
+  type DiagramExportFormat,
+  getLanguageCopy,
+  graphEdgeTypeFilterValues,
+  type GraphNodeTaskFeedback,
+  graphNodeTypeFilterValues,
+  type GraphSourceOpenFeedback,
+  graphViewOptions,
+} from '../workspace/workspaceSupport.js';
 export function CodeMapView(props: {
   isActive?: boolean;
   graphView: GraphViewSnapshot;

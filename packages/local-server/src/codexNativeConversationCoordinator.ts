@@ -3607,8 +3607,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         readyGenerationId,
         receipts,
         reconcileTerminalTurnSubmissions,
-        recoverExternalRequestUserInputAnswer: (conversation: ZeusConversationWithMessagesRecord, request: ZeusConversationServerRequestRecord, resolvedAt: string) =>
-          externalAnswerRecovery.recover(conversation, request, resolvedAt),
+        recoverExternalRequestUserInputAnswer: (conversation: ZeusConversationWithMessagesRecord, request: ZeusConversationServerRequestRecord, resolvedAt: string) => externalAnswerRecovery.recover(conversation, request, resolvedAt),
         recoverExternallyResolvedRequestUserInputAnswers: (conversation: ZeusConversationWithMessagesRecord, providerTurnId?: string) => externalAnswerRecovery.recoverAll(conversation, providerTurnId),
         rejectTurnResultWaiters,
         rememberProcessedProviderEvent,

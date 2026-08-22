@@ -5,12 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { ReadOnlyValidationIdentity } from '@zeus/shared';
 import { createZeusDataLayout } from '../packages/local-server/src/zeusDataLayout.js';
-import {
-  expectedBundleIdForDataRootProfile,
-  prepareZeusDataRootIdentity,
-  zeusDataRootHostIdentity,
-  type ZeusDataRootHostIdentity,
-} from '../apps/desktop/src/main/dataRootIdentity.js';
+import { expectedBundleIdForDataRootProfile, prepareZeusDataRootIdentity, zeusDataRootHostIdentity, type ZeusDataRootHostIdentity } from '../apps/desktop/src/main/dataRootIdentity.js';
 import {
   acquireExecutionHostKernelLease,
   executionHostLockPath,

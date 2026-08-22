@@ -204,10 +204,7 @@ export function adoptZeusDataRootOffline(input: ZeusDataRootOfflineAdoptionReque
     assertStableOfflineInventory(first, second);
     const plan = createOfflineAdoptionPlan(normalized, second);
     if (input.confirmationToken !== plan.confirmationToken) {
-      throw dataRootIdentityError(
-        'ZEUS_DATA_ROOT_OFFLINE_CONFIRMATION_MISMATCH',
-        '离线 adoption 确认令牌与当前 canonical root、profile、distribution label 或目录 inventory 不匹配；请重新执行 --plan。',
-      );
+      throw dataRootIdentityError('ZEUS_DATA_ROOT_OFFLINE_CONFIRMATION_MISMATCH', '离线 adoption 确认令牌与当前 canonical root、profile、distribution label 或目录 inventory 不匹配；请重新执行 --plan。');
     }
 
     // 缩短“确认 writer 缺席”到 marker 发布的窗口；这仍不是抵抗同 UID 恶意竞态的系统安全边界。
@@ -357,10 +354,7 @@ function normalizeOfflineAdoptionRequest(input: ZeusDataRootOfflineAdoptionReque
   }
   const expectedDistributionLabel = expectedBundleIdForDataRootProfile(input.profile);
   if (input.distributionLabel !== expectedDistributionLabel) {
-    throw dataRootIdentityError(
-      'ZEUS_DATA_ROOT_OFFLINE_DISTRIBUTION_MISMATCH',
-      `离线 adoption 的 distribution label 必须精确为 ${expectedDistributionLabel}，收到 ${input.distributionLabel || '<empty>'}。`,
-    );
+    throw dataRootIdentityError('ZEUS_DATA_ROOT_OFFLINE_DISTRIBUTION_MISMATCH', `离线 adoption 的 distribution label 必须精确为 ${expectedDistributionLabel}，收到 ${input.distributionLabel || '<empty>'}。`);
   }
   assertOfflineAdoptionProfilePathIsolation(root, input.profile);
   const expected = normalizeExpectedIdentity({
@@ -516,11 +510,7 @@ function assertNoObservableDataRootUser(root: string): void {
   }
   if (result.error || result.signal || (result.status !== 0 && result.status !== 1) || result.stderr.trim()) {
     const failureDetail = result.error?.message ?? (result.stderr.trim() || `lsof exit=${String(result.status)} signal=${String(result.signal)}`);
-    throw dataRootIdentityError(
-      'ZEUS_DATA_ROOT_OFFLINE_WRITER_CHECK_FAILED',
-      `无法完整检查数据根的打开文件/目录句柄，拒绝 adoption：${failureDetail}`,
-      result.error,
-    );
+    throw dataRootIdentityError('ZEUS_DATA_ROOT_OFFLINE_WRITER_CHECK_FAILED', `无法完整检查数据根的打开文件/目录句柄，拒绝 adoption：${failureDetail}`, result.error);
   }
 }
 

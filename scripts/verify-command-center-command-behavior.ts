@@ -275,12 +275,10 @@ try {
       aiRuntimeManager: new Proxy(
         {},
         {
-          get:
-            (_target, property) =>
-            () => {
-              forbiddenValidationRuntimeCalls.push(String(property));
-              throw new Error(`只读关闭触发了禁止的 Runtime 调用：${String(property)}`);
-            },
+          get: (_target, property) => () => {
+            forbiddenValidationRuntimeCalls.push(String(property));
+            throw new Error(`只读关闭触发了禁止的 Runtime 调用：${String(property)}`);
+          },
         },
       ) as never,
       commandScriptsDirectory: join(probeRoot, 'read-only-command-scripts'),

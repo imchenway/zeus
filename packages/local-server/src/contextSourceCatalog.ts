@@ -485,13 +485,7 @@ async function scanJsonlPrefix(
     const checkpoint = nextLineNumber === 1 || nextLineNumber % jsonlCheckpointLineInterval === 0;
     const shouldAnchor =
       line.length > 0 &&
-      (checkpoint ||
-        Boolean(metadata.turnId) ||
-        metadata.eventSequence !== null ||
-        metadata.eventKind === 'session_meta' ||
-        metadata.eventKind === 'session' ||
-        metadata.eventKind === 'turn_context' ||
-        metadata.eventKind === 'message');
+      (checkpoint || Boolean(metadata.turnId) || metadata.eventSequence !== null || metadata.eventKind === 'session_meta' || metadata.eventKind === 'session' || metadata.eventKind === 'turn_context' || metadata.eventKind === 'message');
     if (shouldAnchor && anchors.length >= maximumColdEvidenceAnchorsPerSource) return false;
 
     lineNumber = nextLineNumber;
@@ -557,12 +551,7 @@ function parseJsonlMetadata(bytes: Buffer): { eventKind: string; nativeSessionId
     const payload = isRecord(parsed.payload) ? parsed.payload : null;
     const nestedTurn = payload && isRecord(payload.turn) ? payload.turn : null;
     const eventKind = boundedEventKind(typeof parsed.type === 'string' ? parsed.type : payload && typeof payload.type === 'string' ? payload.type : 'unknown');
-    const nativeSessionId =
-      eventKind === 'session_meta' && payload && typeof payload.id === 'string'
-        ? payload.id
-        : eventKind === 'session' && typeof parsed.id === 'string'
-          ? parsed.id
-          : null;
+    const nativeSessionId = eventKind === 'session_meta' && payload && typeof payload.id === 'string' ? payload.id : eventKind === 'session' && typeof parsed.id === 'string' ? parsed.id : null;
     const turnId = firstString(parsed.turn_id, parsed.turnId, payload?.turn_id, payload?.turnId, nestedTurn?.id);
     const eventSequence = firstNonNegativeInteger(parsed.sequence, parsed.event_sequence, payload?.sequence, payload?.event_sequence);
     const occurredAt = firstTimestamp(parsed.timestamp, parsed.created_at, parsed.occurred_at, payload?.timestamp, payload?.created_at, payload?.occurred_at);

@@ -1,6 +1,15 @@
 import { type ClipboardEvent as ReactClipboardEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
-import { defaultTaskManagementStatusConfig, extractZentaoTaskLink, isTaskStatusFilter, normalizeTaskManagementStatusConfig, type ProjectCodeWorkspacePreference, type TaskManagementStatusConfig, type TaskManagementStatusDefinition, type ZentaoTaskExtract } from '@zeus/shared';
+import {
+  defaultTaskManagementStatusConfig,
+  extractZentaoTaskLink,
+  isTaskStatusFilter,
+  normalizeTaskManagementStatusConfig,
+  type ProjectCodeWorkspacePreference,
+  type TaskManagementStatusConfig,
+  type TaskManagementStatusDefinition,
+  type ZentaoTaskExtract,
+} from '@zeus/shared';
 import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../../ui/pendingResourcePolicy.js';
 import { TaskAttachmentPreviewList } from '../../task/TaskAttachmentPreviewList.js';
 import { type NativeConversationStartStorage, type SessionWorkspaceTask } from '../../session/SessionWorkspace.js';
@@ -9,12 +18,59 @@ import { compareConversationStageUpdatedDesc } from '../../session/conversationO
 import type { SessionControllerClient } from '../../session/useSessionController.js';
 import { type TaskModelPushPendingState } from '../../task/TaskModelPushPendingWorkspace.js';
 import { languageCopy, type AppLanguage } from './workspaceCopy.js';
-import { type TaskAttachmentCandidate, type TaskAttachmentRestoreTarget, taskAttachmentsForField, type TaskAttachmentView, type TaskResourceAuthorizationResult, type TaskResourcePayload, toPersistedTaskAttachment } from '../../task/taskAttachments.js';
+import {
+  type TaskAttachmentCandidate,
+  type TaskAttachmentRestoreTarget,
+  taskAttachmentsForField,
+  type TaskAttachmentView,
+  type TaskResourceAuthorizationResult,
+  type TaskResourcePayload,
+  toPersistedTaskAttachment,
+} from '../../task/taskAttachments.js';
 import { normalizeTaskTableColumnPreferences, normalizeTaskTableEnumSortOrders, resolveTaskManagementStatus, type TaskWorkspaceViewMode } from '../../task/taskWorkspaceModel.js';
 import { ZeusSelect } from '../../ZeusSelect.js';
 import { Button, type ButtonVariant } from '../../ui/Button.js';
 import { ModalPortal } from '../../ui/ModalPortal.js';
-import { type AiRuntimeAdapterDescriptor, type AiRuntimeAdapterStatus, type AiRuntimeLogEntry, type AiRuntimeSession, type AiRuntimeSessionStatus, type AppShellSettings, type DashboardClient, type DashboardSnapshot, type DeleteTaskRequest, type ExecutionHostTransition, type GitDiffSummary, type GitOperationConfirmation, type GraphConversationHistoryItem, type GraphQuestionAnswer, type GraphViewSnapshot, type GraphViewType, type ProjectConfig, type ProjectConversationAttentionState, type ProjectDatabaseSecretSnapshot, type ProjectRecord, type ReleaseStatusSnapshot, type ReleaseUpdateStatusSnapshot, type RuntimeOperationConfirmation, type RuntimeSettings, type RuntimeStatusSnapshot, type SecurityAuditLogEntry, type SecuritySecretsSnapshot, type TaskEventRecord, type TaskManagementStatus, type TaskPageViewMode, type TaskPriority, type TaskRecord, type TaskStatusFilter, type TaskTableColumnPreferences, type TaskTemplateRecord, type TaskType, ZeusApiError, type ZeusRealtimeEvent } from '../../apiClient.js';
+import {
+  type AiRuntimeAdapterDescriptor,
+  type AiRuntimeAdapterStatus,
+  type AiRuntimeLogEntry,
+  type AiRuntimeSession,
+  type AiRuntimeSessionStatus,
+  type AppShellSettings,
+  type DashboardClient,
+  type DashboardSnapshot,
+  type DeleteTaskRequest,
+  type ExecutionHostTransition,
+  type GitDiffSummary,
+  type GitOperationConfirmation,
+  type GraphConversationHistoryItem,
+  type GraphQuestionAnswer,
+  type GraphViewSnapshot,
+  type GraphViewType,
+  type ProjectConfig,
+  type ProjectConversationAttentionState,
+  type ProjectDatabaseSecretSnapshot,
+  type ProjectRecord,
+  type ReleaseStatusSnapshot,
+  type ReleaseUpdateStatusSnapshot,
+  type RuntimeOperationConfirmation,
+  type RuntimeSettings,
+  type RuntimeStatusSnapshot,
+  type SecurityAuditLogEntry,
+  type SecuritySecretsSnapshot,
+  type TaskEventRecord,
+  type TaskManagementStatus,
+  type TaskPageViewMode,
+  type TaskPriority,
+  type TaskRecord,
+  type TaskStatusFilter,
+  type TaskTableColumnPreferences,
+  type TaskTemplateRecord,
+  type TaskType,
+  ZeusApiError,
+  type ZeusRealtimeEvent,
+} from '../../apiClient.js';
 export type MainNavTarget = 'projects' | 'conversations' | 'settings';
 export type LegacyMainNavTarget = MainNavTarget | 'dashboard' | 'tasks' | 'code-map' | 'runtime' | 'git-diff' | 'telegram' | 'settings-data';
 export type ProjectWorkspaceSection = 'tasks' | 'git' | 'code' | 'sessions' | 'project-settings';
@@ -85,7 +141,10 @@ export type TaskCreateFormState = {
   tags: string;
   attachments: TaskCreateAttachment[];
 };
-export type TaskCreateTextField = Extract<keyof TaskCreateFormState, 'title' | 'description' | 'defectCurrentState' | 'defectExpectedOutcome' | 'defectReproductionSteps' | 'optimizationCurrentState' | 'optimizationExpectedOutcome' | 'tags'>;
+export type TaskCreateTextField = Extract<
+  keyof TaskCreateFormState,
+  'title' | 'description' | 'defectCurrentState' | 'defectExpectedOutcome' | 'defectReproductionSteps' | 'optimizationCurrentState' | 'optimizationExpectedOutcome' | 'tags'
+>;
 export type TaskCreateAttachmentField = Exclude<TaskCreateTextField, 'title'>;
 export type TaskCreateDraft = {
   parentTaskId: string | null;
@@ -771,7 +830,6 @@ export const graphEdgeTypeFilterValues = [
   'try_finally',
   'uses_column',
 ] as const;
-
 
 /** 动作入口在真实提交、扫描、读取中时统一挂载 busy 属性，让 CSS 产品态接管而不是只靠 disabled 变灰。 */
 export function controlBusyProps(isBusy: boolean): ControlBusyProps {

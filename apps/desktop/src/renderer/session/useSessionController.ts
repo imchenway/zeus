@@ -2376,11 +2376,7 @@ export function useSessionControllerInstance(options: CreateSessionControllerOpt
 }
 
 /** useSyncExternalStore 的有缓存 selector；未命中的 store 更新不会触发该组件 commit。 */
-export function useSessionControllerSelector<Selection>(
-  controller: SessionController,
-  selector: (state: NativeSessionState) => Selection,
-  isEqual: (left: Selection, right: Selection) => boolean = Object.is,
-): Selection {
+export function useSessionControllerSelector<Selection>(controller: SessionController, selector: (state: NativeSessionState) => Selection, isEqual: (left: Selection, right: Selection) => boolean = Object.is): Selection {
   const selectionCache = useMemo<{ state: NativeSessionState | null; selection?: Selection }>(() => ({ state: null }), [controller, selector, isEqual]);
   const getSnapshot = useCallback(() => {
     const nextState = controller.getState();

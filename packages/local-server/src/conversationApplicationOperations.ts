@@ -73,10 +73,7 @@ export type ConversationApplicationOperationDependencies = Record<string, any> &
   projectRepositories: ProjectRepositoryRegistrationRepository;
   projectSharedPaths: ProjectSharedPathRepository;
   projects: ProjectRepository;
-  resolveConversationCapabilities(
-    project: ZeusProjectRecord,
-    options?: { refreshCodexAccount?: boolean; allowPiWhenCodexUnavailable?: boolean },
-  ): ReturnType<ConversationCapabilityQueryApplication['buildConversationCapabilities']>;
+  resolveConversationCapabilities(project: ZeusProjectRecord, options?: { refreshCodexAccount?: boolean; allowPiWhenCodexUnavailable?: boolean }): ReturnType<ConversationCapabilityQueryApplication['buildConversationCapabilities']>;
   resolveTaskPushExecutionCapabilities(project: ZeusProjectRecord): Promise<ConversationCapabilitiesSnapshot>;
   resolveModelCapability<T extends { id: string; model: string }>(models: readonly T[], identity: string | null | undefined): T | null;
   normalizeTaskPushAttachments(task: ZeusTaskRecord, projectLocalPath: string): { attachments: NativeConversationAttachment[]; allowedRoots: string[]; promptAttachments: TaskPushPromptAttachment[] };

@@ -927,9 +927,25 @@ function isReadOnlyValidationDescriptor(value: unknown): value is ReadOnlyValida
     isNonEmptyString(value.source.inferredDataRoot) &&
     isNonEmptyString(value.source.device) &&
     isNonEmptyString(value.source.inode) &&
-    ((value.formatVersion === 2 && isSha256(value.source.sha256) && Number.isSafeInteger(value.source.bytes) && Number(value.source.bytes) >= 0 && value.source.treeImmutability === 'required_quiescent' && value.backup === undefined && value.migration === undefined) ||
-      (value.formatVersion === 3 && value.source.sha256 === undefined && value.source.bytes === undefined && value.source.treeImmutability === 'online_backup_snapshot' && isOnlineBackupEvidence(value.backup) && value.migration === undefined) ||
-      (value.formatVersion === 4 && value.source.sha256 === undefined && value.source.bytes === undefined && value.source.treeImmutability === 'online_backup_snapshot' && isOnlineBackupEvidence(value.backup) && isOfflineCandidateMigrationEvidence(value.migration))) &&
+    ((value.formatVersion === 2 &&
+      isSha256(value.source.sha256) &&
+      Number.isSafeInteger(value.source.bytes) &&
+      Number(value.source.bytes) >= 0 &&
+      value.source.treeImmutability === 'required_quiescent' &&
+      value.backup === undefined &&
+      value.migration === undefined) ||
+      (value.formatVersion === 3 &&
+        value.source.sha256 === undefined &&
+        value.source.bytes === undefined &&
+        value.source.treeImmutability === 'online_backup_snapshot' &&
+        isOnlineBackupEvidence(value.backup) &&
+        value.migration === undefined) ||
+      (value.formatVersion === 4 &&
+        value.source.sha256 === undefined &&
+        value.source.bytes === undefined &&
+        value.source.treeImmutability === 'online_backup_snapshot' &&
+        isOnlineBackupEvidence(value.backup) &&
+        isOfflineCandidateMigrationEvidence(value.migration))) &&
     isNonEmptyString(value.database.path) &&
     isNonEmptyString(value.database.device) &&
     isNonEmptyString(value.database.inode) &&

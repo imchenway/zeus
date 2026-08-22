@@ -62,19 +62,19 @@ const piInput = {
 const pi = codexOnly
   ? { status: 0, body: { error: 'SKIPPED_BY_CODEX_ONLY_PROBE' } }
   : taskCreate.status === 201
-  ? await request(`/api/tasks/${encodeURIComponent(taskId)}/conversations`, {
-      method: 'POST',
-      timeoutMs: 60_000,
-      body: commandRequest({
-        commandType: 'conversation.task.create',
-        scopeKind: 'task',
-        scopeId: taskId,
-        operationIdentity: `provider_pi_${randomUUID().replaceAll('-', '')}`,
-        input: piInput,
-        inputSha256: graphConversationInputSha256(piInput),
-      }),
-    })
-  : { status: 0, body: { error: 'TASK_CREATE_FAILED' } };
+    ? await request(`/api/tasks/${encodeURIComponent(taskId)}/conversations`, {
+        method: 'POST',
+        timeoutMs: 60_000,
+        body: commandRequest({
+          commandType: 'conversation.task.create',
+          scopeKind: 'task',
+          scopeId: taskId,
+          operationIdentity: `provider_pi_${randomUUID().replaceAll('-', '')}`,
+          input: piInput,
+          inputSha256: graphConversationInputSha256(piInput),
+        }),
+      })
+    : { status: 0, body: { error: 'TASK_CREATE_FAILED' } };
 
 const piConversationId = resultConversationId(pi);
 const codexConversationId = resultConversationId(codex);
@@ -89,8 +89,7 @@ console.log(
   JSON.stringify(
     {
       status:
-        (piOnly ||
-          (codex.status >= 200 && codex.status < 300 && codexCompletion?.terminalStatus === 'completed' && codexCompletion.assistantReply === 'ZARCH-ISOLATED-CODEX-OK')) &&
+        (piOnly || (codex.status >= 200 && codex.status < 300 && codexCompletion?.terminalStatus === 'completed' && codexCompletion.assistantReply === 'ZARCH-ISOLATED-CODEX-OK')) &&
         (codexOnly || (pi.status >= 200 && pi.status < 300 && piCompletion?.terminalStatus === 'completed' && piCompletion.assistantReply === 'ZARCH-ISOLATED-PI-OK'))
           ? 'passed'
           : 'blocked',
@@ -115,14 +114,7 @@ console.log(
   ),
 );
 
-function commandRequest(input: {
-  commandType: string;
-  scopeKind: 'project' | 'task';
-  scopeId: string;
-  operationIdentity: string;
-  input: Record<string, unknown>;
-  inputSha256: string;
-}): Record<string, unknown> {
+function commandRequest(input: { commandType: string; scopeKind: 'project' | 'task'; scopeId: string; operationIdentity: string; input: Record<string, unknown>; inputSha256: string }): Record<string, unknown> {
   return {
     command: {
       schemaGeneration: 'zeus-command-envelope-v1',
@@ -139,10 +131,7 @@ function commandRequest(input: {
   };
 }
 
-async function request(
-  path: string,
-  input: { method?: string; body?: unknown; timeoutMs?: number } = {},
-): Promise<{ status: number; body: Record<string, any> }> {
+async function request(path: string, input: { method?: string; body?: unknown; timeoutMs?: number } = {}): Promise<{ status: number; body: Record<string, any> }> {
   try {
     const response = await fetch(`${baseUrl}${path}`, {
       method: input.method ?? 'GET',
@@ -186,24 +175,22 @@ async function waitForCompletion(conversationId: string): Promise<Record<string,
   const terminal = Array.isArray(snapshot?.recentClosedTurns) ? snapshot.recentClosedTurns[0] : null;
   const history = await request(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/model-history?direction=tail&limit=100&byteLimit=1048576`);
   const assistantReply = Array.isArray(history.body.items)
-    ? history.body.items
+    ? (history.body.items
         .filter((item: Record<string, any>) => item.role === 'assistant')
         .map((item: Record<string, any>) => previewText(item.content?.preview))
         .filter((value: string | null): value is string => Boolean(value))
-        .at(-1) ?? null
+        .at(-1) ?? null)
     : null;
-  const process = terminal?.status === 'failed' && typeof terminal.id === 'string'
-    ? await request(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/turns/${encodeURIComponent(terminal.id)}/process?limit=100&byteLimit=1048576`)
-    : null;
+  const process =
+    terminal?.status === 'failed' && typeof terminal.id === 'string'
+      ? await request(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/turns/${encodeURIComponent(terminal.id)}/process?limit=100&byteLimit=1048576`)
+      : null;
   return {
     terminalStatus: typeof terminal?.status === 'string' ? terminal.status : 'timeout',
     providerTurnId: typeof terminal?.providerTurnId === 'string' ? terminal.providerTurnId : null,
     assistantReply,
     modelHistoryCount: Array.isArray(history.body.items) ? history.body.items.length : null,
-    processWarnings:
-      process && Array.isArray(process.body.items)
-        ? process.body.items.map((item: Record<string, any>) => ({ status: item.status ?? null, detail: previewText(item.detail?.preview) }))
-        : [],
+    processWarnings: process && Array.isArray(process.body.items) ? process.body.items.map((item: Record<string, any>) => ({ status: item.status ?? null, detail: previewText(item.detail?.preview) })) : [],
     elapsedMs: Date.now() - startedAt,
   };
 }

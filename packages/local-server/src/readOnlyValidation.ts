@@ -41,8 +41,8 @@ export function inspectReadOnlyValidationManifest(manifestPathInput: string, app
     migratedOnlineSnapshot
       ? ['format', 'formatVersion', 'mode', 'runId', 'createdAt', 'copyPlanHash', 'validationRoot', 'allowedApplication', 'source', 'backup', 'migration', 'database', 'manifestHash']
       : onlineBackupSnapshot
-      ? ['format', 'formatVersion', 'mode', 'runId', 'createdAt', 'copyPlanHash', 'validationRoot', 'allowedApplication', 'source', 'backup', 'database', 'manifestHash']
-      : ['format', 'formatVersion', 'mode', 'runId', 'createdAt', 'copyPlanHash', 'validationRoot', 'allowedApplication', 'source', 'database', 'manifestHash'],
+        ? ['format', 'formatVersion', 'mode', 'runId', 'createdAt', 'copyPlanHash', 'validationRoot', 'allowedApplication', 'source', 'backup', 'database', 'manifestHash']
+        : ['format', 'formatVersion', 'mode', 'runId', 'createdAt', 'copyPlanHash', 'validationRoot', 'allowedApplication', 'source', 'database', 'manifestHash'],
     '只读验证 manifest',
   );
   if (manifest.format !== 'zeus-read-only-validation-manifest' || ![2, 3, 4].includes(Number(manifest.formatVersion)) || manifest.mode !== 'read_only_validation') {
@@ -234,12 +234,7 @@ function parseOfflineCandidateMigrationEvidence(value: unknown): NonNullable<Rea
   const startedAt = requireTimestamp(migration.startedAt, 'migration.startedAt');
   const completedAt = requireTimestamp(migration.completedAt, 'migration.completedAt');
   if (Date.parse(completedAt) < Date.parse(startedAt)) throw validationError('ZEUS_READ_ONLY_VALIDATION_MANIFEST_INVALID', '离线候选迁移完成时间早于开始时间。');
-  if (
-    migration.strategy !== 'offline_candidate_schema_migration' ||
-    migration.sourceAccessClosedBeforeMigration !== true ||
-    migration.runtimeWriterCount !== 0 ||
-    migration.rollbackWindow !== 'source_unchanged_candidate_only'
-  ) {
+  if (migration.strategy !== 'offline_candidate_schema_migration' || migration.sourceAccessClosedBeforeMigration !== true || migration.runtimeWriterCount !== 0 || migration.rollbackWindow !== 'source_unchanged_candidate_only') {
     throw validationError('ZEUS_READ_ONLY_VALIDATION_MANIFEST_INVALID', '离线候选迁移边界无效。');
   }
   const appliedMigrationIds = requireBoundedStringArray(migration.appliedMigrationIds, 'migration.appliedMigrationIds');

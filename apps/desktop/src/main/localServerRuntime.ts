@@ -1187,11 +1187,7 @@ export interface ExecutionHostOwnerState {
   metadataConflict: boolean;
 }
 
-export async function readExecutionHostOwnerState(
-  userDataPath: string,
-  expectedDataRootIdentity: ZeusDataRootHostIdentity,
-  expectedValidationIdentity?: ReadOnlyValidationIdentity,
-): Promise<ExecutionHostOwnerState> {
+export async function readExecutionHostOwnerState(userDataPath: string, expectedDataRootIdentity: ZeusDataRootHostIdentity, expectedValidationIdentity?: ReadOnlyValidationIdentity): Promise<ExecutionHostOwnerState> {
   const kernelLeaseHeld = inspectExecutionHostKernelLease(userDataPath, expectedDataRootIdentity) === 'held';
   const lock = await readExecutionHostLockObservation(userDataPath);
   const rendezvous = await readExecutionHostRendezvous(userDataPath);
@@ -1202,9 +1198,7 @@ export async function readExecutionHostOwnerState(
       lock.kind === 'current' &&
       (!sameZeusDataRootHostIdentity(lock.identity.dataRootIdentity, expectedDataRootIdentity) ||
         !sameReadOnlyValidationIdentity(lock.identity.readOnlyValidation, expectedValidationIdentity) ||
-        (rendezvous !== null &&
-          (!sameZeusDataRootHostIdentity(lock.identity.dataRootIdentity, rendezvous.dataRootIdentity) ||
-            !sameReadOnlyValidationIdentity(lock.identity.readOnlyValidation, rendezvous.readOnlyValidation))));
+        (rendezvous !== null && (!sameZeusDataRootHostIdentity(lock.identity.dataRootIdentity, rendezvous.dataRootIdentity) || !sameReadOnlyValidationIdentity(lock.identity.readOnlyValidation, rendezvous.readOnlyValidation))));
     return { ownerPresent: true, certainty: metadataConflict ? 'unconfirmed' : 'confirmed', kernelLeaseHeld: true, pid, lock, rendezvous, metadataConflict };
   }
 
@@ -1214,9 +1208,7 @@ export async function readExecutionHostOwnerState(
     const metadataConflict =
       !sameZeusDataRootHostIdentity(lock.identity.dataRootIdentity, expectedDataRootIdentity) ||
       !sameReadOnlyValidationIdentity(lock.identity.readOnlyValidation, expectedValidationIdentity) ||
-      (rendezvous !== null &&
-        (!sameZeusDataRootHostIdentity(lock.identity.dataRootIdentity, rendezvous.dataRootIdentity) ||
-          !sameReadOnlyValidationIdentity(lock.identity.readOnlyValidation, rendezvous.readOnlyValidation)));
+      (rendezvous !== null && (!sameZeusDataRootHostIdentity(lock.identity.dataRootIdentity, rendezvous.dataRootIdentity) || !sameReadOnlyValidationIdentity(lock.identity.readOnlyValidation, rendezvous.readOnlyValidation)));
     if (metadataConflict) {
       return { ownerPresent: true, certainty: 'unconfirmed', kernelLeaseHeld: false, pid: lock.identity.pid, lock, rendezvous, metadataConflict: true };
     }

@@ -164,11 +164,7 @@ async function executeCopy(): Promise<void> {
     }
     const validationManifestPayload = {
       format: 'zeus-read-only-validation-manifest',
-      formatVersion: arguments_.migrateOfflineCandidate
-        ? migratedOnlineValidationManifestFormatVersion
-        : arguments_.onlineBackupSnapshot
-          ? onlineValidationManifestFormatVersion
-          : strictValidationManifestFormatVersion,
+      formatVersion: arguments_.migrateOfflineCandidate ? migratedOnlineValidationManifestFormatVersion : arguments_.onlineBackupSnapshot ? onlineValidationManifestFormatVersion : strictValidationManifestFormatVersion,
       mode: 'read_only_validation',
       runId: isolatedValidationLayout?.runId ?? randomUUID(),
       createdAt: new Date().toISOString(),
@@ -332,9 +328,7 @@ function inspectCandidateDatabase(path: string, label: string): CandidateDatabas
   try {
     database.exec('PRAGMA query_only = ON');
     const ledgerExists = Boolean(database.prepare(`SELECT 1 AS present FROM sqlite_schema WHERE type = 'table' AND name = 'schema_migrations'`).get());
-    const ledgerRows = ledgerExists
-      ? (database.prepare(`SELECT migration_id, description, checksum FROM schema_migrations ORDER BY migration_id`).all() as Array<Record<string, unknown>>)
-      : [];
+    const ledgerRows = ledgerExists ? (database.prepare(`SELECT migration_id, description, checksum FROM schema_migrations ORDER BY migration_id`).all() as Array<Record<string, unknown>>) : [];
     const migrationIds = ledgerRows.map((row) => String(row.migration_id)).sort();
     return {
       quickCheck: readQuickCheck(database, label),
@@ -349,7 +343,10 @@ function inspectCandidateDatabase(path: string, label: string): CandidateDatabas
   }
 }
 
-async function migrateOfflineCandidate(path: string, before: CandidateDatabaseSnapshot): Promise<{
+async function migrateOfflineCandidate(
+  path: string,
+  before: CandidateDatabaseSnapshot,
+): Promise<{
   strategy: 'offline_candidate_schema_migration';
   startedAt: string;
   completedAt: string;

@@ -228,11 +228,7 @@ async function inventoryDestination(
   });
 }
 
-async function quarantineCandidate(
-  directoryPath: string,
-  plan: RecoveryBackupRetentionPlan,
-  candidate: RecoveryBackupRetentionCandidate,
-): Promise<ApplyRecoveryBackupRetentionResult['results'][number]> {
+async function quarantineCandidate(directoryPath: string, plan: RecoveryBackupRetentionPlan, candidate: RecoveryBackupRetentionCandidate): Promise<ApplyRecoveryBackupRetentionResult['results'][number]> {
   const canonical = await requireRealDirectory(directoryPath);
   const packagePath = join(canonical, candidate.packageFileName);
   const receiptPath = join(canonical, candidate.receiptFileName);
@@ -275,18 +271,28 @@ function selectProtectedBackupIds(groups: BackupGroup[], policy: RecoveryBackupR
   const protectedIds = new Set<string>();
   const sorted = [...groups].sort((left, right) => right.createdAt.localeCompare(left.createdAt) || compareCodeUnits(left.backupId, right.backupId));
   sorted.slice(0, policy.keepLatest).forEach((group) => protectedIds.add(group.backupId));
-  selectFirstPerBucket(sorted, protectedIds, (group) => withinDays(group.createdAt, now, policy.keepDailyDays), (group) => group.createdAt.slice(0, 10));
-  selectFirstPerBucket(sorted, protectedIds, (group) => withinDays(group.createdAt, now, policy.keepWeeklyWeeks * 7), (group) => isoWeekBucket(group.createdAt));
-  selectFirstPerBucket(sorted, protectedIds, (group) => withinMonths(group.createdAt, now, policy.keepMonthlyMonths), (group) => group.createdAt.slice(0, 7));
+  selectFirstPerBucket(
+    sorted,
+    protectedIds,
+    (group) => withinDays(group.createdAt, now, policy.keepDailyDays),
+    (group) => group.createdAt.slice(0, 10),
+  );
+  selectFirstPerBucket(
+    sorted,
+    protectedIds,
+    (group) => withinDays(group.createdAt, now, policy.keepWeeklyWeeks * 7),
+    (group) => isoWeekBucket(group.createdAt),
+  );
+  selectFirstPerBucket(
+    sorted,
+    protectedIds,
+    (group) => withinMonths(group.createdAt, now, policy.keepMonthlyMonths),
+    (group) => group.createdAt.slice(0, 7),
+  );
   return protectedIds;
 }
 
-function selectFirstPerBucket(
-  groups: BackupGroup[],
-  selected: Set<string>,
-  eligible: (group: BackupGroup) => boolean,
-  bucket: (group: BackupGroup) => string,
-): void {
+function selectFirstPerBucket(groups: BackupGroup[], selected: Set<string>, eligible: (group: BackupGroup) => boolean, bucket: (group: BackupGroup) => string): void {
   const seen = new Set<string>();
   for (const group of groups) {
     if (!eligible(group)) continue;

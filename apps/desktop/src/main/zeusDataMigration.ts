@@ -3,13 +3,7 @@ import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync,
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createLegacyFlatZeusDataLayout, createZeusDataLayout, type ZeusDataLayout } from '@zeus/local-server/zeus-data-layout';
-import {
-  prepareZeusDataRootIdentity,
-  withZeusDataRootPreparationLock,
-  zeusDataRootIdentityFileName,
-  type ExpectedZeusDataRootIdentity,
-  type ZeusDataRootIdentityMarker,
-} from './dataRootIdentity.js';
+import { prepareZeusDataRootIdentity, withZeusDataRootPreparationLock, zeusDataRootIdentityFileName, type ExpectedZeusDataRootIdentity, type ZeusDataRootIdentityMarker } from './dataRootIdentity.js';
 
 export type ZeusDataPreparationStatus = 'initialized' | 'already-layered' | 'migrated' | 'legacy-host-active';
 

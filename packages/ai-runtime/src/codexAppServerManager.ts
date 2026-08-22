@@ -294,26 +294,27 @@ interface CodexServerResponseBase {
   requestId: CodexWireId;
 }
 
-export type CodexServerRequestResponse = CodexPerformanceTraceContext & (
-  | (CodexServerResponseBase & { type: 'command'; decision: CodexCommandApprovalDecision })
-  | (CodexServerResponseBase & { type: 'file'; decision: 'accept' | 'acceptForSession' | 'decline' | 'cancel' })
-  | (CodexServerResponseBase & {
-      type: 'permissions';
-      permissions: {
-        network?: { enabled: boolean | null };
-        fileSystem?: { read: string[] | null; write: string[] | null; globScanMaxDepth?: number };
-      };
-      scope: 'turn' | 'session';
-      strictAutoReview?: boolean;
-    })
-  | (CodexServerResponseBase & { type: 'request_user_input'; answers: Record<string, { answers: string[] }> })
-  | (CodexServerResponseBase & { type: 'mcp'; action: 'accept' | 'decline' | 'cancel'; content: JsonValue | null; _meta: JsonValue | null })
-  | (CodexServerResponseBase & {
-      type: 'dynamic_tool';
-      contentItems: Array<{ type: 'inputText'; text: string } | { type: 'inputImage'; imageUrl: string }>;
-      success: boolean;
-    })
-);
+export type CodexServerRequestResponse = CodexPerformanceTraceContext &
+  (
+    | (CodexServerResponseBase & { type: 'command'; decision: CodexCommandApprovalDecision })
+    | (CodexServerResponseBase & { type: 'file'; decision: 'accept' | 'acceptForSession' | 'decline' | 'cancel' })
+    | (CodexServerResponseBase & {
+        type: 'permissions';
+        permissions: {
+          network?: { enabled: boolean | null };
+          fileSystem?: { read: string[] | null; write: string[] | null; globScanMaxDepth?: number };
+        };
+        scope: 'turn' | 'session';
+        strictAutoReview?: boolean;
+      })
+    | (CodexServerResponseBase & { type: 'request_user_input'; answers: Record<string, { answers: string[] }> })
+    | (CodexServerResponseBase & { type: 'mcp'; action: 'accept' | 'decline' | 'cancel'; content: JsonValue | null; _meta: JsonValue | null })
+    | (CodexServerResponseBase & {
+        type: 'dynamic_tool';
+        contentItems: Array<{ type: 'inputText'; text: string } | { type: 'inputImage'; imageUrl: string }>;
+        success: boolean;
+      })
+  );
 
 export type CodexCommandApprovalDecision =
   | 'accept'
@@ -1084,7 +1085,9 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       const capabilities = await awaitCapabilities();
       assertGoalsEnabled(capabilities);
       if (input.objective !== undefined) validateGoalObjective(input.objective);
-      const response = asRecord(await rpc(capabilities.generationId, 'thread/goal/set', compactObject({ threadId: input.threadId, objective: input.objective, status: input.status, tokenBudget: input.tokenBudget }), { traceIdentity: input.traceIdentity }));
+      const response = asRecord(
+        await rpc(capabilities.generationId, 'thread/goal/set', compactObject({ threadId: input.threadId, objective: input.objective, status: input.status, tokenBudget: input.tokenBudget }), { traceIdentity: input.traceIdentity }),
+      );
       return parseThreadGoal(response.goal);
     },
     async clearThreadGoal(input) {

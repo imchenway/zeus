@@ -29,7 +29,20 @@ import { useNewItemMotionIds } from '../../ui/useNewItemMotion.js';
 import { type AiRuntimeAdapterDescriptor, type AiRuntimeAdapterStatus, type AiRuntimeTerminalEvent, type AppShellSettings, type CodeMapSettings, type ProjectConfig, type ProjectRecord, type RuntimeSettings } from '../../apiClient.js';
 import { GENERIC_SHELL_CRITICAL_CONFIRMATION_PHRASE, type GenericShellCommandRisk } from './workspaceFormatters.js';
 import { handleSourceListKeyboardNavigation } from '../graph/GraphCanvas.js';
-import { controlBusyProps, defaultProjectNameFromLocalPath, getLanguageCopy, type InlineRecoveryAction, type LocalUiErrorSnapshot, PROJECT_WORKSPACE_ENTRIES, type ProjectCodeWorkspaceMode, type ProjectCreateFormState, type ProjectWorkspaceEntryId, type ProjectWorkspaceSection, type RuntimeConfirmationStatusState, type WorkspaceViewId } from './workspaceSupport.js';
+import {
+  controlBusyProps,
+  defaultProjectNameFromLocalPath,
+  getLanguageCopy,
+  type InlineRecoveryAction,
+  type LocalUiErrorSnapshot,
+  PROJECT_WORKSPACE_ENTRIES,
+  type ProjectCodeWorkspaceMode,
+  type ProjectCreateFormState,
+  type ProjectWorkspaceEntryId,
+  type ProjectWorkspaceSection,
+  type RuntimeConfirmationStatusState,
+  type WorkspaceViewId,
+} from './workspaceSupport.js';
 export function ProjectCreateDialog(props: {
   open: boolean;
   form: ProjectCreateFormState;
