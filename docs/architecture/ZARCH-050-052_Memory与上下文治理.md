@@ -91,7 +91,11 @@ Renderer 的 `features/memory` 是独立 bounded context：`memoryApiClient.ts` 
 
 优点是 token 成本有上限、过时信息和来源冲突可诊断、跨 Provider 时仍保留 provenance。缺点是当前上游只提供字符数，派发按一字符一 token 作为保守上界；Codex app-server 与 Pi SDK 都没有完整待发请求的同步精确 tokenizer/preflight 端口，故 `preflightTokenCount` 明确为 `unavailable`，运行后 usage 不能替代请求前精确计数。预算或检索策略过保守也可能遗漏必要资料。
 
-2026-08-22 的真实 Codex 验收补充了一条模型窗口兼容边界：若 app-server `model/list` 直接给出 context/output 字段，优先使用 Provider 原始证据；若 Codex CLI `0.149.0` 缺少这些字段，只允许精确模型 `gpt-5.4-mini` 使用 OpenAI 官方目录已核验的 400,000 context / 128,000 max output。该回退按 CLI 版本和完整模型 ID 双键匹配并保留来源，不做家族推断；任一键变化就恢复 `ZEUS_CONTEXT_MODEL_WINDOW_UNAVAILABLE`。这解决的是模型总窗口安全边界，不会把字符估算升级为精确 tokenizer。
+2026-08-22 的真实 Codex 验收补充了一条模型窗口兼容边界：若 app-server `model/list` 直接给出 context/output 字段，优先使用
+Provider 原始证据；若 Codex CLI `0.149.0` 缺少这些字段，只允许完整模型 ID 使用已核验的 OpenAI 官方模型目录数值：
+`gpt-5.4-mini` 为 400,000 context / 128,000 max output，`gpt-5.6-sol` 为 1,050,000 context / 128,000 max output。该回退按
+CLI 版本和完整模型 ID 双键匹配并保留来源，不做家族推断；任一键变化就恢复 `ZEUS_CONTEXT_MODEL_WINDOW_UNAVAILABLE`
+。这解决的是模型总窗口安全边界，不会把字符估算升级为精确 tokenizer。
 
 ## ZARCH-052：`/docs` 与冷证据
 

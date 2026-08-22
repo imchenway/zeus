@@ -1,8 +1,8 @@
-import { spawn } from 'node:child_process';
-import { access } from 'node:fs/promises';
-import { createInterface } from 'node:readline';
+import {spawn} from 'node:child_process';
+import {access} from 'node:fs/promises';
+import {createInterface} from 'node:readline';
 
-export type NativeUpdateProgressAction = 'download' | 'restart' | 'retry' | 'later' | 'closed' | 'close';
+export type NativeUpdateProgressAction = 'download' | 'reconnect' | 'restart' | 'retry' | 'later' | 'closed' | 'close';
 
 export interface NativeUpdateProgressState {
   state: 'checking' | 'available' | 'upToDate' | 'updating' | 'downloading' | 'verifying' | 'ready' | 'installing' | 'failed';
@@ -11,6 +11,7 @@ export interface NativeUpdateProgressState {
   progressCaption?: string;
   progressText?: string;
   progress?: number;
+    canReconnect?: boolean;
   technicalDetail?: string;
   present?: boolean;
 }
@@ -102,7 +103,7 @@ function parseAction(line: string): NativeUpdateProgressAction | null {
     const value = JSON.parse(line) as unknown;
     if (!isRecord(value)) return null;
     const action = value.action;
-    return action === 'download' || action === 'restart' || action === 'retry' || action === 'later' || action === 'closed' || action === 'close' ? action : null;
+      return action === 'download' || action === 'reconnect' || action === 'restart' || action === 'retry' || action === 'later' || action === 'closed' || action === 'close' ? action : null;
   } catch {
     return null;
   }
