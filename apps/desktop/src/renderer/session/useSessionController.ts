@@ -1668,8 +1668,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       const snapshot = await withSessionTimeout(loadConversationForHydration(), conversationHydrationTimeoutMs, () => new ConversationHydrationTimeoutError());
       if (disposed || token !== connectionToken) return;
       const lazySnapshotHydration = options.realtimePolicy === 'lazy' && realtimeMode !== 'required';
-      const subscribeRealtime =
-        realtimeMode === 'required' || (!lazySnapshotHydration && (snapshotNeedsRealtime(snapshot) || Boolean(pendingSend) || deferredSends.length > 0));
+      const subscribeRealtime = realtimeMode === 'required' || (!lazySnapshotHydration && (snapshotNeedsRealtime(snapshot) || Boolean(pendingSend) || deferredSends.length > 0));
       if (!subscribeRealtime) {
         if (!state.snapshot) markConversationNavigationRenderReady(options.projectId, options.conversationId);
         await applyAuthoritativeSnapshot(snapshot);

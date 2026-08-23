@@ -1835,11 +1835,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     }
   }
 
-  async function selectNativeConversation(
-    conversation: NativeConversationChoice,
-    navigation: 'page' | 'preserve' = 'page',
-    presentation: 'history' | 'interactive' = 'history',
-  ): Promise<void> {
+  async function selectNativeConversation(conversation: NativeConversationChoice, navigation: 'page' | 'preserve' = 'page', presentation: 'history' | 'interactive' = 'history'): Promise<void> {
     const targetProject = snapshot.projects.find((candidate) => candidate.id === conversation.projectId);
     if (targetProject) {
       activeProjectIdRef.current = targetProject.id;

@@ -111,11 +111,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const persistedItems = useMemo(
     () =>
       props.state.itemOrder
-      .map((key) => props.state.items[key])
-      .filter(
-        (entry): entry is NativeSessionItemBuffer =>
-          Boolean(entry) && (!props.historyOnly || !entry.optimistic) && isVisibleTranscriptItem(entry) && !isUnacceptedQueuedUserItem(entry, props.state, queuedClientUserMessageIds),
-      ),
+        .map((key) => props.state.items[key])
+        .filter((entry): entry is NativeSessionItemBuffer => Boolean(entry) && (!props.historyOnly || !entry.optimistic) && isVisibleTranscriptItem(entry) && !isUnacceptedQueuedUserItem(entry, props.state, queuedClientUserMessageIds)),
     [props.historyOnly, props.state.activeTurnId, props.state.itemOrder, props.state.items, queuedClientUserMessageIds],
   );
   const projectedItems = useMemo(
@@ -1205,12 +1202,7 @@ export function isFinalAnswerItem(item: NativeSessionItemBuffer): boolean {
   return itemRole(item) === 'assistant' && (providerPhase === 'final_answer' || providerPhase === 'finalAnswer');
 }
 
-export function projectTranscriptRows(
-  items: readonly NativeSessionItemBuffer[],
-  answeredRequests: readonly NativePendingRequest[] = [],
-  activeTurnId: string | null = null,
-  historyOnly = false,
-): TranscriptRow[] {
+export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[], answeredRequests: readonly NativePendingRequest[] = [], activeTurnId: string | null = null, historyOnly = false): TranscriptRow[] {
   const rows: TranscriptRow[] = [];
   const effectiveActiveTurnId = historyOnly ? null : activeTurnId && items.some((item) => item.turnId === activeTurnId) ? activeTurnId : latestLiveTurnId(items);
   const currentReasoningItemKey = latestCurrentReasoningItemKey(items, effectiveActiveTurnId);
