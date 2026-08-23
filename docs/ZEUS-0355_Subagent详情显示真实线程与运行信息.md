@@ -91,3 +91,11 @@
 - 交付前任务分支为 `zeus/ZEUS-0355-subagent-01`，工作区仅包含本任务 12 个变更条目；真实 main worktree 为 `/Users/david/hypha/zeus`，预合入 HEAD 为 `8400cea9873ed96a1c8f9d4e89b8c9bea4285e79`，与 `origin/main` 一致且工作区干净。
 - 发布使用仓库唯一正式入口 `pnpm release` / `scripts/release-all.mjs`，由编排器基于最新公开稳定版自动选择下一个补丁版本，不在任务提交中手工预改版本。
 - 任务提交为 `b088b04`。合并预演发现 `SessionWorkspace.tsx` 与 v0.3.40 的会话运行详情降噪改动同区冲突；解决时保留共享 `RuntimeDetails` 的单一展示实现，同时保留主会话对缺失的输出速率、延迟、费用摘要、代码改动和环境项的低噪音隐藏语义；Subagent 仍按本任务契约显示带原因的“暂无数据”。
+
+## 合入与正式发布结果
+
+- 任务提交 `b088b04c2af84933bea211f4c21733ecca2665e9` 已通过 merge 提交 `ed6bda79903d4b5c9401c785a676f75059d7070e` 合入真实 `main`。合并态下 `pnpm verify:subagent-detail`、`pnpm lint`、`pnpm typecheck`、`pnpm build` 和 `pnpm package:mac` 均通过。
+- 正式 `pnpm release` 基于 v0.3.40 自动生成发布提交 `3f3e597b4ef43bc7f8e75410a631710418cf65a5` 与不可变标签 `v0.3.41`，并将 `main` 安全推送到 `origin/main`。发布说明能力令牌不可用时，编排器按约定使用确定性模板，没有伪造模型结果或中断发布。
+- Release Workflow `32641935399` 的 `preflight`、`typecheck`、`package-mac` 和 `publish` 全部成功：<https://github.com/imchenway/zeus/actions/runs/32641935399>。GitHub Release 已公开且非草稿/预发布：<https://github.com/imchenway/zeus/releases/tag/v0.3.41>。
+- 公开 DMG `Zeus-0.3.41-arm64.dmg` 为 `112184753` 字节，SHA-256 为 `06c1e6b5843e5c3928878696e1a48bcd3cfbaa83117cffd7d1894b7db82d2efc`；发布后使用 `DEEP_VERIFY_PUBLIC_DMG=true` 完整回下载，大小、服务端摘要和 `hdiutil verify` 均通过。
+- 公开 manifest SHA-256 为 `5a0f8b3bbfeef6e476687aba981aa19a0183d6025cefcccd3c901863d3b92af5`；Homebrew Cask 已同步为 `0.3.41` 并使用同一 DMG SHA-256。manifest 如实记录 `signed: false` 和 `notarized: false`，本版本不声称 Developer ID 签名或 Apple 公证。
