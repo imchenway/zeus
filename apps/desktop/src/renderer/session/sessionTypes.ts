@@ -176,10 +176,62 @@ export interface NativeSubagentThreadTurn {
   items: NativeItemSnapshot[];
 }
 
+export type NativeRuntimeFact<T> = { state: 'available'; value: T } | { state: 'unavailable'; reason: string };
+
+export interface NativeRuntimeDetailsSnapshot {
+  model: NativeRuntimeFact<string>;
+  effort: NativeRuntimeFact<string>;
+  serviceTier: NativeRuntimeFact<string | null>;
+  usage: {
+    totalTokens: NativeRuntimeFact<number>;
+    inputTokens: NativeRuntimeFact<number>;
+    outputTokens: NativeRuntimeFact<number>;
+    reasoningOutputTokens: NativeRuntimeFact<number>;
+    contextTokens: NativeRuntimeFact<number>;
+    contextWindow: NativeRuntimeFact<number>;
+    cacheHitRate: NativeRuntimeFact<number>;
+    apiEquivalentUsd: NativeRuntimeFact<number>;
+    priceCoverage: NativeRuntimeFact<number>;
+    pricingCatalogDate: NativeRuntimeFact<string>;
+    pricingSourceUrls: NativeRuntimeFact<string[]>;
+    historyComplete: NativeRuntimeFact<boolean>;
+  };
+  performance: {
+    latestOutputTokensPerSecond: NativeRuntimeFact<number>;
+    latestFirstVisibleResponseMs: NativeRuntimeFact<number>;
+    cumulativeProcessedDurationMs: NativeRuntimeFact<number>;
+  };
+  activity: {
+    turnCount: NativeRuntimeFact<number>;
+    modelRequestCount: NativeRuntimeFact<number>;
+    toolOrCommandCount: NativeRuntimeFact<number>;
+    retryCount: NativeRuntimeFact<number>;
+    failedTurnCount: NativeRuntimeFact<number>;
+  };
+  changeSummary: NativeRuntimeFact<{ fileCount: number; addedLines: number; deletedLines: number; complete: boolean }>;
+  environment: {
+    cwd: NativeRuntimeFact<string>;
+    branch: NativeRuntimeFact<string>;
+    nativeSessionId: NativeRuntimeFact<string>;
+    nativeSessionPath: NativeRuntimeFact<string>;
+  };
+}
+
+export interface NativeSubagentHistoryBoundary {
+  state: 'confirmed' | 'unavailable';
+  createdAt: string | null;
+  ownedTurnCount: number;
+  hiddenInheritedTurnCount: number;
+  hiddenAmbiguousTurnCount: number;
+  reason: string | null;
+}
+
 export interface NativeSubagentThreadSnapshot {
   conversationId: string;
   parentThreadId: string;
   agent: NativeSubagentSummary;
+  historyBoundary: NativeSubagentHistoryBoundary;
+  runtime: NativeRuntimeDetailsSnapshot;
   turns: NativeSubagentThreadTurn[];
 }
 

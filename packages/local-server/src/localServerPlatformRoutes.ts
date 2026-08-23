@@ -50,6 +50,7 @@ import { isUnsafeCodeMapScanRoot } from './codeMapScanBoundary.js';
 import { type CodexRemoteControlSnapshot, registerCodexPublicCommandRoutes } from './codexPublicCommandRoutes.js';
 import { CodexSubagentQueryApplication } from './codexSubagentQueryApplication.js';
 import { registerCodexSubagentQueryRoutes } from './codexSubagentQueryRoutes.js';
+import { createCodexSubagentRuntimeReader } from './codexSubagentRuntimeProjection.js';
 import { createCommandCenter } from './commandCenter.js';
 import { ConversationCapabilityQueryApplication } from './conversationCapabilityQueryApplication.js';
 import { registerConversationCapabilityQueryRoutes } from './conversationCapabilityQueryRoutes.js';
@@ -582,6 +583,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       listThreads: (input) => codexAppServerManager.listThreads(input),
       readThread: (input) => codexAppServerManager.readThread(input),
     },
+    runtime: createCodexSubagentRuntimeReader({ providerHistoryRoot: join(dataLayout.codexHome, 'sessions') }),
     now,
   });
   registerCodexSubagentQueryRoutes({ server, application: codexSubagentQueries });

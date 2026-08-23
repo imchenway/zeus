@@ -15238,11 +15238,24 @@
 }
 
 .session-workspace-root .session-subagent-list,
-.session-workspace-root .session-subagent-thread {
+.session-workspace-root .session-subagent-detail {
   box-sizing: border-box;
   flex: 1 1 auto;
   min-block-size: 0;
   overflow-y: auto;
+}
+
+.session-workspace-root .session-subagent-detail {
+  min-inline-size: 0;
+}
+
+.session-workspace-root .session-subagent-detail > .session-runtime-details {
+  inline-size: 100%;
+}
+
+.session-workspace-root .session-subagent-detail .session-runtime-details :where(code, a) {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .session-workspace-root .session-subagent-list {
@@ -15351,7 +15364,29 @@
 }
 
 .session-workspace-root .session-subagent-thread {
+  box-sizing: border-box;
+  min-inline-size: 0;
   padding: 18px clamp(12px, 3vw, 28px) 44px;
+}
+
+.session-workspace-root .session-subagent-boundary-notice {
+  background: color-mix(in oklab, var(--session-warning) 8%, var(--session-canvas));
+  border-block-end: 1px solid color-mix(in oklab, var(--session-warning) 24%, var(--session-line-soft));
+  color: var(--session-text-muted);
+  display: grid;
+  font-size: 11px;
+  gap: 3px;
+  padding: 9px clamp(12px, 3vw, 28px);
+}
+
+.session-workspace-root .session-subagent-boundary-notice strong {
+  color: var(--session-text);
+  font-weight: 650;
+}
+
+.session-workspace-root .session-subagent-boundary-notice :where(span, small) {
+  line-height: 16px;
+  overflow-wrap: anywhere;
 }
 
 .session-workspace-root .session-subagent-thread .session-thread-item {

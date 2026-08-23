@@ -27,6 +27,7 @@ import { SourceWorkspace } from './SourceWorkspace.js';
 import { TurnDiffWorkspace } from './TurnChanges.js';
 import { SideChatWorkspace } from './SideChatWorkspace.js';
 import { SubagentWorkspace } from './SubagentWorkspace.js';
+import { RuntimeDetails } from './RuntimeDetails.js';
 import { defaultOpenTarget } from './ConversationResources.js';
 import type {
   CodexConversationCapabilities,
@@ -48,6 +49,8 @@ import type {
   NativeServiceTierSelection,
   NativeSessionItemBuffer,
   NativeSessionState,
+  NativeRuntimeDetailsSnapshot,
+  NativeRuntimeFact,
   NativeSubagentListSnapshot,
   NativeSubagentThreadSnapshot,
   NativeTurnSettingsSelection,
@@ -66,7 +69,6 @@ import { SafeMarkdown, type SessionUiLanguage } from './ThreadItemView.js';
 import { autosizeTextarea } from './textareaAutosize.js';
 import { conversationAttachmentIdentity, ConversationComposerAttachments } from './ConversationComposerAttachments.js';
 import { ContextUsageIndicator } from './ContextUsageIndicator.js';
-import { formatTokenCount } from './tokenUsageFormat.js';
 import { ServiceTierToggle } from './ServiceTierToggle.js';
 import { useConversationInputResources } from './useConversationInputResources.js';
 import { SessionQuickActionsCard } from './SessionQuickActionsCard.js';
@@ -1390,24 +1392,6 @@ const labels = {
     exactValue: 'exact value',
   },
 } as const;
-
-type TokenUsageLabel = 'tokens' | 'in' | 'out';
-
-function TokenUsageValue(props: { count: number; label: TokenUsageLabel; language: SessionUiLanguage }) {
-  const display = formatTokenCount(props.count, props.language);
-  const unit = props.label === 'tokens' ? 'Token' : props.language === 'zh-CN' ? `${props.label === 'in' ? '输入' : '输出'} Token` : `${props.label} Token`;
-  const visibleText = `${display.compact} ${unit}`;
-  const exactText = `${display.exact} ${unit}`;
-  return (
-    <span title={exactText} aria-label={`${visibleText}, ${labels[props.language].exactValue} ${exactText}`}>
-      {visibleText}
-    </span>
-  );
-}
-
-function NullableTokenUsageValue(props: { count: number | null; language: SessionUiLanguage; unavailable: string }) {
-  return props.count === null ? <span>{props.unavailable}</span> : <TokenUsageValue count={props.count} label="tokens" language={props.language} />;
-}
 
 type SessionWorkspaceStatus = { kind: 'ready' | 'busy' | 'warning' | 'error'; label: string };
 
@@ -3184,22 +3168,15 @@ function SessionReconnectNotice(props: { language: SessionUiLanguage; attempt: n
 }
 
 function SessionRuntimeDetails(props: { state: NativeSessionState; conversation: NativeConversationChoice | null; language: SessionUiLanguage; capabilities?: CodexConversationCapabilities | null }) {
-  const copy = labels[props.language];
-  const model = props.state.providerSettings?.model?.trim() || props.state.snapshot?.model?.id?.trim() || props.conversation?.model?.id?.trim() || copy.unsynced;
-  const effort = props.state.providerSettings?.effort?.trim() || props.state.snapshot?.nextTurnSettings?.effort?.trim() || copy.unsynced;
+  const model = props.state.providerSettings?.model?.trim() || props.state.snapshot?.model?.id?.trim() || props.conversation?.model?.id?.trim() || null;
+  const effort = props.state.providerSettings?.effort?.trim() || props.state.snapshot?.nextTurnSettings?.effort?.trim() || null;
   const rawServiceTier = props.state.providerSettings?.serviceTier ?? props.state.snapshot?.nextTurnSettings?.serviceTier;
   const hasServiceTier = Boolean(
     (props.state.providerSettings && Object.prototype.hasOwnProperty.call(props.state.providerSettings, 'serviceTier')) ||
     (props.state.snapshot?.nextTurnSettings && Object.prototype.hasOwnProperty.call(props.state.snapshot.nextTurnSettings, 'serviceTier')) ||
     (!props.state.providerSettings && props.state.snapshot?.model?.id),
   );
-  const serviceTier = !hasServiceTier
-    ? copy.unsynced
-    : !rawServiceTier || rawServiceTier === 'default'
-      ? props.language === 'zh-CN'
-        ? '标准'
-        : 'Standard'
-      : (props.capabilities?.models.flatMap((candidate) => candidate.serviceTiers).find((tier) => tier.id === rawServiceTier)?.name ?? rawServiceTier);
+  const serviceTier = !rawServiceTier || rawServiceTier === 'default' ? null : (props.capabilities?.models.flatMap((candidate) => candidate.serviceTiers).find((tier) => tier.id === rawServiceTier)?.name ?? rawServiceTier);
   const usage = props.state.tokenUsage;
   const metrics = props.state.sessionMetrics ?? props.state.snapshot?.sessionMetrics ?? null;
   const unifiedUsage = metrics?.usage ?? props.state.unifiedUsage;
@@ -3210,7 +3187,6 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
   const outputTokens = conversationUsage?.outputTokens ?? usage?.total.outputTokens ?? null;
   const reasoningTokens = conversationUsage?.reasoningOutputTokens ?? usage?.total.reasoningOutputTokens ?? null;
   const cacheHitRate = nullableCacheHitRate(conversationUsage?.inputTokens ?? null, conversationUsage?.cachedInputTokens ?? null) ?? usage?.cacheHitRate ?? null;
-  const contextUsage = formatContextUsage(latestRequest?.totalTokens ?? usage?.last.totalTokens ?? null, latestRequest?.contextWindow ?? usage?.modelContextWindow ?? null, props.language, copy.unavailable);
   const cost = metrics?.cost ?? {
     apiEquivalentUsd: usage?.apiEquivalentUsd ?? null,
     priceCoverage: usage?.priceCoverage ?? null,
@@ -3220,195 +3196,62 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
     complete: usage?.apiEquivalentUsd !== null && usage?.priceCoverage === 1 && usage?.historyComplete === true,
   };
   const mcpStartup = props.state.mcpStartup?.value ?? null;
-  const warning = runtimeValueNeedsAttention(mcpStartup);
-  const modelLabel = [model, effort, serviceTier].join(' · ');
   const executionContext = props.state.snapshot?.executionContext;
-  const executionCwd = executionContext?.cwd ?? copy.unavailable;
-  const executionBranch = executionContext?.cwd ? (executionContext.branch ?? copy.nonGitDirectory) : copy.unavailable;
   const nativeSession = props.state.snapshot?.nativeSession ?? props.conversation?.nativeSession;
-  const nativeSessionId = nativeSession?.id ?? props.state.providerThreadId ?? props.conversation?.providerThreadId ?? copy.unavailable;
-  const nativeSessionPath = nativeSession?.path ?? copy.unavailable;
-  const zh = props.language === 'zh-CN';
   const performance = metrics?.performance ?? null;
   const activity = metrics?.activity ?? null;
   const changes = metrics?.changeSummary ?? null;
-  return (
-    <details className="session-runtime-details" data-severity={warning ? 'warning' : 'ready'} aria-label={copy.runtimeDetails}>
-      <summary>
-        <span className="session-runtime-summary-primary">
-          <RuntimeSummaryMetric label={zh ? '会话累计 Token' : 'Session tokens'} value={totalTokens === null ? copy.unavailable : `${formatTokenCount(totalTokens, props.language).compact} Token`} />
-          <RuntimeSummaryMetric label={copy.contextUsage} value={contextUsage} />
-          <RuntimeSummaryMetric label={copy.cacheHitRate} value={formatPercentage(cacheHitRate, props.language)} />
-          <RuntimeSummaryMetric label={zh ? '最近请求输出速率' : 'Latest output rate'} value={formatOutputRate(performance?.latestOutputTokensPerSecond ?? null, props.language, copy.unavailable)} />
-          <RuntimeSummaryMetric label={zh ? 'API 等价费用（估算）' : 'API-equivalent cost (est.)'} value={formatCostSummary(cost.apiEquivalentUsd, cost.priceCoverage, cost.complete, props.language, copy.unavailable)} />
-        </span>
-      </summary>
-      <div className="session-runtime-detail-groups">
-        <RuntimeDetailGroup title={zh ? '使用与费用' : 'Usage and cost'}>
-          <RuntimeUsageRow label={copy.model} value={modelLabel} />
-          <RuntimeUsageRow label={zh ? '会话累计 Token' : 'Session tokens'} value={<NullableTokenUsageValue count={totalTokens} language={props.language} unavailable={copy.unavailable} />} />
-          <RuntimeUsageRow label={zh ? '累计输入 Token' : 'Input tokens'} value={<NullableTokenUsageValue count={inputTokens} language={props.language} unavailable={copy.unavailable} />} />
-          <RuntimeUsageRow label={zh ? '累计输出 Token' : 'Output tokens'} value={<NullableTokenUsageValue count={outputTokens} language={props.language} unavailable={copy.unavailable} />} />
-          <RuntimeUsageRow label={zh ? '累计推理 Token' : 'Reasoning tokens'} value={<NullableTokenUsageValue count={reasoningTokens} language={props.language} unavailable={copy.unavailable} />} />
-          <RuntimeUsageRow label={copy.contextUsage} value={contextUsage} />
-          <RuntimeUsageRow label={copy.cacheHitRate} value={formatPercentage(cacheHitRate, props.language)} />
-          <RuntimeUsageRow label={zh ? 'API 等价费用（估算）' : 'API-equivalent cost (est.)'} value={formatCoveredCost(cost.apiEquivalentUsd, cost.priceCoverage, props.language, copy.unavailable)} />
-          <RuntimeUsageRow label={copy.priceCoverage} value={formatPercentage(cost.priceCoverage, props.language)} />
-          <RuntimeUsageRow label={copy.priceCatalogDate} value={cost.pricingCatalogDate ?? copy.unavailable} />
-          <RuntimeUsageRow label={copy.priceSource} value={<PricingSources urls={cost.pricingSourceUrls} unavailable={copy.unavailable} />} />
-          {!cost.historyComplete ? <RuntimeUsageRow label={zh ? '费用完整性' : 'Cost completeness'} value={zh ? '估算不完整' : 'Estimate incomplete'} /> : null}
-        </RuntimeDetailGroup>
-        <RuntimeDetailGroup title={zh ? '性能与活动' : 'Performance and activity'}>
-          <RuntimeUsageRow label={zh ? '最近输出速率' : 'Latest output rate'} value={formatOutputRate(performance?.latestOutputTokensPerSecond ?? null, props.language, copy.unavailable)} />
-          <RuntimeUsageRow label={zh ? '最近首段可见响应延迟' : 'Latest first visible response'} value={formatMetricDuration(performance?.latestFirstVisibleResponseMs ?? null, props.language, copy.unavailable)} />
-          <RuntimeUsageRow label={zh ? '累计处理耗时' : 'Cumulative processing time'} value={formatMetricDuration(performance?.cumulativeProcessedDurationMs ?? null, props.language, copy.unavailable)} />
-          <RuntimeUsageRow label={zh ? '轮次' : 'Turns'} value={activity?.turnCount ?? copy.unavailable} />
-          <RuntimeUsageRow label={zh ? '模型请求' : 'Model requests'} value={activity?.modelRequestCount ?? copy.unavailable} />
-          <RuntimeUsageRow label={zh ? '工具 / 命令' : 'Tools / commands'} value={activity?.toolOrCommandCount ?? copy.unavailable} />
-          <RuntimeUsageRow label={zh ? '重试' : 'Retries'} value={activity?.retryCount ?? copy.unavailable} />
-          <RuntimeUsageRow label={zh ? '失败轮次' : 'Failed turns'} value={activity?.failedTurnCount ?? copy.unavailable} />
-          {changes?.available ? (
-            <RuntimeUsageRow label={zh ? '代码改动' : 'Code changes'} value={formatChangeSummary(changes.fileCount, changes.addedLines, changes.deletedLines, changes.complete, props.language, copy.unavailable)} />
-          ) : null}
-        </RuntimeDetailGroup>
-        <RuntimeDetailGroup title={zh ? '环境' : 'Environment'}>
-          {executionContext ? <RuntimeUsageRow label={copy.cwd} value={<code title={executionCwd}>{executionCwd}</code>} /> : null}
-          {executionContext ? <RuntimeUsageRow label={copy.branch} value={<code title={executionBranch}>{executionBranch}</code>} /> : null}
-          {nativeSession?.id || props.state.providerThreadId || props.conversation?.providerThreadId ? <RuntimeUsageRow label={copy.sessionId} value={<code title={nativeSessionId}>{nativeSessionId}</code>} /> : null}
-          {nativeSession?.path ? <RuntimeUsageRow label={copy.jsonlPath} value={<code title={nativeSessionPath}>{nativeSessionPath}</code>} /> : null}
-          {mcpStartup ? <RuntimeUsageRow label={copy.mcpStartup} value={runtimeValueSummary(mcpStartup)} /> : null}
-        </RuntimeDetailGroup>
-      </div>
-    </details>
-  );
+  const runtime: NativeRuntimeDetailsSnapshot = {
+    model: runtimeFact(model, '会话尚未同步模型。'),
+    effort: runtimeFact(effort, '会话尚未同步推理强度。'),
+    serviceTier: hasServiceTier ? { state: 'available', value: serviceTier } : { state: 'unavailable', reason: '会话尚未同步服务层级。' },
+    usage: {
+      totalTokens: runtimeFact(totalTokens, '会话累计 Token 暂无数据。'),
+      inputTokens: runtimeFact(inputTokens, '累计输入 Token 暂无数据。'),
+      outputTokens: runtimeFact(outputTokens, '累计输出 Token 暂无数据。'),
+      reasoningOutputTokens: runtimeFact(reasoningTokens, '累计推理 Token 暂无数据。'),
+      contextTokens: runtimeFact(latestRequest?.totalTokens ?? usage?.last.totalTokens ?? null, '最近请求上下文 Token 暂无数据。'),
+      contextWindow: runtimeFact(latestRequest?.contextWindow ?? usage?.modelContextWindow ?? null, '模型上下文窗口暂无数据。'),
+      cacheHitRate: runtimeFact(cacheHitRate, '缓存命中率暂无数据。'),
+      apiEquivalentUsd: runtimeFact(cost.apiEquivalentUsd, '当前模型没有可用的 API 等价价格。'),
+      priceCoverage: runtimeFact(cost.priceCoverage, '价格覆盖率暂无数据。'),
+      pricingCatalogDate: runtimeFact(cost.pricingCatalogDate, '价格目录日期暂无数据。'),
+      pricingSourceUrls: cost.pricingSourceUrls.length > 0 ? { state: 'available', value: cost.pricingSourceUrls } : { state: 'unavailable', reason: '价格来源暂无数据。' },
+      historyComplete: { state: 'available', value: cost.historyComplete },
+    },
+    performance: {
+      latestOutputTokensPerSecond: runtimeFact(performance?.latestOutputTokensPerSecond ?? null, '最近请求缺少可核验的输出计时。'),
+      latestFirstVisibleResponseMs: runtimeFact(performance?.latestFirstVisibleResponseMs ?? null, '最近请求缺少首段可见响应计时。'),
+      cumulativeProcessedDurationMs: runtimeFact(performance?.cumulativeProcessedDurationMs ?? null, '累计处理耗时暂无数据。'),
+    },
+    activity: {
+      turnCount: runtimeFact(activity?.turnCount ?? null, '轮次统计暂无数据。'),
+      modelRequestCount: runtimeFact(activity?.modelRequestCount ?? null, '模型请求统计暂无数据。'),
+      toolOrCommandCount: runtimeFact(activity?.toolOrCommandCount ?? null, '工具与命令统计暂无数据。'),
+      retryCount: runtimeFact(activity?.retryCount ?? null, '重试统计暂无数据。'),
+      failedTurnCount: runtimeFact(activity?.failedTurnCount ?? null, '失败轮次统计暂无数据。'),
+    },
+    changeSummary:
+      changes?.available && changes.fileCount !== null && changes.addedLines !== null && changes.deletedLines !== null
+        ? { state: 'available', value: { fileCount: changes.fileCount, addedLines: changes.addedLines, deletedLines: changes.deletedLines, complete: changes.complete } }
+        : { state: 'unavailable', reason: '代码改动统计暂无数据。' },
+    environment: {
+      cwd: runtimeFact(executionContext?.cwd ?? null, '会话工作目录暂无数据。'),
+      branch: runtimeFact(executionContext?.cwd ? (executionContext.branch ?? labels[props.language].nonGitDirectory) : null, '会话分支暂无数据。'),
+      nativeSessionId: runtimeFact(nativeSession?.id ?? props.state.providerThreadId ?? props.conversation?.providerThreadId ?? null, '会话线程 ID 暂无数据。'),
+      nativeSessionPath: runtimeFact(nativeSession?.path ?? null, '会话 JSONL 路径暂无数据。'),
+    },
+  };
+  return <RuntimeDetails runtime={runtime} language={props.language} scope="session" mcpStartup={mcpStartup} />;
 }
 
-function RuntimeSummaryMetric(props: { label: string; value: ReactNode }) {
-  return (
-    <span className="session-runtime-summary-metric">
-      <b>{props.label}</b>
-      <span>{props.value}</span>
-    </span>
-  );
-}
-
-function RuntimeDetailGroup(props: { title: string; children: ReactNode }) {
-  return (
-    <section className="session-runtime-detail-group">
-      <h3>{props.title}</h3>
-      <dl>{props.children}</dl>
-    </section>
-  );
-}
-
-function PricingSources(props: { urls: string[]; unavailable: string }) {
-  if (props.urls.length === 0) return props.unavailable;
-  return props.urls.map((source, index) => (
-    <span key={source}>
-      {index > 0 ? ' · ' : null}
-      <a href={source} target="_blank" rel="noreferrer">
-        {pricingSourceLabel(source, index)}
-      </a>
-    </span>
-  ));
-}
-
-function pricingSourceLabel(source: string, index: number): string {
-  try {
-    return new URL(source).hostname;
-  } catch {
-    return `source ${index + 1}`;
-  }
-}
-
-function RuntimeUsageRow(props: { label: string; value: ReactNode }) {
-  return (
-    <div>
-      <dt>{props.label}</dt>
-      <dd>{props.value}</dd>
-    </div>
-  );
+function runtimeFact<T>(value: T | null | undefined, reason: string): NativeRuntimeFact<T> {
+  return value === null || value === undefined ? { state: 'unavailable', reason } : { state: 'available', value };
 }
 
 function nullableCacheHitRate(inputTokens: number | null, cachedInputTokens: number | null): number | null {
   if (inputTokens === null || cachedInputTokens === null || inputTokens <= 0) return null;
   return Math.min(1, Math.max(0, cachedInputTokens / inputTokens));
-}
-
-function formatPercentage(value: number | null, language: SessionUiLanguage): string {
-  if (value === null || !Number.isFinite(value)) return labels[language].unavailable;
-  return new Intl.NumberFormat(language, { style: 'percent', maximumFractionDigits: 1 }).format(Math.max(0, value));
-}
-
-function formatUsdEstimate(value: number, language: SessionUiLanguage): string {
-  const formatted = new Intl.NumberFormat(language, { minimumFractionDigits: value > 0 && value < 0.01 ? 4 : 2, maximumFractionDigits: 6 }).format(value);
-  return `~$${formatted}`;
-}
-
-function formatCostSummary(value: number | null, coverage: number | null, complete: boolean, language: SessionUiLanguage, unavailable: string): string {
-  if (complete && value !== null && Number.isFinite(value)) return formatUsdEstimate(value, language);
-  if (value !== null && Number.isFinite(value) && coverage !== null && coverage > 0) return language === 'zh-CN' ? '估算不完整' : 'Estimate incomplete';
-  return unavailable;
-}
-
-function formatCoveredCost(value: number | null, coverage: number | null, language: SessionUiLanguage, unavailable: string): string {
-  if (value === null || !Number.isFinite(value)) return unavailable;
-  const amount = formatUsdEstimate(value, language);
-  if (coverage !== null && coverage < 1) return `${amount} · ${language === 'zh-CN' ? '已覆盖部分' : 'covered portion'}`;
-  return amount;
-}
-
-function formatContextUsage(totalTokens: number | null, contextWindow: number | null, language: SessionUiLanguage, unavailable: string): string {
-  if (totalTokens === null || contextWindow === null || contextWindow <= 0) return unavailable;
-  return `${formatPercentage(totalTokens / contextWindow, language)} · ${formatTokenCount(totalTokens, language).compact} / ${formatTokenCount(contextWindow, language).compact} Token`;
-}
-
-function formatOutputRate(value: number | null, language: SessionUiLanguage, unavailable: string): string {
-  if (value === null || !Number.isFinite(value) || value < 0) return unavailable;
-  return `${new Intl.NumberFormat(language, { maximumFractionDigits: value < 100 ? 1 : 0 }).format(value)} tokens/s`;
-}
-
-function formatMetricDuration(value: number | null, language: SessionUiLanguage, unavailable: string): string {
-  if (value === null || !Number.isFinite(value) || value < 0) return unavailable;
-  if (value < 1_000) return `${Math.round(value)} ms`;
-  const seconds = value / 1_000;
-  if (seconds < 60) return `${new Intl.NumberFormat(language, { maximumFractionDigits: seconds < 10 ? 1 : 0 }).format(seconds)} s`;
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = Math.round(seconds % 60);
-  if (minutes < 60) return `${minutes} min ${remainingSeconds} s`;
-  const hours = Math.floor(minutes / 60);
-  return `${hours} h ${minutes % 60} min`;
-}
-
-function formatChangeSummary(fileCount: number | null, addedLines: number | null, deletedLines: number | null, complete: boolean, language: SessionUiLanguage, unavailable: string): string {
-  if (fileCount === null || addedLines === null || deletedLines === null) return unavailable;
-  const value = `${fileCount} ${language === 'zh-CN' ? '个文件' : fileCount === 1 ? 'file' : 'files'} · +${addedLines} / -${deletedLines}`;
-  return complete ? value : `${value} · ${language === 'zh-CN' ? '部分统计' : 'partial'}`;
-}
-
-function runtimeValueNeedsAttention(value: unknown, key = ''): boolean {
-  if (typeof value === 'number') return /remaining|available|balance/i.test(key) && value <= 0;
-  if (typeof value === 'string') return /^(error|failed|degraded|unavailable|blocked|exhausted)$/i.test(value.trim());
-  if (Array.isArray(value)) return value.some((entry) => runtimeValueNeedsAttention(entry, key));
-  if (!value || typeof value !== 'object') return false;
-  return Object.entries(value).some(([entryKey, entryValue]) => runtimeValueNeedsAttention(entryValue, entryKey));
-}
-
-function runtimeValueSummary(value: Record<string, unknown>): string {
-  return runtimeValueFragments(value).join(' · ');
-}
-
-function runtimeValueFragments(value: unknown, path: string[] = []): string[] {
-  if (Array.isArray(value)) return value.flatMap((entry, index) => runtimeValueFragments(entry, [...path, String(index + 1)]));
-  if (value && typeof value === 'object') return Object.entries(value).flatMap(([key, entry]) => runtimeValueFragments(entry, [...path, key]));
-  if (value === null || value === undefined) return [];
-  const rawLabel = path.map(humanizeRuntimeKey).join(' ');
-  const label = rawLabel ? `${rawLabel.charAt(0).toUpperCase()}${rawLabel.slice(1)}` : 'Value';
-  return [`${label}: ${String(value)}`];
-}
-
-function humanizeRuntimeKey(value: string): string {
-  return value.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ');
 }
 
 function linkedFileApprovalPaths(state: NativeSessionState | null, request: NativePendingRequest): string[] {
