@@ -84,6 +84,6 @@
 
 - 功能提交：`5c934f2db100`；候选格式提交：`b066420669a3`；发布提交和不可变标签 `v0.3.40`：`60f63bfb394db353d09cdcbefa31cda34e3aa04c`。
 - `origin/main`、标签、GitHub Release 和 Release Workflow 已独立回查；Workflow <https://github.com/imchenway/zeus/actions/runs/32638564206> 的四个作业均为成功。
-- DMG `Zeus-0.3.40-arm64.dmg` 为 112178044 字节，SHA-256 `d02d6c0750cdcbfba68493bbeb18dfbaca3dd49d6ade60bf51160e547c31c73e`；manifest 与 Homebrew Cask 的版本、下载地址和摘要一致。
+- 从公开 Release 重新下载的 DMG `Zeus-0.3.40-arm64.dmg` 为 112178044 字节，SHA-256 `d02d6c0750cdcbfba68493bbeb18dfbaca3dd49d6ade60bf51160e547c31c73e`，`hdiutil verify` 通过；manifest 与 Homebrew Cask 的版本、下载地址和摘要一致。
 - 公开 manifest 为 1047 字节，SHA-256 `e6569975de8f4f2ab4a65fdb5b5ce364523ad57e413be197652c806cb3b1682d`，字段为 `signed=false`、`notarized=false`。
 - GitHub Release：<https://github.com/imchenway/zeus/releases/tag/v0.3.40>。本次没有安装升级，也没有启动或替换 `/Applications/Zeus.app`。
