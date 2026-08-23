@@ -1,7 +1,5 @@
 import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
-import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
-import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paperclip';
 import { TargetIcon as Target } from '@phosphor-icons/react/dist/csr/Target';
@@ -13,7 +11,6 @@ import { openConversationResourceInMain, openTurnChangeFileInMain } from '../app
 import { ZeusSelect } from '../ZeusSelect.js';
 import { canSteerActiveTurn, type ComposerRuntimeSettings, ConversationComposer, type ConversationComposerProps, resolveComposerKeyIntent } from './ConversationComposer.js';
 import { ConversationTranscript, type ConversationTranscriptProps, type SessionCreationStatus } from './ConversationTranscript.js';
-import { QueuedConversationMessages, type QueuedConversationMessagesProps } from './QueuedConversationMessages.js';
 import { SessionPlanProgress } from './SessionActivity.js';
 import { LegacyConversationBanner } from './LegacyConversationBanner.js';
 import { hasPendingRequestDetails, PendingRequestSurface, requestKind } from './PendingRequestSurface.js';
@@ -59,8 +56,8 @@ import type {
   TurnChangeSetOperationResult,
 } from './sessionTypes.js';
 import { normalizeServiceTierSelection, selectionFromEffectiveServiceTier, serviceTierWireOverride } from './serviceTierSelection.js';
-import { reconnectDelayMs, type SessionController, type SessionControllerClient, useSessionControllerInstance, useSessionControllerSelector } from './useSessionController.js';
-import { createConversationComposerStateSelector, createConversationQueueStateSelector, createConversationTranscriptStateSelector, createSessionWorkspaceStateSelector } from './sessionStateSlices.js';
+import { type SessionController, type SessionControllerClient, useSessionControllerInstance, useSessionControllerSelector } from './useSessionController.js';
+import { createConversationComposerStateSelector, createConversationTranscriptStateSelector, createSessionWorkspaceStateSelector } from './sessionStateSlices.js';
 import { createSessionEscapeController, type SessionEscapeController, type SessionEscapeLayer, type SessionEscapeResult } from './useThreadScrollController.js';
 import { SafeMarkdown, type SessionUiLanguage } from './ThreadItemView.js';
 import { autosizeTextarea } from './textareaAutosize.js';
@@ -281,6 +278,8 @@ export interface ConnectedSessionWorkspaceProps {
   localActions?: SessionWorkspaceActions;
   creationStatus?: SessionWorkspaceProps['creationStatus'];
   suppressComposer?: boolean;
+  /** 侧边栏既有会话只展示持久记录，不恢复操作面或实时订阅。 */
+  historyOnly?: boolean;
   stableConversationId?: string;
   onStartConversation?: SessionWorkspaceActions['onStartConversation'];
   onStartProjectConversation?: SessionWorkspaceActions['onStartProjectConversation'];
@@ -369,6 +368,8 @@ export function readCachedCodexConversationCapabilities(client: SessionControlle
 
 export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps) {
   const controllerEnabled = props.controllerEnabled !== false;
+  const [continuedHistoryConversationId, setContinuedHistoryConversationId] = useState<string | null>(null);
+  const historySnapshotOnly = Boolean(props.historyOnly && continuedHistoryConversationId !== props.conversation.id);
   // 真实 id 到达时只重建内部 controller，外层工作面和输入 DOM 保持同一 React 身份。
   const initialCachedState = useMemo(() => props.initialCachedState, [props.conversation.id, props.conversation.projectId]);
   const initialOptimisticState = useMemo(() => props.initialOptimisticState, [props.conversation.id, props.conversation.projectId]);
@@ -379,6 +380,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     initialCachedState,
     initialOptimisticState,
     enabled: controllerEnabled,
+    realtimePolicy: props.historyOnly ? 'lazy' : 'auto',
   });
   const workspaceStateSelector = useMemo(createSessionWorkspaceStateSelector, [controller]);
   const state = useSessionControllerSelector(controller, workspaceStateSelector);
@@ -444,11 +446,13 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
   const controllerVisible = controllerHasSnapshot || (controllerFailed && !props.creationStatus && Boolean(state.snapshot));
   // 普通会话冷切换时直接使用目标 controller；其 send 会在快照就绪前安全排队。
   // 创建期仍优先使用 localActions，避免临时会话身份提前连接服务端。
-  const controllerInteractive = controllerVisible || (controllerEnabled && !props.localState);
+  const controllerActionsAvailable = controllerVisible || (controllerEnabled && !props.localState);
+  const controllerInteractive = !historySnapshotOnly && controllerActionsAvailable;
   const displayedState = controllerVisible ? state : (props.localState ?? state);
   const transcriptLoading = controllerEnabled && !controllerVisible && !state.snapshot && ['connecting', 'hydrating', 'reconnecting'].includes(state.transportState);
-  const displayedCreationStatus: SessionCreationStatus | undefined =
-    controllerFailed && props.creationStatus
+  const displayedCreationStatus: SessionCreationStatus | undefined = historySnapshotOnly
+    ? undefined
+    : controllerFailed && props.creationStatus
       ? {
           state: 'failed',
           message: props.language === 'zh-CN' ? '连接失败' : 'Connection failed',
@@ -464,7 +468,34 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     const projectId = props.conversation.projectId;
     const conversationId = props.conversation.id;
     return {
-      ...(controllerInteractive ? connectedActions : props.localActions),
+      ...(controllerInteractive
+        ? connectedActions
+        : controllerActionsAvailable
+          ? {
+              ...(historySnapshotOnly
+                ? {
+                    onDraftChange: connectedActions.onDraftChange,
+                    onSubmit: (delivery: 'queue' | 'steer_now', settings?: NativeTurnSettingsSelection) => {
+                      setContinuedHistoryConversationId(conversationId);
+                      return connectedActions.onSubmit?.(delivery, settings);
+                    },
+                    onChooseAttachments: connectedActions.onChooseAttachments,
+                    onAddAttachments: connectedActions.onAddAttachments,
+                    onRemoveAttachment: connectedActions.onRemoveAttachment,
+                    onRemoveBrowserSubmission: connectedActions.onRemoveBrowserSubmission,
+                    onContextDraftChange: connectedActions.onContextDraftChange,
+                    onNextTurnSettingsChange: connectedActions.onNextTurnSettingsChange,
+                    onPermissionModeChange: connectedActions.onPermissionModeChange,
+                    onCollaborationModeChange: connectedActions.onCollaborationModeChange,
+                  }
+                : {}),
+              onLoadEarlierHistory: connectedActions.onLoadEarlierHistory,
+              onLoadTurnProcess: connectedActions.onLoadTurnProcess,
+              onLoadTurnArtifacts: connectedActions.onLoadTurnArtifacts,
+              onLoadV2Content: connectedActions.onLoadV2Content,
+              onLoadV2ToolResult: connectedActions.onLoadV2ToolResult,
+            }
+          : props.localActions),
       ...(controllerInteractive
         ? {
             onOpenResource: async (resource, target, location) => {
@@ -557,7 +588,9 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
   }, [
     connectedActions,
     controller,
+    controllerActionsAvailable,
     controllerInteractive,
+    historySnapshotOnly,
     props.client,
     props.conversation.id,
     props.conversation.projectId,
@@ -582,10 +615,12 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       owner={props.owner}
       choices={props.choices}
       capabilities={capabilities}
-      suppressComposer={props.suppressComposer || Boolean(props.readOnlyGate)}
-      quickActionsSuppressed={props.quickActionsSuppressed}
+      suppressComposer={props.suppressComposer || (!props.historyOnly && Boolean(props.readOnlyGate))}
+      historyOnly={historySnapshotOnly}
+      projectPersistedPlans
+      quickActionsSuppressed={props.quickActionsSuppressed || historySnapshotOnly}
       taskManagementStatusChangeBusy={props.taskManagementStatusChangeBusy}
-      readOnlyGate={props.readOnlyGate}
+      readOnlyGate={props.historyOnly ? undefined : props.readOnlyGate}
       subagentListSnapshot={subagentListSnapshot}
       transcriptLoading={transcriptLoading}
       creationStatus={displayedCreationStatus}
@@ -1216,6 +1251,10 @@ export interface SessionWorkspaceProps {
   projects?: readonly Pick<ProjectRecord, 'id' | 'name' | 'localPath'>[];
   choices?: NativeConversationChoice[];
   suppressComposer?: boolean;
+  /** 历史快照阶段：只读正文和过程，不恢复旧队列；用户首次发送后原地进入活动态。 */
+  historyOnly?: boolean;
+  /** 历史入口的稳定身份；续聊后仍用于补齐旧轮次的持久化计划。 */
+  projectPersistedPlans?: boolean;
   quickActionsSuppressed?: boolean;
   taskManagementStatusChangeBusy?: boolean;
   readOnlyGate?: SessionReadOnlyGate;
@@ -1272,12 +1311,6 @@ function SessionComposerProjection(props: Omit<ConversationComposerProps, 'state
   const { controller, state: fallbackState, ...composerProps } = props;
   const state = useOptionalSessionStateSlice(controller, fallbackState, createConversationComposerStateSelector);
   return <ConversationComposer {...composerProps} state={state} />;
-}
-
-function SessionQueueProjection(props: Omit<QueuedConversationMessagesProps, 'state'> & { state: NativeSessionState; controller?: SessionController }) {
-  const { controller, state: fallbackState, ...queueProps } = props;
-  const state = useOptionalSessionStateSlice(controller, fallbackState, createConversationQueueStateSelector);
-  return <QueuedConversationMessages {...queueProps} state={state} />;
 }
 
 const labels = {
@@ -1499,7 +1532,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const previousBlockingInteractionCountRef = useRef(0);
   const composerFocusRestorationPendingRef = useRef(false);
   const legacy = props.conversation && props.conversation.transportKind !== 'codex_native';
-  const interactionReadOnly = Boolean(props.readOnlyGate) || Boolean(props.conversation?.readOnly && props.conversation.transportKind === 'codex_native');
+  const interactionReadOnly = Boolean(props.historyOnly) || Boolean(props.readOnlyGate) || Boolean(props.conversation?.readOnly && props.conversation.transportKind === 'codex_native');
   const transcriptInteractionsEnabled = !interactionReadOnly;
   // 历史分页、过程与截断正文都是本地只读查询。会话只读时仍必须允许查看。
   const transcriptReadActionsEnabled = true;
@@ -1507,25 +1540,25 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const realtimeExpected = sessionStateNeedsRealtime(props.state);
   // 空闲历史会话只读本地快照，不存在“连接失败”；只有真实轮次、排队或待处理请求需要实时连接时才报告连接错误。
   const transportError = realtimeExpected && props.state?.transportState === 'failed' && props.state.error?.retryable === false ? (errorMessage(props.state.error) ?? props.loadError ?? copy.failed) : null;
-  useApplicationErrorDialog(props.readOnlyGate?.error, {
+  useApplicationErrorDialog(props.historyOnly ? null : props.readOnlyGate?.error, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
     title: props.language === 'zh-CN' ? '会话重新打开失败' : 'Conversation failed to reopen',
     source: 'SessionWorkspace.readOnlyGate',
   });
-  useApplicationErrorDialog(props.loadState === 'error' ? (props.loadError ?? copy.failed) : null, {
+  useApplicationErrorDialog(!props.historyOnly && props.loadState === 'error' ? (props.loadError ?? copy.failed) : null, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
     title: props.language === 'zh-CN' ? '会话读取失败' : 'Conversation failed to load',
     source: 'SessionWorkspace.load',
   });
-  useApplicationErrorDialog(transportError, {
+  useApplicationErrorDialog(props.historyOnly ? null : transportError, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
     title: props.language === 'zh-CN' ? '会话连接失败' : 'Conversation connection failed',
     source: 'SessionWorkspace.transport',
   });
   const effectiveResumable = props.state?.snapshot ? !['closed', 'failed'].includes(effectiveProviderState ?? '') : effectiveProviderState === 'archived' ? true : props.conversation?.resumable;
   const nonResumableNative = Boolean(props.conversation && !legacy && !effectiveResumable);
-  const pendingRequests = props.state?.pendingRequests.filter((request) => request.status === 'pending' && hasPendingRequestDetails(request)) ?? [];
-  const pendingPlanImplementationRequests = props.state?.planImplementationRequests.filter((request) => request.status === 'pending').slice(-1) ?? [];
+  const pendingRequests = props.historyOnly ? [] : (props.state?.pendingRequests.filter((request) => request.status === 'pending' && hasPendingRequestDetails(request)) ?? []);
+  const pendingPlanImplementationRequests = props.historyOnly ? [] : (props.state?.planImplementationRequests.filter((request) => request.status === 'pending').slice(-1) ?? []);
   const blockingPendingRequest = pendingRequests[0] ?? null;
   const blockingPlanImplementationRequest = blockingPendingRequest ? null : (pendingPlanImplementationRequests[0] ?? null);
   const blockingInteractionCount = pendingRequests.length + pendingPlanImplementationRequests.length;
@@ -2091,38 +2124,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     );
   }
 
-  function renderQueuedConversationMessages(): ReactNode {
-    if (!props.state) return null;
-    return (
-      <SessionQueueProjection
-        state={props.state}
-        controller={props.stateController}
-        language={props.language}
-        onEdit={actions.onEditQueuedSubmission}
-        onDelete={actions.onDeleteQueuedSubmission}
-        onSendNow={actions.onSendQueuedNow}
-        onRetrySubmission={actions.onRetryQueuedSubmission}
-        onRerouteSubmission={
-          composerRuntimeSettings
-            ? (submissionId) =>
-                actions.onRerouteQueuedSubmission?.(submissionId, {
-                  model: composerRuntimeSettings.model,
-                  ...(composerRuntimeSettings.effort ? { effort: composerRuntimeSettings.effort } : {}),
-                  serviceTier: composerRuntimeSettings.serviceTier ?? null,
-                  permissionMode: composerRuntimeSettings.permissionMode,
-                  collaborationMode: composerRuntimeSettings.collaborationMode,
-                })
-            : undefined
-        }
-        onReorder={actions.onReorderQueue}
-        onResume={props.state.queue?.state.type === 'paused' && props.state.queue.state.reason === 'conflict_preparation_failed' ? actions.onRecoverQueue : actions.onResumeQueue}
-        onRetry={actions.onRestoreArchivedConversation}
-      />
-    );
-  }
-
   function renderBlockingInteraction(): ReactNode {
-    if (props.suppressComposer) return null;
+    if (props.suppressComposer || props.historyOnly) return null;
     if (blockingPendingRequest) {
       return (
         <section className="session-interaction-dock" aria-label={props.language === 'zh-CN' ? '待处理交互' : 'Pending interaction'}>
@@ -2140,7 +2143,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
             onChooseAttachments={actions.onChooseStartAttachments}
             answerAttachmentsSupported={(props.state?.snapshot?.agent?.kind ?? props.conversation?.agent?.kind ?? 'codex') === 'codex'}
           />
-          {renderQueuedConversationMessages()}
         </section>
       );
     }
@@ -2156,7 +2158,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
             error={requestErrors[blockingPlanImplementationRequest.id]}
             onRespond={(_requestId, response) => respondToPlanImplementationRequest(blockingPlanImplementationRequest, response)}
           />
-          {renderQueuedConversationMessages()}
         </section>
       );
     }
@@ -2318,7 +2319,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         </header>
       ) : null}
 
-      {props.readOnlyGate ? (
+      {!props.historyOnly && props.readOnlyGate ? (
         <section className="session-task-readonly-gate" role="note" aria-label={props.readOnlyGate.title}>
           <span>
             <strong>{props.readOnlyGate.title}</strong>
@@ -2369,28 +2370,13 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
               >
                 <div className="session-conversation-pane">
                   <SessionRuntimeDetails state={props.state} conversation={props.conversation} language={props.language} capabilities={props.capabilities} />
-                  {props.state.transportState === 'reconnecting' && sessionStateNeedsRealtime(props.state) ? (
-                    <SessionReconnectNotice language={props.language} attempt={props.state.reconnectAttempt} onReconnect={actions.onReconnect} />
-                  ) : null}
-                  {props.state.transportState === 'failed' && (sessionStateNeedsRealtime(props.state) || !props.state.snapshot) ? (
-                    <section className="session-transport-failure" role="status" data-retained-content={Boolean(props.state.snapshot) || undefined}>
-                      <WarningCircle aria-hidden="true" weight="regular" />
-                      <span className="session-transport-failure-copy">
-                        <strong>{isServerBusyError(props.state.error) ? copy.serverBusy : copy.failed}</strong>
-                        <p>{props.state.snapshot ? copy.refreshFailureHelp : isServerBusyError(props.state.error) ? copy.serverBusyHelp : copy.loadFailureHelp}</p>
-                      </span>
-                      {actions.onReconnect ? (
-                        <button type="button" onClick={() => void actions.onReconnect?.()}>
-                          {props.state.snapshot ? copy.retry : copy.reload}
-                        </button>
-                      ) : null}
-                    </section>
-                  ) : null}
                   <div ref={setQuickActionsPersistentHost} className="session-quick-actions-persistent-host" />
                   <SessionTranscriptProjection
                     state={props.state}
                     controller={props.stateController}
                     language={props.language}
+                    historyOnly={props.historyOnly}
+                    projectPersistedPlans={props.projectPersistedPlans}
                     historyLoading={Boolean(props.transcriptLoading ?? ((props.state.transportState === 'hydrating' || props.state.transportState === 'connecting') && !props.state.snapshot)) && !props.state.snapshot}
                     onLatestContentVisibilityChange={props.onLatestContentVisibilityChange}
                     creationStatus={props.creationStatus}
@@ -2450,16 +2436,15 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                         : undefined
                     }
                   />
-                  {props.suppressComposer || !dockedPlan ? null : <SessionPlanProgress plan={dockedPlan} language={props.language} />}
+                  {props.suppressComposer || props.historyOnly || !dockedPlan ? null : <SessionPlanProgress plan={dockedPlan} language={props.language} />}
                   {renderBlockingInteraction()}
                   {props.suppressComposer || blockingPendingRequest || blockingPlanImplementationRequest ? null : (
                     <>
-                      {renderQueuedConversationMessages()}
                       {goal ? <GoalRail goal={goal} language={props.language} onOpen={() => setGoalPanelOpen(true)} /> : null}
                       {renderConversationComposer()}
                     </>
                   )}
-                  {interruptArmed ? (
+                  {!props.historyOnly && interruptArmed ? (
                     <p className="session-interrupt-confirm" role="status">
                       {copy.interruptConfirm}
                     </p>
@@ -3162,27 +3147,6 @@ function mergeConversationAttachments(current: NativeConversationAttachment[], a
   return [...byIdentity.values()];
 }
 
-function SessionReconnectNotice(props: { language: SessionUiLanguage; attempt: number; onReconnect?: () => void | Promise<void> }) {
-  const delay = reconnectDelayMs(props.attempt);
-  const delayLabel = delay < 1_000 ? `${delay} ms` : `${delay / 1_000} s`;
-  return (
-    <section className="session-reconnect-notice" role="status" aria-live="polite" aria-atomic="true">
-      <span className="session-reconnect-symbol" aria-hidden="true">
-        <ArrowsClockwise weight="regular" />
-      </span>
-      <span>
-        <strong>{labels[props.language].reconnectingAttempt(props.attempt)}</strong>
-        <small>{props.language === 'zh-CN' ? `自动重试会持续进行；下次约 ${delayLabel} 后，历史记录仍可查看。` : `Automatic retries continue; next attempt in about ${delayLabel}. History remains available.`}</small>
-      </span>
-      {props.onReconnect ? (
-        <button type="button" onClick={() => void props.onReconnect?.()}>
-          {props.language === 'zh-CN' ? '立即重试' : 'Retry now'}
-        </button>
-      ) : null}
-    </section>
-  );
-}
-
 function SessionRuntimeDetails(props: { state: NativeSessionState; conversation: NativeConversationChoice | null; language: SessionUiLanguage; capabilities?: CodexConversationCapabilities | null }) {
   const copy = labels[props.language];
   const model = props.state.providerSettings?.model?.trim() || props.state.snapshot?.model?.id?.trim() || props.conversation?.model?.id?.trim() || copy.unsynced;
@@ -3239,8 +3203,12 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
           <RuntimeSummaryMetric label={zh ? '会话累计 Token' : 'Session tokens'} value={totalTokens === null ? copy.unavailable : `${formatTokenCount(totalTokens, props.language).compact} Token`} />
           <RuntimeSummaryMetric label={copy.contextUsage} value={contextUsage} />
           <RuntimeSummaryMetric label={copy.cacheHitRate} value={formatPercentage(cacheHitRate, props.language)} />
-          <RuntimeSummaryMetric label={zh ? '最近请求输出速率' : 'Latest output rate'} value={formatOutputRate(performance?.latestOutputTokensPerSecond ?? null, props.language, copy.unavailable)} />
-          <RuntimeSummaryMetric label={zh ? 'API 等价费用（估算）' : 'API-equivalent cost (est.)'} value={formatCostSummary(cost.apiEquivalentUsd, cost.priceCoverage, cost.complete, props.language, copy.unavailable)} />
+          {performance?.latestOutputTokensPerSecond !== null && performance?.latestOutputTokensPerSecond !== undefined ? (
+            <RuntimeSummaryMetric label={zh ? '最近请求输出速率' : 'Latest output rate'} value={formatOutputRate(performance.latestOutputTokensPerSecond, props.language, copy.unavailable)} />
+          ) : null}
+          {cost.apiEquivalentUsd !== null && cost.priceCoverage !== null ? (
+            <RuntimeSummaryMetric label={zh ? 'API 等价费用（估算）' : 'API-equivalent cost (est.)'} value={formatCostSummary(cost.apiEquivalentUsd, cost.priceCoverage, cost.complete, props.language, copy.unavailable)} />
+          ) : null}
         </span>
       </summary>
       <div className="session-runtime-detail-groups">
@@ -3259,8 +3227,12 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
           {!cost.historyComplete ? <RuntimeUsageRow label={zh ? '费用完整性' : 'Cost completeness'} value={zh ? '估算不完整' : 'Estimate incomplete'} /> : null}
         </RuntimeDetailGroup>
         <RuntimeDetailGroup title={zh ? '性能与活动' : 'Performance and activity'}>
-          <RuntimeUsageRow label={zh ? '最近输出速率' : 'Latest output rate'} value={formatOutputRate(performance?.latestOutputTokensPerSecond ?? null, props.language, copy.unavailable)} />
-          <RuntimeUsageRow label={zh ? '最近首段可见响应延迟' : 'Latest first visible response'} value={formatMetricDuration(performance?.latestFirstVisibleResponseMs ?? null, props.language, copy.unavailable)} />
+          {performance?.latestOutputTokensPerSecond !== null && performance?.latestOutputTokensPerSecond !== undefined ? (
+            <RuntimeUsageRow label={zh ? '最近输出速率' : 'Latest output rate'} value={formatOutputRate(performance.latestOutputTokensPerSecond, props.language, copy.unavailable)} />
+          ) : null}
+          {performance?.latestFirstVisibleResponseMs !== null && performance?.latestFirstVisibleResponseMs !== undefined ? (
+            <RuntimeUsageRow label={zh ? '最近首段可见响应延迟' : 'Latest first visible response'} value={formatMetricDuration(performance.latestFirstVisibleResponseMs, props.language, copy.unavailable)} />
+          ) : null}
           <RuntimeUsageRow label={zh ? '累计处理耗时' : 'Cumulative processing time'} value={formatMetricDuration(performance?.cumulativeProcessedDurationMs ?? null, props.language, copy.unavailable)} />
           <RuntimeUsageRow label={zh ? '轮次' : 'Turns'} value={activity?.turnCount ?? copy.unavailable} />
           <RuntimeUsageRow label={zh ? '模型请求' : 'Model requests'} value={activity?.modelRequestCount ?? copy.unavailable} />

@@ -9,6 +9,7 @@ import type {
   NativeConversationContentV2Page,
   NativeConversationToolResultPage,
   NativePendingRequest,
+  NativeQueueSnapshot,
   NativeSessionError,
   NativeSessionItemBuffer,
   NativeSessionState,
@@ -20,7 +21,6 @@ import { isAssistantDeliverableItem } from './sessionTypes.js';
 import type { ConversationFileLocation, ConversationOpenTarget, ConversationResponseAnnotation, ConversationResponseTextAnchor } from '@zeus/shared';
 import { useThreadScrollController } from './useThreadScrollController.js';
 import { TurnChangeCard } from './TurnChanges.js';
-import { visibleQueuedSubmissions } from './QueuedConversationMessages.js';
 import { reasoningSummaryStatus, SessionReasoningSummary } from './SessionReasoningSummary.js';
 import { AnsweredRequestHistory, isAnsweredUserInputRequest } from './AnsweredRequestHistory.js';
 import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
@@ -29,6 +29,9 @@ import { useTranscriptViewportVirtualizer } from './transcriptViewportVirtualize
 export interface ConversationTranscriptProps {
   state: NativeSessionState;
   language: SessionUiLanguage;
+  historyOnly?: boolean;
+  /** 从历史入口打开后持续补齐已持久化计划；首次续聊不能让旧计划从时间线消失。 */
+  projectPersistedPlans?: boolean;
   onEditUserItem?: (item: NativeSessionItemBuffer, content: string) => void | Promise<void>;
   onRetryItem?: (item: NativeSessionItemBuffer) => void;
   openPlanItemKey?: string | null;
@@ -102,14 +105,22 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const [expandedRowKeys, setExpandedRowKeys] = useState<ReadonlySet<string>>(() => new Set());
   const [focusedRowKey, setFocusedRowKey] = useState<string | null>(null);
   const [historyAnchorRowKey, setHistoryAnchorRowKey] = useState<string | null>(null);
+  const activeTurnId = props.historyOnly ? null : props.state.activeTurnId;
   const queuedSubmissions = useMemo(() => visibleQueuedSubmissions(props.state.queue), [props.state.queue]);
   const queuedClientUserMessageIds = useMemo(() => new Set(queuedSubmissions.map((submission) => submission.clientUserMessageId).filter((value): value is string => Boolean(value))), [queuedSubmissions]);
-  const projectedItems = useMemo(
+  const persistedItems = useMemo(
     () =>
       props.state.itemOrder
-        .map((key) => props.state.items[key])
-        .filter((entry): entry is NativeSessionItemBuffer => Boolean(entry) && isVisibleTranscriptItem(entry) && !isUnacceptedQueuedUserItem(entry, props.state, queuedClientUserMessageIds)),
-    [props.state.activeTurnId, props.state.itemOrder, props.state.items, queuedClientUserMessageIds],
+      .map((key) => props.state.items[key])
+      .filter(
+        (entry): entry is NativeSessionItemBuffer =>
+          Boolean(entry) && (!props.historyOnly || !entry.optimistic) && isVisibleTranscriptItem(entry) && !isUnacceptedQueuedUserItem(entry, props.state, queuedClientUserMessageIds),
+      ),
+    [props.historyOnly, props.state.activeTurnId, props.state.itemOrder, props.state.items, queuedClientUserMessageIds],
+  );
+  const projectedItems = useMemo(
+    () => (props.projectPersistedPlans ? projectPersistedTurnPlans(props.state, persistedItems) : persistedItems),
+    [persistedItems, props.projectPersistedPlans, props.state.conversationId, props.state.planImplementationRequests, props.state.providerThreadId, props.state.terminalTurnIds, props.state.turnsByProviderId],
   );
   const collapsedErrorItems = useMemo(() => collapseRepeatedErrorItems(projectedItems), [projectedItems]);
   const providerErrorItemsByTurn = useMemo(() => groupErrorItemsByTurn(collapsedErrorItems), [collapsedErrorItems]);
@@ -132,11 +143,11 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   );
   const lastUserKey = [...items].reverse().find((entry) => `${entry.type}`.toLocaleLowerCase().includes('user'))?.key;
   const answeredRequests = useMemo(() => props.state.pendingRequests.filter(isAnsweredUserInputRequest), [props.state.pendingRequests]);
-  const transcriptRows = useMemo(() => projectTranscriptRows(items, answeredRequests, props.state.activeTurnId), [answeredRequests, items, props.state.activeTurnId]);
-  const turnRows = useMemo(() => projectTranscriptTurnRows(transcriptRows, props.state.activeTurnId, props.state.terminalTurnIds), [props.state.activeTurnId, props.state.terminalTurnIds, transcriptRows]);
+  const transcriptRows = useMemo(() => projectTranscriptRows(items, answeredRequests, activeTurnId, props.historyOnly), [activeTurnId, answeredRequests, items, props.historyOnly]);
+  const turnRows = useMemo(() => projectTranscriptTurnRows(transcriptRows, activeTurnId, props.state.terminalTurnIds), [activeTurnId, props.state.terminalTurnIds, transcriptRows]);
   const turnRowKeys = useMemo(() => turnRows.map((row) => row.key), [turnRows]);
   const turnRowsByKey = useMemo(() => new Map(turnRows.map((row) => [row.key, row])), [turnRows]);
-  const activeTurnRowKeys = useMemo(() => new Set(turnRows.filter((row) => props.state.activeTurnId && transcriptTurnRowTurnId(row) === props.state.activeTurnId).map((row) => row.key)), [props.state.activeTurnId, turnRows]);
+  const activeTurnRowKeys = useMemo(() => new Set(turnRows.filter((row) => activeTurnId && transcriptTurnRowTurnId(row) === activeTurnId).map((row) => row.key)), [activeTurnId, turnRows]);
   const pinnedRowKeys = useMemo(() => {
     const pinned = new Set([...activeTurnRowKeys, ...expandedRowKeys]);
     if (focusedRowKey) pinned.add(focusedRowKey);
@@ -157,11 +168,11 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       .filter((turn) => turn.status === 'failed' && turn.error && !visibleTurnIds.has(turn.providerTurnId ?? ''))
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   }, [props.state.turnsByProviderId, transcriptRows]);
-  const showActiveStatus = shouldShowTranscriptThinking(props.state, items);
-  const motionFocus = resolveSessionMotionFocus(props.state, transcriptItems, showActiveStatus);
+  const showActiveStatus = !props.historyOnly && shouldShowTranscriptThinking(props.state, items);
+  const motionFocus = props.historyOnly ? null : resolveSessionMotionFocus(props.state, transcriptItems, showActiveStatus);
   const activeStatusKind = props.state.conversationState === 'starting_turn' ? 'starting' : 'thinking';
   const creatingSession = props.creationStatus?.state === 'creating';
-  const realTurnStarted = Boolean(props.state.activeTurnId);
+  const realTurnStarted = Boolean(activeTurnId);
   // 创建期只保留一个主进度：真实轮次建立前显示连接，建立后由轮次状态或真实过程内容接管。
   const showCreationStatus = Boolean(props.creationStatus) && !(creatingSession && realTurnStarted);
   const showStandaloneActiveStatus = showActiveStatus && !(creatingSession && !realTurnStarted);
@@ -392,18 +403,18 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     if (!activeTurnTrackingInitializedRef.current) {
       // 首次水合得到的活动轮次属于既有会话现场，不能误当成当前页面刚开始的新轮次。
       activeTurnTrackingInitializedRef.current = true;
-      previousTurnIdRef.current = props.state.activeTurnId;
+      previousTurnIdRef.current = activeTurnId;
       return;
     }
-    if (props.state.activeTurnId && previousTurnIdRef.current !== props.state.activeTurnId) {
+    if (activeTurnId && previousTurnIdRef.current !== activeTurnId) {
       const effect = scrollController.onTurnStarted(metrics(container), Date.now());
       if (effect.type === 'scroll_to_bottom') {
         scrollToLatest(container, latestContentMarkerRef.current);
         setReturnToLatestVisible(false);
       }
     }
-    previousTurnIdRef.current = props.state.activeTurnId;
-  }, [historyHydrated, latestSubmittedMessageId, props.state.activeTurnId, scrollController]);
+    previousTurnIdRef.current = activeTurnId;
+  }, [activeTurnId, historyHydrated, latestSubmittedMessageId, scrollController]);
 
   useLayoutEffect(() => {
     maintainLatestPosition();
@@ -454,7 +465,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       const process = row.rows.map((child) => {
         const content = renderTranscriptRow(
           child,
-          transcriptRowRenderOptions(renderProps, items, showActiveStatus && props.state.activeTurnId === row.turnId, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId),
+          transcriptRowRenderOptions(renderProps, items, showActiveStatus && activeTurnId === row.turnId, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId),
         );
         return active ? (
           <motion.div className="session-live-turn-row" key={child.key} layout={reduceMotion ? false : 'position'} transition={reduceMotion ? { duration: 0 } : liveTurnLayoutTransition}>
@@ -1194,9 +1205,14 @@ export function isFinalAnswerItem(item: NativeSessionItemBuffer): boolean {
   return itemRole(item) === 'assistant' && (providerPhase === 'final_answer' || providerPhase === 'finalAnswer');
 }
 
-export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[], answeredRequests: readonly NativePendingRequest[] = [], activeTurnId: string | null = null): TranscriptRow[] {
+export function projectTranscriptRows(
+  items: readonly NativeSessionItemBuffer[],
+  answeredRequests: readonly NativePendingRequest[] = [],
+  activeTurnId: string | null = null,
+  historyOnly = false,
+): TranscriptRow[] {
   const rows: TranscriptRow[] = [];
-  const effectiveActiveTurnId = activeTurnId && items.some((item) => item.turnId === activeTurnId) ? activeTurnId : latestLiveTurnId(items);
+  const effectiveActiveTurnId = historyOnly ? null : activeTurnId && items.some((item) => item.turnId === activeTurnId) ? activeTurnId : latestLiveTurnId(items);
   const currentReasoningItemKey = latestCurrentReasoningItemKey(items, effectiveActiveTurnId);
   const currentActivityItemKey = latestCurrentActivityItemKey(items, effectiveActiveTurnId);
   const activitiesByTurn = new Map<string, NativeSessionItemBuffer[]>();
@@ -1307,11 +1323,59 @@ export function isVisibleTranscriptItem(item: NativeSessionItemBuffer): boolean 
   return transcriptItemText(item).trim().length > 0;
 }
 
+/** V2 把 PLAN 持久化在轮次快照而不是模型正文中；历史视图必须把它还原为该轮的正式产物。 */
+function projectPersistedTurnPlans(state: NativeSessionState, items: readonly NativeSessionItemBuffer[]): NativeSessionItemBuffer[] {
+  const turnsWithVisiblePlan = new Set(items.filter((item) => normalizeItemType(item.type) === 'plan').map((item) => item.turnId));
+  const requestByTurn = new Map(state.planImplementationRequests.map((request) => [request.turnId, request]));
+  const planItems = Object.values(state.turnsByProviderId).flatMap((turn) => {
+    const turnId = turn.providerTurnId ?? turn.id;
+    if (!turn.plan || turnsWithVisiblePlan.has(turnId)) return [];
+    const request = requestByTurn.get(turnId);
+    const itemId = request?.planItemId || `${turn.id}:plan`;
+    const updatedAt = turn.completedAt ?? turn.updatedAt ?? turn.createdAt;
+    const explanation = turn.plan.explanation?.trim() ?? '';
+    const steps = turn.plan.steps.map((step, index) => `${index + 1}. ${step.step.trim()}`).filter((step) => step.length > 3);
+    const text = [explanation, steps.join('\n')].filter(Boolean).join('\n\n');
+    if (!text) return [];
+    return [
+      {
+        key: `turn-plan:${encodeURIComponent(state.conversationId ?? '')}:${encodeURIComponent(turnId)}`,
+        conversationId: state.conversationId ?? '',
+        threadId: state.providerThreadId ?? 'unbound-thread',
+        turnId,
+        itemId,
+        localItemId: itemId,
+        type: 'plan',
+        status: state.terminalTurnIds[turnId] ? 'completed' : turn.status,
+        phase: 'final_answer',
+        text,
+        payload: { phase: 'final_answer', plan: turn.plan },
+        resources: [],
+        optimistic: false,
+        timelineAt: updatedAt,
+        updatedAt,
+      } satisfies NativeSessionItemBuffer,
+    ];
+  });
+  if (planItems.length === 0) return [...items];
+  return [...items, ...planItems].sort((left, right) => transcriptTimelineAt(left).localeCompare(transcriptTimelineAt(right)) || left.key.localeCompare(right.key));
+}
+
+function transcriptTimelineAt(item: NativeSessionItemBuffer): string {
+  return item.timelineAt ?? item.updatedAt ?? '';
+}
+
 function isUnacceptedQueuedUserItem(item: NativeSessionItemBuffer, state: NativeSessionState, queuedClientUserMessageIds: ReadonlySet<string>): boolean {
   if (!item.optimistic || itemRole(item) !== 'user' || item.payload.delivery !== 'queue') return false;
   const clientUserMessageId = item.clientUserMessageId ?? item.durableClientUserMessageId;
   if (clientUserMessageId && queuedClientUserMessageIds.has(clientUserMessageId)) return true;
   return item.turnId.startsWith('pending:') && Boolean(state.activeTurnId && item.turnId !== state.activeTurnId);
+}
+
+function visibleQueuedSubmissions(queue: NativeQueueSnapshot | null) {
+  return [...(queue?.submissions ?? [])]
+    .filter((submission) => (submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'steering' || submission.status === 'paused') && !submission.providerTurnId)
+    .sort((left, right) => left.position - right.position || (left.createdAt ?? '').localeCompare(right.createdAt ?? '') || left.id.localeCompare(right.id));
 }
 
 type SessionMotionFocusKind = 'thinking' | 'reasoning' | 'activity' | 'plan' | 'image' | 'streaming';

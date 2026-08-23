@@ -248,6 +248,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setScanState,
     setSelectedGraphConversation,
     setSelectedNativeConversationId,
+    setSelectedNativeConversationPresentation,
     setSelectedTaskIds,
     setSnapshot,
     setTaskConversationDrawerTarget,
@@ -1834,7 +1835,11 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     }
   }
 
-  async function selectNativeConversation(conversation: NativeConversationChoice, navigation: 'page' | 'preserve' = 'page'): Promise<void> {
+  async function selectNativeConversation(
+    conversation: NativeConversationChoice,
+    navigation: 'page' | 'preserve' = 'page',
+    presentation: 'history' | 'interactive' = 'history',
+  ): Promise<void> {
     const targetProject = snapshot.projects.find((candidate) => candidate.id === conversation.projectId);
     if (targetProject) {
       activeProjectIdRef.current = targetProject.id;
@@ -1846,6 +1851,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     const navigationId = conversation.navigationId ?? conversation.id;
     selectedNativeConversationIdRef.current = navigationId;
     setSelectedNativeConversationId(navigationId);
+    setSelectedNativeConversationPresentation(presentation);
     setFocusedArchivedConversation(conversation.archived ? conversation : null);
     setConversationDraftOpen(false);
     if (navigation === 'page') {
@@ -1927,12 +1933,13 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setTaskConversationDrawerTarget(undefined);
     setConversationDrawer(undefined);
     if (conversation) {
-      await selectNativeConversation(conversation);
+      await selectNativeConversation(conversation, 'page', 'interactive');
     } else {
       // 暂时未读到新会话时仍进入正确任务的会话页；后续列表刷新命中后会按 id 自动选中。
       if (task) setTaskDetail(task);
       selectedNativeConversationIdRef.current = conversationId;
       setSelectedNativeConversationId(conversationId);
+      setSelectedNativeConversationPresentation('interactive');
       setConversationDraftOpen(false);
       setActiveNavTarget('conversations');
       setActiveProjectSection('sessions');
@@ -2055,6 +2062,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
           setNativeConversationChoiceTaskStates((current) => ({ ...current, [input.task.id]: completeNativeConversationChoiceTaskLoad(current[input.task.id]) }));
           if (activeProjectIdRef.current !== input.task.projectId) return;
           setSelectedNativeConversationId(choice.id);
+          setSelectedNativeConversationPresentation('interactive');
           setConversationDraftOpen(false);
           const task = snapshot.tasks.find((candidate) => candidate.id === input.task.id);
           if (task) setTaskDetail(task);
@@ -2113,6 +2121,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
           if (activeProjectIdRef.current !== projectId) return;
           setTaskDetail(undefined);
           setSelectedNativeConversationId(choice.id);
+          setSelectedNativeConversationPresentation('interactive');
           setConversationDraftOpen(false);
         },
         refresh: refreshNativeProjectConversationChoices,
@@ -2142,6 +2151,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setActiveNavTarget('conversations');
     setActiveProjectSection('sessions');
     setConversationDraftOpen(true);
+    setSelectedNativeConversationPresentation('interactive');
     setNewConversationFocusRequest((current) => current + 1);
     setSelectedNativeConversationId(null);
     setFocusedArchivedConversation(null);
@@ -2166,6 +2176,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       setTaskDetail(undefined);
       setTaskDetailPaneTaskId(undefined);
       setSelectedNativeConversationId(null);
+      setSelectedNativeConversationPresentation('interactive');
       setFocusedArchivedConversation(null);
       setConversationDrawer(undefined);
       setConversationDraftOpen(true);
@@ -2798,7 +2809,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     }
     setTaskDetailPaneTaskId(undefined);
     setConversationDrawer(undefined);
-    void selectNativeConversation(pending.choice);
+    void selectNativeConversation(pending.choice, 'page', 'interactive');
     if (typeof window !== 'undefined') window.history.replaceState(null, '', '#project-sessions');
     workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'auto' });
     // 先让 pending 工作面和首条消息完成一次绘制，再启动真实会话创建，避免后台请求阻塞首帧。
@@ -2930,6 +2941,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     }
     selectedNativeConversationIdRef.current = pending.origin.selectedConversationId;
     setSelectedNativeConversationId(pending.origin.selectedConversationId);
+    setSelectedNativeConversationPresentation(pending.origin.selectedConversationPresentation);
     setActiveNavTarget(pending.origin.activeNavTarget);
     setActiveProjectSection(pending.origin.activeProjectSection);
     setTaskDetailPaneTaskId(pending.origin.taskDetailPaneTaskId);

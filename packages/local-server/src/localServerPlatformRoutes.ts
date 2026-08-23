@@ -1279,16 +1279,10 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       const visibleRequests = conversationRequests.listByConversation(conversation.id).filter((request) => request.status === 'pending' || (request.requestKind === 'request_user_input' && request.status === 'resolved'));
       return {
         conversationId: conversation.id,
-        requests: visibleRequests.map((persistedRequest) => {
-          const snapshot = toNativeServerRequest(persistedRequest);
-          const turn = persistedRequest.turnId ? conversationTurns.getById(persistedRequest.turnId) : undefined;
-          const item = persistedRequest.itemId ? conversationProviderItems.getById(persistedRequest.itemId) : undefined;
-          return {
-            ...snapshot,
-            turnId: turn?.providerTurnId ?? snapshot.turnId,
-            itemId: item?.providerItemId ?? snapshot.itemId,
-          };
-        }),
+        // 先保留存储层本地身份；Renderer 会使用当前快照已知的映射统一为 Provider
+        // 身份。这样超出最近轮次窗口的旧正文和旧回答仍共同使用本地 turnId，
+        // 不会因为只有回答被提前转换而拆散到两个轮次。
+        requests: visibleRequests.map(toNativeServerRequest),
         planImplementationRequests: pendingPlanAction ? [pendingPlanAction] : [],
       };
     },

@@ -1268,7 +1268,23 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       options.broadcast('conversation.queue.changed', { conversationId: refreshed.id });
       throw error;
     }
-    const state = runStates.get(conversation.id) ?? inferRunState(refreshed);
+    let state = runStates.get(conversation.id) ?? inferRunState(refreshed);
+    if (state.type === 'idle' || state.type === 'paused') {
+      let pausedStaleSubmission = false;
+      for (const staleSubmission of options.submissions.listByConversation(conversation.id)) {
+        if (staleSubmission.id === submission.id || staleSubmission.providerTurnId || staleSubmission.status !== 'queued') continue;
+        options.submissions.updateStatus(staleSubmission.id, 'paused', {
+          pausedReason: 'interrupted',
+          updatedAt: now(),
+        });
+        pausedStaleSubmission = true;
+      }
+      if (pausedStaleSubmission) await persist();
+      if (state.type === 'paused') {
+        // 旧失败、恢复或中断内容只保留在审计账本；用户此刻的新消息拥有明确意图，直接续接原会话。
+        state = { type: 'idle' };
+      }
+    }
     runStates.set(conversation.id, state);
     if (state.type !== 'idle') return accepted(submission, 'queued', refreshed.providerThreadId, null);
     return dispatchSubmission(refreshed, submission, input.providerWriteLifecycle, false, input.segmentLifecycle);

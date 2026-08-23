@@ -974,6 +974,21 @@ export class ConversationExecutionRepository {
     return this.db.select<ModelHistoryRow>(`SELECT * FROM conversation_model_history WHERE conversation_id = ?${clause} ORDER BY sequence`, params).map(mapModelHistory);
   }
 
+  modelHistoryByProviderItem(conversationId: string, providerItemId: string, itemType: string): ConversationModelHistoryRecord | undefined {
+    const row = this.db.get<ModelHistoryRow>(
+      `SELECT *
+         FROM conversation_model_history
+        WHERE conversation_id = ?
+          AND json_valid(reasoning_source_json)
+          AND json_extract(reasoning_source_json, '$.itemId') = ?
+          AND json_extract(reasoning_source_json, '$.itemType') = ?
+        ORDER BY sequence DESC
+        LIMIT 1`,
+      [conversationId, providerItemId, itemType],
+    );
+    return row ? mapModelHistory(row) : undefined;
+  }
+
   recordPortableContext(input: {
     id?: string;
     conversationId: string;

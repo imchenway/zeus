@@ -1437,6 +1437,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     broadcast: publishRealtimeEvent,
     persist: () => db.save(),
     now: () => now().toISOString(),
+    repairLegacyCodexSourceAlias: !readOnlyValidation,
   });
   const usageOverviewService = createUsageOverviewService({
     ledger: codexUsageLedger,

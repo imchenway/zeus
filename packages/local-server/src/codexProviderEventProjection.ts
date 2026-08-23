@@ -818,6 +818,20 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
           reasoningSource: { provider: 'codex', itemId: providerItemId, readableSummary: true },
           confirmedAt: event.receivedAt,
         });
+      } else if (item.itemType === 'plan' && item.textContent.trim()) {
+        if (!turn.planJson) options.turns.updatePlan(turn.id, { explanation: item.textContent.trim(), steps: [] }, event.receivedAt);
+        if (!options.execution.modelHistoryByProviderItem(conversation.id, providerItemId, 'plan')) {
+          options.execution.appendModelHistory({
+            conversationId: conversation.id,
+            turnId: turn.id,
+            segmentId: executionSegment.id,
+            role: 'assistant',
+            content: { type: 'plan', text: item.textContent },
+            submissionId: turn.clientSubmissionId,
+            reasoningSource: { provider: 'codex', itemId: providerItemId, itemType: 'plan', readableSummary: false },
+            confirmedAt: event.receivedAt,
+          });
+        }
       } else if (isToolResultItem(item.itemType)) {
         const rawText = item.textContent || JSON.stringify(completedProjection.payload);
         const toolKind = item.itemType === 'commandExecution' ? 'command' : /search/i.test(item.itemType) ? 'search' : 'other';

@@ -30,9 +30,18 @@ type ConversationPageKind = 'timeline' | 'model_history' | 'process' | 'commands
 type ConversationContentKind = 'timeline_payload' | 'model_content' | 'process_detail' | 'change_file_diff';
 type ConversationProcessKind = 'reasoning' | 'tool' | 'command' | 'retry' | 'context_compaction' | 'waiting' | 'warning';
 
-// 模型历史持久化的是结构化 JSON；会话正文只读取其中的可见文本，绝不能把内部 tool_call 包装层当作消息正文。
-// 工具调用没有 text 字段，继续保留原 JSON 预览供结构分类，Renderer 会按 toolPairId/type 将其从消息流排除。
+// 模型历史持久化的是结构化 JSON；普通会话正文只读取其中的可见文本，绝不能把内部 tool_call 包装层当作消息正文。
+// 用户消息的附件、任务布局和上下文是正文展示所需结构，保留原 JSON 交给 Renderer 还原；工具调用没有 text 字段，
+// 继续保留原 JSON 预览供结构分类，Renderer 会按 toolPairId/type 将其从消息流排除。
 const modelHistoryVisibleContentSql = `CASE
+  WHEN conversation_model_history.role = 'user'
+   AND json_valid(content_json)
+   AND (
+     json_type(content_json, '$.attachments') = 'array'
+     OR json_type(content_json, '$.taskPushLayout') = 'object'
+     OR json_type(content_json, '$.conversationContext') = 'object'
+   )
+    THEN content_json
   WHEN json_valid(content_json) AND json_type(content_json, '$.text') = 'text'
     THEN json_extract(content_json, '$.text')
   ELSE content_json
@@ -63,16 +72,20 @@ const modelHistoryReasoningSummarySql = `CASE
     THEN 1
   ELSE 0
 END`;
-const modelHistoryAssistantPhaseSql = `(SELECT json_extract(message.metadata_json, '$.phase')
-  FROM conversation_messages AS message
-  JOIN conversation_turns AS history_turn ON history_turn.id = conversation_model_history.turn_id
- WHERE message.conversation_id = conversation_model_history.conversation_id
-   AND message.provider_turn_id = history_turn.provider_turn_id
-   AND message.role = conversation_model_history.role
-   AND message.created_at = conversation_model_history.confirmed_at
-   AND message.content = ${modelHistoryVisibleContentSql}
-   AND json_valid(message.metadata_json)
- LIMIT 1)`;
+const modelHistoryAssistantPhaseSql = `CASE
+  WHEN json_valid(reasoning_source_json) AND json_extract(reasoning_source_json, '$.itemType') = 'plan'
+    THEN 'plan'
+  ELSE (SELECT json_extract(message.metadata_json, '$.phase')
+    FROM conversation_messages AS message
+    JOIN conversation_turns AS history_turn ON history_turn.id = conversation_model_history.turn_id
+   WHERE message.conversation_id = conversation_model_history.conversation_id
+     AND message.provider_turn_id = history_turn.provider_turn_id
+     AND message.role = conversation_model_history.role
+     AND message.created_at = conversation_model_history.confirmed_at
+     AND message.content = ${modelHistoryVisibleContentSql}
+     AND json_valid(message.metadata_json)
+   LIMIT 1)
+END`;
 
 export type ConversationSnapshotV2ErrorCode =
   | 'ZEUS_CONVERSATION_SNAPSHOT_V2_INVALID_ARGUMENT'
@@ -374,6 +387,7 @@ interface TurnRow {
   has_error: number;
   has_plan: number;
   plan_json: string | null;
+  legacy_plan_text: string | null;
   started_at: string | null;
   completed_at: string | null;
   created_at: string;
@@ -1085,14 +1099,15 @@ export class ConversationSnapshotV2Repository {
         LIMIT 1`,
       [conversationId, row.id],
     );
+    const plan = parseTurnPlan(row.plan_json) ?? legacyTurnPlan(row.legacy_plan_text);
     return {
       id: row.id,
       providerTurnId: row.provider_turn_id,
       submissionId: row.client_submission_id,
       status: row.status,
       hasError: row.has_error === 1,
-      hasPlan: row.has_plan === 1,
-      plan: parseTurnPlan(row.plan_json),
+      hasPlan: plan !== null,
+      plan,
       startedAt: row.started_at,
       completedAt: row.completed_at,
       createdAt: row.created_at,
@@ -1341,9 +1356,50 @@ interface SequencePageContext {
 function turnSummarySelectSql(): string {
   return `SELECT id, provider_turn_id, client_submission_id, status,
                  CASE WHEN error_json IS NULL THEN 0 ELSE 1 END AS has_error,
-                 CASE WHEN plan_json IS NULL THEN 0 ELSE 1 END AS has_plan,
+                 CASE WHEN plan_json IS NOT NULL OR EXISTS (
+                   SELECT 1
+                     FROM conversation_provider_item_states AS projected_plan
+                    WHERE projected_plan.turn_id = conversation_turns.id
+                      AND projected_plan.item_type = 'plan'
+                      AND projected_plan.status = 'completed'
+                      AND trim(projected_plan.text_projection) <> ''
+                 ) OR EXISTS (
+                   SELECT 1
+                     FROM conversation_items AS completed_plan
+                    WHERE completed_plan.turn_id = conversation_turns.id
+                      AND completed_plan.item_type = 'plan'
+                      AND completed_plan.status = 'completed'
+                      AND trim(completed_plan.text_content) <> ''
+                 ) THEN 1 ELSE 0 END AS has_plan,
                  plan_json,
+                 COALESCE(
+                   (SELECT projected_plan.text_projection
+                      FROM conversation_provider_item_states AS projected_plan
+                     WHERE projected_plan.turn_id = conversation_turns.id
+                       AND projected_plan.item_type = 'plan'
+                       AND projected_plan.status = 'completed'
+                       AND trim(projected_plan.text_projection) <> ''
+                     ORDER BY projected_plan.updated_at DESC, projected_plan.id DESC
+                     LIMIT 1),
+                   (SELECT completed_plan.text_content
+                      FROM conversation_items AS completed_plan
+                     WHERE completed_plan.turn_id = conversation_turns.id
+                       AND completed_plan.item_type = 'plan'
+                       AND completed_plan.status = 'completed'
+                       AND trim(completed_plan.text_content) <> ''
+                     ORDER BY completed_plan.updated_at DESC, completed_plan.id DESC
+                     LIMIT 1)
+                 ) AS legacy_plan_text,
                  started_at, completed_at, created_at, updated_at, agent_kind`;
+}
+
+/**
+ * PLAN 正文可能来自新 Provider 投影或早期统一条目，而不一定收到 turn/plan/updated。
+ * Snapshot V2 只在读取时补齐既有 plan 字段，不迁移数据库，也不改变公开响应结构。
+ */
+function legacyTurnPlan(text: string | null): ConversationSnapshotV2TurnPlan | null {
+  const explanation = text?.trim();
+  return explanation ? { explanation, steps: [] } : null;
 }
 
 function boundedProjection(previewValue: string, byteLength: number, contentHandle: string | null, refreshRequired: boolean): BoundedContentProjection {

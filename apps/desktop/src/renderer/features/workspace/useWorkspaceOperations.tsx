@@ -134,6 +134,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     scanState,
     selectedGraphConversation,
     selectedNativeConversation,
+    selectedNativeConversationPresentation,
     selectedProject,
     selectedTaskModelPushOperation,
     selectedTaskModelPushOptimisticState,
@@ -1923,6 +1924,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           localState={selectedTaskModelPushOperation?.session}
           localActions={selectedTaskModelPushOperation ? taskModelPushWorkspaceActions(selectedTaskModelPushOperation, onOpenTaskDetail) : undefined}
           conversation={selectedNativeConversation}
+          historyOnly={selectedNativeConversationPresentation === 'history'}
           task={nativeSessionTask}
           owner={nativeSessionOwner}
           choices={nativeSessionChoices}
@@ -1968,6 +1970,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
         language={appShellSettings.appLanguage}
         state={null}
         conversation={selectedNativeConversation}
+        historyOnly={Boolean(selectedNativeConversation && selectedNativeConversationPresentation === 'history')}
         task={nativeSessionTask}
         owner={nativeSessionOwner}
         projects={snapshot.projects}

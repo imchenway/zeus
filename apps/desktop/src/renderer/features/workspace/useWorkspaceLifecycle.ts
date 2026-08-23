@@ -31,6 +31,7 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
     setNativeConversationChoiceTaskStates,
     setNativeConversationChoicesByTask,
     setSelectedNativeConversationId,
+    setSelectedNativeConversationPresentation,
     setTaskConversationDrawerTarget,
     setTaskDetail,
     setZeusWindowForeground,
@@ -107,6 +108,7 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
           setNativeConversationChoiceTaskStates((current) => ({ ...current, [task.id]: completeNativeConversationChoiceTaskLoad(current[task.id]) }));
           if (activeProjectIdRef.current === task.projectId) {
             setSelectedNativeConversationId(choice.id);
+            setSelectedNativeConversationPresentation('interactive');
             setConversationDraftOpen(false);
             setTaskDetail(task);
           }

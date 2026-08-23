@@ -112,7 +112,7 @@ export function adaptConversationSnapshotV2(input: ConversationSnapshotV2Bootstr
     pendingRequestKind: choice.pendingRequestKind,
     messages: [],
     turns,
-    items: historyItems(input.history.items),
+    items: historyItems(input.history.items, providerTurnIdentityMap(turns)),
     changeSets: [],
     submissions: input.queue.submissions,
     queue: input.queue,
@@ -140,7 +140,7 @@ export function mergeConversationHistoryV2(snapshot: NativeConversationSnapshot,
   if (!snapshot.snapshotV2 || !snapshot.v2Paging || page.schemaVersion !== 2 || page.structureGeneration !== snapshot.snapshotV2.structureGeneration || page.conversationId !== snapshot.id || page.kind !== 'model_history')
     throw new Error('会话 V2 历史页与当前快照不匹配。');
   const byId = new Map(snapshot.items.map((item) => [item.id, item]));
-  for (const item of historyItems(page.items)) byId.set(item.id, item);
+  for (const item of historyItems(page.items, providerTurnIdentityMap(snapshot.turns))) byId.set(item.id, item);
   const items = [...byId.values()].sort(compareNativeItems);
   return {
     ...snapshot,
@@ -170,7 +170,7 @@ export function mergeConversationProcessV2(snapshot: NativeConversationSnapshot,
     throw new Error('会话 V2 过程页与当前快照不匹配。');
   const byId = new Map(snapshot.items.map((item) => [item.id, item]));
   const byProviderItemId = new Map(snapshot.items.flatMap((item) => (item.providerItemId ? [[item.providerItemId, item] as const] : [])));
-  for (const item of processItems(page.items)) {
+  for (const item of processItems(page.items, providerTurnIdentityMap(snapshot.turns))) {
     const previous = item.providerItemId ? byProviderItemId.get(item.providerItemId) : undefined;
     if (previous && previous.id !== item.id) byId.delete(previous.id);
     byId.set(item.id, item);
@@ -232,7 +232,7 @@ function snapshotTurns(snapshot: NativeConversationSnapshotV2): NativeTurnSnapsh
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
 }
 
-function historyItems(items: NativeConversationModelHistoryV2Item[]): NativeItemSnapshot[] {
+function historyItems(items: NativeConversationModelHistoryV2Item[], providerTurnByLocalId: ReadonlyMap<string, string>): NativeItemSnapshot[] {
   return items.flatMap((item) => {
     const content = parseProjection(item.content.preview, item.content.truncated);
     const contentRecord = recordValue(content);
@@ -244,18 +244,28 @@ function historyItems(items: NativeConversationModelHistoryV2Item[]): NativeItem
     // 是跨分页、冷启动仍稳定的语义身份；provenance 只用于兼容旧服务端返回。
     const reasoning = item.reasoningSummary || typeof contentRecord?.provenance === 'string';
     const text = projectionText(content, item.content.preview, item.content.truncated);
+    const persistedPlan = item.phase === 'plan';
     const phase = item.role === 'user' || reasoning || item.phase === 'prework' || item.phase === 'commentary' ? 'prework' : 'final_answer';
+    const historicalUserPayload =
+      item.role === 'user' && contentRecord
+        ? {
+            ...(Array.isArray(contentRecord.attachments) ? { attachments: contentRecord.attachments } : {}),
+            ...(recordValue(contentRecord.taskPushLayout) ? { taskPushLayout: contentRecord.taskPushLayout } : {}),
+            ...(recordValue(contentRecord.conversationContext) ? { conversationContext: contentRecord.conversationContext } : {}),
+          }
+        : {};
     return [
       {
         id: item.id,
-        turnId: item.turnId,
+        turnId: providerTurnByLocalId.get(item.turnId) ?? item.turnId,
         providerItemId: item.providerItemId,
-        type: item.role === 'user' ? 'userMessage' : reasoning ? 'reasoning' : 'agentMessage',
+        type: item.role === 'user' ? 'userMessage' : persistedPlan ? 'plan' : reasoning ? 'reasoning' : 'agentMessage',
         status: 'completed',
         phase,
         text,
         payload: {
           content,
+          ...historicalUserPayload,
           ...(item.submissionId ? { submissionId: item.submissionId } : {}),
           ...(item.clientUserMessageId
             ? {
@@ -280,14 +290,14 @@ function historyItems(items: NativeConversationModelHistoryV2Item[]): NativeItem
   });
 }
 
-function processItems(items: NativeConversationProcessV2Item[]): NativeItemSnapshot[] {
+function processItems(items: NativeConversationProcessV2Item[], providerTurnByLocalId: ReadonlyMap<string, string>): NativeItemSnapshot[] {
   return items.map((item) => {
     const detail = parseProjection(item.detail.preview, item.detail.truncated);
     const type = item.kind === 'reasoning' ? 'reasoning' : item.kind === 'command' ? 'commandExecution' : item.kind === 'context_compaction' ? 'contextCompaction' : item.kind === 'warning' ? 'error' : 'dynamicToolCall';
     const text = processProjectionText(item, detail);
     return {
       id: item.id,
-      turnId: item.turnId,
+      turnId: providerTurnByLocalId.get(item.turnId) ?? item.turnId,
       providerItemId: item.providerItemId,
       type,
       status: item.status,
@@ -311,6 +321,15 @@ function processItems(items: NativeConversationProcessV2Item[]): NativeItemSnaps
       updatedAt: item.completedAt ?? item.startedAt,
     };
   });
+}
+
+/**
+ * Snapshot V2 的存储分页使用 Zeus 本地轮次 ID；会话 reducer 和实时事件使用
+ * Provider 轮次 ID。进入 Renderer 时统一身份，避免同一轮的正文、过程、计划和
+ * 已回答询问被拆成互不相认的两组。
+ */
+function providerTurnIdentityMap(turns: readonly NativeTurnSnapshot[]): ReadonlyMap<string, string> {
+  return new Map(turns.map((turn) => [turn.id, turn.providerTurnId ?? turn.id]));
 }
 
 function processPresentationPayload(item: NativeConversationProcessV2Item, detail: unknown, text: string): Record<string, unknown> {

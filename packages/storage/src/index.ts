@@ -12,7 +12,7 @@ import { migrateCommandDeliverySchema } from './commandDeliveryStore.js';
 import { CONVERSATION_HOT_QUERY_INDEX_CHECKSUM_SOURCE, CONVERSATION_HOT_QUERY_INDEX_MIGRATION_ID, conversationHotQueryIndexes } from './conversationHotQueryIndexes.js';
 import { migrateUnifiedConversationStoreSchema } from './conversationExecutionStore.js';
 import { migrateConversationLegacyCutoverSchema } from './conversationLegacyCutover.js';
-import { migrateConversationProviderItemStoreSchema } from './conversationProviderItemStore.js';
+import { migrateCompletedProviderPlansToConversationHistory, migrateConversationProviderItemStoreSchema } from './conversationProviderItemStore.js';
 import { migrateConversationSyncEventStoreSchema } from './conversationSyncEventStore.js';
 import { DatabasePerformanceCollector, type DatabasePerformanceSnapshot } from './databasePerformance.js';
 import { migrateExecutionHostHandoffSchema } from './executionHostHandoffStore.js';
@@ -1103,6 +1103,7 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
     migrateUnifiedConversationStoreSchema(zeusDb);
     migrateConversationLegacyCutoverSchema(zeusDb);
     migrateConversationProviderItemStoreSchema(zeusDb);
+    migrateCompletedProviderPlansToConversationHistory(zeusDb);
     migrateArtifactStoreSchema(zeusDb);
     migrateConversationSyncEventStoreSchema(zeusDb);
     migrateLongTermMemorySchema(zeusDb);
@@ -2474,6 +2475,7 @@ function migrateCodexUsageLedgerSchema(db: ZeusDatabase): void {
              WHERE conversations.id = codex_usage_ledger.conversation_id
                AND model_source_id IS NOT NULL
                AND model_source_id <> ''
+               AND model_source_id <> 'codex'
           )`,
     );
     // Pi 的账本值本来就是逐轮增量；旧记录只缺少完整性标记。

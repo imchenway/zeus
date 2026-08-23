@@ -5,6 +5,7 @@ import type { ConversationAgentKind, ConversationItemPhase, ConversationItemStat
 export const conversationProviderItemStoreGeneration = '2026-08-21-provider-item-ingestion-v1';
 
 const schemaMigrationId = '20260821_020_provider_item_ingestion';
+const completedPlanHistoryMigrationId = '20260823_021_completed_plan_history';
 const maximumProjectionTextBytes = 64 * 1024;
 const maximumProjectionPayloadBytes = 128 * 1024;
 
@@ -79,6 +80,105 @@ export function migrateConversationProviderItemStoreSchema(db: ZeusDatabasePort)
     `sha256:${createHash('sha256').update('provider-item-ingestion-state-v1').digest('hex')}`,
     new Date().toISOString(),
   ]);
+}
+
+/**
+ * 早期 PLAN 完成事件只写入 Provider 摄取状态，确认实施后活动内存被清理，计划便会从历史正文消失。
+ * 将每轮最终计划投影为普通模型历史产物，并同时补齐 turn.plan_json；序号只决定分页身份，Renderer
+ * 仍按 confirmed_at 把计划放回原轮次的真实时间位置。
+ */
+export function migrateCompletedProviderPlansToConversationHistory(db: ZeusDatabasePort): void {
+  if (db.get<{ present: number }>(`SELECT 1 AS present FROM schema_migrations WHERE migration_id = ?`, [completedPlanHistoryMigrationId])) return;
+  const plans = db.select<{
+    conversation_id: string;
+    turn_id: string;
+    provider_thread_id: string;
+    provider_item_id: string;
+    text_projection: string;
+    updated_at: string;
+    submission_id: string | null;
+    segment_id: string | null;
+  }>(
+    `SELECT plan.conversation_id, plan.turn_id, plan.provider_thread_id, plan.provider_item_id,
+            plan.text_projection, plan.updated_at, turn.client_submission_id AS submission_id,
+            COALESCE(
+              (SELECT segment.id
+                 FROM conversation_runtime_segments AS segment
+                WHERE segment.conversation_id = plan.conversation_id
+                  AND segment.native_session_id = plan.provider_thread_id
+                ORDER BY segment.created_at DESC, segment.id DESC
+                LIMIT 1),
+              (SELECT segment.id
+                 FROM conversation_runtime_segments AS segment
+                WHERE segment.conversation_id = plan.conversation_id
+                ORDER BY segment.created_at DESC, segment.id DESC
+                LIMIT 1)
+            ) AS segment_id
+       FROM conversation_provider_item_states AS plan
+       JOIN conversation_turns AS turn ON turn.id = plan.turn_id
+      WHERE plan.item_type = 'plan' AND plan.status = 'completed' AND trim(plan.text_projection) <> ''
+        AND NOT EXISTS (
+          SELECT 1
+            FROM conversation_provider_item_states AS newer_plan
+           WHERE newer_plan.turn_id = plan.turn_id
+             AND newer_plan.item_type = 'plan'
+             AND newer_plan.status = 'completed'
+             AND trim(newer_plan.text_projection) <> ''
+             AND (newer_plan.updated_at > plan.updated_at OR (newer_plan.updated_at = plan.updated_at AND newer_plan.id > plan.id))
+        )
+      ORDER BY plan.updated_at, plan.id`,
+  );
+  for (const plan of plans) {
+    db.execute(
+      `UPDATE conversation_turns
+          SET plan_json = COALESCE(plan_json, ?), updated_at = MAX(updated_at, ?)
+        WHERE id = ?`,
+      [JSON.stringify({ explanation: plan.text_projection, steps: [] }), plan.updated_at, plan.turn_id],
+    );
+    if (!plan.segment_id) continue;
+    const alreadyProjected = db.get<{ present: number }>(
+      `SELECT 1 AS present
+         FROM conversation_model_history
+        WHERE conversation_id = ?
+          AND json_valid(reasoning_source_json)
+          AND json_extract(reasoning_source_json, '$.itemId') = ?
+          AND json_extract(reasoning_source_json, '$.itemType') = 'plan'
+        LIMIT 1`,
+      [plan.conversation_id, plan.provider_item_id],
+    );
+    if (alreadyProjected) continue;
+    const sequence = nextModelHistorySequence(db, plan.conversation_id);
+    const id = `conversation_model_history_plan_${createHash('sha256').update(`${plan.provider_thread_id}\0${plan.provider_item_id}`).digest('hex').slice(0, 24)}`;
+    db.execute(
+      `INSERT OR IGNORE INTO conversation_model_history
+       (id, conversation_id, sequence, turn_id, submission_id, segment_id, role, content_json,
+        reasoning_source_json, tool_pair_id, capability_loss_json, confirmed_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'assistant', ?, ?, NULL, NULL, ?)`,
+      [
+        id,
+        plan.conversation_id,
+        sequence,
+        plan.turn_id,
+        plan.submission_id,
+        plan.segment_id,
+        JSON.stringify({ type: 'plan', text: plan.text_projection }),
+        JSON.stringify({ provider: 'codex', itemId: plan.provider_item_id, itemType: 'plan', readableSummary: false }),
+        plan.updated_at,
+      ],
+    );
+  }
+  db.execute(`INSERT INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)`, [
+    completedPlanHistoryMigrationId,
+    '把已完成 PLAN 持久投影到原轮次模型历史',
+    `sha256:${createHash('sha256').update('completed-provider-plan-to-model-history-v2').digest('hex')}`,
+    new Date().toISOString(),
+  ]);
+}
+
+function nextModelHistorySequence(db: ZeusDatabasePort, conversationId: string): number {
+  db.execute(`INSERT OR IGNORE INTO conversation_sequence_counters (conversation_id) VALUES (?)`, [conversationId]);
+  db.execute(`UPDATE conversation_sequence_counters SET model_history_sequence = model_history_sequence + 1 WHERE conversation_id = ?`, [conversationId]);
+  return db.get<{ model_history_sequence: number }>(`SELECT model_history_sequence FROM conversation_sequence_counters WHERE conversation_id = ?`, [conversationId])!.model_history_sequence;
 }
 
 /**

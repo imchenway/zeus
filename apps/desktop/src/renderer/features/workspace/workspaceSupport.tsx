@@ -165,6 +165,7 @@ export type TaskModelPushNavigationTarget = {
   activeNavTarget: MainNavTarget;
   activeProjectSection: ProjectWorkspaceSection;
   selectedConversationId: string | null;
+  selectedConversationPresentation: 'history' | 'interactive';
   taskDetailPaneTaskId?: string;
 };
 export type TrackedTaskModelPushState = TaskModelPushPendingState & { origin: TaskModelPushNavigationTarget };

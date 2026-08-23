@@ -53,8 +53,8 @@ export function PlanSummary(props: { item: NativeSessionItemBuffer; language: Se
             })}
             {iconButton(zh ? '喜欢此计划' : 'Like plan', <ThumbsUp aria-hidden="true" weight={feedback === 'good' ? 'fill' : 'regular'} />, () => setFeedback((value) => (value === 'good' ? null : 'good')), feedback === 'good')}
             {iconButton(zh ? '不喜欢此计划' : 'Dislike plan', <ThumbsDown aria-hidden="true" weight={feedback === 'bad' ? 'fill' : 'regular'} />, () => setFeedback((value) => (value === 'bad' ? null : 'bad')), feedback === 'bad')}
-            {iconButton(zh ? '展开完整计划' : 'Expand plan', <ArrowsOut aria-hidden="true" />, () => props.onOpenPanel?.(props.item))}
-            {iconButton(zh ? '在右侧打开计划' : 'Open plan at right', <SidebarSimple aria-hidden="true" />, () => props.onOpenPanel?.(props.item))}
+            {props.onOpenPanel ? iconButton(zh ? '展开完整计划' : 'Expand plan', <ArrowsOut aria-hidden="true" />, () => props.onOpenPanel?.(props.item)) : null}
+            {props.onOpenPanel ? iconButton(zh ? '在右侧打开计划' : 'Open plan at right', <SidebarSimple aria-hidden="true" />, () => props.onOpenPanel?.(props.item)) : null}
           </nav>
         ) : null}
       </header>

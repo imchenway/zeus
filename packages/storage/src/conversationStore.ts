@@ -993,6 +993,20 @@ export class ConversationRepository {
     return this.upsertConversationSnapshot(conversationId, 'provider_token_usage_json', snapshot);
   }
 
+  /**
+   * 仅供历史定价身份修复：保留 Provider 的 generation/sequence 与真实 Token，替换由旧路由写错的
+   * 估算字段。普通事件仍必须走 upsertProviderTokenUsageSnapshot 的单调序列门禁。
+   */
+  repairProviderTokenUsagePricing(conversationId: string, snapshot: ConversationProviderTokenUsageSnapshot): ConversationProviderTokenUsageSnapshot {
+    validateProviderTokenUsageSnapshot(snapshot);
+    const current = this.getProviderTokenUsageSnapshot(conversationId);
+    if (!current || current.generationId !== snapshot.generationId || current.sequence !== snapshot.sequence) {
+      throw new Error(`Conversation token usage identity changed during pricing repair: ${conversationId}`);
+    }
+    this.db.execute(`UPDATE conversations SET provider_token_usage_json = ?, updated_at = ? WHERE id = ?`, [JSON.stringify(snapshot), nowIso(), conversationId]);
+    return snapshot;
+  }
+
   getProviderTokenUsageSnapshot(conversationId: string): ConversationProviderTokenUsageSnapshot | undefined {
     const snapshot = this.getConversationSnapshot<ConversationProviderTokenUsageSnapshot & { inputTokens?: number; outputTokens?: number; totalTokens?: number }>(conversationId, 'provider_token_usage_json');
     if (!snapshot) return undefined;
@@ -1836,6 +1850,10 @@ export class CodexUsageLedgerRepository {
   findByProviderTurn(providerId: string, providerThreadId: string, providerTurnId: string): CodexUsageLedgerRecord | undefined {
     const row = this.db.get<DbCodexUsageLedgerRow>(`SELECT * FROM codex_usage_ledger WHERE provider_id = ? AND provider_thread_id = ? AND provider_turn_id = ?`, [providerId, providerThreadId, providerTurnId]);
     return row ? mapCodexUsageLedgerRow(row) : undefined;
+  }
+
+  deleteById(id: string): void {
+    this.db.execute(`DELETE FROM codex_usage_ledger WHERE id = ?`, [id]);
   }
 
   list(input: ListCodexUsageLedgerInput = {}): CodexUsageLedgerRecord[] {

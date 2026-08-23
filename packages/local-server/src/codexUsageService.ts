@@ -27,6 +27,7 @@ interface CreateCodexUsageServiceOptions {
   broadcast: (type: string, payload: Record<string, unknown>) => void;
   persist?: () => Promise<void>;
   now?: () => string;
+  repairLegacyCodexSourceAlias?: boolean;
 }
 
 interface PersistedOfficialUsage {
@@ -66,6 +67,64 @@ export function createCodexUsageService(options: CreateCodexUsageServiceOptions)
   let accountCache: { value: CodexAccountSnapshot; expiresAt: number } | null = null;
   let officialRefresh: Promise<CodexOfficialUsageSnapshot> | null = null;
   let sparseRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+  if (options.repairLegacyCodexSourceAlias !== false) repairLegacyCodexSourceAlias();
+
+  /**
+   * 早期任务推送把原生 Codex 的 sourceId 写成了字符串 `codex`，旧迁移又把所有非空
+   * sourceId 都改成 `api:*`。这会把官方 Codex 费率冻结成 DeepSeek 来源。启动时按保留的
+   * 模型与 Token 事实重建这些账本和会话快照；第三方连接 id 不受影响。
+   */
+  function repairLegacyCodexSourceAlias(): void {
+    const legacyRows = options.ledger.list({ providerId: 'api:codex' });
+    if (legacyRows.length === 0) return;
+    const affectedConversationIds = new Set<string>();
+    for (const row of legacyRows) {
+      const canonical = options.ledger.findByProviderTurn('codex', row.providerThreadId, row.providerTurnId);
+      if (!canonical) {
+        options.ledger.upsert({
+          providerId: 'codex',
+          accountScopeId: 'codex-local',
+          projectId: row.projectId,
+          conversationId: row.conversationId,
+          providerThreadId: row.providerThreadId,
+          providerTurnId: row.providerTurnId,
+          model: row.model,
+          serviceTier: row.serviceTier,
+          usage: row.usage,
+          providerBaseline: row.providerBaseline,
+          providerTotal: row.providerTotal,
+          usageComplete: row.usageComplete,
+          estimate: estimateCodexUsage({ model: row.model, serviceTier: row.serviceTier, usage: row.usage }),
+          occurredAt: row.occurredAt,
+        });
+      }
+      options.ledger.deleteById(row.id);
+      affectedConversationIds.add(row.conversationId);
+    }
+    for (const conversationId of affectedConversationIds) repairConversationUsageSnapshot(conversationId);
+  }
+
+  function repairConversationUsageSnapshot(conversationId: string): void {
+    const previous = options.conversations.getProviderTokenUsageSnapshot(conversationId);
+    if (!previous) return;
+    const rows = options.ledger.list({ conversationId });
+    const local = aggregateRows(rows);
+    const catalogDates = [...new Set(rows.map((row) => row.estimate.rateSnapshot.catalogDate))].sort();
+    const pricingSourceUrls = [...new Set(rows.flatMap((row) => row.estimate.rateSnapshot.sourceUrls))];
+    const latest = rows.at(-1);
+    options.conversations.repairProviderTokenUsagePricing(conversationId, {
+      ...previous,
+      estimatedCredits: local.estimatedCredits,
+      apiEquivalentUsd: local.apiEquivalentUsd,
+      lastApiEquivalentUsd: latest?.estimate.apiEquivalentUsd ?? null,
+      cacheSavingsUsd: local.cacheSavingsUsd,
+      priceCoverage: local.priceCoverage,
+      pricingCatalogDate: catalogDates.at(-1) ?? null,
+      pricingSourceUrls,
+      historyComplete: sumBreakdowns(rows.map((row) => row.usage)).totalTokens >= previous.total.totalTokens,
+    });
+  }
 
   async function readAccount(): Promise<CodexAccountSnapshot> {
     if (accountCache && accountCache.expiresAt > Date.now()) return accountCache.value;
@@ -137,7 +196,8 @@ export function createCodexUsageService(options: CreateCodexUsageServiceOptions)
   async function recordTurn(input: Parameters<CodexUsageService['recordTurn']>[0]): Promise<NativeTokenUsageSnapshot> {
     validateBreakdown(input.total);
     validateBreakdown(input.last);
-    const providerId = input.modelSourceId ? `api:${input.modelSourceId}` : 'codex';
+    const nativeCodexSource = !input.modelSourceId || input.modelSourceId === 'codex';
+    const providerId = nativeCodexSource ? 'codex' : `api:${input.modelSourceId}`;
     const existing = options.ledger.findByProviderTurn(providerId, input.providerThreadId, input.providerTurnId);
     const threadRows = options.ledger.list({ providerId, providerThreadId: input.providerThreadId });
     const priorProviderTotal = threadRows
@@ -152,11 +212,11 @@ export function createCodexUsageService(options: CreateCodexUsageServiceOptions)
     const usageComplete = existing?.providerBaseline ? existing.usageComplete : Boolean(priorProviderTotal || previousSnapshotTotal || (!existing && !legacyRowsExist));
     const estimate = existing
       ? estimateCodexUsageWithRateSnapshot(usage, existing.estimate.rateSnapshot)
-      : input.modelSourceId
-        ? estimateDeepSeekUsage({ model: input.model, usage, occurredAt: input.occurredAt })
-        : estimateCodexUsage({ model: input.model, serviceTier: input.serviceTier, usage });
-    let accountScopeId = input.modelSourceId ?? 'codex-local';
-    if (!input.modelSourceId) {
+      : nativeCodexSource
+        ? estimateCodexUsage({ model: input.model, serviceTier: input.serviceTier, usage })
+        : estimateDeepSeekUsage({ model: input.model, usage, occurredAt: input.occurredAt });
+    let accountScopeId = nativeCodexSource ? 'codex-local' : input.modelSourceId!;
+    if (nativeCodexSource) {
       try {
         accountScopeId = (await readAccount()).accountScopeId;
       } catch {

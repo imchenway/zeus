@@ -256,6 +256,8 @@ export interface CreateSessionControllerOptions {
   conversationId: string;
   /** 本地首发工作面尚未绑定真实身份时只构造状态，不连接服务端。 */
   enabled?: boolean;
+  /** 历史展示态先只读取权威快照；用户真正发送时才按需建立实时连接。 */
+  realtimePolicy?: 'auto' | 'lazy';
   initialCachedState?: NativeSessionState;
   initialOptimisticState?: NativeSessionState;
   storage?: SessionDraftStorage;
@@ -1665,16 +1667,19 @@ export function createSessionController(options: CreateSessionControllerOptions)
       if (!reconnecting || !state.snapshot) dispatch({ type: 'transport_changed', transportState: 'hydrating' });
       const snapshot = await withSessionTimeout(loadConversationForHydration(), conversationHydrationTimeoutMs, () => new ConversationHydrationTimeoutError());
       if (disposed || token !== connectionToken) return;
-      const subscribeRealtime = realtimeMode === 'required' || snapshotNeedsRealtime(snapshot) || Boolean(pendingSend) || deferredSends.length > 0;
+      const lazySnapshotHydration = options.realtimePolicy === 'lazy' && realtimeMode !== 'required';
+      const subscribeRealtime =
+        realtimeMode === 'required' || (!lazySnapshotHydration && (snapshotNeedsRealtime(snapshot) || Boolean(pendingSend) || deferredSends.length > 0));
       if (!subscribeRealtime) {
         if (!state.snapshot) markConversationNavigationRenderReady(options.projectId, options.conversationId);
         await applyAuthoritativeSnapshot(snapshot);
-        await reconcilePersistedAcceptance(snapshot);
+        // 浏览历史只能读取持久事实；首次发送进入 required 水合后才允许恢复发送账本和实时副作用。
+        if (!lazySnapshotHydration) await reconcilePersistedAcceptance(snapshot);
         syncProjectionSuspended = false;
         hydrating = false;
         ready = true;
         dispatch({ type: 'transport_changed', transportState: 'ready', error: null });
-        void flushPendingBrowserCommentMarks();
+        if (!lazySnapshotHydration) void flushPendingBrowserCommentMarks();
         return;
       }
       const eventOptions = {
@@ -2544,7 +2549,7 @@ export interface UseSessionControllerResult {
 export function useSessionControllerInstance(options: CreateSessionControllerOptions): SessionController {
   const controller = useMemo(
     () => createSessionController(options),
-    [options.client, options.projectId, options.conversationId, options.enabled, options.initialCachedState, options.initialOptimisticState, options.storage, options.createId],
+    [options.client, options.projectId, options.conversationId, options.enabled, options.realtimePolicy, options.initialCachedState, options.initialOptimisticState, options.storage, options.createId],
   );
   useEffect(() => {
     // 尚未启动的控制器没有连接资源可释放；启用时会按新状态构造可工作的实例。

@@ -442,6 +442,22 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
           startedAt: existing?.startedAt ?? turn.startedAt,
           updatedAt: timestamp,
         });
+    if (itemTerminal && item.itemType === 'plan' && item.textContent.trim()) {
+      if (!turn.planJson) options.turns.updatePlan(turn.id, { explanation: item.textContent.trim(), steps: [] }, timestamp);
+      const executionSegment = options.execution.segmentByNativeSession(providerThreadId, conversation.id);
+      if (executionSegment && !options.execution.modelHistoryByProviderItem(conversation.id, providerItemId, 'plan')) {
+        options.execution.appendModelHistory({
+          conversationId: conversation.id,
+          turnId: turn.id,
+          segmentId: executionSegment.id,
+          role: 'assistant',
+          content: { type: 'plan', text: item.textContent },
+          submissionId: turn.clientSubmissionId,
+          reasoningSource: { provider: 'codex', itemId: providerItemId, itemType: 'plan', readableSummary: false },
+          confirmedAt: timestamp,
+        });
+      }
+    }
     let durableClientMessageId: string | null = null;
     if (item.itemType === 'userMessage' && userMessageProjection) {
       durableClientMessageId = persistProviderUserMessage(conversation, presentedItemPayload, userMessageProjection, providerTurnId, providerThreadId, providerItemId, timestamp);
