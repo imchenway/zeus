@@ -60,7 +60,15 @@ export const conversationEventTypeRegistry = {
     'conversation.native.ephemeral_interrupt_failed',
     'conversation.native.shutdown_interrupt_failed',
   ],
-  coalescible_process: ['conversation.item.delta', 'conversation.item.updated', 'conversation.turn.plan.updated', 'conversation.tokenUsage.changed', 'conversation.rateLimits.changed', 'conversation.mcpStartup.changed'],
+  coalescible_process: [
+    'conversation.item.delta',
+    'conversation.item.updated',
+    'conversation.turn.plan.updated',
+    'conversation.tokenUsage.changed',
+    'conversation.sessionMetrics.changed',
+    'conversation.rateLimits.changed',
+    'conversation.mcpStartup.changed',
+  ],
   // 当前产品没有把临时 UI 事件送进 Core；空集合本身也是受门禁保护的精确声明。
   ephemeral_ui: [],
 } as const satisfies Readonly<Record<ConversationEventDurabilityLevel, readonly string[]>>;

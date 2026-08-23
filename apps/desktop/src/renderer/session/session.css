@@ -1107,15 +1107,24 @@
 .session-codex-parity-v1 .session-runtime-summary-primary {
   align-items: center;
   display: flex;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 6px 14px;
   min-inline-size: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-  white-space: nowrap;
 }
 
-.session-codex-parity-v1 .session-runtime-summary-primary::-webkit-scrollbar {
-  display: none;
+.session-codex-parity-v1 .session-runtime-summary-metric {
+  align-items: baseline;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.session-codex-parity-v1 .session-runtime-summary-metric b {
+  color: var(--session-text);
+  font-weight: 620;
 }
 
 .session-codex-parity-v1 .session-runtime-context-row {
@@ -1171,17 +1180,34 @@
   color: var(--session-warning);
 }
 
-.session-codex-parity-v1 .session-runtime-details > dl {
+.session-codex-parity-v1 .session-runtime-detail-groups {
   background: var(--session-control);
   border-block-start: 1px solid var(--session-line-soft);
   display: grid;
-  gap: 6px 18px;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  margin: 0;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
   padding: 9px var(--session-gutter) 11px;
 }
 
-.session-codex-parity-v1 .session-runtime-details > dl > div {
+.session-codex-parity-v1 .session-runtime-detail-group {
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group > h3 {
+  color: var(--session-text);
+  font-size: 11px;
+  font-weight: 680;
+  margin: 0 0 7px;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group > dl {
+  display: grid;
+  gap: 6px 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
+  margin: 0;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group > dl > div {
   display: grid;
   gap: 2px;
   min-inline-size: 0;
@@ -8631,15 +8657,24 @@
 .session-codex-parity-v1 .session-runtime-summary-primary {
   align-items: center;
   display: flex;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 6px 14px;
   min-inline-size: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-  white-space: nowrap;
 }
 
-.session-codex-parity-v1 .session-runtime-summary-primary::-webkit-scrollbar {
-  display: none;
+.session-codex-parity-v1 .session-runtime-summary-metric {
+  align-items: baseline;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.session-codex-parity-v1 .session-runtime-summary-metric b {
+  color: var(--session-text);
+  font-weight: 620;
 }
 
 .session-codex-parity-v1 .session-runtime-context-row {
@@ -8695,17 +8730,34 @@
   color: var(--session-warning);
 }
 
-.session-codex-parity-v1 .session-runtime-details > dl {
+.session-codex-parity-v1 .session-runtime-detail-groups {
   background: var(--session-control);
   border-block-start: 1px solid var(--session-line-soft);
   display: grid;
-  gap: 6px 18px;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  margin: 0;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
   padding: 9px var(--session-gutter) 11px;
 }
 
-.session-codex-parity-v1 .session-runtime-details > dl > div {
+.session-codex-parity-v1 .session-runtime-detail-group {
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group > h3 {
+  color: var(--session-text);
+  font-size: 11px;
+  font-weight: 680;
+  margin: 0 0 7px;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group > dl {
+  display: grid;
+  gap: 6px 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
+  margin: 0;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group > dl > div {
   display: grid;
   gap: 2px;
   min-inline-size: 0;

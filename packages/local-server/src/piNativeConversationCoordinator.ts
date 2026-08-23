@@ -68,6 +68,13 @@ interface PiRunContext {
   /** 最后一次真实模型请求的用量；上下文规模只能来自它，不能用整轮累加值。 */
   lastRequestUsage: TokenUsageBreakdown | null;
   modelRequestCount: number;
+  pendingModelRequest: {
+    boundaryStarted: boolean;
+    providerRequestId: string | null;
+    firstVisibleOutputAt: string | null;
+    firstTextOutputAt: string | null;
+    hasNonTextOutput: boolean;
+  } | null;
 }
 
 export interface CreatePiNativeConversationCoordinatorOptions {
@@ -618,6 +625,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       usage: emptyTokenUsageBreakdown(),
       lastRequestUsage: null,
       modelRequestCount: 0,
+      pendingModelRequest: null,
     });
     await options.db.save();
     publish('conversation.turn.started', input.conversationId, { turnId: run.nativeRunId, submissionId: submission.id, status: 'running', startedAt: run.acceptedAt });
@@ -837,6 +845,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       usage: emptyTokenUsageBreakdown(),
       lastRequestUsage: null,
       modelRequestCount: 0,
+      pendingModelRequest: null,
     });
     await options.db.save();
     publish('conversation.turn.started', input.conversation.id, { turnId: run.nativeRunId, submissionId: submission.id, status: 'running', startedAt: run.acceptedAt });
@@ -1024,6 +1033,44 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
             textContent: processText(processItem.title, processItem.detailJson),
           });
         }
+        if (processItems.some((item) => item.status !== 'in_progress' && (item.kind === 'tool' || item.kind === 'command' || item.kind === 'retry'))) {
+          publish('conversation.sessionMetrics.changed', run.conversationId, {});
+        }
+      }
+    }
+    if (event.type === 'message_start') {
+      const message = asRecord(payload.message);
+      if (message.role === 'assistant') {
+        run.pendingModelRequest = {
+          boundaryStarted: true,
+          providerRequestId: typeof message.responseId === 'string' ? message.responseId : typeof message.id === 'string' ? message.id : null,
+          firstVisibleOutputAt: null,
+          firstTextOutputAt: null,
+          hasNonTextOutput: false,
+        };
+      }
+    }
+    if (event.type === 'message_update') {
+      const message = asRecord(payload.message);
+      const messageEvent = asRecord(payload.assistantMessageEvent);
+      if (message.role === 'assistant') {
+        const pending = run.pendingModelRequest ?? {
+          boundaryStarted: false,
+          providerRequestId: typeof message.responseId === 'string' ? message.responseId : typeof message.id === 'string' ? message.id : null,
+          firstVisibleOutputAt: null,
+          firstTextOutputAt: null,
+          hasNonTextOutput: false,
+        };
+        if (messageEvent.type === 'thinking_delta' && typeof messageEvent.delta === 'string' && messageEvent.delta.trim()) {
+          pending.firstVisibleOutputAt ??= event.createdAt;
+        } else if (messageEvent.type === 'text_delta' && typeof messageEvent.delta === 'string' && messageEvent.delta.trim()) {
+          pending.firstVisibleOutputAt ??= event.createdAt;
+          pending.firstTextOutputAt ??= event.createdAt;
+        } else if (messageEvent.type === 'toolcall_start' || messageEvent.type === 'toolcall_delta' || messageEvent.type === 'toolcall_end') {
+          pending.hasNonTextOutput = true;
+        }
+        if (typeof message.responseId === 'string') pending.providerRequestId = message.responseId;
+        run.pendingModelRequest = pending;
       }
     }
     if (event.type === 'message_end') {
@@ -1037,6 +1084,25 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         const connection = options.modelConnections.listMetadata().find((candidate) => candidate.id === run.sourceId);
         const contextWindow = connection?.models.find((model) => model.id === run.modelId)?.contextWindow ?? null;
         const rawUsage = readPiUsageObservation(message.usage);
+        const content = Array.isArray(message.content) ? message.content.map(asRecord) : [];
+        const hasReasoningContent = content.some((part) => part.type === 'thinking');
+        // Pi 的 reasoning 拆分是可选字段；完整消息已证明只有文本时，缺失值可以精确归零。
+        // 一旦存在 thinking 内容却缺少拆分，仍保持 null，避免把推理 Token 当作可见输出。
+        if (rawUsage.reasoningOutputTokens === null && !hasReasoningContent) rawUsage.reasoningOutputTokens = 0;
+        const usageComplete = Object.values(rawUsage).every((value) => value !== null);
+        const requestEstimate = requestUsage && connection && isOfficialDeepSeekApiConnection(connection) ? estimateDeepSeekUsage({ model: run.modelId, usage: requestUsage, occurredAt: event.createdAt }) : null;
+        const pending = run.pendingModelRequest;
+        const hasNonTextOutput = pending?.hasNonTextOutput === true || content.some((part) => part.type === 'toolCall');
+        const providerRequestId = typeof message.responseId === 'string' ? message.responseId : typeof message.id === 'string' ? message.id : (pending?.providerRequestId ?? null);
+        const measurementComplete =
+          usageComplete &&
+          pending?.boundaryStarted === true &&
+          pending?.firstTextOutputAt !== null &&
+          pending?.firstTextOutputAt !== undefined &&
+          Date.parse(event.createdAt) > Date.parse(pending.firstTextOutputAt) &&
+          !hasNonTextOutput &&
+          message.stopReason !== 'error' &&
+          message.stopReason !== 'aborted';
         options.execution.observeModelRequest({
           conversationId: run.conversationId,
           turnId: run.turnId,
@@ -1046,12 +1112,20 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           modelId: run.modelId,
           contextWindow,
           ...rawUsage,
-          estimatedUsd: null,
-          usageComplete: Object.values(rawUsage).every((value) => value !== null),
+          estimatedUsd: requestEstimate?.apiEquivalentUsd ?? null,
+          usageComplete,
+          providerRequestId,
+          firstVisibleOutputAt: pending?.firstVisibleOutputAt ?? null,
+          firstTextOutputAt: pending?.firstTextOutputAt ?? null,
+          completedAt: event.createdAt,
+          measurementComplete,
           occurredAt: event.createdAt,
         });
         run.modelRequestCount += 1;
       }
+      run.pendingModelRequest = null;
+      await options.db.save();
+      publish('conversation.sessionMetrics.changed', run.conversationId, {});
       const text = messageText(message);
       if (!text) return;
       const itemId = `pi_message_${event.nativeRunId}`;
@@ -1204,6 +1278,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         completedAt: event.createdAt,
         notificationEligible: true,
       });
+      publish('conversation.sessionMetrics.changed', run.conversationId, {});
       if (interrupted) publish('conversation.queue.changed', run.conversationId, { turnId: run.providerTurnId, submissionId: run.submissionId });
       if (!failed && !interrupted) void dispatchNextQueued(run.conversationId).catch(() => undefined);
     }

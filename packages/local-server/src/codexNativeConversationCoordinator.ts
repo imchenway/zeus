@@ -108,6 +108,7 @@ import {
 } from './codexNativeConversationPolicy.js';
 import { parseCanonicalRequestUserInputQuestions, validateCanonicalRequestUserInputAnswers } from './codexNativeRuiValidation.js';
 import { createCodexExternalRequestAnswerRecovery } from './codexExternalRequestAnswerRecovery.js';
+import { createCodexModelRequestTimingTracker } from './codexModelRequestTiming.js';
 import { chooseNativeUserMessageContent, type ResolvedNativeUserMessageSubmission, resolveNativeUserMessageSubmission } from './codexNativeUserMessageProjection.js';
 import { runCodexPortableContextCompaction } from './codexPortableContextCompaction.js';
 import { CodexProviderCommandApplicationService, type CodexProviderCommandOperation } from './codexProviderCommandApplication.js';
@@ -336,6 +337,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   let scheduledPersistDeadlineTimer: ReturnType<typeof setTimeout> | null = null;
   let scheduledPersistDirty = false;
   let persistenceChain = Promise.resolve();
+  const modelRequestTiming = createCodexModelRequestTimingTracker();
 
   const providerEvents = createCodexProviderEventFlow({
     manager: options.manager,
@@ -428,6 +430,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       event.method === 'thread/goal/updated' ||
       event.method === 'thread/goal/cleared' ||
       event.method === 'serverRequest/resolved' ||
+      event.method === 'rawResponse/completed' ||
       createdPlanImplementationRequest !== null
     );
   }
@@ -3614,6 +3617,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           scheduledPersistDirty = true;
         },
         options,
+        modelRequestTiming,
         persist,
         persistProviderUserMessage,
         projectGoal,

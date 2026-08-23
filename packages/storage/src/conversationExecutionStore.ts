@@ -98,6 +98,11 @@ export interface ConversationModelRequestUsageRecord {
   totalTokens: number | null;
   estimatedUsd: number | null;
   usageComplete: boolean;
+  providerRequestId: string | null;
+  firstVisibleOutputAt: string | null;
+  firstTextOutputAt: string | null;
+  completedAt: string | null;
+  measurementComplete: boolean;
   occurredAt: string;
 }
 
@@ -138,14 +143,50 @@ export interface ConversationUnifiedSnapshot {
   executionSnapshots: ConversationExecutionSnapshotRecord[];
   modelHistory: ConversationModelHistoryRecord[];
   process: ConversationProcessItemRecord[];
-  usage: {
-    conversationTotal: NullableUsage;
-    turnTotal: NullableUsage;
-    latestModelRequest: ConversationModelRequestUsageRecord | null;
-    preflightEstimate: null;
-  };
+  usage: ConversationUsageSnapshot;
   warnings: ConversationPersistentWarningRecord[];
   configurationEvidence: ConversationConfigEvidenceRecord[];
+}
+
+export interface ConversationUsageSnapshot {
+  conversationTotal: NullableUsage;
+  turnTotal: NullableUsage;
+  latestModelRequest: ConversationModelRequestUsageRecord | null;
+  preflightEstimate: null;
+}
+
+export interface ConversationSessionMetricsSnapshot {
+  usage: ConversationUsageSnapshot;
+  cost: {
+    apiEquivalentUsd: number | null;
+    priceCoverage: number | null;
+    pricingCatalogDate: string | null;
+    pricingSourceUrls: string[];
+    historyComplete: boolean;
+    complete: boolean;
+  };
+  performance: {
+    latestOutputTokensPerSecond: number | null;
+    latestFirstVisibleResponseMs: number | null;
+    cumulativeProcessedDurationMs: number | null;
+    complete: boolean;
+  };
+  activity: {
+    turnCount: number;
+    modelRequestCount: number;
+    toolOrCommandCount: number;
+    retryCount: number;
+    failedTurnCount: number;
+    complete: boolean;
+  };
+  changeSummary: {
+    available: boolean;
+    fileCount: number | null;
+    addedLines: number | null;
+    deletedLines: number | null;
+    complete: boolean;
+  };
+  updatedAt: string | null;
 }
 
 export interface ConversationPersistentWarningRecord {
@@ -173,7 +214,7 @@ export interface ConversationConfigEvidenceRecord {
   observedAt: string;
 }
 
-interface NullableUsage {
+export interface NullableUsage {
   inputTokens: number | null;
   cachedInputTokens: number | null;
   cacheWriteInputTokens: number | null;
@@ -360,6 +401,20 @@ export function migrateUnifiedConversationStoreSchema(db: ZeusDatabasePort): voi
     )
   `);
   db.execute(`CREATE INDEX IF NOT EXISTS idx_conversation_model_requests_turn ON conversation_model_requests(conversation_id, turn_id, request_sequence)`);
+  for (const [column, definition] of [
+    ['provider_request_id', 'TEXT'],
+    ['first_visible_output_at', 'TEXT'],
+    ['first_text_output_at', 'TEXT'],
+    ['completed_at', 'TEXT'],
+    ['measurement_complete', 'INTEGER NOT NULL DEFAULT 0'],
+  ] as const) {
+    addColumn(db, 'conversation_model_requests', column, definition);
+  }
+  db.execute(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_model_request_provider
+       ON conversation_model_requests(conversation_id, provider_request_id)
+     WHERE provider_request_id IS NOT NULL`,
+  );
   db.execute(`
     CREATE TABLE IF NOT EXISTS conversation_config_evidence (
       id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, turn_id TEXT, submission_id TEXT,
@@ -1072,8 +1127,9 @@ export class ConversationExecutionRepository {
       `INSERT INTO conversation_model_requests
        (id, conversation_id, turn_id, segment_id, request_kind, request_sequence, model_id,
         context_window, input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens,
-        reasoning_output_tokens, total_tokens, estimated_usd, usage_complete, occurred_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        reasoning_output_tokens, total_tokens, estimated_usd, usage_complete, provider_request_id,
+        first_visible_output_at, first_text_output_at, completed_at, measurement_complete, occurred_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         input.conversationId,
@@ -1091,6 +1147,11 @@ export class ConversationExecutionRepository {
         input.totalTokens,
         input.estimatedUsd,
         input.usageComplete ? 1 : 0,
+        input.providerRequestId,
+        input.firstVisibleOutputAt,
+        input.firstTextOutputAt,
+        input.completedAt,
+        input.measurementComplete ? 1 : 0,
         input.occurredAt,
       ],
     );
@@ -1100,6 +1161,41 @@ export class ConversationExecutionRepository {
   /** 读取同一产品轮次已经确认的真实模型请求，供 Provider 的增量用量事件恢复请求边界。 */
   listModelRequestsForTurn(conversationId: string, turnId: string): ConversationModelRequestUsageRecord[] {
     return this.db.select<ModelRequestRow>(`SELECT * FROM conversation_model_requests WHERE conversation_id = ? AND turn_id = ? ORDER BY request_sequence`, [conversationId, turnId]).map(mapModelRequest);
+  }
+
+  enrichModelRequest(id: string, input: { contextWindow?: number | null; estimatedUsd?: number | null }): ConversationModelRequestUsageRecord | undefined {
+    const existing = this.modelRequestById(id);
+    if (!existing) return undefined;
+    this.db.execute(
+      `UPDATE conversation_model_requests
+          SET context_window = CASE WHEN context_window IS NULL THEN ? ELSE context_window END,
+              estimated_usd = CASE WHEN estimated_usd IS NULL THEN ? ELSE estimated_usd END
+        WHERE id = ?`,
+      [input.contextWindow ?? null, input.estimatedUsd ?? null, id],
+    );
+    return this.modelRequestById(id);
+  }
+
+  attachModelRequestMeasurement(
+    id: string,
+    input: {
+      providerRequestId: string;
+      firstVisibleOutputAt: string | null;
+      firstTextOutputAt: string | null;
+      completedAt: string;
+      measurementComplete: boolean;
+    },
+  ): ConversationModelRequestUsageRecord | undefined {
+    const existing = this.modelRequestById(id);
+    if (!existing || existing.providerRequestId !== null) return existing;
+    this.db.execute(
+      `UPDATE conversation_model_requests
+          SET provider_request_id = ?, first_visible_output_at = ?, first_text_output_at = ?,
+              completed_at = ?, measurement_complete = ?
+        WHERE id = ? AND provider_request_id IS NULL`,
+      [input.providerRequestId, input.firstVisibleOutputAt, input.firstTextOutputAt, input.completedAt, input.measurementComplete ? 1 : 0, id],
+    );
+    return this.modelRequestById(id);
   }
 
   appendConfigEvidence(input: {
@@ -1190,7 +1286,6 @@ export class ConversationExecutionRepository {
   }
 
   snapshot(conversationId: string, turnId?: string | null): ConversationUnifiedSnapshot {
-    const latest = this.db.get<ModelRequestRow>(`SELECT * FROM conversation_model_requests WHERE conversation_id = ? ORDER BY request_sequence DESC LIMIT 1`, [conversationId]);
     return {
       conversationSchemaGeneration,
       throughEventSeq: this.db.get<{ sync_event_sequence: number }>(`SELECT sync_event_sequence FROM conversation_sequence_counters WHERE conversation_id = ?`, [conversationId])?.sync_event_sequence ?? 0,
@@ -1199,15 +1294,18 @@ export class ConversationExecutionRepository {
       executionSnapshots: this.db.select<ExecutionSnapshotRow>(`SELECT * FROM conversation_execution_snapshots WHERE conversation_id = ? ORDER BY created_at, id`, [conversationId]).map(mapExecutionSnapshot),
       modelHistory: this.confirmedModelHistory(conversationId),
       process: this.db.select<ProcessItemRow>(`SELECT * FROM conversation_process_items WHERE conversation_id = ? ORDER BY process_sequence`, [conversationId]).map(mapProcessItem),
-      usage: {
-        conversationTotal: aggregateUsage(this.db.select<ModelRequestRow>(`SELECT * FROM conversation_model_requests WHERE conversation_id = ? ORDER BY request_sequence`, [conversationId])),
-        turnTotal: turnId ? aggregateUsage(this.db.select<ModelRequestRow>(`SELECT * FROM conversation_model_requests WHERE conversation_id = ? AND turn_id = ? ORDER BY request_sequence`, [conversationId, turnId])) : emptyNullableUsage(),
-        latestModelRequest: latest ? mapModelRequest(latest) : null,
-        preflightEstimate: null,
-      },
+      usage: this.usageSnapshot(conversationId, turnId),
       warnings: this.db.select<PersistentWarningRow>(`SELECT * FROM conversation_persistent_warnings WHERE conversation_id = ? AND resolved_at IS NULL ORDER BY first_event_seq`, [conversationId]).map(mapPersistentWarning),
       configurationEvidence: this.db.select<ConfigEvidenceRow>(`SELECT * FROM conversation_config_evidence WHERE conversation_id = ? ORDER BY observed_at, id`, [conversationId]).map(mapConfigEvidence),
     };
+  }
+
+  usageSnapshot(conversationId: string, turnId?: string | null): ConversationUsageSnapshot {
+    return readConversationUsageSnapshot(this.db, conversationId, turnId);
+  }
+
+  sessionMetrics(conversationId: string, turnId?: string | null): ConversationSessionMetricsSnapshot {
+    return readConversationSessionMetrics(this.db, conversationId, turnId);
   }
 
   private requireOpenSwitch(operationId: string): ConversationSwitchOperationRecord {
@@ -1694,6 +1792,11 @@ interface ModelRequestRow {
   total_tokens: number | null;
   estimated_usd: number | null;
   usage_complete: number;
+  provider_request_id: string | null;
+  first_visible_output_at: string | null;
+  first_text_output_at: string | null;
+  completed_at: string | null;
+  measurement_complete: number;
   occurred_at: string;
 }
 
@@ -1855,6 +1958,11 @@ function mapModelRequest(row: ModelRequestRow): ConversationModelRequestUsageRec
     totalTokens: row.total_tokens,
     estimatedUsd: row.estimated_usd,
     usageComplete: row.usage_complete === 1,
+    providerRequestId: row.provider_request_id,
+    firstVisibleOutputAt: row.first_visible_output_at,
+    firstTextOutputAt: row.first_text_output_at,
+    completedAt: row.completed_at,
+    measurementComplete: row.measurement_complete === 1,
     occurredAt: row.occurred_at,
   };
 }
@@ -1902,6 +2010,225 @@ function mapConfigEvidence(row: ConfigEvidenceRow): ConversationConfigEvidenceRe
     mismatch: row.mismatch === 1,
     observedAt: row.observed_at,
   };
+}
+
+export function readConversationUsageSnapshot(db: ZeusDatabasePort, conversationId: string, turnId?: string | null): ConversationUsageSnapshot {
+  const rows = db.select<ModelRequestRow>(`SELECT * FROM conversation_model_requests WHERE conversation_id = ? ORDER BY request_sequence`, [conversationId]);
+  const latest = rows.at(-1);
+  return {
+    conversationTotal: aggregateUsage(rows),
+    turnTotal: turnId ? aggregateUsage(rows.filter((row) => row.turn_id === turnId)) : emptyNullableUsage(),
+    latestModelRequest: latest ? mapModelRequest(latest) : null,
+    preflightEstimate: null,
+  };
+}
+
+export function readConversationSessionMetrics(db: ZeusDatabasePort, conversationId: string, turnId?: string | null): ConversationSessionMetricsSnapshot {
+  const usage = readConversationUsageSnapshot(db, conversationId, turnId);
+  const providerUsage = readProviderUsageMetrics(db, conversationId);
+  const latestRequest = usage.latestModelRequest;
+  const latestOutputTokensPerSecond = outputRate(latestRequest);
+  const latestTurn = db.get<{ id: string; started_at: string | null }>(`SELECT id, started_at FROM conversation_turns WHERE conversation_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`, [conversationId]);
+  const latestFirstVisibleAt = latestTurn
+    ? (db.get<{ first_visible_output_at: string | null }>(
+        `SELECT first_visible_output_at
+           FROM conversation_model_requests
+          WHERE conversation_id = ? AND turn_id = ? AND first_visible_output_at IS NOT NULL
+          ORDER BY request_sequence
+          LIMIT 1`,
+        [conversationId, latestTurn.id],
+      )?.first_visible_output_at ?? null)
+    : null;
+  const latestFirstVisibleResponseMs = elapsedMs(latestTurn?.started_at ?? null, latestFirstVisibleAt);
+  const cumulativeProcessedDurationMs = readCumulativeProcessedDurationMs(db, conversationId);
+  const activity = db.get<{
+    turn_count: number;
+    failed_turn_count: number;
+    model_request_count: number;
+    tool_or_command_count: number;
+    retry_count: number;
+  }>(
+    `SELECT
+       (SELECT COUNT(*) FROM conversation_turns WHERE conversation_id = ?) AS turn_count,
+       (SELECT COUNT(*) FROM conversation_turns WHERE conversation_id = ? AND (status = 'failed' OR error_json IS NOT NULL)) AS failed_turn_count,
+       (SELECT COUNT(*) FROM conversation_model_requests WHERE conversation_id = ?) AS model_request_count,
+       (SELECT COUNT(*) FROM conversation_process_items WHERE conversation_id = ? AND kind IN ('tool', 'command')) AS tool_or_command_count,
+       (SELECT COUNT(*) FROM conversation_process_items WHERE conversation_id = ? AND kind = 'retry') AS retry_count`,
+    [conversationId, conversationId, conversationId, conversationId, conversationId],
+  );
+  const changeSummary = readChangeSummary(db, conversationId);
+  const updatedAtCandidates = db.get<{
+    conversation_updated_at: string | null;
+    request_updated_at: string | null;
+    process_updated_at: string | null;
+    change_updated_at: string | null;
+  }>(
+    `SELECT
+       (SELECT updated_at FROM conversations WHERE id = ?) AS conversation_updated_at,
+       (SELECT MAX(COALESCE(completed_at, occurred_at)) FROM conversation_model_requests WHERE conversation_id = ?) AS request_updated_at,
+       (SELECT MAX(COALESCE(completed_at, started_at)) FROM conversation_process_items WHERE conversation_id = ?) AS process_updated_at,
+       (SELECT MAX(updated_at) FROM turn_change_sets WHERE conversation_id = ?) AS change_updated_at`,
+    [conversationId, conversationId, conversationId, conversationId],
+  );
+  return {
+    usage,
+    cost: providerUsage,
+    performance: {
+      latestOutputTokensPerSecond,
+      latestFirstVisibleResponseMs,
+      cumulativeProcessedDurationMs,
+      complete: latestOutputTokensPerSecond !== null && latestFirstVisibleResponseMs !== null && cumulativeProcessedDurationMs !== null,
+    },
+    activity: {
+      turnCount: activity?.turn_count ?? 0,
+      modelRequestCount: activity?.model_request_count ?? 0,
+      toolOrCommandCount: activity?.tool_or_command_count ?? 0,
+      retryCount: activity?.retry_count ?? 0,
+      failedTurnCount: activity?.failed_turn_count ?? 0,
+      complete: true,
+    },
+    changeSummary,
+    updatedAt: latestIsoTimestamp(updatedAtCandidates ? Object.values(updatedAtCandidates) : []),
+  };
+}
+
+function outputRate(request: ConversationModelRequestUsageRecord | null): number | null {
+  if (!request?.measurementComplete || request.outputTokens === null || request.reasoningOutputTokens === null) return null;
+  const durationMs = elapsedMs(request.firstTextOutputAt, request.completedAt);
+  const visibleOutputTokens = request.outputTokens - request.reasoningOutputTokens;
+  if (durationMs === null || durationMs <= 0 || visibleOutputTokens <= 0) return null;
+  return (visibleOutputTokens * 1_000) / durationMs;
+}
+
+function readProviderUsageMetrics(db: ZeusDatabasePort, conversationId: string): ConversationSessionMetricsSnapshot['cost'] {
+  const raw = db.get<{ provider_token_usage_json: string }>(`SELECT provider_token_usage_json FROM conversations WHERE id = ?`, [conversationId])?.provider_token_usage_json;
+  const value = parseRecord(raw);
+  const apiEquivalentUsd = nonNegativeFinite(value?.apiEquivalentUsd);
+  const priceCoverage = unitInterval(value?.priceCoverage);
+  const pricingCatalogDate = typeof value?.pricingCatalogDate === 'string' && value.pricingCatalogDate.trim() ? value.pricingCatalogDate : null;
+  const pricingSourceUrls = Array.isArray(value?.pricingSourceUrls) ? value.pricingSourceUrls.filter((url): url is string => typeof url === 'string' && url.trim().length > 0) : [];
+  const historyComplete = value?.historyComplete === true;
+  return {
+    apiEquivalentUsd,
+    priceCoverage,
+    pricingCatalogDate,
+    pricingSourceUrls,
+    historyComplete,
+    complete: apiEquivalentUsd !== null && priceCoverage === 1 && historyComplete,
+  };
+}
+
+function readCumulativeProcessedDurationMs(db: ZeusDatabasePort, conversationId: string): number | null {
+  const turns = db.select<{ id: string; provider_turn_id: string | null; started_at: string | null; completed_at: string | null }>(
+    `SELECT id, provider_turn_id, started_at, completed_at
+       FROM conversation_turns
+      WHERE conversation_id = ? AND completed_at IS NOT NULL
+      ORDER BY created_at, id`,
+    [conversationId],
+  );
+  if (turns.length === 0) return null;
+  const requests = db.select<{ turn_id: string | null; created_at: string; resolved_at: string | null }>(`SELECT turn_id, created_at, resolved_at FROM conversation_server_requests WHERE conversation_id = ? ORDER BY created_at, id`, [
+    conversationId,
+  ]);
+  let total = 0;
+  for (const turn of turns) {
+    const startedAt = timestampMs(turn.started_at);
+    const endedAt = timestampMs(turn.completed_at);
+    if (startedAt === null || endedAt === null || endedAt < startedAt) return null;
+    const intervals: Array<{ start: number; end: number }> = [];
+    for (const request of requests) {
+      if (request.turn_id !== turn.id && request.turn_id !== turn.provider_turn_id) continue;
+      const waitStartedAt = timestampMs(request.created_at);
+      const waitEndedAt = timestampMs(request.resolved_at);
+      if (waitStartedAt === null || waitEndedAt === null) return null;
+      const start = Math.max(startedAt, waitStartedAt);
+      const end = Math.min(endedAt, waitEndedAt);
+      if (end > start) intervals.push({ start, end });
+    }
+    intervals.sort((left, right) => left.start - right.start || left.end - right.end);
+    let waitingMs = 0;
+    let mergedStart = -1;
+    let mergedEnd = -1;
+    for (const interval of intervals) {
+      if (mergedStart < 0) {
+        mergedStart = interval.start;
+        mergedEnd = interval.end;
+      } else if (interval.start <= mergedEnd) {
+        mergedEnd = Math.max(mergedEnd, interval.end);
+      } else {
+        waitingMs += mergedEnd - mergedStart;
+        mergedStart = interval.start;
+        mergedEnd = interval.end;
+      }
+    }
+    if (mergedStart >= 0) waitingMs += mergedEnd - mergedStart;
+    total += Math.max(0, endedAt - startedAt - waitingMs);
+  }
+  return total;
+}
+
+function readChangeSummary(db: ZeusDatabasePort, conversationId: string): ConversationSessionMetricsSnapshot['changeSummary'] {
+  const sets = db.select<{ id: string; state: string }>(`SELECT id, state FROM turn_change_sets WHERE conversation_id = ?`, [conversationId]);
+  if (sets.length === 0) return { available: false, fileCount: null, addedLines: null, deletedLines: null, complete: true };
+  const stableSetIds = sets.filter((set) => ['applied', 'undone', 'conflicted'].includes(set.state)).map((set) => set.id);
+  const complete = stableSetIds.length === sets.length;
+  if (stableSetIds.length === 0) return { available: true, fileCount: null, addedLines: null, deletedLines: null, complete: false };
+  const placeholders = stableSetIds.map(() => '?').join(', ');
+  const summary = db.get<{ file_count: number; added_lines: number; deleted_lines: number }>(
+    `SELECT COUNT(DISTINCT COALESCE(NULLIF(new_path, ''), NULLIF(old_path, ''), id)) AS file_count,
+            COALESCE(SUM(added_lines), 0) AS added_lines,
+            COALESCE(SUM(deleted_lines), 0) AS deleted_lines
+       FROM turn_change_files
+      WHERE change_set_id IN (${placeholders})`,
+    stableSetIds,
+  );
+  return {
+    available: true,
+    fileCount: summary?.file_count ?? 0,
+    addedLines: summary?.added_lines ?? 0,
+    deletedLines: summary?.deleted_lines ?? 0,
+    complete,
+  };
+}
+
+function elapsedMs(start: string | null, end: string | null): number | null {
+  const startMs = timestampMs(start);
+  const endMs = timestampMs(end);
+  return startMs !== null && endMs !== null && endMs >= startMs ? endMs - startMs : null;
+}
+
+function timestampMs(value: string | null): number | null {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function latestIsoTimestamp(values: Array<string | null>): string | null {
+  let latest: { value: string; timestamp: number } | null = null;
+  for (const value of values) {
+    if (!value) continue;
+    const timestamp = Date.parse(value);
+    if (Number.isFinite(timestamp) && (!latest || timestamp > latest.timestamp)) latest = { value, timestamp };
+  }
+  return latest?.value ?? null;
+}
+
+function parseRecord(value: string | undefined): Record<string, unknown> | null {
+  if (!value) return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function nonNegativeFinite(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function unitInterval(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1 ? value : null;
 }
 
 function aggregateUsage(rows: ModelRequestRow[]): NullableUsage {
