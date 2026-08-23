@@ -173,7 +173,7 @@ export interface ConversationSnapshotV2 {
   } | null;
   activeTurn: ConversationSnapshotV2TurnSummary | null;
   recentClosedTurns: ConversationSnapshotV2TurnSummary[];
-  sessionMetrics: ConversationSessionMetricsSnapshot;
+  sessionMetrics: ConversationSessionMetricsSnapshot | null;
   collections: {
     timeline: { throughSequence: number };
     modelHistory: { throughSequence: number };
@@ -494,7 +494,7 @@ export class ConversationSnapshotV2Repository {
     private readonly artifactStore?: ArtifactStore,
   ) {}
 
-  readSnapshot(conversationIdValue: string, options: { closedTurnLimit?: number; byteLimit?: number } = {}): ConversationSnapshotV2 {
+  readSnapshot(conversationIdValue: string, options: { closedTurnLimit?: number; byteLimit?: number; includeSessionMetrics?: boolean } = {}): ConversationSnapshotV2 {
     const conversationId = requiredIdentity(conversationIdValue, 'conversationId');
     const closedTurnLimit = boundedInteger(options.closedTurnLimit ?? conversationSnapshotV2Limits.snapshot.defaultClosedTurnLimit, 'closedTurnLimit', 1, conversationSnapshotV2Limits.snapshot.maximumClosedTurnLimit);
     const byteLimit = boundedInteger(options.byteLimit ?? conversationSnapshotV2Limits.snapshot.defaultByteLimit, 'byteLimit', conversationSnapshotV2Limits.snapshot.minimumByteLimit, conversationSnapshotV2Limits.snapshot.maximumByteLimit);
@@ -583,7 +583,8 @@ export class ConversationSnapshotV2Repository {
         : null,
       activeTurn: activeTurn ? this.toTurnSummary(conversationId, activeTurn) : null,
       recentClosedTurns: recentClosedTurns.map((turn) => this.toTurnSummary(conversationId, turn)),
-      sessionMetrics: readConversationSessionMetrics(this.db, conversationId, activeTurn?.id ?? null),
+      // 会话正文首屏允许延后读取聚合指标；旧客户端未传该选项时仍保持原响应契约。
+      sessionMetrics: options.includeSessionMetrics === false ? null : readConversationSessionMetrics(this.db, conversationId, activeTurn?.id ?? null),
       collections: {
         timeline: { throughSequence: this.maximumSequence('conversation_timeline_events', 'sequence', conversationId) },
         modelHistory: { throughSequence: this.maximumSequence('conversation_model_history', 'sequence', conversationId) },
@@ -600,6 +601,14 @@ export class ConversationSnapshotV2Repository {
       },
     };
     return finalizeBoundedResponse(snapshotWithoutMetrics, byteLimit, 'Snapshot V2 固定字段超过响应字节预算。');
+  }
+
+  readSessionMetrics(conversationIdValue: string): ConversationSessionMetricsSnapshot {
+    const conversationId = requiredIdentity(conversationIdValue, 'conversationId');
+    const present = this.db.get<{ present: number }>(`SELECT 1 AS present FROM conversations WHERE id = ?`, [conversationId]);
+    if (!present) throw snapshotError('ZEUS_CONVERSATION_SNAPSHOT_V2_NOT_FOUND', '会话不存在。', 404);
+    const activeTurn = this.latestTurnsByStatus(conversationId, ['running', 'dispatching', 'waiting'], 1)[0];
+    return readConversationSessionMetrics(this.db, conversationId, activeTurn?.id ?? null);
   }
 
   listTimelinePage(input: { conversationId: string; cursor?: string; entryLimit?: number; byteLimit?: number }): ConversationSnapshotV2Page<ConversationTimelinePageItem> {
@@ -1106,7 +1115,7 @@ export class ConversationSnapshotV2Repository {
       submissionId: row.client_submission_id,
       status: row.status,
       hasError: row.has_error === 1,
-      hasPlan: plan !== null,
+      hasPlan: row.has_plan === 1,
       plan,
       startedAt: row.started_at,
       completedAt: row.completed_at,
@@ -1356,46 +1365,35 @@ interface SequencePageContext {
 function turnSummarySelectSql(): string {
   return `SELECT id, provider_turn_id, client_submission_id, status,
                  CASE WHEN error_json IS NULL THEN 0 ELSE 1 END AS has_error,
-                 CASE WHEN plan_json IS NOT NULL OR EXISTS (
+                 CASE WHEN EXISTS (
                    SELECT 1
                      FROM conversation_provider_item_states AS projected_plan
                     WHERE projected_plan.turn_id = conversation_turns.id
                       AND projected_plan.item_type = 'plan'
                       AND projected_plan.status = 'completed'
                       AND trim(projected_plan.text_projection) <> ''
-                 ) OR EXISTS (
+                 ) OR (plan_json IS NOT NULL AND EXISTS (
                    SELECT 1
-                     FROM conversation_items AS completed_plan
-                    WHERE completed_plan.turn_id = conversation_turns.id
-                      AND completed_plan.item_type = 'plan'
-                      AND completed_plan.status = 'completed'
-                      AND trim(completed_plan.text_content) <> ''
-                 ) THEN 1 ELSE 0 END AS has_plan,
+                     FROM conversation_submissions AS plan_submission
+                    WHERE plan_submission.id = conversation_turns.client_submission_id
+                      AND json_valid(plan_submission.input_json)
+                      AND json_extract(plan_submission.input_json, '$.context.workMode') = 'plan'
+                 )) THEN 1 ELSE 0 END AS has_plan,
                  plan_json,
-                 COALESCE(
-                   (SELECT projected_plan.text_projection
-                      FROM conversation_provider_item_states AS projected_plan
-                     WHERE projected_plan.turn_id = conversation_turns.id
-                       AND projected_plan.item_type = 'plan'
-                       AND projected_plan.status = 'completed'
-                       AND trim(projected_plan.text_projection) <> ''
-                     ORDER BY projected_plan.updated_at DESC, projected_plan.id DESC
-                     LIMIT 1),
-                   (SELECT completed_plan.text_content
-                      FROM conversation_items AS completed_plan
-                     WHERE completed_plan.turn_id = conversation_turns.id
-                       AND completed_plan.item_type = 'plan'
-                       AND completed_plan.status = 'completed'
-                       AND trim(completed_plan.text_content) <> ''
-                     ORDER BY completed_plan.updated_at DESC, completed_plan.id DESC
-                     LIMIT 1)
-                 ) AS legacy_plan_text,
+                 (SELECT projected_plan.text_projection
+                    FROM conversation_provider_item_states AS projected_plan
+                   WHERE projected_plan.turn_id = conversation_turns.id
+                     AND projected_plan.item_type = 'plan'
+                     AND projected_plan.status = 'completed'
+                     AND trim(projected_plan.text_projection) <> ''
+                   ORDER BY projected_plan.updated_at DESC, projected_plan.id DESC
+                   LIMIT 1) AS legacy_plan_text,
                  started_at, completed_at, created_at, updated_at, agent_kind`;
 }
 
 /**
- * PLAN 正文可能来自新 Provider 投影或早期统一条目，而不一定收到 turn/plan/updated。
- * Snapshot V2 只在读取时补齐既有 plan 字段，不迁移数据库，也不改变公开响应结构。
+ * PLAN 正文可能来自 Provider 正式计划投影，而不一定收到 turn/plan/updated。
+ * 普通 update_plan 历史只存在于 turn.plan_json/旧统一条目，不能据此升级为 PLAN 计划书。
  */
 function legacyTurnPlan(text: string | null): ConversationSnapshotV2TurnPlan | null {
   const explanation = text?.trim();

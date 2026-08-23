@@ -11,6 +11,7 @@ import type {
   NativePlanImplementationRequest,
   NativeQueueSnapshot,
   NativeTurnSnapshot,
+  NativeUnifiedUsageSnapshot,
 } from './sessionTypes.js';
 
 const syncStreamProtocolGeneration = 'zeus-conversation-sync-v1' as const;
@@ -45,7 +46,7 @@ export function adaptConversationSnapshotV2(input: ConversationSnapshotV2Bootstr
           collaborationMode,
         }
       : undefined);
-  const usage = snapshot.sessionMetrics.usage;
+  const usage = snapshot.sessionMetrics?.usage ?? emptyUnifiedUsageSnapshot();
   return {
     conversationSchemaGeneration: snapshot.conversationSchemaGeneration,
     syncStreamGeneration: syncStreamProtocolGeneration,
@@ -120,7 +121,7 @@ export function adaptConversationSnapshotV2(input: ConversationSnapshotV2Bootstr
     planImplementationRequests: input.planImplementationRequests,
     ...(snapshot.conversation.providerSettings ? { providerSettings: snapshot.conversation.providerSettings } : snapshot.conversation.providerModel ? { providerSettings: { model: snapshot.conversation.providerModel } } : {}),
     ...(nextTurnSettings ? { nextTurnSettings } : {}),
-    sessionMetrics: snapshot.sessionMetrics,
+    ...(snapshot.sessionMetrics ? { sessionMetrics: snapshot.sessionMetrics } : {}),
     permissionMode,
     collaborationMode,
     goal: input.goal.goal,
@@ -133,6 +134,25 @@ export function adaptConversationSnapshotV2(input: ConversationSnapshotV2Bootstr
       resources: { nextCursor: null, hasMore: snapshot.collections.resources.available, loading: false, loaded: false, error: null, items: [] },
       changeSetsByTurn: {},
     },
+  };
+}
+
+function emptyUnifiedUsageSnapshot(): NativeUnifiedUsageSnapshot {
+  const empty = {
+    inputTokens: null,
+    cachedInputTokens: null,
+    cacheWriteInputTokens: null,
+    outputTokens: null,
+    reasoningOutputTokens: null,
+    totalTokens: null,
+    estimatedUsd: null,
+    complete: false,
+  };
+  return {
+    conversationTotal: { ...empty },
+    turnTotal: { ...empty },
+    latestModelRequest: null,
+    preflightEstimate: null,
   };
 }
 

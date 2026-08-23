@@ -250,8 +250,6 @@ export class ConversationChoiceQueryApplication {
     const providerState = `${conversation.providerState ?? ''}`.toLowerCase();
     const recordState = conversation.status.toLowerCase();
     if (providerState.includes('failed') || providerState.includes('error') || recordState.includes('failed') || recordState.includes('error')) return { runtimeState: 'error' as const, taskRunStatus: 'failed' as const };
-    if (providerState.includes('reconnect')) return { runtimeState: 'reconnecting' as const, taskRunStatus: 'reconnecting' as const };
-    if (providerState.includes('connect') || providerState.includes('hydrat') || providerState.includes('disconnected')) return { runtimeState: 'connecting' as const, taskRunStatus: 'connecting' as const };
     const submissions = context.recoverableSubmissionsByConversationId.get(conversation.id) ?? [];
     const pendingRequestKind = context.pendingRequestKindByConversationId.get(conversation.id);
     if (providerState === 'archived') {
@@ -265,7 +263,7 @@ export class ConversationChoiceQueryApplication {
       return { runtimeState: 'streaming' as const, taskRunStatus: 'running' as const };
     }
     const paused = submissions.filter((submission) => submission.status === 'paused');
-    if (paused.some((submission) => submission.pausedReason === 'recovery_required') || providerState === 'paused') return { runtimeState: 'error' as const, taskRunStatus: 'failed' as const };
+    if (paused.some((submission) => submission.pausedReason === 'recovery_required') || providerState === 'paused') return { runtimeState: 'paused' as const, taskRunStatus: 'paused' as const };
     if (paused.length > 0 && !paused.every((submission) => submission.pausedReason === 'user_confirmation')) return { runtimeState: 'paused' as const, taskRunStatus: 'paused' as const };
     if (pendingRequestKind === 'user_input') return { runtimeState: 'pending_user_input' as const, taskRunStatus: 'waiting_user' as const };
     if (pendingRequestKind === 'approval') return { runtimeState: 'pending_approval' as const, taskRunStatus: 'waiting_approval' as const };

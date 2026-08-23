@@ -28,6 +28,7 @@ export type NativeSessionAction =
   | { type: 'transport_changed'; transportState: TransportState; reconnectAttempt?: number; error?: NativeSessionError | null }
   | { type: 'snapshot_hydrated'; snapshot: NativeConversationSnapshot }
   | { type: 'snapshot_v2_page_merged'; snapshot: NativeConversationSnapshot }
+  | { type: 'session_metrics_hydrated'; conversationId: string; sessionMetrics: NativeSessionMetricsSnapshot }
   | { type: 'next_turn_settings_changed'; settings: NativeNextTurnSettings }
   | {
       type: 'pending_requests_hydrated';
@@ -160,6 +161,23 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
       return hydrateSnapshot(state, action.snapshot);
     case 'snapshot_v2_page_merged':
       return mergeSnapshotV2Page(state, action.snapshot);
+    case 'session_metrics_hydrated': {
+      if (state.conversationId !== action.conversationId || state.snapshot?.id !== action.conversationId) return state;
+      const currentUpdatedAt = state.sessionMetrics?.updatedAt;
+      const nextUpdatedAt = action.sessionMetrics.updatedAt;
+      if (currentUpdatedAt && (!nextUpdatedAt || currentUpdatedAt > nextUpdatedAt)) return state;
+      return {
+        ...state,
+        unifiedUsage: action.sessionMetrics.usage,
+        sessionMetrics: action.sessionMetrics,
+        snapshot: {
+          ...state.snapshot,
+          usage: action.sessionMetrics.usage,
+          sessionMetrics: action.sessionMetrics,
+          snapshotV2: state.snapshot.snapshotV2 ? { ...state.snapshot.snapshotV2, sessionMetrics: action.sessionMetrics } : undefined,
+        },
+      };
+    }
     case 'next_turn_settings_changed':
       return state.snapshot
         ? {

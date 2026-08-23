@@ -25,6 +25,7 @@ import type {
   NativePlanImplementationRequest,
   NativeProjectConversationChoicesSnapshot,
   NativeQueueSnapshot,
+  NativeSessionMetricsSnapshot,
   NativeSubagentListSnapshot,
   NativeSubagentThreadSnapshot,
   SendNativeMessageRequest,
@@ -50,6 +51,7 @@ export interface ConversationApiClient {
   loadCodexConversationCapabilities: (projectId: string) => Promise<CodexConversationCapabilities>;
   startNativeConversation: (taskId: string, input: StartNativeConversationRequest) => Promise<NativeConversationStartDispatchResult>;
   loadNativeConversationV2: (projectId: string, conversationId: string) => Promise<NativeConversationSnapshotV2>;
+  loadNativeConversationSessionMetrics: (projectId: string, conversationId: string) => Promise<NativeSessionMetricsSnapshot>;
   loadNativeConversationModelHistoryV2: (
     projectId: string,
     conversationId: string,
@@ -171,9 +173,10 @@ export function createConversationApiClient(transport: LocalApiTransport): Conve
       return { acceptance, operationIdentity: commandBody.command.payload.operationIdentity };
     },
     loadNativeConversationV2: (projectId, conversationId) =>
-      transport.request<NativeConversationSnapshotV2>(`${conversationPath(projectId, conversationId)}/snapshot-v2`, {
+      transport.request<NativeConversationSnapshotV2>(`${conversationPath(projectId, conversationId)}/snapshot-v2?includeMetrics=false`, {
         headers: { 'x-zeus-snapshot-caller': 'renderer-session-v2' },
       }),
+    loadNativeConversationSessionMetrics: (projectId, conversationId) => transport.request<NativeSessionMetricsSnapshot>(`${conversationPath(projectId, conversationId)}/session-metrics`),
     loadNativeConversationModelHistoryV2: (projectId, conversationId, options) =>
       transport.request<NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>>(`${conversationPath(projectId, conversationId)}/model-history${pageQuery(options)}`),
     loadNativeConversationProcessV2: (projectId, conversationId, turnId, options) =>

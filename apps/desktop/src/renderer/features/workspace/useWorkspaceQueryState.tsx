@@ -122,6 +122,7 @@ import {
   readProjectSidebarPreferredWidth,
   readSettingsCategoryFromHash,
   resolveConversationNavigationId,
+  resolveNativeConversationSelectionPresentation,
   resolveInitialGraphProjectId,
   resolveSelectedNativeConversationForProject,
   resolveTaskManagementStatusConfig,
@@ -953,6 +954,17 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     () => resolveSelectedNativeConversationForProject(nativeConversationChoices, selectedNativeConversationId, activeProjectId),
     [activeProjectId, nativeConversationChoices, selectedNativeConversationId],
   );
+  const selectedNativeConversationResolvedPresentation = selectedNativeConversation
+    ? resolveNativeConversationSelectionPresentation(
+        selectedNativeConversation,
+        nativeConversationRuntimeStates[resolveConversationNavigationId(selectedNativeConversation)] ?? nativeConversationRuntimeStates[selectedNativeConversation.id] ?? selectedNativeConversation.listRuntimeState,
+      )
+    : 'history';
+  useEffect(() => {
+    if (selectedNativeConversationPresentation !== 'history' || selectedNativeConversationResolvedPresentation !== 'interactive') return;
+    // 窗口恢复时没有侧栏点击事件；列表事实确认会话仍活动后同样要恢复实时投影。
+    setSelectedNativeConversationPresentation('interactive');
+  }, [selectedNativeConversationPresentation, selectedNativeConversationResolvedPresentation]);
   useEffect(() => {
     if (!props.nativeConversationClient || !activeProjectId) return;
     // 能力元数据很小且按项目复用；完整会话快照必须等用户真正打开时再读取。

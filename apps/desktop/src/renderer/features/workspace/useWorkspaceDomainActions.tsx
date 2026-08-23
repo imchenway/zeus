@@ -106,6 +106,7 @@ import {
   type ProjectCodeWorkspaceMode,
   readCodexConfigImportPromptPreference,
   resolveConversationNavigationId,
+  resolveNativeConversationSelectionPresentation,
   resolveTaskManagementStatusConfig,
   selectCreatedGraphNodeTask,
   selectCreatedProjectTask,
@@ -1835,7 +1836,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     }
   }
 
-  async function selectNativeConversation(conversation: NativeConversationChoice, navigation: 'page' | 'preserve' = 'page', presentation: 'history' | 'interactive' = 'history'): Promise<void> {
+  async function selectNativeConversation(conversation: NativeConversationChoice, navigation: 'page' | 'preserve' = 'page', presentation?: 'history' | 'interactive'): Promise<void> {
     const targetProject = snapshot.projects.find((candidate) => candidate.id === conversation.projectId);
     if (targetProject) {
       activeProjectIdRef.current = targetProject.id;
@@ -1845,9 +1846,11 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     if (task) setTaskDetail(task);
     else setTaskDetail(undefined);
     const navigationId = conversation.navigationId ?? conversation.id;
+    const resolvedPresentation =
+      presentation ?? resolveNativeConversationSelectionPresentation(conversation, nativeConversationRuntimeStates[navigationId] ?? nativeConversationRuntimeStates[conversation.id] ?? conversation.listRuntimeState);
     selectedNativeConversationIdRef.current = navigationId;
     setSelectedNativeConversationId(navigationId);
-    setSelectedNativeConversationPresentation(presentation);
+    setSelectedNativeConversationPresentation(resolvedPresentation);
     setFocusedArchivedConversation(conversation.archived ? conversation : null);
     setConversationDraftOpen(false);
     if (navigation === 'page') {

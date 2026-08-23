@@ -382,7 +382,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     initialCachedState,
     initialOptimisticState,
     enabled: controllerEnabled,
-    realtimePolicy: props.historyOnly ? 'lazy' : 'auto',
+    realtimePolicy: historySnapshotOnly ? 'lazy' : 'auto',
   });
   const workspaceStateSelector = useMemo(createSessionWorkspaceStateSelector, [controller]);
   const state = useSessionControllerSelector(controller, workspaceStateSelector);
@@ -1426,8 +1426,6 @@ const labels = {
   },
 } as const;
 
-type SessionWorkspaceStatus = { kind: 'ready' | 'busy' | 'warning' | 'error'; label: string };
-
 type SessionContextWorkspace =
   | { kind: 'none' }
   | { kind: 'browser' }
@@ -1444,17 +1442,9 @@ export interface SessionHeaderSnapshot {
   taskId: string | null;
   taskManagementStatus: SessionWorkspaceTask['managementStatus'] | null;
   taskManagementStatusOptions: SessionWorkspaceTask['managementStatusOptions'];
-  status: SessionWorkspaceStatus;
 }
 
-export function createSessionHeaderSnapshot(
-  conversation: NativeConversationChoice | null,
-  task: SessionWorkspaceTask | null,
-  state: NativeSessionState | null,
-  loadState: SessionWorkspaceProps['loadState'],
-  language: SessionUiLanguage,
-  owner?: SessionConversationOwner,
-): SessionHeaderSnapshot | null {
+export function createSessionHeaderSnapshot(conversation: NativeConversationChoice | null, task: SessionWorkspaceTask | null, owner?: SessionConversationOwner): SessionHeaderSnapshot | null {
   if (!conversation) return null;
   const taskId = task?.id ?? (owner?.kind === 'task' ? owner.taskId : null);
   const taskTitle = task?.title ?? (owner?.kind === 'task' ? owner.taskTitle : null);
@@ -1465,7 +1455,6 @@ export function createSessionHeaderSnapshot(
     taskId,
     taskManagementStatus: task?.managementStatus ?? null,
     taskManagementStatusOptions: task?.managementStatusOptions,
-    status: sessionStatus(state, loadState, labels[language]),
   };
 }
 
@@ -1505,7 +1494,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const planWorkspaceItemKey = contextWorkspace.kind === 'plan' ? contextWorkspace.itemKey : null;
   const sessionReady = props.state != null;
   const resolvedBrowserTargetWidth = resolveBrowserTargetWidth(browserLayoutWidth, browserPaneShare, contextFullWidth);
-  const currentHeader = useMemo(() => createSessionHeaderSnapshot(props.conversation, props.task, props.state, props.loadState, props.language, owner), [owner, props.conversation, props.language, props.loadState, props.state, props.task]);
+  const currentHeader = useMemo(() => createSessionHeaderSnapshot(props.conversation, props.task, owner), [owner, props.conversation, props.task]);
   const displayedHeader = currentHeader;
   // 本地缓存只支撑会话重挂载的首帧；没有待确认用户修改时，后续以服务端快照为权威。
   const [composerRuntimeSettings, setComposerRuntimeSettings] = useState<ComposerRuntimeSettings | null>(() =>
@@ -2239,14 +2228,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 <span>{props.language === 'zh-CN' ? '浏览器' : 'Browser'}</span>
               </button>
             ) : null}
-            <span
-              className={`session-thread-status session-thread-status-${displayedHeader.status.kind}`}
-              role={displayedHeader.status.kind === 'error' ? 'alert' : 'status'}
-              aria-live={displayedHeader.status.kind === 'error' ? 'assertive' : 'polite'}
-            >
-              <span className="session-status-symbol" aria-hidden="true" />
-              <span>{displayedHeader.status.label}</span>
-            </span>
             {!legacy && props.conversation && props.state ? (
               <SessionQuickActionsCard
                 language={props.language}
@@ -3234,67 +3215,6 @@ function linkedFileApprovalPaths(state: NativeSessionState | null, request: Nati
   ];
 }
 
-function sessionStatus(state: NativeSessionState | null, loadState: SessionWorkspaceProps['loadState'], copy: (typeof labels)[SessionUiLanguage]): SessionWorkspaceStatus {
-  if (!state) {
-    if (loadState === 'loading') return { kind: 'busy', label: copy.loading };
-    if (loadState === 'error') return { kind: 'error', label: copy.failed };
-    return { kind: 'ready', label: copy.ready };
-  }
-  if (state.transportState === 'connecting' || state.transportState === 'hydrating')
-    return {
-      kind: 'busy',
-      label: state.snapshot ? copy.refreshing : copy.loading,
-    };
-  const realtimeExpected = sessionStateNeedsRealtime(state);
-  if (state.transportState === 'reconnecting' && realtimeExpected)
-    return {
-      kind: 'warning',
-      label: copy.reconnectingAttempt(state.reconnectAttempt),
-    };
-  if (state.transportState === 'failed' && (realtimeExpected || !state.snapshot))
-    return {
-      kind: 'error',
-      label: isServerBusyError(state.error) ? copy.serverBusy : copy.failed,
-    };
-  if (state.transportState === 'failed' || state.transportState === 'reconnecting')
-    return {
-      kind: 'ready',
-      label: copy.ready,
-    };
-  if ((state.snapshot?.providerState === 'archived' || (state.queue?.state.type === 'paused' && state.queue.state.reason === 'provider_archived')) && (state.queue?.submissions.length ?? 0) > 0)
-    return {
-      kind: 'busy',
-      label: copy.queued,
-    };
-  if (state.queue?.state.type === 'paused' && state.queue.state.reason === 'recovery_required') {
-    return { kind: 'error', label: copy.failed };
-  }
-  switch (state.conversationState) {
-    case 'native_loading':
-      return { kind: 'busy', label: copy.loading };
-    case 'native_idle':
-      return { kind: 'ready', label: copy.ready };
-    case 'starting_turn':
-      return { kind: 'busy', label: copy.starting };
-    case 'active_prework':
-      return { kind: 'busy', label: copy.working };
-    case 'active_final_answer':
-      return { kind: 'busy', label: copy.answering };
-    case 'waiting_approval':
-      return { kind: 'warning', label: copy.approval };
-    case 'waiting_user_input':
-      return { kind: 'warning', label: copy.input };
-    case 'interrupt_confirm':
-      return { kind: 'warning', label: copy.interruptConfirm };
-    case 'interrupting':
-      return { kind: 'busy', label: copy.interrupting };
-    case 'turn_failed':
-      return { kind: 'error', label: errorMessage(state.error) ?? copy.turnFailed };
-    case 'legacy_readonly':
-      return { kind: 'warning', label: copy.legacyTranscript };
-  }
-}
-
 function sessionStateNeedsRealtime(state: NativeSessionState | null | undefined): boolean {
   if (!state) return false;
   if (state.pendingRequests.some((request) => request.status === 'pending')) return true;
@@ -3313,10 +3233,6 @@ function sessionStateNeedsRealtime(state: NativeSessionState | null | undefined)
 function errorMessage(error: NativeSessionState['error']): string | null {
   if (!error) return null;
   return error instanceof Error ? error.message : error.message;
-}
-
-function isServerBusyError(error: NativeSessionState['error']): boolean {
-  return error?.status === 429 || /^(RATE_LIMITED|SERVER_BUSY|TOO_MANY_REQUESTS)$/i.test(error?.code ?? '');
 }
 
 function resolveBrowserTargetWidth(layoutWidth: number, paneShare: number, expanded: boolean): number {

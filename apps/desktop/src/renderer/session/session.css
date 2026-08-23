@@ -15795,3 +15795,41 @@
   transform: none !important;
   will-change: auto !important;
 }
+
+/* 最终覆盖：业务分组逐行排列，同组指标从左向右流动。 */
+.session-codex-parity-v1 .session-runtime-detail-groups {
+  gap: 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group {
+  align-items: start;
+  display: grid;
+  gap: 10px 18px;
+  grid-template-columns: minmax(108px, 0.12fr) minmax(0, 1fr);
+  padding-block: 8px;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group + .session-runtime-detail-group {
+  border-block-start: 1px solid var(--session-line-soft);
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group > h3 {
+  color: var(--session-text);
+  font-size: 12px;
+  font-weight: 740;
+  letter-spacing: 0.015em;
+  line-height: 1.35;
+  margin: 1px 0 0;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group > dl {
+  align-items: start;
+  grid-template-columns: repeat(auto-fit, minmax(min(142px, 100%), 1fr));
+}
+
+@media (max-width: 720px) {
+  .session-codex-parity-v1 .session-runtime-detail-group {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

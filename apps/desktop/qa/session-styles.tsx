@@ -8,12 +8,14 @@ import './session-styles.css';
 import type { ConversationResource, ConversationResourcePreview } from '@zeus/shared';
 import { PendingRequestSurface } from '../src/renderer/session/PendingRequestSurface.js';
 import { type ConversationTreeRuntimeState, type ProjectConversationGroup, ProjectConversationTree } from '../src/renderer/session/ProjectConversationTree.js';
-import type { NativeConversationChoice, NativePendingRequest, NativeQueuedSubmission, NativeSessionItemBuffer, NativeSessionState } from '../src/renderer/session/sessionTypes.js';
+import type { NativeConversationChoice, NativePendingRequest, NativeQueuedSubmission, NativeRuntimeDetailsSnapshot, NativeSessionItemBuffer, NativeSessionState } from '../src/renderer/session/sessionTypes.js';
 import { SafeMarkdown, ThreadItemView } from '../src/renderer/session/ThreadItemView.js';
 import { ConversationTranscript } from '../src/renderer/session/ConversationTranscript.js';
-import { QueuedConversationMessages } from '../src/renderer/session/QueuedConversationMessages.js';
 import { PlanSummary } from '../src/renderer/session/PlanSummary.js';
+import { RuntimeDetails } from '../src/renderer/session/RuntimeDetails.js';
+import { SessionPlanProgress } from '../src/renderer/session/SessionActivity.js';
 import { createInitialSessionState, sessionReducer } from '../src/renderer/session/sessionReducer.js';
+import { resolveNativeConversationSelectionPresentation } from '../src/renderer/features/workspace/workspaceSupport.js';
 
 declare global {
   interface Window {
@@ -345,6 +347,45 @@ const steeringInitialState: NativeSessionState = {
   transcriptRevision: 1,
 };
 
+const runtimeDetailsFixture: NativeRuntimeDetailsSnapshot = {
+  model: { state: 'available', value: 'gpt-5.6-sol' },
+  effort: { state: 'available', value: 'xhigh' },
+  serviceTier: { state: 'available', value: null },
+  usage: {
+    totalTokens: { state: 'available', value: 52_115_419 },
+    inputTokens: { state: 'available', value: 51_878_171 },
+    outputTokens: { state: 'available', value: 165_996 },
+    reasoningOutputTokens: { state: 'available', value: 55_137 },
+    contextTokens: { state: 'available', value: 200_000 },
+    contextWindow: { state: 'available', value: 258_000 },
+    cacheHitRate: { state: 'available', value: 0.977 },
+    apiEquivalentUsd: { state: 'available', value: 64.86123 },
+    priceCoverage: { state: 'available', value: 1 },
+    pricingCatalogDate: { state: 'available', value: '2026-08-10' },
+    pricingSourceUrls: { state: 'available', value: ['https://developers.openai.com/', 'https://learn.chatgpt.com/'] },
+    historyComplete: { state: 'available', value: true },
+  },
+  performance: {
+    latestOutputTokensPerSecond: { state: 'available', value: 42.8 },
+    latestFirstVisibleResponseMs: { state: 'available', value: 860 },
+    cumulativeProcessedDurationMs: { state: 'available', value: 5_760_000 },
+  },
+  activity: {
+    turnCount: { state: 'available', value: 3 },
+    modelRequestCount: { state: 'available', value: 364 },
+    toolOrCommandCount: { state: 'available', value: 328 },
+    retryCount: { state: 'available', value: 0 },
+    failedTurnCount: { state: 'available', value: 0 },
+  },
+  changeSummary: { state: 'available', value: { fileCount: 12, addedLines: 486, deletedLines: 97, complete: true } },
+  environment: {
+    cwd: { state: 'available', value: '/Users/david/hypha/zeus' },
+    branch: { state: 'available', value: 'main' },
+    nativeSessionId: { state: 'available', value: '01a02dec-c487-7e41-b555-3bf701effc1c' },
+    nativeSessionPath: { state: 'available', value: '/Users/david/.zeus/providers/codex/sessions/2026/08/23/rollout-2026-08-23T17-21-26-01a02dec-c487-7e41-b555-3bf701effc1c.jsonl' },
+  },
+};
+
 const startingSessionState: NativeSessionState = {
   ...createInitialSessionState(),
   transportState: 'ready',
@@ -615,46 +656,7 @@ function SendScrollPreview() {
 }
 
 function SteeringPreview() {
-  const [state, setState] = useState(steeringInitialState);
-
-  function steerImmediately(): void {
-    setState((previous) => {
-      const submission = previous.queue?.submissions.find((entry) => entry.id === steeringSubmission.id);
-      if (!submission || !previous.activeTurnId) return previous;
-      const steeringPending = {
-        ...submission,
-        status: 'steering',
-        delivery: 'queue' as const,
-        providerTurnId: null,
-        updatedAt: new Date().toISOString(),
-      };
-      const next = sessionReducer(previous, {
-        type: 'queue_hydrated',
-        queue: previous.queue
-          ? { ...previous.queue, submissions: previous.queue.submissions.map((entry) => (entry.id === submission.id ? steeringPending : entry)) }
-          : { state: { type: 'active', turnId: previous.activeTurnId, phase: 'prework' }, waitReason: 'current_turn', submissions: [steeringPending] },
-      });
-      window.setTimeout(() => {
-        setState((current) => {
-          const currentSubmission = current.queue?.submissions.find((entry) => entry.id === steeringSubmission.id);
-          if (!currentSubmission || currentSubmission.status !== 'steering' || !current.activeTurnId) return current;
-          return sessionReducer(current, {
-            type: 'steering_submission_hydrated',
-            submission: {
-              ...currentSubmission,
-              status: 'active',
-              delivery: 'steer_now',
-              providerTurnId: current.activeTurnId,
-              updatedAt: new Date().toISOString(),
-            },
-            queue: current.queue ? { ...current.queue, submissions: current.queue.submissions.filter((entry) => entry.id !== steeringSubmission.id) } : undefined,
-          });
-        });
-      }, 3000);
-      return next;
-    });
-  }
-
+  const state = steeringInitialState;
   const steeringState = state.queue?.submissions.find((entry) => entry.id === steeringSubmission.id)?.status;
 
   return (
@@ -663,7 +665,6 @@ function SteeringPreview() {
         <h3>排队消息引导立即接管</h3>
         <small data-testid="steering-status">{steeringState === 'steering' ? '引导中，消息保留在队列，等待当前轮次确认' : state.queue?.submissions.length ? '排队中' : '已按正常引导进入当前思考过程'}</small>
       </div>
-      <QueuedConversationMessages state={state} language="zh-CN" onSendNow={steerImmediately} />
       <div className="qa-send-transcript ai-workspace">
         <ConversationTranscript state={state} language="zh-CN" />
       </div>
@@ -748,7 +749,44 @@ function MotionApp() {
       </section>
       <SendScrollPreview />
       <SteeringPreview />
+      <ConversationSelectionRecoveryPreview />
+      <section className="qa-motion-theme session-codex-parity-v1 theme-light" data-testid="runtime-details-horizontal">
+        <h2>运行详情横向分组</h2>
+        <RuntimeDetails runtime={runtimeDetailsFixture} language="zh-CN" scope="session" />
+      </section>
     </main>
+  );
+}
+
+const selectionRecoveryPlan = {
+  explanation: '切回活动会话后继续显示实时计划进度。',
+  steps: [
+    { step: '恢复实时订阅', status: 'completed' as const },
+    { step: '继续接收正文与进度', status: 'in_progress' as const },
+  ],
+};
+
+function ConversationSelectionRecoveryPreview() {
+  const [selected, setSelected] = useState<'idle' | 'running'>('idle');
+  const selectedConversation = selected === 'running' ? { ...runningConversation, stage: 'running' as const, listRuntimeState: 'streaming' as const } : { ...unreadConversation, stage: 'ready' as const, listRuntimeState: 'ready' as const };
+  const presentation = resolveNativeConversationSelectionPresentation(selectedConversation, selectedConversation.listRuntimeState);
+  return (
+    <section className="qa-motion-theme session-codex-parity-v1 theme-light" data-testid="conversation-selection-recovery">
+      <header>
+        <strong>切换回会话后的实时恢复</strong>
+        <small>活动会话恢复交互态；空闲会话保持轻量历史态</small>
+      </header>
+      <div>
+        <button type="button" onClick={() => setSelected('idle')}>
+          选择空闲会话
+        </button>
+        <button type="button" onClick={() => setSelected('running')}>
+          选择活动会话
+        </button>
+      </div>
+      <output data-testid="conversation-selection-presentation">{presentation}</output>
+      {presentation === 'interactive' ? <SessionPlanProgress plan={selectionRecoveryPlan} language="zh-CN" /> : null}
+    </section>
   );
 }
 

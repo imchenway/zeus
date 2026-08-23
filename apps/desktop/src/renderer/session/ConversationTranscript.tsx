@@ -115,10 +115,21 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
         .filter((entry): entry is NativeSessionItemBuffer => Boolean(entry) && (!props.historyOnly || !entry.optimistic) && isVisibleTranscriptItem(entry) && !isUnacceptedQueuedUserItem(entry, props.state, queuedClientUserMessageIds)),
     [props.historyOnly, props.state.activeTurnId, props.state.itemOrder, props.state.items, queuedClientUserMessageIds],
   );
-  const projectedItems = useMemo(
-    () => (props.projectPersistedPlans ? projectPersistedTurnPlans(props.state, persistedItems) : persistedItems),
-    [persistedItems, props.projectPersistedPlans, props.state.conversationId, props.state.planImplementationRequests, props.state.providerThreadId, props.state.terminalTurnIds, props.state.turnsByProviderId],
-  );
+  const queuedSubmissionItems = useMemo(() => projectQueuedSubmissionItems(props.state, queuedSubmissions, persistedItems), [persistedItems, props.state.conversationId, props.state.providerThreadId, queuedSubmissions]);
+  const projectedItems = useMemo(() => {
+    const durableItems = [...persistedItems, ...queuedSubmissionItems];
+    return props.projectPersistedPlans ? projectPersistedTurnPlans(props.state, durableItems) : durableItems;
+  }, [
+    persistedItems,
+    props.projectPersistedPlans,
+    props.state.conversationId,
+    props.state.planImplementationRequests,
+    props.state.providerThreadId,
+    props.state.snapshot?.snapshotV2,
+    props.state.terminalTurnIds,
+    props.state.turnsByProviderId,
+    queuedSubmissionItems,
+  ]);
   const collapsedErrorItems = useMemo(() => collapseRepeatedErrorItems(projectedItems), [projectedItems]);
   const providerErrorItemsByTurn = useMemo(() => groupErrorItemsByTurn(collapsedErrorItems), [collapsedErrorItems]);
   const transcriptItems = useMemo(
@@ -590,7 +601,15 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
               })}
             </div>
           ) : !showActiveStatus && queuedSubmissions.length === 0 && historyHydrated ? (
-            <p className="session-transcript-empty">{props.language === 'zh-CN' ? '发送第一条消息后，真实 app-server 对话会显示在这里。' : 'Send the first message to begin the real app-server transcript.'}</p>
+            <p className="session-transcript-empty">
+              {props.historyOnly
+                ? props.language === 'zh-CN'
+                  ? '这条历史会话没有可显示的消息。'
+                  : 'This historical conversation has no visible messages.'
+                : props.language === 'zh-CN'
+                  ? '发送第一条消息后，真实 app-server 对话会显示在这里。'
+                  : 'Send the first message to begin the real app-server transcript.'}
+            </p>
           ) : null}
           {orphanFailedTurns.map((turn) => (
             <TurnFailureCard key={`turn-failure:${turn.providerTurnId ?? turn.id}`} failure={turn.error!} language={props.language} providerErrors={providerErrorItemsByTurn.get(turn.providerTurnId ?? '')} />
@@ -1319,10 +1338,18 @@ export function isVisibleTranscriptItem(item: NativeSessionItemBuffer): boolean 
 function projectPersistedTurnPlans(state: NativeSessionState, items: readonly NativeSessionItemBuffer[]): NativeSessionItemBuffer[] {
   const turnsWithVisiblePlan = new Set(items.filter((item) => normalizeItemType(item.type) === 'plan').map((item) => item.turnId));
   const requestByTurn = new Map(state.planImplementationRequests.map((request) => [request.turnId, request]));
+  const formalPlanTurnIds = new Set<string>();
+  const snapshotTurns = state.snapshot?.snapshotV2 ? [...state.snapshot.snapshotV2.recentClosedTurns, ...(state.snapshot.snapshotV2.activeTurn ? [state.snapshot.snapshotV2.activeTurn] : [])] : [];
+  for (const snapshotTurn of snapshotTurns) {
+    if (!snapshotTurn.hasPlan) continue;
+    formalPlanTurnIds.add(snapshotTurn.id);
+    if (snapshotTurn.providerTurnId) formalPlanTurnIds.add(snapshotTurn.providerTurnId);
+  }
   const planItems = Object.values(state.turnsByProviderId).flatMap((turn) => {
     const turnId = turn.providerTurnId ?? turn.id;
-    if (!turn.plan || turnsWithVisiblePlan.has(turnId)) return [];
-    const request = requestByTurn.get(turnId);
+    const formalPlan = formalPlanTurnIds.has(turn.id) || formalPlanTurnIds.has(turnId) || requestByTurn.has(turn.id) || requestByTurn.has(turnId);
+    if (!turn.plan || !formalPlan || turnsWithVisiblePlan.has(turnId)) return [];
+    const request = requestByTurn.get(turnId) ?? requestByTurn.get(turn.id);
     const itemId = request?.planItemId || `${turn.id}:plan`;
     const updatedAt = turn.completedAt ?? turn.updatedAt ?? turn.createdAt;
     const explanation = turn.plan.explanation?.trim() ?? '';
@@ -1368,6 +1395,60 @@ function visibleQueuedSubmissions(queue: NativeQueueSnapshot | null) {
   return [...(queue?.submissions ?? [])]
     .filter((submission) => (submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'steering' || submission.status === 'paused') && !submission.providerTurnId)
     .sort((left, right) => left.position - right.position || (left.createdAt ?? '').localeCompare(right.createdAt ?? '') || left.id.localeCompare(right.id));
+}
+
+/**
+ * Provider 轮次建立前就暂停的提交同样是已落库历史。它们不能只存在于队列状态里，
+ * 否则冷开会话会过滤掉乐观消息，并把用户已经发送的内容渲染成整页空白。
+ */
+function projectQueuedSubmissionItems(state: NativeSessionState, submissions: ReturnType<typeof visibleQueuedSubmissions>, persistedItems: readonly NativeSessionItemBuffer[]): NativeSessionItemBuffer[] {
+  const visibleSubmissionIds = new Set(persistedItems.flatMap((item) => [item.localItemId, item.itemId]).filter((value): value is string => Boolean(value)));
+  const visibleClientMessageIds = new Set(
+    persistedItems
+      .filter((item) => itemRole(item) === 'user')
+      .flatMap((item) => [item.clientUserMessageId, item.durableClientUserMessageId])
+      .filter((value): value is string => Boolean(value)),
+  );
+  return submissions.flatMap((submission) => {
+    if (visibleSubmissionIds.has(submission.id) || visibleSubmissionIds.has(`queued-submission:${submission.id}`)) return [];
+    if (submission.clientUserMessageId && visibleClientMessageIds.has(submission.clientUserMessageId)) return [];
+    const text = submission.composerDraft?.trim() || submission.content.trim();
+    if (!text) return [];
+    const timestamp = submission.createdAt ?? submission.updatedAt ?? '';
+    const deliveryError = submission.error
+      ? {
+          code: submission.error.code,
+          message: submission.error.message,
+          recoveryRequired: submission.error.recoveryRequired,
+          retryable: false,
+        }
+      : null;
+    return [
+      {
+        key: `queued-submission:${encodeURIComponent(submission.id)}`,
+        conversationId: state.conversationId ?? submission.conversationId ?? '',
+        threadId: state.providerThreadId ?? '',
+        turnId: `pending:${submission.id}`,
+        itemId: `queued-submission:${submission.id}`,
+        localItemId: submission.id,
+        type: 'userMessage',
+        status: submission.status,
+        phase: 'user',
+        text,
+        payload: {
+          role: 'user',
+          content: text,
+          delivery: submission.delivery ?? 'queue',
+          pausedReason: submission.pausedReason,
+          ...(deliveryError ? { deliveryError } : {}),
+        },
+        resources: [],
+        optimistic: true,
+        ...(submission.clientUserMessageId ? { clientUserMessageId: submission.clientUserMessageId, durableClientUserMessageId: submission.clientUserMessageId } : {}),
+        ...(timestamp ? { timelineAt: timestamp, updatedAt: submission.updatedAt ?? timestamp } : {}),
+      },
+    ];
+  });
 }
 
 type SessionMotionFocusKind = 'thinking' | 'reasoning' | 'activity' | 'plan' | 'image' | 'streaming';

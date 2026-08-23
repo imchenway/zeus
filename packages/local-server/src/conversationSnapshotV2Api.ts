@@ -53,16 +53,20 @@ export function registerConversationSnapshotV2Api(options: ConversationSnapshotV
     async (
       request: FastifyRequest<{
         Params: ConversationParams;
-        Querystring: { closedTurns?: string; byteLimit?: string };
+        Querystring: { closedTurns?: string; byteLimit?: string; includeMetrics?: string };
       }>,
       reply,
     ) => {
       if (!hasConversationAccess(options, request.params)) return conversationNotFound(reply);
       markV2Response(reply);
       try {
+        if (request.query.includeMetrics !== undefined && request.query.includeMetrics !== 'true' && request.query.includeMetrics !== 'false') {
+          throw new ConversationSnapshotV2Error('ZEUS_CONVERSATION_SNAPSHOT_V2_INVALID_ARGUMENT', 'includeMetrics 必须为 true 或 false。', 400);
+        }
         const snapshot = repository.readSnapshot(request.params.conversationId, {
           ...(request.query.closedTurns === undefined ? {} : { closedTurnLimit: Number(request.query.closedTurns) }),
           ...(request.query.byteLimit === undefined ? {} : { byteLimit: Number(request.query.byteLimit) }),
+          ...(request.query.includeMetrics === undefined ? {} : { includeSessionMetrics: request.query.includeMetrics === 'true' }),
         });
         compatibility.recordV2(request);
         return snapshot;
@@ -71,6 +75,16 @@ export function registerConversationSnapshotV2Api(options: ConversationSnapshotV
       }
     },
   );
+
+  server.get('/api/projects/:projectId/conversations/:conversationId/session-metrics', async (request: FastifyRequest<{ Params: ConversationParams }>, reply) => {
+    if (!hasConversationAccess(options, request.params)) return conversationNotFound(reply);
+    markV2Response(reply);
+    try {
+      return repository.readSessionMetrics(request.params.conversationId);
+    } catch (error) {
+      return sendSnapshotV2Error(reply, error);
+    }
+  });
 
   server.get('/api/projects/:projectId/conversations/:conversationId/timeline', async (request: FastifyRequest<{ Params: ConversationParams; Querystring: PageQuery }>, reply) => {
     if (!hasConversationAccess(options, request.params)) return conversationNotFound(reply);

@@ -491,16 +491,11 @@ function visibleConversationCount(group: Pick<FlattenedProjectConversations, 'fl
 export function conversationTreeRuntimeStateFromSession(state: NativeSessionState): ConversationTreeRuntimeState {
   if (state.conversationState === 'turn_failed') return 'error';
   // 侧栏表达会话本身的运行态，不表达当前窗口读取本地快照或建立实时订阅的短暂状态。
-  // 已有权威快照时，即使视图正在水合/重连，也继续投影任务、队列和待处理请求的真实状态。
-  if (!state.snapshot) {
-    if (state.transportState === 'failed') return 'error';
-    if (state.transportState === 'reconnecting') return 'reconnecting';
-    if (state.transportState === 'connecting' || state.transportState === 'hydrating' || state.transportState === 'disconnected') return 'connecting';
-  }
+  // 读取、连接、重连失败都属于当前窗口的瞬时 transport，不再污染全局会话树状态。
   if (state.snapshot?.providerState === 'archived' || (state.queue?.state.type === 'paused' && state.queue.state.reason === 'provider_archived')) {
     return (state.queue?.submissions.length ?? 0) > 0 ? 'queued' : 'ready';
   }
-  if (state.queue?.state.type === 'paused' && state.queue.state.reason === 'recovery_required') return 'error';
+  if (state.queue?.state.type === 'paused' && state.queue.state.reason === 'recovery_required') return 'paused';
   const pendingRequest = state.pendingRequests.find((request) => request.status === 'pending');
   if (pendingRequest?.type === 'request_user_input' || pendingRequest?.type === 'userInput' || state.conversationState === 'waiting_user_input') return 'pending_user_input';
   if (pendingRequest || state.conversationState === 'waiting_approval') return 'pending_approval';
@@ -543,8 +538,6 @@ export function conversationTreeRuntimeStateFromConversation(
   const providerState = `${conversation.providerState ?? ''}`.toLocaleLowerCase();
   const recordState = conversation.status.toLocaleLowerCase();
   if (providerState.includes('failed') || providerState.includes('error') || recordState.includes('failed') || recordState.includes('error')) return 'error';
-  if (providerState.includes('reconnect')) return 'reconnecting';
-  if (providerState.includes('connect') || providerState.includes('hydrat') || providerState.includes('disconnected')) return 'connecting';
   if (providerState.includes('paused') || recordState.includes('paused')) return 'paused';
   if (conversation.pendingRequestKind === 'user_input') return 'pending_user_input';
   if (conversation.pendingRequestKind === 'approval') return 'pending_approval';

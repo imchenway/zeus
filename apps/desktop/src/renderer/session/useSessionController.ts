@@ -31,6 +31,7 @@ import {
   type NativeQueueSnapshot,
   type NativeRealtimeEventEnvelope,
   type NativeSessionError,
+  type NativeSessionMetricsSnapshot,
   type NativeSessionState,
   type NativeSubagentListSnapshot,
   type NativeSubagentThreadSnapshot,
@@ -158,6 +159,7 @@ function realtimeBufferBudgetError(kind: RealtimeBufferKind): Error {
 export interface SessionControllerClient {
   loadCodexConversationCapabilities?(projectId: string): Promise<CodexConversationCapabilities>;
   loadNativeConversationV2(projectId: string, conversationId: string): Promise<NativeConversationSnapshotV2>;
+  loadNativeConversationSessionMetrics?(projectId: string, conversationId: string): Promise<NativeSessionMetricsSnapshot>;
   loadNativeConversationChoice(projectId: string, conversationId: string): Promise<NativeConversationChoice>;
   loadNativeConversationQueueV2(projectId: string, conversationId: string): Promise<NativeQueueSnapshot>;
   loadNativeConversationModelHistoryV2(
@@ -490,6 +492,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
   let realtimeSubscribed = false;
   let realtimeConnectionPromise: Promise<void> | null = null;
   let connectionToken = 0;
+  let sessionMetricsHydrationToken = 0;
   let identityEpoch = 0;
   let disposed = false;
   let startPromise: Promise<void> | null = null;
@@ -737,8 +740,22 @@ export function createSessionController(options: CreateSessionControllerOptions)
       queue: queueWithPendingSteering(settledSnapshot.queue),
     };
     dispatch({ type: 'snapshot_hydrated', snapshot: projectedSnapshot });
+    void hydrateSessionMetrics(projectedSnapshot.id);
     await recoverManualConfirmationQueue(projectedSnapshot.queue);
     retireRecoveredBrowserCommentMarks(projectedSnapshot);
+  }
+
+  async function hydrateSessionMetrics(conversationId: string): Promise<void> {
+    const load = options.client.loadNativeConversationSessionMetrics;
+    if (!load) return;
+    const token = ++sessionMetricsHydrationToken;
+    try {
+      const sessionMetrics = await load(options.projectId, conversationId);
+      if (disposed || token !== sessionMetricsHydrationToken || state.snapshot?.id !== conversationId) return;
+      dispatch({ type: 'session_metrics_hydrated', conversationId, sessionMetrics });
+    } catch {
+      // 聚合指标是渐进增强；失败不能遮住已经取得的会话正文，后续稳定事件仍会刷新指标。
+    }
   }
 
   function queueWithPendingSteering(queue: NativeQueueSnapshot): NativeQueueSnapshot {
@@ -1536,8 +1553,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const loadChoice = options.client.loadNativeConversationChoice;
     let missingPlanConfirmation = false;
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const snapshot = await loadSnapshot(options.projectId, options.conversationId);
-      const [history, queue, pending, choice, goal] = await Promise.all([
+      const [snapshot, history, queue, pending, choice, goal] = await Promise.all([
+        loadSnapshot(options.projectId, options.conversationId),
         loadHistory(options.projectId, options.conversationId, { direction: 'tail', limit: 48, byteLimit: 96 * 1024 }),
         loadQueue(options.projectId, options.conversationId),
         options.client.loadNativePendingRequests(options.projectId, options.conversationId),

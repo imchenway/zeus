@@ -92,6 +92,20 @@ export const PROJECT_WORKSPACE_ENTRIES = [
 export type ProjectDetailPanel = 'diff' | 'edit' | 'config' | 'archive' | undefined;
 export type ConversationDrawer = 'runtime' | 'context' | 'changes' | 'templates' | undefined;
 
+const interactiveConversationRuntimeStates = new Set<NonNullable<NativeConversationChoice['listRuntimeState']>>(['connecting', 'reconnecting', 'paused', 'queued', 'streaming', 'pending_approval', 'pending_user_input']);
+
+const interactiveConversationStages = new Set<NativeConversationChoice['stage']>(['connecting', 'queued', 'running', 'waiting_user', 'waiting_approval', 'paused']);
+
+/**
+ * 侧栏点击空闲会话时保持轻量历史读取；存在活动事实的会话必须恢复交互态，
+ * 否则 lazy 历史控制器不会订阅后续事件，也会隐藏当前轮次的底部计划进度。
+ */
+export function resolveNativeConversationSelectionPresentation(conversation: NativeConversationChoice, runtimeState: NativeConversationChoice['listRuntimeState'] | undefined = conversation.listRuntimeState): 'history' | 'interactive' {
+  if (conversation.transportKind !== 'codex_native' || conversation.archived || conversation.readOnly) return 'history';
+  if (runtimeState && interactiveConversationRuntimeStates.has(runtimeState)) return 'interactive';
+  return interactiveConversationStages.has(conversation.stage) ? 'interactive' : 'history';
+}
+
 export type TaskConversationDrawerTarget =
   | Readonly<{
       taskId: string;
