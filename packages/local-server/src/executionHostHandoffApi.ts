@@ -168,6 +168,18 @@ export function registerExecutionHostHandoffApi(options: RegisterExecutionHostHa
   });
 
   async function prepare(targetAppVersion: string) {
+    // 已知存在活动写入时不能先关闸再判断，否则新版 Main 的周期探测会让旧 Core
+    // 每秒短暂进入 draining，普通读取和新会话派发都会随机失败。这里先做无副作用
+    // 预检；真正关闸后仍会再次复核，覆盖预检与冻结之间新进入的工作。
+    const preflightBlockers = options.repository.readBlockers();
+    const preflightBackgroundBlockers = options.readBackgroundMutationBlockers();
+    if (hasHandoffBlockers(preflightBlockers) || hasBackgroundMutationBlockers(preflightBackgroundBlockers)) {
+      const blockers = { business: preflightBlockers, background: preflightBackgroundBlockers };
+      throw Object.assign(new Error(`Execution Host 交接被活动工作阻断：${JSON.stringify(blockers)}`), {
+        code: preflightBlockers.piWaitingTurnCount > 0 ? 'ZEUS_EXECUTION_HOST_PI_WAITING_BLOCKED' : 'ZEUS_EXECUTION_HOST_HANDOFF_WORK_BLOCKED',
+        statusCode: 409,
+      });
+    }
     options.fence.transition('draining');
     let handoffId: string | null = null;
     let coordinatorFrozen = false;

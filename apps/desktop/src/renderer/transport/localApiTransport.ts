@@ -215,7 +215,9 @@ function blobPerformanceSpan(response: Response | null, traceId: string, attempt
 }
 
 function isLikelyLocalServerConnectionError(error: unknown): boolean {
-  if (error instanceof ZeusApiError) return false;
+  // 持久化升级交接中的 503 表示当前连接正在退出，不是业务失败。刷新 Main
+  // 提供的连接并复用同一逻辑读取一次，避免把瞬时交接窗口展示成 Git/会话错误。
+  if (error instanceof ZeusApiError) return error.error === 'ZEUS_EXECUTION_HOST_DRAINING';
   if (error instanceof LocalApiReadTimeoutError) return true;
   if (error instanceof TypeError) return true;
   if (!(error instanceof Error)) return false;

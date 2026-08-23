@@ -34,6 +34,7 @@ import {
   TerminalEventRepository,
   type ZeusConversationRecord,
   type ZeusProjectRecord,
+  type ZeusTaskIntegrationAttemptRecord,
   type ZeusTaskRecord,
 } from '@zeus/storage';
 import { type TaskStatus } from '@zeus/task-core';
@@ -784,11 +785,17 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     pauseBackgroundAdmission: pauseTelegramAdmission,
     readBackgroundMutationBlockers: () => {
       const workers = heavyWorkerPoolSnapshot();
+      const activeTaskIntegrationOperationIds = new Set(taskIntegrationAttempts.listByState('preparing').map((attempt: ZeusTaskIntegrationAttemptRecord) => attempt.id));
+      for (const [operationId, operation] of taskConflictAiOperations) {
+        if (operation.running || operation.finalizing) activeTaskIntegrationOperationIds.add(operationId);
+      }
       return {
         activeProjectGraphScans: activeProjectGraphScanIds.size,
         activeHeavyWorkerJobs: workers.activeJobs,
         queuedHeavyWorkerJobs: workers.queuedJobs,
-        taskIntegrationOperations: taskConflictAiOperations.size,
+        // active 冲突交付在等待用户继续时只有持久化身份，不持有进程或写事务；
+        // 仅 preparation、Provider 运行和最终合入属于必须排空的后台写入。
+        taskIntegrationOperations: activeTaskIntegrationOperationIds.size,
       };
     },
     freezeBackgroundMutationSources: async () => {

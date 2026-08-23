@@ -1540,7 +1540,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         loadQueue(options.projectId, options.conversationId),
         options.client.loadNativePendingRequests(options.projectId, options.conversationId),
         loadChoice(options.projectId, options.conversationId),
-        options.client.loadNativeGoal(options.projectId, options.conversationId),
+        loadGoalForHydration(),
       ]);
       if (history.throughEventSeq !== snapshot.throughEventSeq) continue;
       const planImplementationRequests = pending.planImplementationRequests ?? [];
@@ -1560,6 +1560,20 @@ export function createSessionController(options: CreateSessionControllerOptions)
     }
     if (missingPlanConfirmation) throw new Error('会话正在等待计划确认，但计划操作没有随首屏恢复；已停止显示不可操作的排队状态，请重试加载会话。');
     throw new Error('Snapshot V2 结构与尾部历史未能在同一事件水位稳定读取，请重试。');
+  }
+
+  async function loadGoalForHydration(): Promise<NativeGoalResponse> {
+    try {
+      return await options.client.loadNativeGoal(options.projectId, options.conversationId);
+    } catch {
+      // 目标是附属 Provider 能力，旧 thread 丢失、Provider 离线或能力探测失败都不能
+      // 推翻已经取得的 Snapshot V2。重连时保留本地已知投影，冷打开则明确标为未验证。
+      return {
+        goal: state.snapshot?.goal ?? null,
+        timeline: state.snapshot?.goalTimeline ?? [],
+        capability: state.snapshot?.goalCapability ?? { supported: false, enabled: false, stage: null, reason: 'unverified' },
+      };
+    }
   }
 
   function snapshotNeedsRealtime(snapshot: NativeConversationSnapshot): boolean {

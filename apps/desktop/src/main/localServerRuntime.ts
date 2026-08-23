@@ -314,6 +314,7 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
   let handoffProbePromise: Promise<void> | undefined;
   let recoveryPromise: Promise<void> | undefined;
   let handoffPromise: Promise<void> | undefined;
+  let handoffRetryNotBeforeMs = 0;
   let closePromise: Promise<void> | undefined;
   let closing = false;
   try {
@@ -377,7 +378,7 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
     };
 
     const handoffPreviousHostIfSafe = async (work: ExecutionHostWorkStatus): Promise<void> => {
-      if (connection.appVersion === currentAppVersion || hasEffectfulExecution(work) || handoffPromise) return;
+      if (connection.appVersion === currentAppVersion || hasEffectfulExecution(work) || handoffPromise || Date.now() < handoffRetryNotBeforeMs) return;
 
       const previousInstanceId = connection.instanceId;
       const previousPid = connection.pid;
@@ -397,7 +398,13 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
         await waitForExecutionHostExit(options.userDataPath, previousInstanceId, previousPid, options.dataRootIdentity);
         const next = await connectOrLaunchExecutionHost(options);
         await attach(next);
-      })();
+        handoffRetryNotBeforeMs = 0;
+      })().catch((error: unknown) => {
+        // 旧 Core 只能在 prepare 后报告后台阻断；对这类可恢复 409 做退避，避免
+        // 每秒关闸一次。新 Core 会在关闸前预检，此分支保留跨版本兼容。
+        if (isRetryableExecutionHostHandoffBlock(error)) handoffRetryNotBeforeMs = Date.now() + 15_000;
+        throw error;
+      });
       const tracked = switching.finally(() => {
         if (handoffPromise === tracked) handoffPromise = undefined;
       });
@@ -1374,8 +1381,20 @@ async function requestExecutionHostApi<T>(connection: ExecutionHostRendezvous, p
     signal: AbortSignal.timeout(10_000),
   });
   const payload = (await response.json().catch(() => ({}))) as unknown;
-  if (!response.ok) throw Object.assign(new Error(`Zeus execution-host handoff API failed with HTTP ${response.status}.`), { statusCode: response.status });
+  if (!response.ok) {
+    const errorPayload = payload && typeof payload === 'object' && !Array.isArray(payload) ? (payload as Record<string, unknown>) : {};
+    throw Object.assign(new Error(typeof errorPayload.message === 'string' ? errorPayload.message : `Zeus execution-host handoff API failed with HTTP ${response.status}.`), {
+      statusCode: response.status,
+      ...(typeof errorPayload.error === 'string' ? { code: errorPayload.error } : {}),
+    });
+  }
   return payload as T;
+}
+
+function isRetryableExecutionHostHandoffBlock(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const candidate = error as { code?: unknown; statusCode?: unknown };
+  return candidate.statusCode === 409 && (candidate.code === 'ZEUS_EXECUTION_HOST_HANDOFF_WORK_BLOCKED' || candidate.code === 'ZEUS_EXECUTION_HOST_PI_WAITING_BLOCKED' || candidate.code === 'ZEUS_EXECUTION_HOST_HANDOFF_ALREADY_ACTIVE');
 }
 
 function isExecutionHostHandoffPreparation(value: unknown): value is ExecutionHostHandoffPreparation {
