@@ -312,6 +312,11 @@ export interface NativeModelRequestUsageObservation extends Omit<NativeNullableU
   modelId: string;
   contextWindow: number | null;
   usageComplete: boolean;
+  providerRequestId: string | null;
+  firstVisibleOutputAt: string | null;
+  firstTextOutputAt: string | null;
+  completedAt: string | null;
+  measurementComplete: boolean;
   occurredAt: string;
 }
 
@@ -320,6 +325,40 @@ export interface NativeUnifiedUsageSnapshot {
   turnTotal: NativeNullableUsageBreakdown;
   latestModelRequest: NativeModelRequestUsageObservation | null;
   preflightEstimate: null;
+}
+
+export interface NativeSessionMetricsSnapshot {
+  usage: NativeUnifiedUsageSnapshot;
+  cost: {
+    apiEquivalentUsd: number | null;
+    priceCoverage: number | null;
+    pricingCatalogDate: string | null;
+    pricingSourceUrls: string[];
+    historyComplete: boolean;
+    complete: boolean;
+  };
+  performance: {
+    latestOutputTokensPerSecond: number | null;
+    latestFirstVisibleResponseMs: number | null;
+    cumulativeProcessedDurationMs: number | null;
+    complete: boolean;
+  };
+  activity: {
+    turnCount: number;
+    modelRequestCount: number;
+    toolOrCommandCount: number;
+    retryCount: number;
+    failedTurnCount: number;
+    complete: boolean;
+  };
+  changeSummary: {
+    available: boolean;
+    fileCount: number | null;
+    addedLines: number | null;
+    deletedLines: number | null;
+    complete: boolean;
+  };
+  updatedAt: string | null;
 }
 
 export interface NativeProviderValueSnapshot {
@@ -394,6 +433,7 @@ export interface NativeConversationSnapshot {
   providerSettings?: NativeProviderSettingsSnapshot;
   nextTurnSettings?: NativeNextTurnSettings;
   tokenUsage?: NativeTokenUsageSnapshot;
+  sessionMetrics?: NativeSessionMetricsSnapshot;
   rateLimits?: NativeProviderValueSnapshot;
   mcpStartup?: NativeProviderValueSnapshot;
   executionContext?: NativeConversationExecutionContext;
@@ -471,6 +511,7 @@ export interface NativeConversationSnapshotV2 {
   } | null;
   activeTurn: NativeConversationSnapshotV2Turn | null;
   recentClosedTurns: NativeConversationSnapshotV2Turn[];
+  sessionMetrics: NativeSessionMetricsSnapshot;
   collections: {
     timeline: { throughSequence: number };
     modelHistory: { throughSequence: number };
@@ -1313,6 +1354,7 @@ export type NativeConversationEvent =
   | NativeEvent<'conversation.item.completed', NativeItemEventPayload & { textContent: string }>
   | NativeEvent<'conversation.settings.changed', NativeEventIdentity & { model: string; effort?: string }>
   | NativeEvent<'conversation.tokenUsage.changed', NativeEventIdentity & SharedNativeTokenUsageSnapshot>
+  | NativeEvent<'conversation.sessionMetrics.changed', NativeEventIdentity & { sessionMetrics: NativeSessionMetricsSnapshot }>
   | NativeEvent<'conversation.rateLimits.changed', NativeEventIdentity & { value: Record<string, unknown> }>
   | NativeEvent<'conversation.mcpStartup.changed', NativeEventIdentity & { value: Record<string, unknown> }>
   | NativeEvent<'conversation.queue.changed', NativeEventIdentity & { queue: NativeQueueSnapshot }>
@@ -1371,6 +1413,7 @@ export const nativeConversationEventTypes = new Set<NativeConversationEvent['typ
   'conversation.item.completed',
   'conversation.settings.changed',
   'conversation.tokenUsage.changed',
+  'conversation.sessionMetrics.changed',
   'conversation.rateLimits.changed',
   'conversation.mcpStartup.changed',
   'conversation.queue.changed',
@@ -1445,6 +1488,7 @@ export interface NativeSessionState {
   providerSettings: NativeProviderSettingsSnapshot | null;
   tokenUsage: NativeTokenUsageSnapshot | null;
   unifiedUsage: NativeUnifiedUsageSnapshot | null;
+  sessionMetrics: NativeSessionMetricsSnapshot | null;
   rateLimits: NativeProviderValueSnapshot | null;
   mcpStartup: NativeProviderValueSnapshot | null;
   seenEventIds: Record<string, true>;

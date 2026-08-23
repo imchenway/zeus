@@ -7,7 +7,7 @@ import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paper
 import { TargetIcon as Target } from '@phosphor-icons/react/dist/csr/Target';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { animate as animateMotion, motion, useMotionValue, useTransform } from 'framer-motion';
-import { calculateUncachedInputTokens, type ConversationContextDraft, type ConversationFileLocation, type ConversationOpenTarget, type TurnChangeFile, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import { type ConversationContextDraft, type ConversationFileLocation, type ConversationOpenTarget, type TurnChangeFile, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import type { ProjectGitAction, ProjectGitActionResponse, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
 import { openConversationResourceInMain, openTurnChangeFileInMain } from '../appShellBridge.js';
 import { ZeusSelect } from '../ZeusSelect.js';
@@ -40,7 +40,6 @@ import type {
   NativeConversationStage,
   NativeConversationStartDispatchResult,
   NativeConversationToolResultPage,
-  NativeModelRequestUsageObservation,
   NativeNextTurnSettings,
   NativeOperationAcceptance,
   NativePendingRequest,
@@ -1320,28 +1319,18 @@ const labels = {
     removeAttachment: '移除附件',
     runtimeDetails: '运行时详情',
     model: '模型',
-    usage: 'Token 用量',
     cacheHitRate: '缓存 Token 命中率',
-    cacheRead: '缓存命中',
-    cacheMiss: '缓存未命中',
-    cacheWrite: '缓存写入',
-    reasoningOutput: '推理输出',
     contextUsage: '上下文占用',
-    estimatedCredits: '估算 Credits',
-    apiEquivalentUsd: 'API 单价费用估算',
     priceCoverage: '费用覆盖率',
+    priceCatalogDate: '价格目录日期',
     priceSource: '价格来源',
-    collectionNotice: '该指标自用量采集启用后开始记录',
     cwd: '当前目录',
     branch: '当前分支',
     sessionId: '会话 ID',
     jsonlPath: 'JSONL 文件',
     nonGitDirectory: '非 Git 目录',
     unavailable: '不可用',
-    rateLimits: '账户限额',
     mcpStartup: 'MCP 启动状态',
-    runtimeReady: '运行时状态正常',
-    runtimeAttention: '需要关注',
     legacyTranscript: '只读旧会话记录',
     unsynced: '未同步',
     exactValue: '精确值',
@@ -1384,28 +1373,18 @@ const labels = {
     removeAttachment: 'Remove attachment',
     runtimeDetails: 'Runtime details',
     model: 'Model',
-    usage: 'Token usage',
     cacheHitRate: 'Cached-token hit rate',
-    cacheRead: 'Cache hits',
-    cacheMiss: 'Cache misses',
-    cacheWrite: 'Cache writes',
-    reasoningOutput: 'Reasoning output',
     contextUsage: 'Context usage',
-    estimatedCredits: 'Estimated Credits',
-    apiEquivalentUsd: 'API price estimate',
     priceCoverage: 'Price coverage',
+    priceCatalogDate: 'Price catalog date',
     priceSource: 'Price source',
-    collectionNotice: 'This metric is recorded only since usage collection was enabled',
     cwd: 'Current directory',
     branch: 'Current branch',
     sessionId: 'Session ID',
     jsonlPath: 'JSONL file',
     nonGitDirectory: 'Not a Git directory',
     unavailable: 'Unavailable',
-    rateLimits: 'Account rate limits',
     mcpStartup: 'MCP startup',
-    runtimeReady: 'Runtime status current',
-    runtimeAttention: 'Attention required',
     legacyTranscript: 'Read-only legacy transcript',
     unsynced: 'Not synced',
     exactValue: 'exact value',
@@ -3222,9 +3201,24 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
         : 'Standard'
       : (props.capabilities?.models.flatMap((candidate) => candidate.serviceTiers).find((tier) => tier.id === rawServiceTier)?.name ?? rawServiceTier);
   const usage = props.state.tokenUsage;
-  const unifiedUsage = props.state.unifiedUsage;
-  const unifiedCacheHitRate = nullableCacheHitRate(unifiedUsage?.conversationTotal.inputTokens ?? null, unifiedUsage?.conversationTotal.cachedInputTokens ?? null);
-  const latestCacheRequest = unifiedUsage?.latestModelRequest ?? null;
+  const metrics = props.state.sessionMetrics ?? props.state.snapshot?.sessionMetrics ?? null;
+  const unifiedUsage = metrics?.usage ?? props.state.unifiedUsage;
+  const conversationUsage = unifiedUsage?.conversationTotal ?? null;
+  const latestRequest = unifiedUsage?.latestModelRequest ?? null;
+  const totalTokens = conversationUsage?.totalTokens ?? usage?.total.totalTokens ?? null;
+  const inputTokens = conversationUsage?.inputTokens ?? usage?.total.inputTokens ?? null;
+  const outputTokens = conversationUsage?.outputTokens ?? usage?.total.outputTokens ?? null;
+  const reasoningTokens = conversationUsage?.reasoningOutputTokens ?? usage?.total.reasoningOutputTokens ?? null;
+  const cacheHitRate = nullableCacheHitRate(conversationUsage?.inputTokens ?? null, conversationUsage?.cachedInputTokens ?? null) ?? usage?.cacheHitRate ?? null;
+  const contextUsage = formatContextUsage(latestRequest?.totalTokens ?? usage?.last.totalTokens ?? null, latestRequest?.contextWindow ?? usage?.modelContextWindow ?? null, props.language, copy.unavailable);
+  const cost = metrics?.cost ?? {
+    apiEquivalentUsd: usage?.apiEquivalentUsd ?? null,
+    priceCoverage: usage?.priceCoverage ?? null,
+    pricingCatalogDate: usage?.pricingCatalogDate ?? null,
+    pricingSourceUrls: usage?.pricingSourceUrls ?? [],
+    historyComplete: usage?.historyComplete ?? false,
+    complete: usage?.apiEquivalentUsd !== null && usage?.priceCoverage === 1 && usage?.historyComplete === true,
+  };
   const mcpStartup = props.state.mcpStartup?.value ?? null;
   const warning = runtimeValueNeedsAttention(mcpStartup);
   const modelLabel = [model, effort, serviceTier].join(' · ');
@@ -3234,159 +3228,97 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
   const nativeSession = props.state.snapshot?.nativeSession ?? props.conversation?.nativeSession;
   const nativeSessionId = nativeSession?.id ?? props.state.providerThreadId ?? props.conversation?.providerThreadId ?? copy.unavailable;
   const nativeSessionPath = nativeSession?.path ?? copy.unavailable;
-  const goalCapability = props.state.snapshot?.goalCapability;
-  const reasoningEvidence = reasoningConfigurationEvidence(props.state.snapshot?.configurationEvidence ?? [], props.language);
-  const cacheEvidence = cacheConfigurationEvidence(props.state.snapshot?.configurationEvidence ?? [], props.language);
-  const goalCapabilityLabel = goalCapability
-    ? goalCapability.reason === 'available'
-      ? props.language === 'zh-CN'
-        ? '原生目标可用'
-        : 'Native goals available'
-      : goalCapability.reason === 'disabled'
-        ? props.language === 'zh-CN'
-          ? 'Codex 已支持，但当前未启用'
-          : 'Supported by Codex but currently disabled'
-        : goalCapability.reason === 'agent_unsupported'
-          ? props.language === 'zh-CN'
-            ? '当前 Agent 不支持原生目标'
-            : 'Current agent does not support native goals'
-          : props.language === 'zh-CN'
-            ? '当前 app-server 未验证目标能力，请升级 Codex 后重试'
-            : 'Goal support is unverified; upgrade Codex and retry'
-    : null;
+  const zh = props.language === 'zh-CN';
+  const performance = metrics?.performance ?? null;
+  const activity = metrics?.activity ?? null;
+  const changes = metrics?.changeSummary ?? null;
   return (
     <details className="session-runtime-details" data-severity={warning ? 'warning' : 'ready'} aria-label={copy.runtimeDetails}>
       <summary>
         <span className="session-runtime-summary-primary">
-          {unifiedUsage && unifiedUsage.conversationTotal.totalTokens !== null ? (
-            <TokenUsageValue count={unifiedUsage.conversationTotal.totalTokens} label="tokens" language={props.language} />
-          ) : usage ? (
-            <TokenUsageValue count={usage.total.totalTokens} label="tokens" language={props.language} />
-          ) : (
-            <span>{copy.unavailable}</span>
-          )}
-          <span>
-            {copy.cacheHitRate} {formatPercentage(unifiedUsage ? unifiedCacheHitRate : (usage?.cacheHitRate ?? null), props.language)}
-          </span>
+          <RuntimeSummaryMetric label={zh ? '会话累计 Token' : 'Session tokens'} value={totalTokens === null ? copy.unavailable : `${formatTokenCount(totalTokens, props.language).compact} Token`} />
+          <RuntimeSummaryMetric label={copy.contextUsage} value={contextUsage} />
+          <RuntimeSummaryMetric label={copy.cacheHitRate} value={formatPercentage(cacheHitRate, props.language)} />
+          <RuntimeSummaryMetric label={zh ? '最近请求输出速率' : 'Latest output rate'} value={formatOutputRate(performance?.latestOutputTokensPerSecond ?? null, props.language, copy.unavailable)} />
+          <RuntimeSummaryMetric label={zh ? 'API 等价费用（估算）' : 'API-equivalent cost (est.)'} value={formatCostSummary(cost.apiEquivalentUsd, cost.priceCoverage, cost.complete, props.language, copy.unavailable)} />
         </span>
       </summary>
-      <dl>
-        {modelLabel ? (
-          <div>
-            <dt>{copy.model}</dt>
-            <dd>{modelLabel}</dd>
-          </div>
-        ) : null}
-        {reasoningEvidence ? <RuntimeUsageRow label={props.language === 'zh-CN' ? '推理级别证据' : 'Reasoning evidence'} value={reasoningEvidence} /> : null}
-        {cacheEvidence ? <RuntimeUsageRow label={props.language === 'zh-CN' ? '缓存请求证据' : 'Cache request evidence'} value={cacheEvidence} /> : null}
-        {unifiedUsage || usage ? (
-          <>
-            {unifiedUsage ? (
-              <>
-                <RuntimeUsageRow
-                  label={props.language === 'zh-CN' ? '会话累计' : 'Conversation total'}
-                  value={<NullableTokenUsageValue count={unifiedUsage.conversationTotal.totalTokens} language={props.language} unavailable={copy.unavailable} />}
-                />
-                <RuntimeUsageRow label={props.language === 'zh-CN' ? '当前轮次' : 'Turn total'} value={<NullableTokenUsageValue count={unifiedUsage.turnTotal.totalTokens} language={props.language} unavailable={copy.unavailable} />} />
-                <RuntimeUsageRow
-                  label={props.language === 'zh-CN' ? '最后一次真实请求' : 'Latest model request'}
-                  value={
-                    unifiedUsage.latestModelRequest ? (
-                      <span>
-                        {unifiedUsage.latestModelRequest.requestKind} · <NullableTokenUsageValue count={unifiedUsage.latestModelRequest.totalTokens} language={props.language} unavailable={copy.unavailable} />
-                      </span>
-                    ) : (
-                      copy.unavailable
-                    )
-                  }
-                />
-                <RuntimeUsageRow
-                  label={copy.contextUsage}
-                  value={
-                    // 与输入框圆环同口径：最后一次真实请求的 totalTokens 才是下一次请求要携带的上下文。
-                    unifiedUsage.latestModelRequest?.totalTokens !== null && unifiedUsage.latestModelRequest?.totalTokens !== undefined && unifiedUsage.latestModelRequest.contextWindow
-                      ? `${formatPercentage(unifiedUsage.latestModelRequest.totalTokens / unifiedUsage.latestModelRequest.contextWindow, props.language)} · ${formatTokenCount(unifiedUsage.latestModelRequest.totalTokens, props.language).compact} / ${formatTokenCount(unifiedUsage.latestModelRequest.contextWindow, props.language).compact} Token`
-                      : copy.unavailable
-                  }
-                />
-                <RuntimeUsageRow label={props.language === 'zh-CN' ? '缓存状态' : 'Cache status'} value={cacheRequestStatus(latestCacheRequest, props.language, copy.unavailable)} />
-                <RuntimeUsageRow
-                  label={props.language === 'zh-CN' ? '最后请求缓存读取' : 'Latest cache read'}
-                  value={<NullableTokenUsageValue count={latestCacheRequest?.cachedInputTokens ?? null} language={props.language} unavailable={copy.unavailable} />}
-                />
-                <RuntimeUsageRow
-                  label={props.language === 'zh-CN' ? '最后请求缓存写入' : 'Latest cache write'}
-                  value={<NullableTokenUsageValue count={latestCacheRequest?.cacheWriteInputTokens ?? null} language={props.language} unavailable={copy.unavailable} />}
-                />
-                <RuntimeUsageRow
-                  label={props.language === 'zh-CN' ? '最后请求普通输入' : 'Latest uncached input'}
-                  value={<NullableTokenUsageValue count={nullableUncachedInput(latestCacheRequest)} language={props.language} unavailable={copy.unavailable} />}
-                />
-                <RuntimeUsageRow label={copy.cacheHitRate} value={formatPercentage(unifiedCacheHitRate, props.language)} />
-              </>
-            ) : null}
-            {usage && !unifiedUsage ? (
-              <>
-                <RuntimeUsageRow label={copy.usage} value={<TokenUsageValue count={usage.total.totalTokens} label="tokens" language={props.language} />} />
-                <RuntimeUsageRow label={props.language === 'zh-CN' ? '总输入' : 'Total input'} value={<TokenUsageValue count={usage.total.inputTokens} label="in" language={props.language} />} />
-                <RuntimeUsageRow label={copy.cacheRead} value={<TokenUsageValue count={usage.total.cachedInputTokens} label="tokens" language={props.language} />} />
-                <RuntimeUsageRow label={copy.cacheMiss} value={<TokenUsageValue count={calculateUncachedInputTokens(usage.total)} label="tokens" language={props.language} />} />
-                <RuntimeUsageRow label={copy.cacheWrite} value={<TokenUsageValue count={usage.total.cacheWriteInputTokens} label="tokens" language={props.language} />} />
-                <RuntimeUsageRow label={props.language === 'zh-CN' ? '输出' : 'Output'} value={<TokenUsageValue count={usage.total.outputTokens} label="out" language={props.language} />} />
-                <RuntimeUsageRow label={copy.reasoningOutput} value={<TokenUsageValue count={usage.total.reasoningOutputTokens} label="tokens" language={props.language} />} />
-                <RuntimeUsageRow label={copy.cacheHitRate} value={formatPercentage(usage.cacheHitRate, props.language)} />
-                <RuntimeUsageRow
-                  label={copy.contextUsage}
-                  value={
-                    // 旧快照口径下 last 就是最后一次请求；同样按 totalTokens 计算并使用 K/M 单位。
-                    usage.modelContextWindow
-                      ? `${formatPercentage(usage.last.totalTokens / usage.modelContextWindow, props.language)} · ${formatTokenCount(usage.last.totalTokens, props.language).compact} / ${formatTokenCount(usage.modelContextWindow, props.language).compact}`
-                      : copy.unavailable
-                  }
-                />
-                <RuntimeUsageRow label={copy.estimatedCredits} value={formatEstimatedCost(usage.estimatedCredits, 'Credits', props.language)} />
-                <RuntimeUsageRow label={copy.apiEquivalentUsd} value={formatEstimatedCost(usage.apiEquivalentUsd, 'USD', props.language)} />
-                <RuntimeUsageRow
-                  label={props.language === 'zh-CN' ? '本轮用量' : 'Current turn'}
-                  value={`${props.language === 'zh-CN' ? '命中' : 'hit'} ${formatTokenCount(usage.last.cachedInputTokens, props.language).compact} · ${props.language === 'zh-CN' ? '未命中' : 'miss'} ${formatTokenCount(calculateUncachedInputTokens(usage.last), props.language).compact} · ${props.language === 'zh-CN' ? '输出' : 'out'} ${formatTokenCount(usage.last.outputTokens, props.language).compact}`}
-                />
-                <RuntimeUsageRow label={props.language === 'zh-CN' ? '本轮费用估算' : 'Current-turn estimate'} value={formatEstimatedCost(usage.lastApiEquivalentUsd, 'USD', props.language)} />
-                <RuntimeUsageRow label={copy.priceCoverage} value={formatPercentage(usage.priceCoverage, props.language)} />
-                <RuntimeUsageRow
-                  label={copy.priceSource}
-                  value={
-                    usage.pricingCatalogDate ? (
-                      usage.pricingSourceUrls[0] ? (
-                        <a href={usage.pricingSourceUrls[0]} target="_blank" rel="noreferrer">
-                          {usage.pricingCatalogDate}
-                        </a>
-                      ) : (
-                        usage.pricingCatalogDate
-                      )
-                    ) : (
-                      copy.unavailable
-                    )
-                  }
-                />
-              </>
-            ) : null}
-            {usage && !usage.historyComplete ? <RuntimeUsageRow label={props.language === 'zh-CN' ? '历史口径' : 'History'} value={copy.collectionNotice} /> : null}
-          </>
-        ) : null}
-        {executionContext ? <RuntimeUsageRow label={copy.cwd} value={<code title={executionCwd}>{executionCwd}</code>} /> : null}
-        {executionContext ? <RuntimeUsageRow label={copy.branch} value={<code title={executionBranch}>{executionBranch}</code>} /> : null}
-        {nativeSession?.id || props.state.providerThreadId || props.conversation?.providerThreadId ? <RuntimeUsageRow label={copy.sessionId} value={<code title={nativeSessionId}>{nativeSessionId}</code>} /> : null}
-        {nativeSession?.path ? <RuntimeUsageRow label={copy.jsonlPath} value={<code title={nativeSessionPath}>{nativeSessionPath}</code>} /> : null}
-        {goalCapabilityLabel ? <RuntimeUsageRow label={props.language === 'zh-CN' ? '目标能力' : 'Goal capability'} value={goalCapabilityLabel} /> : null}
-        {mcpStartup ? (
-          <div>
-            <dt>{copy.mcpStartup}</dt>
-            <dd>{runtimeValueSummary(mcpStartup)}</dd>
-          </div>
-        ) : null}
-      </dl>
+      <div className="session-runtime-detail-groups">
+        <RuntimeDetailGroup title={zh ? '使用与费用' : 'Usage and cost'}>
+          <RuntimeUsageRow label={copy.model} value={modelLabel} />
+          <RuntimeUsageRow label={zh ? '会话累计 Token' : 'Session tokens'} value={<NullableTokenUsageValue count={totalTokens} language={props.language} unavailable={copy.unavailable} />} />
+          <RuntimeUsageRow label={zh ? '累计输入 Token' : 'Input tokens'} value={<NullableTokenUsageValue count={inputTokens} language={props.language} unavailable={copy.unavailable} />} />
+          <RuntimeUsageRow label={zh ? '累计输出 Token' : 'Output tokens'} value={<NullableTokenUsageValue count={outputTokens} language={props.language} unavailable={copy.unavailable} />} />
+          <RuntimeUsageRow label={zh ? '累计推理 Token' : 'Reasoning tokens'} value={<NullableTokenUsageValue count={reasoningTokens} language={props.language} unavailable={copy.unavailable} />} />
+          <RuntimeUsageRow label={copy.contextUsage} value={contextUsage} />
+          <RuntimeUsageRow label={copy.cacheHitRate} value={formatPercentage(cacheHitRate, props.language)} />
+          <RuntimeUsageRow label={zh ? 'API 等价费用（估算）' : 'API-equivalent cost (est.)'} value={formatCoveredCost(cost.apiEquivalentUsd, cost.priceCoverage, props.language, copy.unavailable)} />
+          <RuntimeUsageRow label={copy.priceCoverage} value={formatPercentage(cost.priceCoverage, props.language)} />
+          <RuntimeUsageRow label={copy.priceCatalogDate} value={cost.pricingCatalogDate ?? copy.unavailable} />
+          <RuntimeUsageRow label={copy.priceSource} value={<PricingSources urls={cost.pricingSourceUrls} unavailable={copy.unavailable} />} />
+          {!cost.historyComplete ? <RuntimeUsageRow label={zh ? '费用完整性' : 'Cost completeness'} value={zh ? '估算不完整' : 'Estimate incomplete'} /> : null}
+        </RuntimeDetailGroup>
+        <RuntimeDetailGroup title={zh ? '性能与活动' : 'Performance and activity'}>
+          <RuntimeUsageRow label={zh ? '最近输出速率' : 'Latest output rate'} value={formatOutputRate(performance?.latestOutputTokensPerSecond ?? null, props.language, copy.unavailable)} />
+          <RuntimeUsageRow label={zh ? '最近首段可见响应延迟' : 'Latest first visible response'} value={formatMetricDuration(performance?.latestFirstVisibleResponseMs ?? null, props.language, copy.unavailable)} />
+          <RuntimeUsageRow label={zh ? '累计处理耗时' : 'Cumulative processing time'} value={formatMetricDuration(performance?.cumulativeProcessedDurationMs ?? null, props.language, copy.unavailable)} />
+          <RuntimeUsageRow label={zh ? '轮次' : 'Turns'} value={activity?.turnCount ?? copy.unavailable} />
+          <RuntimeUsageRow label={zh ? '模型请求' : 'Model requests'} value={activity?.modelRequestCount ?? copy.unavailable} />
+          <RuntimeUsageRow label={zh ? '工具 / 命令' : 'Tools / commands'} value={activity?.toolOrCommandCount ?? copy.unavailable} />
+          <RuntimeUsageRow label={zh ? '重试' : 'Retries'} value={activity?.retryCount ?? copy.unavailable} />
+          <RuntimeUsageRow label={zh ? '失败轮次' : 'Failed turns'} value={activity?.failedTurnCount ?? copy.unavailable} />
+          {changes?.available ? (
+            <RuntimeUsageRow label={zh ? '代码改动' : 'Code changes'} value={formatChangeSummary(changes.fileCount, changes.addedLines, changes.deletedLines, changes.complete, props.language, copy.unavailable)} />
+          ) : null}
+        </RuntimeDetailGroup>
+        <RuntimeDetailGroup title={zh ? '环境' : 'Environment'}>
+          {executionContext ? <RuntimeUsageRow label={copy.cwd} value={<code title={executionCwd}>{executionCwd}</code>} /> : null}
+          {executionContext ? <RuntimeUsageRow label={copy.branch} value={<code title={executionBranch}>{executionBranch}</code>} /> : null}
+          {nativeSession?.id || props.state.providerThreadId || props.conversation?.providerThreadId ? <RuntimeUsageRow label={copy.sessionId} value={<code title={nativeSessionId}>{nativeSessionId}</code>} /> : null}
+          {nativeSession?.path ? <RuntimeUsageRow label={copy.jsonlPath} value={<code title={nativeSessionPath}>{nativeSessionPath}</code>} /> : null}
+          {mcpStartup ? <RuntimeUsageRow label={copy.mcpStartup} value={runtimeValueSummary(mcpStartup)} /> : null}
+        </RuntimeDetailGroup>
+      </div>
     </details>
   );
+}
+
+function RuntimeSummaryMetric(props: { label: string; value: ReactNode }) {
+  return (
+    <span className="session-runtime-summary-metric">
+      <b>{props.label}</b>
+      <span>{props.value}</span>
+    </span>
+  );
+}
+
+function RuntimeDetailGroup(props: { title: string; children: ReactNode }) {
+  return (
+    <section className="session-runtime-detail-group">
+      <h3>{props.title}</h3>
+      <dl>{props.children}</dl>
+    </section>
+  );
+}
+
+function PricingSources(props: { urls: string[]; unavailable: string }) {
+  if (props.urls.length === 0) return props.unavailable;
+  return props.urls.map((source, index) => (
+    <span key={source}>
+      {index > 0 ? ' · ' : null}
+      <a href={source} target="_blank" rel="noreferrer">
+        {pricingSourceLabel(source, index)}
+      </a>
+    </span>
+  ));
+}
+
+function pricingSourceLabel(source: string, index: number): string {
+  try {
+    return new URL(source).hostname;
+  } catch {
+    return `source ${index + 1}`;
+  }
 }
 
 function RuntimeUsageRow(props: { label: string; value: ReactNode }) {
@@ -3403,99 +3335,55 @@ function nullableCacheHitRate(inputTokens: number | null, cachedInputTokens: num
   return Math.min(1, Math.max(0, cachedInputTokens / inputTokens));
 }
 
-function nullableUncachedInput(usage: Pick<NativeModelRequestUsageObservation, 'inputTokens' | 'cachedInputTokens' | 'cacheWriteInputTokens'> | null): number | null {
-  if (!usage || usage.inputTokens === null || usage.cachedInputTokens === null || usage.cacheWriteInputTokens === null) return null;
-  return Math.max(0, usage.inputTokens - usage.cachedInputTokens - usage.cacheWriteInputTokens);
-}
-
-function cacheRequestStatus(usage: NativeModelRequestUsageObservation | null, language: SessionUiLanguage, unavailable: string): string {
-  if (!usage) return unavailable;
-  const zh = language === 'zh-CN';
-  if (usage.cachedInputTokens === null || usage.cacheWriteInputTokens === null) return zh ? '供应商未完整报告' : 'Provider did not fully report cache usage';
-  if (usage.cachedInputTokens > 0) return zh ? '读取命中' : 'Cache read hit';
-  if (usage.cacheWriteInputTokens > 0) return usage.requestSequence === 1 ? (zh ? '首次写入' : 'Initial cache write') : zh ? '重新写入' : 'Cache rewritten';
-  return zh ? '未命中，且未报告写入' : 'Cache miss with no reported write';
-}
-
-function reasoningConfigurationEvidence(entries: Record<string, unknown>[], language: SessionUiLanguage): string | null {
-  const parsed = entries.flatMap((entry) => {
-    if (typeof entry.configurationJson !== 'string' || typeof entry.layer !== 'string') return [];
-    try {
-      const configuration = JSON.parse(entry.configurationJson) as Record<string, unknown>;
-      return [{ layer: entry.layer, effort: typeof configuration.effort === 'string' ? configuration.effort : null, mismatch: entry.mismatch === true }];
-    } catch {
-      return [];
-    }
-  });
-  const selectedMax = [...parsed].reverse().find((entry) => entry.effort === 'max');
-  if (!selectedMax) return null;
-  const layers = new Set(parsed.filter((entry) => entry.effort === 'max').map((entry) => entry.layer));
-  const mismatch = parsed.some((entry) => entry.mismatch);
-  const zh = language === 'zh-CN';
-  if (mismatch) return zh ? '配置回显不一致；已暂停后续队列' : 'Configuration echo mismatch; later queue paused';
-  if (layers.has('provider_echo')) return zh ? 'max 已由 Provider 回显确认' : 'max confirmed by provider echo';
-  if (layers.has('runtime_acknowledged')) return zh ? 'max 已传递且运行时已接纳；实际内部档位不可验证' : 'max sent and runtime-accepted; actual internal level is not verifiable';
-  if (layers.has('adapter_serialized')) return zh ? 'max 已序列化到适配器请求；尚无运行时接纳证据' : 'max serialized by adapter; runtime acceptance not yet evidenced';
-  if (layers.has('frozen')) return zh ? 'max 已由 Zeus 冻结；尚未传递' : 'max frozen by Zeus; not sent yet';
-  return zh ? '用户选择 max' : 'User selected max';
-}
-
-function cacheConfigurationEvidence(entries: Record<string, unknown>[], language: SessionUiLanguage): string | null {
-  const diagnostics = entries.flatMap((entry) => {
-    if (entry.layer !== 'adapter_serialized' || typeof entry.evidenceJson !== 'string') return [];
-    try {
-      const evidence = JSON.parse(entry.evidenceJson) as Record<string, unknown>;
-      const diagnostic = isRecord(evidence.cacheDiagnostic) ? evidence.cacheDiagnostic : null;
-      const request = diagnostic && isRecord(diagnostic.request) ? diagnostic.request : null;
-      const sections = diagnostic && isRecord(diagnostic.sections) ? diagnostic.sections : null;
-      const cache = diagnostic && isRecord(diagnostic.cache) ? diagnostic.cache : null;
-      const messages = sections && isRecord(sections.messages) ? sections.messages : null;
-      if (!request || !sections || !cache || !messages || typeof request.fingerprint !== 'string') return [];
-      const messageEntries = Array.isArray(messages.entries)
-        ? messages.entries.flatMap((candidate) => {
-            const value = isRecord(candidate) ? candidate : null;
-            return value && typeof value.fingerprint === 'string' ? [typeof value.contentFingerprint === 'string' ? value.contentFingerprint : value.fingerprint] : [];
-          })
-        : [];
-      return [
-        {
-          request: request.fingerprint,
-          breakpointCount: typeof cache.breakpointCount === 'number' ? cache.breakpointCount : 0,
-          system: sectionFingerprint(sections.system),
-          tools: sectionFingerprint(sections.tools),
-          messages: messageEntries,
-        },
-      ];
-    } catch {
-      return [];
-    }
-  });
-  const current = diagnostics.at(-1);
-  if (!current) return null;
-  const zh = language === 'zh-CN';
-  const previous = diagnostics.at(-2);
-  const base = `${zh ? '请求' : 'Request'} ${current.request.slice(0, 10)} · ${current.breakpointCount} ${zh ? '个断点' : 'breakpoints'}`;
-  if (!previous) return `${base} · ${current.messages.length} ${zh ? '条消息' : 'messages'}`;
-  let commonMessages = 0;
-  const commonLength = Math.min(previous.messages.length, current.messages.length);
-  while (commonMessages < commonLength && previous.messages[commonMessages] === current.messages[commonMessages]) commonMessages += 1;
-  const sectionState = (left: string | null, right: string | null, label: string) => `${label}${left === right ? (zh ? '同' : '=') : zh ? '变' : '≠'}`;
-  return `${base} · ${sectionState(previous.system, current.system, 'system ')} · ${sectionState(previous.tools, current.tools, 'tools ')} · ${zh ? '共同消息前缀' : 'common message prefix'} ${commonMessages}/${current.messages.length}`;
-}
-
-function sectionFingerprint(value: unknown): string | null {
-  return isRecord(value) && typeof value.fingerprint === 'string' ? value.fingerprint : null;
-}
-
 function formatPercentage(value: number | null, language: SessionUiLanguage): string {
   if (value === null || !Number.isFinite(value)) return labels[language].unavailable;
   return new Intl.NumberFormat(language, { style: 'percent', maximumFractionDigits: 1 }).format(Math.max(0, value));
 }
 
-function formatEstimatedCost(value: number | null, unit: 'Credits' | 'USD', language: SessionUiLanguage): string {
-  if (value === null || !Number.isFinite(value)) return labels[language].unavailable;
+function formatUsdEstimate(value: number, language: SessionUiLanguage): string {
   const formatted = new Intl.NumberFormat(language, { minimumFractionDigits: value > 0 && value < 0.01 ? 4 : 2, maximumFractionDigits: 6 }).format(value);
-  return unit === 'USD' ? `~$${formatted}` : `~${formatted} Credits`;
+  return `~$${formatted}`;
+}
+
+function formatCostSummary(value: number | null, coverage: number | null, complete: boolean, language: SessionUiLanguage, unavailable: string): string {
+  if (complete && value !== null && Number.isFinite(value)) return formatUsdEstimate(value, language);
+  if (value !== null && Number.isFinite(value) && coverage !== null && coverage > 0) return language === 'zh-CN' ? '估算不完整' : 'Estimate incomplete';
+  return unavailable;
+}
+
+function formatCoveredCost(value: number | null, coverage: number | null, language: SessionUiLanguage, unavailable: string): string {
+  if (value === null || !Number.isFinite(value)) return unavailable;
+  const amount = formatUsdEstimate(value, language);
+  if (coverage !== null && coverage < 1) return `${amount} · ${language === 'zh-CN' ? '已覆盖部分' : 'covered portion'}`;
+  return amount;
+}
+
+function formatContextUsage(totalTokens: number | null, contextWindow: number | null, language: SessionUiLanguage, unavailable: string): string {
+  if (totalTokens === null || contextWindow === null || contextWindow <= 0) return unavailable;
+  return `${formatPercentage(totalTokens / contextWindow, language)} · ${formatTokenCount(totalTokens, language).compact} / ${formatTokenCount(contextWindow, language).compact} Token`;
+}
+
+function formatOutputRate(value: number | null, language: SessionUiLanguage, unavailable: string): string {
+  if (value === null || !Number.isFinite(value) || value < 0) return unavailable;
+  return `${new Intl.NumberFormat(language, { maximumFractionDigits: value < 100 ? 1 : 0 }).format(value)} tokens/s`;
+}
+
+function formatMetricDuration(value: number | null, language: SessionUiLanguage, unavailable: string): string {
+  if (value === null || !Number.isFinite(value) || value < 0) return unavailable;
+  if (value < 1_000) return `${Math.round(value)} ms`;
+  const seconds = value / 1_000;
+  if (seconds < 60) return `${new Intl.NumberFormat(language, { maximumFractionDigits: seconds < 10 ? 1 : 0 }).format(seconds)} s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.round(seconds % 60);
+  if (minutes < 60) return `${minutes} min ${remainingSeconds} s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours} h ${minutes % 60} min`;
+}
+
+function formatChangeSummary(fileCount: number | null, addedLines: number | null, deletedLines: number | null, complete: boolean, language: SessionUiLanguage, unavailable: string): string {
+  if (fileCount === null || addedLines === null || deletedLines === null) return unavailable;
+  const value = `${fileCount} ${language === 'zh-CN' ? '个文件' : fileCount === 1 ? 'file' : 'files'} · +${addedLines} / -${deletedLines}`;
+  return complete ? value : `${value} · ${language === 'zh-CN' ? '部分统计' : 'partial'}`;
 }
 
 function runtimeValueNeedsAttention(value: unknown, key = ''): boolean {

@@ -68,6 +68,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     maintainProviderReceiptGenerations,
     markScheduledPersistDirty,
     options,
+    modelRequestTiming,
     persist,
     persistProviderUserMessage,
     projectGoal,
@@ -121,6 +122,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
   let broadcast: { type: string; payload: Record<string, unknown> } | null = null;
   let drainAfterTurn = false;
   let queueChangedAfterTurn = false;
+  let sessionMetricsChanged = false;
   let createdPlanImplementationRequest: ReturnType<ConversationPlanActionRepository['getById']> | null = null;
 
   if (event.method === 'thread/goal/updated' && conversation && threadId) {
@@ -328,6 +330,8 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     const interrupted = terminalStatus === 'interrupted';
     const failed = terminalStatus === 'failed';
     const timestamp = event.receivedAt;
+    modelRequestTiming.clear(conversation.id, turn.id);
+    sessionMetricsChanged = true;
     const failure = failed ? providerTurnFailure(params, providerTurnId) : null;
     const turnItems = options.providerItems.listByConversation(conversation.id).filter((item) => item.turnId === turn.id);
     const completedTurnItems = turnItems.filter((item) => item.status === 'completed');
@@ -600,6 +604,9 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     const turn = providerTurnId ? options.turns.listByConversation(conversation.id).find((candidate) => candidate.providerTurnId === providerTurnId) : undefined;
     const summaryIndex = integerValue(params.summaryIndex);
     if (!providerTurnId || !providerItemId || !turn || summaryIndex === null || (event.method === 'item/reasoning/summaryTextDelta' && typeof params.delta !== 'string')) return;
+    if (event.method === 'item/reasoning/summaryTextDelta' && typeof params.delta === 'string' && params.delta.trim()) {
+      modelRequestTiming.observe(conversation.id, turn.id, firstVisibleReceiptAt(receiptEvents, event.receivedAt), 'visible_non_text');
+    }
     const existing = options.providerItems.getByProvider(threadId, providerItemId);
     const projection = reasoningSummaryProjection(existing, params, summaryIndex);
     const item = options.providerItems.upsertProgress({
@@ -702,6 +709,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     const providerItemId = providerItemIdFrom(params);
     const turn = providerTurnId ? options.turns.listByConversation(conversation.id).find((candidate) => candidate.providerTurnId === providerTurnId) : undefined;
     if (!providerTurnId || !providerItemId || !turn || typeof params.delta !== 'string') return;
+    if (params.delta.trim()) modelRequestTiming.observe(conversation.id, turn.id, firstVisibleReceiptAt(receiptEvents, event.receivedAt), 'visible_text');
     const item = options.providerItems.appendDelta({
       conversationId: conversation.id,
       turnId: turn.id,
@@ -786,6 +794,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       text: item.textContent,
       occurredAt: event.receivedAt,
     });
+    if (isToolResultItem(item.itemType)) sessionMetricsChanged = true;
     const executionSegment = options.execution.segmentByNativeSession(threadId, conversation.id);
     if (executionSegment && executionSegment.state !== 'sealed') {
       if (item.itemType === 'agentMessage') {
@@ -914,6 +923,86 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     };
     options.conversations.upsertProviderSettingsSnapshot(conversation.id, snapshot);
     broadcast = { type: 'conversation.provider.settings.updated', payload: { conversationId: conversation.id, ...snapshot } };
+  } else if (event.method === 'rawResponseItem/completed' && conversation && threadId) {
+    const providerTurnId = providerTurnIdFrom(params);
+    const turn = providerTurnId ? options.turns.listByConversation(conversation.id).find((candidate) => candidate.providerTurnId === providerTurnId) : undefined;
+    const item = isRecord(params.item) ? params.item : null;
+    if (turn && item && item.type !== 'message' && item.type !== 'reasoning') {
+      modelRequestTiming.observe(conversation.id, turn.id, event.receivedAt, 'non_text');
+    }
+  } else if (event.method === 'rawResponse/completed' && conversation && threadId) {
+    const providerTurnId = requireString(providerTurnIdFrom(params), 'provider turn id');
+    const providerRequestId = requireString(params.responseId, 'provider response id');
+    const turn = options.turns.listByConversation(conversation.id).find((candidate) => candidate.providerTurnId === providerTurnId);
+    const segment = options.execution.segmentByNativeSession(threadId, conversation.id);
+    if (!turn || !segment) return;
+    const submission = turn.clientSubmissionId ? options.submissions.getById(turn.clientSubmissionId) : undefined;
+    let context: ConversationDispatchContext | null = null;
+    if (submission) {
+      try {
+        context = contextFromSubmission(submission);
+      } catch {
+        context = null;
+      }
+    }
+    const settings = options.conversations.getProviderSettingsSnapshot(conversation.id);
+    const model = context?.model ?? settings?.model ?? conversation.providerModel;
+    if (!model) throw coordinatorError('ZEUS_NATIVE_PROVIDER_EVENT_INVALID', 'Raw response event cannot resolve its model.');
+    const usage = isRecord(params.usage) ? tokenUsageBreakdown(params.usage) : null;
+    const timing = modelRequestTiming.complete(conversation.id, turn.id);
+    const completedAt = event.receivedAt;
+    const measurementComplete = usage !== null && timing.firstTextOutputAt !== null && Date.parse(completedAt) > Date.parse(timing.firstTextOutputAt) && !timing.hasNonTextOutput;
+    const recordedRequests = options.execution.listModelRequestsForTurn(conversation.id, turn.id);
+    const matchingFallback = usage
+      ? [...recordedRequests]
+          .reverse()
+          .find(
+            (request) =>
+              request.providerRequestId === null &&
+              request.completedAt === null &&
+              request.inputTokens === usage.inputTokens &&
+              request.cachedInputTokens === usage.cachedInputTokens &&
+              request.cacheWriteInputTokens === usage.cacheWriteInputTokens &&
+              request.outputTokens === usage.outputTokens &&
+              request.reasoningOutputTokens === usage.reasoningOutputTokens &&
+              request.totalTokens === usage.totalTokens,
+          )
+      : undefined;
+    if (matchingFallback) {
+      options.execution.attachModelRequestMeasurement(matchingFallback.id, {
+        providerRequestId,
+        firstVisibleOutputAt: timing.firstVisibleOutputAt,
+        firstTextOutputAt: timing.firstTextOutputAt,
+        completedAt,
+        measurementComplete,
+      });
+    } else {
+      const exactRequestCount = recordedRequests.filter((request) => request.providerRequestId !== null).length;
+      options.execution.observeModelRequest({
+        conversationId: conversation.id,
+        turnId: turn.id,
+        segmentId: segment.id,
+        requestKind: exactRequestCount === 0 ? 'inference' : 'tool_continuation',
+        observationIdentity: `codex-response:${threadId}:${providerRequestId}`,
+        modelId: model,
+        contextWindow: null,
+        inputTokens: usage?.inputTokens ?? null,
+        cachedInputTokens: usage?.cachedInputTokens ?? null,
+        cacheWriteInputTokens: usage?.cacheWriteInputTokens ?? null,
+        outputTokens: usage?.outputTokens ?? null,
+        reasoningOutputTokens: usage?.reasoningOutputTokens ?? null,
+        totalTokens: usage?.totalTokens ?? null,
+        estimatedUsd: null,
+        usageComplete: usage !== null,
+        providerRequestId,
+        firstVisibleOutputAt: timing.firstVisibleOutputAt,
+        firstTextOutputAt: timing.firstTextOutputAt,
+        completedAt,
+        measurementComplete,
+        occurredAt: completedAt,
+      });
+    }
+    sessionMetricsChanged = true;
   } else if (event.method === 'thread/tokenUsage/updated' && conversation) {
     const tokenUsage = isRecord(params.tokenUsage) ? params.tokenUsage : params;
     const total = tokenUsageBreakdown(isRecord(tokenUsage.total) ? tokenUsage.total : tokenUsage);
@@ -969,6 +1058,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     const segment = threadId ? options.execution.segmentByNativeSession(threadId, conversation.id) : undefined;
     if (segment && turn) {
       const recordedRequests = options.execution.listModelRequestsForTurn(conversation.id, turn.id);
+      const exactRequest = [...recordedRequests].reverse().find((request) => request.providerRequestId !== null);
       // app-server 的兼容 token_count 事件通常不带 requestKind；同轮首个请求是推理，
       // 后续请求只会在工具结果续跑后出现。显式 retry/compaction 标记仍优先。
       const requestKind =
@@ -979,25 +1069,34 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
             : tokenUsage.requestKind === 'tool_continuation' || recordedRequests.length > 0
               ? 'tool_continuation'
               : 'inference';
-      options.execution.observeModelRequest({
-        conversationId: conversation.id,
-        turnId: turn.id,
-        segmentId: segment.id,
-        requestKind,
-        // 身份不包含推断出的种类；历史重放即使发生在已有后续请求之后，也能命中原记录。
-        observationIdentity: `codex:${providerTurnId}:${JSON.stringify([last.inputTokens, last.cachedInputTokens, last.cacheWriteInputTokens, last.outputTokens, last.reasoningOutputTokens, last.totalTokens, modelContextWindow])}`,
-        modelId: model,
-        contextWindow: modelContextWindow,
-        inputTokens: last.inputTokens,
-        cachedInputTokens: last.cachedInputTokens,
-        cacheWriteInputTokens: last.cacheWriteInputTokens,
-        outputTokens: last.outputTokens,
-        reasoningOutputTokens: last.reasoningOutputTokens,
-        totalTokens: last.totalTokens,
-        estimatedUsd: snapshot.lastApiEquivalentUsd,
-        usageComplete: true,
-        occurredAt: turn.completedAt ?? event.receivedAt,
-      });
+      if (exactRequest) {
+        options.execution.enrichModelRequest(exactRequest.id, { contextWindow: modelContextWindow, estimatedUsd: snapshot.lastApiEquivalentUsd });
+      } else {
+        options.execution.observeModelRequest({
+          conversationId: conversation.id,
+          turnId: turn.id,
+          segmentId: segment.id,
+          requestKind,
+          // 老版本 app-server 没有 rawResponse 事件时仍保留精确用量，但不伪造请求时序。
+          observationIdentity: `codex:${providerTurnId}:${JSON.stringify([last.inputTokens, last.cachedInputTokens, last.cacheWriteInputTokens, last.outputTokens, last.reasoningOutputTokens, last.totalTokens, modelContextWindow])}`,
+          modelId: model,
+          contextWindow: modelContextWindow,
+          inputTokens: last.inputTokens,
+          cachedInputTokens: last.cachedInputTokens,
+          cacheWriteInputTokens: last.cacheWriteInputTokens,
+          outputTokens: last.outputTokens,
+          reasoningOutputTokens: last.reasoningOutputTokens,
+          totalTokens: last.totalTokens,
+          estimatedUsd: snapshot.lastApiEquivalentUsd,
+          usageComplete: true,
+          providerRequestId: null,
+          firstVisibleOutputAt: null,
+          firstTextOutputAt: null,
+          completedAt: null,
+          measurementComplete: false,
+          occurredAt: turn.completedAt ?? event.receivedAt,
+        });
+      }
       if (requestKind === 'context_compaction') {
         options.execution.appendProcessItem({
           conversationId: conversation.id,
@@ -1013,6 +1112,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
         });
       }
     }
+    sessionMetricsChanged = true;
     broadcast = { type: 'conversation.provider.token_usage.updated', payload: { conversationId: conversation.id, ...snapshot } };
   } else if (event.method === 'account/rateLimits/updated') {
     // 官方协议明确这是稀疏更新；只把它当作重读信号，不用不完整包覆盖快照。
@@ -1222,6 +1322,13 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       sequence: event.sequence,
     });
   }
+  if (sessionMetricsChanged && conversation) {
+    options.broadcast('conversation.sessionMetrics.changed', {
+      conversationId: conversation.id,
+      generationId: event.generationId,
+      sequence: event.sequence,
+    });
+  }
   if (queueChangedAfterTurn && conversation) {
     options.broadcast('conversation.queue.changed', {
       conversationId: conversation.id,
@@ -1229,4 +1336,8 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     });
   }
   if (drainAfterTurn && conversation) await drainQueuedSubmissions();
+}
+
+function firstVisibleReceiptAt(events: readonly CodexAppServerEvent[], fallback: string): string {
+  return events.find((event) => isRecord(event.params) && typeof event.params.delta === 'string' && event.params.delta.trim())?.receivedAt ?? fallback;
 }

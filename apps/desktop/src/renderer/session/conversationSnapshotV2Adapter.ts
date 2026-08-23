@@ -11,7 +11,6 @@ import type {
   NativePlanImplementationRequest,
   NativeQueueSnapshot,
   NativeTurnSnapshot,
-  NativeUnifiedUsageSnapshot,
 } from './sessionTypes.js';
 
 const syncStreamProtocolGeneration = 'zeus-conversation-sync-v1' as const;
@@ -46,7 +45,7 @@ export function adaptConversationSnapshotV2(input: ConversationSnapshotV2Bootstr
           collaborationMode,
         }
       : undefined);
-  const usage = emptyUnifiedUsage();
+  const usage = snapshot.sessionMetrics.usage;
   return {
     conversationSchemaGeneration: snapshot.conversationSchemaGeneration,
     syncStreamGeneration: syncStreamProtocolGeneration,
@@ -121,6 +120,7 @@ export function adaptConversationSnapshotV2(input: ConversationSnapshotV2Bootstr
     planImplementationRequests: input.planImplementationRequests,
     ...(snapshot.conversation.providerSettings ? { providerSettings: snapshot.conversation.providerSettings } : snapshot.conversation.providerModel ? { providerSettings: { model: snapshot.conversation.providerModel } } : {}),
     ...(nextTurnSettings ? { nextTurnSettings } : {}),
+    sessionMetrics: snapshot.sessionMetrics,
     permissionMode,
     collaborationMode,
     goal: input.goal.goal,
@@ -394,18 +394,4 @@ function recordValue(value: unknown): Record<string, unknown> | null {
 
 function compareNativeItems(left: NativeItemSnapshot, right: NativeItemSnapshot): number {
   return left.updatedAt.localeCompare(right.updatedAt) || left.id.localeCompare(right.id);
-}
-
-function emptyUnifiedUsage(): NativeUnifiedUsageSnapshot {
-  const empty = {
-    inputTokens: null,
-    cachedInputTokens: null,
-    cacheWriteInputTokens: null,
-    outputTokens: null,
-    reasoningOutputTokens: null,
-    totalTokens: null,
-    estimatedUsd: null,
-    complete: true,
-  };
-  return { conversationTotal: { ...empty }, turnTotal: { ...empty }, latestModelRequest: null, preflightEstimate: null };
 }

@@ -2274,7 +2274,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       const steeringSubmission = mappedType === 'conversation.submission.steering' && typeof payload.submissionId === 'string' ? conversationSubmissions.getById(payload.submissionId) : undefined;
       const eventPayload = {
         ...payload,
-        ...(mappedType === 'conversation.tokenUsage.changed' ? { unifiedUsage: conversationExecution.snapshot(conversationId).usage } : {}),
+        ...(mappedType === 'conversation.tokenUsage.changed' ? { unifiedUsage: conversationExecution.usageSnapshot(conversationId) } : {}),
+        ...(mappedType === 'conversation.sessionMetrics.changed' ? { sessionMetrics: conversationExecution.sessionMetrics(conversationId) } : {}),
         ...(mappedType === 'conversation.queue.changed' ? { queue: toNativeQueueApiSnapshot(conversation) } : {}),
         ...(mappedType === 'conversation.submission.steering' && steeringSubmission
           ? {
