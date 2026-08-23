@@ -9,6 +9,7 @@ import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { NativeSessionItemBuffer, NativeSubagentListSnapshot, NativeSubagentStatus, NativeSubagentSummary, NativeSubagentThreadSnapshot } from './sessionTypes.js';
 import { ThreadItemView, type SessionUiLanguage } from './ThreadItemView.js';
 import { isSubagentCoordinationItem } from './ConversationTranscript.js';
+import { RuntimeDetails } from './RuntimeDetails.js';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
 interface SubagentWorkspaceProps {
@@ -191,15 +192,36 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
           </button>
         </section>
       ) : selectedThreadId ? (
-        <section className="session-subagent-thread" role="log" aria-live="off" aria-label={zh ? '智能体会话' : 'Agent conversation'}>
+        <div className="session-subagent-detail">
           {loadingThread && !thread ? <SubagentLoading label={zh ? '正在读取智能体会话…' : 'Loading agent conversation…'} /> : null}
-          {!loadingThread && thread && threadItems.length === 0 ? (
-            <SubagentEmpty title={zh ? '暂无可显示内容' : 'No visible content'} description={zh ? '该智能体线程尚未产生可读消息。' : 'This agent thread has no readable messages yet.'} />
+          {thread ? <RuntimeDetails runtime={thread.runtime} language={props.language} scope="subagent" /> : null}
+          {thread?.historyBoundary.state === 'unavailable' ? (
+            <aside className="session-subagent-boundary-notice" role="status">
+              <strong>{zh ? '部分历史归属不可确认' : 'Some history could not be attributed'}</strong>
+              <span>{zh ? '已隐藏可能来自父会话或缺少时间边界的内容。' : 'Content that may belong to the parent conversation or lacks a reliable time boundary is hidden.'}</span>
+              {thread.historyBoundary.reason ? <small>{thread.historyBoundary.reason}</small> : null}
+            </aside>
           ) : null}
-          {threadItems.map((item) => (
-            <ThreadItemView key={item.key} item={item} language={props.language} />
-          ))}
-        </section>
+          <section className="session-subagent-thread" role="log" aria-live="off" aria-label={zh ? '智能体会话' : 'Agent conversation'}>
+            {!loadingThread && thread && threadItems.length === 0 ? (
+              <SubagentEmpty
+                title={zh ? '暂无可显示内容' : 'No visible content'}
+                description={
+                  thread.historyBoundary.state === 'unavailable'
+                    ? zh
+                      ? '当前没有能可靠确认属于该智能体的工作内容。'
+                      : 'No work content can currently be attributed to this agent with confidence.'
+                    : zh
+                      ? '该智能体线程尚未产生可读消息。'
+                      : 'This agent thread has no readable messages yet.'
+                }
+              />
+            ) : null}
+            {threadItems.map((item) => (
+              <ThreadItemView key={item.key} item={item} language={props.language} />
+            ))}
+          </section>
+        </div>
       ) : (
         <section className="session-subagent-list" aria-live="polite">
           {loadingList && !snapshot ? <SubagentLoading label={zh ? '正在读取智能体…' : 'Loading agents…'} /> : null}

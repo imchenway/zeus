@@ -29,6 +29,7 @@
     "verify:command-center-command": "tsx scripts/verify-command-center-command-behavior.ts",
     "verify:work-management-command": "tsx scripts/verify-work-management-command-behavior.ts",
     "verify:runtime-session-command": "tsx scripts/verify-runtime-session-command-behavior.ts",
+    "verify:subagent-detail": "tsx scripts/verify-subagent-detail-behavior.ts",
     "verify:conversation-command": "tsx scripts/verify-conversation-command-behavior.ts",
     "verify:conversation-dispatch-command": "tsx scripts/verify-conversation-dispatch-command-behavior.ts",
     "verify:integration-command": "tsx scripts/verify-integration-command-behavior.ts",

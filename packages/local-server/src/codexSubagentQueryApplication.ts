@@ -1,5 +1,6 @@
 import type { CodexThreadListInput, CodexThreadSnapshot, CodexThreadsPage, CodexTransportState } from '@zeus/ai-runtime';
 import type { ConversationProviderItemRepository, ConversationRepository, ZeusConversationRecord } from '@zeus/storage';
+import type { CodexSubagentRuntimeReadPort, SubagentRuntimeDetails } from './codexSubagentRuntimeProjection.js';
 import { sanitizeConversationItemPayload } from './conversationResources.js';
 
 export interface CodexSubagentProviderReadPort {
@@ -14,6 +15,7 @@ interface CodexSubagentQueryPorts {
   conversations: Pick<ConversationRepository, 'getById'>;
   providerItems: Pick<ConversationProviderItemRepository, 'listByConversation'>;
   provider: CodexSubagentProviderReadPort;
+  runtime: CodexSubagentRuntimeReadPort;
   now(): Date;
 }
 
@@ -41,11 +43,15 @@ export class CodexSubagentQueryApplication {
     if (!agent) throw queryError('ZEUS_CODEX_SUBAGENT_NOT_FOUND', 'Subagent thread not found.', 404);
     this.assertProviderReady();
     const thread = await this.ports.provider.readThread({ threadId: agent.id, includeTurns: true });
+    const history = ownedThreadHistory(thread);
+    const runtime = await this.ports.runtime.read({ thread, ownedTurns: history.turns });
     return {
       conversationId: conversation.id,
       parentThreadId: snapshot.parentThreadId,
       agent,
-      turns: this.toTurns(thread),
+      historyBoundary: history.boundary,
+      runtime,
+      turns: this.toTurns(thread, history.turns),
     };
   }
 
@@ -140,11 +146,10 @@ export class CodexSubagentQueryApplication {
     return { threadIds, paths, interrupted, states };
   }
 
-  private toTurns(thread: Record<string, unknown>): SubagentTurn[] {
+  private toTurns(thread: Record<string, unknown>, ownedTurns: Record<string, unknown>[]): SubagentTurn[] {
     const threadUpdatedAt = epochIso(thread.updatedAt) ?? this.ports.now().toISOString();
-    return (Array.isArray(thread.turns) ? thread.turns : []).flatMap((rawTurn) => {
-      if (!isRecord(rawTurn) || typeof rawTurn.id !== 'string') return [];
-      const turnId = rawTurn.id;
+    return ownedTurns.flatMap((rawTurn) => {
+      const turnId = rawTurn.id as string;
       const turnStatus = typeof rawTurn.status === 'string' ? rawTurn.status : 'completed';
       const startedAt = epochIso(rawTurn.startedAt);
       const completedAt = epochIso(rawTurn.completedAt);
@@ -211,11 +216,66 @@ interface SubagentTurn {
   }>;
 }
 
-interface ConversationSubagentThreadSnapshot {
+export interface ConversationSubagentHistoryBoundary {
+  state: 'confirmed' | 'unavailable';
+  createdAt: string | null;
+  ownedTurnCount: number;
+  hiddenInheritedTurnCount: number;
+  hiddenAmbiguousTurnCount: number;
+  reason: string | null;
+}
+
+export interface ConversationSubagentThreadSnapshot {
   conversationId: string;
   parentThreadId: string;
   agent: ConversationSubagentSummary;
+  historyBoundary: ConversationSubagentHistoryBoundary;
+  runtime: SubagentRuntimeDetails;
   turns: SubagentTurn[];
+}
+
+function ownedThreadHistory(thread: Record<string, unknown>): { boundary: ConversationSubagentHistoryBoundary; turns: Record<string, unknown>[] } {
+  const createdAtEpoch = epochSeconds(thread.createdAt);
+  const createdAt = createdAtEpoch === null ? null : new Date(createdAtEpoch * 1_000).toISOString();
+  const turns = Array.isArray(thread.turns) ? thread.turns : [];
+  if (createdAtEpoch === null) {
+    return {
+      turns: [],
+      boundary: {
+        state: 'unavailable',
+        createdAt: null,
+        ownedTurnCount: 0,
+        hiddenInheritedTurnCount: 0,
+        hiddenAmbiguousTurnCount: turns.length,
+        reason: 'Codex 子线程未提供可靠的创建时间，已隐藏无法确认归属的历史内容。',
+      },
+    };
+  }
+  const owned: Record<string, unknown>[] = [];
+  let hiddenInheritedTurnCount = 0;
+  let hiddenAmbiguousTurnCount = 0;
+  for (const rawTurn of turns) {
+    if (!isRecord(rawTurn) || typeof rawTurn.id !== 'string') {
+      hiddenAmbiguousTurnCount += 1;
+      continue;
+    }
+    const turn = rawTurn;
+    const startedAt = epochSeconds(turn.startedAt);
+    if (startedAt === null) hiddenAmbiguousTurnCount += 1;
+    else if (startedAt < createdAtEpoch) hiddenInheritedTurnCount += 1;
+    else owned.push(turn);
+  }
+  return {
+    turns: owned,
+    boundary: {
+      state: hiddenAmbiguousTurnCount === 0 ? 'confirmed' : 'unavailable',
+      createdAt,
+      ownedTurnCount: owned.length,
+      hiddenInheritedTurnCount,
+      hiddenAmbiguousTurnCount,
+      reason: hiddenAmbiguousTurnCount === 0 ? null : '部分 turn 缺少可靠的开始时间，已隐藏这些无法确认归属的内容。',
+    },
+  };
 }
 
 function toSummary(thread: Record<string, unknown>, activity: SubagentActivity): ConversationSubagentSummary {
@@ -273,7 +333,15 @@ function itemStatus(item: Record<string, unknown>, turnStatus: string): 'in_prog
 }
 
 function epochIso(value: unknown): string | null {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? new Date(value * 1_000).toISOString() : null;
+  const seconds = epochSeconds(value);
+  return seconds === null ? null : new Date(seconds * 1_000).toISOString();
+}
+
+function epochSeconds(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return value;
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed / 1_000 : null;
 }
 
 function parseJsonObject(value: string): Record<string, unknown> {
