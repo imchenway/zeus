@@ -1,13 +1,5 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
-import {
-  type ConversationContextDraft,
-  type ConversationFileIconKind,
-  type ConversationResource,
-  emptyConversationContextDraft,
-  hasConversationContext,
-  serializeConversationContext,
-  type ZeusBrowserPreparedSubmission,
-} from '@zeus/shared';
+import { type ConversationContextDraft, type ConversationFileIconKind, type ConversationResource, emptyConversationContextDraft, hasConversationContext, serializeConversationContext, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { createInitialSessionState, sessionReducer } from './sessionReducer.js';
 import {
   type CodexConversationCapabilities,
@@ -1718,10 +1710,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     } catch (error) {
       hydrating = false;
       const shouldScheduleReconnect =
-        !disposed &&
-        token === connectionToken &&
-        !(error instanceof ConversationRealtimeOpenTimeoutError) &&
-        (error instanceof SocketDisconnectedDuringHydrationError || socketLifecycle?.isDisconnected() === true);
+        !disposed && token === connectionToken && !(error instanceof ConversationRealtimeOpenTimeoutError) && (error instanceof SocketDisconnectedDuringHydrationError || socketLifecycle?.isDisconnected() === true);
       if (!disposed && token === connectionToken) {
         socketLifecycle?.markInactive();
         socketLifecycle = null;
@@ -2009,12 +1998,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
                 limit: 32,
                 byteLimit: 64 * 1024,
               });
-              if (
-                page.conversationId !== options.conversationId ||
-                page.schemaVersion !== 2 ||
-                page.structureGeneration !== current.snapshotV2!.structureGeneration ||
-                page.kind !== 'resources'
-              )
+              if (page.conversationId !== options.conversationId || page.schemaVersion !== 2 || page.structureGeneration !== current.snapshotV2!.structureGeneration || page.kind !== 'resources')
                 throw new Error('会话资源分页响应的身份或结构代次无效。');
               items = dedupeById([...items, ...page.items]);
               cursor = page.nextCursor;
@@ -2036,9 +2020,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       if (changeSet) merged = { ...merged, changeSets: dedupeById([...(merged.changeSets ?? []), changeSet]) };
       merged = updateConversationV2Paging(merged, (paging) => ({
         ...paging,
-        resources: resourceResult
-          ? { nextCursor: resourceResult.nextCursor, hasMore: resourceResult.hasMore, loading: false, loaded: true, error: null, items: resourceItems }
-          : { ...paging.resources, loading: false },
+        resources: resourceResult ? { nextCursor: resourceResult.nextCursor, hasMore: resourceResult.hasMore, loading: false, loaded: true, error: null, items: resourceItems } : { ...paging.resources, loading: false },
         changeSetsByTurn: {
           ...paging.changeSetsByTurn,
           [pagingKey]: {
@@ -2585,24 +2567,7 @@ function dedupeById<T extends { id: string }>(items: T[]): T[] {
   return [...new Map(items.map((item) => [item.id, item])).values()];
 }
 
-const conversationFileIconKinds = new Set<ConversationFileIconKind>([
-  'code',
-  'java',
-  'javascript',
-  'typescript',
-  'json',
-  'markdown',
-  'sql',
-  'html',
-  'css',
-  'image',
-  'pdf',
-  'spreadsheet',
-  'presentation',
-  'document',
-  'archive',
-  'file',
-]);
+const conversationFileIconKinds = new Set<ConversationFileIconKind>(['code', 'java', 'javascript', 'typescript', 'json', 'markdown', 'sql', 'html', 'css', 'image', 'pdf', 'spreadsheet', 'presentation', 'document', 'archive', 'file']);
 
 async function attachV2ResourcesToSnapshot(snapshot: NativeConversationSnapshot, metadata: NativeConversationResourceV2Item[]): Promise<NativeConversationSnapshot> {
   const providerThreadId = snapshot.providerThreadId;
@@ -2653,11 +2618,7 @@ function conversationResourceFromV2Metadata(snapshot: NativeConversationSnapshot
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
   } as const;
-  const iconKind = conversationFileIconKinds.has(item.iconKind as ConversationFileIconKind)
-    ? (item.iconKind as ConversationFileIconKind)
-    : item.mimeType?.startsWith('image/')
-      ? 'image'
-      : 'file';
+  const iconKind = conversationFileIconKinds.has(item.iconKind as ConversationFileIconKind) ? (item.iconKind as ConversationFileIconKind) : item.mimeType?.startsWith('image/') ? 'image' : 'file';
   if (item.kind === 'file') {
     return {
       ...base,

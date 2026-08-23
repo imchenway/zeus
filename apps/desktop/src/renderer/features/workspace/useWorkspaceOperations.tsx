@@ -1964,11 +1964,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     }
     return (
       <SessionWorkspace
-        key={
-          selectedNativeConversation
-            ? `${selectedNativeConversation.projectId}:${selectedNativeConversation.navigationId ?? selectedNativeConversation.id}`
-            : `new-conversation-${newConversationFocusRequest}`
-        }
+        key={selectedNativeConversation ? `${selectedNativeConversation.projectId}:${selectedNativeConversation.navigationId ?? selectedNativeConversation.id}` : `new-conversation-${newConversationFocusRequest}`}
         language={appShellSettings.appLanguage}
         state={null}
         conversation={selectedNativeConversation}

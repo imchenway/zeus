@@ -137,14 +137,7 @@ export function adaptConversationSnapshotV2(input: ConversationSnapshotV2Bootstr
 }
 
 export function mergeConversationHistoryV2(snapshot: NativeConversationSnapshot, page: NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>): NativeConversationSnapshot {
-  if (
-    !snapshot.snapshotV2 ||
-    !snapshot.v2Paging ||
-    page.schemaVersion !== 2 ||
-    page.structureGeneration !== snapshot.snapshotV2.structureGeneration ||
-    page.conversationId !== snapshot.id ||
-    page.kind !== 'model_history'
-  )
+  if (!snapshot.snapshotV2 || !snapshot.v2Paging || page.schemaVersion !== 2 || page.structureGeneration !== snapshot.snapshotV2.structureGeneration || page.conversationId !== snapshot.id || page.kind !== 'model_history')
     throw new Error('会话 V2 历史页与当前快照不匹配。');
   const byId = new Map(snapshot.items.map((item) => [item.id, item]));
   for (const item of historyItems(page.items)) byId.set(item.id, item);

@@ -169,14 +169,7 @@ const ActivityItemRow = memo(function ActivityItemRow(props: {
               <div className="session-activity-item-detail-body">
                 {detail.command ? <code>{detail.command}</code> : null}
                 {detail.cwd ? <small>{detail.cwd}</small> : null}
-                {detail.output || toolResult ? (
-                  <ActivityItemOutput
-                    output={detail.output}
-                    toolResult={toolResult}
-                    language={props.language}
-                    onLoadToolResult={props.onLoadToolResult}
-                  />
-                ) : null}
+                {detail.output || toolResult ? <ActivityItemOutput output={detail.output} toolResult={toolResult} language={props.language} onLoadToolResult={props.onLoadToolResult} /> : null}
               </div>
             ) : null}
           </details>
@@ -188,12 +181,7 @@ const ActivityItemRow = memo(function ActivityItemRow(props: {
   );
 });
 
-function ActivityItemOutput(props: {
-  output: string | null;
-  toolResult: ActivityToolResult | null;
-  language: SessionUiLanguage;
-  onLoadToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage>;
-}) {
+function ActivityItemOutput(props: { output: string | null; toolResult: ActivityToolResult | null; language: SessionUiLanguage; onLoadToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage> }) {
   const [pages, setPages] = useState<NativeConversationToolResultPage[]>([]);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -204,11 +192,7 @@ function ActivityItemOutput(props: {
   const sourceOutput = normalizeActivityToolText(loadedOutput || projectedOutput || '').text ?? '';
   const outputPreview = showFull ? { text: sourceOutput, truncated: false } : activityOutputPreview(sourceOutput);
   const lastPage = pages.at(-1) ?? null;
-  const canLoadMore = Boolean(
-    props.toolResult?.handle &&
-      props.onLoadToolResult &&
-      (pages.length > 0 ? lastPage?.nextOffset !== null : props.toolResult.projectionTruncated),
-  );
+  const canLoadMore = Boolean(props.toolResult?.handle && props.onLoadToolResult && (pages.length > 0 ? lastPage?.nextOffset !== null : props.toolResult.projectionTruncated));
   const canShowFull = !canLoadMore && !showFull && sourceOutput.length > MAX_ACTIVITY_OUTPUT_CHARACTERS;
 
   useEffect(() => {
@@ -240,9 +224,7 @@ function ActivityItemOutput(props: {
       {outputPreview.text ? <pre>{outputPreview.text}</pre> : null}
       {outputPreview.truncated ? (
         <small>
-          {props.language === 'zh-CN'
-            ? `输出较大，当前显示前 ${MAX_ACTIVITY_OUTPUT_CHARACTERS.toLocaleString('zh-CN')} 个字符。`
-            : `Large output; showing the first ${MAX_ACTIVITY_OUTPUT_CHARACTERS.toLocaleString('en-US')} characters.`}
+          {props.language === 'zh-CN' ? `输出较大，当前显示前 ${MAX_ACTIVITY_OUTPUT_CHARACTERS.toLocaleString('zh-CN')} 个字符。` : `Large output; showing the first ${MAX_ACTIVITY_OUTPUT_CHARACTERS.toLocaleString('en-US')} characters.`}
         </small>
       ) : null}
       {canLoadMore || canShowFull || failed ? (
@@ -257,17 +239,7 @@ function ActivityItemOutput(props: {
             void loadNextPage();
           }}
         >
-          {loading
-            ? props.language === 'zh-CN'
-              ? '正在展开…'
-              : 'Expanding…'
-            : failed
-              ? props.language === 'zh-CN'
-                ? '重试展开'
-                : 'Retry expansion'
-              : props.language === 'zh-CN'
-                ? '展开剩余内容'
-                : 'Expand remaining content'}
+          {loading ? (props.language === 'zh-CN' ? '正在展开…' : 'Expanding…') : failed ? (props.language === 'zh-CN' ? '重试展开' : 'Retry expansion') : props.language === 'zh-CN' ? '展开剩余内容' : 'Expand remaining content'}
         </button>
       ) : null}
       {failed ? (
