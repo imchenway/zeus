@@ -165,7 +165,6 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   // 创建期只保留一个主进度：真实轮次建立前显示连接，建立后由轮次状态或真实过程内容接管。
   const showCreationStatus = Boolean(props.creationStatus) && !(creatingSession && realTurnStarted);
   const showStandaloneActiveStatus = showActiveStatus && !(creatingSession && !realTurnStarted);
-  const historyUnavailable = !historyHydrated && (props.state.transportState === 'reconnecting' || props.state.transportState === 'failed');
   const awaitingReplyMessageIdsKey = items
     .filter(isOptimisticMessageAwaitingReply)
     .map((item) => item.clientUserMessageId)
@@ -434,7 +433,10 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             error={processPaging?.error}
             open={expandedRowKeys.has(expansionKey)}
             onOpenChange={(open) => setTranscriptRowExpanded(expansionKey, open)}
-            onOpen={() => renderProps.onLoadTurnProcess?.(row.turnId)}
+            onOpen={async () => {
+              await renderProps.onLoadTurnProcess?.(row.turnId);
+              await renderProps.onLoadTurnArtifacts?.(row.turnId);
+            }}
           >
             {row.rows.map((child) => (
               <Fragment key={child.key}>{renderTranscriptRow(child, transcriptRowRenderOptions(renderProps, items, false, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId))}</Fragment>
@@ -442,7 +444,6 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             {processPaging?.loaded && processPaging.hasMore && renderProps.onLoadTurnProcess ? (
               <V2AutoPageSentinel loading={processPaging.loading} error={processPaging.error} kind="process" language={props.language} onLoad={() => renderProps.onLoadTurnProcess?.(row.turnId)} />
             ) : null}
-            <V2TurnDeferredArtifacts state={props.state} localTurnId={row.turnId} pagingKey={row.turnId} language={props.language} onLoadContent={renderProps.onLoadV2Content} onLoadToolResult={renderProps.onLoadV2ToolResult} />
           </SessionTurnProcessDisclosure>
         );
       }
@@ -450,7 +451,6 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       const active = isActiveSessionTurn(turn);
       const v2PagingKey = turn.providerTurnId ?? turn.id;
       const processPaging = props.state.snapshot?.v2Paging?.processByTurn[v2PagingKey];
-      const changePaging = props.state.snapshot?.v2Paging?.changeSetsByTurn[v2PagingKey];
       const process = row.rows.map((child) => {
         const content = renderTranscriptRow(
           child,
@@ -473,25 +473,19 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           ) : (
             <SessionTurnProcessDisclosure
               language={props.language}
-              loading={Boolean(processPaging?.loading || changePaging?.loading || props.state.snapshot?.v2Paging?.resources.loading)}
-              error={processPaging?.error ?? changePaging?.error ?? props.state.snapshot?.v2Paging?.resources.error}
+              loading={Boolean(processPaging?.loading)}
+              error={processPaging?.error}
               open={expandedRowKeys.has(expansionKey)}
               onOpenChange={(open) => setTranscriptRowExpanded(expansionKey, open)}
-              onOpen={() => Promise.all([renderProps.onLoadTurnProcess?.(row.turnId), renderProps.onLoadTurnArtifacts?.(row.turnId)]).then(() => undefined)}
+              onOpen={async () => {
+                await renderProps.onLoadTurnProcess?.(row.turnId);
+                await renderProps.onLoadTurnArtifacts?.(row.turnId);
+              }}
             >
               {process}
               {processPaging?.loaded && processPaging.hasMore && renderProps.onLoadTurnProcess ? (
                 <V2AutoPageSentinel loading={processPaging.loading} error={processPaging.error} kind="process" language={props.language} onLoad={() => renderProps.onLoadTurnProcess?.(row.turnId)} />
               ) : null}
-              <V2TurnDeferredArtifacts
-                state={props.state}
-                localTurnId={turn.id}
-                pagingKey={v2PagingKey}
-                language={props.language}
-                onLoadMore={renderProps.onLoadTurnArtifacts ? () => renderProps.onLoadTurnArtifacts?.(row.turnId) : undefined}
-                onLoadContent={renderProps.onLoadV2Content}
-                onLoadToolResult={renderProps.onLoadV2ToolResult}
-              />
             </SessionTurnProcessDisclosure>
           )}
           {!active && containsLastItem ? (
@@ -510,18 +504,13 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     const v2PagingKey = turn?.providerTurnId ?? turn?.id ?? lastRowItem.turnId;
     const expansionKey = turnProcessExpansionKey(v2PagingKey);
     const v2ProcessPaging = props.state.snapshot?.v2Paging?.processByTurn[v2PagingKey];
-    const v2ChangePaging = props.state.snapshot?.v2Paging?.changeSetsByTurn[v2PagingKey];
     const v2Turn = props.state.snapshot?.snapshotV2
       ? [...props.state.snapshot.snapshotV2.recentClosedTurns, ...(props.state.snapshot.snapshotV2.activeTurn ? [props.state.snapshot.snapshotV2.activeTurn] : [])].find(
           (candidate) => candidate.id === turn?.id || (turn?.providerTurnId && candidate.providerTurnId === turn.providerTurnId),
         )
       : undefined;
     const historicalProcessAvailable = Boolean(v2Turn?.process.available || (!turn && props.state.snapshot?.snapshotV2 && isFinalAnswerItem(lastRowItem)));
-    const showV2DeferredDetails = Boolean(
-      closesVisibleTurn &&
-      !projectedTurnWorkIds.has(lastRowItem.turnId) &&
-      ((!turn && historicalProcessAvailable) || (turn && !isActiveSessionTurn(turn) && v2Turn && (historicalProcessAvailable || v2Turn.resourcesAvailable || v2Turn.changeSetAvailable))),
-    );
+    const showV2DeferredDetails = Boolean(closesVisibleTurn && !projectedTurnWorkIds.has(lastRowItem.turnId) && historicalProcessAvailable && (!turn || !isActiveSessionTurn(turn)));
     return (
       <>
         {renderTranscriptRow(row, transcriptRowRenderOptions(renderProps, items, showActiveStatus, motionFocus, lastUserKey, false, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId))}
@@ -529,21 +518,16 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           <SessionTurnProcessDisclosure
             language={props.language}
             labelKind={historicalProcessAvailable ? 'process' : 'details'}
-            loading={Boolean(v2ProcessPaging?.loading || v2ChangePaging?.loading || props.state.snapshot?.v2Paging?.resources.loading)}
-            error={v2ProcessPaging?.error ?? v2ChangePaging?.error ?? props.state.snapshot?.v2Paging?.resources.error}
+            loading={Boolean(v2ProcessPaging?.loading)}
+            error={v2ProcessPaging?.error}
             open={expandedRowKeys.has(expansionKey)}
             onOpenChange={(open) => setTranscriptRowExpanded(expansionKey, open)}
-            onOpen={() => Promise.all([renderProps.onLoadTurnProcess?.(lastRowItem.turnId), renderProps.onLoadTurnArtifacts?.(lastRowItem.turnId)]).then(() => undefined)}
+            onOpen={async () => {
+              await renderProps.onLoadTurnProcess?.(lastRowItem.turnId);
+              await renderProps.onLoadTurnArtifacts?.(lastRowItem.turnId);
+            }}
           >
-            <V2TurnDeferredArtifacts
-              state={props.state}
-              localTurnId={turn?.id ?? lastRowItem.turnId}
-              pagingKey={v2PagingKey}
-              language={props.language}
-              onLoadMore={renderProps.onLoadTurnArtifacts ? () => renderProps.onLoadTurnArtifacts?.(lastRowItem.turnId) : undefined}
-              onLoadContent={renderProps.onLoadV2Content}
-              onLoadToolResult={renderProps.onLoadV2ToolResult}
-            />
+            {null}
           </SessionTurnProcessDisclosure>
         ) : null}
         {closesVisibleTurn ? renderTurnArtifacts(lastRowItem.turnId, renderProps, lastRowItem.key, providerErrorItemsByTurn.get(lastRowItem.turnId)) : null}
@@ -599,10 +583,6 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             </div>
           ) : !showActiveStatus && queuedSubmissions.length === 0 && historyHydrated ? (
             <p className="session-transcript-empty">{props.language === 'zh-CN' ? '发送第一条消息后，真实 app-server 对话会显示在这里。' : 'Send the first message to begin the real app-server transcript.'}</p>
-          ) : !showActiveStatus && historyUnavailable ? (
-            <p className="session-transcript-empty" role="status">
-              {props.language === 'zh-CN' ? '会话暂时未加载；重新进入或发送消息时会自动读取。' : 'The conversation is not loaded yet. It will be read automatically when you return or send a message.'}
-            </p>
           ) : null}
           {orphanFailedTurns.map((turn) => (
             <TurnFailureCard key={`turn-failure:${turn.providerTurnId ?? turn.id}`} failure={turn.error!} language={props.language} providerErrors={providerErrorItemsByTurn.get(turn.providerTurnId ?? '')} />
@@ -683,87 +663,7 @@ function V2HistoryPageControl(props: { state: NativeSessionState; language: Sess
   );
 }
 
-function V2TurnDeferredArtifacts(props: {
-  state: NativeSessionState;
-  localTurnId: string;
-  pagingKey: string;
-  language: SessionUiLanguage;
-  onLoadMore?: () => void | Promise<void>;
-  onLoadContent?: (handle: string, offset?: number) => Promise<NativeConversationContentV2Page>;
-  onLoadToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage>;
-}) {
-  const paging = props.state.snapshot?.v2Paging;
-  if (!props.state.snapshot?.snapshotV2 || !paging) return null;
-  const resources = paging.resources.items.filter((resource) => resource.turnId === props.localTurnId);
-  const change = paging.changeSetsByTurn[props.pagingKey];
-  const deferredContent = deferredContentHandles(props.state, props.pagingKey);
-  const onLoadContent = props.onLoadContent;
-  const onLoadToolResult = props.onLoadToolResult;
-  const visible = resources.length > 0 || Boolean(change?.summary) || (change?.files.length ?? 0) > 0 || deferredContent.length > 0;
-  if (!visible && !change?.error && !paging.resources.error) return null;
-  const canLoadMore = Boolean(props.onLoadMore && (paging.resources.hasMore || change?.hasMore));
-  return (
-    <section className="session-v2-deferred-artifacts" aria-label={props.language === 'zh-CN' ? '按需加载的轮次详情' : 'On-demand turn details'}>
-      {resources.length > 0 ? (
-        <div>
-          <strong>{props.language === 'zh-CN' ? '资源元数据' : 'Resource metadata'}</strong>
-          <ul>
-            {resources.map((resource) => (
-              <li key={resource.id}>
-                <span>{resource.displayName}</span>
-                <small>{resource.kind}</small>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      {change?.summary ? (
-        <div>
-          <strong>{props.language === 'zh-CN' ? '变更集' : 'Change set'}</strong>
-          <p>
-            {props.language === 'zh-CN'
-              ? `${change.summary.fileCount} 个文件 · +${change.summary.addedLines} / -${change.summary.deletedLines}`
-              : `${change.summary.fileCount} files · +${change.summary.addedLines} / -${change.summary.deletedLines}`}
-          </p>
-          {change.files.length > 0 ? (
-            <ul>
-              {change.files.map((file) => (
-                <li key={file.id}>
-                  <span>{file.newPath ?? file.oldPath ?? file.id}</span>
-                  <small>
-                    +{file.addedLines} / -{file.deletedLines}
-                  </small>
-                  {file.diffHandle && onLoadContent ? <V2DeferredContent handle={file.diffHandle} label={props.language === 'zh-CN' ? '查看差异' : 'View diff'} language={props.language} onLoad={onLoadContent} /> : null}
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
-      ) : null}
-      {deferredContent.some((content) => (content.kind === 'tool_result' ? Boolean(onLoadToolResult) : Boolean(onLoadContent))) ? (
-        <div>
-          <strong>{props.language === 'zh-CN' ? '完整正文与工具结果' : 'Full content and tool results'}</strong>
-          <ul>
-            {deferredContent.flatMap((content) => {
-              const onLoad = content.kind === 'tool_result' ? onLoadToolResult : onLoadContent;
-              return onLoad
-                ? [
-                    <li key={`${content.kind}:${content.handle}`}>
-                      <span>{content.label}</span>
-                      <V2DeferredContent handle={content.handle} label={props.language === 'zh-CN' ? '读取正文' : 'Load content'} language={props.language} onLoad={onLoad} />
-                    </li>,
-                  ]
-                : [];
-            })}
-          </ul>
-        </div>
-      ) : null}
-      {canLoadMore ? <V2AutoPageSentinel loading={Boolean(change?.loading || paging.resources.loading)} error={change?.error ?? paging.resources.error} kind="artifacts" language={props.language} onLoad={props.onLoadMore!} /> : null}
-    </section>
-  );
-}
-
-function V2AutoPageSentinel(props: { loading: boolean; error: string | null | undefined; kind: 'process' | 'artifacts'; language: SessionUiLanguage; onLoad: () => void | Promise<void> }) {
+function V2AutoPageSentinel(props: { loading: boolean; error: string | null | undefined; kind: 'process'; language: SessionUiLanguage; onLoad: () => void | Promise<void> }) {
   const sentinelRef = useRef<HTMLSpanElement | null>(null);
   useEffect(() => {
     const sentinel = sentinelRef.current;
@@ -787,110 +687,14 @@ function V2AutoPageSentinel(props: { loading: boolean; error: string | null | un
     observer.observe(sentinel);
     return () => observer.disconnect();
   }, [props.error, props.loading, props.onLoad]);
-  const loadingLabel = props.kind === 'process' ? (props.language === 'zh-CN' ? '正在补齐处理过程…' : 'Loading process…') : props.language === 'zh-CN' ? '正在补齐资源与变更…' : 'Loading resources and changes…';
-  const errorLabel =
-    props.kind === 'process' ? (props.language === 'zh-CN' ? '处理过程暂时无法读取。' : 'Process is temporarily unavailable.') : props.language === 'zh-CN' ? '资源与变更暂时无法读取。' : 'Resources and changes are temporarily unavailable.';
+  const loadingLabel = props.language === 'zh-CN' ? '正在补齐处理过程…' : 'Loading process…';
+  const errorLabel = props.language === 'zh-CN' ? '处理过程暂时无法读取。' : 'Process is temporarily unavailable.';
   return (
     <span ref={sentinelRef} className="session-v2-auto-page" role={props.loading ? 'status' : undefined}>
       {props.loading ? loadingLabel : null}
       {props.error ? errorLabel : null}
     </span>
   );
-}
-
-interface V2DeferredContentPage {
-  text: string;
-  offset: number;
-  nextOffset: number | null;
-  totalCharacters: number;
-  redacted?: boolean;
-}
-
-function V2DeferredContent(props: { handle: string; label: string; language: SessionUiLanguage; onLoad: (handle: string, offset?: number) => Promise<V2DeferredContentPage> }) {
-  const loadingRef = useRef(false);
-  const [pages, setPages] = useState<V2DeferredContentPage[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    loadingRef.current = false;
-    setPages([]);
-    setLoading(false);
-    setFailed(false);
-  }, [props.handle]);
-  const load = useCallback(
-    async (offset?: number): Promise<void> => {
-      if (loadingRef.current) return;
-      loadingRef.current = true;
-      setLoading(true);
-      setFailed(false);
-      try {
-        const page = await props.onLoad(props.handle, offset);
-        setPages((current) => (offset === undefined ? [page] : [...current.filter((candidate) => candidate.offset !== page.offset), page].sort((left, right) => left.offset - right.offset)));
-      } catch {
-        setFailed(true);
-      } finally {
-        loadingRef.current = false;
-        setLoading(false);
-      }
-    },
-    [props.handle, props.onLoad],
-  );
-  const lastPage = pages.at(-1) ?? null;
-  const text = pages.map((page) => page.text).join('');
-  return (
-    <div className="session-v2-content" aria-label={props.label} aria-busy={loading || undefined}>
-      {!lastPage && !loading && !failed ? (
-        <button type="button" onClick={() => void load()}>
-          {props.label}
-        </button>
-      ) : null}
-      {loading && pages.length === 0 ? <small className="session-v2-page-status">{props.language === 'zh-CN' ? '正在读取正文…' : 'Loading content…'}</small> : null}
-      {failed && pages.length === 0 ? (
-        <button type="button" onClick={() => void load()}>
-          {props.language === 'zh-CN' ? '重试读取正文' : 'Retry loading content'}
-        </button>
-      ) : null}
-      {lastPage ? (
-        <>
-          <pre>{text}</pre>
-          <small>
-            {pages.some((page) => page.redacted === true) ? (props.language === 'zh-CN' ? '敏感内容已脱敏 · ' : 'Sensitive content redacted · ') : ''}
-            {lastPage.nextOffset ?? lastPage.totalCharacters}/{lastPage.totalCharacters}
-          </small>
-          {lastPage.nextOffset !== null ? (
-            <button type="button" disabled={loading} onClick={() => void load(lastPage.nextOffset ?? undefined)}>
-              {loading ? (props.language === 'zh-CN' ? '正在展开…' : 'Expanding…') : props.language === 'zh-CN' ? '展开剩余内容' : 'Expand remaining content'}
-            </button>
-          ) : null}
-        </>
-      ) : null}
-      {failed ? (
-        <small className="session-v2-page-error" role="alert">
-          {props.language === 'zh-CN' ? '正文暂时无法读取。' : 'Content is temporarily unavailable.'}
-        </small>
-      ) : null}
-    </div>
-  );
-}
-
-function deferredContentHandles(state: NativeSessionState, turnId: string): Array<{ handle: string; label: string; kind: 'content' | 'tool_result' }> {
-  const byHandle = new Map<string, { handle: string; label: string; kind: 'content' | 'tool_result' }>();
-  for (const item of Object.values(state.items)) {
-    if (item.turnId !== turnId) continue;
-    const detailHandle = primitiveValue(item.payload.v2ContentHandle);
-    const contentKind = primitiveValue(item.payload.v2ContentKind);
-    if (detailHandle && contentKind === 'model_history' && item.payload.v2ContentTruncated === true) {
-      byHandle.set(detailHandle, { handle: detailHandle, label: primitiveValue(item.payload.title) ?? item.text ?? item.type, kind: 'content' });
-    }
-    const toolResult = recordValue(item.payload.toolResult);
-    const toolHandle = primitiveValue(toolResult?.handle);
-    if (toolHandle) byHandle.set(toolHandle, { handle: toolHandle, label: propsLabelForToolResult(item), kind: 'tool_result' });
-  }
-  return [...byHandle.values()];
-}
-
-function propsLabelForToolResult(item: NativeSessionItemBuffer): string {
-  return primitiveValue(item.payload.title) ?? item.text ?? 'Tool result';
 }
 
 function SessionCreationNotice(props: { status: SessionCreationStatus; language: SessionUiLanguage }) {
@@ -1116,6 +920,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         motionActive={row.motionActive || row.items.some(isLiveActivityItem) || row.items.some((item) => item.key === options.motionFocus?.itemKey)}
         onOpenResource={options.props.onOpenResource}
         onLoadResourcePreview={options.props.onLoadResourcePreview}
+        onLoadToolResult={options.props.onLoadV2ToolResult}
       />
     );
   }
@@ -1343,7 +1148,7 @@ function isLiveTurnTimelineRow(row: TranscriptRow): boolean {
 }
 
 function isTurnProcessRow(row: TranscriptRow): boolean {
-  if (row.kind === 'answered_request') return false;
+  if (row.kind === 'answered_request') return true;
   if (row.kind === 'activity') return true;
   // 计划和明确交付资源属于最终产物，必须独立展示，不能折叠进“已处理”过程。
   if (row.item.type === 'plan' || isAssistantDeliverableItem(row.item)) return false;
@@ -1405,6 +1210,8 @@ export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[],
   let currentReasoningRow: TranscriptRow | null = null;
   const timeline: Array<{ kind: 'item'; item: NativeSessionItemBuffer } | { kind: 'answered_request'; request: NativePendingRequest }> = items.map((item) => ({ kind: 'item', item }));
   for (const request of [...answeredRequests].sort((left, right) => (left.resolvedAt ?? left.createdAt).localeCompare(right.resolvedAt ?? right.createdAt))) {
+    // 缺少轮次身份的旧记录不能靠时间猜测归属，也不能重新污染主会话时间线。
+    if (!request.turnId) continue;
     const requestTimelineAt = request.resolvedAt ?? request.createdAt;
     // 已回答询问按答案提交时间落位；普通条目使用首次进入时间线的稳定时间，不能用流式更新后的时间重排。
     const insertionIndex = timeline.findIndex((entry) => entry.kind === 'item' && (entry.item.timelineAt ?? entry.item.updatedAt ?? '') >= requestTimelineAt);

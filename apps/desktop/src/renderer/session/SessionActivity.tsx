@@ -13,7 +13,7 @@ import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist
 import { WrenchIcon as Wrench } from '@phosphor-icons/react/dist/csr/Wrench';
 import type { ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourcePreview } from '@zeus/shared';
 import { ConversationResourceCards, defaultOpenTarget, isImageResource } from './ConversationResources.js';
-import { isAssistantDeliverableItem, type NativePendingRequest, type NativeSessionItemBuffer, type NativeTurnPlanSnapshot, type NativeTurnSnapshot } from './sessionTypes.js';
+import { isAssistantDeliverableItem, type NativeConversationToolResultPage, type NativePendingRequest, type NativeSessionItemBuffer, type NativeTurnPlanSnapshot, type NativeTurnSnapshot } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 
 const operationalTypes = new Set(['commandexecution', 'command', 'mcptoolcall', 'dynamictoolcall', 'websearch', 'imageview', 'toolcall', 'tool', 'filechange', 'file', 'contextcompaction', 'providerevent']);
@@ -43,6 +43,7 @@ interface SessionActivityGroupProps {
   motionActive?: boolean;
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
+  onLoadToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage>;
 }
 
 export const SessionActivityGroup = memo(function SessionActivityGroup(props: SessionActivityGroupProps) {
@@ -75,7 +76,14 @@ export const SessionActivityGroup = memo(function SessionActivityGroup(props: Se
             {detailItems.length > 0 ? (
               <ol>
                 {detailItems.map((item) => (
-                  <ActivityItemRow key={item.key} item={item} language={props.language} motionActive={Boolean(active && props.motionActive && item.key === liveItem?.key)} onOpenResource={props.onOpenResource} />
+                  <ActivityItemRow
+                    key={item.key}
+                    item={item}
+                    language={props.language}
+                    motionActive={Boolean(active && props.motionActive && item.key === liveItem?.key)}
+                    onOpenResource={props.onOpenResource}
+                    onLoadToolResult={props.onLoadToolResult}
+                  />
                 ))}
               </ol>
             ) : null}
@@ -99,6 +107,7 @@ function sameActivityGroupProps(previous: Readonly<SessionActivityGroupProps>, n
     previous.motionActive !== next.motionActive ||
     previous.onOpenResource !== next.onOpenResource ||
     previous.onLoadResourcePreview !== next.onLoadResourcePreview ||
+    previous.onLoadToolResult !== next.onLoadToolResult ||
     previous.items.length !== next.items.length
   )
     return false;
@@ -126,13 +135,14 @@ const ActivityItemRow = memo(function ActivityItemRow(props: {
   language: SessionUiLanguage;
   motionActive?: boolean;
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
+  onLoadToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage>;
 }) {
   const title = activityItemTitle(props.item, props.language);
   const detail = activityItemDetail(props.item);
   const target = activityItemTarget(props.item, props.language);
   const [open, setOpen] = useState(false);
   const Icon = activityItemIcon(props.item);
-  const outputPreview = open && detail?.output ? activityOutputPreview(detail.output) : null;
+  const toolResult = activityToolResult(props.item);
   const titleNode = target ? (
     <span className="session-activity-item-title">
       <span>{target.prefix}</span>{' '}
@@ -159,14 +169,7 @@ const ActivityItemRow = memo(function ActivityItemRow(props: {
               <div className="session-activity-item-detail-body">
                 {detail.command ? <code>{detail.command}</code> : null}
                 {detail.cwd ? <small>{detail.cwd}</small> : null}
-                {outputPreview ? <pre>{outputPreview.text}</pre> : null}
-                {outputPreview?.truncated ? (
-                  <small>
-                    {props.language === 'zh-CN'
-                      ? `输出较大，仅显示前 ${MAX_ACTIVITY_OUTPUT_CHARACTERS.toLocaleString('zh-CN')} 个字符。`
-                      : `Large output; showing the first ${MAX_ACTIVITY_OUTPUT_CHARACTERS.toLocaleString('en-US')} characters.`}
-                  </small>
-                ) : null}
+                {detail.output || toolResult ? <ActivityItemOutput output={detail.output} toolResult={toolResult} language={props.language} onLoadToolResult={props.onLoadToolResult} /> : null}
               </div>
             ) : null}
           </details>
@@ -177,6 +180,156 @@ const ActivityItemRow = memo(function ActivityItemRow(props: {
     </li>
   );
 });
+
+function ActivityItemOutput(props: { output: string | null; toolResult: ActivityToolResult | null; language: SessionUiLanguage; onLoadToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage> }) {
+  const [pages, setPages] = useState<NativeConversationToolResultPage[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [showFull, setShowFull] = useState(false);
+  const loadingRef = useRef(false);
+  const projectedOutput = props.output ?? props.toolResult?.projection ?? null;
+  const loadedOutput = pages.map((page) => page.text).join('');
+  const sourceOutput = normalizeActivityToolText(loadedOutput || projectedOutput || '').text ?? '';
+  const outputPreview = showFull ? { text: sourceOutput, truncated: false } : activityOutputPreview(sourceOutput);
+  const lastPage = pages.at(-1) ?? null;
+  const canLoadMore = Boolean(props.toolResult?.handle && props.onLoadToolResult && (pages.length > 0 ? lastPage?.nextOffset !== null : props.toolResult.projectionTruncated));
+  const canShowFull = !canLoadMore && !showFull && sourceOutput.length > MAX_ACTIVITY_OUTPUT_CHARACTERS;
+
+  useEffect(() => {
+    setPages([]);
+    setLoading(false);
+    setFailed(false);
+    setShowFull(false);
+    loadingRef.current = false;
+  }, [props.toolResult?.handle]);
+
+  async function loadNextPage(): Promise<void> {
+    if (!props.toolResult?.handle || !props.onLoadToolResult || loadingRef.current) return;
+    loadingRef.current = true;
+    setLoading(true);
+    setFailed(false);
+    try {
+      const page = await props.onLoadToolResult(props.toolResult.handle, lastPage?.nextOffset ?? undefined);
+      setPages((current) => [...current.filter((candidate) => candidate.offset !== page.offset), page].sort((left, right) => left.offset - right.offset));
+    } catch {
+      setFailed(true);
+    } finally {
+      loadingRef.current = false;
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="session-activity-item-output" aria-busy={loading || undefined}>
+      {outputPreview.text ? <pre>{outputPreview.text}</pre> : null}
+      {outputPreview.truncated ? (
+        <small>
+          {props.language === 'zh-CN' ? `输出较大，当前显示前 ${MAX_ACTIVITY_OUTPUT_CHARACTERS.toLocaleString('zh-CN')} 个字符。` : `Large output; showing the first ${MAX_ACTIVITY_OUTPUT_CHARACTERS.toLocaleString('en-US')} characters.`}
+        </small>
+      ) : null}
+      {canLoadMore || canShowFull || failed ? (
+        <button
+          type="button"
+          disabled={loading}
+          onClick={() => {
+            if (canShowFull) {
+              setShowFull(true);
+              return;
+            }
+            void loadNextPage();
+          }}
+        >
+          {loading ? (props.language === 'zh-CN' ? '正在展开…' : 'Expanding…') : failed ? (props.language === 'zh-CN' ? '重试展开' : 'Retry expansion') : props.language === 'zh-CN' ? '展开剩余内容' : 'Expand remaining content'}
+        </button>
+      ) : null}
+      {failed ? (
+        <small className="session-v2-page-error" role="alert">
+          {props.language === 'zh-CN' ? '完整输出暂时无法读取。' : 'The complete output is temporarily unavailable.'}
+        </small>
+      ) : null}
+    </div>
+  );
+}
+
+interface ActivityToolResult {
+  handle: string;
+  projection: string | null;
+  projectionTruncated: boolean;
+}
+
+function activityToolResult(item: NativeSessionItemBuffer): ActivityToolResult | null {
+  const result = isRecord(item.payload.toolResult) ? item.payload.toolResult : null;
+  const handle = primitive(result?.handle);
+  if (!handle) return null;
+  const rawProjection = typeof result?.projection === 'string' ? result.projection : '';
+  const parsedProjection = parseToolResultProjection(rawProjection);
+  return {
+    handle,
+    projection: parsedProjection.text,
+    projectionTruncated: result?.projectionTruncated === true || parsedProjection.truncated,
+  };
+}
+
+function parseToolResultProjection(value: string): { text: string | null; truncated: boolean } {
+  if (!value.trim()) return { text: null, truncated: false };
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (isRecord(parsed) && typeof parsed.text === 'string') {
+      const normalized = normalizeActivityToolText(parsed.text);
+      return { text: normalized.text, truncated: parsed.truncated === true || normalized.truncated };
+    }
+  } catch {
+    // Snapshot V2 会对描述符本身做有界截断；下方只提取开头的 text 字段，不展示协议 JSON。
+  }
+  const text = extractJsonStringField(value, 'text');
+  if (text === null) return normalizeActivityToolText(value, true);
+  const normalized = normalizeActivityToolText(text, true);
+  return { text: normalized.text, truncated: true };
+}
+
+function normalizeActivityToolText(value: string, truncated = false): { text: string | null; truncated: boolean } {
+  const trimmed = value.trim();
+  if (!trimmed) return { text: null, truncated };
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (isRecord(parsed)) {
+      if (typeof parsed.text === 'string') return normalizeActivityToolText(parsed.text, truncated || parsed.truncated === true);
+      if (isCommandExecutionRecord(parsed)) {
+        return {
+          text: primitive(parsed.aggregatedOutput ?? parsed.output ?? parsed.stdout ?? parsed.stderr),
+          truncated,
+        };
+      }
+    }
+  } catch {
+    // 历史资源可能只返回协议 JSON 的一个有界片段，继续按字段提取，不能回退展示协议正文。
+  }
+  if (looksLikeCommandExecutionProtocol(trimmed)) {
+    const output = ['aggregatedOutput', 'output', 'stdout', 'stderr'].map((field) => extractJsonStringField(trimmed, field)).find((candidate) => candidate !== null) ?? null;
+    return { text: output, truncated: true };
+  }
+  return { text: value, truncated };
+}
+
+function isCommandExecutionRecord(value: Record<string, unknown>): boolean {
+  const type = normalizeType(primitive(value.type) ?? '');
+  return type === 'commandexecution' || type === 'command';
+}
+
+function looksLikeCommandExecutionProtocol(value: string): boolean {
+  return /^\s*\{/u.test(value) && /"type"\s*:\s*"(?:commandExecution|command)"/iu.test(value);
+}
+
+function extractJsonStringField(value: string, field: string): string | null {
+  const escapedField = field.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  const match = new RegExp(`"${escapedField}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)`, 'u').exec(value);
+  if (match?.[1] === undefined) return null;
+  try {
+    return JSON.parse(`"${match[1]}"`) as string;
+  } catch {
+    return match[1].replaceAll('\\n', '\n').replaceAll('\\r', '\r').replaceAll('\\t', '\t').replaceAll('\\"', '"').replaceAll('\\\\', '\\');
+  }
+}
 
 function activityOutputPreview(output: string): { text: string; truncated: boolean } {
   if (output.length <= MAX_ACTIVITY_OUTPUT_CHARACTERS) return { text: output, truncated: false };
@@ -584,7 +737,7 @@ function activityItemDetail(item: NativeSessionItemBuffer): {
 } | null {
   const command = commandText(item.payload.command);
   const cwd = primitive(item.payload.cwd);
-  const output = primitive(item.payload.aggregatedOutput ?? item.payload.output ?? item.payload.stdout ?? item.payload.stderr) ?? presentationLiveText(item);
+  const output = primitive(item.payload.aggregatedOutput ?? item.payload.output ?? item.payload.stdout ?? item.payload.stderr) ?? activityToolResult(item)?.projection ?? presentationLiveText(item);
   return command || cwd || output ? { command, cwd, output } : null;
 }
 

@@ -137,7 +137,8 @@ export function adaptConversationSnapshotV2(input: ConversationSnapshotV2Bootstr
 }
 
 export function mergeConversationHistoryV2(snapshot: NativeConversationSnapshot, page: NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>): NativeConversationSnapshot {
-  if (!snapshot.snapshotV2 || !snapshot.v2Paging || page.conversationId !== snapshot.id || page.kind !== 'model_history') throw new Error('会话 V2 历史页与当前快照不匹配。');
+  if (!snapshot.snapshotV2 || !snapshot.v2Paging || page.schemaVersion !== 2 || page.structureGeneration !== snapshot.snapshotV2.structureGeneration || page.conversationId !== snapshot.id || page.kind !== 'model_history')
+    throw new Error('会话 V2 历史页与当前快照不匹配。');
   const byId = new Map(snapshot.items.map((item) => [item.id, item]));
   for (const item of historyItems(page.items)) byId.set(item.id, item);
   const items = [...byId.values()].sort(compareNativeItems);
@@ -158,7 +159,15 @@ export function mergeConversationHistoryV2(snapshot: NativeConversationSnapshot,
 }
 
 export function mergeConversationProcessV2(snapshot: NativeConversationSnapshot, turnId: string, page: NativeConversationSnapshotV2Page<NativeConversationProcessV2Item>): NativeConversationSnapshot {
-  if (!snapshot.snapshotV2 || !snapshot.v2Paging || page.conversationId !== snapshot.id || (page.kind !== 'process' && page.kind !== 'commands')) throw new Error('会话 V2 过程页与当前快照不匹配。');
+  if (
+    !snapshot.snapshotV2 ||
+    !snapshot.v2Paging ||
+    page.schemaVersion !== 2 ||
+    page.structureGeneration !== snapshot.snapshotV2.structureGeneration ||
+    page.conversationId !== snapshot.id ||
+    (page.kind !== 'process' && page.kind !== 'commands')
+  )
+    throw new Error('会话 V2 过程页与当前快照不匹配。');
   const byId = new Map(snapshot.items.map((item) => [item.id, item]));
   const byProviderItemId = new Map(snapshot.items.flatMap((item) => (item.providerItemId ? [[item.providerItemId, item] as const] : [])));
   for (const item of processItems(page.items)) {

@@ -1873,6 +1873,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
       const pending = selectedTaskModelPushOperation;
       return (
         <ConnectedSessionWorkspace
+          key={`${pending.choice.projectId}:${pending.navigationId}`}
           language={appShellSettings.appLanguage}
           client={props.nativeConversationClient}
           controllerEnabled={false}
@@ -1915,6 +1916,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     if (selectedNativeConversation && props.nativeConversationClient && selectedNativeConversation.transportKind === 'codex_native' && nativeSessionOwner) {
       const targetWorkspace = (
         <ConnectedSessionWorkspace
+          key={`${selectedNativeConversation.projectId}:${selectedTaskModelPushOperation?.navigationId ?? selectedNativeConversation.navigationId ?? selectedNativeConversation.id}`}
           language={appShellSettings.appLanguage}
           client={props.nativeConversationClient}
           controllerEnabled={!selectedTaskModelPushOperation || (selectedTaskModelPushOperation.status === 'accepted' && taskModelPushHasRealChoice(selectedTaskModelPushOperation))}
@@ -1962,7 +1964,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     }
     return (
       <SessionWorkspace
-        key={`new-conversation-${newConversationFocusRequest}`}
+        key={selectedNativeConversation ? `${selectedNativeConversation.projectId}:${selectedNativeConversation.navigationId ?? selectedNativeConversation.id}` : `new-conversation-${newConversationFocusRequest}`}
         language={appShellSettings.appLanguage}
         state={null}
         conversation={selectedNativeConversation}

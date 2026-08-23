@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
-import { type ConversationContextDraft, emptyConversationContextDraft, hasConversationContext, serializeConversationContext, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import { type ConversationContextDraft, type ConversationFileIconKind, type ConversationResource, emptyConversationContextDraft, hasConversationContext, serializeConversationContext, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { createInitialSessionState, sessionReducer } from './sessionReducer.js';
 import {
   type CodexConversationCapabilities,
@@ -47,6 +47,42 @@ export const reconnectBackoffMs = [250, 500, 1_000, 2_000, 5_000] as const;
 const RENDER_DELTA_COALESCE_MS = 16;
 const CONVERSATION_SCHEMA_GENERATION = '2026-08-16-unified-conversation-segments' as const;
 const CONVERSATION_SYNC_STREAM_GENERATION = 'zeus-conversation-sync-v1' as const;
+export const conversationHydrationTimeoutMs = 20_000;
+export const conversationRealtimeOpenTimeoutMs = 5_000;
+
+class ConversationHydrationTimeoutError extends Error {
+  readonly code = 'ZEUS_CONVERSATION_HYDRATION_TIMEOUT';
+
+  constructor() {
+    super('会话在 20 秒内未完成读取，请重新加载。');
+    this.name = 'ConversationHydrationTimeoutError';
+  }
+}
+
+class ConversationRealtimeOpenTimeoutError extends Error {
+  readonly code = 'ZEUS_CONVERSATION_REALTIME_OPEN_TIMEOUT';
+
+  constructor() {
+    super('会话历史已读取，但实时连接在 5 秒内未就绪。');
+    this.name = 'ConversationRealtimeOpenTimeoutError';
+  }
+}
+
+function withSessionTimeout<T>(operation: Promise<T>, timeoutMs: number, errorFactory: () => Error): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = globalThis.setTimeout(() => reject(errorFactory()), timeoutMs);
+    operation.then(
+      (value) => {
+        globalThis.clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        globalThis.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
 
 export const sessionRealtimeBufferBudget = Object.freeze({
   maxEntries: 2_048,
@@ -1212,7 +1248,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const buffered = createRealtimeEventBuffer('targeted-hydration');
     targetedHydrationBuffer = buffered;
     try {
-      const snapshot = await loadConversationForHydration();
+      const snapshot = await withSessionTimeout(loadConversationForHydration(), conversationHydrationTimeoutMs, () => new ConversationHydrationTimeoutError());
       if (disposed || pendingSend !== envelope) return;
       await applyAuthoritativeSnapshot(snapshot);
       if (envelopeWasRecoveredToComposer(snapshot, envelope)) {
@@ -1291,7 +1327,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const buffered = createRealtimeEventBuffer('targeted-hydration');
     targetedHydrationBuffer = buffered;
     try {
-      const snapshot = await loadConversationForHydration();
+      const snapshot = await withSessionTimeout(loadConversationForHydration(), conversationHydrationTimeoutMs, () => new ConversationHydrationTimeoutError());
       if (disposed || pendingSend !== envelope) return { kind: 'unknown' };
       await applyAuthoritativeSnapshot(snapshot);
       if (envelopeWasRecoveredToComposer(snapshot, envelope)) {
@@ -1613,7 +1649,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       // 这样既不会遗漏快照读取期间发生的事件，也不会从 0 重放整段历史并反复撞上 WebSocket 高水位。
       // 已有权威快照时保持稳定的重连状态，不能在 reconnecting/hydrating 间反复切换并触发整页同步闪烁。
       if (!reconnecting || !state.snapshot) dispatch({ type: 'transport_changed', transportState: 'hydrating' });
-      const snapshot = await loadConversationForHydration();
+      const snapshot = await withSessionTimeout(loadConversationForHydration(), conversationHydrationTimeoutMs, () => new ConversationHydrationTimeoutError());
       if (disposed || token !== connectionToken) return;
       const subscribeRealtime = realtimeMode === 'required' || snapshotNeedsRealtime(snapshot) || Boolean(pendingSend) || deferredSends.length > 0;
       if (!subscribeRealtime) {
@@ -1645,8 +1681,13 @@ export function createSessionController(options: CreateSessionControllerOptions)
         nextSocket.close();
         throw hydrationOverflowError;
       }
+      // Snapshot 已经权威且可独立阅读；实时连接只负责后续增量，不能继续遮住已取得的历史。
+      if (!state.snapshot) markConversationNavigationRenderReady(options.projectId, options.conversationId);
+      const snapshotAlreadyApplied = reconnecting && state.snapshot?.id === snapshot.id && state.snapshot.throughEventSeq === snapshot.throughEventSeq && state.snapshot.syncStreamGeneration === snapshot.syncStreamGeneration;
+      if (!snapshotAlreadyApplied) await applyAuthoritativeSnapshot(snapshot);
+      await reconcilePersistedAcceptance(snapshot);
       try {
-        await lifecycle.opened;
+        await withSessionTimeout(lifecycle.opened, conversationRealtimeOpenTimeoutMs, () => new ConversationRealtimeOpenTimeoutError());
       } catch (socketError) {
         lifecycle.markInactive();
         if (socket === nextSocket) socket = null;
@@ -1657,11 +1698,6 @@ export function createSessionController(options: CreateSessionControllerOptions)
       if (lifecycle.isDisconnected()) throw new SocketDisconnectedDuringHydrationError();
       if (hydrationOverflowError) throw hydrationOverflowError;
       realtimeSubscribed = true;
-      // 只有冷打开需要开放内容首帧；后台重连不能重置已经可见的导航和滚动状态。
-      if (!state.snapshot) markConversationNavigationRenderReady(options.projectId, options.conversationId);
-      const snapshotAlreadyApplied = reconnecting && state.snapshot?.id === snapshot.id && state.snapshot.throughEventSeq === snapshot.throughEventSeq && state.snapshot.syncStreamGeneration === snapshot.syncStreamGeneration;
-      if (!snapshotAlreadyApplied) await applyAuthoritativeSnapshot(snapshot);
-      await reconcilePersistedAcceptance(snapshot);
       syncProjectionSuspended = false;
       for (const event of buffered.events) applyRealtimeEvent(event);
       buffered.events.length = 0;
@@ -1673,7 +1709,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
       void flushDeferredSends();
     } catch (error) {
       hydrating = false;
-      const shouldScheduleReconnect = !disposed && token === connectionToken && (error instanceof SocketDisconnectedDuringHydrationError || socketLifecycle?.isDisconnected() === true);
+      const shouldScheduleReconnect =
+        !disposed && token === connectionToken && !(error instanceof ConversationRealtimeOpenTimeoutError) && (error instanceof SocketDisconnectedDuringHydrationError || socketLifecycle?.isDisconnected() === true);
       if (!disposed && token === connectionToken) {
         socketLifecycle?.markInactive();
         socketLifecycle = null;
@@ -1829,6 +1866,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
   async function loadEarlierHistoryV2(): Promise<void> {
     const load = options.client.loadNativeConversationModelHistoryV2;
     const current = state.snapshot;
+    const generation = connectionToken;
     const history = current?.v2Paging?.history;
     if (!load || !current?.snapshotV2 || !history || history.loading || !history.hasMore || !history.nextCursor) return;
     dispatchV2Snapshot(
@@ -1839,10 +1877,12 @@ export function createSessionController(options: CreateSessionControllerOptions)
     );
     try {
       const page = await load(options.projectId, options.conversationId, { cursor: history.nextCursor, direction: 'tail', limit: 48, byteLimit: 96 * 1024 });
+      if (disposed || generation !== connectionToken) return;
       const latest = state.snapshot;
       if (!latest?.snapshotV2 || !latest.v2Paging) return;
       dispatchV2Snapshot(mergeConversationHistoryV2(latest, page));
     } catch (error) {
+      if (disposed || generation !== connectionToken) return;
       const latest = state.snapshot;
       if (latest?.v2Paging) {
         dispatchV2Snapshot(
@@ -1859,6 +1899,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
   async function loadTurnProcessV2(turnIdentity: string): Promise<void> {
     const load = options.client.loadNativeConversationProcessV2;
     const current = state.snapshot;
+    const generation = connectionToken;
     if (!load || !current?.snapshotV2 || !current.v2Paging) return;
     const turn = current.turns.find((candidate) => candidate.id === turnIdentity || candidate.providerTurnId === turnIdentity);
     // Snapshot V2 的固定首屏只携带最近闭合轮次；更早模型历史仍保留本地 turn id，
@@ -1882,10 +1923,12 @@ export function createSessionController(options: CreateSessionControllerOptions)
         limit: 32,
         byteLimit: 96 * 1024,
       });
+      if (disposed || generation !== connectionToken) return;
       const latest = state.snapshot;
       if (!latest?.snapshotV2 || !latest.v2Paging) return;
       dispatchV2Snapshot(mergeConversationProcessV2(latest, pagingKey, page));
     } catch (error) {
+      if (disposed || generation !== connectionToken) return;
       const latest = state.snapshot;
       if (latest?.v2Paging) {
         dispatchV2Snapshot(
@@ -1905,6 +1948,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
   async function loadTurnArtifactsV2(turnIdentity: string): Promise<void> {
     const current = state.snapshot;
     if (!current?.snapshotV2 || !current.v2Paging) return;
+    const generation = connectionToken;
     const turn = current.turns.find((candidate) => candidate.id === turnIdentity || candidate.providerTurnId === turnIdentity);
     if (!turn) return;
     const pagingKey = turn.providerTurnId ?? turn.id;
@@ -1913,8 +1957,12 @@ export function createSessionController(options: CreateSessionControllerOptions)
     if (currentChange?.loading || resources.loading) return;
     const v2Turn = [...current.snapshotV2.recentClosedTurns, ...(current.snapshotV2.activeTurn ? [current.snapshotV2.activeTurn] : [])].find((candidate) => candidate.id === turn.id);
     const shouldLoadResources = Boolean(options.client.loadNativeConversationResourcesV2 && (!resources.loaded || resources.hasMore));
-    const shouldLoadChange = Boolean(v2Turn?.changeSetAvailable && options.client.loadNativeConversationChangeSetV2 && options.client.loadNativeConversationChangeFilesV2 && (!currentChange?.loaded || currentChange.hasMore));
-    if (!shouldLoadResources && !shouldLoadChange) return;
+    const shouldLoadChange = Boolean(v2Turn?.changeSetAvailable && options.client.loadTurnChangeSet && !(current.changeSets ?? []).some((changeSet) => changeSet.providerTurnId === pagingKey || changeSet.turnId === turn.id));
+    if (!shouldLoadResources && !shouldLoadChange) {
+      const merged = await attachV2ResourcesToSnapshot(current, resources.items);
+      if (!disposed && generation === connectionToken && merged !== current) dispatchV2Snapshot(merged);
+      return;
+    }
     dispatchV2Snapshot(
       updateConversationV2Paging(current, (paging) => ({
         ...paging,
@@ -1937,50 +1985,56 @@ export function createSessionController(options: CreateSessionControllerOptions)
     );
     try {
       const resourcePromise = shouldLoadResources
-        ? options.client.loadNativeConversationResourcesV2!(options.projectId, options.conversationId, {
-            ...(resources.nextCursor ? { cursor: resources.nextCursor } : {}),
-            limit: 32,
-            byteLimit: 64 * 1024,
-          })
-        : Promise.resolve(null);
-      const changePromise = shouldLoadChange
         ? (async () => {
-            const summary = currentChange?.summary ?? (await options.client.loadNativeConversationChangeSetV2!(options.projectId, options.conversationId, turn.id));
-            const files = await options.client.loadNativeConversationChangeFilesV2!(options.projectId, options.conversationId, turn.id, summary.id, {
-              ...(currentChange?.nextCursor ? { cursor: currentChange.nextCursor } : {}),
-              limit: 32,
-              byteLimit: 64 * 1024,
-            });
-            return { summary, files };
+            let items = resources.items;
+            let cursor = resources.nextCursor;
+            let hasMore = !resources.loaded || resources.hasMore;
+            const seenCursors = new Set<string>();
+            while (hasMore) {
+              if (cursor && seenCursors.has(cursor)) throw new Error('会话资源分页游标没有推进。');
+              if (cursor) seenCursors.add(cursor);
+              const page = await options.client.loadNativeConversationResourcesV2!(options.projectId, options.conversationId, {
+                ...(cursor ? { cursor } : {}),
+                limit: 32,
+                byteLimit: 64 * 1024,
+              });
+              if (page.conversationId !== options.conversationId || page.schemaVersion !== 2 || page.structureGeneration !== current.snapshotV2!.structureGeneration || page.kind !== 'resources')
+                throw new Error('会话资源分页响应的身份或结构代次无效。');
+              items = dedupeById([...items, ...page.items]);
+              cursor = page.nextCursor;
+              hasMore = page.hasMore;
+              if (hasMore && !cursor) throw new Error('会话资源分页缺少下一页游标。');
+              if (disposed || generation !== connectionToken) return null;
+            }
+            return { items, nextCursor: cursor, hasMore };
           })()
         : Promise.resolve(null);
-      const [resourcePage, changePage] = await Promise.all([resourcePromise, changePromise]);
+      const changePromise = shouldLoadChange ? options.client.loadTurnChangeSet!(options.projectId, options.conversationId, turn.id) : Promise.resolve(null);
+      const [resourceResult, changeSet] = await Promise.all([resourcePromise, changePromise]);
+      if (disposed || generation !== connectionToken) return;
       const latest = state.snapshot;
       if (!latest?.snapshotV2 || !latest.v2Paging) return;
-      dispatchV2Snapshot(
-        updateConversationV2Paging(latest, (paging) => {
-          const resourceItems = resourcePage ? dedupeById([...paging.resources.items, ...resourcePage.items]) : paging.resources.items;
-          const previousChange = paging.changeSetsByTurn[pagingKey];
-          return {
-            ...paging,
-            resources: resourcePage ? { nextCursor: resourcePage.nextCursor, hasMore: resourcePage.hasMore, loading: false, loaded: true, error: null, items: resourceItems } : paging.resources,
-            changeSetsByTurn: {
-              ...paging.changeSetsByTurn,
-              [pagingKey]: changePage
-                ? {
-                    loading: false,
-                    loaded: true,
-                    error: null,
-                    summary: changePage.summary,
-                    files: dedupeById([...(previousChange?.files ?? []), ...changePage.files.items]),
-                    nextCursor: changePage.files.nextCursor,
-                    hasMore: changePage.files.hasMore,
-                  }
-                : (previousChange ?? { loading: false, loaded: true, error: null, summary: null, files: [], nextCursor: null, hasMore: false }),
-            },
-          };
-        }),
-      );
+      const resourceItems = resourceResult?.items ?? latest.v2Paging.resources.items;
+      let merged = await attachV2ResourcesToSnapshot(latest, resourceItems);
+      if (disposed || generation !== connectionToken) return;
+      if (changeSet) merged = { ...merged, changeSets: dedupeById([...(merged.changeSets ?? []), changeSet]) };
+      merged = updateConversationV2Paging(merged, (paging) => ({
+        ...paging,
+        resources: resourceResult ? { nextCursor: resourceResult.nextCursor, hasMore: resourceResult.hasMore, loading: false, loaded: true, error: null, items: resourceItems } : { ...paging.resources, loading: false },
+        changeSetsByTurn: {
+          ...paging.changeSetsByTurn,
+          [pagingKey]: {
+            loading: false,
+            loaded: true,
+            error: null,
+            summary: currentChange?.summary ?? null,
+            files: currentChange?.files ?? [],
+            nextCursor: null,
+            hasMore: false,
+          },
+        },
+      }));
+      dispatchV2Snapshot(merged);
     } catch (error) {
       const latest = state.snapshot;
       if (latest?.v2Paging) {
@@ -2019,7 +2073,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     reconnect() {
       cancelReconnectLoop();
       dispatch({ type: 'transport_changed', transportState: 'reconnecting', reconnectAttempt: 1 });
-      return hydrate(true, 'required');
+      return hydrate(true, state.snapshot ? 'required' : 'auto');
     },
     dispose() {
       if (disposed) return;
@@ -2513,6 +2567,89 @@ function dedupeById<T extends { id: string }>(items: T[]): T[] {
   return [...new Map(items.map((item) => [item.id, item])).values()];
 }
 
+const conversationFileIconKinds = new Set<ConversationFileIconKind>(['code', 'java', 'javascript', 'typescript', 'json', 'markdown', 'sql', 'html', 'css', 'image', 'pdf', 'spreadsheet', 'presentation', 'document', 'archive', 'file']);
+
+async function attachV2ResourcesToSnapshot(snapshot: NativeConversationSnapshot, metadata: NativeConversationResourceV2Item[]): Promise<NativeConversationSnapshot> {
+  const providerThreadId = snapshot.providerThreadId;
+  if (!providerThreadId || metadata.length === 0 || !globalThis.crypto?.subtle) return snapshot;
+  const resourcesByItemId = new Map<string, ConversationResource[]>();
+  for (const item of metadata) {
+    const resource = conversationResourceFromV2Metadata(snapshot, item);
+    if (!resource) continue;
+    const resources = resourcesByItemId.get(item.itemId) ?? [];
+    resources.push(resource);
+    resourcesByItemId.set(item.itemId, resources);
+  }
+  const projectedItemIds = await Promise.all(
+    snapshot.items.map(async (item) => ({
+      item,
+      providerStateId: item.providerItemId ? await conversationProviderItemStateId(providerThreadId, item.providerItemId) : null,
+    })),
+  );
+  let changed = false;
+  const items = projectedItemIds.map(({ item, providerStateId }) => {
+    const resources = providerStateId ? resourcesByItemId.get(providerStateId) : undefined;
+    if (!resources?.length) return item;
+    const merged = dedupeById([...(item.resources ?? []), ...resources]);
+    if (merged.length === (item.resources?.length ?? 0)) return item;
+    changed = true;
+    return { ...item, resources: merged };
+  });
+  return changed ? { ...snapshot, items } : snapshot;
+}
+
+async function conversationProviderItemStateId(providerThreadId: string, providerItemId: string): Promise<string> {
+  const source = new TextEncoder().encode(`${providerThreadId}\u0000${providerItemId}`);
+  const digest = new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', source));
+  const hex = [...digest].map((value) => value.toString(16).padStart(2, '0')).join('');
+  return `conversation_provider_item_${hex.slice(0, 32)}`;
+}
+
+function conversationResourceFromV2Metadata(snapshot: NativeConversationSnapshot, item: NativeConversationResourceV2Item): ConversationResource | null {
+  const presentation = item.presentation === 'card' ? 'card' : 'inline';
+  const base = {
+    id: item.id,
+    projectId: snapshot.projectId,
+    conversationId: snapshot.id,
+    turnId: item.turnId,
+    itemId: item.itemId,
+    presentation,
+    displayName: item.displayName,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+  } as const;
+  const iconKind = conversationFileIconKinds.has(item.iconKind as ConversationFileIconKind) ? (item.iconKind as ConversationFileIconKind) : item.mimeType?.startsWith('image/') ? 'image' : 'file';
+  if (item.kind === 'file') {
+    return {
+      ...base,
+      kind: 'file',
+      projectRelativePath: item.displayName,
+      iconKind,
+      ...(item.mimeType ? { mimeType: item.mimeType } : {}),
+    };
+  }
+  if (item.kind === 'website') {
+    let domain = item.displayName;
+    try {
+      domain = new URL(item.displayName).hostname || item.displayName;
+    } catch {
+      // V2 元数据故意不下发真实 URL；点击时仍由受信资源 id 解析实际目标。
+    }
+    return { ...base, kind: 'website', url: item.displayName, domain, title: item.displayName, local: false };
+  }
+  if (item.kind === 'attachment') {
+    return {
+      ...base,
+      kind: 'attachment',
+      attachmentRef: item.id,
+      previewKind: item.previewKind === 'image' || item.previewKind === 'document' ? item.previewKind : 'none',
+      iconKind,
+      ...(item.mimeType ? { mimeType: item.mimeType } : {}),
+    };
+  }
+  return null;
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error && error.message.trim() ? error.message : '按需读取失败。';
 }
@@ -2843,13 +2980,13 @@ function nativeQueueSnapshotFrom(value: unknown): NativeQueueSnapshot | null {
 
 function toSessionError(error: unknown, retryable: boolean): NativeSessionError {
   if (typeof error === 'object' && error !== null) {
-    const value = error as { message?: unknown; error?: unknown; status?: unknown };
-    const code = typeof value.error === 'string' ? value.error : null;
+    const value = error as { message?: unknown; error?: unknown; code?: unknown; status?: unknown; recoveryRequired?: unknown; retryable?: unknown };
+    const code = typeof value.code === 'string' ? value.code : typeof value.error === 'string' ? value.error : null;
     return {
       message: typeof value.message === 'string' ? value.message : String(error),
       code,
-      recoveryRequired: false,
-      retryable,
+      recoveryRequired: typeof value.recoveryRequired === 'boolean' ? value.recoveryRequired : false,
+      retryable: typeof value.retryable === 'boolean' ? value.retryable : retryable,
       ...(typeof value.status === 'number' ? { status: value.status } : {}),
     };
   }

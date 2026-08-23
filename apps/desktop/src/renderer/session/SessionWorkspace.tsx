@@ -446,22 +446,6 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
   // 创建期仍优先使用 localActions，避免临时会话身份提前连接服务端。
   const controllerInteractive = controllerVisible || (controllerEnabled && !props.localState);
   const displayedState = controllerVisible ? state : (props.localState ?? state);
-  const previousReadyTranscriptStateRef = useRef<NativeSessionState | null>(null);
-  useLayoutEffect(() => {
-    if (controllerEnabled && controllerVisible && state.snapshot?.id === props.conversation.id) {
-      previousReadyTranscriptStateRef.current = controller.getState();
-    }
-  }, [controller, controllerEnabled, controllerVisible, props.conversation.id, state]);
-  useEffect(() => {
-    if (!controllerEnabled) return;
-    const retainReadyTranscript = (): void => {
-      const current = controller.getState();
-      if (current.snapshot?.id === props.conversation.id) previousReadyTranscriptStateRef.current = current;
-    };
-    retainReadyTranscript();
-    return controller.subscribe(retainReadyTranscript);
-  }, [controller, controllerEnabled, props.conversation.id]);
-  const retainedTranscriptState = controllerEnabled && !controllerVisible && !state.snapshot && previousReadyTranscriptStateRef.current?.snapshot?.id !== props.conversation.id ? previousReadyTranscriptStateRef.current : null;
   const transcriptLoading = controllerEnabled && !controllerVisible && !state.snapshot && ['connecting', 'hydrating', 'reconnecting'].includes(state.transportState);
   const displayedCreationStatus: SessionCreationStatus | undefined =
     controllerFailed && props.creationStatus
@@ -603,7 +587,6 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       taskManagementStatusChangeBusy={props.taskManagementStatusChangeBusy}
       readOnlyGate={props.readOnlyGate}
       subagentListSnapshot={subagentListSnapshot}
-      transcriptState={retainedTranscriptState}
       transcriptLoading={transcriptLoading}
       creationStatus={displayedCreationStatus}
       onLatestContentVisibilityChange={props.onLatestContentVisibilityChange}
@@ -1239,8 +1222,6 @@ export interface SessionWorkspaceProps {
   capabilities?: CodexConversationCapabilities | null;
   /** 权威子线程预读结果；实时连接失败时仍允许只读打开智能体。 */
   subagentListSnapshot?: NativeSubagentListSnapshot | null;
-  /** 冷切换期间暂留上一条已水合正文，目标快照就绪后再原位接管。 */
-  transcriptState?: NativeSessionState | null;
   /** 目标正文尚未水合时，在输入区上方显示轻量状态。 */
   transcriptLoading?: boolean;
   choicesKnown?: boolean;
@@ -1308,11 +1289,13 @@ const labels = {
     reconnectingAttempt: (attempt: number) => `正在重新连接 · 第 ${Math.max(1, attempt)} 次`,
     failed: '连接失败',
     failureHelp: '连接中断。请重新连接以读取最新快照。',
+    loadFailureHelp: '会话读取未完成。请重新加载，当前草稿会继续保留。',
     refreshFailureHelp: '后台刷新失败，当前仍显示上次成功读取的内容。',
     serverBusy: '服务繁忙',
     serverBusyHelp: '服务暂时繁忙。请稍候片刻，然后重新连接。',
     details: '详情',
     retry: '重新连接',
+    reload: '重新加载',
     ready: '已就绪',
     queued: '待发送',
     starting: '正在开始',
@@ -1360,11 +1343,13 @@ const labels = {
     reconnectingAttempt: (attempt: number) => `Reconnecting · attempt ${Math.max(1, attempt)}`,
     failed: 'Connection failed',
     failureHelp: 'The connection was interrupted. Reconnect to load the latest snapshot.',
+    loadFailureHelp: 'The conversation did not finish loading. Reload it; the current draft remains saved.',
     refreshFailureHelp: 'Background refresh failed. The last successfully loaded content remains visible.',
     serverBusy: 'Server busy',
     serverBusyHelp: 'The server is temporarily busy. Wait briefly, then reconnect.',
     details: 'Details',
     retry: 'Reconnect',
+    reload: 'Reload',
     ready: 'Ready',
     queued: 'Queued',
     starting: 'Starting',
@@ -1515,12 +1500,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const composerFocusRestorationPendingRef = useRef(false);
   const legacy = props.conversation && props.conversation.transportKind !== 'codex_native';
   const interactionReadOnly = Boolean(props.readOnlyGate) || Boolean(props.conversation?.readOnly && props.conversation.transportKind === 'codex_native');
-  const transcriptState = props.transcriptState ?? props.state;
-  const transcriptIsRetained = Boolean(props.transcriptState && props.transcriptState !== props.state);
-  const transcriptInteractionsEnabled = !interactionReadOnly && !transcriptIsRetained;
-  // 历史分页、过程与截断正文都是本地只读查询。会话只读时仍必须允许查看，
-  // 只有切换期间保留的旧投影没有对应 controller，才应禁用这些读取入口。
-  const transcriptReadActionsEnabled = !transcriptIsRetained;
+  const transcriptInteractionsEnabled = !interactionReadOnly;
+  // 历史分页、过程与截断正文都是本地只读查询。会话只读时仍必须允许查看。
+  const transcriptReadActionsEnabled = true;
   const effectiveProviderState = props.state?.snapshot?.providerState ?? props.conversation?.providerState ?? null;
   const realtimeExpected = sessionStateNeedsRealtime(props.state);
   // 空闲历史会话只读本地快照，不存在“连接失败”；只有真实轮次、排队或待处理请求需要实时连接时才报告连接错误。
@@ -2390,28 +2372,28 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                   {props.state.transportState === 'reconnecting' && sessionStateNeedsRealtime(props.state) ? (
                     <SessionReconnectNotice language={props.language} attempt={props.state.reconnectAttempt} onReconnect={actions.onReconnect} />
                   ) : null}
-                  {props.state.transportState === 'failed' && sessionStateNeedsRealtime(props.state) ? (
+                  {props.state.transportState === 'failed' && (sessionStateNeedsRealtime(props.state) || !props.state.snapshot) ? (
                     <section className="session-transport-failure" role="status" data-retained-content={Boolean(props.state.snapshot) || undefined}>
                       <WarningCircle aria-hidden="true" weight="regular" />
                       <span className="session-transport-failure-copy">
                         <strong>{isServerBusyError(props.state.error) ? copy.serverBusy : copy.failed}</strong>
-                        <p>{props.state.transportState === 'failed' && props.state.snapshot ? copy.refreshFailureHelp : isServerBusyError(props.state.error) ? copy.serverBusyHelp : copy.failureHelp}</p>
+                        <p>{props.state.snapshot ? copy.refreshFailureHelp : isServerBusyError(props.state.error) ? copy.serverBusyHelp : copy.loadFailureHelp}</p>
                       </span>
                       {actions.onReconnect ? (
                         <button type="button" onClick={() => void actions.onReconnect?.()}>
-                          {copy.retry}
+                          {props.state.snapshot ? copy.retry : copy.reload}
                         </button>
                       ) : null}
                     </section>
                   ) : null}
                   <div ref={setQuickActionsPersistentHost} className="session-quick-actions-persistent-host" />
                   <SessionTranscriptProjection
-                    state={transcriptState ?? props.state}
-                    controller={transcriptIsRetained ? undefined : props.stateController}
+                    state={props.state}
+                    controller={props.stateController}
                     language={props.language}
-                    historyLoading={Boolean(props.transcriptLoading ?? ((props.state.transportState === 'hydrating' || props.state.transportState === 'connecting') && !props.state.snapshot)) && !(transcriptState ?? props.state).snapshot}
-                    onLatestContentVisibilityChange={transcriptIsRetained ? undefined : props.onLatestContentVisibilityChange}
-                    creationStatus={transcriptIsRetained ? undefined : props.creationStatus}
+                    historyLoading={Boolean(props.transcriptLoading ?? ((props.state.transportState === 'hydrating' || props.state.transportState === 'connecting') && !props.state.snapshot)) && !props.state.snapshot}
+                    onLatestContentVisibilityChange={props.onLatestContentVisibilityChange}
+                    creationStatus={props.creationStatus}
                     onEditUserItem={transcriptInteractionsEnabled ? actions.onEditUserItem : undefined}
                     onRetryItem={
                       !transcriptInteractionsEnabled
@@ -2424,7 +2406,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                             composerRef.current?.focus();
                           }
                     }
-                    openPlanItemKey={transcriptIsRetained ? null : planWorkspaceItemKey}
+                    openPlanItemKey={planWorkspaceItemKey}
                     onOpenPlan={
                       transcriptInteractionsEnabled
                         ? (item) => {
@@ -2468,12 +2450,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                         : undefined
                     }
                   />
-                  {props.transcriptLoading ? (
-                    <p className="session-transcript-transition-status" role="status" aria-live="polite">
-                      <span className="session-command-spinner" aria-hidden="true" />
-                      <span>{copy.loading}</span>
-                    </p>
-                  ) : null}
                   {props.suppressComposer || !dockedPlan ? null : <SessionPlanProgress plan={dockedPlan} language={props.language} />}
                   {renderBlockingInteraction()}
                   {props.suppressComposer || blockingPendingRequest || blockingPlanImplementationRequest ? null : (
@@ -3468,7 +3444,7 @@ function sessionStatus(state: NativeSessionState | null, loadState: SessionWorks
       kind: 'warning',
       label: copy.reconnectingAttempt(state.reconnectAttempt),
     };
-  if (state.transportState === 'failed' && realtimeExpected)
+  if (state.transportState === 'failed' && (realtimeExpected || !state.snapshot))
     return {
       kind: 'error',
       label: isServerBusyError(state.error) ? copy.serverBusy : copy.failed,
