@@ -280,6 +280,11 @@ export class ConversationExecutionCoordinator {
           totalTokens: completed.usage.totalTokens,
           estimatedUsd: null,
           usageComplete: Object.values(completed.usage).every((value) => value !== null),
+          providerRequestId: null,
+          firstVisibleOutputAt: null,
+          firstTextOutputAt: null,
+          completedAt: completed.completedAt,
+          measurementComplete: false,
           occurredAt: completed.completedAt,
         });
         this.options.portableContexts.update({ id: portableContextId, status: 'compacted', content: portableContext, updatedAt: completed.completedAt });

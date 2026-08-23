@@ -1,6 +1,6 @@
 import type { ZeusDatabasePort } from './databasePort.js';
 import { type ArtifactRef, type ArtifactStore, artifactStoreGeneration } from './artifactStore.js';
-import { conversationSchemaGeneration } from './conversationExecutionStore.js';
+import { conversationSchemaGeneration, readConversationSessionMetrics, type ConversationSessionMetricsSnapshot } from './conversationExecutionStore.js';
 
 export const conversationSnapshotV2StructureGeneration = '2026-08-21-conversation-snapshot-v2';
 
@@ -160,6 +160,7 @@ export interface ConversationSnapshotV2 {
   } | null;
   activeTurn: ConversationSnapshotV2TurnSummary | null;
   recentClosedTurns: ConversationSnapshotV2TurnSummary[];
+  sessionMetrics: ConversationSessionMetricsSnapshot;
   collections: {
     timeline: { throughSequence: number };
     modelHistory: { throughSequence: number };
@@ -568,6 +569,7 @@ export class ConversationSnapshotV2Repository {
         : null,
       activeTurn: activeTurn ? this.toTurnSummary(conversationId, activeTurn) : null,
       recentClosedTurns: recentClosedTurns.map((turn) => this.toTurnSummary(conversationId, turn)),
+      sessionMetrics: readConversationSessionMetrics(this.db, conversationId, activeTurn?.id ?? null),
       collections: {
         timeline: { throughSequence: this.maximumSequence('conversation_timeline_events', 'sequence', conversationId) },
         modelHistory: { throughSequence: this.maximumSequence('conversation_model_history', 'sequence', conversationId) },

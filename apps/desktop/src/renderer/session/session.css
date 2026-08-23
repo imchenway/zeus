@@ -1107,15 +1107,24 @@
 .session-codex-parity-v1 .session-runtime-summary-primary {
   align-items: center;
   display: flex;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 6px 14px;
   min-inline-size: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-  white-space: nowrap;
 }
 
-.session-codex-parity-v1 .session-runtime-summary-primary::-webkit-scrollbar {
-  display: none;
+.session-codex-parity-v1 .session-runtime-summary-metric {
+  align-items: baseline;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.session-codex-parity-v1 .session-runtime-summary-metric b {
+  color: var(--session-text);
+  font-weight: 620;
 }
 
 .session-codex-parity-v1 .session-runtime-context-row {
@@ -1171,17 +1180,34 @@
   color: var(--session-warning);
 }
 
-.session-codex-parity-v1 .session-runtime-details > dl {
+.session-codex-parity-v1 .session-runtime-detail-groups {
   background: var(--session-control);
   border-block-start: 1px solid var(--session-line-soft);
   display: grid;
-  gap: 6px 18px;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  margin: 0;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
   padding: 9px var(--session-gutter) 11px;
 }
 
-.session-codex-parity-v1 .session-runtime-details > dl > div {
+.session-codex-parity-v1 .session-runtime-detail-group {
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group > h3 {
+  color: var(--session-text);
+  font-size: 11px;
+  font-weight: 680;
+  margin: 0 0 7px;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group > dl {
+  display: grid;
+  gap: 6px 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
+  margin: 0;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group > dl > div {
   display: grid;
   gap: 2px;
   min-inline-size: 0;
@@ -5241,87 +5267,87 @@
 
 /* TASK-20260822-004：复刻 Codex 的轮次操作组；摘要保持一行，展开后显示明细和图片缩略图。 */
 .session-codex-parity-v1 .session-activity-group > details > summary {
-    justify-content: flex-start;
+  justify-content: flex-start;
 }
 
 .session-codex-parity-v1 .session-activity-group > details > summary > span:nth-child(2) {
-    min-inline-size: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .session-codex-parity-v1 .session-activity-group > details > summary .session-activity-caret {
-    margin-inline-start: 0;
+  margin-inline-start: 0;
 }
 
 .session-codex-parity-v1 .session-activity-resource-link {
-    appearance: none;
-    background: transparent;
-    border: 0;
-    border-block-end: 1px dotted currentColor;
-    color: var(--session-text);
-    cursor: pointer;
-    font: inherit;
-    max-inline-size: min(72ch, 100%);
-    overflow: hidden;
-    padding: 0;
-    text-overflow: ellipsis;
-    vertical-align: baseline;
-    white-space: nowrap;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-block-end: 1px dotted currentColor;
+  color: var(--session-text);
+  cursor: pointer;
+  font: inherit;
+  max-inline-size: min(72ch, 100%);
+  overflow: hidden;
+  padding: 0;
+  text-overflow: ellipsis;
+  vertical-align: baseline;
+  white-space: nowrap;
 }
 
 .session-codex-parity-v1 .session-activity-resource-link:hover {
-    border-block-end-style: solid;
+  border-block-end-style: solid;
 }
 
 .session-codex-parity-v1 .session-activity-resource-link:focus-visible {
-    border-radius: 3px;
-    outline: 2px solid var(--session-focus-outline);
-    outline-offset: 2px;
+  border-radius: 3px;
+  outline: 2px solid var(--session-focus-outline);
+  outline-offset: 2px;
 }
 
 .session-codex-parity-v1 .session-activity-images {
-    margin-block-start: 5px;
+  margin-block-start: 5px;
 }
 
 .session-codex-parity-v1 .session-activity-images .session-resource-card-list[data-layout='images'] {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .session-codex-parity-v1 .session-activity-images .session-resource-image {
-    block-size: 112px;
-    inline-size: 112px;
-    max-inline-size: 112px;
+  block-size: 112px;
+  inline-size: 112px;
+  max-inline-size: 112px;
 }
 
 /* 计划、命令、文件、技能和上下文整理是语义图标，不得作为加载环旋转。 */
 .session-codex-parity-v1 :where(.session-activity-group-icon, .session-activity-item-icon, .session-plan-summary-symbol) {
-    animation: none !important;
-    transform: none !important;
-    will-change: auto !important;
+  animation: none !important;
+  transform: none !important;
+  will-change: auto !important;
 }
 
 /* 最新模型状态固定在过程底部，用 Codex 同类的低饱和扫光表达持续进行。 */
 .session-codex-parity-v1 .session-reasoning-summary[data-status='active'] > .zeus-fidelity-text,
 .session-codex-parity-v1 .session-current-status-text {
-    animation: session-working-sweep 1.7s linear infinite;
-    background: linear-gradient(90deg, var(--session-text-muted) 0%, var(--session-text-muted) 36%, color-mix(in oklab, var(--session-text) 28%, transparent) 50%, var(--session-text-muted) 64%, var(--session-text-muted) 100%);
-    background-clip: text;
-    background-size: 240% 100%;
-    color: transparent;
-    -webkit-background-clip: text;
+  animation: session-working-sweep 1.7s linear infinite;
+  background: linear-gradient(90deg, var(--session-text-muted) 0%, var(--session-text-muted) 36%, color-mix(in oklab, var(--session-text) 28%, transparent) 50%, var(--session-text-muted) 64%, var(--session-text-muted) 100%);
+  background-clip: text;
+  background-size: 240% 100%;
+  color: transparent;
+  -webkit-background-clip: text;
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .session-codex-parity-v1 .session-reasoning-summary[data-status='active'] > .zeus-fidelity-text,
-    .session-codex-parity-v1 .session-current-status-text {
-        animation: none;
-        background: none;
-        color: var(--session-text-muted);
-    }
+  .session-codex-parity-v1 .session-reasoning-summary[data-status='active'] > .zeus-fidelity-text,
+  .session-codex-parity-v1 .session-current-status-text {
+    animation: none;
+    background: none;
+    color: var(--session-text-muted);
+  }
 }
 
 /* 会话外壳保持常驻；切换时只让新标题轻微落位，避免整块页头先消失再闪回。 */
@@ -8631,15 +8657,24 @@
 .session-codex-parity-v1 .session-runtime-summary-primary {
   align-items: center;
   display: flex;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 6px 14px;
   min-inline-size: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-  white-space: nowrap;
 }
 
-.session-codex-parity-v1 .session-runtime-summary-primary::-webkit-scrollbar {
-  display: none;
+.session-codex-parity-v1 .session-runtime-summary-metric {
+  align-items: baseline;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.session-codex-parity-v1 .session-runtime-summary-metric b {
+  color: var(--session-text);
+  font-weight: 620;
 }
 
 .session-codex-parity-v1 .session-runtime-context-row {
@@ -8695,17 +8730,34 @@
   color: var(--session-warning);
 }
 
-.session-codex-parity-v1 .session-runtime-details > dl {
+.session-codex-parity-v1 .session-runtime-detail-groups {
   background: var(--session-control);
   border-block-start: 1px solid var(--session-line-soft);
   display: grid;
-  gap: 6px 18px;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  margin: 0;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
   padding: 9px var(--session-gutter) 11px;
 }
 
-.session-codex-parity-v1 .session-runtime-details > dl > div {
+.session-codex-parity-v1 .session-runtime-detail-group {
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group > h3 {
+  color: var(--session-text);
+  font-size: 11px;
+  font-weight: 680;
+  margin: 0 0 7px;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group > dl {
+  display: grid;
+  gap: 6px 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
+  margin: 0;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group > dl > div {
   display: grid;
   gap: 2px;
   min-inline-size: 0;
@@ -14048,9 +14100,9 @@
 }
 
 .session-codex-parity-v1 .session-v2-auto-page {
-    color: var(--session-text-muted);
-    font-size: 11px;
-    min-block-size: 1px;
+  color: var(--session-text-muted);
+  font-size: 11px;
+  min-block-size: 1px;
 }
 
 .session-codex-parity-v1 .session-v2-deferred-artifacts {
@@ -15416,16 +15468,16 @@
 }
 
 .session-codex-parity-v1 .session-reasoning-summary[data-status='active'] .session-reasoning-summary-icon {
-    aspect-ratio: 1;
+  aspect-ratio: 1;
   animation: session-working-spin var(--session-working-spinner-cycle) linear infinite;
   backface-visibility: hidden;
-    block-size: 19px;
+  block-size: 19px;
   color: var(--session-working-color);
-    inline-size: 19px;
-    max-block-size: 19px;
-    max-inline-size: 19px;
-    min-block-size: 19px;
-    min-inline-size: 19px;
+  inline-size: 19px;
+  max-block-size: 19px;
+  max-inline-size: 19px;
+  min-block-size: 19px;
+  min-inline-size: 19px;
   transform-origin: center;
   will-change: transform;
 }
@@ -15684,7 +15736,7 @@
 
 /* 最终覆盖：语义图标保持静止，只有专用 CircleNotch / CSS 加载环旋转。 */
 .session-codex-parity-v1 :where(.session-activity-group-icon, .session-activity-item-icon, .session-plan-summary-symbol) {
-    animation: none !important;
-    transform: none !important;
-    will-change: auto !important;
+  animation: none !important;
+  transform: none !important;
+  will-change: auto !important;
 }

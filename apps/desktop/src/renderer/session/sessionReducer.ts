@@ -13,6 +13,7 @@ import type {
   NativeQueueSnapshot,
   NativeSessionError,
   NativeSessionItemBuffer,
+  NativeSessionMetricsSnapshot,
   NativeSessionState,
   NativeTokenUsageSnapshot,
   NativeTurnPlanSnapshot,
@@ -115,6 +116,7 @@ export function createInitialSessionState(): NativeSessionState {
     providerSettings: null,
     tokenUsage: null,
     unifiedUsage: null,
+    sessionMetrics: null,
     rateLimits: null,
     mcpStartup: null,
     seenEventIds: {},
@@ -521,7 +523,8 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
     planImplementationRequests: snapshot.planImplementationRequests ?? [],
     providerSettings: snapshot.providerSettings ?? null,
     tokenUsage: snapshot.tokenUsage ?? null,
-    unifiedUsage: snapshot.usage,
+    unifiedUsage: snapshot.sessionMetrics?.usage ?? snapshot.usage,
+    sessionMetrics: snapshot.sessionMetrics ?? null,
     rateLimits: snapshot.rateLimits ?? null,
     mcpStartup: snapshot.mcpStartup ?? null,
     conversationState: requestConversationState(pendingRequests) ?? conversationStateFromSnapshot(snapshot),
@@ -590,6 +593,7 @@ function mergeSnapshotV2Page(state: NativeSessionState, snapshot: NativeConversa
     providerSettings: state.providerSettings,
     tokenUsage: state.tokenUsage,
     unifiedUsage: state.unifiedUsage,
+    sessionMetrics: state.sessionMetrics,
     rateLimits: state.rateLimits,
     mcpStartup: state.mcpStartup,
     conversationState: state.conversationState,
@@ -817,6 +821,10 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
       return { ...base, providerSettings: providerSettingsFrom(payload) };
     case 'conversation.tokenUsage.changed':
       return { ...base, tokenUsage: tokenUsageFrom(payload), unifiedUsage: unifiedUsageFrom(payload.unifiedUsage) ?? base.unifiedUsage };
+    case 'conversation.sessionMetrics.changed': {
+      const sessionMetrics = sessionMetricsFrom(payload.sessionMetrics);
+      return sessionMetrics ? { ...base, sessionMetrics, unifiedUsage: sessionMetrics.usage } : base;
+    }
     case 'conversation.rateLimits.changed':
       return { ...base, rateLimits: providerValueFrom(payload) };
     case 'conversation.mcpStartup.changed':
@@ -1538,6 +1546,11 @@ function tokenUsageFrom(payload: Record<string, unknown>): NativeTokenUsageSnaps
 function unifiedUsageFrom(value: unknown): NativeUnifiedUsageSnapshot | null {
   if (!isRecord(value) || !isRecord(value.conversationTotal) || !isRecord(value.turnTotal)) return null;
   return value as unknown as NativeUnifiedUsageSnapshot;
+}
+
+function sessionMetricsFrom(value: unknown): NativeSessionMetricsSnapshot | null {
+  if (!isRecord(value) || !isRecord(value.usage) || !isRecord(value.cost) || !isRecord(value.performance) || !isRecord(value.activity) || !isRecord(value.changeSummary)) return null;
+  return value as unknown as NativeSessionMetricsSnapshot;
 }
 
 function tokenBreakdownFrom(value: unknown): NativeTokenUsageSnapshot['total'] {
