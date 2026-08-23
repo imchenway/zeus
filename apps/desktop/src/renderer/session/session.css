@@ -2474,6 +2474,39 @@
   padding: 7px;
 }
 
+.session-codex-parity-v1 .session-activity-item-output {
+  display: grid;
+  gap: 5px;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-activity-item-output > button {
+  background: var(--session-control);
+  border: 1px solid var(--session-line-soft);
+  border-radius: 6px;
+  color: var(--session-text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  justify-self: start;
+  padding: 4px 8px;
+}
+
+.session-codex-parity-v1 .session-activity-item-output > button:hover:not(:disabled) {
+  border-color: var(--session-line);
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .session-activity-item-output > button:focus-visible {
+  outline: 2px solid var(--session-focus-outline);
+  outline-offset: 2px;
+}
+
+.session-codex-parity-v1 .session-activity-item-output > button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 .session-codex-parity-v1 .session-turn-duration {
   align-items: center;
   color: var(--session-text-muted);
@@ -5357,19 +5390,6 @@
 
 .session-codex-parity-v1 .session-transcript-loading .session-loading-line:nth-child(2) {
   inline-size: min(24rem, 56%);
-}
-
-.session-codex-parity-v1 .session-transcript-transition-status {
-  align-items: center;
-  color: var(--session-text-muted);
-  display: flex;
-  flex: 0 0 auto;
-  font-size: 12px;
-  gap: 8px;
-  justify-content: center;
-  margin: 0;
-  min-block-size: 32px;
-  padding: 2px var(--session-gutter) 10px;
 }
 
 /* 已完成且离开视口的长历史交给浏览器跳过绘制，活动内容和键盘焦点始终完整渲染。 */
