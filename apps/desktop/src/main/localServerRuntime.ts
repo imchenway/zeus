@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
+import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { createCodexRuntimeGenerationManager } from '@zeus/ai-runtime';
 import {
@@ -315,6 +316,7 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
   let recoveryPromise: Promise<void> | undefined;
   let handoffPromise: Promise<void> | undefined;
   let handoffRetryNotBeforeMs = 0;
+  let legacyIdleHandoffObservation: { instanceId: string; fingerprint: string; observedAtMs: number } | undefined;
   let closePromise: Promise<void> | undefined;
   let closing = false;
   try {
@@ -374,11 +376,16 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       executionHost.instanceId = next.instanceId;
       executionHost.pid = next.pid;
       executionHost.protocolVersion = next.protocolVersion;
+      legacyIdleHandoffObservation = undefined;
       if (changed) await options.onRestarted?.(config);
     };
 
     const handoffPreviousHostIfSafe = async (work: ExecutionHostWorkStatus): Promise<void> => {
-      if (connection.appVersion === currentAppVersion || hasEffectfulExecution(work) || handoffPromise || Date.now() < handoffRetryNotBeforeMs) return;
+      if (connection.appVersion === currentAppVersion || hasEffectfulExecution(work)) {
+        legacyIdleHandoffObservation = undefined;
+        return;
+      }
+      if (handoffPromise || Date.now() < handoffRetryNotBeforeMs) return;
 
       const previousInstanceId = connection.instanceId;
       const previousPid = connection.pid;
@@ -386,8 +393,40 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       const switching = (async () => {
         const capabilities = resolveExecutionHostCapabilities(connection.appVersion, lease.capabilities);
         if (capabilities.durableHandoff === 'sqlite_journal_v1') {
-          const prepared = await prepareExecutionHostDurableHandoff(connection, currentAppVersion);
-          await previousClient.handoff({ handoffId: prepared.handoffId, checkpointSha256: prepared.checkpointSha256 });
+          try {
+            const prepared = await prepareExecutionHostDurableHandoff(connection, currentAppVersion);
+            await previousClient.handoff({ handoffId: prepared.handoffId, checkpointSha256: prepared.checkpointSha256 });
+          } catch (error) {
+            // 0.3.36/0.3.37 会把所有冲突交付 Map 项都当成写入，即使 Provider 已完成、
+            // 只剩持久化 active 记录等待用户代码交付。新 Main 只能在重新读取宿主状态和
+            // SQLite 后同时证明“没有执行工作、没有 preparing、阻断数不超过 active 数”时，
+            // 退回旧协议已有的 graceful shutdown；任何不确定性都继续失败关闭。
+            const refreshed = await previousClient.health();
+            const legacyCandidate =
+              refreshed.instanceId === previousInstanceId && refreshed.pid === previousPid
+                ? legacyIdleTaskIntegrationHandoffCandidate({
+                    error,
+                    work: refreshed.work,
+                    dbPath: connection.dbPath,
+                    hostAppVersion: connection.appVersion,
+                  })
+                : null;
+            if (!legacyCandidate) {
+              legacyIdleHandoffObservation = undefined;
+              throw error;
+            }
+            const nowMs = Date.now();
+            const previousObservation = legacyIdleHandoffObservation;
+            if (!previousObservation || previousObservation.instanceId !== previousInstanceId || previousObservation.fingerprint !== legacyCandidate.fingerprint || nowMs - previousObservation.observedAtMs < 30_000) {
+              legacyIdleHandoffObservation =
+                previousObservation?.instanceId === previousInstanceId && previousObservation.fingerprint === legacyCandidate.fingerprint
+                  ? previousObservation
+                  : { instanceId: previousInstanceId, fingerprint: legacyCandidate.fingerprint, observedAtMs: nowMs };
+              throw error;
+            }
+            await previousClient.shutdown();
+            legacyIdleHandoffObservation = undefined;
+          }
         } else {
           // 旧宿主没有同库 journal 时，只有“完全没有任何工作”才可最终退出；存在 waiting 时绝不把 Main 内存当恢复权威。
           if (work.hasActiveWork || work.waitingRequestCount > 0) return;
@@ -1386,9 +1425,90 @@ async function requestExecutionHostApi<T>(connection: ExecutionHostRendezvous, p
     throw Object.assign(new Error(typeof errorPayload.message === 'string' ? errorPayload.message : `Zeus execution-host handoff API failed with HTTP ${response.status}.`), {
       statusCode: response.status,
       ...(typeof errorPayload.error === 'string' ? { code: errorPayload.error } : {}),
+      handoffPayload: errorPayload,
     });
   }
   return payload as T;
+}
+
+function legacyIdleTaskIntegrationHandoffCandidate(input: { error: unknown; work: ExecutionHostWorkStatus; dbPath: string; hostAppVersion: string }): { fingerprint: string } | null {
+  if (input.hostAppVersion !== '0.3.36' && input.hostAppVersion !== '0.3.37') return null;
+  if (hasEffectfulExecution(input.work) || input.work.hasActiveWork || input.work.waitingRequestCount > 0 || input.work.activeTurnCount > 0) return null;
+  const blockers = readLegacyTaskIntegrationHandoffBlockers(input.error);
+  if (!blockers || blockers.taskIntegrationOperations <= 0) return null;
+  const attempts = readTaskIntegrationAttemptStateCounts(input.dbPath);
+  if (!attempts || attempts.preparing !== 0 || attempts.active < blockers.taskIntegrationOperations) return null;
+  return {
+    fingerprint: JSON.stringify({
+      taskIntegrationOperations: blockers.taskIntegrationOperations,
+      activeAttempts: attempts.active,
+      latestActiveUpdatedAt: attempts.latestActiveUpdatedAt,
+    }),
+  };
+}
+
+function readLegacyTaskIntegrationHandoffBlockers(error: unknown): { taskIntegrationOperations: number } | null {
+  if (!error || typeof error !== 'object') return null;
+  const candidate = error as { code?: unknown; statusCode?: unknown; handoffPayload?: unknown };
+  if (candidate.statusCode !== 409 || candidate.code !== 'ZEUS_EXECUTION_HOST_HANDOFF_WORK_BLOCKED') return null;
+  const payload = candidate.handoffPayload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
+  const message = (payload as Record<string, unknown>).message;
+  if (typeof message !== 'string') return null;
+  const jsonStart = message.indexOf('{');
+  if (jsonStart < 0) return null;
+  try {
+    const parsed = JSON.parse(message.slice(jsonStart)) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const business = (parsed as Record<string, unknown>).business;
+    const background = (parsed as Record<string, unknown>).background;
+    if (!isZeroCountRecord(business) || !background || typeof background !== 'object' || Array.isArray(background)) return null;
+    const backgroundCounts = background as Record<string, unknown>;
+    const taskIntegrationOperations = backgroundCounts.taskIntegrationOperations;
+    if (!Number.isSafeInteger(taskIntegrationOperations) || Number(taskIntegrationOperations) <= 0) return null;
+    for (const [key, count] of Object.entries(backgroundCounts)) {
+      if (!Number.isSafeInteger(count) || Number(count) < 0) return null;
+      if (key !== 'taskIntegrationOperations' && Number(count) !== 0) return null;
+    }
+    return { taskIntegrationOperations: Number(taskIntegrationOperations) };
+  } catch {
+    return null;
+  }
+}
+
+function isZeroCountRecord(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const entries = Object.entries(value as Record<string, unknown>);
+  return entries.length > 0 && entries.every(([, count]) => Number.isSafeInteger(count) && Number(count) === 0);
+}
+
+function readTaskIntegrationAttemptStateCounts(dbPath: string): { preparing: number; active: number; latestActiveUpdatedAt: string | null } | null {
+  let db: DatabaseSync | undefined;
+  try {
+    db = new DatabaseSync(dbPath, { readOnly: true });
+    const table = db.prepare(`SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'task_integration_attempts'`).get();
+    if (!table) return null;
+    const row = db
+      .prepare(
+        `SELECT
+           SUM(CASE WHEN state = 'preparing' THEN 1 ELSE 0 END) AS preparing,
+           SUM(CASE WHEN state = 'active' THEN 1 ELSE 0 END) AS active,
+           MAX(CASE WHEN state = 'active' THEN updated_at ELSE NULL END) AS latest_active_updated_at
+         FROM task_integration_attempts`,
+      )
+      .get() as { preparing?: unknown; active?: unknown; latest_active_updated_at?: unknown } | undefined;
+    if (!row || !Number.isSafeInteger(row.preparing) || !Number.isSafeInteger(row.active)) return null;
+    if (row.latest_active_updated_at !== null && typeof row.latest_active_updated_at !== 'string') return null;
+    return {
+      preparing: Number(row.preparing),
+      active: Number(row.active),
+      latestActiveUpdatedAt: row.latest_active_updated_at ?? null,
+    };
+  } catch {
+    return null;
+  } finally {
+    db?.close();
+  }
 }
 
 function isRetryableExecutionHostHandoffBlock(error: unknown): boolean {
