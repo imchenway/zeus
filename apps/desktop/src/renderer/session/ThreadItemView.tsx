@@ -167,14 +167,22 @@ function TaskPushMessageContent(
             <strong>{block.contextKind === 'current' ? block.taskTitle : `${block.contextKind === 'parent' ? '父任务' : '关联任务'}：${block.taskCode ?? block.taskId} · ${block.taskTitle}`}</strong>
           </header>
           {block.fields.map((field) => {
-            const resources = field.attachmentKeys.flatMap((key) => {
+            const markdownResources = field.attachmentKeys.flatMap((key) => {
               const resource = resourcesByKey.get(key);
               return resource ? [resource] : [];
+            });
+            // 同一任务图片从乐观消息到权威资源会经历异步交接。只要提交快照仍带有
+            // 本地图片，就持续使用这条已可见预览，避免资源元数据先到、内容稍后到时
+            // 短暂退化成“图片预览不可用”。没有提交快照的冷历史才读取权威资源。
+            const pendingImageKeys = new Set(field.attachmentKeys.filter((key) => pendingImagesByKey.has(key)));
+            const resources = markdownResources.filter((resource) => {
+              const key = resourceTaskPushAttachmentKey(resource);
+              return !key || !pendingImageKeys.has(key);
             });
             const attachmentNames = new Map(block.attachments.map((attachment) => [attachment.key, attachment.name]));
             const pendingImages = field.attachmentKeys.flatMap((key) => {
               const attachment = pendingImagesByKey.get(key);
-              return attachment ? [attachment] : [];
+              return attachment && pendingImageKeys.has(key) ? [attachment] : [];
             });
             const missingAttachmentKeys = field.attachmentKeys.filter((key) => !resourcesByKey.has(key) && !pendingImagesByKey.has(key));
             return (
@@ -187,7 +195,7 @@ function TaskPushMessageContent(
                     附件 · {attachmentNames.get(key) ?? key}
                   </span>
                 ))}
-                {field.text ? <SafeMarkdown text={field.text} language={props.language} resources={resources} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} /> : null}
+                {field.text ? <SafeMarkdown text={field.text} language={props.language} resources={markdownResources} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} /> : null}
               </section>
             );
           })}
@@ -206,6 +214,7 @@ function TaskPushMessageContent(
           <strong>补充信息：</strong>
           <ConversationResourceCards
             resources={supplementalAttachments.flatMap((attachment) => {
+              if (pendingImagesByKey.has(attachment.key)) return [];
               const resource = resourcesByKey.get(attachment.key);
               return resource ? [resource] : [];
             })}
@@ -444,7 +453,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
         <TaskPushMessageContent
           layout={taskPushLayout}
           resources={props.item.resources}
-          pendingAttachments={hasAuthoritativeAttachmentResources ? [] : pendingAttachments}
+          pendingAttachments={pendingAttachments}
           language={props.language}
           onOpenResource={props.onOpenResource}
           onLoadResourcePreview={props.onLoadResourcePreview}

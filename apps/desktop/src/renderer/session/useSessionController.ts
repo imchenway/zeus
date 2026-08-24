@@ -40,7 +40,7 @@ import {
   type TurnChangeSet,
   type TurnChangeSetOperationResult,
 } from './sessionTypes.js';
-import { adaptConversationSnapshotV2, mergeConversationHistoryV2, mergeConversationProcessV2, updateConversationV2Paging } from './conversationSnapshotV2Adapter.js';
+import { adaptConversationSnapshotV2, mergeConversationHistoryV2, mergeConversationProcessV2, mergeConversationTurnHistoryV2, updateConversationV2Paging } from './conversationSnapshotV2Adapter.js';
 import { markConversationNavigationRenderReady } from '../performanceTraceContext.js';
 
 export const reconnectBackoffMs = [250, 500, 1_000, 2_000, 5_000] as const;
@@ -174,6 +174,12 @@ export interface SessionControllerClient {
     projectId: string,
     conversationId: string,
     options?: { cursor?: string; limit?: number; byteLimit?: number; direction?: 'forward' | 'tail' },
+  ): Promise<NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>>;
+  loadNativeConversationTurnModelHistoryV2?(
+    projectId: string,
+    conversationId: string,
+    turnId: string,
+    options?: { cursor?: string; limit?: number; byteLimit?: number },
   ): Promise<NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>>;
   loadNativeConversationProcessV2?(
     projectId: string,
@@ -2001,52 +2007,115 @@ export function createSessionController(options: CreateSessionControllerOptions)
   }
 
   async function loadTurnProcessV2(turnIdentity: string): Promise<void> {
-    const load = options.client.loadNativeConversationProcessV2;
+    const loadProcess = options.client.loadNativeConversationProcessV2;
+    const loadHistory = options.client.loadNativeConversationTurnModelHistoryV2;
     const current = state.snapshot;
     const generation = connectionToken;
-    if (!load || !current?.snapshotV2 || !current.v2Paging) return;
+    if ((!loadProcess && !loadHistory) || !current?.snapshotV2 || !current.v2Paging) return;
     const turn = current.turns.find((candidate) => candidate.id === turnIdentity || candidate.providerTurnId === turnIdentity);
     // Snapshot V2 的固定首屏只携带最近闭合轮次；更早模型历史仍保留本地 turn id，
     // 服务端过程入口同时接受本地和 Provider 身份，因此旧轮次可以直接按历史身份读取。
     const localTurnId = turn?.id ?? turnIdentity;
     const pagingKey = turn?.providerTurnId ?? turnIdentity;
-    const currentPage = current.v2Paging.processByTurn[pagingKey];
-    if (currentPage?.loading || (currentPage?.loaded && !currentPage.hasMore)) return;
+    const currentProcessPage = current.v2Paging.processByTurn[pagingKey];
+    const currentHistoryPage = current.v2Paging.historyByTurn[pagingKey];
+    if (currentProcessPage?.loading || currentHistoryPage?.loading) return;
+    const shouldLoadProcess = Boolean(loadProcess && !(currentProcessPage?.loaded && !currentProcessPage.hasMore));
+    const shouldLoadHistory = Boolean(loadHistory && !(currentHistoryPage?.loaded && !currentHistoryPage.hasMore));
+    if (!shouldLoadProcess && !shouldLoadHistory) return;
     dispatchV2Snapshot(
       updateConversationV2Paging(current, (paging) => ({
         ...paging,
+        historyByTurn: shouldLoadHistory
+          ? {
+              ...paging.historyByTurn,
+              [pagingKey]: {
+                nextCursor: currentHistoryPage?.nextCursor ?? null,
+                hasMore: currentHistoryPage?.hasMore ?? true,
+                loading: true,
+                loaded: currentHistoryPage?.loaded ?? false,
+                error: null,
+              },
+            }
+          : paging.historyByTurn,
         processByTurn: {
           ...paging.processByTurn,
-          [pagingKey]: { nextCursor: currentPage?.nextCursor ?? null, hasMore: currentPage?.hasMore ?? true, loading: true, loaded: currentPage?.loaded ?? false, error: null },
+          ...(shouldLoadProcess
+            ? {
+                [pagingKey]: {
+                  nextCursor: currentProcessPage?.nextCursor ?? null,
+                  hasMore: currentProcessPage?.hasMore ?? true,
+                  loading: true,
+                  loaded: currentProcessPage?.loaded ?? false,
+                  error: null,
+                },
+              }
+            : {}),
         },
       })),
     );
-    try {
-      const page = await load(options.projectId, options.conversationId, localTurnId, {
-        ...(currentPage?.nextCursor ? { cursor: currentPage.nextCursor } : {}),
-        limit: 32,
-        byteLimit: 96 * 1024,
-      });
-      if (disposed || generation !== connectionToken) return;
-      const latest = state.snapshot;
-      if (!latest?.snapshotV2 || !latest.v2Paging) return;
-      dispatchV2Snapshot(mergeConversationProcessV2(latest, pagingKey, page));
-    } catch (error) {
-      if (disposed || generation !== connectionToken) return;
-      const latest = state.snapshot;
-      if (latest?.v2Paging) {
-        dispatchV2Snapshot(
-          updateConversationV2Paging(latest, (paging) => ({
-            ...paging,
-            processByTurn: {
+    const processResult = shouldLoadProcess
+      ? loadProcess!(options.projectId, options.conversationId, localTurnId, {
+          ...(currentProcessPage?.nextCursor ? { cursor: currentProcessPage.nextCursor } : {}),
+          // 展开是明确读取意图。多数真实长轮在 128 条过程项以内，一次补齐可避免
+          // 完成态只显示运行过程的前一小段；超大轮次仍由后续哨兵继续分页。
+          limit: 128,
+          byteLimit: 256 * 1024,
+        }).then(
+          (page) => ({ page, error: null as unknown }),
+          (error: unknown) => ({ page: null, error }),
+        )
+      : Promise.resolve({ page: null, error: null as unknown });
+    const historyResult = shouldLoadHistory
+      ? loadHistory!(options.projectId, options.conversationId, localTurnId, {
+          ...(currentHistoryPage?.nextCursor ? { cursor: currentHistoryPage.nextCursor } : {}),
+          limit: 128,
+          byteLimit: 256 * 1024,
+        }).then(
+          (page) => ({ page, error: null as unknown }),
+          (error: unknown) => ({ page: null, error }),
+        )
+      : Promise.resolve({ page: null, error: null as unknown });
+    const [settledProcess, settledHistory] = await Promise.all([processResult, historyResult]);
+    if (disposed || generation !== connectionToken) return;
+    const latest = state.snapshot;
+    if (!latest?.snapshotV2 || !latest.v2Paging) return;
+    let next = latest;
+    // 先合并模型正文，再用更完整的过程投影覆盖相同 Provider item，避免重复行。
+    if (settledHistory.page) next = mergeConversationTurnHistoryV2(next, pagingKey, settledHistory.page);
+    if (settledProcess.page) next = mergeConversationProcessV2(next, pagingKey, settledProcess.page);
+    if (settledProcess.error || settledHistory.error) {
+      next = updateConversationV2Paging(next, (paging) => ({
+        ...paging,
+        historyByTurn: settledHistory.error
+          ? {
+              ...paging.historyByTurn,
+              [pagingKey]: {
+                nextCursor: currentHistoryPage?.nextCursor ?? null,
+                hasMore: currentHistoryPage?.hasMore ?? true,
+                loading: false,
+                loaded: currentHistoryPage?.loaded ?? false,
+                error: errorMessage(settledHistory.error),
+              },
+            }
+          : paging.historyByTurn,
+        processByTurn: settledProcess.error
+          ? {
               ...paging.processByTurn,
-              [pagingKey]: { nextCursor: currentPage?.nextCursor ?? null, hasMore: currentPage?.hasMore ?? true, loading: false, loaded: currentPage?.loaded ?? false, error: errorMessage(error) },
-            },
-          })),
-        );
-      }
-      throw error;
+              [pagingKey]: {
+                nextCursor: currentProcessPage?.nextCursor ?? null,
+                hasMore: currentProcessPage?.hasMore ?? true,
+                loading: false,
+                loaded: currentProcessPage?.loaded ?? false,
+                error: errorMessage(settledProcess.error),
+              },
+            }
+          : paging.processByTurn,
+      }));
     }
+    dispatchV2Snapshot(next);
+    if (settledProcess.error) throw settledProcess.error;
+    if (settledHistory.error) throw settledHistory.error;
   }
 
   async function loadTurnArtifactsV2(turnIdentity: string): Promise<void> {

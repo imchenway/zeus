@@ -57,6 +57,12 @@ export interface ConversationApiClient {
     conversationId: string,
     options?: { cursor?: string; limit?: number; byteLimit?: number; direction?: 'forward' | 'tail' },
   ) => Promise<NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>>;
+  loadNativeConversationTurnModelHistoryV2: (
+    projectId: string,
+    conversationId: string,
+    turnId: string,
+    options?: { cursor?: string; limit?: number; byteLimit?: number },
+  ) => Promise<NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>>;
   loadNativeConversationProcessV2: (
     projectId: string,
     conversationId: string,
@@ -179,6 +185,8 @@ export function createConversationApiClient(transport: LocalApiTransport): Conve
     loadNativeConversationSessionMetrics: (projectId, conversationId) => transport.request<NativeSessionMetricsSnapshot>(`${conversationPath(projectId, conversationId)}/session-metrics`),
     loadNativeConversationModelHistoryV2: (projectId, conversationId, options) =>
       transport.request<NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>>(`${conversationPath(projectId, conversationId)}/model-history${pageQuery(options)}`),
+    loadNativeConversationTurnModelHistoryV2: (projectId, conversationId, turnId, options) =>
+      transport.request<NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>>(`${conversationPath(projectId, conversationId)}/turns/${encodeURIComponent(turnId)}/model-history${pageQuery(options)}`),
     loadNativeConversationProcessV2: (projectId, conversationId, turnId, options) =>
       transport.request<NativeConversationSnapshotV2Page<NativeConversationProcessV2Item>>(`${conversationPath(projectId, conversationId)}/turns/${encodeURIComponent(turnId)}/process${pageQuery(options)}`),
     loadNativeConversationResourcesV2: (projectId, conversationId, options) =>

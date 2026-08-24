@@ -2546,9 +2546,10 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
 }
 
 export function selectDockedTurnPlan(state: NativeSessionState): NativeSessionState['turnsByProviderId'][string]['plan'] {
-  const activePlan = state.activeTurnId ? state.turnsByProviderId[state.activeTurnId]?.plan : null;
-  if (activePlan) return activePlan;
-  return [...Object.values(state.turnsByProviderId)].filter((turn) => turn.plan).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id))[0]?.plan ?? null;
+  if (!state.activeTurnId) return null;
+  const turn = state.turnsByProviderId[state.activeTurnId];
+  if (!turn || turn.completedAt || (turn.status !== 'running' && turn.status !== 'waiting' && turn.status !== 'dispatching')) return null;
+  return turn.plan;
 }
 
 function contextWorkspaceLabel(workspace: SessionContextWorkspace, language: SessionUiLanguage): string {

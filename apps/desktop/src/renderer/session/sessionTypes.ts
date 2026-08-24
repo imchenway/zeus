@@ -521,6 +521,7 @@ export interface NativeConversationSnapshotV2Turn {
   createdAt: string;
   updatedAt: string;
   agentKind: string | null;
+  openingUserMessage: NativeConversationModelHistoryV2Item | null;
   process: { available: boolean; latestSequence: number };
   resourcesAvailable: boolean;
   changeSetAvailable: boolean;
@@ -711,6 +712,7 @@ export interface NativeConversationToolResultPage {
 
 export interface NativeConversationV2PagingState {
   history: { nextCursor: string | null; hasMore: boolean; loading: boolean; error: string | null };
+  historyByTurn: Record<string, { nextCursor: string | null; hasMore: boolean; loading: boolean; loaded: boolean; error: string | null }>;
   processByTurn: Record<string, { nextCursor: string | null; hasMore: boolean; loading: boolean; loaded: boolean; error: string | null }>;
   resources: { nextCursor: string | null; hasMore: boolean; loading: boolean; loaded: boolean; error: string | null; items: NativeConversationResourceV2Item[] };
   changeSetsByTurn: Record<

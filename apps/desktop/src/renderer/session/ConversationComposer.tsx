@@ -539,11 +539,12 @@ export function ConversationComposer(props: ConversationComposerProps) {
                 <button
                   type="button"
                   className="session-stop-button"
-                  aria-label={copy.stop}
+                  aria-label={busy ? (props.language === 'zh-CN' ? '正在暂停' : 'Pausing') : copy.stop}
+                  aria-busy={busy || undefined}
                   onClick={() => props.state.activeTurnId && void props.onInterrupt(props.state.activeTurnId)}
                   disabled={!writable || !props.state.activeTurnId || props.state.startedTurnId !== props.state.activeTurnId || busy}
                 >
-                  <Square aria-hidden="true" weight="fill" />
+                  {busy ? <span className="session-command-spinner" aria-hidden="true" /> : <Square aria-hidden="true" weight="fill" />}
                 </button>
               )}
             </span>

@@ -99,7 +99,6 @@ const modelHistoryFormalPlanSql = `CASE
     THEN 1
   ELSE 0
 END`;
-
 export type ConversationSnapshotV2ErrorCode =
   | 'ZEUS_CONVERSATION_SNAPSHOT_V2_INVALID_ARGUMENT'
   | 'ZEUS_CONVERSATION_SNAPSHOT_V2_INVALID_CURSOR'
@@ -136,6 +135,7 @@ export interface ConversationSnapshotV2TurnSummary {
   createdAt: string;
   updatedAt: string;
   agentKind: string | null;
+  openingUserMessage: ConversationModelHistoryPageItem | null;
   process: {
     available: boolean;
     latestSequence: number;
@@ -707,6 +707,48 @@ export class ConversationSnapshotV2Repository {
   }
 
   /**
+   * 按权威 turn 身份补齐完成轮次的模型正文。过程表只保存命令、工具和摘要，
+   * 不能替代运行期间已经展示过的阶段性 commentary；展开历史轮次时必须同时读取二者。
+   */
+  listTurnModelHistoryPage(input: { conversationId: string; turnId: string; cursor?: string; entryLimit?: number; byteLimit?: number }): ConversationSnapshotV2Page<ConversationModelHistoryPageItem> {
+    const conversationId = requiredIdentity(input.conversationId, 'conversationId');
+    const turnId = this.requireTurn(conversationId, input.turnId);
+    const context = this.sequencePageContext({ ...input, conversationId }, 'model_history', `turn:${turnId}`, {
+      table: 'conversation_model_history',
+      column: 'sequence',
+      extraWhere: ' AND turn_id = ?',
+      extraParams: [turnId],
+    });
+    const rows = this.db.select<ModelHistoryProjectionRow>(
+      `SELECT id,
+              sequence,
+              turn_id,
+              submission_id,
+              (SELECT client_message_id
+               FROM conversation_submissions
+               WHERE id = conversation_model_history.submission_id) AS client_user_message_id,
+              ${modelHistoryProviderItemSql}                        AS provider_item_id,
+              ${modelHistoryReasoningSummarySql}                    AS reasoning_summary,
+              ${modelHistoryAssistantPhaseSql}                      AS assistant_phase,
+              ${modelHistoryFormalPlanSql}                          AS formal_plan,
+              segment_id,
+              role,
+              tool_pair_id,
+              confirmed_at,
+              substr(${modelHistoryVisibleContentSql}, 1, ?)         AS content_preview,
+              length(CAST(${modelHistoryVisibleContentSql} AS BLOB)) AS content_bytes,
+              length(${modelHistoryVisibleContentSql})               AS content_characters
+         FROM conversation_model_history
+        WHERE conversation_id = ? AND turn_id = ?
+          AND sequence > ? AND sequence <= ?
+        ORDER BY sequence
+        LIMIT ?`,
+      [previewCharacterLimit, context.conversationId, turnId, context.afterSequence, context.throughSequence, context.entryLimit + 1],
+    );
+    return buildSequencePage(context, this.mapModelHistoryRows(context.conversationId, rows));
+  }
+
+  /**
    * 首屏从冻结高水位向前读取最近历史；nextCursor 继续向更早序号推进。
    * 返回项始终按 sequence 正序，避免 Renderer 因加载方向改变稳定身份或时间线顺序。
    */
@@ -1120,7 +1162,7 @@ export class ConversationSnapshotV2Repository {
     const latestProcess = this.db.get<{ process_sequence: number }>(
       `SELECT process_sequence
          FROM conversation_process_items
-        WHERE conversation_id = ? AND turn_id = ?
+        WHERE conversation_id = ? AND turn_id = ? AND kind <> 'reasoning'
         ORDER BY process_sequence DESC
         LIMIT 1`,
       [conversationId, row.id],
@@ -1139,10 +1181,32 @@ export class ConversationSnapshotV2Repository {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       agentKind: row.agent_kind,
+      openingUserMessage: this.openingUserMessage(conversationId, row.id),
       process: { available: Boolean(latestProcess), latestSequence: latestProcess?.process_sequence ?? 0 },
       resourcesAvailable: Boolean(this.db.get<{ present: number }>(`SELECT 1 AS present FROM conversation_resources WHERE conversation_id = ? AND turn_id = ? LIMIT 1`, [conversationId, row.id])),
       changeSetAvailable: Boolean(this.db.get<{ present: number }>(`SELECT 1 AS present FROM turn_change_sets WHERE conversation_id = ? AND turn_id = ? LIMIT 1`, [conversationId, row.id])),
     };
+  }
+
+  private openingUserMessage(conversationId: string, turnId: string): ConversationModelHistoryPageItem | null {
+    const row = this.db.get<ModelHistoryProjectionRow>(
+      `SELECT id, sequence, turn_id, submission_id,
+              (SELECT client_message_id FROM conversation_submissions WHERE id = conversation_model_history.submission_id) AS client_user_message_id,
+              ${modelHistoryProviderItemSql} AS provider_item_id,
+              0 AS reasoning_summary,
+              NULL AS assistant_phase,
+              0 AS formal_plan,
+              segment_id, role, tool_pair_id, confirmed_at,
+              substr(${modelHistoryVisibleContentSql}, 1, ?)         AS content_preview,
+              length(CAST(${modelHistoryVisibleContentSql} AS BLOB)) AS content_bytes,
+              length(${modelHistoryVisibleContentSql})               AS content_characters
+         FROM conversation_model_history
+        WHERE conversation_id = ? AND turn_id = ? AND role = 'user'
+        ORDER BY sequence
+        LIMIT 1`,
+      [previewCharacterLimit, conversationId, turnId],
+    );
+    return row ? (this.mapModelHistoryRows(conversationId, [row])[0] ?? null) : null;
   }
 
   private latestTurnsByStatus(conversationId: string, statuses: readonly string[], limit: number): TurnRow[] {
@@ -1165,7 +1229,12 @@ export class ConversationSnapshotV2Repository {
     input: { conversationId: string; cursor?: string; entryLimit?: number; byteLimit?: number },
     kind: SequenceCursorPayload['kind'],
     scope: string,
-    highWater: { table: 'conversation_process_items'; column: 'process_sequence'; extraWhere: string; extraParams: Array<string | number> } | null = null,
+    highWater: {
+      table: 'conversation_process_items' | 'conversation_model_history';
+      column: 'process_sequence' | 'sequence';
+      extraWhere: string;
+      extraParams: Array<string | number>;
+    } | null = null,
   ): SequencePageContext {
     const conversationId = requiredIdentity(input.conversationId, 'conversationId');
     const limits = normalizePageLimits(input.entryLimit, input.byteLimit);

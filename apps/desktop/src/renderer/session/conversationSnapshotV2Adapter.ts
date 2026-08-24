@@ -35,6 +35,7 @@ export function adaptConversationSnapshotV2(input: ConversationSnapshotV2Bootstr
   const snapshot = input.snapshot;
   const choice = input.choice;
   const turns = snapshotTurns(snapshot);
+  const bootstrapHistory = modelHistoryWithOpeningAnchors(snapshot, input.history.items);
   const permissionMode = snapshot.conversation.nextTurnSettings?.permissionMode ?? choice.permissionMode ?? 'read-only';
   const collaborationMode = snapshot.conversation.nextTurnSettings?.collaborationMode ?? choice.collaborationMode ?? 'default';
   const nextTurnSettings =
@@ -68,7 +69,7 @@ export function adaptConversationSnapshotV2(input: ConversationSnapshotV2Bootstr
     usage,
     contextState: {
       throughModelHistorySequence: input.history.throughSequence,
-      confirmedEntryCount: input.history.items.length,
+      confirmedEntryCount: bootstrapHistory.length,
       partial: input.history.hasMore,
     },
     persistentWarnings: [],
@@ -113,7 +114,7 @@ export function adaptConversationSnapshotV2(input: ConversationSnapshotV2Bootstr
     pendingRequestKind: choice.pendingRequestKind,
     messages: [],
     turns,
-    items: historyItems(input.history.items, providerTurnIdentityMap(turns)),
+    items: historyItems(bootstrapHistory, providerTurnIdentityMap(turns)),
     changeSets: [],
     submissions: input.queue.submissions,
     queue: input.queue,
@@ -130,6 +131,7 @@ export function adaptConversationSnapshotV2(input: ConversationSnapshotV2Bootstr
     snapshotV2: snapshot,
     v2Paging: {
       history: { nextCursor: input.history.nextCursor, hasMore: input.history.hasMore, loading: false, error: null },
+      historyByTurn: {},
       processByTurn: {},
       resources: { nextCursor: null, hasMore: snapshot.collections.resources.available, loading: false, loaded: false, error: null, items: [] },
       changeSetsByTurn: {},
@@ -209,6 +211,34 @@ export function mergeConversationProcessV2(snapshot: NativeConversationSnapshot,
   };
 }
 
+export function mergeConversationTurnHistoryV2(snapshot: NativeConversationSnapshot, turnId: string, page: NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>): NativeConversationSnapshot {
+  if (!snapshot.snapshotV2 || !snapshot.v2Paging || page.schemaVersion !== 2 || page.structureGeneration !== snapshot.snapshotV2.structureGeneration || page.conversationId !== snapshot.id || page.kind !== 'model_history') {
+    throw new Error('会话 V2 轮次正文页与当前快照不匹配。');
+  }
+  const byId = new Map(snapshot.items.map((item) => [item.id, item]));
+  const byProviderItemId = new Map(snapshot.items.flatMap((item) => (item.providerItemId ? [[item.providerItemId, item] as const] : [])));
+  for (const item of historyItems(page.items, providerTurnIdentityMap(snapshot.turns))) {
+    // 过程投影比同一 Provider item 的模型历史预览更完整；已存在时保持过程项，
+    // 避免后续正文分页把命令或工具结果重新添成重复行。
+    const previous = item.providerItemId ? byProviderItemId.get(item.providerItemId) : undefined;
+    if (previous && previous.id !== item.id && previous.payload.v2ContentKind === 'process_detail') continue;
+    if (previous && previous.id !== item.id) byId.delete(previous.id);
+    byId.set(item.id, item);
+    if (item.providerItemId) byProviderItemId.set(item.providerItemId, item);
+  }
+  return {
+    ...snapshot,
+    items: [...byId.values()].sort(compareNativeItems),
+    v2Paging: {
+      ...snapshot.v2Paging,
+      historyByTurn: {
+        ...snapshot.v2Paging.historyByTurn,
+        [turnId]: { nextCursor: page.nextCursor, hasMore: page.hasMore, loading: false, loaded: true, error: null },
+      },
+    },
+  };
+}
+
 export function updateConversationV2Paging(snapshot: NativeConversationSnapshot, update: (paging: NonNullable<NativeConversationSnapshot['v2Paging']>) => NonNullable<NativeConversationSnapshot['v2Paging']>): NativeConversationSnapshot {
   if (!snapshot.v2Paging) return snapshot;
   return { ...snapshot, v2Paging: update(snapshot.v2Paging) };
@@ -252,6 +282,15 @@ function snapshotTurns(snapshot: NativeConversationSnapshotV2): NativeTurnSnapsh
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
 }
 
+function modelHistoryWithOpeningAnchors(snapshot: NativeConversationSnapshotV2, items: NativeConversationModelHistoryV2Item[]): NativeConversationModelHistoryV2Item[] {
+  const byId = new Map<string, NativeConversationModelHistoryV2Item>();
+  for (const turn of [...snapshot.recentClosedTurns, ...(snapshot.activeTurn ? [snapshot.activeTurn] : [])]) {
+    if (turn.openingUserMessage) byId.set(turn.openingUserMessage.id, turn.openingUserMessage);
+  }
+  for (const item of items) byId.set(item.id, item);
+  return [...byId.values()].sort((left, right) => left.sequence - right.sequence || left.id.localeCompare(right.id));
+}
+
 function historyItems(items: NativeConversationModelHistoryV2Item[], providerTurnByLocalId: ReadonlyMap<string, string>): NativeItemSnapshot[] {
   return items.flatMap((item) => {
     const content = parseProjection(item.content.preview, item.content.truncated);
@@ -265,7 +304,7 @@ function historyItems(items: NativeConversationModelHistoryV2Item[], providerTur
     const reasoning = item.reasoningSummary || typeof contentRecord?.provenance === 'string';
     const text = projectionText(content, item.content.preview, item.content.truncated);
     const persistedPlan = item.phase === 'plan';
-    const phase = item.role === 'user' || reasoning || item.phase === 'prework' || item.phase === 'commentary' ? 'prework' : 'final_answer';
+    const phase = item.role === 'assistant' && (item.phase === 'final_answer' || item.phase === 'finalAnswer') ? 'final_answer' : 'prework';
     const historicalUserPayload =
       item.role === 'user' && contentRecord
         ? {

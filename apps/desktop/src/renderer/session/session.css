@@ -9370,8 +9370,8 @@
   display: grid;
   font-size: 14px;
   font-weight: 590;
-  gap: 9px;
-  grid-template-columns: 19px minmax(0, 1fr);
+  gap: 0;
+  grid-template-columns: minmax(0, 1fr);
   line-height: 1.5;
   margin-block: 0;
   min-block-size: 28px;
@@ -9382,31 +9382,6 @@
   min-inline-size: 0;
   overflow-wrap: anywhere;
   white-space: break-spaces;
-}
-
-.session-codex-parity-v1 .session-reasoning-summary-icon {
-  block-size: 19px;
-  display: grid;
-  inline-size: 19px;
-  place-items: center;
-}
-
-.session-codex-parity-v1 .session-reasoning-summary-icon > svg {
-  block-size: 19px;
-  inline-size: 19px;
-}
-
-.session-codex-parity-v1 .session-reasoning-summary[data-status='active'] .session-reasoning-summary-icon {
-  animation: session-spinner 900ms linear infinite;
-  color: var(--session-accent);
-}
-
-.session-codex-parity-v1 .session-reasoning-summary[data-status='completed'] .session-reasoning-summary-icon {
-  color: var(--session-success);
-}
-
-.session-codex-parity-v1 .session-reasoning-summary[data-status='failed'] .session-reasoning-summary-icon {
-  color: var(--session-danger);
 }
 
 .session-codex-parity-v1 .session-activity-group > details > summary {
@@ -14521,12 +14496,6 @@
   font-size: var(--session-readable-font-size);
 }
 
-/* 多行摘要保持顶部锚定，图标只在首行行盒内居中。 */
-.session-codex-parity-v1 .session-reasoning-summary-icon {
-  block-size: 1.5em;
-  align-self: start;
-}
-
 .session-codex-parity-v1 .session-command-summary-copy strong,
 .session-codex-parity-v1 .session-answered-request-summary > strong,
 .session-codex-parity-v1 .session-answered-request-body strong {
@@ -14972,6 +14941,19 @@
 .session-codex-parity-v1 .session-stop-button > svg {
   block-size: 12px;
   inline-size: 12px;
+}
+
+.session-codex-parity-v1 .session-stop-button[aria-busy='true']:disabled {
+  background: color-mix(in oklab, var(--session-working-color) 8%, var(--session-canvas)) !important;
+  border: 1px solid color-mix(in oklab, var(--session-working-color) 28%, var(--session-line-soft)) !important;
+  color: var(--session-working-color) !important;
+  cursor: progress;
+  opacity: 1;
+}
+
+.session-codex-parity-v1 .session-stop-button[aria-busy='true'] > .session-command-spinner {
+  border-color: currentColor;
+  border-inline-end-color: transparent;
 }
 
 .session-codex-parity-v1 .session-command-spinner {
@@ -15492,7 +15474,6 @@
 .session-codex-parity-v1 .session-thinking-indicator,
 .session-codex-parity-v1 .session-thinking-indicator::after,
 .session-codex-parity-v1 .session-thinking-pulse,
-.session-codex-parity-v1 .session-reasoning-summary[data-status='active'] .session-reasoning-summary-icon,
 .session-codex-parity-v1 .session-streaming-markdown-placeholder,
 .session-codex-parity-v1 .session-streaming-markdown-placeholder span {
   animation: none;
@@ -15502,7 +15483,7 @@
   display: none;
 }
 
-.session-codex-parity-v1 :where(.session-reasoning-summary-icon, .session-activity-group-icon, .session-activity-item-icon, .session-plan-summary-symbol) {
+.session-codex-parity-v1 :where(.session-activity-group-icon, .session-activity-item-icon, .session-plan-summary-symbol) {
   align-items: center;
   border-radius: 999px;
   display: inline-grid;
@@ -15520,21 +15501,6 @@
 .session-codex-parity-v1 .session-plan-summary-symbol > svg {
   block-size: 17px;
   inline-size: 17px;
-}
-
-.session-codex-parity-v1 .session-reasoning-summary[data-status='active'] .session-reasoning-summary-icon {
-  aspect-ratio: 1;
-  animation: session-working-spin var(--session-working-spinner-cycle) linear infinite;
-  backface-visibility: hidden;
-  block-size: 19px;
-  color: var(--session-working-color);
-  inline-size: 19px;
-  max-block-size: 19px;
-  max-inline-size: 19px;
-  min-block-size: 19px;
-  min-inline-size: 19px;
-  transform-origin: center;
-  will-change: transform;
 }
 
 .session-codex-parity-v1 .session-activity-group[data-motion-active='true'] > .session-activity-live .session-activity-item-icon,
@@ -15692,7 +15658,6 @@
   scroll-behavior: auto;
 }
 
-.session-codex-parity-v1 .session-reasoning-summary[data-status='active'] .session-reasoning-summary-icon,
 .session-codex-parity-v1 .session-activity-group[data-active='true'] .session-activity-group-icon,
 .session-codex-parity-v1 .session-activity-group[data-active='true'] > .session-activity-live .session-activity-item-icon,
 .session-codex-parity-v1 .session-activity-group[data-active='true'] .session-activity-body li[data-motion-active='true'] > .session-activity-item-icon,
@@ -15760,7 +15725,6 @@
 @media (prefers-reduced-motion: reduce) {
   .session-codex-parity-v1
     :where(
-      .session-reasoning-summary-icon,
       .session-activity-item-icon,
       .session-plan-summary-symbol,
       .session-thinking-pulse,

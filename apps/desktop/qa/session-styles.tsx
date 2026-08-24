@@ -11,6 +11,7 @@ import { type ConversationTreeRuntimeState, type ProjectConversationGroup, Proje
 import type { NativeConversationChoice, NativePendingRequest, NativeQueuedSubmission, NativeRuntimeDetailsSnapshot, NativeSessionItemBuffer, NativeSessionState } from '../src/renderer/session/sessionTypes.js';
 import { SafeMarkdown, ThreadItemView } from '../src/renderer/session/ThreadItemView.js';
 import { ConversationTranscript } from '../src/renderer/session/ConversationTranscript.js';
+import { ConversationComposer } from '../src/renderer/session/ConversationComposer.js';
 import { PlanSummary } from '../src/renderer/session/PlanSummary.js';
 import { RuntimeDetails } from '../src/renderer/session/RuntimeDetails.js';
 import { SessionPlanProgress } from '../src/renderer/session/SessionActivity.js';
@@ -471,6 +472,105 @@ defectProcessItem.payload = {
 const defectUserItem = defectItem('user', 'userMessage', '调用第三方的 Claude 模型时，依旧没有任何缓存命中。', 'prework', [defectJsonlResource, defectImageResource]);
 const defectAnswerItem = defectItem('answer', 'agentMessage', '已修复。非图片文件保持文件卡，图片继续显示可预览的缩略图。', 'final_answer');
 
+const taskPushAttachmentKey = 'task-current:defectCurrentState:screenshot';
+const taskPushImageDataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR42mNk+M/wn4GBgYGJAQoAHgQCAfN9NQAAAABJRU5ErkJggg==';
+const taskPushImageResource: ConversationResource = {
+  id: 'task-push-image-resource',
+  projectId: 'project-zeus',
+  conversationId: 'task-push-first-frame',
+  turnId: 'provider-turn-task-push',
+  itemId: 'task-push-user',
+  kind: 'attachment',
+  presentation: 'card',
+  displayName: 'task-push.png',
+  attachmentRef: 'task-push-authoritative-ref',
+  mimeType: 'image/png',
+  previewKind: 'image',
+  iconKind: 'image',
+  taskPushAttachmentKey,
+  createdAt: '2026-08-24T06:16:19.414Z',
+  updatedAt: '2026-08-24T06:16:19.414Z',
+};
+const taskPushUserItem: NativeSessionItemBuffer = {
+  key: 'task-push-first-frame:user',
+  conversationId: 'task-push-first-frame',
+  threadId: 'thread-task-push',
+  turnId: 'pending:task-push-submission',
+  itemId: 'task-push-user',
+  type: 'userMessage',
+  status: 'dispatching',
+  phase: 'user',
+  text: '任务详情内容',
+  payload: {
+    role: 'user',
+    content: '任务详情内容',
+    delivery: 'queue',
+    taskPushLayout: {
+      kind: 'task_push',
+      blocks: [
+        {
+          contextKind: 'current',
+          taskId: 'ZEUS-0357',
+          taskCode: 'ZEUS-0357',
+          taskTitle: '任务详情内容',
+          taskType: 'defect',
+          taskTypeLabel: '缺陷',
+          fields: [{ field: 'defectCurrentState', label: '现状', text: '推送后应立即显示任务提示词和图片。', attachmentKeys: [taskPushAttachmentKey] }],
+          attachments: [{ key: taskPushAttachmentKey, field: 'defectCurrentState', name: 'task-push.png', kind: 'image', mimeType: 'image/png', size: 76 }],
+          conversationPaths: [],
+        },
+      ],
+      supplementalInfo: '',
+      supplementalAttachments: [],
+    },
+    attachments: [{ name: 'task-push.png', mime: 'image/png', size: 76, kind: 'image', source: 'picker', uploadRef: 'qa-task-push-local-preview', taskPushAttachmentKey }],
+  },
+  resources: [taskPushImageResource],
+  optimistic: true,
+  clientUserMessageId: 'client-task-push',
+  durableClientUserMessageId: 'client-task-push',
+  timelineAt: '2026-08-24T06:16:09.300Z',
+  updatedAt: '2026-08-24T06:16:09.300Z',
+};
+const taskPushReasoningItem: NativeSessionItemBuffer = {
+  ...motionItem('task-push-reasoning', 'reasoning', 'in_progress', '正在思考'),
+  key: 'task-push-first-frame:reasoning',
+  conversationId: 'task-push-first-frame',
+  threadId: 'thread-task-push',
+  turnId: 'provider-turn-task-push',
+  itemId: 'task-push-reasoning',
+  timelineAt: '2026-08-24T06:16:12.617Z',
+  updatedAt: '2026-08-24T06:16:12.617Z',
+};
+const taskPushFirstFrameState: NativeSessionState = {
+  ...createInitialSessionState(),
+  transportState: 'ready',
+  conversationState: 'native_running',
+  projectId: 'project-zeus',
+  conversationId: 'task-push-first-frame',
+  providerThreadId: 'thread-task-push',
+  items: {
+    [taskPushUserItem.key]: taskPushUserItem,
+    [taskPushReasoningItem.key]: taskPushReasoningItem,
+  },
+  itemOrder: [taskPushUserItem.key, taskPushReasoningItem.key],
+  turnsByProviderId: {
+    'provider-turn-task-push': {
+      id: 'provider-turn-task-push',
+      providerTurnId: 'provider-turn-task-push',
+      submissionId: 'task-push-submission',
+      status: 'in_progress',
+      error: null,
+      plan: null,
+      startedAt: '2026-08-24T06:16:12.617Z',
+      completedAt: null,
+      createdAt: '2026-08-24T06:16:12.617Z',
+      updatedAt: '2026-08-24T06:16:12.617Z',
+    },
+  },
+  transcriptRevision: 1,
+};
+
 const defectSessionState: NativeSessionState = {
   ...createInitialSessionState(),
   transportState: 'ready',
@@ -512,6 +612,30 @@ async function loadDefectResourcePreview(resource: ConversationResource): Promis
 }
 
 function ConversationDefectApp() {
+  const [taskPushResourceProjected, setTaskPushResourceProjected] = useState(false);
+  const projectedTaskPushState: NativeSessionState = {
+    ...taskPushFirstFrameState,
+    items: {
+      ...taskPushFirstFrameState.items,
+      [taskPushUserItem.key]: {
+        ...taskPushUserItem,
+        resources: taskPushResourceProjected ? [taskPushImageResource] : [],
+      },
+    },
+    transcriptRevision: taskPushResourceProjected ? 2 : 1,
+  };
+  useLayoutEffect(() => {
+    if (window.zeus) return;
+    Object.defineProperty(window, 'zeus', {
+      configurable: true,
+      value: {
+        getConversationResourcePreview: async () => ({ previewUrl: taskPushImageDataUrl, mimeType: 'image/png' }),
+      },
+    });
+    return () => {
+      Reflect.deleteProperty(window, 'zeus');
+    };
+  }, []);
   return (
     <main className="macos-ai-app zeus-shell session-codex-parity-v1 qa-page qa-defect-page theme-light">
       <header className="qa-heading">
@@ -520,6 +644,15 @@ function ConversationDefectApp() {
       </header>
       <section className="qa-implementation-panel qa-defect-transcript" data-testid="zeus-0323-transcript">
         <ConversationTranscript state={defectSessionState} language="zh-CN" onOpenResource={ignoreResourceOpen} onLoadResourcePreview={loadDefectResourcePreview} />
+      </section>
+      <section className="qa-implementation-panel qa-defect-transcript" data-testid="task-push-first-frame">
+        <h2>任务推送首帧</h2>
+        <p>Provider turn 已先到，仍应先显示用户任务提示词；权威资源投影到达后继续沿用本地图片预览。</p>
+        <button type="button" onClick={() => setTaskPushResourceProjected((value) => !value)}>
+          {taskPushResourceProjected ? '移除权威资源投影' : '模拟权威资源投影到达'}
+        </button>
+        <output data-testid="task-push-resource-state">{taskPushResourceProjected ? '权威资源已到达' : '仅本地提交快照'}</output>
+        <ConversationTranscript state={projectedTaskPushState} language="zh-CN" onLoadResourcePreview={loadDefectResourcePreview} />
       </section>
     </main>
   );
@@ -691,14 +824,9 @@ function MotionDiagnostics() {
     const transcript = document.querySelector<HTMLElement>("[data-testid='motion-light'] [data-testid='motion-active-flow']");
     const tailAnchor = transcript?.querySelector<HTMLElement>("[data-streaming-tail-anchor='true']") ?? null;
     const tailStyle = tailAnchor ? window.getComputedStyle(tailAnchor, '::after') : null;
-    const reasoningIcon = transcript?.querySelector<HTMLElement>('.session-reasoning-summary-icon') ?? null;
     const activityIcon = transcript?.querySelector<HTMLElement>('.session-activity-item-icon') ?? null;
-    const focusAnimationNames = [tailStyle?.animationName, reasoningIcon ? window.getComputedStyle(reasoningIcon).animationName : null, activityIcon ? window.getComputedStyle(activityIcon).animationName : null].filter(
-      (name): name is string => Boolean(name && name !== 'none'),
-    );
-    const focusAnimationDurations = [tailStyle?.animationDuration, reasoningIcon ? window.getComputedStyle(reasoningIcon).animationDuration : null, activityIcon ? window.getComputedStyle(activityIcon).animationDuration : null].filter(
-      (duration): duration is string => Boolean(duration && duration !== '0s'),
-    );
+    const focusAnimationNames = [tailStyle?.animationName, activityIcon ? window.getComputedStyle(activityIcon).animationName : null].filter((name): name is string => Boolean(name && name !== 'none'));
+    const focusAnimationDurations = [tailStyle?.animationDuration, activityIcon ? window.getComputedStyle(activityIcon).animationDuration : null].filter((duration): duration is string => Boolean(duration && duration !== '0s'));
     setSnapshot({
       viewport: `${window.innerWidth}×${window.innerHeight}`,
       reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? '开启' : '关闭',
@@ -707,7 +835,7 @@ function MotionDiagnostics() {
       tailAnchor: tailAnchor?.tagName.toLocaleLowerCase() ?? '未找到',
       tailSize: tailStyle ? `${tailStyle.inlineSize} × ${tailStyle.blockSize}` : '未找到',
       tailAnimation: tailStyle?.animationName ?? '未找到',
-      reasoningAnimation: reasoningIcon ? window.getComputedStyle(reasoningIcon).animationName : '未找到',
+      reasoningAnimation: '无可见图标',
       activityAnimation: activityIcon ? window.getComputedStyle(activityIcon).animationName : '未找到',
     });
   }, []);
@@ -750,11 +878,33 @@ function MotionApp() {
       <SendScrollPreview />
       <SteeringPreview />
       <ConversationSelectionRecoveryPreview />
+      <StopButtonPreview />
       <section className="qa-motion-theme session-codex-parity-v1 theme-light" data-testid="runtime-details-horizontal">
         <h2>运行详情横向分组</h2>
         <RuntimeDetails runtime={runtimeDetailsFixture} language="zh-CN" scope="session" />
       </section>
     </main>
+  );
+}
+
+function StopButtonPreview() {
+  const [pausing, setPausing] = useState(false);
+  return (
+    <section className="qa-motion-theme session-codex-parity-v1 theme-light" data-testid="stop-button-preview">
+      <header>
+        <strong>停止响应</strong>
+        <small>点击后进入明确的暂停中状态，不再显示灰色实心圆。</small>
+      </header>
+      <ConversationComposer
+        state={{ ...motionSessionState, busyOperation: pausing ? 'interrupt' : null }}
+        language="zh-CN"
+        onDraftChange={() => undefined}
+        onSubmit={() => undefined}
+        onInterrupt={() => setPausing(true)}
+        permissionMode="auto"
+        collaborationMode="default"
+      />
+    </section>
   );
 }
 

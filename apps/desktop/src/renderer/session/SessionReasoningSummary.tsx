@@ -1,9 +1,4 @@
 import { memo, useLayoutEffect } from 'react';
-import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
-import { CircleIcon as Circle } from '@phosphor-icons/react/dist/csr/Circle';
-import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
-import { StopCircleIcon as StopCircle } from '@phosphor-icons/react/dist/csr/StopCircle';
-import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import type { ConversationState, NativeSessionItemBuffer } from './sessionTypes.js';
 import { type SessionUiLanguage, useAdaptiveTranscriptText } from './ThreadItemView.js';
 
@@ -22,16 +17,12 @@ export const SessionReasoningSummary = memo(function SessionReasoningSummary(pro
     if (adaptiveText.revision > 0) props.onVisibleContentChange?.();
   }, [adaptiveText.revision, props.onVisibleContentChange]);
   if (!sourceText) return null;
-  const StatusIcon = reasoningStatusIcon(props.status);
   const statusLabel = reasoningStatusLabel(props.status, props.language);
 
   return (
     <p className="session-reasoning-summary" data-status={props.status} data-motion-active={props.motionActive || undefined} aria-label={`${statusLabel}：${sourceText}`}>
       <span className="session-sr-only" role="status" aria-live="polite">
         {statusLabel}
-      </span>
-      <span className="session-reasoning-summary-icon" aria-hidden="true">
-        <StatusIcon weight={props.status === 'completed' ? 'fill' : 'regular'} />
       </span>
       <span className="zeus-fidelity-text">{adaptiveText.text}</span>
     </p>
@@ -79,14 +70,6 @@ function cleanReasoningSummary(value: string): string {
     .at(-1)!;
   const bold = /^\*\*([^\n]+)\*\*$/u.exec(latest);
   return bold?.[1] ?? latest;
-}
-
-function reasoningStatusIcon(status: ReasoningSummaryStatus) {
-  if (status === 'active') return CircleNotch;
-  if (status === 'completed') return CheckCircle;
-  if (status === 'failed') return WarningCircle;
-  if (status === 'interrupted') return StopCircle;
-  return Circle;
 }
 
 function reasoningStatusLabel(status: ReasoningSummaryStatus, language: SessionUiLanguage): string {

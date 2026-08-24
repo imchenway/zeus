@@ -73,6 +73,18 @@ const sessionConnectionSymbol = (
 const emptyResponseAnnotations: ConversationResponseAnnotation[] = [];
 const liveTurnLayoutTransition = { duration: 0.22, ease: [0.22, 1, 0.36, 1] as const };
 
+function turnDetailPaging(snapshot: NativeSessionState['snapshot'], turnId: string) {
+  const process = snapshot?.v2Paging?.processByTurn[turnId];
+  const history = snapshot?.v2Paging?.historyByTurn[turnId];
+  if (!process && !history) return undefined;
+  return {
+    loading: Boolean(process?.loading || history?.loading),
+    error: process?.error ?? history?.error ?? null,
+    loaded: Boolean(process?.loaded || history?.loaded),
+    hasMore: Boolean(process?.hasMore || history?.hasMore),
+  };
+}
+
 function useStableOptionalCallback<Arguments extends unknown[], Result>(callback: ((...args: Arguments) => Result) | undefined): ((...args: Arguments) => Result) | undefined {
   const callbackRef = useRef(callback);
   callbackRef.current = callback;
@@ -114,13 +126,15 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
         .map((key) => props.state.items[key])
         .filter(
           (entry): entry is NativeSessionItemBuffer =>
-            Boolean(entry) && (!props.historyOnly || !entry.optimistic) && isVisibleTranscriptItem(entry) && isFormalPlanTranscriptItem(entry, props.state) && !isUnacceptedQueuedUserItem(entry, props.state, queuedClientUserMessageIds),
+            Boolean(entry) && (!props.historyOnly || !entry.optimistic) && isVisibleTranscriptItem(entry) && isFormalPlanTranscriptItem(entry, props.state) && !isUnacceptedQueuedUserItem(entry, queuedClientUserMessageIds),
         ),
     [props.historyOnly, props.state.activeTurnId, props.state.itemOrder, props.state.items, props.state.planImplementationRequests, queuedClientUserMessageIds],
   );
   const queuedSubmissionItems = useMemo(() => projectQueuedSubmissionItems(props.state, queuedSubmissions, persistedItems), [persistedItems, props.state.conversationId, props.state.providerThreadId, queuedSubmissions]);
   const projectedItems = useMemo(() => {
-    const durableItems = [...persistedItems, ...queuedSubmissionItems];
+    // 历史暂停 submission 与新 Provider 正文来自不同投影入口，但必须共享同一条持久时间线。
+    // 直接 append 会把数小时前的任务推送卡放到刚发送的消息之后，造成用户气泡“跳到最上面”。
+    const durableItems = [...persistedItems, ...queuedSubmissionItems].sort((left, right) => transcriptTimelineAt(left).localeCompare(transcriptTimelineAt(right)) || left.key.localeCompare(right.key));
     return props.projectPersistedPlans ? projectPersistedTurnPlans(props.state, durableItems) : durableItems;
   }, [
     persistedItems,
@@ -447,7 +461,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       const turn = props.state.turnsByProviderId[row.turnId];
       const expansionKey = turnProcessExpansionKey(row.turnId);
       if (!turn) {
-        const processPaging = props.state.snapshot?.v2Paging?.processByTurn[row.turnId];
+        const processPaging = turnDetailPaging(props.state.snapshot, row.turnId);
         return (
           <SessionTurnProcessDisclosure
             language={props.language}
@@ -472,7 +486,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       const containsLastItem = row.rows.some((child) => transcriptRowContainsItemKey(child, lastItemKeyByTurn[row.turnId]));
       const active = isActiveSessionTurn(turn);
       const v2PagingKey = turn.providerTurnId ?? turn.id;
-      const processPaging = props.state.snapshot?.v2Paging?.processByTurn[v2PagingKey];
+      const processPaging = turnDetailPaging(props.state.snapshot, v2PagingKey);
       const process = row.rows.map((child) => {
         const content = renderTranscriptRow(
           child,
@@ -525,13 +539,15 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     const closesVisibleTurn = lastItemKeyByTurn[lastRowItem.turnId] === lastRowItem.key;
     const v2PagingKey = turn?.providerTurnId ?? turn?.id ?? lastRowItem.turnId;
     const expansionKey = turnProcessExpansionKey(v2PagingKey);
-    const v2ProcessPaging = props.state.snapshot?.v2Paging?.processByTurn[v2PagingKey];
+    const v2ProcessPaging = turnDetailPaging(props.state.snapshot, v2PagingKey);
     const v2Turn = props.state.snapshot?.snapshotV2
       ? [...props.state.snapshot.snapshotV2.recentClosedTurns, ...(props.state.snapshot.snapshotV2.activeTurn ? [props.state.snapshot.snapshotV2.activeTurn] : [])].find(
           (candidate) => candidate.id === turn?.id || (turn?.providerTurnId && candidate.providerTurnId === turn.providerTurnId),
         )
       : undefined;
-    const historicalProcessAvailable = Boolean(v2Turn?.process.available || (!turn && props.state.snapshot?.snapshotV2 && isFinalAnswerItem(lastRowItem)));
+    // 入口只能来自可见过程事实。缺少 turn summary 或仅有历史视图会隐藏的 reasoning，
+    // 都不能凭最终回答臆造一个展开后为空的“查看处理过程”。
+    const historicalProcessAvailable = Boolean(v2Turn?.process.available);
     const showV2DeferredDetails = Boolean(closesVisibleTurn && !projectedTurnWorkIds.has(lastRowItem.turnId) && historicalProcessAvailable && (!turn || !isActiveSessionTurn(turn)));
     return (
       <>
@@ -1120,14 +1136,15 @@ function renderTurnArtifacts(turnId: string, props: ConversationTranscriptProps,
 
 export function projectTranscriptTurnRows(rows: readonly TranscriptRow[], activeTurnId: string | null = null, terminalTurnIds: Readonly<Record<string, 'completed' | 'interrupted' | 'failed'>> = {}): TranscriptTurnRow[] {
   const finalAnswerTurnIds = new Set(rows.flatMap((row) => (row.kind === 'item' && isFinalAnswerItem(row.item) ? [row.item.turnId] : [])));
-  const collapsibleTurnIds = new Set([...finalAnswerTurnIds, ...Object.keys(terminalTurnIds)]);
+  // 权威活动轮次优先于任何提前或误分类的 final item；运行中永远使用展开时间线，不能提前出现完成态入口。
+  const collapsibleTurnIds = new Set([...finalAnswerTurnIds, ...Object.keys(terminalTurnIds)].filter((turnId) => turnId !== activeTurnId));
   const openingUserRowKeyByTurn = new Map<string, string>();
   for (const row of rows) {
     if (row.kind !== 'item' || itemRole(row.item) !== 'user' || openingUserRowKeyByTurn.has(row.item.turnId)) continue;
     openingUserRowKeyByTurn.set(row.item.turnId, row.key);
   }
   const activeTurnOpeningUserRowKey = activeTurnId ? openingUserRowKeyByTurn.get(activeTurnId) : undefined;
-  const liveTurnRows = activeTurnId && !finalAnswerTurnIds.has(activeTurnId) ? rows.filter((row) => row.key !== activeTurnOpeningUserRowKey && transcriptRowTurnId(row) === activeTurnId && isLiveTurnTimelineRow(row)) : [];
+  const liveTurnRows = activeTurnId ? rows.filter((row) => row.key !== activeTurnOpeningUserRowKey && transcriptRowTurnId(row) === activeTurnId && isLiveTurnTimelineRow(row)) : [];
   const liveTurnRowKeys = new Set(liveTurnRows.map((row) => row.key));
   const firstLiveTurnRowKey = liveTurnRows[0]?.key;
   const workRowsByFinalTurn = new Map<string, TranscriptRow[]>();
@@ -1229,15 +1246,31 @@ export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[],
   const effectiveActiveTurnId = historyOnly ? null : activeTurnId && items.some((item) => item.turnId === activeTurnId) ? activeTurnId : latestLiveTurnId(items);
   const currentReasoningItemKey = latestCurrentReasoningItemKey(items, effectiveActiveTurnId);
   const currentActivityItemKey = latestCurrentActivityItemKey(items, effectiveActiveTurnId);
-  const activitiesByTurn = new Map<string, NativeSessionItemBuffer[]>();
-  for (const item of items) {
-    if (isSubagentCoordinationItem(item) || !isOperationalActivityItem(item)) continue;
-    const activity = activitiesByTurn.get(item.turnId) ?? [];
-    activity.push(item);
-    activitiesByTurn.set(item.turnId, activity);
-  }
-  const emittedActivityTurns = new Set<string>();
   let currentReasoningRow: TranscriptRow | null = null;
+  let pendingActivities: NativeSessionItemBuffer[] = [];
+  const flushActivities = (): void => {
+    if (pendingActivities.length === 0) return;
+    const groupedItems = pendingActivities;
+    pendingActivities = [];
+    const categories = new Set(groupedItems.map(activityCategory));
+    const category = categories.size === 1 ? activityCategory(groupedItems[0]!) : 'mixed';
+    const first = groupedItems[0]!;
+    rows.push({
+      kind: 'activity',
+      key: `activity:${first.turnId}:${first.key}`,
+      items: groupedItems,
+      category,
+      motionActive: groupedItems.some((candidate) => candidate.key === currentActivityItemKey),
+    });
+  };
+  const appendActivity = (item: NativeSessionItemBuffer): void => {
+    const previous = pendingActivities.at(-1);
+    if (previous && previous.turnId !== item.turnId) flushActivities();
+    const standalone = isStandaloneProcessActivity(item);
+    if (standalone) flushActivities();
+    pendingActivities.push(item);
+    if (standalone || pendingActivities.length >= 32 || item.status === 'failed' || item.status === 'interrupted') flushActivities();
+  };
   const timeline: Array<{ kind: 'item'; item: NativeSessionItemBuffer } | { kind: 'answered_request'; request: NativePendingRequest }> = items.map((item) => ({ kind: 'item', item }));
   for (const request of [...answeredRequests].sort((left, right) => (left.resolvedAt ?? left.createdAt).localeCompare(right.resolvedAt ?? right.createdAt))) {
     // 缺少轮次身份的旧记录不能靠时间猜测归属，也不能重新污染主会话时间线。
@@ -1249,6 +1282,7 @@ export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[],
   }
   for (const entry of timeline) {
     if (entry.kind === 'answered_request') {
+      flushActivities();
       rows.push({ kind: 'answered_request', key: `answered-request:${entry.request.id}`, request: entry.request });
       continue;
     }
@@ -1256,8 +1290,9 @@ export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[],
     // 多智能体协调事件统一进入右侧智能体面板，不在主会话重复暴露协议载荷。
     if (isSubagentCoordinationItem(item)) continue;
     if (normalizeItemType(item.type) === 'reasoning') {
-      // 活动轮次只显示最新摘要，并固定到全部过程项之后；新命令、网页搜索或技能调用到达时，
-      // 摘要不会被挤到中间，也不会为每个摘要切出新的活动组。
+      // reasoning 是执行阶段的真实边界。历史不展示全部内部摘要，但必须用它切断活动组，
+      // 否则整轮几十个阶段会被错误堆进第一组。
+      flushActivities();
       if (item.key === currentReasoningItemKey)
         currentReasoningRow = {
           kind: 'item',
@@ -1267,24 +1302,20 @@ export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[],
       continue;
     }
     if (!isOperationalActivityItem(item)) {
+      flushActivities();
       rows.push({ kind: 'item', key: transcriptItemRenderKey(item), item });
       continue;
     }
-    if (emittedActivityTurns.has(item.turnId)) continue;
-    const groupedItems = activitiesByTurn.get(item.turnId) ?? [item];
-    const categories = new Set(groupedItems.map(activityCategory));
-    const category = categories.size === 1 ? activityCategory(groupedItems[0]!) : 'mixed';
-    rows.push({
-      kind: 'activity',
-      key: `activity:${item.turnId}`,
-      items: groupedItems,
-      category,
-      motionActive: groupedItems.some((candidate) => candidate.key === currentActivityItemKey),
-    });
-    emittedActivityTurns.add(item.turnId);
+    appendActivity(item);
   }
+  flushActivities();
   if (currentReasoningRow) rows.push(currentReasoningRow);
   return rows;
+}
+
+function isStandaloneProcessActivity(item: NativeSessionItemBuffer): boolean {
+  const type = normalizeItemType(item.type);
+  return type === 'contextcompaction' || type === 'providerevent';
 }
 
 function latestCurrentReasoningItemKey(items: readonly NativeSessionItemBuffer[], activeTurnId: string | null): string | null {
@@ -1386,11 +1417,12 @@ function transcriptTimelineAt(item: NativeSessionItemBuffer): string {
   return item.timelineAt ?? item.updatedAt ?? '';
 }
 
-function isUnacceptedQueuedUserItem(item: NativeSessionItemBuffer, state: NativeSessionState, queuedClientUserMessageIds: ReadonlySet<string>): boolean {
+function isUnacceptedQueuedUserItem(item: NativeSessionItemBuffer, queuedClientUserMessageIds: ReadonlySet<string>): boolean {
   if (!item.optimistic || itemRole(item) !== 'user' || item.payload.delivery !== 'queue') return false;
   const clientUserMessageId = item.clientUserMessageId ?? item.durableClientUserMessageId;
-  if (clientUserMessageId && queuedClientUserMessageIds.has(clientUserMessageId)) return true;
-  return item.turnId.startsWith('pending:') && Boolean(state.activeTurnId && item.turnId !== state.activeTurnId);
+  // Provider 的 active turn 会早于 userMessage/模型历史投影到达。此时不能因为 pending turn id
+  // 与 Provider turn id 不同就隐藏本地气泡；只有队列已经用同一客户端身份画出替身时才去重。
+  return Boolean(clientUserMessageId && queuedClientUserMessageIds.has(clientUserMessageId));
 }
 
 function visibleQueuedSubmissions(queue: NativeQueueSnapshot | null) {

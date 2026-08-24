@@ -534,6 +534,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
   let preparingForShutdown = false;
   let closePromise: Promise<void> | null = null;
   const pendingEventDeliveryCounts = new WeakMap<CodexAppServerProcess, number>();
+  const priorityReadCounts = new WeakMap<CodexAppServerProcess, number>();
 
   function currentGenerationId(): string {
     if (state.type === 'idle' || state.type === 'closed') throw managerError('ZEUS_CODEX_NOT_READY', 'Codex app-server is not ready.');
@@ -707,11 +708,27 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     if (generationId !== currentGenerationId()) return Promise.reject(managerError('ZEUS_CODEX_STALE_GENERATION', 'Codex app-server generation is stale.'));
     const id = `${generationId}:${++requestSequence}`;
     return new Promise((resolve, reject) => {
+      const finishPriorityRead = method === 'turn/interrupt' ? beginPriorityRead(generationId) : () => undefined;
       const timeout = setTimeout(() => {
-        pendingRequests.delete(pendingKey(generationId, id));
-        reject(managerError('ZEUS_CODEX_RPC_TIMEOUT', `Codex app-server request timed out: ${method}`));
+        const key = pendingKey(generationId, id);
+        const pending = pendingRequests.get(key);
+        pendingRequests.delete(key);
+        if (pending) pending.reject(managerError('ZEUS_CODEX_RPC_TIMEOUT', `Codex app-server request timed out: ${method}`));
       }, requestTimeoutMs);
-      pendingRequests.set(pendingKey(generationId, id), { generationId, method, traceIdentity: input.traceIdentity ?? null, resolve, reject, timeout });
+      pendingRequests.set(pendingKey(generationId, id), {
+        generationId,
+        method,
+        traceIdentity: input.traceIdentity ?? null,
+        resolve(value) {
+          finishPriorityRead();
+          resolve(value);
+        },
+        reject(error) {
+          finishPriorityRead();
+          reject(error);
+        },
+        timeout,
+      });
       try {
         write({ id, method, params }, (error) => {
           if (!error) {
@@ -727,8 +744,10 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
         });
       } catch (error) {
         clearTimeout(timeout);
-        pendingRequests.delete(pendingKey(generationId, id));
-        reject(asError(error));
+        const key = pendingKey(generationId, id);
+        const pending = pendingRequests.get(key);
+        pendingRequests.delete(key);
+        if (pending) pending.reject(asError(error));
       }
     });
   }
@@ -875,7 +894,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     const source = child;
     if (!source) return;
     pendingEventDeliveryCounts.set(source, (pendingEventDeliveryCounts.get(source) ?? 0) + 1);
-    source.stdout.pause?.();
+    if ((priorityReadCounts.get(source) ?? 0) === 0) source.stdout.pause?.();
     void Promise.allSettled(deliveries).then(() => {
       const remaining = Math.max(0, (pendingEventDeliveryCounts.get(source) ?? 1) - 1);
       if (remaining > 0) {
@@ -887,6 +906,32 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       if (state.type !== 'idle' && state.generationId !== generationId) return;
       source.stdout.resume?.();
     });
+  }
+
+  function beginPriorityRead(generationId: string): () => void {
+    const source = child;
+    if (!source) return () => undefined;
+    priorityReadCounts.set(source, (priorityReadCounts.get(source) ?? 0) + 1);
+    source.stdout.resume?.();
+    let finished = false;
+    return () => {
+      if (finished) return;
+      finished = true;
+      // 中断响应和终态通知通常位于相邻帧；保留短暂全双工窗口，让二者一起越过
+      // 过程投影背压。否则 RPC 会已写入却超时，Provider 继续运行。
+      const timer = setTimeout(() => {
+        const remaining = Math.max(0, (priorityReadCounts.get(source) ?? 1) - 1);
+        if (remaining > 0) {
+          priorityReadCounts.set(source, remaining);
+          return;
+        }
+        priorityReadCounts.delete(source);
+        if (child !== source || state.type === 'closed') return;
+        if (state.type !== 'idle' && state.generationId !== generationId) return;
+        if ((pendingEventDeliveryCounts.get(source) ?? 0) > 0) source.stdout.pause?.();
+      }, 2_000);
+      timer.unref?.();
+    };
   }
 
   function observeTurnStarted(generationId: string, params: unknown): void {

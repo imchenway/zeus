@@ -110,6 +110,19 @@ export function registerConversationSnapshotV2Api(options: ConversationSnapshotV
     }
   });
 
+  server.get('/api/projects/:projectId/conversations/:conversationId/turns/:turnId/model-history', async (request: FastifyRequest<{ Params: TurnParams; Querystring: PageQuery }>, reply) => {
+    if (!hasConversationAccess(options, request.params)) return conversationNotFound(reply);
+    markV2Response(reply);
+    try {
+      return repository.listTurnModelHistoryPage({
+        ...pageInput(request.params.conversationId, request.query),
+        turnId: request.params.turnId,
+      });
+    } catch (error) {
+      return sendSnapshotV2Error(reply, error);
+    }
+  });
+
   server.get(
     '/api/projects/:projectId/conversations/:conversationId/turns/:turnId/process',
     async (
