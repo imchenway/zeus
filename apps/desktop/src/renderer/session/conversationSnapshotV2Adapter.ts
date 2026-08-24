@@ -285,6 +285,7 @@ function historyItems(items: NativeConversationModelHistoryV2Item[], providerTur
         text,
         payload: {
           content,
+          ...(persistedPlan ? { formalPlan: item.formalPlan } : {}),
           ...historicalUserPayload,
           ...(item.submissionId ? { submissionId: item.submissionId } : {}),
           ...(item.clientUserMessageId

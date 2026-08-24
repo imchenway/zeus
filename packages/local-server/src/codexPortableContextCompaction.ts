@@ -51,6 +51,7 @@ export async function runCodexPortableContextCompaction(input: {
     requestIdentity: threadRequest,
     providerGenerationId: input.providerGenerationId,
     invoke: (traceIdentity) => input.manager.startThread({ ...threadRequest, traceIdentity }),
+    recoverAccepted: (nativeSessionId) => input.manager.readThread({ threadId: nativeSessionId }),
     nativeSessionId: (result) => result.id,
     acceptedProviderGenerationId: (result) => input.manager.generationForThread(result.id),
   });

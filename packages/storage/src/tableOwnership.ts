@@ -111,6 +111,7 @@ const ownershipGroups = [
       'conversation_provider_sync_checkpoints',
       'conversation_items',
       'conversation_messages',
+      'conversation_message_provider_aliases',
     ],
   },
   {

@@ -525,6 +525,8 @@ const selectConversationFields = `id, project_id, task_id, session_id, title, su
   agent_kind, agent_transport, model_source_id, model_id, native_session_id, native_session_path, capability_snapshot_id`;
 const selectConversationMessageFields = `id, conversation_id, role, content, source, metadata_json, created_at,
   provider_thread_id, provider_turn_id, provider_item_id, client_message_id`;
+const selectAliasedConversationMessageFields = `message.id, message.conversation_id, message.role, message.content, message.source, message.metadata_json, message.created_at,
+  message.provider_thread_id, message.provider_turn_id, message.provider_item_id, message.client_message_id`;
 
 function latestIso(...values: Array<string | null | undefined>): string {
   return values.filter((value): value is string => Boolean(value)).sort((left, right) => right.localeCompare(left))[0] ?? '';
@@ -870,6 +872,46 @@ export class ConversationRepository {
       providerItemId: input.providerItemId ?? null,
       clientMessageId: input.clientMessageId ?? null,
     };
+    if (record.providerItemId) {
+      const aliased = this.db.get<DbConversationMessageRow>(
+        `SELECT ${selectAliasedConversationMessageFields}
+           FROM conversation_message_provider_aliases alias
+           JOIN conversation_messages message ON message.id = alias.message_id
+          WHERE alias.conversation_id = ? AND alias.provider_item_id = ?`,
+        [record.conversationId, record.providerItemId],
+      );
+      if (aliased) return this.updateConfirmedUserMessageAlias(record, mapConversationMessageRow(aliased));
+
+      const legacyExact = this.db.get<DbConversationMessageRow>(`SELECT ${selectConversationMessageFields} FROM conversation_messages WHERE conversation_id = ? AND provider_item_id = ?`, [record.conversationId, record.providerItemId]);
+      if (legacyExact) {
+        const exact = mapConversationMessageRow(legacyExact);
+        this.insertProviderMessageAlias(record, exact.id);
+        return this.updateConfirmedUserMessageAlias(record, exact);
+      }
+    }
+    if (record.role === 'user' && record.clientMessageId) {
+      const existing = this.db.get<DbConversationMessageRow>(
+        `SELECT ${selectConversationMessageFields} FROM conversation_messages
+         WHERE conversation_id = ? AND role = 'user' AND client_message_id = ?
+         ORDER BY CASE WHEN source = 'zeus_local_submission' THEN 0 ELSE 1 END, created_at ASC, id ASC LIMIT 1`,
+        [record.conversationId, record.clientMessageId],
+      );
+      if (existing) {
+        const current = mapConversationMessageRow(existing);
+        // 本地接纳投影先出现，Provider 回显到达后在同一行补齐原生身份；旧回放不得把已确认身份降级。
+        if (!record.providerItemId && current.providerItemId) return current;
+        if (record.providerItemId) this.insertProviderMessageAlias(record, current.id);
+        this.db.execute(
+          `UPDATE conversation_messages SET content = ?, source = ?, metadata_json = ?,
+             provider_thread_id = COALESCE(?, provider_thread_id), provider_turn_id = COALESCE(?, provider_turn_id),
+             provider_item_id = COALESCE(provider_item_id, ?)
+           WHERE id = ?`,
+          [record.content, record.source, record.metadataJson, record.providerThreadId, record.providerTurnId, record.providerItemId, current.id],
+        );
+        this.advanceConversationUpdatedAt(record.conversationId, record.createdAt);
+        return this.db.select<DbConversationMessageRow>(`SELECT ${selectConversationMessageFields} FROM conversation_messages WHERE id = ?`, [current.id]).map(mapConversationMessageRow)[0]!;
+      }
+    }
     const params = [record.id, record.conversationId, record.role, record.content, record.source, record.metadataJson, record.createdAt, record.providerThreadId, record.providerTurnId, record.providerItemId, record.clientMessageId];
     if (record.providerItemId) {
       this.db.execute(
@@ -888,11 +930,45 @@ export class ConversationRepository {
         params,
       );
     }
-    this.db.execute(`UPDATE conversations SET updated_at = ? WHERE id = ?`, [record.createdAt, record.conversationId]);
+    if (record.providerItemId) this.insertProviderMessageAlias(record, record.id);
+    this.advanceConversationUpdatedAt(record.conversationId, record.createdAt);
     if (!record.providerItemId) return record;
     return this.db
       .select<DbConversationMessageRow>(`SELECT ${selectConversationMessageFields} FROM conversation_messages WHERE conversation_id = ? AND provider_item_id = ?`, [record.conversationId, record.providerItemId])
       .map(mapConversationMessageRow)[0]!;
+  }
+
+  private updateConfirmedUserMessageAlias(record: ZeusConversationMessageRecord, current: ZeusConversationMessageRecord): ZeusConversationMessageRecord {
+    if (record.role !== 'user' || current.role !== 'user' || (record.clientMessageId && current.clientMessageId && record.clientMessageId !== current.clientMessageId)) return current;
+    this.db.execute(
+      `UPDATE conversation_messages
+          SET content = ?, source = ?, metadata_json = ?,
+              provider_thread_id = COALESCE(provider_thread_id, ?),
+              provider_turn_id = COALESCE(provider_turn_id, ?),
+              client_message_id = COALESCE(client_message_id, ?)
+        WHERE id = ?`,
+      [record.content, record.source, record.metadataJson, record.providerThreadId, record.providerTurnId, record.clientMessageId, current.id],
+    );
+    this.advanceConversationUpdatedAt(record.conversationId, record.createdAt);
+    return this.db.select<DbConversationMessageRow>(`SELECT ${selectConversationMessageFields} FROM conversation_messages WHERE id = ?`, [current.id]).map(mapConversationMessageRow)[0]!;
+  }
+
+  private insertProviderMessageAlias(record: ZeusConversationMessageRecord, messageId: string): void {
+    if (!record.providerItemId) return;
+    this.db.execute(
+      `INSERT INTO conversation_message_provider_aliases
+         (conversation_id, message_id, provider_thread_id, provider_turn_id, provider_item_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(conversation_id, provider_item_id) DO UPDATE SET
+         provider_thread_id = COALESCE(excluded.provider_thread_id, conversation_message_provider_aliases.provider_thread_id),
+         provider_turn_id = COALESCE(excluded.provider_turn_id, conversation_message_provider_aliases.provider_turn_id),
+         updated_at = CASE WHEN conversation_message_provider_aliases.updated_at < excluded.updated_at THEN excluded.updated_at ELSE conversation_message_provider_aliases.updated_at END`,
+      [record.conversationId, messageId, record.providerThreadId, record.providerTurnId, record.providerItemId, record.createdAt, record.createdAt],
+    );
+  }
+
+  private advanceConversationUpdatedAt(conversationId: string, occurredAt: string): void {
+    this.db.execute(`UPDATE conversations SET updated_at = CASE WHEN updated_at < ? THEN ? ELSE updated_at END WHERE id = ?`, [occurredAt, occurredAt, conversationId]);
   }
 
   bindProvider(conversationId: string, input: BindConversationProviderInput): ZeusConversationWithMessagesRecord {

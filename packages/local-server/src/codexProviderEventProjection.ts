@@ -1321,12 +1321,14 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
   // Plan 终态会把会话从 active 收敛为 idle。先发布耐久的计划确认请求，
   // 避免 Renderer 收到 turn completed 后释放实时连接，错过随后才到的确认动作。
   if (createdPlanImplementationRequest) {
+    const formalPlanItem = options.providerItems.getById(createdPlanImplementationRequest.planItemId);
     options.broadcast('conversation.plan_implementation_request.changed', {
       conversationId: createdPlanImplementationRequest.conversationId,
       requestId: createdPlanImplementationRequest.id,
       status: createdPlanImplementationRequest.status,
       turnId: createdPlanImplementationRequest.turnId,
       planItemId: createdPlanImplementationRequest.planItemId,
+      ...(formalPlanItem?.providerItemId ? { providerPlanItemId: formalPlanItem.providerItemId } : {}),
     });
   }
   if (broadcast) {

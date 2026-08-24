@@ -2322,6 +2322,21 @@ function migrateCodexNativeConversationSchema(db: ZeusDatabase): void {
     }
   }
   db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_messages_provider_item ON conversation_messages(conversation_id, provider_item_id) WHERE provider_item_id IS NOT NULL`);
+  db.execute(`
+    CREATE TABLE IF NOT EXISTS conversation_message_provider_aliases (
+      conversation_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      provider_thread_id TEXT,
+      provider_turn_id TEXT,
+      provider_item_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(conversation_id, provider_item_id)
+    )
+  `);
+  db.execute(`CREATE INDEX IF NOT EXISTS idx_conversation_message_provider_alias_message ON conversation_message_provider_aliases(message_id, created_at)`);
+  // 禁止在冷启动迁移中全量扫描历史消息。旧 Provider item 首次命中时由 ConversationRepository
+  // 惰性登记别名；新消息在投影事务内同步登记，因此升级成本与历史库体积无关。
 
   recordSchemaMigration(db, {
     migrationId: '20260713_0002_codex_native_conversation',
@@ -2347,6 +2362,11 @@ function migrateCodexNativeConversationSchema(db: ZeusDatabase): void {
     migrationId: '20260722_0007_conversation_completion_unread',
     description: '增加会话成功完成未读状态',
     checksumSource: 'conversations:completion_unread:successful_turn_completion,acknowledgement:v1',
+  });
+  recordSchemaMigration(db, {
+    migrationId: '20260824_0001_conversation_message_provider_aliases',
+    description: '增加用户逻辑消息与多个 Provider item 的非破坏别名映射',
+    checksumSource: 'conversation_message_provider_aliases:conversation_id,message_id,provider_thread_id,provider_turn_id,provider_item_id,created_at,updated_at:v1',
   });
   const attentionMigrationId = '20260812_0001_conversation_attention_unread';
   if (!db.get<{ migration_id: string }>(`SELECT migration_id FROM schema_migrations WHERE migration_id = ?`, [attentionMigrationId])) {

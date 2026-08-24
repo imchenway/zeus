@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { commandEnvelopeSchemaGeneration, parseCommandEnvelope, type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
-import { currentDatabasePerformanceTraceId, type CommandDeliveryRepository, type ZeusDatabase } from '@zeus/storage';
+import { currentDatabasePerformanceTraceId, type CommandDeliveryReceiptRecord, type CommandDeliveryRepository, type ZeusDatabase } from '@zeus/storage';
 
 export type CodexProviderCommandOperation = 'thread_start' | 'thread_archive' | 'thread_unarchive' | 'turn_start' | 'turn_steer' | 'turn_interrupt' | 'goal_set' | 'goal_clear' | 'server_request_response';
 
@@ -22,6 +22,11 @@ interface ExecuteCodexProviderCommandBase<T> {
 
 export interface ExecuteCodexSessionCommandInput<T> extends ExecuteCodexProviderCommandBase<T> {
   nativeSessionId(result: T): string;
+  /**
+   * 子命令已经被 Provider 接纳、但父业务投影尚未来得及提交时，只允许按回执中的真实 session 身份做只读恢复。
+   * 不提供恢复器的调用仍保持 fail-closed，绝不重新写出。
+   */
+  recoverAccepted?(nativeSessionId: string, receipt: CommandDeliveryReceiptRecord): Promise<T>;
 }
 
 export interface ExecuteCodexTurnCommandInput<T> extends ExecuteCodexProviderCommandBase<T> {
@@ -46,6 +51,11 @@ export class CodexProviderCommandApplicationService {
 
   async executeSession<T>(input: ExecuteCodexSessionCommandInput<T>): Promise<T> {
     const attempt = this.prepare(input, 'provider_session');
+    if (attempt.state === 'accepted_replay') {
+      const nativeSessionId = requiredIdentity(attempt.receipt.nativeSessionId, 'nativeSessionId');
+      if (!input.recoverAccepted) throw commandError('ZEUS_CODEX_PROVIDER_ACCEPTED_RECOVERY_REQUIRED', 'Codex Provider 子命令已接纳，但调用方没有提供只读恢复路径。');
+      return input.recoverAccepted(nativeSessionId, attempt.receipt);
+    }
     let writeStarted = false;
     try {
       this.commandDeliveries.markProviderWriteStarted({ outboxId: attempt.outboxId, occurredAt: this.now() });
@@ -75,6 +85,7 @@ export class CodexProviderCommandApplicationService {
 
   async executeTurn<T>(input: ExecuteCodexTurnCommandInput<T>): Promise<T> {
     const attempt = this.prepare(input, 'provider_turn');
+    if (attempt.state === 'accepted_replay') throw commandError('ZEUS_CODEX_PROVIDER_ACCEPTED_RECOVERY_REQUIRED', 'Codex Provider turn 已接纳，必须通过 turn 对账恢复，禁止重放。');
     let writeStarted = false;
     try {
       this.commandDeliveries.markProviderWriteStarted({ outboxId: attempt.outboxId, occurredAt: this.now() });
@@ -103,7 +114,10 @@ export class CodexProviderCommandApplicationService {
     }
   }
 
-  private prepare(input: ExecuteCodexProviderCommandBase<unknown>, destinationKind: 'provider_session' | 'provider_turn'): { outboxId: string; traceIdentity: string | null } {
+  private prepare(
+    input: ExecuteCodexProviderCommandBase<unknown>,
+    destinationKind: 'provider_session' | 'provider_turn',
+  ): { state: 'prepared'; outboxId: string; traceIdentity: string | null } | { state: 'accepted_replay'; receipt: CommandDeliveryReceiptRecord } {
     const requestSha256 = sha256(canonicalJson(input.requestIdentity));
     const traceIdentity = input.traceIdentity === undefined ? currentDatabasePerformanceTraceId() : input.traceIdentity;
     const commandId = stableCommandId(input.operation, input.scope.kind, input.scope.id, input.commandKey);
@@ -121,15 +135,22 @@ export class CodexProviderCommandApplicationService {
     };
     const existing = this.commandDeliveries.get(commandId);
     const envelope = existing ? parseStoredEnvelope(existing.inbox.envelopeJson, freshEnvelope) : freshEnvelope;
-    const prepared = this.commandDeliveries.acceptAndPrepare({
-      envelope,
-      requestSha256,
-      destinationKind,
-      destinationId: destinationKind === 'provider_session' ? 'codex:session' : 'codex:turn',
-      resourceId: input.resourceId,
-      occurredAt: this.now(),
-    });
-    return { outboxId: prepared.outbox.id, traceIdentity: envelope.traceIdentity ?? null };
+    try {
+      const prepared = this.commandDeliveries.acceptAndPrepare({
+        envelope,
+        requestSha256,
+        destinationKind,
+        destinationId: destinationKind === 'provider_session' ? 'codex:session' : 'codex:turn',
+        resourceId: input.resourceId,
+        occurredAt: this.now(),
+      });
+      return { state: 'prepared', outboxId: prepared.outbox.id, traceIdentity: envelope.traceIdentity ?? null };
+    } catch (error) {
+      if (readErrorCode(error) !== 'ZEUS_COMMAND_DELIVERY_REPLAY_BLOCKED') throw error;
+      const latest = this.commandDeliveries.get(commandId)?.attempts.at(-1);
+      if (latest?.outcome !== 'accepted' || !latest.receipt || destinationKind !== 'provider_session') throw error;
+      return { state: 'accepted_replay', receipt: latest.receipt };
+    }
   }
 
   private recordFailure(outboxId: string, traceIdentity: string | null, input: ExecuteCodexProviderCommandBase<unknown>, error: unknown, writeStarted: boolean): void {

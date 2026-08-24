@@ -45,7 +45,12 @@ interface RouteResponse<T = unknown> {
 
 export interface ConversationDispatchCommandRouteOperations {
   changeSet(input: { params: TurnParams; action: 'undo' | 'reapply'; changeSetId: string; expectedState: 'applied' | 'undone'; operationIdentity: string }): Promise<unknown>;
-  message(input: { params: ConversationParams; body: Record<string, unknown>; operationIdentity: string }): Promise<RouteResponse>;
+  message(input: {
+    params: ConversationParams;
+    body: Record<string, unknown>;
+    operationIdentity: string;
+    providerWriteLifecycle: { markPrepared(resourceId: string): Promise<void>; markRpcStarted(resourceId: string): void };
+  }): Promise<RouteResponse>;
   sideChat(input: { params: ConversationParams; selectedText: string; question: string; operationIdentity: string }): Promise<unknown>;
   queueUpdate(input: { params: SubmissionParams; content: string }): unknown;
   queueRetry(input: { params: SubmissionParams }): unknown;
@@ -111,7 +116,17 @@ export function registerConversationDispatchCommandRoutes(options: {
         destinationId: 'conversation-message-dispatch',
         resourceId: request.params.conversationId,
         externalOperationId: `conversation-message:${request.params.conversationId}:${idempotencyKey}`,
-        invoke: () => operations.message({ params: request.params, body: parsed.input, operationIdentity: parsed.operationIdentity }),
+        manualExternalWriteStart: true,
+        invoke: (markExternalWriteStarted) =>
+          operations.message({
+            params: request.params,
+            body: parsed.input,
+            operationIdentity: parsed.operationIdentity,
+            providerWriteLifecycle: {
+              markPrepared: async () => undefined,
+              markRpcStarted: () => markExternalWriteStarted(),
+            },
+          }),
         isExplicitRejection: isExplicitRouteRejection,
       });
       return reply.code(executed.result.statusCode).send(executed.result.body);

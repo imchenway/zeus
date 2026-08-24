@@ -112,8 +112,11 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     () =>
       props.state.itemOrder
         .map((key) => props.state.items[key])
-        .filter((entry): entry is NativeSessionItemBuffer => Boolean(entry) && (!props.historyOnly || !entry.optimistic) && isVisibleTranscriptItem(entry) && !isUnacceptedQueuedUserItem(entry, props.state, queuedClientUserMessageIds)),
-    [props.historyOnly, props.state.activeTurnId, props.state.itemOrder, props.state.items, queuedClientUserMessageIds],
+        .filter(
+          (entry): entry is NativeSessionItemBuffer =>
+            Boolean(entry) && (!props.historyOnly || !entry.optimistic) && isVisibleTranscriptItem(entry) && isFormalPlanTranscriptItem(entry, props.state) && !isUnacceptedQueuedUserItem(entry, props.state, queuedClientUserMessageIds),
+        ),
+    [props.historyOnly, props.state.activeTurnId, props.state.itemOrder, props.state.items, props.state.planImplementationRequests, queuedClientUserMessageIds],
   );
   const queuedSubmissionItems = useMemo(() => projectQueuedSubmissionItems(props.state, queuedSubmissions, persistedItems), [persistedItems, props.state.conversationId, props.state.providerThreadId, queuedSubmissions]);
   const projectedItems = useMemo(() => {
@@ -1334,20 +1337,19 @@ export function isVisibleTranscriptItem(item: NativeSessionItemBuffer): boolean 
   return transcriptItemText(item).trim().length > 0;
 }
 
+function isFormalPlanTranscriptItem(item: NativeSessionItemBuffer, state: NativeSessionState): boolean {
+  if (normalizeItemType(item.type) !== 'plan') return true;
+  if (item.payload.formalPlan === true) return true;
+  return state.planImplementationRequests.some((request) => request.planItemId === item.localItemId || request.planItemId === item.itemId || request.planItemId === item.providerItemId);
+}
+
 /** V2 把 PLAN 持久化在轮次快照而不是模型正文中；历史视图必须把它还原为该轮的正式产物。 */
 function projectPersistedTurnPlans(state: NativeSessionState, items: readonly NativeSessionItemBuffer[]): NativeSessionItemBuffer[] {
   const turnsWithVisiblePlan = new Set(items.filter((item) => normalizeItemType(item.type) === 'plan').map((item) => item.turnId));
   const requestByTurn = new Map(state.planImplementationRequests.map((request) => [request.turnId, request]));
-  const formalPlanTurnIds = new Set<string>();
-  const snapshotTurns = state.snapshot?.snapshotV2 ? [...state.snapshot.snapshotV2.recentClosedTurns, ...(state.snapshot.snapshotV2.activeTurn ? [state.snapshot.snapshotV2.activeTurn] : [])] : [];
-  for (const snapshotTurn of snapshotTurns) {
-    if (!snapshotTurn.hasPlan) continue;
-    formalPlanTurnIds.add(snapshotTurn.id);
-    if (snapshotTurn.providerTurnId) formalPlanTurnIds.add(snapshotTurn.providerTurnId);
-  }
   const planItems = Object.values(state.turnsByProviderId).flatMap((turn) => {
     const turnId = turn.providerTurnId ?? turn.id;
-    const formalPlan = formalPlanTurnIds.has(turn.id) || formalPlanTurnIds.has(turnId) || requestByTurn.has(turn.id) || requestByTurn.has(turnId);
+    const formalPlan = requestByTurn.has(turn.id) || requestByTurn.has(turnId);
     if (!turn.plan || !formalPlan || turnsWithVisiblePlan.has(turnId)) return [];
     const request = requestByTurn.get(turnId) ?? requestByTurn.get(turn.id);
     const itemId = request?.planItemId || `${turn.id}:plan`;
@@ -1368,7 +1370,7 @@ function projectPersistedTurnPlans(state: NativeSessionState, items: readonly Na
         status: state.terminalTurnIds[turnId] ? 'completed' : turn.status,
         phase: 'final_answer',
         text,
-        payload: { phase: 'final_answer', plan: turn.plan },
+        payload: { phase: 'final_answer', formalPlan: true, plan: turn.plan },
         resources: [],
         optimistic: false,
         timelineAt: updatedAt,
@@ -1413,7 +1415,8 @@ function projectQueuedSubmissionItems(state: NativeSessionState, submissions: Re
     if (visibleSubmissionIds.has(submission.id) || visibleSubmissionIds.has(`queued-submission:${submission.id}`)) return [];
     if (submission.clientUserMessageId && visibleClientMessageIds.has(submission.clientUserMessageId)) return [];
     const text = submission.composerDraft?.trim() || submission.content.trim();
-    if (!text) return [];
+    const hasVisibleResources = Boolean(submission.attachments?.length || submission.browserComments?.length || submission.conversationContext);
+    if (!text && !hasVisibleResources) return [];
     const timestamp = submission.createdAt ?? submission.updatedAt ?? '';
     const deliveryError = submission.error
       ? {
@@ -1440,6 +1443,9 @@ function projectQueuedSubmissionItems(state: NativeSessionState, submissions: Re
           content: text,
           delivery: submission.delivery ?? 'queue',
           pausedReason: submission.pausedReason,
+          ...(submission.attachments?.length ? { attachments: submission.attachments } : {}),
+          ...(submission.browserComments?.length ? { browserComments: submission.browserComments } : {}),
+          ...(submission.conversationContext ? { conversationContext: submission.conversationContext } : {}),
           ...(deliveryError ? { deliveryError } : {}),
         },
         resources: [],

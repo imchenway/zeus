@@ -223,7 +223,6 @@ export function createConversationApplicationOperations(dependencies: Conversati
     taskWorkspaces,
     tasks,
     toGraphConversationHistoryItem,
-    transitionTaskStatus,
     trustedConversationAttachmentRoots,
   } = dependencies;
   async function archiveNativeConversation(conversation: ZeusConversationRecord): Promise<void> {
@@ -392,7 +391,12 @@ export function createConversationApplicationOperations(dependencies: Conversati
     return conversation;
   }
 
-  async function executeConversationDispatchMessage(input: { params: { projectId: string; conversationId: string }; body: Record<string, unknown>; operationIdentity: string }) {
+  async function executeConversationDispatchMessage(input: {
+    params: { projectId: string; conversationId: string };
+    body: Record<string, unknown>;
+    operationIdentity: string;
+    providerWriteLifecycle: { markPrepared(resourceId: string): Promise<void>; markRpcStarted(resourceId: string): void };
+  }) {
     const project = projects.getById(input.params.projectId);
     if (!project) throw Object.assign(nativeApiError('ZEUS_PROJECT_NOT_FOUND', 'Project not found'), { statusCode: 404 });
     const conversation = conversations.getById(input.params.conversationId);
@@ -414,10 +418,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     if (!content && !hasNativeResourceInput) throw Object.assign(nativeApiError('ZEUS_INVALID_CONVERSATION_MESSAGE', 'Conversation message content, attachments, or browser comments are required'), { statusCode: 400 });
     if (conversation.transportKind === 'codex_native') {
       const body = input.body as CreateConversationMessageBody;
-      const accepted = await acceptNativeConversationMessage(conversation, content, body, idempotencyKey, input.operationIdentity, {
-        markPrepared: async () => undefined,
-        markRpcStarted: () => undefined,
-      });
+      const accepted = await acceptNativeConversationMessage(conversation, content, body, idempotencyKey, input.operationIdentity, input.providerWriteLifecycle);
       return { statusCode: 202, body: accepted };
     }
 
@@ -454,6 +455,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     const refreshedLegacyContext: WritableNonCodexLegacyConversationContext = { ...legacyContext, conversation: conversationAfterUserMessage };
     if (liveResolution.type === 'writable') {
       try {
+        input.providerWriteLifecycle.markRpcStarted(conversation.id);
         runtimeSession = aiRuntimeManager.inputSession(liveResolution.session.id, `${content}\n`);
         appendAuditLog({
           actorType: 'local_api',
@@ -468,6 +470,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       }
     }
     if (!runtimeSession && !runtimeError) {
+      input.providerWriteLifecycle.markRpcStarted(conversation.id);
       const reconnectResult = await reconnectNonCodexLegacyConversationRuntime(project, refreshedLegacyContext, conversation.sessionId ?? 'missing-runtime-session');
       if ('runtimeSession' in reconnectResult) runtimeSession = reconnectResult.runtimeSession;
       else runtimeError = { message: boundedConversationDispatchError(reconnectResult.runtimeError.message) };
@@ -744,6 +747,9 @@ export function createConversationApplicationOperations(dependencies: Conversati
     const effectiveModel = selectedModel ?? conversation.modelId ?? conversation.providerModel;
     if (!effectiveModel) throw nativeApiError('ZEUS_MODEL_UNAVAILABLE', '当前会话没有可冻结的目标模型。');
     const effectiveModelSourceId = selectedModelSourceId ?? (selectedAgentKind === 'codex' ? 'codex' : conversation.modelSourceId);
+    if (delivery === 'steer_now' && selectedAgentKind === 'pi' && (attachments.length > 0 || browserComments.length > 0 || Boolean(browserCommentContent) || Boolean(conversationContext))) {
+      throw nativeApiError('ZEUS_PI_STEER_RESOURCES_UNSUPPORTED', 'Pi 当前执行轮次的插话只支持纯文本；附件、浏览器批注与结构化上下文请进入下一轮队列。');
+    }
     const executionRoot = resolveNativeConversationExecutionRoot(conversation) ?? project.localPath;
     const resolvedExecutionRoute = await resolveConversationExecutionRoute({
       agentKind: selectedAgentKind,
@@ -801,6 +807,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
             ...(permissionMode ? { permissionMode } : {}),
             idempotencyKey,
             clientUserMessageId,
+            attachments,
+            browserComments,
+            ...(browserCommentContent ? { browserCommentContent } : {}),
+            ...(conversationContext ? { conversationContext } : {}),
             holdDispatch: false,
             ...(segmentLifecycle ? { segmentLifecycle } : {}),
           });
@@ -815,6 +825,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
             ...(permissionMode ? { permissionMode } : {}),
             idempotencyKey,
             clientUserMessageId,
+            attachments,
+            browserComments,
+            ...(browserCommentContent ? { browserCommentContent } : {}),
+            ...(conversationContext ? { conversationContext } : {}),
           });
         }
         if (delivery === 'steer_now') {
@@ -825,6 +839,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             expectedTurnId: expectedTurnId!,
             idempotencyKey,
             clientUserMessageId,
+            providerWriteLifecycle,
           });
         }
         const submissionId = `conversation_submission_${createHash('sha256').update(`${stableOperationId}\0pi-submission`).digest('hex').slice(0, 24)}`;
@@ -846,6 +861,9 @@ export function createConversationApplicationOperations(dependencies: Conversati
             clientUserMessageId,
             attachments,
             allowedAttachmentRoots: trustedConversationAttachmentRoots,
+            browserComments,
+            ...(browserCommentContent ? { browserCommentContent } : {}),
+            ...(conversationContext ? { conversationContext } : {}),
             providerWriteLifecycle,
             segmentLifecycle,
           });
@@ -858,6 +876,12 @@ export function createConversationApplicationOperations(dependencies: Conversati
           ...(selectedEffort ? { thinkingLevel: selectedEffort } : {}),
           idempotencyKey,
           clientUserMessageId,
+          attachments,
+          allowedAttachmentRoots: trustedConversationAttachmentRoots,
+          browserComments,
+          ...(browserCommentContent ? { browserCommentContent } : {}),
+          ...(conversationContext ? { conversationContext } : {}),
+          providerWriteLifecycle,
           ...(segmentLifecycle ? { segmentLifecycle } : {}),
         });
       }
@@ -2311,12 +2335,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
           },
         });
       } else if (nativeOperation.providerThreadId) {
-        const runningTask = moveTaskTowardRunning(task.id, 'task.model_push.thread_created');
-        const failedTask = transitionTaskStatus(runningTask, 'failed', 'task.model_push.turn_failed');
         recordTaskEvent({
-          taskId: failedTask.id,
-          eventType: 'task.model_push.turn_failed',
-          title: '会话已创建，但首轮发送失败',
+          taskId: task.id,
+          eventType: 'task.model_push.turn_not_started',
+          title: '会话已创建，首轮尚未被模型接纳',
           payload: {
             conversationId: conversation.id,
             providerThreadId: nativeOperation.providerThreadId,

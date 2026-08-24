@@ -14,7 +14,6 @@ import {
   CommandDeliveryRepository,
   type ConversationCollaborationMode,
   ConversationExecutionRepository,
-  type ConversationGoalEventKind,
   ConversationGoalRepository,
   type ConversationNextTurnSettings,
   type ConversationPermissionMode,
@@ -42,7 +41,7 @@ import type { BrowserAutomationPort } from './browserAutomation.js';
 import { zeusBrowserDynamicTools } from './browserDynamicTools.js';
 import { createCodexDynamicToolApplication } from './codexDynamicToolApplication.js';
 import { finalizeCodexPendingInteractionsForShutdown } from './codexFinalShutdownApplication.js';
-import { createCodexGoalApplication } from './codexGoalApplication.js';
+import { codexGoalEventKind, createCodexGoalApplication, ensureInitialCodexGoal } from './codexGoalApplication.js';
 import type {
   ArchiveConversationInput,
   CodexNativeConversationCoordinator,
@@ -68,6 +67,8 @@ import type {
   SubmitNativeMessageInput,
   WaitForNativeTurnResultInput,
 } from './codexNativeConversationContracts.js';
+import { projectLocallyAcceptedUserMessage } from './localUserSubmissionProjection.js';
+import { projectNativeConversationTitle } from './nativeConversationTitle.js';
 import {
   buildInteractionRecoveryContinuation,
   buildInteractionRecoveryDisplayText,
@@ -502,6 +503,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     commandKey: string;
     requestIdentity: unknown;
     invoke(traceIdentity: string | null): Promise<T>;
+    recoverAccepted?(nativeSessionId: string): Promise<T>;
     mutateBusinessState?(result: T): void;
   }): Promise<T> {
     return providerCommands.executeSession({
@@ -832,9 +834,10 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       if (existing.requestHash !== requestHash(payload)) {
         throw coordinatorError('ZEUS_NATIVE_RESERVED_RESOURCE_CONFLICT', 'Reserved submission content is immutable and does not match this operation.');
       }
+      projectLocallyAcceptedUserMessage({ conversations: options.conversations, submission: existing, broadcast: options.broadcast });
       return existing;
     }
-    return options.submissions.createOrGet({
+    const submission = options.submissions.createOrGet({
       ...(input.submissionId ? { id: input.submissionId } : {}),
       conversationId,
       idempotencyKey: input.idempotencyKey,
@@ -847,6 +850,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       input: payload,
       createdAt: now(),
     });
+    projectLocallyAcceptedUserMessage({ conversations: options.conversations, submission, broadcast: options.broadcast });
+    return submission;
   }
 
   function nextTurnSettingsFromContext(context: ConversationDispatchContext): ConversationNextTurnSettings {
@@ -959,7 +964,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     options.conversations.updateNextTurnSettings(conversation.id, nextTurnSettingsFromContext(context));
     contexts.set(conversation.id, context);
     runStates.set(conversation.id, { type: 'idle' });
-    // 解除等待会生成替换记录；本次准备必须绑定新记录，不能再拿旧预留编号校验新的派发上下文。
     const releasedSubmissions = input.holdDispatch ? new Map<string, ZeusConversationSubmissionRecord>() : releaseHeldSubmissions(conversation.id, context);
     const submission = (input.submissionId ? releasedSubmissions.get(input.submissionId) : undefined) ?? createSubmission(conversation.id, input.prompt, input, context);
     await input.segmentLifecycle?.prepare(submission);
@@ -977,7 +981,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   async function startProjectConversation(input: StartProjectConversationInput): Promise<NativeAcceptedOperation> {
     assertOpen();
     await assertCodexAccountReady(input.modelSourceId ?? null, input.model);
-    const title = projectConversationTitle(input.prompt, input.attachments);
+    const title = projectNativeConversationTitle(input.prompt, input.attachments);
     const existingConversation = input.conversationId ? options.conversations.getById(input.conversationId) : undefined;
     const permissionMode = existingConversation?.permissionMode ?? input.permissionMode ?? 'auto';
     const context: ConversationDispatchContext = {
@@ -1025,17 +1029,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     return dispatchSubmission(conversation, submission, input.providerWriteLifecycle, false, input.segmentLifecycle);
   }
 
-  function projectConversationTitle(prompt: string, attachments: NativeConversationAttachmentInput[] | undefined): string {
-    const firstLine = prompt
-      .split(/\r\n?|\n/u)
-      .map((line) => line.replace(/\s+/gu, ' ').trim())
-      .find(Boolean);
-    if (firstLine) return [...firstLine].slice(0, 48).join('');
-    const attachmentName = attachments?.find((attachment) => attachment.name.trim())?.name.trim();
-    if (attachmentName) return [...attachmentName].slice(0, 48).join('');
-    throw coordinatorError('ZEUS_INVALID_CONVERSATION_START', 'Project conversation content or attachments are required.');
-  }
-
   /** 创建任何产品会话前复验账号，避免先持久化一条必然失败的占位会话。 */
   async function assertCodexAccountReady(modelSourceId: string | null, model: string): Promise<void> {
     if (options.resolveResponsesRuntime && (await options.resolveResponsesRuntime({ modelSourceId, model }))) return;
@@ -1048,22 +1041,10 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     return options.resolveResponsesRuntime?.({ modelSourceId: context.modelSourceId, model: context.model }) ?? null;
   }
 
-  function goalEventKind(previous: ReturnType<ConversationGoalRepository['get']>, next: CodexThreadGoal): ConversationGoalEventKind | undefined {
-    if (!previous) return 'created';
-    if (previous.objective !== next.objective) return 'edited';
-    if (previous.status === next.status) return undefined;
-    if (next.status === 'paused') return 'paused';
-    if (next.status === 'active') return 'resumed';
-    if (next.status === 'blocked') return 'blocked';
-    if (next.status === 'usageLimited') return 'usage_limited';
-    if (next.status === 'budgetLimited') return 'budget_limited';
-    return 'completed';
-  }
-
   function projectGoal(conversationId: string, goal: CodexThreadGoal, providerTurnId: string | null, occurredAt: string) {
     const previous = goals.get(conversationId);
     if (previous && previous.providerUpdatedAt > goal.updatedAt) return previous;
-    const eventKind = goalEventKind(previous, goal);
+    const eventKind = codexGoalEventKind(previous, goal);
     const projected = goals.upsert(
       {
         conversationId,
@@ -1675,6 +1656,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           dynamicTools,
           ...(responsesRuntime ? { responsesRuntime } : {}),
         };
+        // thread/start 是本次父派发可能发生的第一笔 Provider 写；必须先推进父命令水位。
+        markDispatchRpcStarted(lease, submission.id);
         const thread = await providerCommands.executeSession({
           operation: 'thread_start',
           commandKey: submission.id,
@@ -1697,6 +1680,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           },
           providerGenerationId: readyGenerationId(),
           invoke: (traceIdentity) => options.manager.startThread({ ...threadRequest, traceIdentity }),
+          recoverAccepted: (nativeSessionId) => options.manager.readThread({ threadId: nativeSessionId }),
           isExplicitRejection: isRuntimeRejected,
           nativeSessionId: (acceptedThread) => acceptedThread.id,
           acceptedProviderGenerationId: (acceptedThread) => options.manager.generationForThread(acceptedThread.id),
@@ -1761,16 +1745,27 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       if (compiledDispatchContext) assertCallerDoesNotOverrideCompiledContext(context.additionalContext);
       const initialGoalObjective = submissionGoalObjective(submission);
       if (initialGoalObjective) {
-        const goal = await executeSessionCommand({
-          operation: 'goal_set',
-          conversationId: conversation.id,
-          threadId: providerThreadId,
-          commandKey: `initial-goal:${submission.id}`,
-          requestIdentity: { objective: initialGoalObjective, status: 'active' },
-          invoke: (traceIdentity) => options.manager.setThreadGoal({ threadId: providerThreadId, objective: initialGoalObjective, status: 'active', traceIdentity }),
+        const goalConversationId = conversation.id;
+        await ensureInitialCodexGoal({
+          conversationId: goalConversationId,
+          providerThreadId,
+          objective: initialGoalObjective,
+          goals,
+          manager: options.manager,
+          markProviderWriteStarted: () => markDispatchRpcStarted(lease, submission.id),
+          execute: ({ objective, invoke, recoverAccepted }) =>
+            executeSessionCommand({
+              operation: 'goal_set',
+              conversationId: goalConversationId,
+              threadId: providerThreadId,
+              commandKey: `initial-goal:${submission.id}`,
+              requestIdentity: { objective, status: 'active' },
+              invoke,
+              recoverAccepted,
+            }),
+          project: (goal) => projectGoal(goalConversationId, goal, null, now()),
+          persist,
         });
-        projectGoal(conversation.id, goal, null, now());
-        await persist();
       }
       const profile = providerPermissionProfile(context);
       const serializedAt = now();
@@ -1789,6 +1784,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       if (segmentLifecycle?.contextCompactionPlan) {
         await segmentLifecycle.beginContextCompaction(now());
         try {
+          // portable compaction 会创建临时 thread/turn，同样属于父派发的外部写边界。
+          markDispatchRpcStarted(lease, submission.id);
           const compacted = await runCodexPortableContextCompaction({
             manager: options.manager,
             providerCommands,
@@ -2129,12 +2126,10 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const existingProviderMessage = conversation.messages.find((message) => message.providerItemId === providerItemId);
     const projectedSubmission = projection.submission;
     const providerClientId = typeof itemPayload.clientId === 'string' && itemPayload.clientId.trim() ? itemPayload.clientId : null;
-    // 引导确认身份只能来自 Provider 原始事件；禁止用当前轮次或 submission 回退补造 clientId。
     const exactSteeringIdentity = !projectedSubmission || !isSteeringSubmission(projectedSubmission) || providerClientId === projectedSubmission.clientMessageId;
     const clientMessageId = exactSteeringIdentity ? projection.clientMessageId : null;
     const submission = exactSteeringIdentity ? projectedSubmission : undefined;
     const existingMetadata = existingProviderMessage ? parseJsonRecord(existingProviderMessage.metadataJson) : {};
-    // 来源只属于 Zeus 本地投影，精确匹配回本机 submission 后必须移除远程标记，不能污染正文或 Provider 输入。
     const stableMetadata = { ...existingMetadata };
     delete stableMetadata.inputOrigin;
     options.conversations.appendMessage({
@@ -3033,6 +3028,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         conversationId: conversation.id,
         requestId: request.id,
         status: 'dismissed',
+        providerPlanItemId: planItem.providerItemId,
       });
       requestQueueDrain();
       return {
@@ -3094,6 +3090,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       requestId: request.id,
       status: refinement ? 'refinement_requested' : 'implemented',
       submissionId: submission.id,
+      providerPlanItemId: planItem.providerItemId,
       collaborationMode: nextMode,
       // 确认卡消失与用户消息进入时间线必须是同一个投影事件；否则队列事件稍晚到达时，
       // PLAN -> 开发模式切换会短暂只剩一片空白。

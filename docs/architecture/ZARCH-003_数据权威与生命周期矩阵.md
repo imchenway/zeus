@@ -59,7 +59,7 @@ Zeus 的恢复边界必须拆成五个互不冒充的事实域：Zeus 业务 SQL
 
 ## SQLite 逐表矩阵
 
-下面列出当前代码创建的 87 张表。`不可`表示不能从其他本地事实无损重建；`条件`表示只有保留了指定 Provider 历史、资产或源仓库才能重建。SQLite 全库快照会物理包含全部表；标为 `B-NONE` 的表在逻辑导出、分层备份和未来拆库中可以排除。
+下面列出当前代码创建的 88 张表。`不可`表示不能从其他本地事实无损重建；`条件`表示只有保留了指定 Provider 历史、资产或源仓库才能重建。SQLite 全库快照会物理包含全部表；标为 `B-NONE` 的表在逻辑导出、分层备份和未来拆库中可以排除。
 
 ### 存储平台、集成与运行适配器
 
@@ -139,6 +139,7 @@ Zeus 的恢复边界必须拆成五个互不冒充的事实域：Zeus 业务 SQL
 | `conversation_legacy_cutover_metadata` | 存储平台/会话迁移器 | `E` 候选迁移回执 | 不可；来源摘要、映射摘要和回退身份必须共同证明 | `TM`，至少覆盖旧结构回退窗口 | `B-LOCAL/B-DB`，只存在候选或已提升代次 | 仅切换管理器在回退窗口关闭后清理 | 回执缺失或摘要不符则拒绝提升，继续使用已核验回退库 |
 | `conversation_items` | 会话编排旧兼容层 | `D` | 条件 | `TM`，统一时间线验收后退役 | 当前随 `B-DB`；不得作为独立恢复源 | 仅迁移器退役 | 新结构可用时忽略；不得用旧投影覆盖统一账本 |
 | `conversation_messages` | 会话编排旧兼容层 | `D` | 条件 | `TM`，统一模型历史验收后退役 | 当前随 `B-DB`；不得作为独立恢复源 | 仅迁移器退役 | 新结构可用时忽略；缺失不触发 Provider 历史改写 |
+| `conversation_message_provider_aliases` | 会话编排旧兼容层 | `D/E` 用户逻辑消息与 Provider item 别名 | 条件；需客户端消息身份或 Provider item 身份 | `TM/T3`，随对应会话消息 | `B-DB`；不得脱离消息行单独恢复 | 只随会话/消息保留策略；禁止为满足唯一索引破坏性去重 | 缺失时仍显示逻辑消息，但重复 Provider 回显可能无法稳定并入同一条；重建只允许按已存原生身份追加别名 |
 
 ### 执行、资产与命令
 
@@ -175,7 +176,7 @@ Zeus 的恢复边界必须拆成五个互不冒充的事实域：Zeus 业务 SQL
 
 ## 独立派生数据库逐表矩阵
 
-下列 11 张表创建在 create-only `*.index.candidate.db` / `*.cache.candidate.db`，通过核验后可由独立 runtime 提升为活动 `index.db/cache.db`。它们不计入上面 87 张 Core 表，也不属于 `B-DB` 核心一致性组。每个库必须携带 source identity、generation、publication state 和 event waterline；校验失败、来源漂移、损坏或丢失时整库丢弃并后台重建，绝不能反向覆盖 Core。
+下列 11 张表创建在 create-only `*.index.candidate.db` / `*.cache.candidate.db`，通过核验后可由独立 runtime 提升为活动 `index.db/cache.db`。它们不计入上面 88 张 Core 表，也不属于 `B-DB` 核心一致性组。每个库必须携带 source identity、generation、publication state 和 event waterline；校验失败、来源漂移、损坏或丢失时整库丢弃并后台重建，绝不能反向覆盖 Core。
 
 | 表 | Owner | 级别 | 可重建性 | 保留期 | 备份 | 删除权限 | 恢复或缺失降级 |
 | --- | --- | --- | --- | --- | --- | --- | --- |

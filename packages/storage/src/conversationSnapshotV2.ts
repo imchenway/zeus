@@ -86,6 +86,19 @@ const modelHistoryAssistantPhaseSql = `CASE
      AND json_valid(message.metadata_json)
    LIMIT 1)
 END`;
+const modelHistoryFormalPlanSql = `CASE
+  WHEN ${modelHistoryAssistantPhaseSql} = 'plan'
+   AND EXISTS (
+     SELECT 1
+       FROM conversation_plan_actions AS plan_action
+       JOIN conversation_provider_item_states AS formal_plan_item ON formal_plan_item.id = plan_action.plan_item_id
+      WHERE plan_action.conversation_id = conversation_model_history.conversation_id
+        AND plan_action.turn_id = conversation_model_history.turn_id
+        AND formal_plan_item.provider_item_id = ${modelHistoryProviderItemSql}
+   )
+    THEN 1
+  ELSE 0
+END`;
 
 export type ConversationSnapshotV2ErrorCode =
   | 'ZEUS_CONVERSATION_SNAPSHOT_V2_INVALID_ARGUMENT'
@@ -242,6 +255,7 @@ export interface ConversationModelHistoryPageItem {
   providerItemId: string | null;
   reasoningSummary: boolean;
   phase: string | null;
+  formalPlan: boolean;
   segmentId: string;
   role: string;
   toolPairId: string | null;
@@ -471,6 +485,7 @@ interface ModelHistoryProjectionRow {
   provider_item_id: string | null;
   reasoning_summary: number;
   assistant_phase: string | null;
+  formal_plan: number;
   segment_id: string;
   role: string;
   tool_pair_id: string | null;
@@ -674,6 +689,7 @@ export class ConversationSnapshotV2Repository {
                 ${modelHistoryProviderItemSql}                        AS provider_item_id,
                 ${modelHistoryReasoningSummarySql}                    AS reasoning_summary,
                 ${modelHistoryAssistantPhaseSql}                      AS assistant_phase,
+                ${modelHistoryFormalPlanSql}                           AS formal_plan,
                 segment_id,
                 role,
                 tool_pair_id,
@@ -709,6 +725,7 @@ export class ConversationSnapshotV2Repository {
               ${modelHistoryProviderItemSql} AS provider_item_id,
               ${modelHistoryReasoningSummarySql} AS reasoning_summary,
               ${modelHistoryAssistantPhaseSql} AS assistant_phase,
+              ${modelHistoryFormalPlanSql} AS formal_plan,
               segment_id, role, tool_pair_id, confirmed_at,
               substr(${modelHistoryVisibleContentSql}, 1, ?)         AS content_preview,
               length(CAST(${modelHistoryVisibleContentSql} AS BLOB)) AS content_bytes,
@@ -1189,6 +1206,7 @@ export class ConversationSnapshotV2Repository {
       providerItemId: row.provider_item_id,
       reasoningSummary: row.reasoning_summary === 1,
       phase: row.assistant_phase,
+      formalPlan: row.formal_plan === 1,
       segmentId: row.segment_id,
       role: row.role,
       toolPairId: row.tool_pair_id,

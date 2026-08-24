@@ -994,8 +994,20 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
             resolvedAt: status === 'pending' ? null : event.createdAt,
             updatedAt: event.createdAt,
           };
+      const providerPlanItemId = stringValue(payload.providerPlanItemId);
+      const formalPlanEntry = Object.entries(base.items).find(([, item]) => (providerPlanItemId !== null && item.providerItemId === providerPlanItemId) || item.localItemId === updated.planItemId || item.itemId === updated.planItemId);
+      const items = formalPlanEntry
+        ? {
+            ...base.items,
+            [formalPlanEntry[0]]: {
+              ...formalPlanEntry[1],
+              payload: { ...formalPlanEntry[1].payload, formalPlan: true },
+            },
+          }
+        : base.items;
       const nextState: NativeSessionState = {
         ...base,
+        items,
         planImplementationRequests: [...base.planImplementationRequests.filter((request) => request.id !== requestId), updated],
         snapshot: base.snapshot
           ? {

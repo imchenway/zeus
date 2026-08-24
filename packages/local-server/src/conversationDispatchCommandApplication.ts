@@ -142,7 +142,9 @@ export class ConversationDispatchCommandApplication {
     /** 与现有 Provider command 或文件 journal 的稳定子操作身份；禁止每次请求随机生成。 */
     externalOperationId: string;
     beforeWrite?(): Promise<void>;
-    invoke(): Promise<TResult>;
+    /** Provider 派发由内部生命周期在真正写入前标记；其余外部操作仍在 invoke 前标记。 */
+    manualExternalWriteStart?: boolean;
+    invoke(markExternalWriteStarted: () => void): Promise<TResult>;
     mutateAcceptedBusinessState?(result: TResult): void;
     mutateFailureBusinessState?(outcome: Exclude<CommandDeliveryOutcome, 'accepted'>, error: unknown): void;
     isExplicitRejection?(error: unknown): boolean;
@@ -161,7 +163,8 @@ export class ConversationDispatchCommandApplication {
     resourceId: string;
     externalOperationId: string;
     beforeWrite?(): Promise<void>;
-    invoke(): Promise<TResult>;
+    manualExternalWriteStart?: boolean;
+    invoke(markExternalWriteStarted: () => void): Promise<TResult>;
     mutateAcceptedBusinessState?(result: TResult): void;
     mutateFailureBusinessState?(outcome: Exclude<CommandDeliveryOutcome, 'accepted'>, error: unknown): void;
     isExplicitRejection?(error: unknown): boolean;
@@ -183,11 +186,15 @@ export class ConversationDispatchCommandApplication {
     }
 
     let writeStarted = false;
-    try {
-      await input.beforeWrite?.();
+    const markExternalWriteStarted = () => {
+      if (writeStarted) return;
       this.options.deliveries.markExternalWriteStarted({ outboxId: preparation.outbox.id, occurredAt: this.options.now().toISOString() });
       writeStarted = true;
-      const result = await input.invoke();
+    };
+    try {
+      await input.beforeWrite?.();
+      if (!input.manualExternalWriteStart) markExternalWriteStarted();
+      const result = await input.invoke(markExternalWriteStarted);
       assertReplayableResultSize(result);
       const resultArtifact = await this.options.artifacts.putJson({
         value: result,

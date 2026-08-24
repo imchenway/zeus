@@ -595,6 +595,7 @@ export interface NativeConversationModelHistoryV2Item {
   providerItemId: string | null;
   reasoningSummary: boolean;
   phase: string | null;
+  formalPlan?: boolean;
   segmentId: string;
   role: string;
   toolPairId: string | null;

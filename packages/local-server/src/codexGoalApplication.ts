@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { CodexAppServerManager, CodexThreadGoal } from '@zeus/ai-runtime';
-import type { ConversationGoalRepository, ZeusConversationGoalRecord } from '@zeus/storage';
+import type { ConversationGoalEventKind, ConversationGoalRepository, ZeusConversationGoalRecord } from '@zeus/storage';
 import type { CodexProviderCommandApplicationService } from './codexProviderCommandApplication.js';
 
 interface CodexGoalApplicationOptions {
@@ -12,6 +12,51 @@ interface CodexGoalApplicationOptions {
   persist(): Promise<void>;
   broadcast(event: string, payload: unknown): void;
   now(): string;
+}
+
+export function codexGoalEventKind(previous: ReturnType<ConversationGoalRepository['get']>, next: CodexThreadGoal): ConversationGoalEventKind | undefined {
+  if (!previous) return 'created';
+  if (previous.objective !== next.objective) return 'edited';
+  if (previous.status === next.status) return undefined;
+  if (next.status === 'paused') return 'paused';
+  if (next.status === 'active') return 'resumed';
+  if (next.status === 'blocked') return 'blocked';
+  if (next.status === 'usageLimited') return 'usage_limited';
+  if (next.status === 'budgetLimited') return 'budget_limited';
+  return 'completed';
+}
+
+/** 首发目标先读后写；若子命令已接纳，只按 Provider 回执身份做只读恢复。 */
+export async function ensureInitialCodexGoal(input: {
+  conversationId: string;
+  providerThreadId: string;
+  objective: string;
+  goals: ConversationGoalRepository;
+  manager: Pick<CodexAppServerManager, 'readThreadGoal' | 'setThreadGoal'>;
+  markProviderWriteStarted(): void;
+  execute(command: { objective: string; invoke(traceIdentity: string | null): Promise<CodexThreadGoal>; recoverAccepted(nativeSessionId: string): Promise<CodexThreadGoal> }): Promise<CodexThreadGoal>;
+  project(goal: CodexThreadGoal): void;
+  persist(): Promise<void>;
+}): Promise<void> {
+  const local = input.goals.get(input.conversationId);
+  if (local?.providerThreadId === input.providerThreadId && local.objective === input.objective && local.status === 'active') return;
+  const providerGoal = await input.manager.readThreadGoal({ threadId: input.providerThreadId });
+  if (providerGoal?.objective === input.objective && providerGoal.status === 'active') input.project(providerGoal);
+  else {
+    input.markProviderWriteStarted();
+    input.project(
+      await input.execute({
+        objective: input.objective,
+        invoke: (traceIdentity) => input.manager.setThreadGoal({ threadId: input.providerThreadId, objective: input.objective, status: 'active', traceIdentity }),
+        recoverAccepted: async (nativeSessionId) => {
+          const recovered = await input.manager.readThreadGoal({ threadId: nativeSessionId });
+          if (!recovered) throw goalError('ZEUS_CODEX_GOAL_RECOVERY_MISSING', 'Codex 已接纳目标命令，但只读对账未找到目标。');
+          return recovered;
+        },
+      }),
+    );
+  }
+  await input.persist();
 }
 
 /** Codex 原生目标命令的应用边界；读取保持只读，写入统一形成 provider_session 回执。 */
