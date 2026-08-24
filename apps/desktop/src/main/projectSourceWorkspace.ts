@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, watch, type FSWatcher } from 'node:fs';
 import { access, lstat, mkdir, open, opendir, readFile, realpath, rename, stat, unlink } from 'node:fs/promises';
-import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { detectSourceLanguage } from '@zeus/shared';
 import type {
   CreateProjectSourceEntryInput,
   MoveProjectSourceEntryInput,
@@ -99,7 +100,7 @@ export class ProjectSourceWorkspaceService {
     return {
       relativePath: target.relativePath,
       name: basename(target.relativePath),
-      language: sourceLanguageForPath(target.relativePath),
+      language: detectSourceLanguage(target.relativePath) ?? 'text',
       content: rawContent.replace(/\r\n?|\n/gu, '\n'),
       encoding: 'utf-8',
       eol,
@@ -348,7 +349,7 @@ function readOnlyDocument(relativePath: string, revision: ProjectSourceRevision,
   return {
     relativePath,
     name: basename(relativePath),
-    language: sourceLanguageForPath(relativePath),
+    language: detectSourceLanguage(relativePath) ?? 'text',
     content: '',
     encoding: 'utf-8',
     eol: 'lf',
@@ -363,35 +364,6 @@ function detectEol(content: string): ProjectSourceDocument['eol'] {
   if (content.includes('\r\n')) return 'crlf';
   if (content.includes('\r')) return 'cr';
   return 'lf';
-}
-
-function sourceLanguageForPath(path: string): string {
-  const extension = extname(path).slice(1).toLocaleLowerCase();
-  const languages: Record<string, string> = {
-    c: 'c',
-    cc: 'cpp',
-    cpp: 'cpp',
-    css: 'css',
-    go: 'go',
-    h: 'c',
-    hpp: 'cpp',
-    html: 'html',
-    java: 'java',
-    js: 'javascript',
-    json: 'json',
-    jsx: 'javascript',
-    md: 'markdown',
-    py: 'python',
-    rs: 'rust',
-    sh: 'shell',
-    sql: 'sql',
-    ts: 'typescript',
-    tsx: 'typescript',
-    xml: 'xml',
-    yaml: 'yaml',
-    yml: 'yaml',
-  };
-  return languages[extension] ?? 'text';
 }
 
 function joinRelative(parent: string, name: string): string {

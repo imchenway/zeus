@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { Suspense, forwardRef, lazy, useCallback, useEffect, useImperativeHandle, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
 import { FloppyDiskIcon as FloppyDisk } from '@phosphor-icons/react/dist/csr/FloppyDisk';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
@@ -10,8 +10,9 @@ import type { ProjectCodeWorkspacePreference, ProjectSourceDirectorySnapshot, Pr
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
-import { CodeEditor } from './CodeEditor.js';
 import './projectSourceWorkspace.css';
+
+const CodeEditor = lazy(() => import('./CodeEditor.js').then((module) => ({ default: module.CodeEditor })));
 
 type AppLanguage = 'zh-CN' | 'en-US';
 
@@ -555,19 +556,21 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                   </Button>
                 </section>
               ) : (
-                <CodeEditor
-                  path={activeTab.document.relativePath}
-                  language={activeTab.document.language}
-                  content={activeTab.draft}
-                  readOnly={false}
-                  revealLine={activeTab.revealLine}
-                  onChange={(content) =>
-                    setTabs((current) => current.map((tab) => (tab.document.relativePath === activeTab.document.relativePath ? { ...tab, draft: content, dirty: content !== tab.document.content, revealLine: null } : tab)))
-                  }
-                  onCursorChange={(cursorLine, cursorColumn) => setTabs((current) => current.map((tab) => (tab.document.relativePath === activeTab.document.relativePath ? { ...tab, cursorLine, cursorColumn } : tab)))}
-                  onSave={() => void saveTab(activeTab.document.relativePath)}
-                  onSaveAll={() => void saveAll()}
-                />
+                <Suspense fallback={<div className="project-source-code-editor-loading">{zh ? '正在加载代码编辑器…' : 'Loading code editor…'}</div>}>
+                  <CodeEditor
+                    path={activeTab.document.relativePath}
+                    language={activeTab.document.language}
+                    content={activeTab.draft}
+                    readOnly={false}
+                    revealLine={activeTab.revealLine}
+                    onChange={(content) =>
+                      setTabs((current) => current.map((tab) => (tab.document.relativePath === activeTab.document.relativePath ? { ...tab, draft: content, dirty: content !== tab.document.content, revealLine: null } : tab)))
+                    }
+                    onCursorChange={(cursorLine, cursorColumn) => setTabs((current) => current.map((tab) => (tab.document.relativePath === activeTab.document.relativePath ? { ...tab, cursorLine, cursorColumn } : tab)))}
+                    onSave={() => void saveTab(activeTab.document.relativePath)}
+                    onSaveAll={() => void saveAll()}
+                  />
+                </Suspense>
               )}
               <footer className="project-source-statusbar">
                 <span>{activeTab.document.language}</span>

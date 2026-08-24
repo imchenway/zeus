@@ -1,4 +1,5 @@
 import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
+import { useMemo } from 'react';
 import { openAutomaticUpdateIndicatorInMain } from '../../appShellBridge.js';
 import { ProjectGitWorkbench } from '../../git/ProjectGitWorkbench.js';
 import { conversationDisplayTitle } from '../../session/conversationDisplayTitle.js';
@@ -24,6 +25,8 @@ import { taskAgentRunStatusLabels } from '../../task/TaskRunStatusChip.js';
 import { WorkspaceDrawer } from '../../ui/WorkspaceDrawer.js';
 import { CommandCenterPanel } from '../../CommandCenterPanel.js';
 import { ProjectSourceWorkspace } from '../../code/ProjectSourceWorkspace.js';
+import { SyntaxHighlightedLine, useSyntaxHighlightedSegments } from '../../code/SyntaxHighlightedCode.js';
+import type { GitDiffHunk } from '../../apiClient.js';
 import {
   formatProjectDatabase,
   formatProjectDatabaseHelp,
@@ -796,9 +799,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                                 <div className="git-hunk-decision git-hunk-review-row" key={hunk.header}>
                                   <div className="git-hunk-lines">
                                     <span className="git-hunk-meta">{hunk.header}</span>
-                                    {hunk.lines.slice(0, 4).map((line, index) => (
-                                      <code key={`${hunk.header}-${index}`}>{line.content}</code>
-                                    ))}
+                                    <CompactGitHunkLines oldPath={file.oldPath} newPath={file.newPath} hunk={hunk} />
                                     <small>{gitHunkDecisions[buildGitHunkReviewKey(file, hunk)] ?? gitDiffCopy.pendingDecision}</small>
                                   </div>
                                   <div className="git-hunk-command-rail" aria-label={gitDiffCopy.hunkActionsAria(hunk.header)}>
@@ -2952,4 +2953,34 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       </section>
     </main>
   );
+}
+
+function CompactGitHunkLines(props: { oldPath: string; newPath: string; hunk: GitDiffHunk }) {
+  const leftInput = useMemo(() => compactHunkHighlightInput(props.hunk, 'left'), [props.hunk]);
+  const rightInput = useMemo(() => compactHunkHighlightInput(props.hunk, 'right'), [props.hunk]);
+  const leftHighlights = useSyntaxHighlightedSegments(props.oldPath, leftInput.contents);
+  const rightHighlights = useSyntaxHighlightedSegments(props.newPath, rightInput.contents);
+  return props.hunk.lines.slice(0, 4).map((line, index) => {
+    const input = line.type === 'deletion' ? leftInput : rightInput;
+    const highlights = line.type === 'deletion' ? leftHighlights : rightHighlights;
+    const position = input.positions.get(index);
+    const highlighted = (position ? highlights[0]?.[position] : null) ?? (line.content ? [{ text: line.content }] : []);
+    return (
+      <code key={`${props.hunk.header}-${index}`} className={`is-${line.type}`}>
+        <SyntaxHighlightedLine line={highlighted} empty="" />
+      </code>
+    );
+  });
+}
+
+function compactHunkHighlightInput(hunk: GitDiffHunk, side: 'left' | 'right'): { contents: string[]; positions: Map<number, number> } {
+  const lines: string[] = [];
+  const positions = new Map<number, number>();
+  hunk.lines.forEach((line, index) => {
+    const belongsToSide = line.type === 'context' || (side === 'left' ? line.type === 'deletion' : line.type === 'addition');
+    if (!belongsToSide) return;
+    positions.set(index, lines.length);
+    lines.push(line.content);
+  });
+  return { contents: [lines.join('\n')], positions };
 }

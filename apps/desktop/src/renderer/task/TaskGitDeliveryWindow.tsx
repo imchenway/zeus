@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { DashboardClient, TaskRecord } from '../apiClient.js';
 import '../styles.css';
+import '../ui/primitives.css';
 import { TaskGitMergeModal } from './TaskGitMergeModal.js';
 
 export interface TaskGitDeliveryCurrentContext {

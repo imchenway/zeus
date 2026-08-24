@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { buildTaskCommitMessageSuggestion } from '@zeus/shared';
 import { type DashboardClient, type TaskRecord } from '../apiClient.js';
-import type { BatchTaskWorkspaceResponse, TaskGitDiffSummary, TaskGitFileDiff, TaskGitFileStatus, TaskWorkspaceIndexCollection, TaskWorkspaceIndexSnapshot, TaskWorkspaceSnapshot } from '../session/sessionTypes.js';
+import type { BatchTaskWorkspaceResponse, TaskGitDiffSummary, TaskGitFileStatus, TaskWorkspaceIndexCollection, TaskWorkspaceIndexSnapshot, TaskWorkspaceSnapshot } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { formatVisibleApplicationError, useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { TaskWorkspaceBranchList } from './TaskWorkspaceBranchList.js';
+import { TaskGitDiffTable } from './TaskGitDiffTable.js';
 
 type ReviewMode = 'commit' | 'commit-only' | 'push-only' | 'delivery';
 type ReviewStatus = 'loading' | 'ready' | 'submitting' | 'error';
@@ -377,7 +378,7 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
                   </small>
                 ) : null}
               </span>
-              <SideBySideDiff diff={fileDiff?.fileDiffs[0] ?? null} zh={zh} />
+              <TaskGitDiffTable diff={fileDiff?.fileDiffs[0] ?? null} hasSelection={Boolean(selectedFile)} zh={zh} />
             </section>
           </main>
 
@@ -550,33 +551,6 @@ function workspaceStateLabel(workspace: TaskWorkspaceIndexSnapshot, detail: Task
   if (detail.remoteRefreshError && detail.review?.clean) return zh ? '工作区干净 · 远端受阻' : 'Clean · remote unavailable';
   if (detail.review?.clean) return zh ? '工作区干净' : 'Clean';
   return zh ? '待审查' : 'Review required';
-}
-
-function SideBySideDiff(props: { diff: TaskGitFileDiff | null; zh: boolean }) {
-  if (!props.diff) return <p className="task-git-review-empty">{props.zh ? '暂无可显示的文本差异。' : 'No text diff to display.'}</p>;
-  const rows = props.diff.hunks.flatMap((hunk) => [
-    { key: `${hunk.header}-header`, kind: 'header' as const, leftNumber: '', left: hunk.header, rightNumber: '', right: hunk.header },
-    ...hunk.lines.map((line, index) => ({
-      key: `${hunk.header}-${index}`,
-      kind: line.type,
-      leftNumber: line.oldLineNumber ?? '',
-      left: line.type === 'addition' ? '' : line.content,
-      rightNumber: line.newLineNumber ?? '',
-      right: line.type === 'deletion' ? '' : line.content,
-    })),
-  ]);
-  return (
-    <div className="task-git-review-diff-table" role="table">
-      {rows.map((row) => (
-        <div key={row.key} className={`task-git-review-diff-row is-${row.kind}`} role="row">
-          <span className="line-number">{row.leftNumber}</span>
-          <code>{row.left}</code>
-          <span className="line-number">{row.rightNumber}</span>
-          <code>{row.right}</code>
-        </div>
-      ))}
-    </div>
-  );
 }
 
 function confirmActiveSessionRisk(action: 'reclaim' | 'discard', activeConversationCount: number, zh: boolean): boolean {
