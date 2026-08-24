@@ -1,50 +1,31 @@
-import {Fragment, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
-import {motion, useReducedMotion} from 'framer-motion';
-import {
-    activityCategory,
-    isActiveSessionTurn,
-    isLiveActivityItem,
-    isOperationalActivityItem,
-    type SessionActivityCategory,
-    SessionActivityGroup,
-    SessionTurnDuration,
-    SessionTurnProcessDisclosure
-} from './SessionActivity.js';
-import {itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText} from './ThreadItemView.js';
-import {PlanSummary} from './PlanSummary.js';
+import { Fragment, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { motion, useReducedMotion } from 'framer-motion';
+import { activityCategory, isActiveSessionTurn, isLiveActivityItem, isOperationalActivityItem, type SessionActivityCategory, SessionActivityGroup, SessionTurnDuration, SessionTurnProcessDisclosure } from './SessionActivity.js';
+import { itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText } from './ThreadItemView.js';
+import { PlanSummary } from './PlanSummary.js';
 import type {
-    ConversationResource,
-    ConversationResourcePreview,
-    NativeConversationContentV2Page,
-    NativeConversationToolResultPage,
-    NativePendingRequest,
-    NativeQueueSnapshot,
-    NativeSessionError,
-    NativeSessionItemBuffer,
-    NativeSessionState,
-    NativeTurnFailureSnapshot,
-    TurnChangeSet,
-    TurnChangeSetOperationResult,
+  ConversationResource,
+  ConversationResourcePreview,
+  NativeConversationContentV2Page,
+  NativeConversationToolResultPage,
+  NativePendingRequest,
+  NativeQueueSnapshot,
+  NativeSessionError,
+  NativeSessionItemBuffer,
+  NativeSessionState,
+  NativeTurnFailureSnapshot,
+  TurnChangeSet,
+  TurnChangeSetOperationResult,
 } from './sessionTypes.js';
-import {isAssistantDeliverableItem} from './sessionTypes.js';
-import type {
-    ConversationFileLocation,
-    ConversationOpenTarget,
-    ConversationResponseAnnotation,
-    ConversationResponseTextAnchor
-} from '@zeus/shared';
-import {useThreadScrollController} from './useThreadScrollController.js';
-import {TurnChangeCard} from './TurnChanges.js';
-import {reasoningSummaryStatus, SessionReasoningSummary} from './SessionReasoningSummary.js';
-import {AnsweredRequestHistory, isAnsweredUserInputRequest} from './AnsweredRequestHistory.js';
-import {useNewItemMotionIds} from '../ui/useNewItemMotion.js';
-import {
-    captureTranscriptViewportAnchor,
-    compensateTranscriptViewportAnchor,
-    type TranscriptViewportAnchor,
-    useTranscriptViewportVirtualizer
-} from './transcriptViewportVirtualizer.js';
-import {VisibleApplicationError} from '../ui/ApplicationErrorDialog.js';
+import { isAssistantDeliverableItem } from './sessionTypes.js';
+import type { ConversationFileLocation, ConversationOpenTarget, ConversationResponseAnnotation, ConversationResponseTextAnchor } from '@zeus/shared';
+import { useThreadScrollController } from './useThreadScrollController.js';
+import { TurnChangeCard } from './TurnChanges.js';
+import { reasoningSummaryStatus, SessionReasoningSummary } from './SessionReasoningSummary.js';
+import { AnsweredRequestHistory, isAnsweredUserInputRequest } from './AnsweredRequestHistory.js';
+import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
+import { captureTranscriptViewportAnchor, compensateTranscriptViewportAnchor, type TranscriptViewportAnchor, useTranscriptViewportVirtualizer } from './transcriptViewportVirtualizer.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 
 export interface ConversationTranscriptProps {
   state: NativeSessionState;
@@ -221,7 +202,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   });
   const projectedTurnWorkIds = useMemo(() => new Set(turnRows.filter((row): row is TranscriptTurnWorkRow => row.kind === 'turn_work').map((row) => row.turnId)), [turnRows]);
   const lastItemKeyByTurn = useMemo(() => lastVisibleItemKeyByTurn(transcriptRows), [transcriptRows]);
-    const artifactAnchorKeyByTurn = useMemo(() => turnArtifactAnchorKeyByTurn(transcriptRows), [transcriptRows]);
+  const artifactAnchorKeyByTurn = useMemo(() => turnArtifactAnchorKeyByTurn(transcriptRows), [transcriptRows]);
   const orphanFailedTurns = useMemo(() => {
     const visibleTurnIds = new Set(transcriptRows.map(transcriptRowTurnId).filter((turnId): turnId is string => Boolean(turnId)));
     return Object.values(props.state.turnsByProviderId)
@@ -502,7 +483,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
         );
       }
       const containsLastItem = row.rows.some((child) => transcriptRowContainsItemKey(child, lastItemKeyByTurn[row.turnId]));
-        const containsArtifactAnchor = row.rows.some((child) => transcriptRowContainsItemKey(child, artifactAnchorKeyByTurn[row.turnId]));
+      const containsArtifactAnchor = row.rows.some((child) => transcriptRowContainsItemKey(child, artifactAnchorKeyByTurn[row.turnId]));
       const active = isActiveSessionTurn(turn);
       const v2PagingKey = turn.providerTurnId ?? turn.id;
       const processPaging = turnDetailPaging(props.state.snapshot, v2PagingKey);
@@ -543,7 +524,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
               ) : null}
             </SessionTurnProcessDisclosure>
           )}
-            {!active && containsArtifactAnchor ? renderTurnArtifacts(row.turnId, renderProps, artifactAnchorKeyByTurn[row.turnId]) : null}
+          {!active && containsArtifactAnchor ? renderTurnArtifacts(row.turnId, renderProps, artifactAnchorKeyByTurn[row.turnId]) : null}
           {!active && containsLastItem ? (
             <>
               <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} />
@@ -556,7 +537,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     const lastRowItem = rowItems[rowItems.length - 1]!;
     const turn = props.state.turnsByProviderId[lastRowItem.turnId];
     const closesVisibleTurn = lastItemKeyByTurn[lastRowItem.turnId] === lastRowItem.key;
-      const anchorsTurnArtifacts = artifactAnchorKeyByTurn[lastRowItem.turnId] === lastRowItem.key;
+    const anchorsTurnArtifacts = artifactAnchorKeyByTurn[lastRowItem.turnId] === lastRowItem.key;
     const v2PagingKey = turn?.providerTurnId ?? turn?.id ?? lastRowItem.turnId;
     const expansionKey = turnProcessExpansionKey(v2PagingKey);
     const v2ProcessPaging = turnDetailPaging(props.state.snapshot, v2PagingKey);
@@ -588,7 +569,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             {null}
           </SessionTurnProcessDisclosure>
         ) : null}
-          {anchorsTurnArtifacts ? renderTurnArtifacts(lastRowItem.turnId, renderProps, lastRowItem.key) : null}
+        {anchorsTurnArtifacts ? renderTurnArtifacts(lastRowItem.turnId, renderProps, lastRowItem.key) : null}
         {closesVisibleTurn && turn && !isActiveSessionTurn(turn) ? <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} /> : null}
       </>
     );
@@ -1015,23 +996,23 @@ function renderTurnArtifacts(turnId: string, props: ConversationTranscriptProps,
 }
 
 export function projectTranscriptTurnRows(rows: readonly TranscriptRow[], activeTurnId: string | null = null, terminalTurnIds: Readonly<Record<string, 'completed' | 'interrupted' | 'failed'>> = {}): TranscriptTurnRow[] {
-    const orderedRows = projectDeliverablesAfterFinalAnswer(rows);
-    const finalAnswerTurnIds = new Set(orderedRows.flatMap((row) => (row.kind === 'item' && isFinalAnswerItem(row.item) ? [row.item.turnId] : [])));
+  const orderedRows = projectDeliverablesAfterFinalAnswer(rows);
+  const finalAnswerTurnIds = new Set(orderedRows.flatMap((row) => (row.kind === 'item' && isFinalAnswerItem(row.item) ? [row.item.turnId] : [])));
   // 权威活动轮次优先于任何提前或误分类的 final item；运行中永远使用展开时间线，不能提前出现完成态入口。
   const collapsibleTurnIds = new Set([...finalAnswerTurnIds, ...Object.keys(terminalTurnIds)].filter((turnId) => turnId !== activeTurnId));
   const openingUserRowKeyByTurn = new Map<string, string>();
-    for (const row of orderedRows) {
+  for (const row of orderedRows) {
     if (row.kind !== 'item' || itemRole(row.item) !== 'user' || openingUserRowKeyByTurn.has(row.item.turnId)) continue;
     openingUserRowKeyByTurn.set(row.item.turnId, row.key);
   }
   const activeTurnOpeningUserRowKey = activeTurnId ? openingUserRowKeyByTurn.get(activeTurnId) : undefined;
-    const liveTurnRows = activeTurnId ? orderedRows.filter((row) => row.key !== activeTurnOpeningUserRowKey && transcriptRowTurnId(row) === activeTurnId && isLiveTurnTimelineRow(row)) : [];
+  const liveTurnRows = activeTurnId ? orderedRows.filter((row) => row.key !== activeTurnOpeningUserRowKey && transcriptRowTurnId(row) === activeTurnId && isLiveTurnTimelineRow(row)) : [];
   const liveTurnRowKeys = new Set(liveTurnRows.map((row) => row.key));
   const firstLiveTurnRowKey = liveTurnRows[0]?.key;
   const workRowsByFinalTurn = new Map<string, TranscriptRow[]>();
   const firstWorkRowKeyByFinalTurn = new Map<string, string>();
   const finalWorkRowKeys = new Set<string>();
-    for (const row of orderedRows) {
+  for (const row of orderedRows) {
     const turnId = transcriptRowTurnId(row);
     if (!turnId || !collapsibleTurnIds.has(turnId) || !isTurnProcessRow(row)) continue;
     const workRows = workRowsByFinalTurn.get(turnId) ?? [];
@@ -1043,7 +1024,7 @@ export function projectTranscriptTurnRows(rows: readonly TranscriptRow[], active
 
   const projected: TranscriptTurnRow[] = [];
   const emittedFinalWorkTurns = new Set<string>();
-    for (const row of orderedRows) {
+  for (const row of orderedRows) {
     if (activeTurnId && !activeTurnOpeningUserRowKey && firstLiveTurnRowKey === row.key) {
       projected.push({ kind: 'turn_work', key: `turn-work-live:${activeTurnId}`, turnId: activeTurnId, rows: liveTurnRows });
     }
@@ -1071,30 +1052,30 @@ export function projectTranscriptTurnRows(rows: readonly TranscriptRow[], active
 
 /** 明确交付给用户的资源属于最终产物，统一放到该轮最终正文之后，不能夹在处理过程与正文之间。 */
 function projectDeliverablesAfterFinalAnswer(rows: readonly TranscriptRow[]): readonly TranscriptRow[] {
-    const finalAnswerKeyByTurn = new Map<string, string>();
-    for (const row of rows) {
-        if (row.kind === 'item' && isFinalAnswerItem(row.item)) finalAnswerKeyByTurn.set(row.item.turnId, row.key);
-    }
-    if (finalAnswerKeyByTurn.size === 0) return rows;
+  const finalAnswerKeyByTurn = new Map<string, string>();
+  for (const row of rows) {
+    if (row.kind === 'item' && isFinalAnswerItem(row.item)) finalAnswerKeyByTurn.set(row.item.turnId, row.key);
+  }
+  if (finalAnswerKeyByTurn.size === 0) return rows;
 
-    const deliverablesByTurn = new Map<string, TranscriptRow[]>();
-    for (const row of rows) {
-        if (row.kind !== 'item' || isFinalAnswerItem(row.item) || !isAssistantDeliverableItem(row.item) || !finalAnswerKeyByTurn.has(row.item.turnId)) continue;
-        const deliverables = deliverablesByTurn.get(row.item.turnId) ?? [];
-        deliverables.push(row);
-        deliverablesByTurn.set(row.item.turnId, deliverables);
-    }
-    if (deliverablesByTurn.size === 0) return rows;
+  const deliverablesByTurn = new Map<string, TranscriptRow[]>();
+  for (const row of rows) {
+    if (row.kind !== 'item' || isFinalAnswerItem(row.item) || !isAssistantDeliverableItem(row.item) || !finalAnswerKeyByTurn.has(row.item.turnId)) continue;
+    const deliverables = deliverablesByTurn.get(row.item.turnId) ?? [];
+    deliverables.push(row);
+    deliverablesByTurn.set(row.item.turnId, deliverables);
+  }
+  if (deliverablesByTurn.size === 0) return rows;
 
-    const projected: TranscriptRow[] = [];
-    for (const row of rows) {
-        const turnId = transcriptRowTurnId(row);
-        if (turnId && deliverablesByTurn.get(turnId)?.some((deliverable) => deliverable.key === row.key)) continue;
-        projected.push(row);
-        if (!turnId || finalAnswerKeyByTurn.get(turnId) !== row.key) continue;
-        projected.push(...(deliverablesByTurn.get(turnId) ?? []));
-    }
-    return projected;
+  const projected: TranscriptRow[] = [];
+  for (const row of rows) {
+    const turnId = transcriptRowTurnId(row);
+    if (turnId && deliverablesByTurn.get(turnId)?.some((deliverable) => deliverable.key === row.key)) continue;
+    projected.push(row);
+    if (!turnId || finalAnswerKeyByTurn.get(turnId) !== row.key) continue;
+    projected.push(...(deliverablesByTurn.get(turnId) ?? []));
+  }
+  return projected;
 }
 
 function isLiveTurnTimelineRow(row: TranscriptRow): boolean {
@@ -1246,18 +1227,18 @@ function lastVisibleItemKeyByTurn(rows: readonly TranscriptRow[]): Record<string
 
 /** 交付卡跟随该轮最终产物：优先在正文后的显式交付资源下方，无正文时才退回时间线末项。 */
 function turnArtifactAnchorKeyByTurn(rows: readonly TranscriptRow[]): Record<string, string> {
-    const result = lastVisibleItemKeyByTurn(rows);
-    const turnsWithFinalAnswer = new Set<string>();
-    for (const row of projectDeliverablesAfterFinalAnswer(rows)) {
-        if (row.kind !== 'item') continue;
-        if (isFinalAnswerItem(row.item)) {
-            turnsWithFinalAnswer.add(row.item.turnId);
-            result[row.item.turnId] = row.item.key;
-            continue;
-        }
-        if (turnsWithFinalAnswer.has(row.item.turnId) && isAssistantDeliverableItem(row.item)) result[row.item.turnId] = row.item.key;
+  const result = lastVisibleItemKeyByTurn(rows);
+  const turnsWithFinalAnswer = new Set<string>();
+  for (const row of projectDeliverablesAfterFinalAnswer(rows)) {
+    if (row.kind !== 'item') continue;
+    if (isFinalAnswerItem(row.item)) {
+      turnsWithFinalAnswer.add(row.item.turnId);
+      result[row.item.turnId] = row.item.key;
+      continue;
     }
-    return result;
+    if (turnsWithFinalAnswer.has(row.item.turnId) && isAssistantDeliverableItem(row.item)) result[row.item.turnId] = row.item.key;
+  }
+  return result;
 }
 
 export function isSubagentCoordinationItem(item: Pick<NativeSessionItemBuffer, 'type' | 'payload'>): boolean {

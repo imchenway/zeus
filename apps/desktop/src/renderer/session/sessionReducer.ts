@@ -1,29 +1,29 @@
 import type {
-    ConversationState,
-    NativeConversationAttachment,
-    NativeConversationEvent,
-    NativeConversationSnapshot,
-    NativeGoalResponse,
-    NativeItemSnapshot,
-    NativeNextTurnSettings,
-    NativePendingRequest,
-    NativePlanImplementationRequest,
-    NativeProviderSettingsSnapshot,
-    NativeProviderValueSnapshot,
-    NativeQueuedSubmission,
-    NativeQueueSnapshot,
-    NativeSessionError,
-    NativeSessionItemBuffer,
-    NativeSessionMetricsSnapshot,
-    NativeSessionState,
-    NativeTokenUsageSnapshot,
-    NativeTurnPlanSnapshot,
-    NativeTurnSnapshot,
-    NativeUnifiedUsageSnapshot,
-    TransportState,
+  ConversationState,
+  NativeConversationAttachment,
+  NativeConversationEvent,
+  NativeConversationSnapshot,
+  NativeGoalResponse,
+  NativeItemSnapshot,
+  NativeNextTurnSettings,
+  NativePendingRequest,
+  NativePlanImplementationRequest,
+  NativeProviderSettingsSnapshot,
+  NativeProviderValueSnapshot,
+  NativeQueuedSubmission,
+  NativeQueueSnapshot,
+  NativeSessionError,
+  NativeSessionItemBuffer,
+  NativeSessionMetricsSnapshot,
+  NativeSessionState,
+  NativeTokenUsageSnapshot,
+  NativeTurnPlanSnapshot,
+  NativeTurnSnapshot,
+  NativeUnifiedUsageSnapshot,
+  TransportState,
 } from './sessionTypes.js';
-import type {ZeusBrowserComment, ZeusBrowserPreparedSubmission} from '@zeus/shared';
-import {type ConversationContextDraft, emptyConversationContextDraft, type TaskPushMessageLayout} from '@zeus/shared';
+import type { ZeusBrowserComment, ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import { type ConversationContextDraft, emptyConversationContextDraft, type TaskPushMessageLayout } from '@zeus/shared';
 
 export type NativeSessionAction =
   | { type: 'transport_changed'; transportState: TransportState; reconnectAttempt?: number; error?: NativeSessionError | null }
@@ -636,20 +636,20 @@ function shouldPreserveBoundedTranscriptItem(item: NativeSessionItemBuffer, acti
 }
 
 function mergeSnapshotPageItem(previous: NativeSessionItemBuffer, projected: NativeSessionItemBuffer, canonicalKey: string): NativeSessionItemBuffer {
-    const previousProcessDetail = stringValue(previous.payload.v2ContentKind) === 'process_detail';
-    const projectedProcessDetail = stringValue(projected.payload.v2ContentKind) === 'process_detail';
-    const presentation = previousProcessDetail && !projectedProcessDetail ? previous : projected;
-    const fallback = presentation === previous ? projected : previous;
-    return {
-        ...fallback,
-        ...presentation,
-        key: canonicalKey,
-        status: isTerminalItemStatus(previous.status) && !isTerminalItemStatus(projected.status) ? previous.status : projected.status,
-        payload: {...fallback.payload, ...presentation.payload},
-        resources: presentation.resources.length > 0 ? presentation.resources : fallback.resources,
-        timelineAt: previous.timelineAt ?? projected.timelineAt,
-        updatedAt: (previous.updatedAt ?? previous.timelineAt ?? '').localeCompare(projected.updatedAt ?? projected.timelineAt ?? '') > 0 ? previous.updatedAt : projected.updatedAt,
-    };
+  const previousProcessDetail = stringValue(previous.payload.v2ContentKind) === 'process_detail';
+  const projectedProcessDetail = stringValue(projected.payload.v2ContentKind) === 'process_detail';
+  const presentation = previousProcessDetail && !projectedProcessDetail ? previous : projected;
+  const fallback = presentation === previous ? projected : previous;
+  return {
+    ...fallback,
+    ...presentation,
+    key: canonicalKey,
+    status: isTerminalItemStatus(previous.status) && !isTerminalItemStatus(projected.status) ? previous.status : projected.status,
+    payload: { ...fallback.payload, ...presentation.payload },
+    resources: presentation.resources.length > 0 ? presentation.resources : fallback.resources,
+    timelineAt: previous.timelineAt ?? projected.timelineAt,
+    updatedAt: (previous.updatedAt ?? previous.timelineAt ?? '').localeCompare(projected.updatedAt ?? projected.timelineAt ?? '') > 0 ? previous.updatedAt : projected.updatedAt,
+  };
 }
 
 /**
@@ -659,57 +659,57 @@ function mergeSnapshotPageItem(previous: NativeSessionItemBuffer, projected: Nat
 function mergeSnapshotV2Page(state: NativeSessionState, snapshot: NativeConversationSnapshot): NativeSessionState {
   const hydrated = hydrateSnapshot(state, snapshot);
   const items = { ...hydrated.items };
-    const canonicalKeyByProviderItemId = new Map<string, string>();
-    const canonicalKeyByAlias = new Map<string, string>();
+  const canonicalKeyByProviderItemId = new Map<string, string>();
+  const canonicalKeyByAlias = new Map<string, string>();
 
-    // 水合页本身也可能同时带回模型历史和过程详情；先按 Provider 身份压成一个条目。
-    for (const [key, item] of Object.entries(items)) {
-        if (!item.providerItemId) continue;
-        const canonicalKey = canonicalKeyByProviderItemId.get(item.providerItemId);
-        if (!canonicalKey) {
-            canonicalKeyByProviderItemId.set(item.providerItemId, key);
-            continue;
-        }
-        if (canonicalKey === key) continue;
-        const canonical = items[canonicalKey];
-        if (!canonical) {
-            canonicalKeyByProviderItemId.set(item.providerItemId, key);
-            continue;
-        }
-        items[canonicalKey] = mergeSnapshotPageItem(canonical, item, canonicalKey);
-        delete items[key];
-        canonicalKeyByAlias.set(key, canonicalKey);
-    }
-
-  for (const [key, previous] of Object.entries(state.items)) {
-      const canonicalKey = previous.providerItemId ? (canonicalKeyByProviderItemId.get(previous.providerItemId) ?? key) : (canonicalKeyByAlias.get(key) ?? key);
-      canonicalKeyByAlias.set(key, canonicalKey);
-      const projected = items[canonicalKey];
-    if (!projected) {
-        items[canonicalKey] = canonicalKey === key ? previous : {...previous, key: canonicalKey};
-        if (previous.providerItemId) canonicalKeyByProviderItemId.set(previous.providerItemId, canonicalKey);
+  // 水合页本身也可能同时带回模型历史和过程详情；先按 Provider 身份压成一个条目。
+  for (const [key, item] of Object.entries(items)) {
+    if (!item.providerItemId) continue;
+    const canonicalKey = canonicalKeyByProviderItemId.get(item.providerItemId);
+    if (!canonicalKey) {
+      canonicalKeyByProviderItemId.set(item.providerItemId, key);
       continue;
     }
-      items[canonicalKey] = mergeSnapshotPageItem(previous, projected, canonicalKey);
-      if (canonicalKey !== key && items[key]?.providerItemId === previous.providerItemId) delete items[key];
+    if (canonicalKey === key) continue;
+    const canonical = items[canonicalKey];
+    if (!canonical) {
+      canonicalKeyByProviderItemId.set(item.providerItemId, key);
+      continue;
+    }
+    items[canonicalKey] = mergeSnapshotPageItem(canonical, item, canonicalKey);
+    delete items[key];
+    canonicalKeyByAlias.set(key, canonicalKey);
   }
 
-    const canonicalOrderKey = (key: string): string => canonicalKeyByAlias.get(key) ?? key;
-    const previousOrder = new Map<string, number>();
-    state.itemOrder.forEach((key, index) => {
-        const canonicalKey = canonicalOrderKey(key);
-        if (!previousOrder.has(canonicalKey)) previousOrder.set(canonicalKey, index);
+  for (const [key, previous] of Object.entries(state.items)) {
+    const canonicalKey = previous.providerItemId ? (canonicalKeyByProviderItemId.get(previous.providerItemId) ?? key) : (canonicalKeyByAlias.get(key) ?? key);
+    canonicalKeyByAlias.set(key, canonicalKey);
+    const projected = items[canonicalKey];
+    if (!projected) {
+      items[canonicalKey] = canonicalKey === key ? previous : { ...previous, key: canonicalKey };
+      if (previous.providerItemId) canonicalKeyByProviderItemId.set(previous.providerItemId, canonicalKey);
+      continue;
+    }
+    items[canonicalKey] = mergeSnapshotPageItem(previous, projected, canonicalKey);
+    if (canonicalKey !== key && items[key]?.providerItemId === previous.providerItemId) delete items[key];
+  }
+
+  const canonicalOrderKey = (key: string): string => canonicalKeyByAlias.get(key) ?? key;
+  const previousOrder = new Map<string, number>();
+  state.itemOrder.forEach((key, index) => {
+    const canonicalKey = canonicalOrderKey(key);
+    if (!previousOrder.has(canonicalKey)) previousOrder.set(canonicalKey, index);
+  });
+  const itemOrder = [...new Set([...state.itemOrder, ...hydrated.itemOrder].map(canonicalOrderKey))]
+    .filter((key) => Boolean(items[key]))
+    .sort((leftKey, rightKey) => {
+      const left = items[leftKey];
+      const right = items[rightKey];
+      if (!left || !right) return left ? -1 : right ? 1 : 0;
+      const chronology = (left.timelineAt ?? left.updatedAt ?? '').localeCompare(right.timelineAt ?? right.updatedAt ?? '');
+      if (chronology !== 0) return chronology;
+      return (previousOrder.get(leftKey) ?? Number.MAX_SAFE_INTEGER) - (previousOrder.get(rightKey) ?? Number.MAX_SAFE_INTEGER) || leftKey.localeCompare(rightKey);
     });
-    const itemOrder = [...new Set([...state.itemOrder, ...hydrated.itemOrder].map(canonicalOrderKey))]
-        .filter((key) => Boolean(items[key]))
-        .sort((leftKey, rightKey) => {
-            const left = items[leftKey];
-            const right = items[rightKey];
-            if (!left || !right) return left ? -1 : right ? 1 : 0;
-            const chronology = (left.timelineAt ?? left.updatedAt ?? '').localeCompare(right.timelineAt ?? right.updatedAt ?? '');
-            if (chronology !== 0) return chronology;
-            return (previousOrder.get(leftKey) ?? Number.MAX_SAFE_INTEGER) - (previousOrder.get(rightKey) ?? Number.MAX_SAFE_INTEGER) || leftKey.localeCompare(rightKey);
-        });
 
   const turnsByProviderId = { ...hydrated.turnsByProviderId };
   for (const [turnId, previous] of Object.entries(state.turnsByProviderId)) {
