@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
@@ -8,7 +8,16 @@ import './session-styles.css';
 import type { ConversationResource, ConversationResourcePreview } from '@zeus/shared';
 import { PendingRequestSurface } from '../src/renderer/session/PendingRequestSurface.js';
 import { type ConversationTreeRuntimeState, type ProjectConversationGroup, ProjectConversationTree } from '../src/renderer/session/ProjectConversationTree.js';
-import type { NativeConversationAttachment, NativeConversationChoice, NativePendingRequest, NativeQueuedSubmission, NativeRuntimeDetailsSnapshot, NativeSessionItemBuffer, NativeSessionState } from '../src/renderer/session/sessionTypes.js';
+import type {
+  CodexTaskPushCapabilities,
+  NativeConversationAttachment,
+  NativeConversationChoice,
+  NativePendingRequest,
+  NativeQueuedSubmission,
+  NativeRuntimeDetailsSnapshot,
+  NativeSessionItemBuffer,
+  NativeSessionState,
+} from '../src/renderer/session/sessionTypes.js';
 import { SafeMarkdown, ThreadItemView } from '../src/renderer/session/ThreadItemView.js';
 import { ConversationTranscript } from '../src/renderer/session/ConversationTranscript.js';
 import { ConversationComposer } from '../src/renderer/session/ConversationComposer.js';
@@ -18,6 +27,8 @@ import { SessionPlanProgress } from '../src/renderer/session/SessionActivity.js'
 import { createInitialSessionState, sessionReducer } from '../src/renderer/session/sessionReducer.js';
 import { resolveNativeConversationSelectionPresentation } from '../src/renderer/features/workspace/workspaceSupport.js';
 import { ApplicationErrorDialogHost, reportApplicationError, VisibleApplicationError } from '../src/renderer/ui/ApplicationErrorDialog.js';
+import type { TaskRecord } from '../src/renderer/apiClient.js';
+import { TaskModelPushModal, type TaskModelPushForm, type TaskModelPushModalStatus } from '../src/renderer/task/TaskModelPushModal.js';
 
 declare global {
   interface Window {
@@ -310,6 +321,25 @@ function executionPhaseState(options: { appended: boolean; completed: boolean })
   };
 }
 
+const interruptedExecutionPhaseState: NativeSessionState = (() => {
+  const state = executionPhaseState({ appended: true, completed: false });
+  return {
+    ...state,
+    conversationState: 'ready',
+    activeTurnId: null,
+    turnsByProviderId: {
+      [motionTurnId]: {
+        ...state.turnsByProviderId[motionTurnId]!,
+        status: 'interrupted',
+        completedAt: '2026-08-15T04:01:00.000Z',
+        updatedAt: '2026-08-15T04:01:00.000Z',
+      },
+    },
+    terminalTurnIds: { [motionTurnId]: 'interrupted' },
+    transcriptRevision: 43,
+  };
+})();
+
 const longScrollConversationId = 'long-scroll-conversation';
 
 function longScrollItem(index: number, expanded: boolean): NativeSessionItemBuffer {
@@ -502,6 +532,92 @@ const deliveryFailureSessionState: NativeSessionState = {
   itemOrder: [deliveryFailureItem.key],
   transcriptRevision: 1,
 };
+
+const planCustomAnswerText = '将 main 分支最新的代码合入当前分支后，再开始在正确的位置开发';
+const planCustomAnswerSubmission: NativeQueuedSubmission = {
+  id: 'plan-custom-answer-submission',
+  conversationId: 'plan-custom-answer-conversation',
+  content: planCustomAnswerText,
+  status: 'paused',
+  delivery: 'queue',
+  position: 0,
+  providerTurnId: null,
+  clientUserMessageId: 'plan-custom-answer-client',
+  pausedReason: 'recovery_required',
+  error: {
+    code: 'ZEUS_CODEX_RPC_TIMEOUT',
+    message: 'Codex app-server request timed out: thread/turns/list',
+    recoveryRequired: true,
+  },
+  createdAt: '2026-08-24T12:11:24.183Z',
+  updatedAt: '2026-08-24T12:11:54.474Z',
+};
+const planCustomAnswerDurableItem: NativeSessionItemBuffer = {
+  ...motionItem('plan-custom-answer-message', 'userMessage', 'completed', planCustomAnswerText, {
+    role: 'user',
+    delivery: 'queue',
+    submissionId: planCustomAnswerSubmission.id,
+    clientUserMessageId: planCustomAnswerSubmission.clientUserMessageId,
+  }),
+  key: 'plan-custom-answer:durable-message',
+  conversationId: planCustomAnswerSubmission.conversationId,
+  threadId: 'plan-custom-answer-thread',
+  turnId: 'message:plan-custom-answer-message',
+  localItemId: 'plan-custom-answer-message',
+  clientUserMessageId: planCustomAnswerSubmission.clientUserMessageId,
+  durableClientUserMessageId: planCustomAnswerSubmission.clientUserMessageId,
+  timelineAt: planCustomAnswerSubmission.createdAt,
+  updatedAt: planCustomAnswerSubmission.createdAt,
+};
+
+function planCustomAnswerProjectionState(): NativeSessionState {
+  const base: NativeSessionState = {
+    ...createInitialSessionState(),
+    transportState: 'ready',
+    conversationState: 'ready',
+    projectId: 'project-zeus',
+    conversationId: planCustomAnswerSubmission.conversationId,
+    providerThreadId: 'plan-custom-answer-thread',
+    snapshot: { id: planCustomAnswerSubmission.conversationId } as NonNullable<NativeSessionState['snapshot']>,
+    items: { [planCustomAnswerDurableItem.key]: planCustomAnswerDurableItem },
+    itemOrder: [planCustomAnswerDurableItem.key],
+    transcriptRevision: 1,
+  };
+  const projected = sessionReducer(base, {
+    type: 'queue_hydrated',
+    queue: {
+      state: { type: 'paused', reason: 'recovery_required' },
+      waitReason: 'recovery_required',
+      submissions: [planCustomAnswerSubmission],
+    },
+  });
+  const staleDuplicate: NativeSessionItemBuffer = {
+    ...planCustomAnswerDurableItem,
+    key: 'plan-custom-answer:stale-queue-projection',
+    itemId: 'queued-submission:plan-custom-answer-submission',
+    localItemId: 'stale-plan-custom-answer-projection',
+    status: 'paused',
+    optimistic: true,
+    payload: {
+      ...planCustomAnswerDurableItem.payload,
+      pausedReason: 'recovery_required',
+    },
+    updatedAt: planCustomAnswerSubmission.updatedAt,
+  };
+  return {
+    ...projected,
+    items: { ...projected.items, [staleDuplicate.key]: staleDuplicate },
+    itemOrder: [...projected.itemOrder, staleDuplicate.key],
+    // 这是截图里的无关附属读取错误；它不得借任一消息气泡显示。
+    error: {
+      code: 'ZEUS_CODEX_RPC_TIMEOUT',
+      message: 'Codex app-server request timed out: account/read',
+      recoveryRequired: true,
+      retryable: false,
+    },
+    transcriptRevision: projected.transcriptRevision + 1,
+  };
+}
 
 const steeringConversationId = 'steering-conversation';
 const steeringThreadId = 'steering-thread';
@@ -1036,6 +1152,22 @@ function ExecutionPhasePreview() {
   );
 }
 
+function InterruptedProcessPreview() {
+  const [processLoadCount, setProcessLoadCount] = useState(0);
+  return (
+    <section className="qa-motion-theme session-codex-parity-v1 theme-light" data-testid="interrupted-process-preview">
+      <header>
+        <strong>重启后最后一轮中断过程</strong>
+        <small>编排已收口为 interrupted，但思考没有正常结束，因此首次打开保持展开且自动读取详情。</small>
+      </header>
+      <output data-testid="interrupted-process-load-count">处理过程读取 {processLoadCount} 次</output>
+      <div className="qa-motion-transcript ai-workspace" data-testid="interrupted-process-transcript">
+        <ConversationTranscript state={interruptedExecutionPhaseState} language="zh-CN" onLoadTurnProcess={() => setProcessLoadCount((count) => count + 1)} />
+      </div>
+    </section>
+  );
+}
+
 function LongScrollPreview() {
   const [expanded, setExpanded] = useState(false);
   const [scrollAction, setScrollAction] = useState('尚未移动');
@@ -1161,6 +1293,20 @@ function DeliveryFailurePreview() {
   );
 }
 
+function PlanCustomAnswerProjectionPreview() {
+  return (
+    <section className="qa-motion-send-preview session-codex-parity-v1" data-testid="plan-custom-answer-projection-preview">
+      <div>
+        <h3>PLAN 自定义回答单一投影</h3>
+        <small>本地消息、暂停队列和迟到投影共享同一 submission；无关的附属读取错误不挂到消息下。</small>
+      </div>
+      <div className="qa-send-transcript ai-workspace">
+        <ConversationTranscript state={planCustomAnswerProjectionState()} language="zh-CN" />
+      </div>
+    </section>
+  );
+}
+
 function SteeringPreview() {
   const state = steeringInitialState;
   const steeringState = state.queue?.submissions.find((entry) => entry.id === steeringSubmission.id)?.status;
@@ -1242,8 +1388,10 @@ function MotionApp() {
       <MotionPreview />
       <MotionPreview dark />
       <ExecutionPhasePreview />
+      <InterruptedProcessPreview />
       <SendScrollPreview />
       <DeliveryFailurePreview />
+      <PlanCustomAnswerProjectionPreview />
       <HistoryPagingPreview />
       <LongScrollPreview />
       <NoRefillPreview />
@@ -1425,9 +1573,184 @@ function App() {
   );
 }
 
+const taskPushQaTask: TaskRecord = {
+  id: 'task-zeus-0338',
+  projectId: 'project-zeus',
+  taskCode: 'ZEUS-0338',
+  title: '会话的输出方式',
+  taskType: 'optimization',
+  description: '',
+  optimizationCurrentState: '推送弹窗不能被无关的账户读取阻塞。',
+  optimizationExpectedOutcome: 'Git 与 Worktree 读取独立收敛。',
+  status: 'ready',
+  tags: [],
+};
+
+const taskPushQaCapabilities: CodexTaskPushCapabilities = {
+  generationId: 'provider-account-not-read',
+  initializedAt: '2026-08-24T12:35:00.000Z',
+  projectId: taskPushQaTask.projectId,
+  taskId: taskPushQaTask.id,
+  canonicalPrompt: 'ZEUS-0338 会话的输出方式',
+  taskContextRevision: 'task-context-revision',
+  parentContextRevision: 'task-context-revision',
+  repositoryRevision: 'repository-revision',
+  currentAttachmentOptions: [],
+  currentConversationOptions: [],
+  parentContextOptions: [],
+  relatedContextOptions: [],
+  preferredModel: 'connection-deepseek-v4-flash',
+  models: [
+    {
+      id: 'connection-deepseek-v4-flash',
+      model: 'deepseek-v4-flash',
+      displayName: 'DeepSeek V4 Flash',
+      agentKind: 'pi',
+      sourceId: 'deepseek',
+      sourceName: 'DeepSeek',
+      available: true,
+      supportedReasoningEfforts: ['high'],
+      defaultReasoningEffort: 'high',
+      serviceTiers: [],
+    },
+  ],
+  codexAccount: {
+    generationId: 'codex-unavailable',
+    requiresOpenaiAuth: false,
+    signedIn: false,
+    accountType: null,
+    planType: null,
+  },
+  repositories: [
+    {
+      id: 'repository-zeus',
+      projectId: taskPushQaTask.projectId,
+      name: 'zeus',
+      relativePath: '.',
+      localPath: '/Users/david/hypha/zeus',
+      createdAt: '2026-08-24T00:00:00.000Z',
+      updatedAt: '2026-08-24T00:00:00.000Z',
+      branch: 'main',
+      headSha: '79cfd91',
+      clean: false,
+      defaultRemoteName: 'origin',
+      remoteRefreshStatus: 'not_requested',
+      remoteRefreshError: null,
+      sourceRefs: [
+        {
+          ref: 'refs/heads/main',
+          label: 'main',
+          kind: 'local',
+          group: 'local',
+          current: true,
+        },
+      ],
+      suggestedBranchName: 'zeus/ZEUS-0338-01',
+    },
+  ],
+  directWorkspace: {
+    path: '/Users/david/hypha/zeus',
+    activeWritableConversationCount: 0,
+  },
+  existingEnvironments: [],
+  sharedWritablePaths: [],
+  git: {
+    primaryWorkspacePath: '/Users/david/hypha/zeus',
+    primaryBranch: 'main',
+    primaryHeadSha: '79cfd91',
+    primaryClean: false,
+    defaultRemoteName: 'origin',
+    sourceRefs: [
+      {
+        ref: 'refs/heads/main',
+        label: 'main',
+        kind: 'local',
+        group: 'local',
+        current: true,
+      },
+    ],
+    suggestedBranchName: 'zeus/ZEUS-0338-01',
+    worktreeRoot: '/Users/david/hypha/.zeus-worktrees',
+  },
+};
+
+const taskPushQaForm: TaskModelPushForm = {
+  model: 'connection-deepseek-v4-flash',
+  effort: 'high',
+  serviceTier: { type: 'standard' },
+  serviceTierDowngraded: false,
+  workMode: 'default',
+  permissionMode: 'auto',
+  workspaceMode: 'worktree',
+  taskBranchMode: 'create',
+  environmentId: '',
+  directConcurrencyConfirmed: false,
+  repositorySelections: {
+    'repository-zeus': {
+      sourceRef: 'refs/heads/main',
+      branchName: 'zeus/ZEUS-0338-01',
+      includeLocalChanges: false,
+    },
+  },
+  currentConversationIds: [],
+  parentContextSelections: {},
+  relatedContextSelections: {},
+  supplementalInfo: '',
+  supplementalAttachments: [],
+};
+
+function TaskPushDecouplingApp() {
+  const startReady = new URLSearchParams(window.location.search).has('ready');
+  const [capabilities, setCapabilities] = useState<CodexTaskPushCapabilities | null>(() => (startReady ? taskPushQaCapabilities : null));
+  const [status, setStatus] = useState<TaskModelPushModalStatus>(() => (startReady ? 'ready' : 'loading'));
+  const [form, setForm] = useState<TaskModelPushForm>(taskPushQaForm);
+
+  useEffect(() => {
+    document.body.dataset.taskPushSubmitted = 'false';
+    if (startReady) return;
+    const timer = window.setTimeout(() => {
+      setCapabilities(taskPushQaCapabilities);
+      setStatus('ready');
+    }, 2_500);
+    return () => window.clearTimeout(timer);
+  }, [startReady]);
+
+  return (
+    <main className="macos-ai-app zeus-shell qa-page" data-testid="task-push-decoupling-fixture">
+      <p>账户 RPC 保持未完成时，Git 与 Worktree 表单仍必须独立完成加载。</p>
+      <TaskModelPushModal
+        open
+        language="zh-CN"
+        task={taskPushQaTask}
+        projectName="Zeus"
+        capabilities={capabilities}
+        runtimeCapabilities={null}
+        form={form}
+        status={status}
+        configImportPreview={null}
+        configImportNeedsActivation={false}
+        refreshingRepositoryId={null}
+        error={null}
+        onChange={setForm}
+        onRefreshRepository={() => undefined}
+        onClose={() => undefined}
+        onCancelAuthentication={() => undefined}
+        onCancelCodexConfigImport={() => undefined}
+        onImportCodexConfig={() => undefined}
+        onSkipCodexConfigImport={() => undefined}
+        onSubmit={(event) => {
+          event.preventDefault();
+          document.body.dataset.taskPushSubmitted = 'true';
+        }}
+      />
+    </main>
+  );
+}
+
 const motionQa = new URLSearchParams(window.location.search).has('motion');
 const defectQa = new URLSearchParams(window.location.search).has('zeus0323');
+const taskPushQa = new URLSearchParams(window.location.search).has('task-push');
 // 开发态热更新复用同一根节点，避免视觉验收页重复挂载并制造无关控制台错误。
 const qaRoot = window.__zeusSessionStylesRoot ?? createRoot(document.getElementById('root')!);
 window.__zeusSessionStylesRoot = qaRoot;
-qaRoot.render(defectQa ? <ConversationDefectApp /> : motionQa ? <MotionApp /> : <App />);
+qaRoot.render(taskPushQa ? <TaskPushDecouplingApp /> : defectQa ? <ConversationDefectApp /> : motionQa ? <MotionApp /> : <App />);

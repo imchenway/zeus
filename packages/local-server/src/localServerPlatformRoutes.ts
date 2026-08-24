@@ -1020,8 +1020,9 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           ...(feedback !== undefined ? { feedback } : {}),
         });
         const planRequest = conversationPlanActions.getById(params.requestId);
-        if (!planRequest) throw nativeApiError('ZEUS_NATIVE_ACCEPTANCE_NOT_DURABLE', 'Plan implementation response was not persisted.');
-        return { operation, request: planRequest, acknowledged: true };
+        const updatedConversation = conversations.getById(conversation.id);
+        if (!planRequest || !updatedConversation) throw nativeApiError('ZEUS_NATIVE_ACCEPTANCE_NOT_DURABLE', 'Plan implementation response was not persisted.');
+        return { operation, request: planRequest, queue: toNativeQueueApiSnapshot(updatedConversation), acknowledged: true };
       },
       requestSnooze: ({ params }) => {
         const conversation = requireNativeQueueConversation(params);

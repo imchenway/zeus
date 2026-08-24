@@ -314,7 +314,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     isClosed: () => closing || closed,
   });
 
-  const enqueueProviderTurnReconciliation = (conversation: ZeusConversationWithMessagesRecord): Promise<void> => providerEvents.enqueueBarrier(() => reconcileProviderTurnsSinceCheckpoint(conversation));
+  const enqueueProviderTurnReconciliation = (conversation: ZeusConversationWithMessagesRecord, input: { priority?: 'control' } = {}): Promise<void> =>
+    providerEvents.enqueueBarrier(() => reconcileProviderTurnsSinceCheckpoint(conversation, input));
 
   function assertOpen(): void {
     if (closing || closed) throw coordinatorError('ZEUS_CODEX_COORDINATOR_CLOSED', 'Codex native conversation coordinator is closed.');

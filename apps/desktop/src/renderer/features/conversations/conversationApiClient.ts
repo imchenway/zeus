@@ -22,7 +22,7 @@ import type {
   NativePendingInteractionsSnapshot,
   NativePendingRequest,
   NativePermissionMode,
-  NativePlanImplementationRequest,
+  NativePlanImplementationResponseAcceptance,
   NativeProjectConversationChoicesSnapshot,
   NativeQueueSnapshot,
   NativeSessionMetricsSnapshot,
@@ -125,16 +125,7 @@ export interface ConversationApiClient {
   ) => Promise<{
     request: NativePendingRequest;
   }>;
-  respondToPlanImplementationRequest: (
-    projectId: string,
-    conversationId: string,
-    requestId: string,
-    input: { action: 'implement' | 'refine' | 'dismiss'; feedback?: string },
-  ) => Promise<{
-    operation: NativeOperationAcceptance['operation'];
-    request: NativePlanImplementationRequest;
-    acknowledged: true;
-  }>;
+  respondToPlanImplementationRequest: (projectId: string, conversationId: string, requestId: string, input: { action: 'implement' | 'refine' | 'dismiss'; feedback?: string }) => Promise<NativePlanImplementationResponseAcceptance>;
   resumeNativeQueue: (projectId: string, conversationId: string) => Promise<NativeQueueSnapshot>;
   recoverNativeQueue: (projectId: string, conversationId: string) => Promise<NativeQueueSnapshot>;
   reorderNativeQueue: (projectId: string, conversationId: string, orderedSubmissionIds: string[]) => Promise<NativeQueueSnapshot>;
@@ -333,11 +324,8 @@ export function createConversationApiClient(transport: LocalApiTransport): Conve
     },
     respondToPlanImplementationRequest: async (projectId, conversationId, requestId, input) => {
       const body = await buildConversationDispatchCommandRequest({ commandType: conversationDispatchClientCommandTypes.planImplementationRespond, scopeKind: 'approval', scopeId: requestId, value: input });
-      const result = await transport.request<{ operation: NativeOperationAcceptance['operation']; request: NativePlanImplementationRequest }>(
-        `${conversationPath(projectId, conversationId)}/plan-implementation-requests/${encodeURIComponent(requestId)}/respond`,
-        jsonRequest('POST', body),
-      );
-      return { operation: result.operation, request: result.request, acknowledged: true };
+      const result = await transport.request<NativePlanImplementationResponseAcceptance>(`${conversationPath(projectId, conversationId)}/plan-implementation-requests/${encodeURIComponent(requestId)}/respond`, jsonRequest('POST', body));
+      return result;
     },
     resumeNativeQueue: async (projectId, conversationId) => {
       const body = await buildConversationDispatchCommandRequest({ commandType: conversationDispatchClientCommandTypes.queueResume, scopeKind: 'product_conversation', scopeId: conversationId, value: {} });

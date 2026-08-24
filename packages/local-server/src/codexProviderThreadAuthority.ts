@@ -24,7 +24,7 @@ interface CodexProviderThreadAuthorityOptions {
   prepareContext(conversationId: string): Promise<ConversationDispatchContext>;
   inferRunState(conversation: ZeusConversationWithMessagesRecord): NativeConversationRunState;
   responsesRuntimeFor(context: ConversationDispatchContext): Promise<CodexResponsesRuntime | null>;
-  enqueueProviderTurnReconciliation(conversation: ZeusConversationWithMessagesRecord): Promise<void>;
+  enqueueProviderTurnReconciliation(conversation: ZeusConversationWithMessagesRecord, input?: { priority?: 'control' }): Promise<void>;
   projectedProviderThreadSnapshot(conversationId: string, metadata: CodexThreadSnapshot): CodexThreadSnapshot;
   reconcileConversationSnapshot(conversation: ZeusConversationWithMessagesRecord, snapshot: CodexThreadSnapshot, generationId: string, input?: { preserveUnsentQueue?: boolean }): void;
   readyGenerationId(): string | null;
@@ -173,7 +173,7 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
     if (providerStatus.type === 'systemError') {
       throw coordinatorError('ZEUS_NATIVE_PROVIDER_SYSTEM_ERROR', 'Provider thread is in systemError state.');
     }
-    await options.enqueueProviderTurnReconciliation(options.requireConversation(conversation.id));
+    await options.enqueueProviderTurnReconciliation(options.requireConversation(conversation.id), { priority: 'control' });
     const current = options.requireConversation(conversation.id);
     const snapshot = options.projectedProviderThreadSnapshot(conversation.id, metadata);
     const generationId = options.manager.generationForThread(providerThreadId) ?? options.readyGenerationId();

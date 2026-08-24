@@ -102,14 +102,14 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     threadPath,
     upsertRecoveredTurn,
   } = dependencies;
-  async function ensureProviderSyncCheckpoint(conversation: ZeusConversationWithMessagesRecord) {
+  async function ensureProviderSyncCheckpoint(conversation: ZeusConversationWithMessagesRecord, input: { priority?: 'control' } = {}) {
     const providerThreadId = requireString(conversation.providerThreadId, 'provider thread id');
     const existing = syncCheckpoints.getByConversation(conversation.id);
     if (existing) {
       if (existing.providerThreadId === providerThreadId) return existing;
       const currentSegment = options.execution.segmentByNativeSession(providerThreadId, conversation.id);
       if (currentSegment?.state !== 'current') throw coordinatorError('ZEUS_NATIVE_SYNC_CHECKPOINT_CONFLICT', 'Provider sync checkpoint belongs to another thread.');
-      const latest = await options.manager.listThreadTurns({ threadId: providerThreadId, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded' });
+      const latest = await options.manager.listThreadTurns({ threadId: providerThreadId, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded', ...input });
       return syncCheckpoints.rebind({
         conversationId: conversation.id,
         providerThreadId,
@@ -117,7 +117,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
         timestamp: now(),
       });
     }
-    const latest = await options.manager.listThreadTurns({ threadId: providerThreadId, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded' });
+    const latest = await options.manager.listThreadTurns({ threadId: providerThreadId, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded', ...input });
     return syncCheckpoints.initialize({
       conversationId: conversation.id,
       providerThreadId,
@@ -126,9 +126,9 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     });
   }
 
-  async function reconcileProviderTurnsSinceCheckpoint(conversation: ZeusConversationWithMessagesRecord): Promise<void> {
+  async function reconcileProviderTurnsSinceCheckpoint(conversation: ZeusConversationWithMessagesRecord, input: { priority?: 'control' } = {}): Promise<void> {
     const providerThreadId = requireString(conversation.providerThreadId, 'provider thread id');
-    const checkpoint = await ensureProviderSyncCheckpoint(conversation);
+    const checkpoint = await ensureProviderSyncCheckpoint(conversation, input);
     const checkpointBoundaryTurnId = checkpoint.lastSyncedTurnId ?? checkpoint.baselineTurnId;
     const turnsDescending: CodexTurnSnapshot[] = [];
     const seenTurnIds = new Set<string>();
@@ -143,6 +143,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
         limit: 100,
         sortDirection: 'desc',
         itemsView: 'full',
+        ...input,
       });
       pageCount += 1;
       for (const turn of page.data) {

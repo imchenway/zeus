@@ -122,7 +122,12 @@ export class ConversationCapabilityQueryApplication {
     const currentAttachmentOptions = this.ports.taskContext.readAttachmentOptions(project, task);
     // GET 只消费已登记仓库；仓库发现、登记、fetch 与工作区准备仍属于显式 Command。
     const registeredRepositories = this.ports.repositories.listByProject(project.id);
-    const [capabilities, repositoryCapabilities] = await Promise.all([this.readExisting(project), mapWithConcurrency(registeredRepositories, (repository) => this.readRepositoryCapability(project, task, repository))]);
+    // Git、任务上下文和 Worktree 选择不能等待 Provider 账户通道。账户状态由独立的
+    // 会话能力请求在后台读取；真正提交时仍由服务端权威校验登录状态。
+    const [capabilities, repositoryCapabilities] = await Promise.all([
+      this.readExisting(project, { readProviderAccount: false }),
+      mapWithConcurrency(registeredRepositories, (repository) => this.readRepositoryCapability(project, task, repository)),
+    ]);
     const primaryRepository = repositoryCapabilities[0];
     const existingEnvironments = this.ports.environments.listByTask(task.id).flatMap((environment) => {
       if (environment.state === 'reclaimed') return [];
@@ -248,10 +253,10 @@ export class ConversationCapabilityQueryApplication {
     };
   }
 
-  private async readExisting(project: ZeusProjectRecord): Promise<ConversationCapabilitiesSnapshot> {
+  private async readExisting(project: ZeusProjectRecord, options: { readProviderAccount?: boolean } = {}): Promise<ConversationCapabilitiesSnapshot> {
     const transport = this.ports.provider.getState();
     const codexCapabilities = this.ports.codexNativeEnabled() && transport.type === 'ready' ? transport.capabilities : null;
-    const codexAccount = codexCapabilities ? await this.ports.provider.readAccount() : this.unavailableCodexAccount();
+    const codexAccount = codexCapabilities && options.readProviderAccount !== false ? await this.ports.provider.readAccount() : this.unavailableCodexAccount();
     try {
       return await this.buildConversationCapabilities(project, codexCapabilities, codexAccount);
     } catch (error) {

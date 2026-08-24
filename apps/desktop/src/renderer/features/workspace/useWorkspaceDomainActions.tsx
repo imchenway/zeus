@@ -306,6 +306,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     taskModelPushPendingByTask,
     taskModelPushPendingByTaskRef,
     taskModelPushRefreshingRepositoryId,
+    taskModelPushRuntimeCapabilities,
     taskModelPushStatus,
     taskModelPushTaskId,
     taskMutationQueuesRef,
@@ -2373,7 +2374,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       const capabilities = normalizeTaskModelPushCapabilities(await client.loadCodexTaskPushCapabilities(task.projectId, task.id));
       if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
       setTaskModelPushCapabilities(capabilities);
-      setTaskModelPushRuntimeCapabilities(capabilities);
       setTaskModelPushForm((current) => {
         const normalized = resolveTaskModelPushInitialForm(capabilities, {
           model: current.model,
@@ -2483,7 +2483,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       taskModelPushDispatchingTaskIdsRef.current.has(task.id)
     )
       return;
-    proceedTaskModelPush(task, client, capabilities, form);
+    const runtimeAccount = taskModelPushRuntimeCapabilities?.projectId === capabilities.projectId ? taskModelPushRuntimeCapabilities.codexAccount : null;
+    proceedTaskModelPush(task, client, runtimeAccount ? { ...capabilities, codexAccount: runtimeAccount } : capabilities, form);
   }
 
   function proceedTaskModelPush(task: TaskRecord, client: NativeConversationAppClient, capabilities: CodexTaskPushCapabilities, form: TaskModelPushForm): void {
@@ -2960,10 +2961,18 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     try {
       const capabilities = normalizeTaskModelPushCapabilities(await client.loadCodexTaskPushCapabilities(pending.task.projectId, pending.task.id));
       if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
-      setTaskModelPushCapabilities(capabilities);
+      const loginRequiredCapabilities: CodexTaskPushCapabilities = {
+        ...capabilities,
+        codexAccount: {
+          ...capabilities.codexAccount,
+          requiresOpenaiAuth: true,
+          signedIn: false,
+        },
+      };
+      setTaskModelPushCapabilities(loginRequiredCapabilities);
       setTaskModelPushStatus('ready');
       setTaskModelPushError(null);
-      proceedTaskModelPush(pending.task, client, capabilities, pending.form);
+      proceedTaskModelPush(pending.task, client, loginRequiredCapabilities, pending.form);
     } catch (error) {
       if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
       setTaskModelPushStatus('error');

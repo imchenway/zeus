@@ -1333,6 +1333,13 @@ export interface NativeOperationAcceptance {
   submission?: Record<string, unknown> & { id: string };
 }
 
+export interface NativePlanImplementationResponseAcceptance {
+  operation: NativeOperationAcceptance['operation'];
+  request: NativePlanImplementationRequest;
+  queue: NativeQueueSnapshot;
+  acknowledged: true;
+}
+
 /** Graph Command 会把本地重连 id 派生为外部 operation identity；两者必须同时保留并分别校验。 */
 export interface NativeConversationStartDispatchResult {
   acceptance: NativeOperationAcceptance;

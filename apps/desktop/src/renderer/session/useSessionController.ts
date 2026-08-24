@@ -26,7 +26,7 @@ import {
   type NativePendingInteractionsSnapshot,
   type NativePendingRequest,
   type NativePermissionMode,
-  type NativePlanImplementationRequest,
+  type NativePlanImplementationResponseAcceptance,
   type NativeQueuedSubmission,
   type NativeQueueSnapshot,
   type NativeRealtimeEventEnvelope,
@@ -248,16 +248,7 @@ export interface SessionControllerClient {
     request: NativePendingRequest;
   }>;
 
-  respondToPlanImplementationRequest(
-    projectId: string,
-    conversationId: string,
-    requestId: string,
-    input: { action: 'implement' | 'refine' | 'dismiss'; feedback?: string },
-  ): Promise<{
-    operation: NativeOperationAcceptance['operation'];
-    request: NativePlanImplementationRequest;
-    acknowledged: true;
-  }>;
+  respondToPlanImplementationRequest(projectId: string, conversationId: string, requestId: string, input: { action: 'implement' | 'refine' | 'dismiss'; feedback?: string }): Promise<NativePlanImplementationResponseAcceptance>;
 }
 
 export interface SessionDraftStorage {
@@ -1517,6 +1508,11 @@ export function createSessionController(options: CreateSessionControllerOptions)
     return snapshot.turns.some((turn) => turn.status === 'running' || turn.status === 'waiting' || turn.status === 'dispatching');
   }
 
+  function queueNeedsRealtime(queue: NativeQueueSnapshot): boolean {
+    if (queue.state.type === 'dispatching' || queue.state.type === 'active' || queue.state.type === 'waiting') return true;
+    return queue.submissions.some((submission) => submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active');
+  }
+
   function stateNeedsRealtime(): boolean {
     if (pendingSend || deferredSends.length > 0) return true;
     if (state.pendingRequests.some((request) => request.status === 'pending')) return true;
@@ -2507,17 +2503,29 @@ export function createSessionController(options: CreateSessionControllerOptions)
     respondToPlanImplementationRequest(requestId, input) {
       return runOperation(
         `plan-request:${requestId}:${JSON.stringify(input)}`,
-        async () => {
-          await options.client.respondToPlanImplementationRequest(options.projectId, options.conversationId, requestId, input);
-          return loadConversationForHydration();
+        () => options.client.respondToPlanImplementationRequest(options.projectId, options.conversationId, requestId, input),
+        (response) => {
+          dispatch({
+            type: 'plan_implementation_response_accepted',
+            request: response.request,
+            queue: response.queue,
+            ...(input.action === 'refine' ? { collaborationMode: 'plan' as const } : input.action === 'implement' ? { collaborationMode: 'default' as const } : {}),
+          });
         },
-        async (snapshot) => {
-          await applyAuthoritativeSnapshot(snapshot);
-          // 计划动作会先解除 pending 确认，空闲释放可能已经关闭原事件流。
-          // implement/refine 若启动新轮次或生成下一张确认卡，必须从权威水位重建实时订阅。
-          if (snapshotNeedsRealtime(snapshot)) await ensureRealtimeConnection();
-        },
-      ).then(() => undefined);
+      ).then((response) => {
+        // POST 已经证明控制回答和本地 submission 耐久落库。后续全量水合只是后台收敛，
+        // account/read 等附属读取失败不能反过来把这次回答改判成失败或再画一条消息。
+        void (async () => {
+          try {
+            const snapshot = await loadConversationForHydration();
+            if (disposed) return;
+            await applyAuthoritativeSnapshot(snapshot);
+            if (snapshotNeedsRealtime(snapshot)) await ensureRealtimeConnection();
+          } catch {
+            if (!disposed && queueNeedsRealtime(response.queue)) await ensureRealtimeConnection().catch(() => undefined);
+          }
+        })();
+      });
     },
     loadEarlierHistory: loadEarlierHistoryV2,
     loadTurnProcess: loadTurnProcessV2,

@@ -783,6 +783,7 @@ export function TaskModelPushModal(props: {
     setSupplementalResourceError(null);
   }, [props.open, props.task?.id]);
   const runtimeCapabilities = props.capabilities ?? props.runtimeCapabilities;
+  const codexAccount = props.runtimeCapabilities?.codexAccount ?? props.capabilities?.codexAccount;
   const requestedModel = resolveModelCapability(runtimeCapabilities?.models, props.form.model);
   const modelPresentation = useMemo(() => presentModelOptions(runtimeCapabilities?.models ?? [], requestedModel?.id ?? props.form.model, props.language), [props.form.model, props.language, requestedModel?.id, runtimeCapabilities?.models]);
   const selectedModel = resolveModelCapability(modelPresentation.models, modelPresentation.selectedId);
@@ -807,7 +808,7 @@ export function TaskModelPushModal(props: {
   const inspectingConfig = props.status === 'inspecting-config';
   const importingConfig = props.status === 'importing-config';
   const busy = inspectingConfig || importingConfig || authenticating || authenticated || props.status === 'submitting' || inputResources.processing;
-  const codexLoginRequired = selectedModel?.agentKind !== 'pi' && selectedModel?.sourceId === 'codex' && runtimeCapabilities?.codexAccount.requiresOpenaiAuth === true && !runtimeCapabilities.codexAccount.signedIn;
+  const codexLoginRequired = selectedModel?.agentKind !== 'pi' && selectedModel?.sourceId === 'codex' && codexAccount?.requiresOpenaiAuth === true && !codexAccount.signedIn;
   const repositories = props.capabilities?.repositories ?? [];
   const existingEnvironments = props.capabilities?.existingEnvironments ?? [];
   const availableEnvironments = existingEnvironments.filter((environment) => environment.available);
@@ -1036,9 +1037,9 @@ export function TaskModelPushModal(props: {
                 {props.status === 'error' ? (
                   <VisibleApplicationError error={props.error ?? (zh ? 'Git 仓库检查未完成。' : 'The Git repository check did not complete.')} language={zh ? 'zh-CN' : 'en'} />
                 ) : zh ? (
-                  '正在扫描项目目录下的 Git 仓库…'
+                  '正在读取任务工作区与 Git 仓库…'
                 ) : (
-                  'Scanning the project directory for Git repositories…'
+                  'Loading the task workspace and Git repositories…'
                 )}
               </p>
             ) : repositories.length > 0 ? (

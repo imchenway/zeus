@@ -463,7 +463,13 @@ export function SessionTurnProcessDisclosure(props: {
 }) {
   const [internalOpen, setInternalOpen] = useState(false);
   const open = props.open ?? internalOpen;
+  const onOpenRef = useRef(props.onOpen);
+  onOpenRef.current = props.onOpen;
   const bodyId = useId();
+  useEffect(() => {
+    if (!open || !onOpenRef.current) return;
+    void Promise.resolve(onOpenRef.current()).catch(() => undefined);
+  }, [open]);
   const label =
     props.labelKind === 'details'
       ? props.language === 'zh-CN'
@@ -491,7 +497,6 @@ export function SessionTurnProcessDisclosure(props: {
             const nextOpen = !open;
             if (props.open === undefined) setInternalOpen(nextOpen);
             props.onOpenChange?.(nextOpen);
-            if (nextOpen) void Promise.resolve(props.onOpen?.()).catch(() => undefined);
           }}
         >
           <span>{label}</span>

@@ -413,7 +413,15 @@ export interface CodexAppServerManager {
   readThreadGoal(input: { threadId: string }): Promise<CodexThreadGoal | null>;
   setThreadGoal(input: { threadId: string; objective?: string; status?: CodexThreadGoalStatus; tokenBudget?: number | null } & CodexPerformanceTraceContext): Promise<CodexThreadGoal>;
   clearThreadGoal(input: { threadId: string } & CodexPerformanceTraceContext): Promise<{ cleared: boolean }>;
-  listThreadTurns(input: { threadId: string; cursor?: string | null; limit?: number | null; sortDirection?: 'asc' | 'desc' | null; itemsView?: 'notLoaded' | 'summary' | 'full' | null }): Promise<CodexThreadTurnsPage>;
+  listThreadTurns(input: {
+    threadId: string;
+    cursor?: string | null;
+    limit?: number | null;
+    sortDirection?: 'asc' | 'desc' | null;
+    itemsView?: 'notLoaded' | 'summary' | 'full' | null;
+    /** 派发门禁读取不得被同一进程的过程事件投影背压阻塞。 */
+    priority?: 'control';
+  }): Promise<CodexThreadTurnsPage>;
   startTurn(input: CodexTurnStartInput): Promise<CodexTurnSnapshot>;
   steerTurn(input: CodexTurnSteerInput): Promise<{ turnId: string }>;
   interruptTurn(input: { threadId: string; turnId: string } & CodexPerformanceTraceContext): Promise<void>;
@@ -1152,7 +1160,8 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     },
     async listThreadTurns(input) {
       const capabilities = await awaitCapabilities();
-      const response = asRecord(await rpc(capabilities.generationId, 'thread/turns/list', compactObject(input)));
+      const { priority, ...params } = input;
+      const response = asRecord(await rpc(capabilities.generationId, 'thread/turns/list', compactObject(params), { priorityRead: priority === 'control' }));
       if (!Array.isArray(response.data) || (response.nextCursor !== null && typeof response.nextCursor !== 'string')) {
         throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex thread/turns/list returned an invalid page.');
       }

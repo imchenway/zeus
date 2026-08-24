@@ -39,6 +39,12 @@ export type NativeSessionAction =
       turns?: NativeTurnSnapshot[];
       items?: NativeItemSnapshot[];
     }
+  | {
+      type: 'plan_implementation_response_accepted';
+      request: NativePlanImplementationRequest;
+      queue: NativeQueueSnapshot;
+      collaborationMode?: 'plan' | 'default';
+    }
   | { type: 'queue_hydrated'; queue: NativeQueueSnapshot }
   | { type: 'queued_submission_deleted'; submissionId: string; clientUserMessageId?: string; queue: NativeQueueSnapshot }
   | { type: 'steering_submission_hydrated'; submission: NativeQueuedSubmission; queue?: NativeQueueSnapshot }
@@ -203,6 +209,20 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
         planImplementationRequests: action.planImplementationRequests ?? state.planImplementationRequests,
         conversationState: requestConversationState(requests) ?? conversationStateWithoutRequests(state),
       };
+    }
+    case 'plan_implementation_response_accepted': {
+      const nextState: NativeSessionState = {
+        ...state,
+        planImplementationRequests: [...state.planImplementationRequests.filter((request) => request.id !== action.request.id), action.request],
+        snapshot:
+          state.snapshot && action.collaborationMode
+            ? {
+                ...state.snapshot,
+                collaborationMode: action.collaborationMode,
+              }
+            : state.snapshot,
+      };
+      return projectQueueSubmissionMessages(nextState, action.queue);
     }
     case 'queue_hydrated': {
       return projectQueueSubmissionMessages(state, action.queue);
@@ -506,9 +526,26 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
   for (const submission of snapshot.submissions) {
     const clientUserMessageId = submission.clientUserMessageId;
     const pendingStatus = shouldProjectSubmissionMessage(submission);
-    if (!pendingStatus || !clientUserMessageId || durableClientIds.has(clientUserMessageId)) continue;
+    if (!pendingStatus || !clientUserMessageId) continue;
     const providerTurnId = submission.providerTurnId ?? `pending:${clientUserMessageId}`;
     const itemId = `${submission.delivery === 'steer_now' ? 'steering' : 'submission'}:${submission.id}`;
+    const existingUserEntry = Object.entries(items).find(([, item]) => isUserMessageItem(item) && (userMessageClientIds(item).includes(clientUserMessageId) || stringValue(item.payload.submissionId) === submission.id));
+    if (existingUserEntry) {
+      const [key, existing] = existingUserEntry;
+      const submissionItem = submissionUserMessageItem(snapshot.id, threadId, submission, key, itemId, providerTurnId);
+      items[key] = {
+        ...existing,
+        status: submissionItem.status,
+        payload: mergeStableUserMessagePresentation(existing.payload, submissionItem.payload),
+        optimistic: submissionItem.optimistic,
+        clientUserMessageId,
+        durableClientUserMessageId: clientUserMessageId,
+        updatedAt: submissionItem.updatedAt ?? existing.updatedAt,
+      };
+      durableClientIds.add(clientUserMessageId);
+      continue;
+    }
+    if (durableClientIds.has(clientUserMessageId)) continue;
     const key = previousUserItemKeys.get(clientUserMessageId) ?? nativeSessionItemKey(snapshot.id, threadId, providerTurnId, itemId);
     const submissionItem = submissionUserMessageItem(snapshot.id, threadId, submission, key, itemId, providerTurnId);
     const previousUserItem = previousUserItemsByClientId.get(clientUserMessageId);
@@ -1223,8 +1260,7 @@ function projectQueueSubmissionMessages(state: NativeSessionState, queue: Native
     for (const submission of projectedQueue.submissions) {
       const clientUserMessageId = submission.clientUserMessageId;
       if (!clientUserMessageId || !shouldProjectSubmissionMessage(submission)) continue;
-      const matchedEntry = Object.entries(items).find(([, item]) => isUserMessageItem(item) && userMessageClientIds(item).includes(clientUserMessageId));
-      if (matchedEntry && !matchedEntry[1].optimistic) continue;
+      const matchedEntry = Object.entries(items).find(([, item]) => isUserMessageItem(item) && (userMessageClientIds(item).includes(clientUserMessageId) || stringValue(item.payload.submissionId) === submission.id));
 
       const key = matchedEntry?.[0] ?? optimisticUserItemKey(state, clientUserMessageId);
       const previous = matchedEntry?.[1];
@@ -1234,6 +1270,15 @@ function projectQueueSubmissionMessages(state: NativeSessionState, queue: Native
       const next = previous
         ? {
             ...projected,
+            ...(!previous.optimistic
+              ? {
+                  itemId: previous.itemId,
+                  turnId: previous.turnId,
+                  ...(previous.localItemId ? { localItemId: previous.localItemId } : {}),
+                  ...(previous.providerItemId ? { providerItemId: previous.providerItemId } : {}),
+                }
+              : {}),
+            text: previous.text || projected.text,
             resources: previous.resources,
             payload: mergeSubmissionUserMessagePayload(previous.payload, submission),
             timelineAt: previous.timelineAt ?? projected.timelineAt,
@@ -1427,7 +1472,9 @@ function isUserMessageType(type: string): boolean {
 }
 
 function userMessageClientIds(item: NativeSessionItemBuffer): string[] {
-  return [item.clientUserMessageId, item.durableClientUserMessageId].filter((value, index, values): value is string => Boolean(value) && values.indexOf(value) === index);
+  return [item.clientUserMessageId, item.durableClientUserMessageId, stringValue(item.payload.clientId), stringValue(item.payload.clientUserMessageId)].filter(
+    (value, index, values): value is string => Boolean(value) && values.indexOf(value) === index,
+  );
 }
 
 function optimisticUserItemEntry(state: NativeSessionState, clientUserMessageId: string): [string, NativeSessionItemBuffer] | undefined {

@@ -116,7 +116,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const trackedUserMessageRef = useRef<{ conversationId: string | null; key: string | null; initialized: boolean }>({ conversationId: null, key: null, initialized: false });
   const awaitingReplyMessageIdsRef = useRef<Set<string>>(new Set());
   const awaitingReplyConversationIdRef = useRef<string | null>(null);
-  const [expandedRowKeys, setExpandedRowKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const [rowExpansionOverrides, setRowExpansionOverrides] = useState<ReadonlyMap<string, boolean>>(() => new Map());
   const [focusedRowKey, setFocusedRowKey] = useState<string | null>(null);
   const [historyAnchorRowKey, setHistoryAnchorRowKey] = useState<string | null>(null);
   const activeTurnId = props.historyOnly ? null : props.state.activeTurnId;
@@ -124,12 +124,14 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const queuedClientUserMessageIds = useMemo(() => new Set(queuedSubmissions.map((submission) => submission.clientUserMessageId).filter((value): value is string => Boolean(value))), [queuedSubmissions]);
   const persistedItems = useMemo(
     () =>
-      props.state.itemOrder
-        .map((key) => props.state.items[key])
-        .filter(
-          (entry): entry is NativeSessionItemBuffer =>
-            Boolean(entry) && (!props.historyOnly || !entry.optimistic) && isVisibleTranscriptItem(entry) && isFormalPlanTranscriptItem(entry, props.state) && !isUnacceptedQueuedUserItem(entry, queuedClientUserMessageIds),
-        ),
+      coalesceTranscriptUserMessages(
+        props.state.itemOrder
+          .map((key) => props.state.items[key])
+          .filter(
+            (entry): entry is NativeSessionItemBuffer =>
+              Boolean(entry) && (!props.historyOnly || !entry.optimistic) && isVisibleTranscriptItem(entry) && isFormalPlanTranscriptItem(entry, props.state) && !isUnacceptedQueuedUserItem(entry, queuedClientUserMessageIds),
+          ),
+      ),
     [props.historyOnly, props.state.activeTurnId, props.state.itemOrder, props.state.items, props.state.planImplementationRequests, queuedClientUserMessageIds],
   );
   const queuedSubmissionItems = useMemo(() => projectQueuedSubmissionItems(props.state, queuedSubmissions, persistedItems), [persistedItems, props.state.conversationId, props.state.providerThreadId, queuedSubmissions]);
@@ -171,6 +173,15 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const answeredRequests = useMemo(() => props.state.pendingRequests.filter(isAnsweredUserInputRequest), [props.state.pendingRequests]);
   const transcriptRows = useMemo(() => projectTranscriptRows(items, answeredRequests, activeTurnId, props.historyOnly), [activeTurnId, answeredRequests, items, props.historyOnly]);
   const turnRows = useMemo(() => projectTranscriptTurnRows(transcriptRows, activeTurnId, props.state.terminalTurnIds), [activeTurnId, props.state.terminalTurnIds, transcriptRows]);
+  const defaultExpandedRowKeys = useMemo(() => defaultExpandedTurnProcessKeys(turnRows, props.state.turnsByProviderId, props.state.terminalTurnIds), [props.state.terminalTurnIds, props.state.turnsByProviderId, turnRows]);
+  const expandedRowKeys = useMemo(() => {
+    const expanded = new Set(defaultExpandedRowKeys);
+    for (const [rowKey, open] of rowExpansionOverrides) {
+      if (open) expanded.add(rowKey);
+      else expanded.delete(rowKey);
+    }
+    return expanded;
+  }, [defaultExpandedRowKeys, rowExpansionOverrides]);
   const turnRowKeys = useMemo(() => turnRows.map((row) => row.key), [turnRows]);
   const turnRowsByKey = useMemo(() => new Map(turnRows.map((row) => [row.key, row])), [turnRows]);
   const activeTurnRowKeys = useMemo(() => new Set(turnRows.filter((row) => activeTurnId && transcriptTurnRowTurnId(row) === activeTurnId).map((row) => row.key)), [activeTurnId, turnRows]);
@@ -434,11 +445,10 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   }, [maintainLatestPosition, props.creationStatus?.error, props.creationStatus?.state, props.state.transcriptRevision]);
 
   const setTranscriptRowExpanded = useCallback((rowKey: string, open: boolean): void => {
-    setExpandedRowKeys((current) => {
-      if (current.has(rowKey) === open) return current;
-      const next = new Set(current);
-      if (open) next.add(rowKey);
-      else next.delete(rowKey);
+    setRowExpansionOverrides((current) => {
+      if (current.get(rowKey) === open) return current;
+      const next = new Map(current);
+      next.set(rowKey, open);
       return next;
     });
   }, []);
@@ -911,7 +921,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         onRemoveResponseAnnotation={options.props.onRemoveResponseAnnotation}
         onOpenSideChat={options.props.onOpenSideChat}
       />
-      {showPendingDeliveryFeedback ? <MessageDeliveryOutcomeFeedback item={row.item} stateError={options.props.state.error} language={options.props.language} /> : null}
+      {showPendingDeliveryFeedback ? <MessageDeliveryOutcomeFeedback item={row.item} language={options.props.language} /> : null}
     </>
   );
 }
@@ -925,8 +935,8 @@ function TranscriptActiveStatus(props: { language: SessionUiLanguage; kind: 'sta
   );
 }
 
-function MessageDeliveryOutcomeFeedback(props: { item: NativeSessionItemBuffer; stateError: NativeSessionError | null; language: SessionUiLanguage }): ReactNode {
-  const deliveryError = nativeSessionErrorFrom(props.item.payload.deliveryError) ?? nativeSessionErrorFrom(props.item.payload.error) ?? props.stateError;
+function MessageDeliveryOutcomeFeedback(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage }): ReactNode {
+  const deliveryError = nativeSessionErrorFrom(props.item.payload.deliveryError) ?? nativeSessionErrorFrom(props.item.payload.error);
   const unconfirmed = props.item.status === 'unconfirmed' || props.item.status === 'paused';
   const failed = props.item.status === 'failed';
   if (!deliveryError || (!failed && !unconfirmed)) return null;
@@ -1057,6 +1067,24 @@ function transcriptRowTurnId(row: TranscriptRow): string | null {
 
 function turnProcessExpansionKey(turnId: string): string {
   return `turn-process:${turnId}`;
+}
+
+function defaultExpandedTurnProcessKeys(rows: readonly TranscriptTurnRow[], turnsByProviderId: NativeSessionState['turnsByProviderId'], terminalTurnIds: NativeSessionState['terminalTurnIds']): ReadonlySet<string> {
+  let latestTurnId: string | null = null;
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    latestTurnId = transcriptTurnRowTurnId(rows[index]!);
+    if (latestTurnId) break;
+  }
+  if (!latestTurnId) return new Set();
+
+  const turn = turnsByProviderId[latestTurnId] ?? Object.values(turnsByProviderId).find((candidate) => candidate.id === latestTurnId || candidate.providerTurnId === latestTurnId);
+  const providerTurnId = turn?.providerTurnId;
+  const interrupted = terminalTurnIds[latestTurnId] === 'interrupted' || (providerTurnId ? terminalTurnIds[providerTurnId] === 'interrupted' : false) || turn?.status === 'interrupted';
+  if (!interrupted) return new Set();
+
+  // 编排层会把意外退出后的轮次写成 interrupted 终态，但产品语义仍是“过程没有正常结束”。
+  // 只让最后一轮中断过程默认展开，避免旧中断记录把整段历史长期撑开；用户仍可手动收起。
+  return new Set([latestTurnId, providerTurnId, turn?.id].filter((turnId): turnId is string => Boolean(turnId)).map(turnProcessExpansionKey));
 }
 
 function transcriptTurnRowTurnId(row: TranscriptTurnRow): string | null {
@@ -1236,9 +1264,73 @@ function transcriptTimelineAt(item: NativeSessionItemBuffer): string {
   return item.timelineAt ?? item.updatedAt ?? '';
 }
 
+function transcriptPayloadString(item: NativeSessionItemBuffer, key: string): string | undefined {
+  const value = item.payload[key];
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function transcriptUserMessageClientIds(item: NativeSessionItemBuffer): string[] {
+  return [item.clientUserMessageId, item.durableClientUserMessageId, transcriptPayloadString(item, 'clientId'), transcriptPayloadString(item, 'clientUserMessageId')].filter(
+    (value, index, values): value is string => Boolean(value) && values.indexOf(value) === index,
+  );
+}
+
+function transcriptUserMessageIdentities(item: NativeSessionItemBuffer): string[] {
+  return [
+    ...transcriptUserMessageClientIds(item).map((value) => `client:${value}`),
+    ...(transcriptPayloadString(item, 'submissionId') ? [`submission:${transcriptPayloadString(item, 'submissionId')}`] : []),
+    ...(item.providerItemId ? [`provider:${item.providerItemId}`] : []),
+  ];
+}
+
+function hasScopedDeliveryFailure(item: NativeSessionItemBuffer): boolean {
+  if (item.status !== 'failed' && item.status !== 'unconfirmed' && item.status !== 'paused') return false;
+  return Boolean(nativeSessionErrorFrom(item.payload.deliveryError) ?? nativeSessionErrorFrom(item.payload.error));
+}
+
+/** 同一持久 submission 即使从本地消息、队列和 Provider 三条路径到达，也只保留一个稳定气泡。 */
+function coalesceTranscriptUserMessages(items: readonly NativeSessionItemBuffer[]): NativeSessionItemBuffer[] {
+  const projected: NativeSessionItemBuffer[] = [];
+  const indexByIdentity = new Map<string, number>();
+  for (const item of items) {
+    if (itemRole(item) !== 'user') {
+      projected.push(item);
+      continue;
+    }
+    const identities = transcriptUserMessageIdentities(item);
+    const existingIndex = identities.map((identity) => indexByIdentity.get(identity)).find((index): index is number => index !== undefined);
+    if (existingIndex === undefined) {
+      const index = projected.push(item) - 1;
+      for (const identity of identities) indexByIdentity.set(identity, index);
+      continue;
+    }
+    const existing = projected[existingIndex]!;
+    const durable = !existing.optimistic ? existing : !item.optimistic ? item : existing;
+    const delivery = hasScopedDeliveryFailure(item) ? item : hasScopedDeliveryFailure(existing) ? existing : durable;
+    const merged: NativeSessionItemBuffer = {
+      ...durable,
+      key: existing.key,
+      text: durable.text || existing.text || item.text,
+      status: delivery.status,
+      payload: { ...existing.payload, ...item.payload },
+      resources: durable.resources.length ? durable.resources : existing.resources.length ? existing.resources : item.resources,
+      optimistic: hasScopedDeliveryFailure(delivery) ? true : durable.optimistic,
+      clientUserMessageId: durable.clientUserMessageId ?? existing.clientUserMessageId ?? item.clientUserMessageId,
+      durableClientUserMessageId: durable.durableClientUserMessageId ?? existing.durableClientUserMessageId ?? item.durableClientUserMessageId,
+      timelineAt: existing.timelineAt ?? item.timelineAt,
+      updatedAt: item.updatedAt ?? existing.updatedAt,
+    };
+    projected[existingIndex] = merged;
+    for (const identity of [...transcriptUserMessageIdentities(existing), ...identities, ...transcriptUserMessageIdentities(merged)]) indexByIdentity.set(identity, existingIndex);
+  }
+  return projected;
+}
+
 function isUnacceptedQueuedUserItem(item: NativeSessionItemBuffer, queuedClientUserMessageIds: ReadonlySet<string>): boolean {
   if (!item.optimistic || itemRole(item) !== 'user' || item.payload.delivery !== 'queue') return false;
-  const clientUserMessageId = item.clientUserMessageId ?? item.durableClientUserMessageId;
+  // 已落库的本地 userMessage 只是仍在等待 Provider 接纳，不应再被队列替身挤掉。
+  if (item.localItemId) return false;
+  const clientUserMessageId = transcriptUserMessageClientIds(item)[0];
   // Provider 的 active turn 会早于 userMessage/模型历史投影到达。此时不能因为 pending turn id
   // 与 Provider turn id 不同就隐藏本地气泡；只有队列已经用同一客户端身份画出替身时才去重。
   return Boolean(clientUserMessageId && queuedClientUserMessageIds.has(clientUserMessageId));
@@ -1255,11 +1347,11 @@ function visibleQueuedSubmissions(queue: NativeQueueSnapshot | null) {
  * 否则冷开会话会过滤掉乐观消息，并把用户已经发送的内容渲染成整页空白。
  */
 function projectQueuedSubmissionItems(state: NativeSessionState, submissions: ReturnType<typeof visibleQueuedSubmissions>, persistedItems: readonly NativeSessionItemBuffer[]): NativeSessionItemBuffer[] {
-  const visibleSubmissionIds = new Set(persistedItems.flatMap((item) => [item.localItemId, item.itemId]).filter((value): value is string => Boolean(value)));
+  const visibleSubmissionIds = new Set(persistedItems.flatMap((item) => [item.localItemId, item.itemId, transcriptPayloadString(item, 'submissionId')]).filter((value): value is string => Boolean(value)));
   const visibleClientMessageIds = new Set(
     persistedItems
       .filter((item) => itemRole(item) === 'user')
-      .flatMap((item) => [item.clientUserMessageId, item.durableClientUserMessageId])
+      .flatMap(transcriptUserMessageClientIds)
       .filter((value): value is string => Boolean(value)),
   );
   return submissions.flatMap((submission) => {

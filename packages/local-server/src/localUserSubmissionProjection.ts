@@ -19,6 +19,7 @@ export function projectLocallyAcceptedUserMessage(input: { conversations: Conver
     source: 'zeus_local_submission',
     metadata: {
       inputOrigin: 'zeus_local',
+      submissionId: input.submission.id,
       clientUserMessageId: input.submission.clientMessageId,
       ...(Array.isArray(submissionInput.attachments) && submissionInput.attachments.length ? { attachments: submissionInput.attachments } : {}),
       ...(isRecord(submissionInput.taskPushLayout) ? { taskPushLayout: submissionInput.taskPushLayout } : {}),
