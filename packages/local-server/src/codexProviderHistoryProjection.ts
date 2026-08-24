@@ -228,8 +228,8 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     );
     for (const providerTurn of [...eligibleDescending].reverse()) {
       const existingTurn = localTurns.get(providerTurn.id);
-      // 首次启用时的基线只定义边界；它不在 Zeus 本地时不得作为历史缺口导入。
-      if (providerTurn.id === checkpoint.baselineTurnId && !existingTurn) continue;
+      // 终态基线只定义历史边界；仍在执行的基线必须投影，否则首次对账会再次把目标自主 turn 误判为空闲。
+      if (providerTurn.id === checkpoint.baselineTurnId && !existingTurn && classifySnapshotTurn(providerTurn) !== 'active') continue;
       const projected = projectProviderSnapshotTurn(conversation, providerThreadId, providerTurn, existingTurn);
       localTurns.set(providerTurn.id, projected);
     }
@@ -289,7 +289,12 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     const completedAt = classification === 'active' ? null : providerTimestamp(providerTurn.completedAt, existingTurn?.completedAt ?? timestamp);
     const submissions = options.submissions.listByConversation(conversation.id);
     const providerClientId = providerTurnUserClientId(providerTurn);
-    const matchedSubmission = (providerClientId ? submissions.find((candidate) => candidate.clientMessageId === providerClientId) : undefined) ?? submissions.find((candidate) => candidate.providerTurnId === providerTurn.id);
+    const providerMatchedSubmission = providerClientId ? submissions.find((candidate) => candidate.clientMessageId === providerClientId) : undefined;
+    const existingOwnedSubmission = existingTurn?.clientSubmissionId ? submissions.find((candidate) => candidate.id === existingTurn.clientSubmissionId) : undefined;
+    const existingOwnerConfirmed = Boolean(existingOwnedSubmission && (existingOwnedSubmission.acceptedAt || existingOwnedSubmission.clientMessageId === providerClientId));
+    // provider_turn_id 对 steer 只表示目标轮次，不能反向证明该消息已经被 Provider 接收。
+    const matchedSubmission = (existingOwnerConfirmed ? existingOwnedSubmission : undefined) ?? providerMatchedSubmission;
+    const clientSubmissionId = (existingOwnerConfirmed ? existingTurn?.clientSubmissionId : null) ?? providerMatchedSubmission?.id ?? null;
     const status = classification === 'active' ? 'running' : classification;
     const wasTerminal = existingTurn?.status === 'completed' || existingTurn?.status === 'interrupted' || existingTurn?.status === 'failed';
     const stateChanged = !existingTurn || existingTurn.status !== status;
@@ -298,7 +303,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       conversationId: conversation.id,
       providerThreadId,
       providerTurnId: providerTurn.id,
-      clientSubmissionId: matchedSubmission?.id ?? existingTurn?.clientSubmissionId ?? null,
+      clientSubmissionId,
       status,
       ...(classification === 'failed' ? { error: providerTurnFailureRecord({ turn: providerTurn }, providerTurnFailure({ turn: providerTurn }, providerTurn.id)) } : {}),
       startedAt,
@@ -330,9 +335,12 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
         });
       }
     } else {
-      if (matchedSubmission && (matchedSubmission.status === 'active' || matchedSubmission.status === 'dispatching')) {
-        options.submissions.updateStatus(matchedSubmission.id, classification === 'failed' ? 'failed' : 'completed', { providerTurnId: providerTurn.id, resolvedAt: completedAt ?? timestamp });
-      }
+      const terminalReconciliation = reconcileTerminalTurnSubmissions(
+        conversation,
+        turn,
+        completedAt ?? timestamp,
+        classification === 'failed' ? providerTurnFailureRecord({ turn: providerTurn }, providerTurnFailure({ turn: providerTurn }, providerTurn.id)) : undefined,
+      );
       if (classification === 'failed') {
         const failureRecord = providerTurnFailureRecord({ turn: providerTurn }, providerTurnFailure({ turn: providerTurn }, providerTurn.id));
         for (const queued of submissions.filter((entry) => entry.status === 'queued')) {
@@ -343,14 +351,15 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       for (const queued of interruptedQueue.filter((entry: ZeusConversationSubmissionRecord) => entry.status === 'queued')) {
         options.submissions.updateStatus(queued.id, 'paused', { pausedReason: 'interrupted' });
       }
+      const recoveryRequired = terminalReconciliation.recoveryRequired.length > 0;
       const interruptedWithQueue = classification === 'interrupted' && interruptedQueue.length > 0;
       options.conversations.bindProvider(conversation.id, {
         providerId: 'codex',
         providerThreadId,
         providerModel: conversation.providerModel,
-        providerState: classification === 'failed' ? 'failed' : interruptedWithQueue ? 'paused' : 'ready',
+        providerState: classification === 'failed' ? 'failed' : recoveryRequired || interruptedWithQueue ? 'paused' : 'ready',
       });
-      runStates.set(conversation.id, classification === 'failed' ? { type: 'paused', reason: 'recovery_required' } : interruptedWithQueue ? { type: 'paused', reason: 'interrupted' } : { type: 'idle' });
+      runStates.set(conversation.id, classification === 'failed' || recoveryRequired ? { type: 'paused', reason: 'recovery_required' } : interruptedWithQueue ? { type: 'paused', reason: 'interrupted' } : { type: 'idle' });
       if (!wasTerminal) options.changeSets?.seal({ conversation, turn, timestamp });
       if (!wasTerminal && !goals.get(conversation.id)) {
         options.conversations.markAttentionUnread(conversation.id, {
@@ -520,7 +529,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     };
   }
 
-  function reconcileConversationSnapshot(conversation: ZeusConversationWithMessagesRecord, snapshot: CodexThreadSnapshot, generationId: string): void {
+  function reconcileConversationSnapshot(conversation: ZeusConversationWithMessagesRecord, snapshot: CodexThreadSnapshot, generationId: string, input: { preserveUnsentQueue?: boolean } = {}): void {
     const snapshotPath = threadPath(snapshot);
     if (snapshotPath && conversation.nativeSessionPath !== snapshotPath) {
       conversation = options.conversations.updateProviderThreadPath(conversation.id, {
@@ -600,8 +609,8 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
           providerState: 'ready',
         });
       }
-      // 恢复只确认原会话可以继续，不替用户发送重启前尚未进入 Codex 轮次的内容。
-      pauseUnsentSubmissionsForConfirmation(conversation.id);
+      // 一般恢复保留旧有“未进入 Provider 的内容需用户确认”边界；目标 turn 观察器只处理已明确排队的当前输入，可保留队列等待统一排空。
+      if (input.preserveUnsentQueue !== true) pauseUnsentSubmissionsForConfirmation(conversation.id);
       runStates.set(conversation.id, { type: 'idle' });
       return;
     }
@@ -621,18 +630,24 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       }
       const timestamp = now();
       const existingTurn = options.turns.listByConversation(conversation.id).find((turn) => turn.providerTurnId === providerTurnId || turn.clientSubmissionId === submission.id);
+      const exactDeliveryConfirmed = hasExactProviderUserMessage(conversation, submission, providerTurnId);
+      const initialTurnAcceptanceConfirmed = submission.submissionOutcome === 'accepted' && Boolean(submission.acceptedAt);
       const turn = upsertRecoveredTurn(existingTurn, {
         conversationId: conversation.id,
         providerThreadId: requireString(conversation.providerThreadId, 'provider thread id'),
         providerTurnId,
-        clientSubmissionId: existingTurn?.clientSubmissionId ?? submission.id,
+        clientSubmissionId: existingTurn ? existingTurn.clientSubmissionId : exactDeliveryConfirmed || initialTurnAcceptanceConfirmed ? submission.id : null,
         status: classification === 'completed' ? 'completed' : classification === 'interrupted' ? 'interrupted' : classification === 'failed' ? 'failed' : 'running',
         timestamp,
       });
       if (classification === 'active') {
         const pending = options.requests.listByConversation(conversation.id).find((request) => request.turnId === turn.id && request.status === 'pending' && request.transportGenerationId === generationId);
         if (pending) options.turns.upsert({ ...turn, status: 'waiting', updatedAt: timestamp });
-        options.submissions.updateStatus(submission.id, 'active', { providerTurnId });
+        if (exactDeliveryConfirmed || initialTurnAcceptanceConfirmed) {
+          options.submissions.updateStatus(submission.id, 'active', { providerTurnId });
+        } else {
+          markSubmissionRecoveryRequired(submission, coordinatorError('ZEUS_NATIVE_SUBMISSION_DELIVERY_UNCONFIRMED', 'The active provider turn does not contain exact evidence that this user message was received.'));
+        }
         options.conversations.bindProvider(conversation.id, { providerId: 'codex', providerThreadId: turn.providerThreadId, providerModel: conversation.providerModel, providerState: pending ? 'waiting' : 'active' });
         runStates.set(
           conversation.id,
