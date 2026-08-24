@@ -22,7 +22,7 @@ interface ApplicationErrorEntry {
   id: number;
   language: ApplicationErrorLanguage;
   title: string;
-  summary: string;
+  summary: string | null;
   details: string;
   primaryAction?: ApplicationErrorOptions['primaryAction'];
 }
@@ -41,7 +41,6 @@ const secretPatterns: ReadonlyArray<[RegExp, string]> = [
 const copyByLanguage = {
   'zh-CN': {
     title: '操作未完成',
-    summary: 'Zeus 没有完成这项操作。请查看详情后重试，或关闭弹窗返回当前工作面。',
     details: '查看详情',
     hideDetails: '收起详情',
     close: '关闭',
@@ -53,7 +52,6 @@ const copyByLanguage = {
   },
   en: {
     title: 'Operation not completed',
-    summary: 'Zeus could not complete this operation. Review the details and try again, or close this dialog to return to your work.',
     details: 'View Details',
     hideDetails: 'Hide Details',
     close: 'Close',
@@ -98,7 +96,7 @@ export function reportApplicationError(error: unknown, options: ApplicationError
     id: nextErrorId,
     language,
     title: options.title?.trim() || copy.title,
-    summary: options.summary?.trim() || copy.summary,
+    summary: options.summary?.trim() || null,
     details,
     ...(options.primaryAction ? { primaryAction: options.primaryAction } : {}),
   };
@@ -170,14 +168,20 @@ export function ApplicationErrorDialogHost(props: { language: ApplicationErrorLa
 
   return (
     <ModalPortal rootClassName="application-error-dialog-portal-root" backdropClassName="application-error-dialog-backdrop" onDismiss={dismissCurrentError}>
-      <section className="application-error-dialog zeus-solid-form-surface" role="alertdialog" aria-modal="true" aria-labelledby="application-error-dialog-title" aria-describedby="application-error-dialog-summary">
+      <section
+        className="application-error-dialog zeus-solid-form-surface"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="application-error-dialog-title"
+        aria-describedby={current.summary ? 'application-error-dialog-summary' : undefined}
+      >
         <div className="application-error-dialog-icon" aria-hidden="true">
           <WarningCircle weight="fill" />
         </div>
         <div className="application-error-dialog-content">
           <header>
             <strong id="application-error-dialog-title">{current.title}</strong>
-            <p id="application-error-dialog-summary">{current.summary}</p>
+            {current.summary ? <p id="application-error-dialog-summary">{current.summary}</p> : null}
           </header>
           {detailsOpen ? (
             <section className="application-error-dialog-details" aria-labelledby="application-error-dialog-details-title">

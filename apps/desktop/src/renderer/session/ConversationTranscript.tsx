@@ -595,7 +595,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             scheduleLatestContentVisibility();
           }}
         >
-          <V2HistoryPageControl state={props.state} language={props.language} onLoadEarlier={renderProps.onLoadEarlierHistory ? loadEarlierHistoryWithAnchor : undefined} />
+          <V2HistoryPageSentinel state={props.state} onLoadEarlier={renderProps.onLoadEarlierHistory ? loadEarlierHistoryWithAnchor : undefined} />
           {turnRows.length > 0 ? (
             <div className="session-transcript-window" data-rendered-row-count={viewportVirtualizer.projection.renderedRowCount} data-total-row-count={turnRows.length} data-measurement-cache-count={viewportVirtualizer.measurementCacheSize}>
               {viewportVirtualizer.projection.slots.map((slot) => {
@@ -639,6 +639,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           {showStandaloneActiveStatus ? <TranscriptActiveStatus language={props.language} kind={activeStatusKind} /> : null}
           <span ref={latestContentMarkerRef} className="session-latest-content-marker" aria-hidden="true" />
         </section>
+        <V2HistoryPageStatus state={props.state} language={props.language} />
         <button
           type="button"
           className="session-return-latest"
@@ -672,9 +673,9 @@ function TranscriptHistoryLoading(props: { visible: boolean; language: SessionUi
   );
 }
 
-function V2HistoryPageControl(props: { state: NativeSessionState; language: SessionUiLanguage; onLoadEarlier?: () => void | Promise<void> }) {
+function V2HistoryPageSentinel(props: { state: NativeSessionState; onLoadEarlier?: () => void | Promise<void> }) {
   const paging = props.state.snapshot?.v2Paging?.history;
-  const sentinelRef = useRef<HTMLElement | null>(null);
+  const sentinelRef = useRef<HTMLSpanElement | null>(null);
   const cursor = paging?.nextCursor ?? null;
   useEffect(() => {
     const sentinel = sentinelRef.current;
@@ -699,14 +700,16 @@ function V2HistoryPageControl(props: { state: NativeSessionState; language: Sess
     return () => observer.disconnect();
   }, [cursor, paging?.error, paging?.hasMore, paging?.loading, props.onLoadEarlier]);
   if (!props.state.snapshot?.snapshotV2 || !paging || (!paging.hasMore && !paging.error)) return null;
+  return <span ref={sentinelRef} className="session-v2-history-sentinel" aria-hidden="true" />;
+}
+
+function V2HistoryPageStatus(props: { state: NativeSessionState; language: SessionUiLanguage }) {
+  const paging = props.state.snapshot?.v2Paging?.history;
+  if (!props.state.snapshot?.snapshotV2 || !paging || (!paging.loading && !paging.error)) return null;
+  const failed = Boolean(paging.error);
   return (
-    <section ref={sentinelRef} className="session-v2-history-control" aria-busy={paging.loading || undefined}>
-      {paging.loading ? <small className="session-v2-page-status">{props.language === 'zh-CN' ? '正在读取更早消息…' : 'Loading earlier messages…'}</small> : null}
-      {paging.error ? (
-        <small className="session-v2-page-error" role="alert">
-          {props.language === 'zh-CN' ? '更早消息暂时无法读取。' : 'Earlier messages are temporarily unavailable.'}
-        </small>
-      ) : null}
+    <section className="session-v2-history-status" data-state={failed ? 'error' : 'loading'} role={failed ? 'alert' : 'status'} aria-live={failed ? undefined : 'polite'}>
+      {failed ? (props.language === 'zh-CN' ? '更早消息暂时无法读取。' : 'Earlier messages are temporarily unavailable.') : props.language === 'zh-CN' ? '正在读取更早消息…' : 'Loading earlier messages…'}
     </section>
   );
 }
@@ -780,7 +783,7 @@ function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: 
       role={warning ? 'status' : 'alert'}
       aria-label={warning ? (zh ? '模型请求警告' : 'Model request warning') : zh ? '会话失败原因' : 'Conversation failure reason'}
     >
-      <strong>{warning ? (zh ? '本轮请求未完成，会话可以继续' : 'This request did not complete; the conversation can continue') : zh ? '本轮执行失败' : 'This turn failed'}</strong>
+      <strong>{warning ? (zh ? '本轮请求未完成' : 'This request did not complete') : zh ? '本轮执行失败' : 'This turn failed'}</strong>
       <p>{copy.reason}</p>
       <small>{copy.recovery}</small>
       <details className="session-turn-failure-details">
@@ -832,28 +835,22 @@ function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: 
 
 function failureCopy(category: NativeTurnFailureSnapshot['category'], zh: boolean): { reason: string; recovery: string } {
   if (category === 'authentication')
-    return zh
-      ? { reason: '登录状态或 API Key 未通过认证，模型服务拒绝了本轮请求。', recovery: '请完成对应运行内核的登录，或检查模型供应商中的 API Key，然后重新发送。' }
-      : { reason: 'The model service rejected this turn because the login or API key was not accepted.', recovery: 'Sign in to the selected runtime or check the model connection API key, then send again.' };
+    return zh ? { reason: '登录状态或 API Key 无效。', recovery: '请重新登录或检查 API Key 后重试。' } : { reason: 'The sign-in or API key is invalid.', recovery: 'Sign in again or check the API key, then retry.' };
   if (category === 'rate_limit')
     return zh
       ? { reason: '模型服务触发了限流或配额限制。', recovery: '请稍后重试，或检查账号配额和并发限制。' }
       : { reason: 'The model service rate limit or quota was reached.', recovery: 'Try again later, or check the account quota and concurrency limits.' };
   if (category === 'network')
     return zh
-      ? { reason: 'Zeus 与模型服务之间的网络连接中断或超时。', recovery: '请检查网络和服务地址，连接恢复后重新发送。' }
-      : { reason: 'The connection between Zeus and the model service failed or timed out.', recovery: 'Check the network and service URL, then send again after connectivity recovers.' };
+      ? { reason: '与模型服务的连接中断或超时。', recovery: '请检查网络，连接恢复后重试。' }
+      : { reason: 'The connection to the model service was interrupted or timed out.', recovery: 'Check the network, then retry after connectivity recovers.' };
   if (category === 'configuration')
-    return zh
-      ? { reason: '当前模型或请求参数不被接入渠道接受。', recovery: '请检查所选模型、思考深度和接入渠道后重新发送。' }
-      : { reason: 'The selected channel rejected the model or request parameters.', recovery: 'Check the model, reasoning effort, and access channel, then send again.' };
+    return zh ? { reason: '当前模型或请求参数不受支持。', recovery: '请检查模型和推理强度后重试。' } : { reason: 'The current model or request parameters are not supported.', recovery: 'Check the model and reasoning effort, then retry.' };
   if (category === 'permission')
     return zh
-      ? { reason: '本轮操作被权限或安全边界阻止。', recovery: '请检查项目授权和权限模式，再决定是否重新发送。' }
-      : { reason: 'A permission or safety boundary blocked this turn.', recovery: 'Review the project authorization and permission mode before sending again.' };
-  return zh
-    ? { reason: '智能体运行内核报告本轮失败。', recovery: '请展开技术详情查看真实原因，修复后重新发送。' }
-    : { reason: 'The agent runtime reported that this turn failed.', recovery: 'Open the technical details for the reported cause, fix it, and send again.' };
+      ? { reason: '当前权限不允许执行本轮操作。', recovery: '请检查项目授权和权限模式后重试。' }
+      : { reason: 'The current permissions do not allow this turn.', recovery: 'Check the project authorization and permission mode, then retry.' };
+  return zh ? { reason: '本轮执行遇到未知错误。', recovery: '请查看技术详情后重试。' } : { reason: 'This turn encountered an unknown error.', recovery: 'Review the technical details, then retry.' };
 }
 
 export type TranscriptRow =
@@ -1031,27 +1028,29 @@ function MessageDeliveryOutcomeFeedback(props: { item: NativeSessionItemBuffer; 
   const failed = props.item.status === 'failed';
   const hydrationPending = deliveryError?.code === 'ZEUS_NATIVE_ACCEPTANCE_HYDRATION_PENDING';
   const deliveryFailed = failed || Boolean(deliveryError && !hydrationPending);
-  // 正常投递过程不形成独立提示，只保留失败、结果不确定和持久记录确认。
+  // 正常投递过程不形成独立提示，只保留失败、结果不确定和发送结果确认。
   if (!deliveryFailed && !unconfirmed && !hydrationPending) return null;
   const reason = deliveryError ? messageDeliveryFailureReason(deliveryError, zh) : null;
-  const title = deliveryFailed ? (zh ? '消息发送失败' : 'Message send failed') : unconfirmed ? (zh ? '发送结果待确认' : 'Send outcome unconfirmed') : zh ? '消息已接收，正在确认记录' : 'Message accepted; confirming its record';
-  const guidance = failed
+  const title = failed
     ? zh
-      ? '内容已保留在输入框中，可修改后重新发送。'
-      : 'The content remains in the composer so you can edit and send it again.'
+      ? '消息发送失败'
+      : 'Message send failed'
     : unconfirmed
       ? zh
-        ? 'Zeus 不会自动重发，避免模型收到重复消息。'
-        : 'Zeus will not resend automatically, preventing duplicate model input.'
-      : null;
+        ? '发送结果待确认'
+        : 'Send outcome unconfirmed'
+      : deliveryFailed
+        ? zh
+          ? '消息发送失败'
+          : 'Message send failed'
+        : zh
+          ? '正在确认发送结果'
+          : 'Confirming send outcome';
+  const feedbackState = failed || (!unconfirmed && deliveryFailed) ? 'failed' : unconfirmed ? 'unconfirmed' : 'pending';
+  const guidance = failed && !props.onReturnToComposer ? (zh ? '内容已保留在输入框中。' : 'The content remains in the composer.') : null;
 
   return (
-    <section
-      className="session-message-delivery-feedback"
-      data-state={deliveryFailed ? 'failed' : unconfirmed ? 'unconfirmed' : 'pending'}
-      role={deliveryFailed || unconfirmed ? 'alert' : 'status'}
-      aria-live={deliveryFailed || unconfirmed ? 'assertive' : 'polite'}
-    >
+    <section className="session-message-delivery-feedback" data-state={feedbackState} role={deliveryFailed || unconfirmed ? 'alert' : 'status'} aria-live={deliveryFailed || unconfirmed ? 'assertive' : 'polite'}>
       <span className="session-thinking-pulse" aria-hidden="true" />
       <span className="session-message-delivery-copy">
         <span className="session-message-delivery-summary">
@@ -1059,7 +1058,7 @@ function MessageDeliveryOutcomeFeedback(props: { item: NativeSessionItemBuffer; 
           {reason ? <small>{reason}</small> : null}
         </span>
         {guidance ? <small className="session-message-delivery-guidance">{guidance}</small> : null}
-        {deliveryError && reason !== deliveryError.message ? (
+        {deliveryError && !hydrationPending && reason !== deliveryError.message ? (
           <details>
             <summary>{zh ? '技术详情' : 'Technical details'}</summary>
             <code>{[deliveryError.code, deliveryError.message].filter(Boolean).join(': ')}</code>
@@ -1103,21 +1102,23 @@ function nativeSessionErrorFrom(value: unknown): NativeSessionError | null {
   };
 }
 
-function messageDeliveryFailureReason(error: NativeSessionError, zh: boolean): string {
+function messageDeliveryFailureReason(error: NativeSessionError, zh: boolean): string | null {
   switch (error.code) {
     case 'ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE':
-      return zh ? '当前会话的执行目录不可用，Zeus 没有把消息交给模型。' : 'The execution directory is unavailable, so Zeus did not send the message to the model.';
+      return zh ? '当前会话的执行目录不可用。' : 'The execution directory is unavailable.';
     case 'ZEUS_TASK_REOPEN_REQUIRED':
       return zh ? '任务已经完成或取消，需要先重新打开任务才能继续。' : 'The task is completed or cancelled and must be reopened before continuing.';
     case 'ZEUS_NATIVE_ACCEPTANCE_HYDRATION_PENDING':
-      return zh ? 'Zeus 已接收消息，但暂时无法读取它的持久记录。' : 'Zeus accepted the message but cannot read its durable record yet.';
+      return null;
     case 'ZEUS_CODEX_LOGIN_REQUIRED':
-      return zh ? 'Zeus 的 Codex 登录尚未就绪，消息没有进入模型处理。' : 'The Zeus Codex login is not ready, so the model did not receive the message.';
+      return zh ? 'Codex 登录尚未就绪。' : 'Codex sign-in is not ready.';
+    case 'ZEUS_CODEX_RPC_TIMEOUT':
+      return zh ? '请求超时。' : 'The request timed out.';
     case 'ZEUS_TASK_INTEGRATION_AI_BUSY':
       return zh ? '冲突处理现场正在收尾，暂时不能开始下一轮。' : 'The conflict workspace is being finalized and cannot start another turn yet.';
     default:
-      if (error.status === 429) return zh ? '当前请求过多，Zeus 暂时无法开始处理。' : 'Too many requests are active, so Zeus cannot start processing yet.';
-      return error.message;
+      if (error.status === 429) return zh ? '请求过多，请稍后重试。' : 'Too many requests are active. Try again later.';
+      return zh ? '暂时无法发送消息。' : 'The message could not be sent.';
   }
 }
 

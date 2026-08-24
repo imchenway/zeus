@@ -408,7 +408,7 @@ export interface CodexAppServerManager {
   resumeThread(input: CodexThreadResumeInput): Promise<CodexThreadSnapshot>;
   archiveThread(input: { threadId: string } & CodexPerformanceTraceContext): Promise<void>;
   unarchiveThread(input: { threadId: string } & CodexPerformanceTraceContext): Promise<CodexThreadSnapshot>;
-  readThread(input: { threadId: string; includeTurns?: boolean }): Promise<CodexThreadSnapshot>;
+  readThread(input: { threadId: string; includeTurns?: boolean; priority?: 'control' }): Promise<CodexThreadSnapshot>;
   listThreads(input: CodexThreadListInput): Promise<CodexThreadsPage>;
   readThreadGoal(input: { threadId: string }): Promise<CodexThreadGoal | null>;
   setThreadGoal(input: { threadId: string; objective?: string; status?: CodexThreadGoalStatus; tokenBudget?: number | null } & CodexPerformanceTraceContext): Promise<CodexThreadGoal>;
@@ -703,12 +703,13 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     });
   }
 
-  function rpc(generationId: string, method: string, params: unknown, input: { requestWritten?: () => void; traceIdentity?: string | null } = {}): Promise<unknown> {
+  function rpc(generationId: string, method: string, params: unknown, input: { requestWritten?: () => void; traceIdentity?: string | null; priorityRead?: boolean } = {}): Promise<unknown> {
     if (preparingForShutdown || state.type === 'closed') return Promise.reject(managerError('ZEUS_CODEX_CLOSED', 'Codex app-server manager is closing.'));
     if (generationId !== currentGenerationId()) return Promise.reject(managerError('ZEUS_CODEX_STALE_GENERATION', 'Codex app-server generation is stale.'));
     const id = `${generationId}:${++requestSequence}`;
     return new Promise((resolve, reject) => {
-      const finishPriorityRead = method === 'turn/interrupt' ? beginPriorityRead(generationId) : () => undefined;
+      const priorityReleaseDelayMs = method === 'turn/interrupt' ? 2_000 : input.priorityRead ? 0 : null;
+      const finishPriorityRead = priorityReleaseDelayMs === null ? () => undefined : beginPriorityRead(generationId, priorityReleaseDelayMs);
       const timeout = setTimeout(() => {
         const key = pendingKey(generationId, id);
         const pending = pendingRequests.get(key);
@@ -908,7 +909,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     });
   }
 
-  function beginPriorityRead(generationId: string): () => void {
+  function beginPriorityRead(generationId: string, releaseDelayMs: number): () => void {
     const source = child;
     if (!source) return () => undefined;
     priorityReadCounts.set(source, (priorityReadCounts.get(source) ?? 0) + 1);
@@ -917,8 +918,8 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     return () => {
       if (finished) return;
       finished = true;
-      // 中断响应和终态通知通常位于相邻帧；保留短暂全双工窗口，让二者一起越过
-      // 过程投影背压。否则 RPC 会已写入却超时，Provider 继续运行。
+      // 中断响应和终态通知需要短暂全双工窗口；纯控制读取只需让响应本身越过
+      // 过程投影背压，下一轮事件循环就恢复普通背压。
       const timer = setTimeout(() => {
         const remaining = Math.max(0, (priorityReadCounts.get(source) ?? 1) - 1);
         if (remaining > 0) {
@@ -929,7 +930,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
         if (child !== source || state.type === 'closed') return;
         if (state.type !== 'idle' && state.generationId !== generationId) return;
         if ((pendingEventDeliveryCounts.get(source) ?? 0) > 0) source.stdout.pause?.();
-      }, 2_000);
+      }, releaseDelayMs);
       timer.unref?.();
     };
   }
@@ -1113,7 +1114,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     },
     async readThread(input) {
       const capabilities = await awaitCapabilities();
-      const response = asRecord(await rpc(capabilities.generationId, 'thread/read', { threadId: input.threadId, includeTurns: input.includeTurns ?? false }));
+      const response = asRecord(await rpc(capabilities.generationId, 'thread/read', { threadId: input.threadId, includeTurns: input.includeTurns ?? false }, { priorityRead: input.priority === 'control' }));
       return parseThread(response.thread);
     },
     async listThreads(input) {

@@ -302,6 +302,57 @@ const sendScrollInitialState: NativeSessionState = {
   transcriptRevision: 1,
 };
 
+const historyPagingConversationId = 'history-paging-conversation';
+const historyPagingItems = sendScrollItems.map((item) => ({ ...item, conversationId: historyPagingConversationId }));
+const historyPagingSessionState: NativeSessionState = {
+  ...sendScrollInitialState,
+  conversationId: historyPagingConversationId,
+  snapshot: {
+    id: historyPagingConversationId,
+    snapshotV2: { activeTurn: null, recentClosedTurns: [] },
+    v2Paging: {
+      history: { nextCursor: 'history-page-2', hasMore: true, loading: true, error: null },
+      historyByTurn: {},
+      processByTurn: {},
+      resources: { nextCursor: null, hasMore: false, loading: false, loaded: true, error: null, items: [] },
+      changeSetsByTurn: {},
+    },
+  } as NonNullable<NativeSessionState['snapshot']>,
+  items: Object.fromEntries(historyPagingItems.map((item) => [item.key, item])),
+  itemOrder: historyPagingItems.map((item) => item.key),
+};
+
+const deliveryFailureConversationId = 'delivery-failure-conversation';
+const deliveryFailureItem: NativeSessionItemBuffer = {
+  ...motionItem('delivery-failure', 'userMessage', 'unconfirmed', '是，实施此计划', {
+    role: 'user',
+    delivery: 'queue',
+    pausedReason: 'recovery_required',
+    deliveryError: {
+      code: 'ZEUS_CODEX_RPC_TIMEOUT',
+      message: 'Codex app-server request timed out: thread/read',
+      recoveryRequired: true,
+      retryable: false,
+    },
+  }),
+  conversationId: deliveryFailureConversationId,
+  threadId: 'delivery-failure-thread',
+  turnId: 'pending:delivery-failure',
+  optimistic: true,
+};
+const deliveryFailureSessionState: NativeSessionState = {
+  ...createInitialSessionState(),
+  transportState: 'ready',
+  conversationState: 'ready',
+  projectId: 'project-zeus',
+  conversationId: deliveryFailureConversationId,
+  providerThreadId: 'delivery-failure-thread',
+  snapshot: { id: deliveryFailureConversationId } as NonNullable<NativeSessionState['snapshot']>,
+  items: { [deliveryFailureItem.key]: deliveryFailureItem },
+  itemOrder: [deliveryFailureItem.key],
+  transcriptRevision: 1,
+};
+
 const steeringConversationId = 'steering-conversation';
 const steeringThreadId = 'steering-thread';
 const steeringTurnId = 'steering-turn';
@@ -788,6 +839,34 @@ function SendScrollPreview() {
   );
 }
 
+function HistoryPagingPreview() {
+  return (
+    <section className="qa-motion-send-preview session-codex-parity-v1" data-testid="history-paging-preview">
+      <div>
+        <h3>向上读取历史消息</h3>
+        <small>加载状态覆盖在滚动区顶部，不参与消息排版。</small>
+      </div>
+      <div className="qa-send-transcript ai-workspace">
+        <ConversationTranscript state={historyPagingSessionState} language="zh-CN" />
+      </div>
+    </section>
+  );
+}
+
+function DeliveryFailurePreview() {
+  return (
+    <section className="qa-motion-send-preview session-codex-parity-v1" data-testid="delivery-failure-preview">
+      <div>
+        <h3>发送结果待确认</h3>
+        <small>主文案只显示结果与原因，内部错误收入技术详情。</small>
+      </div>
+      <div className="qa-send-transcript ai-workspace">
+        <ConversationTranscript state={deliveryFailureSessionState} language="zh-CN" />
+      </div>
+    </section>
+  );
+}
+
 function SteeringPreview() {
   const state = steeringInitialState;
   const steeringState = state.queue?.submissions.find((entry) => entry.id === steeringSubmission.id)?.status;
@@ -876,6 +955,8 @@ function MotionApp() {
         </div>
       </section>
       <SendScrollPreview />
+      <DeliveryFailurePreview />
+      <HistoryPagingPreview />
       <SteeringPreview />
       <ConversationSelectionRecoveryPreview />
       <StopButtonPreview />

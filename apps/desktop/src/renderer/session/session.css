@@ -14042,17 +14042,42 @@
   display: none;
 }
 
-.session-codex-parity-v1 .session-v2-history-control {
-  align-items: center;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  inline-size: min(var(--session-thread-max), 100%);
-  justify-self: center;
-  min-block-size: 28px;
+.session-codex-parity-v1 .session-v2-history-sentinel {
+  block-size: 1px;
+  inline-size: 1px;
+  inset-block-start: 0;
+  inset-inline-start: 50%;
+  pointer-events: none;
+  position: absolute;
 }
 
-.session-codex-parity-v1 :where(.session-v2-history-control, .session-v2-content, .session-v2-deferred-artifacts) button {
+.session-codex-parity-v1 .session-v2-history-status {
+  backdrop-filter: blur(10px);
+  background: color-mix(in oklab, var(--session-canvas) 92%, transparent);
+  border: 1px solid var(--session-line-soft);
+  border-radius: 999px;
+  box-shadow: 0 4px 14px var(--session-shadow);
+  color: var(--session-text-muted);
+  font-size: 11px;
+  inline-size: max-content;
+  inset-block-start: 10px;
+  inset-inline: 0;
+  line-height: 18px;
+  margin-inline: auto;
+  max-inline-size: calc(100% - (2 * var(--session-gutter)));
+  padding: 4px 10px;
+  pointer-events: none;
+  position: absolute;
+  z-index: 2;
+}
+
+.session-codex-parity-v1 .session-v2-history-status[data-state='error'] {
+  background: color-mix(in oklab, var(--session-danger) 7%, var(--session-canvas));
+  border-color: color-mix(in oklab, var(--session-danger) 25%, var(--session-line-soft));
+  color: var(--session-danger);
+}
+
+.session-codex-parity-v1 :where(.session-v2-content, .session-v2-deferred-artifacts) button {
   background: var(--session-control);
   border: 1px solid var(--session-line-soft);
   border-radius: 7px;
@@ -14064,17 +14089,17 @@
   padding: 3px 9px;
 }
 
-.session-codex-parity-v1 :where(.session-v2-history-control, .session-v2-content, .session-v2-deferred-artifacts) button:hover:not(:disabled) {
+.session-codex-parity-v1 :where(.session-v2-content, .session-v2-deferred-artifacts) button:hover:not(:disabled) {
   background: var(--session-control-hover);
   color: var(--session-text);
 }
 
-.session-codex-parity-v1 :where(.session-v2-history-control, .session-v2-content, .session-v2-deferred-artifacts) button:focus-visible {
+.session-codex-parity-v1 :where(.session-v2-content, .session-v2-deferred-artifacts) button:focus-visible {
   outline: 2px solid var(--session-focus-outline);
   outline-offset: 2px;
 }
 
-.session-codex-parity-v1 :where(.session-v2-history-control, .session-v2-content, .session-v2-deferred-artifacts) button:disabled {
+.session-codex-parity-v1 :where(.session-v2-content, .session-v2-deferred-artifacts) button:disabled {
   cursor: wait;
   opacity: 0.64;
 }

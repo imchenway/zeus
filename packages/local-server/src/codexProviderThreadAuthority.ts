@@ -161,7 +161,8 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
 
   async function readAndProject(conversation: ZeusConversationWithMessagesRecord): Promise<ProviderThreadAuthority> {
     const providerThreadId = requireString(conversation.providerThreadId, 'provider thread id');
-    const metadata = await options.manager.readThread({ threadId: providerThreadId });
+    // 派发门禁属于控制面读取，不能被同一 app-server 的慢过程投影反向阻塞。
+    const metadata = await options.manager.readThread({ threadId: providerThreadId, priority: 'control' });
     if (metadata.id !== providerThreadId) {
       throw coordinatorError('ZEUS_CODEX_THREAD_IDENTITY_MISMATCH', 'Codex returned a different thread while reading authoritative state.');
     }
