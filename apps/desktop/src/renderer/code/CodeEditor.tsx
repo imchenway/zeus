@@ -3,6 +3,9 @@ import { basicSetup } from 'codemirror';
 import { indentWithTab } from '@codemirror/commands';
 import { EditorState, type Extension } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
+import { syntaxHighlighting } from '@codemirror/language';
+import { classHighlighter } from '@lezer/highlight';
+import { loadSourceLanguage } from './sourceLanguageRegistry.js';
 
 export interface CodeEditorProps {
   path: string;
@@ -34,6 +37,7 @@ export function CodeEditor(props: CodeEditorProps) {
           extensions: [
             basicSetup,
             languageExtension,
+            syntaxHighlighting(classHighlighter),
             EditorState.readOnly.of(callbacksRef.current.readOnly),
             EditorView.editable.of(!callbacksRef.current.readOnly),
             keymap.of([
@@ -97,32 +101,7 @@ export function CodeEditor(props: CodeEditorProps) {
 }
 
 async function loadLanguageExtension(language: string): Promise<Extension> {
-  switch (language) {
-    case 'javascript':
-      return (await import('@codemirror/lang-javascript')).javascript({ jsx: true });
-    case 'typescript':
-      return (await import('@codemirror/lang-javascript')).javascript({ jsx: true, typescript: true });
-    case 'json':
-      return (await import('@codemirror/lang-json')).json();
-    case 'css':
-      return (await import('@codemirror/lang-css')).css();
-    case 'html':
-      return (await import('@codemirror/lang-html')).html();
-    case 'markdown':
-      return (await import('@codemirror/lang-markdown')).markdown();
-    case 'python':
-      return (await import('@codemirror/lang-python')).python();
-    case 'java':
-      return (await import('@codemirror/lang-java')).java();
-    case 'sql':
-      return (await import('@codemirror/lang-sql')).sql();
-    case 'xml':
-      return (await import('@codemirror/lang-xml')).xml();
-    case 'yaml':
-      return (await import('@codemirror/lang-yaml')).yaml();
-    default:
-      return [];
-  }
+  return (await loadSourceLanguage(language))?.extension ?? [];
 }
 
 function revealRequestedLine(view: EditorView | undefined, lineNumber: number | null | undefined): void {

@@ -16,10 +16,111 @@
   --zeus-scrollbar-thumb: oklch(58% 0.004 255 / 0.2);
   --zeus-scrollbar-thumb-hover: oklch(52% 0.005 255 / 0.34);
   --zeus-scrollbar-thumb-active: oklch(46% 0.006 255 / 0.46);
+  --zeus-syntax-comment: oklch(50% 0.035 150);
+  --zeus-syntax-keyword: oklch(45% 0.16 268);
+  --zeus-syntax-literal: oklch(48% 0.14 300);
+  --zeus-syntax-string: oklch(43% 0.12 145);
+  --zeus-syntax-string-special: oklch(45% 0.11 195);
+  --zeus-syntax-definition: oklch(43% 0.13 55);
+  --zeus-syntax-type: oklch(45% 0.13 220);
+  --zeus-syntax-property: oklch(45% 0.11 25);
+  --zeus-syntax-meta: oklch(46% 0.1 265);
+  --zeus-syntax-link: oklch(45% 0.14 250);
+  --zeus-syntax-invalid: oklch(48% 0.18 25);
   --zeus-source-list-root-row-radius: 10px;
   --zeus-source-list-row-radius: 8px;
   --zeus-source-list-row-motion: 140ms var(--zeus-motion-ease-out);
   user-select: none;
+}
+
+.macos-ai-app.zeus-shell.theme-dark,
+html[data-zeus-theme='dark'] body > .macos-ai-app {
+  --zeus-syntax-comment: oklch(72% 0.035 150);
+  --zeus-syntax-keyword: oklch(77% 0.12 268);
+  --zeus-syntax-literal: oklch(77% 0.11 300);
+  --zeus-syntax-string: oklch(77% 0.1 145);
+  --zeus-syntax-string-special: oklch(77% 0.09 195);
+  --zeus-syntax-definition: oklch(80% 0.09 65);
+  --zeus-syntax-type: oklch(78% 0.1 220);
+  --zeus-syntax-property: oklch(78% 0.1 28);
+  --zeus-syntax-meta: oklch(75% 0.09 265);
+  --zeus-syntax-link: oklch(76% 0.11 250);
+  --zeus-syntax-invalid: oklch(76% 0.14 25);
+}
+
+@media (prefers-color-scheme: dark) {
+  .macos-ai-app.zeus-shell.theme-system,
+  html[data-zeus-theme='system'] body > .macos-ai-app {
+    --zeus-syntax-comment: oklch(72% 0.035 150);
+    --zeus-syntax-keyword: oklch(77% 0.12 268);
+    --zeus-syntax-literal: oklch(77% 0.11 300);
+    --zeus-syntax-string: oklch(77% 0.1 145);
+    --zeus-syntax-string-special: oklch(77% 0.09 195);
+    --zeus-syntax-definition: oklch(80% 0.09 65);
+    --zeus-syntax-type: oklch(78% 0.1 220);
+    --zeus-syntax-property: oklch(78% 0.1 28);
+    --zeus-syntax-meta: oklch(75% 0.09 265);
+    --zeus-syntax-link: oklch(76% 0.11 250);
+    --zeus-syntax-invalid: oklch(76% 0.14 25);
+  }
+}
+
+.macos-ai-app :where(.tok-comment) {
+  color: var(--zeus-syntax-comment) !important;
+  font-style: italic;
+}
+
+.macos-ai-app :where(.tok-keyword) {
+  color: var(--zeus-syntax-keyword) !important;
+  font-weight: 600;
+}
+
+.macos-ai-app :where(.tok-atom, .tok-bool, .tok-literal, .tok-number) {
+  color: var(--zeus-syntax-literal) !important;
+}
+
+.macos-ai-app :where(.tok-string) {
+  color: var(--zeus-syntax-string) !important;
+}
+
+.macos-ai-app :where(.tok-string2, .tok-variableName2) {
+  color: var(--zeus-syntax-string-special) !important;
+}
+
+.macos-ai-app :where(.tok-definition, .tok-labelName, .tok-macroName) {
+  color: var(--zeus-syntax-definition) !important;
+  font-weight: 600;
+}
+
+.macos-ai-app :where(.tok-typeName, .tok-className, .tok-namespace) {
+  color: var(--zeus-syntax-type) !important;
+}
+
+.macos-ai-app :where(.tok-propertyName) {
+  color: var(--zeus-syntax-property) !important;
+}
+
+.macos-ai-app :where(.tok-meta) {
+  color: var(--zeus-syntax-meta) !important;
+}
+
+.macos-ai-app :where(.tok-link, .tok-url) {
+  color: var(--zeus-syntax-link) !important;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.macos-ai-app :where(.tok-heading, .tok-strong) {
+  font-weight: 650;
+}
+
+.macos-ai-app :where(.tok-emphasis) {
+  font-style: italic;
+}
+
+.macos-ai-app :where(.tok-invalid) {
+  color: var(--zeus-syntax-invalid) !important;
+  text-decoration: underline wavy currentColor;
 }
 
 /* Zeus 默认使用 App 式界面选择边界；只有真正需要复制的内容显式恢复选文。 */

@@ -18156,9 +18156,31 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
   overflow: hidden;
 }
 
+.macos-ai-app .task-git-conflict-full-editor-surface > .task-git-highlighted-code,
 .macos-ai-app .task-git-conflict-full-editor-surface > textarea {
   position: absolute;
   inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+}
+
+.macos-ai-app .task-git-conflict-full-editor-surface > .task-git-highlighted-code {
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.macos-ai-app .task-git-conflict-full-editor-surface > textarea {
+  z-index: 1;
+  padding-inline: 50px 12px;
+  background: transparent;
+  caret-color: var(--zeus-product-text);
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+.macos-ai-app .task-git-conflict-full-editor-surface > textarea::selection {
+  background: color-mix(in oklab, var(--zeus-accent, #3977db) 27%, transparent);
+  -webkit-text-fill-color: transparent;
 }
 
 .macos-ai-app .task-git-conflict-full-controls {
@@ -18167,6 +18189,7 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
   inset-inline-end: 3px;
   inline-size: 30px;
   pointer-events: none;
+  z-index: 2;
 }
 
 .macos-ai-app .task-git-conflict-full-control {
