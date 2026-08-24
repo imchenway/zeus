@@ -1,17 +1,17 @@
 import type {
-  NativeConversationChoice,
-  NativeConversationModelHistoryV2Item,
-  NativeConversationProcessV2Item,
-  NativeConversationSnapshot,
-  NativeConversationSnapshotV2,
-  NativeConversationSnapshotV2Page,
-  NativeGoalResponse,
-  NativeItemSnapshot,
-  NativePendingRequest,
-  NativePlanImplementationRequest,
-  NativeQueueSnapshot,
-  NativeTurnSnapshot,
-  NativeUnifiedUsageSnapshot,
+    NativeConversationChoice,
+    NativeConversationModelHistoryV2Item,
+    NativeConversationProcessV2Item,
+    NativeConversationSnapshot,
+    NativeConversationSnapshotV2,
+    NativeConversationSnapshotV2Page,
+    NativeGoalResponse,
+    NativeItemSnapshot,
+    NativePendingRequest,
+    NativePlanImplementationRequest,
+    NativeQueueSnapshot,
+    NativeTurnSnapshot,
+    NativeUnifiedUsageSnapshot,
 } from './sessionTypes.js';
 
 const syncStreamProtocolGeneration = 'zeus-conversation-sync-v1' as const;
@@ -161,9 +161,7 @@ function emptyUnifiedUsageSnapshot(): NativeUnifiedUsageSnapshot {
 export function mergeConversationHistoryV2(snapshot: NativeConversationSnapshot, page: NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>): NativeConversationSnapshot {
   if (!snapshot.snapshotV2 || !snapshot.v2Paging || page.schemaVersion !== 2 || page.structureGeneration !== snapshot.snapshotV2.structureGeneration || page.conversationId !== snapshot.id || page.kind !== 'model_history')
     throw new Error('会话 V2 历史页与当前快照不匹配。');
-  const byId = new Map(snapshot.items.map((item) => [item.id, item]));
-  for (const item of historyItems(page.items, providerTurnIdentityMap(snapshot.turns))) byId.set(item.id, item);
-  const items = [...byId.values()].sort(compareNativeItems);
+    const items = mergeItemsByProviderIdentity(snapshot.items, historyItems(page.items, providerTurnIdentityMap(snapshot.turns)));
   return {
     ...snapshot,
     items,
@@ -190,17 +188,10 @@ export function mergeConversationProcessV2(snapshot: NativeConversationSnapshot,
     (page.kind !== 'process' && page.kind !== 'commands')
   )
     throw new Error('会话 V2 过程页与当前快照不匹配。');
-  const byId = new Map(snapshot.items.map((item) => [item.id, item]));
-  const byProviderItemId = new Map(snapshot.items.flatMap((item) => (item.providerItemId ? [[item.providerItemId, item] as const] : [])));
-  for (const item of processItems(page.items, providerTurnIdentityMap(snapshot.turns))) {
-    const previous = item.providerItemId ? byProviderItemId.get(item.providerItemId) : undefined;
-    if (previous && previous.id !== item.id) byId.delete(previous.id);
-    byId.set(item.id, item);
-    if (item.providerItemId) byProviderItemId.set(item.providerItemId, item);
-  }
+    const items = mergeItemsByProviderIdentity(snapshot.items, processItems(page.items, providerTurnIdentityMap(snapshot.turns)));
   return {
     ...snapshot,
-    items: [...byId.values()].sort(compareNativeItems),
+      items,
     v2Paging: {
       ...snapshot.v2Paging,
       processByTurn: {
@@ -215,20 +206,10 @@ export function mergeConversationTurnHistoryV2(snapshot: NativeConversationSnaps
   if (!snapshot.snapshotV2 || !snapshot.v2Paging || page.schemaVersion !== 2 || page.structureGeneration !== snapshot.snapshotV2.structureGeneration || page.conversationId !== snapshot.id || page.kind !== 'model_history') {
     throw new Error('会话 V2 轮次正文页与当前快照不匹配。');
   }
-  const byId = new Map(snapshot.items.map((item) => [item.id, item]));
-  const byProviderItemId = new Map(snapshot.items.flatMap((item) => (item.providerItemId ? [[item.providerItemId, item] as const] : [])));
-  for (const item of historyItems(page.items, providerTurnIdentityMap(snapshot.turns))) {
-    // 过程投影比同一 Provider item 的模型历史预览更完整；已存在时保持过程项，
-    // 避免后续正文分页把命令或工具结果重新添成重复行。
-    const previous = item.providerItemId ? byProviderItemId.get(item.providerItemId) : undefined;
-    if (previous && previous.id !== item.id && previous.payload.v2ContentKind === 'process_detail') continue;
-    if (previous && previous.id !== item.id) byId.delete(previous.id);
-    byId.set(item.id, item);
-    if (item.providerItemId) byProviderItemId.set(item.providerItemId, item);
-  }
+    const items = mergeItemsByProviderIdentity(snapshot.items, historyItems(page.items, providerTurnIdentityMap(snapshot.turns)));
   return {
     ...snapshot,
-    items: [...byId.values()].sort(compareNativeItems),
+      items,
     v2Paging: {
       ...snapshot.v2Paging,
       historyByTurn: {
@@ -237,6 +218,25 @@ export function mergeConversationTurnHistoryV2(snapshot: NativeConversationSnaps
       },
     },
   };
+}
+
+/**
+ * V2 正文、过程和实时投影可以用不同本地行 id 描述同一个 Provider item。
+ * Provider 身份是跨分页稳定主键；过程详情比模型历史预览完整，冲突时保持过程详情。
+ */
+function mergeItemsByProviderIdentity(current: readonly NativeItemSnapshot[], incoming: readonly NativeItemSnapshot[]): NativeItemSnapshot[] {
+    const byId = new Map<string, NativeItemSnapshot>();
+    const byProviderItemId = new Map<string, NativeItemSnapshot>();
+    const add = (item: NativeItemSnapshot): void => {
+        const previous = item.providerItemId ? byProviderItemId.get(item.providerItemId) : byId.get(item.id);
+        if (previous && previous.payload.v2ContentKind === 'process_detail' && item.payload.v2ContentKind !== 'process_detail') return;
+        if (previous && previous.id !== item.id) byId.delete(previous.id);
+        byId.set(item.id, item);
+        if (item.providerItemId) byProviderItemId.set(item.providerItemId, item);
+    };
+    for (const item of current) add(item);
+    for (const item of incoming) add(item);
+    return [...byId.values()].sort(compareNativeItems);
 }
 
 export function updateConversationV2Paging(snapshot: NativeConversationSnapshot, update: (paging: NonNullable<NativeConversationSnapshot['v2Paging']>) => NonNullable<NativeConversationSnapshot['v2Paging']>): NativeConversationSnapshot {
