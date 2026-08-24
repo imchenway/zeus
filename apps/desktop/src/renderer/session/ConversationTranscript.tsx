@@ -75,7 +75,9 @@ const liveTurnLayoutTransition = { duration: 0.22, ease: [0.22, 1, 0.36, 1] as c
 
 function turnDetailPaging(snapshot: NativeSessionState['snapshot'], turnId: string) {
   const process = snapshot?.v2Paging?.processByTurn[turnId];
-  const history = snapshot?.v2Paging?.historyByTurn[turnId];
+  // v0.3.46 之前已经留在 Renderer 内存中的分页对象没有 historyByTurn。
+  // 升级后第一次打开历史会话必须把它视为空映射，而不是在旧快照上崩溃。
+  const history = snapshot?.v2Paging?.historyByTurn?.[turnId];
   if (!process && !history) return undefined;
   return {
     loading: Boolean(process?.loading || history?.loading),

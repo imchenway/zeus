@@ -712,7 +712,8 @@ export interface NativeConversationToolResultPage {
 
 export interface NativeConversationV2PagingState {
   history: { nextCursor: string | null; hasMore: boolean; loading: boolean; error: string | null };
-  historyByTurn: Record<string, { nextCursor: string | null; hasMore: boolean; loading: boolean; loaded: boolean; error: string | null }>;
+  /** 旧 Renderer 快照在升级后的首次导航中可能尚未携带该字段。 */
+  historyByTurn?: Record<string, { nextCursor: string | null; hasMore: boolean; loading: boolean; loaded: boolean; error: string | null }>;
   processByTurn: Record<string, { nextCursor: string | null; hasMore: boolean; loading: boolean; loaded: boolean; error: string | null }>;
   resources: { nextCursor: string | null; hasMore: boolean; loading: boolean; loaded: boolean; error: string | null; items: NativeConversationResourceV2Item[] };
   changeSetsByTurn: Record<

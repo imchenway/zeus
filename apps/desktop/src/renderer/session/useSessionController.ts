@@ -2018,7 +2018,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const localTurnId = turn?.id ?? turnIdentity;
     const pagingKey = turn?.providerTurnId ?? turnIdentity;
     const currentProcessPage = current.v2Paging.processByTurn[pagingKey];
-    const currentHistoryPage = current.v2Paging.historyByTurn[pagingKey];
+    const currentHistoryPage = current.v2Paging.historyByTurn?.[pagingKey];
     if (currentProcessPage?.loading || currentHistoryPage?.loading) return;
     const shouldLoadProcess = Boolean(loadProcess && !(currentProcessPage?.loaded && !currentProcessPage.hasMore));
     const shouldLoadHistory = Boolean(loadHistory && !(currentHistoryPage?.loaded && !currentHistoryPage.hasMore));
