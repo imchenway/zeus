@@ -15708,10 +15708,16 @@
   will-change: auto !important;
 }
 
-/* 最终覆盖：业务分组逐行排列，同组指标从左向右流动。 */
+/* 最终覆盖：运行详情按会话/费用双栏与通栏数据表排列。 */
 .session-codex-parity-v1 .session-runtime-detail-groups {
   gap: 0;
   grid-template-columns: minmax(0, 1fr);
+}
+
+.session-codex-parity-v1 .session-runtime-detail-split {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  min-inline-size: 0;
 }
 
 .session-codex-parity-v1 .session-runtime-detail-group {
@@ -15726,6 +15732,10 @@
   border-block-start: 1px solid var(--session-line-soft);
 }
 
+.session-codex-parity-v1 .session-runtime-detail-split + .session-runtime-detail-group {
+  border-block-start: 1px solid var(--session-line-soft);
+}
+
 .session-codex-parity-v1 .session-runtime-detail-group > h3 {
   color: var(--session-text);
   font-size: 12px;
@@ -15737,11 +15747,133 @@
 
 .session-codex-parity-v1 .session-runtime-detail-group > dl {
   align-items: start;
-  grid-template-columns: repeat(auto-fit, minmax(min(142px, 100%), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(132px, 100%), 1fr));
+}
+
+.session-codex-parity-v1 .session-runtime-detail-split > .session-runtime-detail-group {
+  display: block;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-split > .session-runtime-detail-group + .session-runtime-detail-group {
+  border-block-start: 0;
+  border-inline-start: 1px solid var(--session-line-soft);
+  padding-inline-start: 18px;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-split > .session-runtime-detail-group > h3 {
+  margin-block-end: 8px;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group[data-group='session'] > dl {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group[data-group='cost'] > dl {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group > dl > div[data-wide='true'] {
+  grid-column: 1 / -1;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group[data-group='environment'] > dl {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group[data-group='environment'] > dl > div {
+  align-items: center;
+  column-gap: 12px;
+  grid-template-columns: minmax(92px, 0.12fr) minmax(0, 1fr);
+}
+
+.session-codex-parity-v1 .session-runtime-code-value {
+  align-items: center;
+  display: flex;
+  gap: 5px;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-runtime-code-value > code {
+  display: block;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-runtime-copy-button {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: var(--session-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 auto;
+  justify-content: center;
+  margin: -3px;
+  padding: 3px;
+}
+
+.session-codex-parity-v1 .session-runtime-copy-button:hover,
+.session-codex-parity-v1 .session-runtime-copy-button:focus-visible,
+.session-codex-parity-v1 .session-runtime-copy-button[data-copied='true'] {
+  background: var(--session-control-hover);
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .session-runtime-copy-button:focus-visible {
+  box-shadow: 0 0 0 3px var(--session-focus);
+  outline: 0;
+}
+
+.session-codex-parity-v1 .session-runtime-copy-button > svg {
+  block-size: 14px;
+  display: block;
+  inline-size: 14px;
+}
+
+.session-codex-parity-v1 .session-runtime-pricing-source {
+  display: inline-block;
+  margin-inline-end: 9px;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-runtime-pricing-source > a {
+  border-block-end: 1px dotted currentColor;
+  color: inherit;
+  text-decoration: none;
+}
+
+.session-codex-parity-v1 .session-runtime-pricing-source > a:hover {
+  border-block-end-style: solid;
 }
 
 @media (max-width: 720px) {
   .session-codex-parity-v1 .session-runtime-detail-group {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .session-codex-parity-v1 .session-runtime-detail-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .session-codex-parity-v1 .session-runtime-detail-split > .session-runtime-detail-group + .session-runtime-detail-group {
+    border-block-start: 1px solid var(--session-line-soft);
+    border-inline-start: 0;
+    padding-inline-start: 0;
+  }
+
+  .session-codex-parity-v1 .session-runtime-detail-group[data-group='environment'] > dl > div {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 460px) {
+  .session-codex-parity-v1 .session-runtime-detail-group[data-group='session'] > dl,
+  .session-codex-parity-v1 .session-runtime-detail-group[data-group='cost'] > dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
