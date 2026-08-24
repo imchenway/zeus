@@ -1,6 +1,8 @@
-import type { ReactNode } from 'react';
+import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
+import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
+import { useEffect, useState, type ReactNode } from 'react';
 import type { NativeRuntimeDetailsSnapshot, NativeRuntimeFact } from './sessionTypes.js';
-import type { SessionUiLanguage } from './ThreadItemView.js';
+import { copyText, type SessionUiLanguage } from './ThreadItemView.js';
 import { formatTokenCount } from './tokenUsageFormat.js';
 
 interface RuntimeDetailsProps {
@@ -14,7 +16,6 @@ export function RuntimeDetails(props: RuntimeDetailsProps) {
   const zh = props.language === 'zh-CN';
   const copy = runtimeLabels(props.language);
   const warning = runtimeValueNeedsAttention(props.mcpStartup);
-  const showUnavailableFacts = props.scope === 'subagent';
   const contextUsage = formatContextUsage(props.runtime.usage.contextTokens, props.runtime.usage.contextWindow, props.language);
   const costComplete =
     props.runtime.usage.apiEquivalentUsd.state === 'available' &&
@@ -24,88 +25,69 @@ export function RuntimeDetails(props: RuntimeDetailsProps) {
     props.runtime.usage.historyComplete.value;
   const tokenScopeLabel = props.scope === 'subagent' ? (zh ? '智能体累计 Token' : 'Agent tokens') : zh ? '会话累计 Token' : 'Session tokens';
   return (
-    <details className="session-runtime-details" data-severity={warning ? 'warning' : 'ready'} aria-label={copy.runtimeDetails}>
+    <details className="session-runtime-details" data-severity={warning ? 'warning' : 'ready'} data-scope={props.scope} aria-label={copy.runtimeDetails}>
       <summary>
         <span className="session-runtime-summary-primary">
           <RuntimeSummaryMetric label={tokenScopeLabel} value={formatTokenFact(props.runtime.usage.totalTokens, props.language, true)} />
           <RuntimeSummaryMetric label={copy.contextUsage} value={contextUsage} />
           <RuntimeSummaryMetric label={copy.cacheHitRate} value={formatPercentageFact(props.runtime.usage.cacheHitRate, props.language)} />
-          {showUnavailableFacts || props.runtime.performance.latestOutputTokensPerSecond.state === 'available' ? (
-            <RuntimeSummaryMetric label={zh ? '最近请求输出速率' : 'Latest output rate'} value={formatOutputRateFact(props.runtime.performance.latestOutputTokensPerSecond, props.language)} />
-          ) : null}
-          {showUnavailableFacts || (props.runtime.usage.apiEquivalentUsd.state === 'available' && props.runtime.usage.priceCoverage.state === 'available') ? (
-            <RuntimeSummaryMetric label={zh ? 'API 等价费用（估算）' : 'API-equivalent cost (est.)'} value={formatCostSummary(props.runtime.usage.apiEquivalentUsd, props.runtime.usage.priceCoverage, costComplete, props.language)} />
-          ) : null}
+          <RuntimeSummaryMetric label={zh ? '最近请求输出速率' : 'Latest output rate'} value={formatOutputRateFact(props.runtime.performance.latestOutputTokensPerSecond, props.language)} />
+          <RuntimeSummaryMetric label={zh ? 'API 等价费用（估算）' : 'API-equivalent cost (est.)'} value={formatCostSummary(props.runtime.usage.apiEquivalentUsd, props.runtime.usage.priceCoverage, costComplete, props.language)} />
         </span>
       </summary>
       <div className="session-runtime-detail-groups">
-        <RuntimeDetailGroup title={zh ? '使用与费用' : 'Usage and cost'}>
-          <RuntimeUsageRow label={zh ? '模型 · 推理强度 · 服务层级' : 'Model · effort · service tier'} value={<ModelRuntimeValue runtime={props.runtime} language={props.language} />} />
-          <RuntimeUsageRow label={tokenScopeLabel} value={formatTokenFact(props.runtime.usage.totalTokens, props.language)} />
-          <RuntimeUsageRow label={zh ? '累计输入 Token' : 'Input tokens'} value={formatTokenFact(props.runtime.usage.inputTokens, props.language)} />
-          <RuntimeUsageRow label={zh ? '累计输出 Token' : 'Output tokens'} value={formatTokenFact(props.runtime.usage.outputTokens, props.language)} />
-          <RuntimeUsageRow label={zh ? '累计推理 Token' : 'Reasoning tokens'} value={formatTokenFact(props.runtime.usage.reasoningOutputTokens, props.language)} />
-          <RuntimeUsageRow label={copy.contextUsage} value={contextUsage} />
-          <RuntimeUsageRow label={copy.cacheHitRate} value={formatPercentageFact(props.runtime.usage.cacheHitRate, props.language)} />
-          <RuntimeUsageRow label={zh ? 'API 等价费用（估算）' : 'API-equivalent cost (est.)'} value={formatCoveredCost(props.runtime.usage.apiEquivalentUsd, props.runtime.usage.priceCoverage, props.language)} />
-          <RuntimeUsageRow label={zh ? '价格覆盖率' : 'Price coverage'} value={formatPercentageFact(props.runtime.usage.priceCoverage, props.language)} />
-          <RuntimeUsageRow label={zh ? '价格目录日期' : 'Price catalog date'} value={factValue(props.runtime.usage.pricingCatalogDate, props.language)} />
-          <RuntimeUsageRow label={zh ? '价格来源' : 'Pricing source'} value={<PricingSources fact={props.runtime.usage.pricingSourceUrls} language={props.language} />} />
-          {showUnavailableFacts || props.runtime.usage.historyComplete.state === 'unavailable' || !props.runtime.usage.historyComplete.value ? (
+        <div className="session-runtime-detail-split">
+          <RuntimeDetailGroup title={zh ? '会话' : 'Session'} kind="session">
+            <RuntimeUsageRow label={zh ? '模型' : 'Model'} value={factValue(props.runtime.model, props.language)} />
+            <RuntimeUsageRow label={zh ? '推理强度' : 'Reasoning effort'} value={factValue(props.runtime.effort, props.language)} />
+            <RuntimeUsageRow label={zh ? '服务层级' : 'Service tier'} value={<ServiceTierValue fact={props.runtime.serviceTier} language={props.language} />} />
+            <RuntimeUsageRow label={tokenScopeLabel} value={formatTokenFact(props.runtime.usage.totalTokens, props.language)} />
+            <RuntimeUsageRow label={zh ? '累计输入 Token' : 'Input tokens'} value={formatTokenFact(props.runtime.usage.inputTokens, props.language)} />
+            <RuntimeUsageRow label={zh ? '累计输出 Token' : 'Output tokens'} value={formatTokenFact(props.runtime.usage.outputTokens, props.language)} />
+            <RuntimeUsageRow label={zh ? '累计推理 Token' : 'Reasoning tokens'} value={formatTokenFact(props.runtime.usage.reasoningOutputTokens, props.language)} />
+            <RuntimeUsageRow label={copy.contextUsage} value={contextUsage} />
+            <RuntimeUsageRow label={copy.cacheHitRate} value={formatPercentageFact(props.runtime.usage.cacheHitRate, props.language)} />
+          </RuntimeDetailGroup>
+          <RuntimeDetailGroup title={zh ? '费用' : 'Cost'} kind="cost">
+            <RuntimeUsageRow label={zh ? 'API 等价费用（估算）' : 'API-equivalent cost (est.)'} value={formatCoveredCost(props.runtime.usage.apiEquivalentUsd, props.runtime.usage.priceCoverage, props.language)} />
             <RuntimeUsageRow label={zh ? '费用完整性' : 'Cost completeness'} value={formatHistoryComplete(props.runtime.usage.historyComplete, props.language)} />
-          ) : null}
-        </RuntimeDetailGroup>
-        <RuntimeDetailGroup title={zh ? '性能与活动' : 'Performance and activity'}>
-          {showUnavailableFacts || props.runtime.performance.latestOutputTokensPerSecond.state === 'available' ? (
-            <RuntimeUsageRow label={zh ? '最近输出速率' : 'Latest output rate'} value={formatOutputRateFact(props.runtime.performance.latestOutputTokensPerSecond, props.language)} />
-          ) : null}
-          {showUnavailableFacts || props.runtime.performance.latestFirstVisibleResponseMs.state === 'available' ? (
-            <RuntimeUsageRow label={zh ? '最近首段可见响应延迟' : 'Latest first visible response'} value={formatDurationFact(props.runtime.performance.latestFirstVisibleResponseMs, props.language)} />
-          ) : null}
+            <RuntimeUsageRow label={zh ? '价格覆盖率' : 'Price coverage'} value={formatPercentageFact(props.runtime.usage.priceCoverage, props.language)} />
+            <RuntimeUsageRow label={zh ? '价格目录日期' : 'Price catalog date'} value={factValue(props.runtime.usage.pricingCatalogDate, props.language)} />
+            <RuntimeUsageRow wide label={zh ? '价格来源' : 'Pricing source'} value={<PricingSources fact={props.runtime.usage.pricingSourceUrls} language={props.language} />} />
+          </RuntimeDetailGroup>
+        </div>
+        <RuntimeDetailGroup title={zh ? '性能与活动' : 'Performance and activity'} kind="activity">
+          <RuntimeUsageRow label={zh ? '最近输出速率' : 'Latest output rate'} value={formatOutputRateFact(props.runtime.performance.latestOutputTokensPerSecond, props.language)} />
+          <RuntimeUsageRow label={zh ? '最近首段可见响应延迟' : 'Latest first visible response'} value={formatDurationFact(props.runtime.performance.latestFirstVisibleResponseMs, props.language)} />
           <RuntimeUsageRow label={zh ? '累计处理耗时' : 'Cumulative processing time'} value={formatDurationFact(props.runtime.performance.cumulativeProcessedDurationMs, props.language)} />
           <RuntimeUsageRow label={zh ? '轮次' : 'Turns'} value={factValue(props.runtime.activity.turnCount, props.language)} />
           <RuntimeUsageRow label={zh ? '模型请求' : 'Model requests'} value={factValue(props.runtime.activity.modelRequestCount, props.language)} />
           <RuntimeUsageRow label={zh ? '工具 / 命令' : 'Tools / commands'} value={factValue(props.runtime.activity.toolOrCommandCount, props.language)} />
           <RuntimeUsageRow label={zh ? '重试' : 'Retries'} value={factValue(props.runtime.activity.retryCount, props.language)} />
           <RuntimeUsageRow label={zh ? '失败轮次' : 'Failed turns'} value={factValue(props.runtime.activity.failedTurnCount, props.language)} />
-          {showUnavailableFacts || props.runtime.changeSummary.state === 'available' ? <RuntimeUsageRow label={zh ? '代码改动' : 'Code changes'} value={formatChangeSummary(props.runtime.changeSummary, props.language)} /> : null}
+          <RuntimeUsageRow label={zh ? '代码改动' : 'Code changes'} value={formatChangeSummary(props.runtime.changeSummary, props.language)} />
         </RuntimeDetailGroup>
-        <RuntimeDetailGroup title={zh ? '环境' : 'Environment'}>
-          {showUnavailableFacts || props.runtime.environment.cwd.state === 'available' ? (
-            <RuntimeUsageRow label={zh ? '工作目录' : 'Working directory'} value={<RuntimeCode fact={props.runtime.environment.cwd} language={props.language} />} />
-          ) : null}
-          {showUnavailableFacts || props.runtime.environment.branch.state === 'available' ? <RuntimeUsageRow label={zh ? '分支' : 'Branch'} value={<RuntimeCode fact={props.runtime.environment.branch} language={props.language} />} /> : null}
-          {showUnavailableFacts || props.runtime.environment.nativeSessionId.state === 'available' ? (
-            <RuntimeUsageRow label={zh ? '线程 ID' : 'Thread ID'} value={<RuntimeCode fact={props.runtime.environment.nativeSessionId} language={props.language} />} />
-          ) : null}
-          {showUnavailableFacts || props.runtime.environment.nativeSessionPath.state === 'available' ? (
-            <RuntimeUsageRow label="JSONL" value={<RuntimeCode fact={props.runtime.environment.nativeSessionPath} language={props.language} />} />
-          ) : null}
-          {props.mcpStartup ? <RuntimeUsageRow label={zh ? 'MCP 启动' : 'MCP startup'} value={runtimeValueSummary(props.mcpStartup)} /> : null}
+        <RuntimeDetailGroup title={zh ? '环境' : 'Environment'} kind="environment">
+          <RuntimeUsageRow label={zh ? '工作目录' : 'Working directory'} value={<RuntimeCode fact={props.runtime.environment.cwd} language={props.language} />} />
+          <RuntimeUsageRow label={zh ? '分支' : 'Branch'} value={<RuntimeCode fact={props.runtime.environment.branch} language={props.language} />} />
+          <RuntimeUsageRow
+            label={zh ? '线程 ID' : 'Thread ID'}
+            value={<RuntimeCode fact={props.runtime.environment.nativeSessionId} language={props.language} copyLabel={zh ? '复制线程 ID' : 'Copy thread ID'} copiedLabel={zh ? '线程 ID 已复制' : 'Thread ID copied'} />}
+          />
+          <RuntimeUsageRow
+            label="JSONL"
+            value={<RuntimeCode fact={props.runtime.environment.nativeSessionPath} language={props.language} copyLabel={zh ? '复制 JSONL 路径' : 'Copy JSONL path'} copiedLabel={zh ? 'JSONL 路径已复制' : 'JSONL path copied'} />}
+          />
+          <RuntimeUsageRow label={zh ? 'MCP 启动' : 'MCP startup'} value={props.mcpStartup ? runtimeValueSummary(props.mcpStartup) : unavailableValue(zh ? 'MCP 启动状态暂无数据。' : 'MCP startup status is unavailable.', props.language)} />
         </RuntimeDetailGroup>
       </div>
     </details>
   );
 }
 
-function ModelRuntimeValue(props: { runtime: NativeRuntimeDetailsSnapshot; language: SessionUiLanguage }) {
-  const parts: ReactNode[] = [
-    factValue(props.runtime.model, props.language),
-    factValue(props.runtime.effort, props.language),
-    props.runtime.serviceTier.state === 'available'
-      ? props.runtime.serviceTier.value && props.runtime.serviceTier.value !== 'default'
-        ? props.runtime.serviceTier.value
-        : props.language === 'zh-CN'
-          ? '标准'
-          : 'Standard'
-      : unavailableValue(props.runtime.serviceTier.reason, props.language),
-  ];
-  return parts.map((part, index) => (
-    <span key={index}>
-      {index > 0 ? ' · ' : null}
-      {part}
-    </span>
-  ));
+function ServiceTierValue(props: { fact: NativeRuntimeFact<string | null>; language: SessionUiLanguage }) {
+  if (props.fact.state === 'unavailable') return unavailableValue(props.fact.reason, props.language);
+  return props.fact.value && props.fact.value !== 'default' ? props.fact.value : props.language === 'zh-CN' ? '标准' : 'Standard';
 }
 
 function RuntimeSummaryMetric(props: { label: string; value: ReactNode }) {
@@ -117,44 +99,75 @@ function RuntimeSummaryMetric(props: { label: string; value: ReactNode }) {
   );
 }
 
-function RuntimeDetailGroup(props: { title: string; children: ReactNode }) {
+function RuntimeDetailGroup(props: { title: string; kind: 'session' | 'cost' | 'activity' | 'environment'; children: ReactNode }) {
   return (
-    <section className="session-runtime-detail-group">
+    <section className="session-runtime-detail-group" data-group={props.kind}>
       <h3>{props.title}</h3>
       <dl>{props.children}</dl>
     </section>
   );
 }
 
-function RuntimeUsageRow(props: { label: string; value: ReactNode }) {
+function RuntimeUsageRow(props: { label: string; value: ReactNode; wide?: boolean }) {
   return (
-    <div>
+    <div data-wide={props.wide || undefined}>
       <dt>{props.label}</dt>
       <dd>{props.value}</dd>
     </div>
   );
 }
 
-function RuntimeCode(props: { fact: NativeRuntimeFact<string>; language: SessionUiLanguage }) {
-  return props.fact.state === 'available' ? <code title={props.fact.value}>{props.fact.value}</code> : unavailableValue(props.fact.reason, props.language);
+function RuntimeCode(props: { fact: NativeRuntimeFact<string>; language: SessionUiLanguage; copyLabel?: string; copiedLabel?: string }) {
+  if (props.fact.state === 'unavailable') return unavailableValue(props.fact.reason, props.language);
+  return (
+    <span className="session-runtime-code-value">
+      <code title={props.fact.value}>{props.fact.value}</code>
+      {props.copyLabel && props.copiedLabel ? <RuntimeCopyButton text={props.fact.value} label={props.copyLabel} copiedLabel={props.copiedLabel} /> : null}
+    </span>
+  );
+}
+
+function RuntimeCopyButton(props: { text: string; label: string; copiedLabel: string }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1_400);
+    return () => clearTimeout(timer);
+  }, [copied]);
+  return (
+    <button
+      type="button"
+      className="session-runtime-copy-button"
+      aria-label={copied ? props.copiedLabel : props.label}
+      title={copied ? props.copiedLabel : props.label}
+      data-copied={copied || undefined}
+      onClick={async () => setCopied(await copyText(props.text))}
+    >
+      {copied ? <Check aria-hidden="true" weight="bold" /> : <Copy aria-hidden="true" weight="regular" />}
+    </button>
+  );
 }
 
 function PricingSources(props: { fact: NativeRuntimeFact<string[]>; language: SessionUiLanguage }) {
   if (props.fact.state === 'unavailable') return unavailableValue(props.fact.reason, props.language);
   if (props.fact.value.length === 0) return unavailableValue(props.language === 'zh-CN' ? '没有可用的价格来源。' : 'No pricing source is available.', props.language);
   return props.fact.value.map((source, index) => (
-    <span key={source}>
-      {index > 0 ? ' · ' : null}
+    <span className="session-runtime-pricing-source" key={source}>
       <a href={source} target="_blank" rel="noreferrer">
-        {pricingSourceLabel(source, index)}
+        {pricingSourceLabel(source, index, props.language)}
       </a>
     </span>
   ));
 }
 
-function pricingSourceLabel(source: string, index: number): string {
+function pricingSourceLabel(source: string, index: number, language: SessionUiLanguage): string {
   try {
-    return new URL(source).hostname;
+    const url = new URL(source);
+    if (url.pathname.includes('prompt-caching')) return language === 'zh-CN' ? 'Prompt 缓存' : 'Prompt caching';
+    if (url.hash.includes('what-are-tokens-and-credits')) return language === 'zh-CN' ? 'Token 与 Credits' : 'Tokens and credits';
+    if (url.hostname === 'developers.openai.com' && url.pathname.endsWith('/pricing')) return language === 'zh-CN' ? 'API 定价' : 'API pricing';
+    if (url.pathname.endsWith('/speed')) return 'Speed';
+    return url.hostname;
   } catch {
     return `source ${index + 1}`;
   }
@@ -165,7 +178,12 @@ function factValue<T>(fact: NativeRuntimeFact<T>, language: SessionUiLanguage): 
 }
 
 function unavailableValue(reason: string, language: SessionUiLanguage): ReactNode {
-  return <span title={reason}>{language === 'zh-CN' ? '暂无数据' : 'Unavailable'}</span>;
+  const accessibleLabel = language === 'zh-CN' ? `暂无数据：${reason}` : `Unavailable: ${reason}`;
+  return (
+    <span className="session-runtime-unavailable" title={reason} aria-label={accessibleLabel}>
+      -
+    </span>
+  );
 }
 
 function formatTokenFact(fact: NativeRuntimeFact<number>, language: SessionUiLanguage, compact = false): ReactNode {
@@ -207,7 +225,7 @@ function formatCoveredCost(value: NativeRuntimeFact<number>, coverage: NativeRun
 
 function formatOutputRateFact(fact: NativeRuntimeFact<number>, language: SessionUiLanguage): ReactNode {
   if (fact.state === 'unavailable') return unavailableValue(fact.reason, language);
-  return `${new Intl.NumberFormat(language, { maximumFractionDigits: fact.value < 100 ? 1 : 0 }).format(fact.value)} tokens/s`;
+  return `${new Intl.NumberFormat(language, { maximumFractionDigits: fact.value < 100 ? 1 : 0 }).format(fact.value)} tokens / s`;
 }
 
 function formatDurationFact(fact: NativeRuntimeFact<number>, language: SessionUiLanguage): ReactNode {

@@ -1205,8 +1205,11 @@ export class ConversationExecutionRepository {
     if (!existing || existing.providerRequestId !== null) return existing;
     this.db.execute(
       `UPDATE conversation_model_requests
-          SET provider_request_id = ?, first_visible_output_at = ?, first_text_output_at = ?,
-              completed_at = ?, measurement_complete = ?
+          SET provider_request_id = ?,
+              first_visible_output_at = COALESCE(?, first_visible_output_at),
+              first_text_output_at = COALESCE(?, first_text_output_at),
+              completed_at = ?,
+              measurement_complete = CASE WHEN measurement_complete = 1 OR ? = 1 THEN 1 ELSE 0 END
         WHERE id = ? AND provider_request_id IS NULL`,
       [input.providerRequestId, input.firstVisibleOutputAt, input.firstTextOutputAt, input.completedAt, input.measurementComplete ? 1 : 0, id],
     );

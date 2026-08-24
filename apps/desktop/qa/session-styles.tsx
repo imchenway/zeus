@@ -362,7 +362,15 @@ const runtimeDetailsFixture: NativeRuntimeDetailsSnapshot = {
     apiEquivalentUsd: { state: 'available', value: 64.86123 },
     priceCoverage: { state: 'available', value: 1 },
     pricingCatalogDate: { state: 'available', value: '2026-08-10' },
-    pricingSourceUrls: { state: 'available', value: ['https://developers.openai.com/', 'https://learn.chatgpt.com/'] },
+    pricingSourceUrls: {
+      state: 'available',
+      value: [
+        'https://developers.openai.com/api/docs/pricing',
+        'https://developers.openai.com/api/docs/guides/prompt-caching',
+        'https://learn.chatgpt.com/docs/pricing#what-are-tokens-and-credits',
+        'https://learn.chatgpt.com/docs/agent-configuration/speed',
+      ],
+    },
     historyComplete: { state: 'available', value: true },
   },
   performance: {
@@ -383,6 +391,46 @@ const runtimeDetailsFixture: NativeRuntimeDetailsSnapshot = {
     branch: { state: 'available', value: 'main' },
     nativeSessionId: { state: 'available', value: '01a02dec-c487-7e41-b555-3bf701effc1c' },
     nativeSessionPath: { state: 'available', value: '/Users/david/.zeus/providers/codex/sessions/2026/08/23/rollout-2026-08-23T17-21-26-01a02dec-c487-7e41-b555-3bf701effc1c.jsonl' },
+  },
+};
+
+const unavailableRuntimeFact = { state: 'unavailable', reason: '视觉夹具：当前事实不可用。' } as const;
+const unavailableRuntimeDetailsFixture: NativeRuntimeDetailsSnapshot = {
+  model: unavailableRuntimeFact,
+  effort: unavailableRuntimeFact,
+  serviceTier: unavailableRuntimeFact,
+  usage: {
+    totalTokens: unavailableRuntimeFact,
+    inputTokens: unavailableRuntimeFact,
+    outputTokens: unavailableRuntimeFact,
+    reasoningOutputTokens: unavailableRuntimeFact,
+    contextTokens: unavailableRuntimeFact,
+    contextWindow: unavailableRuntimeFact,
+    cacheHitRate: unavailableRuntimeFact,
+    apiEquivalentUsd: unavailableRuntimeFact,
+    priceCoverage: unavailableRuntimeFact,
+    pricingCatalogDate: unavailableRuntimeFact,
+    pricingSourceUrls: unavailableRuntimeFact,
+    historyComplete: unavailableRuntimeFact,
+  },
+  performance: {
+    latestOutputTokensPerSecond: unavailableRuntimeFact,
+    latestFirstVisibleResponseMs: unavailableRuntimeFact,
+    cumulativeProcessedDurationMs: unavailableRuntimeFact,
+  },
+  activity: {
+    turnCount: { state: 'available', value: 0 },
+    modelRequestCount: { state: 'available', value: 0 },
+    toolOrCommandCount: { state: 'available', value: 0 },
+    retryCount: { state: 'available', value: 0 },
+    failedTurnCount: { state: 'available', value: 0 },
+  },
+  changeSummary: unavailableRuntimeFact,
+  environment: {
+    cwd: unavailableRuntimeFact,
+    branch: unavailableRuntimeFact,
+    nativeSessionId: unavailableRuntimeFact,
+    nativeSessionPath: unavailableRuntimeFact,
   },
 };
 
@@ -751,8 +799,12 @@ function MotionApp() {
       <SteeringPreview />
       <ConversationSelectionRecoveryPreview />
       <section className="qa-motion-theme session-codex-parity-v1 theme-light" data-testid="runtime-details-horizontal">
-        <h2>运行详情横向分组</h2>
+        <h2>运行详情分区数据表</h2>
         <RuntimeDetails runtime={runtimeDetailsFixture} language="zh-CN" scope="session" />
+      </section>
+      <section className="qa-motion-theme session-codex-parity-v1 theme-light" data-testid="runtime-details-unavailable">
+        <h2>Subagent 运行详情空值</h2>
+        <RuntimeDetails runtime={unavailableRuntimeDetailsFixture} language="zh-CN" scope="subagent" />
       </section>
     </main>
   );

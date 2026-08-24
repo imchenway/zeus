@@ -491,6 +491,9 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     if (!providerTurnId || !providerItemId || !turn) return;
     const presentedItemPayload = sanitizeConversationItemPayload(itemPayload.type === 'userMessage' ? { ...itemPayload, ...submissionPresentation(conversation.id, turn, itemPayload) } : itemPayload);
     const itemType = itemTypeFromValue(itemPayload.type);
+    // 兼容 app-server 不发送 rawResponseItem/completed 的版本：模型一旦产出工具、命令、
+    // 文件变更等非文本项，本次请求即不能用总输出 Token 计算纯文本生成速率。
+    if (isNonTextModelRequestOutput(itemType)) modelRequestTiming.observe(conversation.id, turn.id, event.receivedAt, 'non_text');
     const userMessageProjection = itemType === 'userMessage' ? projectProviderUserMessage(conversation, turn, presentedItemPayload, itemText(itemPayload), providerItemId) : null;
     if (itemType === 'userMessage' && !userMessageProjection) return;
     const item = userMessageProjection
@@ -975,7 +978,6 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
           .find(
             (request) =>
               request.providerRequestId === null &&
-              request.completedAt === null &&
               request.inputTokens === usage.inputTokens &&
               request.cachedInputTokens === usage.cachedInputTokens &&
               request.cacheWriteInputTokens === usage.cacheWriteInputTokens &&
@@ -1074,7 +1076,18 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     const segment = threadId ? options.execution.segmentByNativeSession(threadId, conversation.id) : undefined;
     if (segment && turn) {
       const recordedRequests = options.execution.listModelRequestsForTurn(conversation.id, turn.id);
-      const exactRequest = [...recordedRequests].reverse().find((request) => request.providerRequestId !== null);
+      const latestRecordedRequest = recordedRequests.at(-1);
+      const exactRequest =
+        latestRecordedRequest &&
+        latestRecordedRequest.providerRequestId !== null &&
+        latestRecordedRequest.inputTokens === last.inputTokens &&
+        latestRecordedRequest.cachedInputTokens === last.cachedInputTokens &&
+        latestRecordedRequest.cacheWriteInputTokens === last.cacheWriteInputTokens &&
+        latestRecordedRequest.outputTokens === last.outputTokens &&
+        latestRecordedRequest.reasoningOutputTokens === last.reasoningOutputTokens &&
+        latestRecordedRequest.totalTokens === last.totalTokens
+          ? latestRecordedRequest
+          : undefined;
       // app-server 的兼容 token_count 事件通常不带 requestKind；同轮首个请求是推理，
       // 后续请求只会在工具结果续跑后出现。显式 retry/compaction 标记仍优先。
       const requestKind =
@@ -1088,6 +1101,12 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       if (exactRequest) {
         options.execution.enrichModelRequest(exactRequest.id, { contextWindow: modelContextWindow, estimatedUsd: snapshot.lastApiEquivalentUsd });
       } else {
+        // 当前 Codex app-server 的兼容协议会在每个模型请求及其工具输出完成后发送
+        // tokenUsage/updated，但不发送 rawResponse/completed。只有本段没有非文本输出时，
+        // 该事件才同时构成可信的纯文本请求完成边界。
+        const timing = modelRequestTiming.complete(conversation.id, turn.id);
+        const completedAt = event.receivedAt;
+        const measurementComplete = timing.firstTextOutputAt !== null && Date.parse(completedAt) > Date.parse(timing.firstTextOutputAt) && !timing.hasNonTextOutput;
         options.execution.observeModelRequest({
           conversationId: conversation.id,
           turnId: turn.id,
@@ -1106,10 +1125,10 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
           estimatedUsd: snapshot.lastApiEquivalentUsd,
           usageComplete: true,
           providerRequestId: null,
-          firstVisibleOutputAt: null,
-          firstTextOutputAt: null,
-          completedAt: null,
-          measurementComplete: false,
+          firstVisibleOutputAt: timing.firstVisibleOutputAt,
+          firstTextOutputAt: timing.firstTextOutputAt,
+          completedAt,
+          measurementComplete,
           occurredAt: turn.completedAt ?? event.receivedAt,
         });
       }
@@ -1358,4 +1377,8 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
 
 function firstVisibleReceiptAt(events: readonly CodexAppServerEvent[], fallback: string): string {
   return events.find((event) => isRecord(event.params) && typeof event.params.delta === 'string' && event.params.delta.trim())?.receivedAt ?? fallback;
+}
+
+function isNonTextModelRequestOutput(itemType: ReturnType<typeof itemTypeFromValue>): boolean {
+  return itemType !== 'userMessage' && itemType !== 'agentMessage' && itemType !== 'reasoning';
 }
