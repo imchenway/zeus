@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { ArrowsInIcon as ArrowsIn } from '@phosphor-icons/react/dist/csr/ArrowsIn';
 import { ArrowsOutIcon as ArrowsOut } from '@phosphor-icons/react/dist/csr/ArrowsOut';
 import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
@@ -8,6 +8,7 @@ import type { ConversationResourcePreview } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import type { ConversationCodeComment, ConversationCodeCommentPosition } from '@zeus/shared';
 import { CodeCommentPanel } from './CodeCommentPanel.js';
+import { SyntaxHighlightedLine, useSyntaxHighlightedLines } from '../code/SyntaxHighlightedCode.js';
 
 export function SourceWorkspace(props: {
   preview: ConversationResourcePreview;
@@ -22,7 +23,8 @@ export function SourceWorkspace(props: {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const titleRef = useRef<HTMLSpanElement | null>(null);
   const sourcePreview = props.preview.kind === 'source' ? props.preview : null;
-  const lines = useMemo(() => (sourcePreview ? sourcePreviewLines(sourcePreview.content) : []), [sourcePreview]);
+  const displayPath = props.preview.resource.kind === 'file' ? props.preview.resource.projectRelativePath : props.preview.resource.displayName;
+  const lines = useSyntaxHighlightedLines(displayPath, sourcePreview?.content ?? '', sourcePreview?.language ?? null);
   const targetLine = sourcePreview?.location?.line ?? null;
   const targetEndLine = sourcePreview?.location?.endLine ?? targetLine;
   const [draftPosition, setDraftPosition] = useState<ConversationCodeCommentPosition | null>(null);
@@ -39,7 +41,6 @@ export function SourceWorkspace(props: {
     target?.scrollIntoView({ block: 'center' });
   }, [props.preview.resource.id, targetLine]);
 
-  const displayPath = props.preview.resource.kind === 'file' ? props.preview.resource.projectRelativePath : props.preview.resource.displayName;
   const comments = (props.comments ?? []).filter((comment) => comment.position.path === displayPath && comment.position.side === 'right');
 
   function saveComment(position: ConversationCodeCommentPosition, body: string, existingId?: string): void {
@@ -121,7 +122,9 @@ export function SourceWorkspace(props: {
                       <span className="session-source-line-number" aria-hidden="true">
                         {lineNumber}
                       </span>
-                      <span className="session-source-line-code">{line || '\u00a0'}</span>
+                      <span className="session-source-line-code">
+                        <SyntaxHighlightedLine line={line} />
+                      </span>
                     </span>
                     {lineComments.map((comment) =>
                       editingCommentId === comment.id ? (
@@ -167,12 +170,6 @@ export function SourceWorkspace(props: {
 function basename(path: string): string {
   const normalized = path.replaceAll('\\', '/');
   return normalized.split('/').filter(Boolean).at(-1) ?? path;
-}
-
-function sourcePreviewLines(content: string): string[] {
-  const normalized = content.replace(/\r\n?/gu, '\n');
-  if (normalized === '') return [''];
-  return (normalized.endsWith('\n') ? normalized.slice(0, -1) : normalized).split('\n');
 }
 
 function formatBytes(bytes: number): string {

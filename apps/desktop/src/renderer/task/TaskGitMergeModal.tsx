@@ -19,6 +19,7 @@ import { ModalPortal } from '../ui/ModalPortal.js';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { TaskGitConflictWorkspace } from './TaskGitConflictWorkspace.js';
+import { TaskGitDiffTable } from './TaskGitDiffTable.js';
 import { type ConflictDocument, countUnresolvedConflictBlocks, createConflictDocument, serializeConflictForGit } from './taskConflictModel.js';
 
 type DeliveryClient = Pick<
@@ -840,7 +841,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                         </small>
                       ) : null}
                     </span>
-                    {diffLoading ? <p className="task-git-review-empty">{zh ? '正在读取差异…' : 'Loading diff…'}</p> : <SideBySideDiff diff={fileDiff?.fileDiffs[0] ?? null} hasSelection={Boolean(selectedFile)} zh={zh} />}
+                    {diffLoading ? <p className="task-git-review-empty">{zh ? '正在读取差异…' : 'Loading diff…'}</p> : <TaskGitDiffTable diff={fileDiff?.fileDiffs[0] ?? null} hasSelection={Boolean(selectedFile)} zh={zh} />}
                   </section>
                 </main>
 
@@ -1382,45 +1383,6 @@ function workingFileLabel(file: TaskGitFileStatus, zh: boolean): string {
         other: 'Changed',
       };
   return labels[file.category];
-}
-
-function SideBySideDiff(props: { diff: TaskGitFileDiff | null; hasSelection: boolean; zh: boolean }) {
-  if (!props.diff)
-    return (
-      <p className="task-git-review-empty">{props.hasSelection ? (props.zh ? '该文件暂无可显示的文本差异。' : 'No text diff is available for this file.') : props.zh ? '请选择文件查看代码差异。' : 'Select a file to view its code diff.'}</p>
-    );
-  if (props.diff.hunks.length === 0)
-    return <p className="task-git-review-empty">{props.zh ? '文件已经变化，但没有可显示的文本内容，可能是二进制文件或仅文件属性变化。' : 'The file changed, but no text content is available; it may be binary or metadata-only.'}</p>;
-  const rows = props.diff.hunks.flatMap((hunk) => [
-    {
-      key: `${hunk.header}-header`,
-      kind: 'header' as const,
-      leftNumber: '',
-      left: hunk.header,
-      rightNumber: '',
-      right: hunk.header,
-    },
-    ...hunk.lines.map((line, index) => ({
-      key: `${hunk.header}-${index}`,
-      kind: line.type,
-      leftNumber: line.oldLineNumber ?? '',
-      left: line.type === 'addition' ? '' : line.content,
-      rightNumber: line.newLineNumber ?? '',
-      right: line.type === 'deletion' ? '' : line.content,
-    })),
-  ]);
-  return (
-    <div className="task-git-review-diff-table" role="table">
-      {rows.map((row) => (
-        <div key={row.key} className={`task-git-review-diff-row is-${row.kind}`} role="row">
-          <span className="line-number">{row.leftNumber}</span>
-          <code>{row.left}</code>
-          <span className="line-number">{row.rightNumber}</span>
-          <code>{row.right}</code>
-        </div>
-      ))}
-    </div>
-  );
 }
 
 function deliveryFeedback(result: TaskIntegrationResult, zh: boolean): DeliveryFeedback {

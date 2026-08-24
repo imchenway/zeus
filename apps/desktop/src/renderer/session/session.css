@@ -13963,9 +13963,9 @@
 }
 
 .session-codex-parity-v1 .session-v2-auto-page {
-    color: var(--session-text-muted);
-    font-size: 11px;
-    min-block-size: 1px;
+  color: var(--session-text-muted);
+  font-size: 11px;
+  min-block-size: 1px;
 }
 
 .session-codex-parity-v1 .session-v2-deferred-artifacts {
@@ -14038,6 +14038,30 @@
   overflow: auto;
   padding: 9px;
   white-space: pre-wrap;
+}
+
+.session-codex-parity-v1 .session-v2-highlighted-diff .session-v2-diff-line {
+  display: inline-block;
+  min-inline-size: 100%;
+}
+
+.session-codex-parity-v1 .session-v2-highlighted-diff .session-v2-diff-line.is-addition {
+  background: color-mix(in srgb, var(--session-success) 10%, transparent);
+}
+
+.session-codex-parity-v1 .session-v2-highlighted-diff .session-v2-diff-line.is-deletion {
+  background: color-mix(in srgb, var(--session-danger) 10%, transparent);
+}
+
+.session-codex-parity-v1 .session-v2-highlighted-diff .session-v2-diff-line.is-metadata,
+.session-codex-parity-v1 .session-v2-highlighted-diff .session-v2-diff-prefix {
+  color: var(--session-text-muted);
+}
+
+.session-codex-parity-v1 .session-v2-highlighted-diff .session-v2-diff-prefix {
+  display: inline-block;
+  inline-size: 1.5ch;
+  user-select: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

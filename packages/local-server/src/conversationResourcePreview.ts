@@ -1,6 +1,6 @@
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
-import type { ConversationResource, ConversationResourcePreview } from '@zeus/shared';
+import { detectSourceLanguage, type ConversationResource, type ConversationResourcePreview } from '@zeus/shared';
 import { toConversationResourceOpenIntent } from './conversationResources.js';
 
 export function isObjectLike(value: unknown): value is object {
@@ -82,37 +82,6 @@ export function isPathInsideRoot(candidate: string, root: string): boolean {
   return delta === '' || (!delta.startsWith(`..${sep}`) && delta !== '..' && !isAbsolute(delta));
 }
 
-export function sourceLanguageForPath(path: string): string | null {
-  const extension = path.slice(path.lastIndexOf('.') + 1).toLocaleLowerCase();
-  const languages: Record<string, string> = {
-    c: 'c',
-    cc: 'cpp',
-    cpp: 'cpp',
-    css: 'css',
-    go: 'go',
-    h: 'c',
-    hpp: 'cpp',
-    html: 'html',
-    java: 'java',
-    js: 'javascript',
-    json: 'json',
-    jsx: 'javascript',
-    kt: 'kotlin',
-    md: 'markdown',
-    php: 'php',
-    py: 'python',
-    rb: 'ruby',
-    rs: 'rust',
-    scss: 'scss',
-    sh: 'shell',
-    sql: 'sql',
-    swift: 'swift',
-    ts: 'typescript',
-    tsx: 'typescript',
-    txt: 'text',
-    xml: 'xml',
-    yaml: 'yaml',
-    yml: 'yaml',
-  };
-  return languages[extension] ?? null;
+export function sourceLanguageForPath(path: string): ReturnType<typeof detectSourceLanguage> {
+  return detectSourceLanguage(path);
 }

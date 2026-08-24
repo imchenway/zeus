@@ -25,6 +25,7 @@ import { reasoningSummaryStatus, SessionReasoningSummary } from './SessionReason
 import { AnsweredRequestHistory, isAnsweredUserInputRequest } from './AnsweredRequestHistory.js';
 import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
 import { useTranscriptViewportVirtualizer } from './transcriptViewportVirtualizer.js';
+import { SyntaxHighlightedLine, useSyntaxHighlightedSegments, type HighlightedLine } from '../code/SyntaxHighlightedCode.js';
 
 export interface ConversationTranscriptProps {
   state: NativeSessionState;
@@ -714,7 +715,9 @@ function V2TurnDeferredArtifacts(props: {
                   <small>
                     +{file.addedLines} / -{file.deletedLines}
                   </small>
-                  {file.diffHandle && onLoadContent ? <V2DeferredContent handle={file.diffHandle} label={props.language === 'zh-CN' ? '查看差异' : 'View diff'} language={props.language} onLoad={onLoadContent} /> : null}
+                  {file.diffHandle && onLoadContent ? (
+                    <V2DeferredContent handle={file.diffHandle} label={props.language === 'zh-CN' ? '查看差异' : 'View diff'} language={props.language} onLoad={onLoadContent} sourcePath={file.newPath ?? file.oldPath ?? file.id} />
+                  ) : null}
                 </li>
               ))}
             </ul>
@@ -787,7 +790,7 @@ interface V2DeferredContentPage {
   redacted?: boolean;
 }
 
-function V2DeferredContent(props: { handle: string; label: string; language: SessionUiLanguage; onLoad: (handle: string, offset?: number) => Promise<V2DeferredContentPage> }) {
+function V2DeferredContent(props: { handle: string; label: string; language: SessionUiLanguage; sourcePath?: string; onLoad: (handle: string, offset?: number) => Promise<V2DeferredContentPage> }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const loadingRef = useRef(false);
   const [pages, setPages] = useState<V2DeferredContentPage[]>([]);
@@ -846,7 +849,7 @@ function V2DeferredContent(props: { handle: string; label: string; language: Ses
       {loading && pages.length === 0 ? <small className="session-v2-page-status">{props.language === 'zh-CN' ? '正在读取正文…' : 'Loading content…'}</small> : null}
       {lastPage ? (
         <>
-          <pre>{text}</pre>
+          {props.sourcePath ? <V2HighlightedDiff path={props.sourcePath} content={text} /> : <pre>{text}</pre>}
           <small>
             {pages.some((page) => page.redacted === true) ? (props.language === 'zh-CN' ? '敏感内容已脱敏 · ' : 'Sensitive content redacted · ') : ''}
             {lastPage.nextOffset ?? lastPage.totalCharacters}/{lastPage.totalCharacters}
@@ -865,6 +868,63 @@ function V2DeferredContent(props: { handle: string; label: string; language: Ses
       ) : null}
     </div>
   );
+}
+
+interface V2DiffLine {
+  content: string;
+  kind: 'addition' | 'context' | 'deletion' | 'metadata';
+  prefix: string;
+  sourceLine: number | null;
+}
+
+function V2HighlightedDiff(props: { path: string; content: string }) {
+  const lines = useMemo(() => parseV2DiffLines(props.content), [props.content]);
+  const source = useMemo(() => lines.flatMap((line) => (line.sourceLine === null ? [] : [line.content])).join('\n'), [lines]);
+  const segments = useMemo(() => [source], [source]);
+  const highlighted = useSyntaxHighlightedSegments(props.path, segments)[0] ?? [];
+  return (
+    <pre className="session-v2-highlighted-diff">
+      {lines.map((line, index) => (
+        <Fragment key={`${index}:${line.kind}`}>
+          <span className={`session-v2-diff-line is-${line.kind}`}>
+            {line.kind === 'metadata' ? (
+              line.content
+            ) : (
+              <>
+                <span className="session-v2-diff-prefix" aria-hidden="true">
+                  {line.prefix}
+                </span>
+                <SyntaxHighlightedLine line={highlightedV2DiffLine(line, highlighted)} empty="" />
+              </>
+            )}
+          </span>
+          {index < lines.length - 1 ? '\n' : null}
+        </Fragment>
+      ))}
+    </pre>
+  );
+}
+
+function parseV2DiffLines(content: string): V2DiffLine[] {
+  let sourceLine = 0;
+  return content
+    .replace(/\r\n?/gu, '\n')
+    .split('\n')
+    .map((raw) => {
+      if (isV2DiffMetadata(raw)) return { content: raw, kind: 'metadata', prefix: '', sourceLine: null };
+      const prefix = raw[0] === '+' || raw[0] === '-' || raw[0] === ' ' ? raw[0] : ' ';
+      const kind = prefix === '+' ? 'addition' : prefix === '-' ? 'deletion' : 'context';
+      return { content: raw[0] === prefix ? raw.slice(1) : raw, kind, prefix, sourceLine: sourceLine++ };
+    });
+}
+
+function isV2DiffMetadata(line: string): boolean {
+  return /^(?:diff --git |index |--- |\+\+\+ |@@ |\\ No newline at end of file)/u.test(line);
+}
+
+function highlightedV2DiffLine(line: V2DiffLine, highlighted: HighlightedLine[]): HighlightedLine {
+  if (line.sourceLine === null) return line.content ? [{ text: line.content }] : [];
+  return highlighted[line.sourceLine] ?? (line.content ? [{ text: line.content }] : []);
 }
 
 function deferredContentHandles(state: NativeSessionState, turnId: string): Array<{ handle: string; label: string; kind: 'content' | 'tool_result' }> {
