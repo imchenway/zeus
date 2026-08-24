@@ -6,6 +6,7 @@ import { openGraphSourceInMain, revealProjectInFinderInMain } from './appShellBr
 import { initializeNativeCloseLayerRouting } from './ui/nativeCloseLayer.js';
 import { ApplicationErrorDialogHost, reportApplicationError } from './ui/ApplicationErrorDialog.js';
 import { RendererPerformanceCollector } from './rendererPerformanceObservability.js';
+import { primePersistedSessionViewCache } from './session/sessionHotCache.js';
 
 initializeNativeCloseLayerRouting();
 const rendererPerformance = new RendererPerformanceCollector();
@@ -18,10 +19,23 @@ Object.defineProperty(window, '__zeusPerformanceSnapshot', {
   writable: false,
 });
 
-async function renderWithClient(client: DashboardClient, executionHostTransition?: ExecutionHostTransition, readOnlyValidation?: ReadOnlyValidationIdentity): Promise<void> {
-  const { App, buildGraphConversationTaskIntent, buildGraphNodeTaskIntent, buildProjectDirectoryResolution, buildTemplateTaskDraft } = await import('./App.js');
-  const snapshot = await client.loadDashboard();
-  const appShellSettings = await client.settings.loadAppShellSettings();
+async function renderWithClient(
+  client: DashboardClient,
+  executionHostTransition?: ExecutionHostTransition,
+  readOnlyValidation?: ReadOnlyValidationIdentity,
+  bootstrap?: {
+    appModule: Promise<typeof import('./App.js')>;
+    sessionViewCache: Promise<unknown | null>;
+  },
+): Promise<void> {
+  const [appModule, snapshot, appShellSettings, sessionViewCache] = await Promise.all([
+    bootstrap?.appModule ?? import('./App.js'),
+    client.loadDashboard(),
+    client.settings.loadAppShellSettings(),
+    bootstrap?.sessionViewCache ?? Promise.resolve(null),
+  ]);
+  const { App, buildGraphConversationTaskIntent, buildGraphNodeTaskIntent, buildProjectDirectoryResolution, buildTemplateTaskDraft } = appModule;
+  primePersistedSessionViewCache(sessionViewCache);
   const root = document.getElementById('root');
   if (!root) throw new Error('Zeus renderer root element is missing');
   const reactRoot = createRoot(root);
@@ -463,6 +477,15 @@ function gitOperationReason(operation: string): string {
 async function hydrateRenderer(): Promise<void> {
   if (!window.zeus?.getLocalServerConfig) throw new Error('Electron 本地桥接未就绪');
   await waitForConversationStoreMigration();
+  const parameters = new URLSearchParams(window.location.search);
+  const surface = parameters.get('surface');
+  // App 模块和纯本地显示缓存不依赖执行宿主，先与宿主就绪检查并行。
+  const mainWindowBootstrap = surface
+    ? undefined
+    : {
+        appModule: import('./App.js'),
+        sessionViewCache: window.zeus.loadSessionViewCache?.().catch(() => null) ?? Promise.resolve(null),
+      };
   const executionHostMaintenance = await window.zeus.getExecutionHostMaintenanceStatus?.();
   if (executionHostMaintenance) {
     renderExecutionHostMaintenance(executionHostMaintenance);
@@ -485,8 +508,6 @@ async function hydrateRenderer(): Promise<void> {
         }
       : {}),
   });
-  const parameters = new URLSearchParams(window.location.search);
-  const surface = parameters.get('surface');
   if (surface === 'menu-bar-usage') {
     await renderMenuBarUsageWithClient(client);
     return;
@@ -501,7 +522,7 @@ async function hydrateRenderer(): Promise<void> {
     await renderProjectGitDiffWithClient(client, parameters);
     return;
   }
-  await renderWithClient(client, config.executionHostTransition, config.readOnlyValidation);
+  await renderWithClient(client, config.executionHostTransition, config.readOnlyValidation, mainWindowBootstrap);
 }
 
 function renderExecutionHostMaintenance(status: NonNullable<Awaited<ReturnType<NonNullable<Window['zeus']>['getExecutionHostMaintenanceStatus']>>>): void {

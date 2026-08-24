@@ -132,6 +132,8 @@ contextBridge.exposeInMainWorld('zeus', {
   retryExecutionHostMaintenance: () => ipcRenderer.invoke('zeus:execution-host-maintenance:retry'),
   exitExecutionHostMaintenance: () => ipcRenderer.invoke('zeus:execution-host-maintenance:exit'),
   getLocalServerConfig: () => ipcRenderer.invoke('zeus:get-local-server-config'),
+  loadSessionViewCache: () => ipcRenderer.invoke('zeus:session-view-cache:load'),
+  persistSessionViewCache: (value: unknown) => ipcRenderer.send('zeus:session-view-cache:persist', value),
   runStorageRecoveryPreflightAndRestart: () => invokeMainCommand('zeus:storage-recovery:preflight-and-restart', 'desktop.storage_recovery.preflight_restart', 'execution_host', 'storage-recovery'),
   openTaskGitDeliveryWindow: (input: unknown) => ipcRenderer.invoke('zeus:task-git-delivery:open', input),
   closeTaskGitDeliveryWindow: () => ipcRenderer.invoke('zeus:task-git-delivery:close'),

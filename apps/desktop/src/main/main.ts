@@ -24,6 +24,7 @@ import { buildAppShellMenuTemplate, buildLoginItemSettings, buildMenuBarTrayTemp
 import { createSystemNotificationBridge, type SystemNotificationBridge } from './systemNotifications.js';
 import { openLocalLogDirectory } from './localLogDirectory.js';
 import { openExternalHttpsUrl } from './externalOpen.js';
+import { readSessionViewCache, writeSessionViewCache } from './sessionViewCache.js';
 import { extractZentaoTaskInfo } from './zentaoTaskExtract.js';
 import {
   createPersistedMainWindowState,
@@ -1157,6 +1158,18 @@ function setupIpc(): void {
   ipcMain.handle('zeus:get-local-server-config', async () => {
     const runtime = localServerRuntime ?? (await rendererRuntimeReady);
     return runtime.refreshConfig();
+  });
+  ipcMain.handle('zeus:session-view-cache:load', (event) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !isTrustedZeusRendererWindow(requestingWindow) || readOnlyValidationDescriptor) return null;
+    const cache = readSessionViewCache(join(activeZeusDataLayout().electronUserData, 'session-view-cache-v1.json'));
+    traceApplicationStartup(cache ? 'session_view_cache_loaded' : 'session_view_cache_missed');
+    return cache;
+  });
+  ipcMain.on('zeus:session-view-cache:persist', (event, value: unknown) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !isTrustedZeusRendererWindow(requestingWindow) || readOnlyValidationDescriptor) return;
+    writeSessionViewCache(join(activeZeusDataLayout().electronUserData, 'session-view-cache-v1.json'), value);
   });
   ipcMain.handle('zeus:storage-recovery:preflight-and-restart', async (event, request: MainCommandRequest) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);

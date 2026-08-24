@@ -68,6 +68,8 @@ declare global {
       retryExecutionHostMaintenance: () => Promise<void>;
       exitExecutionHostMaintenance: () => Promise<void>;
       getLocalServerConfig: () => Promise<DashboardClientOptions>;
+      loadSessionViewCache: () => Promise<unknown | null>;
+      persistSessionViewCache: (value: import('./session/sessionHotCache.js').PersistedSessionViewCache) => void;
       runStorageRecoveryPreflightAndRestart: () => Promise<{
         faultId: string;
         transactionRolledBack: true;

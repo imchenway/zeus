@@ -7,7 +7,7 @@ import { createNativeConversationStartEnvelopeManager, createProjectConversation
 import { forgetGraphConversationCommandRequest, graphConversationClientCommandTypes } from '../conversations/graphConversationCommandClient.js';
 import type { CodexConversationCapabilities, CodexTaskPushCapabilities, NativeConversationChoice, NativeSessionState, SessionConversationOwner, StartTaskModelPushRequest } from '../../session/sessionTypes.js';
 import { compareConversationStageUpdatedDesc } from '../../session/conversationOrdering.js';
-import { rememberSessionHotState, type SessionHotCache } from '../../session/sessionHotCache.js';
+import { buildPersistedSessionViewCache, initialSessionHotCache, rememberSessionHotState, type SessionHotCache } from '../../session/sessionHotCache.js';
 import { type TaskModelPushForm, type TaskModelPushModalStatus } from '../../task/TaskModelPushModal.js';
 import { useConversationFeatureController } from '../conversations/useConversationFeatureController.js';
 import { useGitFeatureController } from '../git/useGitFeatureController.js';
@@ -248,7 +248,9 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const [nativeConversationRuntimeStates, setNativeConversationRuntimeStates] = useState<Record<string, ConversationTreeRuntimeState>>({});
   const [nativeConversationTaskRunStatuses, setNativeConversationTaskRunStatuses] = useState<Record<string, TaskAgentRunStatus>>({});
   const [nativeConversationStatusSyncState, setNativeConversationStatusSyncState] = useState<ZeusRealtimeConnectionState | 'syncing'>(() => (props.onSubscribeRealtimeEvents ? 'connecting' : 'connected'));
-  const nativeConversationHotCacheRef = useRef<SessionHotCache>(new Map());
+  const [initialNativeConversationHotCache] = useState<SessionHotCache>(initialSessionHotCache);
+  const nativeConversationHotCacheRef = useRef<SessionHotCache>(initialNativeConversationHotCache);
+  const sessionViewCachePersistTimerRef = useRef<number | null>(null);
   const [projectSidebarViewportWidth, setProjectSidebarViewportWidth] = useState(() => (typeof window === 'undefined' ? 1440 : window.innerWidth));
   const [projectSidebarPreferredWidth, setProjectSidebarPreferredWidth] = useState(() => readProjectSidebarPreferredWidth(browserProjectSidebarWidthStorage()));
   const [projectSidebarResizing, setProjectSidebarResizing] = useState(false);
@@ -1074,23 +1076,51 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
       return next;
     });
   }, []);
-  const recordNativeConversationRuntimeState = useCallback((conversationId: string, state: NativeSessionState): void => {
-    // 冷切换的 controller 只有视图加载态，不能覆盖服务端已经给出的会话运行态；
-    // 否则用户快速切走后该临时状态无人收尾，会在侧栏永久留下假转圈。
-    if (!state.snapshot && (state.transportState === 'connecting' || state.transportState === 'hydrating' || state.transportState === 'reconnecting' || state.transportState === 'disconnected')) return;
-    rememberSessionHotState(nativeConversationHotCacheRef.current, conversationId, state);
-    const runtimeState = conversationTreeRuntimeStateFromSession(state);
-    setNativeConversationRuntimeStates((current) => (current[conversationId] === runtimeState ? current : { ...current, [conversationId]: runtimeState }));
-    const taskRunStatus = taskAgentRunStatusFromSession(state);
-    setNativeConversationTaskRunStatuses((current) =>
-      current[conversationId] === taskRunStatus
-        ? current
-        : {
-            ...current,
-            [conversationId]: taskRunStatus,
-          },
-    );
+  const persistNativeConversationViewCache = useCallback((): void => {
+    sessionViewCachePersistTimerRef.current = null;
+    const persist = window.zeus?.persistSessionViewCache;
+    if (!persist || nativeConversationHotCacheRef.current.size === 0) return;
+    const snapshot = buildPersistedSessionViewCache(nativeConversationHotCacheRef.current);
+    if (snapshot.entries.length > 0) persist(snapshot);
   }, []);
+  const scheduleNativeConversationViewCachePersistence = useCallback((): void => {
+    if (!window.zeus?.persistSessionViewCache) return;
+    if (sessionViewCachePersistTimerRef.current !== null) window.clearTimeout(sessionViewCachePersistTimerRef.current);
+    sessionViewCachePersistTimerRef.current = window.setTimeout(persistNativeConversationViewCache, 2_500);
+  }, [persistNativeConversationViewCache]);
+  useEffect(() => {
+    const flush = (): void => {
+      if (sessionViewCachePersistTimerRef.current !== null) window.clearTimeout(sessionViewCachePersistTimerRef.current);
+      persistNativeConversationViewCache();
+    };
+    window.addEventListener('pagehide', flush);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      flush();
+    };
+  }, [persistNativeConversationViewCache]);
+  const recordNativeConversationRuntimeState = useCallback(
+    (conversationId: string, state: NativeSessionState): void => {
+      // 冷切换的 controller 只有视图加载态，不能覆盖服务端已经给出的会话运行态；
+      // 否则用户快速切走后该临时状态无人收尾，会在侧栏永久留下假转圈。
+      if (!state.snapshot && (state.transportState === 'connecting' || state.transportState === 'hydrating' || state.transportState === 'reconnecting' || state.transportState === 'disconnected')) return;
+      const remembered = rememberSessionHotState(nativeConversationHotCacheRef.current, conversationId, state);
+      // 只有本次进程已经完成权威水合，才把显示缓存推进到磁盘；旧缓存刷新失败不能续期。
+      if (remembered && state.transportState === 'ready') scheduleNativeConversationViewCachePersistence();
+      const runtimeState = conversationTreeRuntimeStateFromSession(state);
+      setNativeConversationRuntimeStates((current) => (current[conversationId] === runtimeState ? current : { ...current, [conversationId]: runtimeState }));
+      const taskRunStatus = taskAgentRunStatusFromSession(state);
+      setNativeConversationTaskRunStatuses((current) =>
+        current[conversationId] === taskRunStatus
+          ? current
+          : {
+              ...current,
+              [conversationId]: taskRunStatus,
+            },
+      );
+    },
+    [scheduleNativeConversationViewCachePersistence],
+  );
 
   useEffect(() => {
     const client = props.nativeConversationClient;
