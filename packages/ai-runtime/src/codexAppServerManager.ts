@@ -214,10 +214,14 @@ export interface CodexThreadResumeInput extends CodexPerformanceTraceContext {
   responsesRuntime?: CodexResponsesRuntime;
 }
 
+export type CodexThreadRuntimeStatus = { type: 'notLoaded' } | { type: 'idle' } | { type: 'systemError'; [key: string]: unknown } | { type: 'active'; activeFlags: string[] };
+
 export interface CodexThreadSnapshot {
   id: string;
   /** app-server 可选返回的真实 JSONL 文件路径；字段不稳定，缺失时不得猜测。 */
   path?: string | null;
+  /** thread/read 的权威运行态；旧 Provider 缺失时由上层按未知状态失败关闭。 */
+  status?: CodexThreadRuntimeStatus;
   turns?: unknown[];
   providerSettings?: {
     generationId: string;
@@ -1662,7 +1666,19 @@ function attachThreadProviderSettings(thread: CodexThreadSnapshot, generationId:
 function parseThread(value: unknown): CodexThreadSnapshot {
   const thread = asRecord(value);
   if (typeof thread.id !== 'string') throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex thread response omitted id.');
-  return thread as CodexThreadSnapshot;
+  const status = parseThreadRuntimeStatus(thread.status);
+  return { ...thread, id: thread.id, ...(status ? { status } : {}) };
+}
+
+function parseThreadRuntimeStatus(value: unknown): CodexThreadRuntimeStatus | undefined {
+  if (value === undefined) return undefined;
+  const status = asRecord(value);
+  if (status.type === 'notLoaded' || status.type === 'idle') return { type: status.type };
+  if (status.type === 'systemError') return { ...status, type: 'systemError' };
+  if (status.type === 'active' && Array.isArray(status.activeFlags) && status.activeFlags.every((flag) => typeof flag === 'string')) {
+    return { type: 'active', activeFlags: [...status.activeFlags] };
+  }
+  throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex thread response returned an unknown runtime status.');
 }
 
 function parseTurn(value: unknown, threadId: string): CodexTurnSnapshot {

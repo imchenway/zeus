@@ -241,8 +241,10 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     const timestamp = providerTimestamp(providerTurn.startedAt, event.receivedAt);
     const submissions = options.submissions.listByConversation(conversation.id);
     const providerClientId = providerTurnUserClientId(providerTurn);
-    const matchedSubmission = (providerClientId ? submissions.find((candidate) => candidate.clientMessageId === providerClientId) : undefined) ?? submissions.find((candidate) => candidate.providerTurnId === providerTurnId);
     const existingTurn = options.turns.listByConversation(conversation.id).find((candidate) => candidate.providerTurnId === providerTurnId);
+    const providerMatchedSubmission = providerClientId ? submissions.find((candidate) => candidate.clientMessageId === providerClientId) : undefined;
+    const existingOwnedSubmission = existingTurn?.clientSubmissionId ? submissions.find((candidate) => candidate.id === existingTurn.clientSubmissionId) : undefined;
+    const matchedSubmission = providerMatchedSubmission ?? existingOwnedSubmission;
     const existingTerminal = existingTurn?.status === 'completed' || existingTurn?.status === 'interrupted' || existingTurn?.status === 'failed';
     const turn =
       existingTerminal && existingTurn
@@ -252,7 +254,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
             conversationId: conversation.id,
             providerThreadId: threadId,
             providerTurnId,
-            clientSubmissionId: matchedSubmission?.id ?? existingTurn?.clientSubmissionId ?? null,
+            clientSubmissionId: existingTurn ? existingTurn.clientSubmissionId : (providerMatchedSubmission?.id ?? null),
             status: 'running',
             startedAt: existingTurn?.startedAt ?? timestamp,
             completedAt: null,

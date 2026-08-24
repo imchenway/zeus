@@ -268,7 +268,13 @@ export function findSnapshotTurn(snapshot: CodexThreadSnapshot, submission: Zeus
   return turns.find((turn) => turn.clientUserMessageId === submission.clientMessageId || turn.clientMessageId === submission.clientMessageId) ?? null;
 }
 
+/** 目标轮次身份不是 steer 消息的送达回执；仅接受 Provider 精确用户消息或 turn/start 的耐久接纳事实。 */
+export function submissionDeliveryConfirmedForTurn(submission: ZeusConversationSubmissionRecord, turn: ZeusConversationTurnRecord, exactProviderMessage: boolean): boolean {
+  return exactProviderMessage || (submission.id === turn.clientSubmissionId && submission.submissionOutcome === 'accepted' && Boolean(submission.acceptedAt));
+}
+
 export function snapshotConfirmsIdleProviderThread(snapshot: CodexThreadSnapshot): boolean {
+  if (snapshot.status?.type !== 'idle' && snapshot.status?.type !== 'notLoaded') return false;
   const snapshotTurns = Array.isArray(snapshot.turns) ? snapshot.turns.filter(isRecord) : [];
   return snapshotTurns.every((turn) => {
     const classification = classifySnapshotTurn(turn);
@@ -277,6 +283,7 @@ export function snapshotConfirmsIdleProviderThread(snapshot: CodexThreadSnapshot
 }
 
 export function snapshotConfirmsSafeResumeBoundary(snapshot: CodexThreadSnapshot, localTurns: readonly ZeusConversationTurnRecord[]): boolean {
+  if (!snapshotConfirmsIdleProviderThread(snapshot)) return false;
   const snapshotTurns = Array.isArray(snapshot.turns) ? snapshot.turns.filter(isRecord) : [];
   const terminalLocalIds = new Set(localTurns.filter((turn) => turn.providerTurnId && (turn.status === 'completed' || turn.status === 'interrupted' || turn.status === 'failed')).map((turn) => turn.providerTurnId as string));
   if (terminalLocalIds.size === 0) return snapshotTurns.length === 0;
