@@ -50,6 +50,7 @@ const CONVERSATION_SCHEMA_GENERATION = '2026-08-16-unified-conversation-segments
 const CONVERSATION_SYNC_STREAM_GENERATION = 'zeus-conversation-sync-v1' as const;
 export const conversationHydrationTimeoutMs = 20_000;
 export const conversationRealtimeOpenTimeoutMs = 5_000;
+export const conversationGoalHydrationTimeoutMs = 1_000;
 
 class ConversationHydrationTimeoutError extends Error {
   readonly code = 'ZEUS_CONVERSATION_HYDRATION_TIMEOUT';
@@ -66,6 +67,13 @@ class ConversationRealtimeOpenTimeoutError extends Error {
   constructor() {
     super('会话历史已读取，但实时连接在 5 秒内未就绪。');
     this.name = 'ConversationRealtimeOpenTimeoutError';
+  }
+}
+
+class ConversationGoalHydrationTimeoutError extends Error {
+  constructor() {
+    super('Conversation goal hydration exceeded the readable first-screen deadline.');
+    this.name = 'ConversationGoalHydrationTimeoutError';
   }
 }
 
@@ -1547,38 +1555,72 @@ export function createSessionController(options: CreateSessionControllerOptions)
   }
 
   async function loadConversationForHydration(): Promise<NativeConversationSnapshot> {
-    const loadSnapshot = options.client.loadNativeConversationV2;
-    const loadHistory = options.client.loadNativeConversationModelHistoryV2;
-    const loadQueue = options.client.loadNativeConversationQueueV2;
-    const loadChoice = options.client.loadNativeConversationChoice;
-    let missingPlanConfirmation = false;
+    return loadConversationForProgressiveHydration();
+  }
+
+  async function loadConversationForProgressiveHydration(hooks?: { onReadable?: (snapshot: NativeConversationSnapshot) => void | Promise<void>; onGoal?: (response: NativeGoalResponse) => void }): Promise<NativeConversationSnapshot> {
+    const interactionPromise = loadConversationInteractionForHydration();
+    // 队列或确认项即使比正文更早失败，也由稍后的权威阶段统一处理，不能制造未处理 Promise。
+    void interactionPromise.catch(() => undefined);
+    let latestGoal: NativeGoalResponse | null = null;
+    const goalPromise = loadGoalForHydration().then((response) => {
+      latestGoal = response;
+      return response;
+    });
+    if (hooks?.onGoal) void goalPromise.then(hooks.onGoal).catch(() => undefined);
+    const goalAtReadableDeadline = withSessionTimeout(goalPromise, conversationGoalHydrationTimeoutMs, () => new ConversationGoalHydrationTimeoutError()).catch(() => fallbackGoalForHydration());
+    const readable = await loadConversationReadableForHydration();
+    if (hooks?.onReadable) {
+      await hooks.onReadable(
+        adaptConversationSnapshotV2({
+          ...readable,
+          queue: emptyQueueWhileHydrating(),
+          requests: [],
+          planImplementationRequests: [],
+          goal: latestGoal ?? fallbackGoalForHydration(),
+        }),
+      );
+    }
+    const [interaction, goalAtDeadline] = await Promise.all([interactionPromise, goalAtReadableDeadline]);
+    return adaptConversationSnapshotV2({
+      ...readable,
+      queue: interaction.queue,
+      requests: interaction.pending.requests,
+      planImplementationRequests: interaction.pending.planImplementationRequests ?? [],
+      goal: latestGoal ?? goalAtDeadline,
+    });
+  }
+
+  async function loadConversationReadableForHydration(): Promise<{
+    snapshot: NativeConversationSnapshotV2;
+    history: NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>;
+    choice: NativeConversationChoice;
+  }> {
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const [snapshot, history, queue, pending, choice, goal] = await Promise.all([
-        loadSnapshot(options.projectId, options.conversationId),
-        loadHistory(options.projectId, options.conversationId, { direction: 'tail', limit: 48, byteLimit: 96 * 1024 }),
-        loadQueue(options.projectId, options.conversationId),
-        options.client.loadNativePendingRequests(options.projectId, options.conversationId),
-        loadChoice(options.projectId, options.conversationId),
-        loadGoalForHydration(),
+      const [snapshot, history, choice] = await Promise.all([
+        options.client.loadNativeConversationV2(options.projectId, options.conversationId),
+        options.client.loadNativeConversationModelHistoryV2(options.projectId, options.conversationId, { direction: 'tail', limit: 48, byteLimit: 96 * 1024 }),
+        options.client.loadNativeConversationChoice(options.projectId, options.conversationId),
       ]);
       if (history.throughEventSeq !== snapshot.throughEventSeq) continue;
+      return { snapshot, history, choice };
+    }
+    throw new Error('Snapshot V2 结构与尾部历史未能在同一事件水位稳定读取，请重试。');
+  }
+
+  async function loadConversationInteractionForHydration(): Promise<{ queue: NativeQueueSnapshot; pending: NativePendingInteractionsSnapshot }> {
+    let missingPlanConfirmation = false;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const [queue, pending] = await Promise.all([options.client.loadNativeConversationQueueV2(options.projectId, options.conversationId), options.client.loadNativePendingRequests(options.projectId, options.conversationId)]);
       const planImplementationRequests = pending.planImplementationRequests ?? [];
       if (queue.waitReason === 'plan_confirmation' && !planImplementationRequests.some((request) => request.status === 'pending')) {
         missingPlanConfirmation = true;
         continue;
       }
-      return adaptConversationSnapshotV2({
-        snapshot,
-        history,
-        queue,
-        requests: pending.requests,
-        planImplementationRequests,
-        choice,
-        goal,
-      });
+      return { queue, pending };
     }
     if (missingPlanConfirmation) throw new Error('会话正在等待计划确认，但计划操作没有随首屏恢复；已停止显示不可操作的排队状态，请重试加载会话。');
-    throw new Error('Snapshot V2 结构与尾部历史未能在同一事件水位稳定读取，请重试。');
+    throw new Error('会话队列与待处理操作未能稳定读取，请重试。');
   }
 
   async function loadGoalForHydration(): Promise<NativeGoalResponse> {
@@ -1587,12 +1629,24 @@ export function createSessionController(options: CreateSessionControllerOptions)
     } catch {
       // 目标是附属 Provider 能力，旧 thread 丢失、Provider 离线或能力探测失败都不能
       // 推翻已经取得的 Snapshot V2。重连时保留本地已知投影，冷打开则明确标为未验证。
-      return {
-        goal: state.snapshot?.goal ?? null,
-        timeline: state.snapshot?.goalTimeline ?? [],
-        capability: state.snapshot?.goalCapability ?? { supported: false, enabled: false, stage: null, reason: 'unverified' },
-      };
+      return fallbackGoalForHydration();
     }
+  }
+
+  function fallbackGoalForHydration(): NativeGoalResponse {
+    return {
+      goal: state.snapshot?.goal ?? null,
+      timeline: state.snapshot?.goalTimeline ?? [],
+      capability: state.snapshot?.goalCapability ?? { supported: false, enabled: false, stage: null, reason: 'unverified' },
+    };
+  }
+
+  function emptyQueueWhileHydrating(): NativeQueueSnapshot {
+    return {
+      // Transport 仍保持 hydrating，因此所有写操作都 fail-closed；这里不能伪造恢复失败横幅。
+      state: { type: 'idle' },
+      submissions: [],
+    };
   }
 
   function snapshotNeedsRealtime(snapshot: NativeConversationSnapshot): boolean {
@@ -1682,7 +1736,22 @@ export function createSessionController(options: CreateSessionControllerOptions)
       // 这样既不会遗漏快照读取期间发生的事件，也不会从 0 重放整段历史并反复撞上 WebSocket 高水位。
       // 已有权威快照时保持稳定的重连状态，不能在 reconnecting/hydrating 间反复切换并触发整页同步闪烁。
       if (!reconnecting || !state.snapshot) dispatch({ type: 'transport_changed', transportState: 'hydrating' });
-      const snapshot = await withSessionTimeout(loadConversationForHydration(), conversationHydrationTimeoutMs, () => new ConversationHydrationTimeoutError());
+      const progressiveHydration = loadConversationForProgressiveHydration({
+        ...(!state.snapshot
+          ? {
+              onReadable: async (readableSnapshot: NativeConversationSnapshot): Promise<void> => {
+                if (disposed || token !== connectionToken || state.snapshot) return;
+                markConversationNavigationRenderReady(options.projectId, options.conversationId);
+                await applyAuthoritativeSnapshot(readableSnapshot);
+              },
+            }
+          : {}),
+        onGoal: (response) => {
+          if (disposed || token !== connectionToken) return;
+          dispatch({ type: 'goal_hydrated', conversationId: options.conversationId, response });
+        },
+      });
+      const snapshot = await withSessionTimeout(progressiveHydration, conversationHydrationTimeoutMs, () => new ConversationHydrationTimeoutError());
       if (disposed || token !== connectionToken) return;
       const lazySnapshotHydration = options.realtimePolicy === 'lazy' && realtimeMode !== 'required';
       const subscribeRealtime = realtimeMode === 'required' || (!lazySnapshotHydration && (snapshotNeedsRealtime(snapshot) || Boolean(pendingSend) || deferredSends.length > 0));

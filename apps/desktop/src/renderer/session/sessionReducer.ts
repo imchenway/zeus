@@ -2,6 +2,7 @@ import type {
   ConversationState,
   NativeConversationAttachment,
   NativeConversationEvent,
+  NativeGoalResponse,
   NativeConversationSnapshot,
   NativeItemSnapshot,
   NativeNextTurnSettings,
@@ -29,6 +30,7 @@ export type NativeSessionAction =
   | { type: 'snapshot_hydrated'; snapshot: NativeConversationSnapshot }
   | { type: 'snapshot_v2_page_merged'; snapshot: NativeConversationSnapshot }
   | { type: 'session_metrics_hydrated'; conversationId: string; sessionMetrics: NativeSessionMetricsSnapshot }
+  | { type: 'goal_hydrated'; conversationId: string; response: NativeGoalResponse }
   | { type: 'next_turn_settings_changed'; settings: NativeNextTurnSettings }
   | {
       type: 'pending_requests_hydrated';
@@ -178,6 +180,18 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
         },
       };
     }
+    case 'goal_hydrated':
+      return state.conversationId === action.conversationId && state.snapshot?.id === action.conversationId
+        ? {
+            ...state,
+            snapshot: {
+              ...state.snapshot,
+              goal: action.response.goal,
+              goalTimeline: action.response.timeline,
+              goalCapability: action.response.capability,
+            },
+          }
+        : state;
     case 'next_turn_settings_changed':
       return state.snapshot
         ? {
