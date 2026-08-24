@@ -209,6 +209,36 @@
   padding: 7px 12px;
 }
 
+.qa-motion-fixture-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.qa-motion-fixture-actions button,
+.qa-motion-theme > .qa-motion-fixture-actions button {
+  background: var(--session-accent);
+  border: 0;
+  border-radius: 8px;
+  color: white;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 7px 12px;
+}
+
+.qa-motion-fixture-actions button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.qa-motion-fixture-actions output,
+.qa-motion-send-preview > output {
+  color: var(--session-text-muted);
+  font-size: 11px;
+}
+
 .qa-send-transcript {
   border: 1px solid var(--session-line-soft);
   border-radius: 12px;
@@ -219,6 +249,49 @@
 .qa-send-transcript .session-transcript {
   block-size: 230px;
   padding-block: 18px;
+}
+
+.qa-long-scroll-transcript .session-transcript {
+  block-size: 420px;
+}
+
+.qa-no-refill-results {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+}
+
+.qa-no-refill-results > div,
+.qa-error-contract-lines > p {
+  background: var(--session-sidebar);
+  border: 1px solid var(--session-line-soft);
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  min-inline-size: 0;
+  padding: 10px 12px;
+}
+
+.qa-no-refill-results :where(dt, dd) {
+  margin: 0;
+}
+
+.qa-no-refill-results dt {
+  color: var(--session-text-muted);
+  font-size: 11px;
+}
+
+.qa-no-refill-results dd,
+.qa-error-contract-lines code {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.qa-error-contract-lines {
+  display: grid;
+  gap: 8px;
 }
 
 .qa-motion-theme > header small,

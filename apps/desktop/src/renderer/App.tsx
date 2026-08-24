@@ -40,13 +40,9 @@ export function App(props: AppProps) {
   return (
     <RendererErrorBoundary
       appLanguage={language}
-      onFatalError={(error, info) =>
+      onFatalError={(error) =>
         reportApplicationError(error, {
           language: language === 'zh-CN' ? 'zh-CN' : 'en',
-          title: language === 'zh-CN' ? '工作区遇到界面错误' : 'Workspace interface error',
-          summary: language === 'zh-CN' ? '工作区已安全暂停；全局窗口和错误恢复入口仍保持可用。' : 'The workspace is safely paused; the window-level recovery path remains available.',
-          source: 'WorkspaceRouteBoundary',
-          details: `${error.message}\n${info.componentStack ?? ''}`,
           primaryAction: {
             label: language === 'zh-CN' ? '刷新窗口' : 'Refresh window',
             run: () => globalThis.location?.reload(),

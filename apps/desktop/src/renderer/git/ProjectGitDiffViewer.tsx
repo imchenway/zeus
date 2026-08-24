@@ -3,7 +3,7 @@ import { ColumnsIcon as Columns } from '@phosphor-icons/react/dist/csr/Columns';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
 import { RowsIcon as Rows } from '@phosphor-icons/react/dist/csr/Rows';
 import type { DashboardClient, GitDiffHunk, GitDiffLine, GitDiffSummary } from '../apiClient.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import '../styles.css';
 import '../ui/primitives.css';
 
@@ -26,11 +26,9 @@ export function ProjectGitDiffWindow(props: {
   const [diff, setDiff] = useState<GitDiffSummary | null>(null);
   const [title, setTitle] = useState(props.filePath || (zh ? 'Git 差异' : 'Git diff'));
   const [selectedPath, setSelectedPath] = useState(props.filePath);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   useApplicationErrorDialog(error, {
     language: zh ? 'zh-CN' : 'en',
-    title: zh ? 'Git 差异读取失败' : 'Git diff failed to load',
-    source: 'ProjectGitDiffWindow',
   });
 
   useEffect(() => {
@@ -61,7 +59,7 @@ export function ProjectGitDiffWindow(props: {
         setSelectedPath(requested ? props.filePath : next.fileDiffs[0]?.newPath || next.fileDiffs[0]?.oldPath || '');
       })
       .catch((reason: unknown) => {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason));
+        if (!cancelled) setError(reason);
       });
     return () => {
       cancelled = true;
@@ -107,7 +105,7 @@ export function ProjectGitDiffWindow(props: {
           viewer
         )
       ) : (
-        <p className="project-git-diff-loading">{error ? (zh ? '当前没有可显示的差异。' : 'No diff is currently available.') : zh ? '正在读取差异…' : 'Loading diff…'}</p>
+        <p className="project-git-diff-loading">{error ? <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} /> : zh ? '正在读取差异…' : 'Loading diff…'}</p>
       )}
     </main>
   );

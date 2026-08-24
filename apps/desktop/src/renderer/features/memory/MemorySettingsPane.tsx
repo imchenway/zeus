@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { MemoryApiClient } from './memoryApiClient.js';
 import { memoryDisplayStatus, type MemoryCandidateInput, type MemoryEffect, type MemoryKind, type MemoryRecord, type MemoryScope } from './memoryContracts.js';
 import { useMemoryFeatureController } from './useMemoryFeatureController.js';
+import { formatVisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import './memorySettingsPane.css';
 
 type MemoryLanguage = 'zh-CN' | 'en-US';
@@ -65,7 +66,7 @@ export function MemorySettingsPane(props: { client: MemoryApiClient; language: M
       setEditor(null);
       setFormError(null);
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : String(error));
+      setFormError(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
     }
   };
 
@@ -77,7 +78,7 @@ export function MemorySettingsPane(props: { client: MemoryApiClient; language: M
       setTombstoneReason('');
       setFormError(null);
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : String(error));
+      setFormError(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
     }
   };
 

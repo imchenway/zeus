@@ -4,7 +4,7 @@ import { RendererErrorBoundary } from './ErrorBoundary.js';
 import { createDashboardClient, type DashboardClient, type ExecutionHostTransition, type ReadOnlyValidationIdentity } from './apiClient.js';
 import { openGraphSourceInMain, revealProjectInFinderInMain } from './appShellBridge.js';
 import { initializeNativeCloseLayerRouting } from './ui/nativeCloseLayer.js';
-import { ApplicationErrorDialogHost, reportApplicationError } from './ui/ApplicationErrorDialog.js';
+import { ApplicationErrorDialogHost, formatVisibleApplicationError, reportApplicationError } from './ui/ApplicationErrorDialog.js';
 import { RendererPerformanceCollector } from './rendererPerformanceObservability.js';
 import { primePersistedSessionViewCache } from './session/sessionHotCache.js';
 
@@ -69,14 +69,10 @@ async function renderWithClient(
       ) : null}
       <RendererErrorBoundary
         appLanguage={appShellSettings.appLanguage}
-        onFatalError={(error, info) => {
+        onFatalError={(error) => {
           reportRendererFatalFailure(error);
           reportApplicationError(error, {
             language: errorLanguage,
-            title: errorLanguage === 'zh-CN' ? 'Zeus 遇到界面错误' : 'Zeus encountered an interface error',
-            summary: errorLanguage === 'zh-CN' ? '当前界面已安全暂停。你可以查看详情，然后刷新窗口恢复。' : 'The current interface is safely paused. Review the details, then refresh the window to recover.',
-            source: 'RendererErrorBoundary',
-            details: `${error.message}\n${info.componentStack ?? ''}`,
             primaryAction: {
               label: errorLanguage === 'zh-CN' ? '刷新窗口' : 'Refresh window',
               run: () => globalThis.location?.reload(),
@@ -567,7 +563,8 @@ function renderExecutionHostMaintenance(status: NonNullable<Awaited<ReturnType<N
     } catch (error) {
       retry.disabled = false;
       retry.textContent = '重新检查';
-      detail.textContent = error instanceof Error ? error.message : String(error);
+      title.remove();
+      detail.textContent = formatVisibleApplicationError(error, 'zh-CN');
     }
   };
   const exit = migrationButton('退出 Zeus', false);
@@ -617,12 +614,11 @@ function renderConversationStoreMigration(status: NonNullable<Awaited<ReturnType
   Object.assign(title.style, { margin: '0 0 12px', fontSize: '22px', lineHeight: '1.3' });
   const detail = document.createElement('p');
   detail.textContent = migrationFailed
-    ? status.phase === 'promoted_but_validation_failed'
-      ? `候选库已提升为正式数据库，但提升后校验未完成。请查看诊断并重试收敛状态。${status.error?.message ? `\n${status.error.message}` : ''}`
-      : (status.error?.message ?? '候选库未通过校验，正式数据库没有被替换。')
+    ? formatVisibleApplicationError(status.error ?? (status.phase === 'promoted_but_validation_failed' ? '候选库提升后校验未完成。' : '候选库未通过校验。'), 'zh-CN')
     : `${migrationPhaseLabel(status.phase)}。升级完成前，本地服务和正常业务界面不会启动。`;
   Object.assign(detail.style, { margin: '0', color: '#5f6368', lineHeight: '1.65', whiteSpace: 'pre-wrap' });
-  panel.append(title, detail);
+  if (!migrationFailed) panel.append(title);
+  panel.append(detail);
   if (migrationFailed) {
     const actions = document.createElement('div');
     Object.assign(actions.style, { display: 'flex', gap: '10px', marginTop: '22px', flexWrap: 'wrap' });
@@ -635,7 +631,7 @@ function renderConversationStoreMigration(status: NonNullable<Awaited<ReturnType
       } catch (error) {
         retry.disabled = false;
         retry.textContent = '重试迁移';
-        detail.textContent = error instanceof Error ? error.message : String(error);
+        detail.textContent = formatVisibleApplicationError(error, 'zh-CN');
       }
     };
     const diagnostics = migrationButton('查看诊断', false);
@@ -681,9 +677,6 @@ hydrateRenderer().catch((error: unknown) => {
   const root = document.getElementById('root');
   reportApplicationError(error, {
     language: 'zh-CN',
-    title: auxiliarySurface ? '窗口加载失败' : 'Zeus 启动失败',
-    summary: auxiliarySurface ? '当前窗口未能完成加载。查看详情后请关闭窗口并重试。' : 'Zeus 未能完成界面加载。查看详情后请重新打开应用。',
-    source: surface ?? 'dashboard',
   });
   if (root) createRoot(root).render(<ApplicationErrorDialogHost language="zh-CN" />);
   if (!auxiliarySurface) reportRendererFatalFailure(error);
@@ -693,9 +686,6 @@ function reportSurfaceFatalError(error: Error, language: 'zh-CN' | 'en', source:
   console.error(`Zeus ${source} render failed`, error);
   reportApplicationError(error, {
     language,
-    title: language === 'zh-CN' ? '窗口遇到界面错误' : 'The window encountered an interface error',
-    summary: language === 'zh-CN' ? '当前窗口已安全暂停。请查看详情，然后关闭并重新打开窗口。' : 'The window is safely paused. Review the details, then close and reopen it.',
-    source,
   });
 }
 

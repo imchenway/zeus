@@ -109,8 +109,6 @@ export function CodexRemoteControlSettings(props: CodexRemoteControlSettingsProp
   const error = props.client ? controller.snapshot.error : labels.unavailable;
   useApplicationErrorDialog(error, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-    title: props.language === 'zh-CN' ? '远程接管操作失败' : 'Remote Control operation failed',
-    source: 'CodexRemoteControlSettings',
   });
 
   useEffect(() => {

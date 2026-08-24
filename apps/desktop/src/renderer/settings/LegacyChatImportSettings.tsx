@@ -58,8 +58,6 @@ export function LegacyChatImportSettings(props: LegacyChatImportSettingsProps) {
   }, [eligibleIds]);
   useApplicationErrorDialog(props.error, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-    title: props.language === 'zh-CN' ? '旧会话导入失败' : 'Legacy conversation import failed',
-    source: 'LegacyChatImportSettings',
   });
 
   return (

@@ -2588,9 +2588,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         throw coordinatorError('ZEUS_CODEX_THREAD_IDENTITY_MISMATCH', 'Codex returned a different thread snapshot while restoring the archived conversation.');
       }
       for (const submission of options.submissions.listByConversation(conversation.id)) {
-        if (submission.status === 'paused' && submission.pausedReason === 'provider_archived' && !submission.providerTurnId) {
-          options.submissions.updateStatus(submission.id, 'paused', { pausedReason: 'user_confirmation' });
-        }
+        if (submission.status === 'paused' && submission.pausedReason === 'provider_archived' && !submission.providerTurnId) failSubmissionBeforeProviderDispatch(submission);
       }
       conversation = options.conversations.bindProvider(conversation.id, {
         providerId: 'codex',
@@ -3370,7 +3368,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     markSubmissionRecoveryRequired,
     now,
     options,
-    pauseUnsentSubmissionsForConfirmation,
+    failUnsentSubmissionsBeforeProviderDispatch,
     persistProviderUserMessage,
     projectProviderUserMessage,
     providerHistoryReconcilePageLimit,
@@ -3411,10 +3409,26 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     requestQueueDrain,
   });
 
-  function pauseUnsentSubmissionsForConfirmation(conversationId: string): void {
+  function failSubmissionBeforeProviderDispatch(submission: ZeusConversationSubmissionRecord): void {
+    const timestamp = now();
+    options.submissions.updateStatus(submission.id, 'failed', {
+      pausedReason: null,
+      resolvedAt: timestamp,
+      updatedAt: timestamp,
+      ...(submission.errorJson
+        ? { preserveError: true }
+        : {
+            error: serializeError(coordinatorError('ZEUS_NATIVE_SUBMISSION_NOT_DISPATCHED', 'The submission was not dispatched to the provider.')),
+          }),
+      // 写入结果未知时必须保留 outcome_unknown，禁止 retry API 把同一提交重放给 Provider。
+      preserveSubmissionOutcome: true,
+    });
+  }
+
+  function failUnsentSubmissionsBeforeProviderDispatch(conversationId: string): void {
     for (const submission of options.submissions.listByConversation(conversationId)) {
       if ((submission.status !== 'queued' && submission.status !== 'paused') || submission.providerTurnId) continue;
-      options.submissions.updateStatus(submission.id, 'paused', { pausedReason: 'user_confirmation' });
+      failSubmissionBeforeProviderDispatch(submission);
     }
   }
 

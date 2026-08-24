@@ -4,7 +4,7 @@ import { type TaskEventRecord, type TaskManagementStatus, type TaskPriority, typ
 import type { NativeConversationChoice } from '../session/sessionTypes.js';
 import { compareConversationCreatedAsc } from '../session/conversationOrdering.js';
 import { Button } from '../ui/Button.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError, useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../ui/pendingResourcePolicy.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { TaskAttachmentPreviewList } from './TaskAttachmentPreviewList.js';
@@ -163,8 +163,8 @@ const taskEditCopies: Record<'zh-CN' | 'en-US', TaskEditCopy> = {
   },
 };
 
-function taskEditErrorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message.trim() ? error.message : fallback;
+function taskEditErrorMessage(error: unknown, fallback: string, language: 'zh-CN' | 'en'): string {
+  return error === null || error === undefined || error === '' ? fallback : formatVisibleApplicationError(error, language);
 }
 
 function normalizeTaskTagsInput(value: string): string[] {
@@ -209,7 +209,7 @@ function taskClipboardFiles(clipboardData: DataTransfer): File[] {
 
 function TaskEditFeedback(props: { state: TaskFieldSaveState; copy: TaskEditCopy; statusId: string; onRetry?: () => void; onLoadLatest?: () => void }) {
   if (props.state.kind !== 'error' && props.state.kind !== 'conflict') return null;
-  const message = props.state.kind === 'conflict' ? props.copy.conflict : `${props.copy.saveFailed}：${props.state.message}`;
+  const message = props.state.kind === 'conflict' ? props.copy.conflict : props.state.message;
   return (
     <span className="task-inline-edit-feedback is-error">
       <small id={props.statusId} role="status" aria-live="polite">
@@ -369,7 +369,7 @@ function InlineTaskTextField(props: {
       setSaveState({ kind: 'saved' });
       setEditing(false);
     } catch (error) {
-      setSaveState({ kind: 'error', message: taskEditErrorMessage(error, props.copy.saveFailed) });
+      setSaveState({ kind: 'error', message: taskEditErrorMessage(error, props.copy.saveFailed, props.copy === taskEditCopies['zh-CN'] ? 'zh-CN' : 'en') });
     }
   }
 
@@ -565,7 +565,7 @@ function TaskImmediateSelect<T extends string>(props: {
       desiredValueRef.current = null;
       setSaveState({ kind: 'saved' });
     } catch (error) {
-      setSaveState({ kind: 'error', message: taskEditErrorMessage(error, props.copy.saveFailed) });
+      setSaveState({ kind: 'error', message: taskEditErrorMessage(error, props.copy.saveFailed, props.copy === taskEditCopies['zh-CN'] ? 'zh-CN' : 'en') });
     }
   }
 
@@ -635,8 +635,6 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
   const [relatedTaskCandidateId, setRelatedTaskCandidateId] = useState('');
   useApplicationErrorDialog(props.conversationsError, {
     language: zh ? 'zh-CN' : 'en',
-    title: props.copy.conversationError,
-    source: 'TaskDetailPaneContent.loadConversations',
   });
   useEffect(() => {
     setAttachmentSaveState({ kind: 'idle' });
@@ -731,7 +729,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
             ? zh
               ? '不能把当前任务移动到它自己下面。'
               : 'A task cannot be moved below itself.'
-            : taskEditErrorMessage(error, editCopy.saveFailed);
+            : taskEditErrorMessage(error, editCopy.saveFailed, zh ? 'zh-CN' : 'en');
       setRelationshipSaveState({ kind: 'error', message: relationshipMessage });
     }
   }
@@ -752,7 +750,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
       setAttachmentSaveState({ kind: 'saved' });
       return result;
     } catch (error) {
-      setAttachmentSaveState({ kind: 'error', message: taskEditErrorMessage(error, editCopy.saveFailed) });
+      setAttachmentSaveState({ kind: 'error', message: taskEditErrorMessage(error, editCopy.saveFailed, zh ? 'zh-CN' : 'en') });
       return null;
     }
   }

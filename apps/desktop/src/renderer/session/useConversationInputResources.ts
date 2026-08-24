@@ -84,7 +84,7 @@ export function useConversationInputResources(
       const bridge = window.zeus?.materializeConversationResources;
       if (!bridge) {
         insertText(latest.current, text, selection);
-        throw new Error('当前应用版本未提供长文本转附件能力，文本已保留在输入框。');
+        throw new Error('当前应用版本未提供长文本转附件能力。');
       }
       try {
         const attachments = await bridge([

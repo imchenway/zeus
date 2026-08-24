@@ -14,6 +14,7 @@ import type {
 } from '../apiClient.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { Button } from '../ui/Button.js';
+import { formatVisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 
 interface ModelConnectionDraft extends SaveModelConnectionRequest {
@@ -61,7 +62,7 @@ export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US
       })
       .catch((error: unknown) => {
         if (!active) return;
-        setMessage(error instanceof Error ? error.message : String(error));
+        setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
         setStatus('idle');
       });
     return () => {
@@ -144,7 +145,7 @@ export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US
       setDraft((value) => ({ ...value, id: saved.id, apiKey: '' }));
       setMessage(zh ? '供应商配置已保存。' : 'Provider saved.');
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
     } finally {
       setStatus('idle');
     }
@@ -168,7 +169,7 @@ export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US
       await reloadConnections(draft.id);
       setMessage(zh ? `发现 ${result.discoveredModelIds.length} 个模型，新增 ${result.addedModelIds.length} 个。` : `Discovered ${result.discoveredModelIds.length} models and added ${result.addedModelIds.length}.`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
     } finally {
       setStatus('idle');
     }
@@ -181,7 +182,7 @@ export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US
     try {
       setDiagnostic(await props.client.diagnoseModelConnection(draft.id));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
     } finally {
       setStatus('idle');
     }
@@ -195,7 +196,7 @@ export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US
       await reloadConnections(draft.id);
       setMessage(zh ? 'API Key 已从钥匙串清除。' : 'API key cleared from Keychain.');
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
     } finally {
       setStatus('idle');
     }
@@ -212,7 +213,7 @@ export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US
       setDiagnostic(null);
       setMessage(zh ? '供应商已删除。' : 'Provider deleted.');
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
     } finally {
       setStatus('idle');
     }

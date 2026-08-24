@@ -20,7 +20,7 @@ import {
 } from '@zeus/shared';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { CodeCommentPanel } from './CodeCommentPanel.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 
 type ChangeAction = 'undo' | 'reapply';
 const maximumRenderedDiffLines = 2_000;
@@ -34,11 +34,9 @@ export function TurnChangeCard(props: {
   const zh = props.language === 'zh-CN';
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState<ChangeAction | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   useApplicationErrorDialog(error && error !== props.changeSet.conflict?.message && error !== props.changeSet.unavailableReason ? error : null, {
     language: zh ? 'zh-CN' : 'en',
-    title: zh ? '文件变更操作失败' : 'File change operation failed',
-    source: 'TurnChangeCard',
   });
   const [optimisticChangeSet, setOptimisticChangeSet] = useState<TurnChangeSet | null>(null);
   const changeSet = optimisticChangeSet && optimisticChangeSet.id === props.changeSet.id && optimisticChangeSet.updatedAt >= props.changeSet.updatedAt ? optimisticChangeSet : props.changeSet;
@@ -54,7 +52,7 @@ export function TurnChangeCard(props: {
       const result = await props.onOperate(changeSet, action);
       setOptimisticChangeSet(result.changeSet);
     } catch (operationError) {
-      setError(operationError instanceof Error ? operationError.message : String(operationError));
+      setError(operationError);
     } finally {
       setBusy(null);
     }
@@ -91,8 +89,7 @@ export function TurnChangeCard(props: {
       </header>
       {changeSet.conflict ? (
         <p className="session-turn-change-error" role="alert">
-          <WarningCircle aria-hidden="true" />
-          <span>{changeSet.conflict.message}</span>
+          <VisibleApplicationError error={changeSet.conflict} language={zh ? 'zh-CN' : 'en'} />
         </p>
       ) : null}
       {!changeSet.conflict && changeSet.state === 'unavailable' && changeSet.unavailableReason ? (
@@ -144,11 +141,9 @@ export function TurnDiffWorkspace(props: {
   const [activeFileId, setActiveFileId] = useState(props.initialFileId ?? props.changeSet.files[0]?.id ?? null);
   const titleRef = useRef<HTMLSpanElement | null>(null);
   const [busy, setBusy] = useState<ChangeAction | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   useApplicationErrorDialog(error && error !== props.changeSet.conflict?.message && error !== props.changeSet.unavailableReason ? error : null, {
     language: zh ? 'zh-CN' : 'en',
-    title: zh ? '变更审核操作失败' : 'Change review operation failed',
-    source: 'TurnDiffWorkspace',
   });
   const [optimisticChangeSet, setOptimisticChangeSet] = useState<TurnChangeSet | null>(null);
   const [draftPosition, setDraftPosition] = useState<ConversationCodeCommentPosition | null>(null);
@@ -200,7 +195,7 @@ export function TurnDiffWorkspace(props: {
       const result = await props.onOperate(changeSet, action);
       setOptimisticChangeSet(result.changeSet);
     } catch (operationError) {
-      setError(operationError instanceof Error ? operationError.message : String(operationError));
+      setError(operationError);
     } finally {
       setBusy(null);
     }
@@ -212,7 +207,7 @@ export function TurnDiffWorkspace(props: {
     try {
       await props.onOpenFile(file, line);
     } catch (openError) {
-      setError(openError instanceof Error ? openError.message : String(openError));
+      setError(openError);
     }
   }
 
@@ -248,8 +243,7 @@ export function TurnDiffWorkspace(props: {
       </header>
       {changeSet.conflict ? (
         <p className="session-turn-change-error session-turn-diff-error" role="alert">
-          <WarningCircle aria-hidden="true" />
-          <span>{changeSet.conflict.message}</span>
+          <VisibleApplicationError error={changeSet.conflict} language={zh ? 'zh-CN' : 'en'} />
         </p>
       ) : null}
       {!changeSet.conflict && changeSet.state === 'unavailable' && changeSet.unavailableReason ? (

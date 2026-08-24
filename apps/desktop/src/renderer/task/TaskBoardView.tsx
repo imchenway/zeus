@@ -39,6 +39,7 @@ import {
 import { memo, useEffect, useId, useMemo, useState, type CSSProperties } from 'react';
 import type { TaskAgentRunStatus, TaskRecord } from '../apiClient.js';
 import { Button } from '../ui/Button.js';
+import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { parseTaskAttachments } from './taskAttachments.js';
 import { buildTaskBoardGroups, taskBoardActiveContent, taskBoardCardPropertyValues, taskBoardGroupOptions, type TaskBoardCardModel, type TaskBoardGroupModel, type TaskBoardProjectionContext } from './taskBoardModel.js';
@@ -1120,7 +1121,7 @@ export function TaskBoardView(props: TaskBoardViewProps) {
   if (props.error && !snapshot)
     return (
       <section className="task-board-state is-error" role="alert">
-        <strong>{props.language === 'zh-CN' ? '看板暂时无法载入' : 'Board unavailable'}</strong>
+        <VisibleApplicationError error={props.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
         <Button variant="secondary" size="compact" onClick={props.onReload}>
           {props.language === 'zh-CN' ? '重新读取' : 'Reload'}
         </Button>
@@ -1136,7 +1137,7 @@ export function TaskBoardView(props: TaskBoardViewProps) {
       setAnnouncement(props.language === 'zh-CN' ? '看板设置已保存。' : 'Board settings saved.');
       return updated;
     } catch (error) {
-      setAnnouncement(props.language === 'zh-CN' ? '看板设置保存失败，已重新读取最新配置。' : 'Could not save board settings. The latest settings were reloaded.');
+      setAnnouncement(formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'));
       props.onReload();
       throw error;
     } finally {
@@ -1173,7 +1174,7 @@ export function TaskBoardView(props: TaskBoardViewProps) {
     } catch (error) {
       setLocalTasks(previousTasks);
       setLocalSnapshot(previousSnapshot);
-      setAnnouncement(props.language === 'zh-CN' ? `“${card.task.title}”移动失败，已恢复原位置。` : `Could not move “${card.task.title}”; its previous position was restored.`);
+      setAnnouncement(formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'));
       throw error;
     } finally {
       setMoving(false);

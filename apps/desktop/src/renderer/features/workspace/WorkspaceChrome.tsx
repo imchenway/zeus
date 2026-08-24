@@ -24,6 +24,7 @@ import { conversationDisplayTitle } from '../../session/conversationDisplayTitle
 import { type AppLanguage } from './workspaceCopy.js';
 import { Button } from '../../ui/Button.js';
 import { ModalPortal } from '../../ui/ModalPortal.js';
+import { formatVisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { SourceListRow } from '../../ui/SourceListRow.js';
 import { useNewItemMotionIds } from '../../ui/useNewItemMotion.js';
 import { type AiRuntimeAdapterDescriptor, type AiRuntimeAdapterStatus, type AiRuntimeTerminalEvent, type AppShellSettings, type CodeMapSettings, type ProjectConfig, type ProjectRecord, type RuntimeSettings } from '../../apiClient.js';
@@ -1142,9 +1143,7 @@ export function normalizeLocalUiError(error?: LocalUiErrorSnapshot): LocalUiErro
 }
 
 export function errorToLocalUiMessage(error: unknown): string {
-  if (error instanceof Error && error.message.trim()) return error.message;
-  if (typeof error === 'string' && error.trim()) return error;
-  return '本地操作失败，详情请查看本地日志目录。';
+  return formatVisibleApplicationError(error, 'zh-CN');
 }
 
 export function redactLocalUiErrorMessage(message: string): string {

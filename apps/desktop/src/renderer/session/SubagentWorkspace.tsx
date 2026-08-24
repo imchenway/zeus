@@ -10,7 +10,7 @@ import type { NativeSessionItemBuffer, NativeSubagentListSnapshot, NativeSubagen
 import { ThreadItemView, type SessionUiLanguage } from './ThreadItemView.js';
 import { isSubagentCoordinationItem } from './ConversationTranscript.js';
 import { RuntimeDetails } from './RuntimeDetails.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 
 interface SubagentWorkspaceProps {
   language: SessionUiLanguage;
@@ -34,19 +34,13 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
   const [thread, setThread] = useState<NativeSubagentThreadSnapshot | null>(null);
   const [loadingList, setLoadingList] = useState(!props.initialSnapshot);
   const [loadingThread, setLoadingThread] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const listRequestRef = useRef(0);
   const threadRequestRef = useRef(0);
   const loadListRef = useRef(props.loadList);
   const loadThreadRef = useRef(props.loadThread);
   loadListRef.current = props.loadList;
   loadThreadRef.current = props.loadThread;
-  useApplicationErrorDialog(error, {
-    language: zh ? 'zh-CN' : 'en',
-    title: zh ? '智能体读取失败' : 'Failed to load agents',
-    source: 'SubagentWorkspace',
-  });
-
   useEffect(() => {
     if (!props.initialSnapshot || props.initialSnapshot.conversationId !== props.conversationId) return;
     setSnapshot(props.initialSnapshot);
@@ -63,7 +57,7 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
       setError(null);
     } catch (cause) {
       if (listRequestRef.current !== requestId) return;
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(cause);
     } finally {
       if (listRequestRef.current === requestId) setLoadingList(false);
     }
@@ -83,7 +77,7 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
       setError(null);
     } catch (cause) {
       if (threadRequestRef.current !== requestId) return;
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(cause);
     } finally {
       if (threadRequestRef.current === requestId) setLoadingThread(false);
     }
@@ -185,8 +179,7 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
 
       {error ? (
         <section className="session-subagent-error" role="alert">
-          <strong>{zh ? '智能体读取失败' : 'Failed to load agents'}</strong>
-          <p>{zh ? '当前无法读取 Codex 智能体数据，请重试。' : 'Codex agent data is currently unavailable. Try again.'}</p>
+          <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
           <button type="button" onClick={() => void (selectedThreadId ? openThread(selectedThreadId, true) : refreshList(true))}>
             {zh ? '重试' : 'Retry'}
           </button>

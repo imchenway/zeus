@@ -67,25 +67,18 @@ export type NativeSessionAction =
       previousConversationState: ConversationState;
       startedAt: string;
       queuedUntilHydrated?: boolean;
+      preserveComposer?: boolean;
       taskPushLayout?: TaskPushMessageLayout;
     }
   | {
       type: 'send_failed';
       clientUserMessageId: string;
-      draft: string;
-      attachments: NativeConversationAttachment[];
-      browserSubmission: ZeusBrowserPreparedSubmission | null;
-      contextDraft: ConversationContextDraft;
       previousConversationState: ConversationState;
       error: NativeSessionError;
     }
   | {
       type: 'send_uncertain';
       clientUserMessageId: string;
-      draft: string;
-      attachments: NativeConversationAttachment[];
-      browserSubmission: ZeusBrowserPreparedSubmission | null;
-      contextDraft: ConversationContextDraft;
       previousConversationState: ConversationState;
       error: NativeSessionError;
     }
@@ -273,10 +266,6 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
           : {}),
         transcriptRevision: state.transcriptRevision + (optimisticEntry ? 1 : 0),
         conversationState: action.previousConversationState,
-        draft: action.draft,
-        attachments: action.attachments,
-        browserSubmission: action.browserSubmission,
-        contextDraft: action.contextDraft,
         error: action.error,
       };
     }
@@ -302,10 +291,6 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
             }
           : {}),
         conversationState: action.previousConversationState,
-        draft: action.draft,
-        attachments: action.attachments,
-        browserSubmission: action.browserSubmission,
-        contextDraft: action.contextDraft,
         error: action.error,
         transcriptRevision: state.transcriptRevision + (optimistic ? 1 : 0),
       };
@@ -1209,10 +1194,14 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
     itemOrder: existingOptimisticEntry || state.items[key] ? state.itemOrder : [...state.itemOrder, key],
     transcriptRevision: state.transcriptRevision + 1,
     conversationState: action.queuedUntilHydrated ? action.previousConversationState : keepActiveState ? action.previousConversationState : 'starting_turn',
-    draft: '',
-    attachments: [],
-    browserSubmission: null,
-    contextDraft: structuredClone(emptyConversationContextDraft),
+    ...(action.preserveComposer
+      ? {}
+      : {
+          draft: '',
+          attachments: [],
+          browserSubmission: null,
+          contextDraft: structuredClone(emptyConversationContextDraft),
+        }),
     error: null,
   };
 }
@@ -1269,18 +1258,12 @@ function projectQueueSubmissionMessages(state: NativeSessionState, queue: Native
 }
 
 function shouldProjectSubmissionMessage(submission: NativeQueuedSubmission): boolean {
-  if (shouldRecoverSubmissionToComposer(submission)) return false;
   if (submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active' || submission.status === 'failed' || submission.status === 'completed' || submission.status === 'resolved') return true;
-  // user_confirmation 尚未确认进入会话记录，继续回到输入框；其余暂停态保留原消息和可见原因。
-  return submission.status === 'paused' && submission.pausedReason !== 'user_confirmation';
+  return submission.status === 'paused';
 }
 
 function shouldDiscardSubmissionProjection(submission: NativeQueuedSubmission): boolean {
   return submission.status === 'cancelled' || submission.status === 'deleted';
-}
-
-function shouldRecoverSubmissionToComposer(submission: NativeQueuedSubmission): boolean {
-  return (submission.status === 'queued' || submission.status === 'paused') && submission.pausedReason === 'user_confirmation' && !submission.providerTurnId;
 }
 
 function projectSteeringSubmission(state: NativeSessionState, submission: NativeQueuedSubmission, authoritativeQueue?: NativeQueueSnapshot): NativeSessionState {
@@ -1404,20 +1387,30 @@ function submissionUserMessageItem(conversationId: string, threadId: string, sub
 }
 
 function submissionUserMessagePayload(submission: NativeQueuedSubmission): Record<string, unknown> {
+  const deliveryError =
+    submission.error ??
+    (submission.pausedReason === 'user_confirmation'
+      ? {
+          code: 'ZEUS_NATIVE_SUBMISSION_NOT_DISPATCHED',
+          message: 'The submission was not dispatched to the provider.',
+          recoveryRequired: false,
+          retryable: true,
+        }
+      : null);
   return {
     delivery: submission.delivery ?? 'queue',
     submissionId: submission.id,
     attachments: submission.attachments ?? [],
     ...(submission.conversationContext ? { conversationContext: submission.conversationContext } : {}),
     ...(submission.pausedReason ? { pausedReason: submission.pausedReason } : {}),
-    ...(submission.error ? { error: submission.error, deliveryError: submission.error } : {}),
+    ...(deliveryError ? { error: deliveryError, deliveryError } : {}),
   };
 }
 
 function mergeSubmissionUserMessagePayload(previous: Record<string, unknown>, submission: NativeQueuedSubmission): Record<string, unknown> {
   const next = { ...previous, ...submissionUserMessagePayload(submission) };
   if (!submission.pausedReason) delete next.pausedReason;
-  if (!submission.error) {
+  if (!submission.error && submission.pausedReason !== 'user_confirmation') {
     delete next.error;
     delete next.deliveryError;
   }

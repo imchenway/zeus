@@ -76,11 +76,9 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
   const [workspaces, setWorkspaces] = useState<TaskWorkspacesSnapshot | null>(null);
   const [workspaceState, setWorkspaceState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
-  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [workspaceError, setWorkspaceError] = useState<unknown>(null);
   useApplicationErrorDialog(workspaceError, {
     language: zh ? 'zh-CN' : 'en',
-    title: zh ? 'Git 状态读取失败' : 'Git status failed to load',
-    source: 'SessionQuickActionsCard',
   });
   const taskId = props.task?.id ?? props.conversation.taskId;
   const workspace = resolveConversationWorkspace(workspaces, props.conversation, props.state);
@@ -164,7 +162,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
         if (!active) return;
         loadedWorkspaceKeyRef.current = null;
         setWorkspaceState('error');
-        setWorkspaceError(error instanceof Error ? error.message : String(error));
+        setWorkspaceError(error);
       });
     return () => {
       active = false;

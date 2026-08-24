@@ -8,7 +8,7 @@ import './session-styles.css';
 import type { ConversationResource, ConversationResourcePreview } from '@zeus/shared';
 import { PendingRequestSurface } from '../src/renderer/session/PendingRequestSurface.js';
 import { type ConversationTreeRuntimeState, type ProjectConversationGroup, ProjectConversationTree } from '../src/renderer/session/ProjectConversationTree.js';
-import type { NativeConversationChoice, NativePendingRequest, NativeQueuedSubmission, NativeRuntimeDetailsSnapshot, NativeSessionItemBuffer, NativeSessionState } from '../src/renderer/session/sessionTypes.js';
+import type { NativeConversationAttachment, NativeConversationChoice, NativePendingRequest, NativeQueuedSubmission, NativeRuntimeDetailsSnapshot, NativeSessionItemBuffer, NativeSessionState } from '../src/renderer/session/sessionTypes.js';
 import { SafeMarkdown, ThreadItemView } from '../src/renderer/session/ThreadItemView.js';
 import { ConversationTranscript } from '../src/renderer/session/ConversationTranscript.js';
 import { ConversationComposer } from '../src/renderer/session/ConversationComposer.js';
@@ -17,6 +17,7 @@ import { RuntimeDetails } from '../src/renderer/session/RuntimeDetails.js';
 import { SessionPlanProgress } from '../src/renderer/session/SessionActivity.js';
 import { createInitialSessionState, sessionReducer } from '../src/renderer/session/sessionReducer.js';
 import { resolveNativeConversationSelectionPresentation } from '../src/renderer/features/workspace/workspaceSupport.js';
+import { ApplicationErrorDialogHost, reportApplicationError, VisibleApplicationError } from '../src/renderer/ui/ApplicationErrorDialog.js';
 
 declare global {
   interface Window {
@@ -238,35 +239,184 @@ const executionPhasePreviousReasoning = motionItem('phase-reasoning-previous', '
 const executionPhaseReasoning = motionItem('phase-reasoning-current', 'reasoning', 'in_progress', '现在按类别聚合工具、命令和文件活动，完成后再继续输出。', {
   summary: ['现在按类别聚合工具、命令和文件活动，完成后再继续输出。'],
 });
-const executionPhaseActivities = [
-  motionItem('phase-read', 'commandExecution', 'completed', '', {
-    command: ['sed', '-n', '1,160p', 'ConversationTranscript.tsx'],
-    commandActions: [{ type: 'read', path: 'apps/desktop/src/renderer/session/ConversationTranscript.tsx' }],
-  }),
-  motionItem('phase-search', 'commandExecution', 'completed', '', {
-    command: ['rg', 'SessionActivityGroup'],
-    commandActions: [{ type: 'search', pattern: 'SessionActivityGroup', path: 'apps/desktop/src/renderer/session' }],
-  }),
-  motionItem('phase-tool', 'dynamicToolCall', 'completed', '', { toolName: 'browser' }),
-  motionItem('phase-command', 'commandExecution', 'in_progress', '', { command: ['pnpm', 'typecheck'] }),
-];
-const executionPhaseItems = [executionPhasePreviousReasoning, executionPhaseReasoning, ...executionPhaseActivities];
-const executionPhaseSessionState: NativeSessionState = {
-  ...createInitialSessionState(),
-  transportState: 'ready',
-  conversationState: 'active_prework',
-  projectId: 'project-zeus',
-  conversationId: motionConversationId,
-  providerThreadId: motionThreadId,
-  activeTurnId: motionTurnId,
-  startedTurnId: motionTurnId,
-  // 视觉夹具只需要证明已水合后的滚动与新增消息路径，快照其余字段不参与渲染。
-  snapshot: { id: motionConversationId } as NonNullable<NativeSessionState['snapshot']>,
-  items: Object.fromEntries(executionPhaseItems.map((item) => [item.key, item])),
-  itemOrder: executionPhaseItems.map((item) => item.key),
-  turnsByProviderId: motionSessionState.turnsByProviderId,
-  transcriptRevision: 1,
+const executionPhaseActivities = Array.from({ length: 40 }, (_, index) => {
+  const sequence = index + 1;
+  const status = index === 39 ? 'in_progress' : 'completed';
+  if (index % 4 === 0) {
+    return motionItem(`phase-command-${sequence}`, 'commandExecution', status, '', {
+      command: ['pnpm', index % 8 === 0 ? 'typecheck' : 'lint'],
+      commandActions: [{ type: 'run', path: 'apps/desktop' }],
+    });
+  }
+  if (index % 4 === 1) {
+    return motionItem(`phase-search-${sequence}`, 'webSearch', status, '', {
+      query: `Zeus 会话分组验收 ${sequence}`,
+    });
+  }
+  if (index % 4 === 2) {
+    return motionItem(`phase-file-${sequence}`, 'fileChange', status, '', {
+      path: `apps/desktop/src/renderer/session/fixture-${sequence}.tsx`,
+    });
+  }
+  return motionItem(`phase-tool-${sequence}`, 'dynamicToolCall', status, '', {
+    toolName: index % 8 === 3 ? 'browser' : 'openai_docs',
+  });
+});
+const executionPhaseCommentary = motionItem('phase-commentary', 'agentMessage', 'completed', '活动组已经建立；继续追加操作时不改变它在本轮中的位置。', { phase: 'commentary' }, 'commentary');
+const executionPhaseLaterReasoning = motionItem('phase-reasoning-later', 'reasoning', 'in_progress', '继续核对 32 条阈值后的稳定分组。', {
+  summary: ['继续核对 32 条阈值后的稳定分组。'],
+});
+const executionPhaseAppendedActivity = motionItem('phase-appended-tool', 'dynamicToolCall', 'in_progress', '', { toolName: 'browser' });
+const executionPhaseFinalAnswer = motionItem('phase-final-answer', 'agentMessage', 'completed', '本轮过程已完成，所有操作仍归于同一个活动组。', { phase: 'final_answer' }, 'final_answer');
+
+function executionPhaseState(options: { appended: boolean; completed: boolean }): NativeSessionState {
+  const baseActivities = options.completed ? executionPhaseActivities.map((item) => ({ ...item, status: 'completed' })) : executionPhaseActivities;
+  const items = [
+    executionPhasePreviousReasoning,
+    ...baseActivities.slice(0, 12),
+    executionPhaseCommentary,
+    executionPhaseReasoning,
+    ...baseActivities.slice(12, 33),
+    executionPhaseLaterReasoning,
+    ...baseActivities.slice(33),
+    ...(options.appended ? [{ ...executionPhaseAppendedActivity, status: options.completed ? 'completed' : 'in_progress' }] : []),
+    ...(options.completed ? [executionPhaseFinalAnswer] : []),
+  ].map((item, index) => {
+    const timelineAt = new Date(Date.UTC(2026, 7, 15, 4, 0, index)).toISOString();
+    return { ...item, timelineAt, updatedAt: timelineAt };
+  });
+  return {
+    ...createInitialSessionState(),
+    transportState: 'ready',
+    conversationState: options.completed ? 'ready' : 'active_prework',
+    projectId: 'project-zeus',
+    conversationId: motionConversationId,
+    providerThreadId: motionThreadId,
+    activeTurnId: options.completed ? null : motionTurnId,
+    startedTurnId: motionTurnId,
+    // 视觉夹具只需要证明已水合后的滚动与新增消息路径，快照其余字段不参与渲染。
+    snapshot: { id: motionConversationId } as NonNullable<NativeSessionState['snapshot']>,
+    items: Object.fromEntries(items.map((item) => [item.key, item])),
+    itemOrder: items.map((item) => item.key),
+    turnsByProviderId: {
+      [motionTurnId]: {
+        ...motionSessionState.turnsByProviderId[motionTurnId]!,
+        status: options.completed ? 'completed' : 'running',
+        completedAt: options.completed ? '2026-08-15T04:01:00.000Z' : null,
+      },
+    },
+    terminalTurnIds: options.completed ? { [motionTurnId]: 'completed' } : {},
+    transcriptRevision: 40 + Number(options.appended) + Number(options.completed),
+  };
+}
+
+const longScrollConversationId = 'long-scroll-conversation';
+
+function longScrollItem(index: number, expanded: boolean): NativeSessionItemBuffer {
+  const lineCount = index % 5 === 0 ? 7 : index % 3 === 0 ? 4 : 1;
+  const extra = expanded && index === 24 ? 12 : 0;
+  const lines = Array.from({ length: lineCount + extra }, (_, line) => `混合高度消息 ${index + 1} · 第 ${line + 1} 行，验证延迟高度变化不会让可见锚点跳动。`);
+  return {
+    ...motionItem(`long-scroll-${index}`, 'agentMessage', 'completed', lines.join('\n\n'), { phase: 'final_answer' }, 'final_answer'),
+    conversationId: longScrollConversationId,
+    threadId: 'long-scroll-thread',
+    turnId: `long-scroll-turn-${index}`,
+    key: `long-scroll:row-${index}`,
+    updatedAt: new Date(Date.UTC(2026, 7, 15, 4, index)).toISOString(),
+  };
+}
+
+function longScrollState(expanded: boolean): NativeSessionState {
+  const items = Array.from({ length: 72 }, (_, index) => longScrollItem(index, expanded));
+  return {
+    ...createInitialSessionState(),
+    transportState: 'ready',
+    conversationState: 'ready',
+    projectId: 'project-zeus',
+    conversationId: longScrollConversationId,
+    providerThreadId: 'long-scroll-thread',
+    snapshot: { id: longScrollConversationId } as NonNullable<NativeSessionState['snapshot']>,
+    items: Object.fromEntries(items.map((item) => [item.key, item])),
+    itemOrder: items.map((item) => item.key),
+    transcriptRevision: expanded ? 2 : 1,
+  };
+}
+
+const failedComposerAttachment: NativeConversationAttachment = {
+  name: 'failed-message.txt',
+  mime: 'text/plain',
+  size: 18,
+  kind: 'file',
+  source: 'picker',
+  uploadRef: 'qa-failed-message',
 };
+const laterComposerAttachment: NativeConversationAttachment = {
+  name: 'later-draft.txt',
+  mime: 'text/plain',
+  size: 12,
+  kind: 'file',
+  source: 'picker',
+  uploadRef: 'qa-later-draft',
+};
+const noRefillError = {
+  code: 'ZEUS_CODEX_RPC_TIMEOUT',
+  message: 'Codex app-server request timed out: account/read',
+  recoveryRequired: true,
+  retryable: false,
+};
+
+function lateFailureNoRefillState(): NativeSessionState {
+  const initial = { ...createInitialSessionState(), conversationId: 'no-refill-late', providerThreadId: 'no-refill-thread', transportState: 'ready' as const, conversationState: 'ready' as const };
+  const started = sessionReducer(initial, {
+    type: 'send_started',
+    clientUserMessageId: 'failed-client-message',
+    durableClientUserMessageId: 'failed-client-message',
+    draft: '已经发送但失败的旧消息',
+    attachments: [failedComposerAttachment],
+    submittedAttachments: [failedComposerAttachment],
+    browserSubmission: null,
+    contextDraft: initial.contextDraft,
+    browserComments: [],
+    delivery: 'queue',
+    previousConversationState: 'ready',
+    startedAt: '2026-08-24T06:00:00.000Z',
+  });
+  const withLaterDraft = sessionReducer(sessionReducer(started, { type: 'draft_changed', draft: '用户后来输入的新草稿' }), {
+    type: 'attachments_changed',
+    attachments: [laterComposerAttachment],
+  });
+  return sessionReducer(withLaterDraft, {
+    type: 'send_failed',
+    clientUserMessageId: 'failed-client-message',
+    previousConversationState: 'ready',
+    error: noRefillError,
+  });
+}
+
+function restartFailureNoRefillState(): NativeSessionState {
+  const initial = { ...createInitialSessionState(), conversationId: 'no-refill-restart', providerThreadId: 'no-refill-thread', transportState: 'ready' as const, conversationState: 'ready' as const };
+  const projected = sessionReducer(initial, {
+    type: 'send_started',
+    clientUserMessageId: 'restart-failed-client-message',
+    durableClientUserMessageId: 'restart-failed-client-message',
+    draft: '重启前失败的消息',
+    attachments: [failedComposerAttachment],
+    submittedAttachments: [failedComposerAttachment],
+    browserSubmission: null,
+    contextDraft: initial.contextDraft,
+    browserComments: [],
+    delivery: 'queue',
+    previousConversationState: 'ready',
+    startedAt: '2026-08-24T06:00:00.000Z',
+    preserveComposer: true,
+  });
+  return sessionReducer(projected, {
+    type: 'send_uncertain',
+    clientUserMessageId: 'restart-failed-client-message',
+    previousConversationState: 'ready',
+    error: noRefillError,
+  });
+}
 
 const sendScrollConversationId = 'send-scroll-conversation';
 const sendScrollTurnId = 'send-scroll-turn';
@@ -853,12 +1003,156 @@ function HistoryPagingPreview() {
   );
 }
 
+function ExecutionPhasePreview() {
+  const [appended, setAppended] = useState(false);
+  const [completed, setCompleted] = useState(false);
+  const [historyOnly, setHistoryOnly] = useState(false);
+  const terminal = completed || historyOnly;
+  const state = executionPhaseState({ appended, completed: terminal });
+  return (
+    <section className="qa-motion-theme session-codex-parity-v1 theme-light" data-testid="execution-phase-preview" data-phase-state={historyOnly ? 'history' : completed ? 'completed' : 'running'}>
+      <header>
+        <strong>单轮稳定活动组</strong>
+        <small>40+ 条命令、文件、搜索、网页和工具活动只生成一个固定在首个操作位置的活动组。</small>
+      </header>
+      <div className="qa-motion-fixture-actions">
+        <button type="button" data-testid="execution-phase-append" onClick={() => setAppended(true)} disabled={appended}>
+          {appended ? '已追加第 41 条操作' : '增量追加第 41 条操作'}
+        </button>
+        <button type="button" data-testid="execution-phase-complete" onClick={() => setCompleted((value) => !value)}>
+          {completed ? '恢复运行态' : '切换为完成态'}
+        </button>
+        <button type="button" data-testid="execution-phase-history" onClick={() => setHistoryOnly((value) => !value)}>
+          {historyOnly ? '退出历史投影' : '切换为历史投影'}
+        </button>
+        <output data-testid="execution-phase-state">
+          {historyOnly ? '历史投影' : completed ? '完成态' : '运行态'} · {appended ? 41 : 40} 条操作
+        </output>
+      </div>
+      <div className="qa-motion-transcript ai-workspace">
+        <ConversationTranscript state={state} language="zh-CN" historyOnly={historyOnly} />
+      </div>
+    </section>
+  );
+}
+
+function LongScrollPreview() {
+  const [expanded, setExpanded] = useState(false);
+  const [scrollAction, setScrollAction] = useState('尚未移动');
+
+  function moveTranscript(mode: 'middle' | 'up'): void {
+    const transcript = document.querySelector<HTMLElement>('[data-testid="long-scroll-preview"] .session-transcript');
+    if (!transcript) return;
+    const maximum = Math.max(0, transcript.scrollHeight - transcript.clientHeight);
+    transcript.scrollTop = mode === 'middle' ? Math.round(maximum * 0.55) : Math.max(0, transcript.scrollTop - 620);
+    transcript.dispatchEvent(new Event('scroll', { bubbles: true }));
+    setScrollAction(mode === 'middle' ? '已移动到中段' : '已向上移动 620px');
+  }
+
+  return (
+    <section className="qa-motion-send-preview session-codex-parity-v1" data-testid="long-scroll-preview">
+      <div>
+        <div>
+          <h3>72 条混合高度消息上滚</h3>
+          <small>第 25 条延迟增高时，前台第一条可见稳定行必须保持原位。</small>
+        </div>
+        <div className="qa-motion-fixture-actions">
+          <button type="button" data-testid="long-scroll-middle" onClick={() => moveTranscript('middle')}>
+            移动到中段
+          </button>
+          <button type="button" data-testid="long-scroll-up" onClick={() => moveTranscript('up')}>
+            向上移动 620px
+          </button>
+          <button type="button" data-testid="long-scroll-resize" onClick={() => setExpanded((value) => !value)}>
+            {expanded ? '恢复第 25 条高度' : '延迟增高第 25 条'}
+          </button>
+        </div>
+      </div>
+      <output data-testid="long-scroll-height-state">
+        {expanded ? '第 25 条已增高' : '第 25 条为基础高度'} · {scrollAction}
+      </output>
+      <div className="qa-send-transcript qa-long-scroll-transcript ai-workspace">
+        <ConversationTranscript state={longScrollState(expanded)} language="zh-CN" />
+      </div>
+    </section>
+  );
+}
+
+function NoRefillPreview() {
+  const lateFailure = lateFailureNoRefillState();
+  const restartFailure = restartFailureNoRefillState();
+  return (
+    <section className="qa-motion-send-preview session-codex-parity-v1" data-testid="no-refill-preview">
+      <div>
+        <h3>失败消息不回填输入框</h3>
+        <small>即时/迟到失败和重启恢复都只保留消息气泡与失败审计。</small>
+      </div>
+      <dl className="qa-no-refill-results">
+        <div data-testid="late-failure-result">
+          <dt>迟到失败</dt>
+          <dd data-draft={lateFailure.draft} data-attachment-count={lateFailure.attachments.length}>
+            {lateFailure.draft} · {lateFailure.attachments.map((attachment) => attachment.name).join('、')}
+          </dd>
+        </div>
+        <div data-testid="restart-failure-result">
+          <dt>重启恢复</dt>
+          <dd data-draft={restartFailure.draft} data-attachment-count={restartFailure.attachments.length}>
+            {restartFailure.draft || '空输入框'} · {restartFailure.attachments.length} 个附件
+          </dd>
+        </div>
+      </dl>
+      <div className="qa-send-transcript ai-workspace">
+        <ConversationTranscript state={lateFailure} language="zh-CN" />
+      </div>
+    </section>
+  );
+}
+
+const errorContractFixtures = [
+  { id: 'account', code: 'ZEUS_CODEX_RPC_TIMEOUT', message: 'Codex app-server request timed out: account/read' },
+  { id: 'thread', code: 'ZEUS_CODEX_RPC_TIMEOUT', message: 'Codex app-server request timed out: thread/read' },
+  { id: 'plan', code: 'ZEUS_PLAN_CONFIRMATION_FAILED', message: 'Plan confirmation failed.' },
+  { id: 'queue', code: 'ZEUS_NATIVE_QUEUE_FAILED', message: 'Queue submission failed.' },
+  { id: 'steer', code: 'ZEUS_NATIVE_STEER_FAILED', message: 'Steering submission failed.' },
+  { id: 'recovery', code: 'ZEUS_NATIVE_SUBMISSION_NOT_DISPATCHED', message: 'The submission was not dispatched to the provider.' },
+] as const;
+
+function ErrorContractPreview() {
+  return (
+    <section className="qa-motion-send-preview session-codex-parity-v1" data-testid="error-contract-preview">
+      <div>
+        <h3>全应用错误直出</h3>
+        <small>每个出口只有脱敏后的一行“错误码: 原始消息”；全局弹窗只保留必要操作。</small>
+      </div>
+      <div className="qa-error-contract-lines">
+        {errorContractFixtures.map((error) => (
+          <p key={error.id} data-testid={`error-line-${error.id}`}>
+            <VisibleApplicationError error={error} language="zh-CN" />
+          </p>
+        ))}
+      </div>
+      <div className="qa-motion-fixture-actions">
+        <button type="button" data-testid="error-dialog-trigger" onClick={() => reportApplicationError(errorContractFixtures[0], { language: 'zh-CN' })}>
+          打开全局错误弹窗
+        </button>
+        <button
+          type="button"
+          data-testid="fatal-error-dialog-trigger"
+          onClick={() => reportApplicationError(new Error('Renderer crashed while rendering workspace.'), { language: 'zh-CN', primaryAction: { label: '刷新窗口', run: () => undefined } })}
+        >
+          模拟致命错误
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function DeliveryFailurePreview() {
   return (
     <section className="qa-motion-send-preview session-codex-parity-v1" data-testid="delivery-failure-preview">
       <div>
-        <h3>发送结果待确认</h3>
-        <small>主文案只显示结果与原因，内部错误收入技术详情。</small>
+        <h3>失败消息原始错误直出</h3>
+        <small>不显示状态标题、解释、恢复建议或技术详情，也不回填输入框。</small>
       </div>
       <div className="qa-send-transcript ai-workspace">
         <ConversationTranscript state={deliveryFailureSessionState} language="zh-CN" />
@@ -904,6 +1198,8 @@ function MotionDiagnostics() {
     const tailAnchor = transcript?.querySelector<HTMLElement>("[data-streaming-tail-anchor='true']") ?? null;
     const tailStyle = tailAnchor ? window.getComputedStyle(tailAnchor, '::after') : null;
     const activityIcon = transcript?.querySelector<HTMLElement>('.session-activity-item-icon') ?? null;
+    const reasoningText = document.querySelector<HTMLElement>("[data-testid='execution-phase-preview'] .session-reasoning-summary[data-status='active'] > .zeus-fidelity-text") ?? null;
+    const reasoningStyle = reasoningText ? window.getComputedStyle(reasoningText) : null;
     const focusAnimationNames = [tailStyle?.animationName, activityIcon ? window.getComputedStyle(activityIcon).animationName : null].filter((name): name is string => Boolean(name && name !== 'none'));
     const focusAnimationDurations = [tailStyle?.animationDuration, activityIcon ? window.getComputedStyle(activityIcon).animationDuration : null].filter((duration): duration is string => Boolean(duration && duration !== '0s'));
     setSnapshot({
@@ -914,7 +1210,7 @@ function MotionDiagnostics() {
       tailAnchor: tailAnchor?.tagName.toLocaleLowerCase() ?? '未找到',
       tailSize: tailStyle ? `${tailStyle.inlineSize} × ${tailStyle.blockSize}` : '未找到',
       tailAnimation: tailStyle?.animationName ?? '未找到',
-      reasoningAnimation: '无可见图标',
+      reasoningAnimation: reasoningStyle ? `${reasoningStyle.animationName} · ${reasoningStyle.animationDuration}` : '未找到',
       activityAnimation: activityIcon ? window.getComputedStyle(activityIcon).animationName : '未找到',
     });
   }, []);
@@ -945,18 +1241,13 @@ function MotionApp() {
       <MotionDiagnostics />
       <MotionPreview />
       <MotionPreview dark />
-      <section className="qa-motion-theme session-codex-parity-v1 theme-light" data-testid="execution-phase-preview">
-        <header>
-          <strong>摘要之间的执行段</strong>
-          <small>按类别折叠命令、工具和文件活动，展开后保留类别内明细</small>
-        </header>
-        <div className="qa-motion-transcript ai-workspace">
-          <ConversationTranscript state={executionPhaseSessionState} language="zh-CN" />
-        </div>
-      </section>
+      <ExecutionPhasePreview />
       <SendScrollPreview />
       <DeliveryFailurePreview />
       <HistoryPagingPreview />
+      <LongScrollPreview />
+      <NoRefillPreview />
+      <ErrorContractPreview />
       <SteeringPreview />
       <ConversationSelectionRecoveryPreview />
       <StopButtonPreview />
@@ -964,6 +1255,7 @@ function MotionApp() {
         <h2>运行详情横向分组</h2>
         <RuntimeDetails runtime={runtimeDetailsFixture} language="zh-CN" scope="session" />
       </section>
+      <ApplicationErrorDialogHost language="zh-CN" />
     </main>
   );
 }

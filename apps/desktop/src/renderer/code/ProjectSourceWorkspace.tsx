@@ -67,11 +67,9 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   const [loadingTree, setLoadingTree] = useState(true);
   const [busyPath, setBusyPath] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   useApplicationErrorDialog(error, {
     language: zh ? 'zh-CN' : 'en',
-    title: zh ? '源码操作失败' : 'Source operation failed',
-    source: 'ProjectSourceWorkspace',
   });
   const [operation, setOperation] = useState<FileOperation>(null);
   const [operationName, setOperationName] = useState('');
@@ -129,7 +127,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         setActivePath(relativePath);
         setTreeDrawerOpen(false);
       } catch (loadError) {
-        setError(toMessage(loadError));
+        setError(loadError);
       } finally {
         setBusyPath(null);
       }
@@ -158,7 +156,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         return true;
       } catch (saveError) {
         setTabs((current) => current.map((candidate) => (candidate.document.relativePath === relativePath ? { ...candidate, saving: false, externalChange: true } : candidate)));
-        setError(toMessage(saveError));
+        setError(saveError);
         return false;
       }
     },
@@ -210,7 +208,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         setTabs(restoredTabs);
         setActivePath((current) => (restoredTabs.some((tab) => tab.document.relativePath === current) ? current : (restoredTabs[0]?.document.relativePath ?? null)));
       } catch (loadError) {
-        if (active) setError(toMessage(loadError));
+        if (active) setError(loadError);
       } finally {
         if (active) setLoadingTree(false);
       }
@@ -223,7 +221,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   useEffect(() => {
     if (!bridge?.watchProjectSource || !bridge.onProjectSourceEvent) return undefined;
     const sourceBridge = bridge;
-    void sourceBridge.watchProjectSource(props.project.id).catch((watchError) => setError(toMessage(watchError)));
+    void sourceBridge.watchProjectSource(props.project.id).catch(setError);
     const unsubscribe = sourceBridge.onProjectSourceEvent((event) => void handleSourceEvent(event));
     return () => {
       unsubscribe();
@@ -269,7 +267,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
           setSearchResults(result.entries);
           setSearchTruncated(result.truncated);
         })
-        .catch((searchError) => setError(toMessage(searchError)));
+        .catch(setError);
     }, 180);
     return () => window.clearTimeout(timer);
   }, [bridge, props.project.id, searchQuery]);
@@ -306,7 +304,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
       await loadDirectory(path);
       setExpandedDirectories((current) => new Set(current).add(path));
     } catch (loadError) {
-      setError(toMessage(loadError));
+      setError(loadError);
     } finally {
       setBusyPath(null);
     }
@@ -406,7 +404,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
       }
       setOperation(null);
     } catch (operationError) {
-      setError(toMessage(operationError));
+      setError(operationError);
     } finally {
       setBusyPath(null);
     }
@@ -549,7 +547,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                   <Button
                     variant="secondary"
                     onClick={() => {
-                      if (bridge?.openProjectSourceExternally) void bridge.openProjectSourceExternally({ projectId: props.project.id, relativePath: activeTab.document.relativePath }).catch((openError) => setError(toMessage(openError)));
+                      if (bridge?.openProjectSourceExternally) void bridge.openProjectSourceExternally({ projectId: props.project.id, relativePath: activeTab.document.relativePath }).catch(setError);
                       else props.onOpenExternal?.(activeTab.document.relativePath);
                     }}
                   >
@@ -725,7 +723,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
       setTabs((current) => current.map((tab) => (tab.document.relativePath === document.relativePath ? { ...tab, document, draft: document.content, dirty: false, externalChange: false } : tab)));
       setError(null);
     } catch (reloadError) {
-      setError(toMessage(reloadError));
+      setError(reloadError);
     }
   }
 });
@@ -842,8 +840,4 @@ function readOnlyReason(document: ProjectSourceDocument, zh: boolean): string {
         not_regular_file: 'The target is not a regular file.',
       };
   return document.readOnlyReason ? reasons[document.readOnlyReason] : zh ? '文件不可编辑。' : 'The file is not editable.';
-}
-
-function toMessage(error: unknown): string {
-  return error instanceof Error && error.message.trim() ? error.message : String(error);
 }

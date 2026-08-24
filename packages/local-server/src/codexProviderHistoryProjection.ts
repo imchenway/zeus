@@ -88,7 +88,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     markSubmissionRecoveryRequired,
     now,
     options,
-    pauseUnsentSubmissionsForConfirmation,
+    failUnsentSubmissionsBeforeProviderDispatch,
     persistProviderUserMessage,
     projectProviderUserMessage,
     providerHistoryReconcilePageLimit,
@@ -609,8 +609,8 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
           providerState: 'ready',
         });
       }
-      // 一般恢复保留旧有“未进入 Provider 的内容需用户确认”边界；目标 turn 观察器只处理已明确排队的当前输入，可保留队列等待统一排空。
-      if (input.preserveUnsentQueue !== true) pauseUnsentSubmissionsForConfirmation(conversation.id);
+      // Provider 没有接收事实的旧提交直接收敛为失败审计，不能回到输入框或等待隐式重放。
+      if (input.preserveUnsentQueue !== true) failUnsentSubmissionsBeforeProviderDispatch(conversation.id);
       runStates.set(conversation.id, { type: 'idle' });
       return;
     }

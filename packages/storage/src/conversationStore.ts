@@ -2195,22 +2195,48 @@ export class ConversationSubmissionRepository {
   updateStatus(
     id: string,
     statusValue: ConversationSubmissionStatus,
-    input: { providerTurnId?: string | null; pausedReason?: string | null; error?: unknown; dispatchedAt?: string | null; resolvedAt?: string | null; updatedAt?: string } = {},
+    input: {
+      providerTurnId?: string | null;
+      pausedReason?: string | null;
+      error?: unknown;
+      dispatchedAt?: string | null;
+      resolvedAt?: string | null;
+      updatedAt?: string;
+      preserveError?: boolean;
+      preserveSubmissionOutcome?: boolean;
+    } = {},
   ): ZeusConversationSubmissionRecord {
     const status = assertEnum(statusValue, ['queued', 'dispatching', 'active', 'paused', 'completed', 'resolved', 'failed', 'cancelled', 'deleted'] as const, 'conversation submission status');
     const updatedAt = input.updatedAt ?? nowIso();
     this.db.execute(
       `UPDATE conversation_submissions
-          SET status = ?, provider_turn_id = COALESCE(?, provider_turn_id), paused_reason = ?, error_json = ?,
+          SET status = ?, provider_turn_id = COALESCE(?, provider_turn_id), paused_reason = ?,
+              error_json = CASE WHEN ? THEN error_json ELSE ? END,
               dispatched_at = COALESCE(?, dispatched_at), resolved_at = COALESCE(?, resolved_at), updated_at = ?,
-              submission_outcome = CASE
-                WHEN ? IN ('active', 'resolved', 'completed') THEN CASE WHEN ? = 'active' THEN 'accepted' ELSE 'terminal' END
-                WHEN ? IN ('paused', 'failed') THEN 'paused'
-                WHEN ? IN ('cancelled', 'deleted') THEN 'terminal'
-                ELSE 'queued'
+              submission_outcome = CASE WHEN ? THEN submission_outcome ELSE CASE
+                  WHEN ? IN ('active', 'resolved', 'completed') THEN CASE WHEN ? = 'active' THEN 'accepted' ELSE 'terminal' END
+                  WHEN ? IN ('paused', 'failed') THEN 'paused'
+                  WHEN ? IN ('cancelled', 'deleted') THEN 'terminal'
+                  ELSE 'queued'
+                END
               END
         WHERE id = ?`,
-      [status, input.providerTurnId ?? null, input.pausedReason ?? null, input.error === undefined ? null : JSON.stringify(input.error), input.dispatchedAt ?? null, input.resolvedAt ?? null, updatedAt, status, status, status, status, id],
+      [
+        status,
+        input.providerTurnId ?? null,
+        input.pausedReason ?? null,
+        input.preserveError === true ? 1 : 0,
+        input.error === undefined ? null : JSON.stringify(input.error),
+        input.dispatchedAt ?? null,
+        input.resolvedAt ?? null,
+        updatedAt,
+        input.preserveSubmissionOutcome === true ? 1 : 0,
+        status,
+        status,
+        status,
+        status,
+        id,
+      ],
     );
     const updated = this.getById(id);
     if (!updated) throw new Error(`Conversation submission not found: ${id}`);

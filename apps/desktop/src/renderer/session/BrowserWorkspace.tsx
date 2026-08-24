@@ -14,7 +14,7 @@ import { SidebarSimpleIcon as SidebarSimple } from '@phosphor-icons/react/dist/c
 import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { ZeusBrowserApprovalDecision, ZeusBrowserApprovalRequest, ZeusBrowserCommand, ZeusBrowserConversationSnapshot, ZeusBrowserEvent, ZeusBrowserPreparedSubmission } from '@zeus/shared';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 
 interface BrowserWorkspaceProps {
   conversationId: string;
@@ -118,11 +118,9 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [staging, setStaging] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  useApplicationErrorDialog(error, {
+  const [error, setError] = useState<unknown>(null);
+  useApplicationErrorDialog(snapshot ? error : null, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-    title: props.language === 'zh-CN' ? '内置浏览器操作失败' : 'Built-in browser operation failed',
-    source: 'BrowserWorkspace',
   });
   const activeTab = snapshot?.tabs.find((tab) => tab.id === snapshot.activeTabId) ?? null;
   const draftComments = activeTab?.comments.filter((comment) => comment.status === 'draft') ?? [];
@@ -151,7 +149,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
         if (active) setSnapshot(resolved);
       })
       .catch((loadError) => {
-        if (active) setError(loadError instanceof Error ? loadError.message : labels.loadFailed);
+        if (active) setError(loadError instanceof Error ? loadError : labels.loadFailed);
       });
     return () => {
       active = false;
@@ -177,7 +175,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
           command: { action: 'set_annotation_mode', enabled: !annotationMode },
         })
         .then(setSnapshot)
-        .catch((shortcutError) => setError(shortcutError instanceof Error ? shortcutError.message : String(shortcutError)));
+        .catch(setError);
     };
     window.addEventListener('keydown', handleShortcut);
     return () => window.removeEventListener('keydown', handleShortcut);
@@ -208,7 +206,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
           tabId,
           visible: !props.suspended,
           bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-        }).catch((layoutError) => setError(layoutError instanceof Error ? layoutError.message : String(layoutError)));
+        }).catch(setError);
       });
     };
     const observer = new ResizeObserver(apply);
@@ -244,7 +242,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
         }),
       );
     } catch (commandError) {
-      setError(commandError instanceof Error ? commandError.message : String(commandError));
+      setError(commandError);
     }
   }
 
@@ -269,7 +267,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
       next = await window.zeus.closeBrowserTab({ conversationId: props.conversationId, tabId });
     } catch (closeError) {
       closedTabIdsRef.current.delete(tabId);
-      setError(closeError instanceof Error ? closeError.message : String(closeError));
+      setError(closeError);
       return;
     }
     if (next.tabs.length === 0) {
@@ -290,7 +288,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
       });
       await stageRef.current(prepared);
     } catch (stageError) {
-      setError(stageError instanceof Error ? stageError.message : labels.stageFailed);
+      setError(stageError instanceof Error ? stageError : labels.stageFailed);
     } finally {
       setStaging(false);
     }
@@ -325,10 +323,12 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
   if (!snapshot || !activeTab) {
     return (
       <section className="browser-workspace browser-workspace-loading" data-loading={!error || undefined} aria-label={labels.title}>
-        <span className="browser-workspace-loading-symbol" aria-hidden="true">
-          <GlobeSimple weight="regular" />
-        </span>
-        <p>{error ? (props.language === 'zh-CN' ? '浏览器现场暂不可用。' : 'The browser state is temporarily unavailable.') : labels.loading}</p>
+        {!error ? (
+          <span className="browser-workspace-loading-symbol" aria-hidden="true">
+            <GlobeSimple weight="regular" />
+          </span>
+        ) : null}
+        <p>{error ? <VisibleApplicationError error={error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} /> : labels.loading}</p>
       </section>
     );
   }

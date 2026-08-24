@@ -24,7 +24,8 @@ import { TurnChangeCard } from './TurnChanges.js';
 import { reasoningSummaryStatus, SessionReasoningSummary } from './SessionReasoningSummary.js';
 import { AnsweredRequestHistory, isAnsweredUserInputRequest } from './AnsweredRequestHistory.js';
 import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
-import { useTranscriptViewportVirtualizer } from './transcriptViewportVirtualizer.js';
+import { captureTranscriptViewportAnchor, compensateTranscriptViewportAnchor, type TranscriptViewportAnchor, useTranscriptViewportVirtualizer } from './transcriptViewportVirtualizer.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 
 export interface ConversationTranscriptProps {
   state: NativeSessionState;
@@ -33,7 +34,6 @@ export interface ConversationTranscriptProps {
   /** 从历史入口打开后持续补齐已持久化计划；首次续聊不能让旧计划从时间线消失。 */
   projectPersistedPlans?: boolean;
   onEditUserItem?: (item: NativeSessionItemBuffer, content: string) => void | Promise<void>;
-  onRetryItem?: (item: NativeSessionItemBuffer) => void;
   openPlanItemKey?: string | null;
   onOpenPlan?: (item: NativeSessionItemBuffer) => void;
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
@@ -105,7 +105,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const lastReportedLatestVisibilityRef = useRef<boolean | null>(null);
   const latestVisibilityCallbackRef = useRef(props.onLatestContentVisibilityChange);
   latestVisibilityCallbackRef.current = props.onLatestContentVisibilityChange;
-  const historyPrependAnchorRef = useRef<{ frozenCursor: string; rowKey: string | null; topOffset: number | null; scrollHeight: number; scrollTop: number } | null>(null);
+  const historyPrependAnchorRef = useRef<(TranscriptViewportAnchor & { frozenCursor: string }) | null>(null);
   const previousTurnIdRef = useRef<string | null>(null);
   const activeTurnTrackingInitializedRef = useRef(false);
   const scrollController = useThreadScrollController();
@@ -150,7 +150,6 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     queuedSubmissionItems,
   ]);
   const collapsedErrorItems = useMemo(() => collapseRepeatedErrorItems(projectedItems), [projectedItems]);
-  const providerErrorItemsByTurn = useMemo(() => groupErrorItemsByTurn(collapsedErrorItems), [collapsedErrorItems]);
   const transcriptItems = useMemo(
     () =>
       collapsedErrorItems.filter((item) => {
@@ -181,11 +180,14 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     if (historyAnchorRowKey) pinned.add(historyAnchorRowKey);
     return pinned;
   }, [activeTurnRowKeys, expandedRowKeys, focusedRowKey, historyAnchorRowKey]);
+  const isFollowingLatest = useCallback(() => scrollController.getState().mode !== 'static', [scrollController]);
   const viewportVirtualizer = useTranscriptViewportVirtualizer({
     scopeKey: props.state.conversationId,
     rowKeys: turnRowKeys,
     pinnedRowKeys,
     containerRef,
+    isFollowingLatest,
+    suspendAutomaticAnchor: historyAnchorRowKey !== null,
   });
   const projectedTurnWorkIds = useMemo(() => new Set(turnRows.filter((row): row is TranscriptTurnWorkRow => row.kind === 'turn_work').map((row) => row.turnId)), [turnRows]);
   const lastItemKeyByTurn = useMemo(() => lastVisibleItemKeyByTurn(transcriptRows), [transcriptRows]);
@@ -222,7 +224,6 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const renderProps: ConversationTranscriptProps = {
     ...props,
     onEditUserItem: useStableOptionalCallback(props.onEditUserItem),
-    onRetryItem: useStableOptionalCallback(props.onRetryItem),
     onOpenPlan: useStableOptionalCallback(props.onOpenPlan),
     onOpenResource: useStableOptionalCallback(props.onOpenResource),
     onLoadResourcePreview: useStableOptionalCallback(props.onLoadResourcePreview),
@@ -243,18 +244,9 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     const container = containerRef.current;
     const frozenCursor = props.state.snapshot?.v2Paging?.history.nextCursor;
     if (!loadEarlier || !container || !frozenCursor || historyPrependAnchorRef.current) return;
-    const anchorElement = firstVisibleTranscriptWindowRow(container);
-    const containerTop = container.getBoundingClientRect().top;
-    const rowKey = anchorElement?.dataset.transcriptRowKey ?? null;
-    const anchor = {
-      frozenCursor,
-      rowKey,
-      topOffset: anchorElement ? anchorElement.getBoundingClientRect().top - containerTop : null,
-      scrollHeight: container.scrollHeight,
-      scrollTop: container.scrollTop,
-    };
+    const anchor = { frozenCursor, ...captureTranscriptViewportAnchor(container) };
     historyPrependAnchorRef.current = anchor;
-    setHistoryAnchorRowKey(rowKey);
+    setHistoryAnchorRowKey(anchor.rowKey);
     try {
       await loadEarlier();
     } catch (error) {
@@ -270,13 +262,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     const anchor = historyPrependAnchorRef.current;
     const container = containerRef.current;
     if (!anchor || !container || props.state.snapshot?.v2Paging?.history.loading) return;
-    const anchorElement = anchor.rowKey ? transcriptWindowRow(container, anchor.rowKey) : null;
-    if (anchorElement && anchor.topOffset !== null) {
-      const nextOffset = anchorElement.getBoundingClientRect().top - container.getBoundingClientRect().top;
-      container.scrollTop += nextOffset - anchor.topOffset;
-    } else {
-      container.scrollTop = anchor.scrollTop + Math.max(0, container.scrollHeight - anchor.scrollHeight);
-    }
+    compensateTranscriptViewportAnchor(container, anchor);
     historyPrependAnchorRef.current = null;
     setHistoryAnchorRowKey(null);
     viewportVirtualizer.synchronizeViewport(container);
@@ -528,7 +514,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           )}
           {!active && containsLastItem ? (
             <>
-              {renderTurnArtifacts(row.turnId, renderProps, lastItemKeyByTurn[row.turnId], providerErrorItemsByTurn.get(row.turnId))}
+              {renderTurnArtifacts(row.turnId, renderProps, lastItemKeyByTurn[row.turnId])}
               <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} />
             </>
           ) : null}
@@ -570,7 +556,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             {null}
           </SessionTurnProcessDisclosure>
         ) : null}
-        {closesVisibleTurn ? renderTurnArtifacts(lastRowItem.turnId, renderProps, lastRowItem.key, providerErrorItemsByTurn.get(lastRowItem.turnId)) : null}
+        {closesVisibleTurn ? renderTurnArtifacts(lastRowItem.turnId, renderProps, lastRowItem.key) : null}
         {closesVisibleTurn && turn && !isActiveSessionTurn(turn) ? <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} /> : null}
       </>
     );
@@ -633,7 +619,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             </p>
           ) : null}
           {orphanFailedTurns.map((turn) => (
-            <TurnFailureCard key={`turn-failure:${turn.providerTurnId ?? turn.id}`} failure={turn.error!} language={props.language} providerErrors={providerErrorItemsByTurn.get(turn.providerTurnId ?? '')} />
+            <TurnFailureCard key={`turn-failure:${turn.providerTurnId ?? turn.id}`} failure={turn.error!} language={props.language} />
           ))}
           {showCreationStatus && props.creationStatus ? <SessionCreationNotice status={props.creationStatus} language={props.language} /> : null}
           {showStandaloneActiveStatus ? <TranscriptActiveStatus language={props.language} kind={activeStatusKind} /> : null}
@@ -709,7 +695,7 @@ function V2HistoryPageStatus(props: { state: NativeSessionState; language: Sessi
   const failed = Boolean(paging.error);
   return (
     <section className="session-v2-history-status" data-state={failed ? 'error' : 'loading'} role={failed ? 'alert' : 'status'} aria-live={failed ? undefined : 'polite'}>
-      {failed ? (props.language === 'zh-CN' ? '更早消息暂时无法读取。' : 'Earlier messages are temporarily unavailable.') : props.language === 'zh-CN' ? '正在读取更早消息…' : 'Loading earlier messages…'}
+      {paging.error ? <VisibleApplicationError error={paging.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} /> : props.language === 'zh-CN' ? '正在读取更早消息…' : 'Loading earlier messages…'}
     </section>
   );
 }
@@ -739,43 +725,40 @@ function V2AutoPageSentinel(props: { loading: boolean; error: string | null | un
     return () => observer.disconnect();
   }, [props.error, props.loading, props.onLoad]);
   const loadingLabel = props.language === 'zh-CN' ? '正在补齐处理过程…' : 'Loading process…';
-  const errorLabel = props.language === 'zh-CN' ? '处理过程暂时无法读取。' : 'Process is temporarily unavailable.';
   return (
-    <span ref={sentinelRef} className="session-v2-auto-page" role={props.loading ? 'status' : undefined}>
+    <span ref={sentinelRef} className="session-v2-auto-page" role={props.error ? 'alert' : props.loading ? 'status' : undefined}>
       {props.loading ? loadingLabel : null}
-      {props.error ? errorLabel : null}
+      {props.error ? <VisibleApplicationError error={props.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} /> : null}
     </span>
   );
 }
 
 function SessionCreationNotice(props: { status: SessionCreationStatus; language: SessionUiLanguage }) {
+  if (props.status.state !== 'creating') {
+    return (
+      <section className={`session-creation-status is-${props.status.state}`} role="alert" aria-live="assertive">
+        <VisibleApplicationError error={props.status.error ?? props.status.message} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
+        {props.status.onRetry ? (
+          <button type="button" onClick={() => void props.status.onRetry?.()}>
+            {props.status.retryLabel ?? (props.language === 'zh-CN' ? '重试' : 'Retry')}
+          </button>
+        ) : null}
+      </section>
+    );
+  }
   return (
-    <section className={`session-creation-status is-${props.status.state}`} role={props.status.state === 'creating' ? 'status' : 'alert'} aria-live="polite">
-      {props.status.state === 'creating' ? (
-        sessionConnectionSymbol
-      ) : (
-        <span className="session-creation-failure-symbol" aria-hidden="true">
-          !
-        </span>
-      )}
+    <section className="session-creation-status is-creating" role="status" aria-live="polite">
+      {sessionConnectionSymbol}
       <span className="session-creation-status-copy">
         <strong>{props.status.message}</strong>
-        {props.status.error ? <small>{props.status.error}</small> : null}
       </span>
-      {props.status.state !== 'creating' && props.status.onRetry ? (
-        <button type="button" onClick={() => void props.status.onRetry?.()}>
-          {props.status.retryLabel ?? (props.language === 'zh-CN' ? '重试' : 'Retry')}
-        </button>
-      ) : null}
     </section>
   );
 }
 
-function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: SessionUiLanguage; providerErrors?: readonly NativeSessionItemBuffer[] }) {
+function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: SessionUiLanguage }) {
   const zh = props.language === 'zh-CN';
   const warning = props.failure.code === 'ZEUS_PI_MODEL_REQUEST_FAILED';
-  const copy = failureCopy(props.failure.category, zh);
-  const providerDetails = (props.providerErrors ?? []).map(providerErrorDetails);
   return (
     <article
       className="session-turn-failure"
@@ -783,74 +766,9 @@ function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: 
       role={warning ? 'status' : 'alert'}
       aria-label={warning ? (zh ? '模型请求警告' : 'Model request warning') : zh ? '会话失败原因' : 'Conversation failure reason'}
     >
-      <strong>{warning ? (zh ? '本轮请求未完成' : 'This request did not complete') : zh ? '本轮执行失败' : 'This turn failed'}</strong>
-      <p>{copy.reason}</p>
-      <small>{copy.recovery}</small>
-      <details className="session-turn-failure-details">
-        <summary>{zh ? '技术详情' : 'Technical details'}</summary>
-        <dl>
-          {props.failure.code ? (
-            <>
-              <dt>{zh ? '错误代码' : 'Error code'}</dt>
-              <dd>{props.failure.code}</dd>
-            </>
-          ) : null}
-          {props.failure.providerStatus ? (
-            <>
-              <dt>{zh ? '运行状态' : 'Provider status'}</dt>
-              <dd>{props.failure.providerStatus}</dd>
-            </>
-          ) : null}
-          <dt>{zh ? '原始原因（已脱敏）' : 'Original reason (redacted)'}</dt>
-          <dd>{props.failure.message}</dd>
-          {providerDetails.map((detail) => (
-            <Fragment key={`${detail.code ?? ''}:${detail.message}:${detail.method ?? ''}`}>
-              {detail.code ? (
-                <>
-                  <dt>{zh ? '底层错误代码' : 'Provider error code'}</dt>
-                  <dd>{detail.code}</dd>
-                </>
-              ) : null}
-              <dt>{zh ? '底层错误' : 'Provider error'}</dt>
-              <dd>{detail.message}</dd>
-              {detail.method ? (
-                <>
-                  <dt>{zh ? '触发事件' : 'Provider event'}</dt>
-                  <dd>{detail.method}</dd>
-                </>
-              ) : null}
-            </Fragment>
-          ))}
-          {props.failure.additionalDetails.map((detail) => (
-            <Fragment key={detail}>
-              <dt>{zh ? '补充信息' : 'Additional detail'}</dt>
-              <dd>{detail}</dd>
-            </Fragment>
-          ))}
-        </dl>
-      </details>
+      <VisibleApplicationError error={props.failure} language={zh ? 'zh-CN' : 'en'} />
     </article>
   );
-}
-
-function failureCopy(category: NativeTurnFailureSnapshot['category'], zh: boolean): { reason: string; recovery: string } {
-  if (category === 'authentication')
-    return zh ? { reason: '登录状态或 API Key 无效。', recovery: '请重新登录或检查 API Key 后重试。' } : { reason: 'The sign-in or API key is invalid.', recovery: 'Sign in again or check the API key, then retry.' };
-  if (category === 'rate_limit')
-    return zh
-      ? { reason: '模型服务触发了限流或配额限制。', recovery: '请稍后重试，或检查账号配额和并发限制。' }
-      : { reason: 'The model service rate limit or quota was reached.', recovery: 'Try again later, or check the account quota and concurrency limits.' };
-  if (category === 'network')
-    return zh
-      ? { reason: '与模型服务的连接中断或超时。', recovery: '请检查网络，连接恢复后重试。' }
-      : { reason: 'The connection to the model service was interrupted or timed out.', recovery: 'Check the network, then retry after connectivity recovers.' };
-  if (category === 'configuration')
-    return zh ? { reason: '当前模型或请求参数不受支持。', recovery: '请检查模型和推理强度后重试。' } : { reason: 'The current model or request parameters are not supported.', recovery: 'Check the model and reasoning effort, then retry.' };
-  if (category === 'permission')
-    return zh
-      ? { reason: '当前权限不允许执行本轮操作。', recovery: '请检查项目授权和权限模式后重试。' }
-      : { reason: 'The current permissions do not allow this turn.', recovery: 'Check the project authorization and permission mode, then retry.' };
-  return zh ? { reason: '本轮执行遇到未知错误。', recovery: '请查看技术详情后重试。' } : { reason: 'This turn encountered an unknown error.', recovery: 'Review the technical details, then retry.' };
 }
 
 export type TranscriptRow =
@@ -879,17 +797,6 @@ function collapseRepeatedErrorItems(items: readonly NativeSessionItemBuffer[]): 
     result.push(item);
   }
   return result;
-}
-
-function groupErrorItemsByTurn(items: readonly NativeSessionItemBuffer[]): Map<string, NativeSessionItemBuffer[]> {
-  const grouped = new Map<string, NativeSessionItemBuffer[]>();
-  for (const item of items) {
-    if (itemRole(item) !== 'error') continue;
-    const turnItems = grouped.get(item.turnId) ?? [];
-    turnItems.push(item);
-    grouped.set(item.turnId, turnItems);
-  }
-  return grouped;
 }
 
 function providerErrorFingerprint(item: NativeSessionItemBuffer): string {
@@ -995,7 +902,6 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         isLatestUser={row.item.key === options.lastUserKey}
         motionActive={row.item.key === options.motionFocus?.itemKey}
         onEdit={options.props.onEditUserItem}
-        onRetry={options.props.onRetryItem}
         onOpenResource={options.props.onOpenResource}
         onLoadResourcePreview={options.props.onLoadResourcePreview}
         onVisibleContentChange={options.onVisibleContentChange}
@@ -1005,9 +911,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         onRemoveResponseAnnotation={options.props.onRemoveResponseAnnotation}
         onOpenSideChat={options.props.onOpenSideChat}
       />
-      {showPendingDeliveryFeedback ? (
-        <MessageDeliveryOutcomeFeedback item={row.item} stateError={options.props.state.error} language={options.props.language} onReturnToComposer={options.props.onRetryItem ? () => options.props.onRetryItem?.(row.item) : undefined} />
-      ) : null}
+      {showPendingDeliveryFeedback ? <MessageDeliveryOutcomeFeedback item={row.item} stateError={options.props.state.error} language={options.props.language} /> : null}
     </>
   );
 }
@@ -1021,55 +925,16 @@ function TranscriptActiveStatus(props: { language: SessionUiLanguage; kind: 'sta
   );
 }
 
-function MessageDeliveryOutcomeFeedback(props: { item: NativeSessionItemBuffer; stateError: NativeSessionError | null; language: SessionUiLanguage; onReturnToComposer?: () => void }): ReactNode {
-  const zh = props.language === 'zh-CN';
-  const deliveryError = nativeSessionErrorFrom(props.item.payload.deliveryError) ?? (props.stateError?.code === 'ZEUS_NATIVE_ACCEPTANCE_HYDRATION_PENDING' ? props.stateError : null);
+function MessageDeliveryOutcomeFeedback(props: { item: NativeSessionItemBuffer; stateError: NativeSessionError | null; language: SessionUiLanguage }): ReactNode {
+  const deliveryError = nativeSessionErrorFrom(props.item.payload.deliveryError) ?? nativeSessionErrorFrom(props.item.payload.error) ?? props.stateError;
   const unconfirmed = props.item.status === 'unconfirmed' || props.item.status === 'paused';
   const failed = props.item.status === 'failed';
-  const hydrationPending = deliveryError?.code === 'ZEUS_NATIVE_ACCEPTANCE_HYDRATION_PENDING';
-  const deliveryFailed = failed || Boolean(deliveryError && !hydrationPending);
-  // 正常投递过程不形成独立提示，只保留失败、结果不确定和发送结果确认。
-  if (!deliveryFailed && !unconfirmed && !hydrationPending) return null;
-  const reason = deliveryError ? messageDeliveryFailureReason(deliveryError, zh) : null;
-  const title = failed
-    ? zh
-      ? '消息发送失败'
-      : 'Message send failed'
-    : unconfirmed
-      ? zh
-        ? '发送结果待确认'
-        : 'Send outcome unconfirmed'
-      : deliveryFailed
-        ? zh
-          ? '消息发送失败'
-          : 'Message send failed'
-        : zh
-          ? '正在确认发送结果'
-          : 'Confirming send outcome';
-  const feedbackState = failed || (!unconfirmed && deliveryFailed) ? 'failed' : unconfirmed ? 'unconfirmed' : 'pending';
-  const guidance = failed && !props.onReturnToComposer ? (zh ? '内容已保留在输入框中。' : 'The content remains in the composer.') : null;
+  if (!deliveryError || (!failed && !unconfirmed)) return null;
+  const feedbackState = failed ? 'failed' : 'unconfirmed';
 
   return (
-    <section className="session-message-delivery-feedback" data-state={feedbackState} role={deliveryFailed || unconfirmed ? 'alert' : 'status'} aria-live={deliveryFailed || unconfirmed ? 'assertive' : 'polite'}>
-      <span className="session-thinking-pulse" aria-hidden="true" />
-      <span className="session-message-delivery-copy">
-        <span className="session-message-delivery-summary">
-          <strong>{title}</strong>
-          {reason ? <small>{reason}</small> : null}
-        </span>
-        {guidance ? <small className="session-message-delivery-guidance">{guidance}</small> : null}
-        {deliveryError && !hydrationPending && reason !== deliveryError.message ? (
-          <details>
-            <summary>{zh ? '技术详情' : 'Technical details'}</summary>
-            <code>{[deliveryError.code, deliveryError.message].filter(Boolean).join(': ')}</code>
-          </details>
-        ) : null}
-      </span>
-      {failed && props.onReturnToComposer ? (
-        <button type="button" onClick={props.onReturnToComposer}>
-          {zh ? '修改后重发' : 'Edit and resend'}
-        </button>
-      ) : null}
+    <section className="session-message-delivery-feedback" data-state={feedbackState} role="alert" aria-live="assertive">
+      <VisibleApplicationError error={deliveryError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
     </section>
   );
 }
@@ -1102,27 +967,7 @@ function nativeSessionErrorFrom(value: unknown): NativeSessionError | null {
   };
 }
 
-function messageDeliveryFailureReason(error: NativeSessionError, zh: boolean): string | null {
-  switch (error.code) {
-    case 'ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE':
-      return zh ? '当前会话的执行目录不可用。' : 'The execution directory is unavailable.';
-    case 'ZEUS_TASK_REOPEN_REQUIRED':
-      return zh ? '任务已经完成或取消，需要先重新打开任务才能继续。' : 'The task is completed or cancelled and must be reopened before continuing.';
-    case 'ZEUS_NATIVE_ACCEPTANCE_HYDRATION_PENDING':
-      return null;
-    case 'ZEUS_CODEX_LOGIN_REQUIRED':
-      return zh ? 'Codex 登录尚未就绪。' : 'Codex sign-in is not ready.';
-    case 'ZEUS_CODEX_RPC_TIMEOUT':
-      return zh ? '请求超时。' : 'The request timed out.';
-    case 'ZEUS_TASK_INTEGRATION_AI_BUSY':
-      return zh ? '冲突处理现场正在收尾，暂时不能开始下一轮。' : 'The conflict workspace is being finalized and cannot start another turn yet.';
-    default:
-      if (error.status === 429) return zh ? '请求过多，请稍后重试。' : 'Too many requests are active. Try again later.';
-      return zh ? '暂时无法发送消息。' : 'The message could not be sent.';
-  }
-}
-
-function renderTurnArtifacts(turnId: string, props: ConversationTranscriptProps, lastItemKey: string | undefined, providerErrors?: readonly NativeSessionItemBuffer[]): ReactNode {
+function renderTurnArtifacts(turnId: string, props: ConversationTranscriptProps, lastItemKey: string | undefined): ReactNode {
   if (!lastItemKey) return null;
   const turn = props.state.turnsByProviderId[turnId];
   if (!turn) return null;
@@ -1132,7 +977,7 @@ function renderTurnArtifacts(turnId: string, props: ConversationTranscriptProps,
       {changeSet && changeSet.state !== 'capturing' && (changeSet.fileCount > 0 || changeSet.state === 'conflicted') ? (
         <TurnChangeCard changeSet={changeSet} language={props.language} onReview={props.onReviewTurnChanges} onOperate={props.onOperateTurnChangeSet} />
       ) : null}
-      {turn.status === 'failed' && turn.error ? <TurnFailureCard failure={turn.error} language={props.language} providerErrors={providerErrors} /> : null}
+      {turn.status === 'failed' && turn.error ? <TurnFailureCard failure={turn.error} language={props.language} /> : null}
     </>
   );
 }
@@ -1218,22 +1063,6 @@ function transcriptTurnRowTurnId(row: TranscriptTurnRow): string | null {
   return row.kind === 'turn_work' ? row.turnId : transcriptRowTurnId(row);
 }
 
-function firstVisibleTranscriptWindowRow(container: HTMLElement): HTMLElement | null {
-  const containerRect = container.getBoundingClientRect();
-  for (const row of container.querySelectorAll<HTMLElement>('.session-transcript-window-row[data-transcript-row-key]')) {
-    const rowRect = row.getBoundingClientRect();
-    if (rowRect.bottom >= containerRect.top && rowRect.top <= containerRect.bottom) return row;
-  }
-  return null;
-}
-
-function transcriptWindowRow(container: HTMLElement, rowKey: string): HTMLElement | null {
-  for (const row of container.querySelectorAll<HTMLElement>('.session-transcript-window-row[data-transcript-row-key]')) {
-    if (row.dataset.transcriptRowKey === rowKey) return row;
-  }
-  return null;
-}
-
 function transcriptRowContainsItemKey(row: TranscriptRow, itemKey: string | undefined): boolean {
   if (!itemKey || row.kind === 'answered_request') return false;
   return row.kind === 'item' ? row.item.key === itemKey : row.items.some((item) => item.key === itemKey);
@@ -1247,33 +1076,16 @@ export function isFinalAnswerItem(item: NativeSessionItemBuffer): boolean {
 export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[], answeredRequests: readonly NativePendingRequest[] = [], activeTurnId: string | null = null, historyOnly = false): TranscriptRow[] {
   const rows: TranscriptRow[] = [];
   const effectiveActiveTurnId = historyOnly ? null : activeTurnId && items.some((item) => item.turnId === activeTurnId) ? activeTurnId : latestLiveTurnId(items);
-  const currentReasoningItemKey = latestCurrentReasoningItemKey(items, effectiveActiveTurnId);
+  const latestReasoningByTurn = latestReasoningItemsByTurn(items);
   const currentActivityItemKey = latestCurrentActivityItemKey(items, effectiveActiveTurnId);
-  let currentReasoningRow: TranscriptRow | null = null;
-  let pendingActivities: NativeSessionItemBuffer[] = [];
-  const flushActivities = (): void => {
-    if (pendingActivities.length === 0) return;
-    const groupedItems = pendingActivities;
-    pendingActivities = [];
-    const categories = new Set(groupedItems.map(activityCategory));
-    const category = categories.size === 1 ? activityCategory(groupedItems[0]!) : 'mixed';
-    const first = groupedItems[0]!;
-    rows.push({
-      kind: 'activity',
-      key: `activity:${first.turnId}:${first.key}`,
-      items: groupedItems,
-      category,
-      motionActive: groupedItems.some((candidate) => candidate.key === currentActivityItemKey),
-    });
-  };
-  const appendActivity = (item: NativeSessionItemBuffer): void => {
-    const previous = pendingActivities.at(-1);
-    if (previous && previous.turnId !== item.turnId) flushActivities();
-    const standalone = isStandaloneProcessActivity(item);
-    if (standalone) flushActivities();
-    pendingActivities.push(item);
-    if (standalone || pendingActivities.length >= 32 || item.status === 'failed' || item.status === 'interrupted') flushActivities();
-  };
+  const activitiesByTurn = new Map<string, NativeSessionItemBuffer[]>();
+  for (const item of items) {
+    if (isSubagentCoordinationItem(item) || !isOperationalActivityItem(item)) continue;
+    const turnActivities = activitiesByTurn.get(item.turnId) ?? [];
+    turnActivities.push(item);
+    activitiesByTurn.set(item.turnId, turnActivities);
+  }
+  const emittedActivityTurns = new Set<string>();
   const timeline: Array<{ kind: 'item'; item: NativeSessionItemBuffer } | { kind: 'answered_request'; request: NativePendingRequest }> = items.map((item) => ({ kind: 'item', item }));
   for (const request of [...answeredRequests].sort((left, right) => (left.resolvedAt ?? left.createdAt).localeCompare(right.resolvedAt ?? right.createdAt))) {
     // 缺少轮次身份的旧记录不能靠时间猜测归属，也不能重新污染主会话时间线。
@@ -1283,47 +1095,51 @@ export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[],
     const insertionIndex = timeline.findIndex((entry) => entry.kind === 'item' && (entry.item.timelineAt ?? entry.item.updatedAt ?? '') >= requestTimelineAt);
     timeline.splice(insertionIndex < 0 ? timeline.length : insertionIndex, 0, { kind: 'answered_request', request });
   }
-  for (const entry of timeline) {
+  const lastTimelineIndexByTurn = new Map<string, number>();
+  timeline.forEach((entry, index) => {
+    const turnId = entry.kind === 'item' ? entry.item.turnId : entry.request.turnId;
+    if (turnId) lastTimelineIndexByTurn.set(turnId, index);
+  });
+  for (let index = 0; index < timeline.length; index += 1) {
+    const entry = timeline[index]!;
+    const turnId = entry.kind === 'item' ? entry.item.turnId : entry.request.turnId;
     if (entry.kind === 'answered_request') {
-      flushActivities();
       rows.push({ kind: 'answered_request', key: `answered-request:${entry.request.id}`, request: entry.request });
-      continue;
+    } else {
+      const item = entry.item;
+      // 多智能体协调事件统一进入右侧智能体面板，不在主会话重复暴露协议载荷。
+      if (!isSubagentCoordinationItem(item) && normalizeItemType(item.type) !== 'reasoning') {
+        if (!isOperationalActivityItem(item)) {
+          rows.push({ kind: 'item', key: transcriptItemRenderKey(item), item });
+        } else if (!emittedActivityTurns.has(item.turnId)) {
+          emittedActivityTurns.add(item.turnId);
+          const groupedItems = activitiesByTurn.get(item.turnId) ?? [item];
+          const categories = new Set(groupedItems.map(activityCategory));
+          rows.push({
+            kind: 'activity',
+            key: `activity:${item.turnId}`,
+            items: groupedItems,
+            category: categories.size === 1 ? activityCategory(groupedItems[0]!) : 'mixed',
+            motionActive: groupedItems.some((candidate) => candidate.key === currentActivityItemKey),
+          });
+        }
+      }
     }
-    const item = entry.item;
-    // 多智能体协调事件统一进入右侧智能体面板，不在主会话重复暴露协议载荷。
-    if (isSubagentCoordinationItem(item)) continue;
-    if (normalizeItemType(item.type) === 'reasoning') {
-      // reasoning 是执行阶段的真实边界。历史不展示全部内部摘要，但必须用它切断活动组，
-      // 否则整轮几十个阶段会被错误堆进第一组。
-      flushActivities();
-      if (item.key === currentReasoningItemKey)
-        currentReasoningRow = {
-          kind: 'item',
-          key: `current-reasoning:${item.turnId}`,
-          item,
-        };
-      continue;
+    if (turnId && lastTimelineIndexByTurn.get(turnId) === index) {
+      const latestReasoning = latestReasoningByTurn.get(turnId);
+      if (latestReasoning) rows.push({ kind: 'item', key: `current-reasoning:${turnId}`, item: latestReasoning });
     }
-    if (!isOperationalActivityItem(item)) {
-      flushActivities();
-      rows.push({ kind: 'item', key: transcriptItemRenderKey(item), item });
-      continue;
-    }
-    appendActivity(item);
   }
-  flushActivities();
-  if (currentReasoningRow) rows.push(currentReasoningRow);
   return rows;
 }
 
-function isStandaloneProcessActivity(item: NativeSessionItemBuffer): boolean {
-  const type = normalizeItemType(item.type);
-  return type === 'contextcompaction' || type === 'providerevent';
-}
-
-function latestCurrentReasoningItemKey(items: readonly NativeSessionItemBuffer[], activeTurnId: string | null): string | null {
-  if (!activeTurnId || items.some((item) => item.turnId === activeTurnId && isFinalAnswerItem(item))) return null;
-  return [...items].reverse().find((item) => item.turnId === activeTurnId && normalizeItemType(item.type) === 'reasoning' && item.status !== 'failed' && item.status !== 'interrupted')?.key ?? null;
+function latestReasoningItemsByTurn(items: readonly NativeSessionItemBuffer[]): ReadonlyMap<string, NativeSessionItemBuffer> {
+  const result = new Map<string, NativeSessionItemBuffer>();
+  for (const item of items) {
+    if (normalizeItemType(item.type) !== 'reasoning' || item.status === 'failed' || item.status === 'interrupted') continue;
+    result.set(item.turnId, item);
+  }
+  return result;
 }
 
 function latestCurrentActivityItemKey(items: readonly NativeSessionItemBuffer[], activeTurnId: string | null): string | null {

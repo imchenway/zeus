@@ -50,8 +50,6 @@ export function GoalPanel(props: GoalPanelProps) {
   const [confirmClear, setConfirmClear] = useState(false);
   useApplicationErrorDialog(props.error, {
     language: zh ? 'zh-CN' : 'en',
-    title: zh ? '目标操作失败' : 'Goal operation failed',
-    source: 'GoalPanel',
   });
 
   useEffect(() => {

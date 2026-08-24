@@ -2792,7 +2792,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       setTaskModelPushForm(form);
       setTaskModelPushStatus('error');
       const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error));
-      setTaskModelPushError(appShellSettings.appLanguage === 'zh-CN' ? `创建准备失败：${message}` : `Conversation preparation failed: ${message}`);
+      setTaskModelPushError(message);
       return;
     }
     if (!prepared) return;
@@ -3124,11 +3124,9 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       if (active?.request.idempotencyKey !== pending.request.idempotencyKey) return current;
       return { ...current, [pending.task.id]: { ...failTaskModelPushPendingState(active, message), origin: active.origin } };
     });
-    setTaskModelPushAnnouncement(appShellSettings.appLanguage === 'zh-CN' ? `${pending.task.title}：会话创建失败，可以在当前工作面重试。` : `${pending.task.title}: Conversation creation failed. Retry in the current workspace.`);
+    setTaskModelPushAnnouncement(message);
     reportApplicationError(message, {
       language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en',
-      title: appShellSettings.appLanguage === 'zh-CN' ? '会话创建失败' : 'Conversation creation failed',
-      source: 'App.taskModelPush',
       primaryAction: {
         label: appShellSettings.appLanguage === 'zh-CN' ? '重试' : 'Retry',
         run: () => retryTaskModelPush(pending.task.id),

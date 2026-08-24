@@ -426,7 +426,7 @@ export function createPiRuntimeWorkerDriver(options: CreatePiRuntimeWorkerDriver
     for (const [id, pending] of pendingRequests) {
       clearTimeout(pending.timeout);
       pendingRequests.delete(id);
-      const requestFailure = pending.effectful ? failure('process_exit', 'ZEUS_PROVIDER_WORKER_RESULT_UNKNOWN', `Pi Worker 在 ${pending.method} 结果确认前退出；Zeus 不会自动重发。`, true) : exitFailure;
+      const requestFailure = pending.effectful ? failure('process_exit', 'ZEUS_PROVIDER_WORKER_RESULT_UNKNOWN', `Pi Worker 在 ${pending.method} 结果确认前退出。`, true) : exitFailure;
       pending.reject(snapshotError(requestFailure));
     }
     for (const controller of reverseControllers.values()) controller.abort();
@@ -444,7 +444,7 @@ export function createPiRuntimeWorkerDriver(options: CreatePiRuntimeWorkerDriver
           type: 'runtime_error',
           payload: {
             code: 'ZEUS_PROVIDER_WORKER_RESULT_UNKNOWN',
-            message: 'Pi Worker 在轮次终态确认前退出；可能已发生 Provider 或工具副作用，Zeus 不会自动重发。',
+            message: 'Pi Worker 在轮次终态确认前退出。',
             resultUnknown: true,
             generationId: sourceGeneration,
           },

@@ -123,7 +123,7 @@ export class ProviderRuntimeRecoveryApplicationService implements ProviderRuntim
         occurredAt: this.now(),
       });
       if (explicitlyRejected) throw error;
-      throw recoveryError('ZEUS_PROVIDER_RECOVERY_OUTCOME_UNKNOWN', 'Pi Worker 恢复在写出后未取得完整接纳证据；该命令不会自动重发。', 409, {
+      throw recoveryError('ZEUS_PROVIDER_RECOVERY_OUTCOME_UNKNOWN', 'Pi Worker 恢复在写出后未取得完整接纳证据。', 409, {
         commandId: command.commandId,
         outboxId: prepared.outbox.id,
         causeCode: errorCode,
@@ -172,7 +172,7 @@ export class ProviderRuntimeRecoveryApplicationService implements ProviderRuntim
         health: this.options.readPiHealth(),
       };
     }
-    throw recoveryError('ZEUS_PROVIDER_RECOVERY_OUTCOME_UNKNOWN', '该恢复命令已有写出后未知证据；必须核对 Worker generation，不能自动重发。', 409, {
+    throw recoveryError('ZEUS_PROVIDER_RECOVERY_OUTCOME_UNKNOWN', '该恢复命令已有写出后未知证据。', 409, {
       commandId: command.commandId,
       outboxId: latest?.id ?? null,
     });

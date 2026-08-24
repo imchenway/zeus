@@ -1,7 +1,7 @@
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { calculateUncachedInputTokens, type CodexOfficialRateWindow, type UsageOverviewSnapshot, type UsageProviderSummary } from '@zeus/shared';
 import type { AppShellSettings, DashboardClient } from '../apiClient.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import './MenuBarUsageWindow.css';
 
 type Language = AppShellSettings['appLanguage'];
@@ -102,12 +102,10 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
   const [snapshot, setSnapshot] = useState<UsageOverviewSnapshot | null>(() => readStoredSnapshot());
   const [selection, setSelection] = useState(() => readStoredSelection());
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const requestRef = useRef<Promise<void> | null>(null);
   useApplicationErrorDialog(error, {
     language: surfaceSettings.language === 'zh-CN' ? 'zh-CN' : 'en',
-    title: surfaceSettings.language === 'zh-CN' ? '用量读取失败' : 'Usage failed to load',
-    source: 'MenuBarUsageWindow',
   });
 
   useEffect(() => window.zeus?.onMenuBarUsageSettingsChanged?.(setSurfaceSettings), []);
@@ -122,7 +120,7 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
         storeSnapshot(next);
         setError(null);
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
+        setError(cause);
       } finally {
         requestRef.current = null;
         setLoading(false);
@@ -210,7 +208,7 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
 
         <div className="menu-bar-usage-content" role="tabpanel">
           {!snapshot && error ? (
-            <UsageLoadFailure language={surfaceSettings.language} loading={loading} onRetry={load} />
+            <UsageLoadFailure error={error} language={surfaceSettings.language} loading={loading} onRetry={load} />
           ) : !snapshot ? (
             <UsageSkeleton label={text.loading} />
           ) : selectedProvider ? (
@@ -239,12 +237,11 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
   );
 }
 
-function UsageLoadFailure(props: { language: Language; loading: boolean; onRetry: () => Promise<void> }) {
+function UsageLoadFailure(props: { error: unknown; language: Language; loading: boolean; onRetry: () => Promise<void> }) {
   const text = copy[props.language];
   return (
-    <div className="menu-bar-usage-load-failure" role="status">
-      <strong>{text.noProviders}</strong>
-      <span>{props.language === 'zh-CN' ? '可以重新读取本地用量。' : 'You can reload local usage.'}</span>
+    <div className="menu-bar-usage-load-failure" role="alert">
+      <VisibleApplicationError error={props.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
       <button type="button" onClick={() => void props.onRetry()} disabled={props.loading}>
         {props.loading ? text.loading : text.retry}
       </button>

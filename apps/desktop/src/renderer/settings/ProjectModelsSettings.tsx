@@ -3,6 +3,7 @@ import type { DashboardClient, ProjectModelSelection, SelectablePiModel } from '
 import { presentModelOptions } from '../modelOptionPresentation.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { Button } from '../ui/Button.js';
+import { formatVisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 
 type ProjectModelsClient = Pick<DashboardClient, 'loadSelectablePiModels' | 'loadProjectModelSelection' | 'saveProjectModelSelection'>;
 
@@ -40,7 +41,7 @@ export function ProjectModelsSettings(props: { projectId: string; language: 'zh-
       })
       .catch((error: unknown) => {
         if (!active) return;
-        setMessage(error instanceof Error ? error.message : String(error));
+        setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
         setStatus('ready');
       });
     return () => {
@@ -74,7 +75,7 @@ export function ProjectModelsSettings(props: { projectId: string; language: 'zh-
       setSelection(saved);
       setMessage(zh ? '项目可用模型已保存。' : 'Project models saved.');
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
     } finally {
       setStatus('ready');
     }

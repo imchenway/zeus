@@ -73,7 +73,7 @@ async function loadOrCreateCommand(identity: string, input: Parameters<typeof du
     try {
       storage.setItem(key, JSON.stringify(record));
     } catch (error) {
-      throw new Error(`Unable to persist the conversation command envelope before dispatch: ${error instanceof Error ? error.message : String(error)}`);
+      throw Object.assign(new Error(error instanceof Error ? error.message : String(error)), { code: 'ZEUS_CONVERSATION_COMMAND_PERSIST_FAILED' });
     }
     return command;
   }
@@ -112,7 +112,7 @@ function browserLocalStorage(): Storage | null {
   try {
     return window.localStorage;
   } catch (error) {
-    throw new Error(`Conversation command recovery requires durable local storage: ${error instanceof Error ? error.message : String(error)}`);
+    throw Object.assign(new Error(error instanceof Error ? error.message : String(error)), { code: 'ZEUS_CONVERSATION_COMMAND_STORAGE_UNAVAILABLE' });
   }
 }
 

@@ -14,11 +14,9 @@ export function SideChatWorkspace(props: { selectedText: string; language: Sessi
   const [draft, setDraft] = useState('');
   const [messages, setMessages] = useState<SideChatMessage[]>([]);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   useApplicationErrorDialog(error, {
     language: zh ? 'zh-CN' : 'en',
-    title: zh ? '侧边聊天请求失败' : 'Side chat request failed',
-    source: 'SideChatWorkspace',
   });
 
   async function submit(event: FormEvent): Promise<void> {
@@ -36,7 +34,7 @@ export function SideChatWorkspace(props: { selectedText: string; language: Sessi
       const answer = await props.onAsk(providerQuestion);
       setMessages((current) => [...current, { id: crypto.randomUUID(), role: 'assistant', text: answer }]);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(cause);
     } finally {
       setBusy(false);
     }

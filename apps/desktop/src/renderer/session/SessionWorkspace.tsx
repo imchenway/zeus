@@ -76,7 +76,7 @@ import { resolveModelCapability } from './modelSelection.js';
 import { GoalPanel, GoalRail } from './GoalPanel.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
 import { NewConversationExecutionContext } from './NewConversationExecutionContext.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError, useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
 export interface SessionWorkspaceTaskManagementStatus {
   id: string;
@@ -156,7 +156,6 @@ export interface SessionWorkspaceActions {
   onRestoreArchivedConversation?: () => void | Promise<void>;
   onRespondToRequest?: (requestId: string, response: Record<string, unknown>) => void | Promise<void>;
   onEditUserItem?: (item: NativeSessionItemBuffer, content: string) => void | Promise<void>;
-  onRetryItem?: (item: NativeSessionItemBuffer) => void;
   onSelectTask?: (task: SessionWorkspaceTask) => void;
   onOpenTaskDetail?: (taskId: string) => void;
   onTaskManagementStatusChange?: (taskId: string, status: string) => void | Promise<unknown>;
@@ -841,7 +840,7 @@ export function createProjectConversationStartEnvelopeManager(options: {
       try {
         options.storage.setItem(storageKey, JSON.stringify({ version: 1, fingerprint, request } satisfies PersistedProjectConversationStartEnvelope));
       } catch (error) {
-        throw new Error(`Unable to persist project conversation start before dispatch: ${error instanceof Error ? error.message : String(error)}`);
+        throw Object.assign(new Error(error instanceof Error ? error.message : String(error)), { code: 'ZEUS_PROJECT_CONVERSATION_START_PERSIST_FAILED' });
       }
       return request;
     },
@@ -1059,7 +1058,7 @@ export function createNativeConversationStartEnvelopeManager(options: {
       try {
         options.storage.setItem(storageKey, JSON.stringify(envelope));
       } catch (error) {
-        throw new Error(`Unable to persist native conversation start before dispatch: ${error instanceof Error ? error.message : String(error)}`);
+        throw Object.assign(new Error(error instanceof Error ? error.message : String(error)), { code: 'ZEUS_NATIVE_CONVERSATION_START_PERSIST_FAILED' });
       }
       return request;
     },
@@ -1512,21 +1511,15 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const effectiveProviderState = props.state?.snapshot?.providerState ?? props.conversation?.providerState ?? null;
   const realtimeExpected = sessionStateNeedsRealtime(props.state);
   // 空闲历史会话只读本地快照，不存在“连接失败”；只有真实轮次、排队或待处理请求需要实时连接时才报告连接错误。
-  const transportError = realtimeExpected && props.state?.transportState === 'failed' && props.state.error?.retryable === false ? (errorMessage(props.state.error) ?? props.loadError ?? copy.failed) : null;
+  const transportError = realtimeExpected && props.state?.transportState === 'failed' && props.state.error?.retryable === false ? (props.state.error ?? props.loadError ?? copy.failed) : null;
   useApplicationErrorDialog(props.historyOnly ? null : props.readOnlyGate?.error, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-    title: props.language === 'zh-CN' ? '会话重新打开失败' : 'Conversation failed to reopen',
-    source: 'SessionWorkspace.readOnlyGate',
   });
   useApplicationErrorDialog(!props.historyOnly && props.loadState === 'error' ? (props.loadError ?? copy.failed) : null, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-    title: props.language === 'zh-CN' ? '会话读取失败' : 'Conversation failed to load',
-    source: 'SessionWorkspace.load',
   });
   useApplicationErrorDialog(props.historyOnly ? null : transportError, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-    title: props.language === 'zh-CN' ? '会话连接失败' : 'Conversation connection failed',
-    source: 'SessionWorkspace.transport',
   });
   const effectiveResumable = props.state?.snapshot ? !['closed', 'failed'].includes(effectiveProviderState ?? '') : effectiveProviderState === 'archived' ? true : props.conversation?.resumable;
   const nonResumableNative = Boolean(props.conversation && !legacy && !effectiveResumable);
@@ -1850,7 +1843,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       await actions.onRespondToRequest(request.id, response);
     } catch (error) {
       if (workspaceIdentityRef.current !== conversationId) return;
-      setRequestErrors((current) => ({ ...current, [request.id]: error instanceof Error ? error.message : String(error) }));
+      setRequestErrors((current) => ({ ...current, [request.id]: formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en') }));
     } finally {
       responseGuard.finish(request.id);
     }
@@ -2346,17 +2339,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     onLatestContentVisibilityChange={props.onLatestContentVisibilityChange}
                     creationStatus={props.creationStatus}
                     onEditUserItem={transcriptInteractionsEnabled ? actions.onEditUserItem : undefined}
-                    onRetryItem={
-                      !transcriptInteractionsEnabled
-                        ? undefined
-                        : (item) => {
-                            if (actions.onRetryItem) {
-                              actions.onRetryItem(item);
-                              return;
-                            }
-                            composerRef.current?.focus();
-                          }
-                    }
                     openPlanItemKey={planWorkspaceItemKey}
                     onOpenPlan={
                       transcriptInteractionsEnabled
@@ -2686,8 +2668,6 @@ function NewConversationComposer(props: {
 
   useApplicationErrorDialog(localError ?? (props.loadState === 'error' ? props.loadError : null), {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-    title: props.language === 'zh-CN' ? '新会话创建失败' : 'New conversation failed to start',
-    source: 'NewConversationComposer',
   });
 
   useEffect(() => {
@@ -3229,11 +3209,6 @@ function sessionStateNeedsRealtime(state: NativeSessionState | null | undefined)
     state.conversationState === 'waiting_approval' ||
     state.conversationState === 'waiting_user_input'
   );
-}
-
-function errorMessage(error: NativeSessionState['error']): string | null {
-  if (!error) return null;
-  return error instanceof Error ? error.message : error.message;
 }
 
 function resolveBrowserTargetWidth(layoutWidth: number, paneShare: number, expanded: boolean): number {

@@ -27,11 +27,9 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
   const loadVersionRef = useRef(0);
   const [workbench, setWorkbench] = useState<ProjectGitWorkbenchSnapshot | null>(null);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   useApplicationErrorDialog(error, {
     language: zh ? 'zh-CN' : 'en',
-    title: zh ? '新会话执行环境操作失败' : 'New conversation context failed',
-    source: 'NewConversationExecutionContext',
   });
   const [branchBusy, setBranchBusy] = useState(false);
   const [createBranchOpen, setCreateBranchOpen] = useState(false);
@@ -98,7 +96,7 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
       .catch((reason: unknown) => {
         if (version !== loadVersionRef.current) return;
         setLoadState('error');
-        setError(formatGitContextError(reason, props.language));
+        setError(reason);
       });
     return () => {
       loadVersionRef.current += 1;
@@ -125,7 +123,7 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
       setWorkbench((current) => replaceRepositorySnapshot(current, rootRepository.id, response));
       return true;
     } catch (reason) {
-      setError(formatGitContextError(reason, props.language));
+      setError(reason);
       return false;
     } finally {
       setBranchBusy(false);
@@ -229,13 +227,4 @@ function replaceRepositorySnapshot(current: ProjectGitWorkbenchSnapshot | null, 
     refreshedAt: new Date().toISOString(),
     repositories: current.repositories.map((repository) => (repository.id === repositoryId ? { ...repository, snapshot: response.snapshot } : repository)),
   };
-}
-
-function formatGitContextError(reason: unknown, language: SessionUiLanguage): string {
-  const zh = language === 'zh-CN';
-  const message = reason instanceof Error ? reason.message : String(reason);
-  if (/already checked out|registered worktree/u.test(message)) return zh ? '该分支已在其他工作区检出。' : 'This branch is checked out in another worktree.';
-  if (/would be overwritten|local changes/u.test(message)) return zh ? '当前未提交修改会被分支切换覆盖，请先处理这些修改。' : 'Current local changes would be overwritten. Resolve them before switching branches.';
-  if (/not a git repository|repository required/u.test(message.toLocaleLowerCase())) return zh ? '当前项目根目录不是 Git 仓库。' : 'The current project root is not a Git repository.';
-  return zh ? `无法更新分支：${message}` : `Unable to update branch: ${message}`;
 }

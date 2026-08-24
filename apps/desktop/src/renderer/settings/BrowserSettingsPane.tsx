@@ -94,11 +94,9 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
   const [settings, setSettings] = useState<ZeusBrowserSettings | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   useApplicationErrorDialog(error, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-    title: props.language === 'zh-CN' ? '浏览器设置操作失败' : 'Browser settings operation failed',
-    source: 'BrowserSettingsPane',
   });
 
   useEffect(() => {
@@ -114,7 +112,7 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
         if (active) setSettings(value);
       })
       .catch((loadError) => {
-        if (active) setError(loadError instanceof Error ? loadError.message : labels.unavailable);
+        if (active) setError(loadError instanceof Error ? loadError : labels.unavailable);
       });
     return () => {
       active = false;
@@ -139,7 +137,7 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
       setSettings(await window.zeus.updateBrowserSettings(settings));
       setStatus(labels.saved);
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : labels.saveFailed);
+      setError(saveError instanceof Error ? saveError : labels.saveFailed);
     } finally {
       setBusy(false);
     }
@@ -155,7 +153,7 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
       setSettings(await window.zeus.getBrowserSettings());
       setStatus(labels.cleared);
     } catch (clearError) {
-      setError(clearError instanceof Error ? clearError.message : labels.clearFailed);
+      setError(clearError instanceof Error ? clearError : labels.clearFailed);
     } finally {
       setBusy(false);
     }

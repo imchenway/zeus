@@ -21,6 +21,7 @@ import type {
 } from '../apiClient.js';
 import type { NativeConversationChoice } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
+import { formatVisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import {
@@ -89,7 +90,7 @@ function TaskPriorityControl(props: {
       desiredValueRef.current = null;
       setSaveState({ kind: 'idle' });
     } catch (error) {
-      setSaveState({ kind: 'error', message: error instanceof Error && error.message.trim() ? error.message : zh ? '保存失败' : 'Save failed' });
+      setSaveState({ kind: 'error', message: formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en') });
     }
   }
 
@@ -108,7 +109,7 @@ function TaskPriorityControl(props: {
     setSaveState({ kind: 'idle' });
   }
 
-  const feedback = saveState.kind === 'conflict' ? (zh ? '保存冲突' : 'Conflict') : saveState.kind === 'error' ? (zh ? `保存失败：${saveState.message}` : `Save failed: ${saveState.message}`) : null;
+  const feedback = saveState.kind === 'conflict' ? (zh ? '保存冲突' : 'Conflict') : saveState.kind === 'error' ? saveState.message : null;
   const triggerLabel = isTaskPriority(displayValue) ? displayValue.toUpperCase() : legacyLabel;
 
   return (
@@ -408,8 +409,6 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
   const [bulkTargetStatus, setBulkTargetStatus] = useState<TaskManagementStatus>(() => props.statusDefinitions[0]?.id ?? 'todo');
   useApplicationErrorDialog(props.listState === 'error' ? props.copy.taskListErrorHelp : null, {
     language: props.appLanguage === 'zh-CN' ? 'zh-CN' : 'en',
-    title: props.copy.taskListErrorTitle,
-    source: 'TaskWorkspace.loadTaskList',
   });
   const keyboardMoveStartOrderRef = useRef<TaskTableColumnKey[] | null>(null);
   const resizeStateRef = useRef<{ columnKey: TaskTableColumnKey; startX: number; startWidth: number } | null>(null);

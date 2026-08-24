@@ -48,11 +48,9 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
   const [capabilities, setCapabilities] = useState<CodexConversationCapabilities | null>(null);
   const [form, setForm] = useState<SessionCodeReviewForm | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'submitting' | 'preparing' | 'error'>('loading');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   useApplicationErrorDialog(error, {
     language: zh ? 'zh-CN' : 'en',
-    title: zh ? '代码审查启动失败' : 'Code review failed to start',
-    source: 'SessionCodeReviewDialog',
   });
   const [cancelPreparation, setCancelPreparation] = useState<(() => void) | null>(null);
 
@@ -108,7 +106,7 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
       .catch((reason: unknown) => {
         if (!active) return;
         setStatus('error');
-        setError(reason instanceof Error ? reason.message : String(reason));
+        setError(reason);
       });
     return () => {
       active = false;
@@ -175,7 +173,7 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
       props.onClose();
     } catch (reason) {
       setStatus('error');
-      setError(reason instanceof Error ? reason.message : String(reason));
+      setError(reason);
     }
   }
 

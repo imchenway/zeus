@@ -238,11 +238,9 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
   const [runs, setRuns] = useState<CommandRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   useApplicationErrorDialog(error, {
     language: zh ? 'zh-CN' : 'en',
-    title: zh ? '命令操作失败' : 'Command operation failed',
-    source: 'CommandCenterPanel',
   });
   const [notice, setNotice] = useState<string | null>(null);
   const [editing, setEditing] = useState<CommandDefinition | 'new' | null>(null);
@@ -279,7 +277,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
         if (active) setCommands(items);
       })
       .catch((loadError) => {
-        if (active) setError(toMessage(loadError));
+        if (active) setError(loadError);
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -304,7 +302,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
         if (active) setRuns(items);
       })
       .catch((loadError) => {
-        if (active) setError(toMessage(loadError));
+        if (active) setError(loadError);
       });
     return () => {
       active = false;
@@ -357,7 +355,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
           return next;
         });
       } catch (loadError) {
-        if (active) setError(toMessage(loadError));
+        if (active) setError(loadError);
       } finally {
         loading = false;
       }
@@ -409,7 +407,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
       setRuns(items);
       setSelectedRunId(selectRunId ?? commandRuns[0]?.id ?? null);
     } catch (loadError) {
-      setError(toMessage(loadError));
+      setError(loadError);
     }
   }
 
@@ -467,7 +465,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
       setEditing(null);
       setNotice(zh ? '命令定义已保存。' : 'Command definition saved.');
     } catch (saveError) {
-      setError(toMessage(saveError));
+      setError(saveError);
     } finally {
       setBusy(false);
     }
@@ -487,7 +485,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
       setPendingDeleteId(null);
       setNotice(zh ? '命令定义已删除，历史记录仍保留。' : 'Command deleted; history remains available.');
     } catch (deleteError) {
-      setError(toMessage(deleteError));
+      setError(deleteError);
     } finally {
       setBusy(false);
     }
@@ -519,7 +517,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
       }
       showRunConfirmation(command);
     } catch (loadError) {
-      setError(toMessage(loadError));
+      setError(loadError);
     } finally {
       setBusy(false);
     }
@@ -538,7 +536,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
       showRunConfirmation(command);
       setNotice(zh ? '已开启所需项目权限，请确认本次运行。' : 'Required project permissions enabled. Confirm this run to continue.');
     } catch (saveError) {
-      setError(toMessage(saveError));
+      setError(saveError);
     } finally {
       setBusy(false);
     }
@@ -564,7 +562,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
       await openRunHistory(command, run.id);
       setNotice(zh ? `已启动 ${command.title}。` : `${command.title} started.`);
     } catch (runError) {
-      setError(toMessage(runError));
+      setError(runError);
       await reloadRuns().catch(() => undefined);
     } finally {
       setBusy(false);
@@ -578,7 +576,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
       await props.client.stopCommandRun(run.id);
       await reloadRuns(run.id);
     } catch (stopError) {
-      setError(toMessage(stopError));
+      setError(stopError);
     } finally {
       setBusy(false);
     }
@@ -590,7 +588,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
       const blob = await props.client.loadCommandArtifact(artifactId);
       setArtifactPreviewUrls((current) => ({ ...current, [artifactId]: URL.createObjectURL(blob) }));
     } catch (previewError) {
-      setError(toMessage(previewError));
+      setError(previewError);
     }
   }
 
@@ -686,7 +684,6 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
         <CommandDefinitionModal
           draft={draft}
           busy={busy}
-          error={error}
           language={props.language}
           title={editing === 'new' ? (zh ? '新建命令' : 'New command') : zh ? '编辑命令' : 'Edit command'}
           onChange={setDraft}
@@ -696,7 +693,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
       ) : null}
 
       {permissionRequest && props.project ? (
-        <CommandPermissionModal request={permissionRequest} project={props.project} busy={busy} error={error} language={props.language} onClose={() => setPermissionRequest(null)} onContinue={() => void enablePermissionsAndContinue()} />
+        <CommandPermissionModal request={permissionRequest} project={props.project} busy={busy} language={props.language} onClose={() => setPermissionRequest(null)} onContinue={() => void enablePermissionsAndContinue()} />
       ) : null}
 
       {runningCommand && props.project ? (
@@ -705,7 +702,6 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
           project={props.project}
           values={runParameters}
           busy={busy}
-          error={error}
           language={props.language}
           onValuesChange={setRunParameters}
           onClose={() => setRunningCommand(null)}
@@ -725,7 +721,6 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
           artifactPreviewUrls={artifactPreviewUrls}
           client={props.client}
           busy={busy}
-          error={error}
           language={props.language}
           onClose={closeRunHistory}
           onSelectRun={selectHistoryRun}
@@ -748,7 +743,6 @@ function CommandRunHistoryModal(props: {
   artifactPreviewUrls: Record<string, string>;
   client: DashboardClient;
   busy: boolean;
-  error: string | null;
   language: 'zh-CN' | 'en-US';
   onClose: () => void;
   onSelectRun: (runId: string) => void;
@@ -867,7 +861,6 @@ function CommandDefinitionModal(props: {
   draft: CommandDraft;
   title: string;
   busy: boolean;
-  error: string | null;
   language: 'zh-CN' | 'en-US';
   onChange: (draft: CommandDraft) => void;
   onClose: () => void;
@@ -1019,7 +1012,7 @@ function CommandDefinitionModal(props: {
   );
 }
 
-function CommandPermissionModal(props: { request: CommandPermissionRequest; project: ProjectRecord; busy: boolean; error: string | null; language: 'zh-CN' | 'en-US'; onClose: () => void; onContinue: () => void }) {
+function CommandPermissionModal(props: { request: CommandPermissionRequest; project: ProjectRecord; busy: boolean; language: 'zh-CN' | 'en-US'; onClose: () => void; onContinue: () => void }) {
   const zh = props.language === 'zh-CN';
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape' && !props.busy) props.onClose();
@@ -1083,7 +1076,6 @@ function CommandRunModal(props: {
   project: ProjectRecord;
   values: Record<string, string | number | boolean>;
   busy: boolean;
-  error: string | null;
   language: 'zh-CN' | 'en-US';
   onValuesChange: (values: Record<string, string | number | boolean>) => void;
   onClose: () => void;
@@ -1329,8 +1321,4 @@ function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function toMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

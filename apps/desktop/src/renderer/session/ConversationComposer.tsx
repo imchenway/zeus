@@ -127,11 +127,9 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const [goalInputOpen, setGoalInputOpen] = useState(false);
   const [goalDraft, setGoalDraft] = useState('');
   const [goalSubmitting, setGoalSubmitting] = useState(false);
-  const [inputResourceError, setInputResourceError] = useState<string | null>(null);
+  const [inputResourceError, setInputResourceError] = useState<unknown>(null);
   useApplicationErrorDialog(inputResourceError, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-    title: props.language === 'zh-CN' ? '会话附件处理失败' : 'Conversation attachment failed',
-    source: 'ConversationComposer',
   });
   const [selectedModel, setSelectedModel] = useState(initialModel);
   const [selectedEffort, setSelectedEffort] = useState(initialEffort);
@@ -418,7 +416,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
                 onClick={() => {
                   setInputResourceError(null);
                   void Promise.resolve(props.onChooseAttachments?.()).catch((error: unknown) => {
-                    setInputResourceError(error instanceof Error ? error.message : String(error));
+                    setInputResourceError(error);
                   });
                 }}
                 disabled={!writable || busy || inputResources.processing}

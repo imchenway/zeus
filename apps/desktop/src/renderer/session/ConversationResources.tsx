@@ -21,7 +21,7 @@ import type { ConversationFileIconKind, ConversationFileLocation, ConversationOp
 import { listConversationResourceOpenTargetsInMain } from '../appShellBridge.js';
 import type { NativeConversationAttachment } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError, useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
 export interface ConversationResourceInteraction {
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
@@ -148,15 +148,13 @@ export function ConversationInlineResource(
   },
 ) {
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const rawLocation = props.resource.kind === 'file' ? locationLabel(props.resource, props.language) : null;
   const location = rawLocation && !/\(\s*lines?\s+\d+/iu.test(props.label) ? rawLocation : null;
   const title = props.resource.kind === 'file' ? props.resource.projectRelativePath : props.resource.kind === 'website' ? props.resource.url : props.resource.displayName;
 
   useApplicationErrorDialog(error, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-    title: props.language === 'zh-CN' ? '资源打开失败' : 'Resource failed to open',
-    source: 'ConversationInlineResource',
   });
 
   async function open(): Promise<void> {
@@ -166,7 +164,7 @@ export function ConversationInlineResource(
     try {
       await props.onOpenResource(props.resource, defaultOpenTarget(props.resource));
     } catch (openError) {
-      setError(openError instanceof Error ? openError.message : String(openError));
+      setError(openError);
     } finally {
       setBusy(false);
     }
@@ -220,14 +218,12 @@ function ConversationImagePreview(
   const [preview, setPreview] = useState<Extract<ConversationResourcePreview, { kind: 'image' }> | null>(null);
   const [loading, setLoading] = useState(false);
   const [opening, setOpening] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const resourceRef = useRef(props.resource);
   const languageRef = useRef(props.language);
   const loadPreviewRef = useRef(props.onLoadResourcePreview);
   useApplicationErrorDialog(error, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-    title: props.language === 'zh-CN' ? '图片资源操作失败' : 'Image resource operation failed',
-    source: 'ConversationImagePreview',
   });
   const previewFailureRef = useRef(props.onPreviewFailure);
   const visibleContentChangeRef = useRef(props.onVisibleContentChange);
@@ -283,7 +279,7 @@ function ConversationImagePreview(
         setPreview(result);
       })
       .catch((loadError) => {
-        if (active) reportPreviewFailure(loadError instanceof Error ? loadError.message : String(loadError));
+        if (active) reportPreviewFailure(loadError);
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -293,8 +289,9 @@ function ConversationImagePreview(
     };
   }, [props.resource.id, Boolean(props.onLoadResourcePreview), visible]);
 
-  function reportPreviewFailure(message: string): void {
-    setError(message);
+  function reportPreviewFailure(cause: unknown): void {
+    const message = formatVisibleApplicationError(cause, languageRef.current === 'zh-CN' ? 'zh-CN' : 'en');
+    setError(cause);
     if (failureReportedRef.current) return;
     failureReportedRef.current = true;
     previewFailureRef.current?.(message);
@@ -307,7 +304,7 @@ function ConversationImagePreview(
     try {
       await props.onOpenResource(props.resource, defaultOpenTarget(props.resource));
     } catch (openError) {
-      setError(openError instanceof Error ? openError.message : String(openError));
+      setError(openError);
     } finally {
       setOpening(false);
     }
@@ -315,9 +312,7 @@ function ConversationImagePreview(
 
   const unavailable = !loadPreviewRef.current;
   const status = error
-    ? props.language === 'zh-CN'
-      ? '图片无法预览，仍可尝试打开'
-      : 'Image preview unavailable; you can still try to open it'
+    ? formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en')
     : unavailable
       ? props.language === 'zh-CN'
         ? '图片预览不可用'
@@ -343,7 +338,7 @@ function ConversationImagePreview(
         <img src={preview.dataUrl} alt={props.label} loading="lazy" onError={() => reportPreviewFailure(languageRef.current === 'zh-CN' ? '图片预览加载失败。' : 'The image preview failed to load.')} />
       ) : (
         <span className={props.placeholderClassName} role="status">
-          <FileImage aria-hidden="true" weight="duotone" />
+          {!error ? <FileImage aria-hidden="true" weight="duotone" /> : null}
           <span>{status}</span>
         </span>
       )}
@@ -385,12 +380,7 @@ function ConversationResourceImage(
 
   if (!props.onLoadResourcePreview || previewError) {
     return (
-      <ConversationResourceCard
-        resource={props.resource}
-        language={props.language}
-        onOpenResource={props.onOpenResource}
-        initialError={previewError ?? (props.language === 'zh-CN' ? '图片预览不可用，仍可尝试打开' : 'Image preview unavailable; you can still try to open it')}
-      />
+      <ConversationResourceCard resource={props.resource} language={props.language} onOpenResource={props.onOpenResource} initialError={previewError ?? (props.language === 'zh-CN' ? '图片预览不可用。' : 'Image preview unavailable.')} />
     );
   }
 
@@ -416,13 +406,11 @@ function ConversationResourceCard(
   },
 ) {
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(props.initialError ?? null);
+  const [error, setError] = useState<unknown>(props.initialError ?? null);
   const subtitle = resourceSubtitle(props.resource, props.language);
 
   useApplicationErrorDialog(error, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-    title: props.language === 'zh-CN' ? '资源操作失败' : 'Resource operation failed',
-    source: 'ConversationResourceCard',
   });
 
   async function open(target = defaultOpenTarget(props.resource)): Promise<void> {
@@ -432,7 +420,7 @@ function ConversationResourceCard(
     try {
       await props.onOpenResource(props.resource, target);
     } catch (openError) {
-      setError(openError instanceof Error ? openError.message : String(openError));
+      setError(openError);
     } finally {
       setBusy(false);
     }
@@ -461,13 +449,11 @@ function OpenWithMenu(props: { resource: ConversationResource; language: Session
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [targets, setTargets] = useState<ConversationResourceOpenTarget[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [menuPosition, setMenuPosition] = useState<{ left: number; top: number } | null>(null);
 
   useApplicationErrorDialog(error, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-    title: props.language === 'zh-CN' ? '打开方式读取失败' : 'Open-with options failed to load',
-    source: 'OpenWithMenu',
   });
 
   useEffect(() => {
@@ -529,7 +515,7 @@ function OpenWithMenu(props: { resource: ConversationResource; language: Session
       });
       setTargets(result.targets);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : String(loadError));
+      setError(loadError);
     } finally {
       setLoading(false);
     }

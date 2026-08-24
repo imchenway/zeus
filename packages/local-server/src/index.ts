@@ -1770,7 +1770,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       if (!segment || segment.runtimeKind !== 'pi' || segment.nativeSessionId !== turn.providerThreadId) continue;
       const failure = {
         code: 'ZEUS_PI_RUN_INTERRUPTED_BY_RESTART',
-        message: 'Zeus 重启后确认此前 Pi 运行内核已结束；已接纳轮次保留为中断，不会自动重发。',
+        message: 'Zeus 重启后确认此前 Pi 运行内核已结束；已接纳轮次保留为中断。',
       };
       conversationTurns.upsert({ ...turn, status: 'interrupted', error: failure, completedAt: interruptedAt, updatedAt: interruptedAt });
       if (turn.clientSubmissionId) {

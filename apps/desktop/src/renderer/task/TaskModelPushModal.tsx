@@ -28,7 +28,7 @@ import { readConversationRuntimePreferences, writeConversationRuntimePreferences
 import { resolveModelCapability } from '../session/modelSelection.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
 import { TaskPushSupplementalAttachmentCards } from './TaskPushSupplementalAttachmentCards.js';
@@ -762,8 +762,6 @@ export function TaskModelPushModal(props: {
   const repositoryRefreshError = props.capabilities?.repositories.find((repository) => repository.remoteRefreshError)?.remoteRefreshError ?? null;
   useApplicationErrorDialog(props.error ?? supplementalResourceError ?? repositoryRefreshError, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-    title: props.language === 'zh-CN' ? '模型推送操作失败' : 'Model push operation failed',
-    source: 'TaskModelPushModal',
   });
   const resourceInputDisabled = !props.open || props.status === 'inspecting-config' || props.status === 'importing-config' || props.status === 'authenticating' || props.status === 'submitting';
   const inputResources = useConversationInputResources({
@@ -1035,13 +1033,13 @@ export function TaskModelPushModal(props: {
               </section>
             ) : !props.capabilities ? (
               <p className={props.status === 'error' ? 'task-model-push-error' : 'task-model-push-message'} role="status">
-                {props.status === 'error'
-                  ? zh
-                    ? 'Git 仓库检查未完成，不能判断项目是否存在仓库。请根据下方错误处理后重试。'
-                    : 'The Git repository check did not complete, so repository presence is unknown. Resolve the error below and try again.'
-                  : zh
-                    ? '正在扫描项目目录下的 Git 仓库…'
-                    : 'Scanning the project directory for Git repositories…'}
+                {props.status === 'error' ? (
+                  <VisibleApplicationError error={props.error ?? (zh ? 'Git 仓库检查未完成。' : 'The Git repository check did not complete.')} language={zh ? 'zh-CN' : 'en'} />
+                ) : zh ? (
+                  '正在扫描项目目录下的 Git 仓库…'
+                ) : (
+                  'Scanning the project directory for Git repositories…'
+                )}
               </p>
             ) : repositories.length > 0 ? (
               <div className="task-model-push-repository-list">
@@ -1159,21 +1157,25 @@ export function TaskModelPushModal(props: {
                         </label>
                       </div>
                       <p className={repository.remoteRefreshError ? 'task-model-push-error' : 'task-model-push-warning'}>
-                        {repository.remoteRefreshError
-                          ? zh
-                            ? '远端信息暂不可用；本地分支、已知远端分支和当前选择不受影响。'
-                            : 'Remote information is unavailable; local branches, known remote branches, and the current selection remain available.'
-                          : repository.remoteRefreshStatus === 'succeeded'
-                            ? zh
-                              ? '远端分支已手动刷新。来源分支仍由你选择。'
-                              : 'Remote branches were refreshed manually. The source branch remains your choice.'
-                            : repository.defaultRemoteName
-                              ? zh
-                                ? '当前展示本地分支和本机已知的远端分支；需要最新远端状态时再手动刷新。'
-                                : 'Local branches and locally known remote branches are shown. Refresh manually when current remote state is needed.'
-                              : zh
-                                ? '该仓库没有远端，当前使用本地分支快照。默认不带入原工作区未提交内容。'
-                                : 'This repository has no remote, so a local branch snapshot is used. Local uncommitted changes are excluded by default.'}
+                        {repository.remoteRefreshError ? (
+                          <VisibleApplicationError error={repository.remoteRefreshError} language={zh ? 'zh-CN' : 'en'} />
+                        ) : repository.remoteRefreshStatus === 'succeeded' ? (
+                          zh ? (
+                            '远端分支已手动刷新。来源分支仍由你选择。'
+                          ) : (
+                            'Remote branches were refreshed manually. The source branch remains your choice.'
+                          )
+                        ) : repository.defaultRemoteName ? (
+                          zh ? (
+                            '当前展示本地分支和本机已知的远端分支；需要最新远端状态时再手动刷新。'
+                          ) : (
+                            'Local branches and locally known remote branches are shown. Refresh manually when current remote state is needed.'
+                          )
+                        ) : zh ? (
+                          '该仓库没有远端，当前使用本地分支快照。默认不带入原工作区未提交内容。'
+                        ) : (
+                          'This repository has no remote, so a local branch snapshot is used. Local uncommitted changes are excluded by default.'
+                        )}
                       </p>
                       {selectedSource?.kind === 'local' && repository.clean === false ? (
                         <label className="task-model-push-concurrency-confirm">

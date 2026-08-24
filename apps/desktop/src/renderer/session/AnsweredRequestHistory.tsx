@@ -73,12 +73,10 @@ export function AnsweredRequestHistory(props: AnsweredRequestHistoryProps) {
   const copy = labels[props.language];
   const entries = answeredQuestions(props.request);
   const [previewAttachment, setPreviewAttachment] = useState<NativeConversationAttachment | null>(null);
-  const [resourceError, setResourceError] = useState<string | null>(null);
+  const [resourceError, setResourceError] = useState<unknown>(null);
   const previewTriggerRef = useRef<HTMLButtonElement | null>(null);
   useApplicationErrorDialog(resourceError, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-    title: props.language === 'zh-CN' ? '回答附件打开失败' : 'Answer attachment failed to open',
-    source: 'AnsweredRequestHistory',
   });
   if (entries.length === 0) return null;
   const answerUnavailable = isExternalUserInputResolution(props.request.response);
@@ -99,8 +97,8 @@ export function AnsweredRequestHistory(props: AnsweredRequestHistoryProps) {
     try {
       const result = await bridge({ ...(attachment.localPath ? { localPath: attachment.localPath } : {}), ...(attachment.uploadRef ? { uploadRef: attachment.uploadRef } : {}) });
       if (!result.opened) setResourceError(copy.openFailed);
-    } catch {
-      setResourceError(copy.openFailed);
+    } catch (error) {
+      setResourceError(error);
     }
   }
 

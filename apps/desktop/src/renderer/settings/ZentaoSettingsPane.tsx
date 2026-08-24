@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { SaveZentaoInstanceRequest, ZentaoInstanceRecord, ZentaoInstanceVerifyResult } from '@zeus/shared';
 import type { DashboardClient } from '../apiClient.js';
 import { Button } from '../ui/Button.js';
+import { formatVisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 
 interface ZentaoInstanceDraft {
   id: string | null;
@@ -37,7 +38,7 @@ export function ZentaoSettingsPane(props: { language: 'zh-CN' | 'en-US'; client:
       })
       .catch((error: unknown) => {
         if (!active) return;
-        setMessage(error instanceof Error ? error.message : String(error));
+        setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
         setStatus('idle');
       });
     return () => {
@@ -80,7 +81,7 @@ export function ZentaoSettingsPane(props: { language: 'zh-CN' | 'en-US'; client:
       await reloadInstances(saved.id);
       setMessage(input.password ? (zh ? '禅道实例已保存，密码只写入 macOS 钥匙串。' : 'ZenTao instance saved. The password is stored only in the macOS Keychain.') : zh ? '禅道实例已保存。' : 'ZenTao instance saved.');
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
     } finally {
       setStatus('idle');
     }
@@ -94,7 +95,7 @@ export function ZentaoSettingsPane(props: { language: 'zh-CN' | 'en-US'; client:
       const result: ZentaoInstanceVerifyResult = await props.client.verifyZentaoInstance(draft.id);
       setMessage(`${result.ok ? (zh ? '验证通过：' : 'Verified: ') : ''}${result.message}`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
     } finally {
       setStatus('idle');
     }
@@ -108,7 +109,7 @@ export function ZentaoSettingsPane(props: { language: 'zh-CN' | 'en-US'; client:
       await reloadInstances(draft.id);
       setMessage(zh ? '密码已从钥匙串清除，解析将回退为浏览器登录。' : 'Password cleared from Keychain. Parsing will fall back to browser sign-in.');
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
     } finally {
       setStatus('idle');
     }
@@ -125,7 +126,7 @@ export function ZentaoSettingsPane(props: { language: 'zh-CN' | 'en-US'; client:
       setConfirmDelete(false);
       setMessage(zh ? '禅道实例已删除。' : 'ZenTao instance deleted.');
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
     } finally {
       setStatus('idle');
     }

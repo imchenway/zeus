@@ -479,13 +479,9 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const appShellSettings = settingsQuery.value;
   useApplicationErrorDialog(projectWorkspaceConfigError, {
     language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en',
-    title: appShellSettings.appLanguage === 'zh-CN' ? '项目配置保存失败' : 'Project configuration failed',
-    source: 'ProjectWorkspaceConfig',
   });
-  useApplicationErrorDialog(archivedConversationLoadState === 'error' ? (appShellSettings.appLanguage === 'zh-CN' ? '已归档会话读取失败' : 'Archived conversations failed to load') : null, {
+  useApplicationErrorDialog(archivedConversationLoadState === 'error' ? conversationQuery.error : null, {
     language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en',
-    title: appShellSettings.appLanguage === 'zh-CN' ? '已归档会话读取失败' : 'Archived conversations failed to load',
-    source: 'ArchivedConversations.load',
   });
   const appShellSettingsRef = useRef(appShellSettings);
   const codeWorkspacePreferenceTimerRef = useRef<number | null>(null);
@@ -718,9 +714,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const [localError, setLocalError] = useState<LocalUiErrorSnapshot | undefined>(() => normalizeLocalUiError(props.initialLocalError));
   useApplicationErrorDialog(localError?.message, {
     language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en',
-    title: uiCopy.localOperationFailed,
-    source: localError?.action,
-    occurredAt: localError?.occurredAt,
   });
   const projectCreationReady = Boolean(props.onChooseProjectDirectory && props.onCreateCurrentProject);
   const gitLabel = snapshot.git.isRepository ? `Git ${snapshot.git.branch}` : codeWorkspaceCopy.gitNotDetected;

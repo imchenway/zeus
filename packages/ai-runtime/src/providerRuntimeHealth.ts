@@ -34,7 +34,7 @@ export function readCodexProviderRuntimeHealth(manager: Pick<CodexAppServerManag
         ? {
             kind: 'process_exit',
             code: 'ZEUS_CODEX_GENERATION_EXITED',
-            message: 'Codex app-server 世代已退出；监督器只启动新世代，不自动重发未确认命令。',
+            message: 'Codex app-server 世代已退出。',
             occurredAt: checkedAt,
             resultUnknown: true,
           }

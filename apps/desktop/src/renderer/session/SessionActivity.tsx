@@ -15,6 +15,7 @@ import type { ConversationFileLocation, ConversationOpenTarget, ConversationReso
 import { ConversationResourceCards, defaultOpenTarget, isImageResource } from './ConversationResources.js';
 import { isAssistantDeliverableItem, type NativeConversationToolResultPage, type NativePendingRequest, type NativeSessionItemBuffer, type NativeTurnPlanSnapshot, type NativeTurnSnapshot } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 
 const operationalTypes = new Set(['commandexecution', 'command', 'mcptoolcall', 'dynamictoolcall', 'websearch', 'imageview', 'toolcall', 'tool', 'filechange', 'file', 'contextcompaction', 'providerevent']);
 const MAX_ACTIVITY_OUTPUT_CHARACTERS = 40_000;
@@ -184,7 +185,7 @@ const ActivityItemRow = memo(function ActivityItemRow(props: {
 function ActivityItemOutput(props: { output: string | null; toolResult: ActivityToolResult | null; language: SessionUiLanguage; onLoadToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage> }) {
   const [pages, setPages] = useState<NativeConversationToolResultPage[]>([]);
   const [loading, setLoading] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [showFull, setShowFull] = useState(false);
   const loadingRef = useRef(false);
   const projectedOutput = props.output ?? props.toolResult?.projection ?? null;
@@ -198,7 +199,7 @@ function ActivityItemOutput(props: { output: string | null; toolResult: Activity
   useEffect(() => {
     setPages([]);
     setLoading(false);
-    setFailed(false);
+    setLoadError(null);
     setShowFull(false);
     loadingRef.current = false;
   }, [props.toolResult?.handle]);
@@ -207,12 +208,12 @@ function ActivityItemOutput(props: { output: string | null; toolResult: Activity
     if (!props.toolResult?.handle || !props.onLoadToolResult || loadingRef.current) return;
     loadingRef.current = true;
     setLoading(true);
-    setFailed(false);
+    setLoadError(null);
     try {
       const page = await props.onLoadToolResult(props.toolResult.handle, lastPage?.nextOffset ?? undefined);
       setPages((current) => [...current.filter((candidate) => candidate.offset !== page.offset), page].sort((left, right) => left.offset - right.offset));
-    } catch {
-      setFailed(true);
+    } catch (error) {
+      setLoadError(error);
     } finally {
       loadingRef.current = false;
       setLoading(false);
@@ -227,7 +228,7 @@ function ActivityItemOutput(props: { output: string | null; toolResult: Activity
           {props.language === 'zh-CN' ? `输出较大，当前显示前 ${MAX_ACTIVITY_OUTPUT_CHARACTERS.toLocaleString('zh-CN')} 个字符。` : `Large output; showing the first ${MAX_ACTIVITY_OUTPUT_CHARACTERS.toLocaleString('en-US')} characters.`}
         </small>
       ) : null}
-      {canLoadMore || canShowFull || failed ? (
+      {canLoadMore || canShowFull || loadError ? (
         <button
           type="button"
           disabled={loading}
@@ -239,12 +240,12 @@ function ActivityItemOutput(props: { output: string | null; toolResult: Activity
             void loadNextPage();
           }}
         >
-          {loading ? (props.language === 'zh-CN' ? '正在展开…' : 'Expanding…') : failed ? (props.language === 'zh-CN' ? '重试展开' : 'Retry expansion') : props.language === 'zh-CN' ? '展开剩余内容' : 'Expand remaining content'}
+          {loading ? (props.language === 'zh-CN' ? '正在展开…' : 'Expanding…') : loadError ? (props.language === 'zh-CN' ? '重试展开' : 'Retry expansion') : props.language === 'zh-CN' ? '展开剩余内容' : 'Expand remaining content'}
         </button>
       ) : null}
-      {failed ? (
+      {loadError ? (
         <small className="session-v2-page-error" role="alert">
-          {props.language === 'zh-CN' ? '完整输出暂时无法读取。' : 'The complete output is temporarily unavailable.'}
+          <VisibleApplicationError error={loadError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
         </small>
       ) : null}
     </div>
@@ -508,7 +509,7 @@ export function SessionTurnProcessDisclosure(props: {
             ) : null}
             {props.error ? (
               <p className="session-v2-page-error" role="alert">
-                {props.error}
+                <VisibleApplicationError error={props.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
               </p>
             ) : null}
           </>

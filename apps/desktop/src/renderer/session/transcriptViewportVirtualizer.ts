@@ -217,7 +217,48 @@ interface RowBinding {
   callback: RefCallback<HTMLElement>;
 }
 
-export function useTranscriptViewportVirtualizer(input: { scopeKey: string | null; rowKeys: readonly string[]; pinnedRowKeys: ReadonlySet<string>; containerRef: RefObject<HTMLElement | null> }) {
+export interface TranscriptViewportAnchor {
+  rowKey: string | null;
+  topOffset: number | null;
+  scrollHeight: number;
+  scrollTop: number;
+}
+
+export function captureTranscriptViewportAnchor(container: HTMLElement): TranscriptViewportAnchor {
+  const containerRect = container.getBoundingClientRect();
+  const anchorElement = [...container.querySelectorAll<HTMLElement>('.session-transcript-window-row[data-transcript-row-key]')].find((row) => {
+    const rowRect = row.getBoundingClientRect();
+    return rowRect.bottom >= containerRect.top && rowRect.top <= containerRect.bottom;
+  });
+  return {
+    rowKey: anchorElement?.dataset.transcriptRowKey ?? null,
+    topOffset: anchorElement ? anchorElement.getBoundingClientRect().top - containerRect.top : null,
+    scrollHeight: container.scrollHeight,
+    scrollTop: container.scrollTop,
+  };
+}
+
+/** 历史分页和异步高度测量共用同一条稳定行补偿规则。 */
+export function compensateTranscriptViewportAnchor(container: HTMLElement, anchor: TranscriptViewportAnchor): number {
+  const anchorElement = anchor.rowKey ? [...container.querySelectorAll<HTMLElement>('.session-transcript-window-row[data-transcript-row-key]')].find((row) => row.dataset.transcriptRowKey === anchor.rowKey) : undefined;
+  const previousScrollTop = container.scrollTop;
+  if (anchorElement && anchor.topOffset !== null) {
+    const nextOffset = anchorElement.getBoundingClientRect().top - container.getBoundingClientRect().top;
+    container.scrollTop += nextOffset - anchor.topOffset;
+  } else {
+    container.scrollTop = anchor.scrollTop + (container.scrollHeight - anchor.scrollHeight);
+  }
+  return container.scrollTop - previousScrollTop;
+}
+
+export function useTranscriptViewportVirtualizer(input: {
+  scopeKey: string | null;
+  rowKeys: readonly string[];
+  pinnedRowKeys: ReadonlySet<string>;
+  containerRef: RefObject<HTMLElement | null>;
+  isFollowingLatest?: () => boolean;
+  suspendAutomaticAnchor?: boolean;
+}) {
   const scopeRef = useRef(input.scopeKey);
   const cacheRef = useRef(new TranscriptRowMeasurementCache());
   const layoutRef = useRef(new TranscriptViewportLayout());
@@ -225,6 +266,7 @@ export function useTranscriptViewportVirtualizer(input: { scopeKey: string | nul
   const rowObserverRef = useRef<ResizeObserver | null>(null);
   const updateFrameRef = useRef<number | null>(null);
   const pendingViewportRef = useRef<{ scrollTop: number; viewportHeight: number } | null>(null);
+  const measurementAnchorRef = useRef<TranscriptViewportAnchor | null>(null);
   const [layoutRevision, setLayoutRevision] = useState(0);
   const [viewport, setViewport] = useState<{ scopeKey: string | null; scrollTop: number | null; viewportHeight: number }>({ scopeKey: input.scopeKey, scrollTop: null, viewportHeight: 720 });
 
@@ -233,6 +275,7 @@ export function useTranscriptViewportVirtualizer(input: { scopeKey: string | nul
     bindingsRef.current.clear();
     cacheRef.current = new TranscriptRowMeasurementCache();
     layoutRef.current = new TranscriptViewportLayout();
+    measurementAnchorRef.current = null;
     scopeRef.current = input.scopeKey;
   }
   const layout = layoutRef.current;
@@ -257,9 +300,13 @@ export function useTranscriptViewportVirtualizer(input: { scopeKey: string | nul
       const rowKey = element.dataset.transcriptRowKey;
       if (!rowKey) return;
       const height = element.getBoundingClientRect().height;
-      if (layoutRef.current.updateMeasuredHeight(rowKey, height, cacheRef.current)) scheduleUpdate();
+      const container = input.containerRef.current;
+      const candidateAnchor = !measurementAnchorRef.current && !input.suspendAutomaticAnchor && !input.isFollowingLatest?.() && container ? captureTranscriptViewportAnchor(container) : null;
+      if (!layoutRef.current.updateMeasuredHeight(rowKey, height, cacheRef.current)) return;
+      measurementAnchorRef.current ??= candidateAnchor;
+      scheduleUpdate();
     },
-    [scheduleUpdate],
+    [input.containerRef, input.isFollowingLatest, input.suspendAutomaticAnchor, scheduleUpdate],
   );
 
   useLayoutEffect(() => {
@@ -342,15 +389,26 @@ export function useTranscriptViewportVirtualizer(input: { scopeKey: string | nul
   );
 
   const effectiveViewport = viewport.scopeKey === input.scopeKey ? viewport : { scopeKey: input.scopeKey, scrollTop: null, viewportHeight: 720 };
-  const projection = useMemo(
-    () =>
-      layout.project({
-        scrollTop: effectiveViewport.scrollTop,
-        viewportHeight: effectiveViewport.viewportHeight,
-        pinnedRowKeys: input.pinnedRowKeys,
-      }),
-    [effectiveViewport.scrollTop, effectiveViewport.viewportHeight, input.pinnedRowKeys, input.rowKeys, layout, layoutRevision],
-  );
+  const projection = useMemo(() => {
+    const anchorRowKey = measurementAnchorRef.current?.rowKey;
+    const pinnedRowKeys = anchorRowKey ? new Set([...input.pinnedRowKeys, anchorRowKey]) : input.pinnedRowKeys;
+    return layout.project({
+      scrollTop: effectiveViewport.scrollTop,
+      viewportHeight: effectiveViewport.viewportHeight,
+      pinnedRowKeys,
+    });
+  }, [effectiveViewport.scrollTop, effectiveViewport.viewportHeight, input.pinnedRowKeys, input.rowKeys, layout, layoutRevision]);
+
+  useLayoutEffect(() => {
+    const anchor = measurementAnchorRef.current;
+    const container = input.containerRef.current;
+    if (!anchor || !container) return;
+    measurementAnchorRef.current = null;
+    if (input.suspendAutomaticAnchor || input.isFollowingLatest?.()) return;
+    compensateTranscriptViewportAnchor(container, anchor);
+    pendingViewportRef.current = { scrollTop: container.scrollTop, viewportHeight: positiveMetric(container.clientHeight, 720) };
+    scheduleUpdate();
+  }, [input.containerRef, input.isFollowingLatest, input.suspendAutomaticAnchor, projection, scheduleUpdate]);
 
   return {
     projection,

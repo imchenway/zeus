@@ -2020,87 +2020,18 @@
 }
 
 .session-codex-parity-v1 .session-message-delivery-feedback {
-  align-items: flex-start;
   box-sizing: border-box;
   color: var(--session-text-muted);
-  display: grid;
   font-size: var(--session-readable-font-size);
-  gap: 8px;
-  grid-template-columns: auto minmax(0, 1fr) auto;
   inline-size: min(var(--session-thread-max), calc(100% - (2 * var(--session-gutter))));
   margin: 8px auto;
 }
 
-.session-codex-parity-v1 .session-message-delivery-feedback > .session-thinking-pulse {
-  flex: 0 0 auto;
-  margin-block-start: 7px;
-}
-
-.session-codex-parity-v1 .session-message-delivery-copy {
-  display: grid;
-  gap: 2px;
-  min-inline-size: 0;
-}
-
-.session-codex-parity-v1 .session-message-delivery-summary {
-  align-items: baseline;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px 8px;
-  min-inline-size: 0;
-}
-
-.session-codex-parity-v1 .session-message-delivery-feedback :where(strong, small, details) {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.session-codex-parity-v1 .session-message-delivery-feedback strong {
-  color: inherit;
-  font-size: inherit;
-  font-weight: 560;
-}
-
-.session-codex-parity-v1 .session-message-delivery-feedback small {
-  color: inherit;
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.session-codex-parity-v1 .session-message-delivery-feedback button {
-  align-self: center;
-  background: color-mix(in srgb, var(--session-danger) 7%, transparent);
-  border: 1px solid color-mix(in srgb, var(--session-danger) 22%, var(--session-line));
-  border-radius: 7px;
-  color: var(--session-danger);
-  cursor: pointer;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  min-block-size: 28px;
-  padding: 4px 9px;
-  white-space: nowrap;
-}
-
-.session-codex-parity-v1 .session-message-delivery-feedback button:hover {
-  background: color-mix(in srgb, var(--session-danger) 12%, transparent);
-  border-color: color-mix(in srgb, var(--session-danger) 34%, var(--session-line));
-}
-
-.session-codex-parity-v1 .session-message-delivery-feedback button:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--session-danger) 62%, transparent);
-  outline-offset: 2px;
-}
-
-.session-codex-parity-v1 .session-message-delivery-feedback details {
-  font-size: 11px;
-  margin-block-start: 2px;
-}
-
 .session-codex-parity-v1 .session-message-delivery-feedback code {
   display: block;
-  margin-block-start: 4px;
-  white-space: pre-wrap;
+  font: 500 12px/19px var(--session-font-mono);
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .session-codex-parity-v1 .session-message-delivery-feedback[data-state='unconfirmed'] {
@@ -2121,31 +2052,6 @@
   color: var(--session-text);
   inline-size: min(680px, calc(100% - (2 * var(--session-gutter))));
   padding: 8px 10px 8px 9px;
-}
-
-.session-codex-parity-v1 .session-message-delivery-feedback[data-state='failed'] strong {
-  color: var(--session-danger);
-}
-
-.session-codex-parity-v1 .session-message-delivery-feedback[data-state='unconfirmed'] strong {
-  color: var(--session-warning);
-}
-
-.session-codex-parity-v1 .session-message-delivery-feedback[data-state='failed'] > .session-thinking-pulse {
-  animation: none;
-  color: var(--session-danger);
-}
-
-.session-codex-parity-v1 .session-message-delivery-feedback[data-state='unconfirmed'] > .session-thinking-pulse {
-  animation: none;
-  color: var(--session-warning);
-}
-
-@media (max-width: 760px) {
-  .session-codex-parity-v1 .session-message-delivery-feedback[data-state='failed'] > button {
-    grid-column: 2;
-    justify-self: start;
-  }
 }
 
 .session-codex-parity-v1 .session-thinking-indicator::after {
@@ -2569,6 +2475,13 @@
   inline-size: min(var(--session-thread-max), 100%);
   margin-inline: auto;
   padding: 13px 15px;
+}
+
+.session-codex-parity-v1 .session-turn-failure > code {
+  display: block;
+  font: 500 12px/19px var(--session-font-mono);
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .session-codex-parity-v1 .session-turn-failure > strong {
@@ -5363,8 +5276,16 @@
   will-change: auto !important;
 }
 
-/* 最新模型状态固定在过程底部，用 Codex 同类的低饱和扫光表达持续进行。 */
-.session-codex-parity-v1 .session-reasoning-summary[data-status='active'] > .zeus-fidelity-text,
+/* reasoning 使用无端点停驻的连续扫光；其他状态继续沿用既有节奏。 */
+.session-codex-parity-v1 .session-reasoning-summary[data-status='active'] > .zeus-fidelity-text {
+  animation: session-reasoning-continuous-sweep 1.85s linear infinite;
+  background: linear-gradient(90deg, var(--session-text-muted) 0%, var(--session-text-muted) 36%, color-mix(in oklab, var(--session-text) 28%, transparent) 50%, var(--session-text-muted) 64%, var(--session-text-muted) 100%);
+  background-clip: text;
+  background-size: 240% 100%;
+  color: transparent;
+  -webkit-background-clip: text;
+}
+
 .session-codex-parity-v1 .session-current-status-text {
   animation: session-working-sweep 3.4s linear infinite;
   background: linear-gradient(90deg, var(--session-text-muted) 0%, var(--session-text-muted) 36%, color-mix(in oklab, var(--session-text) 28%, transparent) 50%, var(--session-text-muted) 64%, var(--session-text-muted) 100%);
@@ -5480,18 +5401,11 @@
 
 .session-codex-parity-v1 .session-transcript-window-row {
   contain: layout style;
-  contain-intrinsic-block-size: auto 132px;
-  content-visibility: auto;
   display: grid;
   flex: 0 0 auto;
   gap: 14px;
   inline-size: 100%;
   min-inline-size: 0;
-}
-
-.session-codex-parity-v1 .session-transcript-window-row:where([data-pinned='true'], :focus-within) {
-  contain-intrinsic-block-size: none;
-  content-visibility: visible;
 }
 
 .session-codex-parity-v1 .session-transcript-window-spacer {
@@ -15723,6 +15637,15 @@
   }
   72%,
   100% {
+    background-position: -120% 0;
+  }
+}
+
+@keyframes session-reasoning-continuous-sweep {
+  from {
+    background-position: 120% 0;
+  }
+  to {
     background-position: -120% 0;
   }
 }

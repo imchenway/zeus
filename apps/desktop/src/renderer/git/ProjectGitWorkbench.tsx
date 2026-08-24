@@ -14,7 +14,7 @@ import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/c
 import type { DashboardClient, ProjectGitAction, ProjectGitCommitDetail, ProjectGitRepositoryWorkbenchItem, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError, useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { SideBySideDiff } from './ProjectGitDiffViewer.js';
 
 type GitTab = 'changes' | 'shelf' | 'stash' | 'log' | 'console';
@@ -49,8 +49,6 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const [error, setError] = useState<string | null>(null);
   useApplicationErrorDialog(error, {
     language: zh ? 'zh-CN' : 'en',
-    title: zh ? 'Git 操作失败' : 'Git operation failed',
-    source: 'ProjectGitWorkbench',
   });
   const [tab, setTab] = useState<GitTab>(() => readRememberedTab(props.project.id));
   const [selectedRepositoryId, setSelectedRepositoryId] = useState('');
@@ -71,6 +69,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const [operationRecords, setOperationRecords] = useState<OperationRecord[]>([]);
   const [pushResults, setPushResults] = useState<Array<{ repositoryId: string; repositoryName: string; tone: OperationTone; message: string }>>([]);
   const requestVersionRef = useRef(0);
+  const operationErrorsByRepositoryRef = useRef<Record<string, string>>({});
 
   const repositories = snapshot?.repositories ?? [];
   const selectedRepository = repositories.find((repository) => repository.id === selectedRepositoryId) ?? repositories[0] ?? null;
@@ -144,7 +143,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         setSelectedFilePath(detail.files[0]?.path ?? '');
       })
       .catch((reason: unknown) => {
-        if (!cancelled) setError(errorMessage(reason));
+        if (!cancelled) setError(errorMessage(reason, zh));
       })
       .finally(() => {
         if (!cancelled) setCommitLoading(false);
@@ -167,7 +166,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
     } catch (reason) {
       if (version !== requestVersionRef.current) return;
       setLoadState('error');
-      setError(errorMessage(reason));
+      setError(errorMessage(reason, zh));
     }
   }
 
@@ -175,6 +174,9 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
     const started = performance.now();
     setBusy({ repositoryId: repository.id, action: action.type });
     setError(null);
+    const previousOperationErrors = { ...operationErrorsByRepositoryRef.current };
+    delete previousOperationErrors[repository.id];
+    operationErrorsByRepositoryRef.current = previousOperationErrors;
     try {
       const response = await props.client.executeProjectGitAction(props.project.id, repository.id, action);
       setSnapshot((current) =>
@@ -197,7 +199,8 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       if (response.result.outcome === 'conflict') setTab('changes');
       return response.result.outcome;
     } catch (reason) {
-      const message = errorMessage(reason);
+      const message = errorMessage(reason, zh);
+      operationErrorsByRepositoryRef.current = { ...operationErrorsByRepositoryRef.current, [repository.id]: message };
       setError(message);
       addOperationRecord(repository, action.type, label, 'error', message, performance.now() - started);
       return null;
@@ -252,10 +255,8 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
 
   if (loadState === 'error' && !snapshot) {
     return (
-      <section className="project-git-workbench-state" role="status">
-        <WarningCircle aria-hidden="true" />
-        <strong>{zh ? '当前没有可显示的 Git 现场' : 'No Git state is currently available'}</strong>
-        <span>{zh ? '可以重新读取本机仓库。' : 'You can reload the local repositories.'}</span>
+      <section className="project-git-workbench-state" role="alert">
+        <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
         <Button variant="secondary" onClick={() => void loadWorkbench()}>
           {zh ? '重新读取' : 'Reload'}
         </Button>
@@ -417,7 +418,16 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       )}
 
       <CommitDialog open={commitOpen} zh={zh} repositories={repositories} busy={busy} onClose={() => setCommitOpen(false)} onExecute={execute} />
-      <UpdateProjectDialog open={updateOpen} projectId={props.project.id} zh={zh} repositories={repositories} busy={busy} onClose={() => setUpdateOpen(false)} onExecute={execute} />
+      <UpdateProjectDialog
+        open={updateOpen}
+        projectId={props.project.id}
+        zh={zh}
+        repositories={repositories}
+        busy={busy}
+        errorsByRepository={operationErrorsByRepositoryRef.current}
+        onClose={() => setUpdateOpen(false)}
+        onExecute={execute}
+      />
       <NewBranchDialog open={newBranchOpen} zh={zh} repositories={repositories} selectedRepository={selectedRepository} baseRef={newBranchBase} busy={busy} onClose={() => setNewBranchOpen(false)} onExecute={execute} />
       <CheckoutRevisionDialog open={revisionOpen} zh={zh} repositories={repositories} selectedRepository={selectedRepository} busy={busy} onClose={() => setRevisionOpen(false)} onExecute={execute} />
       <PushDialog
@@ -443,9 +453,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                 ? zh
                   ? `已推送 ${repository.snapshot.outgoingCommits.length} 个提交`
                   : `Pushed ${repository.snapshot.outgoingCommits.length} commits`
-                : zh
-                  ? '推送失败，其他仓库结果不回滚'
-                  : 'Push failed; other repository results are not rolled back',
+                : (operationErrorsByRepositoryRef.current[repository.id] ?? (zh ? '推送失败。' : 'Push failed.')),
             });
           }
           setPushResults(results);
@@ -727,6 +735,7 @@ function UpdateProjectDialog(props: {
   zh: boolean;
   repositories: ProjectGitRepositoryWorkbenchItem[];
   busy: BusyState;
+  errorsByRepository: Readonly<Record<string, string>>;
   onClose: () => void;
   onExecute: (repository: ProjectGitRepositoryWorkbenchItem, action: ProjectGitAction, label: string) => Promise<ExecutionOutcome>;
 }) {
@@ -783,7 +792,11 @@ function UpdateProjectDialog(props: {
                   <small>{repository.snapshot.detached ? (props.zh ? '游离提交状态，无法更新' : 'Detached HEAD; cannot update') : (repository.snapshot.upstream ?? (props.zh ? '没有跟踪远端' : 'No tracked remote'))}</small>
                   {repository.snapshot.fileStatuses.length > 0 ? <em>{props.zh ? `Smart Stash · ${repository.snapshot.fileStatuses.length} 个变化` : `Smart Stash · ${repository.snapshot.fileStatuses.length} changes`}</em> : null}
                   {result ? <i className={`is-${result}`}>{result === 'completed' ? (props.zh ? '已完成' : 'Completed') : props.zh ? '存在冲突' : 'Conflicts'}</i> : null}
-                  {result === null && results.some((item) => item.id === repository.id) ? <i className="is-error">{props.zh ? '失败' : 'Failed'}</i> : null}
+                  {result === null && results.some((item) => item.id === repository.id) ? (
+                    <i className="is-error">
+                      <VisibleApplicationError error={props.errorsByRepository[repository.id]} language={props.zh ? 'zh-CN' : 'en'} />
+                    </i>
+                  ) : null}
                 </span>
               );
             })}
@@ -1888,9 +1901,9 @@ function PushDialog(props: {
                 {resultMode ? (
                   result?.tone === 'success' ? (
                     <CheckCircle aria-hidden="true" />
-                  ) : (
+                  ) : result?.tone === 'warning' ? (
                     <WarningCircle aria-hidden="true" />
-                  )
+                  ) : null
                 ) : (
                   <input
                     type="checkbox"
@@ -1929,8 +1942,12 @@ function PushDialog(props: {
                   )}
                 </span>
                 <em>
-                  {result?.message ??
-                    (repository.snapshot.outgoingCommits.length > 0 ? (props.zh ? `${repository.snapshot.outgoingCommits.length} 个提交` : `${repository.snapshot.outgoingCommits.length} commits`) : props.zh ? '无需推送' : 'Up to date')}
+                  {result?.tone === 'error' ? (
+                    <VisibleApplicationError error={result.message} language={props.zh ? 'zh-CN' : 'en'} />
+                  ) : (
+                    (result?.message ??
+                    (repository.snapshot.outgoingCommits.length > 0 ? (props.zh ? `${repository.snapshot.outgoingCommits.length} 个提交` : `${repository.snapshot.outgoingCommits.length} commits`) : props.zh ? '无需推送' : 'Up to date'))
+                  )}
                 </em>
               </section>
             );
@@ -1984,9 +2001,8 @@ function displayStashSubject(subject: string, zh: boolean): string {
   return cleaned || (zh ? '未命名 Stash' : 'Untitled stash');
 }
 
-function errorMessage(error: unknown): string {
-  if (error instanceof Error && error.message.trim()) return error.message;
-  return typeof error === 'string' && error.trim() ? error : 'Git operation failed.';
+function errorMessage(error: unknown, zh: boolean): string {
+  return formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en');
 }
 
 function formatRelativeTime(value: string, zh: boolean): string {

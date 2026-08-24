@@ -16,7 +16,7 @@ import type {
 } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError, useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { TaskGitConflictWorkspace } from './TaskGitConflictWorkspace.js';
 import { type ConflictDocument, countUnresolvedConflictBlocks, createConflictDocument, serializeConflictForGit } from './taskConflictModel.js';
@@ -183,9 +183,6 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   const workspaceError = selectedWorkspace?.comparisonError ?? selectedWorkspace?.reviewError ?? null;
   useApplicationErrorDialog(error ?? workspaceError, {
     language: zh ? 'zh-CN' : 'en',
-    title: zh ? '代码交付操作失败' : 'Code delivery operation failed',
-    summary: error === targetBranchDirtyMessage(zh) ? error : undefined,
-    source: 'TaskGitMergeModal',
   });
   const targetBranch = selectedWorkspace?.sourceBranch ?? '';
   const workingFiles = useMemo(() => collectWorkingFiles(selectedWorkspace), [selectedWorkspace]);
@@ -857,21 +854,25 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                     <div>
                       <dt>{zh ? '来源分支远端' : 'Source branch remote'}</dt>
                       <dd>
-                        {!selectedWorkspace?.remoteName
-                          ? zh
-                            ? '纯本地模式'
-                            : 'Local-only mode'
-                          : selectedWorkspace.remoteRefreshError
-                            ? zh
-                              ? '远端信息暂不可用'
-                              : 'Remote information unavailable'
-                            : selectedWorkspace.sourceRemoteVerified
-                              ? zh
-                                ? '本机记录显示已推送'
-                                : 'Locally recorded as pushed'
-                              : zh
-                                ? '合入后可选推送'
-                                : 'Optional push after merge'}
+                        {!selectedWorkspace?.remoteName ? (
+                          zh ? (
+                            '纯本地模式'
+                          ) : (
+                            'Local-only mode'
+                          )
+                        ) : selectedWorkspace.remoteRefreshError ? (
+                          <VisibleApplicationError error={selectedWorkspace.remoteRefreshError} language={zh ? 'zh-CN' : 'en'} />
+                        ) : selectedWorkspace.sourceRemoteVerified ? (
+                          zh ? (
+                            '本机记录显示已推送'
+                          ) : (
+                            'Locally recorded as pushed'
+                          )
+                        ) : zh ? (
+                          '合入后可选推送'
+                        ) : (
+                          'Optional push after merge'
+                        )}
                       </dd>
                     </div>
                   </dl>
@@ -1012,9 +1013,9 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
 
 function InitialLoadState(props: { zh: boolean; error?: string | null; onRetry?: () => void }) {
   return (
-    <section className="task-git-delivery-load-state" role="status">
-      <strong>{props.error ? (props.zh ? '当前没有可显示的交付信息' : 'No delivery information is available') : props.zh ? '正在读取本机 Git 信息…' : 'Loading local Git information…'}</strong>
-      <small>{props.zh ? '这里只读取本机分支、提交和工作区，不会连接远端仓库。' : 'This reads local branches, commits, and worktrees without contacting a remote repository.'}</small>
+    <section className="task-git-delivery-load-state" role={props.error ? 'alert' : 'status'}>
+      {props.error ? <VisibleApplicationError error={props.error} language={props.zh ? 'zh-CN' : 'en'} /> : <strong>{props.zh ? '正在读取本机 Git 信息…' : 'Loading local Git information…'}</strong>}
+      {!props.error ? <small>{props.zh ? '这里只读取本机分支、提交和工作区，不会连接远端仓库。' : 'This reads local branches, commits, and worktrees without contacting a remote repository.'}</small> : null}
       {props.onRetry ? (
         <Button variant="secondary" size="compact" onClick={props.onRetry}>
           {props.zh ? '重新读取' : 'Retry'}
@@ -1113,9 +1114,6 @@ function DeliveryRepositoryFileTree(props: {
                       </label>
                     </header>
                     {props.detailStates[workspaceId] === 'loading' ? <small className="task-git-delivery-repository-state">{props.zh ? '正在读取文件…' : 'Loading files…'}</small> : null}
-                    {props.detailStates[workspaceId] === 'error' ? (
-                      <small className="task-git-delivery-repository-state is-error">{props.zh ? '读取失败，其他仓库仍可继续。' : 'Load failed; other repositories remain available.'}</small>
-                    ) : null}
                     {group.files.length > 0 ? (
                       <ol>
                         {group.files.map((file) => (
@@ -1315,7 +1313,7 @@ function workspaceStateLabel(workspace: TaskWorkspaceIndexSnapshot, detail: Task
   }
   if (workspace.state === 'discarded') return zh ? '已放弃' : 'Discarded';
   if (loadState === 'loading') return `${zh ? '正在读取…' : 'Loading…'}${activeSuffix}`;
-  if (loadState === 'error') return `${zh ? '读取失败' : 'Load failed'}${activeSuffix}`;
+  if (loadState === 'error') return activeSuffix;
   if (!detail) return `${zh ? '尚未读取' : 'Not loaded'}${activeSuffix}`;
   const workingCount = collectWorkingFiles(detail).length;
   if (workingCount > 0) return `${zh ? `${workingCount} 个未提交文件` : `${workingCount} uncommitted file(s)`}${activeSuffix}`;
@@ -1458,28 +1456,7 @@ function isTargetHeadChanged(error: unknown): boolean {
 }
 
 function errorMessage(error: unknown, zh: boolean): string {
-  if (error instanceof ZeusApiError && error.error === 'ZEUS_TARGET_BRANCH_DIRTY') return targetBranchDirtyMessage(zh);
-  if (zh && error instanceof ZeusApiError) {
-    const localizedMessages: Record<string, string> = {
-      ZEUS_TASK_WORKSPACE_NOT_FOUND: '当前任务工作区已不存在，请关闭后重新打开该任务的代码交付。',
-      ZEUS_TASK_WORKSPACE_CONFLICTED: '任务工作区存在未解决冲突，请先完成冲突处理。',
-      ZEUS_TASK_WORKSPACE_DIRTY: '任务分支还有未提交代码，请先完成提交再合入。',
-      ZEUS_TASK_WORKTREE_UNAVAILABLE: '任务 worktree 当前不可用，不能执行提交或任务分支推送。',
-      ZEUS_TARGET_BRANCH_UNAVAILABLE: '来源分支当前不可用，请确认本地分支状态。',
-      ZEUS_TARGET_HEAD_CHANGED: '来源分支在合入期间发生变化，正在从最新本地提交安全重建。',
-      ZEUS_TASK_HEAD_CHANGED: '任务分支在合入候选创建后发生变化，请确认后重新合入。',
-      ZEUS_TASK_REMOTE_DIVERGED: '远端来源分支包含本地没有的提交，已停止普通推送；请先人工处理分支差异。',
-      ZEUS_GIT_REMOTE_REFRESH_FAILED: '推送前刷新远端失败；本地提交和合入结果不受影响，请检查网络或仓库凭据。',
-      ZEUS_TASK_REMOTE_VERIFICATION_FAILED: '远端提交校验失败，请检查网络和远端分支状态后重试。',
-      ZEUS_GIT_COMMAND_FAILED: 'Git 操作失败，请检查分支和远端状态后重试。',
-    };
-    if (error.error && localizedMessages[error.error]) return localizedMessages[error.error];
-  }
-  return error instanceof Error ? error.message : String(error);
-}
-
-function targetBranchDirtyMessage(zh: boolean): string {
-  return zh ? '来源分支存在未提交代码，请先处理后再合入。' : 'The source branch has uncommitted changes. Resolve them before merging.';
+  return formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en');
 }
 
 function isTargetBranchDirty(error: unknown): boolean {
