@@ -44,6 +44,10 @@ import {
   type RuntimeConfirmationStatusState,
   type WorkspaceViewId,
 } from './workspaceSupport.js';
+
+const defaultVisibleConversationCount = 6;
+const additionalVisibleConversationCount = 10;
+
 export function ProjectCreateDialog(props: {
   open: boolean;
   form: ProjectCreateFormState;
@@ -368,6 +372,17 @@ export function SidebarNav(props: {
       return;
     }
     setProjectSearchOpen(true);
+  };
+  const toggleProjectCollapsed = (projectId: string, expanded: boolean) => {
+    if (expanded) {
+      setVisibleConversationCountByProject((current) => {
+        if (current[projectId] === undefined) return current;
+        const next = { ...current };
+        delete next[projectId];
+        return next;
+      });
+    }
+    props.onToggleProjectCollapsed(projectId);
   };
   const handleProjectSearchKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
     if (event.key !== 'Escape') return;
@@ -731,7 +746,7 @@ export function SidebarNav(props: {
                       className="project-disclosure-button"
                       aria-label={`${expanded ? copy.collapseProjectPrefix : copy.expandProjectPrefix}${copy.labelSeparator}${project.name}`}
                       aria-expanded={expanded}
-                      onClick={() => props.onToggleProjectCollapsed(project.id)}
+                      onClick={() => toggleProjectCollapsed(project.id, expanded)}
                     >
                       <span aria-hidden="true">›</span>
                     </button>
@@ -793,11 +808,11 @@ export function SidebarNav(props: {
                         compactProjectLabel
                         showEmptyState={false}
                         query={projectMatchesSearch ? '' : projectSearchQuery}
-                        visibleConversationCount={visibleConversationCountByProject[project.id] ?? 6}
+                        visibleConversationCount={visibleConversationCountByProject[project.id] ?? defaultVisibleConversationCount}
                         onShowMore={() =>
                           setVisibleConversationCountByProject((current) => ({
                             ...current,
-                            [project.id]: (current[project.id] ?? 6) + 10,
+                            [project.id]: (current[project.id] ?? defaultVisibleConversationCount) + additionalVisibleConversationCount,
                           }))
                         }
                         organization={props.conversationOrganization}
