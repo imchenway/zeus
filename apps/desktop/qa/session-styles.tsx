@@ -761,6 +761,14 @@ const startingSessionState: NativeSessionState = {
   providerThreadId: 'motion-starting-thread',
 };
 
+const failedStartingSessionState: NativeSessionState = {
+  ...startingSessionState,
+  conversationState: 'turn_failed',
+  activeTurnId: null,
+  startedTurnId: null,
+  queue: { state: { type: 'idle' }, submissions: [] },
+};
+
 const coldHistorySessionState: NativeSessionState = {
   ...createInitialSessionState(),
   transportState: 'hydrating',
@@ -1341,6 +1349,30 @@ function DeliveryFailurePreview() {
   );
 }
 
+function CreationFailureExclusivityPreview() {
+  return (
+    <section className="qa-motion-send-preview session-codex-parity-v1" data-testid="creation-failure-exclusivity-preview">
+      <div>
+        <h3>创建失败与思考状态互斥</h3>
+        <small>失败后只保留完整宽度错误与重试入口，不能继续显示“正在思考”。</small>
+      </div>
+      <div className="qa-send-transcript ai-workspace">
+        <ConversationTranscript
+          state={failedStartingSessionState}
+          language="zh-CN"
+          creationStatus={{
+            state: 'failed',
+            message: '连接失败',
+            error: { code: 'ZEUS_CODEX_RPC_TIMEOUT', message: 'Codex app-server request timed out: account/read' },
+            retryLabel: '重试',
+            onRetry: () => undefined,
+          }}
+        />
+      </div>
+    </section>
+  );
+}
+
 function PlanCustomAnswerProjectionPreview() {
   return (
     <section className="qa-motion-send-preview session-codex-parity-v1" data-testid="plan-custom-answer-projection-preview">
@@ -1439,6 +1471,7 @@ function MotionApp() {
       <InterruptedProcessPreview />
       <SendScrollPreview />
       <DeliveryFailurePreview />
+      <CreationFailureExclusivityPreview />
       <PlanCustomAnswerProjectionPreview />
       <HistoryPagingPreview />
       <LongScrollPreview />

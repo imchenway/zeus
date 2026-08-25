@@ -654,7 +654,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
     },
     [],
   );
-  const conversations = [...(props.conversations ?? [])].filter((conversation) => props.terminalReadOnly || !conversation.archived).sort(compareConversationCreatedAsc);
+  const conversations = [...(props.conversations ?? [])].sort(compareConversationCreatedAsc);
   const taskWorkspaces = Array.from(
     new Map(
       conversations

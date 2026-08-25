@@ -1890,6 +1890,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
           allowCodeChanges: false,
           allowTests: false,
           allowGitCommit: false,
+          // 本地接纳完成后立即切入审查会话；首次 Provider 派发由统一队列异步执行。
+          deferInitialDispatch: true,
           idempotencyKey,
           clientUserMessageId,
           providerWriteLifecycle: reservedLifecycle,

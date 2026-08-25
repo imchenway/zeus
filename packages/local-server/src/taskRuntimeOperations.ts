@@ -140,7 +140,9 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
   ) {
     try {
       const codexCapabilities = codexNativeEnabled ? await codexAppServerManager.ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) }) : null;
-      const codexAccount = codexCapabilities ? await codexAppServerManager.readAccount(options.refreshCodexAccount ? { refreshToken: true } : undefined) : conversationCapabilityQueries.unavailableCodexAccount();
+      const codexAccount = codexCapabilities
+        ? await codexAppServerManager.readAccount({ refreshToken: options.refreshCodexAccount === true, allowCachedOnTransportFailure: options.refreshCodexAccount !== true })
+        : conversationCapabilityQueries.unavailableCodexAccount();
       return conversationCapabilityQueries.buildConversationCapabilities(project, codexCapabilities, codexAccount);
     } catch (error) {
       if (!options.allowPiWhenCodexUnavailable) throw error;
@@ -152,7 +154,7 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
 
   async function assertCodexAccountReady(modelSourceId: string | null = 'codex', model = ''): Promise<void> {
     if (model && (await resolveResponsesRuntime({ modelSourceId, model }))) return;
-    const account = await codexAppServerManager.readAccount({ refreshToken: true });
+    const account = await codexAppServerManager.readAccount({ refreshToken: false, allowCachedOnTransportFailure: true, preferCached: true });
     if (!account.requiresOpenaiAuth || account.signedIn) return;
     throw nativeApiError('ZEUS_CODEX_LOGIN_REQUIRED', 'Zeus 专属 Codex 尚未登录。请先完成登录，再创建会话。');
   }

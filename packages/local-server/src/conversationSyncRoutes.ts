@@ -18,8 +18,12 @@ export interface ConversationSyncRoutePorts {
   subscribers: Set<ConversationRealtimeSocket>;
   isAuthorizedRealtimeRequest(request: FastifyRequest): boolean;
   isNativeConversation(conversationId: string, projectId?: string): boolean;
+  /** 当前打开的会话按 Provider 水位补齐移动端新轮次与遗漏终态。 */
+  synchronizeConversation?(conversationId: string): Promise<void>;
   serverIdentity(): { app: string; host: string; port: number };
 }
+
+const providerCatchUpIntervalMs = 5_000;
 
 /**
  * 注册耐久会话增量的 WebSocket replay 与 HTTP cursor 补页。
@@ -54,7 +58,25 @@ export function registerConversationSyncRoutes(ports: ConversationSyncRoutePorts
       );
       if (conversationId) replayConversationPage(ports, subscriber, conversationId, afterSequence);
       ports.subscribers.add(subscriber);
-      subscriber.on('close', () => ports.subscribers.delete(subscriber));
+      let catchUpInFlight = false;
+      const catchUp = (): void => {
+        if (!conversationId || !ports.synchronizeConversation || catchUpInFlight) return;
+        catchUpInFlight = true;
+        void ports
+          .synchronizeConversation(conversationId)
+          // 后台追赶的瞬时网络失败留待下一周期重试，不能污染当前轮次或制造红色消息。
+          .catch(() => undefined)
+          .finally(() => {
+            catchUpInFlight = false;
+          });
+      };
+      catchUp();
+      const catchUpTimer = conversationId && ports.synchronizeConversation ? setInterval(catchUp, providerCatchUpIntervalMs) : null;
+      catchUpTimer?.unref?.();
+      subscriber.on('close', () => {
+        if (catchUpTimer) clearInterval(catchUpTimer);
+        ports.subscribers.delete(subscriber);
+      });
     } catch {
       subscriber.close(1011, 'Conversation sync replay failed; fetch a new authoritative snapshot.');
     }

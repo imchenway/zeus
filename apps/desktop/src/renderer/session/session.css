@@ -14154,6 +14154,12 @@
 
 .session-creation-status.is-failed {
   color: var(--session-danger);
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.session-creation-status.is-failed > :first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .session-creation-status.is-warning {

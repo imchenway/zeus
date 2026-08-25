@@ -92,7 +92,8 @@ export class ConversationChoiceQueryApplication {
   }
 
   buildProjectGroups(projectId: string) {
-    const records = this.ports.conversations.listRecordsByProject(projectId);
+    // 项目侧边栏仍只展示未归档普通会话；任务详情必须同时取得全部归档历史。
+    const records = [...this.ports.conversations.listRecordsByProject(projectId), ...this.ports.conversations.listRecordsByProject(projectId, { archived: true })];
     const context = this.buildContext(projectId);
     const projectChoices: ReturnType<ConversationChoiceQueryApplication['toChoice']>[] = [];
     const taskChoices = new Map<string, ReturnType<ConversationChoiceQueryApplication['toChoice']>[]>(this.ports.tasks.listByProject(projectId).map((task) => [task.id, []]));
@@ -101,6 +102,7 @@ export class ConversationChoiceQueryApplication {
         if (this.isVisibleProjectConversation(conversation)) projectChoices.push(this.toChoice(conversation, context));
         continue;
       }
+      if (!this.isMeaningfulTaskHistoryItem(conversation)) continue;
       const choices = taskChoices.get(conversation.taskId) ?? [];
       choices.push(this.toChoice(conversation, context));
       taskChoices.set(conversation.taskId, choices);
@@ -116,7 +118,9 @@ export class ConversationChoiceQueryApplication {
   listArchivedChoices() {
     const history: ZeusConversationRecord[] = [];
     for (const project of [...this.ports.projects.list(), ...this.ports.projects.listArchived()]) {
-      history.push(...this.ports.conversations.listRecordsByProject(project.id, { archived: true }).filter((conversation) => conversation.taskId !== null || this.isProjectHistoryItem(conversation)));
+      history.push(
+        ...this.ports.conversations.listRecordsByProject(project.id, { archived: true }).filter((conversation) => (conversation.taskId !== null ? this.isMeaningfulTaskHistoryItem(conversation) : this.isProjectHistoryItem(conversation))),
+      );
     }
     return history.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)).map((conversation) => this.toChoice(conversation, this.buildContext(conversation.projectId)));
   }
@@ -172,7 +176,7 @@ export class ConversationChoiceQueryApplication {
 
   listTaskHistory(taskId: string, projectId: string): ZeusConversationRecord[] {
     return [...this.ports.conversations.listRecordsByTask(taskId), ...this.ports.conversations.listRecordsByTask(taskId, { archived: true })]
-      .filter((conversation) => conversation.projectId === projectId)
+      .filter((conversation) => conversation.projectId === projectId && this.isMeaningfulTaskHistoryItem(conversation))
       .sort(compareConversationStageUpdatedDesc);
   }
 
@@ -189,6 +193,16 @@ export class ConversationChoiceQueryApplication {
 
   private isProjectHistoryItem(conversation: ZeusConversationRecord): boolean {
     return conversation.taskId !== null || !this.isEphemeral(conversation);
+  }
+
+  /**
+   * Provider 从未绑定且首次提交已被取消/删除的原生壳没有可查看的消息。
+   * 审计记录仍保留在数据库，但不能冒充任务关联会话、挤掉真实历史。
+   */
+  private isMeaningfulTaskHistoryItem(conversation: ZeusConversationRecord): boolean {
+    if (conversation.transportKind !== 'codex_native' || conversation.providerThreadId?.trim()) return true;
+    const firstSubmission = this.ports.submissions.getFirstByConversation(conversation.id);
+    return firstSubmission?.status !== 'cancelled' && firstSubmission?.status !== 'deleted';
   }
 
   private isEphemeral(conversation: Pick<ZeusConversationRecord, 'id'>): boolean {

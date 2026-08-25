@@ -100,6 +100,7 @@ import { parseCanonicalRequestUserInputQuestions, validateCanonicalRequestUserIn
 import { createCodexExternalRequestAnswerRecovery } from './codexExternalRequestAnswerRecovery.js';
 import { createCodexModelRequestTimingTracker } from './codexModelRequestTiming.js';
 import { assertCallerDoesNotOverrideCompiledContext, mergeCodexAdditionalContext, readCodexAdditionalContext } from './codexNativeContextProtocol.js';
+import { createCodexNativeConversationAccess } from './codexNativeConversationAccess.js';
 import { inferNativeConversationRunState, interruptedQueueSubmissions } from './codexNativeRunStateProjection.js';
 import { chooseNativeUserMessageContent, type ResolvedNativeUserMessageSubmission, resolveNativeUserMessageSubmission } from './codexNativeUserMessageProjection.js';
 import { runCodexPortableContextCompaction } from './codexPortableContextCompaction.js';
@@ -108,6 +109,7 @@ import { codexProviderEventIdentity, createCodexProviderEventFlow } from './code
 import { projectCodexProviderEvent } from './codexProviderEventProjection.js';
 import { createCodexProviderHistoryProjection } from './codexProviderHistoryProjection.js';
 import { createCodexProviderThreadAuthorityApplication } from './codexProviderThreadAuthority.js';
+import { createCodexRemoteControlConversationSyncApplication } from './codexRemoteControlConversationSyncApplication.js';
 import type { CodexUsageService } from './codexUsageService.js';
 import type { ContextDispatchEnvelope } from './contextDispatchService.js';
 import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
@@ -232,6 +234,8 @@ export interface CodexNativeConversationRuntime extends CodexNativeConversationC
   waitForTurnResult(input: WaitForNativeTurnResultInput): Promise<NativeTurnResult>;
   /** 仅依据已持久的终态轮次和精确消息身份收口历史提交，不连接 Provider。 */
   reconcilePersistedTerminalSubmissions(): Promise<number>;
+  synchronizeOpenConversation(input: { conversationId: string }): Promise<void>;
+  synchronizeConversations(input: { conversationIds: readonly string[] }): Promise<void>;
   close(input?: { mode: 'handoff' | 'final' }): Promise<void>;
 }
 
@@ -245,6 +249,7 @@ function isRuntimeRejected(error: unknown): boolean {
 export function createCodexNativeConversationCoordinator(options: CreateCodexNativeConversationCoordinatorOptions): CodexNativeConversationRuntime {
   const now = options.now ?? (() => new Date().toISOString());
   const operationId = options.operationId ?? randomUUID;
+  const { requireConversation, requireProductConversation, requireOwnedSubmission } = createCodexNativeConversationAccess(options);
   const planActions = options.planActions ?? new ConversationPlanActionRepository(options.db);
   const goals = options.goals ?? new ConversationGoalRepository(options.db);
   const resources = options.resources ?? new ConversationResourceRepository(options.db);
@@ -985,7 +990,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   /** 创建任何产品会话前复验账号，避免先持久化一条必然失败的占位会话。 */
   async function assertCodexAccountReady(modelSourceId: string | null, model: string): Promise<void> {
     if (options.resolveResponsesRuntime && (await options.resolveResponsesRuntime({ modelSourceId, model }))) return;
-    const account = await options.manager.readAccount({ refreshToken: true });
+    const account = await options.manager.readAccount({ refreshToken: false, allowCachedOnTransportFailure: true, preferCached: true });
     if (!account.requiresOpenaiAuth || account.signedIn) return;
     throw coordinatorError('ZEUS_CODEX_LOGIN_REQUIRED', 'Zeus 专属 Codex 尚未登录。请先完成登录，再创建会话。');
   }
@@ -3419,6 +3424,17 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     requestQueueDrain,
   });
 
+  const { synchronizeOpenConversation, synchronizeConversations } = createCodexRemoteControlConversationSyncApplication({
+    isClosed: () => closing || closed,
+    manager: options.manager,
+    syncCheckpoints,
+    turns: options.turns,
+    getConversation: (conversationId) => options.conversations.getById(conversationId),
+    ensureGenerationReconciled,
+    reconcile: (conversation) => enqueueProviderTurnReconciliation(conversation, { priority: 'control' }),
+    persist,
+  });
+
   function failSubmissionBeforeProviderDispatch(submission: ZeusConversationSubmissionRecord): void {
     const timestamp = now();
     options.submissions.updateStatus(submission.id, 'failed', {
@@ -3812,6 +3828,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     pauseGoal,
     resumeGoal,
     clearGoal,
+    synchronizeOpenConversation,
+    synchronizeConversations,
     recover,
     close(input = { mode: 'final' }) {
       if (input.mode === 'handoff') {
@@ -3970,28 +3988,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       return finalizationPromise;
     },
   };
-
-  function requireConversation(conversationId: string): ZeusConversationWithMessagesRecord {
-    const conversation = requireProductConversation(conversationId);
-    if (conversation.agentKind !== 'codex') {
-      throw coordinatorError('ZEUS_NATIVE_CONVERSATION_NOT_FOUND', 'Codex native conversation was not found.');
-    }
-    return conversation;
-  }
-
-  function requireProductConversation(conversationId: string): ZeusConversationWithMessagesRecord {
-    const conversation = options.conversations.getById(conversationId);
-    if (!conversation || conversation.transportKind !== 'codex_native') {
-      throw coordinatorError('ZEUS_NATIVE_CONVERSATION_NOT_FOUND', 'Native product conversation was not found.');
-    }
-    return conversation;
-  }
-
-  function requireOwnedSubmission(conversationId: string, submissionId: string): ZeusConversationSubmissionRecord {
-    const submission = options.submissions.getById(submissionId);
-    if (!submission || submission.conversationId !== conversationId) throw coordinatorError('ZEUS_NATIVE_SUBMISSION_NOT_FOUND', 'Native submission was not found.');
-    return submission;
-  }
 
   function accepted(submission: ZeusConversationSubmissionRecord, status: NativeAcceptedOperation['status'], providerThreadId: string | null, providerTurnId: string | null): NativeAcceptedOperation {
     return { operationId: operationId(), conversationId: submission.conversationId, submissionId: submission.id, status, providerThreadId, providerTurnId };

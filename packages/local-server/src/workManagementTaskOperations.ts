@@ -186,7 +186,8 @@ export class WorkManagementTaskOperations<TCleanup, TConversation extends Reopen
     if (this.options.isManagementStatusTerminal(existing) && !targetIsTerminal) {
       const history = this.options.listTaskConversationHistory(existing.id, existing.projectId);
       const requestedId = input.reopenConversationId?.trim();
-      reopenTarget = (requestedId ? history.find((conversation) => conversation.id === requestedId) : history.find((conversation) => conversation.archived)) ?? null;
+      // 状态变更本身不代表用户选择了某条历史会话；只有显式指定才恢复精确会话。
+      reopenTarget = requestedId ? (history.find((conversation) => conversation.id === requestedId) ?? null) : null;
       if (requestedId && !reopenTarget) throw routeError(409, 'ZEUS_TASK_REOPEN_CONVERSATION_NOT_FOUND', 'The selected conversation does not belong to this task.');
     }
     const state = {

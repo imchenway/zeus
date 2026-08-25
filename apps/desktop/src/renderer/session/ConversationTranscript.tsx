@@ -201,8 +201,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     suspendAutomaticAnchor: historyAnchorRowKey !== null,
   });
   const projectedTurnWorkIds = useMemo(() => new Set(turnRows.filter((row): row is TranscriptTurnWorkRow => row.kind === 'turn_work').map((row) => row.turnId)), [turnRows]);
-  const lastItemKeyByTurn = useMemo(() => lastVisibleItemKeyByTurn(transcriptRows), [transcriptRows]);
-  const artifactAnchorKeyByTurn = useMemo(() => turnArtifactAnchorKeyByTurn(transcriptRows), [transcriptRows]);
+  const completionAnchorKeyByTurn = useMemo(() => turnArtifactAnchorKeyByTurn(transcriptRows), [transcriptRows]);
   const orphanFailedTurns = useMemo(() => {
     const visibleTurnIds = new Set(transcriptRows.map(transcriptRowTurnId).filter((turnId): turnId is string => Boolean(turnId)));
     return Object.values(props.state.turnsByProviderId)
@@ -213,10 +212,11 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const motionFocus = props.historyOnly ? null : resolveSessionMotionFocus(props.state, transcriptItems, showActiveStatus);
   const activeStatusKind = props.state.conversationState === 'starting_turn' ? 'starting' : 'thinking';
   const creatingSession = props.creationStatus?.state === 'creating';
+  const creationFailed = props.creationStatus?.state === 'failed';
   const realTurnStarted = Boolean(activeTurnId);
   // 创建期只保留一个主进度：真实轮次建立前显示连接，建立后由轮次状态或真实过程内容接管。
   const showCreationStatus = Boolean(props.creationStatus) && !(creatingSession && realTurnStarted);
-  const showStandaloneActiveStatus = showActiveStatus && !(creatingSession && !realTurnStarted);
+  const showStandaloneActiveStatus = showActiveStatus && !creationFailed && !(creatingSession && !realTurnStarted);
   const awaitingReplyMessageIdsKey = items
     .filter(isOptimisticMessageAwaitingReply)
     .map((item) => item.clientUserMessageId)
@@ -482,8 +482,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           </SessionTurnProcessDisclosure>
         );
       }
-      const containsLastItem = row.rows.some((child) => transcriptRowContainsItemKey(child, lastItemKeyByTurn[row.turnId]));
-      const containsArtifactAnchor = row.rows.some((child) => transcriptRowContainsItemKey(child, artifactAnchorKeyByTurn[row.turnId]));
+      const containsCompletionAnchor = row.rows.some((child) => transcriptRowContainsItemKey(child, completionAnchorKeyByTurn[row.turnId]));
       const active = isActiveSessionTurn(turn);
       const v2PagingKey = turn.providerTurnId ?? turn.id;
       const processPaging = turnDetailPaging(props.state.snapshot, v2PagingKey);
@@ -502,10 +501,12 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       });
       return (
         <>
-          {active ? (
+          {active && containsCompletionAnchor ? (
             <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language}>
               {process}
             </SessionTurnDuration>
+          ) : active ? (
+            process
           ) : (
             <SessionTurnProcessDisclosure
               language={props.language}
@@ -524,8 +525,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
               ) : null}
             </SessionTurnProcessDisclosure>
           )}
-          {!active && containsArtifactAnchor ? renderTurnArtifacts(row.turnId, renderProps, artifactAnchorKeyByTurn[row.turnId]) : null}
-          {!active && containsLastItem ? (
+          {!active && containsCompletionAnchor ? renderTurnArtifacts(row.turnId, renderProps, completionAnchorKeyByTurn[row.turnId]) : null}
+          {!active && containsCompletionAnchor ? (
             <>
               <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} />
             </>
@@ -536,8 +537,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     const rowItems = row.kind === 'item' ? [row.item] : row.items;
     const lastRowItem = rowItems[rowItems.length - 1]!;
     const turn = props.state.turnsByProviderId[lastRowItem.turnId];
-    const closesVisibleTurn = lastItemKeyByTurn[lastRowItem.turnId] === lastRowItem.key;
-    const anchorsTurnArtifacts = artifactAnchorKeyByTurn[lastRowItem.turnId] === lastRowItem.key;
+    const closesVisibleTurn = completionAnchorKeyByTurn[lastRowItem.turnId] === lastRowItem.key;
+    const anchorsTurnArtifacts = closesVisibleTurn;
     const v2PagingKey = turn?.providerTurnId ?? turn?.id ?? lastRowItem.turnId;
     const expansionKey = turnProcessExpansionKey(v2PagingKey);
     const v2ProcessPaging = turnDetailPaging(props.state.snapshot, v2PagingKey);
@@ -570,7 +571,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           </SessionTurnProcessDisclosure>
         ) : null}
         {anchorsTurnArtifacts ? renderTurnArtifacts(lastRowItem.turnId, renderProps, lastRowItem.key) : null}
-        {closesVisibleTurn && turn && !isActiveSessionTurn(turn) ? <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} /> : null}
+        {closesVisibleTurn && turn ? <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} /> : null}
       </>
     );
   };
@@ -1185,7 +1186,8 @@ export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[],
         }
       }
     }
-    if (turnId && lastTimelineIndexByTurn.get(turnId) === index) {
+    // 思考摘要只表示当前活动，轮次完成后不能把最后一条内部摘要重新追加到正文末尾。
+    if (turnId && turnId === effectiveActiveTurnId && lastTimelineIndexByTurn.get(turnId) === index) {
       const latestReasoning = latestReasoningByTurn.get(turnId);
       if (latestReasoning) rows.push({ kind: 'item', key: `current-reasoning:${turnId}`, item: latestReasoning });
     }

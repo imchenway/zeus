@@ -656,6 +656,10 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       const conversation = conversations.getRecordById(conversationId);
       return Boolean(conversation && conversation.transportKind === 'codex_native' && (projectId === undefined || conversation.projectId === projectId));
     },
+    synchronizeConversation: async (conversationId) => {
+      if (readOnlyValidation) return;
+      await codexNativeCoordinator.synchronizeOpenConversation({ conversationId });
+    },
     serverIdentity: () => {
       const boundPort = getBoundPort();
       if (boundPort === null) throw new Error('Zeus local-server 尚未完成监听，不能发布实时连接身份。');
@@ -2007,7 +2011,14 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     mapDomainError: mapWorkManagementTaskDomainError,
   });
 
-  registerConversationChoiceQueryRoutes({ server, application: conversationChoiceQueries });
+  registerConversationChoiceQueryRoutes({
+    server,
+    application: conversationChoiceQueries,
+    synchronizeConversations: async (conversationIds) => {
+      if (readOnlyValidation) return;
+      await codexNativeCoordinator.synchronizeConversations({ conversationIds });
+    },
+  });
 
   server.get('/api/codex/account', async (_request, reply) => {
     try {

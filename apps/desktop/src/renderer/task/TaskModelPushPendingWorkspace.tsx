@@ -107,8 +107,50 @@ export function retryTaskModelPushPendingState(pending: TaskModelPushPendingStat
 }
 
 export function failTaskModelPushPendingState(pending: TaskModelPushPendingState, message: string): TaskModelPushPendingState {
+  const failedAt = new Date().toISOString();
+  const failedItems = Object.fromEntries(
+    Object.entries(pending.session.items).map(([key, item]) => [
+      key,
+      item.clientUserMessageId === pending.request.clientUserMessageId
+        ? {
+            ...item,
+            status: 'failed',
+            updatedAt: failedAt,
+          }
+        : item,
+    ]),
+  );
   return {
     ...pending,
+    choice: {
+      ...pending.choice,
+      taskPushCreating: false,
+      status: 'failed',
+      stage: 'failed',
+      stageUpdatedAt: failedAt,
+      providerState: 'failed',
+      updatedAt: failedAt,
+      listRuntimeState: 'error',
+      taskRunStatus: 'failed',
+    },
+    session: {
+      ...pending.session,
+      conversationState: 'turn_failed',
+      activeTurnId: null,
+      startedTurnId: null,
+      items: failedItems,
+      transcriptRevision: pending.session.transcriptRevision + 1,
+      queue: {
+        state: { type: 'idle' },
+        submissions: [],
+      },
+      error: {
+        message,
+        code: 'ZEUS_TASK_MODEL_PUSH_CREATION_FAILED',
+        recoveryRequired: false,
+        retryable: true,
+      },
+    },
     status: 'failed',
     error: message,
   };

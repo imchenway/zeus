@@ -619,7 +619,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       suppressComposer={props.suppressComposer || (!props.historyOnly && Boolean(props.readOnlyGate))}
       historyOnly={historySnapshotOnly}
       projectPersistedPlans
-      quickActionsSuppressed={props.quickActionsSuppressed || historySnapshotOnly}
+      quickActionsSuppressed={props.quickActionsSuppressed}
       taskManagementStatusChangeBusy={props.taskManagementStatusChangeBusy}
       readOnlyGate={props.historyOnly ? undefined : props.readOnlyGate}
       subagentListSnapshot={subagentListSnapshot}

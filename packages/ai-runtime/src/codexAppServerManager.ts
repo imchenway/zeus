@@ -399,7 +399,7 @@ export interface CodexAppServerManager {
   }): Promise<CodexCapabilitiesSnapshot>;
   /** 在运行身份不变时也激活新世代；多世代管理器保留旧活动轮次并让其自然排空。 */
   activateFreshGeneration?(input: { commandPath: string; externalAgentHome?: string; remoteControl?: boolean; providerEnvironment?: Record<string, string> }): Promise<CodexCapabilitiesSnapshot>;
-  readAccount(input?: { refreshToken?: boolean }): Promise<CodexAccountSnapshot>;
+  readAccount(input?: { refreshToken?: boolean; allowCachedOnTransportFailure?: boolean; preferCached?: boolean }): Promise<CodexAccountSnapshot>;
   readAccountRateLimits(): Promise<CodexAccountRateLimitsSnapshot>;
   readAccountUsage(): Promise<CodexAccountUsageSnapshot>;
   startChatGptLogin(): Promise<CodexChatGptLogin>;
@@ -539,6 +539,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
   let eventSequence = 0;
   let diagnosticSequence = 0;
   let remoteControlEnabled = false;
+  let lastAccountSnapshot: CodexAccountSnapshot | null = null;
   let preparingForShutdown = false;
   let closePromise: Promise<void> | null = null;
   const pendingEventDeliveryCounts = new WeakMap<CodexAppServerProcess, number>();
@@ -1015,13 +1016,26 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     },
     async readAccount(input = {}) {
       const capabilities = await awaitCapabilities();
-      return parseAccountSnapshot(
-        await rpc(capabilities.generationId, 'account/read', {
-          refreshToken: input.refreshToken === true,
-        }),
-        capabilities.generationId,
-        accountFingerprintSalt,
-      );
+      if (input.preferCached === true && input.refreshToken !== true && lastAccountSnapshot?.generationId === capabilities.generationId) return lastAccountSnapshot;
+      try {
+        const snapshot = parseAccountSnapshot(
+          await rpc(
+            capabilities.generationId,
+            'account/read',
+            {
+              refreshToken: input.refreshToken === true,
+            },
+            { priorityRead: input.refreshToken !== true },
+          ),
+          capabilities.generationId,
+          accountFingerprintSalt,
+        );
+        lastAccountSnapshot = snapshot;
+        return snapshot;
+      } catch (error) {
+        if (input.allowCachedOnTransportFailure === true && lastAccountSnapshot?.generationId === capabilities.generationId && isAccountReadTransportFailure(error)) return lastAccountSnapshot;
+        throw error;
+      }
     },
     async readAccountRateLimits() {
       const capabilities = await awaitCapabilities();
@@ -2188,6 +2202,21 @@ function summarizeStderr(value: string): string {
 
 function managerError(code: string, message: string): Error {
   return Object.assign(new Error(message), { code });
+}
+
+function isAccountReadTransportFailure(error: unknown): boolean {
+  if (!error || typeof error !== 'object' || !('code' in error)) return false;
+  const code = error.code;
+  return (
+    code === 'ZEUS_CODEX_RPC_TIMEOUT' ||
+    code === 'ZEUS_CODEX_NOT_READY' ||
+    code === 'ZEUS_CODEX_STALE_GENERATION' ||
+    code === 'ZEUS_CODEX_GENERATION_EXITED' ||
+    code === 'EPIPE' ||
+    code === 'ECONNRESET' ||
+    code === 'ECONNREFUSED' ||
+    code === 'ETIMEDOUT'
+  );
 }
 
 function asError(error: unknown): Error {
