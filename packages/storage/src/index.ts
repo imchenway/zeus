@@ -13,7 +13,7 @@ import { CONVERSATION_HOT_QUERY_INDEX_CHECKSUM_SOURCE, CONVERSATION_HOT_QUERY_IN
 import { migrateUnifiedConversationStoreSchema } from './conversationExecutionStore.js';
 import { migrateConversationLegacyCutoverSchema } from './conversationLegacyCutover.js';
 import { migrateCompletedProviderPlansToConversationHistory, migrateConversationProviderItemStoreSchema } from './conversationProviderItemStore.js';
-import { migrateConversationSyncEventStoreSchema } from './conversationSyncEventStore.js';
+import { migrateConversationSyncEventStoreSchema, migrateConversationSyncProtocolV2 } from './conversationSyncEventStore.js';
 import { DatabasePerformanceCollector, type DatabasePerformanceSnapshot } from './databasePerformance.js';
 import { migrateExecutionHostHandoffSchema } from './executionHostHandoffStore.js';
 import { migrateExecutionHostWorkSchema } from './executionHostWorkStore.js';
@@ -1106,6 +1106,7 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
     migrateCompletedProviderPlansToConversationHistory(zeusDb);
     migrateArtifactStoreSchema(zeusDb);
     migrateConversationSyncEventStoreSchema(zeusDb);
+    migrateConversationSyncProtocolV2(zeusDb);
     migrateLongTermMemorySchema(zeusDb);
     migrateColdEvidenceSchema(zeusDb);
     migrateExecutionHostWorkSchema(zeusDb);

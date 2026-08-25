@@ -674,7 +674,7 @@ export class ConversationRepository {
 
   /**
    * 会话列表时间只描述用户能理解的真实活动，不使用会被打开、水合、统计或归档维护推进的 conversations.updated_at。
-   * 这里刻意不读取 conversation_items.updated_at：历史回填会重写该表，且该表没有 conversation_id 时间索引。
+   * 这里刻意不读取旧 item 投影的更新时间：历史回填会重写该投影，且它没有按会话时间查询的索引。
    */
   meaningfulActivityAt(conversationId: string): string {
     const row = this.db.get<{

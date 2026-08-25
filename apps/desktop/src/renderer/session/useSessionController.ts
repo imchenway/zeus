@@ -47,7 +47,7 @@ export const reconnectBackoffMs = [250, 500, 1_000, 2_000, 5_000] as const;
 // 同一个会话项的增量按一帧窗口合并，兼顾 Markdown 成本与首字可见延迟。
 const RENDER_DELTA_COALESCE_MS = 16;
 const CONVERSATION_SCHEMA_GENERATION = '2026-08-16-unified-conversation-segments' as const;
-const CONVERSATION_SYNC_STREAM_GENERATION = 'zeus-conversation-sync-v1' as const;
+const CONVERSATION_SYNC_STREAM_GENERATION = 'zeus-conversation-sync-v2' as const;
 export const conversationHydrationTimeoutMs = 20_000;
 export const conversationRealtimeOpenTimeoutMs = 5_000;
 export const conversationGoalHydrationTimeoutMs = 1_000;
@@ -514,6 +514,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
   const pendingRenderDeltas = new Map<string, NativeConversationEvent>();
   const pendingRenderDeltaBytes = new Map<string, number>();
   let pendingRenderBytes = 0;
+  const fullChangeSetHydrationRevisions = new Map<string, string>();
   // steer 请求确认前保留队列中的可见占位；只有 steering 事件或明确回队事件到达后才交给正常投影。
   const pendingSteeringSubmissions = new Map<string, NativeQueuedSubmission>();
   let renderDeltaTimer: ReturnType<typeof setTimeout> | null = null;
@@ -903,6 +904,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const eventQueue = event.type === 'conversation.queue.changed' ? nativeQueueSnapshotFrom(event.payload.queue) : null;
     const projectedEvent: NativeConversationEvent = event.type === 'conversation.queue.changed' && eventQueue ? { ...event, payload: { ...event.payload, queue: queueWithPendingSteering(eventQueue) } } : event;
     dispatch({ type: 'event_received', event: projectedEvent, ...(suppressRequestAuthority ? { suppressRequestAuthority: true } : {}) });
+    if (event.type === 'conversation.turn.change_set.changed') hydrateFullTerminalChangeSet(event);
     if (event.type === 'conversation.request.created' && !suppressRequestAuthority && requestId) {
       if (eventCarriesRequestDetails(event, requestId)) {
         requestsAwaitingDetails.delete(requestId);
@@ -911,6 +913,31 @@ export function createSessionController(options: CreateSessionControllerOptions)
         void refreshPendingRequests();
       }
     }
+  }
+
+  function hydrateFullTerminalChangeSet(event: Extract<NativeConversationEvent, { type: 'conversation.turn.change_set.changed' }>): void {
+    const summary = event.payload.changeSet;
+    const load = options.client.loadTurnChangeSet;
+    if (!load || summary.contentProjection !== 'summary' || summary.state === 'capturing') return;
+    const turnId = summary.providerTurnId || event.payload.turnId;
+    const revision = summary.updatedAt;
+    if (!turnId || !revision || fullChangeSetHydrationRevisions.get(turnId) === revision) return;
+    fullChangeSetHydrationRevisions.set(turnId, revision);
+    void load(options.projectId, options.conversationId, turnId)
+      .then((changeSet) => {
+        if (disposed || fullChangeSetHydrationRevisions.get(turnId) !== revision || changeSet.id !== summary.id || changeSet.updatedAt < revision) return;
+        dispatch({
+          type: 'event_received',
+          event: {
+            ...event,
+            payload: { ...event.payload, changeSet },
+          },
+        });
+      })
+      .catch(() => {
+        // 摘要卡仍是可读事实；完整 diff 可在下一次权威水合或后续终态事件中重试。
+        if (fullChangeSetHydrationRevisions.get(turnId) === revision) fullChangeSetHydrationRevisions.delete(turnId);
+      });
   }
 
   function markRequestResolved(requestId: string, event?: NativeConversationEvent): void {

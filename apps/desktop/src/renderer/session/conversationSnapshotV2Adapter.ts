@@ -14,7 +14,7 @@ import type {
   NativeUnifiedUsageSnapshot,
 } from './sessionTypes.js';
 
-const syncStreamProtocolGeneration = 'zeus-conversation-sync-v1' as const;
+const syncStreamProtocolGeneration = 'zeus-conversation-sync-v2' as const;
 
 export interface ConversationSnapshotV2BootstrapInput {
   snapshot: NativeConversationSnapshotV2;

@@ -1,10 +1,24 @@
-import { randomUUID } from 'node:crypto';
-import { conversationSchemaGeneration, type ConversationSyncEventPage, type ConversationSyncEventRecord, type ConversationSyncEventRepository, type ConversationSyncEventStreamRecord, type ZeusDatabase } from '@zeus/storage';
+import { createHash, randomUUID } from 'node:crypto';
+import {
+  conversationSchemaGeneration,
+  conversationSyncProtocolV2Generation,
+  type ConversationSyncEventPage,
+  type ConversationSyncEventRecord,
+  type ConversationSyncEventRepository,
+  type ConversationSyncEventStreamRecord,
+  type ZeusDatabase,
+} from '@zeus/storage';
 import { classifyConversationEventDurability, conversationEventFlowBudgets, type ConversationEventDurabilityLevel, type ConversationEventFlowControl } from './eventFlowControl.js';
 
-export const conversationSyncProtocolGeneration = 'zeus-conversation-sync-v1';
+export const conversationSyncProtocolGeneration = conversationSyncProtocolV2Generation;
 export const maximumDurableConversationEventBytes = 1024 * 1024;
 export const conversationSyncTransportBudgets = conversationEventFlowBudgets.websocket;
+export const maximumRetainedConversationSyncEvents = 4_096;
+export const maximumRetainedConversationSyncBytes = 16 * 1024 * 1024;
+const conversationSyncCompactionInterval = 64;
+const retainedConversationSyncEventsWatermark = maximumRetainedConversationSyncEvents - conversationSyncCompactionInterval;
+const retainedConversationSyncBytesWatermark = 12 * 1024 * 1024;
+const immediateCompactionEventBytes = 64 * 1024;
 
 /** WebSocket 路由只依赖这一个诊断端口，不感知流控实现及其他阶段预算。 */
 export interface ConversationSyncFlowControlPort {
@@ -76,8 +90,8 @@ export class ConversationSyncProtocol {
   }
 
   append(input: AppendDurableConversationEventInput): DurableConversationRealtimeEvent {
-    const occurredAt = input.occurredAt ?? this.now().toISOString();
-    const eventId = input.eventId ?? randomUUID();
+    const occurredAt = input.occurredAt ?? durableEventOccurredAt(input) ?? this.now().toISOString();
+    const eventId = input.eventId ?? stableDurableEventId(input) ?? randomUUID();
     const durabilityLevel = classifyConversationEventDurability(input.type);
     if (durabilityLevel === 'ephemeral_ui') {
       this.options.flowControl?.observeDroppedEphemeralEvent();
@@ -115,6 +129,16 @@ export class ConversationSyncProtocol {
       payload: storedEnvelope,
       occurredAt,
     });
+    if (!appended.appended) return decodeStoredEvent(appended.event);
+    if (appended.latestSequence % conversationSyncCompactionInterval === 0 || appended.event.payloadByteLength >= immediateCompactionEventBytes) {
+      const compacted = this.options.repository.compactCurrentStreamTail({
+        conversationId: input.conversationId,
+        generationId: conversationSyncProtocolGeneration,
+        maximumEvents: retainedConversationSyncEventsWatermark,
+        maximumBytes: retainedConversationSyncBytesWatermark,
+      });
+      if (compacted.prunedEvents > 0) this.options.flowControl?.observeCoalescedProcessEvent(compacted.prunedEvents);
+    }
     const event = decodeStoredEvent(appended.event);
     this.options.flowControl?.observeAppend(durabilityLevel);
     this.options.db.afterCommit(() => this.options.broadcast(event));
@@ -131,6 +155,23 @@ export class ConversationSyncProtocol {
     });
     return toProtocolPage(input.conversationId, page);
   }
+}
+
+function stableDurableEventId(input: AppendDurableConversationEventInput): string | null {
+  if (input.type !== 'conversation.turn.change_set.changed') return null;
+  const changeSetId = input.payload.changeSetId;
+  const entityRevision = input.payload.entityRevision;
+  if (typeof changeSetId !== 'string' || !changeSetId || (typeof entityRevision !== 'string' && typeof entityRevision !== 'number')) return null;
+  const digest = createHash('sha256')
+    .update(`${input.conversationId}\0${input.type}\0${changeSetId}\0${String(entityRevision)}`)
+    .digest('hex');
+  return `change-set:${digest}`;
+}
+
+function durableEventOccurredAt(input: AppendDurableConversationEventInput): string | null {
+  if (input.type !== 'conversation.turn.change_set.changed') return null;
+  const revision = input.payload.entityRevision;
+  return typeof revision === 'string' && !Number.isNaN(Date.parse(revision)) ? revision : null;
 }
 
 function toProtocolPage(conversationId: string, page: ConversationSyncEventPage): DurableConversationEventPage {

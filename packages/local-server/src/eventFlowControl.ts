@@ -34,7 +34,6 @@ export const conversationEventTypeRegistry = {
     'conversation.transport.changed',
     'conversation.turn.started',
     'conversation.turn.completed',
-    'conversation.turn.change_set.changed',
     'conversation.request.created',
     'conversation.request.resolved',
     'conversation.request.snoozed',
@@ -63,6 +62,7 @@ export const conversationEventTypeRegistry = {
   coalescible_process: [
     'conversation.item.delta',
     'conversation.item.updated',
+    'conversation.turn.change_set.changed',
     'conversation.turn.plan.updated',
     'conversation.tokenUsage.changed',
     'conversation.sessionMetrics.changed',

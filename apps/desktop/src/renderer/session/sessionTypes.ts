@@ -438,7 +438,7 @@ export type NativeConversationStage = 'created' | 'connecting' | 'queued' | 'run
 
 export interface NativeConversationSnapshot {
   conversationSchemaGeneration: '2026-08-16-unified-conversation-segments';
-  syncStreamGeneration: 'zeus-conversation-sync-v1';
+  syncStreamGeneration: 'zeus-conversation-sync-v2';
   throughEventSeq: number;
   productConversation: Record<string, unknown>;
   openSegment: Record<string, unknown> | null;
@@ -1370,7 +1370,7 @@ export interface NativeRealtimeEventEnvelope {
 export interface NativeConversationEventPage {
   conversationId: string;
   conversationSchemaGeneration: '2026-08-16-unified-conversation-segments';
-  syncStreamGeneration: 'zeus-conversation-sync-v1';
+  syncStreamGeneration: 'zeus-conversation-sync-v2';
   baseSequence: number | null;
   throughEventSeq: number;
   nextCursor: number;
@@ -1385,7 +1385,7 @@ interface NativeEventIdentity extends Record<string, unknown> {
   threadId?: string;
   generationId: string;
   conversationSchemaGeneration: '2026-08-16-unified-conversation-segments';
-  syncStreamGeneration: 'zeus-conversation-sync-v1';
+  syncStreamGeneration: 'zeus-conversation-sync-v2';
   entityRevision: number | string;
   sequence: number;
 }

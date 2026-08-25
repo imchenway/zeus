@@ -83,7 +83,7 @@ export function TurnChangeCard(props: {
               <span>{busy ? (zh ? '处理中…' : 'Working…') : action === 'undo' ? (zh ? '撤销' : 'Undo') : zh ? '重新应用' : 'Reapply'}</span>
             </button>
           ) : null}
-          <button type="button" className="session-turn-change-review" disabled={!props.onReview || changeSet.files.length === 0} onClick={() => props.onReview?.(changeSet)}>
+          <button type="button" className="session-turn-change-review" disabled={!props.onReview || changeSet.files.length === 0 || changeSet.contentProjection === 'summary'} onClick={() => props.onReview?.(changeSet)}>
             {zh ? '审核' : 'Review'}
           </button>
         </nav>

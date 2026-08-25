@@ -608,12 +608,14 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
   }
 
   function broadcastChangeSet(changeSet: TurnChangeSet): void {
+    const realtimeChangeSet = toRealtimeChangeSet(changeSet);
     options.broadcast?.('conversation.turn.change_set.changed', {
       projectId: changeSet.projectId,
       conversationId: changeSet.conversationId,
       turnId: changeSet.providerTurnId,
       changeSetId: changeSet.id,
-      changeSet,
+      entityRevision: changeSet.updatedAt,
+      changeSet: realtimeChangeSet,
     });
   }
 
@@ -869,6 +871,21 @@ function toPublicChangeSet(record: ZeusTurnChangeSetRecord, files: AggregatedCha
     conflict: parseConflict(record.conflictJson),
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
+    contentProjection: 'full',
+  };
+}
+
+/**
+ * 实时事件只负责告诉 Renderer“哪一个变更集的哪个修订发生了变化”。
+ * diff 正文已经由 turn_change_sets / turn_change_files 权威保存，继续在每个累计更新里复制
+ * 会把一次逐步增长的变更写成近二次存储量。终态 UI 通过既有 change-set API 按需补齐全文。
+ */
+export function toRealtimeChangeSet(changeSet: TurnChangeSet): TurnChangeSet {
+  return {
+    ...changeSet,
+    files: changeSet.files.map((file) => ({ ...file, unifiedDiff: '' })),
+    unifiedDiff: '',
+    contentProjection: 'summary',
   };
 }
 

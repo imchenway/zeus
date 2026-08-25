@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import type { ZeusDatabasePort } from './databasePort.js';
 
 export const conversationSyncEventSchemaMigrationId = '20260821_0315_conversation_sync_events_v3';
+export const conversationSyncProtocolV2MigrationId = '20260826_0001_conversation_sync_protocol_v2';
+export const conversationSyncProtocolV2Generation = 'zeus-conversation-sync-v2';
 export const defaultConversationSyncEventPageLimit = 100;
 export const maximumConversationSyncEventPageLimit = 1_000;
 export const defaultConversationSyncEventPageBytes = 256 * 1024;
@@ -89,6 +91,22 @@ export interface ConversationSyncEventPage {
   throughSequence: number;
 }
 
+export interface CompactConversationSyncEventTailInput {
+  conversationId: string;
+  generationId: string;
+  maximumEvents: number;
+  maximumBytes: number;
+}
+
+export interface CompactConversationSyncEventTailResult {
+  prunedEvents: number;
+  prunedBytes: number;
+  baseSequence: number;
+  latestSequence: number;
+  retainedEvents: number;
+  retainedBytes: number;
+}
+
 interface ConversationSyncEventStreamRow {
   conversation_id: string;
   generation_id: string;
@@ -165,6 +183,11 @@ export function migrateConversationSyncEventStoreSchema(db: ZeusDatabasePort): v
       });
     }
 
+    // 完整连续性核验只属于首次建表/迁移。既有迁移账本已经认证结构；每次冷启动重新
+    // GROUP BY 全部耐久事件会让启动成本随历史事件表无界增长。运行期读取仍会逐流校验
+    // current baseline/latest，离线维护和发布候选再执行全库 quick_check 与连续性审计。
+    if (existing) return;
+
     const eventWithoutStream = db.get<{ conversation_id: string; generation_id: string; sequence: number }>(
       `SELECT event.conversation_id, event.generation_id, event.sequence
          FROM conversation_sync_events AS event
@@ -221,13 +244,68 @@ export function migrateConversationSyncEventStoreSchema(db: ZeusDatabasePort): v
       });
     }
 
-    if (!existing) {
+    db.execute(
+      `INSERT INTO schema_migrations (migration_id, description, checksum, applied_at)
+       VALUES (?, ?, ?, ?)`,
+      [conversationSyncEventSchemaMigrationId, '增加独立连续序号、显式 baseline 和协议代次的耐久会话增量事件流', checksum, new Date().toISOString()],
+    );
+  });
+}
+
+/**
+ * V2 把旧的无界事件流退役为历史协议代次，并为已有会话建立空 baseline。
+ * 这里只更新每会话一行的流元数据；17 GB 的旧事件由显式离线候选维护回收，普通启动绝不扫描或删除大表。
+ */
+export function migrateConversationSyncProtocolV2(db: ZeusDatabasePort): void {
+  const checksumSource = 'conversation_sync_protocol:v2:retire-current-v1,open-empty-v2-baseline:no-event-table-scan';
+  const checksum = `sha256:${createHash('sha256').update(checksumSource).digest('hex')}`;
+  db.transaction(() => {
+    const existing = db.get<{ checksum: string }>(`SELECT checksum FROM schema_migrations WHERE migration_id = ?`, [conversationSyncProtocolV2MigrationId]);
+    if (existing && existing.checksum !== checksum) {
+      throw schemaConflict('会话同步 V2 迁移账本与当前结构定义不一致。', { migrationId: conversationSyncProtocolV2MigrationId });
+    }
+    if (existing) return;
+
+    const retiredAt = new Date().toISOString();
+    const currentLegacyStreams = db.select<{ conversation_id: string }>(
+      `SELECT conversation_id
+         FROM conversation_sync_event_streams
+        WHERE is_current = 1 AND generation_id <> ?
+        ORDER BY conversation_id`,
+      [conversationSyncProtocolV2Generation],
+    );
+    const incompatibleV2 = db.get<{ conversation_id: string }>(
+      `SELECT conversation_id
+         FROM conversation_sync_event_streams
+        WHERE generation_id = ? AND is_current = 0
+        LIMIT 1`,
+      [conversationSyncProtocolV2Generation],
+    );
+    if (incompatibleV2) {
+      throw schemaConflict('检测到已经退役的会话同步 V2 流，拒绝猜测复用旧代次。', {
+        conversationId: incompatibleV2.conversation_id,
+        generationId: conversationSyncProtocolV2Generation,
+      });
+    }
+    db.execute(
+      `UPDATE conversation_sync_event_streams
+          SET is_current = 0, retired_at = ?
+        WHERE is_current = 1 AND generation_id <> ?`,
+      [retiredAt, conversationSyncProtocolV2Generation],
+    );
+    for (const stream of currentLegacyStreams) {
       db.execute(
-        `INSERT INTO schema_migrations (migration_id, description, checksum, applied_at)
-         VALUES (?, ?, ?, ?)`,
-        [conversationSyncEventSchemaMigrationId, '增加独立连续序号、显式 baseline 和协议代次的耐久会话增量事件流', checksum, new Date().toISOString()],
+        `INSERT INTO conversation_sync_event_streams
+           (conversation_id, generation_id, base_sequence, latest_sequence, established_at, retired_at, is_current)
+         VALUES (?, ?, 1, 0, ?, NULL, 1)`,
+        [stream.conversation_id, conversationSyncProtocolV2Generation, retiredAt],
       );
     }
+    db.execute(
+      `INSERT INTO schema_migrations (migration_id, description, checksum, applied_at)
+       VALUES (?, ?, ?, ?)`,
+      [conversationSyncProtocolV2MigrationId, '退役无界 V1 同步流并建立有界 V2 baseline', checksum, retiredAt],
+    );
   });
 }
 
@@ -414,6 +492,70 @@ export class ConversationSyncEventRepository {
       nextSequence,
       throughSequence,
     };
+  }
+
+  /**
+   * 同步事件只是 Snapshot V2 之间的短期追赶日志。删除连续前缀并推进 baseline 后，
+   * 旧客户端会收到 baseline_required 并重新水合权威快照，不会越过事件缺口。
+   */
+  compactCurrentStreamTail(input: CompactConversationSyncEventTailInput): CompactConversationSyncEventTailResult {
+    const conversationId = requiredIdentity(input.conversationId, 'conversationId');
+    const generationId = requiredIdentity(input.generationId, 'generationId');
+    const maximumEvents = boundedPositiveInteger(input.maximumEvents, 'maximumEvents', 100_000);
+    const maximumBytes = boundedPositiveInteger(input.maximumBytes, 'maximumBytes', 1024 * 1024 * 1024);
+    return this.db.transaction(() => {
+      const stream = this.requireStream(conversationId, generationId);
+      if (stream.is_current !== 1) {
+        throw streamGenerationConflict('只能压缩当前会话同步流。', { conversationId, generationId });
+      }
+      this.assertStreamBoundaries(stream);
+      const metadata = this.db.select<ConversationSyncEventMetadataRow>(
+        `SELECT sequence, payload_byte_length
+           FROM conversation_sync_events
+          WHERE conversation_id = ? AND generation_id = ?
+          ORDER BY sequence DESC
+          LIMIT ?`,
+        [conversationId, generationId, maximumEvents],
+      );
+      if (metadata.length === 0) {
+        return { prunedEvents: 0, prunedBytes: 0, baseSequence: stream.base_sequence, latestSequence: stream.latest_sequence, retainedEvents: 0, retainedBytes: 0 };
+      }
+      const retained: ConversationSyncEventMetadataRow[] = [];
+      let retainedBytes = 0;
+      for (const row of metadata) {
+        if (retained.length > 0 && retainedBytes + row.payload_byte_length > maximumBytes) break;
+        retained.push(row);
+        retainedBytes += row.payload_byte_length;
+      }
+      const nextBaseSequence = retained.at(-1)?.sequence ?? stream.latest_sequence;
+      const pruned = this.db.get<{ event_count: number; byte_count: number }>(
+        `SELECT COUNT(*) AS event_count, COALESCE(SUM(payload_byte_length), 0) AS byte_count
+           FROM conversation_sync_events
+          WHERE conversation_id = ? AND generation_id = ? AND sequence < ?`,
+        [conversationId, generationId, nextBaseSequence],
+      ) ?? { event_count: 0, byte_count: 0 };
+      if (pruned.event_count > 0) {
+        this.db.execute(
+          `DELETE FROM conversation_sync_events
+            WHERE conversation_id = ? AND generation_id = ? AND sequence < ?`,
+          [conversationId, generationId, nextBaseSequence],
+        );
+        this.db.execute(
+          `UPDATE conversation_sync_event_streams
+              SET base_sequence = ?
+            WHERE conversation_id = ? AND generation_id = ? AND is_current = 1`,
+          [nextBaseSequence, conversationId, generationId],
+        );
+      }
+      return {
+        prunedEvents: Number(pruned.event_count),
+        prunedBytes: Number(pruned.byte_count),
+        baseSequence: nextBaseSequence,
+        latestSequence: stream.latest_sequence,
+        retainedEvents: retained.length,
+        retainedBytes,
+      };
+    });
   }
 
   private readCurrentStream(conversationId: string): ConversationSyncEventStreamRow | undefined {

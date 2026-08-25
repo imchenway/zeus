@@ -168,6 +168,12 @@ function classifyDirectAccess(file, source, occurrence) {
   if (file === 'scripts/prepare-conversation-legacy-cutover.ts') {
     return { owner: 'legacy_cutover_operator', lifecycle: 'diagnostic_read_only', replacement: 'offline candidate and rollback preparation; source opened read-only' };
   }
+  if (file === 'scripts/compact-conversation-sync-candidate.ts') {
+    return { owner: 'conversation_sync_candidate_compactor', lifecycle: 'migration_candidate_only', replacement: 'offline candidate compaction with business-fact identity verification' };
+  }
+  if (file === 'scripts/promote-conversation-sync-candidate.ts') {
+    return { owner: 'conversation_sync_candidate_promoter', lifecycle: 'migration_read_only', replacement: 'offline target/candidate identity comparison before atomic promotion' };
+  }
   if (file === 'packages/storage/src/tableOwnership.ts') {
     return { owner: 'storage_table_ownership_registry', lifecycle: 'schema_metadata', replacement: 'retain historical ownership classification' };
   }

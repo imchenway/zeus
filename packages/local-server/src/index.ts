@@ -802,8 +802,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   });
   // provider 可能以字符级频率发送增量；只在本地推送层合并同一 item，完成态仍是强制边界。
   const nativeDeltaCoalesceMs = 40;
-  const pendingNativeDeltaEvents = new Map<string, { type: string; payload: Record<string, unknown>; byteLength: number }>();
-  let pendingNativeDeltaBytes = 0;
+  const pendingNativeCoalescibleEvents = new Map<string, { type: string; payload: Record<string, unknown>; byteLength: number }>();
+  let pendingNativeCoalescibleBytes = 0;
   let nativeDeltaFlushTimer: ReturnType<typeof setTimeout> | null = null;
   let nativeEventSaveTimer: ReturnType<typeof setTimeout> | null = null;
   let nativeDeltaFlushFailure: Error | null = null;
@@ -2203,10 +2203,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (nativeDeltaFlushTimer) clearTimeout(nativeDeltaFlushTimer);
     nativeDeltaFlushTimer = null;
     if (nativeDeltaFlushFailure) throw nativeDeltaFlushFailure;
-    if (pendingNativeDeltaEvents.size === 0) return;
-    const pending = [...pendingNativeDeltaEvents.values()];
-    pendingNativeDeltaEvents.clear();
-    pendingNativeDeltaBytes = 0;
+    if (pendingNativeCoalescibleEvents.size === 0) return;
+    const pending = [...pendingNativeCoalescibleEvents.values()];
+    pendingNativeCoalescibleEvents.clear();
+    pendingNativeCoalescibleBytes = 0;
     try {
       db.transaction(() => {
         for (const event of pending) {
@@ -2218,8 +2218,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     } catch (error) {
       for (const event of pending) {
         const conversationId = typeof event.payload.conversationId === 'string' ? event.payload.conversationId : randomUUID();
-        pendingNativeDeltaEvents.set(nativeDeltaEventKey(conversationId, event.payload) ?? `${conversationId}:${randomUUID()}`, event);
-        pendingNativeDeltaBytes += event.byteLength;
+        pendingNativeCoalescibleEvents.set(nativeCoalescingEventKey(event.type, conversationId, event.payload) ?? `${conversationId}:${randomUUID()}`, event);
+        pendingNativeCoalescibleBytes += event.byteLength;
       }
       throw recordNativeDeltaFlushFailure(error);
     }
@@ -2249,13 +2249,24 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     }, 0);
   }
 
-  function nativeDeltaEventKey(conversationId: string, payload: Record<string, unknown>): string | null {
+  function nativeCoalescingEventKey(type: string, conversationId: string, payload: Record<string, unknown>): string | null {
     const threadId = typeof payload.threadId === 'string' ? payload.threadId : typeof payload.providerThreadId === 'string' ? payload.providerThreadId : null;
     const turnId = typeof payload.turnId === 'string' ? payload.turnId : typeof payload.providerTurnId === 'string' ? payload.providerTurnId : null;
     const itemId = typeof payload.itemId === 'string' ? payload.itemId : typeof payload.providerItemId === 'string' ? payload.providerItemId : null;
     const generationId = typeof payload.generationId === 'string' ? payload.generationId : nativeLocalEventGenerationId;
-    if (!threadId || !turnId || !itemId) return null;
-    return [conversationId, generationId, threadId, turnId, itemId].join(':');
+    if (type === 'conversation.item.delta') {
+      if (!threadId || !turnId || !itemId) return null;
+      return [type, conversationId, generationId, threadId, turnId, itemId].join(':');
+    }
+    if (type === 'conversation.turn.change_set.changed') {
+      const changeSetId = typeof payload.changeSetId === 'string' ? payload.changeSetId : null;
+      if (!turnId || !changeSetId) return null;
+      return [type, conversationId, generationId, turnId, changeSetId].join(':');
+    }
+    if (type === 'conversation.turn.plan.updated') {
+      return turnId ? [type, conversationId, generationId, turnId].join(':') : null;
+    }
+    return [type, conversationId, generationId].join(':');
   }
 
   function publishNativeConversationEvent(type: string, payload: Record<string, unknown>): void {
@@ -2300,7 +2311,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         queueMicrotask(() => void dispatchUnifiedConversationQueueHead?.(conversationId).catch(() => undefined));
       }
     }
-    if (mappedType !== 'conversation.item.delta') flushPendingNativeDeltaEvents();
+    const durability = classifyConversationEventDurability(mappedType);
+    if (durability !== 'coalescible_process') flushPendingNativeDeltaEvents();
     let appendedDeferredEvent = false;
     for (const conversationId of new Set(conversationIds)) {
       // 实时事件只需要会话元数据；禁止在每个增量事件中加载整段消息历史。
@@ -2331,7 +2343,14 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           : {}),
         projectId: conversation.projectId,
         conversationId: conversation.id,
-        entityRevision: typeof payload.revision === 'number' && Number.isSafeInteger(payload.revision) ? payload.revision : typeof payload.updatedAt === 'string' && payload.updatedAt ? payload.updatedAt : conversation.updatedAt,
+        entityRevision:
+          (typeof payload.entityRevision === 'number' && Number.isSafeInteger(payload.entityRevision)) || (typeof payload.entityRevision === 'string' && payload.entityRevision)
+            ? payload.entityRevision
+            : typeof payload.revision === 'number' && Number.isSafeInteger(payload.revision)
+              ? payload.revision
+              : typeof payload.updatedAt === 'string' && payload.updatedAt
+                ? payload.updatedAt
+                : conversation.updatedAt,
         ...(typeof payload.threadId === 'string'
           ? { threadId: payload.threadId }
           : typeof payload.providerThreadId === 'string'
@@ -2343,8 +2362,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         ...(typeof payload.itemId === 'string' ? { itemId: payload.itemId } : typeof payload.providerItemId === 'string' ? { itemId: payload.providerItemId } : {}),
         generationId,
       } satisfies Record<string, unknown>;
-      if (mappedType === 'conversation.item.delta') {
-        const key = nativeDeltaEventKey(conversationId, eventPayload);
+      if (durability === 'coalescible_process') {
+        const key = nativeCoalescingEventKey(mappedType, conversationId, eventPayload);
         if (key) {
           const byteLength = Buffer.byteLength(JSON.stringify({ type: mappedType, payload: eventPayload }), 'utf8');
           if (byteLength > conversationEventFlowBudgets.sqlite.maximumEventBytes) {
@@ -2353,20 +2372,20 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
               code: 'ZEUS_CONVERSATION_EVENT_SQLITE_BUDGET_EXCEEDED',
             });
           }
-          const existing = pendingNativeDeltaEvents.get(key);
+          const existing = pendingNativeCoalescibleEvents.get(key);
           if (
-            (!existing && pendingNativeDeltaEvents.size >= conversationEventFlowBudgets.sqlite.maximumCoalescingKeys) ||
-            pendingNativeDeltaBytes - (existing?.byteLength ?? 0) + byteLength > conversationEventFlowBudgets.sqlite.maximumPendingBytes
+            (!existing && pendingNativeCoalescibleEvents.size >= conversationEventFlowBudgets.sqlite.maximumCoalescingKeys) ||
+            pendingNativeCoalescibleBytes - (existing?.byteLength ?? 0) + byteLength > conversationEventFlowBudgets.sqlite.maximumPendingBytes
           ) {
             flushPendingNativeDeltaEvents();
           }
-          // 删除后再写入，保持跨 item 增量的最后到达顺序；同一 item 只保留最新累计文本。
-          const replaced = pendingNativeDeltaEvents.get(key);
-          if (replaced) pendingNativeDeltaBytes -= replaced.byteLength;
-          pendingNativeDeltaEvents.delete(key);
-          pendingNativeDeltaEvents.set(key, { type: mappedType, payload: eventPayload, byteLength });
-          pendingNativeDeltaBytes += byteLength;
-          conversationEventFlow.observeHighWater('sqlite', pendingNativeDeltaBytes, pendingNativeDeltaEvents.size);
+          // 删除后再写入，保持跨实体过程事件的最后到达顺序；同一稳定实体只保留最新累计投影。
+          const replaced = pendingNativeCoalescibleEvents.get(key);
+          if (replaced) pendingNativeCoalescibleBytes -= replaced.byteLength;
+          pendingNativeCoalescibleEvents.delete(key);
+          pendingNativeCoalescibleEvents.set(key, { type: mappedType, payload: eventPayload, byteLength });
+          pendingNativeCoalescibleBytes += byteLength;
+          conversationEventFlow.observeHighWater('sqlite', pendingNativeCoalescibleBytes, pendingNativeCoalescibleEvents.size);
           if (replaced) conversationEventFlow.observeCoalescedProcessEvent();
           scheduleNativeDeltaFlush();
           continue;
@@ -2374,7 +2393,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         flushPendingNativeDeltaEvents();
       }
       const appendEvent = () => conversationSyncProtocol.append({ conversationId, type: mappedType, payload: eventPayload });
-      if (classifyConversationEventDurability(mappedType) === 'critical_fact') db.commitCriticalFactSync(appendEvent);
+      if (durability === 'critical_fact') db.commitCriticalFactSync(appendEvent);
       else {
         appendEvent();
         appendedDeferredEvent = true;

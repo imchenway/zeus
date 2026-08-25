@@ -126,6 +126,8 @@ export interface TurnChangeSet {
   conflict: TurnChangeConflict | null;
   createdAt: string;
   updatedAt: string;
+  /** 实时同步只传 summary；完整 diff 由现有按需读取接口返回。 */
+  contentProjection?: 'summary' | 'full';
 }
 
 export interface TurnChangeSetOperationRequest {
