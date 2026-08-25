@@ -26,6 +26,7 @@ import { AnsweredRequestHistory, isAnsweredUserInputRequest } from './AnsweredRe
 import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
 import { captureTranscriptViewportAnchor, compensateTranscriptViewportAnchor, type TranscriptViewportAnchor, useTranscriptViewportVirtualizer } from './transcriptViewportVirtualizer.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { isImageResource } from './ConversationResources.js';
 
 export interface ConversationTranscriptProps {
   state: NativeSessionState;
@@ -73,6 +74,10 @@ const sessionConnectionSymbol = (
 const emptyResponseAnnotations: ConversationResponseAnnotation[] = [];
 const liveTurnLayoutTransition = { duration: 0.22, ease: [0.22, 1, 0.36, 1] as const };
 
+function containsMarkdownImage(item: NativeSessionItemBuffer): boolean {
+  return /!\[[^\]]*\]\([^)]+\)/u.test(transcriptItemText(item));
+}
+
 function turnDetailPaging(snapshot: NativeSessionState['snapshot'], turnId: string) {
   const process = snapshot?.v2Paging?.processByTurn[turnId];
   // v0.3.46 之前已经留在 Renderer 内存中的分页对象没有 historyByTurn。
@@ -116,6 +121,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const trackedUserMessageRef = useRef<{ conversationId: string | null; key: string | null; initialized: boolean }>({ conversationId: null, key: null, initialized: false });
   const awaitingReplyMessageIdsRef = useRef<Set<string>>(new Set());
   const awaitingReplyConversationIdRef = useRef<string | null>(null);
+  const automaticResourceLoadAttemptRef = useRef<string | null>(null);
   const [rowExpansionOverrides, setRowExpansionOverrides] = useState<ReadonlyMap<string, boolean>>(() => new Map());
   const [focusedRowKey, setFocusedRowKey] = useState<string | null>(null);
   const [historyAnchorRowKey, setHistoryAnchorRowKey] = useState<string | null>(null);
@@ -251,6 +257,23 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     onLoadV2Content: useStableOptionalCallback(props.onLoadV2Content),
     onLoadV2ToolResult: useStableOptionalCallback(props.onLoadV2ToolResult),
   };
+  const markdownImageItem = useMemo(() => items.find(containsMarkdownImage) ?? null, [items]);
+  const markdownImageNeedsResource = Boolean(markdownImageItem && !markdownImageItem.resources.some((resource) => resource.presentation === 'inline' && isImageResource(resource)));
+  const resourcePaging = props.state.snapshot?.v2Paging?.resources;
+  useEffect(() => {
+    const loadTurnArtifacts = renderProps.onLoadTurnArtifacts;
+    // 渐进水合会先投影可读正文，再发布完整交互快照。若在 hydrating 阶段读取，
+    // 连接代次切换会丢弃该页且相同正文不会再触发一次；必须等权威水合完成。
+    if (props.state.transportState !== 'ready' || !loadTurnArtifacts || !markdownImageItem || !markdownImageNeedsResource || !resourcePaging || resourcePaging.loading) return;
+    // 首次调用可能先取得资源页、后取得带 providerItemId 的正文。把资源页代次和
+    // Provider item 身份都纳入尝试键，允许第二次只执行内存合并，但仍禁止无界重试。
+    const attemptKey = `${props.state.conversationId}:${markdownImageItem.turnId}:${markdownImageItem.providerItemId ?? markdownImageItem.key}:${resourcePaging.loaded}:${resourcePaging.hasMore}:${resourcePaging.nextCursor ?? 'end'}:${resourcePaging.items.length}`;
+    if (automaticResourceLoadAttemptRef.current === attemptKey) return;
+    automaticResourceLoadAttemptRef.current = attemptKey;
+    // Markdown 图片属于正文，不应要求用户先展开“处理过程”才能取得资源元数据。
+    // 失败保留现有占位与手动重试入口，避免 React 重渲染形成无界请求循环。
+    void Promise.resolve(loadTurnArtifacts(markdownImageItem.turnId)).catch(() => undefined);
+  }, [markdownImageItem, markdownImageNeedsResource, props.state.conversationId, props.state.transportState, renderProps.onLoadTurnArtifacts, resourcePaging]);
   const loadEarlierHistoryWithAnchor = useCallback(async (): Promise<void> => {
     const loadEarlier = renderProps.onLoadEarlierHistory;
     const container = containerRef.current;

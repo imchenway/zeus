@@ -59,6 +59,22 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
     return options.submissions.listByConversation(conversationId).some((submission) => submission.status === 'queued' && !submission.providerTurnId);
   }
 
+  function requiresProviderTurnProjection(conversation: ZeusConversationWithMessagesRecord, providerStatus: CodexThreadRuntimeStatus): boolean {
+    if (providerStatus.type === 'active') return true;
+    const state = options.runStates.get(conversation.id) ?? options.inferRunState(conversation);
+    if (state.type === 'active' || state.type === 'waiting') return true;
+    // queued -> dispatching 只是 Zeus 已取得本地派发租约，并不代表 Provider 已接受轮次。
+    // 把这个写前状态当作 Provider 活动轮次会让每次“继续”重新读取完整历史，
+    // 恰好把 thread/turns/list 放回 turn/start 的同步前置路径。
+    if (state.type === 'dispatching') {
+      const dispatchingSubmission = options.submissions.listByConversation(conversation.id).find((submission) => submission.id === state.submissionId);
+      if (dispatchingSubmission?.providerTurnId) return true;
+    }
+    return options.submissions
+      .listByConversation(conversation.id)
+      .some((submission) => Boolean(submission.providerTurnId) && (submission.status === 'dispatching' || submission.status === 'active' || (submission.status === 'paused' && submission.pausedReason === 'recovery_required')));
+  }
+
   function stopObserver(conversationId: string): void {
     const observer = activeObservers.get(conversationId);
     if (!observer) return;
@@ -173,7 +189,11 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
     if (providerStatus.type === 'systemError') {
       throw coordinatorError('ZEUS_NATIVE_PROVIDER_SYSTEM_ERROR', 'Provider thread is in systemError state.');
     }
-    await options.enqueueProviderTurnReconciliation(options.requireConversation(conversation.id), { priority: 'control' });
+    // 空闲 Provider + 本地安全边界已经足以允许下一轮派发。完整轮次历史属于投影面，
+    // 不能继续作为每次“继续”的同步前置；只有任一侧仍有未终结轮次时才必须追平。
+    if (requiresProviderTurnProjection(conversation, providerStatus)) {
+      await options.enqueueProviderTurnReconciliation(options.requireConversation(conversation.id), { priority: 'control' });
+    }
     const current = options.requireConversation(conversation.id);
     const snapshot = options.projectedProviderThreadSnapshot(conversation.id, metadata);
     const generationId = options.manager.generationForThread(providerThreadId) ?? options.readyGenerationId();

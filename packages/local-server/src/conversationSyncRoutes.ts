@@ -23,7 +23,8 @@ export interface ConversationSyncRoutePorts {
   serverIdentity(): { app: string; host: string; port: number };
 }
 
-const providerCatchUpIntervalMs = 5_000;
+// Remote Control 实时事件是主链路；周期读取只补齐断线窗口，不能持续和前台发送争用 RPC。
+const providerCatchUpIntervalMs = 30_000;
 
 /**
  * 注册耐久会话增量的 WebSocket replay 与 HTTP cursor 补页。
@@ -70,7 +71,9 @@ export function registerConversationSyncRoutes(ports: ConversationSyncRoutePorts
             catchUpInFlight = false;
           });
       };
-      catchUp();
+      // 首屏先回放 Zeus 自己的耐久事件；不要在用户刚打开会话、最可能立即续聊时
+      // 同步启动 Provider 历史扫描。跨设备兜底从首个周期开始，最坏延迟 30 秒，
+      // 但不会再把冷恢复的 thread/turns/list 塞进前台发送窗口。
       const catchUpTimer = conversationId && ports.synchronizeConversation ? setInterval(catchUp, providerCatchUpIntervalMs) : null;
       catchUpTimer?.unref?.();
       subscriber.on('close', () => {

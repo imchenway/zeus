@@ -3432,6 +3432,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     isClosed: () => closing || closed,
     manager: options.manager,
     syncCheckpoints,
+    submissions: options.submissions,
     turns: options.turns,
     getConversation: (conversationId) => options.conversations.getById(conversationId),
     ensureGenerationReconciled,

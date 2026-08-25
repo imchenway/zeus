@@ -495,46 +495,48 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
               onLoadTurnArtifacts: connectedActions.onLoadTurnArtifacts,
               onLoadV2Content: connectedActions.onLoadV2Content,
               onLoadV2ToolResult: connectedActions.onLoadV2ToolResult,
+              // 资源读取与预览不会修改会话。历史工作面必须保留这些能力，否则
+              // 已经归档到 Zeus 的 Markdown 图片仍会退化为“图片预览不可用”。
+              onOpenResource: async (resource, target, location) => {
+                const result = await openConversationResourceInMain({
+                  zeus: window.zeus,
+                  projectId,
+                  conversationId,
+                  resourceId: resource.id,
+                  target,
+                  ...(location ? { location } : {}),
+                });
+                if (!result.opened) throw new Error(result.error ?? 'conversation_resource_open_failed');
+                if (result.mode !== 'zeus_source') return { opened: true, mode: result.mode };
+                if (!props.client.loadConversationResourcePreview) throw new Error('conversation_resource_preview_unavailable');
+                const preview = await props.client.loadConversationResourcePreview(projectId, conversationId, resource.id);
+                return { opened: true, mode: result.mode, preview: location ? { ...preview, location } : preview };
+              },
+              onLoadResourcePreview: async (resource) => {
+                if (!props.client.loadConversationResourcePreview) throw new Error('conversation_resource_preview_unavailable');
+                return props.client.loadConversationResourcePreview(projectId, conversationId, resource.id);
+              },
+              onOpenTurnChangeFile: async (changeSet, file, target, location) => {
+                const result = await openTurnChangeFileInMain({
+                  zeus: window.zeus,
+                  projectId,
+                  conversationId,
+                  turnId: changeSet.providerTurnId,
+                  changeSetId: changeSet.id,
+                  fileId: file.id,
+                  target,
+                  ...(location ? { location } : {}),
+                });
+                if (!result.opened) throw new Error(result.error ?? 'turn_change_file_open_failed');
+                if (result.mode !== 'zeus_source') return { opened: true, mode: result.mode };
+                if (!props.client.loadTurnChangeFilePreview) throw new Error('conversation_resource_preview_unavailable');
+                const preview = await props.client.loadTurnChangeFilePreview(projectId, conversationId, changeSet.providerTurnId, changeSet.id, file.id);
+                return { opened: true, mode: result.mode, preview: location ? { ...preview, location } : preview };
+              },
             }
           : props.localActions),
       ...(controllerInteractive
         ? {
-            onOpenResource: async (resource, target, location) => {
-              const result = await openConversationResourceInMain({
-                zeus: window.zeus,
-                projectId,
-                conversationId,
-                resourceId: resource.id,
-                target,
-                ...(location ? { location } : {}),
-              });
-              if (!result.opened) throw new Error(result.error ?? 'conversation_resource_open_failed');
-              if (result.mode !== 'zeus_source') return { opened: true, mode: result.mode };
-              if (!props.client.loadConversationResourcePreview) throw new Error('conversation_resource_preview_unavailable');
-              const preview = await props.client.loadConversationResourcePreview(projectId, conversationId, resource.id);
-              return { opened: true, mode: result.mode, preview: location ? { ...preview, location } : preview };
-            },
-            onLoadResourcePreview: async (resource) => {
-              if (!props.client.loadConversationResourcePreview) throw new Error('conversation_resource_preview_unavailable');
-              return props.client.loadConversationResourcePreview(projectId, conversationId, resource.id);
-            },
-            onOpenTurnChangeFile: async (changeSet, file, target, location) => {
-              const result = await openTurnChangeFileInMain({
-                zeus: window.zeus,
-                projectId,
-                conversationId,
-                turnId: changeSet.providerTurnId,
-                changeSetId: changeSet.id,
-                fileId: file.id,
-                target,
-                ...(location ? { location } : {}),
-              });
-              if (!result.opened) throw new Error(result.error ?? 'turn_change_file_open_failed');
-              if (result.mode !== 'zeus_source') return { opened: true, mode: result.mode };
-              if (!props.client.loadTurnChangeFilePreview) throw new Error('conversation_resource_preview_unavailable');
-              const preview = await props.client.loadTurnChangeFilePreview(projectId, conversationId, changeSet.providerTurnId, changeSet.id, file.id);
-              return { opened: true, mode: result.mode, preview: location ? { ...preview, location } : preview };
-            },
             onOperateTurnChangeSet: async (changeSet, action) => {
               if (!props.client.operateTurnChangeSet) throw new Error('turn_change_set_operation_unavailable');
               return props.client.operateTurnChangeSet(projectId, conversationId, changeSet.providerTurnId, action, {
@@ -2349,8 +2351,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                           }
                         : undefined
                     }
-                    onOpenResource={transcriptInteractionsEnabled ? openConversationResource : undefined}
-                    onLoadResourcePreview={transcriptInteractionsEnabled ? actions.onLoadResourcePreview : undefined}
+                    onOpenResource={transcriptReadActionsEnabled ? openConversationResource : undefined}
+                    onLoadResourcePreview={transcriptReadActionsEnabled ? actions.onLoadResourcePreview : undefined}
                     onLoadEarlierHistory={transcriptReadActionsEnabled ? actions.onLoadEarlierHistory : undefined}
                     onLoadTurnProcess={transcriptReadActionsEnabled ? actions.onLoadTurnProcess : undefined}
                     onLoadTurnArtifacts={transcriptReadActionsEnabled ? actions.onLoadTurnArtifacts : undefined}
