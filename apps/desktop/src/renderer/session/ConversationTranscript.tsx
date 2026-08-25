@@ -78,6 +78,39 @@ function containsMarkdownImage(item: NativeSessionItemBuffer): boolean {
   return /!\[[^\]]*\]\([^)]+\)/u.test(transcriptItemText(item));
 }
 
+function imageAttachmentDescriptors(item: NativeSessionItemBuffer): Array<{ name: string; taskPushAttachmentKey: string | null }> {
+  const content = typeof item.payload.content === 'object' && item.payload.content !== null && !Array.isArray(item.payload.content) ? (item.payload.content as Record<string, unknown>) : null;
+  const sources = [item.payload.attachments, content?.attachments].filter(Array.isArray);
+  const descriptors = sources.flatMap((source) =>
+    source.flatMap((entry) => {
+      if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return [];
+      const attachment = entry as Record<string, unknown>;
+      const name = typeof attachment.name === 'string' ? attachment.name : '';
+      const mime = typeof attachment.mime === 'string' ? attachment.mime : typeof attachment.mimeType === 'string' ? attachment.mimeType : '';
+      const image = attachment.kind === 'image' || mime.startsWith('image/');
+      if (!name || !image) return [];
+      return [
+        {
+          name,
+          taskPushAttachmentKey: typeof attachment.taskPushAttachmentKey === 'string' && attachment.taskPushAttachmentKey ? attachment.taskPushAttachmentKey : null,
+        },
+      ];
+    }),
+  );
+  return [...new Map(descriptors.map((descriptor) => [`${descriptor.taskPushAttachmentKey ?? ''}\u0000${descriptor.name}`, descriptor])).values()];
+}
+
+function itemNeedsImageResources(item: NativeSessionItemBuffer): boolean {
+  if (containsMarkdownImage(item) && !item.resources.some((resource) => resource.presentation === 'inline' && isImageResource(resource))) return true;
+  if (item.optimistic) return false;
+  return imageAttachmentDescriptors(item).some(
+    (attachment) =>
+      !item.resources.some(
+        (resource) => resource.kind === 'attachment' && isImageResource(resource) && ((attachment.taskPushAttachmentKey && resource.taskPushAttachmentKey === attachment.taskPushAttachmentKey) || resource.displayName === attachment.name),
+      ),
+  );
+}
+
 function turnDetailPaging(snapshot: NativeSessionState['snapshot'], turnId: string) {
   const process = snapshot?.v2Paging?.processByTurn[turnId];
   // v0.3.46 之前已经留在 Renderer 内存中的分页对象没有 historyByTurn。
@@ -257,23 +290,29 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     onLoadV2Content: useStableOptionalCallback(props.onLoadV2Content),
     onLoadV2ToolResult: useStableOptionalCallback(props.onLoadV2ToolResult),
   };
-  const markdownImageItem = useMemo(() => items.find(containsMarkdownImage) ?? null, [items]);
-  const markdownImageNeedsResource = Boolean(markdownImageItem && !markdownImageItem.resources.some((resource) => resource.presentation === 'inline' && isImageResource(resource)));
+  const itemNeedingImageResources = useMemo(() => items.find(itemNeedsImageResources) ?? null, [items]);
   const resourcePaging = props.state.snapshot?.v2Paging?.resources;
   useEffect(() => {
     const loadTurnArtifacts = renderProps.onLoadTurnArtifacts;
+    // 资源补齐后解除本次尝试锁。若后续权威快照异常丢失展示资源，可再次自愈；
+    // 真正失败且状态未变化时仍保留尝试键，避免无界重试。
+    if (!itemNeedingImageResources) {
+      automaticResourceLoadAttemptRef.current = null;
+      return;
+    }
     // 渐进水合会先投影可读正文，再发布完整交互快照。若在 hydrating 阶段读取，
     // 连接代次切换会丢弃该页且相同正文不会再触发一次；必须等权威水合完成。
-    if (props.state.transportState !== 'ready' || !loadTurnArtifacts || !markdownImageItem || !markdownImageNeedsResource || !resourcePaging || resourcePaging.loading) return;
+    if (props.state.transportState !== 'ready' || !loadTurnArtifacts || !resourcePaging || resourcePaging.loading) return;
     // 首次调用可能先取得资源页、后取得带 providerItemId 的正文。把资源页代次和
     // Provider item 身份都纳入尝试键，允许第二次只执行内存合并，但仍禁止无界重试。
-    const attemptKey = `${props.state.conversationId}:${markdownImageItem.turnId}:${markdownImageItem.providerItemId ?? markdownImageItem.key}:${resourcePaging.loaded}:${resourcePaging.hasMore}:${resourcePaging.nextCursor ?? 'end'}:${resourcePaging.items.length}`;
+    const attemptKey = `${props.state.conversationId}:${itemNeedingImageResources.turnId}:${itemNeedingImageResources.providerItemId ?? itemNeedingImageResources.key}:${resourcePaging.loaded}:${resourcePaging.hasMore}:${resourcePaging.nextCursor ?? 'end'}:${resourcePaging.items.length}`;
     if (automaticResourceLoadAttemptRef.current === attemptKey) return;
     automaticResourceLoadAttemptRef.current = attemptKey;
-    // Markdown 图片属于正文，不应要求用户先展开“处理过程”才能取得资源元数据。
+    // Markdown 图片和已持久用户附件都属于正文，不应要求用户先展开“处理过程”
+    // 才能取得资源元数据。
     // 失败保留现有占位与手动重试入口，避免 React 重渲染形成无界请求循环。
-    void Promise.resolve(loadTurnArtifacts(markdownImageItem.turnId)).catch(() => undefined);
-  }, [markdownImageItem, markdownImageNeedsResource, props.state.conversationId, props.state.transportState, renderProps.onLoadTurnArtifacts, resourcePaging]);
+    void Promise.resolve(loadTurnArtifacts(itemNeedingImageResources.turnId)).catch(() => undefined);
+  }, [itemNeedingImageResources, props.state.conversationId, props.state.transportState, renderProps.onLoadTurnArtifacts, resourcePaging]);
   const loadEarlierHistoryWithAnchor = useCallback(async (): Promise<void> => {
     const loadEarlier = renderProps.onLoadEarlierHistory;
     const container = containerRef.current;
@@ -941,6 +980,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         onEdit={options.props.onEditUserItem}
         onOpenResource={options.props.onOpenResource}
         onLoadResourcePreview={options.props.onLoadResourcePreview}
+        onLoadResources={options.props.onLoadTurnArtifacts}
         onVisibleContentChange={options.onVisibleContentChange}
         responseAnnotations={options.responseAnnotationsByItemId.get(row.item.itemId) ?? emptyResponseAnnotations}
         onAddResponseAnnotation={options.props.onAddResponseAnnotation}

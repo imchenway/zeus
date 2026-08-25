@@ -117,6 +117,7 @@ export interface ThreadItemViewProps {
   onEdit?: (item: NativeSessionItemBuffer, content: string) => void | Promise<void>;
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
+  onLoadResources?: (turnId: string) => void | Promise<void>;
   onVisibleContentChange?: () => void;
   responseAnnotations?: ConversationResponseAnnotation[];
   onAddResponseAnnotation?: (anchor: ConversationResponseTextAnchor) => string;
@@ -164,18 +165,15 @@ function TaskPushMessageContent(
               const resource = resourcesByKey.get(key);
               return resource ? [resource] : [];
             });
-            // 同一任务图片从乐观消息到权威资源会经历异步交接。只要提交快照仍带有
-            // 本地图片，就持续使用这条已可见预览，避免资源元数据先到、内容稍后到时
-            // 短暂退化成“图片预览不可用”。没有提交快照的冷历史才读取权威资源。
-            const pendingImageKeys = new Set(field.attachmentKeys.filter((key) => pendingImagesByKey.has(key)));
-            const resources = markdownResources.filter((resource) => {
-              const key = resourceTaskPushAttachmentKey(resource);
-              return !key || !pendingImageKeys.has(key);
-            });
+            // 乐观消息尚未落库时使用本地图片；一旦权威资源到达就立即接管。历史
+            // payload 会永久保留原始 localPath，但该路径在 Test 数据根、迁移或清理
+            // 后不再受信，不能反过来遮住已经可用的耐久资源。
+            const authoritativeImageKeys = new Set(field.attachmentKeys.filter((key) => resourcesByKey.has(key)));
+            const resources = markdownResources;
             const attachmentNames = new Map(block.attachments.map((attachment) => [attachment.key, attachment.name]));
             const pendingImages = field.attachmentKeys.flatMap((key) => {
               const attachment = pendingImagesByKey.get(key);
-              return attachment && pendingImageKeys.has(key) ? [attachment] : [];
+              return attachment && !authoritativeImageKeys.has(key) ? [attachment] : [];
             });
             const missingAttachmentKeys = field.attachmentKeys.filter((key) => !resourcesByKey.has(key) && !pendingImagesByKey.has(key));
             return (
@@ -207,7 +205,6 @@ function TaskPushMessageContent(
           <strong>补充信息：</strong>
           <ConversationResourceCards
             resources={supplementalAttachments.flatMap((attachment) => {
-              if (pendingImagesByKey.has(attachment.key)) return [];
               const resource = resourcesByKey.get(attachment.key);
               return resource ? [resource] : [];
             })}
@@ -217,6 +214,7 @@ function TaskPushMessageContent(
           />
           <ConversationPendingAttachmentImages
             attachments={supplementalAttachments.flatMap((attachment) => {
+              if (resourcesByKey.has(attachment.key)) return [];
               const pending = pendingImagesByKey.get(attachment.key);
               return pending ? [pending] : [];
             })}
@@ -282,6 +280,16 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const conversationContext = role === 'user' ? conversationContextDraft(props.item.payload.conversationContext) : null;
   const hasAuthoritativeAttachmentResources = props.item.resources.some((resource) => resource.kind === 'attachment' && resource.presentation === 'card');
   const pendingImageAttachments = !taskPushLayout && !hasAuthoritativeAttachmentResources ? pendingAttachments.filter(isPendingImageAttachment) : [];
+  const needsAuthoritativeAttachmentResources =
+    role === 'user' &&
+    !props.item.optimistic &&
+    pendingAttachments.some(
+      (attachment) =>
+        isPendingImageAttachment(attachment) &&
+        !props.item.resources.some(
+          (resource) => resource.kind === 'attachment' && isImageResource(resource) && ((attachment.taskPushAttachmentKey && resource.taskPushAttachmentKey === attachment.taskPushAttachmentKey) || resource.displayName === attachment.name),
+        ),
+    );
   const showUserMessageAttachmentGroup = role === 'user' && !taskPushLayout;
   const taskPushAttachmentKeys = new Set([...(taskPushLayout?.blocks.flatMap((block) => block.attachments.map((attachment) => attachment.key)) ?? []), ...(taskPushLayout?.supplementalAttachments ?? []).map((attachment) => attachment.key)]);
   const itemResources = taskPushLayout
@@ -321,6 +329,11 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
     textarea.focus();
     textarea.setSelectionRange(textarea.value.length, textarea.value.length);
   }, [editing]);
+
+  useEffect(() => {
+    if (!needsAuthoritativeAttachmentResources || !props.onLoadResources) return;
+    void Promise.resolve(props.onLoadResources(props.item.turnId)).catch(() => undefined);
+  }, [needsAuthoritativeAttachmentResources, props.item.turnId, props.onLoadResources]);
 
   useLayoutEffect(() => {
     if (!editing || !editTextareaRef.current) return;

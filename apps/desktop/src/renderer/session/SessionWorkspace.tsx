@@ -468,9 +468,54 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
   const workspaceActions = useMemo<SessionWorkspaceActions>(() => {
     const projectId = props.conversation.projectId;
     const conversationId = props.conversation.id;
+    // 资源、深历史和变更文件读取都是只读能力。它们必须同时存在于冷历史工作面
+    // 和续聊后的交互工作面；不能因为第一条新消息让图片预览能力从 actions 消失。
+    const controllerReadActions: SessionWorkspaceActions = {
+      onLoadEarlierHistory: connectedActions.onLoadEarlierHistory,
+      onLoadTurnProcess: connectedActions.onLoadTurnProcess,
+      onLoadTurnArtifacts: connectedActions.onLoadTurnArtifacts,
+      onLoadV2Content: connectedActions.onLoadV2Content,
+      onLoadV2ToolResult: connectedActions.onLoadV2ToolResult,
+      onOpenResource: async (resource, target, location) => {
+        const result = await openConversationResourceInMain({
+          zeus: window.zeus,
+          projectId,
+          conversationId,
+          resourceId: resource.id,
+          target,
+          ...(location ? { location } : {}),
+        });
+        if (!result.opened) throw new Error(result.error ?? 'conversation_resource_open_failed');
+        if (result.mode !== 'zeus_source') return { opened: true, mode: result.mode };
+        if (!props.client.loadConversationResourcePreview) throw new Error('conversation_resource_preview_unavailable');
+        const preview = await props.client.loadConversationResourcePreview(projectId, conversationId, resource.id);
+        return { opened: true, mode: result.mode, preview: location ? { ...preview, location } : preview };
+      },
+      onLoadResourcePreview: async (resource) => {
+        if (!props.client.loadConversationResourcePreview) throw new Error('conversation_resource_preview_unavailable');
+        return props.client.loadConversationResourcePreview(projectId, conversationId, resource.id);
+      },
+      onOpenTurnChangeFile: async (changeSet, file, target, location) => {
+        const result = await openTurnChangeFileInMain({
+          zeus: window.zeus,
+          projectId,
+          conversationId,
+          turnId: changeSet.providerTurnId,
+          changeSetId: changeSet.id,
+          fileId: file.id,
+          target,
+          ...(location ? { location } : {}),
+        });
+        if (!result.opened) throw new Error(result.error ?? 'turn_change_file_open_failed');
+        if (result.mode !== 'zeus_source') return { opened: true, mode: result.mode };
+        if (!props.client.loadTurnChangeFilePreview) throw new Error('conversation_resource_preview_unavailable');
+        const preview = await props.client.loadTurnChangeFilePreview(projectId, conversationId, changeSet.providerTurnId, changeSet.id, file.id);
+        return { opened: true, mode: result.mode, preview: location ? { ...preview, location } : preview };
+      },
+    };
     return {
       ...(controllerInteractive
-        ? connectedActions
+        ? { ...connectedActions, ...controllerReadActions }
         : controllerActionsAvailable
           ? {
               ...(historySnapshotOnly
@@ -490,49 +535,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
                     onCollaborationModeChange: connectedActions.onCollaborationModeChange,
                   }
                 : {}),
-              onLoadEarlierHistory: connectedActions.onLoadEarlierHistory,
-              onLoadTurnProcess: connectedActions.onLoadTurnProcess,
-              onLoadTurnArtifacts: connectedActions.onLoadTurnArtifacts,
-              onLoadV2Content: connectedActions.onLoadV2Content,
-              onLoadV2ToolResult: connectedActions.onLoadV2ToolResult,
-              // 资源读取与预览不会修改会话。历史工作面必须保留这些能力，否则
-              // 已经归档到 Zeus 的 Markdown 图片仍会退化为“图片预览不可用”。
-              onOpenResource: async (resource, target, location) => {
-                const result = await openConversationResourceInMain({
-                  zeus: window.zeus,
-                  projectId,
-                  conversationId,
-                  resourceId: resource.id,
-                  target,
-                  ...(location ? { location } : {}),
-                });
-                if (!result.opened) throw new Error(result.error ?? 'conversation_resource_open_failed');
-                if (result.mode !== 'zeus_source') return { opened: true, mode: result.mode };
-                if (!props.client.loadConversationResourcePreview) throw new Error('conversation_resource_preview_unavailable');
-                const preview = await props.client.loadConversationResourcePreview(projectId, conversationId, resource.id);
-                return { opened: true, mode: result.mode, preview: location ? { ...preview, location } : preview };
-              },
-              onLoadResourcePreview: async (resource) => {
-                if (!props.client.loadConversationResourcePreview) throw new Error('conversation_resource_preview_unavailable');
-                return props.client.loadConversationResourcePreview(projectId, conversationId, resource.id);
-              },
-              onOpenTurnChangeFile: async (changeSet, file, target, location) => {
-                const result = await openTurnChangeFileInMain({
-                  zeus: window.zeus,
-                  projectId,
-                  conversationId,
-                  turnId: changeSet.providerTurnId,
-                  changeSetId: changeSet.id,
-                  fileId: file.id,
-                  target,
-                  ...(location ? { location } : {}),
-                });
-                if (!result.opened) throw new Error(result.error ?? 'turn_change_file_open_failed');
-                if (result.mode !== 'zeus_source') return { opened: true, mode: result.mode };
-                if (!props.client.loadTurnChangeFilePreview) throw new Error('conversation_resource_preview_unavailable');
-                const preview = await props.client.loadTurnChangeFilePreview(projectId, conversationId, changeSet.providerTurnId, changeSet.id, file.id);
-                return { opened: true, mode: result.mode, preview: location ? { ...preview, location } : preview };
-              },
+              ...controllerReadActions,
             }
           : props.localActions),
       ...(controllerInteractive

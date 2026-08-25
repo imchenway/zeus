@@ -291,6 +291,9 @@ export interface ConversationResourcePageItem {
   mimeType: string | null;
   previewKind: string | null;
   iconKind: string | null;
+  attachmentRef: string | null;
+  taskPushAttachmentKey: string | null;
+  origin: string | null;
   createdAt: string;
   updatedAt: string;
   accessPolicy: 'authorized_open_intent_or_preview';
@@ -896,6 +899,9 @@ export class ConversationSnapshotV2Repository {
       mime_type: string | null;
       preview_kind: string | null;
       icon_kind: string | null;
+      attachment_ref: string | null;
+      task_push_attachment_key: string | null;
+      origin: string | null;
       created_at: string;
       updated_at: string;
     }>(
@@ -904,6 +910,9 @@ export class ConversationSnapshotV2Repository {
               CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.mimeType') AS TEXT), 1, 256) ELSE NULL END AS mime_type,
               CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.previewKind') AS TEXT), 1, 64) ELSE NULL END AS preview_kind,
               CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.iconKind') AS TEXT), 1, 64) ELSE NULL END AS icon_kind,
+              CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.attachmentRef') AS TEXT), 1, 512) ELSE NULL END AS attachment_ref,
+              CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.taskPushAttachmentKey') AS TEXT), 1, 512) ELSE NULL END AS task_push_attachment_key,
+              CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.origin') AS TEXT), 1, 128) ELSE NULL END AS origin,
               created_at, updated_at
          FROM conversation_resources
         WHERE conversation_id = ?
@@ -924,6 +933,9 @@ export class ConversationSnapshotV2Repository {
       mimeType: row.mime_type,
       previewKind: row.preview_kind,
       iconKind: row.icon_kind,
+      attachmentRef: row.attachment_ref,
+      taskPushAttachmentKey: row.task_push_attachment_key,
+      origin: row.origin,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       accessPolicy: 'authorized_open_intent_or_preview' as const,

@@ -640,6 +640,9 @@ export interface NativeConversationResourceV2Item {
   mimeType: string | null;
   previewKind: string | null;
   iconKind: string | null;
+  attachmentRef?: string | null;
+  taskPushAttachmentKey?: string | null;
+  origin?: string | null;
   createdAt: string;
   updatedAt: string;
   accessPolicy: 'authorized_open_intent_or_preview';

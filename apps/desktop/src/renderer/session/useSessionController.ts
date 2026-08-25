@@ -1965,14 +1965,16 @@ export function createSessionController(options: CreateSessionControllerOptions)
     if (!current?.snapshotV2 || !current.v2Paging) return;
     const generation = connectionToken;
     const turn = current.turns.find((candidate) => candidate.id === turnIdentity || candidate.providerTurnId === turnIdentity);
-    if (!turn) return;
-    const pagingKey = turn.providerTurnId ?? turn.id;
+    // 资源页属于整个会话，不依赖首屏保留的 recentClosedTurns。深历史正文已经分页
+    // 进入 items 后，其 turn 可能不在有界 turns 列表中；此时仍须读取并挂接资源。
+    // 只有 change set 读取需要完整 turn DTO。
+    const pagingKey = turn?.providerTurnId ?? turn?.id ?? turnIdentity;
     const currentChange = current.v2Paging.changeSetsByTurn[pagingKey];
     const resources = current.v2Paging.resources;
     if (currentChange?.loading || resources.loading) return;
-    const v2Turn = [...current.snapshotV2.recentClosedTurns, ...(current.snapshotV2.activeTurn ? [current.snapshotV2.activeTurn] : [])].find((candidate) => candidate.id === turn.id);
+    const v2Turn = turn ? [...current.snapshotV2.recentClosedTurns, ...(current.snapshotV2.activeTurn ? [current.snapshotV2.activeTurn] : [])].find((candidate) => candidate.id === turn.id) : undefined;
     const shouldLoadResources = Boolean(options.client.loadNativeConversationResourcesV2 && (!resources.loaded || resources.hasMore));
-    const shouldLoadChange = Boolean(v2Turn?.changeSetAvailable && options.client.loadTurnChangeSet && !(current.changeSets ?? []).some((changeSet) => changeSet.providerTurnId === pagingKey || changeSet.turnId === turn.id));
+    const shouldLoadChange = Boolean(turn && v2Turn?.changeSetAvailable && options.client.loadTurnChangeSet && !(current.changeSets ?? []).some((changeSet) => changeSet.providerTurnId === pagingKey || changeSet.turnId === turn.id));
     if (!shouldLoadResources && !shouldLoadChange) {
       const merged = await attachV2ResourcesToSnapshot(current, resources.items);
       if (!disposed && generation === connectionToken && merged !== current) dispatchV2Snapshot(merged);
@@ -1982,20 +1984,23 @@ export function createSessionController(options: CreateSessionControllerOptions)
       updateConversationV2Paging(current, (paging) => ({
         ...paging,
         resources: shouldLoadResources ? { ...paging.resources, loading: true, error: null } : paging.resources,
-        changeSetsByTurn: {
-          ...paging.changeSetsByTurn,
-          [pagingKey]: shouldLoadChange
+        changeSetsByTurn:
+          shouldLoadChange || currentChange
             ? {
-                loading: true,
-                loaded: currentChange?.loaded ?? false,
-                error: null,
-                summary: currentChange?.summary ?? null,
-                files: currentChange?.files ?? [],
-                nextCursor: currentChange?.nextCursor ?? null,
-                hasMore: currentChange?.hasMore ?? true,
+                ...paging.changeSetsByTurn,
+                [pagingKey]: shouldLoadChange
+                  ? {
+                      loading: true,
+                      loaded: currentChange?.loaded ?? false,
+                      error: null,
+                      summary: currentChange?.summary ?? null,
+                      files: currentChange?.files ?? [],
+                      nextCursor: currentChange?.nextCursor ?? null,
+                      hasMore: currentChange?.hasMore ?? true,
+                    }
+                  : currentChange!,
               }
-            : (currentChange ?? { loading: false, loaded: true, error: null, summary: null, files: [], nextCursor: null, hasMore: false }),
-        },
+            : paging.changeSetsByTurn,
       })),
     );
     try {
@@ -2024,7 +2029,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
             return { items, nextCursor: cursor, hasMore };
           })()
         : Promise.resolve(null);
-      const changePromise = shouldLoadChange ? options.client.loadTurnChangeSet!(options.projectId, options.conversationId, turn.id) : Promise.resolve(null);
+      const changePromise = shouldLoadChange && turn ? options.client.loadTurnChangeSet!(options.projectId, options.conversationId, turn.id) : Promise.resolve(null);
       const [resourceResult, changeSet] = await Promise.all([resourcePromise, changePromise]);
       if (disposed || generation !== connectionToken) return;
       const latest = state.snapshot;
@@ -2036,18 +2041,21 @@ export function createSessionController(options: CreateSessionControllerOptions)
       merged = updateConversationV2Paging(merged, (paging) => ({
         ...paging,
         resources: resourceResult ? { nextCursor: resourceResult.nextCursor, hasMore: resourceResult.hasMore, loading: false, loaded: true, error: null, items: resourceItems } : { ...paging.resources, loading: false },
-        changeSetsByTurn: {
-          ...paging.changeSetsByTurn,
-          [pagingKey]: {
-            loading: false,
-            loaded: true,
-            error: null,
-            summary: currentChange?.summary ?? null,
-            files: currentChange?.files ?? [],
-            nextCursor: null,
-            hasMore: false,
-          },
-        },
+        changeSetsByTurn:
+          shouldLoadChange || currentChange
+            ? {
+                ...paging.changeSetsByTurn,
+                [pagingKey]: {
+                  loading: false,
+                  loaded: true,
+                  error: null,
+                  summary: currentChange?.summary ?? null,
+                  files: currentChange?.files ?? [],
+                  nextCursor: null,
+                  hasMore: false,
+                },
+              }
+            : paging.changeSetsByTurn,
       }));
       dispatchV2Snapshot(merged);
     } catch (error) {
@@ -2057,14 +2065,17 @@ export function createSessionController(options: CreateSessionControllerOptions)
           updateConversationV2Paging(latest, (paging) => ({
             ...paging,
             resources: shouldLoadResources ? { ...paging.resources, loading: false, error: errorMessage(error) } : paging.resources,
-            changeSetsByTurn: {
-              ...paging.changeSetsByTurn,
-              [pagingKey]: {
-                ...(paging.changeSetsByTurn[pagingKey] ?? { loaded: false, summary: null, files: [], nextCursor: null, hasMore: true }),
-                loading: false,
-                error: errorMessage(error),
-              },
-            },
+            changeSetsByTurn:
+              shouldLoadChange || currentChange
+                ? {
+                    ...paging.changeSetsByTurn,
+                    [pagingKey]: {
+                      ...(paging.changeSetsByTurn[pagingKey] ?? { loaded: false, summary: null, files: [], nextCursor: null, hasMore: true }),
+                      loading: false,
+                      error: errorMessage(error),
+                    },
+                  }
+                : paging.changeSetsByTurn,
           })),
         );
       }
@@ -2599,9 +2610,11 @@ async function attachV2ResourcesToSnapshot(snapshot: NativeConversationSnapshot,
   const providerThreadId = snapshot.providerThreadId;
   if (!providerThreadId || metadata.length === 0 || !globalThis.crypto?.subtle) return snapshot;
   const resourcesByItemId = new Map<string, ConversationResource[]>();
+  const projectedResources: ConversationResource[] = [];
   for (const item of metadata) {
     const resource = conversationResourceFromV2Metadata(snapshot, item);
     if (!resource) continue;
+    projectedResources.push(resource);
     const resources = resourcesByItemId.get(item.itemId) ?? [];
     resources.push(resource);
     resourcesByItemId.set(item.itemId, resources);
@@ -2614,7 +2627,12 @@ async function attachV2ResourcesToSnapshot(snapshot: NativeConversationSnapshot,
   );
   let changed = false;
   const items = projectedItemIds.map(({ item, providerStateId }) => {
-    const resources = providerStateId ? resourcesByItemId.get(providerStateId) : undefined;
+    const exactResources = providerStateId ? resourcesByItemId.get(providerStateId) : undefined;
+    // 本地持久用户消息可能没有 providerItemId，而 Provider 会为同一附件生成一个或
+    // 多个别名 item。此时按同轮次的耐久附件身份回接，不能退回 payload.localPath；
+    // 后者在 Test 数据根、迁移或历史 Worktree 清理后不再是可授权读取入口。
+    const attachmentResources = conversationResourcesMatchingItemAttachments(item, projectedResources);
+    const resources = dedupeById([...(exactResources ?? []), ...attachmentResources]);
     if (!resources?.length) return item;
     const merged = dedupeById([...(item.resources ?? []), ...resources]);
     if (merged.length === (item.resources?.length ?? 0)) return item;
@@ -2667,13 +2685,49 @@ function conversationResourceFromV2Metadata(snapshot: NativeConversationSnapshot
     return {
       ...base,
       kind: 'attachment',
-      attachmentRef: item.id,
+      attachmentRef: item.attachmentRef ?? item.id,
       previewKind: item.previewKind === 'image' || item.previewKind === 'document' ? item.previewKind : 'none',
       iconKind,
       ...(item.mimeType ? { mimeType: item.mimeType } : {}),
+      ...(item.taskPushAttachmentKey ? { taskPushAttachmentKey: item.taskPushAttachmentKey } : {}),
     };
   }
   return null;
+}
+
+function conversationResourcesMatchingItemAttachments(item: NativeConversationSnapshot['items'][number], resources: ConversationResource[]): ConversationResource[] {
+  const attachments = conversationItemAttachmentDescriptors(item);
+  if (attachments.length === 0) return [];
+  const taskPushAttachmentKeys = new Set(attachments.map((attachment) => attachment.taskPushAttachmentKey).filter((value): value is string => Boolean(value)));
+  const uploadRefs = new Set(attachments.map((attachment) => attachment.uploadRef).filter((value): value is string => Boolean(value)));
+  const names = new Set(attachments.map((attachment) => attachment.name));
+  return resources.filter(
+    (resource) =>
+      resource.kind === 'attachment' &&
+      resource.turnId === item.turnId &&
+      ((resource.taskPushAttachmentKey && taskPushAttachmentKeys.has(resource.taskPushAttachmentKey)) || uploadRefs.has(resource.attachmentRef) || names.has(resource.displayName)),
+  );
+}
+
+function conversationItemAttachmentDescriptors(item: NativeConversationSnapshot['items'][number]): Array<{ name: string; uploadRef: string | null; taskPushAttachmentKey: string | null }> {
+  const content = typeof item.payload.content === 'object' && item.payload.content !== null && !Array.isArray(item.payload.content) ? (item.payload.content as Record<string, unknown>) : null;
+  const sources = [item.payload.attachments, content?.attachments].filter(Array.isArray);
+  const descriptors = sources.flatMap((source) =>
+    source.flatMap((entry) => {
+      if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return [];
+      const attachment = entry as Record<string, unknown>;
+      const name = typeof attachment.name === 'string' ? attachment.name : '';
+      if (!name) return [];
+      return [
+        {
+          name,
+          uploadRef: typeof attachment.uploadRef === 'string' && attachment.uploadRef ? attachment.uploadRef : null,
+          taskPushAttachmentKey: typeof attachment.taskPushAttachmentKey === 'string' && attachment.taskPushAttachmentKey ? attachment.taskPushAttachmentKey : null,
+        },
+      ];
+    }),
+  );
+  return [...new Map(descriptors.map((descriptor) => [`${descriptor.taskPushAttachmentKey ?? ''}\u0000${descriptor.uploadRef ?? ''}\u0000${descriptor.name}`, descriptor])).values()];
 }
 
 function errorMessage(error: unknown): string {

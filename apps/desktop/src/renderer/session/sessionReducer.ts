@@ -363,11 +363,16 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
   const previousUserItemKeys = new Map<string, string>();
   const previousUserStableIndexes = new Map<string, number>();
   const previousItemStableIndexes = new Map(state.itemOrder.map((key, index) => [key, index]));
+  const previousItemsByProviderId = new Map<string, NativeSessionItemBuffer>();
+  const previousItemsByLocalId = new Map<string, NativeSessionItemBuffer>();
   const previousUserItemsByClientId = new Map<string, NativeSessionItemBuffer>();
   const previousUserItemsBySubmissionId = new Map<string, NativeSessionItemBuffer>();
   state.itemOrder.forEach((key, index) => {
     const item = state.items[key];
-    if (!item || item.conversationId !== snapshot.id || !isUserMessageItem(item)) return;
+    if (!item || item.conversationId !== snapshot.id) return;
+    if (item.providerItemId) previousItemsByProviderId.set(item.providerItemId, item);
+    if (item.localItemId) previousItemsByLocalId.set(item.localItemId, item);
+    if (!isUserMessageItem(item)) return;
     const submissionId = stringValue(item.payload.submissionId);
     if (submissionId) previousUserItemsBySubmissionId.set(submissionId, item);
     for (const clientId of userMessageClientIds(item)) {
@@ -407,6 +412,10 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
     }
     // 同一条用户消息从本地发送态交接为 Provider item 时沿用可见身份，避免气泡被卸载后重建。
     const key = (itemClientId ? previousUserItemKeys.get(itemClientId) : undefined) ?? nativeSessionItemKey(snapshot.id, threadId, turnId, itemId);
+    // 资源分页已经补齐到 Renderer 后，后续轻量权威快照仍可能只携带正文、把 resources
+    // 投影为空。资源属于同一持久 item 的展示增量，必须按稳定身份合并，不能在新一轮
+    // 对账时倒退为“图片不可用”。
+    const previousDurableItem = state.items[key] ?? (item.providerItemId ? previousItemsByProviderId.get(item.providerItemId) : undefined) ?? previousItemsByLocalId.get(item.id);
     items[key] = {
       key,
       conversationId: snapshot.id,
@@ -420,7 +429,7 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
       phase: item.phase,
       text: item.text,
       payload: previousUserItem ? mergeStableUserMessagePresentation(previousUserItem.payload, item.payload) : item.payload,
-      resources: item.resources ?? [],
+      resources: mergeDurableItemResources(previousDurableItem?.resources, item.resources),
       timelineAt,
       updatedAt: item.updatedAt,
       ...(itemClientId ? { clientUserMessageId: itemClientId, durableClientUserMessageId: itemClientId } : {}),
@@ -795,6 +804,15 @@ function sameSerializableValue(left: unknown, right: unknown): boolean {
 
 function sameStringArray(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+/** 同一持久消息的资源是渐进补齐数据；空快照不能撤销已经取得的图片与交付物。 */
+function mergeDurableItemResources(previous: NativeSessionItemBuffer['resources'] | undefined, incoming: NativeSessionItemBuffer['resources'] | undefined): NativeSessionItemBuffer['resources'] {
+  if (!previous?.length) return incoming ?? [];
+  if (!incoming?.length) return previous;
+  const resourcesById = new Map(previous.map((resource) => [resource.id, resource]));
+  for (const resource of incoming) resourcesById.set(resource.id, resource);
+  return [...resourcesById.values()];
 }
 
 function reduceNativeEvent(state: NativeSessionState, event: NativeConversationEvent, suppressRequestAuthority = false): NativeSessionState {
