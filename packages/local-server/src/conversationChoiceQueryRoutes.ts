@@ -10,11 +10,7 @@ interface CatchUpConversationChoice {
 }
 
 /** HTTP 只校验资源存在性并映射 404；选择、排序与运行态投影均由 Application 拥有。 */
-export function registerConversationChoiceQueryRoutes(options: {
-  server: FastifyInstance;
-  application: ConversationChoiceQueryApplication;
-  synchronizeConversations?: (conversationIds: readonly string[]) => Promise<void>;
-}): void {
+export function registerConversationChoiceQueryRoutes(options: { server: FastifyInstance; application: ConversationChoiceQueryApplication; synchronizeConversations?: (conversationIds: readonly string[]) => Promise<void> }): void {
   options.server.get('/api/projects/:projectId/conversation-choices', async (request: FastifyRequest<{ Params: { projectId: string } }>, reply) => {
     const project = options.application.project(request.params.projectId);
     if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' });
@@ -42,20 +38,11 @@ export function registerConversationChoiceQueryRoutes(options: {
   });
 }
 
-function scheduleConversationCatchUp(
-  options: { synchronizeConversations?: (conversationIds: readonly string[]) => Promise<void> },
-  choices: readonly CatchUpConversationChoice[],
-): void {
+function scheduleConversationCatchUp(options: { synchronizeConversations?: (conversationIds: readonly string[]) => Promise<void> }, choices: readonly CatchUpConversationChoice[]): void {
   if (!options.synchronizeConversations) return;
   const conversationIds = choices
     .filter(
-      (choice) =>
-        !choice.archived &&
-        choice.transportKind === 'codex_native' &&
-        Boolean(choice.providerThreadId?.trim()) &&
-        choice.providerState !== 'archived' &&
-        choice.providerState !== 'closed' &&
-        choice.providerState !== 'failed',
+      (choice) => !choice.archived && choice.transportKind === 'codex_native' && Boolean(choice.providerThreadId?.trim()) && choice.providerState !== 'archived' && choice.providerState !== 'closed' && choice.providerState !== 'failed',
     )
     .map((choice) => choice.id);
   if (conversationIds.length === 0) return;
