@@ -20,7 +20,7 @@ import { ComposerDropdown } from './ComposerDropdown.js';
 import { PlanImplementationRequestSurface } from './PlanImplementationRequestSurface.js';
 import { PlanWorkspace } from './PlanWorkspace.js';
 import { BrowserWorkspace } from './BrowserWorkspace.js';
-import { SourceWorkspace } from './SourceWorkspace.js';
+import { defaultSourceWorkspaceViewMode, SourceWorkspace, type SourceWorkspaceViewMode } from './SourceWorkspace.js';
 import { TurnDiffWorkspace } from './TurnChanges.js';
 import { SideChatWorkspace } from './SideChatWorkspace.js';
 import { SubagentWorkspace } from './SubagentWorkspace.js';
@@ -1435,7 +1435,7 @@ type SessionContextWorkspace =
   | { kind: 'browser' }
   | { kind: 'subagents' }
   | { kind: 'plan'; itemKey: string }
-  | { kind: 'source'; preview: ConversationResourcePreview }
+  | { kind: 'source'; preview: ConversationResourcePreview; viewMode: SourceWorkspaceViewMode }
   | { kind: 'turn_diff'; turnId: string; initialFileId?: string }
   | { kind: 'side_chat'; selectedText: string };
 
@@ -1929,7 +1929,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     if (!result.opened) throw new Error('conversation_resource_open_failed');
     if (result.mode === 'zeus_source' && result.preview) {
       setContextFullWidth(false);
-      setContextWorkspace({ kind: 'source', preview: result.preview });
+      setContextWorkspace({ kind: 'source', preview: result.preview, viewMode: defaultSourceWorkspaceViewMode(result.preview) });
       return;
     }
     if (result.mode === 'zeus_browser') {
@@ -1947,7 +1947,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     if (!result.opened) throw new Error('turn_change_file_open_failed');
     if (result.mode === 'zeus_source' && result.preview) {
       setContextFullWidth(false);
-      setContextWorkspace({ kind: 'source', preview: result.preview });
+      setContextWorkspace({ kind: 'source', preview: result.preview, viewMode: 'source' });
       return;
     }
     if (result.mode === 'zeus_browser') {
@@ -1986,7 +1986,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         try {
           const refreshed = await actions.onOpenResource(activeSource.resource, 'zeus_source', activeSource.kind === 'source' ? activeSource.location : undefined);
           if (refreshed.preview) {
-            setContextWorkspace((current) => (current.kind === 'source' && current.preview.resource.id === activeSource.resource.id ? { kind: 'source', preview: refreshed.preview as ConversationResourcePreview } : current));
+            setContextWorkspace((current) =>
+              current.kind === 'source' && current.preview.resource.id === activeSource.resource.id ? { kind: 'source', preview: refreshed.preview as ConversationResourcePreview, viewMode: current.viewMode } : current,
+            );
           }
         } catch {
           setContextWorkspace((current) => (current.kind === 'source' && current.preview.resource.id === activeSource.resource.id ? { kind: 'none' } : current));
@@ -2463,6 +2465,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       {contextWorkspace.kind === 'source' ? (
                         <SourceWorkspace
                           preview={contextWorkspace.preview}
+                          viewMode={contextWorkspace.viewMode}
+                          onViewModeChange={(viewMode) => setContextWorkspace((current) => (current.kind === 'source' ? { ...current, viewMode } : current))}
                           language={props.language}
                           fullWidth={contextFullWidth}
                           onFullWidthChange={setContextFullWidth}

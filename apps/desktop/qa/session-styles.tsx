@@ -26,6 +26,7 @@ import { ConversationComposer } from '../src/renderer/session/ConversationCompos
 import { PlanSummary } from '../src/renderer/session/PlanSummary.js';
 import { RuntimeDetails } from '../src/renderer/session/RuntimeDetails.js';
 import { SubagentWorkspace } from '../src/renderer/session/SubagentWorkspace.js';
+import { defaultSourceWorkspaceViewMode, SourceWorkspace } from '../src/renderer/session/SourceWorkspace.js';
 import { SessionPlanProgress } from '../src/renderer/session/SessionActivity.js';
 import { createInitialSessionState, sessionReducer } from '../src/renderer/session/sessionReducer.js';
 import { resolveNativeConversationSelectionPresentation } from '../src/renderer/features/workspace/workspaceSupport.js';
@@ -1839,6 +1840,83 @@ function App() {
   );
 }
 
+const markdownSourcePreview: ConversationResourcePreview = {
+  kind: 'source',
+  resource: {
+    id: 'resource-markdown-preview',
+    projectId: 'project-zeus',
+    conversationId: 'conversation-markdown-preview',
+    turnId: 'turn-markdown-preview',
+    itemId: 'item-markdown-preview',
+    kind: 'file',
+    presentation: 'inline',
+    displayName: 'TASK_20260825_007_会话Markdown文件默认预览.md',
+    projectRelativePath: 'docs/TASK_20260825_007_会话Markdown文件默认预览.md',
+    iconKind: 'markdown',
+    createdAt: '2026-08-25T00:00:00.000Z',
+    updatedAt: '2026-08-25T00:00:00.000Z',
+  },
+  language: 'markdown',
+  content: '# Markdown 默认预览\n\n从会话正文点击 Markdown 文件后，应直接看到渲染后的正文。\n\n## 验收点\n\n- 首次打开显示预览\n- 可以切换到源码\n- 再次打开恢复预览\n\n```ts\nconst mode = "preview";\n```',
+  lineCount: 13,
+  truncated: false,
+};
+
+const typescriptSourcePreview: ConversationResourcePreview = {
+  kind: 'source',
+  resource: {
+    id: 'resource-typescript-preview',
+    projectId: 'project-zeus',
+    conversationId: 'conversation-markdown-preview',
+    turnId: 'turn-markdown-preview',
+    itemId: 'item-typescript-preview',
+    kind: 'file',
+    presentation: 'inline',
+    displayName: 'SourceWorkspace.tsx',
+    projectRelativePath: 'apps/desktop/src/renderer/session/SourceWorkspace.tsx',
+    iconKind: 'typescript',
+    createdAt: '2026-08-25T00:00:00.000Z',
+    updatedAt: '2026-08-25T00:00:00.000Z',
+  },
+  language: 'typescript',
+  content: 'export const defaultView = "source";\n',
+  lineCount: 1,
+  truncated: false,
+};
+
+function SourcePreviewQaApp() {
+  const [preview, setPreview] = useState<ConversationResourcePreview>(markdownSourcePreview);
+  const [viewMode, setViewMode] = useState(() => defaultSourceWorkspaceViewMode(markdownSourcePreview));
+  const [fullWidth, setFullWidth] = useState(false);
+
+  function openPreview(nextPreview: ConversationResourcePreview): void {
+    setPreview(nextPreview);
+    setViewMode(defaultSourceWorkspaceViewMode(nextPreview));
+  }
+
+  return (
+    <main className="macos-ai-app zeus-shell session-codex-parity-v1 qa-page qa-source-preview-page" data-theme="light" data-testid="source-preview-fixture">
+      <header>
+        <div>
+          <p>2026-08-25 · 真实组件交互验收</p>
+          <h1>会话 Markdown 文件默认预览</h1>
+        </div>
+        <nav className="qa-source-preview-actions" aria-label="资源打开入口">
+          <button type="button" onClick={() => openPreview(markdownSourcePreview)}>
+            打开 Markdown
+          </button>
+          <button type="button" onClick={() => openPreview(typescriptSourcePreview)}>
+            打开 TypeScript
+          </button>
+        </nav>
+      </header>
+      <div className="qa-source-preview-workspace">
+        <SourceWorkspace preview={preview} viewMode={viewMode} onViewModeChange={setViewMode} language="zh-CN" fullWidth={fullWidth} onFullWidthChange={setFullWidth} onClose={() => undefined} />
+      </div>
+    </main>
+  );
+}
+
 const taskPushQaTask: TaskRecord = {
   id: 'task-zeus-0338',
   projectId: 'project-zeus',
@@ -2016,7 +2094,8 @@ function TaskPushDecouplingApp() {
 const motionQa = new URLSearchParams(window.location.search).has('motion');
 const defectQa = new URLSearchParams(window.location.search).has('zeus0323');
 const taskPushQa = new URLSearchParams(window.location.search).has('task-push');
+const sourcePreviewQa = new URLSearchParams(window.location.search).has('source-preview');
 // 开发态热更新复用同一根节点，避免视觉验收页重复挂载并制造无关控制台错误。
 const qaRoot = window.__zeusSessionStylesRoot ?? createRoot(document.getElementById('root')!);
 window.__zeusSessionStylesRoot = qaRoot;
-qaRoot.render(taskPushQa ? <TaskPushDecouplingApp /> : defectQa ? <ConversationDefectApp /> : motionQa ? <MotionApp /> : <App />);
+qaRoot.render(sourcePreviewQa ? <SourcePreviewQaApp /> : taskPushQa ? <TaskPushDecouplingApp /> : defectQa ? <ConversationDefectApp /> : motionQa ? <MotionApp /> : <App />);

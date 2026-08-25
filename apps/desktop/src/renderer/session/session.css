@@ -6892,6 +6892,12 @@
   padding-inline: 8px;
 }
 
+.session-codex-parity-v1 .session-context-workspace-header .session-source-view-action[aria-pressed='true'] {
+  background: var(--session-control-hover);
+  color: var(--session-text);
+  font-weight: 610;
+}
+
 .session-codex-parity-v1 .session-source-meta {
   align-items: center;
   background: var(--session-sidebar);
@@ -6909,6 +6915,22 @@
   flex: 1 1 auto;
   min-block-size: 0;
   overflow: auto;
+}
+
+.session-codex-parity-v1 .session-source-markdown-scroll {
+  background: var(--session-canvas);
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  min-block-size: 0;
+  overflow: auto;
+  padding: 34px clamp(24px, 5vw, 64px) 68px;
+}
+
+.session-codex-parity-v1 .session-source-markdown-scroll > .session-markdown {
+  font-size: 15px;
+  line-height: 25px;
+  margin-inline: auto;
+  max-inline-size: 48rem;
 }
 
 .session-codex-parity-v1 .session-image-preview {

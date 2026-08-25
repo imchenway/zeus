@@ -106,6 +106,60 @@
   inline-size: 100%;
 }
 
+.qa-source-preview-page {
+  background: var(--session-canvas);
+  box-sizing: border-box;
+  color: var(--session-text);
+  display: grid;
+  gap: 18px;
+  grid-template-rows: auto minmax(0, 1fr);
+  inline-size: 100%;
+  min-block-size: 100vh;
+  padding: 24px;
+}
+
+.qa-source-preview-page > header {
+  align-items: end;
+  display: flex;
+  gap: 24px;
+  justify-content: space-between;
+}
+
+.qa-source-preview-page > header div {
+  display: grid;
+  gap: 4px;
+}
+
+.qa-source-preview-page :where(h1, p) {
+  margin: 0;
+}
+
+.qa-source-preview-page p {
+  color: var(--session-text-muted);
+  font-size: 12px;
+}
+
+.qa-source-preview-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.qa-source-preview-actions button {
+  background: var(--session-control);
+  border: 1px solid var(--session-line);
+  border-radius: 8px;
+  color: var(--session-text);
+  cursor: pointer;
+  padding: 7px 12px;
+}
+
+.qa-source-preview-workspace {
+  border: 1px solid var(--session-line);
+  border-radius: 12px;
+  min-block-size: 0;
+  overflow: hidden;
+}
+
 @media (max-width: 1000px) {
   .qa-list-comparison,
   .qa-approval-comparison {
