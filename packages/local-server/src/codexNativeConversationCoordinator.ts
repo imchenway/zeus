@@ -990,8 +990,12 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   /** 创建任何产品会话前复验账号，避免先持久化一条必然失败的占位会话。 */
   async function assertCodexAccountReady(modelSourceId: string | null, model: string): Promise<void> {
     if (options.resolveResponsesRuntime && (await options.resolveResponsesRuntime({ modelSourceId, model }))) return;
-    const account = await options.manager.readAccount({ refreshToken: false, allowCachedOnTransportFailure: true, preferCached: true });
-    if (!account.requiresOpenaiAuth || account.signedIn) return;
+    const account = await options.manager.readAccount({ cachedOnly: true }).catch((error: unknown) => {
+      // 无本地快照时由真实 thread/turn RPC 权威认证，账号探测不再成为派发门禁。
+      if (error && typeof error === 'object' && Reflect.get(error, 'code') === 'ZEUS_CODEX_ACCOUNT_SNAPSHOT_UNAVAILABLE') return null;
+      throw error;
+    });
+    if (!account || !account.requiresOpenaiAuth || account.signedIn) return;
     throw coordinatorError('ZEUS_CODEX_LOGIN_REQUIRED', 'Zeus 专属 Codex 尚未登录。请先完成登录，再创建会话。');
   }
 

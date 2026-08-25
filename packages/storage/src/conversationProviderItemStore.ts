@@ -254,6 +254,18 @@ export class ConversationProviderItemRepository {
     return this.db.select<ProviderItemRow>(`SELECT * FROM conversation_provider_item_states WHERE conversation_id = ? ORDER BY updated_at, id`, [conversationId]).map(mapRow);
   }
 
+  /** 仅供一次性资源迁移读取，避免启动时把全部历史 Provider item 载入内存。 */
+  listCompletedFinalAnswersWithMarkdownImages(): ZeusConversationItemRecord[] {
+    return this.db
+      .select<ProviderItemRow>(
+        `SELECT *
+           FROM conversation_provider_item_states
+          WHERE status = 'completed' AND phase = 'final_answer' AND instr(text_projection, '![') > 0
+          ORDER BY conversation_id, updated_at, id`,
+      )
+      .map(mapRow);
+  }
+
   getLatestCompletedPlanByTurn(turnId: string): ZeusConversationItemRecord | undefined {
     const row = this.db.get<ProviderItemRow>(
       `SELECT *

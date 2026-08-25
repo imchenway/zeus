@@ -1,6 +1,7 @@
-import { createHash } from 'node:crypto';
-import { closeSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
-import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
+import { chmodSync, closeSync, constants as fsConstants, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ConversationAttachmentResource, ConversationFileIconKind, ConversationFileLocation, ConversationFileResource, ConversationResource, ConversationResourcePresentation, ConversationWebsiteResource } from '@zeus/shared';
 import type { ZeusConversationItemRecord, ZeusConversationResourceRecord } from '@zeus/storage';
@@ -40,6 +41,7 @@ interface AttachmentResourceCandidate extends ResourceCandidateBase {
   previewKind: 'image' | 'document' | 'none';
   iconKind: ConversationFileIconKind;
   taskPushAttachmentKey?: string;
+  origin?: 'assistant_markdown_image';
 }
 
 type ResourceCandidate = FileResourceCandidate | WebsiteResourceCandidate | AttachmentResourceCandidate;
@@ -54,6 +56,7 @@ export interface NormalizeConversationResourcesInput {
   text: string;
   trustedAttachmentRoots: readonly string[];
   generatedImageRoot?: string;
+  assistantImageArchiveRoot?: string;
   now: string;
 }
 
@@ -75,12 +78,19 @@ export interface ConversationFileOpenGrant {
   intent: ConversationResourceOpenIntent;
 }
 
-const markdownLinkPattern = /\[([^\]\n]+)\]\(([^)\n]+)\)/gu;
+const markdownLinkPattern = /(!?)\[([^\]\n]+)\]\(([^)\n]+)\)/gu;
 const maximumResourceUrlLength = 8_192;
 const maximumResourcesPerItem = 128;
+const maximumArchivedAssistantImageBytes = 16 * 1_024 * 1_024;
+const maximumArchivedAssistantImageBatchBytes = 64 * 1_024 * 1_024;
 
 export function normalizeConversationResources(input: NormalizeConversationResourcesInput): Array<Omit<ZeusConversationResourceRecord, 'createdAt' | 'updatedAt'>> {
   const candidates: ResourceCandidate[] = [];
+  const assistantImageArchiveBudget = { remainingBytes: maximumArchivedAssistantImageBatchBytes };
+  const assistantImageSourceRoots = [input.projectRoot, ...input.trustedAttachmentRoots, input.generatedImageRoot, tmpdir(), '/private/tmp']
+    .filter((root): root is string => Boolean(root))
+    .map(safeRealpath)
+    .filter((root): root is string => Boolean(root));
   let sourceIndex = 0;
 
   const generatedImages = normalizeGeneratedImageResources({
@@ -95,13 +105,27 @@ export function normalizeConversationResources(input: NormalizeConversationResou
   }
 
   for (const link of markdownLinks(input.text)) {
-    const candidate = normalizeLinkedResource({
-      sourceIndex: sourceIndex++,
-      label: link.label,
-      href: link.href,
-      presentation: 'inline',
-      projectRoot: input.projectRoot,
-    });
+    const linkSourceIndex = sourceIndex++;
+    const candidate =
+      (link.image
+        ? normalizeArchivedAssistantMarkdownImage({
+            sourceIndex: linkSourceIndex,
+            label: link.label,
+            href: link.href,
+            conversationId: input.conversationId,
+            item: input.item,
+            archiveRoot: input.assistantImageArchiveRoot ?? input.trustedAttachmentRoots.find((root) => basename(root) === 'conversation-attachments'),
+            sourceRoots: assistantImageSourceRoots,
+            budget: assistantImageArchiveBudget,
+          })
+        : null) ??
+      normalizeLinkedResource({
+        sourceIndex: linkSourceIndex,
+        label: link.label,
+        href: link.href,
+        presentation: 'inline',
+        projectRoot: input.projectRoot,
+      });
     if (candidate) {
       candidates.push(candidate);
       const artifactCard = localHtmlArtifactCard(candidate, sourceIndex);
@@ -187,6 +211,151 @@ export function normalizeConversationResources(input: NormalizeConversationResou
       authorityJson: JSON.stringify(authorityForCandidate(candidate)),
     };
   });
+}
+
+/**
+ * 助手最终答复引用的本地图片不能继续依赖 /tmp、任务 worktree 或 Provider 临时目录。
+ * 资源投影完成时把图片复制进 Zeus 自管目录；目标身份由会话、item 与原始引用共同决定，
+ * 后续即使来源已清理，也能从同一稳定位置恢复，而不会在重复水合时删除已归档图片。
+ */
+function normalizeArchivedAssistantMarkdownImage(input: {
+  sourceIndex: number;
+  label: string;
+  href: string;
+  conversationId: string;
+  item: ZeusConversationItemRecord;
+  archiveRoot?: string;
+  sourceRoots: readonly string[];
+  budget: { remainingBytes: number };
+}): AttachmentResourceCandidate | null {
+  if (!input.archiveRoot || input.item.itemType === 'userMessage' || input.item.status !== 'completed' || input.item.phase !== 'final_answer') return null;
+  try {
+    const sourcePath = localMarkdownImagePath(input.href);
+    if (!sourcePath) return null;
+    const sourceExtension = extname(sourcePath).toLocaleLowerCase();
+    const expectedMimeType = supportedArchivedImageMimeType(sourceExtension);
+    if (!expectedMimeType) return null;
+
+    const archiveRoot = resolve(input.archiveRoot);
+    const conversationDirectory = join(archiveRoot, 'assistant-markdown-images', createHash('sha256').update(input.conversationId).digest('hex').slice(0, 24));
+    const sourceIdentity = createHash('sha256').update(`${input.item.id}\0${input.href}`).digest('hex');
+    const destination = join(conversationDirectory, `${sourceIdentity}${sourceExtension}`);
+    mkdirSync(conversationDirectory, { recursive: true, mode: 0o700 });
+    const canonicalArchiveRoot = safeRealpath(archiveRoot);
+    const canonicalConversationDirectory = safeRealpath(conversationDirectory);
+    if (!canonicalArchiveRoot || !canonicalConversationDirectory || !isInsideRoot(canonicalConversationDirectory, canonicalArchiveRoot)) return null;
+
+    const existingMimeType = archivedImageMimeType(destination);
+    if (existingMimeType) {
+      return archivedAssistantImageCandidate({ ...input, absolutePath: destination, allowedRoot: canonicalArchiveRoot, mimeType: existingMimeType });
+    }
+
+    const canonicalSource = safeRealpath(sourcePath);
+    if (!canonicalSource || !resolveAuthorizedPath(canonicalSource, input.sourceRoots)) return null;
+    const sourceStat = statSync(canonicalSource);
+    if (!sourceStat.isFile() || sourceStat.size <= 0 || sourceStat.size > maximumArchivedAssistantImageBytes || sourceStat.size > input.budget.remainingBytes) return null;
+    const sourceMimeType = generatedImageMimeType(canonicalSource);
+    if (sourceMimeType !== expectedMimeType) return null;
+
+    const bytes = readFileSync(canonicalSource);
+    if (bytes.byteLength !== sourceStat.size) return null;
+    const staging = join(conversationDirectory, `.${sourceIdentity}.${randomUUID()}.tmp`);
+    try {
+      writeFileSync(staging, bytes, { flag: 'wx', mode: 0o600 });
+      chmodSync(staging, 0o600);
+      syncPath(staging);
+      try {
+        linkSync(staging, destination);
+        input.budget.remainingBytes -= bytes.byteLength;
+      } catch (error) {
+        if (!isFileExistsError(error)) throw error;
+      }
+    } finally {
+      try {
+        unlinkSync(staging);
+      } catch {
+        // 暂存文件可能尚未创建，或已经完成清理。
+      }
+    }
+    syncPath(conversationDirectory);
+    const archivedMimeType = archivedImageMimeType(destination);
+    return archivedMimeType ? archivedAssistantImageCandidate({ ...input, absolutePath: destination, allowedRoot: canonicalArchiveRoot, mimeType: archivedMimeType }) : null;
+  } catch {
+    // 单张图片归档失败不能阻断会话正文或其他资源投影。
+    return null;
+  }
+}
+
+function archivedAssistantImageCandidate(input: { sourceIndex: number; label: string; absolutePath: string; allowedRoot: string; mimeType: string }): AttachmentResourceCandidate {
+  return {
+    kind: 'attachment',
+    sourceIndex: input.sourceIndex,
+    presentation: 'inline',
+    origin: 'assistant_markdown_image',
+    displayName: input.label,
+    absolutePath: input.absolutePath,
+    allowedRoot: input.allowedRoot,
+    attachmentRef: basename(input.absolutePath),
+    mimeType: input.mimeType,
+    previewKind: 'image',
+    iconKind: 'image',
+  };
+}
+
+function localMarkdownImagePath(href: string): string | null {
+  let reference = href.trim().replace(/^<|>$/gu, '');
+  if (!reference || reference.includes('\0')) return null;
+  if (/^file:/iu.test(reference)) {
+    try {
+      const url = new URL(reference);
+      if (url.username || url.password || url.search || url.hash) return null;
+      reference = fileURLToPath(url);
+    } catch {
+      return null;
+    }
+  } else {
+    if (!isAbsolute(reference) || reference.includes('?') || reference.includes('#')) return null;
+    try {
+      reference = decodeURIComponent(reference);
+    } catch {
+      return null;
+    }
+  }
+  return isAbsolute(reference) ? resolve(reference) : null;
+}
+
+function supportedArchivedImageMimeType(extension: string): 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp' | null {
+  if (extension === '.png') return 'image/png';
+  if (extension === '.jpg' || extension === '.jpeg') return 'image/jpeg';
+  if (extension === '.gif') return 'image/gif';
+  if (extension === '.webp') return 'image/webp';
+  return null;
+}
+
+function archivedImageMimeType(path: string): string | null {
+  try {
+    const stat = statSync(path);
+    if (!stat.isFile() || stat.size <= 0 || stat.size > maximumArchivedAssistantImageBytes) return null;
+    return generatedImageMimeType(path);
+  } catch {
+    return null;
+  }
+}
+
+function syncPath(path: string): void {
+  let descriptor: number | null = null;
+  try {
+    descriptor = openSync(path, fsConstants.O_RDONLY);
+    fsyncSync(descriptor);
+  } catch {
+    // fsync 是持久化强化；不支持目录 fsync 的文件系统仍可依赖原子 hard-link。
+  } finally {
+    if (descriptor !== null) closeSync(descriptor);
+  }
+}
+
+function isFileExistsError(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'EEXIST';
 }
 
 /** 图片和音频二进制只保留会话恢复所需的元数据，避免 base64 进入数据库或 Renderer。 */
@@ -740,14 +909,14 @@ function safeRealpath(path: string): string | null {
   }
 }
 
-function markdownLinks(text: string): Array<{ label: string; href: string }> {
-  const links: Array<{ label: string; href: string }> = [];
+function markdownLinks(text: string): Array<{ label: string; href: string; image: boolean }> {
+  const links: Array<{ label: string; href: string; image: boolean }> = [];
   let match: RegExpExecArray | null;
   markdownLinkPattern.lastIndex = 0;
   while ((match = markdownLinkPattern.exec(text))) {
-    const label = (match[1] ?? '').trim();
-    const href = (match[2] ?? '').trim().replace(/^<|>$/gu, '');
-    if (label && href) links.push({ label, href });
+    const label = (match[2] ?? '').trim();
+    const href = (match[3] ?? '').trim().replace(/^<|>$/gu, '');
+    if (label && href) links.push({ label, href, image: match[1] === '!' });
     if (links.length >= maximumResourcesPerItem) break;
   }
   return links;
@@ -782,6 +951,7 @@ function displayForCandidate(candidate: ResourceCandidate): Record<string, unkno
     iconKind: candidate.iconKind,
     ...(candidate.mimeType ? { mimeType: candidate.mimeType } : {}),
     ...(candidate.taskPushAttachmentKey ? { taskPushAttachmentKey: candidate.taskPushAttachmentKey } : {}),
+    ...(candidate.origin ? { origin: candidate.origin } : {}),
   };
 }
 

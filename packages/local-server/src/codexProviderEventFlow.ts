@@ -33,8 +33,9 @@ export interface CodexProviderEventFlow {
  *
  * 可读 delta 在小窗口内按稳定 item 身份合并，关键事件、恢复 barrier 与 delta
  * 共用同一串行链。非动态工具事件返回的 Promise 会传回 app-server transport，
- * 因而积压期间 stdout/WebSocket 会暂停读取；动态工具调用必须脱离该链，否则其
- * Provider RPC 响应会与被暂停的输入流互相等待。
+ * 在没有未决 RPC 时把积压反压到 stdout/WebSocket；一旦 Zeus 已写出 RPC，传输层
+ * 会保持全双工读取直到回包完成。动态工具调用仍脱离该链，避免工具响应被自身的
+ * 事件投影顺序阻塞。
  */
 export function createCodexProviderEventFlow(options: CodexProviderEventFlowOptions): CodexProviderEventFlow {
   const pendingReadableDeltas = new Map<string, ReadableDeltaBatch>();

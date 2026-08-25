@@ -812,7 +812,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const appShellSettingsKey = 'app.shell.settings';
   const codexAccountFingerprintSaltKey = 'codex.usage.account_fingerprint_salt';
   const conversationResourceBackfillSettingKey = 'conversation.resource_backfill';
-  const conversationResourceBackfillRevision = '20260815_resource_projection';
+  const conversationResourceBackfillRevision = '20260825_durable_assistant_markdown_images';
   const localLogDirectory = dataLayout.localLogs;
   const localConfigPath = options.localConfigPath ?? dataLayout.localConfig;
   // 本地日志目录是设计书明确要求的物理落点；服务启动时创建，避免 UI 只展示一个不存在的路径。
@@ -1283,7 +1283,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   if (!readOnlyValidation && resourceBackfillState?.revision !== conversationResourceBackfillRevision) {
     const existingResourceCount = db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM conversation_resources`)?.count ?? 0;
     let conversationResourceBackfillCount = 0;
-    // 资源表已有投影说明旧版启动回填已经实际运行；只补登记，不再把全部历史正文读入内存重算一次。
+    // 首次资源回填仍处理全部 item；升级路径只读取带 Markdown 图片的已完成最终答复，
+    // 不把全部历史正文重新载入内存，也不覆盖已经存在的文件/网页资源。
     if (existingResourceCount === 0) {
       for (const conversation of conversations.listNativeBoundRecords()) {
         const project = projects.getById(conversation.projectId);
@@ -1311,6 +1312,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
             text: item.textContent,
             trustedAttachmentRoots: trustedConversationAttachmentRoots,
             generatedImageRoot,
+            assistantImageArchiveRoot: conversationAttachmentRoot,
             now: item.updatedAt,
           });
           const existing = existingResourcesByItem.get(item.id) ?? [];
@@ -1319,11 +1321,42 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           conversationResourceBackfillCount += Math.max(normalized.length, existing.length);
         }
       }
+    } else {
+      const imageItems = conversationProviderItems.listCompletedFinalAnswersWithMarkdownImages();
+      for (const item of imageItems) {
+        const conversation = conversations.getById(item.conversationId);
+        if (!conversation) continue;
+        const project = projects.getById(conversation.projectId);
+        if (!project) continue;
+        const projectRoot = resolveNativeConversationExecutionRoot(conversation) ?? project.localPath;
+        const normalized = normalizeConversationResources({
+          projectId: conversation.projectId,
+          projectRoot,
+          conversationId: conversation.id,
+          turnId: item.turnId,
+          item,
+          payload: parseJsonObject(item.payloadJson),
+          text: item.textContent,
+          trustedAttachmentRoots: trustedConversationAttachmentRoots,
+          generatedImageRoot,
+          assistantImageArchiveRoot: conversationAttachmentRoot,
+          now: item.updatedAt,
+        }).filter(isDurableAssistantMarkdownImageResource);
+        if (normalized.length === 0) continue;
+        const existing = conversationResources.listByItem(item.id);
+        const existingDigests = new Set(existing.map((resource) => resource.canonicalTargetDigest));
+        const merged = [...existing, ...normalized.filter((resource) => !existingDigests.has(resource.canonicalTargetDigest))];
+        if (merged.length === existing.length) continue;
+        conversationResources.replaceForItem(item.id, merged, item.updatedAt);
+        conversationResourceBackfillCount += merged.length - existing.length;
+      }
     }
+    const projectedResourceCount = db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM conversation_resources`)?.count ?? 0;
     settings.setJson(conversationResourceBackfillSettingKey, {
       revision: conversationResourceBackfillRevision,
       completedAt: now().toISOString(),
-      projectedResourceCount: existingResourceCount + conversationResourceBackfillCount,
+      projectedResourceCount,
+      backfilledResourceCount: conversationResourceBackfillCount,
       adoptedExistingProjection: existingResourceCount > 0,
     });
     await db.save();
@@ -3515,6 +3548,12 @@ function conversationResourceRecordsEqual(existing: readonly ZeusConversationRes
       resource.authorityJson === candidate.authorityJson
     );
   });
+}
+
+function isDurableAssistantMarkdownImageResource(resource: Omit<ZeusConversationResourceRecord, 'createdAt' | 'updatedAt'>): boolean {
+  if (resource.kind !== 'attachment' || resource.presentation !== 'inline') return false;
+  const display = parseJsonObject(resource.displayJson);
+  return display.origin === 'assistant_markdown_image' && display.previewKind === 'image';
 }
 
 /** 将数据库审计记录转换为本地 API 响应；payload 只解析对象，避免把异常 JSON 透出给界面。 */

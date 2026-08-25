@@ -202,7 +202,7 @@ export class ConversationChoiceQueryApplication {
   private isMeaningfulTaskHistoryItem(conversation: ZeusConversationRecord): boolean {
     if (conversation.transportKind !== 'codex_native' || conversation.providerThreadId?.trim()) return true;
     const firstSubmission = this.ports.submissions.getFirstByConversation(conversation.id);
-    return firstSubmission?.status !== 'cancelled' && firstSubmission?.status !== 'deleted';
+    return Boolean(firstSubmission && firstSubmission.status !== 'cancelled' && firstSubmission.status !== 'deleted');
   }
 
   private isEphemeral(conversation: Pick<ZeusConversationRecord, 'id'>): boolean {

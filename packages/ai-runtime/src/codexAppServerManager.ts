@@ -33,7 +33,7 @@ export type {
 
 export interface CodexAppServerReadable {
   on(event: 'data', listener: (chunk: Buffer | string) => void): unknown;
-  /** Node pipe 支持暂停读取；假实现可省略。用于消费者未收口时把背压传回 app-server stdout。 */
+  /** Node pipe 支持暂停读取；假实现可省略。只允许在没有未决 RPC 时把投影背压传回 app-server stdout。 */
   pause?(): unknown;
   resume?(): unknown;
 }
@@ -399,7 +399,7 @@ export interface CodexAppServerManager {
   }): Promise<CodexCapabilitiesSnapshot>;
   /** 在运行身份不变时也激活新世代；多世代管理器保留旧活动轮次并让其自然排空。 */
   activateFreshGeneration?(input: { commandPath: string; externalAgentHome?: string; remoteControl?: boolean; providerEnvironment?: Record<string, string> }): Promise<CodexCapabilitiesSnapshot>;
-  readAccount(input?: { refreshToken?: boolean; allowCachedOnTransportFailure?: boolean; preferCached?: boolean }): Promise<CodexAccountSnapshot>;
+  readAccount(input?: { refreshToken?: boolean; allowCachedOnTransportFailure?: boolean; preferCached?: boolean; cachedOnly?: boolean }): Promise<CodexAccountSnapshot>;
   readAccountRateLimits(): Promise<CodexAccountRateLimitsSnapshot>;
   readAccountUsage(): Promise<CodexAccountUsageSnapshot>;
   startChatGptLogin(): Promise<CodexChatGptLogin>;
@@ -486,6 +486,13 @@ type ServerRequestRecord = {
 };
 
 const RESTART_DELAYS_MS = [250, 500, 1_000, 2_000, 5_000] as const;
+const ACCOUNT_SNAPSHOT_TTL_MS = 30_000;
+const ACCOUNT_USAGE_SNAPSHOT_TTL_MS = 15_000;
+
+type TimedGenerationSnapshot<T extends { generationId: string }> = {
+  value: T;
+  cachedAt: number;
+};
 
 function resolveBeforeTimeout(promise: Promise<void>, timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -539,11 +546,16 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
   let eventSequence = 0;
   let diagnosticSequence = 0;
   let remoteControlEnabled = false;
-  let lastAccountSnapshot: CodexAccountSnapshot | null = null;
+  let lastAccountSnapshot: TimedGenerationSnapshot<CodexAccountSnapshot> | null = null;
+  let lastAccountRateLimitsSnapshot: TimedGenerationSnapshot<CodexAccountRateLimitsSnapshot> | null = null;
+  let lastAccountUsageSnapshot: TimedGenerationSnapshot<CodexAccountUsageSnapshot> | null = null;
   let preparingForShutdown = false;
   let closePromise: Promise<void> | null = null;
   const pendingEventDeliveryCounts = new WeakMap<CodexAppServerProcess, number>();
-  const priorityReadCounts = new WeakMap<CodexAppServerProcess, number>();
+  const pendingRpcReadCounts = new WeakMap<CodexAppServerProcess, number>();
+  const accountReadInFlight = new Map<string, Promise<CodexAccountSnapshot>>();
+  const accountRateLimitsReadInFlight = new Map<string, Promise<CodexAccountRateLimitsSnapshot>>();
+  const accountUsageReadInFlight = new Map<string, Promise<CodexAccountUsageSnapshot>>();
 
   function currentGenerationId(): string {
     if (state.type === 'idle' || state.type === 'closed') throw managerError('ZEUS_CODEX_NOT_READY', 'Codex app-server is not ready.');
@@ -712,29 +724,33 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     });
   }
 
-  function rpc(generationId: string, method: string, params: unknown, input: { requestWritten?: () => void; traceIdentity?: string | null; priorityRead?: boolean } = {}): Promise<unknown> {
+  function rpc(generationId: string, method: string, params: unknown, input: { requestWritten?: () => void; traceIdentity?: string | null; timeoutMs?: number } = {}): Promise<unknown> {
     if (preparingForShutdown || state.type === 'closed') return Promise.reject(managerError('ZEUS_CODEX_CLOSED', 'Codex app-server manager is closing.'));
     if (generationId !== currentGenerationId()) return Promise.reject(managerError('ZEUS_CODEX_STALE_GENERATION', 'Codex app-server generation is stale.'));
     const id = `${generationId}:${++requestSequence}`;
     return new Promise((resolve, reject) => {
-      const priorityReleaseDelayMs = method === 'turn/interrupt' ? 2_000 : input.priorityRead ? 0 : null;
-      const finishPriorityRead = priorityReleaseDelayMs === null ? () => undefined : beginPriorityRead(generationId, priorityReleaseDelayMs);
-      const timeout = setTimeout(() => {
-        const key = pendingKey(generationId, id);
-        const pending = pendingRequests.get(key);
-        pendingRequests.delete(key);
-        if (pending) pending.reject(managerError('ZEUS_CODEX_RPC_TIMEOUT', `Codex app-server request timed out: ${method}`));
-      }, requestTimeoutMs);
+      // 官方 stdio 协议把 RPC 回包与过程通知复用在同一条 JSONL stdout 上。
+      // 任何已写出的 RPC 都必须保持读取窗口，否则事件投影的异步背压会把回包一起堵住。
+      const finishRpcRead = beginRpcRead(generationId, method === 'turn/interrupt' ? 2_000 : 0);
+      const timeout = setTimeout(
+        () => {
+          const key = pendingKey(generationId, id);
+          const pending = pendingRequests.get(key);
+          pendingRequests.delete(key);
+          if (pending) pending.reject(managerError('ZEUS_CODEX_RPC_TIMEOUT', `Codex app-server request timed out: ${method}`));
+        },
+        Math.max(1, input.timeoutMs ?? requestTimeoutMs),
+      );
       pendingRequests.set(pendingKey(generationId, id), {
         generationId,
         method,
         traceIdentity: input.traceIdentity ?? null,
         resolve(value) {
-          finishPriorityRead();
+          finishRpcRead();
           resolve(value);
         },
         reject(error) {
-          finishPriorityRead();
+          finishRpcRead();
           reject(error);
         },
         timeout,
@@ -853,6 +869,13 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       const resolvedRequestId = typeof params.requestId === 'string' || typeof params.requestId === 'number' ? params.requestId : null;
       if (resolvedRequestId !== null) serverRequests.delete(serverRequestKey(generationId, resolvedRequestId));
     }
+    if (message.method === 'account/updated') {
+      lastAccountSnapshot = null;
+      lastAccountRateLimitsSnapshot = null;
+      lastAccountUsageSnapshot = null;
+    } else if (message.method === 'account/rateLimits/updated') {
+      lastAccountRateLimitsSnapshot = null;
+    }
     emitEvent(generationId, message.method, message.params, requestId);
     if (message.method === 'externalAgentConfig/import/progress' || message.method === 'externalAgentConfig/import/completed') {
       try {
@@ -904,7 +927,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     const source = child;
     if (!source) return;
     pendingEventDeliveryCounts.set(source, (pendingEventDeliveryCounts.get(source) ?? 0) + 1);
-    if ((priorityReadCounts.get(source) ?? 0) === 0) source.stdout.pause?.();
+    if ((pendingRpcReadCounts.get(source) ?? 0) === 0) source.stdout.pause?.();
     void Promise.allSettled(deliveries).then(() => {
       const remaining = Math.max(0, (pendingEventDeliveryCounts.get(source) ?? 1) - 1);
       if (remaining > 0) {
@@ -918,10 +941,10 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     });
   }
 
-  function beginPriorityRead(generationId: string, releaseDelayMs: number): () => void {
+  function beginRpcRead(generationId: string, releaseDelayMs: number): () => void {
     const source = child;
     if (!source) return () => undefined;
-    priorityReadCounts.set(source, (priorityReadCounts.get(source) ?? 0) + 1);
+    pendingRpcReadCounts.set(source, (pendingRpcReadCounts.get(source) ?? 0) + 1);
     source.stdout.resume?.();
     let finished = false;
     return () => {
@@ -930,12 +953,12 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       // 中断响应和终态通知需要短暂全双工窗口；纯控制读取只需让响应本身越过
       // 过程投影背压，下一轮事件循环就恢复普通背压。
       const timer = setTimeout(() => {
-        const remaining = Math.max(0, (priorityReadCounts.get(source) ?? 1) - 1);
+        const remaining = Math.max(0, (pendingRpcReadCounts.get(source) ?? 1) - 1);
         if (remaining > 0) {
-          priorityReadCounts.set(source, remaining);
+          pendingRpcReadCounts.set(source, remaining);
           return;
         }
-        priorityReadCounts.delete(source);
+        pendingRpcReadCounts.delete(source);
         if (child !== source || state.type === 'closed') return;
         if (state.type !== 'idle' && state.generationId !== generationId) return;
         if ((pendingEventDeliveryCounts.get(source) ?? 0) > 0) source.stdout.pause?.();
@@ -1016,34 +1039,71 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     },
     async readAccount(input = {}) {
       const capabilities = await awaitCapabilities();
-      if (input.preferCached === true && input.refreshToken !== true && lastAccountSnapshot?.generationId === capabilities.generationId) return lastAccountSnapshot;
-      try {
-        const snapshot = parseAccountSnapshot(
-          await rpc(
+      const refreshToken = input.refreshToken === true;
+      const cached = lastAccountSnapshot?.value.generationId === capabilities.generationId ? lastAccountSnapshot : null;
+      if (input.cachedOnly === true) {
+        if (cached) return cached.value;
+        throw managerError('ZEUS_CODEX_ACCOUNT_SNAPSHOT_UNAVAILABLE', '当前 app-server 世代还没有可复用的账号快照。');
+      }
+      const preferCached = input.preferCached ?? !refreshToken;
+      if (preferCached && cached && Date.now() - cached.cachedAt < ACCOUNT_SNAPSHOT_TTL_MS) return cached.value;
+      const flightKey = `${capabilities.generationId}:${refreshToken ? 'refresh' : 'local'}`;
+      let request = accountReadInFlight.get(flightKey);
+      if (!request) {
+        request = (async () => {
+          const snapshot = parseAccountSnapshot(
+            await rpc(capabilities.generationId, 'account/read', { refreshToken }, { ...(refreshToken ? {} : { timeoutMs: Math.min(requestTimeoutMs, 8_000) }) }),
             capabilities.generationId,
-            'account/read',
-            {
-              refreshToken: input.refreshToken === true,
-            },
-            { priorityRead: input.refreshToken !== true },
-          ),
-          capabilities.generationId,
-          accountFingerprintSalt,
-        );
-        lastAccountSnapshot = snapshot;
-        return snapshot;
+            accountFingerprintSalt,
+          );
+          lastAccountSnapshot = { value: snapshot, cachedAt: Date.now() };
+          return snapshot;
+        })();
+        accountReadInFlight.set(flightKey, request);
+        const clearFlight = () => {
+          if (accountReadInFlight.get(flightKey) === request) accountReadInFlight.delete(flightKey);
+        };
+        void request.then(clearFlight, clearFlight);
+      }
+      try {
+        return await request;
       } catch (error) {
-        if (input.allowCachedOnTransportFailure === true && lastAccountSnapshot?.generationId === capabilities.generationId && isAccountReadTransportFailure(error)) return lastAccountSnapshot;
+        const allowCached = input.allowCachedOnTransportFailure ?? !refreshToken;
+        if (allowCached && cached && isAccountReadTransportFailure(error)) return cached.value;
         throw error;
       }
     },
     async readAccountRateLimits() {
       const capabilities = await awaitCapabilities();
-      return parseAccountRateLimitsSnapshot(await rpc(capabilities.generationId, 'account/rateLimits/read', {}), capabilities.generationId);
+      const cached = lastAccountRateLimitsSnapshot;
+      if (cached?.value.generationId === capabilities.generationId && Date.now() - cached.cachedAt < ACCOUNT_USAGE_SNAPSHOT_TTL_MS) return cached.value;
+      const existing = accountRateLimitsReadInFlight.get(capabilities.generationId);
+      if (existing) return existing;
+      const request: Promise<CodexAccountRateLimitsSnapshot> = (async () => {
+        const snapshot = parseAccountRateLimitsSnapshot(await rpc(capabilities.generationId, 'account/rateLimits/read', {}, { timeoutMs: Math.min(requestTimeoutMs, 8_000) }), capabilities.generationId);
+        lastAccountRateLimitsSnapshot = { value: snapshot, cachedAt: Date.now() };
+        return snapshot;
+      })().finally(() => {
+        if (accountRateLimitsReadInFlight.get(capabilities.generationId) === request) accountRateLimitsReadInFlight.delete(capabilities.generationId);
+      });
+      accountRateLimitsReadInFlight.set(capabilities.generationId, request);
+      return request;
     },
     async readAccountUsage() {
       const capabilities = await awaitCapabilities();
-      return parseAccountUsageSnapshot(await rpc(capabilities.generationId, 'account/usage/read', {}), capabilities.generationId);
+      const cached = lastAccountUsageSnapshot;
+      if (cached?.value.generationId === capabilities.generationId && Date.now() - cached.cachedAt < ACCOUNT_USAGE_SNAPSHOT_TTL_MS) return cached.value;
+      const existing = accountUsageReadInFlight.get(capabilities.generationId);
+      if (existing) return existing;
+      const request: Promise<CodexAccountUsageSnapshot> = (async () => {
+        const snapshot = parseAccountUsageSnapshot(await rpc(capabilities.generationId, 'account/usage/read', {}, { timeoutMs: Math.min(requestTimeoutMs, 8_000) }), capabilities.generationId);
+        lastAccountUsageSnapshot = { value: snapshot, cachedAt: Date.now() };
+        return snapshot;
+      })().finally(() => {
+        if (accountUsageReadInFlight.get(capabilities.generationId) === request) accountUsageReadInFlight.delete(capabilities.generationId);
+      });
+      accountUsageReadInFlight.set(capabilities.generationId, request);
+      return request;
     },
     async startChatGptLogin() {
       const capabilities = await awaitCapabilities();
@@ -1136,7 +1196,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     },
     async readThread(input) {
       const capabilities = await awaitCapabilities();
-      const response = asRecord(await rpc(capabilities.generationId, 'thread/read', { threadId: input.threadId, includeTurns: input.includeTurns ?? false }, { priorityRead: input.priority === 'control' }));
+      const response = asRecord(await rpc(capabilities.generationId, 'thread/read', { threadId: input.threadId, includeTurns: input.includeTurns ?? false }));
       return parseThread(response.thread);
     },
     async listThreads(input) {
@@ -1174,8 +1234,19 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     },
     async listThreadTurns(input) {
       const capabilities = await awaitCapabilities();
-      const { priority, ...params } = input;
-      const response = asRecord(await rpc(capabilities.generationId, 'thread/turns/list', compactObject(params), { priorityRead: priority === 'control' }));
+      const response = asRecord(
+        await rpc(
+          capabilities.generationId,
+          'thread/turns/list',
+          compactObject({
+            threadId: input.threadId,
+            cursor: input.cursor,
+            limit: input.limit,
+            sortDirection: input.sortDirection,
+            itemsView: input.itemsView,
+          }),
+        ),
+      );
       if (!Array.isArray(response.data) || (response.nextCursor !== null && typeof response.nextCursor !== 'string')) {
         throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex thread/turns/list returned an invalid page.');
       }
@@ -1436,6 +1507,12 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
         serverRequests.clear();
         pendingInterrupts.clear();
         startedTurns.clear();
+        accountReadInFlight.clear();
+        accountRateLimitsReadInFlight.clear();
+        accountUsageReadInFlight.clear();
+        lastAccountSnapshot = null;
+        lastAccountRateLimitsSnapshot = null;
+        lastAccountUsageSnapshot = null;
       })();
       return closePromise;
     },

@@ -820,6 +820,16 @@ const defectImageResource: ConversationResource = {
   updatedAt: '2026-08-17T01:42:07.957Z',
 };
 
+const archivedAssistantImageResource: ConversationResource = {
+  ...defectImageResource,
+  id: 'zeus-0323-archived-assistant-image',
+  itemId: 'answer',
+  presentation: 'inline',
+  displayName: '持久化验收截图',
+  attachmentRef: 'assistant-markdown-image.png',
+  updatedAt: '2026-08-17T02:02:09.433Z',
+};
+
 function defectItem(id: string, type: string, text: string, phase = 'prework', resources: ConversationResource[] = []): NativeSessionItemBuffer {
   return {
     key: `zeus-0323:${id}`,
@@ -843,7 +853,9 @@ defectProcessItem.payload = {
   commandActions: [{ type: 'read', path: 'packages/local-server/src/conversationResources.ts' }],
 };
 const defectUserItem = defectItem('user', 'userMessage', '调用第三方的 Claude 模型时，依旧没有任何缓存命中。', 'prework', [defectJsonlResource, defectImageResource]);
-const defectAnswerItem = defectItem('answer', 'agentMessage', '已修复。非图片文件保持文件卡，图片继续显示可预览的缩略图。', 'final_answer');
+const defectAnswerItem = defectItem('answer', 'agentMessage', '已修复。历史答复里的截图会归档并在重新打开会话后继续显示。\n\n![持久化验收截图](/private/tmp/zeus-archived-assistant-image.png)', 'final_answer', [
+  archivedAssistantImageResource,
+]);
 
 const taskPushAttachmentKey = 'task-current:defectCurrentState:screenshot';
 const taskPushImageDataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR42mNk+M/wn4GBgYGJAQoAHgQCAfN9NQAAAABJRU5ErkJggg==';
@@ -974,10 +986,10 @@ const defectSessionState: NativeSessionState = {
 };
 
 async function loadDefectResourcePreview(resource: ConversationResource): Promise<ConversationResourcePreview> {
-  if (resource.id !== defectImageResource.id) throw new Error('非图片资源不提供图片预览。');
+  if (resource.id !== defectImageResource.id && resource.id !== archivedAssistantImageResource.id) throw new Error('非图片资源不提供图片预览。');
   return {
     kind: 'image',
-    resource: defectImageResource,
+    resource,
     mimeType: 'image/png',
     dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
     byteLength: 68,

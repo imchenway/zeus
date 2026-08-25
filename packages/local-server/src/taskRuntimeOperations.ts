@@ -140,9 +140,18 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
   ) {
     try {
       const codexCapabilities = codexNativeEnabled ? await codexAppServerManager.ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) }) : null;
-      const codexAccount = codexCapabilities
-        ? await codexAppServerManager.readAccount({ refreshToken: options.refreshCodexAccount === true, allowCachedOnTransportFailure: options.refreshCodexAccount !== true })
-        : conversationCapabilityQueries.unavailableCodexAccount();
+      let codexAccount: Parameters<typeof conversationCapabilityQueries.buildConversationCapabilities>[2] = conversationCapabilityQueries.unavailableCodexAccount();
+      if (codexCapabilities) {
+        if (options.refreshCodexAccount === true) {
+          codexAccount = await codexAppServerManager.readAccount({ refreshToken: true });
+        } else {
+          try {
+            codexAccount = await codexAppServerManager.readAccount({ cachedOnly: true });
+          } catch (error) {
+            if (!error || typeof error !== 'object' || Reflect.get(error, 'code') !== 'ZEUS_CODEX_ACCOUNT_SNAPSHOT_UNAVAILABLE') throw error;
+          }
+        }
+      }
       return conversationCapabilityQueries.buildConversationCapabilities(project, codexCapabilities, codexAccount);
     } catch (error) {
       if (!options.allowPiWhenCodexUnavailable) throw error;
@@ -154,7 +163,15 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
 
   async function assertCodexAccountReady(modelSourceId: string | null = 'codex', model = ''): Promise<void> {
     if (model && (await resolveResponsesRuntime({ modelSourceId, model }))) return;
-    const account = await codexAppServerManager.readAccount({ refreshToken: false, allowCachedOnTransportFailure: true, preferCached: true });
+    let account: Awaited<ReturnType<typeof codexAppServerManager.readAccount>>;
+    try {
+      account = await codexAppServerManager.readAccount({ cachedOnly: true });
+    } catch (error) {
+      // 没有本地快照时不让账号探测先于真实 Provider 派发成为硬门禁；
+      // app-server 仍会对 thread/turn 请求执行权威认证并返回可审计错误。
+      if (error && typeof error === 'object' && Reflect.get(error, 'code') === 'ZEUS_CODEX_ACCOUNT_SNAPSHOT_UNAVAILABLE') return;
+      throw error;
+    }
     if (!account.requiresOpenaiAuth || account.signedIn) return;
     throw nativeApiError('ZEUS_CODEX_LOGIN_REQUIRED', 'Zeus 专属 Codex 尚未登录。请先完成登录，再创建会话。');
   }
