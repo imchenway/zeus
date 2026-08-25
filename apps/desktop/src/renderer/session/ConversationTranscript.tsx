@@ -32,6 +32,8 @@ export interface ConversationTranscriptProps {
   state: NativeSessionState;
   language: SessionUiLanguage;
   historyOnly?: boolean;
+  /** 子线程等只读投影没有主会话快照时，仍可明确声明时间线已完成水合。 */
+  transcriptHydrated?: boolean;
   /** 从历史入口打开后持续补齐已持久化计划；首次续聊不能让旧计划从时间线消失。 */
   projectPersistedPlans?: boolean;
   onEditUserItem?: (item: NativeSessionItemBuffer, content: string) => void | Promise<void>;
@@ -202,7 +204,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   );
   // 原始思考摘要完整保留在会话状态中；会话记录的当前态选择统一交给行投影处理。
   const items = transcriptItems;
-  const historyHydrated = props.state.snapshot !== null;
+  const historyHydrated = props.transcriptHydrated ?? props.state.snapshot !== null;
   const enteringItemIds = useNewItemMotionIds(
     items.map((item) => item.key),
     220,

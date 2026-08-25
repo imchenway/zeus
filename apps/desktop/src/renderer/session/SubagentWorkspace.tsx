@@ -6,11 +6,12 @@ import { ArrowsOutIcon as ArrowsOut } from '@phosphor-icons/react/dist/csr/Arrow
 import { CaretRightIcon as CaretRight } from '@phosphor-icons/react/dist/csr/CaretRight';
 import { UsersThreeIcon as UsersThree } from '@phosphor-icons/react/dist/csr/UsersThree';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
-import type { NativeSessionItemBuffer, NativeSubagentListSnapshot, NativeSubagentStatus, NativeSubagentSummary, NativeSubagentThreadSnapshot } from './sessionTypes.js';
-import { ThreadItemView, type SessionUiLanguage } from './ThreadItemView.js';
-import { isSubagentCoordinationItem } from './ConversationTranscript.js';
+import type { NativeSessionItemBuffer, NativeSessionState, NativeSubagentListSnapshot, NativeSubagentStatus, NativeSubagentSummary, NativeSubagentThreadSnapshot, NativeTurnSnapshot } from './sessionTypes.js';
+import type { SessionUiLanguage } from './ThreadItemView.js';
+import { ConversationTranscript, isSubagentCoordinationItem } from './ConversationTranscript.js';
 import { RuntimeDetails } from './RuntimeDetails.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { createInitialSessionState } from './sessionReducer.js';
 
 interface SubagentWorkspaceProps {
   language: SessionUiLanguage;
@@ -137,6 +138,7 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
         })),
     );
   }, [props.conversationId, thread]);
+  const transcriptState = useMemo(() => (thread ? projectSubagentTranscriptState(props.conversationId, thread, threadItems) : null), [props.conversationId, thread, threadItems]);
 
   const toggleLabel = props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width';
   return (
@@ -195,7 +197,7 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
               {thread.historyBoundary.reason ? <small>{thread.historyBoundary.reason}</small> : null}
             </aside>
           ) : null}
-          <section className="session-subagent-thread" role="log" aria-live="off" aria-label={zh ? '智能体会话' : 'Agent conversation'}>
+          <section className="session-subagent-thread" aria-label={zh ? '智能体会话' : 'Agent conversation'}>
             {!loadingThread && thread && threadItems.length === 0 ? (
               <SubagentEmpty
                 title={zh ? '暂无可显示内容' : 'No visible content'}
@@ -210,9 +212,7 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
                 }
               />
             ) : null}
-            {threadItems.map((item) => (
-              <ThreadItemView key={item.key} item={item} language={props.language} />
-            ))}
+            {transcriptState ? <ConversationTranscript state={transcriptState} language={props.language} historyOnly={!activeStatuses.has(thread!.agent.status)} transcriptHydrated /> : null}
           </section>
         </div>
       ) : (
@@ -225,6 +225,74 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
       )}
     </aside>
   );
+}
+
+function projectSubagentTranscriptState(conversationId: string, thread: NativeSubagentThreadSnapshot, items: readonly NativeSessionItemBuffer[]): NativeSessionState {
+  const base = createInitialSessionState();
+  const terminalTurnIds: NativeSessionState['terminalTurnIds'] = {};
+  const turnsByProviderId: Record<string, NativeTurnSnapshot> = {};
+  for (const turn of thread.turns) {
+    const turnItems = items.filter((item) => item.turnId === turn.id);
+    const timeline = turnItems
+      .map((item) => item.timelineAt ?? item.updatedAt)
+      .filter((value): value is string => Boolean(value))
+      .sort();
+    const updated = turnItems
+      .map((item) => item.updatedAt)
+      .filter((value): value is string => Boolean(value))
+      .sort();
+    const status = normalizeSubagentTurnStatus(turn.status);
+    const terminal = terminalSubagentTurnStatus(status);
+    if (terminal) terminalTurnIds[turn.id] = terminal;
+    const createdAt = timeline[0] ?? thread.agent.createdAt ?? thread.agent.updatedAt ?? new Date(0).toISOString();
+    const updatedAt = updated.at(-1) ?? timeline.at(-1) ?? thread.agent.updatedAt ?? createdAt;
+    turnsByProviderId[turn.id] = {
+      id: turn.id,
+      providerTurnId: turn.id,
+      submissionId: null,
+      status,
+      startedAt: timeline[0] ?? null,
+      completedAt: terminal ? updatedAt : null,
+      createdAt,
+      updatedAt,
+    };
+  }
+  // Agent 汇总状态可能比具体轮次晚到；不能把最后一个已终结轮次重新标成活动轮次并回显旧 reasoning。
+  const activeTurnId = activeStatuses.has(thread.agent.status) ? ([...thread.turns].reverse().find((turn) => !terminalSubagentTurnStatus(normalizeSubagentTurnStatus(turn.status)))?.id ?? null) : null;
+  const itemMap = Object.fromEntries(items.map((item) => [item.key, item]));
+  const latestUpdatedAt = items
+    .map((item) => item.updatedAt)
+    .filter((value): value is string => Boolean(value))
+    .sort()
+    .at(-1);
+  return {
+    ...base,
+    transportState: 'ready',
+    conversationState: thread.agent.status === 'pending' ? 'starting_turn' : thread.agent.status === 'running' ? 'active_prework' : thread.agent.status === 'waiting' ? 'waiting_user_input' : 'native_idle',
+    conversationId: `${conversationId}:subagent:${thread.agent.id}`,
+    providerThreadId: thread.agent.id,
+    activeTurnId,
+    startedTurnId: activeTurnId,
+    turnsByProviderId,
+    terminalTurnIds,
+    items: itemMap,
+    itemOrder: items.map((item) => item.key),
+    transcriptRevision: latestUpdatedAt ? Date.parse(latestUpdatedAt) || items.length : items.length,
+  };
+}
+
+function normalizeSubagentTurnStatus(status: string): string {
+  const normalized = status.trim().toLowerCase();
+  if (normalized === 'in_progress' || normalized === 'active') return 'running';
+  if (normalized === 'cancelled' || normalized === 'canceled') return 'interrupted';
+  return normalized || 'running';
+}
+
+function terminalSubagentTurnStatus(status: string): 'completed' | 'interrupted' | 'failed' | null {
+  if (status === 'completed') return 'completed';
+  if (status === 'interrupted') return 'interrupted';
+  if (status === 'failed') return 'failed';
+  return null;
 }
 
 function SubagentGroup(props: { title: string; items: NativeSubagentSummary[]; language: SessionUiLanguage; onOpen: (agent: NativeSubagentSummary) => void }) {

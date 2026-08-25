@@ -672,6 +672,34 @@ export class AgentCapabilitySnapshotRepository {
 export class ConversationRepository {
   constructor(private readonly db: ZeusDatabasePort) {}
 
+  /**
+   * 会话列表时间只描述用户能理解的真实活动，不使用会被打开、水合、统计或归档维护推进的 conversations.updated_at。
+   * 这里刻意不读取 conversation_items.updated_at：历史回填会重写该表，且该表没有 conversation_id 时间索引。
+   */
+  meaningfulActivityAt(conversationId: string): string {
+    const row = this.db.get<{
+      created_at: string;
+      message_at: string | null;
+      turn_at: string | null;
+      submission_at: string | null;
+      request_at: string | null;
+      plan_at: string | null;
+    }>(
+      `SELECT c.created_at,
+              (SELECT MAX(m.created_at) FROM conversation_messages m WHERE m.conversation_id = c.id) AS message_at,
+              (SELECT MAX(COALESCE(t.completed_at, t.started_at, t.created_at)) FROM conversation_turns t WHERE t.conversation_id = c.id) AS turn_at,
+              (SELECT MAX(CASE WHEN s.status IN ('cancelled', 'deleted') THEN s.created_at ELSE COALESCE(s.resolved_at, s.accepted_at, s.dispatched_at, s.created_at) END)
+                 FROM conversation_submissions s WHERE s.conversation_id = c.id) AS submission_at,
+              (SELECT MAX(COALESCE(r.resolved_at, r.created_at)) FROM conversation_server_requests r WHERE r.conversation_id = c.id) AS request_at,
+              (SELECT MAX(COALESCE(p.resolved_at, p.created_at)) FROM conversation_plan_actions p WHERE p.conversation_id = c.id) AS plan_at
+         FROM conversations c
+        WHERE c.id = ?`,
+      [conversationId],
+    );
+    if (!row) throw new Error(`Zeus conversation not found: ${conversationId}`);
+    return latestIso(row.message_at, row.turn_at, row.submission_at, row.request_at, row.plan_at, row.created_at);
+  }
+
   create(input: CreateConversationInput): ZeusConversationRecord {
     const transportKind = assertEnum(input.transportKind ?? 'legacy_cli', ['legacy_cli', 'codex_native'] as const, 'conversation transport kind');
     const providerState = assertEnum(input.providerState ?? 'unbound', ['unbound', 'binding', 'ready', 'active', 'waiting', 'paused', 'archived', 'closed', 'failed'] as const, 'conversation provider state');

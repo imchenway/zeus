@@ -15173,7 +15173,10 @@
 }
 
 .session-workspace-root .session-subagent-detail {
+  display: flex;
+  flex-direction: column;
   min-inline-size: 0;
+  overflow: hidden;
 }
 
 .session-workspace-root .session-subagent-detail > .session-runtime-details {
@@ -15292,8 +15295,11 @@
 
 .session-workspace-root .session-subagent-thread {
   box-sizing: border-box;
+  display: flex;
+  flex: 1 1 auto;
+  min-block-size: 0;
   min-inline-size: 0;
-  padding: 18px clamp(12px, 3vw, 28px) 44px;
+  padding: 0;
 }
 
 .session-workspace-root .session-subagent-boundary-notice {
@@ -15316,10 +15322,10 @@
   overflow-wrap: anywhere;
 }
 
-.session-workspace-root .session-subagent-thread .session-thread-item {
-  inline-size: 100%;
-  margin-inline: 0;
-  max-inline-size: none;
+.session-workspace-root .session-subagent-thread > .session-transcript-shell {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  min-inline-size: 0;
 }
 
 .session-workspace-root .session-subagent-loading,

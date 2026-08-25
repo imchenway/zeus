@@ -26,7 +26,7 @@ export interface NativeConversationChoiceProjectionContext {
 interface ConversationChoiceQueryPorts {
   projects: Pick<ProjectRepository, 'list' | 'listArchived' | 'getById'>;
   tasks: Pick<TaskRepository, 'getById' | 'listByProject'>;
-  conversations: Pick<ConversationRepository, 'listRecordsByProject' | 'listRecordsByTask' | 'listUnarchivedRecords'>;
+  conversations: Pick<ConversationRepository, 'listRecordsByProject' | 'listRecordsByTask' | 'listUnarchivedRecords' | 'meaningfulActivityAt'>;
   requests: Pick<ConversationServerRequestRepository, 'listPending' | 'listPendingByConversation'>;
   submissions: Pick<ConversationSubmissionRepository, 'listRecoverable' | 'getFirstByConversation'>;
   turns: Pick<ConversationTurnRepository, 'listInProgress'>;
@@ -255,6 +255,7 @@ export class ConversationChoiceQueryApplication {
       nativeSession: { id: conversation.nativeSessionId ?? conversation.providerThreadId, path: conversation.nativeSessionPath ?? conversation.providerThreadPath },
       createdAt: conversation.createdAt,
       updatedAt: conversation.updatedAt,
+      activityAt: this.ports.conversations.meaningfulActivityAt(conversation.id),
       archived: conversation.archived,
     };
   }

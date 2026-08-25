@@ -1232,7 +1232,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
                       </small>
                     </span>
                     <span className="task-detail-conversation-row-meta">
-                      <time dateTime={conversation.updatedAt}>{formatTaskUpdatedAt(conversation.updatedAt, props.copy.updatedAtMissing ?? '未记录')}</time>
+                      <time dateTime={conversation.activityAt ?? conversation.createdAt}>{formatTaskUpdatedAt(conversation.activityAt ?? conversation.createdAt, props.copy.updatedAtMissing ?? '未记录')}</time>
                       <small>{props.copy.openConversation}</small>
                     </span>
                   </button>

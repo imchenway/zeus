@@ -769,6 +769,8 @@ export interface NativeConversationChoice {
   legacySourceConversationId?: string | null;
   createdAt: string;
   updatedAt: string;
+  /** 最近一次真实会话活动；不包含打开、水合、统计刷新等维护写入。 */
+  activityAt?: string;
   archived: boolean;
   hasUnreadAttention: boolean;
   attentionKind: NativeConversationAttentionKind;

@@ -17,12 +17,15 @@ import type {
   NativeRuntimeDetailsSnapshot,
   NativeSessionItemBuffer,
   NativeSessionState,
+  NativeSubagentListSnapshot,
+  NativeSubagentThreadSnapshot,
 } from '../src/renderer/session/sessionTypes.js';
 import { SafeMarkdown, ThreadItemView } from '../src/renderer/session/ThreadItemView.js';
 import { ConversationTranscript } from '../src/renderer/session/ConversationTranscript.js';
 import { ConversationComposer } from '../src/renderer/session/ConversationComposer.js';
 import { PlanSummary } from '../src/renderer/session/PlanSummary.js';
 import { RuntimeDetails } from '../src/renderer/session/RuntimeDetails.js';
+import { SubagentWorkspace } from '../src/renderer/session/SubagentWorkspace.js';
 import { SessionPlanProgress } from '../src/renderer/session/SessionActivity.js';
 import { createInitialSessionState, sessionReducer } from '../src/renderer/session/sessionReducer.js';
 import { resolveNativeConversationSelectionPresentation } from '../src/renderer/features/workspace/workspaceSupport.js';
@@ -750,6 +753,92 @@ const unavailableRuntimeDetailsFixture: NativeRuntimeDetailsSnapshot = {
     nativeSessionId: unavailableRuntimeFact,
     nativeSessionPath: unavailableRuntimeFact,
   },
+};
+
+const subagentListFixture: NativeSubagentListSnapshot = {
+  conversationId: 'qa-subagent-parent',
+  parentThreadId: 'qa-parent-thread',
+  items: [
+    {
+      id: 'qa-subagent-completed',
+      parentThreadId: 'qa-parent-thread',
+      title: 'Zeno',
+      nickname: 'Zeno',
+      role: 'worker',
+      path: '/root/zeno',
+      preview: '已完成代码审查。',
+      status: 'completed',
+      createdAt: '2026-08-25T07:00:00.000Z',
+      updatedAt: '2026-08-25T07:08:00.000Z',
+    },
+    {
+      id: 'qa-subagent-running',
+      parentThreadId: 'qa-parent-thread',
+      title: 'Copernicus',
+      nickname: 'Copernicus',
+      role: 'reviewer',
+      path: '/root/copernicus',
+      preview: '正在审查内存上下文。',
+      status: 'running',
+      createdAt: '2026-08-25T07:10:00.000Z',
+      updatedAt: '2026-08-25T07:18:00.000Z',
+    },
+  ],
+};
+
+function subagentItem(id: string, type: string, status: string, text: string, updatedAt: string, phase = 'prework'): NativeSubagentThreadSnapshot['turns'][number]['items'][number] {
+  return {
+    id,
+    turnId: 'qa-subagent-turn',
+    providerItemId: id,
+    type,
+    status,
+    phase,
+    text,
+    payload: type === 'reasoning' ? { summary: [text] } : type === 'fileChange' ? { changes: [{ path: `apps/desktop/src/renderer/session/${id}.tsx`, kind: 'update' }] } : { phase },
+    resources: [],
+    startedAt: updatedAt,
+    completedAt: status === 'completed' ? updatedAt : null,
+    updatedAt,
+  };
+}
+
+const completedSubagentThreadFixture: NativeSubagentThreadSnapshot = {
+  conversationId: subagentListFixture.conversationId,
+  parentThreadId: subagentListFixture.parentThreadId,
+  agent: subagentListFixture.items[0]!,
+  historyBoundary: { state: 'confirmed', createdAt: '2026-08-25T07:00:00.000Z', ownedTurnCount: 1, hiddenInheritedTurnCount: 0, hiddenAmbiguousTurnCount: 0, reason: null },
+  runtime: runtimeDetailsFixture,
+  turns: [
+    {
+      id: 'qa-subagent-turn',
+      status: 'completed',
+      items: [
+        subagentItem('reasoning-1', 'reasoning', 'completed', 'Planning detailed read-only code review', '2026-08-25T07:00:10.000Z'),
+        subagentItem('file-change-1', 'fileChange', 'completed', '', '2026-08-25T07:01:00.000Z'),
+        subagentItem('reasoning-2', 'reasoning', 'completed', 'Executing file searches with patterns', '2026-08-25T07:02:00.000Z'),
+        ...Array.from({ length: 8 }, (_, index) => subagentItem(`file-change-${index + 2}`, 'fileChange', 'completed', '', `2026-08-25T07:0${index + 2}:00.000Z`)),
+        subagentItem('answer', 'agentMessage', 'completed', '审查完成：已核对代码边界、失败语义与验证证据。', '2026-08-25T07:08:00.000Z', 'final_answer'),
+      ],
+    },
+  ],
+};
+
+const runningSubagentThreadFixture: NativeSubagentThreadSnapshot = {
+  ...completedSubagentThreadFixture,
+  agent: subagentListFixture.items[1]!,
+  historyBoundary: { ...completedSubagentThreadFixture.historyBoundary, createdAt: '2026-08-25T07:10:00.000Z' },
+  turns: [
+    {
+      id: 'qa-subagent-turn',
+      status: 'running',
+      items: [
+        subagentItem('running-reasoning-old', 'reasoning', 'completed', 'Preparing memory quick pass with citations', '2026-08-25T07:10:00.000Z'),
+        subagentItem('running-file-change', 'fileChange', 'completed', '', '2026-08-25T07:12:00.000Z'),
+        subagentItem('running-reasoning-current', 'reasoning', 'in_progress', 'Inspecting input size and context window', '2026-08-25T07:18:00.000Z'),
+      ],
+    },
+  ],
 };
 
 const startingSessionState: NativeSessionState = {
@@ -1500,8 +1589,32 @@ function MotionApp() {
         <h2>Subagent 运行详情空值</h2>
         <RuntimeDetails runtime={unavailableRuntimeDetailsFixture} language="zh-CN" scope="subagent" />
       </section>
+      <SubagentTranscriptPreview />
       <ApplicationErrorDialogHost language="zh-CN" />
     </main>
+  );
+}
+
+function SubagentTranscriptPreview() {
+  const [fullWidth, setFullWidth] = useState(false);
+  return (
+    <section className="qa-motion-theme session-codex-parity-v1 theme-light" data-testid="subagent-transcript-parity">
+      <h2>Subagent 与普通会话同源转录</h2>
+      <div className="session-workspace-root" style={{ blockSize: 720, border: '1px solid var(--session-line)' }}>
+        <SubagentWorkspace
+          language="zh-CN"
+          conversationId={subagentListFixture.conversationId}
+          activityRevision="qa-subagent"
+          hintCount={subagentListFixture.items.length}
+          initialSnapshot={subagentListFixture}
+          fullWidth={fullWidth}
+          onFullWidthChange={setFullWidth}
+          onClose={() => undefined}
+          loadList={async () => subagentListFixture}
+          loadThread={async (threadId) => (threadId === runningSubagentThreadFixture.agent.id ? runningSubagentThreadFixture : completedSubagentThreadFixture)}
+        />
+      </div>
+    </section>
   );
 }
 
