@@ -3307,6 +3307,7 @@ function readOnlyValidationSkippedCapabilities(): Array<{ id: string; reason: st
     { id: 'runtime_session_reconciliation', reason: 'persisted PID and PGID are not inspected' },
     { id: 'pi_accepted_turn_recovery', reason: 'Pi Worker not constructed; copied turn state unchanged' },
     { id: 'command_center_interrupted_run_recovery', reason: 'read-only Command Center skips directories and recovery' },
+    { id: 'digital_employee_automation_and_execution', reason: 'query-only validation exposes history but does not construct the digital employee scheduler or dispatch Provider, Git, deployment and completion actions' },
     { id: 'heavy_worker_pool_activation', reason: 'worker pool remains closed' },
     { id: 'telegram_polling_and_notification', reason: 'token and Keychain port unavailable; all Telegram admission blocked' },
     { id: 'release_update_scheduler', reason: 'update endpoints blocked and Main scheduler not constructed' },

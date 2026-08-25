@@ -59,7 +59,7 @@ Zeus 的恢复边界必须拆成五个互不冒充的事实域：Zeus 业务 SQL
 
 ## SQLite 逐表矩阵
 
-下面列出当前代码创建的 88 张表。`不可`表示不能从其他本地事实无损重建；`条件`表示只有保留了指定 Provider 历史、资产或源仓库才能重建。SQLite 全库快照会物理包含全部表；标为 `B-NONE` 的表在逻辑导出、分层备份和未来拆库中可以排除。
+下面列出当前代码创建的 93 张表。`不可`表示不能从其他本地事实无损重建；`条件`表示只有保留了指定 Provider 历史、资产或源仓库才能重建。SQLite 全库快照会物理包含全部表；标为 `B-NONE` 的表在逻辑导出、分层备份和未来拆库中可以排除。
 
 ### 存储平台、集成与运行适配器
 
@@ -98,6 +98,11 @@ Zeus 的恢复边界必须拆成五个互不冒充的事实域：Zeus 业务 SQL
 | `task_workspaces` | 工作管理 | `Z` | 不可 | `T3` | `B-DB` | 用户工作区回收流程 | 工作区进入缺失或孤立状态，需核对路径、分支和来源 |
 | `task_integrations` | 工作管理 | `Z` | 不可 | `T3` | `B-DB` | 交付/归档流程；活动 integration 禁删 | 交付状态未知时不得重做 merge/push，要求 Git 证据对账 |
 | `task_integration_attempts` | 工作管理 | `E` | 不可 | `T3` | `B-DB` | integration 审计策略 | 冲突处理链不完整；不得复用无法证明来源的现场 |
+| `digital_employee_templates` | 工作管理 | `Z` 可复用岗位基线 | 不可；内置模板可由版本恢复，自定义模板不可猜测 | `T4` | `B-DB` | 内置模板只读；自定义模板由用户版本化更新或软删 | 模板不可继续分配；既有项目员工和执行快照保持可读 |
+| `digital_employees` | 工作管理 | `Z` 项目内工作主体与持续授权 | 不可 | `T4` | `B-DB` | 用户项目配置；有活动执行时禁止删除 | 自动领任务和新派发停止；既有执行按自己的快照继续或显式阻塞 |
+| `digital_employee_automations` | 工作管理 | `Z/E` 触发规则与耐久游标 | 不可 | `T3/T4` | `B-DB` | 用户配置；删除先停用，保留历史引用 | 所有规则默认停用；不得按当前任务或时间猜测补跑 |
+| `digital_employee_executions` | 工作管理 | `Z/E` 指派、配置快照、租约与交付状态 | 不可；会话或 Git 终态不能反推出当时授权 | `T3` | `B-DB`，随命令回执和任务历史 | 执行状态机；活动、待交付或结果未知时禁删 | 缺失时不自动续派发、提交、推送、合入、部署或完结任务，要求人工对账 |
+| `digital_employee_event_receipts` | 工作管理 | `E` 项目事件消费去重 | 不可 | `T3`，至少覆盖事件与自动化恢复窗口 | `B-DB` | 仅自动化消费者按终态和水位成组清理 | 回执缺失时停止对应规则自动消费，禁止把重复风险当作新事件继续执行 |
 
 ### 会话编排
 
@@ -176,7 +181,7 @@ Zeus 的恢复边界必须拆成五个互不冒充的事实域：Zeus 业务 SQL
 
 ## 独立派生数据库逐表矩阵
 
-下列 11 张表创建在 create-only `*.index.candidate.db` / `*.cache.candidate.db`，通过核验后可由独立 runtime 提升为活动 `index.db/cache.db`。它们不计入上面 88 张 Core 表，也不属于 `B-DB` 核心一致性组。每个库必须携带 source identity、generation、publication state 和 event waterline；校验失败、来源漂移、损坏或丢失时整库丢弃并后台重建，绝不能反向覆盖 Core。
+下列 11 张表创建在 create-only `*.index.candidate.db` / `*.cache.candidate.db`，通过核验后可由独立 runtime 提升为活动 `index.db/cache.db`。它们不计入上面 93 张 Core 表，也不属于 `B-DB` 核心一致性组。每个库必须携带 source identity、generation、publication state 和 event waterline；校验失败、来源漂移、损坏或丢失时整库丢弃并后台重建，绝不能反向覆盖 Core。
 
 | 表 | Owner | 级别 | 可重建性 | 保留期 | 备份 | 删除权限 | 恢复或缺失降级 |
 | --- | --- | --- | --- | --- | --- | --- | --- |

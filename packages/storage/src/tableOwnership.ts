@@ -79,6 +79,11 @@ const ownershipGroups = [
       'task_workspaces',
       'task_integrations',
       'task_integration_attempts',
+      'digital_employee_templates',
+      'digital_employees',
+      'digital_employee_automations',
+      'digital_employee_executions',
+      'digital_employee_event_receipts',
     ],
   },
   {

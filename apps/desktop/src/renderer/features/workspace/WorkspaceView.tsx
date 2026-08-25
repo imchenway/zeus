@@ -17,6 +17,8 @@ import { ProjectModelsSettings } from '../../settings/ProjectModelsSettings.js';
 import { TaskManagementStatusEditor } from '../../settings/TaskManagementStatusEditor.js';
 import { CodexUsageSettingsPane } from '../../settings/CodexUsageSettingsPane.js';
 import { MemorySettingsPane } from '../memory/MemorySettingsPane.js';
+import { DigitalEmployeeTemplatesSettings } from '../digital-employees/DigitalEmployeeTemplatesSettings.js';
+import { ProjectDigitalEmployeesPanel } from '../digital-employees/ProjectDigitalEmployeesPanel.js';
 import { defaultTaskTableEnumSortOrders, normalizeTaskTableEnumSortOrders } from '../../task/taskWorkspaceModel.js';
 import { ZeusSelect } from '../../ZeusSelect.js';
 import { Button } from '../../ui/Button.js';
@@ -759,6 +761,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                       </section>
                     ) : null}
                   </section>
+
+                  <ProjectDigitalEmployeesPanel projectId={selectedProject.id} projectName={selectedProject.name} client={props.commandClient ?? null} language={appShellSettings.appLanguage} />
 
                   {projectPanel ? (
                     <WorkspaceDrawer
@@ -2105,6 +2109,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                         ['usage', settingsWorkspaceCopy.categories.usage, undefined],
                         ['memory', settingsWorkspaceCopy.categories.memory, settingsWorkspaceCopy.localStatus],
                         ['tasks', settingsWorkspaceCopy.categories.tasks, undefined],
+                        ['employees', settingsWorkspaceCopy.categories.employees, settingsWorkspaceCopy.localStatus],
                         ['security', settingsWorkspaceCopy.categories.security, settingsWorkspaceCopy.protectedStatus],
                       ],
                     },
@@ -2309,6 +2314,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     initialProjectId={projectDetail?.id}
                   />
                 ) : null}
+                {settingsCategory === 'employees' ? <DigitalEmployeeTemplatesSettings client={props.commandClient ?? null} language={appShellSettings.appLanguage} /> : null}
                 {settingsCategory === 'tasks' ? (
                   <section className="settings-product-pane task-list-settings-pane" aria-label={settingsWorkspaceCopy.categories.tasks}>
                     <h2 className="settings-page-title">{settingsWorkspaceCopy.categories.tasks}</h2>

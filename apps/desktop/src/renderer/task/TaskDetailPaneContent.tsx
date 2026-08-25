@@ -8,6 +8,8 @@ import { formatVisibleApplicationError, useApplicationErrorDialog } from '../ui/
 import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../ui/pendingResourcePolicy.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { TaskAttachmentPreviewList } from './TaskAttachmentPreviewList.js';
+import { TaskDigitalEmployeePanel } from '../features/digital-employees/TaskDigitalEmployeePanel.js';
+import type { DigitalEmployeeApiClient } from '../features/digital-employees/digitalEmployeeApiClient.js';
 import {
   mergeTaskAttachments,
   parseTaskAttachments,
@@ -70,6 +72,7 @@ export interface TaskDetailPaneContentProps {
   priorityOptions: ReadonlyArray<{ value: TaskPriority; label: string }>;
   busy: boolean;
   terminalReadOnly: boolean;
+  digitalEmployeeClient?: DigitalEmployeeApiClient | null;
   conversations?: NativeConversationChoice[];
   conversationsLoading?: boolean;
   conversationsError?: string | null;
@@ -1024,6 +1027,8 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           </strong>
         </span>
       </section>
+
+      <TaskDigitalEmployeePanel taskId={props.task.id} projectId={props.task.projectId} terminalReadOnly={props.terminalReadOnly} client={props.digitalEmployeeClient ?? null} language={props.language} />
 
       {typedContentFields.map((field) => (
         <section key={field.key} className="task-detail-block task-detail-request-block" aria-label={field.label}>

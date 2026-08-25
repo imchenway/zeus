@@ -2,6 +2,7 @@ import { createCodexApiClient, type CodexApiClient } from './features/codex/code
 import { createCommandCenterApiClient, type CommandCenterApiClient } from './features/command-center/commandCenterApiClient.js';
 import { createConversationApiClient, type ConversationApiClient } from './features/conversations/conversationApiClient.js';
 import { createDashboardApiClient, type DashboardApiClient } from './features/dashboard/dashboardApiClient.js';
+import { createDigitalEmployeeApiClient, type DigitalEmployeeApiClient } from './features/digital-employees/digitalEmployeeApiClient.js';
 import { createGitApiClient, type GitApiClient } from './features/git/gitApiClient.js';
 import { createGraphApiClient, type GraphApiClient } from './features/graph/graphApiClient.js';
 import { createIntegrationApiClient, type IntegrationApiClient } from './features/integrations/integrationApiClient.js';
@@ -19,6 +20,7 @@ import { createLocalApiTransport } from './transport/localApiTransport.js';
 export interface DashboardClient
   extends
     DashboardApiClient,
+    DigitalEmployeeApiClient,
     CodexApiClient,
     CommandCenterApiClient,
     ConversationApiClient,
@@ -65,6 +67,7 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
   });
   const memory = createMemoryApiClient(transport);
   const conversations = createConversationApiClient(transport);
+  const digitalEmployees = createDigitalEmployeeApiClient(transport);
   const projects = createProjectApiClient(transport);
   const tasks = createTaskApiClient(transport);
   const git = createGitApiClient(transport, () => currentOptions.projectGitWorkbench);
@@ -79,6 +82,7 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
     git,
     settings,
     remoteControl,
+    ...digitalEmployees,
     subscribeEvents: createLocalApiEventSubscription({
       transport,
       refreshConnection: refreshConnection ? async () => void (await refreshConnection()) : undefined,

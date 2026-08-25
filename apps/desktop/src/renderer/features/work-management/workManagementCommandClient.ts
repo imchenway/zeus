@@ -30,6 +30,19 @@ export const workManagementClientCommandTypes = {
   taskFromGraphNodeCreate: 'work_management.task.from_graph_node.create',
   taskFromGraphViewCreate: 'work_management.task.from_graph_view.create',
   taskGraphNodeLink: 'work_management.task.graph_node.link',
+  digitalEmployeeTemplateCreate: 'work_management.digital_employee_template.create',
+  digitalEmployeeTemplateUpdate: 'work_management.digital_employee_template.update',
+  digitalEmployeeTemplateDelete: 'work_management.digital_employee_template.delete',
+  digitalEmployeeCreate: 'work_management.digital_employee.create',
+  digitalEmployeeUpdate: 'work_management.digital_employee.update',
+  digitalEmployeeDelete: 'work_management.digital_employee.delete',
+  digitalEmployeeAutomationCreate: 'work_management.digital_employee_automation.create',
+  digitalEmployeeAutomationUpdate: 'work_management.digital_employee_automation.update',
+  digitalEmployeeAutomationDelete: 'work_management.digital_employee_automation.delete',
+  digitalEmployeeAutomationRun: 'work_management.digital_employee_automation.run',
+  digitalEmployeeExecutionCreate: 'work_management.digital_employee_execution.create',
+  digitalEmployeeExecutionRetry: 'work_management.digital_employee_execution.retry',
+  digitalEmployeeExecutionCancel: 'work_management.digital_employee_execution.cancel',
 } as const;
 
 type WorkManagementClientCommandType = (typeof workManagementClientCommandTypes)[keyof typeof workManagementClientCommandTypes];
@@ -38,7 +51,7 @@ type WorkManagementCommandPayload = { operationIdentity: string; inputSha256: st
 /** Local transport 重连复用此处一次生成的 Body，不能重新生成 command 或 operation identity。 */
 export async function buildWorkManagementCommandRequest<TInput extends object>(input: {
   commandType: WorkManagementClientCommandType;
-  scopeKind: Extract<CommandScopeKind, 'project' | 'task'>;
+  scopeKind: Extract<CommandScopeKind, 'project' | 'task' | 'settings'>;
   scopeId(operationIdentity: string): string;
   expectedRevision?: number | null;
   operationPrefix: string;
