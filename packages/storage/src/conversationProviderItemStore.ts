@@ -2,12 +2,27 @@ import { createHash } from 'node:crypto';
 import type { ZeusDatabasePort } from './databasePort.js';
 import type { ConversationAgentKind, ConversationItemPhase, ConversationItemStatus, ConversationItemType, ZeusConversationItemRecord } from './conversationItemTypes.js';
 
-export const conversationProviderItemStoreGeneration = '2026-08-21-provider-item-ingestion-v1';
+export const conversationProviderItemStoreGeneration = '2026-08-25-provider-item-ingestion-v2';
 
 const schemaMigrationId = '20260821_020_provider_item_ingestion';
 const completedPlanHistoryMigrationId = '20260823_021_completed_plan_history';
 const maximumProjectionTextBytes = 64 * 1024;
 const maximumProjectionPayloadBytes = 128 * 1024;
+const compatibilitySnapshotItemIdPattern = /^item-\d+$/u;
+
+/** Codex `thread/read` 兼容快照的 item-N 只在单个 turn 内唯一。 */
+export function scopedSnapshotProviderItemId(providerTurnId: string, providerItemId: string): string {
+  return compatibilitySnapshotItemIdPattern.test(providerItemId) ? `compat:${encodeURIComponent(providerTurnId)}:${providerItemId}` : providerItemId;
+}
+
+/**
+ * 已落库的首个兼容快照条目继续沿用旧身份，避免升级时重写消息、模型历史和资源引用；
+ * 只有同一原生 item-N 被另一轮复用时才创建 turn-scoped 身份。
+ */
+export function resolveSnapshotProviderItemId(providerTurnId: string, providerItemId: string, existingRaw?: Pick<ZeusConversationItemRecord, 'providerTurnId'>): string {
+  if (!compatibilitySnapshotItemIdPattern.test(providerItemId) || !existingRaw || existingRaw.providerTurnId === providerTurnId) return providerItemId;
+  return scopedSnapshotProviderItemId(providerTurnId, providerItemId);
+}
 
 type ProviderItemBaseInput = {
   conversationId: string;
@@ -190,6 +205,7 @@ export class ConversationProviderItemRepository {
 
   appendDelta(input: ProviderItemBaseInput & { delta: string; status?: ConversationItemStatus }): ZeusConversationItemRecord {
     const existing = this.getByProvider(input.providerThreadId, input.providerItemId);
+    assertProviderItemIdentity(existing, input);
     if (existing?.status === 'completed') return existing;
     return this.write({
       ...input,
@@ -202,6 +218,7 @@ export class ConversationProviderItemRepository {
 
   upsertProgress(input: ProviderItemBaseInput & { textContent: string; status?: ConversationItemStatus }): ZeusConversationItemRecord {
     const existing = this.getByProvider(input.providerThreadId, input.providerItemId);
+    assertProviderItemIdentity(existing, input);
     if (existing?.status === 'completed') return existing;
     return this.write({
       ...input,
@@ -214,6 +231,7 @@ export class ConversationProviderItemRepository {
 
   upsertCompleted(input: ProviderItemBaseInput & { textContent: string; completedAt: string | null; status?: ConversationItemStatus }): ZeusConversationItemRecord {
     const existing = this.getByProvider(input.providerThreadId, input.providerItemId);
+    assertProviderItemIdentity(existing, input);
     if (existing?.status === 'completed' && existing.itemType === input.itemType) return existing;
     return this.write({ ...input, status: input.status ?? 'completed', textContent: input.textContent, startedAt: existing?.startedAt ?? input.startedAt ?? null });
   }
@@ -305,6 +323,7 @@ export class ConversationProviderItemRepository {
     },
   ): ZeusConversationItemRecord {
     assertItemInput(input);
+    assertProviderItemIdentity(this.getByProvider(input.providerThreadId, input.providerItemId), input);
     const text = boundedUtf8(input.textContent, maximumProjectionTextBytes);
     const payload = boundedJsonProjection(input.payload, maximumProjectionPayloadBytes);
     const truncated = text.truncated || payload.truncated;
@@ -354,6 +373,14 @@ export class ConversationProviderItemRepository {
     );
     return this.getByProvider(input.providerThreadId, input.providerItemId)!;
   }
+}
+
+function assertProviderItemIdentity(existing: ZeusConversationItemRecord | undefined, input: Pick<ProviderItemBaseInput, 'conversationId' | 'turnId' | 'providerThreadId' | 'providerTurnId' | 'providerItemId'>): void {
+  if (!existing) return;
+  if (existing.conversationId === input.conversationId && existing.turnId === input.turnId && existing.providerTurnId === input.providerTurnId) return;
+  throw Object.assign(new Error(`Provider item identity crossed turn boundary: ${input.providerThreadId}/${input.providerItemId}`), {
+    code: 'ZEUS_PROVIDER_ITEM_IDENTITY_CONFLICT' as const,
+  });
 }
 
 function assertItemInput(input: ProviderItemBaseInput & { status: ConversationItemStatus }): void {

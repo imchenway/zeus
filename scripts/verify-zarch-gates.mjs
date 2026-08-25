@@ -41,7 +41,7 @@ const checks = [
   { id: 'git-command-slice', command: 'node', args: ['scripts/audit-command-side-effect-entries.mjs', '--require-git-command-slice'] },
   { id: 'workspace-git-command-behavior', command: 'pnpm', args: ['exec', 'tsx', 'scripts/verify-workspace-git-command-behavior.ts'] },
   { id: 'workspace-git-command-slice', command: 'node', args: ['scripts/audit-command-side-effect-entries.mjs', '--require-workspace-git-command-slice'] },
-  { id: 'event-flow-behavior', command: 'pnpm', args: ['exec', 'tsx', 'scripts/verify-event-flow-behavior.ts'] },
+  { id: 'event-flow-behavior', command: 'pnpm', args: ['exec', 'tsx', '--tsconfig', 'apps/desktop/tsconfig.json', 'scripts/verify-event-flow-behavior.ts'] },
   { id: 'provider-runtime-recovery', command: 'pnpm', args: ['exec', 'tsx', 'scripts/verify-provider-runtime-recovery.ts'] },
   { id: 'pi-provider-command-delivery', command: 'pnpm', args: ['exec', 'tsx', 'scripts/verify-pi-provider-command-delivery.ts'] },
   { id: 'codex-provider-command-delivery', command: 'pnpm', args: ['exec', 'tsx', 'scripts/verify-codex-provider-command-delivery.ts'] },

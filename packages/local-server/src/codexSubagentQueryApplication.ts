@@ -24,6 +24,7 @@ type SubagentActivity = {
   paths: Map<string, string>;
   interrupted: Set<string>;
   states: Map<string, string>;
+  instructions: Map<string, string>;
 };
 
 const codexSubagentSourceKinds = ['subAgent', 'subAgentReview', 'subAgentCompact', 'subAgentThreadSpawn', 'subAgentOther'] as const;
@@ -38,7 +39,8 @@ export class CodexSubagentQueryApplication {
 
   async read(projectId: string, conversationId: string, threadId: string): Promise<ConversationSubagentThreadSnapshot> {
     const conversation = this.requireCodexConversation(projectId, conversationId);
-    const snapshot = await this.load(conversation);
+    const activity = this.readActivity(conversation.id);
+    const snapshot = await this.load(conversation, activity);
     const agent = snapshot.items.find((item) => item.id === threadId);
     if (!agent) throw queryError('ZEUS_CODEX_SUBAGENT_NOT_FOUND', 'Subagent thread not found.', 404);
     this.assertProviderReady();
@@ -49,6 +51,8 @@ export class CodexSubagentQueryApplication {
       conversationId: conversation.id,
       parentThreadId: snapshot.parentThreadId,
       agent,
+      taskInstruction: taskInstruction(thread, agent.id, activity),
+      inheritedContext: inheritedContext(thread),
       historyBoundary: history.boundary,
       runtime,
       turns: this.toTurns(thread, history.turns),
@@ -64,10 +68,9 @@ export class CodexSubagentQueryApplication {
     return conversation;
   }
 
-  private async load(conversation: ZeusConversationRecord): Promise<ConversationSubagentsSnapshot> {
+  private async load(conversation: ZeusConversationRecord, activity = this.readActivity(conversation.id)): Promise<ConversationSubagentsSnapshot> {
     const parentThreadId = conversation.providerThreadId;
     if (!parentThreadId) throw queryError('ZEUS_CODEX_THREAD_UNAVAILABLE', '当前会话没有可读取的 Codex 线程。');
-    const activity = this.readActivity(conversation.id);
     let listError: unknown;
     const listed = await this.listProviderThreads(parentThreadId).catch((error) => {
       listError = error;
@@ -120,6 +123,7 @@ export class CodexSubagentQueryApplication {
     const paths = new Map<string, string>();
     const interrupted = new Set<string>();
     const states = new Map<string, string>();
+    const instructions = new Map<string, string>();
     for (const item of this.ports.providerItems.listByConversation(conversationId)) {
       const payload = parseJsonObject(item.payloadJson);
       const payloadType = typeof payload.type === 'string' ? payload.type : item.itemType;
@@ -132,18 +136,29 @@ export class CodexSubagentQueryApplication {
         continue;
       }
       if (payloadType !== 'collabAgentToolCall') continue;
+      const receiverThreadIds = new Set<string>();
       if (isRecord(payload.agentsStates)) {
         for (const [threadId, rawState] of Object.entries(payload.agentsStates)) {
-          if (!isRecord(rawState) || typeof rawState.status !== 'string') continue;
+          if (!isRecord(rawState)) continue;
           threadIds.add(threadId);
-          states.set(threadId, rawState.status);
+          receiverThreadIds.add(threadId);
+          if (typeof rawState.status === 'string') states.set(threadId, rawState.status);
+          const agentInstruction = firstNonEmptyString(rawState.prompt, rawState.instruction, rawState.message, rawState.task);
+          if (agentInstruction) instructions.set(threadId, agentInstruction);
         }
       }
       if (Array.isArray(payload.receiverThreadIds)) {
-        for (const threadId of payload.receiverThreadIds) if (typeof threadId === 'string' && threadId) threadIds.add(threadId);
+        for (const threadId of payload.receiverThreadIds) {
+          if (typeof threadId !== 'string' || !threadId) continue;
+          threadIds.add(threadId);
+          receiverThreadIds.add(threadId);
+        }
       }
+      const tool = typeof payload.tool === 'string' ? payload.tool.toLowerCase().replaceAll(/[^a-z]/gu, '') : '';
+      const prompt = firstNonEmptyString(payload.prompt, payload.instruction, payload.message, payload.task);
+      if (prompt && (tool === 'spawn' || tool === 'spawnagent')) for (const receiverThreadId of receiverThreadIds) instructions.set(receiverThreadId, prompt);
     }
-    return { threadIds, paths, interrupted, states };
+    return { threadIds, paths, interrupted, states, instructions };
   }
 
   private toTurns(thread: Record<string, unknown>, ownedTurns: Record<string, unknown>[]): SubagentTurn[] {
@@ -229,9 +244,55 @@ export interface ConversationSubagentThreadSnapshot {
   conversationId: string;
   parentThreadId: string;
   agent: ConversationSubagentSummary;
+  taskInstruction: ConversationSubagentPromptFact;
+  inheritedContext: ConversationSubagentPromptFact;
   historyBoundary: ConversationSubagentHistoryBoundary;
   runtime: SubagentRuntimeDetails;
   turns: SubagentTurn[];
+}
+
+export interface ConversationSubagentPromptFact {
+  state: 'available' | 'unavailable';
+  text: string | null;
+  source: 'collaboration_prompt' | 'provider_thread_source' | 'provider_thread_preview' | null;
+  reason: string | null;
+}
+
+function taskInstruction(thread: Record<string, unknown>, threadId: string, activity: SubagentActivity): ConversationSubagentPromptFact {
+  const projected = activity.instructions.get(threadId);
+  if (projected) return availablePrompt(projected, 'collaboration_prompt');
+  const source = isRecord(thread.source) ? thread.source : {};
+  const subagent = isRecord(source.subagent) ? source.subagent : {};
+  const spawn = isRecord(subagent.thread_spawn) ? subagent.thread_spawn : isRecord(subagent.threadSpawn) ? subagent.threadSpawn : {};
+  const explicit = firstNonEmptyString(thread.taskInstruction, thread.subagentPrompt, thread.spawnPrompt, spawn.prompt, spawn.instruction, spawn.message, spawn.task);
+  if (explicit) return availablePrompt(explicit, 'provider_thread_source');
+  return {
+    state: 'unavailable',
+    text: null,
+    source: null,
+    reason: '当前 Codex Provider 未在子线程读取协议中返回原始子任务指令；Zeus 不会用继承的主任务提示词冒充。',
+  };
+}
+
+function inheritedContext(thread: Record<string, unknown>): ConversationSubagentPromptFact {
+  const text = firstNonEmptyString(thread.firstUserMessage, thread.preview);
+  return text
+    ? availablePrompt(text, 'provider_thread_preview')
+    : {
+        state: 'unavailable',
+        text: null,
+        source: null,
+        reason: 'Provider 未返回可读的上层任务上下文。',
+      };
+}
+
+function availablePrompt(text: string, source: Exclude<ConversationSubagentPromptFact['source'], null>): ConversationSubagentPromptFact {
+  return { state: 'available', text, source, reason: null };
+}
+
+function firstNonEmptyString(...values: unknown[]): string | null {
+  for (const value of values) if (typeof value === 'string' && value.trim()) return value.trim();
+  return null;
 }
 
 function ownedThreadHistory(thread: Record<string, unknown>): { boundary: ConversationSubagentHistoryBoundary; turns: Record<string, unknown>[] } {
@@ -280,7 +341,10 @@ function ownedThreadHistory(thread: Record<string, unknown>): { boundary: Conver
 
 function toSummary(thread: Record<string, unknown>, activity: SubagentActivity): ConversationSubagentSummary {
   const id = typeof thread.id === 'string' ? thread.id : '';
-  const path = activity.paths.get(id) ?? null;
+  const source = isRecord(thread.source) ? thread.source : {};
+  const subagent = isRecord(source.subagent) ? source.subagent : {};
+  const spawn = isRecord(subagent.thread_spawn) ? subagent.thread_spawn : isRecord(subagent.threadSpawn) ? subagent.threadSpawn : {};
+  const path = activity.paths.get(id) ?? firstNonEmptyString(thread.agentPath, spawn.agent_path, spawn.agentPath);
   return {
     id,
     parentThreadId: typeof thread.parentThreadId === 'string' ? thread.parentThreadId : null,

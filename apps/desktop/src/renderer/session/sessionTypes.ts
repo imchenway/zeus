@@ -230,9 +230,18 @@ export interface NativeSubagentThreadSnapshot {
   conversationId: string;
   parentThreadId: string;
   agent: NativeSubagentSummary;
+  taskInstruction: NativeSubagentPromptFact;
+  inheritedContext: NativeSubagentPromptFact;
   historyBoundary: NativeSubagentHistoryBoundary;
   runtime: NativeRuntimeDetailsSnapshot;
   turns: NativeSubagentThreadTurn[];
+}
+
+export interface NativeSubagentPromptFact {
+  state: 'available' | 'unavailable';
+  text: string | null;
+  source: 'collaboration_prompt' | 'provider_thread_source' | 'provider_thread_preview' | null;
+  reason: string | null;
 }
 
 export interface NativeQueuedSubmission {

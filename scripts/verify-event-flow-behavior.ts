@@ -3,11 +3,133 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { CodexAppServerEvent, CodexAppServerManager } from '../packages/ai-runtime/src/index.js';
+import { projectTranscriptRows, projectTranscriptTurnRows, type TranscriptTurnWorkRow } from '../apps/desktop/src/renderer/session/ConversationTranscript.js';
+import type { NativeSessionItemBuffer } from '../apps/desktop/src/renderer/session/sessionTypes.js';
 import { createCodexProviderEventFlow } from '../packages/local-server/src/codexProviderEventFlow.js';
+import { filterCompatibilitySnapshotItemAliases } from '../packages/local-server/src/codexProviderHistoryProjection.js';
+import { selectAutomaticQueueDispatchCandidate } from '../packages/local-server/src/conversationQueueCoreMutationApplication.js';
 import { ConversationEventFlowControl } from '../packages/local-server/src/eventFlowControl.js';
 import { ConversationSyncProtocol } from '../packages/local-server/src/conversationSyncProtocol.js';
 import { registerConversationSyncRoutes, type ConversationRealtimeSocket } from '../packages/local-server/src/conversationSyncRoutes.js';
-import { ConversationSyncEventRepository, createZeusDatabase } from '../packages/storage/src/index.js';
+import { ConversationProviderItemRepository, ConversationSyncEventRepository, createZeusDatabase, resolveSnapshotProviderItemId, scopedSnapshotProviderItemId } from '../packages/storage/src/index.js';
+
+async function verifyCompatibilityItemIdentity(): Promise<Record<string, unknown>> {
+  const firstScopedId = scopedSnapshotProviderItemId('turn-1', 'item-1');
+  const secondScopedId = scopedSnapshotProviderItemId('turn-2', 'item-1');
+  assertBehavior(firstScopedId !== secondScopedId, '兼容 item-N 必须按 Provider turn 定域。');
+  assertBehavior(scopedSnapshotProviderItemId('turn-1', 'provider-item-stable') === 'provider-item-stable', '原生稳定 item 身份不得改写。');
+  assertBehavior(resolveSnapshotProviderItemId('turn-1', 'item-1') === 'item-1', '首个历史兼容身份必须保持原值，避免重写既有历史引用。');
+
+  const probeRoot = await mkdtemp(join(tmpdir(), 'zeus-provider-item-identity-'));
+  const database = await createZeusDatabase(join(probeRoot, 'probe.db'));
+  const repository = new ConversationProviderItemRepository(database);
+  const completed = (providerItemId: string, turnId: string, providerTurnId: string, providerThreadId = 'thread-1') =>
+    repository.upsertCompleted({
+      conversationId: 'conversation-1',
+      turnId,
+      providerThreadId,
+      providerTurnId,
+      providerItemId,
+      itemType: 'userMessage',
+      phase: 'prework',
+      payload: { type: 'userMessage' },
+      textContent: `${providerTurnId}-text`,
+      completedAt: '2026-08-25T10:00:00.000Z',
+      updatedAt: '2026-08-25T10:00:00.000Z',
+    });
+
+  try {
+    const first = completed('item-1', 'local-turn-1', 'turn-1');
+    assertBehavior(resolveSnapshotProviderItemId('turn-1', 'item-1', first) === 'item-1', '同轮重新投影必须继续命中旧兼容身份。');
+    const collisionScopedId = resolveSnapshotProviderItemId('turn-2', 'item-1', first);
+    assertBehavior(collisionScopedId === secondScopedId, '跨轮复用 item-N 时必须切换到 turn-scoped 身份。');
+    completed(collisionScopedId, 'local-turn-2', 'turn-2');
+    completed('provider-item-collision', 'local-turn-1', 'turn-1');
+    let collisionCode: string | null = null;
+    try {
+      completed('provider-item-collision', 'local-turn-2', 'turn-2');
+    } catch (error) {
+      collisionCode = isRecord(error) && typeof error.code === 'string' ? error.code : null;
+    }
+    assertBehavior(collisionCode === 'ZEUS_PROVIDER_ITEM_IDENTITY_CONFLICT', '跨轮复用同一 Provider item 必须失败关闭。');
+    assertBehavior(repository.listByConversation('conversation-1').length === 3, '两个定域兼容项应分别持久化，冲突项不得覆盖旧轮。');
+    const stable = completed('stable-message', 'alias-turn', 'alias-provider-turn', 'alias-thread');
+    const compatibility = completed(scopedSnapshotProviderItemId('alias-provider-turn', 'item-9'), 'alias-turn', 'alias-provider-turn', 'alias-thread');
+    database.execute(`UPDATE conversation_provider_item_states SET native_item_id = 'item-9', text_projection = ? WHERE id = ?`, [stable.textContent, compatibility.id]);
+    const filtered = filterCompatibilitySnapshotItemAliases(repository.listByConversation('conversation-1'));
+    assertBehavior(!filtered.items.some((candidate) => candidate.id === compatibility.id), 'turn-scoped 兼容项在存在真实稳定身份时仍必须被别名过滤。');
+    assertBehavior(filtered.suppressedProviderItemIds.has(compatibility.providerItemId), '别名过滤必须记录被抑制的 scoped Provider item 身份。');
+    return { firstLegacyId: first.providerItemId, secondScopedId: collisionScopedId, collisionCode, suppressedScopedAlias: compatibility.providerItemId };
+  } finally {
+    await database.close();
+    await rm(probeRoot, { recursive: true, force: true });
+  }
+}
+
+function verifyAutomaticQueueDispatchSelection(): Record<string, unknown> {
+  const interruptedHistorical = { id: 'old-paused', status: 'paused', providerTurnId: null, executionSnapshotId: 'snapshot-old' };
+  const queuedGuide = { id: 'queued-guide', status: 'queued', providerTurnId: null, executionSnapshotId: 'snapshot-guide' };
+  const selected = selectAutomaticQueueDispatchCandidate([interruptedHistorical, queuedGuide]);
+  assertBehavior(selected?.id === queuedGuide.id, '较早的暂停审计记录不得遮挡活动轮次中新增的 queued 消息。');
+
+  const blockedBehindHead = selectAutomaticQueueDispatchCandidate([
+    { id: 'failed-head', status: 'paused', providerTurnId: null, executionSnapshotId: 'snapshot-failed' },
+    { id: 'blocked-tail', status: 'paused', providerTurnId: null, executionSnapshotId: 'snapshot-tail' },
+  ]);
+  assertBehavior(blockedBehindHead === undefined, '被队首暂停的后续项不得自动绕过阻塞。');
+
+  const legacyQueued = { id: 'legacy-queued', status: 'queued', providerTurnId: null, executionSnapshotId: null };
+  const newerQueued = { id: 'newer-queued', status: 'queued', providerTurnId: null, executionSnapshotId: 'snapshot-newer' };
+  assertBehavior(selectAutomaticQueueDispatchCandidate([legacyQueued, newerQueued])?.id === legacyQueued.id, 'queued 消息之间仍必须保持原始队列顺序。');
+  return { selectedId: selected.id, blockedSelection: null, legacyHeadId: legacyQueued.id };
+}
+
+function verifyStageSummaryProcessGrouping(): Record<string, unknown> {
+  const turnId = 'stage-turn';
+  const item = (id: string, type: string, text: string, phase = 'prework'): NativeSessionItemBuffer => ({
+    key: id,
+    conversationId: 'stage-conversation',
+    threadId: 'stage-thread',
+    turnId,
+    itemId: id,
+    type,
+    status: 'completed',
+    phase,
+    text,
+    payload: { phase },
+    resources: [],
+    optimistic: false,
+    timelineAt: `2026-08-25T10:00:0${id.length}.000Z`,
+    updatedAt: `2026-08-25T10:00:0${id.length}.000Z`,
+  });
+  const items = [
+    item('summary-a', 'agentMessage', 'A 摘要', 'commentary'),
+    item('command-a', 'commandExecution', ''),
+    item('reasoning-a', 'reasoning', 'A 阶段思考'),
+    item('summary-b', 'agentMessage', 'B 摘要', 'commentary'),
+    item('tool-b', 'dynamicToolCall', ''),
+    item('summary-c', 'agentMessage', 'C 摘要', 'commentary'),
+    item('file-c', 'fileChange', ''),
+    item('final', 'agentMessage', '最终正文', 'final_answer'),
+  ];
+  const rows = projectTranscriptRows(items);
+  const turnRows = projectTranscriptTurnRows(rows, null, { [turnId]: 'completed' });
+  const stages = turnRows.filter((row): row is TranscriptTurnWorkRow => row.kind === 'turn_work');
+  assertBehavior(stages.length === 3, 'A/B/C 三条摘要必须生成三个独立过程阶段。');
+  assertBehavior(stages.map((stage) => (stage.summary?.kind === 'item' ? stage.summary.item.text : null)).join('|') === 'A 摘要|B 摘要|C 摘要', '阶段摘要顺序必须保持 A/B/C，不得被整轮活动组吞并。');
+  assertBehavior(
+    stages[0]?.rows.some((row) => row.kind === 'item' && row.item.type === 'reasoning'),
+    'A 与 B 之间的思考过程必须留在 A 阶段。',
+  );
+  assertBehavior(
+    stages.every((stage) => stage.rows.filter((row) => row.kind === 'activity').length === 1),
+    '每个阶段的命令、工具或文件操作必须各自合并为一组。',
+  );
+  assertBehavior(stages.filter((stage) => stage.loadMore).length === 1 && stages.at(-1)?.loadMore, '只有最后阶段负责继续加载本轮后续过程。');
+  return {
+    stages: stages.map((stage) => ({ summary: stage.summary?.kind === 'item' ? stage.summary.item.text : null, detailGroups: stage.rows.length, live: stage.live, loadMore: stage.loadMore })),
+  };
+}
 
 async function verifyCodexProviderEventFlow(): Promise<Record<string, unknown>> {
   let listener: ((event: CodexAppServerEvent) => void | Promise<void>) | null = null;
@@ -225,5 +347,8 @@ function assertBehavior(condition: unknown, message: string): asserts condition 
 
 const provider = await verifyCodexProviderEventFlow();
 const sync = await verifyConversationSyncFlow();
+const compatibilityItems = await verifyCompatibilityItemIdentity();
+const automaticQueueDispatch = verifyAutomaticQueueDispatchSelection();
+const stageSummaryGrouping = verifyStageSummaryProcessGrouping();
 
-console.log(JSON.stringify({ status: 'passed', provider, sync }, null, 2));
+console.log(JSON.stringify({ status: 'passed', provider, sync, compatibilityItems, automaticQueueDispatch, stageSummaryGrouping }, null, 2));

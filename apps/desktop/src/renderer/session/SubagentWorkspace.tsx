@@ -10,6 +10,7 @@ import type { NativeSessionItemBuffer, NativeSessionState, NativeSubagentListSna
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { ConversationTranscript, isSubagentCoordinationItem } from './ConversationTranscript.js';
 import { RuntimeDetails } from './RuntimeDetails.js';
+import { SafeMarkdown } from './ThreadItemView.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { createInitialSessionState } from './sessionReducer.js';
 
@@ -189,6 +190,7 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
       ) : selectedThreadId ? (
         <div className="session-subagent-detail">
           {loadingThread && !thread ? <SubagentLoading label={zh ? '正在读取智能体会话…' : 'Loading agent conversation…'} /> : null}
+          {thread ? <SubagentTaskInstruction thread={thread} language={props.language} /> : null}
           {thread ? <RuntimeDetails runtime={thread.runtime} language={props.language} scope="subagent" /> : null}
           {thread?.historyBoundary.state === 'unavailable' ? (
             <aside className="session-subagent-boundary-notice" role="status">
@@ -224,6 +226,39 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
         </section>
       )}
     </aside>
+  );
+}
+
+function SubagentTaskInstruction(props: { thread: NativeSubagentThreadSnapshot; language: SessionUiLanguage }) {
+  const zh = props.language === 'zh-CN';
+  const instruction = props.thread.taskInstruction;
+  const inherited = props.thread.inheritedContext;
+  const inheritedDiffers = inherited.state === 'available' && inherited.text && inherited.text !== instruction.text;
+  return (
+    <section className="session-subagent-instruction" aria-label={zh ? '任务指令' : 'Task instruction'}>
+      <header>
+        <strong>{zh ? '任务指令' : 'Task instruction'}</strong>
+        <span>{props.thread.agent.path ?? props.thread.agent.role ?? (zh ? '子智能体' : 'Subagent')}</span>
+      </header>
+      {instruction.state === 'available' && instruction.text ? (
+        <div className="session-subagent-instruction-content">
+          <SafeMarkdown text={instruction.text} language={props.language} />
+        </div>
+      ) : (
+        <div className="session-subagent-instruction-unavailable" role="status">
+          <strong>{zh ? '原始子任务指令不可读取' : 'Original subtask instruction unavailable'}</strong>
+          <span>{zh ? (instruction.reason ?? 'Provider 没有返回可验证的原始指令。') : 'The current Codex provider did not expose the original subtask instruction. Zeus will not substitute inherited parent context.'}</span>
+        </div>
+      )}
+      {inheritedDiffers ? (
+        <details className="session-subagent-inherited-context">
+          <summary>{zh ? '查看上层任务上下文' : 'View inherited task context'}</summary>
+          <div>
+            <SafeMarkdown text={inherited.text!} language={props.language} />
+          </div>
+        </details>
+      ) : null}
+    </section>
   );
 }
 

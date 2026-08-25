@@ -250,6 +250,7 @@ function activityFlowState(latest: boolean): NativeSessionState {
 const executionPhasePreviousReasoning = motionItem('phase-reasoning-previous', 'reasoning', 'completed', '先检查上一阶段的工作结果。', {
   summary: ['先检查上一阶段的工作结果。'],
 });
+const executionPhaseSummaryA = motionItem('phase-summary-a', 'agentMessage', 'completed', 'A 摘要：先读取两个分支的提交与文件差异，再决定是否需要暂存保护现有未提交实现。', { phase: 'commentary' }, 'commentary');
 const executionPhaseReasoning = motionItem('phase-reasoning-current', 'reasoning', 'in_progress', '现在按类别聚合工具、命令和文件活动，完成后再继续输出。', {
   summary: ['现在按类别聚合工具、命令和文件活动，完成后再继续输出。'],
 });
@@ -276,21 +277,24 @@ const executionPhaseActivities = Array.from({ length: 40 }, (_, index) => {
     toolName: index % 8 === 3 ? 'browser' : 'openai_docs',
   });
 });
-const executionPhaseCommentary = motionItem('phase-commentary', 'agentMessage', 'completed', '活动组已经建立；继续追加操作时不改变它在本轮中的位置。', { phase: 'commentary' }, 'commentary');
+const executionPhaseCommentary = motionItem('phase-commentary', 'agentMessage', 'completed', 'B 摘要：已确认来源分支与当前分支的共同基线，现在执行合并并保留两边入口。', { phase: 'commentary' }, 'commentary');
 const executionPhaseLaterReasoning = motionItem('phase-reasoning-later', 'reasoning', 'in_progress', '继续核对 32 条阈值后的稳定分组。', {
   summary: ['继续核对 32 条阈值后的稳定分组。'],
 });
+const executionPhaseSummaryC = motionItem('phase-summary-c', 'agentMessage', 'completed', 'C 摘要：合并已经完成；接下来审查稳定身份、执行快照与原生投影链路。', { phase: 'commentary' }, 'commentary');
 const executionPhaseAppendedActivity = motionItem('phase-appended-tool', 'dynamicToolCall', 'in_progress', '', { toolName: 'browser' });
 const executionPhaseFinalAnswer = motionItem('phase-final-answer', 'agentMessage', 'completed', '本轮过程已完成，所有操作仍归于同一个活动组。', { phase: 'final_answer' }, 'final_answer');
 
 function executionPhaseState(options: { appended: boolean; completed: boolean }): NativeSessionState {
   const baseActivities = options.completed ? executionPhaseActivities.map((item) => ({ ...item, status: 'completed' })) : executionPhaseActivities;
   const items = [
+    executionPhaseSummaryA,
     executionPhasePreviousReasoning,
     ...baseActivities.slice(0, 12),
     executionPhaseCommentary,
     executionPhaseReasoning,
     ...baseActivities.slice(12, 33),
+    executionPhaseSummaryC,
     executionPhaseLaterReasoning,
     ...baseActivities.slice(33),
     ...(options.appended ? [{ ...executionPhaseAppendedActivity, status: options.completed ? 'completed' : 'in_progress' }] : []),
@@ -807,6 +811,18 @@ const completedSubagentThreadFixture: NativeSubagentThreadSnapshot = {
   conversationId: subagentListFixture.conversationId,
   parentThreadId: subagentListFixture.parentThreadId,
   agent: subagentListFixture.items[0]!,
+  taskInstruction: {
+    state: 'available',
+    text: '只读审查 Renderer 会话投影：核对分页、水合与终态收敛；按严重程度输出问题，不修改文件。',
+    source: 'collaboration_prompt',
+    reason: null,
+  },
+  inheritedContext: {
+    state: 'available',
+    text: '# 代码审查任务\n\n审查当前任务分支的全部变化，并保留可复核的代码位置。',
+    source: 'provider_thread_preview',
+    reason: null,
+  },
   historyBoundary: { state: 'confirmed', createdAt: '2026-08-25T07:00:00.000Z', ownedTurnCount: 1, hiddenInheritedTurnCount: 0, hiddenAmbiguousTurnCount: 0, reason: null },
   runtime: runtimeDetailsFixture,
   turns: [
@@ -814,10 +830,14 @@ const completedSubagentThreadFixture: NativeSubagentThreadSnapshot = {
       id: 'qa-subagent-turn',
       status: 'completed',
       items: [
+        subagentItem('summary-a', 'agentMessage', 'completed', 'A 摘要：先固定审查范围，再读取分页与水合实现。', '2026-08-25T07:00:05.000Z', 'commentary'),
         subagentItem('reasoning-1', 'reasoning', 'completed', 'Planning detailed read-only code review', '2026-08-25T07:00:10.000Z'),
         subagentItem('file-change-1', 'fileChange', 'completed', '', '2026-08-25T07:01:00.000Z'),
+        subagentItem('summary-b', 'agentMessage', 'completed', 'B 摘要：分页边界已经确认，继续核对终态与历史恢复。', '2026-08-25T07:01:30.000Z', 'commentary'),
         subagentItem('reasoning-2', 'reasoning', 'completed', 'Executing file searches with patterns', '2026-08-25T07:02:00.000Z'),
-        ...Array.from({ length: 8 }, (_, index) => subagentItem(`file-change-${index + 2}`, 'fileChange', 'completed', '', `2026-08-25T07:0${index + 2}:00.000Z`)),
+        ...Array.from({ length: 4 }, (_, index) => subagentItem(`file-change-${index + 2}`, 'fileChange', 'completed', '', `2026-08-25T07:0${index + 2}:00.000Z`)),
+        subagentItem('summary-c', 'agentMessage', 'completed', 'C 摘要：主要风险已经定位，最后整理证据与严重程度。', '2026-08-25T07:06:30.000Z', 'commentary'),
+        ...Array.from({ length: 4 }, (_, index) => subagentItem(`file-change-${index + 6}`, 'fileChange', 'completed', '', `2026-08-25T07:0${index + 7}:00.000Z`)),
         subagentItem('answer', 'agentMessage', 'completed', '审查完成：已核对代码边界、失败语义与验证证据。', '2026-08-25T07:08:00.000Z', 'final_answer'),
       ],
     },
@@ -827,6 +847,12 @@ const completedSubagentThreadFixture: NativeSubagentThreadSnapshot = {
 const runningSubagentThreadFixture: NativeSubagentThreadSnapshot = {
   ...completedSubagentThreadFixture,
   agent: subagentListFixture.items[1]!,
+  taskInstruction: {
+    state: 'unavailable',
+    text: null,
+    source: null,
+    reason: '当前 Codex Provider 未在子线程读取协议中返回原始子任务指令；Zeus 不会用继承的主任务提示词冒充。',
+  },
   historyBoundary: { ...completedSubagentThreadFixture.historyBoundary, createdAt: '2026-08-25T07:10:00.000Z' },
   turns: [
     {
@@ -1285,8 +1311,8 @@ function ExecutionPhasePreview() {
   return (
     <section className="qa-motion-theme session-codex-parity-v1 theme-light" data-testid="execution-phase-preview" data-phase-state={historyOnly ? 'history' : completed ? 'completed' : 'running'}>
       <header>
-        <strong>单轮稳定活动组</strong>
-        <small>40+ 条命令、文件、搜索、网页和工具活动只生成一个固定在首个操作位置的活动组。</small>
+        <strong>单轮按阶段摘要分组</strong>
+        <small>A、B、C 三条摘要各自承接下一条摘要前的命令、文件、搜索、工具与思考过程；不再整轮合并。</small>
       </header>
       <div className="qa-motion-fixture-actions">
         <button type="button" data-testid="execution-phase-append" onClick={() => setAppended(true)} disabled={appended}>

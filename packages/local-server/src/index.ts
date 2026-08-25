@@ -119,7 +119,7 @@ import { ConversationDispatchCommandApplication } from './conversationDispatchCo
 import { createConversationExecutionContextOperations } from './conversationExecutionContextOperations.js';
 import { ConversationExecutionCoordinator, type ConversationExecutionRoute } from './conversationExecutionCoordinator.js';
 import { ManagedConversationToolResultStore } from './conversationPortableContext.js';
-import { ConversationQueueCoreMutationApplication } from './conversationQueueCoreMutationApplication.js';
+import { ConversationQueueCoreMutationApplication, selectAutomaticQueueDispatchCandidate } from './conversationQueueCoreMutationApplication.js';
 import { isObjectLike, quotePosixShellArgument } from './conversationResourcePreview.js';
 import { normalizeConversationResources } from './conversationResources.js';
 import { ConversationSnapshotCompatibilityTracker } from './conversationSnapshotCompatibility.js';
@@ -1569,10 +1569,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     const conversation = conversations.getById(conversationId);
     if (!conversation || conversation.archived) return;
     if (conversationTurns.listByConversation(conversationId).some((turn) => turn.status === 'running' || turn.status === 'waiting' || turn.status === 'dispatching')) return;
-    const head = conversationSubmissions
-      .listQueueByConversation(conversationId)
-      .filter((submission) => !submission.providerTurnId && (submission.status === 'queued' || submission.status === 'paused' || submission.status === 'failed'))
-      .at(0);
+    const head = selectAutomaticQueueDispatchCandidate(conversationSubmissions.listQueueByConversation(conversationId));
     if (!head || head.status !== 'queued' || !head.executionSnapshotId) return;
     const frozen = conversationExecution.getExecutionSnapshot(head.executionSnapshotId);
     if (!frozen) {

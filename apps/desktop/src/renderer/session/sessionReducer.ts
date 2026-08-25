@@ -1165,6 +1165,9 @@ function reduceItemEvent(state: NativeSessionState, event: NativeConversationEve
   const optimisticText = optimisticEntry?.[1].text ?? '';
   const matchedUserText = matchedUserItem?.text ?? '';
   const resolvedClientId = matchedUserItem?.clientUserMessageId ?? matchedUserItem?.durableClientUserMessageId ?? providerClientId;
+  const compatibilitySnapshotItem = /^item-\d+$/u.test(itemId) || Boolean(incomingPayload && stringValue(incomingPayload.compatibilitySnapshotItemId));
+  const durableUserText = compatibilitySnapshotItem && resolvedClientId ? durableUserMessageText(state, resolvedClientId) : null;
+  const completedText = compatibilitySnapshotItem && durableUserText !== null && incomingText !== durableUserText ? durableUserText : incomingText;
   const next: NativeSessionItemBuffer = {
     key,
     conversationId,
@@ -1175,7 +1178,7 @@ function reduceItemEvent(state: NativeSessionState, event: NativeConversationEve
     type: effectiveType,
     status: stringValue(payload.status) ?? (completed ? 'completed' : (previous?.status ?? 'in_progress')),
     phase: stringValue(payload.phase) ?? previous?.phase ?? matchedUserItem?.phase ?? 'prework',
-    text: completed ? incomingText || previous?.text || matchedUserText || optimisticText : reconcileCumulativeText(previous?.text ?? matchedUserText ?? optimisticText, incomingText),
+    text: completed ? completedText || previous?.text || matchedUserText || optimisticText : reconcileCumulativeText(previous?.text ?? matchedUserText ?? optimisticText, incomingText),
     // 进行中事件以 started 的类型壳为基础合并权威进度字段；completed 仍是最终投影。
     payload: completed
       ? isUserMessageType(effectiveType)
@@ -1204,6 +1207,15 @@ function reduceItemEvent(state: NativeSessionState, event: NativeConversationEve
     visibleFeedbackEpoch,
     conversationState: terminal ? state.conversationState : phase,
   };
+}
+
+function durableUserMessageText(state: NativeSessionState, clientUserMessageId: string): string | null {
+  const message = state.snapshot?.messages.find((candidate) => candidate.role === 'user' && stringValue(candidate.metadata.clientUserMessageId) === clientUserMessageId);
+  if (message) return message.content;
+  const submission = state.snapshot?.submissions.find((candidate) => candidate.clientUserMessageId === clientUserMessageId);
+  if (submission) return submission.composerDraft ?? submission.content;
+  const item = Object.values(state.items).find((candidate) => !candidate.optimistic && isUserMessageItem(candidate) && userMessageClientIds(candidate).includes(clientUserMessageId));
+  return item?.text ?? null;
 }
 
 function reconcileCumulativeText(current: string, incoming: string): string {

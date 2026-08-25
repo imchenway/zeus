@@ -13885,6 +13885,23 @@
   margin-inline: 0 !important;
 }
 
+/* 每条用户可见的中间摘要都是一个阶段锚点；摘要之后的过程明细只属于该阶段，不能跨摘要合并。 */
+.session-codex-parity-v1 .session-turn-stage-summary {
+  display: grid;
+  inline-size: min(var(--session-thread-max), 100%);
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-turn-stage-summary > .session-thread-item {
+  inline-size: 100%;
+  margin-inline: 0;
+}
+
+.session-codex-parity-v1 .session-turn-stage-summary .session-thread-item-assistant .session-markdown {
+  color: var(--session-process-text);
+  font-size: var(--session-readable-font-size);
+}
+
 .session-codex-parity-v1 .session-turn-process {
   display: grid;
   inline-size: min(var(--session-thread-max), 100%);
@@ -15186,6 +15203,84 @@
 .session-workspace-root .session-subagent-detail .session-runtime-details :where(code, a) {
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.session-workspace-root .session-subagent-instruction {
+  background: color-mix(in oklab, var(--session-control-hover) 72%, var(--session-canvas));
+  border-block-end: 1px solid var(--session-line-soft);
+  display: grid;
+  gap: 8px;
+  padding: 12px clamp(12px, 3vw, 28px);
+}
+
+.session-workspace-root .session-subagent-instruction > header {
+  align-items: baseline;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.session-workspace-root .session-subagent-instruction > header strong {
+  color: var(--session-text);
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.session-workspace-root .session-subagent-instruction > header span {
+  color: var(--session-text-muted);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-workspace-root .session-subagent-instruction-content,
+.session-workspace-root .session-subagent-inherited-context > div {
+  color: var(--session-text);
+  font-size: 12px;
+  line-height: 1.6;
+  max-block-size: 280px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+
+.session-workspace-root .session-subagent-instruction-content > :first-child,
+.session-workspace-root .session-subagent-inherited-context > div > :first-child {
+  margin-block-start: 0;
+}
+
+.session-workspace-root .session-subagent-instruction-content > :last-child,
+.session-workspace-root .session-subagent-inherited-context > div > :last-child {
+  margin-block-end: 0;
+}
+
+.session-workspace-root .session-subagent-instruction-unavailable {
+  color: var(--session-text-muted);
+  display: grid;
+  font-size: 11px;
+  gap: 3px;
+  line-height: 16px;
+}
+
+.session-workspace-root .session-subagent-instruction-unavailable strong {
+  color: var(--session-text);
+  font-weight: 620;
+}
+
+.session-workspace-root .session-subagent-inherited-context {
+  border-block-start: 1px solid var(--session-line-soft);
+  color: var(--session-text-muted);
+  font-size: 11px;
+  padding-block-start: 8px;
+}
+
+.session-workspace-root .session-subagent-inherited-context > summary {
+  cursor: pointer;
+  font-weight: 620;
+}
+
+.session-workspace-root .session-subagent-inherited-context > div {
+  margin-block-start: 8px;
 }
 
 .session-workspace-root .session-subagent-list {

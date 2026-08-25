@@ -2,6 +2,15 @@ import { createHash } from 'node:crypto';
 import { ConversationExecutionRepository, ConversationServerRequestRepository, ConversationSubmissionRepository, type ZeusConversationSubmissionRecord } from '@zeus/storage';
 
 /**
+ * 自动排空只选择仍处于 queued 的最早提交。paused/failed 是需要人工处理或保留审计的
+ * 历史状态，不能因为排在更早位置就永久遮挡用户在活动轮次中新增的 queued 消息。
+ * `blocked_by_head` 后续项本身也会被暂停，因此不会绕过真正的阻塞队首。
+ */
+export function selectAutomaticQueueDispatchCandidate<T extends Pick<ZeusConversationSubmissionRecord, 'status' | 'providerTurnId'>>(submissions: readonly T[]): T | undefined {
+  return submissions.find((submission) => submission.status === 'queued' && !submission.providerTurnId);
+}
+
+/**
  * Queue 与 request 的纯 Core mutation。调用方负责把这些同步方法包在自己的 durable
  * transaction 中；本类不保存、不广播，也不触发 Provider 派发。
  */

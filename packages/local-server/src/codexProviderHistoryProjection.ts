@@ -1,5 +1,5 @@
 import type { CodexThreadSnapshot, CodexTurnSnapshot } from '@zeus/ai-runtime';
-import type { ZeusConversationItemRecord, ZeusConversationSubmissionRecord, ZeusConversationTurnRecord, ZeusConversationWithMessagesRecord } from '@zeus/storage';
+import { resolveSnapshotProviderItemId, type ZeusConversationItemRecord, type ZeusConversationSubmissionRecord, type ZeusConversationTurnRecord, type ZeusConversationWithMessagesRecord } from '@zeus/storage';
 import type { CreateCodexNativeConversationCoordinatorOptions } from './codexNativeConversationCoordinator.js';
 import {
   classifySnapshotTurn,
@@ -25,6 +25,10 @@ import { sanitizeConversationItemPayload } from './conversationResources.js';
 
 const compatibilitySnapshotItemIdPattern = /^item-\d+$/u;
 
+function isCompatibilitySnapshotItem(item: Pick<ZeusConversationItemRecord, 'providerItemId' | 'nativeItemId'>): boolean {
+  return compatibilitySnapshotItemIdPattern.test(item.nativeItemId ?? item.providerItemId);
+}
+
 function compatibilitySnapshotItemIdentity(item: Pick<ZeusConversationItemRecord, 'providerThreadId' | 'providerTurnId' | 'itemType' | 'status' | 'phase' | 'textContent'>): string {
   return JSON.stringify([item.providerThreadId, item.providerTurnId, item.itemType, item.status, item.phase]);
 }
@@ -34,9 +38,7 @@ function claimCompatibilitySnapshotSourceItems(
   candidates: readonly ZeusConversationItemRecord[],
   claimedItemIds: Set<string>,
 ): ZeusConversationItemRecord[] {
-  const scoped = candidates.filter(
-    (candidate) => !compatibilitySnapshotItemIdPattern.test(candidate.providerItemId) && !claimedItemIds.has(candidate.id) && compatibilitySnapshotItemIdentity(candidate) === compatibilitySnapshotItemIdentity(target),
-  );
+  const scoped = candidates.filter((candidate) => !isCompatibilitySnapshotItem(candidate) && !claimedItemIds.has(candidate.id) && compatibilitySnapshotItemIdentity(candidate) === compatibilitySnapshotItemIdentity(target));
   const maximumSegmentCount = target.itemType === 'reasoning' ? scoped.length : Math.min(scoped.length, 1);
   for (let start = 0; start < scoped.length; start += 1) {
     const matched: ZeusConversationItemRecord[] = [];
@@ -60,7 +62,7 @@ export function filterCompatibilitySnapshotItemAliases(items: readonly ZeusConve
   const claimedItemIds = new Set<string>();
   const suppressedProviderItemIds = new Set<string>();
   const projectedItems = items.filter((item) => {
-    if (!compatibilitySnapshotItemIdPattern.test(item.providerItemId)) return true;
+    if (!isCompatibilitySnapshotItem(item)) return true;
     const sourceItems = claimCompatibilitySnapshotSourceItems(item, items, claimedItemIds);
     if (sourceItems.length === 0) return true;
     for (const sourceItem of sourceItems) claimedItemIds.add(sourceItem.id);
@@ -392,11 +394,15 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
   ): void {
     const providerThreadId = turn.providerThreadId;
     const providerTurnId = requireString(turn.providerTurnId, 'provider turn id');
-    const providerItemId = typeof itemPayload.id === 'string' && itemPayload.id.trim() ? itemPayload.id : null;
-    if (!providerItemId) return;
+    const nativeProviderItemId = typeof itemPayload.id === 'string' && itemPayload.id.trim() ? itemPayload.id : null;
+    if (!nativeProviderItemId) return;
+    const compatibilitySnapshotItem = compatibilitySnapshotItemIdPattern.test(nativeProviderItemId);
+    const existingRaw = options.providerItems.getByProvider(providerThreadId, nativeProviderItemId);
+    const providerItemId = resolveSnapshotProviderItemId(providerTurnId, nativeProviderItemId, existingRaw);
     const itemType = itemTypeFromValue(itemPayload.type);
-    const presentedItemPayload = sanitizeConversationItemPayload(itemType === 'userMessage' ? { ...itemPayload, ...submissionPresentation(conversation.id, turn, itemPayload) } : itemPayload);
-    const existing = options.providerItems.getByProvider(providerThreadId, providerItemId);
+    const identityPayload = compatibilitySnapshotItem ? { ...itemPayload, compatibilitySnapshotItemId: nativeProviderItemId } : itemPayload;
+    const presentedItemPayload = sanitizeConversationItemPayload(itemType === 'userMessage' ? { ...identityPayload, ...submissionPresentation(conversation.id, turn, itemPayload) } : identityPayload);
+    const existing = providerItemId === nativeProviderItemId ? existingRaw : options.providerItems.getByProvider(providerThreadId, providerItemId);
     const userMessageProjection = itemType === 'userMessage' ? projectProviderUserMessage(conversation, turn, presentedItemPayload, itemText(itemPayload), providerItemId) : null;
     if (itemType === 'userMessage' && !userMessageProjection) return;
     const completedProjection = userMessageProjection
@@ -405,7 +411,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     const itemFailed = itemPayload.status === 'failed';
     const itemTerminal = turnClassification !== 'active' || itemFailed || itemPayload.status === 'completed';
     const projectedStatus = itemFailed ? 'failed' : itemTerminal ? 'completed' : 'in_progress';
-    if (compatibilitySnapshotItemIdPattern.test(providerItemId)) {
+    if (compatibilitySnapshotItem) {
       const sourceItems = claimCompatibilitySnapshotSourceItems(
         {
           providerThreadId,
@@ -430,6 +436,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
           providerThreadId,
           providerTurnId,
           providerItemId,
+          nativeItemId: nativeProviderItemId,
           itemType,
           phase: phaseFromItem(itemPayload),
           payload: completedProjection.payload,
@@ -445,6 +452,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
           providerThreadId,
           providerTurnId,
           providerItemId,
+          nativeItemId: nativeProviderItemId,
           itemType,
           phase: phaseFromItem(itemPayload),
           payload: completedProjection.payload,
