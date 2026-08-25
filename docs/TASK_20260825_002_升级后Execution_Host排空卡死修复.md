@@ -39,4 +39,9 @@
 
 ## 发布记录
 
-- 待补充。
+- 修复提交：`67de2aa3556f10ea8bde82f8b767e2c17e43e065`；发布提交：`a85ea99be5862d3b5eb4fc6a89b7dae35f8db890`。
+- `v0.3.54` Release Workflow `32811731804` 完成且结论为 `success`；`preflight`、`typecheck`、`package-mac`、`publish` 四个作业全部通过。
+- 远程标签 `v0.3.54`、正式 GitHub Release、公开 DMG、manifest、Release notes 与 Homebrew Tap Cask 已完成一致性对账。
+- 公开 DMG `Zeus-0.3.54-arm64.dmg` 为 `112353132` 字节，SHA-256 为 `c0ffd307c6629568dea77b17e859a714fd79af22acab41d2765a22ac95ff0dbb`；manifest SHA-256 为 `7f8259a953420c0f695d2d1e036b4e26b52f7696175e10629ab2cf47ed7ea33f`。
+- manifest 如实标记 `signed=false`、`notarized=false`，因此不宣称 Developer ID 签名或 Apple 公证；正式 DMG 在上传前已通过 `hdiutil verify`。
+- 已通过 Homebrew 把日常正式安装从 0.3.53 升级为 0.3.54。Homebrew 正常退出旧应用、替换 `/Applications/Zeus.app` 并重新打开；新正式 Core PID `28628` 在大库初始化约 26 秒后记录 `ready/ui_attached`，正式任务工作台完整可操作，没有 `DRAINING` 错误卡、系统“无法启动”弹窗或持续转圈。
