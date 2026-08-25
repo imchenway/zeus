@@ -284,10 +284,33 @@ const executionPhaseLaterReasoning = motionItem('phase-reasoning-later', 'reason
 const executionPhaseSummaryC = motionItem('phase-summary-c', 'agentMessage', 'completed', 'C 摘要：合并已经完成；接下来审查稳定身份、执行快照与原生投影链路。', { phase: 'commentary' }, 'commentary');
 const executionPhaseAppendedActivity = motionItem('phase-appended-tool', 'dynamicToolCall', 'in_progress', '', { toolName: 'browser' });
 const executionPhaseFinalAnswer = motionItem('phase-final-answer', 'agentMessage', 'completed', '本轮过程已完成，所有操作仍归于同一个活动组。', { phase: 'final_answer' }, 'final_answer');
+const interruptedQueueTakeoverText = '第二条引导消息（存量 interrupted 接管）';
+const interruptedQueueTakeoverDurableItem: NativeSessionItemBuffer = {
+  ...motionItem('phase-queue-takeover', 'userMessage', 'completed', interruptedQueueTakeoverText, { role: 'user', content: interruptedQueueTakeoverText, delivery: 'queue' }, 'user'),
+  providerItemId: 'phase-queue-takeover-provider-item',
+  clientUserMessageId: 'phase-queue-takeover-provider-client',
+  durableClientUserMessageId: 'phase-queue-takeover-provider-client',
+  optimistic: false,
+};
+const interruptedQueueTakeoverSubmission: NativeQueuedSubmission = {
+  id: 'phase-queue-takeover-interrupted',
+  conversationId: motionConversationId,
+  content: interruptedQueueTakeoverText,
+  status: 'paused',
+  delivery: 'queue',
+  position: 0,
+  providerTurnId: null,
+  clientUserMessageId: 'phase-queue-takeover-legacy-client',
+  pausedReason: 'interrupted',
+  error: null,
+  createdAt: '2026-08-15T03:40:00.000Z',
+  updatedAt: '2026-08-15T04:00:00.300Z',
+};
 
 function executionPhaseState(options: { appended: boolean; completed: boolean }): NativeSessionState {
   const baseActivities = options.completed ? executionPhaseActivities.map((item) => ({ ...item, status: 'completed' })) : executionPhaseActivities;
   const items = [
+    ...(options.completed ? [interruptedQueueTakeoverDurableItem] : []),
     executionPhaseSummaryA,
     executionPhasePreviousReasoning,
     ...baseActivities.slice(0, 12),
@@ -324,6 +347,13 @@ function executionPhaseState(options: { appended: boolean; completed: boolean })
       },
     },
     terminalTurnIds: options.completed ? { [motionTurnId]: 'completed' } : {},
+    queue: options.completed
+      ? {
+          state: { type: 'paused', reason: 'interrupted' },
+          waitReason: 'interrupted',
+          submissions: [interruptedQueueTakeoverSubmission],
+        }
+      : null,
     transcriptRevision: 40 + Number(options.appended) + Number(options.completed),
   };
 }

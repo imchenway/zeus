@@ -186,7 +186,9 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const projectedItems = useMemo(() => {
     // 历史暂停 submission 与新 Provider 正文来自不同投影入口，但必须共享同一条持久时间线。
     // 直接 append 会把数小时前的任务推送卡放到刚发送的消息之后，造成用户气泡“跳到最上面”。
-    const durableItems = [...persistedItems, ...queuedSubmissionItems].sort((left, right) => transcriptTimelineAt(left).localeCompare(transcriptTimelineAt(right)) || left.key.localeCompare(right.key));
+    const durableItems = coalesceSupersededInterruptedQueuedUserMessages(
+      [...persistedItems, ...queuedSubmissionItems].sort((left, right) => transcriptTimelineAt(left).localeCompare(transcriptTimelineAt(right)) || left.key.localeCompare(right.key)),
+    );
     return props.projectPersistedPlans ? projectPersistedTurnPlans(props.state, durableItems) : durableItems;
   }, [
     persistedItems,
@@ -1510,6 +1512,48 @@ function coalesceTranscriptUserMessages(items: readonly NativeSessionItemBuffer[
     for (const identity of [...transcriptUserMessageIdentities(existing), ...identities, ...transcriptUserMessageIdentities(merged)]) indexByIdentity.set(identity, existingIndex);
   }
   return projected;
+}
+
+/**
+ * 旧版队列恢复会把原 submission 标记为 interrupted，随后用新的客户端身份创建
+ * Provider 接管项。两条记录都必须保留审计事实，但转录里不能把同一次发送画成两个
+ * 用户气泡。这里只接受“无结构化载荷、正文完全相同、旧项更新时间与 Provider 项
+ * 相差不超过 5 秒”的强证据；普通重复发送、失败后隔一段时间重发和附件消息均保留。
+ */
+export function coalesceSupersededInterruptedQueuedUserMessages(items: readonly NativeSessionItemBuffer[]): NativeSessionItemBuffer[] {
+  const durableByFingerprint = new Map<string, NativeSessionItemBuffer[]>();
+  for (const item of items) {
+    const fingerprint = simpleUserMessageFingerprint(item);
+    if (!fingerprint || item.optimistic || !item.providerItemId) continue;
+    const candidates = durableByFingerprint.get(fingerprint) ?? [];
+    candidates.push(item);
+    durableByFingerprint.set(fingerprint, candidates);
+  }
+  return items.filter((item) => {
+    if (!item.optimistic || item.status !== 'paused' || item.payload.pausedReason !== 'interrupted' || item.payload.delivery !== 'queue') return true;
+    const fingerprint = simpleUserMessageFingerprint(item);
+    const interruptedAt = timestampMillis(item.updatedAt);
+    if (!fingerprint || interruptedAt === null) return true;
+    return !(durableByFingerprint.get(fingerprint) ?? []).some((candidate) => {
+      const acceptedAt = timestampMillis(transcriptTimelineAt(candidate));
+      return acceptedAt !== null && Math.abs(acceptedAt - interruptedAt) <= 5_000;
+    });
+  });
+}
+
+function simpleUserMessageFingerprint(item: NativeSessionItemBuffer): string | null {
+  if (itemRole(item) !== 'user' || item.resources.length > 0) return null;
+  if (Array.isArray(item.payload.attachments) && item.payload.attachments.length > 0) return null;
+  if (Array.isArray(item.payload.browserComments) && item.payload.browserComments.length > 0) return null;
+  if (recordValue(item.payload.conversationContext) || recordValue(item.payload.taskPushLayout)) return null;
+  const text = transcriptItemText(item).trim();
+  return text || null;
+}
+
+function timestampMillis(value: string | undefined): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function isUnacceptedQueuedUserItem(item: NativeSessionItemBuffer, queuedClientUserMessageIds: ReadonlySet<string>): boolean {

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { CodexAppServerEvent, CodexAppServerManager } from '../packages/ai-runtime/src/index.js';
-import { projectTranscriptRows, projectTranscriptTurnRows, type TranscriptTurnWorkRow } from '../apps/desktop/src/renderer/session/ConversationTranscript.js';
+import { coalesceSupersededInterruptedQueuedUserMessages, projectTranscriptRows, projectTranscriptTurnRows, type TranscriptTurnWorkRow } from '../apps/desktop/src/renderer/session/ConversationTranscript.js';
 import type { NativeSessionItemBuffer } from '../apps/desktop/src/renderer/session/sessionTypes.js';
 import { createCodexProviderEventFlow } from '../packages/local-server/src/codexProviderEventFlow.js';
 import { filterCompatibilitySnapshotItemAliases } from '../packages/local-server/src/codexProviderHistoryProjection.js';
@@ -129,6 +129,66 @@ function verifyStageSummaryProcessGrouping(): Record<string, unknown> {
   return {
     stages: stages.map((stage) => ({ summary: stage.summary?.kind === 'item' ? stage.summary.item.text : null, detailGroups: stage.rows.length, live: stage.live, loadMore: stage.loadMore })),
   };
+}
+
+function verifyInterruptedQueueTakeoverProjection(): Record<string, unknown> {
+  const userItem = (input: { id: string; clientId: string; optimistic: boolean; status: string; timelineAt: string; updatedAt: string; pausedReason?: string; providerItemId?: string }): NativeSessionItemBuffer => ({
+    key: input.id,
+    conversationId: 'queue-takeover-conversation',
+    threadId: 'queue-takeover-thread',
+    turnId: input.providerItemId ? 'provider-turn' : `pending:${input.id}`,
+    itemId: input.id,
+    localItemId: input.id,
+    type: 'userMessage',
+    status: input.status,
+    phase: 'user',
+    text: '第二条引导消息',
+    payload: {
+      role: 'user',
+      content: '第二条引导消息',
+      delivery: 'queue',
+      ...(input.pausedReason ? { pausedReason: input.pausedReason } : {}),
+    },
+    resources: [],
+    optimistic: input.optimistic,
+    clientUserMessageId: input.clientId,
+    durableClientUserMessageId: input.clientId,
+    ...(input.providerItemId ? { providerItemId: input.providerItemId } : {}),
+    timelineAt: input.timelineAt,
+    updatedAt: input.updatedAt,
+  });
+  const interrupted = userItem({
+    id: 'legacy-interrupted',
+    clientId: 'legacy-client',
+    optimistic: true,
+    status: 'paused',
+    pausedReason: 'interrupted',
+    timelineAt: '2026-08-25T09:48:45.131Z',
+    updatedAt: '2026-08-25T10:28:09.901Z',
+  });
+  const accepted = userItem({
+    id: 'provider-accepted',
+    clientId: 'provider-client',
+    optimistic: false,
+    status: 'completed',
+    providerItemId: 'provider-item',
+    timelineAt: '2026-08-25T10:28:09.615Z',
+    updatedAt: '2026-08-25T10:28:09.615Z',
+  });
+  const projected = coalesceSupersededInterruptedQueuedUserMessages([interrupted, accepted]);
+  assertBehavior(projected.length === 1 && projected[0]?.key === accepted.key, '旧 interrupted 气泡必须与 5 秒内同正文 Provider 接管项合并。');
+
+  const deliberateRepeat = userItem({
+    id: 'deliberate-repeat',
+    clientId: 'deliberate-client',
+    optimistic: false,
+    status: 'completed',
+    providerItemId: 'provider-item-2',
+    timelineAt: '2026-08-25T10:29:00.000Z',
+    updatedAt: '2026-08-25T10:29:00.000Z',
+  });
+  assertBehavior(coalesceSupersededInterruptedQueuedUserMessages([accepted, deliberateRepeat]).length === 2, '两条成功且正文相同的用户消息必须保留，不能用正文启发式吞掉真实重复发送。');
+  return { legacyProjectionCount: projected.length, preservedDeliberateRepeats: 2 };
 }
 
 async function verifyCodexProviderEventFlow(): Promise<Record<string, unknown>> {
@@ -350,5 +410,6 @@ const sync = await verifyConversationSyncFlow();
 const compatibilityItems = await verifyCompatibilityItemIdentity();
 const automaticQueueDispatch = verifyAutomaticQueueDispatchSelection();
 const stageSummaryGrouping = verifyStageSummaryProcessGrouping();
+const interruptedQueueTakeover = verifyInterruptedQueueTakeoverProjection();
 
-console.log(JSON.stringify({ status: 'passed', provider, sync, compatibilityItems, automaticQueueDispatch, stageSummaryGrouping }, null, 2));
+console.log(JSON.stringify({ status: 'passed', provider, sync, compatibilityItems, automaticQueueDispatch, stageSummaryGrouping, interruptedQueueTakeover }, null, 2));
