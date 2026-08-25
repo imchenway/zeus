@@ -1151,6 +1151,14 @@ function segmentTurnProcessRows(turnId: string, rows: readonly TranscriptRow[], 
 
   for (const row of rows) {
     if (isTurnStageSummaryRow(row)) {
+      // Provider 在第一条用户可见摘要前通常已经产生了若干 reasoning。它们仍属于
+      // 第一阶段的准备过程，不能单独生成一个没有摘要的“查看处理过程”，否则界面
+      // 看起来仍像按整轮过程分组。首条摘要接管这些前置行；后续摘要才真正结束上一
+      // 阶段并开启下一阶段。
+      if (!current.summary && segments.length === 0) {
+        current = { summary: row, rows: current.rows };
+        continue;
+      }
       flush();
       current = { summary: row, rows: [] };
       continue;
@@ -1167,11 +1175,38 @@ function segmentTurnProcessRows(turnId: string, rows: readonly TranscriptRow[], 
       key: `turn-work-stage:${encodeURIComponent(turnId)}:${encodeURIComponent(identity)}`,
       turnId,
       summary: segment.summary,
-      rows: segment.rows,
+      rows: mergeStageActivityRows(segment.rows, turnId, identity),
       live: active && index === segments.length - 1,
       loadMore: index === segments.length - 1,
     };
   });
+}
+
+function mergeStageActivityRows(rows: readonly TranscriptRow[], turnId: string, stageIdentity: string): TranscriptRow[] {
+  const activityRows = rows.filter((row): row is Extract<TranscriptRow, { kind: 'activity' }> => row.kind === 'activity');
+  if (activityRows.length <= 1) return [...rows];
+
+  const items = activityRows.flatMap((row) => row.items);
+  const categories = new Set(items.map(activityCategory));
+  const merged: Extract<TranscriptRow, { kind: 'activity' }> = {
+    kind: 'activity',
+    key: `activity-stage:${encodeURIComponent(turnId)}:${encodeURIComponent(stageIdentity)}`,
+    items,
+    category: categories.size === 1 ? activityCategory(items[0]!) : 'mixed',
+    motionActive: activityRows.some((row) => row.motionActive),
+  };
+  let emitted = false;
+  const projected: TranscriptRow[] = [];
+  for (const row of rows) {
+    if (row.kind !== 'activity') {
+      projected.push(row);
+      continue;
+    }
+    if (emitted) continue;
+    emitted = true;
+    projected.push(merged);
+  }
+  return projected;
 }
 
 function isTurnStageSummaryRow(row: TranscriptRow): boolean {

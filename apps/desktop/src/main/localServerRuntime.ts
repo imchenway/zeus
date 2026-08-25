@@ -1189,6 +1189,10 @@ function readOnlyValidationDesktopBindingError(detail: string): Error {
 }
 
 const executionHostSafeStartupLimitMs = 120_000;
+// read_only_validation 在 Main 与 Host 两侧都会对完整历史副本做 SHA-256、schema 与
+// quick_check 核验。大库即使健康也可能超过普通可写启动的 120 秒；这里仅延长只读
+// 验证身份的等待窗口，不放宽 owner、lock、rootId 或数据库摘要门禁。
+const executionHostReadOnlyValidationStartupLimitMs = 300_000;
 const executionHostUnconfirmedOwnerLimitMs = 5_000;
 const executionHostChildExitDiscoveryGraceMs = 5_000;
 
@@ -1200,7 +1204,8 @@ async function waitForExecutionHostReady(input: {
   expectedValidationIdentity?: ReadOnlyValidationIdentity;
   childFailure?: () => Error | null;
 }): Promise<ExecutionHostRendezvous | null> {
-  const deadline = Date.now() + executionHostSafeStartupLimitMs;
+  const startupLimitMs = input.expectedValidationIdentity ? executionHostReadOnlyValidationStartupLimitMs : executionHostSafeStartupLimitMs;
+  const deadline = Date.now() + startupLimitMs;
   let observedOwnerPid = input.initialOwnerPid;
   let ownerUnconfirmedSince: number | null = null;
   let childFailureObservedAt: number | null = null;
@@ -1237,7 +1242,7 @@ async function waitForExecutionHostReady(input: {
   const pid = lock?.pid ?? observedOwnerPid ?? 'unknown';
   throw new ExecutionHostOwnershipError({
     code: 'ZEUS_EXECUTION_HOST_STARTUP_TIMEOUT',
-    message: `Zeus Core 在 ${executionHostSafeStartupLimitMs / 1_000} 秒安全上限内仍未就绪（generation=${generationId}, pid=${String(pid)}, stage=${stage}）；为保护 SQLite 唯一写入者，未创建第二宿主。`,
+    message: `Zeus Core 在 ${startupLimitMs / 1_000} 秒安全上限内仍未就绪（generation=${generationId}, pid=${String(pid)}, stage=${stage}）；为保护 SQLite 唯一写入者，未创建第二宿主。`,
     generationId: generationId === 'unknown' ? null : generationId,
     pid: typeof pid === 'number' ? pid : null,
     stage,

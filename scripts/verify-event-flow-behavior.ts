@@ -86,23 +86,29 @@ function verifyAutomaticQueueDispatchSelection(): Record<string, unknown> {
 
 function verifyStageSummaryProcessGrouping(): Record<string, unknown> {
   const turnId = 'stage-turn';
-  const item = (id: string, type: string, text: string, phase = 'prework'): NativeSessionItemBuffer => ({
-    key: id,
-    conversationId: 'stage-conversation',
-    threadId: 'stage-thread',
-    turnId,
-    itemId: id,
-    type,
-    status: 'completed',
-    phase,
-    text,
-    payload: { phase },
-    resources: [],
-    optimistic: false,
-    timelineAt: `2026-08-25T10:00:0${id.length}.000Z`,
-    updatedAt: `2026-08-25T10:00:0${id.length}.000Z`,
-  });
+  let timelineOrdinal = 0;
+  const item = (id: string, type: string, text: string, phase = 'prework'): NativeSessionItemBuffer => {
+    const timelineAt = `2026-08-25T10:00:${String(timelineOrdinal++).padStart(2, '0')}.000Z`;
+    return {
+      key: id,
+      conversationId: 'stage-conversation',
+      threadId: 'stage-thread',
+      turnId,
+      itemId: id,
+      type,
+      status: 'completed',
+      phase,
+      text,
+      payload: { phase },
+      resources: [],
+      optimistic: false,
+      timelineAt,
+      updatedAt: timelineAt,
+    };
+  };
   const items = [
+    item('bootstrap-reasoning-a', 'reasoning', 'A 摘要前的准备思考'),
+    item('bootstrap-command-a', 'commandExecution', ''),
     item('summary-a', 'agentMessage', 'A 摘要', 'commentary'),
     item('command-a', 'commandExecution', ''),
     item('reasoning-a', 'reasoning', 'A 阶段思考'),
@@ -117,17 +123,21 @@ function verifyStageSummaryProcessGrouping(): Record<string, unknown> {
   const stages = turnRows.filter((row): row is TranscriptTurnWorkRow => row.kind === 'turn_work');
   assertBehavior(stages.length === 3, 'A/B/C 三条摘要必须生成三个独立过程阶段。');
   assertBehavior(stages.map((stage) => (stage.summary?.kind === 'item' ? stage.summary.item.text : null)).join('|') === 'A 摘要|B 摘要|C 摘要', '阶段摘要顺序必须保持 A/B/C，不得被整轮活动组吞并。');
-  assertBehavior(
-    stages[0]?.rows.some((row) => row.kind === 'item' && row.item.type === 'reasoning'),
-    'A 与 B 之间的思考过程必须留在 A 阶段。',
-  );
+  assertBehavior(!stages.some((stage) => stage.summary === null), '首条摘要之前的准备过程必须归入 A 阶段，不能生成无摘要的孤立过程入口。');
+  assertBehavior(stages[0]?.rows.filter((row) => row.kind === 'item' && row.item.type === 'reasoning').length === 2, 'A 摘要前的准备思考和 A 与 B 之间的思考过程都必须留在 A 阶段。');
   assertBehavior(
     stages.every((stage) => stage.rows.filter((row) => row.kind === 'activity').length === 1),
     '每个阶段的命令、工具或文件操作必须各自合并为一组。',
   );
   assertBehavior(stages.filter((stage) => stage.loadMore).length === 1 && stages.at(-1)?.loadMore, '只有最后阶段负责继续加载本轮后续过程。');
   return {
-    stages: stages.map((stage) => ({ summary: stage.summary?.kind === 'item' ? stage.summary.item.text : null, detailGroups: stage.rows.length, live: stage.live, loadMore: stage.loadMore })),
+    stages: stages.map((stage) => ({
+      summary: stage.summary?.kind === 'item' ? stage.summary.item.text : null,
+      detailGroups: stage.rows.length,
+      activityGroups: stage.rows.filter((row) => row.kind === 'activity').length,
+      live: stage.live,
+      loadMore: stage.loadMore,
+    })),
   };
 }
 

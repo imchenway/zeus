@@ -32,6 +32,7 @@ import { isZeusDataRootHostIdentity, sameZeusDataRootHostIdentity, type ZeusData
 
 const uiLeaseTimeoutMs = 15_000;
 const detachedIdleShutdownMs = 30_000;
+const readOnlyValidationDetachedIdleShutdownMs = 300_000;
 const monitorIntervalMs = 5_000;
 const maximumControlBodyBytes = 64 * 1024;
 
@@ -75,6 +76,10 @@ async function runExecutionHost(): Promise<void> {
   const instanceId = bootstrap.requestedInstanceId;
   const startedAt = new Date().toISOString();
   const validationIdentity = bootstrap.readOnlyValidation ? readOnlyValidationIdentity(bootstrap.readOnlyValidation) : undefined;
+  // 只读大库在 Host 发布控制面后，Main 仍可能需要完成同一副本的最终身份复验；
+  // 普通 30 秒 detached idle 会让健康 Host 在 UI 租约建立前自行退出。只延长只读
+  // 验证身份的无租约等待，不改变普通可写宿主的 30 秒自动收口。
+  const detachedIdleShutdownLimitMs = bootstrap.readOnlyValidation ? readOnlyValidationDetachedIdleShutdownMs : detachedIdleShutdownMs;
   const hostCapabilities = executionHostCapabilitiesFor(bootstrap.dataRootIdentity, bootstrap.readOnlyValidation);
   const lock = await acquireExecutionHostLock(bootstrap.userDataPath, {
     protocolVersion: executionHostProtocolVersion,
@@ -349,7 +354,7 @@ async function runExecutionHost(): Promise<void> {
         return;
       }
       detachedIdleSince ??= Date.now();
-      if (Date.now() - detachedIdleSince < detachedIdleShutdownMs) return;
+      if (Date.now() - detachedIdleSince < detachedIdleShutdownLimitMs) return;
       try {
         await closeHost('detached_idle');
         process.exit(0);
