@@ -34,6 +34,7 @@ import {
   SettingRepository,
   TaskBoardRepository,
   TaskEventRepository,
+  TaskStageRepository,
   type TaskManagementStatus,
   TaskRepository,
   TaskWorkspaceRepository,
@@ -136,6 +137,8 @@ import { registerRuntimeQueryRoutes } from './runtimeQueryRoutes.js';
 import { registerRuntimeSessionCommandRoutes } from './runtimeSessionCommandRoutes.js';
 import { type ParsedSettingsCommand, SettingsCommandApplication, settingsCommandHttpError, type SettingsCommandRequest, settingsCommandTypes } from './settingsCommandApplication.js';
 import { registerStorageRecoveryPreflightApi } from './storageRecoveryPreflightApi.js';
+import { TaskStageApplication } from './taskStageApplication.js';
+import { registerTaskStageRoutes } from './taskStageRoutes.js';
 import { telegramChildOperation, TelegramCommandApplication, telegramCommandHttpError, type TelegramCommandRequest, telegramCommandTypes } from './telegramCommandApplication.js';
 import { registerTelegramPollingApi } from './telegramPollingApi.js';
 import { changeSetErrorStatus, errorCode as turnChangeSetErrorCode } from './turnChangeSets.js';
@@ -187,6 +190,7 @@ export type LocalServerPlatformRouteDependencies = Record<string, any> & {
   settingsCommands: SettingsCommandApplication;
   taskBoards: TaskBoardRepository;
   taskEvents: TaskEventRepository;
+  taskStages: TaskStageRepository;
   taskWorkspaces: TaskWorkspaceRepository;
   tasks: TaskRepository;
   telegramCommands: TelegramCommandApplication;
@@ -393,6 +397,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     taskIntegrationAttempts,
     taskIntegrations,
     taskManagementStatusIsTerminal,
+    taskStages,
     taskTemplates,
     taskWorkspaces,
     tasks,
@@ -569,6 +574,17 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
 
   const workManagementQueries = new WorkManagementQueryApplication({ projects, tasks, taskBoards, taskEvents, taskTemplates });
   registerWorkManagementQueryRoutes({ server, application: workManagementQueries });
+
+  const taskStageApplication = new TaskStageApplication({
+    db,
+    tasks,
+    stages: taskStages,
+    conversations,
+    artifacts: artifactStore,
+    recordTaskEvent,
+    publishRealtimeEvent,
+  });
+  registerTaskStageRoutes({ server, application: taskStageApplication });
 
   const runtimeQueries = new RuntimeQueryApplication({
     runtimeSessions,

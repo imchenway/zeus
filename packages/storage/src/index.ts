@@ -20,6 +20,7 @@ import { migrateExecutionHostWorkSchema } from './executionHostWorkStore.js';
 import { migrateDigitalEmployeeSchema } from './digitalEmployeeStore.js';
 import { migrateLongTermMemorySchema } from './longTermMemoryStore.js';
 import { migrateTaskEventFileProjectionSchema } from './taskEventFileProjectionStore.js';
+import { migrateTaskStageSchema } from './taskStageStore.js';
 import type { SqlValue, ZeusDatabasePort } from './databasePort.js';
 import { deriveConversationStageProjection, isPlainRecord, ProviderEventReceiptRepository, subtractTokenUsageBreakdown, validateTokenUsageBreakdown, type DbCodexUsageLedgerRow } from './conversationStore.js';
 
@@ -43,6 +44,7 @@ export * from './conversationSnapshotV2.js';
 export * from './conversationSyncEventStore.js';
 export * from './longTermMemoryStore.js';
 export * from './taskEventFileProjectionStore.js';
+export * from './taskStageStore.js';
 export * from './projectionDatabaseCandidate.js';
 export * from './projectionDatabaseRuntime.js';
 export * from './recoveryBackup.js';
@@ -1102,6 +1104,7 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
     migrateCommandCenterSchema(zeusDb);
     migrateCommandDeliverySchema(zeusDb);
     migrateTaskEventFileProjectionSchema(zeusDb);
+    migrateTaskStageSchema(zeusDb);
     migrateProviderEventReceipts(zeusDb);
     migrateUnifiedConversationStoreSchema(zeusDb);
     migrateConversationLegacyCutoverSchema(zeusDb);

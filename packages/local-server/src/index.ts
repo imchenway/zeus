@@ -78,6 +78,7 @@ import {
   TaskIntegrationRepository,
   type TaskManagementStatus,
   TaskRepository,
+  TaskStageRepository,
   TaskTemplateRepository,
   TaskWorkspaceRepository,
   TerminalEventRepository,
@@ -499,6 +500,7 @@ export type StartTaskConversationBody = (
       inheritConversationId?: string;
       permissionMode?: ConversationPermissionMode;
       source?: 'task_push' | 'code_review' | 'conflict_resolution';
+      stageId?: string;
       model?: string;
       effort?: string;
       serviceTier?: string | null;
@@ -642,6 +644,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const taskIntegrationAttempts = new TaskIntegrationAttemptRepository(db);
   const taskConflictAiOperations = new Map<string, { conversationId: string; submissionId: string; running: boolean; finalizing: boolean }>();
   const taskEvents = new TaskEventRepository(db);
+  const taskStages = new TaskStageRepository(db, () => now().toISOString());
   const taskEventFileProjectionOutbox = new TaskEventFileProjectionRepository(db);
   const taskTemplates = new TaskTemplateRepository(db);
   const settingsIdentityCatalog = {
@@ -2711,6 +2714,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
 
   conversationOperations = createConversationApplicationOperations({
     aiRuntimeManager,
+    artifactStore,
     appendAuditLog,
     assertCodexAccountReady,
     buildTaskPushLayoutForTask,
@@ -2778,6 +2782,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     taskIntegrationAttempts,
     taskIntegrations,
     taskManagementStatusIsTerminal,
+    taskStages,
     taskConflictExecutionForConversation,
     taskConversationExecutionWorkspaceMode,
     resolveNativeConversationExecutionRoot,
@@ -3235,6 +3240,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     taskIntegrationAttempts,
     taskIntegrations,
     taskManagementStatusIsTerminal,
+    taskStages,
     taskTemplates,
     taskWorkspaces,
     tasks,

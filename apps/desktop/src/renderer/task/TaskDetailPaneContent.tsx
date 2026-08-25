@@ -2,6 +2,7 @@ import { type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type Ke
 import { isTaskPriority, type TaskAttachmentField, type TaskAttachmentReference, type TaskManagementStatusDefinition } from '@zeus/shared';
 import { type TaskEventRecord, type TaskManagementStatus, type TaskPriority, type TaskRecord, type TaskType, type UpdateTaskRelationshipsRequest, type UpdateTaskRequest, ZeusApiError } from '../apiClient.js';
 import type { NativeConversationChoice } from '../session/sessionTypes.js';
+import type { CodexTaskPushCapabilities } from '../session/sessionTypes.js';
 import { compareConversationCreatedAsc } from '../session/conversationOrdering.js';
 import { Button } from '../ui/Button.js';
 import { formatVisibleApplicationError, useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
@@ -10,6 +11,8 @@ import { ZeusSelect } from '../ZeusSelect.js';
 import { TaskAttachmentPreviewList } from './TaskAttachmentPreviewList.js';
 import { TaskDigitalEmployeePanel } from '../features/digital-employees/TaskDigitalEmployeePanel.js';
 import type { DigitalEmployeeApiClient } from '../features/digital-employees/digitalEmployeeApiClient.js';
+import { TaskWorkflowSection, type TaskWorkflowClient } from './TaskWorkflowSection.js';
+import type { TaskStageRecord } from '../features/tasks/taskContracts.js';
 import {
   mergeTaskAttachments,
   parseTaskAttachments,
@@ -94,6 +97,9 @@ export interface TaskDetailPaneContentProps {
   onReloadConversations?: (taskId: string) => void;
   onLoadAttachmentPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
   onOpenAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }>;
+  workflowClient?: TaskWorkflowClient;
+  onLoadWorkflowCapabilities?: () => Promise<CodexTaskPushCapabilities>;
+  onStartTaskStage?: (stage: TaskStageRecord) => Promise<void>;
 }
 
 export type TaskEditResult = { kind: 'updated'; task: TaskRecord } | { kind: 'conflict'; latest: TaskRecord };
@@ -1193,6 +1199,18 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         </div>
         <TaskEditFeedback state={relationshipSaveState} copy={editCopy} statusId={`${attachmentStatusId}-relationships`} />
       </section>
+
+      {props.workflowClient && props.onLoadWorkflowCapabilities && props.onStartTaskStage ? (
+        <TaskWorkflowSection
+          language={props.language}
+          task={props.task}
+          terminalReadOnly={props.terminalReadOnly}
+          client={props.workflowClient}
+          loadCapabilities={props.onLoadWorkflowCapabilities}
+          onStartStage={props.onStartTaskStage}
+          onOpenConversation={(conversationId) => props.onOpenConversation(props.task.id, conversationId)}
+        />
+      ) : null}
 
       <section className="task-detail-block task-detail-conversations" aria-label={props.copy.conversationsTitle}>
         <span className="task-detail-section-heading">

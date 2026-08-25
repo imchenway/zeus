@@ -97,6 +97,7 @@ export type SessionStartMode = 'create' | 'resume' | 'reference_legacy';
 export interface SessionWorkspaceStartInput {
   mode: SessionStartMode;
   source?: 'code_review';
+  stageId?: string;
   task: SessionWorkspaceTask;
   inheritConversationId?: string;
   conversation?: NativeConversationChoice;
@@ -220,6 +221,7 @@ type StartNativeConversationPayload =
   | {
       mode: 'create';
       source?: 'code_review';
+      stageId?: string;
       content: string;
       attachments?: NativeConversationAttachment[];
       inheritConversationId?: string;
@@ -1127,6 +1129,7 @@ function buildStartNativeConversationPayload(input: SessionWorkspaceStartInput):
     return {
       mode: 'create',
       ...(input.source ? { source: input.source } : {}),
+      ...(input.stageId ? { stageId: input.stageId } : {}),
       content,
       ...(input.attachments?.length ? { attachments: input.attachments } : {}),
       ...(input.inheritConversationId ? { inheritConversationId: input.inheritConversationId } : {}),
@@ -1192,6 +1195,7 @@ function isStartNativeConversationRequest(value: unknown): value is StartNativeC
       (Boolean(request.content.trim()) || (Array.isArray(request.attachments) && request.attachments.length > 0)) &&
       (request.source === undefined || request.source === 'code_review') &&
       (request.skillId === undefined || (typeof request.skillId === 'string' && /^[a-f0-9]{32}$/u.test(request.skillId))) &&
+      (request.stageId === undefined || (typeof request.stageId === 'string' && Boolean(request.stageId))) &&
       (request.inheritConversationId === undefined || (typeof request.inheritConversationId === 'string' && Boolean(request.inheritConversationId))) &&
       (request.source !== 'code_review' ||
         (typeof request.inheritConversationId === 'string' &&

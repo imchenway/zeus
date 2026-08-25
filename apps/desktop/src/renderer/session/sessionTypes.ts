@@ -1224,6 +1224,7 @@ export interface StartTaskModelPushRequest {
   agentKind?: 'codex' | 'pi' | 'claude';
   mode: 'create';
   source: 'task_push';
+  stageId?: string;
   model: string;
   effort?: string;
   serviceTier?: string | null;
@@ -1259,6 +1260,7 @@ export type StartNativeConversationRequest =
   | {
       mode: 'create';
       source?: 'code_review';
+      stageId?: string;
       content?: string;
       skillId?: string;
       attachments?: NativeConversationAttachment[];

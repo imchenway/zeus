@@ -121,6 +121,7 @@ export function registerGraphConversationCommandRoutes(options: {
           'skillId',
           'source',
           'sourceConversationId',
+          'stageId',
           'supplementalAttachments',
           'supplementalInfo',
           'taskContext',

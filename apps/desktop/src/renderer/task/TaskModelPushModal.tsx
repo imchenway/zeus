@@ -36,6 +36,7 @@ import { SkillSelector } from '../features/skills/SkillSelector.js';
 import type { CodexApiClient } from '../features/codex/codexApiClient.js';
 
 export interface TaskModelPushForm {
+  stageId?: string;
   model: string;
   effort: string;
   serviceTier: NativeServiceTierSelection;
@@ -1231,7 +1232,7 @@ export function TaskModelPushModal(props: {
                 options={modelPresentation.options}
                 triggerLabel={modelPresentation.triggerLabel}
                 onChange={onModelChange}
-                disabled={!runtimeCapabilities || modelPresentation.options.length === 0 || busy}
+                disabled={!runtimeCapabilities || modelPresentation.options.length === 0 || busy || Boolean(props.form.stageId)}
                 searchPlaceholder={zh ? '搜索供应商或模型' : 'Search providers or models'}
                 emptyLabel={zh ? '没有匹配模型' : 'No matching models'}
               />
@@ -1260,7 +1261,7 @@ export function TaskModelPushModal(props: {
                     label: effort,
                   }))}
                   onChange={(effort) => props.onChange({ ...props.form, effort })}
-                  disabled={busy}
+                  disabled={busy || Boolean(props.form.stageId)}
                   searchable={false}
                 />
               </label>
@@ -1273,7 +1274,7 @@ export function TaskModelPushModal(props: {
                 value={serviceTierSelectionValue(props.form.serviceTier)}
                 options={serviceTierOptions(selectedModel, props.language)}
                 onChange={(value) => props.onChange({ ...props.form, serviceTier: serviceTierSelectionFromValue(value), serviceTierDowngraded: false })}
-                disabled={!selectedModel || busy}
+                disabled={!selectedModel || busy || Boolean(props.form.stageId)}
                 searchable={false}
               />
             </label>
@@ -1288,7 +1289,7 @@ export function TaskModelPushModal(props: {
                   { value: 'plan', label: zh ? '规划' : 'Plan' },
                 ]}
                 onChange={(workMode) => props.onChange({ ...props.form, workMode })}
-                disabled={busy}
+                disabled={busy || Boolean(props.form.stageId)}
                 searchable={false}
               />
             </label>
@@ -1304,11 +1305,18 @@ export function TaskModelPushModal(props: {
                   { value: 'full-access', label: zh ? '完全访问' : 'Full access' },
                 ]}
                 onChange={(permissionMode) => props.onChange({ ...props.form, permissionMode })}
-                disabled={busy}
+                disabled={busy || Boolean(props.form.stageId)}
                 searchable={false}
               />
             </label>
           </div>
+          {props.form.stageId ? (
+            <small className="task-model-push-stage-lock">
+              {zh
+                ? '模型、推理强度、速度、工作模式与权限已由任务阶段冻结；如需调整，请返回任务详情修改尚未启动的阶段配置。'
+                : 'Model, effort, speed, work mode, and permissions are frozen by the task stage. Return to task details to edit an unstarted stage.'}
+            </small>
+          ) : null}
 
           <TaskPushCurrentConversationPicker
             options={currentConversationOptions}

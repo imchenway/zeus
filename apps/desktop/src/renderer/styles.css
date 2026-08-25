@@ -6,6 +6,248 @@
   text-rendering: optimizeLegibility;
 }
 
+/* 任务阶段工作流：以一条连续轨道呈现阶段、尝试和版本化交付物。 */
+.task-workflow-section {
+  container-type: inline-size;
+}
+
+.task-workflow-empty > p {
+  margin: 0;
+  color: var(--zeus-product-muted);
+  line-height: 1.6;
+}
+
+.task-workflow-heading > span,
+.task-workflow-stage > .task-workflow-stage-body,
+.task-workflow-stage header > span:first-child,
+.task-workflow-deliverable-list button > span {
+  min-width: 0;
+}
+
+.task-workflow-stage-list,
+.task-workflow-deliverable-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.task-workflow-stage-list {
+  display: grid;
+  gap: 0;
+}
+
+.task-workflow-stage {
+  position: relative;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 10px;
+  padding: 0 0 18px;
+}
+
+.task-workflow-stage:not(:last-child)::before {
+  position: absolute;
+  top: 28px;
+  bottom: 0;
+  left: 15px;
+  width: 1px;
+  content: '';
+  background: var(--zeus-product-line-soft);
+}
+
+.task-workflow-stage-marker {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 50%;
+  color: var(--zeus-product-muted);
+  background: var(--zeus-product-panel);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.task-workflow-stage-ready .task-workflow-stage-marker,
+.task-workflow-stage-running .task-workflow-stage-marker,
+.task-workflow-stage-awaiting_acceptance .task-workflow-stage-marker,
+.task-workflow-stage-changes_requested .task-workflow-stage-marker {
+  border-color: var(--zeus-accent-blue);
+  color: var(--zeus-accent-blue);
+}
+
+.task-workflow-stage-accepted .task-workflow-stage-marker,
+.task-workflow-stage-skipped .task-workflow-stage-marker {
+  border-color: var(--zeus-status-success-text);
+  color: var(--zeus-status-success-text);
+}
+
+.task-workflow-stage-body {
+  display: grid;
+  gap: 10px;
+  padding-top: 3px;
+}
+
+.task-workflow-stage-body > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.task-workflow-stage-body > header > span:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.task-workflow-stage-body > header small,
+.task-workflow-deliverable-list small {
+  color: var(--zeus-product-muted);
+  overflow-wrap: anywhere;
+}
+
+.task-workflow-stage-status {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border-radius: 999px;
+  color: var(--zeus-product-muted);
+  background: var(--zeus-product-panel-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.task-workflow-stage-meta,
+.task-workflow-stage-actions,
+.task-workflow-stage-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.task-workflow-stage-meta > span {
+  padding: 3px 7px;
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 6px;
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.task-workflow-stage-editor {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 10px;
+  background: var(--zeus-product-panel-muted);
+}
+
+.task-workflow-stage-editor label,
+.task-workflow-manual-deliverable {
+  display: grid;
+  gap: 6px;
+}
+
+.task-workflow-stage-editor .task-workflow-stage-prompt,
+.task-workflow-stage-editor-actions {
+  grid-column: 1 / -1;
+}
+
+.task-workflow-stage-editor textarea,
+.task-workflow-manual-deliverable textarea {
+  width: 100%;
+  min-width: 0;
+  resize: vertical;
+}
+
+.task-workflow-manual-deliverable {
+  padding: 10px;
+  border-left: 2px solid var(--zeus-accent-blue);
+}
+
+.task-workflow-manual-deliverable .button {
+  justify-self: start;
+}
+
+.task-workflow-deliverable-list {
+  display: grid;
+  gap: 6px;
+}
+
+.task-workflow-deliverable-list button {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 10px;
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 8px;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.task-workflow-deliverable-list button:hover {
+  border-color: var(--zeus-product-line);
+  background: var(--zeus-product-panel-muted);
+}
+
+.task-workflow-deliverable-list button > span {
+  display: grid;
+  gap: 3px;
+}
+
+.task-workflow-deliverable-preview {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--zeus-product-line-soft);
+}
+
+.task-workflow-deliverable-preview pre {
+  max-height: 420px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border-radius: 8px;
+  background: var(--zeus-product-panel-muted);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.task-model-push-stage-lock {
+  display: block;
+  margin-top: -4px;
+  color: var(--zeus-product-muted);
+  line-height: 1.5;
+}
+
+@container (max-width: 520px) {
+  .task-workflow-stage-editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .task-workflow-stage-editor .task-workflow-stage-prompt,
+  .task-workflow-stage-editor-actions {
+    grid-column: 1;
+  }
+
+  .task-workflow-stage-body > header,
+  .task-workflow-deliverable-list button {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
 body {
   inline-size: 100%;
   margin: 0;
