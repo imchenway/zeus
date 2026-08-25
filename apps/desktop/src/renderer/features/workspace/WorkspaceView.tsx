@@ -19,6 +19,7 @@ import { CodexUsageSettingsPane } from '../../settings/CodexUsageSettingsPane.js
 import { MemorySettingsPane } from '../memory/MemorySettingsPane.js';
 import { DigitalEmployeeTemplatesSettings } from '../digital-employees/DigitalEmployeeTemplatesSettings.js';
 import { ProjectDigitalEmployeesPanel } from '../digital-employees/ProjectDigitalEmployeesPanel.js';
+import { SkillsWorkspace } from '../skills/SkillsWorkspace.js';
 import { defaultTaskTableEnumSortOrders, normalizeTaskTableEnumSortOrders } from '../../task/taskWorkspaceModel.js';
 import { ZeusSelect } from '../../ZeusSelect.js';
 import { Button } from '../../ui/Button.js';
@@ -471,7 +472,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   } = operations;
   return (
     <main
-      className={`zeus-shell ai-native-shell macos-ai-app codex-thread-workbench code-map-product-shell theme-${appShellSettings.appearance}${activeNavTarget === 'settings' ? ' settings-dedicated-shell' : ''}${activeProjectSection === 'sessions' && activeNavTarget !== 'settings' ? ' session-codex-parity-v1' : ''}`}
+      className={`zeus-shell ai-native-shell macos-ai-app codex-thread-workbench code-map-product-shell theme-${appShellSettings.appearance}${activeNavTarget === 'settings' ? ' settings-dedicated-shell' : ''}${activeNavTarget === 'skills' ? ' skills-dedicated-shell' : ''}${activeProjectSection === 'sessions' && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' ? ' session-codex-parity-v1' : ''}`}
       data-theme={appShellSettings.appearance}
       data-language={appShellSettings.appLanguage}
       data-project-sidebar-resizing={projectSidebarResizing ? 'true' : 'false'}
@@ -588,7 +589,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
         />
       ) : null}
       <section className="workspace ai-workspace" ref={workspaceScrollRef}>
-        {activeNavTarget !== 'settings' && selectedProject ? (
+        {activeNavTarget === 'skills' ? <SkillsWorkspace client={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} onChooseDirectory={props.onChooseProjectDirectory} /> : null}
+        {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && selectedProject ? (
           <ProjectWorkspaceModeToolbar
             project={selectedProject}
             section={activeProjectSection}
@@ -597,7 +599,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             onOpen={(section, codeMode) => openProjectSection(selectedProject, section, codeMode)}
           />
         ) : null}
-        {activeNavTarget !== 'settings' && activeProjectSection === 'code' && selectedProject ? (
+        {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeProjectSection === 'code' && selectedProject ? (
           <section className="workspace-view workspace-view-project-code project-code-workspace" aria-label={codeWorkspaceCopy.projectCodeAria}>
             <div className="project-code-mode-host">
               <div className="project-code-mode-pane" hidden={projectCodeWorkspaceMode !== 'source'}>
@@ -636,13 +638,13 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           </section>
         ) : null}
 
-        {activeNavTarget !== 'settings' && activeProjectSection === 'git' && selectedProject && props.nativeConversationClient ? (
+        {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeProjectSection === 'git' && selectedProject && props.nativeConversationClient ? (
           <section className="workspace-view workspace-view-project-git">
             <ProjectGitWorkbench project={selectedProject} client={props.nativeConversationClient} language={appShellSettings.appLanguage} />
           </section>
         ) : null}
 
-        {activeNavTarget !== 'settings' && activeProjectSection === 'project-settings' ? (
+        {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeProjectSection === 'project-settings' ? (
           <section className="workspace-view workspace-view-project-settings" aria-label={codeWorkspaceCopy.projectSettingsAria}>
             <section className="workspace-detail-pane project-detail-pane" aria-label={codeWorkspaceCopy.detailAria}>
               {selectedProject ? (
@@ -1319,7 +1321,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           </section>
         ) : null}
 
-        {activeNavTarget !== 'settings' && (activeProjectSection === 'tasks' || activeProjectSection === 'sessions') ? (
+        {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && (activeProjectSection === 'tasks' || activeProjectSection === 'sessions') ? (
           <section
             className={`workspace-view ${activeProjectSection === 'tasks' ? 'workspace-view-project-tasks' : 'workspace-view-project-sessions'}`}
             aria-label={activeProjectSection === 'tasks' ? taskWorkspaceCopy.viewAria : sessionWorkspaceCopy.viewAria}
@@ -1520,6 +1522,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                 configImportNeedsActivation={taskModelPushConfigImportNeedsActivation}
                 refreshingRepositoryId={taskModelPushRefreshingRepositoryId}
                 error={taskModelPushError}
+                skillClient={props.nativeConversationClient ?? null}
                 onChange={(nextForm) => {
                   setTaskModelPushForm((current) => {
                     const resolved = typeof nextForm === 'function' ? nextForm(current) : nextForm;

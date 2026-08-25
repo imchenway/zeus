@@ -1,6 +1,8 @@
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, join, resolve, sep } from 'node:path';
+import type { Skill } from '@earendil-works/pi-coding-agent';
 import type { LoadExtensionsResult, ResourceLoader } from '@earendil-works/pi-coding-agent/headless';
+import type { AgentRunSkillActivation } from './agentRuntimeContracts.js';
 
 interface PiHeadlessResourceLoaderOptions {
   cwd: string;
@@ -24,7 +26,7 @@ interface GitPaths {
 }
 
 /**
- * Zeus 只保留 Pi 会话需要的项目上下文，不加载扩展、技能、主题和终端界面资源。
+ * Zeus 只保留 Pi 会话需要的项目上下文和 Zeus Skill，不加载扩展、主题和终端界面资源。
  */
 export class PiHeadlessResourceLoader implements ResourceLoader {
   private readonly cwd: string;
@@ -32,6 +34,7 @@ export class PiHeadlessResourceLoader implements ResourceLoader {
   private readonly extensionsResult: LoadExtensionsResult;
   private agentsFiles: ContextFile[] = [];
   private applicationContext: PiApplicationContextResource | null = null;
+  private activeSkill: Skill | null = null;
 
   constructor(options: PiHeadlessResourceLoaderOptions) {
     this.cwd = resolve(options.cwd);
@@ -48,7 +51,7 @@ export class PiHeadlessResourceLoader implements ResourceLoader {
   }
 
   getSkills() {
-    return { skills: [], diagnostics: [] };
+    return { skills: this.activeSkill ? [this.activeSkill] : [], diagnostics: [] };
   }
 
   getPrompts() {
@@ -85,6 +88,27 @@ export class PiHeadlessResourceLoader implements ResourceLoader {
     const previous = this.applicationContext;
     this.applicationContext = input ? { ...input } : null;
     return previous ? { ...previous } : null;
+  }
+
+  replaceActiveSkill(input: AgentRunSkillActivation | null): Skill | null {
+    const previous = this.activeSkill;
+    this.activeSkill = input
+      ? {
+          name: input.name,
+          description: input.description,
+          filePath: input.path,
+          baseDir: dirname(input.path),
+          sourceInfo: {
+            path: input.path,
+            source: 'zeus',
+            scope: 'user',
+            origin: 'top-level',
+            baseDir: dirname(input.path),
+          },
+          disableModelInvocation: false,
+        }
+      : null;
+    return previous ? { ...previous, sourceInfo: { ...previous.sourceInfo } } : null;
   }
 
   extendResources(): void {

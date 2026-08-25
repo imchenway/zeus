@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
-import { extname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import {
   type AgentImageInput,
@@ -35,7 +35,8 @@ import type {
   ZeusDatabase,
 } from '@zeus/storage';
 import type { ModelConnectionService } from './modelConnectionService.js';
-import type { NativeConversationAttachmentInput } from './codexNativeConversationContracts.js';
+import type { NativeConversationAttachmentInput, NativeConversationSkillInput } from './codexNativeConversationContracts.js';
+import { readNativeSubmissionSkill } from './nativeConversationSubmissionInputs.js';
 import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
 import type { ManagedConversationToolResultStore } from './conversationPortableContext.js';
 import { TurnProcessProjector } from './turnProcessProjector.js';
@@ -131,6 +132,7 @@ export interface StartPiConversationInput {
   browserCommentContent?: string;
   conversationContext?: Record<string, unknown>;
   taskPushLayout?: TaskPushMessageLayout;
+  skill?: NativeConversationSkillInput;
   holdDispatch?: boolean;
   operationContext?: Record<string, unknown>;
   internalOperation?: boolean;
@@ -213,6 +215,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     }
     const orderedAttachments = input.taskPushLayout ? orderPiTaskPushAttachments(input.taskPushLayout, input.attachments ?? []) : (input.attachments ?? []);
     const rawPathReferences = orderedAttachments.flatMap((attachment) => (attachment.localPath ? [{ name: attachment.name, path: attachment.localPath }] : []));
+    const skillRoot = input.skill ? resolveSkillResourceRoot(input.skill) : null;
+    const allowedResourceRoots = uniquePaths([...(input.allowedAttachmentRoots ?? []), ...(skillRoot ? [skillRoot] : [])]);
     let providerPrompt = appendPiConversationContext(
       input.taskPushLayout ? renderPiTaskPushPrompt(input.taskPushLayout, orderedAttachments) : appendPiAttachmentReferences(input.prompt, rawPathReferences),
       input.browserCommentContent,
@@ -265,6 +269,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           ...(input.browserComments?.length ? { browserComments: input.browserComments } : {}),
           ...(input.browserCommentContent ? { browserCommentContent: input.browserCommentContent } : {}),
           ...(input.conversationContext ? { conversationContext: input.conversationContext } : {}),
+          ...(input.skill ? { skill: input.skill } : {}),
           context: {
             projectId: input.projectId,
             taskId: input.taskId ?? null,
@@ -275,7 +280,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
             thinkingLevel: input.thinkingLevel,
             permissionMode: input.permissionMode,
             holdDispatch: true,
-            ...(input.allowedAttachmentRoots?.length ? { allowedAttachmentRoots: input.allowedAttachmentRoots } : {}),
+            ...(allowedResourceRoots.length ? { allowedAttachmentRoots: allowedResourceRoots } : {}),
             ...(input.operationContext ? { operationContext: input.operationContext } : {}),
           },
           ...(input.internalOperation ? { internalOperation: true } : {}),
@@ -288,7 +293,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       await input.providerWriteLifecycle?.markPrepared(input.submissionId);
       return { conversationId: input.conversationId, submissionId: submission.id, providerThreadId: null, providerTurnId: null, status: 'queued' as const };
     }
-    let attachmentInput: PiAttachmentResolution = { attachments: orderedAttachments, images: [], pathReferences: rawPathReferences, allowedRoots: input.allowedAttachmentRoots ?? [] };
+    let attachmentInput: PiAttachmentResolution = { attachments: orderedAttachments, images: [], pathReferences: rawPathReferences, allowedRoots: allowedResourceRoots };
     if (!existingConversation) {
       options.conversations.create({
         id: input.conversationId,
@@ -340,6 +345,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           ...(input.browserComments?.length ? { browserComments: input.browserComments } : {}),
           ...(input.browserCommentContent ? { browserCommentContent: input.browserCommentContent } : {}),
           ...(input.conversationContext ? { conversationContext: input.conversationContext } : {}),
+          ...(input.skill ? { skill: input.skill } : {}),
           context: {
             projectLocalPath: input.cwd,
             model: input.model.modelId,
@@ -359,7 +365,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     const providerCommandIssuedAt = submission.createdAt;
     let compiledDispatchContext: ContextDispatchEnvelope | null = null;
     try {
-      attachmentInput = await resolvePiAttachmentInput(orderedAttachments, input.allowedAttachmentRoots ?? []);
+      attachmentInput = await resolvePiAttachmentInput(orderedAttachments, allowedResourceRoots);
       providerPrompt = appendPiConversationContext(
         input.taskPushLayout ? renderPiTaskPushPrompt(input.taskPushLayout, attachmentInput.attachments) : appendPiAttachmentReferences(input.prompt, attachmentInput.pathReferences),
         input.browserCommentContent,
@@ -527,6 +533,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           thinkingLevel: input.thinkingLevel ?? null,
           imagesSha256: stableSha256(JSON.stringify(attachmentInput.images)),
           contextFingerprint: compiledDispatchContext?.compiled.fingerprint ?? null,
+          skillId: input.skill?.id ?? null,
         },
         providerGenerationId: session.runtimeInstanceId,
       });
@@ -540,6 +547,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         clientRequestId: input.clientUserMessageId,
         model: input.model,
         ...toPiRunDispatchContext(compiledDispatchContext),
+        ...(input.skill ? { skill: input.skill } : {}),
         ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),
         ...(attachmentInput.images.length > 0 ? { images: attachmentInput.images } : {}),
         preflightResult: () => undefined,
@@ -684,13 +692,16 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     browserComments?: Record<string, unknown>[];
     browserCommentContent?: string;
     conversationContext?: Record<string, unknown>;
+    skill?: NativeConversationSkillInput;
     providerWriteLifecycle?: { markPrepared(submissionId: string): Promise<void>; markRpcStarted(submissionId: string): void };
     segmentLifecycle?: ConversationSegmentLifecycle;
   }) {
     let context = input.conversation.nativeSessionId ? contexts.get(input.conversation.nativeSessionId) : undefined;
     const createdAt = options.now();
     const cwd = context?.cwd ?? resolveConversationCwd(input.conversation);
-    let attachmentInput: PiAttachmentResolution = { attachments: input.attachments ?? [], images: [], pathReferences: [], allowedRoots: [] };
+    const skillRoot = input.skill ? resolveSkillResourceRoot(input.skill) : null;
+    const allowedResourceRoots = uniquePaths([...(input.allowedAttachmentRoots ?? context?.attachmentRoots ?? [cwd]), ...(skillRoot ? [skillRoot] : [])]);
+    let attachmentInput: PiAttachmentResolution = { attachments: input.attachments ?? [], images: [], pathReferences: [], allowedRoots: allowedResourceRoots };
     let providerContent = input.content;
     let submission = options.submissions.createOrGet({
       id: input.submissionId,
@@ -707,6 +718,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         ...(input.browserComments?.length ? { browserComments: input.browserComments } : {}),
         ...(input.browserCommentContent ? { browserCommentContent: input.browserCommentContent } : {}),
         ...(input.conversationContext ? { conversationContext: input.conversationContext } : {}),
+        ...(input.skill ? { skill: input.skill } : {}),
         context: { model: input.model.modelId, modelSourceId: input.model.sourceId, agentKind: 'pi', thinkingLevel: input.thinkingLevel, projectLocalPath: cwd },
       },
       createdAt,
@@ -733,7 +745,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     let runCommand: PiProviderCommandAttempt | null = null;
     const providerModel = input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId;
     try {
-      attachmentInput = await resolvePiAttachmentInput(input.attachments ?? [], input.allowedAttachmentRoots ?? context.attachmentRoots ?? [cwd]);
+      attachmentInput = await resolvePiAttachmentInput(input.attachments ?? [], allowedResourceRoots);
+      context.attachmentRoots = attachmentInput.allowedRoots;
       providerContent = appendPiConversationContext(appendPiAttachmentReferences(input.content, attachmentInput.pathReferences), input.browserCommentContent, input.browserComments, input.conversationContext);
       compiledDispatchContext = options.compileDispatchContext
         ? await options.compileDispatchContext({
@@ -765,6 +778,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           thinkingLevel: input.thinkingLevel ?? null,
           contextFingerprint: compiledDispatchContext?.compiled.fingerprint ?? null,
           imagesSha256: stableSha256(JSON.stringify(attachmentInput.images)),
+          skillId: input.skill?.id ?? null,
         },
         providerGenerationId: context.session.runtimeInstanceId,
       });
@@ -780,6 +794,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         model: input.model,
         ...(attachmentInput.images.length > 0 ? { images: attachmentInput.images } : {}),
         ...toPiRunDispatchContext(compiledDispatchContext),
+        ...(input.skill ? { skill: input.skill } : {}),
         ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),
         preflightResult: () => undefined,
         durableTransactionSync: (acceptance) => {
@@ -937,6 +952,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     browserComments?: Record<string, unknown>[];
     browserCommentContent?: string;
     conversationContext?: Record<string, unknown>;
+    skill?: NativeConversationSkillInput;
     holdDispatch?: boolean;
     segmentLifecycle?: ConversationSegmentLifecycle;
   }) {
@@ -960,6 +976,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         ...(input.browserComments?.length ? { browserComments: input.browserComments } : {}),
         ...(input.browserCommentContent ? { browserCommentContent: input.browserCommentContent } : {}),
         ...(input.conversationContext ? { conversationContext: input.conversationContext } : {}),
+        ...(input.skill ? { skill: input.skill } : {}),
         context: {
           projectId: input.conversation.projectId,
           taskId: input.conversation.taskId,
@@ -1001,6 +1018,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     const selectedModel = selectedModelRef
       ? { sourceId: selectedModelRef.sourceId, modelId: selectedModelRef.modelId, displayName: null }
       : { sourceId: conversation.modelSourceId, modelId: settings?.model ?? conversation.modelId ?? conversation.providerModel ?? '', displayName: null };
+    const skill = readNativeSubmissionSkill(next);
     await submitMessage({
       conversation,
       submissionId: next.id,
@@ -1014,6 +1032,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       browserComments: Array.isArray(persisted.browserComments) ? persisted.browserComments.filter(isRecord) : [],
       ...(typeof persisted.browserCommentContent === 'string' ? { browserCommentContent: persisted.browserCommentContent } : {}),
       ...(isRecord(persisted.conversationContext) ? { conversationContext: persisted.conversationContext } : {}),
+      ...(skill ? { skill } : {}),
     });
   }
 
@@ -2029,6 +2048,20 @@ function existingDirectoryRealpath(value: string): string | null {
   } catch {
     return null;
   }
+}
+
+function resolveSkillResourceRoot(skill: NativeConversationSkillInput): string {
+  try {
+    const skillPath = realpathSync(skill.path);
+    if (!statSync(skillPath).isFile()) throw new Error('Skill path is not a file.');
+    return dirname(skillPath);
+  } catch {
+    throw piError('ZEUS_SKILL_NOT_FOUND', `所选 Skill “${skill.name}” 已不存在。`);
+  }
+}
+
+function uniquePaths(paths: readonly string[]): string[] {
+  return paths.map((path) => existingDirectoryRealpath(path)).filter((path, index, values): path is string => Boolean(path) && values.indexOf(path) === index);
 }
 
 function isInsideRoot(path: string, root: string): boolean {

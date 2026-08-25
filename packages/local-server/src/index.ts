@@ -102,6 +102,7 @@ import { clearPersistedGraphCache, compactProjectGraphForRuntimeCache, persistSc
 import { applyCodeMapSettingsToGraph, parseJsonObject, resolveCodeMapScanRoot, resolveConfiguredSqliteDatabase, resolveImportedSchemaFiles } from './codeIntelligenceGraphStore.js';
 import { isUnsafeCodeMapScanRoot, UnsafeCodeMapScanRootError } from './codeMapScanBoundary.js';
 import { createCodexConfigImportService } from './codexConfigImportService.js';
+import { createZeusSkillService } from './zeusSkillService.js';
 import { type CodexLegacyImportService, createCodexLegacyImportService } from './codexLegacyImportService.js';
 import { createCodexNativeConversationCoordinator } from './codexNativeConversationCoordinator.js';
 import { CodexPublicCommandApplicationService } from './codexPublicCommandApplication.js';
@@ -513,6 +514,7 @@ export type StartTaskConversationBody = (
       conflictPath?: string;
       conflictContent?: string;
       goalObjective?: string;
+      skillId?: string;
       workspace?:
         | { mode: 'direct'; confirmConcurrentWrites?: boolean }
         | {
@@ -1367,6 +1369,21 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     artifacts: artifactStore,
     now,
   });
+  const ensureSkillProviderCatalogReady = () =>
+    codexAppServerManager
+      .ensureReady({
+        commandPath: currentCodexRuntimeCommandPath(),
+        ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}),
+      })
+      .then(() => undefined);
+  const zeusSkillService = codexHome
+    ? createZeusSkillService({
+        skillsRoot: join(codexHome, 'skills'),
+        manager: codexAppServerManager,
+        ensureReady: ensureSkillProviderCatalogReady,
+        now,
+      })
+    : undefined;
   resolveCodexDispatchModelBudget = (modelId) => {
     const state = codexAppServerManager.getState();
     if (state.type !== 'ready') return null;
@@ -2701,6 +2718,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     codexExternalAgentHome,
     codexNativeCoordinator,
     codexNativeEnabled,
+    zeusSkillService,
     conversationChoiceQueries,
     conversationExecution,
     conversationExecutionCoordinator,
@@ -3064,6 +3082,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     closeTaskResourcesForTerminalStatus,
     codexAppServerManager,
     codexConfigImportService,
+    zeusSkillDefaultCwd: codexHome ?? dataLayout.codexHome,
+    zeusSkillService,
     codexExternalAgentHome,
     codexLegacyImportService,
     codexNativeCoordinator,

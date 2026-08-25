@@ -39,6 +39,7 @@ import type {
   NativeAcceptedOperation,
   NativeConversationAttachmentInput,
   NativeConversationRunState,
+  NativeConversationSkillInput,
   NativeProviderWriteLifecycle,
   NativeQuestionAnswerAttachmentInput,
   NativeQueueSnapshot,
@@ -100,6 +101,7 @@ import { parseCanonicalRequestUserInputQuestions, validateCanonicalRequestUserIn
 import { createCodexExternalRequestAnswerRecovery } from './codexExternalRequestAnswerRecovery.js';
 import { createCodexModelRequestTimingTracker } from './codexModelRequestTiming.js';
 import { assertCallerDoesNotOverrideCompiledContext, mergeCodexAdditionalContext, readCodexAdditionalContext } from './codexNativeContextProtocol.js';
+import { readNativeSubmissionSkill, readNativeSubmissionTaskPushLayout } from './nativeConversationSubmissionInputs.js';
 import { inferNativeConversationRunState, interruptedQueueSubmissions } from './codexNativeRunStateProjection.js';
 import { chooseNativeUserMessageContent, type ResolvedNativeUserMessageSubmission, resolveNativeUserMessageSubmission } from './codexNativeUserMessageProjection.js';
 import { runCodexPortableContextCompaction } from './codexPortableContextCompaction.js';
@@ -161,6 +163,7 @@ interface PersistedSubmissionInput {
   internalOperation?: boolean;
   requestAnswerId?: string;
   goalObjective?: string;
+  skill?: NativeConversationSkillInput;
 }
 
 interface NativeTurnResultWaiter {
@@ -571,15 +574,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     return value.trim();
   }
 
-  function submissionTaskPushLayout(submission: ZeusConversationSubmissionRecord): TaskPushMessageLayout | null {
-    const value = parseJsonRecord(submission.inputJson).taskPushLayout;
-    if (value === undefined) return null;
-    if (!isRecord(value) || value.kind !== 'task_push' || !Array.isArray(value.blocks) || typeof value.supplementalInfo !== 'string' || (value.supplementalAttachments !== undefined && !Array.isArray(value.supplementalAttachments))) {
-      throw coordinatorError('ZEUS_NATIVE_PERSISTED_STATE_INVALID', 'Persisted task push layout is invalid.');
-    }
-    return { ...value, supplementalAttachments: value.supplementalAttachments ?? [] } as unknown as TaskPushMessageLayout;
-  }
-
   function submissionAttachments(submission: ZeusConversationSubmissionRecord): NativeConversationAttachmentInput[] {
     const value = parseJsonRecord(submission.inputJson).attachments;
     if (value === undefined) return [];
@@ -661,8 +655,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       }
       return isSupportedLocalImageAttachment(attachment, canonicalPath) ? { type: 'localImage', path: canonicalPath } : { type: 'mention', name: attachment.name, path: canonicalPath };
     };
-    const taskPushLayout = submissionTaskPushLayout(submission);
-    const inputs: Array<Record<string, unknown>> = [];
+    const taskPushLayout = readNativeSubmissionTaskPushLayout(submission);
+    const skill = readNativeSubmissionSkill(submission);
+    const inputs: Array<Record<string, unknown>> = skill ? [{ type: 'skill', name: skill.name, path: skill.path }] : [];
     if (taskPushLayout) {
       const attachmentsByKey = new Map(attachments.flatMap((attachment) => (attachment.taskPushAttachmentKey ? [[attachment.taskPushAttachmentKey, attachment] as const] : [])));
       for (const part of buildTaskPushInputParts(taskPushLayout)) {
@@ -759,6 +754,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       requestAnswerId?: string;
       internalOperation?: boolean;
       goalObjective?: string;
+      skill?: NativeConversationSkillInput;
     },
     context: ConversationDispatchContext,
   ): ZeusConversationSubmissionRecord {
@@ -778,6 +774,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       ...(input.requestAnswerId ? { requestAnswerId: input.requestAnswerId } : {}),
       ...(input.internalOperation ? { internalOperation: true } : {}),
       ...(input.goalObjective ? { goalObjective: input.goalObjective } : {}),
+      ...(input.skill ? { skill: input.skill } : {}),
     };
     const existing = input.submissionId ? options.submissions.getById(input.submissionId) : undefined;
     if (existing) {
@@ -2086,6 +2083,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const submission = exactSteeringIdentity ? projectedSubmission : undefined;
     const existingMetadata = existingProviderMessage ? parseJsonRecord(existingProviderMessage.metadataJson) : {};
     const stableMetadata = { ...existingMetadata };
+    const taskPushLayout = submission ? readNativeSubmissionTaskPushLayout(submission) : null;
     delete stableMetadata.inputOrigin;
     options.conversations.appendMessage({
       conversationId: conversation.id,
@@ -2097,7 +2095,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         inputOrigin: submission ? 'zeus_local' : 'remote_device',
         ...(clientMessageId ? { clientUserMessageId: clientMessageId } : {}),
         ...(submission ? { attachments: submissionAttachments(submission) } : {}),
-        ...(submission && submissionTaskPushLayout(submission) ? { taskPushLayout: submissionTaskPushLayout(submission) } : {}),
+        ...(taskPushLayout ? { taskPushLayout } : {}),
         ...(submission && submissionBrowserComments(submission).length ? { browserComments: submissionBrowserComments(submission) } : {}),
         ...(submission && submissionConversationContext(submission) ? { conversationContext: submissionConversationContext(submission) } : {}),
         ...(typeof itemPayload.origin === 'string' ? { origin: itemPayload.origin } : {}),

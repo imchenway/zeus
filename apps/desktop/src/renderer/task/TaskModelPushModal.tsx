@@ -32,6 +32,8 @@ import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/Applic
 import { ZeusSelect } from '../ZeusSelect.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
 import { TaskPushSupplementalAttachmentCards } from './TaskPushSupplementalAttachmentCards.js';
+import { SkillSelector } from '../features/skills/SkillSelector.js';
+import type { CodexApiClient } from '../features/codex/codexApiClient.js';
 
 export interface TaskModelPushForm {
   model: string;
@@ -40,6 +42,7 @@ export interface TaskModelPushForm {
   serviceTierDowngraded: boolean;
   workMode: 'default' | 'plan';
   permissionMode: NativePermissionMode;
+  skillId: string;
   workspaceMode: 'direct' | 'worktree';
   taskBranchMode: 'create' | 'existing';
   environmentId: string;
@@ -542,7 +545,7 @@ export function writeTaskModelPushPreferences(storage: Pick<Storage, 'getItem' |
   );
 }
 
-export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapabilities, remembered: TaskModelPushPreferences | null, serviceTier: NativeServiceTierSelection = { type: 'standard' }): TaskModelPushForm {
+export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapabilities, remembered: TaskModelPushPreferences | null, serviceTier: NativeServiceTierSelection = { type: 'standard' }, skillId = ''): TaskModelPushForm {
   const availableModels = capabilities.models.filter((model) => model.available !== false);
   const rememberedModel = resolveModelCapability(availableModels, remembered?.model);
   const selectedModel = rememberedModel ?? resolveModelCapability(availableModels, capabilities.preferredModel) ?? availableModels[0];
@@ -559,6 +562,7 @@ export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapab
     workMode: remembered?.workMode ?? 'default',
     // 用户已确认：项目没有成功记忆时，权限必须回退为只读。
     permissionMode: remembered?.permissionMode ?? 'read-only',
+    skillId,
     workspaceMode: remembered?.workspaceMode ?? (capabilities.repositories.length > 0 ? 'worktree' : 'direct'),
     taskBranchMode: 'create',
     environmentId: firstAvailableEnvironment?.id ?? '',
@@ -747,6 +751,7 @@ export function TaskModelPushModal(props: {
   configImportNeedsActivation: boolean;
   refreshingRepositoryId: string | null;
   error: string | null;
+  skillClient: Pick<CodexApiClient, 'loadSkills'> | null;
   onChange: Dispatch<SetStateAction<TaskModelPushForm>>;
   onRefreshRepository: (repositoryId: string) => void;
   onClose: () => void;
@@ -1229,6 +1234,18 @@ export function TaskModelPushModal(props: {
                 disabled={!runtimeCapabilities || modelPresentation.options.length === 0 || busy}
                 searchPlaceholder={zh ? '搜索供应商或模型' : 'Search providers or models'}
                 emptyLabel={zh ? '没有匹配模型' : 'No matching models'}
+              />
+            </label>
+            <label>
+              <span>Skill</span>
+              <SkillSelector
+                client={props.skillClient}
+                projectId={props.task.projectId}
+                value={props.form.skillId}
+                onChange={(skillId) => props.onChange({ ...props.form, skillId })}
+                language={props.language}
+                disabled={busy}
+                ariaLabel={zh ? '推送任务使用的 Skill' : 'Skill for task push'}
               />
             </label>
             {selectedModel?.supportedReasoningEfforts.length ? (

@@ -9,6 +9,8 @@ export const codexPublicClientCommandTypes = {
   remoteControlClientRevoke: 'codex.remote_control.client.revoke',
   configurationImport: 'codex.configuration.import',
   configurationActivate: 'codex.configuration.activate',
+  skillInstall: 'skill.install',
+  skillRemove: 'skill.remove',
   legacyImportStart: 'codex.legacy_import.start',
 } as const;
 
@@ -16,6 +18,7 @@ export const codexPublicClientScopeIds = {
   account: 'codex-account',
   remoteControl: 'codex-remote-control',
   configuration: 'codex-configuration',
+  skills: 'zeus-skills',
   legacyImport: 'codex-legacy-import',
 } as const;
 

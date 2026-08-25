@@ -3,6 +3,7 @@ import type { CodexChatGptLogin, CodexRemoteControlClient, CodexRemoteControlPai
 import type { ZeusCodexLegacyImportRecord } from '@zeus/storage';
 import type { CodexConfigImportResult, CodexConfigImportService } from './codexConfigImportService.js';
 import type { CodexLegacyImportService } from './codexLegacyImportService.js';
+import { ZeusSkillServiceError, type ZeusSkillInstallSource, type ZeusSkillService } from './zeusSkillService.js';
 import { CodexPublicCommandApplicationService, codexPublicCommandHttpError, codexPublicCommandScopeIds, codexPublicCommandTypes, type CodexPublicMutationRequest } from './codexPublicCommandApplication.js';
 
 export interface CodexRemoteControlSnapshot {
@@ -38,6 +39,14 @@ interface RevokeClientInput {
 interface LegacyImportInput {
   sourceConversationIds: string[];
 }
+interface SkillInstallInput {
+  projectId: string | null;
+  source: ZeusSkillInstallSource;
+}
+interface SkillRemoveInput {
+  projectId: string | null;
+  skillId: string;
+}
 
 interface CodexConfigImportApiResult extends CodexConfigImportResult {
   runtimeReloaded: false;
@@ -50,6 +59,8 @@ export function registerCodexPublicCommandRoutes(options: {
   application: CodexPublicCommandApplicationService;
   configImport?: CodexConfigImportService;
   legacyImport?: CodexLegacyImportService;
+  skills?: ZeusSkillService;
+  resolveSkillCwd(projectId: string | null): string;
   account: {
     ensureReady(): Promise<void>;
     startLogin(): Promise<CodexChatGptLogin>;
@@ -75,6 +86,69 @@ export function registerCodexPublicCommandRoutes(options: {
   sendNativeError(reply: FastifyReply, error: unknown): unknown;
 }): void {
   const { server, application } = options;
+
+  server.get('/api/skills', async (request: FastifyRequest<{ Querystring: { projectId?: string; forceReload?: string } }>, reply) => {
+    if (!options.skills) return unavailable(reply, 'ZEUS_SKILLS_UNAVAILABLE', 'Zeus Skill 管理不可用。');
+    try {
+      const projectId = optionalProjectId(request.query.projectId);
+      const forceReload = request.query.forceReload === 'true';
+      if (request.query.forceReload !== undefined && request.query.forceReload !== 'true' && request.query.forceReload !== 'false') {
+        return reply.code(400).send({ error: 'ZEUS_SKILL_INPUT_INVALID', message: 'forceReload 必须为 true 或 false。' });
+      }
+      return await options.skills.list({ cwd: options.resolveSkillCwd(projectId), forceReload });
+    } catch (error) {
+      return sendSkillError(reply, error);
+    }
+  });
+
+  server.post('/api/skills/install', async (request: FastifyRequest<{ Body: CodexPublicMutationRequest<SkillInstallInput> }>, reply) => {
+    if (!options.skills) return unavailable(reply, 'ZEUS_SKILLS_UNAVAILABLE', 'Zeus Skill 管理不可用。');
+    try {
+      const parsed = application.parse<SkillInstallInput>({
+        value: request.body,
+        commandType: codexPublicCommandTypes.skillInstall,
+        scopeKind: 'provider_configuration',
+        scopeId: codexPublicCommandScopeIds.skills,
+      });
+      assertExactInputKeys(parsed.input, ['projectId', 'source'], parsed.command.commandType);
+      const projectId = nullableProjectId(parsed.input.projectId);
+      const executed = await application.executeExternal({
+        parsed: { ...parsed, input: { projectId, source: parsed.input.source } },
+        destinationId: 'filesystem:zeus-skills',
+        resourceId: codexPublicCommandScopeIds.skills,
+        invoke: () => options.skills!.install({ cwd: options.resolveSkillCwd(projectId), source: parsed.input.source }),
+        isExplicitRejection: (error) => error instanceof ZeusSkillServiceError,
+      });
+      return executed.result;
+    } catch (error) {
+      return sendCommandError(reply, error, () => sendSkillError(reply, error));
+    }
+  });
+
+  server.delete('/api/skills/:skillId', async (request: FastifyRequest<{ Params: { skillId: string }; Body: CodexPublicMutationRequest<SkillRemoveInput> }>, reply) => {
+    if (!options.skills) return unavailable(reply, 'ZEUS_SKILLS_UNAVAILABLE', 'Zeus Skill 管理不可用。');
+    try {
+      const parsed = application.parse<SkillRemoveInput>({
+        value: request.body,
+        commandType: codexPublicCommandTypes.skillRemove,
+        scopeKind: 'provider_configuration',
+        scopeId: codexPublicCommandScopeIds.skills,
+      });
+      assertExactInputKeys(parsed.input, ['projectId', 'skillId'], parsed.command.commandType);
+      const skillId = requiredMatchingIdentity(parsed.input.skillId, request.params.skillId, 'skillId');
+      const projectId = nullableProjectId(parsed.input.projectId);
+      const executed = await application.executeExternal({
+        parsed: { ...parsed, input: { projectId, skillId } },
+        destinationId: 'filesystem:zeus-skills',
+        resourceId: skillId,
+        invoke: () => options.skills!.remove({ cwd: options.resolveSkillCwd(projectId), skillId }),
+        isExplicitRejection: (error) => error instanceof ZeusSkillServiceError,
+      });
+      return executed.result;
+    } catch (error) {
+      return sendCommandError(reply, error, () => sendSkillError(reply, error));
+    }
+  });
 
   server.get('/api/codex-native/import', async (_request, reply) => {
     if (!options.legacyImport) return unavailable(reply, 'ZEUS_CODEX_LEGACY_IMPORT_UNAVAILABLE', 'Codex legacy import is unavailable.');
@@ -339,6 +413,22 @@ function sendLegacyImportError(reply: FastifyReply, error: unknown) {
   return reply.code(status).send({ error: code, message: error instanceof Error ? error.message : 'Codex legacy import failed.' });
 }
 
+function sendSkillError(reply: FastifyReply, error: unknown) {
+  if (error instanceof ZeusSkillServiceError) return reply.code(error.statusCode).send({ error: error.code, message: error.message });
+  if (error instanceof Error && 'code' in error && typeof error.code === 'string') {
+    const statusCode =
+      'statusCode' in error && typeof error.statusCode === 'number' && error.statusCode >= 400 && error.statusCode <= 599
+        ? error.statusCode
+        : error.code === 'ZEUS_PROJECT_NOT_FOUND'
+          ? 404
+          : error.code === 'ZEUS_SKILL_INPUT_INVALID'
+            ? 400
+            : 500;
+    return reply.code(statusCode).send({ error: error.code, message: error.message });
+  }
+  return reply.code(500).send({ error: 'ZEUS_SKILL_OPERATION_FAILED', message: error instanceof Error ? error.message : 'Zeus Skill 操作失败。' });
+}
+
 function toLegacyImportApiRun(run: ZeusCodexLegacyImportRecord) {
   return {
     id: run.id,
@@ -376,6 +466,17 @@ function requiredMatchingIdentity(value: unknown, addressed: unknown, field: str
 
 function optionalNonBlank(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function optionalProjectId(value: unknown): string | null {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string' || !value.trim() || value.length > 200) throw new ZeusSkillServiceError('ZEUS_CODEX_SKILL_INPUT_INVALID', 'projectId 无效。');
+  return value.trim();
+}
+
+function nullableProjectId(value: unknown): string | null {
+  if (value === null) return null;
+  return optionalProjectId(value);
 }
 
 function codedError(code: string, message: string): Error & { code: string } {

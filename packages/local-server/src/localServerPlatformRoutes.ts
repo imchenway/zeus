@@ -240,6 +240,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     closeTaskResourcesForTerminalStatus,
     codexAppServerManager,
     codexConfigImportService,
+    zeusSkillDefaultCwd,
+    zeusSkillService,
     codexExternalAgentHome,
     codexLegacyImportService,
     codexNativeCoordinator,
@@ -853,6 +855,13 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     application: codexPublicCommands,
     configImport: codexConfigImportService,
     legacyImport: codexLegacyImportService,
+    skills: zeusSkillService,
+    resolveSkillCwd: (projectId) => {
+      if (!projectId) return zeusSkillDefaultCwd;
+      const project = projects.getById(projectId);
+      if (!project) throw Object.assign(new Error('项目不存在，无法读取项目级 Skill。'), { code: 'ZEUS_PROJECT_NOT_FOUND', statusCode: 404 });
+      return project.localPath;
+    },
     account: {
       ensureReady: () =>
         codexAppServerManager

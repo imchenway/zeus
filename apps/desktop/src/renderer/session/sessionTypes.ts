@@ -1229,6 +1229,7 @@ export interface StartTaskModelPushRequest {
   serviceTier?: string | null;
   workMode: 'default' | 'plan';
   permissionMode: NativePermissionMode;
+  skillId?: string;
   workspace:
     | { mode: 'direct'; confirmConcurrentWrites: boolean }
     | { mode: 'existing'; environmentId: string }
@@ -1259,6 +1260,7 @@ export type StartNativeConversationRequest =
       mode: 'create';
       source?: 'code_review';
       content?: string;
+      skillId?: string;
       attachments?: NativeConversationAttachment[];
       inheritConversationId?: string;
       permissionMode: NativePermissionMode;

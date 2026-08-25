@@ -1905,6 +1905,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           localActions={taskModelPushWorkspaceActions(pending, onOpenTaskDetail)}
           onStartConversation={startNativeConversation}
           onStartProjectConversation={startProjectConversation}
+          onLoadSkills={props.nativeConversationClient.loadSkills}
           onOpenTaskDetail={onOpenTaskDetail}
           onTaskManagementStatusChange={(taskId, status) => updateTaskManagementStatus(taskId, status)}
           onLoadTaskWorkspaces={props.nativeConversationClient.loadTaskGitWorkspaces}
@@ -1953,6 +1954,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           }}
           onStartConversation={startNativeConversation}
           onStartProjectConversation={startProjectConversation}
+          onLoadSkills={props.nativeConversationClient.loadSkills}
           onOpenTaskDetail={onOpenTaskDetail}
           onTaskManagementStatusChange={(taskId, status) => updateTaskManagementStatus(taskId, status)}
           onLoadTaskWorkspaces={props.nativeConversationClient.loadTaskGitWorkspaces}
@@ -2000,6 +2002,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           onOpenTaskDetail,
           onTaskManagementStatusChange: (taskId, status) => updateTaskManagementStatus(taskId, status),
           onLoadCapabilities: props.nativeConversationClient?.loadCodexConversationCapabilities,
+          onLoadSkills: props.nativeConversationClient?.loadSkills,
           onSelectNewConversationProject: selectNewConversationProject,
           onLoadNewConversationProjectGit: props.nativeConversationClient?.loadProjectGitWorkbench,
           onExecuteNewConversationProjectGit: props.nativeConversationClient ? executeNewConversationProjectGit : undefined,

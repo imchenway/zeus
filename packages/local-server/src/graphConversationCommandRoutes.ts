@@ -118,6 +118,7 @@ export function registerGraphConversationCommandRoutes(options: {
           'model',
           'permissionMode',
           'serviceTier',
+          'skillId',
           'source',
           'sourceConversationId',
           'supplementalAttachments',

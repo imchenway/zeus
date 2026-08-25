@@ -58,6 +58,7 @@ import { type TaskResourceAuthorizationResult, type TaskResourcePayload } from '
 import { normalizeTaskTableEnumSortOrders, resolveTaskManagementStatus } from '../../task/taskWorkspaceModel.js';
 import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { reportStorageReadOnlyFault } from '../../storageRecoveryError.js';
+import { readSkillWorkflowDefault } from '../skills/skillWorkflowPreferences.js';
 import { createSessionOperationId } from '../../sessionOperationIdentity.js';
 import {
   type DashboardSnapshot,
@@ -2341,6 +2342,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       serviceTierDowngraded: false,
       workMode: remembered?.workMode ?? 'default',
       permissionMode: remembered?.permissionMode ?? 'read-only',
+      skillId: readSkillWorkflowDefault('task_push'),
       workspaceMode: remembered?.workspaceMode ?? 'direct',
       taskBranchMode: 'create',
       environmentId: '',
@@ -2375,14 +2377,19 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
       setTaskModelPushCapabilities(capabilities);
       setTaskModelPushForm((current) => {
-        const normalized = resolveTaskModelPushInitialForm(capabilities, {
-          model: current.model,
-          effort: current.effort,
-          serviceTier: current.serviceTier,
-          workMode: current.workMode,
-          permissionMode: current.permissionMode,
-          workspaceMode: current.workspaceMode,
-        });
+        const normalized = resolveTaskModelPushInitialForm(
+          capabilities,
+          {
+            model: current.model,
+            effort: current.effort,
+            serviceTier: current.serviceTier,
+            workMode: current.workMode,
+            permissionMode: current.permissionMode,
+            workspaceMode: current.workspaceMode,
+          },
+          current.serviceTier,
+          current.skillId,
+        );
         return {
           ...normalized,
           supplementalInfo: current.supplementalInfo,
@@ -2719,6 +2726,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
               ...serviceTierWireOverride(normalizedForm.serviceTier),
               workMode: normalizedForm.workMode,
               permissionMode: normalizedForm.permissionMode,
+              ...(normalizedForm.skillId ? { skillId: normalizedForm.skillId } : {}),
               workspace:
                 form.workspaceMode === 'direct'
                   ? { mode: 'direct', confirmConcurrentWrites: form.directConcurrencyConfirmed }

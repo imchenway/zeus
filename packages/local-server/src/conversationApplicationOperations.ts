@@ -40,10 +40,13 @@ import { existsSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { parseJsonObject } from './codeIntelligenceGraphStore.js';
 import { createCodexNativeConversationCoordinator } from './codexNativeConversationCoordinator.js';
+import type { ZeusSkillService } from './zeusSkillService.js';
 import { resolveConversationAttachmentGrant } from './conversationAttachmentGrant.js';
 import { type ConversationCapabilitiesSnapshot, ConversationCapabilityQueryApplication } from './conversationCapabilityQueryApplication.js';
 import { ConversationChoiceQueryApplication } from './conversationChoiceQueryApplication.js';
 import { ConversationExecutionCoordinator, type ConversationExecutionRoute } from './conversationExecutionCoordinator.js';
+import type { NativeConversationSkillInput } from './codexNativeConversationContracts.js';
+import { readNativeConversationSkill } from './nativeConversationSubmissionInputs.js';
 import type { CreateConversationMessageBody, NativeConversationAttachment, ProjectConversationAcceptanceReservation, StartProjectConversationBody, StartTaskConversationBody, TaskConversationAcceptanceReservation } from './index.js';
 import { createModelConnectionService } from './modelConnectionService.js';
 import { resolveWritableNonCodexLegacyConversation, type WritableNonCodexLegacyConversationContext } from './nonCodexLegacyRuntime.js';
@@ -58,6 +61,7 @@ export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, 
 export type ConversationApplicationOperationDependencies = Record<string, any> & {
   aiRuntimeManager: ReturnType<typeof createAiRuntimeSessionManager>;
   codexNativeCoordinator: ReturnType<typeof createCodexNativeConversationCoordinator>;
+  zeusSkillService?: ZeusSkillService;
   conversationChoiceQueries: ConversationChoiceQueryApplication;
   conversationExecution: ConversationExecutionRepository;
   conversationExecutionCoordinator: ConversationExecutionCoordinator;
@@ -151,6 +155,7 @@ export interface NativeTaskConversationStartPlan {
   clientUserMessageId: string;
   providerWriteLifecycle: { markPrepared(submissionId: string): Promise<void>; markRpcStarted(submissionId: string): void };
   goalObjective?: string;
+  skill?: NativeConversationSkillInput;
 }
 
 export function nativeApiError(code: string, message: string): Error & { code: string } {
@@ -170,6 +175,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     codexAppServerManager,
     codexExternalAgentHome,
     codexNativeCoordinator,
+    zeusSkillService,
     codexNativeEnabled,
     conversationChoiceQueries,
     conversationExecution,
@@ -787,6 +793,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             },
           })
         : null;
+    const conversationSkill = segmentLifecycle?.requiresNewSegment ? readNativeConversationSkill(conversationSubmissions.listByConversation(conversation.id)) : null;
     const conflictAttempt = taskIntegrationAttempts.getByConversationId(conversation.id);
     const conflictPreparationHeld = conflictAttempt?.state === 'preparing' || conflictAttempt?.state === 'failed';
     const executionBusy =
@@ -811,6 +818,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             browserComments,
             ...(browserCommentContent ? { browserCommentContent } : {}),
             ...(conversationContext ? { conversationContext } : {}),
+            ...(conversationSkill ? { skill: conversationSkill } : {}),
             holdDispatch: false,
             ...(segmentLifecycle ? { segmentLifecycle } : {}),
           });
@@ -829,6 +837,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             browserComments,
             ...(browserCommentContent ? { browserCommentContent } : {}),
             ...(conversationContext ? { conversationContext } : {}),
+            ...(conversationSkill ? { skill: conversationSkill } : {}),
           });
         }
         if (delivery === 'steer_now') {
@@ -864,6 +873,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             browserComments,
             ...(browserCommentContent ? { browserCommentContent } : {}),
             ...(conversationContext ? { conversationContext } : {}),
+            ...(conversationSkill ? { skill: conversationSkill } : {}),
             providerWriteLifecycle,
             segmentLifecycle,
           });
@@ -911,6 +921,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           browserComments,
           ...(browserCommentContent ? { browserCommentContent } : {}),
           ...(conversationContext ? { conversationContext } : {}),
+          ...(conversationSkill ? { skill: conversationSkill } : {}),
           model: effectiveModel,
           modelSourceId: effectiveModelSourceId,
           ...(selectedEffort ? { effort: selectedEffort } : {}),
@@ -951,6 +962,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             attachments,
             allowedAttachmentRoots: trustedConversationAttachmentRoots,
             workMode: collaborationMode ?? conversation.collaborationMode,
+            ...(conversationSkill ? { skill: conversationSkill } : {}),
             applyLegacyTaskGuards: false,
             providerWriteLifecycle,
             segmentLifecycle,
@@ -971,6 +983,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           idempotencyKey,
           clientUserMessageId,
           attachments,
+          ...(conversationSkill ? { skill: conversationSkill } : {}),
           providerWriteLifecycle,
           segmentLifecycle,
         });
@@ -1635,6 +1648,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         ...(plan.attachments ? { attachments: plan.attachments } : {}),
         ...(plan.allowedAttachmentRoots ? { allowedAttachmentRoots: plan.allowedAttachmentRoots } : {}),
         ...(plan.taskPushLayout ? { taskPushLayout: plan.taskPushLayout } : {}),
+        ...(plan.skill ? { skill: plan.skill } : {}),
         ...(plan.holdDispatch ? { holdDispatch: true } : {}),
         ...(plan.operationContext ? { operationContext: plan.operationContext } : {}),
         ...(plan.internalOperation ? { internalOperation: true } : {}),
@@ -1666,6 +1680,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       ...(plan.allowedAttachmentRoots ? { allowedAttachmentRoots: plan.allowedAttachmentRoots } : {}),
       ...(plan.taskPushLayout ? { taskPushLayout: plan.taskPushLayout } : {}),
       model: plan.model.modelId,
+      ...(plan.skill ? { skill: plan.skill } : {}),
       modelSourceId: plan.model.sourceId,
       ...(plan.effort ? { effort: plan.effort } : {}),
       ...(plan.serviceTierPresent ? { serviceTier: plan.serviceTier ?? null } : {}),
@@ -1780,7 +1795,12 @@ export function createConversationApplicationOperations(dependencies: Conversati
         const taskPushAttachments = attachmentInput.attachments.filter((attachment) => attachment.taskPushAttachmentKey && taskPushAttachmentKeys.has(attachment.taskPushAttachmentKey));
         const taskPushPrompt = renderTaskPushLayoutText(taskPushLayout);
         if (selectedModel.agentKind !== 'pi') await assertCodexAccountReady(selectedModel.sourceId ?? null, selectedModel.model);
+        // 先在用户实际选择 Skill 的项目目录复验身份，避免失效选择在创建 Worktree 后才失败；
+        // Worktree 就绪后再按相同稳定 ID 解析一次，确保 repo Skill 使用该工作目录中的真实文件。
+        const projectSkill = await resolveWorkflowSkill(body.skillId, project.localPath);
         const taskEnvironment = directWorkspace ? null : await resolveTaskPushEnvironment(project, task, body.workspace, stableOperationId);
+        const executionCwd = taskEnvironment?.cwd ?? project.localPath;
+        const skill = taskEnvironment && projectSkill ? await resolveWorkflowSkill(projectSkill.id, executionCwd) : projectSkill;
         moveTaskToPushedManagementStatus(task.id);
         await db.save();
         nativeOperation = await startNativeTaskConversationFromPlan({
@@ -1790,7 +1810,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           projectId: project.id,
           taskId: task.id,
           taskTitle: task.title,
-          cwd: taskEnvironment?.cwd ?? project.localPath,
+          cwd: executionCwd,
           prompt: taskPushPrompt,
           taskPushLayout,
           model: { sourceId: selectedModel.sourceId ?? null, modelId: selectedModel.model, displayName: selectedModel.displayName ?? null },
@@ -1815,6 +1835,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           idempotencyKey,
           clientUserMessageId,
           providerWriteLifecycle: reservedLifecycle,
+          ...(skill ? { skill } : {}),
         });
       } else if (body.source === 'code_review') {
         if (body.attachments !== undefined) throw nativeApiError('ZEUS_INVALID_CODE_REVIEW', 'Code review attachments are not accepted; the server reviews the persisted workspace directly.');
@@ -1859,12 +1880,14 @@ export function createConversationApplicationOperations(dependencies: Conversati
         }
         const requestedServiceTier = readServiceTierOverride(body);
         const serviceTier = normalizeServiceTierForCapability(requestedServiceTier, selectedModel);
+        const projectSkill = await resolveWorkflowSkill(body.skillId, project.localPath);
         const inheritedEnvironment = await resolveTaskPushEnvironment(project, task, { mode: 'existing', environmentId: sourceConversation.environmentId }, stableOperationId);
         const reviewWorkspace = inheritedEnvironment.workspaces.find((workspace: ZeusTaskWorkspaceRecord) => workspace.id === sourceWorkspace.id);
         if (!reviewWorkspace) throw nativeApiError('ZEUS_TASK_EXECUTION_CONTEXT_INVALID', 'The exact review repository could not be restored in the source environment.');
         const reviewCwd = reviewWorkspace.worktreePath?.trim();
         if (!reviewCwd || !existsSync(reviewCwd)) throw nativeApiError('ZEUS_TASK_EXECUTION_CONTEXT_REQUIRED', 'The exact code review worktree is unavailable.');
         const prompt = createTaskCodeReviewPrompt(task, reviewWorkspace);
+        const skill = projectSkill ? await resolveWorkflowSkill(projectSkill.id, reviewCwd) : undefined;
         if (selectedAgentKind === 'codex') await assertCodexAccountReady(selectedModel.sourceId ?? null, selectedModel.model);
 
         nativeOperation = await startNativeTaskConversationFromPlan({
@@ -1893,6 +1916,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           idempotencyKey,
           clientUserMessageId,
           providerWriteLifecycle: reservedLifecycle,
+          ...(skill ? { skill } : {}),
         });
       } else if (body.source === 'conflict_resolution') {
         const integrationId = typeof body.integrationId === 'string' ? body.integrationId.trim() : '';
@@ -1980,6 +2004,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           commitMessage: conflictCommitMessage,
         });
         const selectedAgentKind = modelConversation.agentKind;
+        const skill = await resolveWorkflowSkill(body.skillId, project.localPath);
         if (selectedAgentKind === 'codex') await assertCodexAccountReady(modelConversation.modelSourceId, modelId);
         nativeOperation = await startNativeTaskConversationFromPlan({
           agentKind: selectedAgentKind,
@@ -2012,11 +2037,13 @@ export function createConversationApplicationOperations(dependencies: Conversati
               conflictFingerprint,
               repositoryPath,
               conflictWorkspaceId: conflictWorkspace.id,
+              skill: skill ?? null,
             },
           },
           idempotencyKey,
           clientUserMessageId,
           providerWriteLifecycle: reservedLifecycle,
+          ...(skill ? { skill } : {}),
         });
         if (!existingAttempt) {
           taskIntegrationAttempts.create({
@@ -2065,6 +2092,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             clientUserMessageId,
             agentKind: selectedAgentKind,
             model: { sourceId: modelConversation.modelSourceId, modelId, displayName: null },
+            ...(skill ? { skill } : {}),
           });
         });
       } else {
@@ -2189,6 +2217,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         },
         userHistoryContent: { text: content },
       });
+      const conversationSkill = segmentLifecycle.requiresNewSegment ? readNativeConversationSkill(conversationSubmissions.listByConversation(selected.id)) : null;
       if (selectedAgentKind === 'pi') {
         nativeOperation = segmentLifecycle.requiresNewSegment
           ? await piNativeCoordinator.startConversation({
@@ -2202,6 +2231,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
               prompt: content,
               model: { sourceId: modelSourceId, modelId, displayName: null },
               ...(nextSettings?.effort ? { thinkingLevel: nextSettings.effort } : {}),
+              ...(conversationSkill ? { skill: conversationSkill } : {}),
               permissionMode: nextSettings?.permissionMode ?? selected.permissionMode,
               idempotencyKey,
               clientUserMessageId,
@@ -2232,6 +2262,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
               model: modelId,
               modelSourceId,
               ...(nextSettings?.effort ? { effort: nextSettings.effort } : {}),
+              ...(conversationSkill ? { skill: conversationSkill } : {}),
               ...(nextSettings && Object.prototype.hasOwnProperty.call(nextSettings, 'serviceTier') ? { serviceTier: nextSettings.serviceTier ?? null } : {}),
               allowCodeChanges: task.allowCodeChanges,
               allowTests: task.allowTests,
@@ -2349,6 +2380,13 @@ export function createConversationApplicationOperations(dependencies: Conversati
       await db.save();
     }
     return toNativeDurableAcceptance(stableOperationId, idempotencyKey, conversation, submission);
+  }
+
+  async function resolveWorkflowSkill(value: unknown, cwd: string): Promise<NativeConversationSkillInput | undefined> {
+    if (value === undefined || value === null || value === '') return undefined;
+    if (typeof value !== 'string' || !/^[a-f0-9]{32}$/u.test(value)) throw nativeApiError('ZEUS_SKILL_INPUT_INVALID', 'Skill ID 无效，请重新选择。');
+    if (!zeusSkillService) throw nativeApiError('ZEUS_SKILLS_UNAVAILABLE', '当前执行宿主不支持 Zeus Skill。');
+    return zeusSkillService.resolve({ cwd, skillId: value });
   }
 
   function recoverTaskConversationAcceptance(project: ZeusProjectRecord, task: ZeusTaskRecord, idempotencyKey: string, expected: TaskConversationAcceptanceReservation, persistedResourceId: string | null) {
