@@ -48,6 +48,7 @@ import type { DesktopLocalServerCloseMode } from './beforeQuitCleanup.js';
 import { sameZeusDataRootHostIdentity, verifyZeusDataRootHostIdentity, type ZeusDataRootHostIdentity } from './dataRootIdentity.js';
 
 const readOnlyValidationVerifiedBeforeOwnedCoreLock = new WeakSet<ReadOnlyValidationDescriptor>();
+const executionHostHandoffPrepareTimeoutMs = 60_000;
 
 /**
  * Detached Core 在取得 owner lock 前完成一次全库核验，并以同进程对象能力交给 startOwned。
@@ -485,12 +486,12 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
 
     const refreshConfig = async (): Promise<RendererLocalServerConfig> => {
       if (closing) throw new Error('Zeus execution-host connection is closing.');
-      // 交接期间立即返回旧端口会让 Renderer 把已经退出的 Core 当成当前连接，历史会话读取会永久悬挂。
-      // 只短暂等待正常交接完成；超过上限仍返回当前配置，由 Renderer 的有界 GET 读取负责显式失败。
+      // 交接期间立即返回旧端口会让 Renderer 把 draining Core 当成当前连接，启动水合会把
+      // ZEUS_EXECUTION_HOST_DRAINING 误报成整机启动失败。handoff 自身的 prepare、退出和新宿主
+      // 发布都有独立上限，这里必须等待本次有界交接真正收口，不能再用更短的 8 秒窗口截断。
       if (handoffPromise) {
         const pendingHandoff = handoffPromise;
-        const handoffCompleted = await Promise.race([pendingHandoff.then(() => true).catch(() => true), wait(8_000).then(() => false)]);
-        if (!handoffCompleted) return cloneRendererLocalServerConfig(config);
+        await pendingHandoff.catch(() => undefined);
       }
       const advertised = await readExecutionHostRendezvous(options.userDataPath);
       if (advertised && connectionChanged(advertised)) await recover(true);
@@ -535,6 +536,15 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       void cycle.catch(() => undefined);
     }, 1_000);
     heartbeatTimer.unref();
+
+    // 冷启动发现旧版本且当前没有执行工作时，先完成一次安全交接，再把业务配置交给 Renderer。
+    // 心跳必须先开始：正式大库的持久化准备可能超过租约窗口的一半，不能在安全交接期间把正常
+    // Main 误判成已离线。有活动工作或 preflight 阻断时旧 Core 继续正常提供界面。
+    if (connection.appVersion !== currentAppVersion) {
+      await probeHostHandoff().catch((error: unknown) => {
+        console.warn('Zeus initial execution-host handoff did not complete; background supervision will continue.', error);
+      });
+    }
 
     handoffTimer = setInterval(() => {
       if (handoffProbePromise || handoffPromise || closing) return;
@@ -1417,7 +1427,10 @@ async function requestExecutionHostApi<T>(connection: ExecutionHostRendezvous, p
       ...Object.fromEntries(new Headers(init.headers).entries()),
       authorization: `Bearer ${connection.apiToken}`,
     },
-    signal: AbortSignal.timeout(10_000),
+    // 正式库的 durable save / Provider 协调器冻结可能明显超过普通本地 GET 的 8 秒读取上限。
+    // 交接接口有 SQLite journal、单飞 promise 与外层 Host 退出上限，允许完整等待一次持久化准备，
+    // 避免 Main 先超时而旧 Core 随后独自进入 prepared，留下 Renderer 面向 draining 端口启动。
+    signal: AbortSignal.timeout(executionHostHandoffPrepareTimeoutMs),
   });
   const payload = (await response.json().catch(() => ({}))) as unknown;
   if (!response.ok) {

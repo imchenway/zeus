@@ -1,7 +1,7 @@
 import { Profiler, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { RendererErrorBoundary } from './ErrorBoundary.js';
-import { createDashboardClient, type DashboardClient, type ExecutionHostTransition, type ReadOnlyValidationIdentity } from './apiClient.js';
+import { createDashboardClient, type DashboardClient, type ExecutionHostTransition, type ReadOnlyValidationIdentity, ZeusApiError } from './apiClient.js';
 import { openGraphSourceInMain, revealProjectInFinderInMain } from './appShellBridge.js';
 import { initializeNativeCloseLayerRouting } from './ui/nativeCloseLayer.js';
 import { ApplicationErrorDialogHost, formatVisibleApplicationError, reportApplicationError } from './ui/ApplicationErrorDialog.js';
@@ -670,7 +670,24 @@ function migrationPhaseLabel(phase: string): string {
   return '正在准备会话数据';
 }
 
-hydrateRenderer().catch((error: unknown) => {
+const executionHostDrainRecoveryLimitMs = 120_000;
+
+async function hydrateRendererWithExecutionHostRecovery(): Promise<void> {
+  const deadline = Date.now() + executionHostDrainRecoveryLimitMs;
+  while (true) {
+    try {
+      await hydrateRenderer();
+      return;
+    } catch (error) {
+      // 跨版本持久化交接会暂时拒绝普通 API。它不是 Renderer 模块、React 或本地数据库启动失败，
+      // 不能上报给 Main 的 fatal startup 路径（该路径会用同步系统弹窗阻塞心跳，反过来拖死交接）。
+      if (!(error instanceof ZeusApiError) || error.error !== 'ZEUS_EXECUTION_HOST_DRAINING' || Date.now() >= deadline) throw error;
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 500));
+    }
+  }
+}
+
+hydrateRendererWithExecutionHostRecovery().catch((error: unknown) => {
   const surface = new URLSearchParams(window.location.search).get('surface');
   const auxiliarySurface = surface === 'menu-bar-usage' || surface === 'task-git-delivery' || surface === 'project-git-diff';
   console.error(surface === 'menu-bar-usage' ? 'Zeus menu bar usage hydration failed' : surface === 'task-git-delivery' ? 'Zeus task Git delivery hydration failed' : 'Zeus dashboard hydration failed', error);

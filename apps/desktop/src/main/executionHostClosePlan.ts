@@ -17,36 +17,55 @@ export interface ExecutionHostCloseResources {
  */
 export async function closeExecutionHostResources(resources: ExecutionHostCloseResources): Promise<void> {
   const errors: unknown[] = [];
-  await attempt(() => resources.recordClosing(), errors);
+  await attempt('recordClosing', () => resources.recordClosing(), errors);
 
   let runtimeClosed = false;
   try {
     await resources.closeRuntime();
     runtimeClosed = true;
   } catch (error) {
-    errors.push(error);
+    errors.push(closeStageError('closeRuntime', error));
   }
-  await attempt(() => resources.closeControlServer(), errors);
+  await attempt('closeControlServer', () => resources.closeControlServer(), errors);
 
   if (runtimeClosed) {
-    await attempt(() => resources.removeRendezvous(), errors);
-    await attempt(() => resources.removeStartupStatus(), errors);
-    await attempt(() => resources.removeLockIdentity(), errors);
+    await attempt('removeRendezvous', () => resources.removeRendezvous(), errors);
+    await attempt('removeStartupStatus', () => resources.removeStartupStatus(), errors);
+    await attempt('removeLockIdentity', () => resources.removeLockIdentity(), errors);
     try {
       resources.releaseKernelLease();
     } catch (error) {
-      errors.push(error);
+      errors.push(closeStageError('releaseKernelLease', error));
     }
-    await attempt(() => resources.recordClosed(), errors);
+    await attempt('recordClosed', () => resources.recordClosed(), errors);
   }
 
-  if (errors.length > 0) throw new AggregateError(errors, 'Zeus execution-host shutdown failed.');
+  if (errors.length > 0) {
+    const detail = errors
+      .map((error) => summarizeCloseError(error))
+      .join('; ')
+      .slice(0, 2_000);
+    throw new AggregateError(errors, `Zeus execution-host shutdown failed: ${detail}`);
+  }
 }
 
-async function attempt(operation: () => Promise<void>, errors: unknown[]): Promise<void> {
+async function attempt(stage: string, operation: () => Promise<void>, errors: unknown[]): Promise<void> {
   try {
     await operation();
   } catch (error) {
-    errors.push(error);
+    errors.push(closeStageError(stage, error));
   }
+}
+
+function closeStageError(stage: string, error: unknown): Error {
+  return new Error(`${stage}: ${summarizeCloseError(error)}`, { cause: error });
+}
+
+function summarizeCloseError(error: unknown, depth = 0): string {
+  if (depth >= 3) return error instanceof Error ? error.message : String(error);
+  if (error instanceof AggregateError) {
+    const nested = [...error.errors].map((entry) => summarizeCloseError(entry, depth + 1)).filter(Boolean);
+    return nested.length > 0 ? `${error.message} [${nested.join(' | ')}]` : error.message;
+  }
+  return error instanceof Error ? error.message : String(error);
 }

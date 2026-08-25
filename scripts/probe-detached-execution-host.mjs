@@ -172,6 +172,7 @@ try {
   activeRuntime = null;
   const piWaitingRendezvous = await protocol.readExecutionHostRendezvous(probeRoot);
   assertProbe(piWaitingRendezvous?.instanceId === expectedHost.instanceId, 'Pi waiting 阻断探针必须连接真实旧宿主');
+  const handoffBeforePiPreparation = inspectLatestHandoff(databasePath);
   const piPreparation = await requestDurableHandoff(piWaitingRendezvous, '0.3.29');
   observed.piWaitingBlocked = {
     statusCode: piPreparation.statusCode,
@@ -180,7 +181,13 @@ try {
     journal: inspectLatestHandoff(databasePath),
   };
   assertProbe(piPreparation.statusCode === 409 && piPreparation.payload?.error === 'ZEUS_EXECUTION_HOST_PI_WAITING_BLOCKED', 'Pi waiting 必须以专用 409 拒绝 durable handoff');
-  assertProbe(observed.piWaitingBlocked.oldPidAlive && observed.piWaitingBlocked.journal.status === 'aborted' && observed.piWaitingBlocked.journal.dispatchEnabled === 1, 'Pi waiting 阻断后旧宿主必须存活、账本 aborted 且重新开放派发');
+  assertProbe(
+    observed.piWaitingBlocked.oldPidAlive &&
+      observed.piWaitingBlocked.journal.id === handoffBeforePiPreparation.id &&
+      observed.piWaitingBlocked.journal.status === handoffBeforePiPreparation.status &&
+      observed.piWaitingBlocked.journal.dispatchEnabled === 1,
+    'Pi waiting 必须在 durable journal 与副作用闸门之前阻断，旧宿主继续存活并保持派发开放',
+  );
   await protocol.createExecutionHostControlClient(piWaitingRendezvous).shutdown();
   await waitFor(() => !processExists(expectedHost.pid), 10_000, 'Pi waiting 阻断现场最终退出');
   await settleSyntheticWaitingSeed(databasePath, piWaitingSeed);
