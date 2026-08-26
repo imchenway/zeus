@@ -5,6 +5,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameS
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
 import { commandFailureDetail, commandResultSucceeded, releaseRemoteReadAttempts, releaseRemoteReadTimeoutMs, runRemoteReadWithRetrySync } from './release-remote-read.mjs';
+import { releaseWorkflowWaitLimitMs } from './release-workflow-wait-policy.mjs';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const repository = 'imchenway/zeus';
@@ -471,7 +472,7 @@ function rebindUnpublishedReleaseRepair(state, headSha) {
   if (recoveringUnpushedCommit && previousReleaseIsOnRemote) return false;
   const localMainContainsRemote = capture('git', ['merge-base', '--is-ancestor', remoteMainSha, headSha], true).status === 0;
   if (recoveringFailedPushedCommit && (!previousReleaseIsOnRemote || !localMainContainsRemote)) return false;
-  if (recoveringFailedPushedCommit) assertNoActiveReleaseWorkflow();
+  if (recoveringFailedPushedCommit) assertNoActiveReleaseWorkflow(state.releaseCommit, headSha);
   assertAncestor(state.baseTag, headSha);
   state.sourceHead = headSha;
   state.releaseCommit = headSha;
@@ -485,12 +486,31 @@ function rebindUnpublishedReleaseRepair(state, headSha) {
   return true;
 }
 
-function assertNoActiveReleaseWorkflow() {
-  const runs = JSON.parse(gh(['run', 'list', '--repo', repository, '--workflow', 'Release', '--limit', '50', '--json', 'databaseId,status,headSha,url']));
+function assertNoActiveReleaseWorkflow(replacedCommit, replacementCommit) {
+  const runs = JSON.parse(gh(['run', 'list', '--repo', repository, '--workflow', 'Release', '--limit', '50', '--json', 'databaseId,status,headSha,url,createdAt']));
   const activeRuns = runs.filter((run) => run.status !== 'completed');
   if (activeRuns.length === 0) return;
-  const details = activeRuns.map((run) => `${run.databaseId}:${run.status}:${run.headSha}:${run.url}`).join('\n');
+
+  const remoteMainSha = resolveRemoteReference('refs/heads/main');
+  const supersededRuns = activeRuns.filter((run) => isSupersededUnstartedReleaseRun(run, replacedCommit, replacementCommit, remoteMainSha));
+  const supersededRunIds = new Set(supersededRuns.map((run) => run.databaseId));
+  const blockingRuns = activeRuns.filter((run) => !supersededRunIds.has(run.databaseId));
+  for (const run of supersededRuns) {
+    console.warn(`隔离忽略已被 main 替代且超过 15 分钟仍未启动的 Release Workflow：${run.databaseId} ${run.url}`);
+  }
+  if (blockingRuns.length === 0) return;
+  const details = blockingRuns.map((run) => `${run.databaseId}:${run.status}:${run.headSha}:${run.url}`).join('\n');
   throw new Error(`仍有 Release Workflow 在运行或排队，拒绝重新绑定失败发布候选：\n${details}`);
+}
+
+function isSupersededUnstartedReleaseRun(run, replacedCommit, replacementCommit, remoteMainSha) {
+  const createdAtMs = Date.parse(run.createdAt ?? '');
+  if (run.status !== 'queued' || run.headSha !== replacedCommit || remoteMainSha !== replacementCommit || !Number.isFinite(createdAtMs) || Date.now() - createdAtMs < releaseWorkflowWaitLimitMs) {
+    return false;
+  }
+
+  const detail = JSON.parse(gh(['run', 'view', String(run.databaseId), '--repo', repository, '--json', 'databaseId,status,headSha,jobs']));
+  return detail.status === 'queued' && detail.headSha === replacedCommit && Array.isArray(detail.jobs) && detail.jobs.length === 0;
 }
 
 function validateState(state, stableRelease) {
