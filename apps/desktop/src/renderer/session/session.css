@@ -6923,14 +6923,15 @@
   flex: 1 1 auto;
   min-block-size: 0;
   overflow: auto;
-  padding: 34px clamp(24px, 5vw, 64px) 68px;
+    padding: 34px clamp(20px, 2.4vw, 36px) 68px;
 }
 
 .session-codex-parity-v1 .session-source-markdown-scroll > .session-markdown {
   font-size: 15px;
+    inline-size: 100%;
   line-height: 25px;
   margin-inline: auto;
-  max-inline-size: 48rem;
+    max-inline-size: 64rem;
 }
 
 .session-codex-parity-v1 .session-image-preview {
@@ -13907,11 +13908,21 @@
   margin-inline: 0 !important;
 }
 
-/* 每条用户可见的中间摘要都是一个阶段锚点；摘要之后的过程明细只属于该阶段，不能跨摘要合并。 */
+/* 每条用户可见的中间摘要都是单轮处理过程内部的阶段锚点；顶层始终只有一个折叠入口。 */
+.session-codex-parity-v1 .session-turn-process-stage {
+    display: grid;
+    gap: 6px;
+    min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-turn-process-stage + .session-turn-process-stage {
+    margin-block-start: 10px;
+}
+
 .session-codex-parity-v1 .session-turn-stage-summary {
   display: grid;
-  inline-size: min(var(--session-thread-max), 100%);
-  margin-inline: auto;
+    inline-size: 100%;
+    margin-inline: 0;
   min-inline-size: 0;
 }
 

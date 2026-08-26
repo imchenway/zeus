@@ -1,38 +1,50 @@
-import React, { useEffect, useLayoutEffect, useState } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
-import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
-import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
+import React, {useEffect, useLayoutEffect, useState} from 'react';
+import {createRoot, type Root} from 'react-dom/client';
+import {ArrowsClockwiseIcon as ArrowsClockwise} from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
+import {GlobeSimpleIcon as GlobeSimple} from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import '../src/renderer/styles.css';
 import '../src/renderer/session/session.css';
 import './session-styles.css';
-import type { ConversationResource, ConversationResourcePreview } from '@zeus/shared';
-import { PendingRequestSurface } from '../src/renderer/session/PendingRequestSurface.js';
-import { type ConversationTreeRuntimeState, type ProjectConversationGroup, ProjectConversationTree } from '../src/renderer/session/ProjectConversationTree.js';
+import type {ConversationResource, ConversationResourcePreview} from '@zeus/shared';
+import {PendingRequestSurface} from '../src/renderer/session/PendingRequestSurface.js';
+import {
+    type ConversationTreeRuntimeState,
+    type ProjectConversationGroup,
+    ProjectConversationTree
+} from '../src/renderer/session/ProjectConversationTree.js';
 import type {
-  CodexTaskPushCapabilities,
-  NativeConversationAttachment,
-  NativeConversationChoice,
-  NativePendingRequest,
-  NativeQueuedSubmission,
-  NativeRuntimeDetailsSnapshot,
-  NativeSessionItemBuffer,
-  NativeSessionState,
-  NativeSubagentListSnapshot,
-  NativeSubagentThreadSnapshot,
+    CodexTaskPushCapabilities,
+    NativeConversationAttachment,
+    NativeConversationChoice,
+    NativePendingRequest,
+    NativeQueuedSubmission,
+    NativeRuntimeDetailsSnapshot,
+    NativeSessionItemBuffer,
+    NativeSessionState,
+    NativeSubagentListSnapshot,
+    NativeSubagentThreadSnapshot,
 } from '../src/renderer/session/sessionTypes.js';
-import { SafeMarkdown, ThreadItemView } from '../src/renderer/session/ThreadItemView.js';
-import { ConversationTranscript } from '../src/renderer/session/ConversationTranscript.js';
-import { ConversationComposer } from '../src/renderer/session/ConversationComposer.js';
-import { PlanSummary } from '../src/renderer/session/PlanSummary.js';
-import { RuntimeDetails } from '../src/renderer/session/RuntimeDetails.js';
-import { SubagentWorkspace } from '../src/renderer/session/SubagentWorkspace.js';
-import { defaultSourceWorkspaceViewMode, SourceWorkspace } from '../src/renderer/session/SourceWorkspace.js';
-import { SessionPlanProgress } from '../src/renderer/session/SessionActivity.js';
-import { createInitialSessionState, sessionReducer } from '../src/renderer/session/sessionReducer.js';
-import { resolveNativeConversationSelectionPresentation } from '../src/renderer/features/workspace/workspaceSupport.js';
-import { ApplicationErrorDialogHost, reportApplicationError, VisibleApplicationError } from '../src/renderer/ui/ApplicationErrorDialog.js';
-import type { TaskRecord } from '../src/renderer/apiClient.js';
-import { TaskModelPushModal, type TaskModelPushForm, type TaskModelPushModalStatus } from '../src/renderer/task/TaskModelPushModal.js';
+import {SafeMarkdown, ThreadItemView} from '../src/renderer/session/ThreadItemView.js';
+import {ConversationTranscript} from '../src/renderer/session/ConversationTranscript.js';
+import {ConversationComposer} from '../src/renderer/session/ConversationComposer.js';
+import {PlanSummary} from '../src/renderer/session/PlanSummary.js';
+import {RuntimeDetails} from '../src/renderer/session/RuntimeDetails.js';
+import {SubagentWorkspace} from '../src/renderer/session/SubagentWorkspace.js';
+import {defaultSourceWorkspaceViewMode, SourceWorkspace} from '../src/renderer/session/SourceWorkspace.js';
+import {SessionPlanProgress} from '../src/renderer/session/SessionActivity.js';
+import {createInitialSessionState, sessionReducer} from '../src/renderer/session/sessionReducer.js';
+import {resolveNativeConversationSelectionPresentation} from '../src/renderer/features/workspace/workspaceSupport.js';
+import {
+    ApplicationErrorDialogHost,
+    reportApplicationError,
+    VisibleApplicationError
+} from '../src/renderer/ui/ApplicationErrorDialog.js';
+import type {TaskRecord} from '../src/renderer/apiClient.js';
+import {
+    type TaskModelPushForm,
+    TaskModelPushModal,
+    type TaskModelPushModalStatus
+} from '../src/renderer/task/TaskModelPushModal.js';
 
 declare global {
   interface Window {
@@ -284,7 +296,28 @@ const executionPhaseLaterReasoning = motionItem('phase-reasoning-later', 'reason
 });
 const executionPhaseSummaryC = motionItem('phase-summary-c', 'agentMessage', 'completed', 'C 摘要：合并已经完成；接下来审查稳定身份、执行快照与原生投影链路。', { phase: 'commentary' }, 'commentary');
 const executionPhaseAppendedActivity = motionItem('phase-appended-tool', 'dynamicToolCall', 'in_progress', '', { toolName: 'browser' });
-const executionPhaseFinalAnswer = motionItem('phase-final-answer', 'agentMessage', 'completed', '本轮过程已完成，所有操作仍归于同一个活动组。', { phase: 'final_answer' }, 'final_answer');
+const executionPhaseFinalAnswer = motionItem('phase-final-answer', 'agentMessage', 'completed', '本轮过程已完成。完成态默认只显示这一条最终正文、交付文件与处理耗时。', {phase: 'final_answer'}, 'final_answer');
+const executionPhaseDeliveryFile: NativeSessionItemBuffer = {
+    ...motionItem('phase-delivery-file', 'agentMessage', 'completed', '查看 [会话处理过程验收.md](docs/会话处理过程验收.md)', {phase: 'final_answer'}, 'final_answer'),
+    resources: [
+        {
+            id: 'phase-delivery-file-resource',
+            projectId: 'project-zeus',
+            conversationId: motionConversationId,
+            turnId: motionTurnId,
+            itemId: 'phase-delivery-file',
+            kind: 'file',
+            presentation: 'inline',
+            delivery: 'assistant',
+            displayName: '会话处理过程验收.md',
+            projectRelativePath: 'docs/会话处理过程验收.md',
+            mimeType: 'text/markdown',
+            iconKind: 'markdown',
+            createdAt: '2026-08-15T04:01:00.000Z',
+            updatedAt: '2026-08-15T04:01:00.000Z',
+        },
+    ],
+};
 const interruptedQueueTakeoverText = '第二条引导消息（存量 interrupted 接管）';
 const interruptedQueueTakeoverDurableItem: NativeSessionItemBuffer = {
   ...motionItem('phase-queue-takeover', 'userMessage', 'completed', interruptedQueueTakeoverText, { role: 'user', content: interruptedQueueTakeoverText, delivery: 'queue' }, 'user'),
@@ -322,7 +355,7 @@ function executionPhaseState(options: { appended: boolean; completed: boolean })
     executionPhaseLaterReasoning,
     ...baseActivities.slice(33),
     ...(options.appended ? [{ ...executionPhaseAppendedActivity, status: options.completed ? 'completed' : 'in_progress' }] : []),
-    ...(options.completed ? [executionPhaseFinalAnswer] : []),
+      ...(options.completed ? [executionPhaseFinalAnswer, executionPhaseDeliveryFile] : []),
   ].map((item, index) => {
     const timelineAt = new Date(Date.UTC(2026, 7, 15, 4, 0, index)).toISOString();
     return { ...item, timelineAt, updatedAt: timelineAt };
@@ -1342,8 +1375,9 @@ function ExecutionPhasePreview() {
   return (
     <section className="qa-motion-theme session-codex-parity-v1 theme-light" data-testid="execution-phase-preview" data-phase-state={historyOnly ? 'history' : completed ? 'completed' : 'running'}>
       <header>
-        <strong>单轮按阶段摘要分组</strong>
-        <small>A、B、C 三条摘要各自承接下一条摘要前的命令、文件、搜索、工具与思考过程；不再整轮合并。</small>
+          <strong>单轮一个处理过程入口</strong>
+          <small>运行中默认展开；A、B、C
+              只在同一个入口内部承接各自阶段过程。正文到达后自动收起，折叠态只留最终正文、交付文件与耗时。</small>
       </header>
       <div className="qa-motion-fixture-actions">
         <button type="button" data-testid="execution-phase-append" onClick={() => setAppended(true)} disabled={appended}>
