@@ -13911,6 +13911,7 @@
 .session-codex-parity-v1 .session-turn-stage-summary {
   display: grid;
   inline-size: min(var(--session-thread-max), 100%);
+  margin-inline: auto;
   min-inline-size: 0;
 }
 
