@@ -1,38 +1,19 @@
-import {createHash, randomUUID} from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { historicalTurnChangeUnavailableReason, type TurnChangeConflict, type TurnChangeFile, type TurnChangeFileType, type TurnChangeSet, type TurnChangeSetOperationRequest, type TurnChangeSetOperationResult } from '@zeus/shared';
 import {
-    chmodSync,
-    existsSync,
-    lstatSync,
-    mkdirSync,
-    readFileSync,
-    realpathSync,
-    renameSync,
-    statSync,
-    unlinkSync,
-    writeFileSync
-} from 'node:fs';
-import {basename, dirname, isAbsolute, join, relative, resolve, sep} from 'node:path';
-import {
-    historicalTurnChangeUnavailableReason,
-    type TurnChangeConflict,
-    type TurnChangeFile,
-    type TurnChangeFileType,
-    type TurnChangeSet,
-    type TurnChangeSetOperationRequest,
-    type TurnChangeSetOperationResult
-} from '@zeus/shared';
-import {
-    type AuditLogRepository,
-    type IdempotencyRequestRepository,
-    type ProjectRepository,
-    type TurnChangeFileRepository,
-    type TurnChangeSetRepository,
-    type ZeusConversationItemRecord,
-    type ZeusConversationTurnRecord,
-    type ZeusConversationWithMessagesRecord,
-    type ZeusDatabase,
-    type ZeusTurnChangeFileRecord,
-    type ZeusTurnChangeSetRecord,
+  type AuditLogRepository,
+  type IdempotencyRequestRepository,
+  type ProjectRepository,
+  type TurnChangeFileRepository,
+  type TurnChangeSetRepository,
+  type ZeusConversationItemRecord,
+  type ZeusConversationTurnRecord,
+  type ZeusConversationWithMessagesRecord,
+  type ZeusDatabase,
+  type ZeusTurnChangeFileRecord,
+  type ZeusTurnChangeSetRecord,
 } from '@zeus/storage';
 
 interface ProviderFileUpdateChange {
@@ -236,72 +217,72 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
     const executionRoot = conversationExecutionRoot(input.conversation.id, project.localPath);
     const changeSet = ensureChangeSet(input.conversation, input.turn, input.timestamp);
     let capturedBytes = existingCaptureBytes(changeSet.id);
-      const snapshotCandidates = new Set<string>();
-      try {
-          changes.forEach((change, sourceIndex) => {
-              const paths = changePaths(change, executionRoot);
-              const existing = options.files.listByChangeSet(changeSet.id).find((candidate) => candidate.sourceItemId === input.providerItemId && candidate.sourceIndex === sourceIndex);
-              if (existing?.preBlobRef) snapshotCandidates.add(existing.preBlobRef);
-              if (existing?.postBlobRef) snapshotCandidates.add(existing.postBlobRef);
-              const snapshotPath = input.phase === 'pre' ? paths.oldAbsolutePath : paths.newAbsolutePath;
-              const expectedAbsent = input.phase === 'pre' ? paths.oldPath === null : paths.newPath === null;
-              const snapshot = expectedAbsent ? absentSnapshot() : snapshotPath ? captureSnapshot(changeSet.id, input.providerItemId, sourceIndex, input.phase, snapshotPath, capturedBytes) : unavailableSnapshot('Missing authorized file path.');
-              if (snapshot.blobRef) {
-                  snapshotCandidates.add(snapshot.blobRef);
-                  capturedBytes += statSync(snapshot.blobRef).size;
-              }
-              const counts = countDiffLines(change.diff);
-              const binary = isBinaryDiff(change.diff);
-              const changeType = binary ? 'binary' : paths.changeType;
-              let pre = input.phase === 'pre' ? snapshot : existing ? snapshotFromRecord(existing, 'pre') : unavailableSnapshot('The provider patch was observed after the pre-image capture point.');
-              const post = input.phase === 'post' ? snapshot : existing ? snapshotFromRecord(existing, 'post') : unavailableSnapshot('Post-image has not been captured yet.');
-              if (input.phase === 'post' && changeType !== 'binary') {
-                  pre = reconcileTextPreImage({
-                      changeSetId: changeSet.id,
-                      providerItemId: input.providerItemId,
-                      sourceIndex,
-                      change,
-                      changeType,
-                      pre,
-                      post,
-                      capturedBytes,
-                  });
-                  if (pre.blobRef && pre.blobRef !== existing?.preBlobRef) {
-                      snapshotCandidates.add(pre.blobRef);
-                      capturedBytes += statSync(pre.blobRef).size;
-                  }
-              }
-              if (pre.blobRef) snapshotCandidates.add(pre.blobRef);
-              if (post.blobRef) snapshotCandidates.add(post.blobRef);
-              const semanticUnavailableReason = input.phase === 'post' ? snapshotSemanticUnavailableReason(changeType, pre, post, change.diff) : null;
-              const unavailableReason = input.phase === 'post' ? (pre.unavailableReason ?? post.unavailableReason ?? semanticUnavailableReason) : (pre.unavailableReason ?? post.unavailableReason);
-              options.files.upsert({
-                  changeSetId: changeSet.id,
-                  sourceItemId: input.providerItemId,
-                  sourceIndex,
-                  oldPath: paths.oldPath,
-                  newPath: paths.newPath,
-                  changeType,
-                  addedLines: counts.added,
-                  deletedLines: counts.deleted,
-                  preHash: pre.hash,
-                  postHash: post.hash,
-                  preExists: pre.exists,
-                  postExists: post.exists,
-                  preMode: pre.mode,
-                  postMode: post.mode,
-                  unifiedDiff: change.diff,
-                  preBlobRef: pre.blobRef,
-                  postBlobRef: post.blobRef,
-                  reversible: input.phase === 'post' && !unavailableReason,
-                  unavailableReason,
-                  updatedAt: input.timestamp,
-                  replacePreImage: input.phase === 'post',
-              });
+    const snapshotCandidates = new Set<string>();
+    try {
+      changes.forEach((change, sourceIndex) => {
+        const paths = changePaths(change, executionRoot);
+        const existing = options.files.listByChangeSet(changeSet.id).find((candidate) => candidate.sourceItemId === input.providerItemId && candidate.sourceIndex === sourceIndex);
+        if (existing?.preBlobRef) snapshotCandidates.add(existing.preBlobRef);
+        if (existing?.postBlobRef) snapshotCandidates.add(existing.postBlobRef);
+        const snapshotPath = input.phase === 'pre' ? paths.oldAbsolutePath : paths.newAbsolutePath;
+        const expectedAbsent = input.phase === 'pre' ? paths.oldPath === null : paths.newPath === null;
+        const snapshot = expectedAbsent ? absentSnapshot() : snapshotPath ? captureSnapshot(changeSet.id, input.providerItemId, sourceIndex, input.phase, snapshotPath, capturedBytes) : unavailableSnapshot('Missing authorized file path.');
+        if (snapshot.blobRef) {
+          snapshotCandidates.add(snapshot.blobRef);
+          capturedBytes += statSync(snapshot.blobRef).size;
+        }
+        const counts = countDiffLines(change.diff);
+        const binary = isBinaryDiff(change.diff);
+        const changeType = binary ? 'binary' : paths.changeType;
+        let pre = input.phase === 'pre' ? snapshot : existing ? snapshotFromRecord(existing, 'pre') : unavailableSnapshot('The provider patch was observed after the pre-image capture point.');
+        const post = input.phase === 'post' ? snapshot : existing ? snapshotFromRecord(existing, 'post') : unavailableSnapshot('Post-image has not been captured yet.');
+        if (input.phase === 'post' && changeType !== 'binary') {
+          pre = reconcileTextPreImage({
+            changeSetId: changeSet.id,
+            providerItemId: input.providerItemId,
+            sourceIndex,
+            change,
+            changeType,
+            pre,
+            post,
+            capturedBytes,
           });
-      } finally {
-          pruneSupersededSnapshotCandidates(changeSet.id, snapshotCandidates);
-      }
+          if (pre.blobRef && pre.blobRef !== existing?.preBlobRef) {
+            snapshotCandidates.add(pre.blobRef);
+            capturedBytes += statSync(pre.blobRef).size;
+          }
+        }
+        if (pre.blobRef) snapshotCandidates.add(pre.blobRef);
+        if (post.blobRef) snapshotCandidates.add(post.blobRef);
+        const semanticUnavailableReason = input.phase === 'post' ? snapshotSemanticUnavailableReason(changeType, pre, post, change.diff) : null;
+        const unavailableReason = input.phase === 'post' ? (pre.unavailableReason ?? post.unavailableReason ?? semanticUnavailableReason) : (pre.unavailableReason ?? post.unavailableReason);
+        options.files.upsert({
+          changeSetId: changeSet.id,
+          sourceItemId: input.providerItemId,
+          sourceIndex,
+          oldPath: paths.oldPath,
+          newPath: paths.newPath,
+          changeType,
+          addedLines: counts.added,
+          deletedLines: counts.deleted,
+          preHash: pre.hash,
+          postHash: post.hash,
+          preExists: pre.exists,
+          postExists: post.exists,
+          preMode: pre.mode,
+          postMode: post.mode,
+          unifiedDiff: change.diff,
+          preBlobRef: pre.blobRef,
+          postBlobRef: post.blobRef,
+          reversible: input.phase === 'post' && !unavailableReason,
+          unavailableReason,
+          updatedAt: input.timestamp,
+          replacePreImage: input.phase === 'post',
+        });
+      });
+    } finally {
+      pruneSupersededSnapshotCandidates(changeSet.id, snapshotCandidates);
+    }
     options.changeSets.upsert({
       ...changeSet,
       state: 'capturing',
@@ -692,39 +673,39 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
     }, 0);
   }
 
-    /**
-     * Provider 会重复更新同一个 fileChange item。数据库只保留当前 pre/post 引用，
-     * 捕获阶段产生但最终未被选中的快照若继续留在目录中，会随长会话永久累积。
-     * 这里只删除当前变更集目录内、且已不被任何 file row 引用的普通文件。
-     */
-    function pruneSupersededSnapshotCandidates(changeSetId: string, candidates: ReadonlySet<string>): void {
-        if (candidates.size === 0) return;
-        let retained: Set<string>;
-        try {
-            retained = new Set(
-                options.files
-                    .listByChangeSet(changeSetId)
-                    .flatMap((file) => [file.preBlobRef, file.postBlobRef])
-                    .filter((entry): entry is string => Boolean(entry))
-                    .map((entry) => resolve(entry)),
-            );
-        } catch {
-            return;
-        }
-        const blobRoot = resolve(options.recoveryRoot, changeSetId, 'blobs');
-        for (const candidate of candidates) {
-            const path = resolve(candidate);
-            if (retained.has(path) || dirname(path) !== blobRoot || !isInsideRoot(path, blobRoot)) continue;
-            try {
-                const stat = lstatSync(path);
-                if (stat.isSymbolicLink() || !stat.isFile()) continue;
-                unlinkSync(path);
-            } catch (error) {
-                if (isNodeError(error) && error.code === 'ENOENT') continue;
-                // 快照回收失败不能把已经持久化成功的 Provider 轮次反向标记为失败。
-            }
-        }
+  /**
+   * Provider 会重复更新同一个 fileChange item。数据库只保留当前 pre/post 引用，
+   * 捕获阶段产生但最终未被选中的快照若继续留在目录中，会随长会话永久累积。
+   * 这里只删除当前变更集目录内、且已不被任何 file row 引用的普通文件。
+   */
+  function pruneSupersededSnapshotCandidates(changeSetId: string, candidates: ReadonlySet<string>): void {
+    if (candidates.size === 0) return;
+    let retained: Set<string>;
+    try {
+      retained = new Set(
+        options.files
+          .listByChangeSet(changeSetId)
+          .flatMap((file) => [file.preBlobRef, file.postBlobRef])
+          .filter((entry): entry is string => Boolean(entry))
+          .map((entry) => resolve(entry)),
+      );
+    } catch {
+      return;
     }
+    const blobRoot = resolve(options.recoveryRoot, changeSetId, 'blobs');
+    for (const candidate of candidates) {
+      const path = resolve(candidate);
+      if (retained.has(path) || dirname(path) !== blobRoot || !isInsideRoot(path, blobRoot)) continue;
+      try {
+        const stat = lstatSync(path);
+        if (stat.isSymbolicLink() || !stat.isFile()) continue;
+        unlinkSync(path);
+      } catch (error) {
+        if (isNodeError(error) && error.code === 'ENOENT') continue;
+        // 快照回收失败不能把已经持久化成功的 Provider 轮次反向标记为失败。
+      }
+    }
+  }
 }
 
 function normalizeProviderChanges(value: unknown): ProviderFileUpdateChange[] {

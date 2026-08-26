@@ -1,51 +1,32 @@
-import {Fragment, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
-import {motion, useReducedMotion} from 'framer-motion';
-import {
-    activityCategory,
-    isActiveSessionTurn,
-    isLiveActivityItem,
-    isOperationalActivityItem,
-    type SessionActivityCategory,
-    SessionActivityGroup,
-    SessionTurnDuration,
-    SessionTurnProcessDisclosure
-} from './SessionActivity.js';
-import {itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText} from './ThreadItemView.js';
-import {PlanSummary} from './PlanSummary.js';
+import { Fragment, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { motion, useReducedMotion } from 'framer-motion';
+import { activityCategory, isActiveSessionTurn, isLiveActivityItem, isOperationalActivityItem, type SessionActivityCategory, SessionActivityGroup, SessionTurnDuration, SessionTurnProcessDisclosure } from './SessionActivity.js';
+import { itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText } from './ThreadItemView.js';
+import { PlanSummary } from './PlanSummary.js';
 import type {
-    ConversationResource,
-    ConversationResourcePreview,
-    NativeConversationContentV2Page,
-    NativeConversationToolResultPage,
-    NativePendingRequest,
-    NativeQueueSnapshot,
-    NativeSessionError,
-    NativeSessionItemBuffer,
-    NativeSessionState,
-    NativeTurnFailureSnapshot,
-    TurnChangeSet,
-    TurnChangeSetOperationResult,
+  ConversationResource,
+  ConversationResourcePreview,
+  NativeConversationContentV2Page,
+  NativeConversationToolResultPage,
+  NativePendingRequest,
+  NativeQueueSnapshot,
+  NativeSessionError,
+  NativeSessionItemBuffer,
+  NativeSessionState,
+  NativeTurnFailureSnapshot,
+  TurnChangeSet,
+  TurnChangeSetOperationResult,
 } from './sessionTypes.js';
-import {isAssistantDeliverableItem} from './sessionTypes.js';
-import type {
-    ConversationFileLocation,
-    ConversationOpenTarget,
-    ConversationResponseAnnotation,
-    ConversationResponseTextAnchor
-} from '@zeus/shared';
-import {useThreadScrollController} from './useThreadScrollController.js';
-import {TurnChangeCard} from './TurnChanges.js';
-import {reasoningSummaryStatus, SessionReasoningSummary} from './SessionReasoningSummary.js';
-import {AnsweredRequestHistory, isAnsweredUserInputRequest} from './AnsweredRequestHistory.js';
-import {useNewItemMotionIds} from '../ui/useNewItemMotion.js';
-import {
-    captureTranscriptViewportAnchor,
-    compensateTranscriptViewportAnchor,
-    type TranscriptViewportAnchor,
-    useTranscriptViewportVirtualizer
-} from './transcriptViewportVirtualizer.js';
-import {VisibleApplicationError} from '../ui/ApplicationErrorDialog.js';
-import {isImageResource} from './ConversationResources.js';
+import { isAssistantDeliverableItem } from './sessionTypes.js';
+import type { ConversationFileLocation, ConversationOpenTarget, ConversationResponseAnnotation, ConversationResponseTextAnchor } from '@zeus/shared';
+import { useThreadScrollController } from './useThreadScrollController.js';
+import { TurnChangeCard } from './TurnChanges.js';
+import { reasoningSummaryStatus, SessionReasoningSummary } from './SessionReasoningSummary.js';
+import { AnsweredRequestHistory, isAnsweredUserInputRequest } from './AnsweredRequestHistory.js';
+import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
+import { captureTranscriptViewportAnchor, compensateTranscriptViewportAnchor, type TranscriptViewportAnchor, useTranscriptViewportVirtualizer } from './transcriptViewportVirtualizer.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { isImageResource } from './ConversationResources.js';
 
 export interface ConversationTranscriptProps {
   state: NativeSessionState;
@@ -243,24 +224,24 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const transcriptRows = useMemo(() => projectTranscriptRows(items, answeredRequests, activeTurnId, props.historyOnly), [activeTurnId, answeredRequests, items, props.historyOnly]);
   const turnRows = useMemo(() => projectTranscriptTurnRows(transcriptRows, activeTurnId, props.state.terminalTurnIds), [activeTurnId, props.state.terminalTurnIds, transcriptRows]);
   const defaultExpandedRowKeys = useMemo(() => defaultExpandedTurnProcessKeys(turnRows, props.state.turnsByProviderId, props.state.terminalTurnIds), [props.state.terminalTurnIds, props.state.turnsByProviderId, turnRows]);
-    const activeProcessExpansionKey = useMemo(() => {
-        const activeWork = turnRows.find((row): row is TranscriptTurnWorkRow => row.kind === 'turn_work' && row.live);
-        return activeWork ? turnProcessExpansionKey(activeWork.key) : null;
-    }, [turnRows]);
-    const previousActiveProcessExpansionKeyRef = useRef<string | null>(null);
-    useLayoutEffect(() => {
-        const previousKey = previousActiveProcessExpansionKeyRef.current;
-        previousActiveProcessExpansionKeyRef.current = activeProcessExpansionKey;
-        if (!previousKey || previousKey === activeProcessExpansionKey) return;
-        // 正文到达或活动轮次切换时必须回到完成态默认值：处理过程自动收起。
-        // 这同时清除运行中用户手动展开/收起留下的覆盖，避免完成态继续沿用旧交互状态。
-        setRowExpansionOverrides((current) => {
-            if (!current.has(previousKey)) return current;
-            const next = new Map(current);
-            next.delete(previousKey);
-            return next;
-        });
-    }, [activeProcessExpansionKey]);
+  const activeProcessExpansionKey = useMemo(() => {
+    const activeWork = turnRows.find((row): row is TranscriptTurnWorkRow => row.kind === 'turn_work' && row.live);
+    return activeWork ? turnProcessExpansionKey(activeWork.key) : null;
+  }, [turnRows]);
+  const previousActiveProcessExpansionKeyRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    const previousKey = previousActiveProcessExpansionKeyRef.current;
+    previousActiveProcessExpansionKeyRef.current = activeProcessExpansionKey;
+    if (!previousKey || previousKey === activeProcessExpansionKey) return;
+    // 正文到达或活动轮次切换时必须回到完成态默认值：处理过程自动收起。
+    // 这同时清除运行中用户手动展开/收起留下的覆盖，避免完成态继续沿用旧交互状态。
+    setRowExpansionOverrides((current) => {
+      if (!current.has(previousKey)) return current;
+      const next = new Map(current);
+      next.delete(previousKey);
+      return next;
+    });
+  }, [activeProcessExpansionKey]);
   const expandedRowKeys = useMemo(() => {
     const expanded = new Set(defaultExpandedRowKeys);
     for (const [rowKey, open] of rowExpansionOverrides) {
@@ -269,7 +250,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     }
     return expanded;
   }, [defaultExpandedRowKeys, rowExpansionOverrides]);
-    const activeProcessCollapsed = activeProcessExpansionKey !== null && !expandedRowKeys.has(activeProcessExpansionKey);
+  const activeProcessCollapsed = activeProcessExpansionKey !== null && !expandedRowKeys.has(activeProcessExpansionKey);
   const turnRowKeys = useMemo(() => turnRows.map((row) => row.key), [turnRows]);
   const turnRowsByKey = useMemo(() => new Map(turnRows.map((row) => [row.key, row])), [turnRows]);
   const activeTurnRowKeys = useMemo(() => new Set(turnRows.filter((row) => activeTurnId && transcriptTurnRowTurnId(row) === activeTurnId).map((row) => row.key)), [activeTurnId, turnRows]);
@@ -304,7 +285,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const realTurnStarted = Boolean(activeTurnId);
   // 创建期只保留一个主进度：真实轮次建立前显示连接，建立后由轮次状态或真实过程内容接管。
   const showCreationStatus = Boolean(props.creationStatus) && !(creatingSession && realTurnStarted);
-    const showStandaloneActiveStatus = (showActiveStatus || activeProcessCollapsed) && !creationFailed && !(creatingSession && !realTurnStarted);
+  const showStandaloneActiveStatus = (showActiveStatus || activeProcessCollapsed) && !creationFailed && !(creatingSession && !realTurnStarted);
   const awaitingReplyMessageIdsKey = items
     .filter(isOptimisticMessageAwaitingReply)
     .map((item) => item.clientUserMessageId)
@@ -570,40 +551,36 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     if (row.kind === 'turn_work') {
       const turn = props.state.turnsByProviderId[row.turnId];
       const expansionKey = turnProcessExpansionKey(row.key);
-        const containsCompletionAnchor = row.segments.some(
-            (segment) =>
-                Boolean(segment.summary && transcriptRowContainsItemKey(segment.summary, completionAnchorKeyByTurn[row.turnId])) || segment.rows.some((child) => transcriptRowContainsItemKey(child, completionAnchorKeyByTurn[row.turnId])),
-        );
-        const renderProcessSegments = (active: boolean): ReactNode =>
-            row.segments.map((segment, segmentIndex) => (
-                <section className="session-turn-process-stage"
-                         data-current={row.live && segmentIndex === row.segments.length - 1 ? true : undefined}
-                         key={segment.key}>
-                    {segment.summary ? (
-                        <div className="session-turn-stage-summary">
-                            {renderTranscriptRow(segment.summary, transcriptRowRenderOptions(renderProps, items, false, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId))}
-                        </div>
-                    ) : null}
-                    {segment.rows.map((child) => {
-                        const content = renderTranscriptRow(
-                            child,
-                            transcriptRowRenderOptions(renderProps, items, showActiveStatus && activeTurnId === row.turnId, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId),
-                        );
-                        return active ? (
-                            <motion.div className="session-live-turn-row" key={child.key}
-                                        layout={reduceMotion ? false : 'position'}
-                                        transition={reduceMotion ? {duration: 0} : liveTurnLayoutTransition}>
-                                {content}
-                            </motion.div>
-                        ) : (
-                            <Fragment key={child.key}>{content}</Fragment>
-                        );
-                    })}
-                </section>
-            ));
+      const containsCompletionAnchor = row.segments.some(
+        (segment) =>
+          Boolean(segment.summary && transcriptRowContainsItemKey(segment.summary, completionAnchorKeyByTurn[row.turnId])) || segment.rows.some((child) => transcriptRowContainsItemKey(child, completionAnchorKeyByTurn[row.turnId])),
+      );
+      const renderProcessSegments = (active: boolean): ReactNode =>
+        row.segments.map((segment, segmentIndex) => (
+          <section className="session-turn-process-stage" data-current={row.live && segmentIndex === row.segments.length - 1 ? true : undefined} key={segment.key}>
+            {segment.summary ? (
+              <div className="session-turn-stage-summary">
+                {renderTranscriptRow(segment.summary, transcriptRowRenderOptions(renderProps, items, false, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId))}
+              </div>
+            ) : null}
+            {segment.rows.map((child) => {
+              const content = renderTranscriptRow(
+                child,
+                transcriptRowRenderOptions(renderProps, items, showActiveStatus && activeTurnId === row.turnId, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId),
+              );
+              return active ? (
+                <motion.div className="session-live-turn-row" key={child.key} layout={reduceMotion ? false : 'position'} transition={reduceMotion ? { duration: 0 } : liveTurnLayoutTransition}>
+                  {content}
+                </motion.div>
+              ) : (
+                <Fragment key={child.key}>{content}</Fragment>
+              );
+            })}
+          </section>
+        ));
       if (!turn) {
         const processPaging = turnDetailPaging(props.state.snapshot, row.turnId);
-          const hasProcessDetails = row.segments.length > 0 || (row.loadMore && turnProcessAvailable(props.state.snapshot, row.turnId));
+        const hasProcessDetails = row.segments.length > 0 || (row.loadMore && turnProcessAvailable(props.state.snapshot, row.turnId));
         return (
           <>
             {hasProcessDetails ? (
@@ -619,7 +596,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                   await renderProps.onLoadTurnArtifacts?.(row.turnId);
                 }}
               >
-                  {renderProcessSegments(false)}
+                {renderProcessSegments(false)}
                 {row.loadMore && processPaging?.loaded && processPaging.hasMore && renderProps.onLoadTurnProcess ? (
                   <V2AutoPageSentinel loading={processPaging.loading} error={processPaging.error} kind="process" language={props.language} onLoad={() => renderProps.onLoadTurnProcess?.(row.turnId)} />
                 ) : null}
@@ -631,11 +608,11 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       const active = isActiveSessionTurn(turn);
       const v2PagingKey = turn.providerTurnId ?? turn.id;
       const processPaging = turnDetailPaging(props.state.snapshot, v2PagingKey);
-        const hasProcessDetails = row.segments.length > 0 || (row.loadMore && turnProcessAvailable(props.state.snapshot, v2PagingKey));
-        const process = renderProcessSegments(active);
+      const hasProcessDetails = row.segments.length > 0 || (row.loadMore && turnProcessAvailable(props.state.snapshot, v2PagingKey));
+      const process = renderProcessSegments(active);
       return (
         <>
-            {hasProcessDetails ? (
+          {hasProcessDetails ? (
             <SessionTurnProcessDisclosure
               language={props.language}
               loading={Boolean(row.loadMore && processPaging?.loading)}
@@ -655,9 +632,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             </SessionTurnProcessDisclosure>
           ) : null}
           {!active && containsCompletionAnchor ? renderTurnArtifacts(row.turnId, renderProps, completionAnchorKeyByTurn[row.turnId]) : null}
-            {!active && containsCompletionAnchor ?
-                <SessionTurnDuration turn={turn} requests={props.state.pendingRequests}
-                                     language={props.language}/> : null}
+          {!active && containsCompletionAnchor ? <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} /> : null}
         </>
       );
     }
@@ -971,13 +946,13 @@ export interface TranscriptTurnWorkRow {
   kind: 'turn_work';
   key: string;
   turnId: string;
-    segments: TranscriptTurnProcessSegment[];
-    live: boolean;
-    loadMore: boolean;
+  segments: TranscriptTurnProcessSegment[];
+  live: boolean;
+  loadMore: boolean;
 }
 
 export interface TranscriptTurnProcessSegment {
-    key: string;
+  key: string;
   summary: TranscriptRow | null;
   rows: TranscriptRow[];
 }
@@ -1135,8 +1110,8 @@ function renderTurnArtifacts(turnId: string, props: ConversationTranscriptProps,
 export function projectTranscriptTurnRows(rows: readonly TranscriptRow[], activeTurnId: string | null = null, terminalTurnIds: Readonly<Record<string, 'completed' | 'interrupted' | 'failed'>> = {}): TranscriptTurnRow[] {
   const orderedRows = projectDeliverablesAfterFinalAnswer(rows);
   const finalAnswerTurnIds = new Set(orderedRows.flatMap((row) => (row.kind === 'item' && isFinalAnswerItem(row.item) ? [row.item.turnId] : [])));
-    // 权威活动轮次优先于任何提前或误分类的 final item；阶段摘要只负责切分单轮过程内部的内容，
-    // 不能再生成多个顶层折叠入口。final 正文一旦到达，该轮过程立即按完成态自动收起。
+  // 权威活动轮次优先于任何提前或误分类的 final item；阶段摘要只负责切分单轮过程内部的内容，
+  // 不能再生成多个顶层折叠入口。final 正文一旦到达，该轮过程立即按完成态自动收起。
   const projectedTurnIds = new Set([...finalAnswerTurnIds, ...Object.keys(terminalTurnIds), ...(activeTurnId ? [activeTurnId] : [])]);
   const openingUserRowKeyByTurn = new Map<string, string>();
   for (const row of orderedRows) {
@@ -1153,18 +1128,18 @@ export function projectTranscriptTurnRows(rows: readonly TranscriptRow[], active
     processRowsByTurn.set(turnId, workRows);
   }
 
-    const workRowByTurn = new Map<string, TranscriptTurnWorkRow>();
+  const workRowByTurn = new Map<string, TranscriptTurnWorkRow>();
   const processRowKeys = new Set<string>();
   for (const [turnId, processRows] of processRowsByTurn) {
-      const segments = segmentTurnProcessRows(turnId, processRows);
-      workRowByTurn.set(turnId, {
-          kind: 'turn_work',
-          key: `turn-work:${encodeURIComponent(turnId)}`,
-          turnId,
-          segments,
-          live: turnId === activeTurnId && !finalAnswerTurnIds.has(turnId),
-          loadMore: true,
-      });
+    const segments = segmentTurnProcessRows(turnId, processRows);
+    workRowByTurn.set(turnId, {
+      kind: 'turn_work',
+      key: `turn-work:${encodeURIComponent(turnId)}`,
+      turnId,
+      segments,
+      live: turnId === activeTurnId && !finalAnswerTurnIds.has(turnId),
+      loadMore: true,
+    });
     processRows.forEach((row) => processRowKeys.add(row.key));
   }
 
@@ -1172,18 +1147,18 @@ export function projectTranscriptTurnRows(rows: readonly TranscriptRow[], active
   const emittedWorkTurns = new Set<string>();
   for (const row of orderedRows) {
     const turnId = transcriptRowTurnId(row);
-      const workRow = turnId ? workRowByTurn.get(turnId) : undefined;
+    const workRow = turnId ? workRowByTurn.get(turnId) : undefined;
     const openingUserRowKey = turnId ? openingUserRowKeyByTurn.get(turnId) : undefined;
-      const firstProcessRowKey = workRow?.segments.flatMap((segment) => [segment.summary, ...segment.rows]).find((candidate): candidate is TranscriptRow => Boolean(candidate))?.key;
-      if (turnId && workRow && !openingUserRowKey && firstProcessRowKey === row.key && !emittedWorkTurns.has(turnId)) {
-          projected.push(workRow);
+    const firstProcessRowKey = workRow?.segments.flatMap((segment) => [segment.summary, ...segment.rows]).find((candidate): candidate is TranscriptRow => Boolean(candidate))?.key;
+    if (turnId && workRow && !openingUserRowKey && firstProcessRowKey === row.key && !emittedWorkTurns.has(turnId)) {
+      projected.push(workRow);
       emittedWorkTurns.add(turnId);
     }
     if (processRowKeys.has(row.key)) continue;
     projected.push(row);
     // Provider 的过程事件可能先于用户消息落库；展示顺序必须以轮次语义为准，不能把处理过程放到开场消息上方。
-      if (turnId && workRow && openingUserRowKey === row.key && !emittedWorkTurns.has(turnId)) {
-          projected.push(workRow);
+    if (turnId && workRow && openingUserRowKey === row.key && !emittedWorkTurns.has(turnId)) {
+      projected.push(workRow);
       emittedWorkTurns.add(turnId);
     }
   }
@@ -1220,7 +1195,7 @@ function segmentTurnProcessRows(turnId: string, rows: readonly TranscriptRow[]):
     const identityRow = segment.summary ?? segment.rows[0];
     const identity = identityRow?.key ?? `empty-${index}`;
     return {
-        key: `turn-process-stage:${encodeURIComponent(turnId)}:${encodeURIComponent(identity)}`,
+      key: `turn-process-stage:${encodeURIComponent(turnId)}:${encodeURIComponent(identity)}`,
       summary: segment.summary,
       rows: mergeStageActivityRows(segment.rows, turnId, identity),
     };
@@ -1304,25 +1279,25 @@ function turnProcessExpansionKey(identity: string): string {
 }
 
 function defaultExpandedTurnProcessKeys(rows: readonly TranscriptTurnRow[], turnsByProviderId: NativeSessionState['turnsByProviderId'], terminalTurnIds: NativeSessionState['terminalTurnIds']): ReadonlySet<string> {
-    const expanded = new Set(rows.filter((row): row is TranscriptTurnWorkRow => row.kind === 'turn_work' && row.live).map((row) => turnProcessExpansionKey(row.key)));
+  const expanded = new Set(rows.filter((row): row is TranscriptTurnWorkRow => row.kind === 'turn_work' && row.live).map((row) => turnProcessExpansionKey(row.key)));
   let latestTurnId: string | null = null;
   for (let index = rows.length - 1; index >= 0; index -= 1) {
     latestTurnId = transcriptTurnRowTurnId(rows[index]!);
     if (latestTurnId) break;
   }
-    if (!latestTurnId) return expanded;
+  if (!latestTurnId) return expanded;
 
   const turn = turnsByProviderId[latestTurnId] ?? Object.values(turnsByProviderId).find((candidate) => candidate.id === latestTurnId || candidate.providerTurnId === latestTurnId);
   const providerTurnId = turn?.providerTurnId;
   const interrupted = terminalTurnIds[latestTurnId] === 'interrupted' || (providerTurnId ? terminalTurnIds[providerTurnId] === 'interrupted' : false) || turn?.status === 'interrupted';
-    if (!interrupted) return expanded;
+  if (!interrupted) return expanded;
 
   // 编排层会把意外退出后的轮次写成 interrupted 终态，但产品语义仍是“过程没有正常结束”。
   // 只让最后一轮中断过程默认展开，避免旧中断记录把整段历史长期撑开；用户仍可手动收起。
   const interruptedTurnIds = new Set([latestTurnId, providerTurnId, turn?.id].filter((turnId): turnId is string => Boolean(turnId)));
-    const latestInterruptedProcess = [...rows].reverse().find((row): row is TranscriptTurnWorkRow => row.kind === 'turn_work' && interruptedTurnIds.has(row.turnId));
-    if (latestInterruptedProcess) expanded.add(turnProcessExpansionKey(latestInterruptedProcess.key));
-    return expanded;
+  const latestInterruptedProcess = [...rows].reverse().find((row): row is TranscriptTurnWorkRow => row.kind === 'turn_work' && interruptedTurnIds.has(row.turnId));
+  if (latestInterruptedProcess) expanded.add(turnProcessExpansionKey(latestInterruptedProcess.key));
+  return expanded;
 }
 
 function transcriptTurnRowTurnId(row: TranscriptTurnRow): string | null {
