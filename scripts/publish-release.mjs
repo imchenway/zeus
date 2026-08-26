@@ -7,6 +7,14 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { commandFailureDetail, commandResultSucceeded, releaseRemoteReadAttempts, releaseRemoteReadTimeoutMs, runRemoteReadWithRetrySync } from './release-remote-read.mjs';
+import {
+  formatReleaseWorkflowDuration,
+  readReleaseWorkflowWaitState,
+  releaseWorkflowHeartbeatIntervalMs,
+  releaseWorkflowPollIntervalMs,
+  releaseWorkflowWaitLimitMs,
+  resolveReleaseWorkflowWaitWindow,
+} from './release-workflow-wait-policy.mjs';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const repository = 'imchenway/zeus';
@@ -492,18 +500,30 @@ async function waitForDispatchedRun(headSha, dispatchedAt) {
 }
 
 async function waitForWorkflowRun(workflowRun) {
+  const waitWindow = resolveReleaseWorkflowWaitWindow(workflowRun);
   let previousSnapshot = null;
   let consecutiveReadFailures = 0;
+  let nextHeartbeatAtMs = Date.now() + releaseWorkflowHeartbeatIntervalMs;
   while (true) {
-    const result = ghJson(['run', 'view', String(workflowRun.databaseId), '--repo', repository, '--json', 'databaseId,status,conclusion,url,jobs'], true);
+    const beforeRead = readReleaseWorkflowWaitState(waitWindow);
+    if (beforeRead.timedOut) throw releaseWorkflowWaitTimeoutError(workflowRun, previousSnapshot, beforeRead);
+
+    const result = ghJson(['run', 'view', String(workflowRun.databaseId), '--repo', repository, '--json', 'databaseId,status,conclusion,url,jobs'], true, {
+      attempts: 1,
+      timeout: Math.max(1, Math.min(releaseRemoteReadTimeoutMs, beforeRead.remainingMs)),
+    });
     if (!result.ok || !result.value || typeof result.value.status !== 'string') {
       consecutiveReadFailures += 1;
       const reason = result.error || 'GitHub CLI 返回了无效响应';
       if (consecutiveReadFailures >= 3) {
         throw new Error(`连续 3 次无法读取 Release Workflow 状态：${reason}`);
       }
-      console.warn(`暂时无法读取 Release Workflow 状态，10 秒后重试（${consecutiveReadFailures}/3）：${reason}`);
-      await delay(10_000);
+      const waitState = readReleaseWorkflowWaitState(waitWindow);
+      if (waitState.timedOut) throw releaseWorkflowWaitTimeoutError(workflowRun, previousSnapshot, waitState);
+      console.warn(`暂时无法读取 Release Workflow 状态，稍后重试（${consecutiveReadFailures}/3）：${reason}`);
+      printWorkflowWaitHeartbeatIfDue(workflowRun, previousSnapshot, waitState, nextHeartbeatAtMs);
+      if (Date.now() >= nextHeartbeatAtMs) nextHeartbeatAtMs = Date.now() + releaseWorkflowHeartbeatIntervalMs;
+      await delay(Math.min(releaseWorkflowPollIntervalMs, waitState.remainingMs));
       continue;
     }
     consecutiveReadFailures = 0;
@@ -518,8 +538,29 @@ async function waitForWorkflowRun(workflowRun) {
       }
       return { ...workflowRun, ...result.value };
     }
-    await delay(10_000);
+
+    const waitState = readReleaseWorkflowWaitState(waitWindow);
+    if (waitState.timedOut) throw releaseWorkflowWaitTimeoutError(workflowRun, snapshot, waitState);
+    printWorkflowWaitHeartbeatIfDue(workflowRun, snapshot, waitState, nextHeartbeatAtMs);
+    if (Date.now() >= nextHeartbeatAtMs) nextHeartbeatAtMs = Date.now() + releaseWorkflowHeartbeatIntervalMs;
+    await delay(Math.min(releaseWorkflowPollIntervalMs, waitState.remainingMs));
   }
+}
+
+function printWorkflowWaitHeartbeatIfDue(workflowRun, snapshot, waitState, nextHeartbeatAtMs) {
+  if (Date.now() < nextHeartbeatAtMs) return;
+  const status = snapshot?.status ?? workflowRun.status ?? 'unknown';
+  console.log(`Release Workflow 仍在等待：${status}，已等待 ${formatReleaseWorkflowDuration(waitState.elapsedMs)} / 上限 ${formatReleaseWorkflowDuration(releaseWorkflowWaitLimitMs)}；${workflowRun.url}`);
+}
+
+function releaseWorkflowWaitTimeoutError(workflowRun, snapshot, waitState) {
+  const status = snapshot?.status ?? workflowRun.status ?? 'unknown';
+  return new Error(
+    [
+      `等待 Release Workflow 已达到 ${formatReleaseWorkflowDuration(releaseWorkflowWaitLimitMs)} 上限，本地发布命令已停止：status=${status}，elapsed=${formatReleaseWorkflowDuration(waitState.elapsedMs)} ${workflowRun.url}`,
+      '远程 Workflow 未被自动取消；GitHub Actions 恢复后重新执行发布命令，将继续识别并回验同一运行。',
+    ].join('\n'),
+  );
 }
 
 function buildWorkflowProgressSnapshot(workflowRun) {
@@ -594,8 +635,8 @@ function gh(args) {
   return result.stdout;
 }
 
-function ghJson(args, allowFailure = false) {
-  const result = captureRemoteRead('读取 GitHub 公开事实', 'gh', args, { allowFailure });
+function ghJson(args, allowFailure = false, options = {}) {
+  const result = captureRemoteRead('读取 GitHub 公开事实', 'gh', args, { ...options, allowFailure });
   if (result.status !== 0) return { ok: false, error: [result.stdout, result.stderr].filter(Boolean).join('\n') || commandFailureDetail(result) };
   try {
     return { ok: true, value: JSON.parse(result.stdout) };
