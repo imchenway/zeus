@@ -603,6 +603,15 @@ export function SidebarNav(props: {
           </span>
           <span className="project-quick-action-label">{copy.search}</span>
         </button>
+        <button type="button" className={`project-quick-action${props.activeNavTarget === 'skills' ? ' is-active' : ''}`} aria-current={props.activeNavTarget === 'skills' ? 'page' : undefined} onClick={() => props.onNavigate('skills')}>
+          <span className="project-quick-action-icon" aria-hidden="true">
+            <svg viewBox="0 0 20 20" focusable="false">
+              <path d="M10 2.7 11.5 7l4.5 1.5-4.5 1.6-1.5 4.3-1.5-4.3L4 8.5 8.5 7 10 2.7Z" />
+              <path d="m15.2 13 .7 2 .1.1 2.1.7-2.1.8-.8 2.1-.7-2.1-2.1-.8 2.1-.7.7-2Z" />
+            </svg>
+          </span>
+          <span className="project-quick-action-label">{copy.skills}</span>
+        </button>
       </nav>
       {projectSearchOpen ? (
         <section className="project-sidebar-search-row" aria-label={copy.search} onKeyDown={handleProjectSearchKeyDown}>
@@ -649,7 +658,7 @@ export function SidebarNav(props: {
           </section>
         ) : (
           visibleProjects.map((project) => {
-            const isActiveProject = project.id === props.activeProjectId && props.activeNavTarget !== 'settings';
+            const isActiveProject = project.id === props.activeProjectId && props.activeNavTarget !== 'settings' && props.activeNavTarget !== 'skills';
             const pinned = props.pinnedProjectIds.includes(project.id);
             const expanded = !props.collapsedProjectIds.includes(project.id);
             const menuOpen = openProjectMenuIds.has(project.id);

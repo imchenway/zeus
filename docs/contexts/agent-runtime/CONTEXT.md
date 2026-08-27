@@ -28,6 +28,18 @@ _避免：Zeus 会话 ID、文件路径_
 在特定运行代次和时间点确认的模型、协议、上下文窗口与交互能力集合。
 _避免：永久权限、用户偏好_
 
+**Skill**：
+由 Zeus 安装、发现并按需交给 Runtime Adapter 的可复用执行说明与资源包，拥有可显式调用的名称和可审计来源。
+_避免：提示词模板、Plugin、工具_
+
+**已安装 Skill**：
+已经进入 Zeus Skill 发现范围并通过结构校验的 Skill；它天然可由所有 Zeus Runtime Adapter 消费，只表示可被选择，不表示已经执行。
+_避免：Codex Skill、Pi Skill、已启用 Skill、已调用 Skill_
+
+**Skill 运行时投影**：
+Runtime Adapter 为同一个已安装 Skill 生成的原生调用表达；投影差异不得改变 Skill 的身份、内容或用户选择。
+_避免：Provider Skill、Skill 副本、兼容 Skill_
+
 **接纳证据**：
 足以证明 Provider 已接受某个提交或轮次的原生协议事实。
 _避免：HTTP 成功、请求已写出、界面加载中_

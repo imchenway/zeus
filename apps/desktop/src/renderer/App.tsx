@@ -90,6 +90,7 @@ function routeFromHash(hash: string | undefined): MainNavTarget {
   if (!target) return 'conversations';
   if (target === 'dashboard' || target === 'tasks' || target === 'runtime' || target === 'conversations') return 'conversations';
   if (target === 'code-map' || target === 'git-diff' || target === 'projects' || target === 'project-commands' || target.startsWith('project-code')) return 'projects';
+  if (target === 'skills') return 'skills';
   if (target === 'telegram' || target === 'settings' || target.startsWith('settings-')) return 'settings';
   return 'conversations';
 }
@@ -99,4 +100,4 @@ function settingsCategoryFromHash(hash: string | undefined): SettingsCategory | 
   return settingsCategories.includes(target as SettingsCategory) ? (target as SettingsCategory) : undefined;
 }
 
-const settingsCategories = ['general', 'usage', 'memory', 'tasks', 'runtime', 'models', 'browser', 'telegram', 'zentao', 'security', 'commands', 'git', 'release', 'data'] as const satisfies readonly SettingsCategory[];
+const settingsCategories = ['general', 'usage', 'memory', 'tasks', 'employees', 'runtime', 'models', 'browser', 'telegram', 'zentao', 'security', 'commands', 'git', 'release', 'data'] as const satisfies readonly SettingsCategory[];

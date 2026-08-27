@@ -1905,6 +1905,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           localActions={taskModelPushWorkspaceActions(pending, onOpenTaskDetail)}
           onStartConversation={startNativeConversation}
           onStartProjectConversation={startProjectConversation}
+          onLoadSkills={props.nativeConversationClient.loadSkills}
           onOpenTaskDetail={onOpenTaskDetail}
           onTaskManagementStatusChange={(taskId, status) => updateTaskManagementStatus(taskId, status)}
           onLoadTaskWorkspaces={props.nativeConversationClient.loadTaskGitWorkspaces}
@@ -1953,6 +1954,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           }}
           onStartConversation={startNativeConversation}
           onStartProjectConversation={startProjectConversation}
+          onLoadSkills={props.nativeConversationClient.loadSkills}
           onOpenTaskDetail={onOpenTaskDetail}
           onTaskManagementStatusChange={(taskId, status) => updateTaskManagementStatus(taskId, status)}
           onLoadTaskWorkspaces={props.nativeConversationClient.loadTaskGitWorkspaces}
@@ -2000,6 +2002,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           onOpenTaskDetail,
           onTaskManagementStatusChange: (taskId, status) => updateTaskManagementStatus(taskId, status),
           onLoadCapabilities: props.nativeConversationClient?.loadCodexConversationCapabilities,
+          onLoadSkills: props.nativeConversationClient?.loadSkills,
           onSelectNewConversationProject: selectNewConversationProject,
           onLoadNewConversationProjectGit: props.nativeConversationClient?.loadProjectGitWorkbench,
           onExecuteNewConversationProjectGit: props.nativeConversationClient ? executeNewConversationProjectGit : undefined,
@@ -2040,6 +2043,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           resolveTaskManagementStatus(taskDetailPaneTask) === activeTaskManagementStatusConfig.roles.completedStatusId ||
           resolveTaskManagementStatus(taskDetailPaneTask) === activeTaskManagementStatusConfig.roles.cancelledStatusId
         }
+        digitalEmployeeClient={props.commandClient ?? null}
         conversations={taskDetailPaneConversations}
         conversationsLoading={taskDetailPaneConversationState?.status === 'loading' && !taskDetailPaneConversationState.choicesKnown}
         conversationsError={taskDetailPaneConversationState?.status === 'error' ? taskDetailPaneConversationState.error : null}
@@ -2061,6 +2065,39 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
         onReloadConversations={(taskId) => void refreshNativeConversationChoices(taskId)}
         onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
         onOpenAttachment={props.onOpenTaskAttachment}
+        workflowClient={props.nativeConversationClient?.tasks}
+        onLoadWorkflowCapabilities={props.nativeConversationClient ? () => props.nativeConversationClient!.loadCodexTaskPushCapabilities(taskDetailPaneTask.projectId, taskDetailPaneTask.id) : undefined}
+        onStartTaskStage={
+          props.nativeConversationClient
+            ? async (stage) => {
+                if (stage.kind === 'plan' || stage.kind === 'implementation') {
+                  await openTaskModelPush(taskDetailPaneTask.id, stage);
+                  return;
+                }
+                if (stage.kind !== 'code_review') throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '当前版本尚不支持启动自定义阶段。' : 'Custom stages cannot be started in this version.');
+                const workflow = await props.nativeConversationClient!.tasks.loadTaskWorkflow(taskDetailPaneTask.id);
+                const implementation = workflow?.stages.filter((candidate) => candidate.sequence < stage.sequence && candidate.kind === 'implementation').sort((left, right) => right.sequence - left.sequence)[0];
+                const accepted = implementation?.deliverables.filter((deliverable) => deliverable.status === 'accepted').sort((left, right) => right.version - left.version)[0];
+                const sourceAttempt = accepted ? implementation?.attempts.find((attempt) => attempt.id === accepted.attemptId) : null;
+                if (!sourceAttempt?.conversationId) throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '找不到已验收实施交付物对应的真实会话。' : 'The accepted implementation deliverable has no source conversation.');
+                const result = await startNativeConversation({
+                  mode: 'create',
+                  source: 'code_review',
+                  stageId: stage.id,
+                  task: { id: taskDetailPaneTask.id, projectId: taskDetailPaneTask.projectId, title: taskDetailPaneTask.title },
+                  inheritConversationId: sourceAttempt.conversationId,
+                  content: stage.prompt || (appShellSettings.appLanguage === 'zh-CN' ? '执行当前任务的独立代码审查阶段。' : 'Run the independent code review stage for this task.'),
+                  permissionMode: 'read-only',
+                  collaborationMode: 'default',
+                  serviceTierSelection: stage.serviceTier ? { type: 'catalog', id: stage.serviceTier } : { type: 'standard' },
+                  model: stage.modelRef,
+                  ...(stage.effort ? { effort: stage.effort } : {}),
+                  agentKind: stage.agentKind,
+                });
+                if (typeof result === 'object' && result.state === 'failed') throw new Error(result.message);
+              }
+            : undefined
+        }
       />
     );
   }

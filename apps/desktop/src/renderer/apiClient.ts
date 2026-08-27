@@ -43,5 +43,6 @@ export type * from './features/remote/remoteControlContracts.js';
 export type * from './features/runtime/runtimeContracts.js';
 export type * from './features/settings/settingsContracts.js';
 export type * from './features/tasks/taskContracts.js';
+export type * from './features/digital-employees/digitalEmployeeContracts.js';
 export type * from './features/telegram/telegramContracts.js';
 export type * from './transport/dashboardClientContracts.js';

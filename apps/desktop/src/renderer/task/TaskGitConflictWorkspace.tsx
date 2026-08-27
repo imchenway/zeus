@@ -5,6 +5,9 @@ import { MagicWandIcon as MagicWand } from '@phosphor-icons/react/dist/csr/Magic
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { useDeferredValue, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { TaskIntegrationConflictPermissionMode, TaskIntegrationRecord } from '../session/sessionTypes.js';
+import { SkillSelector } from '../features/skills/SkillSelector.js';
+import { readSkillWorkflowDefault } from '../features/skills/skillWorkflowPreferences.js';
+import type { NativeConversationAppClient } from '../features/workspace/workspaceSupport.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { SyntaxHighlightedLine, useDeferredSyntaxHighlightedLines, useSyntaxHighlightedLines } from '../code/SyntaxHighlightedCode.js';
@@ -44,7 +47,9 @@ export function TaskGitConflictWorkspace(props: {
   conflict: ConflictDocument | null;
   onSelectPath: (path: string) => void;
   onDocumentChange: (document: ConflictDocument) => void;
-  onAskAi: (content: string, fingerprint: string, permissionMode: TaskIntegrationConflictPermissionMode) => Promise<void>;
+  onAskAi: (content: string, fingerprint: string, permissionMode: TaskIntegrationConflictPermissionMode, skillId?: string) => Promise<void>;
+  skillClient: Pick<NativeConversationAppClient, 'loadSkills'> | null;
+  projectId: string;
 }) {
   const document = props.conflict;
   const blocks = document?.blocks ?? [];
@@ -55,6 +60,7 @@ export function TaskGitConflictWorkspace(props: {
   const [undoDraft, setUndoDraft] = useState<ConflictDocument | null>(null);
   const [aiPermissionOpen, setAiPermissionOpen] = useState(false);
   const [aiPermissionMode, setAiPermissionMode] = useState<TaskIntegrationConflictPermissionMode>('auto');
+  const [aiSkillId, setAiSkillId] = useState('');
   const currentFileResolved = document !== null && unresolvedCount === 0;
   const selectedBlock = blocks[Math.min(selectedBlockIndex, Math.max(0, blocks.length - 1))] ?? null;
   const activeBlock = currentFileResolved ? null : selectedBlock;
@@ -126,7 +132,7 @@ export function TaskGitConflictWorkspace(props: {
   async function askAi(): Promise<void> {
     if (!document) return;
     try {
-      await props.onAskAi(serializeConflictForAi(document), document.fingerprint, aiPermissionMode);
+      await props.onAskAi(serializeConflictForAi(document), document.fingerprint, aiPermissionMode, aiSkillId || undefined);
       setAiPermissionOpen(false);
     } catch {
       // 具体失败原因由代码交付弹窗统一展示，避免在两个状态区重复报错。
@@ -158,6 +164,7 @@ export function TaskGitConflictWorkspace(props: {
 
   function openAiPermissionDialog(): void {
     setAiPermissionMode('auto');
+    setAiSkillId(readSkillWorkflowDefault('conflict_resolution'));
     setAiPermissionOpen(true);
   }
 
@@ -297,6 +304,19 @@ export function TaskGitConflictWorkspace(props: {
                   </span>
                 </label>
               </fieldset>
+              <label className="task-git-conflict-ai-skill">
+                <span>{props.zh ? '本次使用的 Skill' : 'Skill for this run'}</span>
+                <SkillSelector
+                  client={props.skillClient}
+                  projectId={props.projectId}
+                  value={aiSkillId}
+                  onChange={setAiSkillId}
+                  language={props.zh ? 'zh-CN' : 'en-US'}
+                  disabled={props.aiBusy}
+                  ariaLabel={props.zh ? '选择冲突处理 Skill' : 'Choose conflict resolution skill'}
+                />
+                <small>{props.zh ? '默认值可在侧边栏的 Skill 管理中配置；这里只影响本次处理。' : 'Configure the default in Skill management. This choice applies only to this run.'}</small>
+              </label>
               <footer>
                 <Button variant="secondary" size="regular" onClick={() => setAiPermissionOpen(false)} disabled={props.aiBusy}>
                   {props.zh ? '取消' : 'Cancel'}

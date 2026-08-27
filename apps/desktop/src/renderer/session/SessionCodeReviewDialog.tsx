@@ -9,6 +9,9 @@ import { ZeusSelect } from '../ZeusSelect.js';
 import { readConversationRuntimePreferences, writeConversationRuntimePreferences } from './conversationRuntimePreferences.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { SkillSelector } from '../features/skills/SkillSelector.js';
+import { readSkillWorkflowDefault } from '../features/skills/skillWorkflowPreferences.js';
+import type { CodexApiClient } from '../features/codex/codexApiClient.js';
 
 export interface SessionCodeReviewSelection {
   agentKind: 'codex' | 'pi';
@@ -16,6 +19,7 @@ export interface SessionCodeReviewSelection {
   effort: string;
   serviceTierSelection: NativeServiceTierSelection;
   permissionMode: NativePermissionMode;
+  skillId?: string;
 }
 
 interface SessionCodeReviewForm {
@@ -23,6 +27,7 @@ interface SessionCodeReviewForm {
   effort: string;
   serviceTierSelection: NativeServiceTierSelection;
   serviceTierDowngraded: boolean;
+  skillId: string;
 }
 
 interface SessionCodeReviewDialogProps {
@@ -33,6 +38,7 @@ interface SessionCodeReviewDialogProps {
   workspace: TaskWorkspaceSnapshot | null;
   capabilities: CodexConversationCapabilities | null;
   onLoadCapabilities?: (projectId: string) => Promise<CodexConversationCapabilities>;
+  onLoadSkills?: Pick<CodexApiClient, 'loadSkills'>['loadSkills'];
   onClose: () => void;
   onStart?: (
     selection: SessionCodeReviewSelection,
@@ -77,6 +83,7 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
             remembered?.model ?? inheritedModel,
             remembered?.effort ?? inheritedEffort,
             remembered?.serviceTier.type === 'catalog' ? remembered.serviceTier.id : remembered?.serviceTier.type === 'standard' ? null : inheritedServiceTier,
+            readSkillWorkflowDefault('code_review'),
           ),
       );
       setStatus('ready');
@@ -115,6 +122,7 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
 
   const modelPresentation = useMemo(() => presentModelOptions(capabilities?.models ?? [], form?.model ?? '', props.language), [capabilities?.models, form?.model, props.language]);
   const selectedModel = useMemo(() => resolveModelCapability(modelPresentation.models, modelPresentation.selectedId) ?? undefined, [modelPresentation.models, modelPresentation.selectedId]);
+  const skillClient = useMemo(() => (props.onLoadSkills ? { loadSkills: props.onLoadSkills } : null), [props.onLoadSkills]);
 
   useEffect(() => {
     if (!props.open || !form) return;
@@ -143,6 +151,7 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
       effort: capability?.defaultReasoningEffort ?? capability?.supportedReasoningEfforts[0] ?? '',
       serviceTierSelection: normalizedTier.selection,
       serviceTierDowngraded: normalizedTier.downgraded,
+      skillId: form.skillId,
     });
   }
 
@@ -162,6 +171,7 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
         effort: form.effort,
         serviceTierSelection: form.serviceTierSelection,
         permissionMode,
+        ...(form.skillId ? { skillId: form.skillId } : {}),
       });
       if (accepted === false) throw new Error(zh ? '代码审查会话未被接受，请查看当前错误提示。' : 'The code review conversation was not accepted. Check the current error notice.');
       if (accepted && typeof accepted === 'object' && accepted.state === 'failed') throw new Error(accepted.message);
@@ -232,6 +242,18 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
                 disabled={!form || modelPresentation.options.length === 0 || busy}
                 searchPlaceholder={zh ? '搜索供应商或模型' : 'Search providers or models'}
                 emptyLabel={zh ? '没有匹配模型' : 'No matching models'}
+              />
+            </label>
+            <label>
+              <span>Skill</span>
+              <SkillSelector
+                client={skillClient}
+                projectId={props.conversation.projectId}
+                value={form?.skillId ?? ''}
+                onChange={(skillId) => setForm((current) => (current ? { ...current, skillId } : current))}
+                language={props.language}
+                disabled={!form || busy}
+                ariaLabel={zh ? '代码审查使用的 Skill' : 'Skill for code review'}
               />
             </label>
             {selectedModel && selectedModel.supportedReasoningEfforts.length > 0 ? (
@@ -312,7 +334,7 @@ function browserStorage(): Storage | undefined {
   }
 }
 
-function resolveInitialForm(capabilities: CodexConversationCapabilities, inheritedModel: string, inheritedEffort: string, inheritedServiceTier: string | null | undefined): SessionCodeReviewForm {
+function resolveInitialForm(capabilities: CodexConversationCapabilities, inheritedModel: string, inheritedEffort: string, inheritedServiceTier: string | null | undefined, skillId: string): SessionCodeReviewForm {
   const selectedModel = findModel(capabilities, inheritedModel) ?? findModel(capabilities, capabilities.preferredModel) ?? capabilities.models.find((model) => model.available !== false);
   if (!selectedModel) throw new Error('No review model is available.');
   const effort = selectedModel.supportedReasoningEfforts.includes(inheritedEffort) ? inheritedEffort : (selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? '');
@@ -323,6 +345,7 @@ function resolveInitialForm(capabilities: CodexConversationCapabilities, inherit
     effort,
     serviceTierSelection: normalizedTier.selection,
     serviceTierDowngraded: normalizedTier.downgraded,
+    skillId,
   };
 }
 

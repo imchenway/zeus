@@ -78,6 +78,7 @@ import {
   TaskIntegrationRepository,
   type TaskManagementStatus,
   TaskRepository,
+  TaskStageRepository,
   TaskTemplateRepository,
   TaskWorkspaceRepository,
   TerminalEventRepository,
@@ -102,6 +103,7 @@ import { clearPersistedGraphCache, compactProjectGraphForRuntimeCache, persistSc
 import { applyCodeMapSettingsToGraph, parseJsonObject, resolveCodeMapScanRoot, resolveConfiguredSqliteDatabase, resolveImportedSchemaFiles } from './codeIntelligenceGraphStore.js';
 import { isUnsafeCodeMapScanRoot, UnsafeCodeMapScanRootError } from './codeMapScanBoundary.js';
 import { createCodexConfigImportService } from './codexConfigImportService.js';
+import { createZeusSkillService } from './zeusSkillService.js';
 import { type CodexLegacyImportService, createCodexLegacyImportService } from './codexLegacyImportService.js';
 import { createCodexNativeConversationCoordinator } from './codexNativeConversationCoordinator.js';
 import { CodexPublicCommandApplicationService } from './codexPublicCommandApplication.js';
@@ -498,6 +500,7 @@ export type StartTaskConversationBody = (
       inheritConversationId?: string;
       permissionMode?: ConversationPermissionMode;
       source?: 'task_push' | 'code_review' | 'conflict_resolution';
+      stageId?: string;
       model?: string;
       effort?: string;
       serviceTier?: string | null;
@@ -513,6 +516,7 @@ export type StartTaskConversationBody = (
       conflictPath?: string;
       conflictContent?: string;
       goalObjective?: string;
+      skillId?: string;
       workspace?:
         | { mode: 'direct'; confirmConcurrentWrites?: boolean }
         | {
@@ -640,6 +644,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const taskIntegrationAttempts = new TaskIntegrationAttemptRepository(db);
   const taskConflictAiOperations = new Map<string, { conversationId: string; submissionId: string; running: boolean; finalizing: boolean }>();
   const taskEvents = new TaskEventRepository(db);
+  const taskStages = new TaskStageRepository(db, () => now().toISOString());
   const taskEventFileProjectionOutbox = new TaskEventFileProjectionRepository(db);
   const taskTemplates = new TaskTemplateRepository(db);
   const settingsIdentityCatalog = {
@@ -1400,6 +1405,21 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     artifacts: artifactStore,
     now,
   });
+  const ensureSkillProviderCatalogReady = () =>
+    codexAppServerManager
+      .ensureReady({
+        commandPath: currentCodexRuntimeCommandPath(),
+        ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}),
+      })
+      .then(() => undefined);
+  const zeusSkillService = codexHome
+    ? createZeusSkillService({
+        skillsRoot: join(codexHome, 'skills'),
+        manager: codexAppServerManager,
+        ensureReady: ensureSkillProviderCatalogReady,
+        now,
+      })
+    : undefined;
   resolveCodexDispatchModelBudget = (modelId) => {
     const state = codexAppServerManager.getState();
     if (state.type !== 'ready') return null;
@@ -2743,6 +2763,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
 
   conversationOperations = createConversationApplicationOperations({
     aiRuntimeManager,
+    artifactStore,
     appendAuditLog,
     assertCodexAccountReady,
     buildTaskPushLayoutForTask,
@@ -2750,6 +2771,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     codexExternalAgentHome,
     codexNativeCoordinator,
     codexNativeEnabled,
+    zeusSkillService,
     conversationChoiceQueries,
     conversationExecution,
     conversationExecutionCoordinator,
@@ -2809,6 +2831,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     taskIntegrationAttempts,
     taskIntegrations,
     taskManagementStatusIsTerminal,
+    taskStages,
     taskConflictExecutionForConversation,
     taskConversationExecutionWorkspaceMode,
     resolveNativeConversationExecutionRoot,
@@ -3113,6 +3136,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     closeTaskResourcesForTerminalStatus,
     codexAppServerManager,
     codexConfigImportService,
+    zeusSkillDefaultCwd: codexHome ?? dataLayout.codexHome,
+    zeusSkillService,
     codexExternalAgentHome,
     codexLegacyImportService,
     codexNativeCoordinator,
@@ -3264,6 +3289,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     taskIntegrationAttempts,
     taskIntegrations,
     taskManagementStatusIsTerminal,
+    taskStages,
     taskTemplates,
     taskWorkspaces,
     tasks,
@@ -3356,6 +3382,7 @@ function readOnlyValidationSkippedCapabilities(): Array<{ id: string; reason: st
     { id: 'runtime_session_reconciliation', reason: 'persisted PID and PGID are not inspected' },
     { id: 'pi_accepted_turn_recovery', reason: 'Pi Worker not constructed; copied turn state unchanged' },
     { id: 'command_center_interrupted_run_recovery', reason: 'read-only Command Center skips directories and recovery' },
+    { id: 'digital_employee_automation_and_execution', reason: 'query-only validation exposes history but does not construct the digital employee scheduler or dispatch Provider, Git, deployment and completion actions' },
     { id: 'heavy_worker_pool_activation', reason: 'worker pool remains closed' },
     { id: 'telegram_polling_and_notification', reason: 'token and Keychain port unavailable; all Telegram admission blocked' },
     { id: 'release_update_scheduler', reason: 'update endpoints blocked and Main scheduler not constructed' },

@@ -1,0 +1,1972 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>交互图册｜ZEUS-0352 Harness Engineering</title>
+  <style data-vd-shell="1">
+:root {
+  color-scheme: light;
+  --vd-ink: #10243a;
+  --vd-muted: #5d7187;
+  --vd-blue: #176aa6;
+  --vd-blue-soft: #e8f3fb;
+  --vd-green: #237a5b;
+  --vd-green-soft: #e8f7f0;
+  --vd-amber: #9a6709;
+  --vd-amber-soft: #fff5d8;
+  --vd-red: #aa3f45;
+  --vd-red-soft: #fff0f1;
+  --vd-violet: #6958ad;
+  --vd-violet-soft: #f1effd;
+  --vd-line: #b7cce0;
+  --vd-paper: #fbfdff;
+  --vd-panel: rgba(255, 255, 255, 0.9);
+  --vd-shadow: 0 14px 38px rgba(31, 72, 108, 0.09);
+  --vd-radius: 18px;
+  --vd-grid: 24px;
+}
+
+* { box-sizing: border-box; }
+
+html { min-inline-size: 0; background: var(--vd-paper); }
+
+body {
+  margin: 0;
+  min-inline-size: 0;
+  overflow-x: clip;
+  color: var(--vd-ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(207, 230, 249, 0.62), transparent 29rem),
+    radial-gradient(circle at 88% 4%, rgba(221, 243, 234, 0.58), transparent 26rem),
+    linear-gradient(rgba(78, 118, 154, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(78, 118, 154, 0.045) 1px, transparent 1px),
+    linear-gradient(180deg, #fff 0%, #f7fbff 55%, #fbfdff 100%);
+  background-size: auto, auto, var(--vd-grid) var(--vd-grid), var(--vd-grid) var(--vd-grid), auto;
+}
+
+[data-vd-artifact="1"] {
+  width: min(1440px, calc(100vw - 32px));
+  margin-inline: auto;
+  padding: 24px 0 64px;
+}
+
+[data-vd-title-region] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 16px 24px;
+  margin-bottom: 20px;
+}
+
+[data-vd-title-copy] { min-inline-size: 0; }
+
+h1 {
+  margin: 0;
+  font-size: clamp(1.65rem, 3vw, 2.5rem);
+  line-height: 1.12;
+  letter-spacing: -0.025em;
+  overflow-wrap: anywhere;
+}
+
+[data-vd-summary] {
+  max-inline-size: 76rem;
+  margin: 10px 0 0;
+  color: #314d67;
+  font-size: 1.04rem;
+  font-weight: 650;
+  line-height: 1.65;
+}
+
+.vd-tech-label {
+  display: block;
+  margin-top: 4px;
+  color: var(--vd-muted);
+  font: 600 0.72rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.vd-product-callout,
+.vd-decision-callout {
+  padding: 14px 16px;
+  border-inline-start: 4px solid var(--vd-blue);
+  border-radius: 0 12px 12px 0;
+  background: rgba(232, 243, 251, 0.72);
+}
+
+.vd-decision-callout {
+  border-inline-start-color: var(--vd-amber);
+  background: rgba(255, 245, 216, 0.72);
+}
+
+[data-vd-evidence-state] {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 24px;
+  padding: 3px 8px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  color: var(--vd-muted);
+  background: #fff;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+[data-vd-controls] {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgba(108, 148, 184, 0.46);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 6px 18px rgba(31, 72, 108, 0.06);
+}
+
+[data-vd-zoom] {
+  min-inline-size: 44px;
+  min-block-size: 38px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--vd-muted);
+  background: transparent;
+  font: 800 0.75rem/1 inherit;
+  cursor: pointer;
+}
+
+[data-vd-zoom]:hover { color: var(--vd-blue); background: var(--vd-blue-soft); }
+[data-vd-zoom][aria-pressed="true"] { color: #fff; background: var(--vd-blue); }
+[data-vd-zoom]:focus-visible { outline: 3px solid rgba(23, 106, 166, 0.3); outline-offset: 2px; }
+
+[data-vd-content] {
+  display: grid;
+  gap: 24px;
+  min-inline-size: 0;
+}
+
+[data-vd-view] {
+  position: relative;
+  min-inline-size: 0;
+}
+
+[data-vd-view] > :first-child { margin-top: 0; }
+[data-vd-view] > :last-child { margin-bottom: 0; }
+
+[data-vd-viewport] {
+  min-inline-size: 0;
+  overflow-x: auto;
+  overflow-y: visible;
+  overscroll-behavior-inline: contain;
+  scrollbar-gutter: stable;
+}
+
+[data-vd-zoom-target] {
+  --vd-applied-zoom: 1;
+  min-inline-size: 0;
+  transform-origin: top left;
+}
+
+[data-vd-detail-trigger] { cursor: pointer; }
+
+dialog[data-vd-detail-for] {
+  width: min(34rem, calc(100vw - 32px));
+  max-height: min(74vh, 44rem);
+  padding: 0;
+  border: 1px solid rgba(108, 148, 184, 0.6);
+  border-radius: 16px;
+  color: var(--vd-ink);
+  background: #fff;
+  box-shadow: 0 24px 68px rgba(20, 52, 82, 0.22);
+}
+
+dialog[data-vd-detail-for]::backdrop { background: rgba(14, 31, 48, 0.28); backdrop-filter: blur(2px); }
+
+.vd-detail-body { padding: 20px; overflow: auto; }
+.vd-detail-body h2 { margin: 0 0 8px; font-size: 1.2rem; }
+.vd-detail-body p, .vd-detail-body li { line-height: 1.55; }
+.vd-detail-close { float: right; margin: 12px 12px 0; }
+
+.vd-visually-hidden,
+[data-vd-audit-output] {
+  position: absolute !important;
+  inline-size: 1px !important;
+  block-size: 1px !important;
+  overflow: hidden !important;
+  clip-path: inset(50%) !important;
+  white-space: nowrap !important;
+}
+
+[data-vd-static-fallback] { margin-top: 16px; }
+
+@media (max-width: 48rem) {
+  [data-vd-artifact="1"] { width: min(100vw - 20px, 48rem); padding-top: 14px; }
+  [data-vd-title-region] { grid-template-columns: 1fr; gap: 12px; }
+  [data-vd-controls] { justify-self: start; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.001ms !important; }
+}
+
+@media print {
+  body { background: #fff; }
+  [data-vd-artifact="1"] { width: 100%; padding: 0; }
+  [data-vd-controls], [data-vd-audit-output] { display: none !important; }
+  [data-vd-viewport] { overflow: visible !important; }
+  [data-vd-zoom-target] { zoom: 1 !important; transform: none !important; }
+  dialog[data-vd-detail-for] { display: block; position: static; width: auto; max-height: none; margin: 1rem 0; box-shadow: none; }
+}
+  </style>
+  <style data-vd-author-style="1">
+  :root {
+    --vd-teal: #087f8c;
+    --vd-teal-soft: #e7f7f8;
+    --vd-slate-soft: #edf3f8;
+    --vd-seq-row: 74px;
+  }
+
+  a { color: var(--vd-blue); }
+
+  .hero-meta,
+  .legend,
+  .index-nav,
+  .view-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .hero-meta { margin-top: 14px; }
+
+  .meta-pill,
+  .index-nav a,
+  .owner-chip,
+  .sequence-phase {
+    display: inline-flex;
+    align-items: center;
+    min-block-size: 28px;
+    padding: 4px 10px;
+    border: 1px solid rgba(82, 127, 166, 0.28);
+    border-radius: 999px;
+    color: #36536e;
+    background: rgba(255, 255, 255, 0.76);
+    font-size: 0.76rem;
+    font-weight: 800;
+  }
+
+  .legend {
+    justify-content: space-between;
+    padding: 14px 16px;
+    border: 1px solid rgba(108, 148, 184, 0.34);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.78);
+  }
+
+  .legend-items { display: flex; flex-wrap: wrap; gap: 8px; }
+
+  .status-observed { color: var(--vd-green); background: var(--vd-green-soft); }
+  .status-proposed { color: var(--vd-blue); background: var(--vd-blue-soft); }
+  .status-gap { color: var(--vd-amber); background: var(--vd-amber-soft); }
+  .status-unknown { color: var(--vd-red); background: var(--vd-red-soft); }
+
+  .index-nav {
+    padding: 14px;
+    border-radius: 16px;
+    background: rgba(232, 243, 251, 0.58);
+  }
+
+  .index-nav strong { margin-right: 4px; }
+  .index-nav a { text-decoration: none; background: #fff; }
+  .index-nav a:hover { border-color: var(--vd-blue); }
+
+  .fact-strip {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .fact-card {
+    min-inline-size: 0;
+    padding: 16px;
+    border: 1px solid rgba(108, 148, 184, 0.32);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.86);
+    box-shadow: 0 8px 22px rgba(31, 72, 108, 0.05);
+  }
+
+  .fact-card h2,
+  .fact-card h3 { margin: 8px 0 6px; font-size: 1rem; }
+  .fact-card p { margin: 0; color: #4d667d; line-height: 1.55; font-size: 0.86rem; }
+
+  .diagram-panel {
+    padding: 22px;
+    border: 1px solid rgba(108, 148, 184, 0.38);
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: var(--vd-shadow);
+  }
+
+  .diagram-panel.primary {
+    border-color: rgba(23, 106, 166, 0.48);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(240, 248, 255, 0.93));
+  }
+
+  .view-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px 24px;
+    align-items: start;
+    margin-bottom: 18px;
+  }
+
+  .view-head h2 {
+    margin: 6px 0 0;
+    font-size: clamp(1.18rem, 2vw, 1.55rem);
+    line-height: 1.25;
+  }
+
+  .view-head p {
+    max-inline-size: 58rem;
+    margin: 8px 0 0;
+    color: var(--vd-muted);
+    line-height: 1.55;
+  }
+
+  .view-number {
+    inline-size: 42px;
+    block-size: 42px;
+    display: grid;
+    place-items: center;
+    border-radius: 12px;
+    color: #fff;
+    background: linear-gradient(135deg, var(--vd-blue), var(--vd-teal));
+    font-weight: 900;
+    box-shadow: 0 8px 18px rgba(23, 106, 166, 0.2);
+  }
+
+  .overview-canvas {
+    min-inline-size: 1420px;
+    padding: 20px;
+    border-radius: 18px;
+    background:
+      linear-gradient(rgba(78, 118, 154, 0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(78, 118, 154, 0.045) 1px, transparent 1px),
+      rgba(251, 253, 255, 0.96);
+    background-size: 24px 24px;
+  }
+
+  .flow-track {
+    display: grid;
+    grid-template-columns: minmax(150px, 1fr) 62px minmax(150px, 1fr) 62px minmax(160px, 1fr) 62px minmax(160px, 1fr) 62px minmax(160px, 1fr) 62px minmax(162px, 1fr) 62px minmax(162px, 1fr);
+    align-items: stretch;
+    gap: 0;
+    padding-inline: 2px;
+  }
+
+  .flow-node {
+    min-inline-size: 0;
+    min-block-size: 172px;
+    padding: 16px;
+    border: 1.5px solid var(--node-color, var(--vd-line));
+    border-radius: 16px;
+    background: var(--node-bg, #fff);
+    box-shadow: 0 8px 18px rgba(31, 72, 108, 0.06);
+  }
+
+  .flow-node h3 { margin: 10px 0 8px; font-size: 1rem; line-height: 1.28; }
+  .flow-node p { margin: 0; color: #4d667d; font-size: 0.8rem; line-height: 1.5; }
+  .flow-node .outcome { margin-top: 10px; color: var(--node-color, var(--vd-blue)); font-weight: 850; }
+
+  .node-user { --node-color: #9a6709; --node-bg: var(--vd-amber-soft); }
+  .node-work { --node-color: var(--vd-blue); --node-bg: var(--vd-blue-soft); }
+  .node-runtime { --node-color: var(--vd-violet); --node-bg: var(--vd-violet-soft); }
+  .node-quality { --node-color: var(--vd-teal); --node-bg: var(--vd-teal-soft); }
+  .node-delivery { --node-color: var(--vd-green); --node-bg: var(--vd-green-soft); }
+  .node-error { --node-color: var(--vd-red); --node-bg: var(--vd-red-soft); }
+
+  .flow-edge {
+    position: relative;
+    display: grid;
+    place-items: center;
+    min-inline-size: 0;
+    color: var(--vd-blue);
+    font-size: 1.45rem;
+    font-weight: 900;
+  }
+
+  .flow-edge span {
+    position: absolute;
+    inset-block-start: 36px;
+    inline-size: 58px;
+    color: var(--vd-muted);
+    font-size: 0.64rem;
+    line-height: 1.25;
+    text-align: center;
+  }
+
+  .flow-edge-svg,
+  .mini-edge-svg {
+    inline-size: 100%;
+    block-size: 100%;
+    overflow: visible;
+  }
+
+  .flow-edge-line,
+  .mini-edge-line {
+    fill: none;
+    stroke: var(--vd-blue);
+    stroke-width: 2.5;
+    vector-effect: non-scaling-stroke;
+    marker-end: url(#vd-arrow-blue);
+  }
+
+  .mini-edge-line {
+    stroke: var(--vd-red);
+    stroke-width: 2;
+    marker-end: url(#vd-arrow-red);
+  }
+
+  .critical-rules {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 18px;
+  }
+
+  .critical-rule {
+    padding: 14px 16px;
+    border-inline-start: 4px solid var(--rule-color, var(--vd-blue));
+    border-radius: 0 14px 14px 0;
+    background: var(--rule-bg, var(--vd-blue-soft));
+  }
+
+  .critical-rule strong { display: block; margin-bottom: 4px; }
+  .critical-rule p { margin: 0; color: #415d76; font-size: 0.82rem; line-height: 1.5; }
+
+  .exception-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin-top: 18px;
+  }
+
+  .exception-path {
+    padding: 14px;
+    border: 1px solid rgba(170, 63, 69, 0.25);
+    border-radius: 16px;
+    background: rgba(255, 240, 241, 0.54);
+  }
+
+  .exception-path h3 { margin: 0 0 10px; font-size: 0.92rem; }
+
+  .mini-flow {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 38px minmax(0, 1fr) 38px minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .mini-node {
+    min-inline-size: 0;
+    min-block-size: 82px;
+    padding: 10px;
+    border: 1px solid rgba(170, 63, 69, 0.3);
+    border-radius: 12px;
+    background: #fff;
+    color: #60434a;
+    font-size: 0.76rem;
+    line-height: 1.42;
+  }
+
+  .mini-edge {
+    display: grid;
+    place-items: center;
+    color: var(--vd-red);
+    font-size: 1.15rem;
+    font-weight: 900;
+  }
+
+  .evidence-button {
+    margin-top: 10px;
+    padding: 6px 9px;
+    border: 1px solid rgba(23, 106, 166, 0.36);
+    border-radius: 9px;
+    color: var(--vd-blue);
+    background: rgba(255, 255, 255, 0.8);
+    font: 800 0.72rem/1.2 inherit;
+  }
+
+  .sequence {
+    min-inline-size: var(--seq-width, 1120px);
+    padding: 18px 22px 24px;
+    border: 1px solid rgba(108, 148, 184, 0.24);
+    border-radius: 16px;
+    background:
+      linear-gradient(rgba(78, 118, 154, 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(78, 118, 154, 0.04) 1px, transparent 1px),
+      #fcfeff;
+    background-size: 24px 24px;
+  }
+
+  .participant-row {
+    display: grid;
+    grid-template-columns: repeat(var(--participants), minmax(0, 1fr));
+    gap: 18px;
+    padding-inline: 10px;
+  }
+
+  .participant {
+    min-inline-size: 0;
+    min-block-size: 76px;
+    padding: 12px 10px;
+    border: 1.5px solid var(--participant-color, var(--vd-blue));
+    border-radius: 13px;
+    color: #17334e;
+    background: var(--participant-bg, var(--vd-blue-soft));
+    text-align: center;
+    box-shadow: 0 6px 14px rgba(31, 72, 108, 0.06);
+  }
+
+  .participant strong { display: block; font-size: 0.86rem; line-height: 1.25; }
+  .participant .vd-tech-label { font-size: 0.65rem; }
+  .p-user { --participant-color: var(--vd-amber); --participant-bg: var(--vd-amber-soft); }
+  .p-work { --participant-color: var(--vd-blue); --participant-bg: var(--vd-blue-soft); }
+  .p-runtime { --participant-color: var(--vd-violet); --participant-bg: var(--vd-violet-soft); }
+  .p-asset { --participant-color: var(--vd-teal); --participant-bg: var(--vd-teal-soft); }
+  .p-external { --participant-color: var(--vd-green); --participant-bg: var(--vd-green-soft); }
+  .p-risk { --participant-color: var(--vd-red); --participant-bg: var(--vd-red-soft); }
+
+  .sequence-body {
+    position: relative;
+    block-size: calc(var(--rows) * var(--vd-seq-row) + 46px);
+    margin-top: 2px;
+  }
+
+  .lifeline {
+    position: absolute;
+    inset-block: 0 12px;
+    inset-inline-start: var(--x);
+    border-inline-start: 2px dashed rgba(93, 113, 135, 0.38);
+  }
+
+  .seq-message {
+    --message-color: var(--vd-blue);
+    --caption-bg: var(--vd-blue-soft);
+    position: absolute;
+    inset-block-start: var(--top);
+    inset-inline-start: var(--left);
+    inline-size: var(--width);
+    block-size: 32px;
+    border-block-start: 0;
+    color: var(--message-color);
+    pointer-events: none;
+  }
+
+  .seq-message.return { --message-color: var(--vd-green); --caption-bg: var(--vd-green-soft); }
+
+  .seq-message.exception {
+    --message-color: var(--vd-red);
+    --caption-bg: var(--vd-red-soft);
+  }
+
+  .seq-message.decision {
+    --message-color: var(--vd-amber);
+    --caption-bg: var(--vd-amber-soft);
+  }
+
+  .seq-caption {
+    position: absolute;
+    inset-block-start: -30px;
+    inset-inline-start: 50%;
+    z-index: 2;
+    max-inline-size: min(32rem, 88%);
+    min-block-size: 24px;
+    padding: 4px 9px;
+    border: 1px solid color-mix(in srgb, var(--message-color) 34%, transparent);
+    border-radius: 8px;
+    color: #284861;
+    background: var(--caption-bg);
+    font-size: 0.74rem;
+    font-weight: 800;
+    line-height: 1.3;
+    text-align: center;
+    white-space: normal;
+    transform: translateX(-50%);
+  }
+
+  .sequence-edges {
+    position: absolute;
+    inset: 0;
+    inline-size: 100%;
+    block-size: 100%;
+    overflow: visible;
+    pointer-events: none;
+  }
+
+  .seq-edge-call,
+  .seq-edge-return,
+  .seq-edge-error {
+    fill: none;
+    stroke: var(--vd-blue);
+    stroke-width: 2.4;
+    vector-effect: non-scaling-stroke;
+    marker-end: url(#vd-arrow-blue);
+  }
+
+  .seq-edge-return {
+    stroke: var(--vd-green);
+    stroke-dasharray: 7 5;
+    marker-end: url(#vd-arrow-green);
+  }
+
+  .seq-edge-error {
+    stroke: var(--vd-red);
+    stroke-dasharray: 5 5;
+    marker-end: url(#vd-arrow-red);
+  }
+
+  .seq-anchor {
+    stroke-width: 1.5;
+    vector-effect: non-scaling-stroke;
+  }
+  .seq-anchor.call { fill: var(--vd-blue-soft); stroke: var(--vd-blue); }
+  .seq-anchor.return { fill: var(--vd-green-soft); stroke: var(--vd-green); }
+  .seq-anchor.error { fill: var(--vd-red-soft); stroke: var(--vd-red); }
+
+  .primary-evidence-strip {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  .primary-evidence {
+    padding: 12px 14px;
+    border: 1px solid rgba(108, 148, 184, 0.3);
+    border-radius: 13px;
+    background: rgba(255, 255, 255, 0.82);
+    color: #425d75;
+    font-size: 0.82rem;
+    line-height: 1.5;
+  }
+
+  .primary-evidence strong { color: var(--vd-ink); }
+
+  .sequence-note {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px 20px;
+    align-items: center;
+    margin-top: 14px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    color: #405c75;
+    background: var(--vd-slate-soft);
+    font-size: 0.82rem;
+    line-height: 1.5;
+  }
+
+  .sequence-note strong { color: var(--vd-ink); }
+
+  .gap-list {
+    margin: 10px 0 0;
+    padding-left: 1.2rem;
+  }
+  .gap-list li { margin: 6px 0; color: #4d667d; line-height: 1.5; }
+
+  .footer-note {
+    padding: 16px;
+    border-radius: 16px;
+    color: #425d75;
+    background: rgba(232, 243, 251, 0.68);
+    line-height: 1.6;
+  }
+
+  @media (max-width: 64rem) {
+    .fact-strip,
+    .critical-rules,
+    .exception-grid,
+    .primary-evidence-strip { grid-template-columns: 1fr; }
+  }
+
+  @media (max-width: 48rem) {
+    .diagram-panel { padding: 16px 12px; }
+    .view-head { grid-template-columns: 1fr auto; }
+    .view-head p { grid-column: 1 / -1; }
+    .legend { align-items: flex-start; }
+    .sequence-note { grid-template-columns: 1fr; }
+  }
+  </style>
+</head>
+<body>
+  <div data-vd-artifact="1">
+    <header data-vd-title-region>
+      <div data-vd-title-copy>
+        <h1>交互图册｜ZEUS-0352 Harness Engineering</h1>
+        <p id="product-summary" data-vd-summary>这套方案把数字员工、Skill、阶段交付物、代码审查和自动交付收敛为一条任务级闭环：Zeus 决定谁负责、当前阶段、可用能力、验收和交付；Codex/Pi 只执行单次 Agent loop。当前分支已经具备这些能力的主体，但数字员工仍绕过阶段工作流，且会话完成会过早触发交付；图中以“当前已确认 / 拟议整合 / 当前断点”明确区分。</p>
+        <div class="hero-meta" aria-label="图册范围">
+          <span class="meta-pill">10 张交互图</span>
+          <span class="meta-pill">产品 → 实施 → 审查 → 交付</span>
+          <span class="meta-pill">异常与恢复可追溯</span>
+          <span class="meta-pill">方案状态：拟议，尚未全部实现</span>
+        </div>
+      </div>
+      <div data-vd-controls role="group" aria-label="图形缩放" data-vd-zoom-request="fit">
+        <button type="button" data-vd-zoom="0.75" aria-pressed="false">75%</button>
+        <button type="button" data-vd-zoom="0.9" aria-pressed="false">90%</button>
+        <button type="button" data-vd-zoom="1" aria-pressed="false">100%</button>
+        <button type="button" data-vd-zoom="fit" aria-pressed="true">适配</button>
+      </div>
+    </header>
+    <svg width="0" height="0" aria-hidden="true" focusable="false" style="position:absolute">
+      <defs>
+        <marker id="vd-arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#176aa6"></path></marker>
+        <marker id="vd-arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#237a5b"></path></marker>
+        <marker id="vd-arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#aa3f45"></path></marker>
+      </defs>
+    </svg>
+    <main data-vd-content>
+      <section class="legend" aria-label="证据状态与阅读说明">
+        <div>
+          <strong>阅读说明</strong>
+          <span class="vd-tech-label">先看 00 总闭环，再按 01—09 查看细节时序</span>
+        </div>
+        <div class="legend-items">
+          <span data-vd-evidence-state="observed" class="status-observed">当前已确认</span>
+          <span data-vd-evidence-state="proposed" class="status-proposed">拟议整合</span>
+          <span data-vd-evidence-state="unresolved" class="status-gap">当前断点</span>
+          <span data-vd-evidence-state="unresolved" class="status-unknown">结果未知 / 阻塞</span>
+        </div>
+      </section>
+
+      <section class="fact-strip" aria-label="一眼看懂当前与目标">
+        <article id="fact-current-capabilities" class="fact-card">
+          <span data-vd-evidence-state="observed" class="status-observed">当前已确认</span>
+          <h2>四类能力已经存在</h2>
+          <p>项目数字员工、真实 Skill Catalog/Runtime 投影、任务阶段与交付物、独立只读代码审查均已在当前分支中存在。</p>
+        </article>
+        <article class="fact-card" id="gap-current-orchestrator">
+          <span data-vd-evidence-state="unresolved" class="status-gap">当前断点</span>
+          <h2>还不是同一条执行链</h2>
+          <p>数字员工直接发起普通任务会话；会话完成后直接进入交付，未等待阶段交付物验收。7 个阶段写接口也尚未进入统一命令信封。</p>
+          <button type="button" class="evidence-button" data-vd-detail-trigger="detail-current-gaps">查看代码证据</button>
+        </article>
+        <article id="fact-target-closed-loop" class="fact-card">
+          <span data-vd-evidence-state="proposed" class="status-proposed">拟议整合</span>
+          <h2>一条 Harness 权威链</h2>
+          <p>工作执行跨越任务工作流；每个阶段冻结员工、Skill、能力、上下文和会话；验收后才推进，最终检查点后才执行外部动作。</p>
+        </article>
+      </section>
+
+      <nav class="index-nav" aria-label="交互图索引">
+        <strong>跳转：</strong>
+        <a href="#view-overview">00 总闭环</a>
+        <a href="#view-manual">01 人工指派</a>
+        <a href="#view-automation">02 自动找活</a>
+        <a href="#view-resolution">03 员工 / Skill / 能力</a>
+        <a href="#view-context">04 上下文与执行</a>
+        <a href="#view-deliverable">05 交付物与验收</a>
+        <a href="#view-review">06 代码审查</a>
+        <a href="#view-delivery">07 最终交付</a>
+        <a href="#view-recovery">08 结果未知恢复</a>
+        <a href="#view-configuration">09 配置与自动化</a>
+      </nav>
+
+      <section id="view-overview" class="diagram-panel primary" data-vd-view="overview" data-vd-family="business-flow" data-vd-view-role="primary">
+        <header class="view-head">
+          <div>
+            <div class="view-meta"><span data-vd-evidence-state="proposed" class="status-proposed">拟议整合</span><span class="owner-chip">主读图</span></div>
+            <h2 data-vd-view-title>业务流程｜从工作进入到安全交付的完整闭环</h2>
+            <p>主线只在“交付物已验收”后进入下一阶段，只在“工作流完成且检查点放行”后执行提交、推送、合入、部署和结束任务。</p>
+          </div>
+          <div class="view-number" aria-hidden="true">00</div>
+        </header>
+
+        <div class="primary-evidence-strip">
+          <article id="critical-current-gap" class="primary-evidence" data-vd-critical>
+            <span data-vd-evidence-state="observed" class="status-gap">当前断点</span>
+            <strong> 数字员工尚未进入阶段链：</strong>当前仍以普通任务会话执行，并在会话完成后直接进入交付；阶段交付物验收没有成为它的推进门。
+          </article>
+          <article id="critical-review-safety" class="primary-evidence" data-vd-critical>
+            <span data-vd-evidence-state="observed" class="status-observed">可复用基础</span>
+            <strong> 代码审查已有独立只读边界：</strong>当前已校验精确实施来源和只读工作区；目标只需补齐需求、变更、验证三份正式清单。
+          </article>
+        </div>
+
+        <div data-vd-viewport>
+          <div class="overview-canvas" data-vd-zoom-target>
+            <div id="group-main-business-path" class="flow-track" data-vd-group="main-business-path">
+              <article id="flow-source" class="flow-node node-user" data-vd-node="start" data-vd-critical>
+                <span class="owner-chip">用户 / 自动化</span>
+                <h3>工作进入</h3>
+                <p>人工指派、任务池认领、只读探索、定时或项目事件只产生候选工作。</p>
+                <p class="outcome">开始：有明确任务与来源身份</p>
+              </article>
+              <div class="flow-edge"><svg class="flow-edge-svg" viewBox="0 0 62 172" preserveAspectRatio="none"><line id="edge-source-execution" class="flow-edge-line" x1="0" y1="86" x2="62" y2="86" data-vd-edge="command" data-from="flow-source" data-to="flow-execution"></line></svg><span id="label-source-execution" data-vd-edge-label="edge-source-execution">稳定来源身份</span></div>
+
+              <article id="flow-execution" class="flow-node node-work" data-vd-node="work-execution">
+                <span class="owner-chip">工作管理</span>
+                <h3>建立工作执行</h3>
+                <p>冻结任务默认员工、触发来源、预算、自动化和逐动作授权，成为跨阶段父执行。</p>
+                <p class="outcome">责任与授权有据可查</p>
+              </article>
+              <div class="flow-edge"><svg class="flow-edge-svg" viewBox="0 0 62 172" preserveAspectRatio="none"><line id="edge-execution-resolve" class="flow-edge-line" x1="0" y1="86" x2="62" y2="86" data-vd-edge="resolve" data-from="flow-execution" data-to="flow-resolve"></line></svg><span id="label-execution-resolve" data-vd-edge-label="edge-execution-resolve">读取当前阶段</span></div>
+
+              <article id="flow-resolve" class="flow-node node-work" data-vd-node="activity" data-vd-critical>
+                <span class="owner-chip">阶段控制面</span>
+                <h3>解析员工、Skill 与能力</h3>
+                <p>阶段员工优先、任务默认兜底；Skill 按覆盖/继承/禁用解析；能力取最小交集。</p>
+                <p class="outcome">冻结阶段尝试快照</p>
+                <button type="button" class="evidence-button" data-vd-detail-trigger="detail-resolution">查看解析规则</button>
+              </article>
+              <div class="flow-edge"><svg class="flow-edge-svg" viewBox="0 0 62 172" preserveAspectRatio="none"><line id="edge-resolve-runtime" class="flow-edge-line" x1="0" y1="86" x2="62" y2="86" data-vd-edge="dispatch" data-from="flow-resolve" data-to="flow-runtime"></line></svg><span id="label-resolve-runtime" data-vd-edge-label="edge-resolve-runtime">上下文清单 + 命令</span></div>
+
+              <article id="flow-runtime" class="flow-node node-runtime" data-vd-node="agent-loop">
+                <span class="owner-chip">Codex / Pi Runtime</span>
+                <h3>执行 Agent loop</h3>
+                <p>Runtime 只看能力清单允许的工具，并按原生协议投影一个 Skill；不拥有阶段推进权。</p>
+                <p class="outcome">运行完成 ≠ 业务验收</p>
+              </article>
+              <div class="flow-edge"><svg class="flow-edge-svg" viewBox="0 0 62 172" preserveAspectRatio="none"><line id="edge-runtime-artifact" class="flow-edge-line" x1="0" y1="86" x2="62" y2="86" data-vd-edge="candidate" data-from="flow-runtime" data-to="flow-artifact"></line></svg><span id="label-runtime-artifact" data-vd-edge-label="edge-runtime-artifact">最终输出</span></div>
+
+              <article id="flow-artifact" class="flow-node node-quality" data-vd-node="deliverable">
+                <span class="owner-chip">工作管理 + 资产</span>
+                <h3>沉淀阶段交付物</h3>
+                <p>校验输出契约，保存完整资产、摘要、哈希和来源尝试，形成可验收版本。</p>
+                <p class="outcome">正式结果不再是聊天末条回复</p>
+              </article>
+              <div class="flow-edge"><svg class="flow-edge-svg" viewBox="0 0 62 172" preserveAspectRatio="none"><line id="edge-artifact-gate" class="flow-edge-line" x1="0" y1="86" x2="62" y2="86" data-vd-edge="approval" data-from="flow-artifact" data-to="flow-gate"></line></svg><span id="label-artifact-gate" data-vd-edge-label="edge-artifact-gate">人工 / 策略验收</span></div>
+
+              <article id="flow-gate" class="flow-node node-quality" data-vd-node="activity" data-vd-critical>
+                <span class="owner-chip">验收 / 代码审查</span>
+                <h3>是否满足阶段契约？</h3>
+                <p>人工、确定性门禁或独立审查决定接受、请求修改或阻塞；审查固定独立只读。</p>
+                <p class="outcome">接受才推进；修改则返工</p>
+              </article>
+              <div class="flow-edge"><svg class="flow-edge-svg" viewBox="0 0 62 172" preserveAspectRatio="none"><line id="edge-gate-delivery" class="flow-edge-line" x1="0" y1="86" x2="62" y2="86" data-vd-edge="authorized-handoff" data-from="flow-gate" data-to="flow-delivery"></line></svg><span id="label-gate-delivery" data-vd-edge-label="edge-gate-delivery">全部阶段已接受</span></div>
+
+              <article id="flow-delivery" class="flow-node node-delivery" data-vd-node="end" data-vd-critical>
+                <span class="owner-chip">交付控制器</span>
+                <h3>逐动作安全交付</h3>
+                <p>检查点冻结目标、验收和授权，再按配置执行提交、推送、合入、部署和结束任务。</p>
+                <p class="outcome">结束：已交付或明确无需外部动作</p>
+                <button type="button" class="evidence-button" data-vd-detail-trigger="detail-delivery">查看交付边界</button>
+              </article>
+            </div>
+
+            <div class="critical-rules">
+              <article id="critical-role-rule" class="critical-rule" data-vd-critical style="--rule-color: var(--vd-blue); --rule-bg: var(--vd-blue-soft);">
+                <strong>谁负责、怎么做、能做什么分开</strong>
+                <p>数字员工是责任主体；阶段是本次契约；Skill 是执行说明；能力清单才是真实工具与副作用边界。</p>
+              </article>
+              <article id="critical-completion-rule" class="critical-rule" data-vd-critical style="--rule-color: var(--vd-teal); --rule-bg: var(--vd-teal-soft);">
+                <strong>会话完成只产生候选</strong>
+                <p>交付物提交并验收后才进入下一阶段；整个工作流接受后才创建最终交付检查点。</p>
+              </article>
+              <article id="critical-unknown-rule" class="critical-rule" data-vd-critical style="--rule-color: var(--vd-red); --rule-bg: var(--vd-red-soft);">
+                <strong>结果未知立即停止扩散</strong>
+                <p>会话、Git 或部署写出后未知时不自动重发；先对账原生身份或目标系统事实，再决定恢复。</p>
+              </article>
+            </div>
+
+            <div id="group-exception-and-recovery-paths" class="exception-grid" data-vd-group="exception-and-recovery-paths">
+              <article class="exception-path">
+                <h3>未通过：保留证据并返工，不覆盖历史</h3>
+                <div class="mini-flow">
+                  <div id="flow-changes" class="mini-node" data-vd-node="event" data-vd-critical>代码审查或验收<br><strong>请求修改</strong></div>
+                  <div class="mini-edge"><svg class="mini-edge-svg" viewBox="0 0 38 82" preserveAspectRatio="none"><line id="edge-changes-reopen" class="mini-edge-line" x1="0" y1="41" x2="38" y2="41" data-vd-edge="changes-requested" data-from="flow-changes" data-to="flow-reopen"></line></svg></div>
+                  <div id="flow-reopen" class="mini-node" data-vd-node="activity" data-vd-critical>重开上游阶段<br><strong>创建新尝试</strong></div>
+                  <div class="mini-edge"><svg class="mini-edge-svg" viewBox="0 0 38 82" preserveAspectRatio="none"><line id="edge-reopen-resolve" class="mini-edge-line" x1="0" y1="41" x2="38" y2="41" data-vd-edge="rejoin" data-from="flow-reopen" data-to="flow-return-stage"></line></svg></div>
+                  <div id="flow-return-stage" class="mini-node" data-vd-node="merge">回到员工 / Skill / 能力解析，旧交付物标记为被替代</div>
+                </div>
+              </article>
+              <article class="exception-path">
+                <h3>结果未知：阻塞、对账、追加结论</h3>
+                <div class="mini-flow">
+                  <div id="flow-unknown" class="mini-node" data-vd-node="event">Provider / Git / 部署<br><strong>写出后未知</strong></div>
+                  <div class="mini-edge"><svg class="mini-edge-svg" viewBox="0 0 38 82" preserveAspectRatio="none"><line id="edge-unknown-block" class="mini-edge-line" x1="0" y1="41" x2="38" y2="41" data-vd-edge="fail-closed" data-from="flow-unknown" data-to="flow-blocked"></line></svg></div>
+                  <div id="flow-blocked" class="mini-node" data-vd-node="activity" data-vd-critical>停止后续动作<br><strong>保持 outcome_unknown</strong></div>
+                  <div class="mini-edge"><svg class="mini-edge-svg" viewBox="0 0 38 82" preserveAspectRatio="none"><line id="edge-block-reconcile" class="mini-edge-line" x1="0" y1="41" x2="38" y2="41" data-vd-edge="reconcile" data-from="flow-blocked" data-to="flow-reconcile"></line></svg></div>
+                  <div id="flow-reconcile" class="mini-node" data-vd-node="end" data-vd-critical>查询原生 / 目标证据<br><strong>确认后再恢复</strong></div>
+                </div>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-manual" class="diagram-panel" data-vd-view="manual-assignment" data-vd-family="code-sequence" data-vd-view-role="supporting">
+        <header class="view-head">
+          <div>
+            <div class="view-meta"><span data-vd-evidence-state="proposed" class="status-proposed">拟议整合</span><span class="sequence-phase">人工入口</span></div>
+            <h2 data-vd-view-title>交互时序｜人工指派任务并启动首个阶段</h2>
+            <p>用户只指派责任和必要覆盖项；服务端解析并冻结阶段尝试，Renderer 不直接建立 Provider 会话。</p>
+          </div>
+          <div class="view-number" aria-hidden="true">01</div>
+        </header>
+        <div data-vd-viewport>
+          <div class="sequence" data-vd-zoom-target style="--participants: 5; --rows: 7; --seq-width: 1120px;">
+            <div class="participant-row">
+              <div id="m-user" class="participant p-user" data-vd-node="participant"><strong>用户</strong><span class="vd-tech-label">任务负责人</span></div>
+              <div id="m-ui" class="participant p-work" data-vd-node="participant"><strong>任务详情</strong><span class="vd-tech-label">Renderer</span></div>
+              <div id="m-work" class="participant p-work" data-vd-node="participant"><strong>工作管理</strong><span class="vd-tech-label">Work Management</span></div>
+              <div id="m-conv" class="participant p-asset" data-vd-node="participant"><strong>会话编排</strong><span class="vd-tech-label">Conversation Orchestration</span></div>
+              <div id="m-runtime" class="participant p-runtime" data-vd-node="participant"><strong>Agent Runtime</strong><span class="vd-tech-label">Codex / Pi</span></div>
+            </div>
+            <div class="sequence-body">
+              <svg class="sequence-edges" viewBox="0 0 1000 564" preserveAspectRatio="none" aria-hidden="true">
+                <circle id="m-msg-1-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="m-user" cx="100.00" cy="52" r="4.5"></circle>
+                <circle id="m-msg-1-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="m-ui" cx="300.00" cy="52" r="4.5"></circle>
+                <line id="m-msg-1" class="seq-edge-call" x1="100.00" y1="52" x2="300.00" y2="52" data-vd-edge="user-action" data-from="m-msg-1-from-anchor" data-to="m-msg-1-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="m-msg-2-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="m-ui" cx="300.00" cy="126" r="4.5"></circle>
+                <circle id="m-msg-2-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="m-work" cx="500.00" cy="126" r="4.5"></circle>
+                <line id="m-msg-2" class="seq-edge-call" x1="300.00" y1="126" x2="500.00" y2="126" data-vd-edge="command" data-from="m-msg-2-from-anchor" data-to="m-msg-2-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="m-msg-3-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="m-work" cx="500.00" cy="200" r="4.5"></circle>
+                <circle id="m-msg-3-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="m-conv" cx="700.00" cy="200" r="4.5"></circle>
+                <line id="m-msg-3" class="seq-edge-call" x1="500.00" y1="200" x2="700.00" y2="200" data-vd-edge="dispatch" data-from="m-msg-3-from-anchor" data-to="m-msg-3-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="m-msg-4-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="m-conv" cx="700.00" cy="274" r="4.5"></circle>
+                <circle id="m-msg-4-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="m-runtime" cx="900.00" cy="274" r="4.5"></circle>
+                <line id="m-msg-4" class="seq-edge-call" x1="700.00" y1="274" x2="900.00" y2="274" data-vd-edge="native-dispatch" data-from="m-msg-4-from-anchor" data-to="m-msg-4-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="m-msg-5-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="m-runtime" cx="900.00" cy="348" r="4.5"></circle>
+                <circle id="m-msg-5-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="m-conv" cx="700.00" cy="348" r="4.5"></circle>
+                <line id="m-msg-5" class="seq-edge-return" x1="900.00" y1="348" x2="700.00" y2="348" data-vd-edge="acceptance-receipt" data-from="m-msg-5-from-anchor" data-to="m-msg-5-to-anchor" data-vd-message-kind="return"></line>
+                <circle id="m-msg-6-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="m-conv" cx="700.00" cy="422" r="4.5"></circle>
+                <circle id="m-msg-6-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="m-work" cx="500.00" cy="422" r="4.5"></circle>
+                <line id="m-msg-6" class="seq-edge-return" x1="700.00" y1="422" x2="500.00" y2="422" data-vd-edge="bind-attempt" data-from="m-msg-6-from-anchor" data-to="m-msg-6-to-anchor" data-vd-message-kind="return"></line>
+                <circle id="m-msg-7-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="m-work" cx="500.00" cy="496" r="4.5"></circle>
+                <circle id="m-msg-7-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="m-ui" cx="300.00" cy="496" r="4.5"></circle>
+                <line id="m-msg-7" class="seq-edge-return" x1="500.00" y1="496" x2="300.00" y2="496" data-vd-edge="projection" data-from="m-msg-7-from-anchor" data-to="m-msg-7-to-anchor" data-vd-message-kind="return"></line>
+              </svg>
+              <div class="lifeline" style="--x:10%" data-vd-lifeline-for="m-user"></div><div class="lifeline" style="--x:30%" data-vd-lifeline-for="m-ui"></div><div class="lifeline" style="--x:50%" data-vd-lifeline-for="m-work"></div><div class="lifeline" style="--x:70%" data-vd-lifeline-for="m-conv"></div><div class="lifeline" style="--x:90%" data-vd-lifeline-for="m-runtime"></div>
+              <div class="seq-message" style="--left:10%;--width:20%;--top:52px" data-vd-caption-for="m-msg-1"><span id="m-label-1" class="seq-caption" data-vd-edge-label="m-msg-1">1. 指派任务默认员工；可覆盖当前阶段员工</span></div>
+              <div class="seq-message" style="--left:30%;--width:20%;--top:126px" data-vd-caption-for="m-msg-2"><span id="m-label-2" class="seq-caption" data-vd-edge-label="m-msg-2">2. 提交 work_execution.create / stage.assign</span></div>
+              <div class="seq-message" style="--left:50%;--width:20%;--top:200px" data-vd-caption-for="m-msg-3"><span id="m-label-3" class="seq-caption" data-vd-edge-label="m-msg-3">3. 冻结尝试并请求建立阶段会话</span></div>
+              <div class="seq-message" style="--left:70%;--width:20%;--top:274px" data-vd-caption-for="m-msg-4"><span id="m-label-4" class="seq-caption" data-vd-edge-label="m-msg-4">4. 原生 Skill 投影 + 能力限定 + 首发提交</span></div>
+              <div class="seq-message return reverse" style="--left:70%;--width:20%;--top:348px" data-vd-caption-for="m-msg-5"><span id="m-label-5" class="seq-caption" data-vd-edge-label="m-msg-5">5. 返回耐久会话 / 提交 / 原生身份</span></div>
+              <div class="seq-message return reverse" style="--left:50%;--width:20%;--top:422px" data-vd-caption-for="m-msg-6"><span id="m-label-6" class="seq-caption" data-vd-edge-label="m-msg-6">6. 绑定阶段尝试并发布 started 事件</span></div>
+              <div class="seq-message return reverse" style="--left:30%;--width:20%;--top:496px" data-vd-caption-for="m-msg-7"><span id="m-label-7" class="seq-caption" data-vd-edge-label="m-msg-7">7. 时间线展示员工、Skill、会话与当前阶段</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="sequence-note"><span><strong>验收含义：</strong>“阶段已启动”必须已有耐久尝试、会话和提交身份；HTTP 返回或 Renderer 状态不单独构成开始事实。</span><span data-vd-evidence-state="proposed" class="status-proposed">目标契约</span></div>
+      </section>
+
+      <section id="view-automation" class="diagram-panel" data-vd-view="automation-claim" data-vd-family="code-sequence" data-vd-view-role="supporting">
+        <header class="view-head">
+          <div>
+            <div class="view-meta"><span data-vd-evidence-state="observed" class="status-observed">已有调度基础</span><span data-vd-evidence-state="proposed" class="status-proposed">接入统一链</span></div>
+            <h2 data-vd-view-title>交互时序｜自动探索、候选任务与安全认领</h2>
+            <p>调度器只发布候选工作命令；探索固定只读，来源去重、筛选、预算和并发租约通过后才创建工作执行。</p>
+          </div>
+          <div class="view-number" aria-hidden="true">02</div>
+        </header>
+        <div data-vd-viewport>
+          <div class="sequence" data-vd-zoom-target style="--participants: 5; --rows: 9; --seq-width: 1120px;">
+            <div class="participant-row">
+              <div id="a-trigger" class="participant p-user" data-vd-node="participant"><strong>时间 / 项目事件</strong><span class="vd-tech-label">trigger identity</span></div>
+              <div id="a-source" class="participant p-asset" data-vd-node="participant"><strong>工作来源</strong><span class="vd-tech-label">sourceRef / event receipt</span></div>
+              <div id="a-work" class="participant p-work" data-vd-node="participant"><strong>工作管理</strong><span class="vd-tech-label">scheduler + execution store</span></div>
+              <div id="a-policy" class="participant p-runtime" data-vd-node="participant"><strong>员工策略与预算</strong><span class="vd-tech-label">filter / concurrency / grants</span></div>
+              <div id="a-pool" class="participant p-external" data-vd-node="participant"><strong>项目任务池</strong><span class="vd-tech-label">tasks + project scope</span></div>
+            </div>
+            <div class="sequence-body">
+              <svg class="sequence-edges" viewBox="0 0 1000 712" preserveAspectRatio="none" aria-hidden="true">
+                <circle id="a-msg-1-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="a-trigger" cx="100.00" cy="52" r="4.5"></circle>
+                <circle id="a-msg-1-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="a-source" cx="300.00" cy="52" r="4.5"></circle>
+                <line id="a-msg-1" class="seq-edge-call" x1="100.00" y1="52" x2="300.00" y2="52" data-vd-edge="trigger" data-from="a-msg-1-from-anchor" data-to="a-msg-1-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="a-msg-2-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="a-source" cx="300.00" cy="126" r="4.5"></circle>
+                <circle id="a-msg-2-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="a-work" cx="500.00" cy="126" r="4.5"></circle>
+                <line id="a-msg-2" class="seq-edge-call" x1="300.00" y1="126" x2="500.00" y2="126" data-vd-edge="candidate-command" data-from="a-msg-2-from-anchor" data-to="a-msg-2-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="a-msg-3-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="a-work" cx="500.00" cy="200" r="4.5"></circle>
+                <circle id="a-msg-3-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="a-pool" cx="900.00" cy="200" r="4.5"></circle>
+                <line id="a-msg-3" class="seq-edge-call" x1="500.00" y1="200" x2="900.00" y2="200" data-vd-edge="query" data-from="a-msg-3-from-anchor" data-to="a-msg-3-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="a-msg-4-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="a-pool" cx="900.00" cy="274" r="4.5"></circle>
+                <circle id="a-msg-4-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="a-work" cx="500.00" cy="274" r="4.5"></circle>
+                <line id="a-msg-4" class="seq-edge-return" x1="900.00" y1="274" x2="500.00" y2="274" data-vd-edge="candidate-list" data-from="a-msg-4-from-anchor" data-to="a-msg-4-to-anchor" data-vd-message-kind="return"></line>
+                <circle id="a-msg-5-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="a-work" cx="500.00" cy="348" r="4.5"></circle>
+                <circle id="a-msg-5-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="a-policy" cx="700.00" cy="348" r="4.5"></circle>
+                <line id="a-msg-5" class="seq-edge-call" x1="500.00" y1="348" x2="700.00" y2="348" data-vd-edge="policy-check" data-from="a-msg-5-from-anchor" data-to="a-msg-5-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="a-msg-6-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="a-policy" cx="700.00" cy="422" r="4.5"></circle>
+                <circle id="a-msg-6-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="a-work" cx="500.00" cy="422" r="4.5"></circle>
+                <line id="a-msg-6" class="seq-edge-return" x1="700.00" y1="422" x2="500.00" y2="422" data-vd-edge="selection" data-from="a-msg-6-from-anchor" data-to="a-msg-6-to-anchor" data-vd-message-kind="return"></line>
+                <circle id="a-msg-7-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="a-work" cx="500.00" cy="496" r="4.5"></circle>
+                <circle id="a-msg-7-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="a-pool" cx="900.00" cy="496" r="4.5"></circle>
+                <line id="a-msg-7" class="seq-edge-call" x1="500.00" y1="496" x2="900.00" y2="496" data-vd-edge="claim" data-from="a-msg-7-from-anchor" data-to="a-msg-7-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="a-msg-8-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="a-pool" cx="900.00" cy="570" r="4.5"></circle>
+                <circle id="a-msg-8-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="a-work" cx="500.00" cy="570" r="4.5"></circle>
+                <line id="a-msg-8" class="seq-edge-return" x1="900.00" y1="570" x2="500.00" y2="570" data-vd-edge="execution-created" data-from="a-msg-8-from-anchor" data-to="a-msg-8-to-anchor" data-vd-message-kind="return"></line>
+                <circle id="a-msg-9-from-anchor" class="seq-anchor error" data-vd-node="activation" data-vd-activation-for="a-source" cx="300.00" cy="644" r="4.5"></circle>
+                <circle id="a-msg-9-to-anchor" class="seq-anchor error" data-vd-node="activation" data-vd-activation-for="a-work" cx="500.00" cy="644" r="4.5"></circle>
+                <line id="a-msg-9" class="seq-edge-error" x1="300.00" y1="644" x2="500.00" y2="644" data-vd-edge="deduplicated" data-from="a-msg-9-from-anchor" data-to="a-msg-9-to-anchor" data-vd-message-kind="error"></line>
+              </svg>
+              <div class="lifeline" style="--x:10%" data-vd-lifeline-for="a-trigger"></div><div class="lifeline" style="--x:30%" data-vd-lifeline-for="a-source"></div><div class="lifeline" style="--x:50%" data-vd-lifeline-for="a-work"></div><div class="lifeline" style="--x:70%" data-vd-lifeline-for="a-policy"></div><div class="lifeline" style="--x:90%" data-vd-lifeline-for="a-pool"></div>
+              <div class="seq-message" style="--left:10%;--width:20%;--top:52px" data-vd-caption-for="a-msg-1"><span id="a-label-1" class="seq-caption" data-vd-edge-label="a-msg-1">1. 到期或项目事实变化</span></div>
+              <div class="seq-message" style="--left:30%;--width:20%;--top:126px" data-vd-caption-for="a-msg-2"><span id="a-label-2" class="seq-caption" data-vd-edge-label="a-msg-2">2. 发布带稳定 sourceRef 的候选工作</span></div>
+              <div class="seq-message" style="--left:50%;--width:40%;--top:200px" data-vd-caption-for="a-msg-3"><span id="a-label-3" class="seq-caption" data-vd-edge-label="a-msg-3">3. 只查询已分配项目内可处理任务</span></div>
+              <div class="seq-message return reverse" style="--left:50%;--width:40%;--top:274px" data-vd-caption-for="a-msg-4"><span id="a-label-4" class="seq-caption" data-vd-edge-label="a-msg-4">4. 返回候选与任务版本</span></div>
+              <div class="seq-message" style="--left:50%;--width:20%;--top:348px" data-vd-caption-for="a-msg-5"><span id="a-label-5" class="seq-caption" data-vd-edge-label="a-msg-5">5. 校验筛选、预算、并发、静默时段</span></div>
+              <div class="seq-message return reverse" style="--left:50%;--width:20%;--top:422px" data-vd-caption-for="a-msg-6"><span id="a-label-6" class="seq-caption" data-vd-edge-label="a-msg-6">6. 返回确定性选择；探索保持只读</span></div>
+              <div class="seq-message" style="--left:50%;--width:40%;--top:496px" data-vd-caption-for="a-msg-7"><span id="a-label-7" class="seq-caption" data-vd-edge-label="a-msg-7">7. 以 expectedRevision 认领任务</span></div>
+              <div class="seq-message return reverse" style="--left:50%;--width:40%;--top:570px" data-vd-caption-for="a-msg-8"><span id="a-label-8" class="seq-caption" data-vd-edge-label="a-msg-8">8. 建立 queued 工作执行并进入阶段链</span></div>
+              <div class="seq-message exception" style="--left:30%;--width:20%;--top:644px" data-vd-caption-for="a-msg-9"><span id="a-label-9" class="seq-caption" data-vd-edge-label="a-msg-9">重复事件 / 触发风暴：命中回执后安全 no-op</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="sequence-note"><span><strong>边界：</strong>模型探索只能提出候选；认领与执行仍由确定性策略和命令完成，不能跨项目自行找活。</span><span data-vd-evidence-state="observed" class="status-observed">现有去重/租约可复用</span></div>
+      </section>
+
+      <section id="view-resolution" class="diagram-panel" data-vd-view="stage-resolution" data-vd-family="code-sequence" data-vd-view-role="supporting">
+        <header class="view-head">
+          <div>
+            <div class="view-meta"><span data-vd-evidence-state="proposed" class="status-proposed">拟议整合</span><span class="sequence-phase">启动前门禁</span></div>
+            <h2 data-vd-view-title>交互时序｜阶段员工、Skill 与真实能力解析</h2>
+            <p>员工、Skill、模型和工具面在阶段启动前一次性解析并冻结；任何冲突都在创建 Provider 会话前阻塞。</p>
+          </div>
+          <div class="view-number" aria-hidden="true">03</div>
+        </header>
+        <div data-vd-viewport>
+          <div class="sequence" data-vd-zoom-target style="--participants: 5; --rows: 10; --seq-width: 1180px;">
+            <div class="participant-row">
+              <div id="r-work" class="participant p-work" data-vd-node="participant"><strong>工作管理</strong><span class="vd-tech-label">stage attempt resolver</span></div>
+              <div id="r-stage" class="participant p-asset" data-vd-node="participant"><strong>任务与阶段配置</strong><span class="vd-tech-label">task_stages</span></div>
+              <div id="r-employee" class="participant p-user" data-vd-node="participant"><strong>项目数字员工</strong><span class="vd-tech-label">employee snapshot</span></div>
+              <div id="r-skill" class="participant p-runtime" data-vd-node="participant"><strong>Skill Catalog</strong><span class="vd-tech-label">stable skill identity</span></div>
+              <div id="r-capability" class="participant p-external" data-vd-node="participant"><strong>Runtime 能力</strong><span class="vd-tech-label">models / tools / workspace</span></div>
+            </div>
+            <div class="sequence-body">
+              <svg class="sequence-edges" viewBox="0 0 1000 786" preserveAspectRatio="none" aria-hidden="true">
+                <circle id="r-msg-1-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="r-work" cx="100.00" cy="52" r="4.5"></circle>
+                <circle id="r-msg-1-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="r-stage" cx="300.00" cy="52" r="4.5"></circle>
+                <line id="r-msg-1" class="seq-edge-call" x1="100.00" y1="52" x2="300.00" y2="52" data-vd-edge="read-stage" data-from="r-msg-1-from-anchor" data-to="r-msg-1-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="r-msg-2-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="r-stage" cx="300.00" cy="126" r="4.5"></circle>
+                <circle id="r-msg-2-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="r-work" cx="100.00" cy="126" r="4.5"></circle>
+                <line id="r-msg-2" class="seq-edge-return" x1="300.00" y1="126" x2="100.00" y2="126" data-vd-edge="stage-config" data-from="r-msg-2-from-anchor" data-to="r-msg-2-to-anchor" data-vd-message-kind="return"></line>
+                <circle id="r-msg-3-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="r-work" cx="100.00" cy="200" r="4.5"></circle>
+                <circle id="r-msg-3-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="r-employee" cx="500.00" cy="200" r="4.5"></circle>
+                <line id="r-msg-3" class="seq-edge-call" x1="100.00" y1="200" x2="500.00" y2="200" data-vd-edge="read-employee" data-from="r-msg-3-from-anchor" data-to="r-msg-3-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="r-msg-4-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="r-employee" cx="500.00" cy="274" r="4.5"></circle>
+                <circle id="r-msg-4-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="r-work" cx="100.00" cy="274" r="4.5"></circle>
+                <line id="r-msg-4" class="seq-edge-return" x1="500.00" y1="274" x2="100.00" y2="274" data-vd-edge="employee-snapshot" data-from="r-msg-4-from-anchor" data-to="r-msg-4-to-anchor" data-vd-message-kind="return"></line>
+                <circle id="r-msg-5-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="r-work" cx="100.00" cy="348" r="4.5"></circle>
+                <circle id="r-msg-5-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="r-skill" cx="700.00" cy="348" r="4.5"></circle>
+                <line id="r-msg-5" class="seq-edge-call" x1="100.00" y1="348" x2="700.00" y2="348" data-vd-edge="resolve-skill" data-from="r-msg-5-from-anchor" data-to="r-msg-5-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="r-msg-6-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="r-skill" cx="700.00" cy="422" r="4.5"></circle>
+                <circle id="r-msg-6-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="r-work" cx="100.00" cy="422" r="4.5"></circle>
+                <line id="r-msg-6" class="seq-edge-return" x1="700.00" y1="422" x2="100.00" y2="422" data-vd-edge="skill-snapshot" data-from="r-msg-6-from-anchor" data-to="r-msg-6-to-anchor" data-vd-message-kind="return"></line>
+                <circle id="r-msg-7-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="r-work" cx="100.00" cy="496" r="4.5"></circle>
+                <circle id="r-msg-7-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="r-capability" cx="900.00" cy="496" r="4.5"></circle>
+                <line id="r-msg-7" class="seq-edge-call" x1="100.00" y1="496" x2="900.00" y2="496" data-vd-edge="read-capability" data-from="r-msg-7-from-anchor" data-to="r-msg-7-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="r-msg-8-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="r-capability" cx="900.00" cy="570" r="4.5"></circle>
+                <circle id="r-msg-8-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="r-work" cx="100.00" cy="570" r="4.5"></circle>
+                <line id="r-msg-8" class="seq-edge-return" x1="900.00" y1="570" x2="100.00" y2="570" data-vd-edge="capability-snapshot" data-from="r-msg-8-from-anchor" data-to="r-msg-8-to-anchor" data-vd-message-kind="return"></line>
+                <circle id="r-msg-9-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="r-work" cx="100.00" cy="644" r="4.5"></circle>
+                <circle id="r-msg-9-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="r-stage" cx="300.00" cy="644" r="4.5"></circle>
+                <line id="r-msg-9" class="seq-edge-call" x1="100.00" y1="644" x2="300.00" y2="644" data-vd-edge="freeze-attempt" data-from="r-msg-9-from-anchor" data-to="r-msg-9-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="r-msg-10-from-anchor" class="seq-anchor error" data-vd-node="activation" data-vd-activation-for="r-capability" cx="900.00" cy="718" r="4.5"></circle>
+                <circle id="r-msg-10-to-anchor" class="seq-anchor error" data-vd-node="activation" data-vd-activation-for="r-work" cx="100.00" cy="718" r="4.5"></circle>
+                <line id="r-msg-10" class="seq-edge-error" x1="900.00" y1="718" x2="100.00" y2="718" data-vd-edge="configuration-block" data-from="r-msg-10-from-anchor" data-to="r-msg-10-to-anchor" data-vd-message-kind="error"></line>
+              </svg>
+              <div class="lifeline" style="--x:10%" data-vd-lifeline-for="r-work"></div><div class="lifeline" style="--x:30%" data-vd-lifeline-for="r-stage"></div><div class="lifeline" style="--x:50%" data-vd-lifeline-for="r-employee"></div><div class="lifeline" style="--x:70%" data-vd-lifeline-for="r-skill"></div><div class="lifeline" style="--x:90%" data-vd-lifeline-for="r-capability"></div>
+              <div class="seq-message" style="--left:10%;--width:20%;--top:52px" data-vd-caption-for="r-msg-1"><span id="r-label-1" class="seq-caption" data-vd-edge-label="r-msg-1">1. 读取任务默认员工与当前阶段修订</span></div>
+              <div class="seq-message return reverse" style="--left:10%;--width:20%;--top:126px" data-vd-caption-for="r-msg-2"><span id="r-label-2" class="seq-caption" data-vd-edge-label="r-msg-2">2. 阶段员工：explicit 优先，否则 inherit</span></div>
+              <div class="seq-message" style="--left:10%;--width:40%;--top:200px" data-vd-caption-for="r-msg-3"><span id="r-label-3" class="seq-caption" data-vd-edge-label="r-msg-3">3. 校验员工启用、项目归属与并发</span></div>
+              <div class="seq-message return reverse" style="--left:10%;--width:40%;--top:274px" data-vd-caption-for="r-msg-4"><span id="r-label-4" class="seq-caption" data-vd-edge-label="r-msg-4">4. 返回岗位、提示词、模型偏好与授权快照</span></div>
+              <div class="seq-message" style="--left:10%;--width:60%;--top:348px" data-vd-caption-for="r-msg-5"><span id="r-label-5" class="seq-caption" data-vd-edge-label="r-msg-5">5. Skill：阶段 explicit ＞ 员工默认 ＞ none</span></div>
+              <div class="seq-message return reverse" style="--left:10%;--width:60%;--top:422px" data-vd-caption-for="r-msg-6"><span id="r-label-6" class="seq-caption" data-vd-edge-label="r-msg-6">6. 项目目录与最终工作区复验稳定 ID</span></div>
+              <div class="seq-message" style="--left:10%;--width:80%;--top:496px" data-vd-caption-for="r-msg-7"><span id="r-label-7" class="seq-caption" data-vd-edge-label="r-msg-7">7. 查询可用模型、工具、网络、可写根和命令</span></div>
+              <div class="seq-message return reverse" style="--left:10%;--width:80%;--top:570px" data-vd-caption-for="r-msg-8"><span id="r-label-8" class="seq-caption" data-vd-edge-label="r-msg-8">8. 计算任务 ∩ 员工 ∩ 阶段 ∩ Runtime</span></div>
+              <div class="seq-message" style="--left:10%;--width:20%;--top:644px" data-vd-caption-for="r-msg-9"><span id="r-label-9" class="seq-caption" data-vd-edge-label="r-msg-9">9. 冻结 CapabilityManifestV1 与全部快照</span></div>
+              <div class="seq-message exception reverse" style="--left:10%;--width:80%;--top:718px" data-vd-caption-for="r-msg-10"><span id="r-label-10" class="seq-caption" data-vd-edge-label="r-msg-10">模型 / Skill / 能力不兼容：启动前阻塞，不静默降级</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="sequence-note"><span><strong>关键规则：</strong>Skill 只提供说明和资源；真正暴露给模型的工具、连接器、凭据槽位、网络和可写根来自能力清单。</span><span data-vd-evidence-state="proposed" class="status-proposed">目标契约</span></div>
+      </section>
+
+      <section id="view-context" class="diagram-panel" data-vd-view="context-runtime" data-vd-family="code-sequence" data-vd-view-role="supporting">
+        <header class="view-head">
+          <div>
+            <div class="view-meta"><span data-vd-evidence-state="observed" class="status-observed">已有阶段会话与 Skill 投影</span><span data-vd-evidence-state="proposed" class="status-proposed">新增上下文清单</span></div>
+            <h2 data-vd-view-title>交互时序｜阶段上下文编译与 Agent 执行</h2>
+            <p>上下文编译器把策略、阶段契约、员工角色、Skill、任务事实和代码证据分区组织，并保存来源清单与指纹。</p>
+          </div>
+          <div class="view-number" aria-hidden="true">04</div>
+        </header>
+        <div data-vd-viewport>
+          <div class="sequence" data-vd-zoom-target style="--participants: 5; --rows: 9; --seq-width: 1180px;">
+            <div class="participant-row">
+              <div id="c-work" class="participant p-work" data-vd-node="participant"><strong>工作管理</strong><span class="vd-tech-label">stage attempt</span></div>
+              <div id="c-compiler" class="participant p-asset" data-vd-node="participant"><strong>上下文编译器</strong><span class="vd-tech-label">context compiler</span></div>
+              <div id="c-sources" class="participant p-user" data-vd-node="participant"><strong>权威来源</strong><span class="vd-tech-label">docs / deliverables / git / decisions</span></div>
+              <div id="c-conv" class="participant p-asset" data-vd-node="participant"><strong>会话编排</strong><span class="vd-tech-label">durable submission</span></div>
+              <div id="c-runtime" class="participant p-runtime" data-vd-node="participant"><strong>Agent Runtime</strong><span class="vd-tech-label">native thread / session</span></div>
+            </div>
+            <div class="sequence-body">
+              <svg class="sequence-edges" viewBox="0 0 1000 712" preserveAspectRatio="none" aria-hidden="true">
+                <circle id="c-msg-1-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="c-work" cx="100.00" cy="52" r="4.5"></circle>
+                <circle id="c-msg-1-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="c-compiler" cx="300.00" cy="52" r="4.5"></circle>
+                <line id="c-msg-1" class="seq-edge-call" x1="100.00" y1="52" x2="300.00" y2="52" data-vd-edge="compile-request" data-from="c-msg-1-from-anchor" data-to="c-msg-1-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="c-msg-2-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="c-compiler" cx="300.00" cy="126" r="4.5"></circle>
+                <circle id="c-msg-2-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="c-sources" cx="500.00" cy="126" r="4.5"></circle>
+                <line id="c-msg-2" class="seq-edge-call" x1="300.00" y1="126" x2="500.00" y2="126" data-vd-edge="read-evidence" data-from="c-msg-2-from-anchor" data-to="c-msg-2-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="c-msg-3-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="c-sources" cx="500.00" cy="200" r="4.5"></circle>
+                <circle id="c-msg-3-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="c-compiler" cx="300.00" cy="200" r="4.5"></circle>
+                <line id="c-msg-3" class="seq-edge-return" x1="500.00" y1="200" x2="300.00" y2="200" data-vd-edge="evidence-return" data-from="c-msg-3-from-anchor" data-to="c-msg-3-to-anchor" data-vd-message-kind="return"></line>
+                <circle id="c-msg-4-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="c-compiler" cx="300.00" cy="274" r="4.5"></circle>
+                <circle id="c-msg-4-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="c-work" cx="100.00" cy="274" r="4.5"></circle>
+                <line id="c-msg-4" class="seq-edge-return" x1="300.00" y1="274" x2="100.00" y2="274" data-vd-edge="manifest-return" data-from="c-msg-4-from-anchor" data-to="c-msg-4-to-anchor" data-vd-message-kind="return"></line>
+                <circle id="c-msg-5-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="c-work" cx="100.00" cy="348" r="4.5"></circle>
+                <circle id="c-msg-5-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="c-conv" cx="700.00" cy="348" r="4.5"></circle>
+                <line id="c-msg-5" class="seq-edge-call" x1="100.00" y1="348" x2="700.00" y2="348" data-vd-edge="start-command" data-from="c-msg-5-from-anchor" data-to="c-msg-5-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="c-msg-6-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="c-conv" cx="700.00" cy="422" r="4.5"></circle>
+                <circle id="c-msg-6-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="c-runtime" cx="900.00" cy="422" r="4.5"></circle>
+                <line id="c-msg-6" class="seq-edge-call" x1="700.00" y1="422" x2="900.00" y2="422" data-vd-edge="native-dispatch" data-from="c-msg-6-from-anchor" data-to="c-msg-6-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="c-msg-7-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="c-runtime" cx="900.00" cy="496" r="4.5"></circle>
+                <circle id="c-msg-7-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="c-conv" cx="700.00" cy="496" r="4.5"></circle>
+                <line id="c-msg-7" class="seq-edge-return" x1="900.00" y1="496" x2="700.00" y2="496" data-vd-edge="stream-and-result" data-from="c-msg-7-from-anchor" data-to="c-msg-7-to-anchor" data-vd-message-kind="return"></line>
+                <circle id="c-msg-8-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="c-conv" cx="700.00" cy="570" r="4.5"></circle>
+                <circle id="c-msg-8-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="c-work" cx="100.00" cy="570" r="4.5"></circle>
+                <line id="c-msg-8" class="seq-edge-return" x1="700.00" y1="570" x2="100.00" y2="570" data-vd-edge="runtime-completed" data-from="c-msg-8-from-anchor" data-to="c-msg-8-to-anchor" data-vd-message-kind="return"></line>
+                <circle id="c-msg-9-from-anchor" class="seq-anchor error" data-vd-node="activation" data-vd-activation-for="c-runtime" cx="900.00" cy="644" r="4.5"></circle>
+                <circle id="c-msg-9-to-anchor" class="seq-anchor error" data-vd-node="activation" data-vd-activation-for="c-conv" cx="700.00" cy="644" r="4.5"></circle>
+                <line id="c-msg-9" class="seq-edge-error" x1="900.00" y1="644" x2="700.00" y2="644" data-vd-edge="unknown-outcome" data-from="c-msg-9-from-anchor" data-to="c-msg-9-to-anchor" data-vd-message-kind="error"></line>
+              </svg>
+              <div class="lifeline" style="--x:10%" data-vd-lifeline-for="c-work"></div><div class="lifeline" style="--x:30%" data-vd-lifeline-for="c-compiler"></div><div class="lifeline" style="--x:50%" data-vd-lifeline-for="c-sources"></div><div class="lifeline" style="--x:70%" data-vd-lifeline-for="c-conv"></div><div class="lifeline" style="--x:90%" data-vd-lifeline-for="c-runtime"></div>
+              <div class="seq-message" style="--left:10%;--width:20%;--top:52px" data-vd-caption-for="c-msg-1"><span id="c-label-1" class="seq-caption" data-vd-edge-label="c-msg-1">1. 提交冻结阶段、员工、Skill 与能力引用</span></div>
+              <div class="seq-message" style="--left:30%;--width:20%;--top:126px" data-vd-caption-for="c-msg-2"><span id="c-label-2" class="seq-caption" data-vd-edge-label="c-msg-2">2. 读取主任务文档、已验收交付物和精确代码现场</span></div>
+              <div class="seq-message return reverse" style="--left:30%;--width:20%;--top:200px" data-vd-caption-for="c-msg-3"><span id="c-label-3" class="seq-caption" data-vd-edge-label="c-msg-3">3. 返回版本、哈希、预算、裁剪与缺失项</span></div>
+              <div class="seq-message return reverse" style="--left:10%;--width:20%;--top:274px" data-vd-caption-for="c-msg-4"><span id="c-label-4" class="seq-caption" data-vd-edge-label="c-msg-4">4. 固化阶段上下文清单与 fingerprint</span></div>
+              <div class="seq-message" style="--left:10%;--width:60%;--top:348px" data-vd-caption-for="c-msg-5"><span id="c-label-5" class="seq-caption" data-vd-edge-label="c-msg-5">5. stage_attempt.start（expectedRevision + operationIdentity）</span></div>
+              <div class="seq-message" style="--left:70%;--width:20%;--top:422px" data-vd-caption-for="c-msg-6"><span id="c-label-6" class="seq-caption" data-vd-edge-label="c-msg-6">6. 按 Runtime 原生协议投影 Skill 与允许工具</span></div>
+              <div class="seq-message return reverse" style="--left:70%;--width:20%;--top:496px" data-vd-caption-for="c-msg-7"><span id="c-label-7" class="seq-caption" data-vd-edge-label="c-msg-7">7. 流式事件、工具结果与最终输出</span></div>
+              <div class="seq-message return reverse" style="--left:10%;--width:60%;--top:570px" data-vd-caption-for="c-msg-8"><span id="c-label-8" class="seq-caption" data-vd-edge-label="c-msg-8">8. runtime_completed；形成交付物候选</span></div>
+              <div class="seq-message exception reverse" style="--left:70%;--width:20%;--top:644px" data-vd-caption-for="c-msg-9"><span id="c-label-9" class="seq-caption" data-vd-edge-label="c-msg-9">写出后无回执：记录 outcome_unknown，不创建第二会话</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="sequence-note"><span><strong>上下文优先级：</strong>策略与能力 → 阶段契约 → 员工角色 → Skill → 任务与证据 → 输出契约；代码、日志和外部内容均按不可信数据处理。</span><span data-vd-evidence-state="proposed" class="status-proposed">新增清单</span></div>
+      </section>
+
+      <section id="view-deliverable" class="diagram-panel" data-vd-view="deliverable-acceptance" data-vd-family="code-sequence" data-vd-view-role="supporting">
+        <header class="view-head">
+          <div>
+            <div class="view-meta"><span data-vd-evidence-state="observed" class="status-observed">已有版本化阶段交付物</span><span data-vd-evidence-state="proposed" class="status-proposed">接入自动员工</span></div>
+            <h2 data-vd-view-title>交互时序｜交付物提交、验收、推进与返工</h2>
+            <p>运行结束和业务验收被拆成两个阶段；交付物完整保留，修改请求创建新尝试，不覆盖原结果。</p>
+          </div>
+          <div class="view-number" aria-hidden="true">05</div>
+        </header>
+        <div data-vd-viewport>
+          <div class="sequence" data-vd-zoom-target style="--participants: 5; --rows: 9; --seq-width: 1180px;">
+            <div class="participant-row">
+              <div id="d-runtime" class="participant p-runtime" data-vd-node="participant"><strong>Agent Runtime</strong><span class="vd-tech-label">final output</span></div>
+              <div id="d-conv" class="participant p-asset" data-vd-node="participant"><strong>会话编排</strong><span class="vd-tech-label">conversation projection</span></div>
+              <div id="d-work" class="participant p-work" data-vd-node="participant"><strong>工作管理</strong><span class="vd-tech-label">stage application</span></div>
+              <div id="d-asset" class="participant p-external" data-vd-node="participant"><strong>资产存储</strong><span class="vd-tech-label">artifact + sha256</span></div>
+              <div id="d-gate" class="participant p-user" data-vd-node="participant"><strong>用户 / 验收策略</strong><span class="vd-tech-label">manual / deterministic / reviewer</span></div>
+            </div>
+            <div class="sequence-body">
+              <svg class="sequence-edges" viewBox="0 0 1000 712" preserveAspectRatio="none" aria-hidden="true">
+                <circle id="d-msg-1-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="d-runtime" cx="300.00" cy="52" r="4.5"></circle>
+                <circle id="d-msg-1-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="d-conv" cx="100.00" cy="52" r="4.5"></circle>
+                <line id="d-msg-1" class="seq-edge-return" x1="300.00" y1="52" x2="100.00" y2="52" data-vd-edge="runtime-output" data-from="d-msg-1-from-anchor" data-to="d-msg-1-to-anchor" data-vd-message-kind="return"></line>
+                <circle id="d-msg-2-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="d-conv" cx="300.00" cy="126" r="4.5"></circle>
+                <circle id="d-msg-2-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="d-work" cx="500.00" cy="126" r="4.5"></circle>
+                <line id="d-msg-2" class="seq-edge-call" x1="300.00" y1="126" x2="500.00" y2="126" data-vd-edge="candidate" data-from="d-msg-2-from-anchor" data-to="d-msg-2-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="d-msg-3-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="d-work" cx="500.00" cy="200" r="4.5"></circle>
+                <circle id="d-msg-3-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="d-asset" cx="700.00" cy="200" r="4.5"></circle>
+                <line id="d-msg-3" class="seq-edge-call" x1="500.00" y1="200" x2="700.00" y2="200" data-vd-edge="persist-artifact" data-from="d-msg-3-from-anchor" data-to="d-msg-3-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="d-msg-4-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="d-asset" cx="700.00" cy="274" r="4.5"></circle>
+                <circle id="d-msg-4-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="d-work" cx="500.00" cy="274" r="4.5"></circle>
+                <line id="d-msg-4" class="seq-edge-return" x1="700.00" y1="274" x2="500.00" y2="274" data-vd-edge="artifact-reference" data-from="d-msg-4-from-anchor" data-to="d-msg-4-to-anchor" data-vd-message-kind="return"></line>
+                <circle id="d-msg-5-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="d-work" cx="500.00" cy="348" r="4.5"></circle>
+                <circle id="d-msg-5-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="d-gate" cx="900.00" cy="348" r="4.5"></circle>
+                <line id="d-msg-5" class="seq-edge-call" x1="500.00" y1="348" x2="900.00" y2="348" data-vd-edge="submit-for-acceptance" data-from="d-msg-5-from-anchor" data-to="d-msg-5-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="d-msg-6-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="d-gate" cx="900.00" cy="422" r="4.5"></circle>
+                <circle id="d-msg-6-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="d-work" cx="500.00" cy="422" r="4.5"></circle>
+                <line id="d-msg-6" class="seq-edge-return" x1="900.00" y1="422" x2="500.00" y2="422" data-vd-edge="accepted" data-from="d-msg-6-from-anchor" data-to="d-msg-6-to-anchor" data-vd-message-kind="return"></line>
+                <circle id="d-msg-7-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="d-work" cx="300.00" cy="496" r="4.5"></circle>
+                <circle id="d-msg-7-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="d-conv" cx="500.00" cy="496" r="4.5"></circle>
+                <line id="d-msg-7" class="seq-edge-call" x1="300.00" y1="496" x2="500.00" y2="496" data-vd-edge="next-stage" data-from="d-msg-7-from-anchor" data-to="d-msg-7-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="d-msg-8-from-anchor" class="seq-anchor error" data-vd-node="activation" data-vd-activation-for="d-gate" cx="900.00" cy="570" r="4.5"></circle>
+                <circle id="d-msg-8-to-anchor" class="seq-anchor error" data-vd-node="activation" data-vd-activation-for="d-work" cx="500.00" cy="570" r="4.5"></circle>
+                <line id="d-msg-8" class="seq-edge-error" x1="900.00" y1="570" x2="500.00" y2="570" data-vd-edge="changes-requested" data-from="d-msg-8-from-anchor" data-to="d-msg-8-to-anchor" data-vd-message-kind="error"></line>
+                <circle id="d-msg-9-from-anchor" class="seq-anchor error" data-vd-node="activation" data-vd-activation-for="d-work" cx="500.00" cy="644" r="4.5"></circle>
+                <circle id="d-msg-9-to-anchor" class="seq-anchor error" data-vd-node="activation" data-vd-activation-for="d-asset" cx="700.00" cy="644" r="4.5"></circle>
+                <line id="d-msg-9" class="seq-edge-error" x1="500.00" y1="644" x2="700.00" y2="644" data-vd-edge="preserve-history" data-from="d-msg-9-from-anchor" data-to="d-msg-9-to-anchor" data-vd-message-kind="error"></line>
+              </svg>
+              <div class="lifeline" style="--x:10%" data-vd-lifeline-for="d-runtime"></div><div class="lifeline" style="--x:30%" data-vd-lifeline-for="d-conv"></div><div class="lifeline" style="--x:50%" data-vd-lifeline-for="d-work"></div><div class="lifeline" style="--x:70%" data-vd-lifeline-for="d-asset"></div><div class="lifeline" style="--x:90%" data-vd-lifeline-for="d-gate"></div>
+              <div class="seq-message return reverse" style="--left:10%;--width:20%;--top:52px" data-vd-caption-for="d-msg-1"><span id="d-label-1" class="seq-caption" data-vd-edge-label="d-msg-1">1. Agent loop 完成并返回正式输出候选</span></div>
+              <div class="seq-message" style="--left:30%;--width:20%;--top:126px" data-vd-caption-for="d-msg-2"><span id="d-label-2" class="seq-caption" data-vd-edge-label="d-msg-2">2. 标记 runtime_completed，不触发交付</span></div>
+              <div class="seq-message" style="--left:50%;--width:20%;--top:200px" data-vd-caption-for="d-msg-3"><span id="d-label-3" class="seq-caption" data-vd-edge-label="d-msg-3">3. 校验输出契约并保存完整资产</span></div>
+              <div class="seq-message return reverse" style="--left:50%;--width:20%;--top:274px" data-vd-caption-for="d-msg-4"><span id="d-label-4" class="seq-caption" data-vd-edge-label="d-msg-4">4. 返回稳定引用、摘要与内容哈希</span></div>
+              <div class="seq-message" style="--left:50%;--width:40%;--top:348px" data-vd-caption-for="d-msg-5"><span id="d-label-5" class="seq-caption" data-vd-edge-label="d-msg-5">5. deliverable.submit，进入阶段验收</span></div>
+              <div class="seq-message return reverse" style="--left:50%;--width:40%;--top:422px" data-vd-caption-for="d-msg-6"><span id="d-label-6" class="seq-caption" data-vd-edge-label="d-msg-6">6A. accepted：推进到下一阶段</span></div>
+              <div class="seq-message" style="--left:30%;--width:20%;--top:496px" data-vd-caption-for="d-msg-7"><span id="d-label-7" class="seq-caption" data-vd-edge-label="d-msg-7">7A. 使用已验收交付物启动下游尝试</span></div>
+              <div class="seq-message exception reverse" style="--left:50%;--width:40%;--top:570px" data-vd-caption-for="d-msg-8"><span id="d-label-8" class="seq-caption" data-vd-edge-label="d-msg-8">6B. changes_requested：附明确原因</span></div>
+              <div class="seq-message exception" style="--left:50%;--width:20%;--top:644px" data-vd-caption-for="d-msg-9"><span id="d-label-9" class="seq-caption" data-vd-edge-label="d-msg-9">7B. 保留旧版本，返工产生新尝试与新版本</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="sequence-note"><span><strong>验收策略：</strong>manual 适合主观和高风险结论；deterministic 只接受机器可证明的结果；reviewer_plus_policy 需要独立审查与确定性门禁。</span><span data-vd-evidence-state="proposed" class="status-proposed">三类策略</span></div>
+      </section>
+
+      <section id="view-review" class="diagram-panel" data-vd-view="code-review" data-vd-family="code-sequence" data-vd-view-role="supporting">
+        <header class="view-head">
+          <div>
+            <div class="view-meta"><span data-vd-evidence-state="observed" class="status-observed">已有独立只读审查</span><span data-vd-evidence-state="proposed" class="status-proposed">补齐三份清单</span></div>
+            <h2 data-vd-view-title>交互时序｜代码审查、结构化结论与返工</h2>
+            <p>审查必须同时看到确认需求、完整代码现场和真实验证证据；审查会话不能修改代码，也不能用缺证据的 blocked 冒充通过。</p>
+          </div>
+          <div class="view-number" aria-hidden="true">06</div>
+        </header>
+        <div data-vd-viewport>
+          <div class="sequence" data-vd-zoom-target style="--participants: 6; --rows: 10; --seq-width: 1320px;">
+            <div class="participant-row">
+              <div id="v-work" class="participant p-work" data-vd-node="participant"><strong>工作管理</strong><span class="vd-tech-label">code_review stage</span></div>
+              <div id="v-req" class="participant p-user" data-vd-node="participant"><strong>需求证据</strong><span class="vd-tech-label">task doc + decisions + plan</span></div>
+              <div id="v-git" class="participant p-external" data-vd-node="participant"><strong>实施工作区</strong><span class="vd-tech-label">baseline + full diff + checks</span></div>
+              <div id="v-conv" class="participant p-asset" data-vd-node="participant"><strong>审查会话</strong><span class="vd-tech-label">read-only / writableRoots=[]</span></div>
+              <div id="v-reviewer" class="participant p-runtime" data-vd-node="participant"><strong>审查数字员工</strong><span class="vd-tech-label">independent reviewer</span></div>
+              <div id="v-gate" class="participant p-risk" data-vd-node="participant"><strong>阶段验收门</strong><span class="vd-tech-label">pass / changes / blocked</span></div>
+            </div>
+            <div class="sequence-body">
+              <svg class="sequence-edges" viewBox="0 0 1000 786" preserveAspectRatio="none" aria-hidden="true">
+                <circle id="v-msg-1-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="v-work" cx="83.30" cy="52" r="4.5"></circle>
+                <circle id="v-msg-1-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="v-req" cx="250.00" cy="52" r="4.5"></circle>
+                <line id="v-msg-1" class="seq-edge-call" x1="83.30" y1="52" x2="250.00" y2="52" data-vd-edge="compile-requirements" data-from="v-msg-1-from-anchor" data-to="v-msg-1-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="v-msg-2-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="v-req" cx="250.00" cy="126" r="4.5"></circle>
+                <circle id="v-msg-2-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="v-work" cx="83.30" cy="126" r="4.5"></circle>
+                <line id="v-msg-2" class="seq-edge-return" x1="250.00" y1="126" x2="83.30" y2="126" data-vd-edge="requirements-manifest" data-from="v-msg-2-from-anchor" data-to="v-msg-2-to-anchor" data-vd-message-kind="return"></line>
+                <circle id="v-msg-3-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="v-work" cx="83.30" cy="200" r="4.5"></circle>
+                <circle id="v-msg-3-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="v-git" cx="416.70" cy="200" r="4.5"></circle>
+                <line id="v-msg-3" class="seq-edge-call" x1="83.30" y1="200" x2="416.70" y2="200" data-vd-edge="freeze-workspace" data-from="v-msg-3-from-anchor" data-to="v-msg-3-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="v-msg-4-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="v-git" cx="416.70" cy="274" r="4.5"></circle>
+                <circle id="v-msg-4-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="v-work" cx="83.30" cy="274" r="4.5"></circle>
+                <line id="v-msg-4" class="seq-edge-return" x1="416.70" y1="274" x2="83.30" y2="274" data-vd-edge="change-and-verification-manifest" data-from="v-msg-4-from-anchor" data-to="v-msg-4-to-anchor" data-vd-message-kind="return"></line>
+                <circle id="v-msg-5-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="v-work" cx="83.30" cy="348" r="4.5"></circle>
+                <circle id="v-msg-5-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="v-conv" cx="583.30" cy="348" r="4.5"></circle>
+                <line id="v-msg-5" class="seq-edge-call" x1="83.30" y1="348" x2="583.30" y2="348" data-vd-edge="start-review" data-from="v-msg-5-from-anchor" data-to="v-msg-5-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="v-msg-6-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="v-conv" cx="583.30" cy="422" r="4.5"></circle>
+                <circle id="v-msg-6-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="v-reviewer" cx="750.00" cy="422" r="4.5"></circle>
+                <line id="v-msg-6" class="seq-edge-call" x1="583.30" y1="422" x2="750.00" y2="422" data-vd-edge="review-dispatch" data-from="v-msg-6-from-anchor" data-to="v-msg-6-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="v-msg-7-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="v-reviewer" cx="750.00" cy="496" r="4.5"></circle>
+                <circle id="v-msg-7-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="v-conv" cx="583.30" cy="496" r="4.5"></circle>
+                <line id="v-msg-7" class="seq-edge-return" x1="750.00" y1="496" x2="583.30" y2="496" data-vd-edge="structured-report" data-from="v-msg-7-from-anchor" data-to="v-msg-7-to-anchor" data-vd-message-kind="return"></line>
+                <circle id="v-msg-8-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="v-conv" cx="583.30" cy="570" r="4.5"></circle>
+                <circle id="v-msg-8-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="v-gate" cx="916.70" cy="570" r="4.5"></circle>
+                <line id="v-msg-8" class="seq-edge-call" x1="583.30" y1="570" x2="916.70" y2="570" data-vd-edge="submit-review" data-from="v-msg-8-from-anchor" data-to="v-msg-8-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="v-msg-9-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="v-gate" cx="916.70" cy="644" r="4.5"></circle>
+                <circle id="v-msg-9-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="v-work" cx="83.30" cy="644" r="4.5"></circle>
+                <line id="v-msg-9" class="seq-edge-return" x1="916.70" y1="644" x2="83.30" y2="644" data-vd-edge="review-accepted" data-from="v-msg-9-from-anchor" data-to="v-msg-9-to-anchor" data-vd-message-kind="return"></line>
+                <circle id="v-msg-10-from-anchor" class="seq-anchor error" data-vd-node="activation" data-vd-activation-for="v-gate" cx="916.70" cy="718" r="4.5"></circle>
+                <circle id="v-msg-10-to-anchor" class="seq-anchor error" data-vd-node="activation" data-vd-activation-for="v-work" cx="83.30" cy="718" r="4.5"></circle>
+                <line id="v-msg-10" class="seq-edge-error" x1="916.70" y1="718" x2="83.30" y2="718" data-vd-edge="review-rework" data-from="v-msg-10-from-anchor" data-to="v-msg-10-to-anchor" data-vd-message-kind="error"></line>
+              </svg>
+              <div class="lifeline" style="--x:8.33%" data-vd-lifeline-for="v-work"></div><div class="lifeline" style="--x:25%" data-vd-lifeline-for="v-req"></div><div class="lifeline" style="--x:41.67%" data-vd-lifeline-for="v-git"></div><div class="lifeline" style="--x:58.33%" data-vd-lifeline-for="v-conv"></div><div class="lifeline" style="--x:75%" data-vd-lifeline-for="v-reviewer"></div><div class="lifeline" style="--x:91.67%" data-vd-lifeline-for="v-gate"></div>
+              <div class="seq-message" style="--left:8.33%;--width:16.67%;--top:52px" data-vd-caption-for="v-msg-1"><span id="v-label-1" class="seq-caption" data-vd-edge-label="v-msg-1">1. 编译主任务文档、确认决策与已验收计划</span></div>
+              <div class="seq-message return reverse" style="--left:8.33%;--width:16.67%;--top:126px" data-vd-caption-for="v-msg-2"><span id="v-label-2" class="seq-caption" data-vd-edge-label="v-msg-2">2. 返回 RequirementsManifest</span></div>
+              <div class="seq-message" style="--left:8.33%;--width:33.34%;--top:200px" data-vd-caption-for="v-msg-3"><span id="v-label-3" class="seq-caption" data-vd-edge-label="v-msg-3">3. 校验精确实施来源、基线 SHA 与只读边界</span></div>
+              <div class="seq-message return reverse" style="--left:8.33%;--width:33.34%;--top:274px" data-vd-caption-for="v-msg-4"><span id="v-label-4" class="seq-caption" data-vd-edge-label="v-msg-4">4. 返回 committed / staged / unstaged / untracked + 真实检查</span></div>
+              <div class="seq-message" style="--left:8.33%;--width:50%;--top:348px" data-vd-caption-for="v-msg-5"><span id="v-label-5" class="seq-caption" data-vd-edge-label="v-msg-5">5. 建立独立只读审查会话</span></div>
+              <div class="seq-message" style="--left:58.33%;--width:16.67%;--top:422px" data-vd-caption-for="v-msg-6"><span id="v-label-6" class="seq-caption" data-vd-edge-label="v-msg-6">6. 依据三份清单检查需求符合性与代码风险</span></div>
+              <div class="seq-message return reverse" style="--left:58.33%;--width:16.67%;--top:496px" data-vd-caption-for="v-msg-7"><span id="v-label-7" class="seq-caption" data-vd-edge-label="v-msg-7">7. CodeReviewReportV1：发现、证据、影响、建议</span></div>
+              <div class="seq-message" style="--left:58.33%;--width:33.34%;--top:570px" data-vd-caption-for="v-msg-8"><span id="v-label-8" class="seq-caption" data-vd-edge-label="v-msg-8">8. 提交审查交付物与 pass / changes / blocked</span></div>
+              <div class="seq-message return reverse" style="--left:8.33%;--width:83.34%;--top:644px" data-vd-caption-for="v-msg-9"><span id="v-label-9" class="seq-caption" data-vd-edge-label="v-msg-9">9A. pass + 门禁满足：接受审查阶段</span></div>
+              <div class="seq-message exception reverse" style="--left:8.33%;--width:83.34%;--top:718px" data-vd-caption-for="v-msg-10"><span id="v-label-10" class="seq-caption" data-vd-edge-label="v-msg-10">9B. changes_requested：重开实施；blocked：补证据后再审</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="sequence-note"><span><strong>已有安全基础：</strong>当前代码已要求审查继承产生已验收实施交付物的精确会话，并固定只读工作区；目标方案新增需求、变更、验证三份正式清单。</span><button type="button" class="evidence-button" data-vd-detail-trigger="detail-review">查看审查证据</button></div>
+      </section>
+
+      <section id="view-delivery" class="diagram-panel" data-vd-view="final-delivery" data-vd-family="code-sequence" data-vd-view-role="supporting">
+        <header class="view-head">
+          <div>
+            <div class="view-meta"><span data-vd-evidence-state="observed" class="status-observed">已有 Command ledger</span><span data-vd-evidence-state="proposed" class="status-proposed">新增最终检查点</span></div>
+            <h2 data-vd-view-title>交互时序｜最终检查点与逐动作自动交付</h2>
+            <p>员工授权不是一次性“完全访问”；提交、推送、合入、部署和结束任务各自校验目标、前置事实与稳定命令身份。</p>
+          </div>
+          <div class="view-number" aria-hidden="true">07</div>
+        </header>
+        <div data-vd-viewport>
+          <div class="sequence" data-vd-zoom-target style="--participants: 6; --rows: 11; --seq-width: 1320px;">
+            <div class="participant-row">
+              <div id="y-work" class="participant p-work" data-vd-node="participant"><strong>工作管理</strong><span class="vd-tech-label">workflow + grants</span></div>
+              <div id="y-controller" class="participant p-asset" data-vd-node="participant"><strong>交付控制器</strong><span class="vd-tech-label">delivery checkpoint</span></div>
+              <div id="y-ledger" class="participant p-runtime" data-vd-node="participant"><strong>Command ledger</strong><span class="vd-tech-label">operation identity + receipt</span></div>
+              <div id="y-git" class="participant p-external" data-vd-node="participant"><strong>Git 目标</strong><span class="vd-tech-label">commit / push / merge</span></div>
+              <div id="y-deploy" class="participant p-risk" data-vd-node="participant"><strong>部署命令</strong><span class="vd-tech-label">command center</span></div>
+              <div id="y-task" class="participant p-user" data-vd-node="participant"><strong>任务系统</strong><span class="vd-tech-label">task completion</span></div>
+            </div>
+            <div class="sequence-body">
+              <svg class="sequence-edges" viewBox="0 0 1000 860" preserveAspectRatio="none" aria-hidden="true">
+                <circle id="y-msg-1-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="y-work" cx="83.30" cy="52" r="4.5"></circle>
+                <circle id="y-msg-1-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="y-controller" cx="250.00" cy="52" r="4.5"></circle>
+                <line id="y-msg-1" class="seq-edge-call" x1="83.30" y1="52" x2="250.00" y2="52" data-vd-edge="checkpoint" data-from="y-msg-1-from-anchor" data-to="y-msg-1-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="y-msg-2-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="y-controller" cx="250.00" cy="126" r="4.5"></circle>
+                <circle id="y-msg-2-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="y-ledger" cx="416.70" cy="126" r="4.5"></circle>
+                <line id="y-msg-2" class="seq-edge-call" x1="250.00" y1="126" x2="416.70" y2="126" data-vd-edge="command-create" data-from="y-msg-2-from-anchor" data-to="y-msg-2-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="y-msg-3-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="y-ledger" cx="416.70" cy="200" r="4.5"></circle>
+                <circle id="y-msg-3-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="y-git" cx="583.30" cy="200" r="4.5"></circle>
+                <line id="y-msg-3" class="seq-edge-call" x1="416.70" y1="200" x2="583.30" y2="200" data-vd-edge="git-write" data-from="y-msg-3-from-anchor" data-to="y-msg-3-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="y-msg-4-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="y-git" cx="583.30" cy="274" r="4.5"></circle>
+                <circle id="y-msg-4-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="y-ledger" cx="416.70" cy="274" r="4.5"></circle>
+                <line id="y-msg-4" class="seq-edge-return" x1="583.30" y1="274" x2="416.70" y2="274" data-vd-edge="git-receipt" data-from="y-msg-4-from-anchor" data-to="y-msg-4-to-anchor" data-vd-message-kind="return"></line>
+                <circle id="y-msg-5-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="y-ledger" cx="416.70" cy="348" r="4.5"></circle>
+                <circle id="y-msg-5-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="y-git" cx="583.30" cy="348" r="4.5"></circle>
+                <line id="y-msg-5" class="seq-edge-call" x1="416.70" y1="348" x2="583.30" y2="348" data-vd-edge="git-publish" data-from="y-msg-5-from-anchor" data-to="y-msg-5-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="y-msg-6-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="y-ledger" cx="416.70" cy="422" r="4.5"></circle>
+                <circle id="y-msg-6-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="y-controller" cx="250.00" cy="422" r="4.5"></circle>
+                <line id="y-msg-6" class="seq-edge-return" x1="416.70" y1="422" x2="250.00" y2="422" data-vd-edge="git-actions-accepted" data-from="y-msg-6-from-anchor" data-to="y-msg-6-to-anchor" data-vd-message-kind="return"></line>
+                <circle id="y-msg-7-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="y-controller" cx="250.00" cy="496" r="4.5"></circle>
+                <circle id="y-msg-7-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="y-ledger" cx="416.70" cy="496" r="4.5"></circle>
+                <line id="y-msg-7" class="seq-edge-call" x1="250.00" y1="496" x2="416.70" y2="496" data-vd-edge="deploy-command" data-from="y-msg-7-from-anchor" data-to="y-msg-7-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="y-msg-8-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="y-ledger" cx="416.70" cy="570" r="4.5"></circle>
+                <circle id="y-msg-8-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="y-deploy" cx="750.00" cy="570" r="4.5"></circle>
+                <line id="y-msg-8" class="seq-edge-call" x1="416.70" y1="570" x2="750.00" y2="570" data-vd-edge="deploy" data-from="y-msg-8-from-anchor" data-to="y-msg-8-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="y-msg-9-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="y-deploy" cx="750.00" cy="644" r="4.5"></circle>
+                <circle id="y-msg-9-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="y-controller" cx="250.00" cy="644" r="4.5"></circle>
+                <line id="y-msg-9" class="seq-edge-return" x1="750.00" y1="644" x2="250.00" y2="644" data-vd-edge="deploy-receipt" data-from="y-msg-9-from-anchor" data-to="y-msg-9-to-anchor" data-vd-message-kind="return"></line>
+                <circle id="y-msg-10-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="y-controller" cx="250.00" cy="718" r="4.5"></circle>
+                <circle id="y-msg-10-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="y-task" cx="916.70" cy="718" r="4.5"></circle>
+                <line id="y-msg-10" class="seq-edge-call" x1="250.00" y1="718" x2="916.70" y2="718" data-vd-edge="complete-task" data-from="y-msg-10-from-anchor" data-to="y-msg-10-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="y-msg-11-from-anchor" class="seq-anchor error" data-vd-node="activation" data-vd-activation-for="y-deploy" cx="750.00" cy="792" r="4.5"></circle>
+                <circle id="y-msg-11-to-anchor" class="seq-anchor error" data-vd-node="activation" data-vd-activation-for="y-controller" cx="250.00" cy="792" r="4.5"></circle>
+                <line id="y-msg-11" class="seq-edge-error" x1="750.00" y1="792" x2="250.00" y2="792" data-vd-edge="delivery-unknown" data-from="y-msg-11-from-anchor" data-to="y-msg-11-to-anchor" data-vd-message-kind="error"></line>
+              </svg>
+              <div class="lifeline" style="--x:8.33%" data-vd-lifeline-for="y-work"></div><div class="lifeline" style="--x:25%" data-vd-lifeline-for="y-controller"></div><div class="lifeline" style="--x:41.67%" data-vd-lifeline-for="y-ledger"></div><div class="lifeline" style="--x:58.33%" data-vd-lifeline-for="y-git"></div><div class="lifeline" style="--x:75%" data-vd-lifeline-for="y-deploy"></div><div class="lifeline" style="--x:91.67%" data-vd-lifeline-for="y-task"></div>
+              <div class="seq-message" style="--left:8.33%;--width:16.67%;--top:52px" data-vd-caption-for="y-msg-1"><span id="y-label-1" class="seq-caption" data-vd-edge-label="y-msg-1">1. 工作流完成：冻结目标、验收、审查与逐动作授权</span></div>
+              <div class="seq-message" style="--left:25%;--width:16.67%;--top:126px" data-vd-caption-for="y-msg-2"><span id="y-label-2" class="seq-caption" data-vd-edge-label="y-msg-2">2. 建立 commit 动作的稳定命令身份</span></div>
+              <div class="seq-message" style="--left:41.67%;--width:16.66%;--top:200px" data-vd-caption-for="y-msg-3"><span id="y-label-3" class="seq-caption" data-vd-edge-label="y-msg-3">3. 在本次隔离工作区执行提交</span></div>
+              <div class="seq-message return reverse" style="--left:41.67%;--width:16.66%;--top:274px" data-vd-caption-for="y-msg-4"><span id="y-label-4" class="seq-caption" data-vd-edge-label="y-msg-4">4. 持久化 commit SHA / 明确失败 / 未知</span></div>
+              <div class="seq-message" style="--left:41.67%;--width:16.66%;--top:348px" data-vd-caption-for="y-msg-5"><span id="y-label-5" class="seq-caption" data-vd-edge-label="y-msg-5">5. 逐项执行已授权 push 与 merge</span></div>
+              <div class="seq-message return reverse" style="--left:25%;--width:16.67%;--top:422px" data-vd-caption-for="y-msg-6"><span id="y-label-6" class="seq-caption" data-vd-edge-label="y-msg-6">6. Git 动作均有已接纳回执才继续</span></div>
+              <div class="seq-message" style="--left:25%;--width:16.67%;--top:496px" data-vd-caption-for="y-msg-7"><span id="y-label-7" class="seq-caption" data-vd-edge-label="y-msg-7">7. 建立部署动作命令（若已授权）</span></div>
+              <div class="seq-message" style="--left:41.67%;--width:33.33%;--top:570px" data-vd-caption-for="y-msg-8"><span id="y-label-8" class="seq-caption" data-vd-edge-label="y-msg-8">8. 调用作用域匹配、参数完整的部署命令</span></div>
+              <div class="seq-message return reverse" style="--left:25%;--width:50%;--top:644px" data-vd-caption-for="y-msg-9"><span id="y-label-9" class="seq-caption" data-vd-edge-label="y-msg-9">9. 部署回执确认后才允许结束任务</span></div>
+              <div class="seq-message" style="--left:25%;--width:66.67%;--top:718px" data-vd-caption-for="y-msg-10"><span id="y-label-10" class="seq-caption" data-vd-edge-label="y-msg-10">10. 按独立授权更新任务终态</span></div>
+              <div class="seq-message exception reverse" style="--left:25%;--width:50%;--top:792px" data-vd-caption-for="y-msg-11"><span id="y-label-11" class="seq-caption" data-vd-edge-label="y-msg-11">任一动作结果未知：停止所有后续动作并进入对账</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="sequence-note"><span><strong>部署员工的职责：</strong>可以形成发布就绪报告和建议命令，但实际部署权来自项目授权、任务权限、最终检查点和 Command ledger，而不是员工提示词。</span><span data-vd-evidence-state="proposed" class="status-proposed">最终门禁</span></div>
+      </section>
+
+      <section id="view-recovery" class="diagram-panel" data-vd-view="unknown-recovery" data-vd-family="code-sequence" data-vd-view-role="supporting">
+        <header class="view-head">
+          <div>
+            <div class="view-meta"><span data-vd-evidence-state="observed" class="status-observed">已有未知结果失败关闭</span><span class="sequence-phase">恢复与对账</span></div>
+            <h2 data-vd-view-title>交互时序｜Provider、Git 或部署结果未知时的恢复</h2>
+            <p>未知不是失败，也不是未执行。系统冻结原操作身份、阻止重发，通过原生会话或目标系统证据追加结论。</p>
+          </div>
+          <div class="view-number" aria-hidden="true">08</div>
+        </header>
+        <div data-vd-viewport>
+          <div class="sequence" data-vd-zoom-target style="--participants: 5; --rows: 11; --seq-width: 1180px;">
+            <div class="participant-row">
+              <div id="u-user" class="participant p-user" data-vd-node="participant"><strong>用户 / 恢复 Worker</strong><span class="vd-tech-label">reconciliation actor</span></div>
+              <div id="u-work" class="participant p-work" data-vd-node="participant"><strong>工作管理</strong><span class="vd-tech-label">blocked execution / attempt</span></div>
+              <div id="u-runtime" class="participant p-runtime" data-vd-node="participant"><strong>原生 Runtime</strong><span class="vd-tech-label">thread / turn evidence</span></div>
+              <div id="u-ledger" class="participant p-asset" data-vd-node="participant"><strong>Command ledger</strong><span class="vd-tech-label">dispatch receipt</span></div>
+              <div id="u-target" class="participant p-external" data-vd-node="participant"><strong>外部目标</strong><span class="vd-tech-label">Git / deploy / task state</span></div>
+            </div>
+            <div class="sequence-body">
+              <svg class="sequence-edges" viewBox="0 0 1000 860" preserveAspectRatio="none" aria-hidden="true">
+                <circle id="u-msg-1-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="u-work" cx="300.00" cy="52" r="4.5"></circle>
+                <circle id="u-msg-1-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="u-runtime" cx="500.00" cy="52" r="4.5"></circle>
+                <line id="u-msg-1" class="seq-edge-call" x1="300.00" y1="52" x2="500.00" y2="52" data-vd-edge="dispatch" data-from="u-msg-1-from-anchor" data-to="u-msg-1-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="u-msg-2-from-anchor" class="seq-anchor error" data-vd-node="activation" data-vd-activation-for="u-runtime" cx="500.00" cy="126" r="4.5"></circle>
+                <circle id="u-msg-2-to-anchor" class="seq-anchor error" data-vd-node="activation" data-vd-activation-for="u-work" cx="300.00" cy="126" r="4.5"></circle>
+                <line id="u-msg-2" class="seq-edge-error" x1="500.00" y1="126" x2="300.00" y2="126" data-vd-edge="unknown" data-from="u-msg-2-from-anchor" data-to="u-msg-2-to-anchor" data-vd-message-kind="error"></line>
+                <circle id="u-msg-3-from-anchor" class="seq-anchor error" data-vd-node="activation" data-vd-activation-for="u-work" cx="300.00" cy="200" r="4.5"></circle>
+                <circle id="u-msg-3-to-anchor" class="seq-anchor error" data-vd-node="activation" data-vd-activation-for="u-user" cx="100.00" cy="200" r="4.5"></circle>
+                <line id="u-msg-3" class="seq-edge-error" x1="300.00" y1="200" x2="100.00" y2="200" data-vd-edge="block-notification" data-from="u-msg-3-from-anchor" data-to="u-msg-3-to-anchor" data-vd-message-kind="error"></line>
+                <circle id="u-msg-4-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="u-user" cx="100.00" cy="274" r="4.5"></circle>
+                <circle id="u-msg-4-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="u-work" cx="300.00" cy="274" r="4.5"></circle>
+                <line id="u-msg-4" class="seq-edge-call" x1="100.00" y1="274" x2="300.00" y2="274" data-vd-edge="reconcile-command" data-from="u-msg-4-from-anchor" data-to="u-msg-4-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="u-msg-5-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="u-work" cx="300.00" cy="348" r="4.5"></circle>
+                <circle id="u-msg-5-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="u-runtime" cx="500.00" cy="348" r="4.5"></circle>
+                <line id="u-msg-5" class="seq-edge-call" x1="300.00" y1="348" x2="500.00" y2="348" data-vd-edge="query-runtime" data-from="u-msg-5-from-anchor" data-to="u-msg-5-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="u-msg-6-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="u-runtime" cx="500.00" cy="422" r="4.5"></circle>
+                <circle id="u-msg-6-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="u-work" cx="300.00" cy="422" r="4.5"></circle>
+                <line id="u-msg-6" class="seq-edge-return" x1="500.00" y1="422" x2="300.00" y2="422" data-vd-edge="runtime-evidence" data-from="u-msg-6-from-anchor" data-to="u-msg-6-to-anchor" data-vd-message-kind="return"></line>
+                <circle id="u-msg-7-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="u-work" cx="300.00" cy="496" r="4.5"></circle>
+                <circle id="u-msg-7-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="u-ledger" cx="700.00" cy="496" r="4.5"></circle>
+                <line id="u-msg-7" class="seq-edge-call" x1="300.00" y1="496" x2="700.00" y2="496" data-vd-edge="query-command" data-from="u-msg-7-from-anchor" data-to="u-msg-7-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="u-msg-8-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="u-ledger" cx="700.00" cy="570" r="4.5"></circle>
+                <circle id="u-msg-8-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="u-target" cx="900.00" cy="570" r="4.5"></circle>
+                <line id="u-msg-8" class="seq-edge-call" x1="700.00" y1="570" x2="900.00" y2="570" data-vd-edge="query-target" data-from="u-msg-8-from-anchor" data-to="u-msg-8-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="u-msg-9-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="u-target" cx="900.00" cy="644" r="4.5"></circle>
+                <circle id="u-msg-9-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="u-ledger" cx="700.00" cy="644" r="4.5"></circle>
+                <line id="u-msg-9" class="seq-edge-return" x1="900.00" y1="644" x2="700.00" y2="644" data-vd-edge="target-evidence" data-from="u-msg-9-from-anchor" data-to="u-msg-9-to-anchor" data-vd-message-kind="return"></line>
+                <circle id="u-msg-10-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="u-ledger" cx="700.00" cy="718" r="4.5"></circle>
+                <circle id="u-msg-10-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="u-work" cx="300.00" cy="718" r="4.5"></circle>
+                <line id="u-msg-10" class="seq-edge-return" x1="700.00" y1="718" x2="300.00" y2="718" data-vd-edge="append-conclusion" data-from="u-msg-10-from-anchor" data-to="u-msg-10-to-anchor" data-vd-message-kind="return"></line>
+                <circle id="u-msg-11-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="u-work" cx="300.00" cy="792" r="4.5"></circle>
+                <circle id="u-msg-11-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="u-user" cx="100.00" cy="792" r="4.5"></circle>
+                <line id="u-msg-11" class="seq-edge-return" x1="300.00" y1="792" x2="100.00" y2="792" data-vd-edge="recovery-outcome" data-from="u-msg-11-from-anchor" data-to="u-msg-11-to-anchor" data-vd-message-kind="return"></line>
+              </svg>
+              <div class="lifeline" style="--x:10%" data-vd-lifeline-for="u-user"></div><div class="lifeline" style="--x:30%" data-vd-lifeline-for="u-work"></div><div class="lifeline" style="--x:50%" data-vd-lifeline-for="u-runtime"></div><div class="lifeline" style="--x:70%" data-vd-lifeline-for="u-ledger"></div><div class="lifeline" style="--x:90%" data-vd-lifeline-for="u-target"></div>
+              <div class="seq-message" style="--left:30%;--width:20%;--top:52px" data-vd-caption-for="u-msg-1"><span id="u-label-1" class="seq-caption" data-vd-edge-label="u-msg-1">1. 使用稳定 operationIdentity 写出请求</span></div>
+              <div class="seq-message exception reverse" style="--left:30%;--width:20%;--top:126px" data-vd-caption-for="u-msg-2"><span id="u-label-2" class="seq-caption" data-vd-edge-label="u-msg-2">2. 已开始写出但未取得可判定回执</span></div>
+              <div class="seq-message exception reverse" style="--left:10%;--width:20%;--top:200px" data-vd-caption-for="u-msg-3"><span id="u-label-3" class="seq-caption" data-vd-edge-label="u-msg-3">3. 标记 outcome_unknown，停止后续阶段 / 动作</span></div>
+              <div class="seq-message decision" style="--left:10%;--width:20%;--top:274px" data-vd-caption-for="u-msg-4"><span id="u-label-4" class="seq-caption" data-vd-edge-label="u-msg-4">4. 发起带原操作身份的对账命令</span></div>
+              <div class="seq-message" style="--left:30%;--width:20%;--top:348px" data-vd-caption-for="u-msg-5"><span id="u-label-5" class="seq-caption" data-vd-edge-label="u-msg-5">5. 查询原生 thread / turn / submission 身份</span></div>
+              <div class="seq-message return reverse" style="--left:30%;--width:20%;--top:422px" data-vd-caption-for="u-msg-6"><span id="u-label-6" class="seq-caption" data-vd-edge-label="u-msg-6">6. 返回已接纳 / 明确拒绝 / 仍未知</span></div>
+              <div class="seq-message" style="--left:30%;--width:40%;--top:496px" data-vd-caption-for="u-msg-7"><span id="u-label-7" class="seq-caption" data-vd-edge-label="u-msg-7">7. 对 Git / 部署动作查询命令回执</span></div>
+              <div class="seq-message" style="--left:70%;--width:20%;--top:570px" data-vd-caption-for="u-msg-8"><span id="u-label-8" class="seq-caption" data-vd-edge-label="u-msg-8">8. 用目标、SHA、部署运行 ID 等事实对账</span></div>
+              <div class="seq-message return reverse" style="--left:70%;--width:20%;--top:644px" data-vd-caption-for="u-msg-9"><span id="u-label-9" class="seq-caption" data-vd-edge-label="u-msg-9">9. 返回目标系统当前事实</span></div>
+              <div class="seq-message return reverse" style="--left:30%;--width:40%;--top:718px" data-vd-caption-for="u-msg-10"><span id="u-label-10" class="seq-caption" data-vd-edge-label="u-msg-10">10. 追加不可变结论，不改写原未知回执</span></div>
+              <div class="seq-message return reverse" style="--left:10%;--width:20%;--top:792px" data-vd-caption-for="u-msg-11"><span id="u-label-11" class="seq-caption" data-vd-edge-label="u-msg-11">11. 已接纳则从下一安全点继续；仍未知则保持阻塞</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="sequence-note"><span><strong>禁止：</strong>删除锁、换工作区冒充原现场、创建第二条会话、重新提交同一 Git/部署动作，都会破坏对账证据。</span><span data-vd-evidence-state="observed" class="status-observed">失败关闭</span></div>
+      </section>
+
+      <section id="view-configuration" class="diagram-panel" data-vd-view="configuration" data-vd-family="code-sequence" data-vd-view-role="supporting">
+        <header class="view-head">
+          <div>
+            <div class="view-meta"><span data-vd-evidence-state="observed" class="status-observed">已有模板 / 项目副本 / 自动化</span><span class="sequence-phase">配置生命周期</span></div>
+            <h2 data-vd-view-title>交互时序｜数字员工模板、项目配置、Skill 与自动化规则</h2>
+            <p>全局模板只提供可复用基线；分配到项目后形成独立员工副本，项目权限默认收紧，模板后续变化不会静默扩大项目能力。</p>
+          </div>
+          <div class="view-number" aria-hidden="true">09</div>
+        </header>
+        <div data-vd-viewport>
+          <div class="sequence" data-vd-zoom-target style="--participants: 6; --rows: 10; --seq-width: 1320px;">
+            <div class="participant-row">
+              <div id="f-admin" class="participant p-user" data-vd-node="participant"><strong>管理员 / 项目负责人</strong><span class="vd-tech-label">configuration actor</span></div>
+              <div id="f-template" class="participant p-work" data-vd-node="participant"><strong>全局员工模板</strong><span class="vd-tech-label">built-in + custom baseline</span></div>
+              <div id="f-employee" class="participant p-asset" data-vd-node="participant"><strong>项目数字员工</strong><span class="vd-tech-label">independent project copy</span></div>
+              <div id="f-skill" class="participant p-runtime" data-vd-node="participant"><strong>Skill Catalog</strong><span class="vd-tech-label">zero or one stable ID</span></div>
+              <div id="f-auto" class="participant p-external" data-vd-node="participant"><strong>自动化规则</strong><span class="vd-tech-label">time / interval / project event</span></div>
+              <div id="f-queue" class="participant p-risk" data-vd-node="participant"><strong>工作执行队列</strong><span class="vd-tech-label">dedupe / lease / budget</span></div>
+            </div>
+            <div class="sequence-body">
+              <svg class="sequence-edges" viewBox="0 0 1000 786" preserveAspectRatio="none" aria-hidden="true">
+                <circle id="f-msg-1-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="f-admin" cx="83.30" cy="52" r="4.5"></circle>
+                <circle id="f-msg-1-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="f-template" cx="250.00" cy="52" r="4.5"></circle>
+                <line id="f-msg-1" class="seq-edge-call" x1="83.30" y1="52" x2="250.00" y2="52" data-vd-edge="configure-template" data-from="f-msg-1-from-anchor" data-to="f-msg-1-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="f-msg-2-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="f-template" cx="250.00" cy="126" r="4.5"></circle>
+                <circle id="f-msg-2-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="f-employee" cx="416.70" cy="126" r="4.5"></circle>
+                <line id="f-msg-2" class="seq-edge-call" x1="250.00" y1="126" x2="416.70" y2="126" data-vd-edge="assign-template" data-from="f-msg-2-from-anchor" data-to="f-msg-2-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="f-msg-3-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="f-admin" cx="83.30" cy="200" r="4.5"></circle>
+                <circle id="f-msg-3-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="f-employee" cx="416.70" cy="200" r="4.5"></circle>
+                <line id="f-msg-3" class="seq-edge-call" x1="83.30" y1="200" x2="416.70" y2="200" data-vd-edge="project-overrides" data-from="f-msg-3-from-anchor" data-to="f-msg-3-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="f-msg-4-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="f-admin" cx="83.30" cy="274" r="4.5"></circle>
+                <circle id="f-msg-4-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="f-employee" cx="416.70" cy="274" r="4.5"></circle>
+                <line id="f-msg-4" class="seq-edge-call" x1="83.30" y1="274" x2="416.70" y2="274" data-vd-edge="delivery-grants" data-from="f-msg-4-from-anchor" data-to="f-msg-4-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="f-msg-5-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="f-employee" cx="416.70" cy="348" r="4.5"></circle>
+                <circle id="f-msg-5-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="f-skill" cx="583.30" cy="348" r="4.5"></circle>
+                <line id="f-msg-5" class="seq-edge-call" x1="416.70" y1="348" x2="583.30" y2="348" data-vd-edge="select-skill" data-from="f-msg-5-from-anchor" data-to="f-msg-5-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="f-msg-6-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="f-skill" cx="583.30" cy="422" r="4.5"></circle>
+                <circle id="f-msg-6-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="f-employee" cx="416.70" cy="422" r="4.5"></circle>
+                <line id="f-msg-6" class="seq-edge-return" x1="583.30" y1="422" x2="416.70" y2="422" data-vd-edge="skill-identity" data-from="f-msg-6-from-anchor" data-to="f-msg-6-to-anchor" data-vd-message-kind="return"></line>
+                <circle id="f-msg-7-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="f-admin" cx="83.30" cy="496" r="4.5"></circle>
+                <circle id="f-msg-7-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="f-auto" cx="750.00" cy="496" r="4.5"></circle>
+                <line id="f-msg-7" class="seq-edge-call" x1="83.30" y1="496" x2="750.00" y2="496" data-vd-edge="create-automation" data-from="f-msg-7-from-anchor" data-to="f-msg-7-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="f-msg-8-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="f-auto" cx="750.00" cy="570" r="4.5"></circle>
+                <circle id="f-msg-8-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="f-queue" cx="916.70" cy="570" r="4.5"></circle>
+                <line id="f-msg-8" class="seq-edge-call" x1="750.00" y1="570" x2="916.70" y2="570" data-vd-edge="enqueue-work" data-from="f-msg-8-from-anchor" data-to="f-msg-8-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="f-msg-9-from-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="f-template" cx="250.00" cy="644" r="4.5"></circle>
+                <circle id="f-msg-9-to-anchor" class="seq-anchor call" data-vd-node="activation" data-vd-activation-for="f-employee" cx="416.70" cy="644" r="4.5"></circle>
+                <line id="f-msg-9" class="seq-edge-call" x1="250.00" y1="644" x2="416.70" y2="644" data-vd-edge="template-update" data-from="f-msg-9-from-anchor" data-to="f-msg-9-to-anchor" data-vd-message-kind="sync"></line>
+                <circle id="f-msg-10-from-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="f-employee" cx="416.70" cy="718" r="4.5"></circle>
+                <circle id="f-msg-10-to-anchor" class="seq-anchor return" data-vd-node="activation" data-vd-activation-for="f-admin" cx="83.30" cy="718" r="4.5"></circle>
+                <line id="f-msg-10" class="seq-edge-return" x1="416.70" y1="718" x2="83.30" y2="718" data-vd-edge="explicit-upgrade" data-from="f-msg-10-from-anchor" data-to="f-msg-10-to-anchor" data-vd-message-kind="return"></line>
+              </svg>
+              <div class="lifeline" style="--x:8.33%" data-vd-lifeline-for="f-admin"></div><div class="lifeline" style="--x:25%" data-vd-lifeline-for="f-template"></div><div class="lifeline" style="--x:41.67%" data-vd-lifeline-for="f-employee"></div><div class="lifeline" style="--x:58.33%" data-vd-lifeline-for="f-skill"></div><div class="lifeline" style="--x:75%" data-vd-lifeline-for="f-auto"></div><div class="lifeline" style="--x:91.67%" data-vd-lifeline-for="f-queue"></div>
+              <div class="seq-message" style="--left:8.33%;--width:16.67%;--top:52px" data-vd-caption-for="f-msg-1"><span id="f-label-1" class="seq-caption" data-vd-edge-label="f-msg-1">1. 选择内置岗位或创建自定义岗位 / 领域基线</span></div>
+              <div class="seq-message" style="--left:25%;--width:16.67%;--top:126px" data-vd-caption-for="f-msg-2"><span id="f-label-2" class="seq-caption" data-vd-edge-label="f-msg-2">2. 分配到项目，产生独立员工副本</span></div>
+              <div class="seq-message" style="--left:8.33%;--width:33.34%;--top:200px" data-vd-caption-for="f-msg-3"><span id="f-label-3" class="seq-caption" data-vd-edge-label="f-msg-3">3. 覆盖领域、提示词、模型、工作模式和任务筛选</span></div>
+              <div class="seq-message decision" style="--left:8.33%;--width:33.34%;--top:274px" data-vd-caption-for="f-msg-4"><span id="f-label-4" class="seq-caption" data-vd-edge-label="f-msg-4">4. 提交 / 推送 / 合入 / 部署 / 完结逐项授权，默认全关</span></div>
+              <div class="seq-message" style="--left:41.67%;--width:16.66%;--top:348px" data-vd-caption-for="f-msg-5"><span id="f-label-5" class="seq-caption" data-vd-edge-label="f-msg-5">5. 从真实 Catalog 选择零或一个默认 Skill</span></div>
+              <div class="seq-message return reverse" style="--left:41.67%;--width:16.66%;--top:422px" data-vd-caption-for="f-msg-6"><span id="f-label-6" class="seq-caption" data-vd-edge-label="f-msg-6">6. 保存稳定 ID；名称 / 路径不作为自由文本配置</span></div>
+              <div class="seq-message" style="--left:8.33%;--width:66.67%;--top:496px" data-vd-caption-for="f-msg-7"><span id="f-label-7" class="seq-caption" data-vd-edge-label="f-msg-7">7. 创建立即、一次、每天、每周、间隔或项目事件规则</span></div>
+              <div class="seq-message" style="--left:75%;--width:16.67%;--top:570px" data-vd-caption-for="f-msg-8"><span id="f-label-8" class="seq-caption" data-vd-edge-label="f-msg-8">8. 触发时使用来源身份去重并进入工作执行队列</span></div>
+              <div class="seq-message decision" style="--left:25%;--width:16.67%;--top:644px" data-vd-caption-for="f-msg-9"><span id="f-label-9" class="seq-caption" data-vd-edge-label="f-msg-9">9. 模板更新只形成可见差异，不静默覆盖项目副本</span></div>
+              <div class="seq-message return reverse" style="--left:8.33%;--width:33.34%;--top:718px" data-vd-caption-for="f-msg-10"><span id="f-label-10" class="seq-caption" data-vd-edge-label="f-msg-10">10. 用户显式选择升级项并重新确认权限</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="sequence-note"><span><strong>业务组合示例：</strong>同一个“测试”模板可在 CSS 项目形成“CSS 测试员工”，在 PIM 项目形成“PIM 测试员工”；项目副本拥有各自 Skill、提示词、权限和自动化。</span><span data-vd-evidence-state="observed" class="status-observed">已有主体能力</span></div>
+      </section>
+
+      <section class="footer-note" aria-label="图册结论">
+        <strong>最终结论：</strong>最小可行的 Harness 改造不是继续增加角色或提示词，而是先让 7 个阶段写接口进入 Command Envelope，再让数字员工从“普通任务会话”切换为“工作执行 → 当前阶段尝试”，最后把会话完成后的直接交付改成“交付物 → 验收 → 最终检查点”。
+      </section>
+    </main>
+
+    <dialog id="detail-current-gaps" data-vd-detail-for="gap-current-orchestrator">
+      <button type="button" class="vd-detail-close evidence-button" data-vd-detail-close>关闭</button>
+      <div class="vd-detail-body">
+        <h2>当前三处真实断点</h2>
+        <ol class="gap-list">
+          <li><code>digitalEmployeeOrchestrator.dispatchExecution()</code> 仍构造普通 <code>source: "task_push"</code>，只传员工默认 <code>skillId</code>，没有读取工作流或传入 <code>stageId</code>。</li>
+          <li><code>monitorConversation()</code> 在产品会话进入 <code>completed</code> 后直接切到 <code>delivery_pending</code>，尚未等待阶段交付物提交和验收。</li>
+          <li><code>taskStageRoutes.ts</code> 的初始化、配置、捕获、手工交付物、跳过、接受和请求修改 7 个写入口直接调用应用服务，尚无统一 Work Management Command Envelope。</li>
+        </ol>
+        <p class="vd-tech-label">证据：packages/local-server/src/digitalEmployeeOrchestrator.ts:407-511；packages/local-server/src/taskStageRoutes.ts:10-38</p>
+      </div>
+    </dialog>
+
+    <dialog id="detail-resolution" data-vd-detail-for="flow-resolve">
+      <button type="button" class="vd-detail-close evidence-button" data-vd-detail-close>关闭</button>
+      <div class="vd-detail-body">
+        <h2>阶段启动解析规则</h2>
+        <ul class="gap-list">
+          <li>员工：阶段显式员工优先，未配置时继承任务默认员工；模型不能自行选择员工。</li>
+          <li>Skill：阶段 <code>explicit</code> ＞ 员工默认；<code>none</code> 表示明确禁用，不能与“未配置”混淆。</li>
+          <li>模型：阶段冻结配置权威；员工偏好只用于初始化，能力不兼容时阻塞而不是静默换模型。</li>
+          <li>能力：任务权限 ∩ 员工快照 ∩ 阶段策略 ∩ Runtime 能力；Skill 不参与权限计算。</li>
+        </ul>
+        <p class="vd-tech-label">方案依据：docs/ZEUS-0352_引入数字员工.md#Harness-Engineering-完整方案</p>
+      </div>
+    </dialog>
+
+    <dialog id="detail-delivery" data-vd-detail-for="flow-delivery">
+      <button type="button" class="vd-detail-close evidence-button" data-vd-detail-close>关闭</button>
+      <div class="vd-detail-body">
+        <h2>自动交付的放行条件</h2>
+        <ul class="gap-list">
+          <li>整个工作流已经完成，最终质量阶段已验收，没有未解决阻断项。</li>
+          <li>目标仓库、分支、环境、工作区水位和验证/审查证据被最终检查点冻结。</li>
+          <li>任务权限、员工授权和动作自身策略都允许本次具体动作。</li>
+          <li>每个动作拥有稳定命令身份和回执；前一动作未知时后续动作全部停止。</li>
+        </ul>
+        <p class="vd-tech-label">现有基础：Command ledger、Git/部署耐久回执、数字员工逐动作授权；新增边界：final delivery checkpoint</p>
+      </div>
+    </dialog>
+
+    <dialog id="detail-review" data-vd-detail-for="view-review">
+      <button type="button" class="vd-detail-close evidence-button" data-vd-detail-close>关闭</button>
+      <div class="vd-detail-body">
+        <h2>代码审查：已存在与待补齐</h2>
+        <p><strong>当前已存在：</strong>代码审查要求继承产生已验收实施交付物的精确会话，固定只读权限与 <code>writableRoots=[]</code>，并覆盖冻结基线之后的已提交、暂存、未暂存和未跟踪变更。</p>
+        <p><strong>目标待补齐：</strong>把主任务文档、确认会话决策、已验收计划、完整变更和真实验证结果编译成 Requirements / Change / Verification 三份可追溯清单，并把审查结论固化为 <code>CodeReviewReportV1</code>。</p>
+        <p class="vd-tech-label">证据：packages/local-server/src/conversationApplicationOperations.ts:1745-1838；packages/local-server/src/taskRuntimeOperations.ts</p>
+      </div>
+    </dialog>
+
+    <output data-vd-audit-output aria-live="polite"></output>
+  </div>
+  <script id="vibe-diagram-manifest" type="application/json">
+{
+  "$schema": "vibe-diagram/artifact-manifest@1",
+  "artifactId": "zeus-0352-harness-engineering-interaction-atlas",
+  "language": "zh-CN",
+  "title": "交互图册｜ZEUS-0352 Harness Engineering",
+  "audience": [
+    "product-manager",
+    "engineering-lead",
+    "architect"
+  ],
+  "questions": [
+    {
+      "id": "q-closed-loop",
+      "text": "一项工作如何从人工或自动化入口安全推进到最终交付？",
+      "priority": "critical",
+      "answeredBy": ["flow-source", "critical-completion-rule", "flow-delivery"]
+    },
+    {
+      "id": "q-role-skill-capability",
+      "text": "阶段员工、Skill 和真实权限分别由谁决定？",
+      "priority": "critical",
+      "answeredBy": ["flow-resolve", "critical-role-rule"]
+    },
+    {
+      "id": "q-review-rework",
+      "text": "代码审查何时发生，未通过后如何返工？",
+      "priority": "critical",
+      "answeredBy": ["flow-gate", "flow-changes", "flow-reopen"]
+    },
+    {
+      "id": "q-unknown-recovery",
+      "text": "Provider、Git 或部署结果未知时系统如何避免重复副作用？",
+      "priority": "critical",
+      "answeredBy": ["critical-unknown-rule", "flow-blocked", "flow-reconcile"]
+    },
+    {
+      "id": "q-current-gap",
+      "text": "当前分支距离完整 Harness 还缺少哪些关键连接？",
+      "priority": "important",
+      "answeredBy": ["gap-current-orchestrator"]
+    }
+  ],
+  "criticalFacts": [
+    {
+      "id": "fact-current-gap",
+      "statement": "当前数字员工仍直接发起普通任务会话，并在会话完成后进入交付，尚未等待阶段交付物验收。",
+      "status": "observed",
+      "visibleIn": ["critical-current-gap"],
+      "evidenceIds": ["e-current-orchestrator"]
+    },
+    {
+      "id": "fact-current-stage-route-gap",
+      "statement": "当前 7 个阶段写入口尚未进入统一 Work Management Command Envelope。",
+      "status": "observed",
+      "visibleIn": ["critical-current-gap"],
+      "evidenceIds": ["e-stage-routes"]
+    },
+    {
+      "id": "fact-target-separation",
+      "statement": "目标方案把运行完成、交付物提交、阶段验收、工作流完成和外部交付拆成独立事实。",
+      "status": "proposed",
+      "visibleIn": ["critical-completion-rule"],
+      "evidenceIds": ["e-task-design", "e-harness-adr"]
+    },
+    {
+      "id": "fact-target-resolution",
+      "statement": "目标方案中数字员工决定责任主体，阶段决定工作契约，Skill 提供方法，能力清单决定真实工具边界。",
+      "status": "proposed",
+      "visibleIn": ["critical-role-rule"],
+      "evidenceIds": ["e-task-design", "e-harness-adr"]
+    },
+    {
+      "id": "fact-current-review-safety",
+      "statement": "当前代码审查已经使用独立只读会话，并校验精确实施来源。",
+      "status": "observed",
+      "visibleIn": ["critical-review-safety"],
+      "evidenceIds": ["e-review-source"]
+    },
+    {
+      "id": "fact-unknown-fail-closed",
+      "statement": "结果未知时必须停止后续动作并通过原生或目标系统事实对账，禁止盲目重发。",
+      "status": "observed",
+      "visibleIn": ["critical-unknown-rule"],
+      "evidenceIds": ["e-stage-start", "e-current-orchestrator"]
+    }
+  ],
+  "views": [
+    { "id": "overview", "family": "business-flow", "role": "primary", "elementId": "view-overview" },
+    { "id": "manual-assignment", "family": "code-sequence", "role": "supporting", "elementId": "view-manual" },
+    { "id": "automation-claim", "family": "code-sequence", "role": "supporting", "elementId": "view-automation" },
+    { "id": "stage-resolution", "family": "code-sequence", "role": "supporting", "elementId": "view-resolution" },
+    { "id": "context-runtime", "family": "code-sequence", "role": "supporting", "elementId": "view-context" },
+    { "id": "deliverable-acceptance", "family": "code-sequence", "role": "supporting", "elementId": "view-deliverable" },
+    { "id": "code-review", "family": "code-sequence", "role": "supporting", "elementId": "view-review" },
+    { "id": "final-delivery", "family": "code-sequence", "role": "supporting", "elementId": "view-delivery" },
+    { "id": "unknown-recovery", "family": "code-sequence", "role": "supporting", "elementId": "view-recovery" },
+    { "id": "configuration", "family": "code-sequence", "role": "supporting", "elementId": "view-configuration" }
+  ],
+  "evidence": [
+    {
+      "id": "e-current-orchestrator",
+      "status": "observed",
+      "sourceKind": "source-code",
+      "source": "packages/local-server/src/digitalEmployeeOrchestrator.ts:407-511",
+      "supports": ["fact-current-gap", "fact-unknown-fail-closed"]
+    },
+    {
+      "id": "e-stage-routes",
+      "status": "observed",
+      "sourceKind": "source-code",
+      "source": "packages/local-server/src/taskStageRoutes.ts:10-38",
+      "supports": ["fact-current-stage-route-gap"]
+    },
+    {
+      "id": "e-stage-start",
+      "status": "observed",
+      "sourceKind": "source-code",
+      "source": "packages/local-server/src/conversationApplicationOperations.ts:1715-1855",
+      "supports": ["fact-unknown-fail-closed"]
+    },
+    {
+      "id": "e-review-source",
+      "status": "observed",
+      "sourceKind": "source-code",
+      "source": "packages/local-server/src/conversationApplicationOperations.ts:1745-1838, 2016-2069",
+      "supports": ["fact-current-review-safety"]
+    },
+    {
+      "id": "e-task-design",
+      "status": "proposed",
+      "sourceKind": "project-document",
+      "source": "docs/ZEUS-0352_引入数字员工.md:209",
+      "supports": ["fact-target-separation", "fact-target-resolution"]
+    },
+    {
+      "id": "e-harness-adr",
+      "status": "proposed",
+      "sourceKind": "architecture-decision",
+      "source": "docs/adr/0007-zeus-owns-harness-workflow.md:5",
+      "supports": ["fact-target-separation", "fact-target-resolution"]
+    }
+  ],
+  "extensions": {
+    "taskCode": "ZEUS-0352",
+    "scope": "数字员工、Skill、阶段交付物、代码审查、自动化、最终交付与恢复",
+    "artifactStatus": "proposed-design-with-observed-current-state"
+  }
+}
+  </script>
+  <script data-vd-shell="1">
+(() => {
+  "use strict";
+
+  const $ = (selector, root = document) => root.querySelector(selector);
+  const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+  const auditOutput = () => $("[data-vd-audit-output]");
+
+  function zoomTargets() {
+    const explicit = $$('[data-vd-zoom-target]');
+    return explicit.length ? explicit : $$('[data-vd-view]');
+  }
+
+  function viewportFor(target) {
+    return target.closest('[data-vd-viewport]') || target.parentElement;
+  }
+
+  function naturalWidth(target) {
+    const previous = target.style.zoom;
+    target.style.zoom = "1";
+    const width = Math.max(target.scrollWidth, target.getBoundingClientRect().width, 1);
+    target.style.zoom = previous;
+    return width;
+  }
+
+  function applyZoom(request) {
+    let allApplied = true;
+    zoomTargets().forEach((target) => {
+      const viewport = viewportFor(target);
+      if (!viewport) return;
+      const width = naturalWidth(target);
+      const available = Math.max(viewport.clientWidth, 1);
+      const requested = request === "fit" ? Math.min(1, available / width) : Number(request);
+      const applied = Math.max(0.75, Math.min(1, requested || 1));
+      const overflow = request === "fit" && available / width < 0.75;
+      target.style.zoom = String(applied);
+      target.dataset.vdAppliedZoom = String(applied);
+      viewport.style.overflowX = overflow ? "auto" : "visible";
+      viewport.dataset.vdHorizontalOverflow = String(overflow);
+      if (request === "fit" && requested < 0.75) allApplied = false;
+    });
+
+    $$('[data-vd-zoom]').forEach((button) => {
+      button.setAttribute("aria-pressed", String(button.dataset.vdZoom === request));
+    });
+    const controls = $('[data-vd-controls]');
+    if (controls) {
+      controls.dataset.vdZoomRequest = request;
+      controls.dataset.vdZoomFullyApplied = String(allApplied);
+    }
+    return allApplied;
+  }
+
+  function bindZoom() {
+    $$('[data-vd-zoom]').forEach((button) => {
+      button.addEventListener("click", () => applyZoom(button.dataset.vdZoom || "fit"));
+    });
+    let frame = 0;
+    window.addEventListener("resize", () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const request = $('[data-vd-controls]')?.dataset.vdZoomRequest || "fit";
+        applyZoom(request);
+      });
+    });
+    applyZoom("fit");
+  }
+
+  function bindDetails() {
+    let returnFocus = null;
+    $$('[data-vd-detail-trigger]').forEach((trigger) => {
+      trigger.addEventListener("click", (event) => {
+        const targetId = trigger.getAttribute("data-vd-detail-trigger");
+        const dialog = targetId ? document.getElementById(targetId) : null;
+        if (!(dialog instanceof HTMLDialogElement)) return;
+        event.preventDefault();
+        returnFocus = trigger;
+        dialog.showModal();
+        $('[data-vd-detail-close]', dialog)?.focus();
+      });
+    });
+    $$('dialog[data-vd-detail-for]').forEach((dialog) => {
+      $$('[data-vd-detail-close]', dialog).forEach((button) => button.addEventListener("click", () => dialog.close()));
+      dialog.addEventListener("click", (event) => {
+        if (event.target === dialog) dialog.close();
+      });
+      dialog.addEventListener("close", () => {
+        if (returnFocus instanceof HTMLElement && returnFocus.isConnected) returnFocus.focus();
+        returnFocus = null;
+      });
+    });
+  }
+
+  const rect = (element) => element.getBoundingClientRect();
+  const visible = (element) => {
+    const style = getComputedStyle(element);
+    const box = rect(element);
+    if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+    if (box.width < 1 || box.height < 1) return false;
+    if (element.closest('details:not([open]), dialog:not([open]), [hidden], [aria-hidden="true"]')) return false;
+    return true;
+  };
+  const intersects = (a, b, pad = 1) =>
+    a.left + pad < b.right && a.right - pad > b.left && a.top + pad < b.bottom && a.bottom - pad > b.top;
+  const contains = (outer, inner, tolerance = 1) =>
+    inner.left >= outer.left - tolerance && inner.right <= outer.right + tolerance &&
+    inner.top >= outer.top - tolerance && inner.bottom <= outer.bottom + tolerance;
+
+  function screenPoint(path, length) {
+    if (!(path instanceof SVGGeometryElement) || typeof path.getPointAtLength !== "function") return null;
+    const point = path.getPointAtLength(length);
+    const matrix = path.getScreenCTM();
+    if (!matrix) return null;
+    return new DOMPoint(point.x, point.y).matrixTransform(matrix);
+  }
+
+  function nearBoundary(point, box, tolerance = 18) {
+    if (!point) return false;
+    const insideExpanded = point.x >= box.left - tolerance && point.x <= box.right + tolerance &&
+      point.y >= box.top - tolerance && point.y <= box.bottom + tolerance;
+    const distance = Math.min(
+      Math.abs(point.x - box.left), Math.abs(point.x - box.right),
+      Math.abs(point.y - box.top), Math.abs(point.y - box.bottom)
+    );
+    return insideExpanded && distance <= tolerance;
+  }
+
+  function issue(code, element, detail = "") {
+    return {
+      code,
+      id: element?.id || element?.getAttribute?.("data-vd-view") || "",
+      detail
+    };
+  }
+
+  function authoredBounds(element, fallback) {
+    const svg = element.closest("svg");
+    if (svg) return rect(svg);
+    const target = element.closest("[data-vd-zoom-target]");
+    if (!target) return fallback;
+    const box = rect(target);
+    const zoom = Number.parseFloat(getComputedStyle(target).zoom) || 1;
+    return {
+      left: box.left,
+      top: box.top,
+      right: box.left + Math.max(box.width, target.scrollWidth * zoom),
+      bottom: box.top + Math.max(box.height, target.scrollHeight * zoom)
+    };
+  }
+
+  function auditView(view) {
+    const issues = [];
+    const viewRect = rect(view);
+    const nodes = $$('[data-vd-node]', view).filter(visible);
+    const groups = $$('[data-vd-group]', view).filter(visible);
+    const labels = $$('[data-vd-edge-label]', view).filter(visible);
+    const edges = $$('[data-vd-edge]', view).filter(visible);
+
+    nodes.forEach((node) => {
+      const box = rect(node);
+      if (!contains(authoredBounds(node, viewRect), box, 2)) issues.push(issue("node-outside-view", node));
+      if (node.scrollWidth > node.clientWidth + 2 || node.scrollHeight > node.clientHeight + 2) {
+        issues.push(issue("node-content-overflow", node));
+      }
+    });
+
+    for (let i = 0; i < nodes.length; i += 1) {
+      for (let j = i + 1; j < nodes.length; j += 1) {
+        const a = rect(nodes[i]);
+        const b = rect(nodes[j]);
+        if (intersects(a, b, 2)) issues.push(issue("node-overlap", nodes[i], nodes[j].id || "anonymous"));
+      }
+    }
+
+    groups.forEach((group) => {
+      const box = rect(group);
+      $$('[data-vd-node]', group).filter(visible).forEach((node) => {
+        if (!contains(box, rect(node), 2)) issues.push(issue("group-clips-node", group, node.id || "anonymous"));
+      });
+    });
+
+    labels.forEach((label, index) => {
+      const box = rect(label);
+      if (label.scrollWidth > label.clientWidth + 2 || label.scrollHeight > label.clientHeight + 2) {
+        issues.push(issue("edge-label-overflow", label));
+      }
+      nodes.forEach((node) => {
+        if (intersects(box, rect(node), 1)) issues.push(issue("edge-label-node-collision", label, node.id || "anonymous"));
+      });
+      labels.slice(index + 1).forEach((other) => {
+        if (intersects(box, rect(other), 1)) issues.push(issue("edge-label-collision", label, other.id || "anonymous"));
+      });
+    });
+
+    edges.forEach((edge) => {
+      const from = document.getElementById(edge.getAttribute("data-from") || "");
+      const to = document.getElementById(edge.getAttribute("data-to") || "");
+      if (!from || !to) return;
+      if (edge instanceof SVGGeometryElement && typeof edge.getTotalLength === "function") {
+        const length = edge.getTotalLength();
+        const start = screenPoint(edge, 0);
+        const end = screenPoint(edge, length);
+        if (!nearBoundary(start, rect(from))) issues.push(issue("edge-start-not-anchored", edge, from.id));
+        if (!nearBoundary(end, rect(to))) issues.push(issue("edge-end-not-anchored", edge, to.id));
+        const excluded = new Set([from, to]);
+        for (let sample = 10; sample < length - 10; sample += 8) {
+          const point = screenPoint(edge, sample);
+          if (!point) break;
+          const hit = nodes.find((node) => !excluded.has(node) && contains(rect(node), {
+            left: point.x, right: point.x, top: point.y, bottom: point.y
+          }, -2));
+          if (hit) {
+            issues.push(issue("edge-through-node", edge, hit.id || "anonymous"));
+            break;
+          }
+        }
+      }
+    });
+
+    return issues;
+  }
+
+  function auditAll() {
+    const issues = [];
+    $$('[data-vd-view]').filter(visible).forEach((view) => issues.push(...auditView(view)));
+    const summary = $('[data-vd-summary]');
+    if (!summary || !visible(summary)) issues.push(issue("product-summary-not-visible", summary));
+    $$('[data-vd-critical]').forEach((element) => {
+      if (!visible(element) || !element.closest('[data-vd-view-role="primary"]')) {
+        issues.push(issue("critical-target-not-primary-visible", element));
+      }
+    });
+    if (document.documentElement.scrollWidth > document.documentElement.clientWidth + 2) {
+      issues.push(issue("page-horizontal-overflow", document.documentElement));
+    }
+    const controls = $('[data-vd-controls]');
+    if (!controls || $$('[data-vd-zoom]', controls).length !== 4) issues.push(issue("zoom-controls-incomplete", controls));
+
+    const report = {
+      status: issues.length ? "failed" : "passed",
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+      issues
+    };
+    const output = auditOutput();
+    if (output) {
+      output.setAttribute("data-vd-audit-status", report.status);
+      output.textContent = JSON.stringify(report);
+    }
+    document.documentElement.setAttribute("data-vd-audit-status", report.status);
+    return report;
+  }
+
+  globalThis.VibeDiagramQuality = { auditAll, applyZoom };
+
+  const ready = document.fonts?.ready || Promise.resolve();
+  ready.then(() => {
+    bindZoom();
+    bindDetails();
+    requestAnimationFrame(() => requestAnimationFrame(auditAll));
+  });
+})();
+  </script>
+</body>
+</html>

@@ -21,7 +21,7 @@ import type {
   TaskWorkspacesSnapshot,
 } from '../../session/sessionTypes.js';
 import type { CodexUsageAnalyticsSnapshot, CodexUsageRange, CodexUsageSummarySnapshot, UsageOverviewSnapshot } from '@zeus/shared';
-import type { CodexConfigActivationResult, CodexConfigImportPreview, CodexConfigImportResult, CodexLegacyImportResult, CodexLegacyImportSnapshot } from './codexContracts.js';
+import type { CodexConfigActivationResult, CodexConfigImportPreview, CodexConfigImportResult, CodexLegacyImportResult, CodexLegacyImportSnapshot, SkillCatalog, SkillInstallResult, SkillInstallSource } from './codexContracts.js';
 import { buildCodexPublicCommandRequest, codexPublicClientCommandTypes, codexPublicClientScopeIds } from './codexPublicCommandClient.js';
 import { buildGraphConversationCommandRequest, graphConversationClientCommandTypes } from '../conversations/graphConversationCommandClient.js';
 import { buildWorkspaceGitCommandRequest, workspaceGitClientCommandTypes } from '../git/workspaceGitCommandClient.js';
@@ -83,6 +83,7 @@ export interface CodexApiClient {
     fingerprint: string,
     permissionMode: TaskIntegrationConflictPermissionMode,
     idempotencyKey: string,
+    skillId?: string,
   ) => Promise<TaskIntegrationConflictAiSession>;
   resolveTaskIntegrationConflict: (taskId: string, integrationId: string, path: string, content: string) => Promise<{ integration: TaskIntegrationRecord; result: { path: string; remainingConflictFiles: string[] } }>;
   finalizeTaskIntegration: (
@@ -98,6 +99,9 @@ export interface CodexApiClient {
   inspectCodexConfigImport: () => Promise<CodexConfigImportPreview>;
   importCodexConfig: () => Promise<CodexConfigImportResult>;
   activateCodexConfig: () => Promise<CodexConfigActivationResult>;
+  loadSkills: (projectId?: string, forceReload?: boolean) => Promise<SkillCatalog>;
+  installSkill: (source: SkillInstallSource, projectId?: string) => Promise<SkillInstallResult>;
+  removeSkill: (skillId: string, projectId?: string) => Promise<{ removed: true; skillId: string; name: string }>;
 }
 
 export function createCodexApiClient(transport: LocalApiTransport): CodexApiClient {
@@ -248,12 +252,12 @@ export function createCodexApiClient(transport: LocalApiTransport): CodexApiClie
     },
     loadTaskIntegrationConflict: (taskId, integrationId, path) =>
       transport.request<TaskIntegrationConflictFile>(`/api/tasks/${encodeURIComponent(taskId)}/integrations/${encodeURIComponent(integrationId)}/conflict?path=${encodeURIComponent(path)}`),
-    startTaskIntegrationConflictAi: async (taskId, integrationId, path, content, fingerprint, permissionMode, idempotencyKey) => {
+    startTaskIntegrationConflictAi: async (taskId, integrationId, path, content, fingerprint, permissionMode, idempotencyKey, skillId) => {
       const body = await buildWorkspaceGitCommandRequest({
         commandType: workspaceGitClientCommandTypes.taskIntegrationConflictAiSession,
         scopeKind: 'task_integration',
         scopeId: integrationId,
-        value: { path, content, fingerprint, permissionMode },
+        value: { path, content, fingerprint, permissionMode, ...(skillId ? { skillId } : {}) },
         reconnectIdentity: idempotencyKey,
       });
       return transport.request<TaskIntegrationConflictAiSession>(`/api/tasks/${encodeURIComponent(taskId)}/integrations/${encodeURIComponent(integrationId)}/conflict/ai-session`, {
@@ -313,6 +317,35 @@ export function createCodexApiClient(transport: LocalApiTransport): CodexApiClie
         value: {},
       });
       return transport.request<CodexConfigActivationResult>('/api/codex-config/activate', { method: 'POST', body: JSON.stringify(body) });
+    },
+    loadSkills: (projectId, forceReload = false) => {
+      const query = new URLSearchParams();
+      if (projectId) query.set('projectId', projectId);
+      if (forceReload) query.set('forceReload', 'true');
+      const suffix = query.size ? `?${query.toString()}` : '';
+      return transport.request<SkillCatalog>(`/api/skills${suffix}`);
+    },
+    installSkill: async (source, projectId) => {
+      const value = { projectId: projectId ?? null, source };
+      const body = await buildCodexPublicCommandRequest({
+        commandType: codexPublicClientCommandTypes.skillInstall,
+        scopeKind: 'provider_configuration',
+        scopeId: codexPublicClientScopeIds.skills,
+        operationPrefix: 'zeus_skill_install',
+        value,
+      });
+      return transport.request<SkillInstallResult>('/api/skills/install', { method: 'POST', body: JSON.stringify(body) });
+    },
+    removeSkill: async (skillId, projectId) => {
+      const value = { projectId: projectId ?? null, skillId };
+      const body = await buildCodexPublicCommandRequest({
+        commandType: codexPublicClientCommandTypes.skillRemove,
+        scopeKind: 'provider_configuration',
+        scopeId: codexPublicClientScopeIds.skills,
+        operationPrefix: 'zeus_skill_remove',
+        value,
+      });
+      return transport.request<{ removed: true; skillId: string; name: string }>(`/api/skills/${encodeURIComponent(skillId)}`, { method: 'DELETE', body: JSON.stringify(body) });
     },
   };
 }

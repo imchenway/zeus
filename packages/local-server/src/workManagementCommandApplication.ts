@@ -36,6 +36,19 @@ export const workManagementCommandTypes = {
   taskIntegrationConflictResolve: 'work_management.task.integration.conflict.resolve',
   taskIntegrationFinalize: 'work_management.task.integration.finalize',
   taskIntegrationPush: 'work_management.task.integration.push',
+  digitalEmployeeTemplateCreate: 'work_management.digital_employee_template.create',
+  digitalEmployeeTemplateUpdate: 'work_management.digital_employee_template.update',
+  digitalEmployeeTemplateDelete: 'work_management.digital_employee_template.delete',
+  digitalEmployeeCreate: 'work_management.digital_employee.create',
+  digitalEmployeeUpdate: 'work_management.digital_employee.update',
+  digitalEmployeeDelete: 'work_management.digital_employee.delete',
+  digitalEmployeeAutomationCreate: 'work_management.digital_employee_automation.create',
+  digitalEmployeeAutomationUpdate: 'work_management.digital_employee_automation.update',
+  digitalEmployeeAutomationDelete: 'work_management.digital_employee_automation.delete',
+  digitalEmployeeAutomationRun: 'work_management.digital_employee_automation.run',
+  digitalEmployeeExecutionCreate: 'work_management.digital_employee_execution.create',
+  digitalEmployeeExecutionRetry: 'work_management.digital_employee_execution.retry',
+  digitalEmployeeExecutionCancel: 'work_management.digital_employee_execution.cancel',
 } as const;
 
 export type WorkManagementCommandType = (typeof workManagementCommandTypes)[keyof typeof workManagementCommandTypes];
@@ -122,7 +135,7 @@ export class WorkManagementCommandApplication {
   parse<TInput extends object>(input: {
     value: unknown;
     commandType: WorkManagementCommandType;
-    scopeKind: Extract<CommandScopeKind, 'project' | 'task'>;
+    scopeKind: Extract<CommandScopeKind, 'project' | 'task' | 'settings'>;
     expectedScopeId: (parsed: { input: TInput; operationIdentity: string }) => string;
   }): ParsedWorkManagementMutation<TInput> {
     const request = requireRecord(input.value, 'Body');

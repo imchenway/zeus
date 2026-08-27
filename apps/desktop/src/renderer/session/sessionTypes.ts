@@ -1238,11 +1238,13 @@ export interface StartTaskModelPushRequest {
   agentKind?: 'codex' | 'pi' | 'claude';
   mode: 'create';
   source: 'task_push';
+  stageId?: string;
   model: string;
   effort?: string;
   serviceTier?: string | null;
   workMode: 'default' | 'plan';
   permissionMode: NativePermissionMode;
+  skillId?: string;
   workspace:
     | { mode: 'direct'; confirmConcurrentWrites: boolean }
     | { mode: 'existing'; environmentId: string }
@@ -1272,7 +1274,9 @@ export type StartNativeConversationRequest =
   | {
       mode: 'create';
       source?: 'code_review';
+      stageId?: string;
       content?: string;
+      skillId?: string;
       attachments?: NativeConversationAttachment[];
       inheritConversationId?: string;
       permissionMode: NativePermissionMode;

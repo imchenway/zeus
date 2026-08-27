@@ -39,6 +39,7 @@ interface SessionQuickActionsCardProps {
   suppressed?: boolean;
   capabilities?: CodexConversationCapabilities | null;
   onLoadCapabilities?: (projectId: string) => Promise<CodexConversationCapabilities>;
+  onLoadSkills?: (projectId?: string, forceReload?: boolean) => Promise<import('../features/codex/codexContracts.js').SkillCatalog>;
   onLoadTaskWorkspaces?: (taskId: string) => Promise<TaskWorkspacesSnapshot>;
   onOpenTaskDetail?: (taskId: string) => void;
   onOpenGitReview?: (taskId: string, workspaceId: string | null, mode: 'commit' | 'push-only') => void;
@@ -454,6 +455,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
         workspace={exactReviewWorkspace}
         capabilities={props.capabilities ?? null}
         onLoadCapabilities={props.onLoadCapabilities}
+        onLoadSkills={props.onLoadSkills}
         onClose={() => setReviewDialogOpen(false)}
         onStart={props.onStartCodeReview}
       />

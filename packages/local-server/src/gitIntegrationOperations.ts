@@ -61,6 +61,8 @@ import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { parseJsonObject } from './codeIntelligenceGraphStore.js';
 import { createCodexNativeConversationCoordinator } from './codexNativeConversationCoordinator.js';
+import type { NativeConversationSkillInput } from './codexNativeConversationContracts.js';
+import { readNativeSubmissionSkill } from './nativeConversationSubmissionInputs.js';
 import { isNativeApiRecord, nativeApiError } from './conversationApplicationOperations.js';
 import { isPathInsideRoot } from './conversationResourcePreview.js';
 import type { BatchTaskWorkspaceResult, WorkspaceGitExplicitRejection, WorkspaceGitPreparedOpaque } from './index.js';
@@ -1498,6 +1500,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
         conflictContent: value.content,
         conflictFingerprint: fingerprint,
         permissionMode,
+        ...(typeof value.skillId === 'string' && value.skillId ? { skillId: value.skillId } : {}),
       },
       operationIdentity,
     );
@@ -1673,6 +1676,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     clientUserMessageId: string;
     agentKind: 'codex' | 'pi';
     model: { sourceId: string | null; modelId: string; displayName: string | null };
+    skill?: NativeConversationSkillInput;
     dispatchSubmissionId?: string;
     dispatchIdempotencyKey?: string;
     dispatchClientUserMessageId?: string;
@@ -1752,6 +1756,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
         cwd: started.integrationPath,
         prompt,
         model: selectedModel,
+        ...(input.skill ? { skill: input.skill } : {}),
         ...(settings?.effort ? { effort: settings.effort } : {}),
         ...(settings && Object.prototype.hasOwnProperty.call(settings, 'serviceTier') ? { serviceTier: settings.serviceTier, serviceTierPresent: true } : {}),
         permissionMode: settings?.permissionMode ?? conversations.getById(attempt.conversationId)?.permissionMode ?? 'auto',
@@ -1807,6 +1812,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     const conflictPath = required('conflictPath');
     const conflictContent = required('conflictContent');
     const conflictFingerprint = required('conflictFingerprint');
+    const skill = readNativeSubmissionSkill(submission) ?? undefined;
     if (integrationId !== attempt.integrationId) throw nativeApiError('ZEUS_NATIVE_RESERVED_RESOURCE_CONFLICT', '冲突处理准备信封与业务操作身份不一致。');
     taskIntegrationAttempts.update(attempt.id, { state: 'preparing', lastError: null });
     taskConflictAiOperations.set(attempt.id, { conversationId: conversation.id, submissionId: submission.id, running: false, finalizing: false });
@@ -1824,6 +1830,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
         clientUserMessageId: submission.clientMessageId,
         agentKind: conversation.agentKind === 'pi' ? 'pi' : 'codex',
         model: { sourceId: conversation.modelSourceId, modelId: conversation.modelId ?? conversation.providerModel ?? '', displayName: null },
+        ...(skill ? { skill } : {}),
         ...(generationIdentity
           ? {
               dispatchSubmissionId: `conversation_submission_${generationIdentity}`,

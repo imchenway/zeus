@@ -58,6 +58,7 @@ import { type TaskResourceAuthorizationResult, type TaskResourcePayload } from '
 import { normalizeTaskTableEnumSortOrders, resolveTaskManagementStatus } from '../../task/taskWorkspaceModel.js';
 import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { reportStorageReadOnlyFault } from '../../storageRecoveryError.js';
+import { readSkillWorkflowDefault } from '../skills/skillWorkflowPreferences.js';
 import { createSessionOperationId } from '../../sessionOperationIdentity.js';
 import {
   type DashboardSnapshot,
@@ -73,6 +74,7 @@ import {
   type TaskManagementStatus,
   type TaskPriority,
   type TaskRecord,
+  type TaskStageRecord,
   type TaskType,
   type UpdateTaskRelationshipsRequest,
   type UpdateTaskRequest,
@@ -2324,7 +2326,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     }
   }
 
-  async function openTaskModelPush(taskId: string): Promise<void> {
+  async function openTaskModelPush(taskId: string, stage?: TaskStageRecord): Promise<void> {
     const task = snapshot.tasks.find((candidate) => candidate.id === taskId);
     const client = props.nativeConversationClient;
     if (!task || taskModelPushPendingByTask[task.id]?.status === 'submitting') return;
@@ -2335,12 +2337,14 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setTaskModelPushConfigImportPreview(null);
     setTaskModelPushConfigImportNeedsActivation(false);
     setTaskModelPushForm({
-      model: remembered?.model ?? '',
-      effort: remembered?.effort ?? '',
-      serviceTier: remembered?.serviceTier ?? { type: 'standard' },
+      ...(stage ? { stageId: stage.id } : {}),
+      model: stage?.modelRef ?? remembered?.model ?? '',
+      effort: stage?.effort ?? remembered?.effort ?? '',
+      serviceTier: stage?.serviceTier ? { type: 'catalog', id: stage.serviceTier } : (remembered?.serviceTier ?? { type: 'standard' }),
       serviceTierDowngraded: false,
-      workMode: remembered?.workMode ?? 'default',
-      permissionMode: remembered?.permissionMode ?? 'read-only',
+      workMode: stage?.workMode ?? remembered?.workMode ?? 'default',
+      permissionMode: stage?.permissionMode ?? remembered?.permissionMode ?? 'read-only',
+      skillId: readSkillWorkflowDefault('task_push'),
       workspaceMode: remembered?.workspaceMode ?? 'direct',
       taskBranchMode: 'create',
       environmentId: '',
@@ -2375,16 +2379,32 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
       setTaskModelPushCapabilities(capabilities);
       setTaskModelPushForm((current) => {
-        const normalized = resolveTaskModelPushInitialForm(capabilities, {
-          model: current.model,
-          effort: current.effort,
-          serviceTier: current.serviceTier,
-          workMode: current.workMode,
-          permissionMode: current.permissionMode,
-          workspaceMode: current.workspaceMode,
-        });
+        const normalized = resolveTaskModelPushInitialForm(
+          capabilities,
+          {
+            model: current.model,
+            effort: current.effort,
+            serviceTier: current.serviceTier,
+            workMode: current.workMode,
+            permissionMode: current.permissionMode,
+            workspaceMode: current.workspaceMode,
+          },
+          current.serviceTier,
+          current.skillId,
+        );
         return {
           ...normalized,
+          ...(current.stageId ? { stageId: current.stageId } : {}),
+          ...(current.stageId
+            ? {
+                model: current.model,
+                effort: current.effort,
+                serviceTier: current.serviceTier,
+                serviceTierDowngraded: false,
+                workMode: current.workMode,
+                permissionMode: current.permissionMode,
+              }
+            : {}),
           supplementalInfo: current.supplementalInfo,
           supplementalAttachments: current.supplementalAttachments,
         };
@@ -2714,11 +2734,13 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
               agentKind: selectedModel.agentKind ?? 'codex',
               mode: 'create',
               source: 'task_push',
+              ...(normalizedForm.stageId ? { stageId: normalizedForm.stageId } : {}),
               model: selectedModel.id,
               ...(normalizedForm.effort ? { effort: normalizedForm.effort } : {}),
               ...serviceTierWireOverride(normalizedForm.serviceTier),
               workMode: normalizedForm.workMode,
               permissionMode: normalizedForm.permissionMode,
+              ...(normalizedForm.skillId ? { skillId: normalizedForm.skillId } : {}),
               workspace:
                 form.workspaceMode === 'direct'
                   ? { mode: 'direct', confirmConcurrentWrites: form.directConcurrencyConfirmed }

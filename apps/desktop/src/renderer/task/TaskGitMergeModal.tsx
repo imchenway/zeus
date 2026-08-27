@@ -35,6 +35,7 @@ type DeliveryClient = Pick<
   | 'startTaskIntegrationConflictAi'
   | 'resolveTaskIntegrationConflict'
   | 'finalizeTaskIntegration'
+  | 'loadSkills'
 >;
 
 type DiffScope = 'committed' | 'working';
@@ -78,6 +79,7 @@ export interface PendingConflictAiStart {
   content: string;
   fingerprint: string;
   permissionMode: TaskIntegrationConflictPermissionMode;
+  skillId?: string;
 }
 
 const pendingConflictAiStartPrefix = 'zeus.conflict-ai-start:';
@@ -105,6 +107,7 @@ export function listPendingConflictAiStarts(): PendingConflictAiStart[] {
         typeof parsed.path === 'string' &&
         typeof parsed.content === 'string' &&
         typeof parsed.fingerprint === 'string' &&
+        (parsed.skillId === undefined || (typeof parsed.skillId === 'string' && /^[a-f0-9]{32}$/u.test(parsed.skillId))) &&
         (parsed.permissionMode === 'auto' || parsed.permissionMode === 'full-access')
       ) {
         pending.push(parsed as PendingConflictAiStart);
@@ -585,7 +588,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     }
   }
 
-  async function startAiConflictSession(content: string, fingerprint: string, permissionMode: TaskIntegrationConflictPermissionMode): Promise<void> {
+  async function startAiConflictSession(content: string, fingerprint: string, permissionMode: TaskIntegrationConflictPermissionMode, skillId?: string): Promise<void> {
     if (!props.task || !props.client || !activeConflict || !conflictPath) throw new Error(zh ? '当前没有可处理的冲突。' : 'No conflict is available.');
     setBusyAction('ai');
     setError(null);
@@ -593,7 +596,17 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
       const idempotencyKey = crypto.randomUUID();
       if (props.executionReady === false) {
         if (!props.onQueueConflictAiStart) throw new Error(zh ? '当前操作暂时无法进入准备队列。' : 'This operation cannot be queued yet.');
-        const cancel = props.onQueueConflictAiStart({ idempotencyKey, taskId: props.task.id, projectId: props.task.projectId, integrationId: activeConflict.id, path: conflictPath, content, fingerprint, permissionMode });
+        const cancel = props.onQueueConflictAiStart({
+          idempotencyKey,
+          taskId: props.task.id,
+          projectId: props.task.projectId,
+          integrationId: activeConflict.id,
+          path: conflictPath,
+          content,
+          fingerprint,
+          permissionMode,
+          ...(skillId ? { skillId } : {}),
+        });
         setFeedback({
           tone: 'info',
           text: zh ? '正在准备，完成后自动开始。' : 'Preparing. This will start automatically when ready.',
@@ -605,7 +618,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
         });
         return;
       }
-      const operation = await props.client.startTaskIntegrationConflictAi(props.task.id, activeConflict.id, conflictPath, content, fingerprint, permissionMode, idempotencyKey);
+      const operation = await props.client.startTaskIntegrationConflictAi(props.task.id, activeConflict.id, conflictPath, content, fingerprint, permissionMode, idempotencyKey, skillId);
       await props.onOpenConversation(props.task.id, operation.conversationId);
       props.onClose();
     } catch (reason) {
@@ -797,6 +810,8 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
               conflict={conflictDocument}
               onDocumentChange={setConflictDocument}
               onAskAi={startAiConflictSession}
+              skillClient={props.client}
+              projectId={props.task.projectId}
             />
           ) : conflictReadyToFinalize && activeConflict ? (
             <ConflictCompletion zh={zh} targetBranch={activeConflict.targetBranch} taskBranch={selectedWorkspace?.branchName ?? ''} />

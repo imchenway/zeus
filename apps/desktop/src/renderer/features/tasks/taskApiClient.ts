@@ -1,5 +1,19 @@
 import type { TaskBoardMoveRequest, TaskBoardViewSettings, TaskBoardViewSnapshot, TaskManagementStatus } from '@zeus/shared';
-import type { CreateTaskRequest, DeleteTaskRequest, DeleteTaskResult, LoadTasksRequest, TaskEventRecord, TaskRecord, TaskRuntimeControlResult, TaskStatus, UpdateTaskRelationshipsRequest, UpdateTaskRequest } from './taskContracts.js';
+import type {
+  CreateTaskRequest,
+  CreateTaskStageRequest,
+  DeleteTaskRequest,
+  DeleteTaskResult,
+  LoadTasksRequest,
+  TaskEventRecord,
+  TaskRecord,
+  TaskRuntimeControlResult,
+  TaskStatus,
+  TaskWorkflowSnapshot,
+  UpdateTaskRelationshipsRequest,
+  UpdateTaskRequest,
+  UpdateTaskStageRequest,
+} from './taskContracts.js';
 import { jsonRequest, type LocalApiTransport } from '../../transport/localApiTransport.js';
 import { buildWorkManagementCommandRequest, workManagementClientCommandTypes } from '../work-management/workManagementCommandClient.js';
 
@@ -25,6 +39,15 @@ export interface TaskApiClient {
   updateTaskManagementStatus: (taskId: string, status: TaskManagementStatus, expectedUpdatedAt: string, confirmWorktreeCleanup?: boolean, reopenConversationId?: string) => Promise<TaskRecord>;
   archiveTask: (taskId: string) => Promise<TaskRecord>;
   restoreTask: (taskId: string) => Promise<TaskRecord>;
+  loadTaskWorkflow: (taskId: string) => Promise<TaskWorkflowSnapshot | null>;
+  initializeTaskWorkflow: (taskId: string, stages: CreateTaskStageRequest[]) => Promise<TaskWorkflowSnapshot>;
+  updateTaskStage: (taskId: string, stageId: string, input: UpdateTaskStageRequest) => Promise<TaskWorkflowSnapshot>;
+  captureTaskStageDeliverable: (taskId: string, stageId: string) => Promise<TaskWorkflowSnapshot>;
+  createTaskStageDeliverable: (taskId: string, stageId: string, content: string) => Promise<TaskWorkflowSnapshot>;
+  acceptTaskStageDeliverable: (taskId: string, deliverableId: string, expectedStageRevision: number) => Promise<TaskWorkflowSnapshot>;
+  requestTaskStageChanges: (taskId: string, deliverableId: string, expectedStageRevision: number, reason: string) => Promise<TaskWorkflowSnapshot>;
+  skipTaskStage: (taskId: string, stageId: string, expectedRevision: number, reason: string) => Promise<TaskWorkflowSnapshot>;
+  loadTaskStageDeliverableContent: (taskId: string, deliverableId: string) => Promise<{ deliverable: TaskWorkflowSnapshot['stages'][number]['deliverables'][number]; content: string }>;
 }
 
 export function createTaskApiClient(transport: LocalApiTransport): TaskApiClient {
@@ -167,7 +190,24 @@ export function createTaskApiClient(transport: LocalApiTransport): TaskApiClient
       });
       return transport.request<TaskRecord>(`${taskPath(taskId)}/restore`, jsonRequest('POST', body));
     },
+    loadTaskWorkflow: (taskId) => transport.request<TaskWorkflowSnapshot | null>(`${taskPath(taskId)}/workflow`),
+    initializeTaskWorkflow: (taskId, stages) => transport.request<TaskWorkflowSnapshot>(`${taskPath(taskId)}/workflow`, jsonRequest('POST', { templateKey: 'default-plan-implement-review', templateRevision: 1, stages })),
+    updateTaskStage: (taskId, stageId, input) => transport.request<TaskWorkflowSnapshot>(`${taskPath(taskId)}/workflow/stages/${encodeURIComponent(stageId)}`, jsonRequest('PATCH', input)),
+    captureTaskStageDeliverable: (taskId, stageId) =>
+      transport.request<TaskWorkflowSnapshot>(`${taskPath(taskId)}/workflow/stages/${encodeURIComponent(stageId)}/deliverables/capture`, jsonRequest('POST', { operationIdentity: taskStageOperationIdentity('capture') })),
+    createTaskStageDeliverable: (taskId, stageId, content) =>
+      transport.request<TaskWorkflowSnapshot>(`${taskPath(taskId)}/workflow/stages/${encodeURIComponent(stageId)}/deliverables`, jsonRequest('POST', { content, operationIdentity: taskStageOperationIdentity('manual') })),
+    acceptTaskStageDeliverable: (taskId, deliverableId, expectedStageRevision) =>
+      transport.request<TaskWorkflowSnapshot>(`${taskPath(taskId)}/workflow/deliverables/${encodeURIComponent(deliverableId)}/accept`, jsonRequest('POST', { expectedStageRevision })),
+    requestTaskStageChanges: (taskId, deliverableId, expectedStageRevision, reason) =>
+      transport.request<TaskWorkflowSnapshot>(`${taskPath(taskId)}/workflow/deliverables/${encodeURIComponent(deliverableId)}/request-changes`, jsonRequest('POST', { expectedStageRevision, reason })),
+    skipTaskStage: (taskId, stageId, expectedRevision, reason) => transport.request<TaskWorkflowSnapshot>(`${taskPath(taskId)}/workflow/stages/${encodeURIComponent(stageId)}/skip`, jsonRequest('POST', { expectedRevision, reason })),
+    loadTaskStageDeliverableContent: (taskId, deliverableId) => transport.request(`${taskPath(taskId)}/workflow/deliverables/${encodeURIComponent(deliverableId)}/content`),
   };
+}
+
+function taskStageOperationIdentity(kind: string): string {
+  return `task_stage_${kind}_${crypto.randomUUID()}`;
 }
 
 function emptyTaskCommand(taskId: string, commandType: (typeof workManagementClientCommandTypes)['taskRetry' | 'taskRun' | 'taskPause' | 'taskContinue' | 'taskCancel'], operationPrefix: string) {
