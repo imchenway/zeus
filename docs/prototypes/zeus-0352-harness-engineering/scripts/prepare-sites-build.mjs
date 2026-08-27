@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* global console */
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
