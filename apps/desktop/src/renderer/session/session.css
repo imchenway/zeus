@@ -13840,6 +13840,14 @@
   margin: 0;
 }
 
+.session-codex-parity-v1 .session-turn-duration[data-status='interrupted'] > p {
+    color: var(--session-warning);
+}
+
+.session-codex-parity-v1 .session-turn-duration[data-status='failed'] > p {
+    color: var(--session-danger);
+}
+
 .session-codex-parity-v1 .session-turn-duration::before,
 .session-codex-parity-v1 .session-turn-duration::after {
   content: none;

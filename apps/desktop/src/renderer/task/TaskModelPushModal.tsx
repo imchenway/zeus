@@ -1,37 +1,54 @@
-import { useEffect, useMemo, useRef, useState, type Dispatch, type FormEvent, type KeyboardEvent, type SetStateAction } from 'react';
 import {
-  buildTaskPushLayout,
-  renderTaskPushLayoutText,
-  type TaskPushContextConversationOption,
-  type TaskPushContextOption,
-  type TaskPushMessageLayout,
-  type TaskPushParentContextOption,
-  type TaskPushPromptAttachment,
-  type TaskPushPromptParentContext,
-  type TaskPushPromptRelatedContext,
-  type TaskPushRelatedContextOption,
-  type TaskPushSupplementalAttachment,
+    type Dispatch,
+    type FormEvent,
+    type KeyboardEvent,
+    type SetStateAction,
+    useEffect,
+    useMemo,
+    useRef,
+    useState
+} from 'react';
+import {
+    buildTaskPushLayout,
+    renderTaskPushLayoutText,
+    type TaskPushContextConversationOption,
+    type TaskPushContextOption,
+    type TaskPushMessageLayout,
+    type TaskPushParentContextOption,
+    type TaskPushPromptAttachment,
+    type TaskPushPromptParentContext,
+    type TaskPushPromptRelatedContext,
+    type TaskPushRelatedContextOption,
+    type TaskPushSupplementalAttachment,
 } from '@zeus/shared';
-import type { CodexConfigImportPreview, TaskRecord } from '../apiClient.js';
+import type {CodexConfigImportPreview, TaskRecord} from '../apiClient.js';
 import type {
-  CodexConversationCapabilities,
-  CodexTaskPushCapabilities,
-  NativeConversationAttachment,
-  NativePermissionMode,
-  NativeServiceTierSelection,
-  TaskPushSupplementalAttachmentDraft,
-  TaskPushSupplementalAttachmentInput,
+    CodexConversationCapabilities,
+    CodexTaskPushCapabilities,
+    NativeConversationAttachment,
+    NativePermissionMode,
+    NativeServiceTierSelection,
+    TaskPushSupplementalAttachmentDraft,
+    TaskPushSupplementalAttachmentInput,
 } from '../session/sessionTypes.js';
-import { useConversationInputResources } from '../session/useConversationInputResources.js';
-import { normalizeServiceTierSelection, serviceTierOptions, serviceTierSelectionFromValue, serviceTierSelectionValue } from '../session/serviceTierSelection.js';
-import { readConversationRuntimePreferences, writeConversationRuntimePreferences } from '../session/conversationRuntimePreferences.js';
-import { resolveModelCapability } from '../session/modelSelection.js';
-import { Button } from '../ui/Button.js';
-import { ModalPortal } from '../ui/ModalPortal.js';
-import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
-import { ZeusSelect } from '../ZeusSelect.js';
-import { presentModelOptions } from '../modelOptionPresentation.js';
-import { TaskPushSupplementalAttachmentCards } from './TaskPushSupplementalAttachmentCards.js';
+import {useConversationInputResources} from '../session/useConversationInputResources.js';
+import {
+    normalizeServiceTierSelection,
+    serviceTierOptions,
+    serviceTierSelectionFromValue,
+    serviceTierSelectionValue
+} from '../session/serviceTierSelection.js';
+import {
+    readConversationRuntimePreferences,
+    writeConversationRuntimePreferences
+} from '../session/conversationRuntimePreferences.js';
+import {resolveModelCapability} from '../session/modelSelection.js';
+import {Button} from '../ui/Button.js';
+import {ModalPortal} from '../ui/ModalPortal.js';
+import {useApplicationErrorDialog, VisibleApplicationError} from '../ui/ApplicationErrorDialog.js';
+import {ZeusSelect} from '../ZeusSelect.js';
+import {presentModelOptions} from '../modelOptionPresentation.js';
+import {TaskPushSupplementalAttachmentCards} from './TaskPushSupplementalAttachmentCards.js';
 
 export interface TaskModelPushForm {
   model: string;
@@ -675,8 +692,8 @@ function TaskModelPushConfigImportDialog(props: {
                 ? '配置文件已经安全导入。Zeus 需要先启动新的 Codex 运行服务，才能保证本次新会话使用这些配置。'
                 : 'The configuration was imported safely. Zeus must start a fresh Codex runtime before this conversation can use it.'
               : zh
-                ? 'Zeus 会把普通偏好、指令、规则、提示词、技能和用户插件复制到专属目录；不会导入账号、密钥或历史会话。'
-                : 'Zeus will copy preferences, instructions, rules, prompts, skills, and user plugins into its own directory. Accounts, secrets, and conversation history are excluded.'}
+                    ? 'Zeus 会把普通偏好、指令、规则、提示词、技能以及 Computer/Browser 工具组件复制到专属目录；不会导入账号、密钥或历史会话。'
+                    : 'Zeus will copy preferences, instructions, rules, prompts, skills, and Computer/Browser tool components into its own directory. Accounts, secrets, and conversation history are excluded.'}
           </p>
           {props.preview ? (
             <ul aria-label={zh ? '可导入配置' : 'Configuration available to import'}>

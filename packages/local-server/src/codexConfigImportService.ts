@@ -1,9 +1,11 @@
-import { randomUUID } from 'node:crypto';
-import { cp, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import {randomUUID} from 'node:crypto';
+import {cp, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile} from 'node:fs/promises';
+import {dirname, isAbsolute, join, relative, resolve, sep} from 'node:path';
 
 const directImportEntries = ['config.toml', 'AGENTS.md', 'rules', 'prompts', 'skills'] as const;
+const managedToolRuntimeEntries = ['computer-use/Codex Computer Use.app', 'plugins/cache/openai-bundled/browser', 'plugins/cache/openai-bundled/chrome', 'plugins/cache/openai-bundled/computer-use'] as const;
 const generatedPluginEntries = new Set(['.plugin-appserver', '.remote-plugin-install-staging', '.tmp', 'cache']);
+const isolatedRuntimePathAssignments = new Set(['notify', 'CODEX_HOME', 'NODE_REPL_TRUSTED_CODE_PATHS', 'NODE_REPL_TRUSTED_SERVICES', 'SKY_CUA_SERVICE_PATH']);
 const sensitiveAssignment = /\b[A-Za-z0-9_.-]*(?:api[_-]?key|token|secret|password|credential)[A-Za-z0-9_.-]*\s*=\s*/iu;
 const maximumImportedNodes = 20_000;
 
@@ -59,7 +61,7 @@ export function createCodexConfigImportService(options: { sourceRoot: string; ta
     }
     if (!sourceAvailable) return { available: false, sourceRoot, targetRoot, entries, skipped };
 
-    for (const entryName of directImportEntries) {
+      for (const entryName of [...directImportEntries, ...managedToolRuntimeEntries]) {
       const source = join(sourceRoot, entryName);
       try {
         const stat = await lstat(source);
@@ -168,7 +170,7 @@ export function createCodexConfigImportService(options: { sourceRoot: string; ta
       if (preview.entries.some((entry) => entry.path === 'config.toml')) {
         const stagedConfigPath = join(stagingRoot, 'config.toml');
         const stagedConfig = await readFile(stagedConfigPath, 'utf8');
-        const rewrittenConfig = stagedConfig.split(sourceRoot).join(targetRoot).split('~/.codex').join(targetRoot);
+          const rewrittenConfig = rewriteIsolatedRuntimePaths(stagedConfig, sourceRoot, targetRoot);
         if (rewrittenConfig !== stagedConfig) await writeFile(stagedConfigPath, rewrittenConfig, { encoding: 'utf8', mode: 0o600 });
       }
       for (const entry of preview.entries) {
@@ -233,6 +235,17 @@ export function createCodexConfigImportService(options: { sourceRoot: string; ta
   }
 
   return { inspect, import: importConfiguration };
+}
+
+function rewriteIsolatedRuntimePaths(config: string, sourceRoot: string, targetRoot: string): string {
+    return config
+        .split('\n')
+        .map((line) => {
+            const assignment = /^\s*([A-Za-z0-9_-]+)\s*=/.exec(line);
+            if (!assignment || !isolatedRuntimePathAssignments.has(assignment[1])) return line;
+            return line.split(sourceRoot).join(targetRoot).split('~/.codex').join(targetRoot);
+        })
+        .join('\n');
 }
 
 async function countSafeNodes(path: string, sourceRoot: string, visited: Set<string>): Promise<number> {

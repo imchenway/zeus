@@ -1816,6 +1816,10 @@ a {
 .project-sidebar-conversations .session-conversation-status-icon:is(.is-waiting_user, .is-waiting_approval, .is-paused) {
   color: var(--zeus-task-status-amber);
 }
+
+.project-sidebar-conversations .session-conversation-status-icon.is-interrupted {
+    color: var(--zeus-task-status-amber);
+}
 .project-sidebar-conversations .session-conversation-status-icon.is-failed {
   color: var(--zeus-danger-text);
 }
