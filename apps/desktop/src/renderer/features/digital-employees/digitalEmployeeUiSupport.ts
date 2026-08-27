@@ -16,7 +16,7 @@ export interface DigitalEmployeeTemplateDraft {
   description: string;
   role: string;
   domain: string;
-  skillIds: string;
+  skillId: string;
   prompt: string;
   agentKind: 'codex' | 'pi';
   model: string;
@@ -65,7 +65,7 @@ export const emptyTemplateDraft: DigitalEmployeeTemplateDraft = {
   description: '',
   role: '',
   domain: '',
-  skillIds: '',
+  skillId: '',
   prompt: '',
   agentKind: 'codex',
   model: '',
@@ -98,7 +98,7 @@ export function templateDraft(record?: DigitalEmployeeTemplateRecord | DigitalEm
     description: record.description,
     role: record.role,
     domain: record.domain,
-    skillIds: record.skillIds.join('\n'),
+    skillId: record.skillIds[0] ?? '',
     prompt: record.prompt,
     agentKind: record.agentKind,
     model: record.model ?? '',
@@ -136,7 +136,7 @@ export function templateInput(draft: DigitalEmployeeTemplateDraft): DigitalEmplo
     description: draft.description.trim(),
     role: draft.role.trim(),
     domain: draft.domain.trim(),
-    skillIds: splitList(draft.skillIds),
+    skillIds: draft.skillId ? [draft.skillId] : [],
     prompt: draft.prompt.trim(),
     agentKind: draft.agentKind,
     model: nullable(draft.model),

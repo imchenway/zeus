@@ -457,6 +457,7 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
       workMode: snapshot.workMode,
       permissionMode,
       agentKind: model.agentKind,
+      ...(snapshot.skillIds[0] ? { skillId: snapshot.skillIds[0] } : {}),
       supplementalInfo,
       workspace,
     };
@@ -478,7 +479,13 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
       taskId: task.id,
       eventType: 'task.digital_employee.started',
       title: '数字员工已开始处理任务',
-      payload: { executionId: updated.id, employeeId: updated.employeeId, conversationId: conversation.id, environmentId: conversation.environmentId },
+      payload: {
+        executionId: updated.id,
+        employeeId: updated.employeeId,
+        conversationId: conversation.id,
+        environmentId: conversation.environmentId,
+        skillId: snapshot.skillIds[0] ?? null,
+      },
     });
     publishExecution(updated);
   }
@@ -925,7 +932,7 @@ function buildEmployeeSupplementalInfo(execution: DigitalEmployeeExecutionRecord
       : Object.entries(execution.deliveryGrantsSnapshot)
           .filter(([, value]) => value)
           .map(([key]) => key);
-  const skillInstruction = employee.skillIds.length > 0 ? `配置的 Skill：${employee.skillIds.join('、')}。仅在当前运行环境确实可用时使用；不可用时要明确报告，不得伪装已加载。` : '未为该员工配置专属 Skill。';
+  const skillInstruction = employee.skillIds[0] ? 'Zeus 已按本次执行快照解析并加载员工的默认 Skill；Skill 只提供执行说明和资源，不授予工具、凭据或额外副作用权限。' : '未为该员工配置默认 Skill。';
   return [
     `你正在以 Zeus 数字员工“${employee.name}”身份工作。岗位：${employee.role}；业务领域：${employee.domain || '通用'}。`,
     skillInstruction,

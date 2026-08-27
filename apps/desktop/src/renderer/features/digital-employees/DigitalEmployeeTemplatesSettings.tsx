@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '../../ui/Button.js';
 import { ZeusSelect } from '../../ZeusSelect.js';
+import { SkillSelector } from '../skills/SkillSelector.js';
+import type { NativeConversationAppClient } from '../workspace/workspaceSupport.js';
 import type { DigitalEmployeeApiClient } from './digitalEmployeeApiClient.js';
 import type { DigitalEmployeeTemplateRecord } from './digitalEmployeeContracts.js';
 import { emptyTemplateDraft, errorMessage, templateDraft, templateInput, type DigitalEmployeeLanguage, type DigitalEmployeeTemplateDraft } from './digitalEmployeeUiSupport.js';
@@ -8,6 +10,7 @@ import './digitalEmployees.css';
 
 export interface DigitalEmployeeTemplatesSettingsProps {
   client: DigitalEmployeeApiClient | null;
+  skillClient: Pick<NativeConversationAppClient, 'loadSkills'> | null;
   language: DigitalEmployeeLanguage;
 }
 
@@ -167,7 +170,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
               <span>{zh ? '也可以创建自己的岗位、业务领域、Skill 和提示词组合。' : 'Or create a custom combination of role, domain, skills, and prompt.'}</span>
             </div>
           ) : (
-            <TemplateEditor draft={draft} language={props.language} readOnly={readOnly} onChange={setDraft} />
+            <TemplateEditor draft={draft} skillClient={props.skillClient} language={props.language} readOnly={readOnly} onChange={setDraft} />
           )}
           {editorTarget ? (
             <footer className="digital-employee-editor-actions">
@@ -200,7 +203,13 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
   );
 }
 
-function TemplateEditor(props: { draft: DigitalEmployeeTemplateDraft; language: DigitalEmployeeLanguage; readOnly: boolean; onChange: (draft: DigitalEmployeeTemplateDraft) => void }) {
+function TemplateEditor(props: {
+  draft: DigitalEmployeeTemplateDraft;
+  skillClient: Pick<NativeConversationAppClient, 'loadSkills'> | null;
+  language: DigitalEmployeeLanguage;
+  readOnly: boolean;
+  onChange: (draft: DigitalEmployeeTemplateDraft) => void;
+}) {
   const zh = props.language === 'zh-CN';
   const patch = (value: Partial<DigitalEmployeeTemplateDraft>) => props.onChange({ ...props.draft, ...value });
   return (
@@ -282,8 +291,16 @@ function TemplateEditor(props: { draft: DigitalEmployeeTemplateDraft; language: 
         <textarea value={props.draft.description} onChange={(event) => patch({ description: event.currentTarget.value })} disabled={props.readOnly} rows={2} maxLength={1000} />
       </label>
       <label>
-        <span>{zh ? 'Skill（逗号或换行分隔）' : 'Skills (comma or newline separated)'}</span>
-        <textarea value={props.draft.skillIds} onChange={(event) => patch({ skillIds: event.currentTarget.value })} disabled={props.readOnly} rows={3} placeholder="domain-modeling" />
+        <span>{zh ? '默认 Skill（可选）' : 'Default skill (optional)'}</span>
+        <SkillSelector
+          client={props.skillClient}
+          value={props.draft.skillId}
+          onChange={(skillId) => patch({ skillId })}
+          language={props.language}
+          disabled={props.readOnly}
+          ariaLabel={zh ? '选择模板默认 Skill' : 'Choose template default skill'}
+        />
+        <small>{zh ? '只绑定 Zeus Skill 目录中的稳定身份；不会授予工具、凭据或交付权限。' : 'Binds a stable Zeus Skill identity without granting tools, credentials, or delivery permissions.'}</small>
       </label>
       <label>
         <span>{zh ? '员工提示词' : 'Employee prompt'}</span>

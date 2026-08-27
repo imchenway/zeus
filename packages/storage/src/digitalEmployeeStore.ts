@@ -36,6 +36,7 @@ export interface DigitalEmployeeTemplateRecord {
   description: string;
   role: string;
   domain: string;
+  /** 兼容既有 JSON 列的数组形态；首版只允许零或一个默认 Zeus Skill 稳定身份。 */
   skillIds: string[];
   prompt: string;
   agentKind: DigitalEmployeeAgentKind;
@@ -181,7 +182,7 @@ const builtInDigitalEmployeeTemplates: ReadonlyArray<CreateDigitalEmployeeTempla
     description: '分析需求、业务规则、取舍与验收标准。',
     role: '产品',
     domain: '通用',
-    skillIds: ['domain-modeling'],
+    skillIds: [],
     prompt: '你是产品数字员工。先核对需求来源和真实产品语义，再给出边界、取舍、验收标准与可执行任务。所有建议必须说明优缺点。',
     permissionMode: 'read-only',
   },
@@ -191,7 +192,7 @@ const builtInDigitalEmployeeTemplates: ReadonlyArray<CreateDigitalEmployeeTempla
     description: '负责前端交互、实现与真实界面验收。',
     role: '前端',
     domain: '通用',
-    skillIds: ['build-web-apps:react-best-practices', 'accessibility'],
+    skillIds: [],
     prompt: '你是前端数字员工。基于现有设计系统完成最小范围实现，并以真实渲染、交互与可访问性证据验收。',
     permissionMode: 'auto',
   },
@@ -1253,7 +1254,7 @@ function normalizeTemplateInput(input: CreateDigitalEmployeeTemplateInput): Requ
     description: boundedText(input.description ?? '', 'template.description', 0, 1_000),
     role: boundedText(input.role, 'template.role', 1, 120),
     domain: boundedText(input.domain ?? '', 'template.domain', 0, 120),
-    skillIds: normalizeStringList(input.skillIds ?? [], 'template.skillIds', 100, 256),
+    skillIds: normalizeDigitalEmployeeSkillIds(input.skillIds ?? []),
     prompt: boundedText(input.prompt, 'template.prompt', 1, 20_000),
     agentKind: oneOf(input.agentKind ?? 'codex', digitalEmployeeAgentKinds, 'template.agentKind'),
     model: nullableText(input.model, 256),
@@ -1426,6 +1427,14 @@ function normalizeStringList(value: unknown[], field: string, maximumItems: numb
   if (value.length > maximumItems) throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_INVALID', `${field} 项目过多。`);
   const normalized = value.map((entry) => boundedText(entry, field, 1, maximumLength));
   return [...new Set(normalized)];
+}
+
+function normalizeDigitalEmployeeSkillIds(value: unknown[]): string[] {
+  const skillIds = normalizeStringList(value, 'template.skillIds', 1, 32);
+  if (skillIds.some((skillId) => !/^[a-f0-9]{32}$/u.test(skillId))) {
+    throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_SKILL_INVALID', '数字员工必须从 Zeus Skill 目录选择默认 Skill。');
+  }
+  return skillIds;
 }
 
 const executionTransitions: Record<DigitalEmployeeExecutionStatus, readonly DigitalEmployeeExecutionStatus[]> = {

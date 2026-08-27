@@ -20,6 +20,7 @@ export interface DigitalEmployeeTemplateRecord {
   description: string;
   role: string;
   domain: string;
+  /** 首版只返回零或一个默认 Zeus Skill 稳定身份。 */
   skillIds: string[];
   prompt: string;
   agentKind: DigitalEmployeeAgentKind;

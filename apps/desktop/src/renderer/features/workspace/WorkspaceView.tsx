@@ -764,7 +764,13 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     ) : null}
                   </section>
 
-                  <ProjectDigitalEmployeesPanel projectId={selectedProject.id} projectName={selectedProject.name} client={props.commandClient ?? null} language={appShellSettings.appLanguage} />
+                  <ProjectDigitalEmployeesPanel
+                    projectId={selectedProject.id}
+                    projectName={selectedProject.name}
+                    client={props.commandClient ?? null}
+                    skillClient={props.nativeConversationClient ?? null}
+                    language={appShellSettings.appLanguage}
+                  />
 
                   {projectPanel ? (
                     <WorkspaceDrawer
@@ -2317,7 +2323,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     initialProjectId={projectDetail?.id}
                   />
                 ) : null}
-                {settingsCategory === 'employees' ? <DigitalEmployeeTemplatesSettings client={props.commandClient ?? null} language={appShellSettings.appLanguage} /> : null}
+                {settingsCategory === 'employees' ? <DigitalEmployeeTemplatesSettings client={props.commandClient ?? null} skillClient={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} /> : null}
                 {settingsCategory === 'tasks' ? (
                   <section className="settings-product-pane task-list-settings-pane" aria-label={settingsWorkspaceCopy.categories.tasks}>
                     <h2 className="settings-page-title">{settingsWorkspaceCopy.categories.tasks}</h2>

@@ -125,6 +125,24 @@ export const internalSideEffectPolicies = [
     ],
   },
   {
+    id: 'skill_install_process',
+    effectClass: 'public_command_child',
+    identityBoundary: 'skill.install 的 commandId、operationIdentity 与不可变输入哈希。',
+    writeBoundary: 'Command Delivery 先记录 write_started，再允许 git clone 写入隔离临时目录；参数以 -- 隔离用户仓库地址。',
+    recoveryBoundary: '写出后结果未知禁止自动重发；临时目录在 finally 清理，只有完整校验后才原子移动到 Zeus Skill Root。',
+    receiptBoundary: 'Codex Public Command 的四类 Command Delivery outcome 与不可变结果 Artifact。',
+    evidence: [
+      {
+        file: 'packages/local-server/src/codexPublicCommandApplication.ts',
+        markers: ['markExternalWriteStarted', 'outcome_unknown_after_write', 'recordOutcomeInCurrentTransaction'],
+      },
+      {
+        file: 'packages/local-server/src/zeusSkillService.ts',
+        markers: ["mkdtemp(join(skillProfileRoot, '.skill-install-'))", "args.push('--', repositoryUrl, cloneRoot)", 'await rename(stagedSkill, installedDirectory)', 'await rm(stagingRoot'],
+      },
+    ],
+  },
+  {
     id: 'provider_process_generation',
     effectClass: 'generation_lifecycle_capability',
     identityBoundary: 'runtime session/process identity token 或 Provider generationId/requestId。',
@@ -257,32 +275,39 @@ export const coreInternalSideEffectCapabilities = [
 
 /** OS/IPC primitives are file-qualified because the same `.send()` may be HTTP、WebSocket 或 child IPC。 */
 export const processInternalSideEffectCapabilities = [
-  { id: 'process:ai-runtime.nodeSpawn', selector: { file: 'packages/ai-runtime/src/index.ts', callee: 'nodeSpawn' } },
-  { id: 'process:ai-runtime.pty.spawn', selector: { file: 'packages/ai-runtime/src/index.ts', callee: 'pty.spawn' } },
-  { id: 'process:ai-runtime.process.kill', selector: { file: 'packages/ai-runtime/src/index.ts', callee: 'process.kill' } },
-  { id: 'process:ai-runtime.child.kill', selector: { file: 'packages/ai-runtime/src/index.ts', callee: 'child.kill' } },
-  { id: 'process:ai-runtime.handle.kill', selector: { file: 'packages/ai-runtime/src/index.ts', callee: 'handle.kill' } },
-  { id: 'process:codex-app-server.nodeSpawn', selector: { file: 'packages/ai-runtime/src/codexAppServerManager.ts', callee: 'nodeSpawn' } },
-  { id: 'process:codex-app-server.spawned.kill', selector: { file: 'packages/ai-runtime/src/codexAppServerManager.ts', callee: 'spawned.kill' } },
-  { id: 'process:codex-app-server.child.kill', selector: { file: 'packages/ai-runtime/src/codexAppServerManager.ts', callee: 'child.kill' } },
-  { id: 'process:codex-app-server.process.kill', selector: { file: 'packages/ai-runtime/src/codexAppServerManager.ts', callee: 'process.kill' } },
-  { id: 'process:codex-app-server.socket.send', selector: { file: 'packages/ai-runtime/src/codexAppServerManager.ts', callee: 'socket.send' } },
-  { id: 'process:codex-app-server.socket.terminate', selector: { file: 'packages/ai-runtime/src/codexAppServerManager.ts', callee: 'socket.terminate' } },
+  ...[
+    { id: 'process:ai-runtime.nodeSpawn', selector: { file: 'packages/ai-runtime/src/index.ts', callee: 'nodeSpawn' } },
+    { id: 'process:ai-runtime.pty.spawn', selector: { file: 'packages/ai-runtime/src/index.ts', callee: 'pty.spawn' } },
+    { id: 'process:ai-runtime.process.kill', selector: { file: 'packages/ai-runtime/src/index.ts', callee: 'process.kill' } },
+    { id: 'process:ai-runtime.child.kill', selector: { file: 'packages/ai-runtime/src/index.ts', callee: 'child.kill' } },
+    { id: 'process:ai-runtime.handle.kill', selector: { file: 'packages/ai-runtime/src/index.ts', callee: 'handle.kill' } },
+    { id: 'process:codex-app-server.nodeSpawn', selector: { file: 'packages/ai-runtime/src/codexAppServerManager.ts', callee: 'nodeSpawn' } },
+    { id: 'process:codex-app-server.spawned.kill', selector: { file: 'packages/ai-runtime/src/codexAppServerManager.ts', callee: 'spawned.kill' } },
+    { id: 'process:codex-app-server.child.kill', selector: { file: 'packages/ai-runtime/src/codexAppServerManager.ts', callee: 'child.kill' } },
+    { id: 'process:codex-app-server.process.kill', selector: { file: 'packages/ai-runtime/src/codexAppServerManager.ts', callee: 'process.kill' } },
+    { id: 'process:codex-app-server.socket.send', selector: { file: 'packages/ai-runtime/src/codexAppServerManager.ts', callee: 'socket.send' } },
+    { id: 'process:codex-app-server.socket.terminate', selector: { file: 'packages/ai-runtime/src/codexAppServerManager.ts', callee: 'socket.terminate' } },
+    {
+      id: 'process:codex-runtime-generation.nodeSpawn',
+      selector: { file: 'packages/ai-runtime/src/codexRuntimeGenerationManager.ts', callee: 'nodeSpawn' },
+    },
+    {
+      id: 'process:codex-runtime-generation.child.kill',
+      selector: { file: 'packages/ai-runtime/src/codexRuntimeGenerationManager.ts', callee: 'child.kill' },
+    },
+    { id: 'process:pi-worker.fork', selector: { file: 'packages/ai-runtime/src/piRuntimeWorkerDriver.ts', callee: 'fork' } },
+    { id: 'process:pi-worker.child.send', selector: { file: 'packages/ai-runtime/src/piRuntimeWorkerDriver.ts', callee: 'child.send' } },
+    { id: 'process:pi-worker.current.kill', selector: { file: 'packages/ai-runtime/src/piRuntimeWorkerDriver.ts', callee: 'current.kill' } },
+    { id: 'process:pi-worker.process.send', selector: { file: 'packages/ai-runtime/src/piSdkRuntimeWorker.ts', callee: 'process.send' } },
+    { id: 'process:pi-tools.execFileAsync', selector: { file: 'packages/local-server/src/piNativeConversationCoordinator.ts', callee: 'execFileAsync' } },
+    { id: 'process:runtime-recovery.spawnSync', selector: { file: 'packages/local-server/src/runtimeProcessIdentity.ts', callee: 'spawnSync' } },
+    { id: 'process:runtime-recovery.process.kill', selector: { file: 'packages/local-server/src/runtimeProcessIdentity.ts', callee: 'process.kill' } },
+  ].map((entry) => ({ ...entry, policyId: 'provider_process_generation' })),
   {
-    id: 'process:codex-runtime-generation.nodeSpawn',
-    selector: { file: 'packages/ai-runtime/src/codexRuntimeGenerationManager.ts', callee: 'nodeSpawn' },
+    id: 'process:skill-install.execFileAsync',
+    selector: { file: 'packages/local-server/src/zeusSkillService.ts', callee: 'execFileAsync' },
+    policyId: 'skill_install_process',
   },
-  {
-    id: 'process:codex-runtime-generation.child.kill',
-    selector: { file: 'packages/ai-runtime/src/codexRuntimeGenerationManager.ts', callee: 'child.kill' },
-  },
-  { id: 'process:pi-worker.fork', selector: { file: 'packages/ai-runtime/src/piRuntimeWorkerDriver.ts', callee: 'fork' } },
-  { id: 'process:pi-worker.child.send', selector: { file: 'packages/ai-runtime/src/piRuntimeWorkerDriver.ts', callee: 'child.send' } },
-  { id: 'process:pi-worker.current.kill', selector: { file: 'packages/ai-runtime/src/piRuntimeWorkerDriver.ts', callee: 'current.kill' } },
-  { id: 'process:pi-worker.process.send', selector: { file: 'packages/ai-runtime/src/piSdkRuntimeWorker.ts', callee: 'process.send' } },
-  { id: 'process:pi-tools.execFileAsync', selector: { file: 'packages/local-server/src/piNativeConversationCoordinator.ts', callee: 'execFileAsync' } },
-  { id: 'process:runtime-recovery.spawnSync', selector: { file: 'packages/local-server/src/runtimeProcessIdentity.ts', callee: 'spawnSync' } },
-  { id: 'process:runtime-recovery.process.kill', selector: { file: 'packages/local-server/src/runtimeProcessIdentity.ts', callee: 'process.kill' } },
-].map((entry) => ({ ...entry, policyId: 'provider_process_generation' }));
+];
 
 export const internalSideEffectCapabilityRegistry = [...gitInternalSideEffectCapabilities, ...coreInternalSideEffectCapabilities, ...processInternalSideEffectCapabilities];

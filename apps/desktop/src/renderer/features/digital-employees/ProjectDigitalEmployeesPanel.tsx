@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { DashboardClient } from '../../dashboardClient.js';
 import { Button } from '../../ui/Button.js';
 import { ZeusSelect } from '../../ZeusSelect.js';
+import { SkillSelector } from '../skills/SkillSelector.js';
+import type { NativeConversationAppClient } from '../workspace/workspaceSupport.js';
 import type { DigitalEmployeeAutomationRecord, DigitalEmployeeExecutionRecord, DigitalEmployeeRecord, DigitalEmployeeTemplateRecord } from './digitalEmployeeContracts.js';
 import {
   actionLabel,
@@ -26,6 +28,7 @@ export interface ProjectDigitalEmployeesPanelProps {
   projectId: string;
   projectName: string;
   client: DashboardClient | null;
+  skillClient: Pick<NativeConversationAppClient, 'loadSkills'> | null;
   language: DigitalEmployeeLanguage;
 }
 
@@ -344,7 +347,7 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
             </section>
             <section className="digital-employee-editor-pane" aria-label={zh ? '项目员工配置' : 'Project employee configuration'}>
               {selectedEmployeeId && employeeDraftState ? (
-                <EmployeeEditor draft={employeeDraftState} language={props.language} deployCommands={deployCommands} onChange={setEmployeeDraftState} />
+                <EmployeeEditor draft={employeeDraftState} projectId={props.projectId} skillClient={props.skillClient} language={props.language} deployCommands={deployCommands} onChange={setEmployeeDraftState} />
               ) : (
                 <div className="digital-employee-empty-state">
                   <strong>{zh ? '选择员工查看项目配置' : 'Select an employee to configure'}</strong>
@@ -455,7 +458,14 @@ function SectionTab(props: { selected: boolean; label: string; onClick: () => vo
   );
 }
 
-function EmployeeEditor(props: { draft: DigitalEmployeeDraft; language: DigitalEmployeeLanguage; deployCommands: CommandDefinition[]; onChange: (draft: DigitalEmployeeDraft) => void }) {
+function EmployeeEditor(props: {
+  draft: DigitalEmployeeDraft;
+  projectId: string;
+  skillClient: Pick<NativeConversationAppClient, 'loadSkills'> | null;
+  language: DigitalEmployeeLanguage;
+  deployCommands: CommandDefinition[];
+  onChange: (draft: DigitalEmployeeDraft) => void;
+}) {
   const zh = props.language === 'zh-CN';
   const patch = (value: Partial<DigitalEmployeeDraft>) => props.onChange({ ...props.draft, ...value });
   const patchGrant = (key: 'allowCommit' | 'allowPush' | 'allowMerge' | 'allowDeploy' | 'allowComplete', checked: boolean) => {
@@ -546,8 +556,16 @@ function EmployeeEditor(props: { draft: DigitalEmployeeDraft; language: DigitalE
           </label>
         </div>
         <label>
-          <span>{zh ? 'Skill（逗号或换行分隔）' : 'Skills (comma or newline separated)'}</span>
-          <textarea rows={2} value={props.draft.skillIds} onChange={(event) => patch({ skillIds: event.currentTarget.value })} />
+          <span>{zh ? '默认 Skill（可选）' : 'Default skill (optional)'}</span>
+          <SkillSelector
+            client={props.skillClient}
+            projectId={props.projectId}
+            value={props.draft.skillId}
+            onChange={(skillId) => patch({ skillId })}
+            language={props.language}
+            ariaLabel={zh ? '选择项目员工默认 Skill' : 'Choose project employee default skill'}
+          />
+          <small>{zh ? '派发时会在项目及最终工作区复验并冻结该 Skill；Skill 不会扩大员工权限。' : 'Resolved again in the project and final workspace at dispatch; the skill cannot expand employee permissions.'}</small>
         </label>
         <label>
           <span>{zh ? '员工提示词' : 'Employee prompt'}</span>
