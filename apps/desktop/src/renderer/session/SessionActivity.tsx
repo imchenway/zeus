@@ -1,43 +1,21 @@
-import {
-    type FocusEvent,
-    type KeyboardEvent,
-    memo,
-    type ReactNode,
-    useEffect,
-    useId,
-    useMemo,
-    useRef,
-    useState
-} from 'react';
-import {CaretDownIcon as CaretDown} from '@phosphor-icons/react/dist/csr/CaretDown';
-import {CheckCircleIcon as CheckCircle} from '@phosphor-icons/react/dist/csr/CheckCircle';
-import {CircleIcon as Circle} from '@phosphor-icons/react/dist/csr/Circle';
-import {CircleNotchIcon as CircleNotch} from '@phosphor-icons/react/dist/csr/CircleNotch';
-import {BookOpenIcon as BookOpen} from '@phosphor-icons/react/dist/csr/BookOpen';
-import {ImageIcon as Image} from '@phosphor-icons/react/dist/csr/Image';
-import {ListChecksIcon as ListChecks} from '@phosphor-icons/react/dist/csr/ListChecks';
-import {MagnifyingGlassIcon as MagnifyingGlass} from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
-import {PencilSimpleIcon as PencilSimple} from '@phosphor-icons/react/dist/csr/PencilSimple';
-import {PlugsIcon as Plugs} from '@phosphor-icons/react/dist/csr/Plugs';
-import {TerminalWindowIcon as TerminalWindow} from '@phosphor-icons/react/dist/csr/TerminalWindow';
-import {WrenchIcon as Wrench} from '@phosphor-icons/react/dist/csr/Wrench';
-import type {
-    ConversationFileLocation,
-    ConversationOpenTarget,
-    ConversationResource,
-    ConversationResourcePreview
-} from '@zeus/shared';
-import {ConversationResourceCards, defaultOpenTarget, isImageResource} from './ConversationResources.js';
-import {
-    isAssistantDeliverableItem,
-    type NativeConversationToolResultPage,
-    type NativePendingRequest,
-    type NativeSessionItemBuffer,
-    type NativeTurnPlanSnapshot,
-    type NativeTurnSnapshot
-} from './sessionTypes.js';
-import type {SessionUiLanguage} from './ThreadItemView.js';
-import {VisibleApplicationError} from '../ui/ApplicationErrorDialog.js';
+import { type FocusEvent, type KeyboardEvent, memo, type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
+import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
+import { CircleIcon as Circle } from '@phosphor-icons/react/dist/csr/Circle';
+import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
+import { BookOpenIcon as BookOpen } from '@phosphor-icons/react/dist/csr/BookOpen';
+import { ImageIcon as Image } from '@phosphor-icons/react/dist/csr/Image';
+import { ListChecksIcon as ListChecks } from '@phosphor-icons/react/dist/csr/ListChecks';
+import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
+import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
+import { PlugsIcon as Plugs } from '@phosphor-icons/react/dist/csr/Plugs';
+import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
+import { WrenchIcon as Wrench } from '@phosphor-icons/react/dist/csr/Wrench';
+import type { ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourcePreview } from '@zeus/shared';
+import { ConversationResourceCards, defaultOpenTarget, isImageResource } from './ConversationResources.js';
+import { isAssistantDeliverableItem, type NativeConversationToolResultPage, type NativePendingRequest, type NativeSessionItemBuffer, type NativeTurnPlanSnapshot, type NativeTurnSnapshot } from './sessionTypes.js';
+import type { SessionUiLanguage } from './ThreadItemView.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 
 const operationalTypes = new Set(['commandexecution', 'command', 'mcptoolcall', 'dynamictoolcall', 'websearch', 'imageview', 'toolcall', 'tool', 'filechange', 'file', 'contextcompaction', 'providerevent']);
 const MAX_ACTIVITY_OUTPUT_CHARACTERS = 40_000;
@@ -462,28 +440,27 @@ export function SessionTurnDuration(props: { turn: NativeTurnSnapshot; requests:
   const duration = useMemo(() => turnDurationMs(props.turn, props.requests, now), [now, props.requests, props.turn]);
   if (duration === null) return null;
   const value = formatDuration(duration, props.language);
-    const terminalStatus = props.turn.status === 'interrupted' || props.turn.status === 'failed' ? props.turn.status : 'completed';
-    const label =
-        props.language === 'zh-CN'
-            ? active
-                ? `处理中 ${value}`
-                : terminalStatus === 'interrupted'
-                    ? `处理已中断（${value}）`
-                    : terminalStatus === 'failed'
-                        ? `处理失败（${value}）`
-                        : `已处理 ${value}`
-            : active
-                ? `Processing for ${value}`
-                : terminalStatus === 'interrupted'
-                    ? `Interrupted after ${value}`
-                    : terminalStatus === 'failed'
-                        ? `Failed after ${value}`
-                        : `Processed in ${value}`;
+  const terminalStatus = props.turn.status === 'interrupted' || props.turn.status === 'failed' ? props.turn.status : 'completed';
+  const label =
+    props.language === 'zh-CN'
+      ? active
+        ? `处理中 ${value}`
+        : terminalStatus === 'interrupted'
+          ? `处理已中断（${value}）`
+          : terminalStatus === 'failed'
+            ? `处理失败（${value}）`
+            : `已处理 ${value}`
+      : active
+        ? `Processing for ${value}`
+        : terminalStatus === 'interrupted'
+          ? `Interrupted after ${value}`
+          : terminalStatus === 'failed'
+            ? `Failed after ${value}`
+            : `Processed in ${value}`;
   const hasDetails = props.children !== undefined && props.children !== null;
   const time = <time dateTime={`PT${Math.max(0, Math.round(duration / 1_000))}S`}>{label}</time>;
   return (
-      <section className="session-turn-duration" data-active={active || undefined}
-               data-status={active ? 'active' : terminalStatus}>
+    <section className="session-turn-duration" data-active={active || undefined} data-status={active ? 'active' : terminalStatus}>
       {hasDetails ? <div className="session-turn-duration-body">{props.children}</div> : null}
       <p>{time}</p>
     </section>

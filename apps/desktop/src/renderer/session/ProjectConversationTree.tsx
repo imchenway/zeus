@@ -1,25 +1,25 @@
-import {type KeyboardEvent, useEffect, useRef, useState} from 'react';
-import {AnimatePresence, motion, useReducedMotion} from 'framer-motion';
-import {ArchiveIcon as Archive} from '@phosphor-icons/react/dist/csr/Archive';
-import {ChatCircleIcon as ChatCircle} from '@phosphor-icons/react/dist/csr/ChatCircle';
-import {CheckCircleIcon as CheckCircle} from '@phosphor-icons/react/dist/csr/CheckCircle';
-import {CircleNotchIcon as CircleNotch} from '@phosphor-icons/react/dist/csr/CircleNotch';
-import {ClockIcon as Clock} from '@phosphor-icons/react/dist/csr/Clock';
-import {EyeSlashIcon as EyeSlash} from '@phosphor-icons/react/dist/csr/EyeSlash';
-import {FolderIcon as Folder} from '@phosphor-icons/react/dist/csr/Folder';
-import {PauseCircleIcon as PauseCircle} from '@phosphor-icons/react/dist/csr/PauseCircle';
-import {PlusIcon as Plus} from '@phosphor-icons/react/dist/csr/Plus';
-import {ShieldCheckIcon as ShieldCheck} from '@phosphor-icons/react/dist/csr/ShieldCheck';
-import {WarningIcon as Warning} from '@phosphor-icons/react/dist/csr/Warning';
-import {WarningCircleIcon as WarningCircle} from '@phosphor-icons/react/dist/csr/WarningCircle';
-import type {NativeConversationChoice, NativeConversationSnapshot, NativeSessionState} from './sessionTypes.js';
-import {compareConversationStageUpdatedDesc} from './conversationOrdering.js';
-import type {SessionUiLanguage} from './ThreadItemView.js';
-import {conversationDisplayTitle} from './conversationDisplayTitle.js';
-import {useNewItemMotionIds} from '../ui/useNewItemMotion.js';
-import type {TaskAgentRunStatus} from '../apiClient.js';
-import {taskAgentRunStatusLabels} from '../task/TaskRunStatusChip.js';
-import {beginConversationNavigationTrace} from '../performanceTraceContext.js';
+import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { ArchiveIcon as Archive } from '@phosphor-icons/react/dist/csr/Archive';
+import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
+import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
+import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
+import { ClockIcon as Clock } from '@phosphor-icons/react/dist/csr/Clock';
+import { EyeSlashIcon as EyeSlash } from '@phosphor-icons/react/dist/csr/EyeSlash';
+import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
+import { PauseCircleIcon as PauseCircle } from '@phosphor-icons/react/dist/csr/PauseCircle';
+import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
+import { ShieldCheckIcon as ShieldCheck } from '@phosphor-icons/react/dist/csr/ShieldCheck';
+import { WarningIcon as Warning } from '@phosphor-icons/react/dist/csr/Warning';
+import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
+import type { NativeConversationChoice, NativeConversationSnapshot, NativeSessionState } from './sessionTypes.js';
+import { compareConversationStageUpdatedDesc } from './conversationOrdering.js';
+import type { SessionUiLanguage } from './ThreadItemView.js';
+import { conversationDisplayTitle } from './conversationDisplayTitle.js';
+import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
+import type { TaskAgentRunStatus } from '../apiClient.js';
+import { taskAgentRunStatusLabels } from '../task/TaskRunStatusChip.js';
+import { beginConversationNavigationTrace } from '../performanceTraceContext.js';
 
 export interface ProjectConversationTaskGroup {
   taskId: string;
@@ -383,8 +383,7 @@ function ConversationRowState(props: { conversation: NativeConversationChoice; r
   }
   if (props.conversation.hasUnreadAttention) {
     if (props.conversation.attentionKind === 'failed') return <ConversationStatusIcon status="failed" label={taskAgentRunStatusLabels[props.language].failed} />;
-      if (props.conversation.attentionKind === 'interrupted') return <ConversationStatusIcon status="interrupted"
-                                                                                             label={props.language === 'zh-CN' ? '本轮已中断' : 'Turn interrupted'}/>;
+    if (props.conversation.attentionKind === 'interrupted') return <ConversationStatusIcon status="interrupted" label={props.language === 'zh-CN' ? '本轮已中断' : 'Turn interrupted'} />;
     if (props.conversation.attentionKind === 'completed') return <ConversationStatusIcon status="completed" label={props.language === 'zh-CN' ? '已完成' : 'Completed'} />;
     return <ConversationStatusIcon status="unread" label={props.language === 'zh-CN' ? '有未读回复' : 'Unread reply'} />;
   }
@@ -406,7 +405,7 @@ function ConversationStatusIcon(props: { status: ConversationStatusIconKind; lab
   } else if (props.status === 'failed') {
     icon = <Warning aria-hidden="true" />;
   } else if (props.status === 'interrupted') {
-      icon = <WarningCircle aria-hidden="true"/>;
+    icon = <WarningCircle aria-hidden="true" />;
   } else if (props.status === 'completed') {
     icon = <CheckCircle aria-hidden="true" />;
   } else if (props.status === 'legacy_readonly') {
