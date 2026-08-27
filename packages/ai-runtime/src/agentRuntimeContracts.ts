@@ -110,6 +110,14 @@ export interface AgentRunUntrustedContext {
   content: string;
 }
 
+/** Core 已解析的 Zeus Skill；Runtime Adapter 必须把同一份内容投影到自己的原生 Skill 通道。 */
+export interface AgentRunSkillActivation {
+  id: string;
+  name: string;
+  description: string;
+  path: string;
+}
+
 export interface StartAgentRunInput {
   session: AgentSessionIdentity;
   content: string;
@@ -119,6 +127,7 @@ export interface StartAgentRunInput {
   images?: AgentImageInput[];
   applicationContext?: AgentRunApplicationContext;
   untrustedContext?: AgentRunUntrustedContext;
+  skill?: AgentRunSkillActivation;
   /** 仅用于 Zeus 内部 Command/Worker/RPC/回执性能关联，不进入 Provider 正文。 */
   traceIdentity?: string | null;
   /** Pi 在进入 agent run 前同步返回预检结论；false 表示请求不会写给模型。 */

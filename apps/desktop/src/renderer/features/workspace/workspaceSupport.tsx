@@ -71,7 +71,7 @@ import {
   ZeusApiError,
   type ZeusRealtimeEvent,
 } from '../../apiClient.js';
-export type MainNavTarget = 'projects' | 'conversations' | 'settings';
+export type MainNavTarget = 'projects' | 'conversations' | 'skills' | 'settings';
 export type LegacyMainNavTarget = MainNavTarget | 'dashboard' | 'tasks' | 'code-map' | 'runtime' | 'git-diff' | 'telegram' | 'settings-data';
 export type ProjectWorkspaceSection = 'tasks' | 'git' | 'code' | 'sessions' | 'project-settings';
 export type ProjectCodeWorkspaceMode = 'source' | 'graph' | 'commands';
@@ -115,8 +115,8 @@ export type TaskConversationDrawerTarget =
     }>
   | undefined;
 export type TaskConversationReopenState = Readonly<{ conversationId: string; status: 'busy' | 'error'; error?: string }> | undefined;
-export type SettingsCategory = 'general' | 'usage' | 'memory' | 'tasks' | 'runtime' | 'models' | 'browser' | 'telegram' | 'zentao' | 'security' | 'commands' | 'git' | 'release' | 'data';
-export const SETTINGS_CATEGORIES = ['general', 'usage', 'memory', 'tasks', 'runtime', 'models', 'browser', 'telegram', 'zentao', 'security', 'commands', 'git', 'release', 'data'] as const satisfies readonly SettingsCategory[];
+export type SettingsCategory = 'general' | 'usage' | 'memory' | 'tasks' | 'employees' | 'runtime' | 'models' | 'browser' | 'telegram' | 'zentao' | 'security' | 'commands' | 'git' | 'release' | 'data';
+export const SETTINGS_CATEGORIES = ['general', 'usage', 'memory', 'tasks', 'employees', 'runtime', 'models', 'browser', 'telegram', 'zentao', 'security', 'commands', 'git', 'release', 'data'] as const satisfies readonly SettingsCategory[];
 export type DataPortabilityStatusState = { kind: 'idle' } | { kind: 'exported'; target: string } | { kind: 'imported'; target: string; changedSettings: string[] };
 export type TaskBulkActionStatusState = { kind: 'idle' | 'running' | 'done' | 'failed'; message?: string };
 export type RuntimeLogExportStatusState = { kind: 'idle' } | { kind: 'empty' } | { kind: 'cancelled' } | { kind: 'saved'; filePath: string } | { kind: 'failed' };
@@ -213,6 +213,9 @@ export type NativeConversationAppClient = SessionControllerClient &
     | 'inspectCodexConfigImport'
     | 'importCodexConfig'
     | 'activateCodexConfig'
+    | 'loadSkills'
+    | 'installSkill'
+    | 'removeSkill'
     | 'startTaskModelPush'
     | 'loadModelConnections'
     | 'createModelConnection'
@@ -1270,6 +1273,7 @@ export function normalizeMainNavTarget(hash: string | undefined): MainNavTarget 
   if (!target) return 'conversations';
   if (target === 'dashboard' || target === 'tasks' || target === 'runtime' || target === 'conversations') return 'conversations';
   if (target === 'code-map' || target === 'git-diff' || target === 'projects' || target === 'project-commands' || target.startsWith('project-code')) return 'projects';
+  if (target === 'skills') return 'skills';
   if (target === 'telegram' || target === 'settings' || target?.startsWith('settings-')) return 'settings';
   return 'conversations';
 }

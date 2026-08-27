@@ -1,0 +1,703 @@
+.macos-ai-app .digital-employee-settings-pane,
+.macos-ai-app .project-digital-employees {
+  min-width: 0;
+  color: var(--zeus-control-text);
+}
+
+.macos-ai-app .digital-employee-page-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.macos-ai-app .digital-employee-page-heading > span:first-child {
+  min-width: 0;
+}
+
+.macos-ai-app .digital-employee-page-heading :where(h2, p) {
+  margin: 0;
+}
+
+.macos-ai-app .digital-employee-page-heading h2 {
+  font-size: 20px;
+  letter-spacing: -0.015em;
+}
+
+.macos-ai-app .digital-employee-page-heading p {
+  max-width: 760px;
+  margin-top: 5px;
+  color: var(--zeus-control-muted-text);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.macos-ai-app .digital-employee-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.macos-ai-app .digital-employee-feedback {
+  margin: 12px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.macos-ai-app .digital-employee-feedback.is-error {
+  border-color: color-mix(in oklab, var(--zeus-danger, #d14b55) 42%, var(--zeus-control-border));
+  color: var(--zeus-danger, #b73542);
+  background: color-mix(in oklab, var(--zeus-danger, #d14b55) 7%, transparent);
+}
+
+.macos-ai-app .digital-employee-master-detail {
+  display: grid;
+  min-height: 540px;
+  grid-template-columns: minmax(220px, 0.36fr) minmax(360px, 0.64fr);
+  margin-top: 18px;
+  overflow: hidden;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 11px;
+  background: var(--zeus-product-panel);
+}
+
+.macos-ai-app .digital-employee-master-detail.is-project {
+  min-height: 610px;
+  margin-top: 0;
+}
+
+.macos-ai-app .digital-employee-list-pane {
+  min-width: 0;
+  overflow: auto;
+  border-inline-end: 1px solid var(--zeus-control-border);
+  background: color-mix(in oklab, var(--zeus-product-panel-muted) 64%, transparent);
+}
+
+.macos-ai-app .digital-employee-list-row {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 10px;
+  border: 0;
+  border-block-end: 1px solid color-mix(in oklab, var(--zeus-control-border) 72%, transparent);
+  border-radius: 0;
+  color: inherit;
+  background: transparent;
+  text-align: start;
+}
+
+.macos-ai-app .digital-employee-list-row:hover,
+.macos-ai-app .digital-employee-list-row.is-selected {
+  background: color-mix(in oklab, var(--zeus-product-accent) 8%, var(--zeus-product-panel));
+}
+
+.macos-ai-app .digital-employee-list-row.is-selected {
+  box-shadow: inset 3px 0 0 var(--zeus-product-accent);
+}
+
+.macos-ai-app .digital-employee-list-row.is-disabled {
+  opacity: 0.64;
+}
+
+.macos-ai-app .digital-employee-list-row > span:nth-child(2),
+.macos-ai-app .digital-employee-list-row > span:nth-child(2) :where(strong, small) {
+  min-width: 0;
+}
+
+.macos-ai-app .digital-employee-list-row > span:nth-child(2) {
+  display: grid;
+  gap: 3px;
+}
+
+.macos-ai-app .digital-employee-list-row strong,
+.macos-ai-app .digital-employee-list-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macos-ai-app .digital-employee-list-row small,
+.macos-ai-app .digital-employee-list-row em {
+  color: var(--zeus-control-muted-text);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.macos-ai-app .digital-employee-avatar {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid color-mix(in oklab, var(--zeus-product-accent) 24%, var(--zeus-control-border));
+  border-radius: 9px;
+  color: var(--zeus-product-accent);
+  background: color-mix(in oklab, var(--zeus-product-accent) 9%, var(--zeus-product-panel));
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.macos-ai-app .digital-employee-editor-pane {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  background: var(--zeus-product-panel);
+}
+
+.macos-ai-app .digital-employee-editor-pane > .digital-employee-form {
+  flex: 1;
+  overflow: auto;
+  padding: 18px;
+}
+
+.macos-ai-app .digital-employee-empty,
+.macos-ai-app .digital-employee-empty-state {
+  color: var(--zeus-control-muted-text);
+  font-size: 12px;
+}
+
+.macos-ai-app .digital-employee-empty {
+  margin: 0;
+  padding: 18px;
+}
+
+.macos-ai-app .digital-employee-empty-state {
+  display: grid;
+  min-height: 240px;
+  flex: 1;
+  place-content: center;
+  gap: 5px;
+  padding: 28px;
+  text-align: center;
+}
+
+.macos-ai-app .digital-employee-empty-state strong {
+  color: var(--zeus-control-text);
+  font-size: 14px;
+}
+
+.macos-ai-app .digital-employee-form {
+  display: grid;
+  gap: 14px;
+}
+
+.macos-ai-app .digital-employee-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.macos-ai-app .digital-employee-form label,
+.macos-ai-app .digital-employee-deploy-command {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  color: var(--zeus-control-muted-text);
+  font-size: 11px;
+}
+
+.macos-ai-app .digital-employee-form :where(input:not([type='checkbox']), textarea),
+.macos-ai-app .digital-employee-deploy-command input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 7px;
+  color: var(--zeus-control-text);
+  background: var(--zeus-control-background, var(--zeus-product-panel));
+  font: inherit;
+  font-size: 12px;
+}
+
+.macos-ai-app .digital-employee-form input:not([type='checkbox']) {
+  min-height: 34px;
+  padding: 6px 9px;
+}
+
+.macos-ai-app .digital-employee-form textarea {
+  min-height: 64px;
+  padding: 8px 9px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.macos-ai-app .digital-employee-form :where(input:not([type='checkbox']), textarea):focus-visible {
+  border-color: var(--zeus-product-accent);
+  outline: 2px solid color-mix(in oklab, var(--zeus-product-accent) 25%, transparent);
+  outline-offset: 1px;
+}
+
+.macos-ai-app .digital-employee-form :where(input, textarea):disabled {
+  opacity: 0.68;
+}
+
+.macos-ai-app .digital-employee-editor-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 11px 14px;
+  border-block-start: 1px solid var(--zeus-control-border);
+  background: color-mix(in oklab, var(--zeus-product-panel-muted) 62%, transparent);
+}
+
+.macos-ai-app .digital-employee-editor-actions > small {
+  max-width: 560px;
+  color: var(--zeus-control-muted-text);
+  line-height: 1.45;
+}
+
+.macos-ai-app .project-digital-employees {
+  margin: 0 18px 20px;
+  padding-top: 18px;
+  border-block-start: 1px solid var(--zeus-control-border);
+}
+
+.macos-ai-app .digital-employee-section-tabs {
+  display: flex;
+  gap: 4px;
+  margin-top: 16px;
+  padding: 3px;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 9px;
+  background: var(--zeus-product-panel-muted);
+}
+
+.macos-ai-app .digital-employee-section-tabs button {
+  min-height: 30px;
+  padding: 4px 11px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--zeus-control-muted-text);
+  background: transparent;
+  font-size: 12px;
+}
+
+.macos-ai-app .digital-employee-section-tabs button.is-selected {
+  color: var(--zeus-control-text);
+  background: var(--zeus-product-panel);
+  box-shadow: 0 1px 2px color-mix(in oklab, black 10%, transparent);
+}
+
+.macos-ai-app .digital-employee-project-section {
+  margin-top: 12px;
+}
+
+.macos-ai-app .digital-employee-assignment-strip {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 0.7fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 9px;
+  background: var(--zeus-product-panel);
+}
+
+.macos-ai-app .digital-employee-assignment-strip > span:first-child,
+.macos-ai-app .digital-employee-form-section > header,
+.macos-ai-app .digital-employee-automation-editor > header,
+.macos-ai-app .digital-employee-execution-list > header {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.macos-ai-app :where(.digital-employee-assignment-strip, .digital-employee-form-section, .digital-employee-automation-editor, .digital-employee-execution-list) small {
+  color: var(--zeus-control-muted-text);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.macos-ai-app .digital-employee-project-form {
+  gap: 20px;
+}
+
+.macos-ai-app .digital-employee-form-section {
+  display: grid;
+  gap: 12px;
+  padding-block-end: 19px;
+  border-block-end: 1px solid var(--zeus-control-border);
+}
+
+.macos-ai-app .digital-employee-form-section:last-child {
+  padding-block-end: 0;
+  border-block-end: 0;
+}
+
+.macos-ai-app .digital-employee-form-section > header strong,
+.macos-ai-app .digital-employee-automation-editor > header strong,
+.macos-ai-app .digital-employee-execution-list > header strong {
+  font-size: 13px;
+}
+
+.macos-ai-app .digital-employee-policy-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.macos-ai-app .digital-employee-checkbox-row {
+  position: relative;
+  display: grid !important;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px !important;
+  padding: 9px;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 8px;
+  color: var(--zeus-control-text) !important;
+  background: color-mix(in oklab, var(--zeus-product-panel-muted) 48%, transparent);
+}
+
+.macos-ai-app .digital-employee-checkbox-row input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.macos-ai-app .digital-employee-checkbox-visual {
+  display: grid;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+  box-sizing: border-box;
+  margin-top: 1px;
+  border: 1px solid var(--zeus-control-border-hover);
+  border-radius: 4px;
+  background: var(--zeus-product-panel);
+}
+
+.macos-ai-app .digital-employee-checkbox-row input:checked + .digital-employee-checkbox-visual {
+  border-color: var(--zeus-product-accent);
+  background: var(--zeus-product-accent);
+}
+
+.macos-ai-app .digital-employee-checkbox-row input:checked + .digital-employee-checkbox-visual::after {
+  width: 7px;
+  height: 4px;
+  border: solid white;
+  border-width: 0 0 2px 2px;
+  content: '';
+  transform: translateY(-1px) rotate(-45deg);
+}
+
+.macos-ai-app .digital-employee-checkbox-row input:focus-visible + .digital-employee-checkbox-visual {
+  outline: 2px solid color-mix(in oklab, var(--zeus-product-accent) 32%, transparent);
+  outline-offset: 2px;
+}
+
+.macos-ai-app .digital-employee-checkbox-row > span:last-child {
+  display: grid;
+  gap: 2px;
+}
+
+.macos-ai-app .digital-employee-checkbox-row small {
+  color: var(--zeus-control-muted-text);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+.macos-ai-app .digital-employee-grant-flow {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  gap: 7px;
+}
+
+.macos-ai-app .digital-employee-grant-flow .digital-employee-checkbox-row {
+  grid-template-columns: 18px minmax(0, 1fr);
+}
+
+.macos-ai-app .digital-employee-deploy-command {
+  max-width: 460px;
+}
+
+.macos-ai-app .digital-employee-automation-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.42fr) minmax(360px, 0.58fr);
+  gap: 12px;
+}
+
+.macos-ai-app .digital-employee-automation-editor,
+.macos-ai-app .digital-employee-automation-list,
+.macos-ai-app .digital-employee-execution-list {
+  min-width: 0;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 10px;
+  background: var(--zeus-product-panel);
+}
+
+.macos-ai-app .digital-employee-automation-editor {
+  padding: 14px;
+}
+
+.macos-ai-app .digital-employee-automation-editor > .digital-employee-form {
+  margin-top: 13px;
+}
+
+.macos-ai-app .digital-employee-automation-task-fields {
+  display: grid;
+  gap: 12px;
+}
+
+.macos-ai-app .digital-employee-boundary-note {
+  margin: 0;
+  padding: 8px 10px;
+  border-inline-start: 3px solid color-mix(in oklab, var(--zeus-product-accent) 64%, var(--zeus-control-border));
+  color: var(--zeus-control-muted-text);
+  background: color-mix(in oklab, var(--zeus-product-accent) 5%, transparent);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.macos-ai-app .digital-employee-automation-list {
+  overflow: hidden;
+}
+
+.macos-ai-app .digital-employee-automation-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border-block-end: 1px solid var(--zeus-control-border);
+}
+
+.macos-ai-app .digital-employee-automation-row:last-child {
+  border-block-end: 0;
+}
+
+.macos-ai-app .digital-employee-automation-row.is-disabled {
+  opacity: 0.62;
+}
+
+.macos-ai-app .digital-employee-automation-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.macos-ai-app .digital-employee-automation-copy :where(strong, small) {
+  overflow-wrap: anywhere;
+}
+
+.macos-ai-app .digital-employee-execution-list {
+  overflow: hidden;
+}
+
+.macos-ai-app .digital-employee-execution-list > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border-block-end: 1px solid var(--zeus-control-border);
+}
+
+.macos-ai-app .digital-employee-execution-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 10px minmax(170px, 1fr) minmax(130px, 0.6fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  border-block-end: 1px solid var(--zeus-control-border);
+  font-size: 12px;
+}
+
+.macos-ai-app .digital-employee-execution-row > span:not(.digital-employee-status-dot) {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.macos-ai-app .digital-employee-execution-row :where(small, time) {
+  color: var(--zeus-control-muted-text);
+  font-size: 10.5px;
+}
+
+.macos-ai-app .digital-employee-execution-row p {
+  grid-column: 2 / -1;
+  margin: 0;
+  color: var(--zeus-danger, #b73542);
+  overflow-wrap: anywhere;
+}
+
+.macos-ai-app .digital-employee-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--zeus-control-muted-text);
+}
+
+.macos-ai-app :where(.is-queued, .is-dispatching, .is-running, .is-waiting, .is-delivery_pending) > .digital-employee-status-dot {
+  background: var(--zeus-product-accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--zeus-product-accent) 13%, transparent);
+}
+
+.macos-ai-app .is-delivered > .digital-employee-status-dot {
+  background: #2d9b67;
+}
+
+.macos-ai-app :where(.is-failed, .is-blocked) > .digital-employee-status-dot {
+  background: var(--zeus-danger, #d14b55);
+}
+
+.macos-ai-app .task-digital-employee-panel {
+  gap: 11px;
+}
+
+.macos-ai-app .task-digital-employee-assignment {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(190px, 0.7fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.macos-ai-app .task-digital-employee-assignment > span:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.macos-ai-app .task-digital-employee-assignment small,
+.macos-ai-app .task-digital-employee-execution small,
+.macos-ai-app .task-digital-employee-history small {
+  color: var(--zeus-control-muted-text);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.macos-ai-app .task-digital-employee-execution {
+  display: grid;
+  grid-template-columns: 10px minmax(160px, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--zeus-product-panel-muted) 44%, transparent);
+}
+
+.macos-ai-app .task-digital-employee-execution.is-historical {
+  opacity: 0.82;
+}
+
+.macos-ai-app .task-digital-employee-execution-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.macos-ai-app .task-digital-employee-execution time {
+  color: var(--zeus-control-muted-text);
+  font-size: 10.5px;
+}
+
+.macos-ai-app .task-digital-employee-execution > p {
+  grid-column: 2 / -1;
+  margin: 0;
+  color: var(--zeus-danger, #b73542);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.macos-ai-app .task-digital-employee-history {
+  border-block-start: 1px solid var(--zeus-control-border);
+  padding-top: 9px;
+}
+
+.macos-ai-app .task-digital-employee-history summary {
+  color: var(--zeus-control-muted-text);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.macos-ai-app .task-digital-employee-history ol {
+  display: grid;
+  gap: 0;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.macos-ai-app .task-digital-employee-history li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 0;
+  border-block-end: 1px solid var(--zeus-control-border);
+  font-size: 11px;
+}
+
+.macos-ai-app .task-digital-employee-history li > span:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+@media (max-width: 1080px) {
+  .macos-ai-app .digital-employee-grant-flow {
+    grid-template-columns: repeat(2, minmax(150px, 1fr));
+  }
+
+  .macos-ai-app .digital-employee-automation-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 820px) {
+  .macos-ai-app .digital-employee-master-detail,
+  .macos-ai-app .digital-employee-master-detail.is-project {
+    min-height: 0;
+    grid-template-columns: 1fr;
+  }
+
+  .macos-ai-app .digital-employee-list-pane {
+    max-height: 260px;
+    border-inline-end: 0;
+    border-block-end: 1px solid var(--zeus-control-border);
+  }
+
+  .macos-ai-app .digital-employee-assignment-strip,
+  .macos-ai-app .task-digital-employee-assignment {
+    grid-template-columns: 1fr;
+  }
+
+  .macos-ai-app .digital-employee-policy-grid,
+  .macos-ai-app .digital-employee-form-grid,
+  .macos-ai-app .digital-employee-grant-flow {
+    grid-template-columns: 1fr;
+  }
+
+  .macos-ai-app .digital-employee-editor-actions,
+  .macos-ai-app .digital-employee-page-heading,
+  .macos-ai-app .digital-employee-automation-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .macos-ai-app .digital-employee-actions {
+    justify-content: flex-start;
+  }
+
+  .macos-ai-app .digital-employee-execution-row,
+  .macos-ai-app .task-digital-employee-execution {
+    grid-template-columns: 10px minmax(0, 1fr);
+  }
+
+  .macos-ai-app .digital-employee-execution-row > :where(span, time, p):not(.digital-employee-status-dot),
+  .macos-ai-app .task-digital-employee-execution > :where(span, time, p):not(.digital-employee-status-dot) {
+    grid-column: 2;
+  }
+}

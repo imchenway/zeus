@@ -63,3 +63,32 @@ export interface CodexConfigActivationResult {
   runtimeGenerationId: string;
   restartRequired: false;
 }
+
+export type SkillScope = 'user' | 'repo' | 'system' | 'admin';
+
+export interface SkillDescriptor {
+  id: string;
+  name: string;
+  description: string;
+  shortDescription?: string;
+  invocation: string;
+  path: string;
+  scope: SkillScope;
+  removable: boolean;
+  interface?: Record<string, unknown>;
+  dependencies?: Record<string, unknown>;
+}
+
+export interface SkillCatalog {
+  cwd: string;
+  skills: SkillDescriptor[];
+  errors: Array<Record<string, unknown>>;
+  refreshedAt: string;
+}
+
+export type SkillInstallSource = { kind: 'local'; path: string } | { kind: 'git'; repositoryUrl: string; ref?: string; subdirectory?: string };
+
+export interface SkillInstallResult {
+  skill: SkillDescriptor;
+  installedAt: string;
+}

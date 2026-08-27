@@ -601,6 +601,9 @@ export function createCodexRuntimeGenerationManager(
     async listThreadTurns(input) {
       return routeThread(input.threadId).manager.listThreadTurns(input);
     },
+    async listSkills(input) {
+      return requireActiveEntry().manager.listSkills(input);
+    },
     async startTurn(input) {
       return withThreadOwner(input.threadId, input.cwd, input.responsesRuntime, async (entry) => {
         if (input.responsesRuntime) {

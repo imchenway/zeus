@@ -546,6 +546,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     serviceTierDowngraded: false,
     workMode: 'default',
     permissionMode: 'read-only',
+    skillId: '',
     workspaceMode: 'direct',
     taskBranchMode: 'create',
     environmentId: '',
@@ -780,7 +781,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const [taskConversationDrawerTarget, setTaskConversationDrawerTarget] = useState<TaskConversationDrawerTarget>();
   const [taskConversationReopenState, setTaskConversationReopenState] = useState<TaskConversationReopenState>();
   useEffect(() => {
-    if (activeNavTarget !== 'settings' && activeProjectSection === 'tasks') return;
+    if (activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeProjectSection === 'tasks') return;
     setTaskConversationDrawerTarget(undefined);
   }, [activeNavTarget, activeProjectSection]);
   const [localSettingsCategory, setLocalSettingsCategory] = useState<SettingsCategory>(() => {

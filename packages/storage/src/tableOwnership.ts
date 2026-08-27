@@ -79,6 +79,15 @@ const ownershipGroups = [
       'task_workspaces',
       'task_integrations',
       'task_integration_attempts',
+      'task_workflows',
+      'task_stages',
+      'task_stage_attempts',
+      'task_stage_deliverables',
+      'digital_employee_templates',
+      'digital_employees',
+      'digital_employee_automations',
+      'digital_employee_executions',
+      'digital_employee_event_receipts',
     ],
   },
   {
@@ -161,7 +170,7 @@ export const storageTableOwnership: readonly StorageTableOwnershipRecord[] = own
   group.tables.map((table) => ({ table, owner: group.owner, documentationOwnerLabel: group.documentationOwnerLabel, authorityClass: group.authorityClass })),
 );
 
-/** 可删除重建的独立派生数据库表；不得与 Core 84 表或其备份边界混为一谈。 */
+/** 可删除重建的独立派生数据库表；不得与 Core 92 表或其备份边界混为一谈。 */
 export const storageAuxiliaryTableOwnership: readonly StorageAuxiliaryTableOwnershipRecord[] = [
   ...[
     'projection_metadata',

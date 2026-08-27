@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { createProvider, envApiKeyAuth, type Api, type Model, type ProviderStreams, type StreamOptions } from '@earendil-works/pi-ai';
 import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy';
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
@@ -15,6 +15,7 @@ import type {
   AgentRuntimeDriver,
   AgentRuntimeEvent,
   AgentRuntimeProbe,
+  AgentRunSkillActivation,
   AgentSessionIdentity,
   AgentSessionSnapshot,
   CompactAgentSessionInput,
@@ -78,6 +79,7 @@ interface PiSessionEntry {
   session: AgentSession;
   resourceLoader: PiHeadlessResourceLoader;
   applicationContextFingerprint: string | null;
+  activeSkill: AgentRunSkillActivation | null;
   applicationContextUpdating: boolean;
   activeRunId: string | null;
   pendingFailure: PiTerminalFailure | null;
@@ -204,6 +206,7 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
       session,
       resourceLoader,
       applicationContextFingerprint: null,
+      activeSkill: null,
       applicationContextUpdating: false,
       activeRunId: null,
       pendingFailure: null,
@@ -243,7 +246,8 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
 
   async function start(entry: PiSessionEntry, input: StartAgentRunInput, mode: 'prompt' | 'steer' | 'follow_up'): Promise<AcceptedAgentRun> {
     if (mode === 'steer' && !entry.activeRunId) throw runtimeError('ZEUS_PI_RUN_NOT_ACTIVE', 'Pi 插话需要一个正在执行的轮次。');
-    if (mode === 'prompt') await applyApplicationContext(entry, input.applicationContext);
+    const selectedSkill = input.skill ? normalizeSkillActivation(input.skill) : undefined;
+    if (mode === 'prompt') await applyRunResources(entry, input.applicationContext, selectedSkill);
     if (input.model) {
       if (!entry.session.isIdle) throw runtimeError('ZEUS_PI_MODEL_CHANGE_IN_PROGRESS', 'Pi 模型只能在会话空闲时切换。');
       const { runtime } = await loadModelRuntime();
@@ -308,7 +312,8 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
               : {}),
           }
         : undefined;
-    const userContent = mode === 'prompt' ? appendUntrustedContext(input.content, input.untrustedContext) : input.content;
+    const contextualContent = mode === 'prompt' ? appendUntrustedContext(input.content, input.untrustedContext) : input.content;
+    const userContent = mode === 'prompt' && selectedSkill ? `/skill:${selectedSkill.name} ${contextualContent}` : contextualContent;
     const operation = mode === 'steer' ? entry.session.steer(userContent, images) : mode === 'follow_up' ? entry.session.followUp(userContent, images) : entry.session.prompt(userContent, promptOptions);
     if (preflight && !preflightSettled) {
       // prompt() 返回的是整轮异步 Promise，不代表认证、压缩和扩展预处理已经完成。
@@ -712,36 +717,63 @@ function sourceIdFromPiProvider(providerId: string): string | null {
   return providerId.startsWith('zeus-') ? providerId.slice('zeus-'.length) : null;
 }
 
-async function applyApplicationContext(entry: PiSessionEntry, input: StartAgentRunInput['applicationContext']): Promise<void> {
-  if (!input) return;
-  const context = normalizeApplicationContext(input);
-  if (entry.applicationContextFingerprint === context.fingerprint) return;
+async function applyRunResources(entry: PiSessionEntry, input: StartAgentRunInput['applicationContext'], skill: AgentRunSkillActivation | undefined): Promise<void> {
+  const context = input ? normalizeApplicationContext(input) : undefined;
+  const contextChanged = Boolean(context && entry.applicationContextFingerprint !== context.fingerprint);
+  const skillChanged = Boolean(skill && !sameSkillActivation(entry.activeSkill, skill));
+  if (!contextChanged && !skillChanged) return;
   if (!entry.session.isIdle || entry.activeRunId || entry.applicationContextUpdating) {
-    throw runtimeError('ZEUS_PI_APPLICATION_CONTEXT_RELOAD_NOT_IDLE', 'Pi application context 只能在会话空闲且没有并发 reload 时更新。');
+    throw runtimeError('ZEUS_PI_RUN_RESOURCES_RELOAD_NOT_IDLE', 'Pi 运行资源只能在会话空闲且没有并发 reload 时更新。');
   }
   entry.applicationContextUpdating = true;
-  const previous = entry.resourceLoader.replaceApplicationContext(context);
+  const previousContext = contextChanged ? entry.resourceLoader.replaceApplicationContext(context!) : null;
   const previousFingerprint = entry.applicationContextFingerprint;
+  const previousSkill = entry.activeSkill;
+  if (skillChanged) entry.resourceLoader.replaceActiveSkill(skill!);
   try {
     await entry.session.reload();
     if (!entry.session.isIdle || entry.activeRunId) {
-      throw runtimeError('ZEUS_PI_APPLICATION_CONTEXT_RELOAD_NOT_IDLE', 'Pi application context reload 后会话不再空闲，已拒绝本轮派发。');
+      throw runtimeError('ZEUS_PI_RUN_RESOURCES_RELOAD_NOT_IDLE', 'Pi 运行资源 reload 后会话不再空闲，已拒绝本轮派发。');
     }
-    entry.applicationContextFingerprint = context.fingerprint;
+    if (contextChanged) entry.applicationContextFingerprint = context!.fingerprint;
+    if (skillChanged) entry.activeSkill = skill!;
   } catch (error) {
-    entry.resourceLoader.replaceApplicationContext(previous);
+    if (contextChanged) entry.resourceLoader.replaceApplicationContext(previousContext);
+    if (skillChanged) entry.resourceLoader.replaceActiveSkill(previousSkill);
     try {
       await entry.session.reload();
       entry.applicationContextFingerprint = previousFingerprint;
+      entry.activeSkill = previousSkill;
     } catch (rollbackError) {
-      throw Object.assign(new AggregateError([error, rollbackError], 'Pi application context reload 与回滚同时失败。'), {
-        code: 'ZEUS_PI_APPLICATION_CONTEXT_RELOAD_ROLLBACK_FAILED',
+      throw Object.assign(new AggregateError([error, rollbackError], 'Pi 运行资源 reload 与回滚同时失败。'), {
+        code: 'ZEUS_PI_RUN_RESOURCES_RELOAD_ROLLBACK_FAILED',
       });
     }
     throw error;
   } finally {
     entry.applicationContextUpdating = false;
   }
+}
+
+function normalizeSkillActivation(input: AgentRunSkillActivation): AgentRunSkillActivation {
+  if (
+    typeof input.id !== 'string' ||
+    !/^[a-f0-9]{32}$/u.test(input.id) ||
+    typeof input.name !== 'string' ||
+    !input.name.trim() ||
+    /[\r\n\0\s]/u.test(input.name) ||
+    typeof input.description !== 'string' ||
+    !input.description.trim() ||
+    typeof input.path !== 'string' ||
+    !isAbsolute(input.path)
+  ) {
+    throw runtimeError('ZEUS_PI_SKILL_ACTIVATION_INVALID', 'Pi 收到的 Zeus Skill 激活信息无效。');
+  }
+  return { id: input.id, name: input.name.trim(), description: input.description.trim(), path: resolve(input.path) };
+}
+
+function sameSkillActivation(left: AgentRunSkillActivation | null, right: AgentRunSkillActivation): boolean {
+  return Boolean(left && left.id === right.id && left.name === right.name && left.description === right.description && left.path === right.path);
 }
 
 function normalizeApplicationContext(input: NonNullable<StartAgentRunInput['applicationContext']>) {

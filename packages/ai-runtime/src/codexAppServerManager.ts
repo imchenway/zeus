@@ -148,6 +148,25 @@ export interface CodexAccountUsageSnapshot {
   dailyUsageBuckets: Array<{ startDate: string; tokens: number }> | null;
 }
 
+export type CodexSkillScope = 'user' | 'repo' | 'system' | 'admin';
+
+export interface CodexSkillMetadata {
+  name: string;
+  description: string;
+  shortDescription?: string;
+  path: string;
+  scope: CodexSkillScope;
+  enabled: boolean;
+  interface?: Record<string, unknown>;
+  dependencies?: Record<string, unknown>;
+}
+
+export interface CodexSkillsListEntry {
+  cwd: string;
+  skills: CodexSkillMetadata[];
+  errors: Array<Record<string, unknown>>;
+}
+
 export interface CodexChatGptLogin {
   generationId: string;
   loginId: string;
@@ -422,6 +441,7 @@ export interface CodexAppServerManager {
     /** 派发门禁读取不得被同一进程的过程事件投影背压阻塞。 */
     priority?: 'control';
   }): Promise<CodexThreadTurnsPage>;
+  listSkills(input: { cwds?: string[]; forceReload?: boolean }): Promise<CodexSkillsListEntry[]>;
   startTurn(input: CodexTurnStartInput): Promise<CodexTurnSnapshot>;
   steerTurn(input: CodexTurnSteerInput): Promise<{ turnId: string }>;
   interruptTurn(input: { threadId: string; turnId: string } & CodexPerformanceTraceContext): Promise<void>;
@@ -1255,6 +1275,10 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
         nextCursor: response.nextCursor,
       };
     },
+    async listSkills(input) {
+      const capabilities = await awaitCapabilities();
+      return parseSkillsList(await rpc(capabilities.generationId, 'skills/list', compactObject(input)));
+    },
     async startTurn(input) {
       const capabilities = await awaitCapabilities();
       const modelName = input.model ?? threadModels.get(input.threadId);
@@ -1729,6 +1753,43 @@ function parseModels(value: unknown): CodexModelCapability[] {
       ...(typeof model.defaultServiceTier === 'string' || model.defaultServiceTier === null ? { defaultServiceTier: model.defaultServiceTier } : {}),
       raw: model,
     };
+  });
+}
+
+function parseSkillsList(value: unknown): CodexSkillsListEntry[] {
+  const response = asRecord(value);
+  if (!Array.isArray(response.data)) throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex skills/list response omitted data.');
+  return response.data.map((rawEntry) => {
+    const entry = asRecord(rawEntry);
+    if (typeof entry.cwd !== 'string' || !Array.isArray(entry.skills) || !Array.isArray(entry.errors)) {
+      throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex skills/list returned an invalid entry.');
+    }
+    const skills = entry.skills.map((rawSkill) => {
+      const skill = asRecord(rawSkill);
+      if (
+        typeof skill.name !== 'string' ||
+        typeof skill.description !== 'string' ||
+        typeof skill.path !== 'string' ||
+        !isAbsolute(skill.path) ||
+        (skill.scope !== 'user' && skill.scope !== 'repo' && skill.scope !== 'system' && skill.scope !== 'admin') ||
+        typeof skill.enabled !== 'boolean'
+      ) {
+        throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex skills/list returned invalid skill metadata.');
+      }
+      const scope: CodexSkillScope = skill.scope;
+      return {
+        name: skill.name,
+        description: skill.description,
+        ...(typeof skill.shortDescription === 'string' ? { shortDescription: skill.shortDescription } : {}),
+        path: skill.path,
+        scope,
+        enabled: skill.enabled,
+        ...(isRecord(skill.interface) ? { interface: skill.interface } : {}),
+        ...(isRecord(skill.dependencies) ? { dependencies: skill.dependencies } : {}),
+      };
+    });
+    const errors = entry.errors.map((error) => asRecord(error));
+    return { cwd: entry.cwd, skills, errors };
   });
 }
 

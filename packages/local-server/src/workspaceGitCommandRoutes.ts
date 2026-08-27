@@ -180,7 +180,7 @@ export function registerWorkspaceGitCommandRoutes(options: {
     async (
       request: FastifyRequest<{
         Params: TaskIntegrationParams;
-        Body: WorkspaceGitMutationRequest<{ path?: unknown; content?: unknown; fingerprint?: unknown; permissionMode?: unknown }>;
+        Body: WorkspaceGitMutationRequest<{ path?: unknown; content?: unknown; fingerprint?: unknown; permissionMode?: unknown; skillId?: unknown }>;
       }>,
       reply,
     ) =>
@@ -189,7 +189,7 @@ export function registerWorkspaceGitCommandRoutes(options: {
         scopeKind: 'task_integration',
         scopeId: request.params.integrationId,
         ids: request.params,
-        allowedInputKeys: ['content', 'fingerprint', 'path', 'permissionMode'],
+        allowedInputKeys: ['content', 'fingerprint', 'path', 'permissionMode', 'skillId'],
       }),
   );
 

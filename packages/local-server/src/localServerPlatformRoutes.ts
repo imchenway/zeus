@@ -17,17 +17,24 @@ import { normalizeProjectConfig, type ProjectConfigSnapshot, type UpdateProjectC
 import { getSecretPresenceLabel } from '@zeus/security-core';
 import { cloneTaskManagementStatusConfig, type TaskPushParentAttachmentOption } from '@zeus/shared';
 import {
+  CommandDefinitionRepository,
   ConversationProviderItemRepository,
   ConversationRepository,
   ConversationResourceRepository,
   ConversationServerRequestRepository,
   ConversationTurnRepository,
+  DigitalEmployeeAutomationRepository,
+  DigitalEmployeeExecutionRepository,
+  DigitalEmployeeProjectEventRepository,
+  DigitalEmployeeRepository,
+  DigitalEmployeeTemplateRepository,
   ProjectionDatabaseRuntimeManager,
   ProjectRepository,
   runtimeSessionMayOwnProcess,
   SettingRepository,
   TaskBoardRepository,
   TaskEventRepository,
+  TaskStageRepository,
   type TaskManagementStatus,
   TaskRepository,
   TaskWorkspaceRepository,
@@ -53,6 +60,8 @@ import { registerCodexSubagentQueryRoutes } from './codexSubagentQueryRoutes.js'
 import { createCodexSubagentRuntimeReader } from './codexSubagentRuntimeProjection.js';
 import { createCommandCenter } from './commandCenter.js';
 import { ConversationCapabilityQueryApplication } from './conversationCapabilityQueryApplication.js';
+import { createDigitalEmployeeOrchestrator, type DigitalEmployeeOrchestrator } from './digitalEmployeeOrchestrator.js';
+import { registerDigitalEmployeeRoutes } from './digitalEmployeeRoutes.js';
 import { registerConversationCapabilityQueryRoutes } from './conversationCapabilityQueryRoutes.js';
 import { ConversationChoiceQueryApplication } from './conversationChoiceQueryApplication.js';
 import { registerConversationChoiceQueryRoutes } from './conversationChoiceQueryRoutes.js';
@@ -128,6 +137,8 @@ import { registerRuntimeQueryRoutes } from './runtimeQueryRoutes.js';
 import { registerRuntimeSessionCommandRoutes } from './runtimeSessionCommandRoutes.js';
 import { type ParsedSettingsCommand, SettingsCommandApplication, settingsCommandHttpError, type SettingsCommandRequest, settingsCommandTypes } from './settingsCommandApplication.js';
 import { registerStorageRecoveryPreflightApi } from './storageRecoveryPreflightApi.js';
+import { TaskStageApplication } from './taskStageApplication.js';
+import { registerTaskStageRoutes } from './taskStageRoutes.js';
 import { telegramChildOperation, TelegramCommandApplication, telegramCommandHttpError, type TelegramCommandRequest, telegramCommandTypes } from './telegramCommandApplication.js';
 import { registerTelegramPollingApi } from './telegramPollingApi.js';
 import { changeSetErrorStatus, errorCode as turnChangeSetErrorCode } from './turnChangeSets.js';
@@ -179,6 +190,7 @@ export type LocalServerPlatformRouteDependencies = Record<string, any> & {
   settingsCommands: SettingsCommandApplication;
   taskBoards: TaskBoardRepository;
   taskEvents: TaskEventRepository;
+  taskStages: TaskStageRepository;
   taskWorkspaces: TaskWorkspaceRepository;
   tasks: TaskRepository;
   telegramCommands: TelegramCommandApplication;
@@ -232,6 +244,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     closeTaskResourcesForTerminalStatus,
     codexAppServerManager,
     codexConfigImportService,
+    zeusSkillDefaultCwd,
+    zeusSkillService,
     codexExternalAgentHome,
     codexLegacyImportService,
     codexNativeCoordinator,
@@ -383,6 +397,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     taskIntegrationAttempts,
     taskIntegrations,
     taskManagementStatusIsTerminal,
+    taskStages,
     taskTemplates,
     taskWorkspaces,
     tasks,
@@ -412,6 +427,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     zentaoCredentials,
   } = dependencies;
   let closeLocalServerResources: () => Promise<void>;
+  let digitalEmployeeOrchestrator: DigitalEmployeeOrchestrator | null = null;
   server.get('/health', async () => {
     const storage = db.storageHealthSnapshot();
     const boundPort = getBoundPort();
@@ -558,6 +574,17 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
 
   const workManagementQueries = new WorkManagementQueryApplication({ projects, tasks, taskBoards, taskEvents, taskTemplates });
   registerWorkManagementQueryRoutes({ server, application: workManagementQueries });
+
+  const taskStageApplication = new TaskStageApplication({
+    db,
+    tasks,
+    stages: taskStages,
+    conversations,
+    artifacts: artifactStore,
+    recordTaskEvent,
+    publishRealtimeEvent,
+  });
+  registerTaskStageRoutes({ server, application: taskStageApplication });
 
   const runtimeQueries = new RuntimeQueryApplication({
     runtimeSessions,
@@ -848,6 +875,13 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     application: codexPublicCommands,
     configImport: codexConfigImportService,
     legacyImport: codexLegacyImportService,
+    skills: zeusSkillService,
+    resolveSkillCwd: (projectId) => {
+      if (!projectId) return zeusSkillDefaultCwd;
+      const project = projects.getById(projectId);
+      if (!project) throw Object.assign(new Error('项目不存在，无法读取项目级 Skill。'), { code: 'ZEUS_PROJECT_NOT_FOUND', statusCode: 404 });
+      return project.localPath;
+    },
     account: {
       ensureReady: () =>
         codexAppServerManager
@@ -2011,6 +2045,68 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     mapDomainError: mapWorkManagementTaskDomainError,
   });
 
+  const digitalEmployeeTemplates = new DigitalEmployeeTemplateRepository(db);
+  const digitalEmployees = new DigitalEmployeeRepository(db);
+  const digitalEmployeeAutomations = new DigitalEmployeeAutomationRepository(db);
+  const digitalEmployeeExecutions = new DigitalEmployeeExecutionRepository(db);
+  const digitalEmployeeProjectEvents = new DigitalEmployeeProjectEventRepository(db);
+  const digitalEmployeeCommandDefinitions = new CommandDefinitionRepository(db);
+
+  registerDigitalEmployeeRoutes({
+    server,
+    application: workManagementCommands,
+    projects,
+    tasks,
+    taskEvents,
+    templates: digitalEmployeeTemplates,
+    employees: digitalEmployees,
+    automations: digitalEmployeeAutomations,
+    executions: digitalEmployeeExecutions,
+    projectEvents: digitalEmployeeProjectEvents,
+    commandDefinitions: digitalEmployeeCommandDefinitions,
+    appendAuditLog,
+    publishRealtimeEvent,
+    isTaskTerminal: taskManagementStatusIsTerminal,
+    save: () => db.save(),
+    kick: () => digitalEmployeeOrchestrator?.kick(),
+  });
+
+  if (!readOnlyValidation) {
+    digitalEmployeeOrchestrator = createDigitalEmployeeOrchestrator({
+      server,
+      apiToken: options.apiToken,
+      workManagement: workManagementCommands,
+      workspaceGit: workspaceGitCommands,
+      workspaceGitOperations: {
+        prepare: prepareWorkspaceGitCommand,
+        execute: executeWorkspaceGitCommand,
+        isExplicitRejection: isWorkspaceGitExplicitRejection,
+      },
+      employees: digitalEmployees,
+      automations: digitalEmployeeAutomations,
+      executions: digitalEmployeeExecutions,
+      projectEvents: digitalEmployeeProjectEvents,
+      projects,
+      tasks,
+      taskEvents,
+      taskIntegrations,
+      taskWorkspaces,
+      conversations,
+      commandRuns,
+      conversationCapabilities: conversationCapabilityQueries,
+      executeTaskConversationIdempotent: (project, task, body, idempotencyKey) => executeTaskConversationIdempotent(project, task, body, idempotencyKey),
+      readTaskWorkspaceSnapshot,
+      createTask: (input, taskId, context) => workManagementCoreOperations.createUserTask(input, taskId, context),
+      resolveDefaultManagementStatus: (projectId) => resolveTaskManagementStatusConfigForProject(projectId).roles.defaultStatusId,
+      resolveCompletedManagementStatus: (projectId) => resolveTaskManagementStatusConfigForProject(projectId).roles.completedStatusId,
+      isTaskTerminal: taskManagementStatusIsTerminal,
+      appendAuditLog,
+      publishRealtimeEvent,
+      save: () => db.save(),
+      now,
+    });
+  }
+
   registerConversationChoiceQueryRoutes({
     server,
     application: conversationChoiceQueries,
@@ -2928,6 +3024,12 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     } catch (error) {
       cleanupErrors.push(error);
     }
+    try {
+      await digitalEmployeeOrchestrator?.close();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    digitalEmployeeOrchestrator = null;
     commandCenter.close();
     if (platformMutableState.usageRefreshTimer) {
       clearInterval(platformMutableState.usageRefreshTimer);

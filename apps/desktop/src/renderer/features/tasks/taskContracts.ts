@@ -92,6 +92,139 @@ export interface TaskEventRecord {
   createdAt: string;
 }
 
+export type TaskWorkflowStatus = 'active' | 'completed' | 'cancelled';
+export type TaskStageKind = 'plan' | 'implementation' | 'code_review' | 'custom';
+export type TaskStageStatus = 'pending' | 'ready' | 'running' | 'awaiting_acceptance' | 'accepted' | 'changes_requested' | 'failed' | 'cancelled' | 'skipped';
+export type TaskStageAttemptStatus = 'starting' | 'active' | 'completed' | 'failed' | 'outcome_unknown' | 'cancelled';
+export type TaskStageDeliverableStatus = 'submitted' | 'accepted' | 'changes_requested' | 'superseded';
+export type TaskStageAdvanceMode = 'manual' | 'auto';
+export type TaskStageAgentKind = 'codex' | 'pi';
+export type TaskStagePermissionMode = 'read-only' | 'auto' | 'full-access';
+export type TaskStageWorkMode = 'default' | 'plan';
+
+export interface TaskWorkflowRecord {
+  id: string;
+  taskId: string;
+  templateKey: string;
+  templateRevision: number;
+  status: TaskWorkflowStatus;
+  currentStageId: string | null;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskStageAttemptRecord {
+  id: string;
+  taskId: string;
+  stageId: string;
+  attemptNumber: number;
+  operationIdentity: string;
+  conversationId: string | null;
+  submissionId: string | null;
+  segmentId: string | null;
+  workspaceId: string | null;
+  environmentId: string | null;
+  agentKind: TaskStageAgentKind;
+  modelRef: string;
+  effort: string | null;
+  serviceTier: string | null;
+  workMode: TaskStageWorkMode;
+  permissionMode: TaskStagePermissionMode;
+  inputDeliverableIds: string[];
+  sourceSnapshotJson: string;
+  status: TaskStageAttemptStatus;
+  errorJson: string | null;
+  startedAt: string;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskStageDeliverableRecord {
+  id: string;
+  taskId: string;
+  stageId: string;
+  attemptId: string;
+  version: number;
+  kind: string;
+  title: string;
+  summary: string;
+  mimeType: string;
+  artifactSha256: string;
+  artifactRefJson: string;
+  contentSha256: string;
+  contentByteLength: number;
+  operationIdentity: string;
+  status: TaskStageDeliverableStatus;
+  decisionReason: string | null;
+  acceptedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskStageRecord {
+  id: string;
+  workflowId: string;
+  taskId: string;
+  stageKey: string;
+  sequence: number;
+  kind: TaskStageKind;
+  title: string;
+  description: string;
+  status: TaskStageStatus;
+  agentKind: TaskStageAgentKind;
+  modelRef: string;
+  effort: string | null;
+  serviceTier: string | null;
+  workMode: TaskStageWorkMode;
+  permissionMode: TaskStagePermissionMode;
+  advanceMode: TaskStageAdvanceMode;
+  prompt: string;
+  outputContractJson: string;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+  attempts: TaskStageAttemptRecord[];
+  deliverables: TaskStageDeliverableRecord[];
+}
+
+export interface TaskWorkflowSnapshot {
+  workflow: TaskWorkflowRecord;
+  stages: TaskStageRecord[];
+}
+
+export interface CreateTaskStageRequest {
+  stageKey: string;
+  kind: TaskStageKind;
+  title: string;
+  description: string;
+  agentKind: TaskStageAgentKind;
+  modelRef: string;
+  effort?: string | null;
+  serviceTier?: string | null;
+  workMode: TaskStageWorkMode;
+  permissionMode: TaskStagePermissionMode;
+  advanceMode: TaskStageAdvanceMode;
+  prompt: string;
+  outputContract: Record<string, unknown>;
+}
+
+export interface UpdateTaskStageRequest {
+  expectedRevision: number;
+  title?: string;
+  description?: string;
+  agentKind?: TaskStageAgentKind;
+  modelRef?: string;
+  effort?: string | null;
+  serviceTier?: string | null;
+  workMode?: TaskStageWorkMode;
+  permissionMode?: TaskStagePermissionMode;
+  advanceMode?: TaskStageAdvanceMode;
+  prompt?: string;
+  outputContract?: Record<string, unknown>;
+}
+
 export interface CreateTaskRequest {
   idempotencyKey: string;
   projectId: string;

@@ -144,7 +144,7 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
       }
       recoveringConflictAiStartsRef.current.add(pending.idempotencyKey);
       void client
-        .startTaskIntegrationConflictAi(pending.taskId, pending.integrationId, pending.path, pending.content, pending.fingerprint, pending.permissionMode, pending.idempotencyKey)
+        .startTaskIntegrationConflictAi(pending.taskId, pending.integrationId, pending.path, pending.content, pending.fingerprint, pending.permissionMode, pending.idempotencyKey, pending.skillId)
         .then(async (operation) => {
           clearPendingConflictAiStart(pending.idempotencyKey);
           if (disposed) return;

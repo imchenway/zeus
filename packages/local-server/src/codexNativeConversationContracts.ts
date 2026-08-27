@@ -95,6 +95,14 @@ export interface NativeConversationAttachmentInput {
   taskPushAttachmentKey?: string;
 }
 
+export interface NativeConversationSkillInput {
+  id: string;
+  name: string;
+  description: string;
+  /** Runtime Adapter 内部使用的绝对 SKILL.md 投影路径。 */
+  path: string;
+}
+
 export interface NativeQuestionAnswerAttachmentInput {
   questionId: string;
   attachments: NativeConversationAttachmentInput[];
@@ -116,6 +124,7 @@ export interface StartTaskConversationInput {
   taskTitle: string;
   prompt: string;
   model: string;
+  skill?: NativeConversationSkillInput;
   modelSourceId?: string | null;
   effort?: string;
   serviceTier?: string | null;
@@ -157,6 +166,7 @@ export interface StartProjectConversationInput {
   projectLocalPath: string;
   prompt: string;
   model: string;
+  skill?: NativeConversationSkillInput;
   modelSourceId?: string | null;
   effort?: string;
   serviceTier?: string | null;
@@ -303,6 +313,7 @@ export interface StartNativeEphemeralConversationInput {
   title: string;
   prompt: string;
   model: string;
+  skill?: NativeConversationSkillInput;
   effort?: string;
   serviceTier?: string | null;
   idempotencyKey: string;

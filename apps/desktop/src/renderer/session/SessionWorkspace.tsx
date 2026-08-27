@@ -97,6 +97,7 @@ export type SessionStartMode = 'create' | 'resume' | 'reference_legacy';
 export interface SessionWorkspaceStartInput {
   mode: SessionStartMode;
   source?: 'code_review';
+  stageId?: string;
   task: SessionWorkspaceTask;
   inheritConversationId?: string;
   conversation?: NativeConversationChoice;
@@ -110,6 +111,7 @@ export interface SessionWorkspaceStartInput {
   effort?: string;
   agentKind?: 'codex' | 'pi';
   goalObjective?: string;
+  skillId?: string;
 }
 
 export interface ProjectSessionWorkspaceStartInput {
@@ -130,6 +132,7 @@ export interface SessionWorkspaceActions {
   ) => void | boolean | NativeConversationStartPreparation | NativeConversationStartFailure | Promise<void | boolean | NativeConversationStartPreparation | NativeConversationStartFailure>;
   onStartProjectConversation?: (input: ProjectSessionWorkspaceStartInput) => void | boolean | NativeConversationStartFailure | Promise<void | boolean | NativeConversationStartFailure>;
   onLoadCapabilities?: (projectId: string) => Promise<CodexConversationCapabilities>;
+  onLoadSkills?: (projectId?: string, forceReload?: boolean) => Promise<import('../features/codex/codexContracts.js').SkillCatalog>;
   onSelectNewConversationProject?: (projectId: string) => void;
   onLoadNewConversationProjectGit?: (projectId: string) => Promise<ProjectGitWorkbenchSnapshot>;
   onExecuteNewConversationProjectGit?: (projectId: string, repositoryId: string, action: ProjectGitAction) => Promise<ProjectGitActionResponse>;
@@ -218,6 +221,7 @@ type StartNativeConversationPayload =
   | {
       mode: 'create';
       source?: 'code_review';
+      stageId?: string;
       content: string;
       attachments?: NativeConversationAttachment[];
       inheritConversationId?: string;
@@ -228,6 +232,7 @@ type StartNativeConversationPayload =
       effort?: string;
       agentKind?: 'codex' | 'pi';
       goalObjective?: string;
+      skillId?: string;
     }
   | { mode: 'resume'; conversationId: string; content: string; collaborationMode: NativeCollaborationMode }
   | {
@@ -284,6 +289,7 @@ export interface ConnectedSessionWorkspaceProps {
   stableConversationId?: string;
   onStartConversation?: SessionWorkspaceActions['onStartConversation'];
   onStartProjectConversation?: SessionWorkspaceActions['onStartProjectConversation'];
+  onLoadSkills?: SessionWorkspaceActions['onLoadSkills'];
   onOpenTaskDetail?: SessionWorkspaceActions['onOpenTaskDetail'];
   onTaskManagementStatusChange?: SessionWorkspaceActions['onTaskManagementStatusChange'];
   taskManagementStatusChangeBusy?: boolean;
@@ -589,6 +595,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       onOpenTaskGitDelivery: props.onOpenTaskGitDelivery,
       onOpenProjectCommands: props.onOpenProjectCommands,
       onLoadCapabilities: props.client.loadCodexConversationCapabilities,
+      onLoadSkills: props.onLoadSkills,
       onChooseStartAttachments: props.onChooseAttachments,
     };
   }, [
@@ -603,6 +610,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     props.localActions,
     props.onChooseAttachments,
     props.onLoadTaskWorkspaces,
+    props.onLoadSkills,
     props.onOpenProjectCommands,
     props.onOpenTaskDetail,
     props.onOpenTaskGitDelivery,
@@ -1126,6 +1134,7 @@ function buildStartNativeConversationPayload(input: SessionWorkspaceStartInput):
     return {
       mode: 'create',
       ...(input.source ? { source: input.source } : {}),
+      ...(input.stageId ? { stageId: input.stageId } : {}),
       content,
       ...(input.attachments?.length ? { attachments: input.attachments } : {}),
       ...(input.inheritConversationId ? { inheritConversationId: input.inheritConversationId } : {}),
@@ -1136,6 +1145,7 @@ function buildStartNativeConversationPayload(input: SessionWorkspaceStartInput):
       ...(input.effort ? { effort: input.effort } : {}),
       ...(input.agentKind ? { agentKind: input.agentKind } : {}),
       ...(input.goalObjective ? { goalObjective: input.goalObjective } : {}),
+      ...(input.skillId ? { skillId: input.skillId } : {}),
     };
   }
   if (!content) throw new Error('Native conversation resume/reference content is required.');
@@ -1189,6 +1199,8 @@ function isStartNativeConversationRequest(value: unknown): value is StartNativeC
     return (
       (Boolean(request.content.trim()) || (Array.isArray(request.attachments) && request.attachments.length > 0)) &&
       (request.source === undefined || request.source === 'code_review') &&
+      (request.skillId === undefined || (typeof request.skillId === 'string' && /^[a-f0-9]{32}$/u.test(request.skillId))) &&
+      (request.stageId === undefined || (typeof request.stageId === 'string' && Boolean(request.stageId))) &&
       (request.inheritConversationId === undefined || (typeof request.inheritConversationId === 'string' && Boolean(request.inheritConversationId))) &&
       (request.source !== 'code_review' ||
         (typeof request.inheritConversationId === 'string' &&
@@ -2239,6 +2251,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 suppressed={props.quickActionsSuppressed}
                 capabilities={props.capabilities}
                 onLoadCapabilities={actions.onLoadCapabilities}
+                onLoadSkills={actions.onLoadSkills}
                 onLoadTaskWorkspaces={actions.onLoadTaskWorkspaces}
                 onOpenTaskDetail={actions.onOpenTaskDetail}
                 onOpenGitReview={actions.onOpenTaskGitReview}
@@ -2273,6 +2286,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     model: selection.model,
                     effort: selection.effort,
                     agentKind: selection.agentKind,
+                    ...(selection.skillId ? { skillId: selection.skillId } : {}),
                   });
                 }}
                 onAddSources={actions.onChooseAttachments}

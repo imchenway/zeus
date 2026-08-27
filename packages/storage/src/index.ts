@@ -17,8 +17,10 @@ import { migrateConversationSyncEventStoreSchema, migrateConversationSyncProtoco
 import { DatabasePerformanceCollector, type DatabasePerformanceSnapshot } from './databasePerformance.js';
 import { migrateExecutionHostHandoffSchema } from './executionHostHandoffStore.js';
 import { migrateExecutionHostWorkSchema } from './executionHostWorkStore.js';
+import { migrateDigitalEmployeeSchema } from './digitalEmployeeStore.js';
 import { migrateLongTermMemorySchema } from './longTermMemoryStore.js';
 import { migrateTaskEventFileProjectionSchema } from './taskEventFileProjectionStore.js';
+import { migrateTaskStageSchema } from './taskStageStore.js';
 import type { SqlValue, ZeusDatabasePort } from './databasePort.js';
 import { deriveConversationStageProjection, isPlainRecord, ProviderEventReceiptRepository, subtractTokenUsageBreakdown, validateTokenUsageBreakdown, type DbCodexUsageLedgerRow } from './conversationStore.js';
 
@@ -29,6 +31,7 @@ export * from './coldEvidenceStore.js';
 export * from './commandDeliveryStore.js';
 export * from './databasePerformance.js';
 export * from './databasePort.js';
+export * from './digitalEmployeeStore.js';
 export * from './executionHostHandoffStore.js';
 export * from './executionHostWorkStore.js';
 export * from './conversationHotQueryIndexes.js';
@@ -41,6 +44,7 @@ export * from './conversationSnapshotV2.js';
 export * from './conversationSyncEventStore.js';
 export * from './longTermMemoryStore.js';
 export * from './taskEventFileProjectionStore.js';
+export * from './taskStageStore.js';
 export * from './projectionDatabaseCandidate.js';
 export * from './projectionDatabaseRuntime.js';
 export * from './recoveryBackup.js';
@@ -1083,6 +1087,7 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
     migrateRetiredUnitTestTemplate(zeusDb);
     migrateTaskManagementStatus(zeusDb);
     migrateTaskTypesAndContents(zeusDb);
+    migrateDigitalEmployeeSchema(zeusDb);
     migrateCodexNativeConversationSchema(zeusDb);
     migrateConversationGoalSchema(zeusDb);
     // 用量身份迁移会读取模型来源字段，新库必须先建立 Agent 会话身份列。
@@ -1099,6 +1104,7 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
     migrateCommandCenterSchema(zeusDb);
     migrateCommandDeliverySchema(zeusDb);
     migrateTaskEventFileProjectionSchema(zeusDb);
+    migrateTaskStageSchema(zeusDb);
     migrateProviderEventReceipts(zeusDb);
     migrateUnifiedConversationStoreSchema(zeusDb);
     migrateConversationLegacyCutoverSchema(zeusDb);
