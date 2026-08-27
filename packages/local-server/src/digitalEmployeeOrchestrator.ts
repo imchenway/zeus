@@ -505,7 +505,9 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
     }
     const hasDelivery = execution.source !== 'exploration' && Object.values(execution.deliveryGrantsSnapshot).some(Boolean);
     if (!hasDelivery) {
-      await markDelivered(execution, '数字员工已完成任务处理；当前执行没有获授自动交付动作。');
+      const pending = options.executions.update(execution.id, { status: 'delivery_pending', deliveryStage: 'done' });
+      publishExecution(pending);
+      await markDelivered(pending, '数字员工已完成任务处理；当前执行没有获授自动交付动作。');
       return;
     }
     const pending = options.executions.update(execution.id, { status: 'delivery_pending', deliveryStage: firstDeliveryStage(execution) });
