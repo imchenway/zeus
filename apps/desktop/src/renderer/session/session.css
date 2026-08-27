@@ -15849,6 +15849,12 @@
   will-change: auto !important;
 }
 
+/* 命令与工具图标只表达活动类型，不再叠加蓝色圆底或光晕。 */
+.session-codex-parity-v1 :where(.session-activity-group-icon, .session-activity-item-icon) {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
 /* 最终覆盖：运行详情按会话/费用双栏与通栏数据表排列。 */
 .session-codex-parity-v1 .session-runtime-detail-groups {
   gap: 0;

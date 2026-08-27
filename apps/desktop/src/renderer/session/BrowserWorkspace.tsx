@@ -423,8 +423,9 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
               aria-label={labels.address}
               placeholder={labels.address}
               onFocus={(event) => {
+                const input = event.currentTarget;
                 setAddressFocused(true);
-                requestAnimationFrame(() => event.currentTarget.select());
+                requestAnimationFrame(() => input.select());
               }}
               onBlur={() => setAddressFocused(false)}
               onChange={(event) => setAddress(event.currentTarget.value)}
