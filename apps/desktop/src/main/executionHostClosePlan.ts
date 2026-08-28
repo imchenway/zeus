@@ -24,12 +24,12 @@ export async function closeExecutionHostResources(resources: ExecutionHostCloseR
 
   let runtimeClosed = false;
   try {
-      await withCloseTimeout(resources.closeRuntime(), executionHostRuntimeCloseTimeoutMs, 'Core 收尾超过 20 秒');
+    await withCloseTimeout(resources.closeRuntime(), executionHostRuntimeCloseTimeoutMs, 'Core 收尾超过 20 秒');
     runtimeClosed = true;
   } catch (error) {
     errors.push(closeStageError('closeRuntime', error));
   }
-    await attempt('closeControlServer', () => withCloseTimeout(resources.closeControlServer(), executionHostControlCloseTimeoutMs, '控制服务关闭超过 5 秒'), errors);
+  await attempt('closeControlServer', () => withCloseTimeout(resources.closeControlServer(), executionHostControlCloseTimeoutMs, '控制服务关闭超过 5 秒'), errors);
 
   if (runtimeClosed) {
     await attempt('removeRendezvous', () => resources.removeRendezvous(), errors);
@@ -53,18 +53,18 @@ export async function closeExecutionHostResources(resources: ExecutionHostCloseR
 }
 
 async function withCloseTimeout(operation: Promise<void>, timeoutMs: number, message: string): Promise<void> {
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    try {
-        await Promise.race([
-            operation,
-            new Promise<never>((_resolve, reject) => {
-                timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
-                timeout.unref?.();
-            }),
-        ]);
-    } finally {
-        if (timeout) clearTimeout(timeout);
-    }
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      operation,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+        timeout.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 async function attempt(stage: string, operation: () => Promise<void>, errors: unknown[]): Promise<void> {

@@ -1,59 +1,50 @@
-import {spawn} from 'node:child_process';
-import {createHash, randomBytes, randomUUID} from 'node:crypto';
-import {existsSync} from 'node:fs';
-import {mkdir, writeFile} from 'node:fs/promises';
-import {dirname, join} from 'node:path';
-import {homedir} from 'node:os';
-import {fileURLToPath} from 'node:url';
-import {createCodexRuntimeGenerationManager} from '@zeus/ai-runtime';
+import { spawn } from 'node:child_process';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { homedir } from 'node:os';
+import { fileURLToPath } from 'node:url';
+import { createCodexRuntimeGenerationManager } from '@zeus/ai-runtime';
 import {
-    type BrowserAutomationPort,
-    createZeusDataLayout,
-    hasCodexFinalizationOwnershipClaim,
-    prepareUnifiedConversationStoreMigration,
-    type RunningZeusLocalServer,
-    startZeusLocalServer,
-    verifyReadOnlyValidationDescriptor,
-    type ZeusDataLayout,
+  type BrowserAutomationPort,
+  createZeusDataLayout,
+  hasCodexFinalizationOwnershipClaim,
+  prepareUnifiedConversationStoreMigration,
+  type RunningZeusLocalServer,
+  startZeusLocalServer,
+  verifyReadOnlyValidationDescriptor,
+  type ZeusDataLayout,
 } from '@zeus/local-server';
+import { type ReadOnlyValidationDescriptor, readOnlyValidationIdentity, type ReadOnlyValidationIdentity, sameReadOnlyValidationIdentity } from '@zeus/shared';
+import { startDesktopBrowserAutomationBridge } from './browserAutomationBridge.js';
+import { createExecutionHostStopActiveCommandRequest } from './executionHostStopCommand.js';
+import { createReadOnlyValidationCodexManager } from './readOnlyValidationCodexManager.js';
+import { resolveDesktopKeychainService } from './secretServiceIdentity.js';
 import {
-    type ReadOnlyValidationDescriptor,
-    readOnlyValidationIdentity,
-    type ReadOnlyValidationIdentity,
-    sameReadOnlyValidationIdentity
-} from '@zeus/shared';
-import {startDesktopBrowserAutomationBridge} from './browserAutomationBridge.js';
-import {createExecutionHostStopActiveCommandRequest} from './executionHostStopCommand.js';
-import {createReadOnlyValidationCodexManager} from './readOnlyValidationCodexManager.js';
-import {resolveDesktopKeychainService} from './secretServiceIdentity.js';
-import {
-    createExecutionHostControlClient,
-    currentExecutionHostCapabilityFeatures,
-    type ExecutionHostCapabilities,
-    executionHostCapabilitiesFor,
-    type ExecutionHostLeaseStatus,
-    type ExecutionHostLockObservation,
-    executionHostProtocolVersion,
-    type ExecutionHostRendezvous,
-    executionHostRendezvousPath,
-    executionHostStartupPath,
-    type ExecutionHostStartupStage,
-    type ExecutionHostWorkStatus,
-    type IncompatibleExecutionHostIdentity,
-    inspectExecutionHostKernelLease,
-    readExecutionHostLockIdentity,
-    readExecutionHostLockObservation,
-    readExecutionHostRendezvous,
-    readExecutionHostStartupStatus,
-    readIncompatibleExecutionHostIdentity,
-    writeExecutionHostBootstrap,
+  createExecutionHostControlClient,
+  currentExecutionHostCapabilityFeatures,
+  type ExecutionHostCapabilities,
+  executionHostCapabilitiesFor,
+  type ExecutionHostLeaseStatus,
+  type ExecutionHostLockObservation,
+  executionHostProtocolVersion,
+  type ExecutionHostRendezvous,
+  executionHostRendezvousPath,
+  executionHostStartupPath,
+  type ExecutionHostStartupStage,
+  type ExecutionHostWorkStatus,
+  type IncompatibleExecutionHostIdentity,
+  inspectExecutionHostKernelLease,
+  readExecutionHostLockIdentity,
+  readExecutionHostLockObservation,
+  readExecutionHostRendezvous,
+  readExecutionHostStartupStatus,
+  readIncompatibleExecutionHostIdentity,
+  writeExecutionHostBootstrap,
 } from './executionHostProtocol.js';
-import type {DesktopLocalServerCloseMode} from './beforeQuitCleanup.js';
-import {
-    sameZeusDataRootHostIdentity,
-    verifyZeusDataRootHostIdentity,
-    type ZeusDataRootHostIdentity
-} from './dataRootIdentity.js';
+import type { DesktopLocalServerCloseMode } from './beforeQuitCleanup.js';
+import { sameZeusDataRootHostIdentity, verifyZeusDataRootHostIdentity, type ZeusDataRootHostIdentity } from './dataRootIdentity.js';
 
 const readOnlyValidationVerifiedBeforeOwnedCoreLock = new WeakSet<ReadOnlyValidationDescriptor>();
 
@@ -378,18 +369,18 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       if (changed) await options.onRestarted?.(config);
     };
 
-      const replaceMismatchedHost = async (): Promise<void> => {
-          if (connection.appVersion === currentAppVersion || handoffPromise) return;
+    const replaceMismatchedHost = async (): Promise<void> => {
+      if (connection.appVersion === currentAppVersion || handoffPromise) return;
 
       const previousInstanceId = connection.instanceId;
       const previousPid = connection.pid;
       const previousClient = client;
       const switching = (async () => {
-          // “重新启动 Zeus”必须替换全部相关进程。先用持久化停止命令终结旧宿主工作，
-          // 再关闭旧 Core；新版界面绝不能继续连接不同应用版本的宿主。
-          const stopCommand = createExecutionHostStopActiveCommandRequest({reason: 'embedded_owner_retirement'});
-          await previousClient.stopActiveWork(stopCommand);
-          await previousClient.shutdown();
+        // “重新启动 Zeus”必须替换全部相关进程。先用持久化停止命令终结旧宿主工作，
+        // 再关闭旧 Core；新版界面绝不能继续连接不同应用版本的宿主。
+        const stopCommand = createExecutionHostStopActiveCommandRequest({ reason: 'embedded_owner_retirement' });
+        await previousClient.stopActiveWork(stopCommand);
+        await previousClient.shutdown();
         await waitForExecutionHostExit(options.userDataPath, previousInstanceId, previousPid, options.dataRootIdentity);
         const next = await connectOrLaunchExecutionHost(options);
         await attach(next);
@@ -454,34 +445,34 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       return cloneRendererLocalServerConfig(config);
     };
 
-      const forceTerminateCurrentHost = async (): Promise<void> => {
-          let identityConfirmed = false;
-          try {
-              const status = await client.health();
-              identityConfirmed = status.instanceId === connection.instanceId && status.pid === connection.pid;
-          } catch {
-              const advertised = await readExecutionHostRendezvous(options.userDataPath);
-              identityConfirmed =
-                  Boolean(advertised) &&
-                  advertised!.instanceId === connection.instanceId &&
-                  advertised!.pid === connection.pid &&
-                  advertised!.appVersion === connection.appVersion &&
-                  advertised!.protocolVersion === connection.protocolVersion &&
-                  sameZeusDataRootHostIdentity(advertised!.dataRootIdentity, options.dataRootIdentity) &&
-                  sameReadOnlyValidationIdentity(advertised!.readOnlyValidation, connection.readOnlyValidation) &&
-                  inspectExecutionHostKernelLease(options.userDataPath, options.dataRootIdentity) === 'held';
-          }
-          if (!identityConfirmed || connection.pid <= 1 || connection.pid === process.pid) {
-              throw new Error('Zeus 拒绝结束身份无法确认的执行宿主。');
-          }
-          try {
-              // Execution Host 是独立进程组组长；结束进程组可同时收口其 Provider 和 Runtime 子进程。
-              process.kill(-connection.pid, 'SIGKILL');
-          } catch (error) {
-              if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
-          }
-          await waitForExecutionHostExit(options.userDataPath, connection.instanceId, connection.pid, options.dataRootIdentity);
-      };
+    const forceTerminateCurrentHost = async (): Promise<void> => {
+      let identityConfirmed = false;
+      try {
+        const status = await client.health();
+        identityConfirmed = status.instanceId === connection.instanceId && status.pid === connection.pid;
+      } catch {
+        const advertised = await readExecutionHostRendezvous(options.userDataPath);
+        identityConfirmed =
+          Boolean(advertised) &&
+          advertised!.instanceId === connection.instanceId &&
+          advertised!.pid === connection.pid &&
+          advertised!.appVersion === connection.appVersion &&
+          advertised!.protocolVersion === connection.protocolVersion &&
+          sameZeusDataRootHostIdentity(advertised!.dataRootIdentity, options.dataRootIdentity) &&
+          sameReadOnlyValidationIdentity(advertised!.readOnlyValidation, connection.readOnlyValidation) &&
+          inspectExecutionHostKernelLease(options.userDataPath, options.dataRootIdentity) === 'held';
+      }
+      if (!identityConfirmed || connection.pid <= 1 || connection.pid === process.pid) {
+        throw new Error('Zeus 拒绝结束身份无法确认的执行宿主。');
+      }
+      try {
+        // Execution Host 是独立进程组组长；结束进程组可同时收口其 Provider 和 Runtime 子进程。
+        process.kill(-connection.pid, 'SIGKILL');
+      } catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
+      }
+      await waitForExecutionHostExit(options.userDataPath, connection.instanceId, connection.pid, options.dataRootIdentity);
+    };
 
     const maintainLease = async (): Promise<void> => {
       if (closing) return;
@@ -498,10 +489,10 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       if (closing || handoffPromise || recoveryPromise || connection.appVersion === currentAppVersion) return;
       const probeClient = client;
       const probedInstanceId = connection.instanceId;
-        await probeClient.health();
+      await probeClient.health();
       // 心跳可能在探测期间完成重连；旧宿主状态不得驱动新宿主交接。
       if (client !== probeClient || connection.instanceId !== probedInstanceId) return;
-        await replaceMismatchedHost();
+      await replaceMismatchedHost();
     };
 
     heartbeatTimer = setInterval(() => {
@@ -514,10 +505,10 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
     }, 1_000);
     heartbeatTimer.unref();
 
-      // 冷启动发现旧版本时必须先完整替换旧 Core，再把业务配置交给 Renderer。
-      // 替换失败会进入唯一启动失败页，不能让新版界面继续使用旧版宿主。
+    // 冷启动发现旧版本时必须先完整替换旧 Core，再把业务配置交给 Renderer。
+    // 替换失败会进入唯一启动失败页，不能让新版界面继续使用旧版宿主。
     if (connection.appVersion !== currentAppVersion) {
-        await probeHostHandoff();
+      await probeHostHandoff();
     }
 
     handoffTimer = setInterval(() => {
@@ -601,15 +592,15 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
           }
           try {
             if (mode === 'force_quit') {
-                await forceTerminateCurrentHost();
+              await forceTerminateCurrentHost();
             } else if (mode === 'final_quit') {
-                try {
-                    await client.shutdown();
-                    await waitForExecutionHostExit(options.userDataPath, connection.instanceId, connection.pid, options.dataRootIdentity);
-                } catch (error) {
-                    console.error('Zeus Core 未能在有界关闭窗口内退出，将使用已验证进程身份完成收口。', error);
-                    await forceTerminateCurrentHost();
-                }
+              try {
+                await client.shutdown();
+                await waitForExecutionHostExit(options.userDataPath, connection.instanceId, connection.pid, options.dataRootIdentity);
+              } catch (error) {
+                console.error('Zeus Core 未能在有界关闭窗口内退出，将使用已验证进程身份完成收口。', error);
+                await forceTerminateCurrentHost();
+              }
             } else await client.detach(leaseId);
           } catch (error) {
             errors.push(error);

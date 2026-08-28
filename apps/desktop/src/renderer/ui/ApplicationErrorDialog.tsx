@@ -1,4 +1,4 @@
-import {useEffect, useRef} from 'react';
+import { useEffect, useRef } from 'react';
 
 export type ApplicationErrorLanguage = 'zh-CN' | 'en';
 
@@ -19,11 +19,11 @@ const secretPatterns: ReadonlyArray<[RegExp, string]> = [
 
 const copyByLanguage = {
   'zh-CN': {
-      unavailable: '当前操作未完成，请稍后重试。',
+    unavailable: '当前操作未完成，请稍后重试。',
     unknown: '未知错误。',
   },
   en: {
-      unavailable: 'The current operation did not complete. Please try again.',
+    unavailable: 'The current operation did not complete. Please try again.',
     unknown: 'Unknown error.',
   },
 } as const;
@@ -52,12 +52,12 @@ function errorCode(error: unknown): string | null {
  * 真实诊断信息由 reportApplicationError 写入本机运行日志。
  */
 export function formatVisibleApplicationError(error: unknown, language: ApplicationErrorLanguage = 'zh-CN'): string {
-    void error;
-    return copyByLanguage[language].unavailable;
+  void error;
+  return copyByLanguage[language].unavailable;
 }
 
 export function VisibleApplicationError(props: { error: unknown; language?: ApplicationErrorLanguage; className?: string }) {
-    return <span className={props.className}>{formatVisibleApplicationError(props.error, props.language)}</span>;
+  return <span className={props.className}>{formatVisibleApplicationError(props.error, props.language)}</span>;
 }
 
 /**
@@ -65,11 +65,11 @@ export function VisibleApplicationError(props: { error: unknown; language?: Appl
  */
 export function reportApplicationError(error: unknown, options: ApplicationErrorOptions = {}): void {
   const language = options.language ?? 'zh-CN';
-    const code = errorCode(error);
-    const message = errorMessage(error, language).replace(/\s+/gu, ' ').trim() || copyByLanguage[language].unknown;
-    const detail = redactDetails(code && message !== code && !message.startsWith(`${code}:`) ? `${code}: ${message}` : message);
-    console.error('[Zeus runtime]', detail);
-    window.zeus?.reportRendererRuntimeError?.(detail);
+  const code = errorCode(error);
+  const message = errorMessage(error, language).replace(/\s+/gu, ' ').trim() || copyByLanguage[language].unknown;
+  const detail = redactDetails(code && message !== code && !message.startsWith(`${code}:`) ? `${code}: ${message}` : message);
+  console.error('[Zeus runtime]', detail);
+  window.zeus?.reportRendererRuntimeError?.(detail);
 }
 
 /** 同一个失败值只写入一次运行日志。 */
@@ -94,6 +94,6 @@ export function useApplicationErrorDialog(error: unknown, options: ApplicationEr
 
 /** 保留旧挂载点以避免业务页批量改动；全局错误弹窗已永久停用。 */
 export function ApplicationErrorDialogHost(props: { language: ApplicationErrorLanguage }) {
-    void props.language;
-    return null;
+  void props.language;
+  return null;
 }

@@ -1,9 +1,5 @@
-import type {FastifyInstance, FastifyRequest} from 'fastify';
-import {
-    type ExecutionHostHandoffBlockers,
-    type ExecutionHostHandoffPreparation,
-    ExecutionHostHandoffRepository
-} from '@zeus/storage';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { type ExecutionHostHandoffBlockers, type ExecutionHostHandoffPreparation, ExecutionHostHandoffRepository } from '@zeus/storage';
 
 export type ExecutionHostMutationFenceState = 'open' | 'draining' | 'prepared' | 'recovery_required';
 
@@ -44,10 +40,10 @@ export class ExecutionHostMutationAdmissionFence {
           (request.method === 'GET' && pathname === '/api/execution-host/status') ||
           (request.method === 'GET' && /^\/api\/execution-host\/handoff\/[^/]+\/prepared$/u.test(pathname));
         if (allowedControlRequest) return;
-          const recoveryRequired = this.currentState === 'recovery_required';
+        const recoveryRequired = this.currentState === 'recovery_required';
         await reply.code(503).send({
-            error: recoveryRequired ? 'ZEUS_EXECUTION_HOST_RECOVERY_REQUIRED' : 'ZEUS_EXECUTION_HOST_DRAINING',
-            message: recoveryRequired ? 'Zeus 上次未能完整退出，已停止继续执行会话。' : 'Zeus 正在完成更新，请稍后重试。',
+          error: recoveryRequired ? 'ZEUS_EXECUTION_HOST_RECOVERY_REQUIRED' : 'ZEUS_EXECUTION_HOST_DRAINING',
+          message: recoveryRequired ? 'Zeus 上次未能完整退出，已停止继续执行会话。' : 'Zeus 正在完成更新，请稍后重试。',
           handoffState: this.currentState,
         });
         return;

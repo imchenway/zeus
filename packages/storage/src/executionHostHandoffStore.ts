@@ -1,6 +1,6 @@
-import {createHash, randomUUID} from 'node:crypto';
-import type {ZeusDatabasePort} from './databasePort.js';
-import {runtimeSessionProcessOwningStatuses} from './runtimeSessionStore.js';
+import { createHash, randomUUID } from 'node:crypto';
+import type { ZeusDatabasePort } from './databasePort.js';
+import { runtimeSessionProcessOwningStatuses } from './runtimeSessionStore.js';
 
 export const EXECUTION_HOST_HANDOFF_MIGRATION_ID = '20260821_0003_execution_host_durable_handoff';
 
@@ -31,7 +31,7 @@ export interface ExecutionHostHandoffPreparation {
 }
 
 export interface ExecutionHostHandoffRecoveryResult {
-    outcome: 'none' | 'completed' | 'aborted' | 'recovery_required';
+  outcome: 'none' | 'completed' | 'aborted' | 'recovery_required';
   handoffId: string | null;
   restoredRequestCount: number;
   dispatchEnabled: boolean;
@@ -353,35 +353,36 @@ export class ExecutionHostHandoffRepository {
 
       const preparedRow = this.db.get<DbHandoffRow>(`SELECT * FROM execution_host_handoffs WHERE status = 'prepared' ORDER BY prepared_at DESC, id DESC LIMIT 1`);
       if (!preparedRow) {
-          const recovery = this.db.get<DbHandoffRow>(`SELECT *
+        const recovery = this.db.get<DbHandoffRow>(`SELECT *
                                                       FROM execution_host_handoffs
                                                       WHERE status = 'recovery_required'
                                                       ORDER BY updated_at DESC, id DESC
                                                       LIMIT 1`);
         if (recovery) {
-            const storedRequestCount = this.db.get<{
-                count: number
+          const storedRequestCount =
+            this.db.get<{
+              count: number;
             }>(`SELECT COUNT(*) AS count FROM execution_host_handoff_requests WHERE handoff_id = ?`, [recovery.id])?.count ?? 0;
-            // source Core 在生成 checkpoint 前失败时，没有任何可供新 Core 恢复的交接正文。
-            // 将明确未发送的本地队列暂停后即可安全终止该账本；Provider 已接纳的轮次仍由随后
-            // 的原生恢复流程按权威快照对账，禁止自动重放本地队列。
-            if (recovery.checkpoint_sha256 === null && recovery.request_count === 0 && storedRequestCount === 0) {
-                this.db.execute(
-                    `UPDATE conversation_submissions
+          // source Core 在生成 checkpoint 前失败时，没有任何可供新 Core 恢复的交接正文。
+          // 将明确未发送的本地队列暂停后即可安全终止该账本；Provider 已接纳的轮次仍由随后
+          // 的原生恢复流程按权威快照对账，禁止自动重放本地队列。
+          if (recovery.checkpoint_sha256 === null && recovery.request_count === 0 && storedRequestCount === 0) {
+            this.db.execute(
+              `UPDATE conversation_submissions
                   SET status = 'paused', paused_reason = 'upgrade_interrupted', submission_outcome = 'paused', updated_at = ?
                 WHERE status = 'queued' AND provider_turn_id IS NULL`,
-                    [input.restoredAt],
-                );
-                this.db.execute(`UPDATE execution_host_handoffs SET status = 'aborted', updated_at = ? WHERE id = ? AND status = 'recovery_required'`, [input.restoredAt, recovery.id]);
-                this.setDispatchEnabled(true);
-                return {
-                    outcome: 'aborted',
-                    handoffId: recovery.id,
-                    restoredRequestCount: 0,
-                    dispatchEnabled: true,
-                    reason: recovery.failure_json
-                };
-            }
+              [input.restoredAt],
+            );
+            this.db.execute(`UPDATE execution_host_handoffs SET status = 'aborted', updated_at = ? WHERE id = ? AND status = 'recovery_required'`, [input.restoredAt, recovery.id]);
+            this.setDispatchEnabled(true);
+            return {
+              outcome: 'aborted',
+              handoffId: recovery.id,
+              restoredRequestCount: 0,
+              dispatchEnabled: true,
+              reason: recovery.failure_json,
+            };
+          }
           this.setDispatchEnabled(false);
           return { outcome: 'recovery_required', handoffId: recovery.id, restoredRequestCount: 0, dispatchEnabled: false, reason: recovery.failure_json };
         }
