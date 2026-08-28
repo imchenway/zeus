@@ -166,7 +166,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
       const navigationId = conversationNavigationId(conversation);
       const current = navigationId === props.selectedConversationId;
       const runtimeState = props.conversationStates?.[navigationId] ?? props.conversationStates?.[conversation.id] ?? conversationTreeRuntimeStateFromConversation(conversation);
-      const archiveAvailable = conversationCanBeArchived(runtimeState);
+      const archiveAvailable = conversationCanBeArchived(runtimeState, conversation);
       const archiveUnavailableReason = runtimeState === 'legacy_readonly' ? copy.archiveLegacyUnavailable : copy.archiveUnavailable;
       const archiving = archivingConversationId === conversation.id;
       const archiveLabel = archiving ? copy.archiving : archiveAvailable ? copy.archive : archiveUnavailableReason;
@@ -289,8 +289,11 @@ function conversationNavigationId(conversation: NativeConversationChoice): strin
   return conversation.navigationId ?? conversation.id;
 }
 
-export function conversationCanBeArchived(runtimeState: ConversationTreeRuntimeState): boolean {
-  return runtimeState === 'ready' || runtimeState === 'paused' || runtimeState === 'error';
+export function conversationCanBeArchived(runtimeState: ConversationTreeRuntimeState, conversation?: Pick<NativeConversationChoice, 'providerThreadId' | 'providerState'>): boolean {
+  if (runtimeState === 'ready' || runtimeState === 'paused' || runtimeState === 'error') return true;
+  // 从未建立 Provider 线程的本地队列可以由服务端取消后归档；已进入 binding/active
+  // 或拥有真实线程身份的会话仍维持禁用，避免把未知外部写入当成本地清理。
+  return conversation?.providerThreadId === null && conversation.providerState === 'unbound';
 }
 
 function ProjectConversationHeader(props: { project: ProjectConversationGroup; language: SessionUiLanguage; onStartConversation: (taskId: string) => void }) {

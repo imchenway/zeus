@@ -119,6 +119,7 @@ import type { ConversationSegmentLifecycle } from './conversationExecutionCoordi
 import { conversationToolResultDynamicTools, type ManagedConversationToolResultStore } from './conversationPortableContext.js';
 import { ConversationQueueCoreMutationApplication } from './conversationQueueCoreMutationApplication.js';
 import { normalizeConversationResources, toConversationResource } from './conversationResources.js';
+import { archiveUnboundConversationLocally, restoreUnboundConversationLocally } from './unboundConversationArchiveApplication.js';
 import { persistThreadProviderSettings as persistProviderThreadMetadata, threadPath } from './codexThreadMetadataProjection.js';
 import type { ConversationEventFlowControl } from './eventFlowControl.js';
 import type { TurnChangeSetService } from './turnChangeSets.js';
@@ -2456,6 +2457,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     assertOpen();
     let conversation = requireConversation(input.conversationId);
     if (conversation.archived) return toQueueSnapshot(conversation.id);
+    if (await archiveUnboundConversationLocally(options, conversation, () => (runStates.delete(conversation.id), contexts.delete(conversation.id)))) return toQueueSnapshot(conversation.id);
     assertConversationCanBeArchived(conversation);
     await ensureGenerationReconciled([conversation.id]);
     conversation = requireConversation(input.conversationId);
@@ -2531,6 +2533,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   async function restoreArchivedConversation(input: RestoreArchivedConversationInput): Promise<NativeQueueSnapshot> {
     assertOpen();
     let conversation = requireConversation(input.conversationId);
+    if (await restoreUnboundConversationLocally(options, conversation, () => (runStates.set(conversation.id, { type: 'idle' }), contexts.delete(conversation.id)))) return toQueueSnapshot(conversation.id);
     if (conversation.providerState === 'archived') {
       await ensureGenerationReconciled([conversation.id]);
       conversation = requireConversation(input.conversationId);
@@ -2545,13 +2548,12 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         projectId: conversation.projectId,
         taskId: conversation.taskId,
         providerThreadId: conversation.providerThreadId,
-        providerState: 'ready',
+        providerState: conversation.providerState,
       });
     }
     await drainQueuedSubmissions();
     return toQueueSnapshot(conversation.id);
   }
-
   async function restoreArchivedProviderThread(conversationId: string): Promise<NativeQueueSnapshot> {
     let conversation = requireConversation(conversationId);
     if (conversation.providerState !== 'archived') return toQueueSnapshot(conversation.id);

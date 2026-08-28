@@ -1,14 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
+  canonicalJson,
   conversationSchemaGeneration,
-  conversationSyncProtocolV2Generation,
   type ConversationSyncEventPage,
   type ConversationSyncEventRecord,
   type ConversationSyncEventRepository,
   type ConversationSyncEventStreamRecord,
+  conversationSyncProtocolV2Generation,
   type ZeusDatabase,
 } from '@zeus/storage';
-import { classifyConversationEventDurability, conversationEventFlowBudgets, type ConversationEventDurabilityLevel, type ConversationEventFlowControl } from './eventFlowControl.js';
+import { classifyConversationEventDurability, type ConversationEventDurabilityLevel, conversationEventFlowBudgets, type ConversationEventFlowControl } from './eventFlowControl.js';
 
 export const conversationSyncProtocolGeneration = conversationSyncProtocolV2Generation;
 export const maximumDurableConversationEventBytes = 1024 * 1024;
@@ -161,9 +162,14 @@ function stableDurableEventId(input: AppendDurableConversationEventInput): strin
   if (input.type !== 'conversation.turn.change_set.changed') return null;
   const changeSetId = input.payload.changeSetId;
   const entityRevision = input.payload.entityRevision;
-  if (typeof changeSetId !== 'string' || !changeSetId || (typeof entityRevision !== 'string' && typeof entityRevision !== 'number')) return null;
+  const changeSet = input.payload.changeSet;
+  if (typeof changeSetId !== 'string' || !changeSetId || changeSet === undefined || (typeof entityRevision !== 'string' && typeof entityRevision !== 'number')) return null;
+  // Provider 事件时间只有毫秒精度：同一毫秒内的 pre/post 投影可以拥有相同 updatedAt，
+  // 但内容已经不同。事件身份同时纳入规范化投影指纹，既保留相同内容重放的幂等性，
+  // 又不会把不同阶段错误地绑定到同一个 eventId。
+  const projectionSha256 = createHash('sha256').update(canonicalJson(changeSet)).digest('hex');
   const digest = createHash('sha256')
-    .update(`${input.conversationId}\0${input.type}\0${changeSetId}\0${String(entityRevision)}`)
+    .update(`${input.conversationId}\0${input.type}\0${changeSetId}\0${String(entityRevision)}\0${projectionSha256}`)
     .digest('hex');
   return `change-set:${digest}`;
 }

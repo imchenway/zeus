@@ -811,7 +811,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   let pendingNativeCoalescibleBytes = 0;
   let nativeDeltaFlushTimer: ReturnType<typeof setTimeout> | null = null;
   let nativeEventSaveTimer: ReturnType<typeof setTimeout> | null = null;
-  let nativeDeltaFlushFailure: Error | null = null;
   const nativeIdempotentInFlight = new Map<string, { requestHash: string; promise: Promise<{ statusCode: number; body: unknown }> }>();
   const telegramConfirmationTtlMs = 10 * 60 * 1000;
   const appShellSettingsKey = 'app.shell.settings';
@@ -2214,15 +2213,42 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
 
   function recordNativeDeltaFlushFailure(error: unknown): Error {
     const failure = error instanceof Error ? error : new Error(String(error));
-    nativeDeltaFlushFailure = failure;
-    console.error('Zeus 会话增量持久化失败；后续会话事件已失败关闭，等待权威恢复。', failure);
+    console.error('Zeus 会话增量持久化失败；已隔离本批增量，客户端可通过权威快照恢复。', failure);
     return failure;
+  }
+
+  function isNativeSyncEventIdentityConflict(error: unknown): boolean {
+    return (
+      Boolean(error) &&
+      typeof error === 'object' &&
+      (
+        error as {
+          code?: unknown;
+        }
+      ).code === 'ZEUS_CONVERSATION_SYNC_EVENT_IDENTITY_CONFLICT'
+    );
+  }
+
+  function requeueNativeDeltaEvents(
+    events: ReadonlyArray<{
+      type: string;
+      payload: Record<string, unknown>;
+      byteLength: number;
+    }>,
+  ): void {
+    for (const event of events) {
+      const conversationId = typeof event.payload.conversationId === 'string' ? event.payload.conversationId : randomUUID();
+      const key = nativeCoalescingEventKey(event.type, conversationId, event.payload) ?? `${conversationId}:${randomUUID()}`;
+      const replaced = pendingNativeCoalescibleEvents.get(key);
+      if (replaced) pendingNativeCoalescibleBytes -= replaced.byteLength;
+      pendingNativeCoalescibleEvents.set(key, event);
+      pendingNativeCoalescibleBytes += event.byteLength;
+    }
   }
 
   function flushPendingNativeDeltaEvents(saveAfterAppend = false): void {
     if (nativeDeltaFlushTimer) clearTimeout(nativeDeltaFlushTimer);
     nativeDeltaFlushTimer = null;
-    if (nativeDeltaFlushFailure) throw nativeDeltaFlushFailure;
     if (pendingNativeCoalescibleEvents.size === 0) return;
     const pending = [...pendingNativeCoalescibleEvents.values()];
     pendingNativeCoalescibleEvents.clear();
@@ -2236,12 +2262,29 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         }
       });
     } catch (error) {
-      for (const event of pending) {
-        const conversationId = typeof event.payload.conversationId === 'string' ? event.payload.conversationId : randomUUID();
-        pendingNativeCoalescibleEvents.set(nativeCoalescingEventKey(event.type, conversationId, event.payload) ?? `${conversationId}:${randomUUID()}`, event);
-        pendingNativeCoalescibleBytes += event.byteLength;
+      if (!isNativeSyncEventIdentityConflict(error)) {
+        requeueNativeDeltaEvents(pending);
+        throw recordNativeDeltaFlushFailure(error);
       }
-      throw recordNativeDeltaFlushFailure(error);
+      // 一条旧的内容冲突事件不能毒化整个进程。批事务回滚后逐条重放，
+      // 只丢弃能够由 Snapshot V2 重建的冲突过程投影，其余会话继续持久化。
+      for (let index = 0; index < pending.length; index += 1) {
+        const event = pending[index]!;
+        try {
+          db.transaction(() => {
+            const conversationId = typeof event.payload.conversationId === 'string' ? event.payload.conversationId : null;
+            if (!conversationId) throw new Error('待持久会话增量事件缺少 conversationId。');
+            conversationSyncProtocol.append({ conversationId, type: event.type, payload: event.payload });
+          });
+        } catch (eventError) {
+          if (isNativeSyncEventIdentityConflict(eventError)) {
+            recordNativeDeltaFlushFailure(eventError);
+            continue;
+          }
+          requeueNativeDeltaEvents(pending.slice(index));
+          throw recordNativeDeltaFlushFailure(eventError);
+        }
+      }
     }
     if (saveAfterAppend) void db.save().catch(recordNativeDeltaFlushFailure);
   }
@@ -2290,7 +2333,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   }
 
   function publishNativeConversationEvent(type: string, payload: Record<string, unknown>): void {
-    if (nativeDeltaFlushFailure) throw nativeDeltaFlushFailure;
     const mappedType =
       type === 'conversation.item.updated'
         ? payload.status === 'in_progress'

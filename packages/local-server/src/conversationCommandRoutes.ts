@@ -341,6 +341,7 @@ export function registerConversationCommandRoutes(options: {
             else await options.restoreNativeConversation(current);
             return lifecycleResult(requireConversation(request.params));
           },
+          isExplicitRejection: isConversationLifecycleExplicitRejection,
           mutateAcceptedBusinessState: (accepted) => appendLifecycleAudit(action, request.params.projectId, accepted.conversationId),
         });
         result = executed.result;
@@ -367,6 +368,18 @@ export function registerConversationCommandRoutes(options: {
     } catch (error) {
       return sendRouteError(reply, error);
     }
+  }
+
+  function isConversationLifecycleExplicitRejection(error: unknown): boolean {
+    return (
+      Boolean(error) &&
+      typeof error === 'object' &&
+      (
+        error as {
+          code?: unknown;
+        }
+      ).code === 'ZEUS_NATIVE_CONVERSATION_IN_PROGRESS'
+    );
   }
 
   function parseCommand<TInput extends object>(request: FastifyRequest<{ Params: ConversationParams; Body: ConversationMutationRequest<TInput> }>, commandType: (typeof conversationCommandTypes)[keyof typeof conversationCommandTypes]) {

@@ -26,7 +26,7 @@ export interface NativeConversationChoiceProjectionContext {
 interface ConversationChoiceQueryPorts {
   projects: Pick<ProjectRepository, 'list' | 'listArchived' | 'getById'>;
   tasks: Pick<TaskRepository, 'getById' | 'listByProject'>;
-  conversations: Pick<ConversationRepository, 'listRecordsByProject' | 'listRecordsByTask' | 'listUnarchivedRecords' | 'meaningfulActivityAt'>;
+  conversations: Pick<ConversationRepository, 'getById' | 'listRecordsByProject' | 'listRecordsByTask' | 'listUnarchivedRecords' | 'meaningfulActivityAt'>;
   requests: Pick<ConversationServerRequestRepository, 'listPending' | 'listPendingByConversation'>;
   submissions: Pick<ConversationSubmissionRepository, 'listRecoverable' | 'getFirstByConversation'>;
   turns: Pick<ConversationTurnRepository, 'listInProgress'>;
@@ -196,13 +196,15 @@ export class ConversationChoiceQueryApplication {
   }
 
   /**
-   * Provider 从未绑定且首次提交已被取消/删除的原生壳没有可查看的消息。
-   * 审计记录仍保留在数据库，但不能冒充任务关联会话、挤掉真实历史。
+   * 用户主动归档的会话必须始终保留恢复入口，即使它在首次外发前取消了提交。
+   * 只有未归档、Provider 从未绑定且首次提交已被取消/删除的原生壳才不进入任务历史。
    */
   private isMeaningfulTaskHistoryItem(conversation: ZeusConversationRecord): boolean {
+    if (conversation.archived) return true;
     if (conversation.transportKind !== 'codex_native' || conversation.providerThreadId?.trim()) return true;
     const firstSubmission = this.ports.submissions.getFirstByConversation(conversation.id);
-    return Boolean(firstSubmission && firstSubmission.status !== 'cancelled' && firstSubmission.status !== 'deleted');
+    const hasMessages = (this.ports.conversations.getById(conversation.id)?.messages.length ?? 0) > 0;
+    return hasMessages || Boolean(firstSubmission && firstSubmission.status !== 'cancelled' && firstSubmission.status !== 'deleted');
   }
 
   private isEphemeral(conversation: Pick<ZeusConversationRecord, 'id'>): boolean {
