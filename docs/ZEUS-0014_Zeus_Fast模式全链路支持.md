@@ -119,3 +119,11 @@ SQLite 只读复核确认提交输入的三层事实：Fast 为请求 `priority`
 - 任务推送、项目新会话、既有会话、代码审查和冲突处理统一读取“项目 + 模型来源 + 模型”的偏好；Provider 上一轮实际档位不再反向成为下一轮意图。运行详情分别展示 Provider 实际档位与用量计费档位。
 - 已执行 `pnpm install --frozen-lockfile --offline`，未修改锁文件；`pnpm lint`、`pnpm typecheck`、`pnpm build` 与本次变更文件 Prettier 检查通过。构建只保留既有的大分块提示。
 - 本阶段尚未提交当前 merge、尚未合入 `test`、尚未重新打包或执行 Zeus Test GUI/Provider 验收，因此不把上述静态结果表述为 test 或桌面验收通过。
+
+## 2026-08-28 test 合入与隔离测试包验收阻塞
+
+- 重构适配候选以 merge commit `a3746b58ab4b9ca9ae5dc013c394a95a0c2585d6` 固化，并本地合入 `test`，生成 merge commit `ee05a10bf5ca2d00e07e5a57448125efea1893e9`；没有推送远端。
+- 在 `test` 工作树重新执行 `pnpm install --frozen-lockfile --offline`、`pnpm typecheck` 与 `pnpm package:mac`，结果均通过。测试产物为 `dist/test/mac-arm64/Zeus Test.app` 与 `dist/test/Zeus-Test-0.3.67-arm64.dmg`；反读 bundle ID 为 `dev.hypha.zeus.test`，严格 codesign 结构校验通过，签名仍为本机 ad-hoc。
+- 启动前确认没有其他同 bundle ID 测试实例。最终包使用独立资料根 `/tmp/zeus-0014-test-0XmQ7PTu` 启动，并通过 `ZEUS_TEST_DISPLAY_ID=3` 指定非主外接屏；进程树、独立 profile、执行宿主 ready 与 UI attached 均确认来自本轮测试包和资料根。
+- Computer Use 在读取窗口状态前被可信服务门禁拒绝，错误为 `sky requires node_repl; configure NODE_REPL_TRUSTED_SERVICES`。因此没有执行 Fast 控件点击、Provider 登录、真实会话发送或截图，不把隔离启动和宿主就绪表述为 GUI/Provider 验收通过。验收停止后只向本任务主进程 PID 24128 发送 TERM，并确认该进程及其执行宿主均已退出；隔离资料根保留用于后续续验。
+- 本地 `main` 当前还存在另一项工作的 4 个已修改文件和 2 个未跟踪文件。为避免覆盖或夹带并发改动，在 GUI/Provider 验收补齐且 `main` 工作树归属明确之前，不执行最终 main merge。
