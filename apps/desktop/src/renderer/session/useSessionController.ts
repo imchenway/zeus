@@ -1875,8 +1875,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         if (disposed || generation !== connectionToken) throw new Error('会话已经切换，请重试读取完整消息。');
         if (page.schemaVersion !== 2 || page.structureGeneration !== structureGeneration || page.conversationId !== options.conversationId || page.kind !== 'model_content' || page.offset !== offset)
           throw new Error('完整正文分页响应与当前消息不匹配。');
-        if (!Number.isSafeInteger(page.totalCharacters) || page.totalCharacters < 0 || !Number.isSafeInteger(page.totalBytes) || page.totalBytes < 0 || page.offset > page.totalCharacters)
-          throw new Error('完整正文分页大小无效。');
+        if (!Number.isSafeInteger(page.totalCharacters) || page.totalCharacters < 0 || !Number.isSafeInteger(page.totalBytes) || page.totalBytes < 0 || page.offset > page.totalCharacters) throw new Error('完整正文分页大小无效。');
         if (totalCharacters !== null && (page.totalCharacters !== totalCharacters || page.totalBytes !== totalBytes)) throw new Error('完整正文在分页期间发生变化。');
         totalCharacters ??= page.totalCharacters;
         totalBytes ??= page.totalBytes;
@@ -1885,6 +1884,11 @@ export function createSessionController(options: CreateSessionControllerOptions)
         if (page.nextOffset === null) break;
         if (!Number.isSafeInteger(page.nextOffset) || page.nextOffset <= offset || page.nextOffset > page.totalCharacters) throw new Error('完整正文分页位置无效。');
         offset = page.nextOffset;
+      }
+      if (!redacted) {
+        const assembledCharacters = Array.from(text).length;
+        const assembledBytes = new TextEncoder().encode(text).byteLength;
+        if (assembledCharacters !== totalCharacters || assembledBytes !== totalBytes) throw new Error('完整正文分页结果不完整。');
       }
       if (disposed || generation !== connectionToken) throw new Error('会话已经切换，请重试读取完整消息。');
       const latest = state.snapshot;

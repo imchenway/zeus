@@ -571,14 +571,21 @@ const completeMessageText = `${Array.from({ length: 52 }, (_, index) => `完整�
 const completeMessageCodePoints = Array.from(completeMessageText);
 const completeMessagePageBoundary = 1_300;
 const completeMessageItem: NativeSessionItemBuffer = {
-  ...motionItem('complete-message', 'agentMessage', 'completed', `${completeMessageText.slice(0, 2_048)}…`, {
-    phase: 'final_answer',
-    v2ContentKind: 'model_history',
-    v2Sequence: 96,
-    v2ContentHandle: completeMessageHandle,
-    v2ContentTruncated: true,
-    v2ContentBytes: new TextEncoder().encode(completeMessageText).byteLength,
-  }, 'final_answer'),
+  ...motionItem(
+    'complete-message',
+    'agentMessage',
+    'completed',
+    `${completeMessageText.slice(0, 2_048)}…`,
+    {
+      phase: 'final_answer',
+      v2ContentKind: 'model_history',
+      v2Sequence: 96,
+      v2ContentHandle: completeMessageHandle,
+      v2ContentTruncated: true,
+      v2ContentBytes: new TextEncoder().encode(completeMessageText).byteLength,
+    },
+    'final_answer',
+  ),
   conversationId: 'complete-message-conversation',
   threadId: 'complete-message-thread',
   turnId: 'complete-message-turn',
@@ -2074,6 +2081,18 @@ function TimeoutRetryQaApp() {
   );
 }
 
+function CompleteMessageQaApp() {
+  return (
+    <main className="macos-ai-app zeus-shell qa-page qa-motion-page" data-testid="complete-message-qa">
+      <header className="qa-heading">
+        <p>ZEUS-0376 · 真实 DOM 长消息验收</p>
+        <h1>长消息完整正文</h1>
+      </header>
+      <CompleteMessagePreview />
+    </main>
+  );
+}
+
 function SubagentTranscriptPreview() {
   const [fullWidth, setFullWidth] = useState(false);
   return (
@@ -2518,7 +2537,24 @@ const defectQa = new URLSearchParams(window.location.search).has('zeus0323');
 const taskPushQa = new URLSearchParams(window.location.search).has('task-push');
 const sourcePreviewQa = new URLSearchParams(window.location.search).has('source-preview');
 const timeoutRetryQa = new URLSearchParams(window.location.search).has('timeout-retry');
+const completeMessageQa = new URLSearchParams(window.location.search).has('complete-message');
 // 开发态热更新复用同一根节点，避免视觉验收页重复挂载并制造无关控制台错误。
 const qaRoot = window.__zeusSessionStylesRoot ?? createRoot(document.getElementById('root')!);
 window.__zeusSessionStylesRoot = qaRoot;
-qaRoot.render(sourcePreviewQa ? <SourcePreviewQaApp /> : taskPushQa ? <TaskPushDecouplingApp /> : defectQa ? <ConversationDefectApp /> : timeoutRetryQa ? <TimeoutRetryQaApp /> : motionQa ? <MotionApp /> : <App />);
+qaRoot.render(
+  sourcePreviewQa ? (
+    <SourcePreviewQaApp />
+  ) : taskPushQa ? (
+    <TaskPushDecouplingApp />
+  ) : defectQa ? (
+    <ConversationDefectApp />
+  ) : timeoutRetryQa ? (
+    <TimeoutRetryQaApp />
+  ) : completeMessageQa ? (
+    <CompleteMessageQaApp />
+  ) : motionQa ? (
+    <MotionApp />
+  ) : (
+    <App />
+  ),
+);
