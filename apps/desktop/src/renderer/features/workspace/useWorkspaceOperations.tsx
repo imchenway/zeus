@@ -247,7 +247,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     executeNewConversationProjectGit,
     loadGraphConversationDetail,
     loadGraphConversations,
-    loadProjectConfig,
     openGraphSourceFromCodeMap,
     openGraphView,
     openTaskConversation,
@@ -1598,8 +1597,8 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
         setProjectCodeWorkspaceMode(codeMode);
         setVisitedCodeWorkspaceModes((current) => new Set(current).add(codeMode));
       }
-      setProjectPanel(section === 'project-settings' ? 'config' : undefined);
-      if (section === 'project-settings') void loadProjectConfig(project.id);
+      // 项目设置直接进入数字员工，不再自动打开旧项目配置抽屉。
+      setProjectPanel(undefined);
       if (typeof window !== 'undefined') window.history.replaceState(null, '', section === 'code' ? (codeMode === 'commands' ? '#project-commands' : `#project-code-${codeMode}`) : `#project-${section}`);
       workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
     };
