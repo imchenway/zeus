@@ -6,6 +6,7 @@ export const settingsCommandTypes = {
   projectDatabaseSecretPut: 'settings.project_database_secret.put',
   projectDatabaseSecretDelete: 'settings.project_database_secret.delete',
   projectConfigPut: 'settings.project_config.put',
+  projectModelServiceTierPreferencePut: 'settings.project_model_service_tier_preference.put',
   runtimeSettingsPut: 'settings.runtime.put',
   appShellSettingsPut: 'settings.app_shell.put',
   projectionCacheClear: 'settings.projection_cache.clear',
@@ -51,7 +52,7 @@ interface ReplayedExternal {
 }
 
 export const settingsCommandRoutePolicy = {
-  coreApplications: ['PUT /api/projects/:projectId/config', 'PUT /api/settings/app-shell', 'PUT /api/code-map/settings'],
+  coreApplications: ['PUT /api/projects/:projectId/config', 'PUT /api/projects/:projectId/model-service-tier-preference', 'PUT /api/settings/app-shell', 'PUT /api/code-map/settings'],
   externalOperations: [
     'PUT /api/projects/:projectId/database/secret',
     'DELETE /api/projects/:projectId/database/secret',

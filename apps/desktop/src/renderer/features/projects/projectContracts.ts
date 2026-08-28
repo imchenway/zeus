@@ -31,8 +31,15 @@ export type ProjectWorkMode = 'plan' | 'develop' | 'review' | 'debug';
 
 export type ProjectIndexScope = 'project' | 'src' | 'custom';
 
+export interface ProjectModelServiceTierPreference {
+  modelSourceId: string | null;
+  modelId: string;
+  serviceTier: 'standard' | 'priority';
+}
+
 export interface ProjectConfig {
   projectId: string;
+  serviceTierPreferences: ProjectModelServiceTierPreference[];
   defaultModel: string | null;
   defaultWorkMode: ProjectWorkMode;
   defaultTaskPrompt: string;
@@ -65,7 +72,7 @@ export interface ProjectConfig {
   };
 }
 
-export type SaveProjectConfigRequest = Omit<ProjectConfig, 'projectId' | 'vcs'> & { vcs?: ProjectConfig['vcs'] };
+export type SaveProjectConfigRequest = Omit<ProjectConfig, 'projectId' | 'vcs' | 'serviceTierPreferences'> & { vcs?: ProjectConfig['vcs'] };
 
 export interface ProjectDatabaseSecretSnapshot {
   connectionName: string | null;

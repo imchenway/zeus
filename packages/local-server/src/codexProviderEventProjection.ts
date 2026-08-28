@@ -5,7 +5,8 @@ import { parseCanonicalRequestUserInputQuestions } from './codexNativeRuiValidat
 import { sanitizeConversationItemPayload } from './conversationResources.js';
 import { codexProviderEventIdentity, isCodexReadableItemTextDeltaEvent } from './codexProviderEventFlow.js';
 import type { NativeTurnResult } from './codexNativeConversationContracts.js';
-import type { ConversationDispatchContext, CreateCodexNativeConversationCoordinatorOptions } from './codexNativeConversationCoordinator.js';
+import type { CreateCodexNativeConversationCoordinatorOptions } from './codexNativeConversationCoordinator.js';
+import type { ConversationDispatchContext } from './codexNativeConversationContracts.js';
 import {
   completedItemProjection,
   coordinatorError,
@@ -71,6 +72,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     modelRequestTiming,
     persist,
     persistProviderUserMessage,
+    persistProviderReportedServiceTierDowngrade,
     projectGoal,
     projectProcessItem,
     projectProviderUserMessage,
@@ -964,6 +966,13 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       ...(Object.prototype.hasOwnProperty.call(settings, 'serviceTier') && (settings.serviceTier === null || typeof settings.serviceTier === 'string') ? { serviceTier: settings.serviceTier } : {}),
     };
     options.conversations.upsertProviderSettingsSnapshot(conversation.id, snapshot);
+    if (Object.prototype.hasOwnProperty.call(snapshot, 'serviceTier')) {
+      const state = runStates.get(conversation.id);
+      const providerTurnId = state?.type === 'active' || state?.type === 'waiting' ? state.turnId : null;
+      const turn = providerTurnId ? options.turns.listByConversation(conversation.id).find((candidate) => candidate.providerTurnId === providerTurnId) : undefined;
+      const submission = turn?.clientSubmissionId ? options.submissions.getById(turn.clientSubmissionId) : undefined;
+      if (submission) persistProviderReportedServiceTierDowngrade(conversation.id, submission, contextFromSubmission(submission), snapshot.serviceTier ?? null);
+    }
     broadcast = { type: 'conversation.provider.settings.updated', payload: { conversationId: conversation.id, ...snapshot } };
   } else if (event.method === 'rawResponseItem/completed' && conversation && threadId) {
     const providerTurnId = providerTurnIdFrom(params);
@@ -1060,6 +1069,8 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       }
     }
     const settings = options.conversations.getProviderSettingsSnapshot(conversation.id);
+    const eventServiceTier = Object.prototype.hasOwnProperty.call(tokenUsage, 'serviceTier') && (tokenUsage.serviceTier === null || typeof tokenUsage.serviceTier === 'string') ? tokenUsage.serviceTier : undefined;
+    const actualServiceTier = eventServiceTier !== undefined ? eventServiceTier : settings && Object.prototype.hasOwnProperty.call(settings, 'serviceTier') ? (settings.serviceTier ?? null) : (context?.serviceTier ?? null);
     const model = context?.model ?? settings?.model ?? conversation.providerModel;
     if (!model) throw coordinatorError('ZEUS_NATIVE_PROVIDER_EVENT_INVALID', 'Token usage event cannot resolve its model.');
     const modelContextWindow = tokenUsage.modelContextWindow === null || tokenUsage.modelContextWindow === undefined ? null : requireNumber(tokenUsage.modelContextWindow, 'modelContextWindow');
@@ -1073,7 +1084,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
           providerTurnId,
           model,
           modelSourceId: context?.modelSourceId ?? conversation.modelSourceId,
-          serviceTier: context?.serviceTier ?? settings?.serviceTier ?? null,
+          serviceTier: actualServiceTier,
           total,
           last,
           modelContextWindow,
@@ -1082,6 +1093,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       : {
           generationId: event.generationId,
           sequence: event.sequence,
+          serviceTier: actualServiceTier,
           total,
           last,
           modelContextWindow,

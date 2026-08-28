@@ -13,7 +13,7 @@ import {
   readTaskIntegrationConflict,
 } from '@zeus/git-core';
 import { type ProjectGraph } from '@zeus/graph-engine';
-import { normalizeProjectConfig, type ProjectConfigSnapshot, type UpdateProjectConfigBody } from '@zeus/project-core';
+import { normalizeProjectConfig, normalizeProjectModelServiceTierPreference, type ProjectConfigSnapshot, type ProjectModelServiceTierPreference, type UpdateProjectConfigBody } from '@zeus/project-core';
 import { getSecretPresenceLabel } from '@zeus/security-core';
 import { cloneTaskManagementStatusConfig, type TaskPushParentAttachmentOption } from '@zeus/shared';
 import {
@@ -1675,6 +1675,64 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   );
 
   server.put(
+    '/api/projects/:projectId/model-service-tier-preference',
+    async (
+      request: FastifyRequest<{
+        Params: { projectId: string };
+        Body: SettingsCommandRequest<ProjectModelServiceTierPreference>;
+      }>,
+      reply,
+    ): Promise<ProjectConfigSnapshot | unknown> => {
+      try {
+        const parsed = settingsCommands.parse<ProjectModelServiceTierPreference>({
+          value: request.body,
+          commandType: settingsCommandTypes.projectModelServiceTierPreferencePut,
+          scopeKind: 'project',
+          expectedScopeId: () => request.params.projectId,
+        });
+        const project = projects.getById(request.params.projectId);
+        if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' });
+        const preference = normalizeProjectModelServiceTierPreference(parsed.input);
+        if (!preference) {
+          return reply.code(400).send({
+            error: 'ZEUS_INVALID_PROJECT_SERVICE_TIER_PREFERENCE',
+            message: 'Project model service tier preference must identify one model and use standard or priority',
+          });
+        }
+        const current = readProjectConfig(project.id);
+        const replacesExisting = current.serviceTierPreferences.some((entry: ProjectModelServiceTierPreference) => entry.modelSourceId === preference.modelSourceId && entry.modelId === preference.modelId);
+        if (!replacesExisting && current.serviceTierPreferences.length >= 100) {
+          return reply.code(409).send({ error: 'ZEUS_PROJECT_SERVICE_TIER_PREFERENCE_LIMIT', message: 'Project model service tier preference limit reached' });
+        }
+        const nextConfig: ProjectConfigSnapshot = {
+          ...current,
+          serviceTierPreferences: [...current.serviceTierPreferences.filter((entry: ProjectModelServiceTierPreference) => entry.modelSourceId !== preference.modelSourceId || entry.modelId !== preference.modelId), preference],
+        };
+        const mutation = settingsCommands.executeCore({
+          parsed,
+          destinationId: 'project_model_service_tier_preference',
+          resourceId: project.id,
+          mutateBusinessState: () => {
+            settings.setJson(projectConfigSettingsPrefix + project.id, nextConfig);
+            appendAuditLog({
+              actorType: 'local_api',
+              action: 'project.service_tier_preference.updated',
+              resourceType: 'project',
+              resourceId: project.id,
+              payload: { ...preference },
+            });
+            return nextConfig;
+          },
+        });
+        return mutation.result;
+      } catch (error) {
+        const mapped = settingsCommandHttpError(error, redactSensitiveText);
+        return reply.code(mapped.statusCode).send(mapped.body);
+      }
+    },
+  );
+
+  server.put(
     '/api/projects/:projectId/config',
     async (
       request: FastifyRequest<{
@@ -1692,7 +1750,10 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         });
         const project = projects.getById(request.params.projectId);
         if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' });
-        const nextConfig = normalizeProjectConfig(project.id, parsed.input, readProjectConfig(project.id));
+        // 普通项目设置保存不拥有模型速度偏好，避免旧界面快照覆盖专用接口写入的显式选择。
+        const ordinaryConfigBody: UpdateProjectConfigBody = { ...parsed.input };
+        delete ordinaryConfigBody.serviceTierPreferences;
+        const nextConfig = normalizeProjectConfig(project.id, ordinaryConfigBody, readProjectConfig(project.id));
         if (!nextConfig) return reply.code(400).send({ error: 'ZEUS_INVALID_PROJECT_CONFIG', message: 'Project config must use safe single-line values and supported options' });
         if (hasDatabaseUriPassword(nextConfig.database.connectionName)) {
           return reply.code(400).send({ error: 'ZEUS_DATABASE_CONNECTION_SECRET_IN_URI', message: 'Database connection URI must not include a password; save the password in the project Keychain field.' });

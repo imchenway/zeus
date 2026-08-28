@@ -118,6 +118,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     readGitDiff,
     recordTaskEvent,
     resolveConversationCapabilities,
+    resolveProjectModelServiceTierPlan,
     resolveTaskEnvironmentWritableRoots,
     runtimeSessions,
     sendNativeConversationApiError,
@@ -1738,6 +1739,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
           : settings?.model
             ? { sourceId: null, modelId: settings.model, displayName: null }
             : input.model;
+      const serviceTierPlan = input.agentKind === 'codex' ? await resolveProjectModelServiceTierPlan(project, selectedModel) : null;
       const prompt = buildTaskConflictAiPrompt({
         sourceBranch: integration.targetBranch,
         taskBranch: workspace.branchName,
@@ -1758,7 +1760,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
         model: selectedModel,
         ...(input.skill ? { skill: input.skill } : {}),
         ...(settings?.effort ? { effort: settings.effort } : {}),
-        ...(settings && Object.prototype.hasOwnProperty.call(settings, 'serviceTier') ? { serviceTier: settings.serviceTier, serviceTierPresent: true } : {}),
+        ...(serviceTierPlan ?? {}),
         permissionMode: settings?.permissionMode ?? conversations.getById(attempt.conversationId)?.permissionMode ?? 'auto',
         workMode: settings?.collaborationMode ?? 'default',
         workspaceId: conflictWorkspace.id,

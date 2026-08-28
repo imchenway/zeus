@@ -1793,6 +1793,7 @@ function providerSettingsFrom(payload: Record<string, unknown>): NativeProviderS
     ...(numberValue(payload.sequence) !== null ? { sequence: numberValue(payload.sequence)! } : {}),
     model: stringValue(payload.model) ?? '',
     ...(stringValue(payload.effort) ? { effort: stringValue(payload.effort)! } : {}),
+    ...(Object.prototype.hasOwnProperty.call(payload, 'serviceTier') && (payload.serviceTier === null || typeof payload.serviceTier === 'string') ? { serviceTier: payload.serviceTier } : {}),
   };
 }
 
@@ -1802,6 +1803,7 @@ function tokenUsageFrom(payload: Record<string, unknown>): NativeTokenUsageSnaps
   return {
     generationId: stringValue(payload.generationId) ?? '',
     sequence: numberValue(payload.sequence) ?? 0,
+    ...(Object.prototype.hasOwnProperty.call(payload, 'serviceTier') && (payload.serviceTier === null || typeof payload.serviceTier === 'string') ? { serviceTier: payload.serviceTier } : {}),
     total,
     last,
     modelContextWindow: numberValue(payload.modelContextWindow),

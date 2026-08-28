@@ -241,6 +241,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     taskModelPushForm,
     taskModelPushRefreshingRepositoryId,
     taskModelPushRuntimeCapabilities,
+    taskModelPushServiceTierPreferences,
     taskModelPushStatus,
     taskModelPushTaskId,
     taskPageViewMode,
@@ -873,6 +874,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                 projectName={snapshot.projects.find((project) => project.id === snapshot.tasks.find((task) => task.id === taskModelPushTaskId)?.projectId)?.name}
                 capabilities={taskModelPushCapabilities}
                 runtimeCapabilities={taskModelPushRuntimeCapabilities}
+                serviceTierPreferences={taskModelPushServiceTierPreferences}
                 form={taskModelPushForm}
                 status={taskModelPushStatus}
                 configImportPreview={taskModelPushConfigImportPreview}
@@ -888,6 +890,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     return resolved;
                   });
                 }}
+                onServiceTierPreferenceChange={domainActions.saveTaskModelPushServiceTierPreference}
                 onRefreshRepository={(repositoryId) => void refreshTaskModelPushRepository(repositoryId)}
                 onClose={closeTaskModelPush}
                 onCancelAuthentication={cancelTaskModelPushAuthentication}

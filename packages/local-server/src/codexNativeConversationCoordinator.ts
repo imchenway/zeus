@@ -1,12 +1,11 @@
 import { type CodexAppServerEvent, type CodexAppServerManager, type CodexResponsesRuntime, type CodexServerRequestResponse, type CodexThreadGoal, modelRef, parseModelRef, toCodexWireReasoningEffort } from '@zeus/ai-runtime';
-import { buildTaskPushInputParts, type CodexAdditionalContextEntry, type CodexBootstrapAdditionalContext, type TaskPushMessageLayout } from '@zeus/shared';
+import { buildTaskPushInputParts, type CodexAdditionalContextEntry, type TaskPushMessageLayout } from '@zeus/shared';
 import {
   CommandDeliveryRepository,
   type ConversationCollaborationMode,
   ConversationExecutionRepository,
   ConversationGoalRepository,
   type ConversationNextTurnSettings,
-  type ConversationPermissionMode,
   ConversationPlanActionRepository,
   ConversationProviderItemRepository,
   ConversationProviderSyncCheckpointRepository,
@@ -35,6 +34,7 @@ import { codexGoalEventKind, createCodexGoalApplication, ensureInitialCodexGoal 
 import type {
   ArchiveConversationInput,
   CodexNativeConversationCoordinator,
+  ConversationDispatchContext,
   InterruptNativeTurnInput,
   NativeAcceptedOperation,
   NativeConversationAttachmentInput,
@@ -45,6 +45,7 @@ import type {
   NativeQueueSnapshot,
   NativeQueueWaitReason,
   NativeTurnResult,
+  NativeTurnResultWaiter,
   RecoverNativeQueueInput,
   RespondNativeRequestInput,
   RespondPlanImplementationRequestInput,
@@ -102,7 +103,7 @@ import { createCodexExternalRequestAnswerRecovery } from './codexExternalRequest
 import { createCodexModelRequestTimingTracker } from './codexModelRequestTiming.js';
 import { assertCallerDoesNotOverrideCompiledContext, mergeCodexAdditionalContext, readCodexAdditionalContext } from './codexNativeContextProtocol.js';
 import { createCodexNativeConversationAccess } from './codexNativeConversationAccess.js';
-import { readNativeSubmissionSkill, readNativeSubmissionTaskPushLayout } from './nativeConversationSubmissionInputs.js';
+import { readNativeSubmissionSkill, readNativeSubmissionTaskPushLayout, type PersistedSubmissionInput } from './nativeConversationSubmissionInputs.js';
 import { inferNativeConversationRunState, interruptedQueueSubmissions } from './codexNativeRunStateProjection.js';
 import { chooseNativeUserMessageContent, type ResolvedNativeUserMessageSubmission, resolveNativeUserMessageSubmission } from './codexNativeUserMessageProjection.js';
 import { runCodexPortableContextCompaction } from './codexPortableContextCompaction.js';
@@ -124,56 +125,9 @@ import { persistThreadProviderSettings as persistProviderThreadMetadata, threadP
 import type { ConversationEventFlowControl } from './eventFlowControl.js';
 import type { TurnChangeSetService } from './turnChangeSets.js';
 import { TurnProcessProjector } from './turnProcessProjector.js';
+import { createCodexServiceTierDowngrade, isServiceTierUnavailableError } from './codexServiceTierDowngrade.js';
 
 export { filterCompatibilitySnapshotItemAliases } from './codexProviderHistoryProjection.js';
-export interface ConversationDispatchContext {
-  projectId: string;
-  projectLocalPath: string;
-  taskId: string | null;
-  executionWorkspaceMode?: 'direct' | 'worktree';
-  model: string;
-  modelSourceId: string | null;
-  effort?: string;
-  serviceTier?: string | null;
-  allowCodeChanges: boolean;
-  allowTests: boolean;
-  allowGitCommit: boolean;
-  permissionMode: ConversationPermissionMode;
-  allowedAttachmentRoots?: string[];
-  writableRoots?: string[];
-  workMode: ConversationCollaborationMode;
-  applyLegacyTaskGuards?: boolean;
-  ephemeral?: boolean;
-  additionalContext?: CodexBootstrapAdditionalContext;
-  operationContext?: Record<string, unknown>;
-  holdDispatch?: boolean;
-}
-
-interface PersistedSubmissionInput {
-  text: string;
-  composerDraft?: string;
-  attachments?: NativeConversationAttachmentInput[];
-  browserComments?: Record<string, unknown>[];
-  browserCommentContent?: string;
-  conversationContext?: Record<string, unknown>;
-  context: ConversationDispatchContext;
-  displayText?: string;
-  origin?: 'implement_plan' | 'refine_plan';
-  planItemId?: string;
-  delivery?: 'queue' | 'steer_now';
-  expectedTurnId?: string | null;
-  taskPushLayout?: TaskPushMessageLayout;
-  internalOperation?: boolean;
-  requestAnswerId?: string;
-  goalObjective?: string;
-  skill?: NativeConversationSkillInput;
-}
-
-interface NativeTurnResultWaiter {
-  resolve(result: NativeTurnResult): void;
-  reject(error: Error): void;
-  timer: ReturnType<typeof setTimeout>;
-}
 
 interface NativeConversationDispatchLease {
   submissionId: string;
@@ -770,12 +724,14 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       internalOperation?: boolean;
       goalObjective?: string;
       skill?: NativeConversationSkillInput;
+      requestedServiceTier?: string | null;
     },
     context: ConversationDispatchContext,
   ): ZeusConversationSubmissionRecord {
     const queuedCount = options.submissions.listByConversation(conversationId).filter((entry) => entry.status === 'queued' || entry.status === 'paused' || entry.status === 'failed').length;
     const payload: PersistedSubmissionInput = {
       text: content,
+      ...(Object.prototype.hasOwnProperty.call(input, 'requestedServiceTier') ? { requestedServiceTier: input.requestedServiceTier } : {}),
       ...(typeof input.composerDraft === 'string' ? { composerDraft: input.composerDraft } : {}),
       ...(input.attachments?.length ? { attachments: input.attachments } : {}),
       ...(input.browserComments?.length ? { browserComments: input.browserComments } : {}),
@@ -818,6 +774,21 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     projectLocallyAcceptedUserMessage({ conversations: options.conversations, submission, broadcast: options.broadcast });
     return submission;
   }
+
+  const {
+    flushNotice: flushServiceTierDowngradeNotice,
+    persistProviderReported: persistProviderReportedServiceTierDowngrade,
+    persistSubmissionDispatchContext,
+    record: recordServiceTierDowngrade,
+  } = createCodexServiceTierDowngrade({
+    db: options.db,
+    conversations: options.conversations,
+    submissions: options.submissions,
+    broadcast: options.broadcast,
+    now,
+    contextFromSubmission,
+    conversationMessageClientId,
+  });
 
   function nextTurnSettingsFromContext(context: ConversationDispatchContext): ConversationNextTurnSettings {
     return {
@@ -1531,10 +1502,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     lease: NativeConversationDispatchLease,
     providerArchiveRecoveryAttempted: boolean,
     segmentLifecycle?: ConversationSegmentLifecycle,
+    serviceTierFallbackAttempted = false,
   ): Promise<NativeAcceptedOperation> {
     let conversation = options.conversations.getById(conversationInput.id);
     if (!conversation) throw coordinatorError('ZEUS_NATIVE_CONVERSATION_NOT_FOUND', 'Native conversation was not found.');
-    await segmentLifecycle?.beginDispatch();
+    if (!serviceTierFallbackAttempted) await segmentLifecycle?.beginDispatch();
     try {
       await ensureConversationExecutionContext(conversation.id, 'dispatch', segmentLifecycle?.requiresNewSegment === true);
       const recoveryState = runStates.get(conversation.id) ?? inferRunState(conversation);
@@ -1563,6 +1535,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     let commandTraceIdentity: string | null = null;
     let commandProviderGenerationId: string | null = null;
     let providerWriteStarted = false;
+    let threadStartedForSubmission = false;
     try {
       if (!segmentLifecycle?.requiresNewSegment) await ensureGenerationReconciled([conversation.id]);
       conversation = options.conversations.getById(conversation.id) ?? conversation;
@@ -1656,6 +1629,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           acceptedProviderGenerationId: (acceptedThread) => options.manager.generationForThread(acceptedThread.id),
         });
         providerThreadId = thread.id;
+        threadStartedForSubmission = true;
         providerThreadAuthority.markSubscribed(thread.id);
         candidateProviderThreadId = thread.id;
         segmentLifecycle?.nativeSessionReady({
@@ -1866,6 +1840,13 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         });
       }
       runStates.set(conversation.id, { type: 'active', turnId: turn.id, phase: 'prework' });
+      if (!serviceTierFallbackAttempted && parseJsonRecord(submission.inputJson).requestedServiceTier === 'priority' && context.serviceTier !== 'priority') {
+        recordServiceTierDowngrade(conversation.id, submission, context, 'model_unsupported');
+      }
+      const providerSettings = options.conversations.getProviderSettingsSnapshot(conversation.id);
+      if (threadStartedForSubmission && providerSettings && Object.prototype.hasOwnProperty.call(providerSettings, 'serviceTier')) {
+        persistProviderReportedServiceTierDowngrade(conversation.id, submission, context, providerSettings.serviceTier ?? null);
+      }
       await persist();
       // submission 已进入 provider 轮次后必须同步清出队列表面，避免其他窗口继续展示旧快照。
       options.broadcast('conversation.queue.changed', { conversationId: conversation.id, providerThreadId, providerTurnId: turn.id, submissionId: submission.id });
@@ -1881,6 +1862,23 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       }
       return accepted(submission, 'active', providerThreadId, turn.id);
     } catch (error) {
+      if (!serviceTierFallbackAttempted && context.serviceTier === 'priority' && isServiceTierUnavailableError(error)) {
+        const standardContext: ConversationDispatchContext = { ...context, serviceTier: null };
+        persistSubmissionDispatchContext(submission, standardContext);
+        options.conversations.updateNextTurnSettings(conversation.id, nextTurnSettingsFromContext(standardContext));
+        contexts.set(conversation.id, standardContext);
+        options.submissions.updateStatus(submission.id, 'queued', { providerTurnId: null, updatedAt: now() });
+        runStates.set(conversation.id, { type: 'idle' });
+        await persist();
+        const retrySubmission = options.submissions.getById(submission.id) ?? submission;
+        const retryConversation = options.conversations.getById(conversation.id) ?? conversation;
+        const result = await dispatchSubmissionWithLease(retryConversation, retrySubmission, lease, providerArchiveRecoveryAttempted, segmentLifecycle, true);
+        if (result.status !== 'recovery_required' && result.status !== 'provider_archived') {
+          recordServiceTierDowngrade(conversation.id, retrySubmission, standardContext, 'app_server_rejected');
+          await persist();
+        }
+        return result;
+      }
       const providerArchived = isProviderThreadArchivedError(error);
       const explicitlyRejected = isRuntimeRejected(error) || providerArchived;
       const runtimeRejected = segmentLifecycle !== undefined && isRuntimeRejected(error);
@@ -1936,7 +1934,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
             await restoreArchivedProviderThread(conversation.id);
             const retrySubmission = options.submissions.getById(submission.id);
             const retryConversation = options.conversations.getById(conversation.id);
-            if (retrySubmission && retryConversation) return dispatchSubmissionWithLease(retryConversation, retrySubmission, lease, true, segmentLifecycle);
+            if (retrySubmission && retryConversation) return dispatchSubmissionWithLease(retryConversation, retrySubmission, lease, true, segmentLifecycle, serviceTierFallbackAttempted);
           } catch {
             // 恢复函数已保留原始消息与可重试状态。
           }
@@ -2127,6 +2125,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       providerItemId,
       ...(clientMessageId ? { clientMessageId } : {}),
     });
+    flushServiceTierDowngradeNotice(submission);
     resolveExactSteeringSubmission(conversation.id, itemPayload, providerThreadId, providerTurnId);
     return clientMessageId;
   }
@@ -3613,6 +3612,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         modelRequestTiming,
         persist,
         persistProviderUserMessage,
+        persistProviderReportedServiceTierDowngrade,
         projectGoal,
         projectProcessItem,
         projectProviderUserMessage,

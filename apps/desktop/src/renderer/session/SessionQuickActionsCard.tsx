@@ -18,16 +18,19 @@ import { isImageResource, isPendingImageAttachment, ResourceIcon } from './Conve
 import { SessionCodeReviewDialog, type SessionCodeReviewSelection } from './SessionCodeReviewDialog.js';
 import type {
   CodexConversationCapabilities,
+  CodexTaskPushModelCapability,
   ConversationResource,
   ConversationResourcePreview,
   NativeConversationAttachment,
   NativeConversationChoice,
   NativeSessionState,
+  NativeServiceTierSelection,
   TaskWorkspaceSnapshot,
   TaskWorkspacesSnapshot,
 } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import type { ProjectModelServiceTierPreference } from '../apiClient.js';
 
 interface SessionQuickActionsCardProps {
   language: SessionUiLanguage;
@@ -38,6 +41,8 @@ interface SessionQuickActionsCardProps {
   forceCollapsed?: boolean;
   suppressed?: boolean;
   capabilities?: CodexConversationCapabilities | null;
+  serviceTierPreferences: readonly ProjectModelServiceTierPreference[];
+  onServiceTierPreferenceChange?: (model: CodexTaskPushModelCapability, selection: NativeServiceTierSelection) => void | Promise<void>;
   onLoadCapabilities?: (projectId: string) => Promise<CodexConversationCapabilities>;
   onLoadSkills?: (projectId?: string, forceReload?: boolean) => Promise<import('../features/codex/codexContracts.js').SkillCatalog>;
   onLoadTaskWorkspaces?: (taskId: string) => Promise<TaskWorkspacesSnapshot>;
@@ -463,6 +468,8 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
         state={props.state}
         workspace={exactReviewWorkspace}
         capabilities={props.capabilities ?? null}
+        serviceTierPreferences={props.serviceTierPreferences}
+        onServiceTierPreferenceChange={props.onServiceTierPreferenceChange}
         onLoadCapabilities={props.onLoadCapabilities}
         onLoadSkills={props.onLoadSkills}
         onClose={() => setReviewDialogOpen(false)}

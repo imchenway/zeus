@@ -1912,6 +1912,8 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           onStartConversation={startNativeConversation}
           onStartProjectConversation={startProjectConversation}
           onLoadSkills={props.nativeConversationClient.loadSkills}
+          onLoadProjectConfig={props.onLoadProjectConfig}
+          onSaveProjectModelServiceTierPreference={props.onSaveProjectModelServiceTierPreference}
           onOpenTaskDetail={onOpenTaskDetail}
           onTaskManagementStatusChange={(taskId, status) => updateTaskManagementStatus(taskId, status)}
           onLoadTaskWorkspaces={props.nativeConversationClient.loadTaskGitWorkspaces}
@@ -1968,6 +1970,8 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           onStartConversation={startNativeConversation}
           onStartProjectConversation={startProjectConversation}
           onLoadSkills={props.nativeConversationClient.loadSkills}
+          onLoadProjectConfig={props.onLoadProjectConfig}
+          onSaveProjectModelServiceTierPreference={props.onSaveProjectModelServiceTierPreference}
           onOpenTaskDetail={onOpenTaskDetail}
           onTaskManagementStatusChange={(taskId, status) => updateTaskManagementStatus(taskId, status)}
           onLoadTaskWorkspaces={props.nativeConversationClient.loadTaskGitWorkspaces}
@@ -2016,6 +2020,8 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           onTaskManagementStatusChange: (taskId, status) => updateTaskManagementStatus(taskId, status),
           onLoadCapabilities: props.nativeConversationClient?.loadCodexConversationCapabilities,
           onLoadSkills: props.nativeConversationClient?.loadSkills,
+          onLoadProjectConfig: props.onLoadProjectConfig,
+          onSaveProjectModelServiceTierPreference: props.onSaveProjectModelServiceTierPreference,
           onSelectNewConversationProject: selectNewConversationProject,
           onLoadNewConversationProjectGit: props.nativeConversationClient?.loadProjectGitWorkbench,
           onExecuteNewConversationProjectGit: props.nativeConversationClient ? executeNewConversationProjectGit : undefined,

@@ -47,6 +47,7 @@ import {
   type GraphViewSnapshot,
   type GraphViewType,
   type ProjectConfig,
+  type ProjectModelServiceTierPreference,
   type ProjectDatabaseSecretSnapshot,
   type ProjectRecord,
   type ReleaseStatusSnapshot,
@@ -539,6 +540,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const [taskCreateError, setTaskCreateError] = useState('');
   const [taskModelPushTaskId, setTaskModelPushTaskId] = useState<string | null>(null);
   const [taskModelPushCapabilities, setTaskModelPushCapabilities] = useState<CodexTaskPushCapabilities | null>(null);
+  const [taskModelPushServiceTierPreferences, setTaskModelPushServiceTierPreferences] = useState<ProjectModelServiceTierPreference[]>([]);
   const [taskModelPushRuntimeCapabilities, setTaskModelPushRuntimeCapabilities] = useState<CodexConversationCapabilities | null>(null);
   const [taskModelPushForm, setTaskModelPushForm] = useState<TaskModelPushForm>({
     model: '',
@@ -1632,6 +1634,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     setTaskModelPushForm,
     setTaskModelPushRefreshingRepositoryId,
     setTaskModelPushRuntimeCapabilities,
+    setTaskModelPushServiceTierPreferences,
     setTaskModelPushStatus,
     setTaskModelPushTaskId,
     setTaskSearchQuery,
@@ -1702,6 +1705,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     taskModelPushPendingByTaskRef,
     taskModelPushRefreshingRepositoryId,
     taskModelPushRuntimeCapabilities,
+    taskModelPushServiceTierPreferences,
     taskModelPushStatus,
     taskModelPushTaskId,
     taskMutationQueuesRef,

@@ -183,6 +183,7 @@ export interface NativeRuntimeDetailsSnapshot {
   effort: NativeRuntimeFact<string>;
   serviceTier: NativeRuntimeFact<string | null>;
   usage: {
+    serviceTier: NativeRuntimeFact<string | null>;
     totalTokens: NativeRuntimeFact<number>;
     inputTokens: NativeRuntimeFact<number>;
     outputTokens: NativeRuntimeFact<number>;

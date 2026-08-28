@@ -13,7 +13,7 @@ import { ResponseSelectionActions } from './ResponseSelectionActions.js';
 import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 
 export type SessionUiLanguage = 'zh-CN' | 'en-US';
-export type ThreadItemRole = 'user' | 'assistant' | 'commentary' | 'tool' | 'file' | 'image' | 'request' | 'error' | 'unknown';
+export type ThreadItemRole = 'user' | 'assistant' | 'commentary' | 'notice' | 'tool' | 'file' | 'image' | 'request' | 'error' | 'unknown';
 export const MAX_MARKDOWN_CHARACTERS = 200_000;
 export const MAX_MARKDOWN_BLOCK_CHARACTERS = 50_000;
 export const MAX_MARKDOWN_BLOCKS = 512;
@@ -30,6 +30,7 @@ const copy = {
     user: '你',
     assistant: 'Codex',
     commentary: 'Codex',
+    notice: '速度提示',
     tool: '工具调用',
     file: '文件变更',
     request: '等待操作',
@@ -69,6 +70,7 @@ const copy = {
     user: 'You',
     assistant: 'Codex',
     commentary: 'Codex',
+    notice: 'Speed notice',
     tool: 'Tool call',
     file: 'File change',
     request: 'Action pending',
@@ -464,6 +466,10 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
         />
       ) : role === 'user' && visibleText ? (
         <SafeMarkdown text={visibleText} language={props.language} resources={props.item.resources} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
+      ) : role === 'notice' && visibleText ? (
+        <div className="session-service-tier-notice" role="status">
+          <SafeMarkdown text={visibleText} language={props.language} resources={props.item.resources} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
+        </div>
       ) : naturalLanguageStream && (visibleText || (streamActive && itemText)) ? (
         <TranscriptMarkdown
           text={visibleText}
@@ -882,6 +888,7 @@ function decodeReferencePath(href: string): string {
 
 export function itemRole(item: NativeSessionItemBuffer): ThreadItemRole {
   const type = normalizeType(item.type);
+  if (type === 'servicetiernotice' || (type === 'systemmessage' && item.payload.kind === 'service_tier_downgrade')) return 'notice';
   if (isAssistantDeliverableItem(item)) {
     const deliverables = item.resources.filter((resource) => resource.delivery === 'assistant');
     return deliverables.length > 0 && deliverables.every(isImageResource) ? 'image' : 'assistant';
@@ -1077,7 +1084,7 @@ function roleLabel(role: ThreadItemRole, labels: (typeof copy)[SessionUiLanguage
 }
 
 function TypedItemFacts(props: { item: NativeSessionItemBuffer; role: ThreadItemRole; language: SessionUiLanguage }) {
-  if (props.role === 'user' || props.role === 'assistant' || props.role === 'commentary' || props.role === 'image' || props.role === 'error') return null;
+  if (props.role === 'user' || props.role === 'assistant' || props.role === 'commentary' || props.role === 'notice' || props.role === 'image' || props.role === 'error') return null;
   const facts = itemFacts(props.item, props.role);
   if (facts.length === 0 && props.role !== 'unknown') return null;
   return (

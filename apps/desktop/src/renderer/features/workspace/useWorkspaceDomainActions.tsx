@@ -18,14 +18,17 @@ import {
 } from '../../session/SessionWorkspace.js';
 import type {
   CodexTaskPushCapabilities,
+  CodexTaskPushModelCapability,
   NativeConversationAttachment,
   NativeConversationChoice,
   NativeConversationChoicesSnapshot,
   NativeProjectConversationChoicesSnapshot,
+  NativeServiceTierSelection,
   NativeTurnSettingsSelection,
   StartTaskModelPushRequest,
 } from '../../session/sessionTypes.js';
 import { serviceTierWireOverride } from '../../session/serviceTierSelection.js';
+import { toProjectModelServiceTierPreference, upsertProjectModelServiceTierPreference } from '../../session/projectServiceTierPreferences.js';
 import { resolveModelCapability } from '../../session/modelSelection.js';
 import { type TaskEditResult } from '../../task/TaskDetailPaneContent.js';
 import {
@@ -277,6 +280,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setTaskModelPushForm,
     setTaskModelPushRefreshingRepositoryId,
     setTaskModelPushRuntimeCapabilities,
+    setTaskModelPushServiceTierPreferences,
     setTaskModelPushStatus,
     setTaskModelPushTaskId,
     setTaskSearchQuery,
@@ -2383,6 +2387,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     const remembered = readTaskModelPushPreferences(browserNativeConversationStartStorage(), task.projectId);
     setTaskModelPushTaskId(task.id);
     setTaskModelPushCapabilities(null);
+    setTaskModelPushServiceTierPreferences([]);
     setTaskModelPushRuntimeCapabilities(client ? readCachedCodexConversationCapabilities(client, task.projectId) : null);
     setTaskModelPushConfigImportPreview(null);
     setTaskModelPushConfigImportNeedsActivation(false);
@@ -2425,9 +2430,12 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       .catch(() => undefined);
     try {
       // 与 Codex App 一致：打开 composer 时只连接并读取能力，不提前创建 thread/turn。
-      const capabilities = normalizeTaskModelPushCapabilities(await client.loadCodexTaskPushCapabilities(task.projectId, task.id));
+      const [rawCapabilities, loadedProjectConfig] = await Promise.all([client.loadCodexTaskPushCapabilities(task.projectId, task.id), props.onLoadProjectConfig?.(task.projectId) ?? Promise.resolve(undefined)]);
+      const capabilities = normalizeTaskModelPushCapabilities(rawCapabilities);
       if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
+      const serviceTierPreferences = normalizeProjectConfig(loadedProjectConfig, task.projectId)?.serviceTierPreferences ?? [];
       setTaskModelPushCapabilities(capabilities);
+      setTaskModelPushServiceTierPreferences(serviceTierPreferences);
       setTaskModelPushForm((current) => {
         const normalized = resolveTaskModelPushInitialForm(
           capabilities,
@@ -2439,7 +2447,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
             permissionMode: current.permissionMode,
             workspaceMode: current.workspaceMode,
           },
-          current.serviceTier,
+          serviceTierPreferences,
           current.skillId,
         );
         return {
@@ -2464,6 +2472,29 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
       setTaskModelPushStatus('error');
       setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error)));
+    }
+  }
+
+  async function saveTaskModelPushServiceTierPreference(model: CodexTaskPushModelCapability, selection: NativeServiceTierSelection): Promise<void> {
+    const task = snapshot.tasks.find((candidate) => candidate.id === taskModelPushTaskId);
+    if (!task || !props.onSaveProjectModelServiceTierPreference) {
+      setTaskModelPushError(appShellSettings.appLanguage === 'zh-CN' ? '项目模型速度偏好保存入口不可用。' : 'Project model speed preference saving is unavailable.');
+      return;
+    }
+    const preference = toProjectModelServiceTierPreference(model, selection);
+    setTaskModelPushServiceTierPreferences((current) => upsertProjectModelServiceTierPreference(current, preference));
+    try {
+      const saved = normalizeProjectConfig(await props.onSaveProjectModelServiceTierPreference(task.projectId, preference), task.projectId);
+      if (!saved) throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '项目模型速度偏好保存结果无效。' : 'The saved project model speed preference is invalid.');
+      setTaskModelPushServiceTierPreferences(saved.serviceTierPreferences);
+    } catch (error) {
+      setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error)));
+      try {
+        const config = normalizeProjectConfig(await props.onLoadProjectConfig?.(task.projectId), task.projectId);
+        if (config) setTaskModelPushServiceTierPreferences(config.serviceTierPreferences);
+      } catch {
+        // 保存失败后的读取只用于回滚乐观状态；原始错误已经展示。
+      }
     }
   }
 
@@ -3400,6 +3431,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     revealProjectInFinder,
     saveProjectConfig,
     saveProjectWorkspaceConfig,
+    saveTaskModelPushServiceTierPreference,
     scanActiveProjectGraph,
     searchGraph,
     selectNativeConversation,
