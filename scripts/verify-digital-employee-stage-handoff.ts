@@ -436,10 +436,7 @@ try {
     assertProbe(observed.handoffCommandReplay === true && observed.preciseAcceptedInput === true, '交接命令必须幂等并精确传递已接受方案');
     assertProbe(observed.independentConversations === true && observed.frozenEmployeeSnapshots === true, '阶段必须使用独立会话并冻结各自员工快照');
     assertProbe(
-      observed.activeEmployeeSwitchRejected === 'ZEUS_TASK_STAGE_NOT_READY' &&
-        observed.reworkPreservesHistory === true &&
-        observed.failedRetryPreservesHistory === true &&
-        observed.finalStageReworkStaysOnReview === true,
+      observed.activeEmployeeSwitchRejected === 'ZEUS_TASK_STAGE_NOT_READY' && observed.reworkPreservesHistory === true && observed.failedRetryPreservesHistory === true && observed.finalStageReworkStaysOnReview === true,
       '活动阶段不可换人；返工和失败重试必须保留旧尝试并新建尝试，最终审查返工必须停留当前阶段',
     );
     assertProbe(observed.deliveryStillClosedAfterHandoff === true && observed.legacyNotFabricated === true, '最终确认前不得打开交付，旧记录不得伪造阶段');

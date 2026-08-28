@@ -696,10 +696,7 @@ function preserveCompleteModelContentPayload(payload: Record<string, unknown>, c
   };
 }
 
-function mergeCompleteModelContent(
-  state: NativeSessionState,
-  action: Extract<NativeSessionAction, { type: 'v2_model_content_loaded' }>,
-): NativeSessionState {
+function mergeCompleteModelContent(state: NativeSessionState, action: Extract<NativeSessionAction, { type: 'v2_model_content_loaded' }>): NativeSessionState {
   if (state.conversationId !== action.conversationId || state.snapshot?.id !== action.conversationId) return state;
   const matchingKeys = state.itemOrder.filter((key) => {
     const item = state.items[key];

@@ -1,13 +1,7 @@
 import type { UpdateTaskStageInput, ZeusTaskWorkflowSnapshot } from '@zeus/storage';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { TaskStageApplication, taskStageApplicationError, type CaptureTaskStageDeliverableInput, type CreateManualTaskStageDeliverableInput, type InitializeTaskWorkflowInput } from './taskStageApplication.js';
-import {
-  WorkManagementCommandApplication,
-  type WorkManagementCommandType,
-  type WorkManagementMutationRequest,
-  workManagementCommandHttpError,
-  workManagementCommandTypes,
-} from './workManagementCommandApplication.js';
+import { WorkManagementCommandApplication, type WorkManagementCommandType, type WorkManagementMutationRequest, workManagementCommandHttpError, workManagementCommandTypes } from './workManagementCommandApplication.js';
 
 type TaskParams = { taskId: string };
 type StageParams = TaskParams & { stageId: string };
@@ -60,10 +54,12 @@ export function registerTaskStageRoutes(options: TaskStageRouteOptions): void {
     ),
   );
 
-  options.server.post('/api/tasks/:taskId/workflow/deliverables/:deliverableId/request-changes', async (request: FastifyRequest<{ Params: DeliverableParams; Body: WorkManagementMutationRequest<{ expectedStageRevision: number; reason: string }> }>, reply) =>
-    executeMutation(options, reply, request.params.taskId, request.body, workManagementCommandTypes.taskStageDeliverableRequestChanges, 'task-stage-repository', `task_stage_deliverable:${request.params.deliverableId}`, (input) =>
-      options.application.requestChanges(request.params.taskId, request.params.deliverableId, input),
-    ),
+  options.server.post(
+    '/api/tasks/:taskId/workflow/deliverables/:deliverableId/request-changes',
+    async (request: FastifyRequest<{ Params: DeliverableParams; Body: WorkManagementMutationRequest<{ expectedStageRevision: number; reason: string }> }>, reply) =>
+      executeMutation(options, reply, request.params.taskId, request.body, workManagementCommandTypes.taskStageDeliverableRequestChanges, 'task-stage-repository', `task_stage_deliverable:${request.params.deliverableId}`, (input) =>
+        options.application.requestChanges(request.params.taskId, request.params.deliverableId, input),
+      ),
   );
 
   options.server.get('/api/tasks/:taskId/workflow/deliverables/:deliverableId/content', async (request: FastifyRequest<{ Params: DeliverableParams }>, reply) =>

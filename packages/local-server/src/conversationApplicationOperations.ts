@@ -1807,10 +1807,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       }
     });
     const outputContract = parseJsonObject(stage.outputContractJson);
-    const acceptanceEvidence = acceptedInputs.map(
-      (deliverable) =>
-        `- ${deliverable.title} v${deliverable.version}：status=accepted；acceptedAt=${deliverable.acceptedAt ?? '未记录'}；交付物 ID=${deliverable.id}`,
-    );
+    const acceptanceEvidence = acceptedInputs.map((deliverable) => `- ${deliverable.title} v${deliverable.version}：status=accepted；acceptedAt=${deliverable.acceptedAt ?? '未记录'}；交付物 ID=${deliverable.id}`);
     return [
       `## 当前任务阶段：${stage.title}`,
       stage.description,

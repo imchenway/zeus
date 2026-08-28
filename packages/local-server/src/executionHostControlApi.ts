@@ -45,13 +45,7 @@ interface ExecutionHostControlApiOptions {
   codexManager: CodexAppServerManager;
   codexCoordinator: {
     pauseGoal(input: { conversationId: string }): Promise<unknown>;
-    requestProviderTurnStop(input: {
-      conversationId: string;
-      providerThreadId: string;
-      providerTurnId: string;
-      stopCommandId: string;
-      confirmationTimeoutMs: number;
-    }): Promise<CodexProviderStopRequestResult>;
+    requestProviderTurnStop(input: { conversationId: string; providerThreadId: string; providerTurnId: string; stopCommandId: string; confirmationTimeoutMs: number }): Promise<CodexProviderStopRequestResult>;
   };
   piCoordinator: { interruptTurn(input: { conversation: ZeusConversationRecord; providerTurnId: string }): Promise<unknown> };
   goals: ConversationGoalRepository;

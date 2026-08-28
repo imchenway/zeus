@@ -910,7 +910,12 @@ export class DigitalEmployeeExecutionRepository {
 
   update(
     id: string,
-    input: Partial<Pick<DigitalEmployeeExecutionRecord, 'status' | 'conversationId' | 'environmentId' | 'deliveryStage' | 'deliveryState' | 'errorCode' | 'errorMessage' | 'startedAt' | 'completedAt' | 'finalizedAt' | 'attempt' | 'workflowId' | 'currentStageId'>>,
+    input: Partial<
+      Pick<
+        DigitalEmployeeExecutionRecord,
+        'status' | 'conversationId' | 'environmentId' | 'deliveryStage' | 'deliveryState' | 'errorCode' | 'errorMessage' | 'startedAt' | 'completedAt' | 'finalizedAt' | 'attempt' | 'workflowId' | 'currentStageId'
+      >
+    >,
   ): DigitalEmployeeExecutionRecord {
     const existing = this.require(id);
     const status = input.status ? oneOf(input.status, digitalEmployeeExecutionStatuses, 'execution.status') : existing.status;
@@ -987,10 +992,7 @@ export class DigitalEmployeeExecutionRepository {
     return this.getById(existing.id)!;
   }
 
-  advanceStage(
-    id: string,
-    input: { expectedRevision: number; employee: DigitalEmployeeRecord; currentStageId: string; deliveryState?: Record<string, unknown> },
-  ): DigitalEmployeeExecutionRecord {
+  advanceStage(id: string, input: { expectedRevision: number; employee: DigitalEmployeeRecord; currentStageId: string; deliveryState?: Record<string, unknown> }): DigitalEmployeeExecutionRecord {
     const existing = this.require(id);
     if (existing.executionMode !== 'staged') throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_EXECUTION_TRANSITION_INVALID', '旧版单会话执行不能直接切换阶段。');
     if (existing.revision !== input.expectedRevision) throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_REVISION_CONFLICT', '数字员工协作执行已更新，请刷新后重试。');

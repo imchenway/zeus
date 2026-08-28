@@ -572,9 +572,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       }
     }
     if (inFlight.length === 0) {
-      const protectedProviderStopTurn = options.turns
-        .listByConversation(conversation.id)
-        .find((turn) => shouldPreserveProviderStopTerminalTurn({ turn, submissions }) && snapshot.status?.type === 'active');
+      const protectedProviderStopTurn = options.turns.listByConversation(conversation.id).find((turn) => shouldPreserveProviderStopTerminalTurn({ turn, submissions }) && snapshot.status?.type === 'active');
       if (protectedProviderStopTurn) {
         options.conversations.bindProvider(conversation.id, {
           providerId: 'codex',

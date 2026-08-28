@@ -453,12 +453,7 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
 
     const permissionMode = execution.source === 'exploration' || (!allowCodeChanges && !allowTests) ? 'read-only' : snapshot.permissionMode;
     const reworkReason = typeof execution.deliveryState.reason === 'string' ? execution.deliveryState.reason.trim() : '';
-    const supplementalInfo = [
-      buildEmployeeSupplementalInfo(execution, snapshot, { allowCodeChanges, allowTests }),
-      reworkReason ? `## 用户要求完善的内容\n\n${reworkReason}` : '',
-    ]
-      .filter(Boolean)
-      .join('\n\n');
+    const supplementalInfo = [buildEmployeeSupplementalInfo(execution, snapshot, { allowCodeChanges, allowTests }), reworkReason ? `## 用户要求完善的内容\n\n${reworkReason}` : ''].filter(Boolean).join('\n\n');
     let taskStage: ZeusTaskStageRecord | null = null;
     if (execution.executionMode === 'staged') {
       if (!execution.currentStageId || !execution.workflowId) throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_STAGE_MISSING', '阶段化工作执行缺少当前阶段身份。', true);
@@ -537,10 +532,7 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
             workMode: taskStage?.workMode ?? snapshot.workMode,
             supplementalInfo:
               taskStage?.kind === 'code_review'
-                ? [
-                    supplementalInfo,
-                    '已确认实施交付物的来源会话没有可继承的精确任务工作区。本阶段只能审查已确认的实施报告，不得声称已审查仓库现场；如需仓库级代码审查，应明确报告为现场未验证项。',
-                  ].join('\n\n')
+                ? [supplementalInfo, '已确认实施交付物的来源会话没有可继承的精确任务工作区。本阶段只能审查已确认的实施报告，不得声称已审查仓库现场；如需仓库级代码审查，应明确报告为现场未验证项。'].join('\n\n')
                 : supplementalInfo,
             workspace,
           };
