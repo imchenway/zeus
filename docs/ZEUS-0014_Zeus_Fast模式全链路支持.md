@@ -127,3 +127,12 @@ SQLite 只读复核确认提交输入的三层事实：Fast 为请求 `priority`
 - 启动前确认没有其他同 bundle ID 测试实例。最终包使用独立资料根 `/tmp/zeus-0014-test-0XmQ7PTu` 启动，并通过 `ZEUS_TEST_DISPLAY_ID=3` 指定非主外接屏；进程树、独立 profile、执行宿主 ready 与 UI attached 均确认来自本轮测试包和资料根。
 - Computer Use 在读取窗口状态前被可信服务门禁拒绝，错误为 `sky requires node_repl; configure NODE_REPL_TRUSTED_SERVICES`。因此没有执行 Fast 控件点击、Provider 登录、真实会话发送或截图，不把隔离启动和宿主就绪表述为 GUI/Provider 验收通过。验收停止后只向本任务主进程 PID 24128 发送 TERM，并确认该进程及其执行宿主均已退出；隔离资料根保留用于后续续验。
 - 本地 `main` 当前还存在另一项工作的 4 个已修改文件和 2 个未跟踪文件。为避免覆盖或夹带并发改动，在 GUI/Provider 验收补齐且 `main` 工作树归属明确之前，不执行最终 main merge。
+
+## 2026-08-28 同步 v0.3.68 后复验
+
+- 本地最新 `main` 已推进至 `5f015c3b8f59e542edc34fb72905797d267b1363`（`v0.3.68`）。该提交以 merge commit `2aed38e` 无冲突合入 `test`；合入只读取已提交的 `main` ref，没有读取、暂存或夹带主工作树的并发未提交改动。
+- 最终合并态重新执行 `pnpm install --frozen-lockfile --offline`、`pnpm lint`、`pnpm typecheck`、`pnpm build`、Renderer 事件流、设置命令行为和 Subagent 详情专项探针，结果全部通过；架构门禁仍满足 97 张 Core 表、11 张可重建辅助表及源码尺寸约束，构建只有既有的大分块提示。
+- `pnpm package:mac` 重新生成 `0.3.68` 测试包。包健康检查确认 54 个 Renderer assets、Main、两个 Preload 与更新助手完整；bundle ID 为 `dev.hypha.zeus.test`，严格 codesign 与 `Zeus-Test-0.3.68-arm64.dmg` 校验均通过。该包仍是本机 ad-hoc 签名且未公证。
+- 启动前确认没有其他 Zeus Test 实例，外接竖屏 ID 3 可用。最终包使用独立资料根 `/tmp/zeus-0014-v0368-OM6Lla` 启动，真实 Renderer、`0.3.68` execution host ready、UI attached、测试 profile 和 bundle 身份均成立；验收后只向本任务主进程 PID 73944 发送 TERM，所有本任务子进程均已退出。
+- Computer Use 对应用完整路径读取窗口仍被可信服务门禁拒绝，错误保持为 `sky requires node_repl; configure NODE_REPL_TRUSTED_SERVICES`。因此 Fast 控件、跨入口、冷重启恢复、Provider 登录与实际档位截图仍未完成，不能把本轮隔离启动表述为 GUI/Provider 验收通过。
+- 当前本地 `main` 工作树仍有另一项任务的未提交文档与源码改动。最终 main merge 继续等待 GUI/Provider 验收通过且主工作树归属收口；没有 push。
