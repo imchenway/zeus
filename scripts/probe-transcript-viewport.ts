@@ -96,7 +96,7 @@ function probeSessionState(conversationId: string, payload: string): NativeSessi
       id: conversationId,
       projectId: 'probe-project',
       v2Paging: {
-        history: { nextCursor: `frozen:${conversationId}`, hasMore: true, loading: false, error: null },
+        history: { nextCursor: `frozen:${conversationId}`, hasMore: true, loading: false, error: null, loadedThroughSequence: null, oldestLoadedSequence: null },
       },
     },
     probePayload: payload,

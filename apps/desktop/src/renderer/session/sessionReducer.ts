@@ -24,11 +24,13 @@ import type {
 } from './sessionTypes.js';
 import type { ZeusBrowserComment, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { type ConversationContextDraft, emptyConversationContextDraft, type TaskPushMessageLayout } from '@zeus/shared';
+import { mergeConversationModelContentV2, reconcileConversationHistoryCache } from './conversationSnapshotV2Adapter.js';
 
 export type NativeSessionAction =
   | { type: 'transport_changed'; transportState: TransportState; reconnectAttempt?: number; error?: NativeSessionError | null }
   | { type: 'snapshot_hydrated'; snapshot: NativeConversationSnapshot }
   | { type: 'snapshot_v2_page_merged'; snapshot: NativeConversationSnapshot }
+  | { type: 'v2_model_content_loaded'; conversationId: string; handle: string; text: string; redacted: boolean }
   | { type: 'session_metrics_hydrated'; conversationId: string; sessionMetrics: NativeSessionMetricsSnapshot }
   | { type: 'goal_hydrated'; conversationId: string; response: NativeGoalResponse }
   | { type: 'next_turn_settings_changed'; settings: NativeNextTurnSettings }
@@ -162,6 +164,8 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
       return hydrateSnapshot(state, action.snapshot);
     case 'snapshot_v2_page_merged':
       return mergeSnapshotV2Page(state, action.snapshot);
+    case 'v2_model_content_loaded':
+      return mergeCompleteModelContent(state, action);
     case 'session_metrics_hydrated': {
       if (state.conversationId !== action.conversationId || state.snapshot?.id !== action.conversationId) return state;
       const currentUpdatedAt = state.sessionMetrics?.updatedAt;
@@ -353,7 +357,9 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
   }
 }
 
-function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversationSnapshot): NativeSessionState {
+function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConversationSnapshot, reconcileHistoryCache = true): NativeSessionState {
+  const historyReconciliation = reconcileHistoryCache ? reconcileConversationHistoryCache(state.snapshot, incomingSnapshot) : { snapshot: incomingSnapshot, preserveCachedHistory: true };
+  const snapshot = historyReconciliation.snapshot;
   const turnsByProviderId = Object.fromEntries(snapshot.turns.filter((turn) => turn.providerTurnId).map((turn) => [turn.providerTurnId!, turn]));
   const providerTurnIdByLocalId = new Map(snapshot.turns.filter((turn) => turn.providerTurnId).map((turn) => [turn.id, turn.providerTurnId!]));
   const providerItemIdByLocalId = new Map(snapshot.items.filter((item) => item.providerItemId).map((item) => [item.id, item.providerItemId!]));
@@ -416,6 +422,8 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
     // 投影为空。资源属于同一持久 item 的展示增量，必须按稳定身份合并，不能在新一轮
     // 对账时倒退为“图片不可用”。
     const previousDurableItem = state.items[key] ?? (item.providerItemId ? previousItemsByProviderId.get(item.providerItemId) : undefined) ?? previousItemsByLocalId.get(item.id);
+    const previousCompleteContent = matchingCompleteModelContent(previousDurableItem, item);
+    const projectedPayload = previousUserItem ? mergeStableUserMessagePresentation(previousUserItem.payload, item.payload) : item.payload;
     items[key] = {
       key,
       conversationId: snapshot.id,
@@ -427,8 +435,8 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
       type: item.type,
       status: item.status,
       phase: item.phase,
-      text: item.text,
-      payload: previousUserItem ? mergeStableUserMessagePresentation(previousUserItem.payload, item.payload) : item.payload,
+      text: previousCompleteContent?.text ?? item.text,
+      payload: previousCompleteContent ? preserveCompleteModelContentPayload(projectedPayload, previousCompleteContent) : projectedPayload,
       resources: mergeDurableItemResources(previousDurableItem?.resources, item.resources),
       timelineAt,
       updatedAt: item.updatedAt,
@@ -465,7 +473,7 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
       key in items ||
       (previous.localItemId ? projectedLocalItemIds.has(previous.localItemId) : false) ||
       (previous.providerItemId ? projectedProviderItemIds.has(previous.providerItemId) : false) ||
-      !shouldPreserveBoundedTranscriptItem(previous, activeTurnIdentities)
+      !shouldPreserveBoundedTranscriptItem(previous, activeTurnIdentities, historyReconciliation.preserveCachedHistory)
     )
       continue;
     items[key] = previous;
@@ -635,10 +643,10 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
 
 const boundedProcessItemTypes = new Set(['commandexecution', 'command', 'mcptoolcall', 'dynamictoolcall', 'websearch', 'imageview', 'toolcall', 'tool', 'filechange', 'file', 'contextcompaction', 'providerevent']);
 
-function shouldPreserveBoundedTranscriptItem(item: NativeSessionItemBuffer, activeTurnIdentities: ReadonlySet<string>): boolean {
+function shouldPreserveBoundedTranscriptItem(item: NativeSessionItemBuffer, activeTurnIdentities: ReadonlySet<string>, preserveCachedHistory: boolean): boolean {
   if (item.optimistic) return false;
   const contentKind = stringValue(item.payload.v2ContentKind);
-  if (contentKind === 'model_history') return isTerminalItemStatus(item.status);
+  if (contentKind === 'model_history') return preserveCachedHistory && isTerminalItemStatus(item.status);
   const type = item.type.toLocaleLowerCase().replace(/[\s_\-/]+/gu, '');
   const processItem = contentKind === 'process_detail' || boundedProcessItemTypes.has(type);
   return processItem && (isTerminalItemStatus(item.status) || activeTurnIdentities.has(item.turnId));
@@ -649,7 +657,7 @@ function mergeSnapshotPageItem(previous: NativeSessionItemBuffer, projected: Nat
   const projectedProcessDetail = stringValue(projected.payload.v2ContentKind) === 'process_detail';
   const presentation = previousProcessDetail && !projectedProcessDetail ? previous : projected;
   const fallback = presentation === previous ? projected : previous;
-  return {
+  const merged = {
     ...fallback,
     ...presentation,
     key: canonicalKey,
@@ -659,6 +667,62 @@ function mergeSnapshotPageItem(previous: NativeSessionItemBuffer, projected: Nat
     timelineAt: previous.timelineAt ?? projected.timelineAt,
     updatedAt: (previous.updatedAt ?? previous.timelineAt ?? '').localeCompare(projected.updatedAt ?? projected.timelineAt ?? '') > 0 ? previous.updatedAt : projected.updatedAt,
   };
+  const completeContent = matchingCompleteModelContent(previous, projected) ?? matchingCompleteModelContent(projected, previous);
+  return completeContent
+    ? {
+        ...merged,
+        text: completeContent.text,
+        payload: preserveCompleteModelContentPayload(merged.payload, completeContent),
+      }
+    : merged;
+}
+
+function matchingCompleteModelContent(previous: NativeSessionItemBuffer | undefined, projected: Pick<NativeSessionItemBuffer, 'payload'>): NativeSessionItemBuffer | null {
+  if (!previous || projected.payload.v2ContentKind !== 'model_history' || projected.payload.v2ContentTruncated !== true) return null;
+  const projectedHandle = stringValue(projected.payload.v2ContentHandle);
+  return projectedHandle && previous.payload.v2ContentCompleteHandle === projectedHandle && previous.payload.v2ContentTruncated === false ? previous : null;
+}
+
+function preserveCompleteModelContentPayload(payload: Record<string, unknown>, completeContent: NativeSessionItemBuffer): Record<string, unknown> {
+  return {
+    ...payload,
+    ...(completeContent.payload.content !== undefined ? { content: completeContent.payload.content } : {}),
+    ...(completeContent.payload.attachments !== undefined ? { attachments: completeContent.payload.attachments } : {}),
+    ...(completeContent.payload.taskPushLayout !== undefined ? { taskPushLayout: completeContent.payload.taskPushLayout } : {}),
+    ...(completeContent.payload.conversationContext !== undefined ? { conversationContext: completeContent.payload.conversationContext } : {}),
+    v2ContentTruncated: false,
+    v2ContentCompleteHandle: completeContent.payload.v2ContentCompleteHandle,
+    v2ContentRedacted: completeContent.payload.v2ContentRedacted === true || payload.v2ContentRedacted === true,
+  };
+}
+
+function mergeCompleteModelContent(
+  state: NativeSessionState,
+  action: Extract<NativeSessionAction, { type: 'v2_model_content_loaded' }>,
+): NativeSessionState {
+  if (state.conversationId !== action.conversationId || state.snapshot?.id !== action.conversationId) return state;
+  const matchingKeys = state.itemOrder.filter((key) => {
+    const item = state.items[key];
+    return item?.payload.v2ContentKind === 'model_history' && item.payload.v2ContentHandle === action.handle && item.payload.v2ContentTruncated === true;
+  });
+  if (matchingKeys.length === 0 || !state.snapshot.items.some((item) => item.payload.v2ContentKind === 'model_history' && item.payload.v2ContentHandle === action.handle)) return state;
+  const snapshot = mergeConversationModelContentV2(state.snapshot, action.handle, action.text, action.redacted);
+  const completeSnapshotItem = snapshot.items.find((item) => item.payload.v2ContentKind === 'model_history' && item.payload.v2ContentHandle === action.handle);
+  if (!completeSnapshotItem) return state;
+  const items = { ...state.items };
+  for (const key of matchingKeys) {
+    const item = items[key]!;
+    items[key] = {
+      ...item,
+      text: completeSnapshotItem.text,
+      payload: {
+        ...item.payload,
+        ...completeSnapshotItem.payload,
+        v2ContentRedacted: item.payload.v2ContentRedacted === true || completeSnapshotItem.payload.v2ContentRedacted === true,
+      },
+    };
+  }
+  return { ...state, snapshot, items, transcriptRevision: state.transcriptRevision + 1 };
 }
 
 /**
@@ -666,7 +730,7 @@ function mergeSnapshotPageItem(previous: NativeSessionItemBuffer, projected: Nat
  * 若用普通水合处理，较早的分页基准会把刚完成的轮次降回运行中并丢掉实时最终答复。
  */
 function mergeSnapshotV2Page(state: NativeSessionState, snapshot: NativeConversationSnapshot): NativeSessionState {
-  const hydrated = hydrateSnapshot(state, snapshot);
+  const hydrated = hydrateSnapshot(state, snapshot, false);
   const items = { ...hydrated.items };
   const canonicalKeyByProviderItemId = new Map<string, string>();
   const canonicalKeyByAlias = new Map<string, string>();

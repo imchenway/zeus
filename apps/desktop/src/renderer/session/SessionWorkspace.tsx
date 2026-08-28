@@ -34,7 +34,6 @@ import type {
   NativeConversationAttachment,
   NativeConversationAttentionKind,
   NativeConversationChoice,
-  NativeConversationContentV2Page,
   NativeConversationStage,
   NativeConversationStartDispatchResult,
   NativeConversationToolResultPage,
@@ -191,7 +190,7 @@ export interface SessionWorkspaceActions {
   onLoadEarlierHistory?: () => void | Promise<void>;
   onLoadTurnProcess?: (turnId: string) => void | Promise<void>;
   onLoadTurnArtifacts?: (turnId: string) => void | Promise<void>;
-  onLoadV2Content?: (handle: string, offset?: number) => Promise<NativeConversationContentV2Page>;
+  onLoadV2Content?: (handle: string) => Promise<void>;
   onLoadV2ToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage>;
 }
 
@@ -729,7 +728,7 @@ export function createConnectedSessionActions(input: { controller: SessionContro
     onLoadEarlierHistory: () => settle(input.controller.loadEarlierHistory()),
     onLoadTurnProcess: (turnId) => settle(input.controller.loadTurnProcess(turnId)),
     onLoadTurnArtifacts: (turnId) => settle(input.controller.loadTurnArtifacts(turnId)),
-    onLoadV2Content: (handle, offset) => input.controller.loadV2Content(handle, offset),
+    onLoadV2Content: (handle) => input.controller.loadV2Content(handle),
     onLoadV2ToolResult: (handle, offset) => input.controller.loadV2ToolResult(handle, offset),
     onEditUserItem: async (_item, content) => {
       const current = input.controller.getState();

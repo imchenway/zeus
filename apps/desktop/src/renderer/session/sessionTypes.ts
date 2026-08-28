@@ -727,7 +727,16 @@ export interface NativeConversationToolResultPage {
 }
 
 export interface NativeConversationV2PagingState {
-  history: { nextCursor: string | null; hasMore: boolean; loading: boolean; error: string | null };
+  history: {
+    nextCursor: string | null;
+    hasMore: boolean;
+    loading: boolean;
+    error: string | null;
+    /** 当前连续显示缓存拥有的模型历史最高序列；null 表示旧缓存无法证明范围。 */
+    loadedThroughSequence: number | null;
+    /** 当前连续显示缓存拥有的模型历史最低序列；空历史为 null。 */
+    oldestLoadedSequence: number | null;
+  };
   /** 旧 Renderer 快照在升级后的首次导航中可能尚未携带该字段。 */
   historyByTurn?: Record<string, { nextCursor: string | null; hasMore: boolean; loading: boolean; loaded: boolean; error: string | null }>;
   processByTurn: Record<string, { nextCursor: string | null; hasMore: boolean; loading: boolean; loaded: boolean; error: string | null }>;
