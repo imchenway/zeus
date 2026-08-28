@@ -15,6 +15,7 @@ import {
   ConversationExecutionRepository,
   type ConversationPermissionMode,
   ConversationPlanActionRepository,
+  ConversationProviderItemRepository,
   ConversationRepository,
   ConversationServerRequestRepository,
   ConversationSubmissionRepository,
@@ -43,6 +44,7 @@ import { existsSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { parseJsonObject } from './codeIntelligenceGraphStore.js';
 import { createCodexNativeConversationCoordinator } from './codexNativeConversationCoordinator.js';
+import { nativePendingRequestProjection } from './codexNativeConversationPolicy.js';
 import type { ZeusSkillService } from './zeusSkillService.js';
 import { resolveConversationAttachmentGrant } from './conversationAttachmentGrant.js';
 import { type ConversationCapabilitiesSnapshot, ConversationCapabilityQueryApplication } from './conversationCapabilityQueryApplication.js';
@@ -70,6 +72,7 @@ export type ConversationApplicationOperationDependencies = Record<string, any> &
   conversationExecution: ConversationExecutionRepository;
   conversationExecutionCoordinator: ConversationExecutionCoordinator;
   conversationPlanActions: ConversationPlanActionRepository;
+  conversationProviderItems: ConversationProviderItemRepository;
   conversationRequests: ConversationServerRequestRepository;
   conversationSubmissions: ConversationSubmissionRepository;
   conversationTurns: ConversationTurnRepository;
@@ -187,6 +190,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     conversationExecution,
     conversationExecutionCoordinator,
     conversationPlanActions,
+    conversationProviderItems,
     conversationRequests,
     conversationSubmissions,
     conversationTurns,
@@ -297,23 +301,18 @@ export function createConversationApplicationOperations(dependencies: Conversati
   }
 
   function toNativeServerRequest(request: NonNullable<ReturnType<ConversationServerRequestRepository['getById']>>) {
-    const type = request.requestKind === 'request_user_input' ? 'userInput' : request.requestKind === 'mcp' ? 'MCP' : request.requestKind;
-    return {
-      id: request.id,
-      conversationId: request.conversationId,
-      turnId: request.turnId,
-      itemId: request.itemId,
-      generationId: request.transportGenerationId,
-      type,
-      status: request.status,
-      payload: parseJsonObject(request.payloadJson),
-      response: request.responseJson ? parseJsonObject(request.responseJson) : null,
-      containsSecret: request.containsSecret,
-      expiresAt: request.expiresAt,
-      autoResolutionState: request.autoResolutionState,
-      createdAt: request.createdAt,
-      resolvedAt: request.resolvedAt,
-    };
+    const conversation = conversations.getRecordById(request.conversationId);
+    const projectRoot = conversation ? resolveNativeConversationExecutionRoot(conversation) : null;
+    return nativePendingRequestProjection(
+      request,
+      conversation
+        ? {
+            conversation,
+            projectRoot,
+            providerItems: conversationProviderItems,
+          }
+        : undefined,
+    );
   }
 
   function conversationGoalCapability(conversation: ZeusConversationRecord) {
