@@ -515,19 +515,27 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
       ...(snapshot.skillIds[0] ? { skillId: snapshot.skillIds[0] } : {}),
       ...(taskStage ? { stageId: taskStage.id, stageExecution } : {}),
     };
+    const reviewSource = taskStage?.kind === 'code_review' ? reviewSourceConversation(taskStage) : null;
+    const canReviewPersistedWorkspace = Boolean(reviewSource?.environmentId && reviewSource.workspaceId);
     const body: Record<string, unknown> =
-      taskStage?.kind === 'code_review'
+      taskStage?.kind === 'code_review' && canReviewPersistedWorkspace
         ? {
             ...commonBody,
             source: 'code_review',
             collaborationMode: 'default',
-            inheritConversationId: reviewSourceConversationId(taskStage),
+            inheritConversationId: reviewSource!.id,
           }
         : {
             ...commonBody,
             source: 'task_push',
             workMode: taskStage?.workMode ?? snapshot.workMode,
-            supplementalInfo,
+            supplementalInfo:
+              taskStage?.kind === 'code_review'
+                ? [
+                    supplementalInfo,
+                    '已确认实施交付物的来源会话没有可继承的精确任务工作区。本阶段只能审查已确认的实施报告，不得声称已审查仓库现场；如需仓库级代码审查，应明确报告为现场未验证项。',
+                  ].join('\n\n')
+                : supplementalInfo,
             workspace,
           };
     const accepted = await options.executeTaskConversationIdempotent(project, task, body, `digital-employee:${execution.id}:attempt:${execution.attempt}`);
@@ -910,13 +918,17 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
     await options.save();
   }
 
-  function reviewSourceConversationId(stage: ZeusTaskStageRecord): string {
+  function reviewSourceConversation(stage: ZeusTaskStageRecord) {
     const workflow = options.stages.getWorkflowByTask(stage.taskId);
     const implementation = workflow?.stages.filter((candidate) => candidate.sequence < stage.sequence && candidate.kind === 'implementation').sort((left, right) => right.sequence - left.sequence)[0];
     const accepted = implementation?.deliverables.filter((deliverable) => deliverable.status === 'accepted').sort((left, right) => right.version - left.version)[0];
     const attempt = accepted ? implementation?.attempts.find((candidate) => candidate.id === accepted.attemptId) : null;
     if (!attempt?.conversationId) throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_REVIEW_SOURCE_MISSING', '代码审查阶段缺少已确认实施交付物的精确会话。', false);
-    return attempt.conversationId;
+    const conversation = options.conversations.getById(attempt.conversationId);
+    if (!conversation || conversation.taskId !== stage.taskId) {
+      throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_REVIEW_SOURCE_MISSING', '代码审查阶段的实施来源会话已经不可用。', false);
+    }
+    return conversation;
   }
 
   function executionWorkspaces(execution: DigitalEmployeeExecutionRecord): ZeusTaskWorkspaceRecord[] {

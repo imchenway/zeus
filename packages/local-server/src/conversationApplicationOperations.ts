@@ -1960,7 +1960,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
         const effort = typeof body.effort === 'string' ? body.effort.trim() : '';
         const workMode = body.workMode === 'plan' || body.workMode === 'default' ? body.workMode : null;
         const supplementalInfo = typeof body.supplementalInfo === 'string' ? body.supplementalInfo.trim() : '';
-        const taskStage = requestedTaskStage(body, task, ['plan', 'implementation']);
+        // 阶段化数字员工在没有可继承任务工作区时，代码审查只能审查已确认的
+        // 实施交付报告。它仍需通过 task_push 创建独立只读会话，而不能伪造
+        // environmentId/workspaceId 或绕过阶段尝试与交付物冻结。
+        const taskStage = requestedTaskStage(body, task, ['plan', 'implementation', 'code_review']);
         if (!modelName) throw nativeApiError('ZEUS_INVALID_TASK_PUSH', 'Task push model is required.');
         if (!workMode) throw nativeApiError('ZEUS_INVALID_TASK_PUSH', 'Task push workMode must be default or plan.');
         if (supplementalInfo.length > 20_000) throw nativeApiError('ZEUS_INVALID_TASK_PUSH', 'Task push supplementalInfo must be no longer than 20000 characters.');
