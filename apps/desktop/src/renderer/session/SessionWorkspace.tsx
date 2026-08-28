@@ -1,137 +1,82 @@
-import {
-    type CSSProperties,
-    type KeyboardEvent as ReactKeyboardEvent,
-    type PointerEvent as ReactPointerEvent,
-    type ReactNode,
-    useCallback,
-    useEffect,
-    useLayoutEffect,
-    useMemo,
-    useRef,
-    useState,
-    useSyncExternalStore
-} from 'react';
-import {ArrowUpIcon as ArrowUp} from '@phosphor-icons/react/dist/csr/ArrowUp';
-import {GlobeSimpleIcon as GlobeSimple} from '@phosphor-icons/react/dist/csr/GlobeSimple';
-import {PaperclipIcon as Paperclip} from '@phosphor-icons/react/dist/csr/Paperclip';
-import {TargetIcon as Target} from '@phosphor-icons/react/dist/csr/Target';
-import {XIcon as X} from '@phosphor-icons/react/dist/csr/X';
-import {animate as animateMotion, motion, useMotionValue, useTransform} from 'framer-motion';
-import {
-    type ConversationContextDraft,
-    type ConversationFileLocation,
-    type ConversationOpenTarget,
-    type TurnChangeFile,
-    type ZeusBrowserPreparedSubmission
-} from '@zeus/shared';
+import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
+import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
+import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paperclip';
+import { TargetIcon as Target } from '@phosphor-icons/react/dist/csr/Target';
+import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
+import { animate as animateMotion, motion, useMotionValue, useTransform } from 'framer-motion';
+import { type ConversationContextDraft, type ConversationFileLocation, type ConversationOpenTarget, type TurnChangeFile, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import type { ProjectGitAction, ProjectGitActionResponse, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
+import { openConversationResourceInMain, openTurnChangeFileInMain } from '../appShellBridge.js';
+import { ZeusSelect } from '../ZeusSelect.js';
+import { canSteerActiveTurn, type ComposerRuntimeSettings, ConversationComposer, type ConversationComposerProps, resolveComposerKeyIntent } from './ConversationComposer.js';
+import { ConversationTranscript, type ConversationTranscriptProps, type SessionCreationStatus } from './ConversationTranscript.js';
+import { SessionPlanProgress } from './SessionActivity.js';
+import { LegacyConversationBanner } from './LegacyConversationBanner.js';
+import { hasPendingRequestDetails, PendingRequestSurface, requestKind } from './PendingRequestSurface.js';
+import { PermissionModeControl } from './PermissionModeControl.js';
+import { CollaborationModeControl } from './CollaborationModeControl.js';
+import { ComposerDropdown } from './ComposerDropdown.js';
+import { PlanImplementationRequestSurface } from './PlanImplementationRequestSurface.js';
+import { PlanWorkspace } from './PlanWorkspace.js';
+import { BrowserWorkspace } from './BrowserWorkspace.js';
+import { defaultSourceWorkspaceViewMode, SourceWorkspace, type SourceWorkspaceViewMode } from './SourceWorkspace.js';
+import { TurnDiffWorkspace } from './TurnChanges.js';
+import { SideChatWorkspace } from './SideChatWorkspace.js';
+import { SubagentWorkspace } from './SubagentWorkspace.js';
+import { RuntimeDetails } from './RuntimeDetails.js';
+import { defaultOpenTarget } from './ConversationResources.js';
 import type {
-    ProjectGitAction,
-    ProjectGitActionResponse,
-    ProjectGitWorkbenchSnapshot,
-    ProjectRecord
-} from '../apiClient.js';
-import {openConversationResourceInMain, openTurnChangeFileInMain} from '../appShellBridge.js';
-import {ZeusSelect} from '../ZeusSelect.js';
-import {
-    canSteerActiveTurn,
-    type ComposerRuntimeSettings,
-    ConversationComposer,
-    type ConversationComposerProps,
-    resolveComposerKeyIntent
-} from './ConversationComposer.js';
-import {
-    ConversationTranscript,
-    type ConversationTranscriptProps,
-    type SessionCreationStatus
-} from './ConversationTranscript.js';
-import {SessionPlanProgress} from './SessionActivity.js';
-import {LegacyConversationBanner} from './LegacyConversationBanner.js';
-import {hasPendingRequestDetails, PendingRequestSurface, requestKind} from './PendingRequestSurface.js';
-import {PermissionModeControl} from './PermissionModeControl.js';
-import {CollaborationModeControl} from './CollaborationModeControl.js';
-import {ComposerDropdown} from './ComposerDropdown.js';
-import {PlanImplementationRequestSurface} from './PlanImplementationRequestSurface.js';
-import {PlanWorkspace} from './PlanWorkspace.js';
-import {BrowserWorkspace} from './BrowserWorkspace.js';
-import {defaultSourceWorkspaceViewMode, SourceWorkspace, type SourceWorkspaceViewMode} from './SourceWorkspace.js';
-import {TurnDiffWorkspace} from './TurnChanges.js';
-import {SideChatWorkspace} from './SideChatWorkspace.js';
-import {SubagentWorkspace} from './SubagentWorkspace.js';
-import {RuntimeDetails} from './RuntimeDetails.js';
-import {defaultOpenTarget} from './ConversationResources.js';
-import type {
-    CodexConversationCapabilities,
-    ConversationResource,
-    ConversationResourcePreview,
-    NativeCollaborationMode,
-    NativeConversationAttachment,
-    NativeConversationAttentionKind,
-    NativeConversationChoice,
-    NativeConversationContentV2Page,
-    NativeConversationStage,
-    NativeConversationStartDispatchResult,
-    NativeConversationToolResultPage,
-    NativeNextTurnSettings,
-    NativeOperationAcceptance,
-    NativePendingRequest,
-    NativePermissionMode,
-    NativePlanImplementationRequest,
-    NativeRuntimeDetailsSnapshot,
-    NativeRuntimeFact,
-    NativeServiceTierSelection,
-    NativeSessionItemBuffer,
-    NativeSessionState,
-    NativeSubagentListSnapshot,
-    NativeSubagentThreadSnapshot,
-    NativeTurnSettingsSelection,
-    SessionConversationOwner,
-    StartNativeConversationRequest,
-    StartProjectConversationRequest,
-    TaskWorkspacesSnapshot,
-    TurnChangeSet,
-    TurnChangeSetOperationResult,
+  CodexConversationCapabilities,
+  ConversationResource,
+  ConversationResourcePreview,
+  NativeCollaborationMode,
+  NativeConversationAttachment,
+  NativeConversationAttentionKind,
+  NativeConversationChoice,
+  NativeConversationContentV2Page,
+  NativeConversationStage,
+  NativeConversationStartDispatchResult,
+  NativeConversationToolResultPage,
+  NativeNextTurnSettings,
+  NativeOperationAcceptance,
+  NativePendingRequest,
+  NativePermissionMode,
+  NativePlanImplementationRequest,
+  NativeRuntimeDetailsSnapshot,
+  NativeRuntimeFact,
+  NativeServiceTierSelection,
+  NativeSessionItemBuffer,
+  NativeSessionState,
+  NativeSubagentListSnapshot,
+  NativeSubagentThreadSnapshot,
+  NativeTurnSettingsSelection,
+  SessionConversationOwner,
+  StartNativeConversationRequest,
+  StartProjectConversationRequest,
+  TaskWorkspacesSnapshot,
+  TurnChangeSet,
+  TurnChangeSetOperationResult,
 } from './sessionTypes.js';
-import {
-    normalizeServiceTierSelection,
-    selectionFromEffectiveServiceTier,
-    serviceTierWireOverride
-} from './serviceTierSelection.js';
-import {
-    type SessionController,
-    type SessionControllerClient,
-    useSessionControllerInstance,
-    useSessionControllerSelector
-} from './useSessionController.js';
-import {
-    createConversationComposerStateSelector,
-    createConversationTranscriptStateSelector,
-    createSessionWorkspaceStateSelector
-} from './sessionStateSlices.js';
-import {
-    createSessionEscapeController,
-    type SessionEscapeController,
-    type SessionEscapeLayer,
-    type SessionEscapeResult
-} from './useThreadScrollController.js';
-import {SafeMarkdown, type SessionUiLanguage} from './ThreadItemView.js';
-import {autosizeTextarea} from './textareaAutosize.js';
-import {conversationAttachmentIdentity, ConversationComposerAttachments} from './ConversationComposerAttachments.js';
-import {ContextUsageIndicator} from './ContextUsageIndicator.js';
-import {ServiceTierToggle} from './ServiceTierToggle.js';
-import {useConversationInputResources} from './useConversationInputResources.js';
-import {SessionQuickActionsCard} from './SessionQuickActionsCard.js';
-import type {SessionCodeReviewSelection} from './SessionCodeReviewDialog.js';
-import {conversationDisplayTitle} from './conversationDisplayTitle.js';
-import {
-    conversationRuntimePreferenceKind,
-    readConversationRuntimePreferences,
-    writeConversationRuntimePreferences
-} from './conversationRuntimePreferences.js';
-import {resolveModelCapability} from './modelSelection.js';
-import {GoalPanel, GoalRail} from './GoalPanel.js';
-import {presentModelOptions} from '../modelOptionPresentation.js';
-import {NewConversationExecutionContext} from './NewConversationExecutionContext.js';
-import {formatVisibleApplicationError, useApplicationErrorDialog} from '../ui/ApplicationErrorDialog.js';
+import { normalizeServiceTierSelection, selectionFromEffectiveServiceTier, serviceTierWireOverride } from './serviceTierSelection.js';
+import { type SessionController, type SessionControllerClient, useSessionControllerInstance, useSessionControllerSelector } from './useSessionController.js';
+import { createConversationComposerStateSelector, createConversationTranscriptStateSelector, createSessionWorkspaceStateSelector } from './sessionStateSlices.js';
+import { createSessionEscapeController, type SessionEscapeController, type SessionEscapeLayer, type SessionEscapeResult } from './useThreadScrollController.js';
+import { SafeMarkdown, type SessionUiLanguage } from './ThreadItemView.js';
+import { autosizeTextarea } from './textareaAutosize.js';
+import { conversationAttachmentIdentity, ConversationComposerAttachments } from './ConversationComposerAttachments.js';
+import { ContextUsageIndicator } from './ContextUsageIndicator.js';
+import { ServiceTierToggle } from './ServiceTierToggle.js';
+import { useConversationInputResources } from './useConversationInputResources.js';
+import { SessionQuickActionsCard } from './SessionQuickActionsCard.js';
+import type { SessionCodeReviewSelection } from './SessionCodeReviewDialog.js';
+import { conversationDisplayTitle } from './conversationDisplayTitle.js';
+import { conversationRuntimePreferenceKind, readConversationRuntimePreferences, writeConversationRuntimePreferences } from './conversationRuntimePreferences.js';
+import { resolveModelCapability } from './modelSelection.js';
+import { GoalPanel, GoalRail } from './GoalPanel.js';
+import { presentModelOptions } from '../modelOptionPresentation.js';
+import { NewConversationExecutionContext } from './NewConversationExecutionContext.js';
+import { formatVisibleApplicationError, useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
 export interface SessionWorkspaceTaskManagementStatus {
   id: string;
@@ -767,7 +712,7 @@ export function createConnectedSessionActions(input: { controller: SessionContro
     onRerouteQueuedSubmission: (submissionId, settings) => settle(input.controller.rerouteQueuedSubmission(submissionId, settings)),
     // 删除未进入 provider turn 的内容是本地软删除，不会触发 Provider 重发。
     onDeleteQueuedSubmission: (submissionId) => settle(input.controller.deleteQueuedSubmission(submissionId)),
-      // 引导失败由队列气泡给出可重试结果，技术细节同时写入统一运行日志。
+    // 引导失败由队列气泡给出可重试结果，技术细节同时写入统一运行日志。
     onSendQueuedNow: async (submissionId) => {
       await input.controller.sendQueuedNow(submissionId);
     },

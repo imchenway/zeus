@@ -1,4 +1,4 @@
-import {useEffect, useRef} from 'react';
+import { useEffect, useRef } from 'react';
 
 export type ApplicationErrorLanguage = 'zh-CN' | 'en';
 
@@ -80,7 +80,7 @@ export function useApplicationErrorDialog(error: unknown, options: ApplicationEr
     }
     if (Object.is(previousErrorRef.current, error)) return;
     previousErrorRef.current = error;
-      reportApplicationError(error, language ? {language} : {});
+    reportApplicationError(error, language ? { language } : {});
   }, [error, language]);
 }
 

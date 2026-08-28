@@ -1,8 +1,8 @@
-import {reportApplicationError} from './ui/ApplicationErrorDialog.js';
+import { reportApplicationError } from './ui/ApplicationErrorDialog.js';
 
 export interface StorageRecoveryFaultState {
-    readsAvailable: boolean;
-    phase: 'ready' | 'running' | 'failed';
+  readsAvailable: boolean;
+  phase: 'ready' | 'running' | 'failed';
 }
 
 /**
@@ -13,6 +13,6 @@ export function reportStorageReadOnlyFault(language: 'zh-CN' | 'en', readsAvaila
   const error = Object.assign(new Error(language === 'zh-CN' ? (readsAvailable ? '存储已进入只读保护。' : '存储读写已停止。') : readsAvailable ? 'Storage entered read-only protection.' : 'Storage reads and writes stopped.'), {
     code: 'ZEUS_STORAGE_READ_ONLY_FAULT',
   });
-    reportApplicationError(error, {language});
-    return {readsAvailable, phase: 'ready'};
+  reportApplicationError(error, { language });
+  return { readsAvailable, phase: 'ready' };
 }

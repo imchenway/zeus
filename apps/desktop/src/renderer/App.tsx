@@ -1,7 +1,7 @@
-import {type ComponentProps, useCallback, useEffect, useState} from 'react';
-import {RendererErrorBoundary} from './ErrorBoundary.js';
-import {reportApplicationError} from './ui/ApplicationErrorDialog.js';
-import {type MainNavTarget, type SettingsCategory, WorkspacePage} from './WorkspacePage.js';
+import { type ComponentProps, useCallback, useEffect, useState } from 'react';
+import { RendererErrorBoundary } from './ErrorBoundary.js';
+import { reportApplicationError } from './ui/ApplicationErrorDialog.js';
+import { type MainNavTarget, type SettingsCategory, WorkspacePage } from './WorkspacePage.js';
 
 export { buildGraphConversationTaskIntent, buildGraphNodeTaskIntent, buildProjectDirectoryResolution, buildTemplateTaskDraft } from './WorkspacePage.js';
 

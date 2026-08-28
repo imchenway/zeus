@@ -1,75 +1,75 @@
-import {MagnifyingGlassIcon as MagnifyingGlass} from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
-import {openAutomaticUpdateIndicatorInMain} from '../../appShellBridge.js';
-import {ProjectGitWorkbench} from '../../git/ProjectGitWorkbench.js';
-import {conversationDisplayTitle} from '../../session/conversationDisplayTitle.js';
-import {TaskGitReviewModal} from '../../task/TaskGitReviewModal.js';
-import {persistPendingConflictAiStart, TaskGitMergeModal} from '../../task/TaskGitMergeModal.js';
-import {TaskModelPushModal, writeTaskModelPushPreferences} from '../../task/TaskModelPushModal.js';
-import {TaskWorkspace} from '../../task/TaskWorkspace.js';
-import {LegacyChatImportSettings} from '../../settings/LegacyChatImportSettings.js';
-import {CodexConfigImportSettings} from '../../settings/CodexConfigImportSettings.js';
-import {BrowserSettingsPane} from '../../settings/BrowserSettingsPane.js';
-import {CodexRemoteControlSettings} from '../../settings/CodexRemoteControlSettings.js';
-import {ModelConnectionsSettingsPane} from '../../settings/ModelConnectionsSettingsPane.js';
-import {ZentaoSettingsPane} from '../../settings/ZentaoSettingsPane.js';
-import {TaskManagementStatusEditor} from '../../settings/TaskManagementStatusEditor.js';
-import {CodexUsageSettingsPane} from '../../settings/CodexUsageSettingsPane.js';
-import {MemorySettingsPane} from '../memory/MemorySettingsPane.js';
-import {DigitalEmployeeTemplatesSettings} from '../digital-employees/DigitalEmployeeTemplatesSettings.js';
-import {ProjectDigitalEmployeesPanel} from '../digital-employees/ProjectDigitalEmployeesPanel.js';
-import {SkillsWorkspace} from '../skills/SkillsWorkspace.js';
-import {defaultTaskTableEnumSortOrders, normalizeTaskTableEnumSortOrders} from '../../task/taskWorkspaceModel.js';
-import {ZeusSelect} from '../../ZeusSelect.js';
-import {Button} from '../../ui/Button.js';
-import {ModalPortal} from '../../ui/ModalPortal.js';
-import {taskAgentRunStatusLabels} from '../../task/TaskRunStatusChip.js';
-import {WorkspaceDrawer} from '../../ui/WorkspaceDrawer.js';
-import {CommandCenterPanel} from '../../CommandCenterPanel.js';
-import {ProjectSourceWorkspace} from '../../code/ProjectSourceWorkspace.js';
+import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
+import { openAutomaticUpdateIndicatorInMain } from '../../appShellBridge.js';
+import { ProjectGitWorkbench } from '../../git/ProjectGitWorkbench.js';
+import { conversationDisplayTitle } from '../../session/conversationDisplayTitle.js';
+import { TaskGitReviewModal } from '../../task/TaskGitReviewModal.js';
+import { persistPendingConflictAiStart, TaskGitMergeModal } from '../../task/TaskGitMergeModal.js';
+import { TaskModelPushModal, writeTaskModelPushPreferences } from '../../task/TaskModelPushModal.js';
+import { TaskWorkspace } from '../../task/TaskWorkspace.js';
+import { LegacyChatImportSettings } from '../../settings/LegacyChatImportSettings.js';
+import { CodexConfigImportSettings } from '../../settings/CodexConfigImportSettings.js';
+import { BrowserSettingsPane } from '../../settings/BrowserSettingsPane.js';
+import { CodexRemoteControlSettings } from '../../settings/CodexRemoteControlSettings.js';
+import { ModelConnectionsSettingsPane } from '../../settings/ModelConnectionsSettingsPane.js';
+import { ZentaoSettingsPane } from '../../settings/ZentaoSettingsPane.js';
+import { TaskManagementStatusEditor } from '../../settings/TaskManagementStatusEditor.js';
+import { CodexUsageSettingsPane } from '../../settings/CodexUsageSettingsPane.js';
+import { MemorySettingsPane } from '../memory/MemorySettingsPane.js';
+import { DigitalEmployeeTemplatesSettings } from '../digital-employees/DigitalEmployeeTemplatesSettings.js';
+import { ProjectDigitalEmployeesPanel } from '../digital-employees/ProjectDigitalEmployeesPanel.js';
+import { SkillsWorkspace } from '../skills/SkillsWorkspace.js';
+import { defaultTaskTableEnumSortOrders, normalizeTaskTableEnumSortOrders } from '../../task/taskWorkspaceModel.js';
+import { ZeusSelect } from '../../ZeusSelect.js';
+import { Button } from '../../ui/Button.js';
+import { ModalPortal } from '../../ui/ModalPortal.js';
+import { taskAgentRunStatusLabels } from '../../task/TaskRunStatusChip.js';
+import { WorkspaceDrawer } from '../../ui/WorkspaceDrawer.js';
+import { CommandCenterPanel } from '../../CommandCenterPanel.js';
+import { ProjectSourceWorkspace } from '../../code/ProjectSourceWorkspace.js';
 import {
-    formatRuntimeAdapterDetectionFacts,
-    formatRuntimeDefaultArgs,
-    formatRuntimeTerminalEnv,
-    InlineRecoveryPrompt,
-    normalizeRuntimeSettingNumber,
-    parseRuntimeDefaultArgsText,
-    parseRuntimeTerminalEnvText,
-    ProjectCreateDialog,
-    ProjectWorkspaceModeToolbar,
-    SidebarNav,
+  formatRuntimeAdapterDetectionFacts,
+  formatRuntimeDefaultArgs,
+  formatRuntimeTerminalEnv,
+  InlineRecoveryPrompt,
+  normalizeRuntimeSettingNumber,
+  parseRuntimeDefaultArgsText,
+  parseRuntimeTerminalEnvText,
+  ProjectCreateDialog,
+  ProjectWorkspaceModeToolbar,
+  SidebarNav,
 } from './WorkspaceChrome.js';
-import {formatGraphConversationStatus, GENERIC_SHELL_CRITICAL_CONFIRMATION_PHRASE} from './workspaceFormatters.js';
-import {handleInlineRailKeyboardNavigation, RuntimeXtermPane} from '../graph/GraphCanvas.js';
+import { formatGraphConversationStatus, GENERIC_SHELL_CRITICAL_CONFIRMATION_PHRASE } from './workspaceFormatters.js';
+import { handleInlineRailKeyboardNavigation, RuntimeXtermPane } from '../graph/GraphCanvas.js';
 import {
-    browserNativeConversationStartStorage,
-    controlBusyProps,
-    executionHostSupportsConversationSource,
-    formatArchivedConversationDate,
-    formatConfiguredTaskManagementStatus,
-    formatReleaseArtifactKind,
-    formatReleaseAutoUpdateLabel,
-    formatReleasePresenceStatus,
-    formatReleaseUpdateChannel,
-    formatReleaseUpdateLabel,
-    formatReleaseUpdateReason,
-    formatReleaseWaitingForItems,
-    formatRuntimeAdapterDisplayName,
-    formatRuntimeSessionStatus,
-    NativeControlRow,
-    NativeSettingsPane,
-    PROJECT_SIDEBAR_MIN_WIDTH,
-    ProjectArchiveWorkbench,
-    type SettingsCategory,
-    TaskCreateModal,
-    TaskDeleteRelationshipDialog,
-    TaskEnumOrderEditor,
-    taskHierarchyDepth,
-    TaskTableLayoutDecisionDialog,
-    TaskTerminalCleanupDialog,
+  browserNativeConversationStartStorage,
+  controlBusyProps,
+  executionHostSupportsConversationSource,
+  formatArchivedConversationDate,
+  formatConfiguredTaskManagementStatus,
+  formatReleaseArtifactKind,
+  formatReleaseAutoUpdateLabel,
+  formatReleasePresenceStatus,
+  formatReleaseUpdateChannel,
+  formatReleaseUpdateLabel,
+  formatReleaseUpdateReason,
+  formatReleaseWaitingForItems,
+  formatRuntimeAdapterDisplayName,
+  formatRuntimeSessionStatus,
+  NativeControlRow,
+  NativeSettingsPane,
+  PROJECT_SIDEBAR_MIN_WIDTH,
+  ProjectArchiveWorkbench,
+  type SettingsCategory,
+  TaskCreateModal,
+  TaskDeleteRelationshipDialog,
+  TaskEnumOrderEditor,
+  taskHierarchyDepth,
+  TaskTableLayoutDecisionDialog,
+  TaskTerminalCleanupDialog,
 } from './workspaceSupport.js';
-import type {WorkspaceQueryState} from './useWorkspaceQueryState.js';
-import type {WorkspaceDomainActions} from './useWorkspaceDomainActions.js';
-import type {WorkspaceOperations} from './useWorkspaceOperations.js';
+import type { WorkspaceQueryState } from './useWorkspaceQueryState.js';
+import type { WorkspaceDomainActions } from './useWorkspaceDomainActions.js';
+import type { WorkspaceOperations } from './useWorkspaceOperations.js';
 
 export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions: WorkspaceDomainActions; operations: WorkspaceOperations }) {
   const { state, domainActions, operations } = input;
@@ -217,7 +217,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     snapshot,
     sourceWorkspaceLeaveDialogOpen,
     sourceWorkspaceSaveBusy,
-      storageRecoveryFault,
+    storageRecoveryFault,
     taskBoardLoadState,
     taskBoardSnapshots,
     taskBulkActionStatus,
@@ -307,7 +307,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     resolveTaskTerminalCleanupConfirmation,
     restoreProject,
     restoreTaskConversation,
-      runStorageRecoveryPreflightAndRestart,
+    runStorageRecoveryPreflightAndRestart,
     revealProjectInFinder,
     selectNativeConversation,
     selectProjectCodeWorkspaceMode,
@@ -432,47 +432,47 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           <span>{appShellSettings.appLanguage === 'zh-CN' ? '正在同步会话状态' : 'Syncing conversation status'}</span>
         </output>
       ) : null}
-        {storageRecoveryFault ? (
-            <InlineRecoveryPrompt
-                className="storage-recovery-prompt"
-                title={
-                    storageRecoveryFault.phase === 'failed'
-                        ? appShellSettings.appLanguage === 'zh-CN'
-                            ? '存储恢复未完成'
-                            : 'Storage recovery did not complete'
-                        : appShellSettings.appLanguage === 'zh-CN'
-                            ? '存储已停止写入'
-                            : 'Storage writes have stopped'
-                }
-                body={
-                    appShellSettings.appLanguage === 'zh-CN'
-                        ? storageRecoveryFault.readsAvailable
-                            ? 'Zeus 仍可读取现有数据。检查通过后将重启全部相关进程。'
-                            : 'Zeus 已停止读写。检查通过后将重启全部相关进程。'
-                        : storageRecoveryFault.readsAvailable
-                            ? 'Existing data is still readable. Zeus will restart all related processes after the check succeeds.'
-                            : 'Reads and writes have stopped. Zeus will restart all related processes after the check succeeds.'
-                }
-                actions={[
-                    {
-                        label:
-                            storageRecoveryFault.phase === 'running'
-                                ? appShellSettings.appLanguage === 'zh-CN'
-                                    ? '正在检查'
-                                    : 'Checking'
-                                : storageRecoveryFault.phase === 'failed'
-                                    ? appShellSettings.appLanguage === 'zh-CN'
-                                        ? '重新检查'
-                                        : 'Check again'
-                                    : appShellSettings.appLanguage === 'zh-CN'
-                                        ? '检查并重启'
-                                        : 'Check and restart',
-                        onAction: () => void runStorageRecoveryPreflightAndRestart(),
-                        busy: storageRecoveryFault.phase === 'running',
-                        disabled: storageRecoveryFault.phase === 'running',
-                    },
-                ]}
-            />
+      {storageRecoveryFault ? (
+        <InlineRecoveryPrompt
+          className="storage-recovery-prompt"
+          title={
+            storageRecoveryFault.phase === 'failed'
+              ? appShellSettings.appLanguage === 'zh-CN'
+                ? '存储恢复未完成'
+                : 'Storage recovery did not complete'
+              : appShellSettings.appLanguage === 'zh-CN'
+                ? '存储已停止写入'
+                : 'Storage writes have stopped'
+          }
+          body={
+            appShellSettings.appLanguage === 'zh-CN'
+              ? storageRecoveryFault.readsAvailable
+                ? 'Zeus 仍可读取现有数据。检查通过后将重启全部相关进程。'
+                : 'Zeus 已停止读写。检查通过后将重启全部相关进程。'
+              : storageRecoveryFault.readsAvailable
+                ? 'Existing data is still readable. Zeus will restart all related processes after the check succeeds.'
+                : 'Reads and writes have stopped. Zeus will restart all related processes after the check succeeds.'
+          }
+          actions={[
+            {
+              label:
+                storageRecoveryFault.phase === 'running'
+                  ? appShellSettings.appLanguage === 'zh-CN'
+                    ? '正在检查'
+                    : 'Checking'
+                  : storageRecoveryFault.phase === 'failed'
+                    ? appShellSettings.appLanguage === 'zh-CN'
+                      ? '重新检查'
+                      : 'Check again'
+                    : appShellSettings.appLanguage === 'zh-CN'
+                      ? '检查并重启'
+                      : 'Check and restart',
+              onAction: () => void runStorageRecoveryPreflightAndRestart(),
+              busy: storageRecoveryFault.phase === 'running',
+              disabled: storageRecoveryFault.phase === 'running',
+            },
+          ]}
+        />
       ) : null}
       <ProjectCreateDialog
         open={projectCreateDialogOpen}

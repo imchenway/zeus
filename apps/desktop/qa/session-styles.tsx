@@ -1,51 +1,39 @@
-import React, {useEffect, useLayoutEffect, useState} from 'react';
-import {createRoot, type Root} from 'react-dom/client';
-import {ArrowsClockwiseIcon as ArrowsClockwise} from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
-import {GlobeSimpleIcon as GlobeSimple} from '@phosphor-icons/react/dist/csr/GlobeSimple';
+import React, { useEffect, useLayoutEffect, useState } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
+import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import '../src/renderer/styles.css';
 import '../src/renderer/session/session.css';
 import './session-styles.css';
-import type {ConversationResource, ConversationResourcePreview} from '@zeus/shared';
-import {PendingRequestSurface} from '../src/renderer/session/PendingRequestSurface.js';
-import {
-    type ConversationTreeRuntimeState,
-    type ProjectConversationGroup,
-    ProjectConversationTree
-} from '../src/renderer/session/ProjectConversationTree.js';
+import type { ConversationResource, ConversationResourcePreview } from '@zeus/shared';
+import { PendingRequestSurface } from '../src/renderer/session/PendingRequestSurface.js';
+import { type ConversationTreeRuntimeState, type ProjectConversationGroup, ProjectConversationTree } from '../src/renderer/session/ProjectConversationTree.js';
 import type {
-    CodexTaskPushCapabilities,
-    NativeConversationAttachment,
-    NativeConversationChoice,
-    NativePendingRequest,
-    NativeQueuedSubmission,
-    NativeRuntimeDetailsSnapshot,
-    NativeSessionItemBuffer,
-    NativeSessionState,
-    NativeSubagentListSnapshot,
-    NativeSubagentThreadSnapshot,
+  CodexTaskPushCapabilities,
+  NativeConversationAttachment,
+  NativeConversationChoice,
+  NativePendingRequest,
+  NativeQueuedSubmission,
+  NativeRuntimeDetailsSnapshot,
+  NativeSessionItemBuffer,
+  NativeSessionState,
+  NativeSubagentListSnapshot,
+  NativeSubagentThreadSnapshot,
 } from '../src/renderer/session/sessionTypes.js';
-import {SafeMarkdown, ThreadItemView} from '../src/renderer/session/ThreadItemView.js';
-import {ConversationTranscript} from '../src/renderer/session/ConversationTranscript.js';
-import {BrowserWorkspace} from '../src/renderer/session/BrowserWorkspace.js';
-import {ConversationComposer} from '../src/renderer/session/ConversationComposer.js';
-import {PlanSummary} from '../src/renderer/session/PlanSummary.js';
-import {RuntimeDetails} from '../src/renderer/session/RuntimeDetails.js';
-import {SubagentWorkspace} from '../src/renderer/session/SubagentWorkspace.js';
-import {defaultSourceWorkspaceViewMode, SourceWorkspace} from '../src/renderer/session/SourceWorkspace.js';
-import {SessionPlanProgress} from '../src/renderer/session/SessionActivity.js';
-import {createInitialSessionState, sessionReducer} from '../src/renderer/session/sessionReducer.js';
-import {resolveNativeConversationSelectionPresentation} from '../src/renderer/features/workspace/workspaceSupport.js';
-import {
-    ApplicationErrorDialogHost,
-    reportApplicationError,
-    VisibleApplicationError
-} from '../src/renderer/ui/ApplicationErrorDialog.js';
-import type {TaskRecord} from '../src/renderer/apiClient.js';
-import {
-    type TaskModelPushForm,
-    TaskModelPushModal,
-    type TaskModelPushModalStatus
-} from '../src/renderer/task/TaskModelPushModal.js';
+import { SafeMarkdown, ThreadItemView } from '../src/renderer/session/ThreadItemView.js';
+import { ConversationTranscript } from '../src/renderer/session/ConversationTranscript.js';
+import { BrowserWorkspace } from '../src/renderer/session/BrowserWorkspace.js';
+import { ConversationComposer } from '../src/renderer/session/ConversationComposer.js';
+import { PlanSummary } from '../src/renderer/session/PlanSummary.js';
+import { RuntimeDetails } from '../src/renderer/session/RuntimeDetails.js';
+import { SubagentWorkspace } from '../src/renderer/session/SubagentWorkspace.js';
+import { defaultSourceWorkspaceViewMode, SourceWorkspace } from '../src/renderer/session/SourceWorkspace.js';
+import { SessionPlanProgress } from '../src/renderer/session/SessionActivity.js';
+import { createInitialSessionState, sessionReducer } from '../src/renderer/session/sessionReducer.js';
+import { resolveNativeConversationSelectionPresentation } from '../src/renderer/features/workspace/workspaceSupport.js';
+import { ApplicationErrorDialogHost, reportApplicationError, VisibleApplicationError } from '../src/renderer/ui/ApplicationErrorDialog.js';
+import type { TaskRecord } from '../src/renderer/apiClient.js';
+import { type TaskModelPushForm, TaskModelPushModal, type TaskModelPushModalStatus } from '../src/renderer/task/TaskModelPushModal.js';
 
 declare global {
   interface Window {
@@ -1516,8 +1504,8 @@ function ErrorContractPreview() {
   return (
     <section className="qa-motion-send-preview session-codex-parity-v1" data-testid="error-contract-preview">
       <div>
-          <h3>运行期错误日志</h3>
-          <small>业务位置只显示稳定的人话，技术错误经脱敏后写入本机运行日志，不再弹窗或遮挡应用。</small>
+        <h3>运行期错误日志</h3>
+        <small>业务位置只显示稳定的人话，技术错误经脱敏后写入本机运行日志，不再弹窗或遮挡应用。</small>
       </div>
       <div className="qa-error-contract-lines">
         {errorContractFixtures.map((error) => (
@@ -1528,11 +1516,10 @@ function ErrorContractPreview() {
       </div>
       <div className="qa-motion-fixture-actions">
         <button type="button" data-testid="error-dialog-trigger" onClick={() => reportApplicationError(errorContractFixtures[0], { language: 'zh-CN' })}>
-            记录普通错误
+          记录普通错误
         </button>
-          <button type="button" data-testid="fatal-error-dialog-trigger"
-                  onClick={() => reportApplicationError(new Error('Renderer crashed while rendering workspace.'), {language: 'zh-CN'})}>
-              记录渲染错误
+        <button type="button" data-testid="fatal-error-dialog-trigger" onClick={() => reportApplicationError(new Error('Renderer crashed while rendering workspace.'), { language: 'zh-CN' })}>
+          记录渲染错误
         </button>
       </div>
     </section>

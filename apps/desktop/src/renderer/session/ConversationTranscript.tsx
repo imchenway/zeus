@@ -1,51 +1,32 @@
-import {Fragment, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
-import {motion, useReducedMotion} from 'framer-motion';
-import {
-    activityCategory,
-    isActiveSessionTurn,
-    isLiveActivityItem,
-    isOperationalActivityItem,
-    type SessionActivityCategory,
-    SessionActivityGroup,
-    SessionTurnDuration,
-    SessionTurnProcessDisclosure
-} from './SessionActivity.js';
-import {itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText} from './ThreadItemView.js';
-import {PlanSummary} from './PlanSummary.js';
+import { Fragment, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { motion, useReducedMotion } from 'framer-motion';
+import { activityCategory, isActiveSessionTurn, isLiveActivityItem, isOperationalActivityItem, type SessionActivityCategory, SessionActivityGroup, SessionTurnDuration, SessionTurnProcessDisclosure } from './SessionActivity.js';
+import { itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText } from './ThreadItemView.js';
+import { PlanSummary } from './PlanSummary.js';
 import type {
-    ConversationResource,
-    ConversationResourcePreview,
-    NativeConversationContentV2Page,
-    NativeConversationToolResultPage,
-    NativePendingRequest,
-    NativeQueueSnapshot,
-    NativeSessionError,
-    NativeSessionItemBuffer,
-    NativeSessionState,
-    NativeTurnFailureSnapshot,
-    TurnChangeSet,
-    TurnChangeSetOperationResult,
+  ConversationResource,
+  ConversationResourcePreview,
+  NativeConversationContentV2Page,
+  NativeConversationToolResultPage,
+  NativePendingRequest,
+  NativeQueueSnapshot,
+  NativeSessionError,
+  NativeSessionItemBuffer,
+  NativeSessionState,
+  NativeTurnFailureSnapshot,
+  TurnChangeSet,
+  TurnChangeSetOperationResult,
 } from './sessionTypes.js';
-import {isAssistantDeliverableItem} from './sessionTypes.js';
-import type {
-    ConversationFileLocation,
-    ConversationOpenTarget,
-    ConversationResponseAnnotation,
-    ConversationResponseTextAnchor
-} from '@zeus/shared';
-import {useThreadScrollController} from './useThreadScrollController.js';
-import {TurnChangeCard} from './TurnChanges.js';
-import {reasoningSummaryStatus, SessionReasoningSummary} from './SessionReasoningSummary.js';
-import {AnsweredRequestHistory, isAnsweredUserInputRequest} from './AnsweredRequestHistory.js';
-import {useNewItemMotionIds} from '../ui/useNewItemMotion.js';
-import {
-    captureTranscriptViewportAnchor,
-    compensateTranscriptViewportAnchor,
-    type TranscriptViewportAnchor,
-    useTranscriptViewportVirtualizer
-} from './transcriptViewportVirtualizer.js';
-import {VisibleApplicationError} from '../ui/ApplicationErrorDialog.js';
-import {isImageResource} from './ConversationResources.js';
+import { isAssistantDeliverableItem } from './sessionTypes.js';
+import type { ConversationFileLocation, ConversationOpenTarget, ConversationResponseAnnotation, ConversationResponseTextAnchor } from '@zeus/shared';
+import { useThreadScrollController } from './useThreadScrollController.js';
+import { TurnChangeCard } from './TurnChanges.js';
+import { reasoningSummaryStatus, SessionReasoningSummary } from './SessionReasoningSummary.js';
+import { AnsweredRequestHistory, isAnsweredUserInputRequest } from './AnsweredRequestHistory.js';
+import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
+import { captureTranscriptViewportAnchor, compensateTranscriptViewportAnchor, type TranscriptViewportAnchor, useTranscriptViewportVirtualizer } from './transcriptViewportVirtualizer.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { isImageResource } from './ConversationResources.js';
 
 export interface ConversationTranscriptProps {
   state: NativeSessionState;
@@ -1285,8 +1266,8 @@ function isTurnProcessRow(row: TranscriptRow): boolean {
   if (row.kind === 'activity') return true;
   // 计划和明确交付资源属于最终产物，必须独立展示，不能折叠进“已处理”过程。
   if (row.item.type === 'plan' || isAssistantDeliverableItem(row.item)) return false;
-    // 只有缺少 phase 的旧 assistant 正文才走兼容兜底；明确 prework 必须留在处理过程。
-    if (row.item.type === 'agentMessage' && itemRole(row.item) === 'assistant' && !itemProviderPhase(row.item)) return false;
+  // 只有缺少 phase 的旧 assistant 正文才走兼容兜底；明确 prework 必须留在处理过程。
+  if (row.item.type === 'agentMessage' && itemRole(row.item) === 'assistant' && !itemProviderPhase(row.item)) return false;
   return itemRole(row.item) !== 'user' && !isFinalAnswerItem(row.item);
 }
 
@@ -1331,12 +1312,12 @@ function transcriptRowContainsItemKey(row: TranscriptRow, itemKey: string | unde
 }
 
 export function isFinalAnswerItem(item: NativeSessionItemBuffer): boolean {
-    const providerPhase = itemProviderPhase(item);
+  const providerPhase = itemProviderPhase(item);
   return itemRole(item) === 'assistant' && (providerPhase === 'final_answer' || providerPhase === 'finalAnswer');
 }
 
 function itemProviderPhase(item: NativeSessionItemBuffer): string {
-    return typeof item.payload.phase === 'string' ? item.payload.phase : item.phase;
+  return typeof item.payload.phase === 'string' ? item.payload.phase : item.phase;
 }
 
 export function projectTranscriptRows(
