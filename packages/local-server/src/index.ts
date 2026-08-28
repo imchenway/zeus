@@ -1854,6 +1854,34 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     }
     if (recovered) await db.save();
   };
+  const reconcilePausedTurnsAfterRestart = async () => {
+    const interruptedAt = now().toISOString();
+    let repaired = false;
+    for (const turn of conversationTurns.listInProgress()) {
+      if (turn.status !== 'dispatching' && turn.status !== 'running' && turn.status !== 'waiting') continue;
+      const conversation = conversations.getById(turn.conversationId);
+      if (!conversation || conversation.providerState !== 'paused') continue;
+      const failure = {
+        code: 'ZEUS_TURN_INTERRUPTED_AFTER_RESTART',
+        message: 'Zeus 重启后确认该轮已暂停，旧运行状态已收口为中断。',
+      };
+      conversationTurns.upsert({
+        ...turn,
+        status: 'interrupted',
+        error: failure,
+        completedAt: interruptedAt,
+        updatedAt: interruptedAt,
+      });
+      conversationExecution.persistWarning({
+        conversationId: turn.conversationId,
+        warningKind: 'stale_active_turn_interrupted_after_restart',
+        payload: { turnId: turn.id, providerTurnId: turn.providerTurnId },
+        occurredAt: interruptedAt,
+      });
+      repaired = true;
+    }
+    if (repaired) await db.save();
+  };
   traceStartup('codex_coordinator_ready');
   if (executionHostDispatchMayResume && codexNativeEnabled && codexRemoteControlEnabled) {
     void codexAppServerManager
@@ -1949,45 +1977,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   };
   if (executionHostDispatchMayResume) await turnChangeSetService.recoverInterruptedOperations();
   traceStartup('turn_changes_ready');
-  if (
-    executionHostDispatchMayResume &&
-    codexNativeEnabled &&
-    (conversations.listNativeBoundRecords('codex').length > 0 ||
-      conversationSubmissions.listRecoverable().some((submission) => conversations.getRecordById(submission.conversationId)?.agentKind === 'codex' && (submission.status === 'dispatching' || submission.status === 'active')))
-  ) {
-    try {
-      await codexNativeCoordinator.recover();
-    } catch (recoveryError) {
-      const claimedRecoveryError = claimCodexFinalizationOwnership(recoveryError);
-      const cleanupErrors: unknown[] = [];
-      try {
-        await codexNativeCoordinator.close({ mode: 'final' });
-      } catch (error) {
-        cleanupErrors.push(error);
-      }
-      try {
-        await server.close();
-      } catch (error) {
-        cleanupErrors.push(error);
-      }
-      if (ownsCodexAppServerManager) {
-        try {
-          await codexAppServerManager.prepareForShutdown();
-        } catch (error) {
-          cleanupErrors.push(error);
-        }
-        try {
-          await codexAppServerManager.close();
-        } catch (error) {
-          cleanupErrors.push(error);
-        }
-      }
-      if (cleanupErrors.length > 0) throw claimCodexFinalizationOwnership(new AggregateError([claimedRecoveryError, ...cleanupErrors], 'Zeus native recovery and cleanup failed.'));
-      throw claimedRecoveryError;
-    }
-  }
-  traceStartup('codex_recovery_ready');
-
   function recordTaskEvent(input: CreateTaskEventInput) {
     const event = taskEvents.create(input);
     taskEventFileProjectionOutbox.enqueue(event.taskId, event.id, event.createdAt);
@@ -3367,6 +3356,47 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   conversationCapabilityQueries = platformRoutes.conversationCapabilityQueries;
   const { commandCenter } = platformRoutes;
 
+  // 恢复过程可能立即发布 queue.changed。事件投影依赖 platformRoutes 提供的队列序列化器，
+  // 必须在组合根完成初始化后再恢复；否则启动期派发失败会触发 TDZ 并让整个 Core 退出。
+  if (
+    executionHostDispatchMayResume &&
+    codexNativeEnabled &&
+    (conversations.listNativeBoundRecords('codex').length > 0 ||
+      conversationSubmissions.listRecoverable().some((submission) => conversations.getRecordById(submission.conversationId)?.agentKind === 'codex' && (submission.status === 'dispatching' || submission.status === 'active')))
+  ) {
+    try {
+      await codexNativeCoordinator.recover();
+    } catch (recoveryError) {
+      const claimedRecoveryError = claimCodexFinalizationOwnership(recoveryError);
+      const cleanupErrors: unknown[] = [];
+      try {
+        await codexNativeCoordinator.close({ mode: 'final' });
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      try {
+        await server.close();
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      if (ownsCodexAppServerManager) {
+        try {
+          await codexAppServerManager.prepareForShutdown();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+        try {
+          await codexAppServerManager.close();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+      if (cleanupErrors.length > 0) throw claimCodexFinalizationOwnership(new AggregateError([claimedRecoveryError, ...cleanupErrors], 'Zeus native recovery and cleanup failed.'));
+      throw claimedRecoveryError;
+    }
+  }
+  traceStartup('codex_recovery_ready');
+
   // 先核对“请求已写出但 turn/start 回执丢失”的候选 thread；只有原生 turn 与
   // clientUserMessageId 同时吻合时才补交提升事务，其他情况保持结果未知和队列锁。
   // Pi 运行内核随 Zeus 进程结束，重启时必须把已接纳但未终结的轮次显式收敛为中断。
@@ -3380,6 +3410,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       );
     }
     await recoverAcceptedPiTurnsAfterRestart();
+    await reconcilePausedTurnsAfterRestart();
     await recoverUnifiedOutcomeUnknownSwitches();
   }
   if (!readOnlyValidation) conversationExecution.setDispatchEnabled(executionHostDispatchMayResume);

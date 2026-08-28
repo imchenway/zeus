@@ -88,8 +88,8 @@ async function main() {
   await ensureReleaseNotes(releaseState);
   announceReleaseStage('写入版本并创建发布提交');
   await ensureReleaseCommit(releaseState);
-  announceReleaseStage('执行本地快速发布门禁');
-  ensureFastLocalGate(releaseState);
+  announceReleaseStage('执行本地阻塞级发布门禁');
+  await ensureFastLocalGate(releaseState);
   announceReleaseStage('安全推送 main');
   ensureMainPushed(releaseState);
   announceReleaseStage('创建并回验公开发布');
@@ -472,7 +472,7 @@ function rebindUnpublishedReleaseRepair(state, headSha) {
   if (recoveringUnpushedCommit && previousReleaseIsOnRemote) return false;
   const localMainContainsRemote = capture('git', ['merge-base', '--is-ancestor', remoteMainSha, headSha], true).status === 0;
   if (recoveringFailedPushedCommit && (!previousReleaseIsOnRemote || !localMainContainsRemote)) return false;
-  if (recoveringFailedPushedCommit) assertNoActiveReleaseWorkflow(state.releaseCommit, headSha);
+  if (recoveringFailedPushedCommit) assertNoActiveReleaseWorkflow(headSha);
   assertAncestor(state.baseTag, headSha);
   state.sourceHead = headSha;
   state.releaseCommit = headSha;
@@ -486,13 +486,13 @@ function rebindUnpublishedReleaseRepair(state, headSha) {
   return true;
 }
 
-function assertNoActiveReleaseWorkflow(replacedCommit, replacementCommit) {
+function assertNoActiveReleaseWorkflow(replacementCommit) {
   const runs = JSON.parse(gh(['run', 'list', '--repo', repository, '--workflow', 'Release', '--limit', '50', '--json', 'databaseId,status,headSha,url,createdAt']));
   const activeRuns = runs.filter((run) => run.status !== 'completed');
   if (activeRuns.length === 0) return;
 
   const remoteMainSha = resolveRemoteReference('refs/heads/main');
-  const supersededRuns = activeRuns.filter((run) => isSupersededUnstartedReleaseRun(run, replacedCommit, replacementCommit, remoteMainSha));
+  const supersededRuns = activeRuns.filter((run) => isSupersededUnstartedReleaseRun(run, replacementCommit, remoteMainSha));
   const supersededRunIds = new Set(supersededRuns.map((run) => run.databaseId));
   const blockingRuns = activeRuns.filter((run) => !supersededRunIds.has(run.databaseId));
   for (const run of supersededRuns) {
@@ -503,14 +503,26 @@ function assertNoActiveReleaseWorkflow(replacedCommit, replacementCommit) {
   throw new Error(`仍有 Release Workflow 在运行或排队，拒绝重新绑定失败发布候选：\n${details}`);
 }
 
-function isSupersededUnstartedReleaseRun(run, replacedCommit, replacementCommit, remoteMainSha) {
+function isSupersededUnstartedReleaseRun(run, replacementCommit, remoteMainSha) {
   const createdAtMs = Date.parse(run.createdAt ?? '');
-  if (run.status !== 'queued' || run.headSha !== replacedCommit || remoteMainSha !== replacementCommit || !Number.isFinite(createdAtMs) || Date.now() - createdAtMs < releaseWorkflowWaitLimitMs) {
+  // 重新绑定发生在新候选 push 之前；安全链必须是“幽灵提交 < 当前远程 main < 本地新候选”。
+  // 旧 Workflow 即使随后苏醒，也会在公开写入预检中因不再等于 origin/main 而失败。
+  if (
+    run.status !== 'queued' ||
+    !run.headSha ||
+    run.headSha === replacementCommit ||
+    !remoteMainSha ||
+    run.headSha === remoteMainSha ||
+    !Number.isFinite(createdAtMs) ||
+    Date.now() - createdAtMs < releaseWorkflowWaitLimitMs ||
+    capture('git', ['merge-base', '--is-ancestor', run.headSha, remoteMainSha], true).status !== 0 ||
+    capture('git', ['merge-base', '--is-ancestor', remoteMainSha, replacementCommit], true).status !== 0
+  ) {
     return false;
   }
 
   const detail = JSON.parse(gh(['run', 'view', String(run.databaseId), '--repo', repository, '--json', 'databaseId,status,headSha,jobs']));
-  return detail.status === 'queued' && detail.headSha === replacedCommit && Array.isArray(detail.jobs) && detail.jobs.length === 0;
+  return detail.status === 'queued' && detail.headSha === run.headSha && Array.isArray(detail.jobs) && detail.jobs.length === 0;
 }
 
 function validateState(state, stableRelease) {
@@ -561,20 +573,14 @@ function formatReleaseCandidate(state) {
     .sort();
   if (paths.length === 0) return;
 
-  if (state.releaseCommit) {
-    console.log(`\n[检查发布提交格式] Prettier --check（${paths.length} 个文件）`);
-    run('pnpm', ['exec', 'prettier', '--check', '--ignore-path', '.prettierignore', ...paths]);
-    console.log('发布提交格式检查通过。');
-    return;
-  }
-
-  console.log(`\n[自动修复发布候选格式] Prettier --write（${paths.length} 个文件）`);
+  const formattingCommittedCandidate = Boolean(state.releaseCommit);
+  console.log(`\n[自动修复${formattingCommittedCandidate ? '发布提交' : '发布候选'}格式] Prettier --write（${paths.length} 个文件）`);
   run('pnpm', ['exec', 'prettier', '--write', '--ignore-path', '.prettierignore', ...paths]);
-  console.log(`\n[复核发布候选格式] Prettier --check（${paths.length} 个文件）`);
+  console.log(`\n[复核${formattingCommittedCandidate ? '发布提交' : '发布候选'}格式] Prettier --check（${paths.length} 个文件）`);
   run('pnpm', ['exec', 'prettier', '--check', '--ignore-path', '.prettierignore', ...paths]);
   const formattedStatus = git(['status', '--short']);
   if (!formattedStatus) {
-    console.log('发布候选原本已符合格式规范，无需创建格式提交。');
+    console.log(`${formattingCommittedCandidate ? '发布提交' : '发布候选'}原本已符合格式规范，无需创建格式提交。`);
     return;
   }
 
@@ -594,19 +600,30 @@ function formatReleaseCandidate(state) {
     diffArgs: [`${state.baseTag}^{commit}`],
     allowAutoFix: false,
   });
+  const formattedParentExpected = state.releaseCommit ?? state.sourceHead;
   runGit(['add', '--', ...formattedPaths]);
   runGit(['diff', '--cached', '--check', '--', ...formattedPaths]);
-  runGit(['commit', '-m', `style(release): 自动修复 ${state.tag} 候选格式`, '--', ...formattedPaths]);
+  runGit(['commit', '-m', `style(release): 自动修复 ${state.tag} ${formattingCommittedCandidate ? '发布提交' : '候选'}格式`, '--', ...formattedPaths]);
   const formattedHead = git(['rev-parse', 'HEAD']);
   const formattedParent = git(['rev-parse', 'HEAD^']);
-  if (formattedParent !== state.sourceHead) {
-    throw new Error(`自动格式提交父提交不一致：expected=${state.sourceHead} actual=${formattedParent}`);
+  if (formattedParent !== formattedParentExpected) {
+    throw new Error(`自动格式提交父提交不一致：expected=${formattedParentExpected} actual=${formattedParent}`);
   }
   const committedPaths = git(['diff-tree', '--no-commit-id', '--name-only', '-r', formattedHead]).split(/\r?\n/u).filter(Boolean).sort();
   if (JSON.stringify(committedPaths) !== JSON.stringify(formattedPaths)) {
     throw new Error(`自动格式提交包含非预期文件：\n${committedPaths.join('\n')}`);
   }
   if (git(['status', '--short'])) throw new Error('自动格式提交完成后工作区仍有未提交变更。');
+
+  if (formattingCommittedCandidate) {
+    state.releaseCommit = formattedHead;
+    state.gateSummaryPath = null;
+    state.publishResultPath = null;
+    state.phase = 'release_committed';
+    writeState(state);
+    console.log(`发布提交格式已自动修复并提交：${formattedHead.slice(0, 12)}（${formattedPaths.length} 个文件）`);
+    return;
+  }
 
   state.sourceHead = formattedHead;
   state.releaseCommit = null;
@@ -724,7 +741,7 @@ async function ensureCandidatePreflight(state) {
   console.log('快速前置检查通过：候选提交、工作区、Git 候选检查和目标标签均正常。');
 }
 
-function ensureFastLocalGate(state) {
+async function ensureFastLocalGate(state) {
   if (state.gateSummaryPath && existsSync(state.gateSummaryPath)) return;
   assertReleaseHead(state);
   if (resolveLocalTagSha(state.tag) || resolveRemoteReference(`refs/tags/${state.tag}`)) {
@@ -735,6 +752,8 @@ function ensureFastLocalGate(state) {
     diffArgs: [`${state.releaseCommit}^`, state.releaseCommit],
     allowAutoFix: false,
   });
+  // 自动格式化和版本文件都已进入固定候选；必须在任何 main 推送前运行与 CI 相同的阻塞级检查。
+  await runStage('本地阻塞级 TypeScript 检查', 'pnpm', ['typecheck'], process.env);
   const gateDirectory = join(state.stateDirectory, 'gate');
   mkdirSync(gateDirectory, { recursive: true, mode: 0o700 });
   const summaryPath = join(gateDirectory, `Zeus-${state.version}-release-fast-preflight-summary.md`);
@@ -749,7 +768,8 @@ function ensureFastLocalGate(state) {
       '- 工作区：干净。',
       '- 版本文件与 Release notes：已写入固定候选提交。',
       '- Git 空白错误检查：通过。',
-      '- typecheck、正式 DMG 打包、包内容健康检查、hdiutil 与 manifest 对账：交由同一固定提交的 Release Workflow 并行执行。',
+      '- 本地阻塞级 typecheck：通过。',
+      '- 正式 DMG 打包、包内容健康检查、hdiutil 与 manifest 对账：交由同一固定提交的 Release Workflow 执行。',
       '',
     ].join('\n'),
     { mode: 0o600 },
@@ -757,7 +777,7 @@ function ensureFastLocalGate(state) {
   state.gateSummaryPath = summaryPath;
   state.phase = 'gate_passed';
   writeState(state);
-  console.log(`本地快速发布前置检查通过：${summaryPath}`);
+  console.log(`本地阻塞级发布前置检查通过：${summaryPath}`);
 }
 
 function ensureMainPushed(state) {

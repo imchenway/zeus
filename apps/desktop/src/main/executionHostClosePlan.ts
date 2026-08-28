@@ -9,6 +9,9 @@ export interface ExecutionHostCloseResources {
   recordClosed(): Promise<void>;
 }
 
+const executionHostRuntimeCloseTimeoutMs = 20_000;
+const executionHostControlCloseTimeoutMs = 5_000;
+
 /**
  * Execution Host 关闭顺序的唯一组合点。
  *
@@ -21,12 +24,12 @@ export async function closeExecutionHostResources(resources: ExecutionHostCloseR
 
   let runtimeClosed = false;
   try {
-    await resources.closeRuntime();
+    await withCloseTimeout(resources.closeRuntime(), executionHostRuntimeCloseTimeoutMs, 'Core 收尾超过 20 秒');
     runtimeClosed = true;
   } catch (error) {
     errors.push(closeStageError('closeRuntime', error));
   }
-  await attempt('closeControlServer', () => resources.closeControlServer(), errors);
+  await attempt('closeControlServer', () => withCloseTimeout(resources.closeControlServer(), executionHostControlCloseTimeoutMs, '控制服务关闭超过 5 秒'), errors);
 
   if (runtimeClosed) {
     await attempt('removeRendezvous', () => resources.removeRendezvous(), errors);
@@ -46,6 +49,21 @@ export async function closeExecutionHostResources(resources: ExecutionHostCloseR
       .join('; ')
       .slice(0, 2_000);
     throw new AggregateError(errors, `Zeus execution-host shutdown failed: ${detail}`);
+  }
+}
+
+async function withCloseTimeout(operation: Promise<void>, timeoutMs: number, message: string): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      operation,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+        timeout.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
 }
 

@@ -1504,8 +1504,8 @@ function ErrorContractPreview() {
   return (
     <section className="qa-motion-send-preview session-codex-parity-v1" data-testid="error-contract-preview">
       <div>
-        <h3>全应用错误直出</h3>
-        <small>每个出口只有脱敏后的一行“错误码: 原始消息”；全局弹窗只保留必要操作。</small>
+        <h3>运行期错误日志</h3>
+        <small>业务位置只显示稳定的人话，技术错误经脱敏后写入本机运行日志，不再弹窗或遮挡应用。</small>
       </div>
       <div className="qa-error-contract-lines">
         {errorContractFixtures.map((error) => (
@@ -1516,14 +1516,10 @@ function ErrorContractPreview() {
       </div>
       <div className="qa-motion-fixture-actions">
         <button type="button" data-testid="error-dialog-trigger" onClick={() => reportApplicationError(errorContractFixtures[0], { language: 'zh-CN' })}>
-          打开全局错误弹窗
+          记录普通错误
         </button>
-        <button
-          type="button"
-          data-testid="fatal-error-dialog-trigger"
-          onClick={() => reportApplicationError(new Error('Renderer crashed while rendering workspace.'), { language: 'zh-CN', primaryAction: { label: '刷新窗口', run: () => undefined } })}
-        >
-          模拟致命错误
+        <button type="button" data-testid="fatal-error-dialog-trigger" onClick={() => reportApplicationError(new Error('Renderer crashed while rendering workspace.'), { language: 'zh-CN' })}>
+          记录渲染错误
         </button>
       </div>
     </section>

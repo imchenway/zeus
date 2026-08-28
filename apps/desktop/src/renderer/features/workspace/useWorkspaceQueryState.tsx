@@ -24,6 +24,7 @@ import {
   type TaskWorkspaceViewMode,
 } from '../../task/taskWorkspaceModel.js';
 import { useApplicationErrorDialog } from '../../ui/ApplicationErrorDialog.js';
+import type { StorageRecoveryFaultState } from '../../storageRecoveryError.js';
 import { createSessionOperationId } from '../../sessionOperationIdentity.js';
 import { type ProjectSourceWorkspaceHandle } from '../../code/ProjectSourceWorkspace.js';
 import {
@@ -123,8 +124,8 @@ import {
   readProjectSidebarPreferredWidth,
   readSettingsCategoryFromHash,
   resolveConversationNavigationId,
-  resolveNativeConversationSelectionPresentation,
   resolveInitialGraphProjectId,
+  resolveNativeConversationSelectionPresentation,
   resolveSelectedNativeConversationForProject,
   resolveTaskManagementStatusConfig,
   resolveTaskStatusFilterForProject,
@@ -715,6 +716,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const scanActionBusy = scanState === 'scanning';
   const releaseUpdateBusy = releaseUpdateCheckState === 'loading';
   const [localError, setLocalError] = useState<LocalUiErrorSnapshot | undefined>(() => normalizeLocalUiError(props.initialLocalError));
+  const [storageRecoveryFault, setStorageRecoveryFault] = useState<StorageRecoveryFaultState | null>(null);
   useApplicationErrorDialog(localError?.message, {
     language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en',
   });
@@ -1607,6 +1609,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     setSourceWorkspaceDirty,
     setSourceWorkspaceLeaveDialogOpen,
     setSourceWorkspaceSaveBusy,
+    setStorageRecoveryFault,
     setTaskBoardSnapshots,
     setTaskBulkActionStatus,
     setTaskConversationDrawerTarget,
@@ -1659,6 +1662,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     sourceWorkspaceDirty,
     sourceWorkspaceLeaveDialogOpen,
     sourceWorkspaceSaveBusy,
+    storageRecoveryFault,
     taskBoardLoadState,
     taskBoardSnapshots,
     taskBulkActionStatus,

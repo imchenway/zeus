@@ -40,9 +40,10 @@ export class ExecutionHostMutationAdmissionFence {
           (request.method === 'GET' && pathname === '/api/execution-host/status') ||
           (request.method === 'GET' && /^\/api\/execution-host\/handoff\/[^/]+\/prepared$/u.test(pathname));
         if (allowedControlRequest) return;
+        const recoveryRequired = this.currentState === 'recovery_required';
         await reply.code(503).send({
-          error: 'ZEUS_EXECUTION_HOST_DRAINING',
-          message: 'Zeus Core 正在执行持久化升级交接；新的副作用请求已停止接纳。',
+          error: recoveryRequired ? 'ZEUS_EXECUTION_HOST_RECOVERY_REQUIRED' : 'ZEUS_EXECUTION_HOST_DRAINING',
+          message: recoveryRequired ? 'Zeus 上次未能完整退出，已停止继续执行会话。' : 'Zeus 正在完成更新，请稍后重试。',
           handoffState: this.currentState,
         });
         return;

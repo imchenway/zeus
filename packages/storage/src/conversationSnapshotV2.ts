@@ -1,6 +1,6 @@
 import type { ZeusDatabasePort } from './databasePort.js';
 import { type ArtifactRef, type ArtifactStore, artifactStoreGeneration } from './artifactStore.js';
-import { conversationSchemaGeneration, readConversationSessionMetrics, type ConversationSessionMetricsSnapshot } from './conversationExecutionStore.js';
+import { conversationSchemaGeneration, type ConversationSessionMetricsSnapshot, readConversationSessionMetrics } from './conversationExecutionStore.js';
 
 export const conversationSnapshotV2StructureGeneration = '2026-08-21-conversation-snapshot-v2';
 
@@ -533,7 +533,10 @@ export class ConversationSnapshotV2Repository {
 
     // 每个状态只从既有 (conversation_id, status, created_at, id) 索引取少量候选，
     // 避免离线热索引尚未切换时为 IN + 跨状态排序扫描全部历史 turn。
-    const activeTurn = this.latestTurnsByStatus(conversationId, ['running', 'dispatching', 'waiting'], 1)[0];
+    // 历史异常退出可能留下 running turn，但 provider_state 已由恢复流程收口为 paused。
+    // 两份权威状态必须同时表明正在执行，Snapshot 才能向界面暴露 activeTurn。
+    const activeTurnCandidate = this.latestTurnsByStatus(conversationId, ['running', 'dispatching', 'waiting'], 1)[0];
+    const activeTurn = conversation.provider_state === 'active' || conversation.provider_state === 'waiting' ? activeTurnCandidate : undefined;
     const recentClosedTurns = this.latestTurnsByStatus(conversationId, ['completed', 'interrupted', 'failed'], closedTurnLimit);
     const stream = this.db.get<{ generation_id: string; latest_sequence: number }>(
       `SELECT generation_id, latest_sequence
@@ -623,9 +626,15 @@ export class ConversationSnapshotV2Repository {
 
   readSessionMetrics(conversationIdValue: string): ConversationSessionMetricsSnapshot {
     const conversationId = requiredIdentity(conversationIdValue, 'conversationId');
-    const present = this.db.get<{ present: number }>(`SELECT 1 AS present FROM conversations WHERE id = ?`, [conversationId]);
-    if (!present) throw snapshotError('ZEUS_CONVERSATION_SNAPSHOT_V2_NOT_FOUND', '会话不存在。', 404);
-    const activeTurn = this.latestTurnsByStatus(conversationId, ['running', 'dispatching', 'waiting'], 1)[0];
+    const conversation = this.db.get<{ provider_state: string }>(
+      `SELECT provider_state
+                                                                    FROM conversations
+                                                                    WHERE id = ?`,
+      [conversationId],
+    );
+    if (!conversation) throw snapshotError('ZEUS_CONVERSATION_SNAPSHOT_V2_NOT_FOUND', '会话不存在。', 404);
+    const activeTurnCandidate = this.latestTurnsByStatus(conversationId, ['running', 'dispatching', 'waiting'], 1)[0];
+    const activeTurn = conversation.provider_state === 'active' || conversation.provider_state === 'waiting' ? activeTurnCandidate : undefined;
     return readConversationSessionMetrics(this.db, conversationId, activeTurn?.id ?? null);
   }
 

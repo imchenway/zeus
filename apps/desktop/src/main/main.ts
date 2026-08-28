@@ -1,18 +1,16 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, screen, session, shell, Tray } from 'electron';
-import { execFile as execFileCallback } from 'node:child_process';
-import { constants as fsConstants, existsSync, readFileSync, type FSWatcher } from 'node:fs';
+import { execFile as execFileCallback, spawn } from 'node:child_process';
+import { constants as fsConstants, existsSync, type FSWatcher, mkdtempSync, readFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { access, chmod, copyFile, cp, link, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { access, appendFile, chmod, copyFile, cp, link, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { performance } from 'node:perf_hooks';
-import { createBeforeQuitCleanupHandler } from './beforeQuitCleanup.js';
-import type { DesktopLocalServerRuntime } from './localServerRuntime.js';
-import type { ExecutionHostMaintenanceStatus } from './localServerRuntime.js';
+import { type BeforeQuitCleanupFailureAction, createBeforeQuitCleanupHandler } from './beforeQuitCleanup.js';
+import type { DesktopLocalServerRuntime, ExecutionHostMaintenanceStatus } from './localServerRuntime.js';
 import { createStartupCoordinator } from './startupCoordinator.js';
-import { terminateAfterFatalStartup } from './fatalStartup.js';
 import { createRendererBootstrapMonitor } from './rendererBootstrapMonitor.js';
 import { exportMermaidDiagramToFile, exportPlantUmlDiagramToFile } from './mermaidExport.js';
 import { exportPatchToFile } from './patchExport.js';
@@ -25,6 +23,7 @@ import { createSystemNotificationBridge, type SystemNotificationBridge } from '.
 import { openLocalLogDirectory } from './localLogDirectory.js';
 import { openExternalHttpsUrl } from './externalOpen.js';
 import { readSessionViewCache, writeSessionViewCache } from './sessionViewCache.js';
+import type { ZentaoExtractServices } from './zentaoTaskExtract.js';
 import { extractZentaoTaskInfo } from './zentaoTaskExtract.js';
 import {
   createPersistedMainWindowState,
@@ -32,8 +31,8 @@ import {
   findSavedWindowDisplay,
   minimumMainWindowSize,
   type PersistedMainWindowState,
-  type ResolvedMainWindowState,
   readPersistedMainWindowState,
+  type ResolvedMainWindowState,
   resolveMainWindowState,
   writePersistedMainWindowState,
 } from './windowState.js';
@@ -59,26 +58,25 @@ import {
 import { cleanupStaleReleaseBackups, createReleaseUpdateService, type ReleaseUpdateService } from './releaseUpdateService.js';
 import { createHomebrewUpdateService } from './homebrewUpdateService.js';
 import { createHomebrewUpdateController, type HomebrewUpdateController, type HomebrewUpdateIndicatorState } from './homebrewUpdateController.js';
-import { createAutomaticUpdateScheduler, type AutomaticUpdateScheduler } from './automaticUpdateScheduler.js';
+import { type AutomaticUpdateScheduler, createAutomaticUpdateScheduler } from './automaticUpdateScheduler.js';
 import { createZeusDataLayout, type ZeusDataLayout } from '@zeus/local-server/zeus-data-layout';
 import { readUnifiedConversationStoreMigrationStatus } from '@zeus/local-server';
 import { prepareZeusDataRoot } from './zeusDataMigration.js';
 import { loadDesktopReadOnlyValidationDescriptor, readOnlyValidationManifestEnvironmentName, verifyDesktopReadOnlyValidationDescriptor } from './readOnlyValidationManifest.js';
 import { installReadOnlyValidationIpcFence } from './readOnlyValidationIpcFence.js';
 import { ProjectSourceWorkspaceService } from './projectSourceWorkspace.js';
-import { ProjectGitWorkbenchService, type ProjectGitProjectIdentity } from './projectGitWorkbench.js';
+import { type ProjectGitProjectIdentity, ProjectGitWorkbenchService } from './projectGitWorkbench.js';
 import { ElectronRecoveryBackupDestinationPort } from './recoveryBackupDestinationPort.js';
 import {
-  zentaoSecretAccount,
   type CreateProjectSourceEntryInput,
   type MoveProjectSourceEntryInput,
   type ReadOnlyValidationDescriptor,
   type SaveProjectSourceFileInput,
   type TrashProjectSourceEntryInput,
   type ZentaoInstanceRecord,
+  zentaoSecretAccount,
 } from '@zeus/shared';
 import { createMacOSKeychainStore } from '@zeus/security-core';
-import type { ZentaoExtractServices } from './zentaoTaskExtract.js';
 import { resolveDesktopKeychainService } from './secretServiceIdentity.js';
 import { createSystemMainCommandEnvelope, MainCommandLedger, type MainCommandRequest } from './mainCommandLedger.js';
 import { StorageRecoveryRestartCoordinator } from './storageRecoveryRestartCoordinator.js';
@@ -127,6 +125,7 @@ let systemNotificationBridge: SystemNotificationBridge | undefined;
 let zeusDataRootPath: string | undefined;
 let zeusDataLayout: ZeusDataLayout | undefined;
 let zeusDataRootIdentity: ZeusDataRootIdentityMarker | undefined;
+let dataRootPreparationError: unknown;
 let readOnlyValidationDescriptor: ReadOnlyValidationDescriptor | undefined;
 let projectSourceWorkspace: ProjectSourceWorkspaceService | undefined;
 let projectGitWorkbench: ProjectGitWorkbenchService | undefined;
@@ -171,8 +170,42 @@ const projectSourceWatchers = new Map<number, { projectId: string; watcher: FSWa
 let taskTableLayoutQuitPending = false;
 let taskTableLayoutQuitApproved = false;
 let upgradeHandoffRequested = false;
+let fullRestartRequested = false;
 
-/** 更新辅助程序已经拿到精确新版路径后，立即进入既有安全退出编排。 */
+/** 所有“重新启动”入口都必须经过 before-quit，完整关闭 Core 和子进程。 */
+function requestFullAppRestart(): void {
+  fullRestartRequested = true;
+  taskTableLayoutQuitApproved = true;
+  scheduleExactAppRelaunchAfterCurrentProcessExit();
+  app.quit();
+}
+
+/**
+ * Electron 的 app.relaunch() 在 Main 启动早期失败时可能只退出旧进程而没有拉起新进程。
+ * 独立小进程等待当前 Main 真正退出后，再用当前可执行文件、参数和环境精确重启；
+ * 这样新 Main 不会在旧单实例锁尚未释放时被误判为“第二实例”而退出。
+ */
+function scheduleExactAppRelaunchAfterCurrentProcessExit(): void {
+  const relauncher = spawn(
+    '/bin/sh',
+    [
+      '-c',
+      'old_pid="$1"; shift; attempts=0; while kill -0 "$old_pid" 2>/dev/null && [ "$attempts" -lt 600 ]; do sleep 0.1; attempts=$((attempts + 1)); done; kill -0 "$old_pid" 2>/dev/null && exit 1; exec "$@"',
+      'zeus-relaunch',
+      String(process.pid),
+      process.execPath,
+      ...process.argv.slice(1),
+    ],
+    {
+      detached: true,
+      env: process.env,
+      stdio: 'ignore',
+    },
+  );
+  relauncher.unref();
+}
+
+/** 更新辅助程序已经拿到精确新版路径后，完整关闭当前 Core，再由辅助程序拉起新版。 */
 function requestUpgradeHandoffQuit(): void {
   upgradeHandoffRequested = true;
   taskTableLayoutQuitApproved = true;
@@ -353,8 +386,17 @@ function activeDesktopKeychainService(): string {
 
 // 打包验收可用隔离资料目录运行，禁止污染用户正在使用的 Zeus 数据。
 traceApplicationStartup('data_root_preparation_started');
-applyExplicitUserDataDirectory();
-traceApplicationStartup('data_root_ready');
+try {
+  applyExplicitUserDataDirectory();
+  traceApplicationStartup('data_root_ready');
+} catch (error) {
+  dataRootPreparationError = error;
+  // 数据根准备发生在 app.whenReady() 之前；这里不能把异常交给 Electron 的原生阻塞弹窗。
+  // 使用一次性 Chromium profile 只承载统一“启动失败”页，绝不读写用户业务数据。
+  const failureProfile = mkdtempSync(join(tmpdir(), 'zeus-startup-failure-'));
+  app.setPath('userData', failureProfile);
+  console.error('Zeus data root preparation failed', error);
+}
 
 function desktopRoot(): string {
   return process.env.ZEUS_DESKTOP_DIR ?? app.getAppPath();
@@ -1116,8 +1158,22 @@ function auditProjectSourceStructure(action: 'create' | 'move' | 'trash', projec
   console.info('[project-source-audit]', JSON.stringify({ action, projectId, relativePath, ...(targetRelativePath ? { targetRelativePath } : {}) }));
 }
 
+function sanitizeRendererRuntimeLogDetail(message: unknown): string {
+  const raw = typeof message === 'string' && message.trim() ? message.trim() : 'Renderer operation failed without detail';
+  return raw
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/giu, 'Bearer [redacted]')
+    .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/gu, 'sk-[redacted]')
+    .replace(/\b(api[_-]?key|token|password|secret)\s*[:=]\s*([^\s,;]+)/giu, '$1=[redacted]')
+    .replace(/([?&](?:access_token|api_key|token|password|secret)=)[^&\s]+/giu, '$1[redacted]')
+    .replace(/\s+/gu, ' ')
+    .slice(0, 2_000);
+}
+
 function setupIpc(): void {
-  ipcMain.handle('zeus:conversation-store-migration:get-status', () => readUnifiedConversationStoreMigrationStatus(activeZeusDataLayout()));
+  ipcMain.handle('zeus:conversation-store-migration:get-status', () => {
+    if (dataRootPreparationError !== undefined) return null;
+    return readUnifiedConversationStoreMigrationStatus(activeZeusDataLayout());
+  });
   ipcMain.handle('zeus:conversation-store-migration:retry', async (_event, request: MainCommandRequest) => {
     const status = await activeMainCommandLedger().execute(request, 'desktop.conversation_store_migration.retry', async (_body, command) => {
       const { prepareDesktopConversationStoreMigration } = await import('./localServerRuntime.js');
@@ -1125,8 +1181,7 @@ function setupIpc(): void {
       return prepareDesktopConversationStoreMigration(activeZeusDataLayout().root, zeusDataRootHostIdentity(activeDataRootIdentity()), activeZeusDataLayout());
     });
     if (status.phase === 'completed' || status.phase === 'not_required') {
-      app.relaunch();
-      app.exit(0);
+      requestFullAppRestart();
     }
     return status;
   });
@@ -1137,6 +1192,7 @@ function setupIpc(): void {
   });
   ipcMain.handle('zeus:conversation-store-migration:exit', () => app.quit());
   ipcMain.handle('zeus:execution-host-maintenance:get-status', async () => {
+    if (dataRootPreparationError !== undefined) return null;
     await rendererStartupDisposition;
     return executionHostMaintenance;
   });
@@ -1145,13 +1201,26 @@ function setupIpc(): void {
     if (!requestingWindow || requestingWindow.isDestroyed() || !isTrustedZeusRendererWindow(requestingWindow) || !executionHostMaintenance) {
       throw new Error('执行宿主维护重试来自不受信任窗口或当前不在维护模式。');
     }
-    app.relaunch();
-    app.exit(0);
+    requestFullAppRestart();
   });
   ipcMain.handle('zeus:execution-host-maintenance:exit', (event) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !isTrustedZeusRendererWindow(requestingWindow) || !executionHostMaintenance) {
       throw new Error('执行宿主维护退出来自不受信任窗口或当前不在维护模式。');
+    }
+    app.quit();
+  });
+  ipcMain.handle('zeus:startup-failure:restart', (event) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !isTrustedZeusRendererWindow(requestingWindow)) {
+      throw new Error('启动恢复请求来自不受信任窗口。');
+    }
+    requestFullAppRestart();
+  });
+  ipcMain.handle('zeus:startup-failure:exit', (event) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !isTrustedZeusRendererWindow(requestingWindow)) {
+      throw new Error('启动失败退出请求来自不受信任窗口。');
     }
     app.quit();
   });
@@ -1161,14 +1230,14 @@ function setupIpc(): void {
   });
   ipcMain.handle('zeus:session-view-cache:load', (event) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
-    if (!requestingWindow || requestingWindow.isDestroyed() || !isTrustedZeusRendererWindow(requestingWindow) || readOnlyValidationDescriptor) return null;
+    if (!requestingWindow || requestingWindow.isDestroyed() || !isTrustedZeusRendererWindow(requestingWindow) || readOnlyValidationDescriptor || dataRootPreparationError !== undefined) return null;
     const cache = readSessionViewCache(join(activeZeusDataLayout().electronUserData, 'session-view-cache-v1.json'));
     traceApplicationStartup(cache ? 'session_view_cache_loaded' : 'session_view_cache_missed');
     return cache;
   });
   ipcMain.on('zeus:session-view-cache:persist', (event, value: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
-    if (!requestingWindow || requestingWindow.isDestroyed() || !isTrustedZeusRendererWindow(requestingWindow) || readOnlyValidationDescriptor) return;
+    if (!requestingWindow || requestingWindow.isDestroyed() || !isTrustedZeusRendererWindow(requestingWindow) || readOnlyValidationDescriptor || dataRootPreparationError !== undefined) return;
     writeSessionViewCache(join(activeZeusDataLayout().electronUserData, 'session-view-cache-v1.json'), value);
   });
   ipcMain.handle('zeus:storage-recovery:preflight-and-restart', async (event, request: MainCommandRequest) => {
@@ -1245,8 +1314,7 @@ function setupIpc(): void {
       // 预检一旦通过，即使 Main receipt 的最后一次持久化再次失败，也不能留下“已安排但没有 timer”的假状态。
       storageRecoveryRestart.ensureScheduled(() => {
         setTimeout(() => {
-          app.relaunch();
-          app.quit();
+          requestFullAppRestart();
         }, 0);
       });
     }
@@ -1482,6 +1550,28 @@ function setupIpc(): void {
     const detail = typeof message === 'string' && message.trim() ? message.trim().slice(0, 500) : 'Renderer runtime failed without detail';
     // 界面已完成启动后，运行期错误交给 Renderer 的可恢复页处理；主进程不得把它误判为启动失败并退出整个应用。
     console.error(`Renderer runtime failed: ${detail}`);
+  });
+  ipcMain.on('zeus:renderer-runtime-log', (event, message: unknown) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) return;
+    const detail = sanitizeRendererRuntimeLogDetail(message);
+    console.error(`Renderer operation failed: ${detail}`);
+    if (readOnlyValidationDescriptor || dataRootPreparationError !== undefined) return;
+    const logDirectory = activeZeusDataLayout().executionHost;
+    void mkdir(logDirectory, { recursive: true })
+      .then(() =>
+        appendFile(
+          join(logDirectory, 'host.log'),
+          `${JSON.stringify({
+            timestamp: new Date().toISOString(),
+            event: 'renderer_runtime_error',
+            pid: process.pid,
+            detail,
+          })}\n`,
+          { encoding: 'utf8', mode: 0o600 },
+        ),
+      )
+      .catch((error) => console.error('Zeus Renderer 运行日志写入失败。', error));
   });
   ipcMain.on('zeus:task-table-layout-dirty-changed', (event, dirty: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
@@ -2574,6 +2664,12 @@ async function initializeApplication(): Promise<void> {
   void initialWindowPromise.catch(() => undefined);
   traceApplicationStartup('initial_window_requested');
   try {
+    if (dataRootPreparationError !== undefined) {
+      rejectRendererStartupDisposition(dataRootPreparationError);
+      rejectRendererRuntimeReady(dataRootPreparationError);
+      await initialWindowPromise;
+      throw dataRootPreparationError;
+    }
     const dataLayout = activeZeusDataLayout();
     const userDataPath = dataLayout.root;
     const browserAttachmentRoot = dataLayout.browserComments;
@@ -2788,12 +2884,12 @@ function isConversationStoreMigrationError(error: unknown): boolean {
 
 function handleFatalStartupError(error: unknown): void {
   fatalStartup = true;
-  terminateAfterFatalStartup({
-    error,
-    reportError: (message, detail) => console.error(message, detail),
-    showGenericError: () => dialog.showErrorBox('Zeus', 'Zeus 无法启动，请重新打开应用。'),
-    quitApplication: () => app.quit(),
-    forceExit: (code) => app.exit(code),
+  // Renderer 已通过被拒绝的启动配置进入唯一“启动失败”页；Main 只记录日志，
+  // 不再叠加原生错误弹窗或主动退出造成白屏。
+  console.error('Zeus startup failed', error);
+  void revealOrCreateMainWindow().catch((windowError) => {
+    console.error('Zeus 启动失败页无法创建窗口。', windowError);
+    app.exit(1);
   });
 }
 
@@ -2827,17 +2923,25 @@ async function resolveDesktopQuitMode(): Promise<'continue_in_background' | 'upg
   // 只读验收副本不得使用正式数据投影中的历史活动计数阻塞退出。
   if (readOnlyValidationDescriptor) return 'final_quit';
   if (storageRecoveryRestart.isRequested()) return 'final_quit';
-  if (upgradeHandoffRequested) return 'upgrade_handoff';
   const runtime = localServerRuntime;
   if (!runtime) return 'final_quit';
   let status;
   try {
     status = await runtime.getStatus();
   } catch {
-    // 控制面状态不明时无法证明 Core 会继续运行，保持应用打开并等待监督恢复。
-    return 'cancel';
+    // 用户明确要求完整重启/更新时不能再保留未知旧 Core；有界关闭失败后由退出兜底收口进程。
+    return fullRestartRequested || upgradeHandoffRequested ? 'force_quit' : 'cancel';
   }
   if (!status.hasActiveWork) return 'final_quit';
+  if (fullRestartRequested || upgradeHandoffRequested) {
+    try {
+      await runtime.stopActiveWork();
+      return 'final_quit';
+    } catch (error) {
+      console.error('Zeus 完整重启前未能正常终结全部活动工作，将进入强制退出兜底。', error);
+      return 'force_quit';
+    }
+  }
   const mayContinueInBackground = !isTestDistribution() && appShellSettings.backgroundModeEnabled;
   const options = {
     type: 'warning' as const,
@@ -2858,9 +2962,9 @@ async function resolveDesktopQuitMode(): Promise<'continue_in_background' | 'upg
   if (result.response !== stopResponse) return 'cancel';
   try {
     await runtime.stopActiveWork();
-    return 'force_quit';
+    return 'final_quit';
   } catch (error) {
-    dialog.showErrorBox('Zeus', `无法记录全部活动工作的中断状态，应用将保持打开。\n\n${error instanceof Error ? error.message : String(error)}`);
+    console.error('Zeus 未能记录全部活动工作的中断状态，已取消本次退出。', error);
     return 'cancel';
   }
 }
@@ -2931,26 +3035,14 @@ app.on(
       }
       if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'Zeus 退出时一个或多个资源未能完整关闭。');
     },
-    onCleanupError: async (error) => {
-      const message = error instanceof Error ? error.message : String(error);
+    onCleanupError: async (error): Promise<BeforeQuitCleanupFailureAction> => {
       if (readOnlyValidationDescriptor) {
         console.error('只读验收关闭失败；禁止以成功状态退出。', error);
-        dialog.showErrorBox('Zeus 只读验收关闭失败', `Core 或本机资源未能完整释放，本次验收将以失败状态退出。\n\n${message}`);
         return 'force_quit';
       }
-      const options = {
-        type: 'error' as const,
-        title: 'Zeus 安全退出失败',
-        message: '本地 Core 或本机资源尚未完整释放。',
-        detail: `${message}\n\n可重试安全退出；强制退出可能遗留运行中的 Core 或未完成收据。`,
-        buttons: ['重试安全退出', '强制退出'],
-        defaultId: 0,
-        cancelId: 0,
-        noLink: true,
-      };
-      const targetWindow = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
-      const result = targetWindow ? await dialog.showMessageBox(targetWindow, options) : await dialog.showMessageBox(options);
-      return result.response === 1 ? 'force_quit' : 'retry';
+      // 退出链已经有界等待并完成持久化优先收口；剩余技术错误只进运行日志，禁止再弹模态框卡住应用。
+      console.error('Zeus 退出清理未完整成功，将使用进程退出兜底。', error);
+      return 'force_quit';
     },
     exitApp: (code) => app.exit(code),
   }),

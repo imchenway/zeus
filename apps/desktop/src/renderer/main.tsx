@@ -70,13 +70,8 @@ async function renderWithClient(
       <RendererErrorBoundary
         appLanguage={appShellSettings.appLanguage}
         onFatalError={(error) => {
-          reportRendererFatalFailure(error);
           reportApplicationError(error, {
             language: errorLanguage,
-            primaryAction: {
-              label: errorLanguage === 'zh-CN' ? '刷新窗口' : 'Refresh window',
-              run: () => globalThis.location?.reload(),
-            },
           });
         }}
       >
@@ -523,57 +518,75 @@ async function hydrateRenderer(): Promise<void> {
 }
 
 function renderExecutionHostMaintenance(status: NonNullable<Awaited<ReturnType<NonNullable<Window['zeus']>['getExecutionHostMaintenanceStatus']>>>): void {
+  renderStartupFailure(status);
+}
+
+function renderStartupFailure(error: unknown): void {
+  reportApplicationError(error, { language: 'zh-CN' });
   const root = document.getElementById('root');
   if (!root) return;
-  document.body.dataset.surface = 'execution-host-maintenance';
+  document.body.dataset.surface = 'startup-failure';
+
   const shell = document.createElement('main');
-  shell.className = 'zeus-execution-host-maintenance';
-  Object.assign(shell.style, {
-    minHeight: '100%',
-    display: 'grid',
-    placeItems: 'center',
-    padding: '32px',
-    boxSizing: 'border-box',
-    background: '#f7f7f8',
-    color: '#202124',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-  });
-  const panel = document.createElement('section');
-  Object.assign(panel.style, { width: 'min(680px, 100%)', padding: '28px', border: '1px solid #dedfe3', borderRadius: '18px', background: '#fff', boxSizing: 'border-box' });
+  shell.className = 'startup-failure-shell';
+  shell.setAttribute('aria-labelledby', 'startup-failure-title');
+
+  const content = document.createElement('section');
+  content.className = 'startup-failure-content';
+
+  const mark = document.createElement('span');
+  mark.className = 'startup-failure-mark';
+  mark.textContent = 'Z';
+  mark.setAttribute('aria-hidden', 'true');
+
   const title = document.createElement('h1');
-  title.textContent = '执行宿主正在等待安全升级';
-  Object.assign(title.style, { margin: '0 0 12px', fontSize: '22px', lineHeight: '1.3' });
-  const detail = document.createElement('p');
-  const ownerFacts = [
-    status.hostAppVersion ? `Zeus ${status.hostAppVersion}` : null,
-    status.hostProtocolVersion === null ? null : `协议 ${status.hostProtocolVersion}`,
-    status.hostPid === null ? null : `PID ${status.hostPid}`,
-    status.hostGenerationId ? `generation ${status.hostGenerationId}` : null,
-    status.stage ? `阶段 ${status.stage}` : null,
-  ].filter((value): value is string => Boolean(value));
-  detail.textContent = `${status.message}${ownerFacts.length > 0 ? `\n\n已验证宿主信息：${ownerFacts.join(' · ')}` : ''}\n当前协议：${status.currentProtocolVersion}\n\nZeus 没有删除锁、强制结束旧进程或创建第二个数据库写入者。请先让旧版本完成或停止活动任务，再重试。`;
-  Object.assign(detail.style, { margin: '0', color: '#5f6368', lineHeight: '1.65', whiteSpace: 'pre-wrap' });
+  title.id = 'startup-failure-title';
+  title.textContent = '启动失败';
+
+  const description = document.createElement('p');
+  description.className = 'startup-failure-description';
+  description.textContent = 'Zeus 现在无法使用。重新启动会停止遗留工作，并重新启动全部相关进程。';
+
+  const logHint = document.createElement('p');
+  logHint.className = 'startup-failure-log-hint';
+  logHint.textContent = '详细信息已写入本机运行日志。';
+
   const actions = document.createElement('div');
-  Object.assign(actions.style, { display: 'flex', gap: '10px', marginTop: '22px', flexWrap: 'wrap' });
-  const retry = migrationButton('重新检查', true);
-  retry.onclick = async () => {
-    retry.disabled = true;
-    retry.textContent = '正在重新启动…';
+  actions.className = 'startup-failure-actions';
+  const restart = startupFailureButton('重新启动', true);
+  restart.onclick = async () => {
+    restart.disabled = true;
+    restart.textContent = '正在重新启动…';
     try {
-      await window.zeus?.retryExecutionHostMaintenance?.();
-    } catch (error) {
-      retry.disabled = false;
-      retry.textContent = '重新检查';
-      title.remove();
-      detail.textContent = formatVisibleApplicationError(error, 'zh-CN');
+      await window.zeus?.restartAfterStartupFailure?.();
+    } catch (restartError) {
+      reportApplicationError(restartError, { language: 'zh-CN' });
+      restart.disabled = false;
+      restart.textContent = '重新启动';
     }
   };
-  const exit = migrationButton('退出 Zeus', false);
-  exit.onclick = () => void window.zeus?.exitExecutionHostMaintenance?.();
-  actions.append(retry, exit);
-  panel.append(title, detail, actions);
-  shell.append(panel);
+  const exit = startupFailureButton('退出 Zeus', false);
+  exit.onclick = async () => {
+    exit.disabled = true;
+    try {
+      await window.zeus?.exitAfterStartupFailure?.();
+    } catch (exitError) {
+      reportApplicationError(exitError, { language: 'zh-CN' });
+      exit.disabled = false;
+    }
+  };
+  actions.append(restart, exit);
+  content.append(mark, title, description, logHint, actions);
+  shell.append(content);
   root.replaceChildren(shell);
+}
+
+function startupFailureButton(label: string, primary: boolean): HTMLButtonElement {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = label;
+  button.className = primary ? 'startup-failure-button is-primary' : 'startup-failure-button';
+  return button;
 }
 
 async function waitForConversationStoreMigration(): Promise<void> {
@@ -611,6 +624,10 @@ function renderConversationStoreMigration(status: NonNullable<Awaited<ReturnType
   Object.assign(panel.style, { width: 'min(620px, 100%)', padding: '28px', border: '1px solid #dedfe3', borderRadius: '18px', background: '#fff', boxSizing: 'border-box' });
   const title = document.createElement('h1');
   const migrationFailed = status.phase === 'failed' || status.phase === 'promoted_but_validation_failed';
+  if (migrationFailed) {
+    renderStartupFailure(status.error ?? status);
+    return;
+  }
   title.textContent = migrationFailed ? '会话数据升级已安全暂停' : '正在升级会话数据';
   Object.assign(title.style, { margin: '0 0 12px', fontSize: '22px', lineHeight: '1.3' });
   const detail = document.createElement('p');
@@ -692,12 +709,8 @@ hydrateRendererWithExecutionHostRecovery().catch((error: unknown) => {
   const surface = new URLSearchParams(window.location.search).get('surface');
   const auxiliarySurface = surface === 'menu-bar-usage' || surface === 'task-git-delivery' || surface === 'project-git-diff';
   console.error(surface === 'menu-bar-usage' ? 'Zeus menu bar usage hydration failed' : surface === 'task-git-delivery' ? 'Zeus task Git delivery hydration failed' : 'Zeus dashboard hydration failed', error);
-  const root = document.getElementById('root');
-  reportApplicationError(error, {
-    language: 'zh-CN',
-  });
-  if (root) createRoot(root).render(<ApplicationErrorDialogHost language="zh-CN" />);
-  if (!auxiliarySurface) reportRendererFatalFailure(error);
+  renderStartupFailure(error);
+  if (!auxiliarySurface) window.zeus?.reportRendererBootstrapReady?.();
 });
 
 function reportSurfaceFatalError(error: Error, language: 'zh-CN' | 'en', source: string): void {
@@ -705,14 +718,4 @@ function reportSurfaceFatalError(error: Error, language: 'zh-CN' | 'en', source:
   reportApplicationError(error, {
     language,
   });
-}
-
-function reportRendererFatalFailure(error: unknown): void {
-  window.zeus?.reportRendererFatalFailure?.(formatHydrationError(error));
-}
-
-function formatHydrationError(error: unknown): string {
-  if (error instanceof Error && error.message.trim()) return error.message.split('\n')[0]?.slice(0, 180) ?? '未知错误';
-  if (typeof error === 'string' && error.trim()) return error.split('\n')[0]?.slice(0, 180) ?? '未知错误';
-  return '未知错误';
 }

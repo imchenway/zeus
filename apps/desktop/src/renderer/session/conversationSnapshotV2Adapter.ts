@@ -304,7 +304,10 @@ function historyItems(items: NativeConversationModelHistoryV2Item[], providerTur
     const reasoning = item.reasoningSummary || typeof contentRecord?.provenance === 'string';
     const text = projectionText(content, item.content.preview, item.content.truncated);
     const persistedPlan = item.phase === 'plan';
-    const phase = item.role === 'assistant' && (item.phase === 'final_answer' || item.phase === 'finalAnswer') ? 'final_answer' : 'prework';
+    // 旧 Pi/DeepSeek 历史没有 phase；没有 reasoning/plan 证据的 assistant 内容是用户正文，
+    // 不能因为缺少新版元数据就折叠进“处理过程”。
+    const missingPhase = item.phase === null || item.phase === undefined || item.phase === '';
+    const phase = item.role === 'assistant' && (item.phase === 'final_answer' || item.phase === 'finalAnswer' || (missingPhase && !persistedPlan && !reasoning)) ? 'final_answer' : 'prework';
     const historicalUserPayload =
       item.role === 'user' && contentRecord
         ? {

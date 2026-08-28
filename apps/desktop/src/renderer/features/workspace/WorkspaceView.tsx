@@ -70,6 +70,7 @@ import {
 import type { WorkspaceQueryState } from './useWorkspaceQueryState.js';
 import type { WorkspaceDomainActions } from './useWorkspaceDomainActions.js';
 import type { WorkspaceOperations } from './useWorkspaceOperations.js';
+
 export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions: WorkspaceDomainActions; operations: WorkspaceOperations }) {
   const { state, domainActions, operations } = input;
   const {
@@ -216,6 +217,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     snapshot,
     sourceWorkspaceLeaveDialogOpen,
     sourceWorkspaceSaveBusy,
+    storageRecoveryFault,
     taskBoardLoadState,
     taskBoardSnapshots,
     taskBulkActionStatus,
@@ -306,6 +308,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     resolveTaskTerminalCleanupConfirmation,
     restoreProject,
     restoreTaskConversation,
+    runStorageRecoveryPreflightAndRestart,
     revealProjectInFinder,
     selectNativeConversation,
     selectProjectCodeWorkspaceMode,
@@ -429,6 +432,48 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           <span className="conversation-status-sync-spinner" aria-hidden="true" />
           <span>{appShellSettings.appLanguage === 'zh-CN' ? '正在同步会话状态' : 'Syncing conversation status'}</span>
         </output>
+      ) : null}
+      {storageRecoveryFault ? (
+        <InlineRecoveryPrompt
+          className="storage-recovery-prompt"
+          title={
+            storageRecoveryFault.phase === 'failed'
+              ? appShellSettings.appLanguage === 'zh-CN'
+                ? '存储恢复未完成'
+                : 'Storage recovery did not complete'
+              : appShellSettings.appLanguage === 'zh-CN'
+                ? '存储已停止写入'
+                : 'Storage writes have stopped'
+          }
+          body={
+            appShellSettings.appLanguage === 'zh-CN'
+              ? storageRecoveryFault.readsAvailable
+                ? 'Zeus 仍可读取现有数据。检查通过后将重启全部相关进程。'
+                : 'Zeus 已停止读写。检查通过后将重启全部相关进程。'
+              : storageRecoveryFault.readsAvailable
+                ? 'Existing data is still readable. Zeus will restart all related processes after the check succeeds.'
+                : 'Reads and writes have stopped. Zeus will restart all related processes after the check succeeds.'
+          }
+          actions={[
+            {
+              label:
+                storageRecoveryFault.phase === 'running'
+                  ? appShellSettings.appLanguage === 'zh-CN'
+                    ? '正在检查'
+                    : 'Checking'
+                  : storageRecoveryFault.phase === 'failed'
+                    ? appShellSettings.appLanguage === 'zh-CN'
+                      ? '重新检查'
+                      : 'Check again'
+                    : appShellSettings.appLanguage === 'zh-CN'
+                      ? '检查并重启'
+                      : 'Check and restart',
+              onAction: () => void runStorageRecoveryPreflightAndRestart(),
+              busy: storageRecoveryFault.phase === 'running',
+              disabled: storageRecoveryFault.phase === 'running',
+            },
+          ]}
+        />
       ) : null}
       <ProjectCreateDialog
         open={projectCreateDialogOpen}

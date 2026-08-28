@@ -20,12 +20,12 @@ import {
   type PiZeusToolRequest,
   type PiZeusToolResult,
 } from '@zeus/ai-runtime';
-import { buildTaskPushInputParts, calculateCacheHitRate, emptyTokenUsageBreakdown, estimateDeepSeekUsage, type CodexUsageEstimate, type NativeTokenUsageSnapshot, type TaskPushMessageLayout, type TokenUsageBreakdown } from '@zeus/shared';
+import { buildTaskPushInputParts, calculateCacheHitRate, type CodexUsageEstimate, emptyTokenUsageBreakdown, estimateDeepSeekUsage, type NativeTokenUsageSnapshot, type TaskPushMessageLayout, type TokenUsageBreakdown } from '@zeus/shared';
 import type {
   CodexUsageLedgerRepository,
   CommandDeliveryRepository,
-  ConversationProviderItemRepository,
   ConversationExecutionRepository,
+  ConversationProviderItemRepository,
   ConversationRepository,
   ConversationServerRequestRepository,
   ConversationSubmissionRepository,
@@ -1269,7 +1269,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         role: 'assistant',
         content: text,
         source: 'pi_sdk',
-        metadata: { agentKind: 'pi' },
+        metadata: { agentKind: 'pi', phase: itemInput.phase },
         createdAt: event.createdAt,
         providerThreadId: event.nativeSessionId ?? undefined,
         providerTurnId: run.providerTurnId,

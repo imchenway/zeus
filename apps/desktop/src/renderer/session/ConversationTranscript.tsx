@@ -1266,6 +1266,8 @@ function isTurnProcessRow(row: TranscriptRow): boolean {
   if (row.kind === 'activity') return true;
   // 计划和明确交付资源属于最终产物，必须独立展示，不能折叠进“已处理”过程。
   if (row.item.type === 'plan' || isAssistantDeliverableItem(row.item)) return false;
+  // 只有缺少 phase 的旧 assistant 正文才走兼容兜底；明确 prework 必须留在处理过程。
+  if (row.item.type === 'agentMessage' && itemRole(row.item) === 'assistant' && !itemProviderPhase(row.item)) return false;
   return itemRole(row.item) !== 'user' && !isFinalAnswerItem(row.item);
 }
 
@@ -1310,8 +1312,12 @@ function transcriptRowContainsItemKey(row: TranscriptRow, itemKey: string | unde
 }
 
 export function isFinalAnswerItem(item: NativeSessionItemBuffer): boolean {
-  const providerPhase = typeof item.payload.phase === 'string' ? item.payload.phase : item.phase;
+  const providerPhase = itemProviderPhase(item);
   return itemRole(item) === 'assistant' && (providerPhase === 'final_answer' || providerPhase === 'finalAnswer');
+}
+
+function itemProviderPhase(item: NativeSessionItemBuffer): string {
+  return typeof item.payload.phase === 'string' ? item.payload.phase : item.phase;
 }
 
 export function projectTranscriptRows(

@@ -113,6 +113,7 @@ import { projectCodexProviderEvent } from './codexProviderEventProjection.js';
 import { createCodexProviderHistoryProjection } from './codexProviderHistoryProjection.js';
 import { createCodexProviderThreadAuthorityApplication } from './codexProviderThreadAuthority.js';
 import { createCodexRemoteControlConversationSyncApplication } from './codexRemoteControlConversationSyncApplication.js';
+import { createCodexRecoveryStateApplication } from './codexRecoveryStateApplication.js';
 import type { CodexUsageService } from './codexUsageService.js';
 import type { ContextDispatchEnvelope } from './contextDispatchService.js';
 import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
@@ -213,6 +214,15 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   const receipts = options.receipts ?? new ProviderEventReceiptRepository(options.db);
   const syncCheckpoints = options.syncCheckpoints ?? new ConversationProviderSyncCheckpointRepository(options.db);
   const runStates = new Map<string, NativeConversationRunState>();
+  const { markConversationProviderArchived, markConversationRecoveryRequired, markSubmissionRecoveryRequired } = createCodexRecoveryStateApplication({
+    conversations: options.conversations,
+    submissions: options.submissions,
+    turns: options.turns,
+    execution: options.execution,
+    runStates,
+    broadcast: options.broadcast,
+    now,
+  });
   const contexts = new Map<string, ConversationDispatchContext>();
   const executionContextPromises = new Map<string, Promise<void>>();
   const dispatchLeases = new Map<string, NativeConversationDispatchLease>();
@@ -3484,77 +3494,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       createdAt: existing?.createdAt ?? input.timestamp,
       updatedAt: input.timestamp,
     });
-  }
-
-  function markConversationRecoveryRequired(conversationId: string, error: unknown): boolean {
-    const submissions = options.submissions.listByConversation(conversationId);
-    const acceptedInFlight = submissions.find((submission) => submission.status === 'active' && Boolean(submission.providerTurnId));
-    if (acceptedInFlight) {
-      // 精确 provider turn 已经接纳后，辅助恢复读取失败不能覆盖实时写入事实；终态事件或后续快照会继续收口。
-      options.execution.persistWarning({
-        conversationId,
-        warningKind: 'provider_reconciliation_deferred',
-        payload: {
-          submissionId: acceptedInFlight.id,
-          providerTurnId: acceptedInFlight.providerTurnId,
-          error: serializeError(error),
-        },
-        occurredAt: now(),
-      });
-      return false;
-    }
-    for (const submission of submissions) {
-      if (submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active') markSubmissionRecoveryRequired(submission, error);
-    }
-    const conversation = options.conversations.getById(conversationId);
-    if (conversation?.providerThreadId && conversation.providerState !== 'archived' && conversation.providerState !== 'closed' && conversation.providerState !== 'failed') {
-      options.conversations.bindProvider(conversation.id, {
-        providerId: 'codex',
-        providerThreadId: conversation.providerThreadId,
-        providerModel: conversation.providerModel,
-        providerState: 'paused',
-      });
-    }
-    runStates.set(conversationId, { type: 'paused', reason: 'recovery_required' });
-    return true;
-  }
-
-  function markConversationProviderArchived(conversationId: string, error: unknown): void {
-    const conversation = options.conversations.getById(conversationId);
-    if (!conversation?.providerThreadId) return;
-    const archivedError = {
-      code: 'ZEUS_CODEX_THREAD_ARCHIVED',
-      message: 'The Codex provider thread is archived.',
-      cause: serializeError(error),
-    };
-    for (const submission of options.submissions.listByConversation(conversationId)) {
-      if (submission.status !== 'queued' && submission.status !== 'dispatching' && submission.status !== 'active') continue;
-      options.submissions.updateStatus(submission.id, 'paused', {
-        pausedReason: 'provider_archived',
-        error: archivedError,
-      });
-    }
-    options.conversations.bindProvider(conversation.id, {
-      providerId: 'codex',
-      providerThreadId: conversation.providerThreadId,
-      providerModel: conversation.providerModel,
-      providerState: 'archived',
-    });
-    runStates.set(conversationId, { type: 'paused', reason: 'provider_archived' });
-    options.broadcast('conversation.thread.changed', {
-      conversationId,
-      providerThreadId: conversation.providerThreadId,
-      providerState: 'archived',
-    });
-    options.broadcast('conversation.queue.changed', { conversationId });
-  }
-
-  function markSubmissionRecoveryRequired(submission: ZeusConversationSubmissionRecord, error: unknown): void {
-    options.submissions.updateStatus(submission.id, 'paused', {
-      pausedReason: 'recovery_required',
-      error: toRecoverySubmissionError(error),
-    });
-    runStates.set(submission.conversationId, { type: 'paused', reason: 'recovery_required' });
   }
 
   async function pauseQueueAfterDispatchFailure(conversation: ZeusConversationWithMessagesRecord, submission: ZeusConversationSubmissionRecord, error: unknown): Promise<NativeAcceptedOperation> {

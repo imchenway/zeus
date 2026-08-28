@@ -4,7 +4,6 @@ import { existsSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
-import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { createCodexRuntimeGenerationManager } from '@zeus/ai-runtime';
 import {
@@ -48,7 +47,6 @@ import type { DesktopLocalServerCloseMode } from './beforeQuitCleanup.js';
 import { sameZeusDataRootHostIdentity, verifyZeusDataRootHostIdentity, type ZeusDataRootHostIdentity } from './dataRootIdentity.js';
 
 const readOnlyValidationVerifiedBeforeOwnedCoreLock = new WeakSet<ReadOnlyValidationDescriptor>();
-const executionHostHandoffPrepareTimeoutMs = 60_000;
 
 /**
  * Detached Core 在取得 owner lock 前完成一次全库核验，并以同进程对象能力交给 startOwned。
@@ -88,13 +86,6 @@ export interface DesktopLocalServerRuntime {
   refreshConfig: () => Promise<RendererLocalServerConfig>;
   stopActiveWork: () => Promise<void>;
   close: (mode?: DesktopLocalServerCloseMode) => Promise<void>;
-}
-
-interface ExecutionHostHandoffPreparation {
-  handoffId: string;
-  checkpointSha256: string;
-  requestCount: number;
-  preparedAt: string;
 }
 
 export interface StartDesktopLocalServerOptions {
@@ -316,8 +307,6 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
   let handoffProbePromise: Promise<void> | undefined;
   let recoveryPromise: Promise<void> | undefined;
   let handoffPromise: Promise<void> | undefined;
-  let handoffRetryNotBeforeMs = 0;
-  let legacyIdleHandoffObservation: { instanceId: string; fingerprint: string; observedAtMs: number } | undefined;
   let closePromise: Promise<void> | undefined;
   let closing = false;
   try {
@@ -377,74 +366,25 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       executionHost.instanceId = next.instanceId;
       executionHost.pid = next.pid;
       executionHost.protocolVersion = next.protocolVersion;
-      legacyIdleHandoffObservation = undefined;
       if (changed) await options.onRestarted?.(config);
     };
 
-    const handoffPreviousHostIfSafe = async (work: ExecutionHostWorkStatus): Promise<void> => {
-      if (connection.appVersion === currentAppVersion || hasEffectfulExecution(work)) {
-        legacyIdleHandoffObservation = undefined;
-        return;
-      }
-      if (handoffPromise || Date.now() < handoffRetryNotBeforeMs) return;
+    const replaceMismatchedHost = async (): Promise<void> => {
+      if (connection.appVersion === currentAppVersion || handoffPromise) return;
 
       const previousInstanceId = connection.instanceId;
       const previousPid = connection.pid;
       const previousClient = client;
       const switching = (async () => {
-        const capabilities = resolveExecutionHostCapabilities(connection.appVersion, lease.capabilities);
-        if (capabilities.durableHandoff === 'sqlite_journal_v1') {
-          try {
-            const prepared = await prepareExecutionHostDurableHandoff(connection, currentAppVersion);
-            await previousClient.handoff({ handoffId: prepared.handoffId, checkpointSha256: prepared.checkpointSha256 });
-          } catch (error) {
-            // 0.3.36/0.3.37 会把所有冲突交付 Map 项都当成写入，即使 Provider 已完成、
-            // 只剩持久化 active 记录等待用户代码交付。新 Main 只能在重新读取宿主状态和
-            // SQLite 后同时证明“没有执行工作、没有 preparing、阻断数不超过 active 数”时，
-            // 退回旧协议已有的 graceful shutdown；任何不确定性都继续失败关闭。
-            const refreshed = await previousClient.health();
-            const legacyCandidate =
-              refreshed.instanceId === previousInstanceId && refreshed.pid === previousPid
-                ? legacyIdleTaskIntegrationHandoffCandidate({
-                    error,
-                    work: refreshed.work,
-                    dbPath: connection.dbPath,
-                    hostAppVersion: connection.appVersion,
-                  })
-                : null;
-            if (!legacyCandidate) {
-              legacyIdleHandoffObservation = undefined;
-              throw error;
-            }
-            const nowMs = Date.now();
-            const previousObservation = legacyIdleHandoffObservation;
-            if (!previousObservation || previousObservation.instanceId !== previousInstanceId || previousObservation.fingerprint !== legacyCandidate.fingerprint || nowMs - previousObservation.observedAtMs < 30_000) {
-              legacyIdleHandoffObservation =
-                previousObservation?.instanceId === previousInstanceId && previousObservation.fingerprint === legacyCandidate.fingerprint
-                  ? previousObservation
-                  : { instanceId: previousInstanceId, fingerprint: legacyCandidate.fingerprint, observedAtMs: nowMs };
-              throw error;
-            }
-            await previousClient.shutdown();
-            legacyIdleHandoffObservation = undefined;
-          }
-        } else {
-          // 旧宿主没有同库 journal 时，只有“完全没有任何工作”才可最终退出；存在 waiting 时绝不把 Main 内存当恢复权威。
-          if (work.hasActiveWork || work.waitingRequestCount > 0) return;
-          const confirmed = await previousClient.health();
-          if (confirmed.work.hasActiveWork) return;
-          await previousClient.shutdown();
-        }
+        // “重新启动 Zeus”必须替换全部相关进程。先用持久化停止命令终结旧宿主工作，
+        // 再关闭旧 Core；新版界面绝不能继续连接不同应用版本的宿主。
+        const stopCommand = createExecutionHostStopActiveCommandRequest({ reason: 'embedded_owner_retirement' });
+        await previousClient.stopActiveWork(stopCommand);
+        await previousClient.shutdown();
         await waitForExecutionHostExit(options.userDataPath, previousInstanceId, previousPid, options.dataRootIdentity);
         const next = await connectOrLaunchExecutionHost(options);
         await attach(next);
-        handoffRetryNotBeforeMs = 0;
-      })().catch((error: unknown) => {
-        // 旧 Core 只能在 prepare 后报告后台阻断；对这类可恢复 409 做退避，避免
-        // 每秒关闸一次。新 Core 会在关闸前预检，此分支保留跨版本兼容。
-        if (isRetryableExecutionHostHandoffBlock(error)) handoffRetryNotBeforeMs = Date.now() + 15_000;
-        throw error;
-      });
+      })();
       const tracked = switching.finally(() => {
         if (handoffPromise === tracked) handoffPromise = undefined;
       });
@@ -505,6 +445,35 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       return cloneRendererLocalServerConfig(config);
     };
 
+    const forceTerminateCurrentHost = async (): Promise<void> => {
+      let identityConfirmed = false;
+      try {
+        const status = await client.health();
+        identityConfirmed = status.instanceId === connection.instanceId && status.pid === connection.pid;
+      } catch {
+        const advertised = await readExecutionHostRendezvous(options.userDataPath);
+        identityConfirmed =
+          Boolean(advertised) &&
+          advertised!.instanceId === connection.instanceId &&
+          advertised!.pid === connection.pid &&
+          advertised!.appVersion === connection.appVersion &&
+          advertised!.protocolVersion === connection.protocolVersion &&
+          sameZeusDataRootHostIdentity(advertised!.dataRootIdentity, options.dataRootIdentity) &&
+          sameReadOnlyValidationIdentity(advertised!.readOnlyValidation, connection.readOnlyValidation) &&
+          inspectExecutionHostKernelLease(options.userDataPath, options.dataRootIdentity) === 'held';
+      }
+      if (!identityConfirmed || connection.pid <= 1 || connection.pid === process.pid) {
+        throw new Error('Zeus 拒绝结束身份无法确认的执行宿主。');
+      }
+      try {
+        // Execution Host 是独立进程组组长；结束进程组可同时收口其 Provider 和 Runtime 子进程。
+        process.kill(-connection.pid, 'SIGKILL');
+      } catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
+      }
+      await waitForExecutionHostExit(options.userDataPath, connection.instanceId, connection.pid, options.dataRootIdentity);
+    };
+
     const maintainLease = async (): Promise<void> => {
       if (closing) return;
       try {
@@ -520,11 +489,10 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       if (closing || handoffPromise || recoveryPromise || connection.appVersion === currentAppVersion) return;
       const probeClient = client;
       const probedInstanceId = connection.instanceId;
-      const status = await probeClient.health();
+      await probeClient.health();
       // 心跳可能在探测期间完成重连；旧宿主状态不得驱动新宿主交接。
       if (client !== probeClient || connection.instanceId !== probedInstanceId) return;
-      // 交接在独立任务中推进；无论快照多慢，1 秒心跳都不等待它。
-      await handoffPreviousHostIfSafe(status.work);
+      await replaceMismatchedHost();
     };
 
     heartbeatTimer = setInterval(() => {
@@ -537,13 +505,10 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
     }, 1_000);
     heartbeatTimer.unref();
 
-    // 冷启动发现旧版本且当前没有执行工作时，先完成一次安全交接，再把业务配置交给 Renderer。
-    // 心跳必须先开始：正式大库的持久化准备可能超过租约窗口的一半，不能在安全交接期间把正常
-    // Main 误判成已离线。有活动工作或 preflight 阻断时旧 Core 继续正常提供界面。
+    // 冷启动发现旧版本时必须先完整替换旧 Core，再把业务配置交给 Renderer。
+    // 替换失败会进入唯一启动失败页，不能让新版界面继续使用旧版宿主。
     if (connection.appVersion !== currentAppVersion) {
-      await probeHostHandoff().catch((error: unknown) => {
-        console.warn('Zeus initial execution-host handoff did not complete; background supervision will continue.', error);
-      });
+      await probeHostHandoff();
     }
 
     handoffTimer = setInterval(() => {
@@ -627,28 +592,15 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
           }
           try {
             if (mode === 'force_quit') {
-              let status;
-              try {
-                status = await client.health();
-              } catch {
-                // 控制面不可达时不得按陈旧 PID 强杀，也不得删除可能刚由新宿主替换的发现路径。
-                status = undefined;
-              }
-              if (status) {
-                if (status.instanceId !== connection.instanceId || status.pid !== connection.pid || connection.pid <= 1 || connection.pid === process.pid) {
-                  throw new Error('Zeus 拒绝强制结束身份不匹配的执行宿主。');
-                }
-                try {
-                  // 执行宿主以独立进程组启动；结束进程组才能同时收口其 Codex、Pi 和 Runtime 子进程。
-                  process.kill(-connection.pid, 'SIGKILL');
-                } catch (error) {
-                  if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
-                }
-                await waitForExecutionHostExit(options.userDataPath, connection.instanceId, connection.pid, options.dataRootIdentity);
-              }
+              await forceTerminateCurrentHost();
             } else if (mode === 'final_quit') {
-              await client.shutdown();
-              await waitForExecutionHostExit(options.userDataPath, connection.instanceId, connection.pid, options.dataRootIdentity);
+              try {
+                await client.shutdown();
+                await waitForExecutionHostExit(options.userDataPath, connection.instanceId, connection.pid, options.dataRootIdentity);
+              } catch (error) {
+                console.error('Zeus Core 未能在有界关闭窗口内退出，将使用已验证进程身份完成收口。', error);
+                await forceTerminateCurrentHost();
+              }
             } else await client.detach(leaseId);
           } catch (error) {
             errors.push(error);
@@ -1404,150 +1356,6 @@ function cloneRendererLocalServerConfig(config: RendererLocalServerConfig): Rend
     },
     ...(config.readOnlyValidation ? { readOnlyValidation: { ...config.readOnlyValidation } } : {}),
   };
-}
-
-function hasEffectfulExecution(work: ExecutionHostWorkStatus): boolean {
-  // 旧宿主缺少 effectfulTurnCount 时，active 与 waiting 是全局计数且无法一一对应；相减会让另一会话的
-  // waiting 抵消真实 active。兼容边界必须失败关闭：只要旧协议报告任何 active turn，就不自动交接。
-  const effectfulNativeTurnCount = work.effectfulTurnCount ?? work.activeTurnCount;
-  return effectfulNativeTurnCount > 0 || work.activeRuntimeCount > 0 || work.activeCommandRunCount > 0;
-}
-
-async function prepareExecutionHostDurableHandoff(connection: ExecutionHostRendezvous, targetAppVersion: string): Promise<ExecutionHostHandoffPreparation> {
-  const prepared = await requestExecutionHostApi<unknown>(connection, '/api/execution-host/handoff/prepare', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ targetAppVersion }),
-  });
-  if (!isExecutionHostHandoffPreparation(prepared)) {
-    throw new Error('Zeus execution-host returned an invalid durable handoff preparation.');
-  }
-  return prepared;
-}
-
-async function requestExecutionHostApi<T>(connection: ExecutionHostRendezvous, path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${connection.baseUrl}${path}`, {
-    ...init,
-    headers: {
-      ...Object.fromEntries(new Headers(init.headers).entries()),
-      authorization: `Bearer ${connection.apiToken}`,
-    },
-    // 正式库的 durable save / Provider 协调器冻结可能明显超过普通本地 GET 的 8 秒读取上限。
-    // 交接接口有 SQLite journal、单飞 promise 与外层 Host 退出上限，允许完整等待一次持久化准备，
-    // 避免 Main 先超时而旧 Core 随后独自进入 prepared，留下 Renderer 面向 draining 端口启动。
-    signal: AbortSignal.timeout(executionHostHandoffPrepareTimeoutMs),
-  });
-  const payload = (await response.json().catch(() => ({}))) as unknown;
-  if (!response.ok) {
-    const errorPayload = payload && typeof payload === 'object' && !Array.isArray(payload) ? (payload as Record<string, unknown>) : {};
-    throw Object.assign(new Error(typeof errorPayload.message === 'string' ? errorPayload.message : `Zeus execution-host handoff API failed with HTTP ${response.status}.`), {
-      statusCode: response.status,
-      ...(typeof errorPayload.error === 'string' ? { code: errorPayload.error } : {}),
-      handoffPayload: errorPayload,
-    });
-  }
-  return payload as T;
-}
-
-function legacyIdleTaskIntegrationHandoffCandidate(input: { error: unknown; work: ExecutionHostWorkStatus; dbPath: string; hostAppVersion: string }): { fingerprint: string } | null {
-  if (input.hostAppVersion !== '0.3.36' && input.hostAppVersion !== '0.3.37') return null;
-  if (hasEffectfulExecution(input.work) || input.work.hasActiveWork || input.work.waitingRequestCount > 0 || input.work.activeTurnCount > 0) return null;
-  const blockers = readLegacyTaskIntegrationHandoffBlockers(input.error);
-  if (!blockers || blockers.taskIntegrationOperations <= 0) return null;
-  const attempts = readTaskIntegrationAttemptStateCounts(input.dbPath);
-  if (!attempts || attempts.preparing !== 0 || attempts.active < blockers.taskIntegrationOperations) return null;
-  return {
-    fingerprint: JSON.stringify({
-      taskIntegrationOperations: blockers.taskIntegrationOperations,
-      activeAttempts: attempts.active,
-      latestActiveUpdatedAt: attempts.latestActiveUpdatedAt,
-    }),
-  };
-}
-
-function readLegacyTaskIntegrationHandoffBlockers(error: unknown): { taskIntegrationOperations: number } | null {
-  if (!error || typeof error !== 'object') return null;
-  const candidate = error as { code?: unknown; statusCode?: unknown; handoffPayload?: unknown };
-  if (candidate.statusCode !== 409 || candidate.code !== 'ZEUS_EXECUTION_HOST_HANDOFF_WORK_BLOCKED') return null;
-  const payload = candidate.handoffPayload;
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
-  const message = (payload as Record<string, unknown>).message;
-  if (typeof message !== 'string') return null;
-  const jsonStart = message.indexOf('{');
-  if (jsonStart < 0) return null;
-  try {
-    const parsed = JSON.parse(message.slice(jsonStart)) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-    const business = (parsed as Record<string, unknown>).business;
-    const background = (parsed as Record<string, unknown>).background;
-    if (!isZeroCountRecord(business) || !background || typeof background !== 'object' || Array.isArray(background)) return null;
-    const backgroundCounts = background as Record<string, unknown>;
-    const taskIntegrationOperations = backgroundCounts.taskIntegrationOperations;
-    if (!Number.isSafeInteger(taskIntegrationOperations) || Number(taskIntegrationOperations) <= 0) return null;
-    for (const [key, count] of Object.entries(backgroundCounts)) {
-      if (!Number.isSafeInteger(count) || Number(count) < 0) return null;
-      if (key !== 'taskIntegrationOperations' && Number(count) !== 0) return null;
-    }
-    return { taskIntegrationOperations: Number(taskIntegrationOperations) };
-  } catch {
-    return null;
-  }
-}
-
-function isZeroCountRecord(value: unknown): boolean {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const entries = Object.entries(value as Record<string, unknown>);
-  return entries.length > 0 && entries.every(([, count]) => Number.isSafeInteger(count) && Number(count) === 0);
-}
-
-function readTaskIntegrationAttemptStateCounts(dbPath: string): { preparing: number; active: number; latestActiveUpdatedAt: string | null } | null {
-  let db: DatabaseSync | undefined;
-  try {
-    db = new DatabaseSync(dbPath, { readOnly: true });
-    const table = db.prepare(`SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'task_integration_attempts'`).get();
-    if (!table) return null;
-    const row = db
-      .prepare(
-        `SELECT
-           SUM(CASE WHEN state = 'preparing' THEN 1 ELSE 0 END) AS preparing,
-           SUM(CASE WHEN state = 'active' THEN 1 ELSE 0 END) AS active,
-           MAX(CASE WHEN state = 'active' THEN updated_at ELSE NULL END) AS latest_active_updated_at
-         FROM task_integration_attempts`,
-      )
-      .get() as { preparing?: unknown; active?: unknown; latest_active_updated_at?: unknown } | undefined;
-    if (!row || !Number.isSafeInteger(row.preparing) || !Number.isSafeInteger(row.active)) return null;
-    if (row.latest_active_updated_at !== null && typeof row.latest_active_updated_at !== 'string') return null;
-    return {
-      preparing: Number(row.preparing),
-      active: Number(row.active),
-      latestActiveUpdatedAt: row.latest_active_updated_at ?? null,
-    };
-  } catch {
-    return null;
-  } finally {
-    db?.close();
-  }
-}
-
-function isRetryableExecutionHostHandoffBlock(error: unknown): boolean {
-  if (!error || typeof error !== 'object') return false;
-  const candidate = error as { code?: unknown; statusCode?: unknown };
-  return candidate.statusCode === 409 && (candidate.code === 'ZEUS_EXECUTION_HOST_HANDOFF_WORK_BLOCKED' || candidate.code === 'ZEUS_EXECUTION_HOST_PI_WAITING_BLOCKED' || candidate.code === 'ZEUS_EXECUTION_HOST_HANDOFF_ALREADY_ACTIVE');
-}
-
-function isExecutionHostHandoffPreparation(value: unknown): value is ExecutionHostHandoffPreparation {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const prepared = value as Record<string, unknown>;
-  return (
-    typeof prepared.handoffId === 'string' &&
-    Boolean(prepared.handoffId.trim()) &&
-    typeof prepared.checkpointSha256 === 'string' &&
-    /^[a-f0-9]{64}$/u.test(prepared.checkpointSha256) &&
-    Number.isSafeInteger(prepared.requestCount) &&
-    Number(prepared.requestCount) >= 0 &&
-    typeof prepared.preparedAt === 'string' &&
-    Number.isFinite(Date.parse(prepared.preparedAt))
-  );
 }
 
 async function waitForExecutionHostExit(userDataPath: string, instanceId: string, pid: number, dataRootIdentity: ZeusDataRootHostIdentity): Promise<void> {

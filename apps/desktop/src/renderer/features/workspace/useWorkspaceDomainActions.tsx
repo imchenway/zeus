@@ -257,6 +257,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setSelectedNativeConversationPresentation,
     setSelectedTaskIds,
     setSnapshot,
+    setStorageRecoveryFault,
     setTaskConversationDrawerTarget,
     setTaskConversationReopenState,
     setTaskCreateError,
@@ -527,7 +528,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     const unsubscribe = subscribeRealtimeEvents(
       (event) => {
         if (event.type === 'storage.write_fault') {
-          reportStorageReadOnlyFault(appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en', event.payload.readsAvailable === true, (error) => recordLocalError('storage-recovery-preflight-and-restart', error));
+          const fault = reportStorageReadOnlyFault(appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en', event.payload.readsAvailable === true);
+          setStorageRecoveryFault((current) => (current?.phase === 'running' ? { ...fault, phase: 'running' } : fault));
           return;
         }
         if (event.type === 'codex.usage.changed') setCodexUsageRevision((current) => current + 1);
@@ -720,6 +722,23 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       occurredAt: new Date().toISOString(),
     });
     setActionState('failed');
+  }
+
+  async function runStorageRecoveryPreflightAndRestart(): Promise<void> {
+    const restart = window.zeus?.runStorageRecoveryPreflightAndRestart;
+    if (!restart) {
+      const error = new Error(appShellSettings.appLanguage === 'zh-CN' ? '存储恢复服务尚未就绪。' : 'Storage recovery is not available yet.');
+      setStorageRecoveryFault((current) => (current ? { ...current, phase: 'failed' } : current));
+      recordLocalError('storage-recovery-preflight-and-restart', error);
+      return;
+    }
+    setStorageRecoveryFault((current) => (current ? { ...current, phase: 'running' } : current));
+    try {
+      await restart();
+    } catch (error) {
+      setStorageRecoveryFault((current) => (current ? { ...current, phase: 'failed' } : current));
+      recordLocalError('storage-recovery-preflight-and-restart', error);
+    }
   }
 
   function enqueueTaskMutation<T>(taskId: string, operation: () => Promise<T>): Promise<T> {
@@ -1807,16 +1826,19 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   async function archiveConversation(conversation: NativeConversationChoice): Promise<void> {
     const client = props.nativeConversationClient;
     if (!client) return;
+    const navigationId = conversation.navigationId ?? conversation.id;
+    const wasSelected = selectedNativeConversationIdRef.current === navigationId;
+    // 先卸载正在读取该会话的正文面板，避免归档成功后旧请求继续刷新已移除的选择并产生预期 404。
+    if (wasSelected) {
+      selectedNativeConversationIdRef.current = null;
+      setSelectedNativeConversationId(null);
+      setFocusedArchivedConversation(null);
+      setConversationDraftOpen(false);
+    }
     try {
       await client.archiveNativeConversation(conversation.projectId, conversation.id);
       if (conversation.taskId) nativeConversationChoiceLoadCoordinator.forget(conversation.taskId, conversation.id);
       else nativeProjectConversationChoiceLoadCoordinator.forget(conversation.projectId, conversation.id);
-      if (selectedNativeConversationIdRef.current === (conversation.navigationId ?? conversation.id)) {
-        selectedNativeConversationIdRef.current = null;
-        setSelectedNativeConversationId(null);
-        setFocusedArchivedConversation(null);
-        setConversationDraftOpen(false);
-      }
       setNativeConversationRuntimeStates((current) => {
         const next = { ...current };
         delete next[conversation.id];
@@ -1824,6 +1846,11 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       });
       await Promise.all([conversation.taskId ? refreshNativeConversationChoices(conversation.taskId) : refreshNativeProjectConversationChoices(conversation.projectId), refreshArchivedConversations()]);
     } catch (error) {
+      // 只恢复仍由本次归档清空的选择；用户已打开其他会话时不得抢回导航。
+      if (wasSelected && selectedNativeConversationIdRef.current === null) {
+        selectedNativeConversationIdRef.current = navigationId;
+        setSelectedNativeConversationId(navigationId);
+      }
       recordLocalError('conversation-archive', error);
       throw error;
     }
@@ -3187,13 +3214,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       return { ...current, [pending.task.id]: { ...failTaskModelPushPendingState(active, message), origin: active.origin } };
     });
     setTaskModelPushAnnouncement(message);
-    reportApplicationError(message, {
-      language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en',
-      primaryAction: {
-        label: appShellSettings.appLanguage === 'zh-CN' ? '重试' : 'Retry',
-        run: () => retryTaskModelPush(pending.task.id),
-      },
-    });
+    reportApplicationError(message, { language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en' });
   }
 
   function retryTaskModelPush(taskId: string): void {
@@ -3375,6 +3396,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     restoreProject,
     restoreTaskConversation,
     retryTaskModelPush,
+    runStorageRecoveryPreflightAndRestart,
     revealProjectInFinder,
     saveProjectConfig,
     saveProjectWorkspaceConfig,
