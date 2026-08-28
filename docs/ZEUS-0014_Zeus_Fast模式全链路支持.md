@@ -136,3 +136,11 @@ SQLite 只读复核确认提交输入的三层事实：Fast 为请求 `priority`
 - 启动前确认没有其他 Zeus Test 实例，外接竖屏 ID 3 可用。最终包使用独立资料根 `/tmp/zeus-0014-v0368-OM6Lla` 启动，真实 Renderer、`0.3.68` execution host ready、UI attached、测试 profile 和 bundle 身份均成立；验收后只向本任务主进程 PID 73944 发送 TERM，所有本任务子进程均已退出。
 - Computer Use 对应用完整路径读取窗口仍被可信服务门禁拒绝，错误保持为 `sky requires node_repl; configure NODE_REPL_TRUSTED_SERVICES`。因此 Fast 控件、跨入口、冷重启恢复、Provider 登录与实际档位截图仍未完成，不能把本轮隔离启动表述为 GUI/Provider 验收通过。
 - 当前本地 `main` 工作树仍有另一项任务的未提交文档与源码改动。最终 main merge 继续等待 GUI/Provider 验收通过且主工作树归属收口；没有 push。
+
+## 2026-08-28 同步 v0.3.69 后续验
+
+- `main` 已推进至干净的 `56eb31f`（发布结果对应 `v0.3.69`）。合入 `test` 时只有 `codexNativeConversationCoordinator.ts` 一处冲突：保留 ZEUS-0014 已拆出的 contracts、持久提交输入和 service-tier 降级模块，同时接入主线新增的 Codex 恢复状态应用；协调器最终为 3938 行。合并提交为 `58af95c`。
+- 最终合并态重新执行离线依赖安装、`pnpm lint`、`pnpm typecheck`、架构门禁、`pnpm build`、Renderer 事件流、设置命令行为与 Subagent 详情专项探针，结果全部通过。`pnpm package:mac`、包健康、`dev.hypha.zeus.test` 身份、`0.3.69` 版本、严格 codesign 和测试 DMG 校验均通过。
+- 启动前没有其他 Zeus Test 实例，外接竖屏 ID 3 可用。最终包使用独立资料根 `/tmp/zeus-0014-v0369-RjvwsP` 启动；真实 Renderer、`0.3.69` execution host ready、UI attached 与测试数据根身份成立。验收停止后只向本任务 PID 16569 发送 TERM，相关进程已全部退出。
+- Computer Use 仍在读取窗口前返回 `sky requires node_repl; configure NODE_REPL_TRUSTED_SERVICES`。只读核对确认来源 `/Users/david/.codex/config.toml` 已声明受信服务，而当前正式 Zeus Provider 配置缺少 `NODE_REPL_TRUSTED_SERVICES`，目标 Computer Use 支撑 App 也不存在；这与 TASK_20260827_003 记录的“需要重新执行官方配置导入并重启会话”边界一致。
+- 本任务不修改正式 Zeus Provider 配置或复制正式认证。因而 Fast 控件点击、跨入口、冷重启恢复和打包身份下 Provider 实际档位截图仍未完成；在官方配置导入与新会话恢复 Computer Use 前，不宣称 GUI/Provider 验收通过，也不合入 `main`。没有 push。
