@@ -1,24 +1,24 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type {FastifyInstance, FastifyReply, FastifyRequest} from 'fastify';
 import type {
-  ConversationCollaborationMode,
-  ConversationGoalRepository,
-  ConversationNextTurnSettings,
-  ConversationPermissionMode,
-  ConversationRepository,
-  ProjectRepository,
-  TaskRepository,
-  ZeusConversationGoalRecord,
-  ZeusConversationRecord,
-  ZeusConversationWithMessagesRecord,
-  ZeusTaskRecord,
+    ConversationCollaborationMode,
+    ConversationGoalRepository,
+    ConversationNextTurnSettings,
+    ConversationPermissionMode,
+    ConversationRepository,
+    ProjectRepository,
+    TaskRepository,
+    ZeusConversationGoalRecord,
+    ZeusConversationRecord,
+    ZeusConversationWithMessagesRecord,
+    ZeusTaskRecord,
 } from '@zeus/storage';
 import {
-  ConversationCommandApplication,
-  ConversationCommandApplicationError,
-  conversationCommandHttpError,
-  conversationCommandTypes,
-  type ConversationMutationRequest,
-  type ParsedConversationMutation,
+    ConversationCommandApplication,
+    ConversationCommandApplicationError,
+    conversationCommandHttpError,
+    conversationCommandTypes,
+    type ConversationMutationRequest,
+    type ParsedConversationMutation,
 } from './conversationCommandApplication.js';
 
 type EmptyInput = Record<string, never>;
@@ -341,6 +341,7 @@ export function registerConversationCommandRoutes(options: {
             else await options.restoreNativeConversation(current);
             return lifecycleResult(requireConversation(request.params));
           },
+            isExplicitRejection: isConversationLifecycleExplicitRejection,
           mutateAcceptedBusinessState: (accepted) => appendLifecycleAudit(action, request.params.projectId, accepted.conversationId),
         });
         result = executed.result;
@@ -368,6 +369,12 @@ export function registerConversationCommandRoutes(options: {
       return sendRouteError(reply, error);
     }
   }
+
+    function isConversationLifecycleExplicitRejection(error: unknown): boolean {
+        return Boolean(error) && typeof error === 'object' && (error as {
+            code?: unknown
+        }).code === 'ZEUS_NATIVE_CONVERSATION_IN_PROGRESS';
+    }
 
   function parseCommand<TInput extends object>(request: FastifyRequest<{ Params: ConversationParams; Body: ConversationMutationRequest<TInput> }>, commandType: (typeof conversationCommandTypes)[keyof typeof conversationCommandTypes]) {
     return application.parse<TInput>({ value: request.body, commandType, conversationId: request.params.conversationId });

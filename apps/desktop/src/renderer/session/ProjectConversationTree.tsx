@@ -1,25 +1,25 @@
-import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { ArchiveIcon as Archive } from '@phosphor-icons/react/dist/csr/Archive';
-import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
-import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
-import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
-import { ClockIcon as Clock } from '@phosphor-icons/react/dist/csr/Clock';
-import { EyeSlashIcon as EyeSlash } from '@phosphor-icons/react/dist/csr/EyeSlash';
-import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
-import { PauseCircleIcon as PauseCircle } from '@phosphor-icons/react/dist/csr/PauseCircle';
-import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
-import { ShieldCheckIcon as ShieldCheck } from '@phosphor-icons/react/dist/csr/ShieldCheck';
-import { WarningIcon as Warning } from '@phosphor-icons/react/dist/csr/Warning';
-import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
-import type { NativeConversationChoice, NativeConversationSnapshot, NativeSessionState } from './sessionTypes.js';
-import { compareConversationStageUpdatedDesc } from './conversationOrdering.js';
-import type { SessionUiLanguage } from './ThreadItemView.js';
-import { conversationDisplayTitle } from './conversationDisplayTitle.js';
-import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
-import type { TaskAgentRunStatus } from '../apiClient.js';
-import { taskAgentRunStatusLabels } from '../task/TaskRunStatusChip.js';
-import { beginConversationNavigationTrace } from '../performanceTraceContext.js';
+import {type KeyboardEvent, useEffect, useRef, useState} from 'react';
+import {AnimatePresence, motion, useReducedMotion} from 'framer-motion';
+import {ArchiveIcon as Archive} from '@phosphor-icons/react/dist/csr/Archive';
+import {ChatCircleIcon as ChatCircle} from '@phosphor-icons/react/dist/csr/ChatCircle';
+import {CheckCircleIcon as CheckCircle} from '@phosphor-icons/react/dist/csr/CheckCircle';
+import {CircleNotchIcon as CircleNotch} from '@phosphor-icons/react/dist/csr/CircleNotch';
+import {ClockIcon as Clock} from '@phosphor-icons/react/dist/csr/Clock';
+import {EyeSlashIcon as EyeSlash} from '@phosphor-icons/react/dist/csr/EyeSlash';
+import {FolderIcon as Folder} from '@phosphor-icons/react/dist/csr/Folder';
+import {PauseCircleIcon as PauseCircle} from '@phosphor-icons/react/dist/csr/PauseCircle';
+import {PlusIcon as Plus} from '@phosphor-icons/react/dist/csr/Plus';
+import {ShieldCheckIcon as ShieldCheck} from '@phosphor-icons/react/dist/csr/ShieldCheck';
+import {WarningIcon as Warning} from '@phosphor-icons/react/dist/csr/Warning';
+import {WarningCircleIcon as WarningCircle} from '@phosphor-icons/react/dist/csr/WarningCircle';
+import type {NativeConversationChoice, NativeConversationSnapshot, NativeSessionState} from './sessionTypes.js';
+import {compareConversationStageUpdatedDesc} from './conversationOrdering.js';
+import type {SessionUiLanguage} from './ThreadItemView.js';
+import {conversationDisplayTitle} from './conversationDisplayTitle.js';
+import {useNewItemMotionIds} from '../ui/useNewItemMotion.js';
+import type {TaskAgentRunStatus} from '../apiClient.js';
+import {taskAgentRunStatusLabels} from '../task/TaskRunStatusChip.js';
+import {beginConversationNavigationTrace} from '../performanceTraceContext.js';
 
 export interface ProjectConversationTaskGroup {
   taskId: string;
@@ -166,7 +166,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
       const navigationId = conversationNavigationId(conversation);
       const current = navigationId === props.selectedConversationId;
       const runtimeState = props.conversationStates?.[navigationId] ?? props.conversationStates?.[conversation.id] ?? conversationTreeRuntimeStateFromConversation(conversation);
-      const archiveAvailable = conversationCanBeArchived(runtimeState);
+        const archiveAvailable = conversationCanBeArchived(runtimeState, conversation);
       const archiveUnavailableReason = runtimeState === 'legacy_readonly' ? copy.archiveLegacyUnavailable : copy.archiveUnavailable;
       const archiving = archivingConversationId === conversation.id;
       const archiveLabel = archiving ? copy.archiving : archiveAvailable ? copy.archive : archiveUnavailableReason;
@@ -289,8 +289,11 @@ function conversationNavigationId(conversation: NativeConversationChoice): strin
   return conversation.navigationId ?? conversation.id;
 }
 
-export function conversationCanBeArchived(runtimeState: ConversationTreeRuntimeState): boolean {
-  return runtimeState === 'ready' || runtimeState === 'paused' || runtimeState === 'error';
+export function conversationCanBeArchived(runtimeState: ConversationTreeRuntimeState, conversation?: Pick<NativeConversationChoice, 'providerThreadId' | 'providerState'>): boolean {
+    if (runtimeState === 'ready' || runtimeState === 'paused' || runtimeState === 'error') return true;
+    // 从未建立 Provider 线程的本地队列可以由服务端取消后归档；已进入 binding/active
+    // 或拥有真实线程身份的会话仍维持禁用，避免把未知外部写入当成本地清理。
+    return conversation?.providerThreadId === null && conversation.providerState === 'unbound';
 }
 
 function ProjectConversationHeader(props: { project: ProjectConversationGroup; language: SessionUiLanguage; onStartConversation: (taskId: string) => void }) {
