@@ -147,18 +147,12 @@ export function PendingRequestSurface(props: PendingRequestSurfaceProps) {
 
   useApplicationErrorDialog(props.error, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-    title: props.language === 'zh-CN' ? '请求处理失败' : 'Request handling failed',
-    source: 'PendingRequestSurface',
   });
   useApplicationErrorDialog(mcpUrlError, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-    title: props.language === 'zh-CN' ? '外部链接打开失败' : 'External link failed to open',
-    source: 'PendingRequestSurface.openMcpUrl',
   });
   useApplicationErrorDialog(kind === 'unknown' ? copy.unsupportedHelp : null, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-    title: copy.unsupported,
-    source: 'PendingRequestSurface.requestKind',
   });
 
   useEffect(() => {
@@ -504,7 +498,7 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
   const [answers, setAnswers] = useState<Record<string, string[]>>(restored.answers);
   const [otherAnswers, setOtherAnswers] = useState<Record<string, string>>(restored.otherAnswers);
   const [answerAttachments, setAnswerAttachments] = useState<Record<string, NativeConversationAttachment[]>>(restored.answerAttachments);
-  const [resourceError, setResourceError] = useState<string | null>(null);
+  const [resourceError, setResourceError] = useState<unknown>(null);
   const [questionIndex, setQuestionIndex] = useState(0);
   const [remainingMs, setRemainingMs] = useState(() => requestRemainingMs(props.request));
   const [locallyResponding, setLocallyResponding] = useState(false);
@@ -531,8 +525,6 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
 
   useApplicationErrorDialog(resourceError, {
     language: zh ? 'zh-CN' : 'en',
-    title: zh ? '回答附件处理失败' : 'Answer attachment failed',
-    source: 'RequestUserInputPanel',
   });
 
   const inputResources = useConversationInputResources({
@@ -664,7 +656,7 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
         setAnswerAttachments((current) => ({ ...current, [currentQuestion.id]: mergeAnswerAttachments(current[currentQuestion.id] ?? [], selected) }));
       }
     } catch (error) {
-      setResourceError(error instanceof Error ? error.message : String(error));
+      setResourceError(error);
     }
   }
 

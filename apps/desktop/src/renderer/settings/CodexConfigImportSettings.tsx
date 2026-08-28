@@ -15,7 +15,7 @@ interface CodexConfigImportSettingsProps {
 const copy = {
   'zh-CN': {
     title: '从 Codex App 导入配置',
-    help: '把 Codex 的指令、规则、提示词、技能和插件复制到 Zeus 专属目录。不会导入账号、密钥或历史会话。',
+    help: '把 Codex 的指令、规则、提示词、技能以及 Computer/Browser 工具组件复制到 Zeus 专属目录。不会导入账号、密钥或历史会话。',
     scan: '重新检查',
     importing: '正在导入…',
     activating: '正在启用…',
@@ -29,7 +29,7 @@ const copy = {
   },
   'en-US': {
     title: 'Import configuration from Codex App',
-    help: 'Copy Codex instructions, rules, prompts, skills, and plugins into the Zeus-owned directory. Accounts, secrets, and conversation history are excluded.',
+    help: 'Copy Codex instructions, rules, prompts, skills, and Computer/Browser tool components into the Zeus-owned directory. Accounts, secrets, and conversation history are excluded.',
     scan: 'Check again',
     importing: 'Importing…',
     activating: 'Enabling…',
@@ -48,8 +48,6 @@ export function CodexConfigImportSettings(props: CodexConfigImportSettingsProps)
   const activationRequired = Boolean(props.result && props.result.imported.length > 0 && !props.result.runtimeReloaded);
   useApplicationErrorDialog(props.error, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-    title: props.language === 'zh-CN' ? 'Codex 配置导入失败' : 'Codex configuration import failed',
-    source: 'CodexConfigImportSettings',
   });
   return (
     <section className="legacy-import-settings" aria-labelledby="codex-config-import-title">

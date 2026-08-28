@@ -111,3 +111,11 @@ SQLite 只读复核确认提交输入的三层事实：Fast 为请求 `priority`
 - 会话条目分类同时保留助手交付图片与服务档位降级提示；Provider 用量快照校验同时接受 `serviceTier` 与 `lastApiEquivalentUsd`，并分别复验字符串和非负有限数。
 - 合入后重新执行变更源码格式检查、`pnpm lint`、`pnpm typecheck`、`pnpm build` 与暂存差异空白错误检查，结果均通过；构建仅保留既有的大分块提示。本阶段没有重新打包或启动 GUI，不把静态检查与构建结果宣称为真实运行验收。
 - 最终复核要求 `git diff --name-only --diff-filter=U` 与 `git ls-files -u` 均无输出、工作区不存在未暂存改动，并确认 `MERGE_HEAD` 仍指向任务分支待合入提交。
+
+## 2026-08-28 合入 test 前的 main 重构适配
+
+- 当前候选分支先合入本地最新 `main`。最新主线已把 Renderer、Local Server 与 Storage 拆成有边界的模块，本阶段按新边界重新移植项目模型速度偏好、各会话入口、请求/下发/Provider 实际档位、用量计费档位和降级提示，没有恢复旧巨型入口结构。
+- 新增 `codexServiceTierDowngrade` 专属应用模块；协调器保持在 4000 行架构上限内。自动降级仍只接受明确的 service-tier 不支持证据，同一提交只回退一次，模型和推理强度不变，项目 Fast 偏好不被改写。
+- 任务推送、项目新会话、既有会话、代码审查和冲突处理统一读取“项目 + 模型来源 + 模型”的偏好；Provider 上一轮实际档位不再反向成为下一轮意图。运行详情分别展示 Provider 实际档位与用量计费档位。
+- 已执行 `pnpm install --frozen-lockfile --offline`，未修改锁文件；`pnpm lint`、`pnpm typecheck`、`pnpm build` 与本次变更文件 Prettier 检查通过。构建只保留既有的大分块提示。
+- 本阶段尚未提交当前 merge、尚未合入 `test`、尚未重新打包或执行 Zeus Test GUI/Provider 验收，因此不把上述静态结果表述为 test 或桌面验收通过。

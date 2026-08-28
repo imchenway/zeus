@@ -3,7 +3,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { createConnection } from 'node:net';
 import { isAbsolute, join } from 'node:path';
-import { WebSocket, type RawData } from 'ws';
+import { type RawData, WebSocket } from 'ws';
+import type { CodexBootstrapAdditionalContext } from '@zeus/shared';
 import {
   CodexJsonLineDecoder,
   type CodexWireId,
@@ -32,11 +33,14 @@ export type {
 
 export interface CodexAppServerReadable {
   on(event: 'data', listener: (chunk: Buffer | string) => void): unknown;
+  /** Node pipe 支持暂停读取；假实现可省略。只允许在没有未决 RPC 时把投影背压传回 app-server stdout。 */
+  pause?(): unknown;
+  resume?(): unknown;
 }
 
 export interface CodexAppServerProcess {
   readonly pid?: number;
-  stdin: { write(chunk: string | Uint8Array): boolean };
+  stdin: { write(chunk: string | Uint8Array, callback?: (error?: Error | null) => void): boolean };
   stdout: CodexAppServerReadable;
   stderr: CodexAppServerReadable;
   on(event: 'exit' | 'error', listener: (...args: unknown[]) => void): this;
@@ -69,8 +73,16 @@ export interface CodexModelCapability {
 export interface CodexCapabilitiesSnapshot {
   generationId: string;
   initializedAt: string;
+  /** 来自 initialize 回执或同一真实可执行文件 `--version` 的 Provider 版本；两者都缺失时保持 null。 */
+  providerVersion: string | null;
+  protocolVersion: 'codex-app-server-v2';
   models: CodexModelCapability[];
   supportedModels: string[];
+  preflightTokenCount: {
+    state: 'unavailable';
+    exact: false;
+    reason: string;
+  };
   goals: {
     supported: boolean;
     enabled: boolean;
@@ -136,6 +148,25 @@ export interface CodexAccountUsageSnapshot {
   dailyUsageBuckets: Array<{ startDate: string; tokens: number }> | null;
 }
 
+export type CodexSkillScope = 'user' | 'repo' | 'system' | 'admin';
+
+export interface CodexSkillMetadata {
+  name: string;
+  description: string;
+  shortDescription?: string;
+  path: string;
+  scope: CodexSkillScope;
+  enabled: boolean;
+  interface?: Record<string, unknown>;
+  dependencies?: Record<string, unknown>;
+}
+
+export interface CodexSkillsListEntry {
+  cwd: string;
+  skills: CodexSkillMetadata[];
+  errors: Array<Record<string, unknown>>;
+}
+
 export interface CodexChatGptLogin {
   generationId: string;
   loginId: string;
@@ -176,7 +207,12 @@ export interface CodexResponsesRuntime {
   environment: Record<string, string>;
 }
 
-export interface CodexThreadStartInput {
+export interface CodexPerformanceTraceContext {
+  /** Zeus 内部短期性能身份；不序列化到 Codex app-server params。 */
+  traceIdentity?: string | null;
+}
+
+export interface CodexThreadStartInput extends CodexPerformanceTraceContext {
   model: string;
   serviceTier?: string | null;
   cwd: string;
@@ -191,16 +227,20 @@ export interface CodexThreadStartInput {
   dynamicTools?: CodexDynamicToolSpec[];
 }
 
-export interface CodexThreadResumeInput {
+export interface CodexThreadResumeInput extends CodexPerformanceTraceContext {
   threadId: string;
   cwd?: string;
   responsesRuntime?: CodexResponsesRuntime;
 }
 
+export type CodexThreadRuntimeStatus = { type: 'notLoaded' } | { type: 'idle' } | { type: 'systemError'; [key: string]: unknown } | { type: 'active'; activeFlags: string[] };
+
 export interface CodexThreadSnapshot {
   id: string;
   /** app-server 可选返回的真实 JSONL 文件路径；字段不稳定，缺失时不得猜测。 */
   path?: string | null;
+  /** thread/read 的权威运行态；旧 Provider 缺失时由上层按未知状态失败关闭。 */
+  status?: CodexThreadRuntimeStatus;
   turns?: unknown[];
   providerSettings?: {
     generationId: string;
@@ -212,11 +252,15 @@ export interface CodexThreadSnapshot {
   [key: string]: unknown;
 }
 
-export interface CodexTurnStartInput {
+export interface CodexTurnStartInput extends CodexPerformanceTraceContext {
   threadId: string;
   clientUserMessageId?: string;
   input: Array<Record<string, unknown>>;
-  additionalContext?: Record<string, unknown>;
+  additionalContext?: CodexBootstrapAdditionalContext;
+  /** 仅供适配器确认 JSON-RPC 帧已经成功写入传输层，不进入线协议。 */
+  requestWritten?: () => void;
+  /** 仅供运行管理器在进程重启后恢复外部 Responses Provider，不进入 turn/start 线协议。 */
+  responsesRuntime?: CodexResponsesRuntime;
   collaborationMode?: { mode: 'plan' | 'default'; settings: { model: string; reasoning_effort: string | null; developer_instructions: string | null } };
   model?: string;
   effort?: string;
@@ -228,7 +272,12 @@ export interface CodexTurnStartInput {
   sandboxPolicy?: CodexSandboxPolicy;
 }
 
-export interface CodexTurnSteerInput {
+/** 产品层沿用 Pi 的 `off` 术语；Codex Responses 线协议对应值是 `none`。 */
+export function toCodexWireReasoningEffort(effort: string | null | undefined): string | null | undefined {
+  return effort === 'off' ? 'none' : effort;
+}
+
+export interface CodexTurnSteerInput extends CodexPerformanceTraceContext {
   threadId: string;
   turnId: string;
   clientUserMessageId?: string;
@@ -268,25 +317,27 @@ interface CodexServerResponseBase {
   requestId: CodexWireId;
 }
 
-export type CodexServerRequestResponse =
-  | (CodexServerResponseBase & { type: 'command'; decision: CodexCommandApprovalDecision })
-  | (CodexServerResponseBase & { type: 'file'; decision: 'accept' | 'acceptForSession' | 'decline' | 'cancel' })
-  | (CodexServerResponseBase & {
-      type: 'permissions';
-      permissions: {
-        network?: { enabled: boolean | null };
-        fileSystem?: { read: string[] | null; write: string[] | null; globScanMaxDepth?: number };
-      };
-      scope: 'turn' | 'session';
-      strictAutoReview?: boolean;
-    })
-  | (CodexServerResponseBase & { type: 'request_user_input'; answers: Record<string, { answers: string[] }> })
-  | (CodexServerResponseBase & { type: 'mcp'; action: 'accept' | 'decline' | 'cancel'; content: JsonValue | null; _meta: JsonValue | null })
-  | (CodexServerResponseBase & {
-      type: 'dynamic_tool';
-      contentItems: Array<{ type: 'inputText'; text: string } | { type: 'inputImage'; imageUrl: string }>;
-      success: boolean;
-    });
+export type CodexServerRequestResponse = CodexPerformanceTraceContext &
+  (
+    | (CodexServerResponseBase & { type: 'command'; decision: CodexCommandApprovalDecision })
+    | (CodexServerResponseBase & { type: 'file'; decision: 'accept' | 'acceptForSession' | 'decline' | 'cancel' })
+    | (CodexServerResponseBase & {
+        type: 'permissions';
+        permissions: {
+          network?: { enabled: boolean | null };
+          fileSystem?: { read: string[] | null; write: string[] | null; globScanMaxDepth?: number };
+        };
+        scope: 'turn' | 'session';
+        strictAutoReview?: boolean;
+      })
+    | (CodexServerResponseBase & { type: 'request_user_input'; answers: Record<string, { answers: string[] }> })
+    | (CodexServerResponseBase & { type: 'mcp'; action: 'accept' | 'decline' | 'cancel'; content: JsonValue | null; _meta: JsonValue | null })
+    | (CodexServerResponseBase & {
+        type: 'dynamic_tool';
+        contentItems: Array<{ type: 'inputText'; text: string } | { type: 'inputImage'; imageUrl: string }>;
+        success: boolean;
+      })
+  );
 
 export type CodexCommandApprovalDecision =
   | 'accept'
@@ -357,27 +408,43 @@ export interface CodexRemoteControlClientsPage {
 }
 
 export interface CodexAppServerManager {
-  ensureReady(input: { commandPath: string; externalAgentHome?: string; remoteControl?: boolean; providerEnvironment?: Record<string, string> }): Promise<CodexCapabilitiesSnapshot>;
+  ensureReady(input: {
+    commandPath: string;
+    externalAgentHome?: string;
+    remoteControl?: boolean;
+    providerEnvironment?: Record<string, string>;
+    /** 世代管理器用于在进程启动前安装外部 Responses Provider；底层管理器不把它写入 RPC。 */
+    responsesProvider?: CodexResponsesModelProvider | null;
+  }): Promise<CodexCapabilitiesSnapshot>;
   /** 在运行身份不变时也激活新世代；多世代管理器保留旧活动轮次并让其自然排空。 */
   activateFreshGeneration?(input: { commandPath: string; externalAgentHome?: string; remoteControl?: boolean; providerEnvironment?: Record<string, string> }): Promise<CodexCapabilitiesSnapshot>;
-  readAccount(input?: { refreshToken?: boolean }): Promise<CodexAccountSnapshot>;
+  readAccount(input?: { refreshToken?: boolean; allowCachedOnTransportFailure?: boolean; preferCached?: boolean; cachedOnly?: boolean }): Promise<CodexAccountSnapshot>;
   readAccountRateLimits(): Promise<CodexAccountRateLimitsSnapshot>;
   readAccountUsage(): Promise<CodexAccountUsageSnapshot>;
   startChatGptLogin(): Promise<CodexChatGptLogin>;
   cancelChatGptLogin(input: { loginId: string }): Promise<void>;
   startThread(input: CodexThreadStartInput): Promise<CodexThreadSnapshot>;
   resumeThread(input: CodexThreadResumeInput): Promise<CodexThreadSnapshot>;
-  archiveThread(input: { threadId: string }): Promise<void>;
-  unarchiveThread(input: { threadId: string }): Promise<CodexThreadSnapshot>;
-  readThread(input: { threadId: string }): Promise<CodexThreadSnapshot>;
+  archiveThread(input: { threadId: string } & CodexPerformanceTraceContext): Promise<void>;
+  unarchiveThread(input: { threadId: string } & CodexPerformanceTraceContext): Promise<CodexThreadSnapshot>;
+  readThread(input: { threadId: string; includeTurns?: boolean; priority?: 'control' }): Promise<CodexThreadSnapshot>;
   listThreads(input: CodexThreadListInput): Promise<CodexThreadsPage>;
   readThreadGoal(input: { threadId: string }): Promise<CodexThreadGoal | null>;
-  setThreadGoal(input: { threadId: string; objective?: string; status?: CodexThreadGoalStatus; tokenBudget?: number | null }): Promise<CodexThreadGoal>;
-  clearThreadGoal(input: { threadId: string }): Promise<{ cleared: boolean }>;
-  listThreadTurns(input: { threadId: string; cursor?: string | null; limit?: number | null; sortDirection?: 'asc' | 'desc' | null; itemsView?: 'notLoaded' | 'summary' | 'full' | null }): Promise<CodexThreadTurnsPage>;
+  setThreadGoal(input: { threadId: string; objective?: string; status?: CodexThreadGoalStatus; tokenBudget?: number | null } & CodexPerformanceTraceContext): Promise<CodexThreadGoal>;
+  clearThreadGoal(input: { threadId: string } & CodexPerformanceTraceContext): Promise<{ cleared: boolean }>;
+  listThreadTurns(input: {
+    threadId: string;
+    cursor?: string | null;
+    limit?: number | null;
+    sortDirection?: 'asc' | 'desc' | null;
+    itemsView?: 'notLoaded' | 'summary' | 'full' | null;
+    /** 派发门禁读取不得被同一进程的过程事件投影背压阻塞。 */
+    priority?: 'control';
+  }): Promise<CodexThreadTurnsPage>;
+  listSkills(input: { cwds?: string[]; forceReload?: boolean }): Promise<CodexSkillsListEntry[]>;
   startTurn(input: CodexTurnStartInput): Promise<CodexTurnSnapshot>;
   steerTurn(input: CodexTurnSteerInput): Promise<{ turnId: string }>;
-  interruptTurn(input: { threadId: string; turnId: string }): Promise<void>;
+  interruptTurn(input: { threadId: string; turnId: string } & CodexPerformanceTraceContext): Promise<void>;
   respondToServerRequest(input: CodexServerRequestResponse): Promise<void>;
   readRemoteControlStatus(): Promise<CodexRemoteControlStatus>;
   enableRemoteControl(input?: { ephemeral?: boolean }): Promise<CodexRemoteControlStatus>;
@@ -390,7 +457,7 @@ export interface CodexAppServerManager {
   startExternalAgentImport(input: ExternalAgentConfigImportParams): Promise<ExternalAgentConfigImportResponse>;
   readExternalAgentImportHistories(): Promise<ExternalAgentConfigImportHistory[]>;
   subscribeExternalAgentImport(listener: (event: ExternalAgentImportEvent) => void): () => void;
-  subscribe(listener: (event: CodexAppServerEvent) => void): () => void;
+  subscribe(listener: (event: CodexAppServerEvent) => void | Promise<void>): () => void;
   getState(): CodexTransportState;
   hasGeneration(generationId: string): boolean;
   generationForThread(threadId: string): string | null;
@@ -403,6 +470,8 @@ export type ExternalAgentImportEvent = ExternalAgentImportNotification & { gener
 
 type PendingRequest = {
   generationId: string;
+  method: string;
+  traceIdentity: string | null;
   resolve(value: unknown): void;
   reject(error: Error): void;
   timeout: ReturnType<typeof setTimeout>;
@@ -422,6 +491,8 @@ interface CreateCodexAppServerManagerOptions {
   shutdownTimeoutMs?: number;
   accountFingerprintSalt?: string;
   runtimeEnvironment?: Record<string, string>;
+  /** initialize 不再报告版本时，仅接纳同一可执行文件的只读版本探测结果。 */
+  providerVersionFallback?: string | null;
 }
 
 type ProcessExitTracker = { promise: Promise<void>; resolve: () => void; exited: boolean };
@@ -435,6 +506,13 @@ type ServerRequestRecord = {
 };
 
 const RESTART_DELAYS_MS = [250, 500, 1_000, 2_000, 5_000] as const;
+const ACCOUNT_SNAPSHOT_TTL_MS = 30_000;
+const ACCOUNT_USAGE_SNAPSHOT_TTL_MS = 15_000;
+
+type TimedGenerationSnapshot<T extends { generationId: string }> = {
+  value: T;
+  cachedAt: number;
+};
 
 function resolveBeforeTimeout(promise: Promise<void>, timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -462,8 +540,9 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
   const accountFingerprintSalt = options.accountFingerprintSalt?.trim() || 'zeus-local-account-scope';
   const runtimeEnvironment = { ...options.runtimeEnvironment };
   const codexHome = options.codexHome?.trim() || null;
+  const providerVersionFallback = normalizeProviderVersion(options.providerVersionFallback);
   if (codexHome !== null && !isAbsolute(codexHome)) throw managerError('ZEUS_CODEX_HOME_INVALID', 'Codex home must be an absolute path.');
-  const listeners = new Set<(event: CodexAppServerEvent) => void>();
+  const listeners = new Set<(event: CodexAppServerEvent) => void | Promise<void>>();
   const externalAgentImportListeners = new Set<(event: ExternalAgentImportEvent) => void>();
   const eventReplayBuffer: CodexAppServerEvent[] = [];
   const pendingRequests = new Map<string, PendingRequest>();
@@ -487,8 +566,16 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
   let eventSequence = 0;
   let diagnosticSequence = 0;
   let remoteControlEnabled = false;
+  let lastAccountSnapshot: TimedGenerationSnapshot<CodexAccountSnapshot> | null = null;
+  let lastAccountRateLimitsSnapshot: TimedGenerationSnapshot<CodexAccountRateLimitsSnapshot> | null = null;
+  let lastAccountUsageSnapshot: TimedGenerationSnapshot<CodexAccountUsageSnapshot> | null = null;
   let preparingForShutdown = false;
   let closePromise: Promise<void> | null = null;
+  const pendingEventDeliveryCounts = new WeakMap<CodexAppServerProcess, number>();
+  const pendingRpcReadCounts = new WeakMap<CodexAppServerProcess, number>();
+  const accountReadInFlight = new Map<string, Promise<CodexAccountSnapshot>>();
+  const accountRateLimitsReadInFlight = new Map<string, Promise<CodexAccountRateLimitsSnapshot>>();
+  const accountUsageReadInFlight = new Map<string, Promise<CodexAccountUsageSnapshot>>();
 
   function currentGenerationId(): string {
     if (state.type === 'idle' || state.type === 'closed') throw managerError('ZEUS_CODEX_NOT_READY', 'Codex app-server is not ready.');
@@ -513,7 +600,8 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       ...(codexHome === null ? {} : { CODEX_HOME: codexHome }),
       ...(externalAgentHome === null ? {} : { ZEUS_CODEX_EXTERNAL_AGENT_HOME: externalAgentHome }),
     };
-    const spawned = remoteControlTransport ? spawnRemoteControlCodexAppServer(command, { env }) : spawn(command, ['app-server', ...(options.appServerFlags ?? []), '--listen', 'stdio://'], { env });
+    // `-c/--config` 是 Codex 根命令参数，必须位于 app-server 子命令之前。
+    const spawned = remoteControlTransport ? spawnRemoteControlCodexAppServer(command, { env }) : spawn(command, [...(options.appServerFlags ?? []), 'app-server', '--listen', 'stdio://'], { env });
     trackProcessExit(spawned);
     child = spawned;
     spawned.stdout.on('data', (chunk) => {
@@ -552,7 +640,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     });
 
     const handshake = (async () => {
-      await rpc(generationId, 'initialize', {
+      const initializeResponse = await rpc(generationId, 'initialize', {
         clientInfo: { name: 'zeus', title: 'Zeus', version: '0.1.0' },
         capabilities: { experimentalApi: true, requestAttestation: false },
       });
@@ -564,8 +652,15 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       const capabilities: CodexCapabilitiesSnapshot = {
         generationId,
         initializedAt: now(),
+        providerVersion: providerVersionFromInitialize(initializeResponse) ?? providerVersionFallback,
+        protocolVersion: 'codex-app-server-v2',
         models,
         supportedModels: models.map((model) => model.model),
+        preflightTokenCount: {
+          state: 'unavailable',
+          exact: false,
+          reason: '当前 app-server 协议没有请求前 token-count RPC；仅提供请求后的真实 usage 通知。',
+        },
         goals,
       };
       if (child !== spawned) throw managerError('ZEUS_CODEX_GENERATION_EXITED', 'Codex app-server generation changed during initialization.');
@@ -642,27 +737,63 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     void readyPromise.catch(() => undefined);
   }
 
-  function write(message: unknown): void {
+  function write(message: unknown, completed?: (error?: Error) => void): void {
     if (child === null) throw managerError('ZEUS_CODEX_NOT_READY', 'Codex app-server process is unavailable.');
-    child.stdin.write(`${JSON.stringify(message)}\n`);
+    child.stdin.write(`${JSON.stringify(message)}\n`, (error) => {
+      completed?.(error ?? undefined);
+    });
   }
 
-  function rpc(generationId: string, method: string, params: unknown): Promise<unknown> {
+  function rpc(generationId: string, method: string, params: unknown, input: { requestWritten?: () => void; traceIdentity?: string | null; timeoutMs?: number } = {}): Promise<unknown> {
     if (preparingForShutdown || state.type === 'closed') return Promise.reject(managerError('ZEUS_CODEX_CLOSED', 'Codex app-server manager is closing.'));
     if (generationId !== currentGenerationId()) return Promise.reject(managerError('ZEUS_CODEX_STALE_GENERATION', 'Codex app-server generation is stale.'));
     const id = `${generationId}:${++requestSequence}`;
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        pendingRequests.delete(pendingKey(generationId, id));
-        reject(managerError('ZEUS_CODEX_RPC_TIMEOUT', `Codex app-server request timed out: ${method}`));
-      }, requestTimeoutMs);
-      pendingRequests.set(pendingKey(generationId, id), { generationId, resolve, reject, timeout });
+      // 官方 stdio 协议把 RPC 回包与过程通知复用在同一条 JSONL stdout 上。
+      // 任何已写出的 RPC 都必须保持读取窗口，否则事件投影的异步背压会把回包一起堵住。
+      const finishRpcRead = beginRpcRead(generationId, method === 'turn/interrupt' ? 2_000 : 0);
+      const timeout = setTimeout(
+        () => {
+          const key = pendingKey(generationId, id);
+          const pending = pendingRequests.get(key);
+          pendingRequests.delete(key);
+          if (pending) pending.reject(managerError('ZEUS_CODEX_RPC_TIMEOUT', `Codex app-server request timed out: ${method}`));
+        },
+        Math.max(1, input.timeoutMs ?? requestTimeoutMs),
+      );
+      pendingRequests.set(pendingKey(generationId, id), {
+        generationId,
+        method,
+        traceIdentity: input.traceIdentity ?? null,
+        resolve(value) {
+          finishRpcRead();
+          resolve(value);
+        },
+        reject(error) {
+          finishRpcRead();
+          reject(error);
+        },
+        timeout,
+      });
       try {
-        write({ id, method, params });
+        write({ id, method, params }, (error) => {
+          if (!error) {
+            input.requestWritten?.();
+            return;
+          }
+          const key = pendingKey(generationId, id);
+          const pending = pendingRequests.get(key);
+          if (!pending) return;
+          clearTimeout(pending.timeout);
+          pendingRequests.delete(key);
+          pending.reject(error);
+        });
       } catch (error) {
         clearTimeout(timeout);
-        pendingRequests.delete(pendingKey(generationId, id));
-        reject(asError(error));
+        const key = pendingKey(generationId, id);
+        const pending = pendingRequests.get(key);
+        pendingRequests.delete(key);
+        if (pending) pending.reject(asError(error));
       }
     });
   }
@@ -693,7 +824,13 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       pendingRequests.delete(key);
       clearTimeout(pending.timeout);
       if (message.error) {
-        pending.reject(Object.assign(new Error(message.error.message), { code: message.error.code, data: message.error.data }));
+        pending.reject(
+          Object.assign(new Error(message.error.message), {
+            code: message.error.code,
+            data: message.error.data,
+            dispatchDisposition: 'runtime_rejected' as const,
+          }),
+        );
       } else {
         pending.resolve(message.result);
       }
@@ -752,6 +889,13 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       const resolvedRequestId = typeof params.requestId === 'string' || typeof params.requestId === 'number' ? params.requestId : null;
       if (resolvedRequestId !== null) serverRequests.delete(serverRequestKey(generationId, resolvedRequestId));
     }
+    if (message.method === 'account/updated') {
+      lastAccountSnapshot = null;
+      lastAccountRateLimitsSnapshot = null;
+      lastAccountUsageSnapshot = null;
+    } else if (message.method === 'account/rateLimits/updated') {
+      lastAccountRateLimitsSnapshot = null;
+    }
     emitEvent(generationId, message.method, message.params, requestId);
     if (message.method === 'externalAgentConfig/import/progress' || message.method === 'externalAgentConfig/import/completed') {
       try {
@@ -787,13 +931,60 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       eventReplayBuffer.push(event);
       if (eventReplayBuffer.length > eventReplayLimit) eventReplayBuffer.splice(0, eventReplayBuffer.length - eventReplayLimit);
     }
+    const pendingDeliveries: Promise<void>[] = [];
     for (const listener of listeners) {
       try {
-        listener(event);
+        const delivery = listener(event);
+        if (delivery && typeof delivery.then === 'function') pendingDeliveries.push(delivery);
       } catch {
         // Consumer failures must not break decoding, request settlement, or other listeners.
       }
     }
+    if (pendingDeliveries.length > 0) applyEventDeliveryBackpressure(generationId, pendingDeliveries);
+  }
+
+  function applyEventDeliveryBackpressure(generationId: string, deliveries: Promise<void>[]): void {
+    const source = child;
+    if (!source) return;
+    pendingEventDeliveryCounts.set(source, (pendingEventDeliveryCounts.get(source) ?? 0) + 1);
+    if ((pendingRpcReadCounts.get(source) ?? 0) === 0) source.stdout.pause?.();
+    void Promise.allSettled(deliveries).then(() => {
+      const remaining = Math.max(0, (pendingEventDeliveryCounts.get(source) ?? 1) - 1);
+      if (remaining > 0) {
+        pendingEventDeliveryCounts.set(source, remaining);
+        return;
+      }
+      pendingEventDeliveryCounts.delete(source);
+      if (child !== source || state.type === 'closed') return;
+      if (state.type !== 'idle' && state.generationId !== generationId) return;
+      source.stdout.resume?.();
+    });
+  }
+
+  function beginRpcRead(generationId: string, releaseDelayMs: number): () => void {
+    const source = child;
+    if (!source) return () => undefined;
+    pendingRpcReadCounts.set(source, (pendingRpcReadCounts.get(source) ?? 0) + 1);
+    source.stdout.resume?.();
+    let finished = false;
+    return () => {
+      if (finished) return;
+      finished = true;
+      // 中断响应和终态通知需要短暂全双工窗口；纯控制读取只需让响应本身越过
+      // 过程投影背压，下一轮事件循环就恢复普通背压。
+      const timer = setTimeout(() => {
+        const remaining = Math.max(0, (pendingRpcReadCounts.get(source) ?? 1) - 1);
+        if (remaining > 0) {
+          pendingRpcReadCounts.set(source, remaining);
+          return;
+        }
+        pendingRpcReadCounts.delete(source);
+        if (child !== source || state.type === 'closed') return;
+        if (state.type !== 'idle' && state.generationId !== generationId) return;
+        if ((pendingEventDeliveryCounts.get(source) ?? 0) > 0) source.stdout.pause?.();
+      }, releaseDelayMs);
+      timer.unref?.();
+    };
   }
 
   function observeTurnStarted(generationId: string, params: unknown): void {
@@ -868,28 +1059,79 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     },
     async readAccount(input = {}) {
       const capabilities = await awaitCapabilities();
-      return parseAccountSnapshot(
-        await rpc(capabilities.generationId, 'account/read', {
-          refreshToken: input.refreshToken === true,
-        }),
-        capabilities.generationId,
-        accountFingerprintSalt,
-      );
+      const refreshToken = input.refreshToken === true;
+      const cached = lastAccountSnapshot?.value.generationId === capabilities.generationId ? lastAccountSnapshot : null;
+      if (input.cachedOnly === true) {
+        if (cached) return cached.value;
+        throw managerError('ZEUS_CODEX_ACCOUNT_SNAPSHOT_UNAVAILABLE', '当前 app-server 世代还没有可复用的账号快照。');
+      }
+      const preferCached = input.preferCached ?? !refreshToken;
+      if (preferCached && cached && Date.now() - cached.cachedAt < ACCOUNT_SNAPSHOT_TTL_MS) return cached.value;
+      const flightKey = `${capabilities.generationId}:${refreshToken ? 'refresh' : 'local'}`;
+      let request = accountReadInFlight.get(flightKey);
+      if (!request) {
+        request = (async () => {
+          const snapshot = parseAccountSnapshot(
+            await rpc(capabilities.generationId, 'account/read', { refreshToken }, { ...(refreshToken ? {} : { timeoutMs: Math.min(requestTimeoutMs, 8_000) }) }),
+            capabilities.generationId,
+            accountFingerprintSalt,
+          );
+          lastAccountSnapshot = { value: snapshot, cachedAt: Date.now() };
+          return snapshot;
+        })();
+        accountReadInFlight.set(flightKey, request);
+        const clearFlight = () => {
+          if (accountReadInFlight.get(flightKey) === request) accountReadInFlight.delete(flightKey);
+        };
+        void request.then(clearFlight, clearFlight);
+      }
+      try {
+        return await request;
+      } catch (error) {
+        const allowCached = input.allowCachedOnTransportFailure ?? !refreshToken;
+        if (allowCached && cached && isAccountReadTransportFailure(error)) return cached.value;
+        throw error;
+      }
     },
     async readAccountRateLimits() {
       const capabilities = await awaitCapabilities();
-      return parseAccountRateLimitsSnapshot(await rpc(capabilities.generationId, 'account/rateLimits/read', {}), capabilities.generationId);
+      const cached = lastAccountRateLimitsSnapshot;
+      if (cached?.value.generationId === capabilities.generationId && Date.now() - cached.cachedAt < ACCOUNT_USAGE_SNAPSHOT_TTL_MS) return cached.value;
+      const existing = accountRateLimitsReadInFlight.get(capabilities.generationId);
+      if (existing) return existing;
+      const request: Promise<CodexAccountRateLimitsSnapshot> = (async () => {
+        const snapshot = parseAccountRateLimitsSnapshot(await rpc(capabilities.generationId, 'account/rateLimits/read', {}, { timeoutMs: Math.min(requestTimeoutMs, 8_000) }), capabilities.generationId);
+        lastAccountRateLimitsSnapshot = { value: snapshot, cachedAt: Date.now() };
+        return snapshot;
+      })().finally(() => {
+        if (accountRateLimitsReadInFlight.get(capabilities.generationId) === request) accountRateLimitsReadInFlight.delete(capabilities.generationId);
+      });
+      accountRateLimitsReadInFlight.set(capabilities.generationId, request);
+      return request;
     },
     async readAccountUsage() {
       const capabilities = await awaitCapabilities();
-      return parseAccountUsageSnapshot(await rpc(capabilities.generationId, 'account/usage/read', {}), capabilities.generationId);
+      const cached = lastAccountUsageSnapshot;
+      if (cached?.value.generationId === capabilities.generationId && Date.now() - cached.cachedAt < ACCOUNT_USAGE_SNAPSHOT_TTL_MS) return cached.value;
+      const existing = accountUsageReadInFlight.get(capabilities.generationId);
+      if (existing) return existing;
+      const request: Promise<CodexAccountUsageSnapshot> = (async () => {
+        const snapshot = parseAccountUsageSnapshot(await rpc(capabilities.generationId, 'account/usage/read', {}, { timeoutMs: Math.min(requestTimeoutMs, 8_000) }), capabilities.generationId);
+        lastAccountUsageSnapshot = { value: snapshot, cachedAt: Date.now() };
+        return snapshot;
+      })().finally(() => {
+        if (accountUsageReadInFlight.get(capabilities.generationId) === request) accountUsageReadInFlight.delete(capabilities.generationId);
+      });
+      accountUsageReadInFlight.set(capabilities.generationId, request);
+      return request;
     },
     async startChatGptLogin() {
       const capabilities = await awaitCapabilities();
       return parseChatGptLogin(
         await rpc(capabilities.generationId, 'account/login/start', {
           type: 'chatgpt',
-          useHostedLoginSuccessPage: true,
+          // Zeus 自己轮询权威登录状态并回到原窗口；不让托管成功页把本次流程收口到 ChatGPT。
+          useHostedLoginSuccessPage: false,
           appBrand: 'chatgpt',
         }),
         capabilities.generationId,
@@ -931,6 +1173,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
             dynamicTools: input.dynamicTools,
             config: responsesProvider ? responsesProviderConfig(responsesProvider) : undefined,
           }),
+          { traceIdentity: input.traceIdentity },
         ),
       );
       const thread = parseThread(response.thread);
@@ -962,18 +1205,18 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     },
     async archiveThread(input) {
       const capabilities = await awaitCapabilities();
-      await rpc(capabilities.generationId, 'thread/archive', { threadId: input.threadId });
+      await rpc(capabilities.generationId, 'thread/archive', { threadId: input.threadId }, { traceIdentity: input.traceIdentity });
       threadModels.delete(input.threadId);
       threadResponsesProviders.delete(input.threadId);
     },
     async unarchiveThread(input) {
       const capabilities = await awaitCapabilities();
-      const response = asRecord(await rpc(capabilities.generationId, 'thread/unarchive', { threadId: input.threadId }));
+      const response = asRecord(await rpc(capabilities.generationId, 'thread/unarchive', { threadId: input.threadId }, { traceIdentity: input.traceIdentity }));
       return parseThread(response.thread);
     },
     async readThread(input) {
       const capabilities = await awaitCapabilities();
-      const response = asRecord(await rpc(capabilities.generationId, 'thread/read', { threadId: input.threadId, includeTurns: true }));
+      const response = asRecord(await rpc(capabilities.generationId, 'thread/read', { threadId: input.threadId, includeTurns: input.includeTurns ?? false }));
       return parseThread(response.thread);
     },
     async listThreads(input) {
@@ -997,19 +1240,33 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       const capabilities = await awaitCapabilities();
       assertGoalsEnabled(capabilities);
       if (input.objective !== undefined) validateGoalObjective(input.objective);
-      const response = asRecord(await rpc(capabilities.generationId, 'thread/goal/set', compactObject(input)));
+      const response = asRecord(
+        await rpc(capabilities.generationId, 'thread/goal/set', compactObject({ threadId: input.threadId, objective: input.objective, status: input.status, tokenBudget: input.tokenBudget }), { traceIdentity: input.traceIdentity }),
+      );
       return parseThreadGoal(response.goal);
     },
     async clearThreadGoal(input) {
       const capabilities = await awaitCapabilities();
       assertGoalsEnabled(capabilities);
-      const response = asRecord(await rpc(capabilities.generationId, 'thread/goal/clear', input));
+      const response = asRecord(await rpc(capabilities.generationId, 'thread/goal/clear', { threadId: input.threadId }, { traceIdentity: input.traceIdentity }));
       if (typeof response.cleared !== 'boolean') throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex thread/goal/clear response omitted cleared.');
       return { cleared: response.cleared };
     },
     async listThreadTurns(input) {
       const capabilities = await awaitCapabilities();
-      const response = asRecord(await rpc(capabilities.generationId, 'thread/turns/list', compactObject(input)));
+      const response = asRecord(
+        await rpc(
+          capabilities.generationId,
+          'thread/turns/list',
+          compactObject({
+            threadId: input.threadId,
+            cursor: input.cursor,
+            limit: input.limit,
+            sortDirection: input.sortDirection,
+            itemsView: input.itemsView,
+          }),
+        ),
+      );
       if (!Array.isArray(response.data) || (response.nextCursor !== null && typeof response.nextCursor !== 'string')) {
         throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex thread/turns/list returned an invalid page.');
       }
@@ -1018,15 +1275,30 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
         nextCursor: response.nextCursor,
       };
     },
+    async listSkills(input) {
+      const capabilities = await awaitCapabilities();
+      return parseSkillsList(await rpc(capabilities.generationId, 'skills/list', compactObject(input)));
+    },
     async startTurn(input) {
       const capabilities = await awaitCapabilities();
       const modelName = input.model ?? threadModels.get(input.threadId);
-      const responsesProvider = threadResponsesProviders.get(input.threadId);
+      const responsesProvider = input.responsesRuntime ? normalizeResponsesProvider(input.responsesRuntime.provider) : threadResponsesProviders.get(input.threadId);
+      if (responsesProvider) threadResponsesProviders.set(input.threadId, responsesProvider);
       const model = !responsesProvider && modelName ? requireModel(capabilities, modelName) : null;
-      if (input.effort !== undefined && !responsesProvider) {
+      const wireEffort = toCodexWireReasoningEffort(input.effort);
+      const wireCollaborationMode = input.collaborationMode
+        ? {
+            ...input.collaborationMode,
+            settings: {
+              ...input.collaborationMode.settings,
+              reasoning_effort: toCodexWireReasoningEffort(input.collaborationMode.settings.reasoning_effort) ?? null,
+            },
+          }
+        : undefined;
+      if (typeof wireEffort === 'string' && !responsesProvider) {
         const supportedEfforts = model?.supportedReasoningEfforts ?? [];
-        if (!model || !supportedEfforts.includes(input.effort)) {
-          throw Object.assign(new Error(`Configured Codex effort is unavailable: ${input.effort}`), {
+        if (!model || !supportedEfforts.includes(wireEffort)) {
+          throw Object.assign(new Error(`Configured Codex effort is unavailable: ${wireEffort}`), {
             code: 'ZEUS_CODEX_EFFORT_UNAVAILABLE',
             supportedEfforts: [...supportedEfforts],
           });
@@ -1036,9 +1308,9 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
         if (!model) throw managerError('ZEUS_CODEX_MODEL_UNAVAILABLE', 'Codex service tier validation requires a known model.');
         validateServiceTier(model, input.serviceTier);
       }
-      if (input.collaborationMode && !responsesProvider) {
-        const collaborationModel = requireModel(capabilities, input.collaborationMode.settings.model);
-        const collaborationEffort = input.collaborationMode.settings.reasoning_effort;
+      if (wireCollaborationMode && !responsesProvider) {
+        const collaborationModel = requireModel(capabilities, wireCollaborationMode.settings.model);
+        const collaborationEffort = wireCollaborationMode.settings.reasoning_effort;
         if (collaborationEffort !== null && !collaborationModel.supportedReasoningEfforts.includes(collaborationEffort)) {
           throw Object.assign(new Error(`Configured Codex effort is unavailable: ${collaborationEffort}`), {
             code: 'ZEUS_CODEX_EFFORT_UNAVAILABLE',
@@ -1056,9 +1328,9 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
             clientUserMessageId: input.clientUserMessageId,
             input: input.input,
             additionalContext: input.additionalContext,
-            collaborationMode: input.collaborationMode,
+            collaborationMode: wireCollaborationMode,
             model: input.model,
-            effort: input.effort,
+            effort: wireEffort,
             serviceTier: input.serviceTier,
             summary: input.summary,
             cwd: input.cwd,
@@ -1066,6 +1338,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
             approvalsReviewer: input.approvalsReviewer,
             sandboxPolicy,
           }),
+          { requestWritten: input.requestWritten, traceIdentity: input.traceIdentity },
         ),
       );
       const turn = parseTurn(response.turn, input.threadId);
@@ -1075,12 +1348,17 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     async steerTurn(input) {
       const capabilities = await awaitCapabilities();
       const response = asRecord(
-        await rpc(capabilities.generationId, 'turn/steer', {
-          threadId: input.threadId,
-          expectedTurnId: input.turnId,
-          clientUserMessageId: input.clientUserMessageId,
-          input: input.input,
-        }),
+        await rpc(
+          capabilities.generationId,
+          'turn/steer',
+          {
+            threadId: input.threadId,
+            expectedTurnId: input.turnId,
+            clientUserMessageId: input.clientUserMessageId,
+            input: input.input,
+          },
+          { traceIdentity: input.traceIdentity },
+        ),
       );
       if (typeof response.turnId !== 'string') throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex turn/steer response omitted turnId.');
       return { turnId: response.turnId };
@@ -1092,7 +1370,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
         pendingInterrupts.add(key);
         return;
       }
-      await rpc(capabilities.generationId, 'turn/interrupt', input);
+      await rpc(capabilities.generationId, 'turn/interrupt', { threadId: input.threadId, turnId: input.turnId }, { traceIdentity: input.traceIdentity });
     },
     async respondToServerRequest(input) {
       const generationId = currentGenerationId();
@@ -1190,7 +1468,14 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     },
     subscribe(listener) {
       listeners.add(listener);
-      for (const event of eventReplayBuffer) listener(event);
+      for (const event of eventReplayBuffer) {
+        try {
+          const delivery = listener(event);
+          if (delivery && typeof delivery.then === 'function') applyEventDeliveryBackpressure(event.generationId, [delivery]);
+        } catch {
+          // 回放消费者异常与实时消费者一样隔离。
+        }
+      }
       return () => listeners.delete(listener);
     },
     getState() {
@@ -1246,6 +1531,12 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
         serverRequests.clear();
         pendingInterrupts.clear();
         startedTurns.clear();
+        accountReadInFlight.clear();
+        accountRateLimitsReadInFlight.clear();
+        accountUsageReadInFlight.clear();
+        lastAccountSnapshot = null;
+        lastAccountRateLimitsSnapshot = null;
+        lastAccountUsageSnapshot = null;
       })();
       return closePromise;
     },
@@ -1268,8 +1559,18 @@ function spawnRemoteControlCodexAppServer(command: string, options: CodexAppServ
   const pendingMessages: string[] = [];
   let inputBuffer = '';
   let socket: WebSocket | null = null;
+  let deliveryPaused = false;
   let stopping = false;
   let exited = false;
+
+  stdout.pause = () => {
+    deliveryPaused = true;
+    socket?.pause();
+  };
+  stdout.resume = () => {
+    deliveryPaused = false;
+    socket?.resume();
+  };
 
   function finishExit(code: number | null, signal: NodeJS.Signals | null): void {
     if (exited) return;
@@ -1334,6 +1635,7 @@ function spawnRemoteControlCodexAppServer(command: string, options: CodexAppServ
       perMessageDeflate: false,
     });
     socket.on('open', () => {
+      if (deliveryPaused) socket?.pause();
       for (const message of pendingMessages.splice(0)) socket?.send(message);
     });
     socket.on('message', (data: RawData) => {
@@ -1454,6 +1756,43 @@ function parseModels(value: unknown): CodexModelCapability[] {
   });
 }
 
+function parseSkillsList(value: unknown): CodexSkillsListEntry[] {
+  const response = asRecord(value);
+  if (!Array.isArray(response.data)) throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex skills/list response omitted data.');
+  return response.data.map((rawEntry) => {
+    const entry = asRecord(rawEntry);
+    if (typeof entry.cwd !== 'string' || !Array.isArray(entry.skills) || !Array.isArray(entry.errors)) {
+      throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex skills/list returned an invalid entry.');
+    }
+    const skills = entry.skills.map((rawSkill) => {
+      const skill = asRecord(rawSkill);
+      if (
+        typeof skill.name !== 'string' ||
+        typeof skill.description !== 'string' ||
+        typeof skill.path !== 'string' ||
+        !isAbsolute(skill.path) ||
+        (skill.scope !== 'user' && skill.scope !== 'repo' && skill.scope !== 'system' && skill.scope !== 'admin') ||
+        typeof skill.enabled !== 'boolean'
+      ) {
+        throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex skills/list returned invalid skill metadata.');
+      }
+      const scope: CodexSkillScope = skill.scope;
+      return {
+        name: skill.name,
+        description: skill.description,
+        ...(typeof skill.shortDescription === 'string' ? { shortDescription: skill.shortDescription } : {}),
+        path: skill.path,
+        scope,
+        enabled: skill.enabled,
+        ...(isRecord(skill.interface) ? { interface: skill.interface } : {}),
+        ...(isRecord(skill.dependencies) ? { dependencies: skill.dependencies } : {}),
+      };
+    });
+    const errors = entry.errors.map((error) => asRecord(error));
+    return { cwd: entry.cwd, skills, errors };
+  });
+}
+
 function validateServiceTier(model: CodexModelCapability, serviceTier: string | null | undefined): void {
   if (serviceTier === undefined || serviceTier === null) return;
   if (model.serviceTiers.some((tier) => tier.id === serviceTier)) return;
@@ -1534,7 +1873,19 @@ function attachThreadProviderSettings(thread: CodexThreadSnapshot, generationId:
 function parseThread(value: unknown): CodexThreadSnapshot {
   const thread = asRecord(value);
   if (typeof thread.id !== 'string') throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex thread response omitted id.');
-  return thread as CodexThreadSnapshot;
+  const status = parseThreadRuntimeStatus(thread.status);
+  return { ...thread, id: thread.id, ...(status ? { status } : {}) };
+}
+
+function parseThreadRuntimeStatus(value: unknown): CodexThreadRuntimeStatus | undefined {
+  if (value === undefined) return undefined;
+  const status = asRecord(value);
+  if (status.type === 'notLoaded' || status.type === 'idle') return { type: status.type };
+  if (status.type === 'systemError') return { ...status, type: 'systemError' };
+  if (status.type === 'active' && Array.isArray(status.activeFlags) && status.activeFlags.every((flag) => typeof flag === 'string')) {
+    return { type: 'active', activeFlags: [...status.activeFlags] };
+  }
+  throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex thread response returned an unknown runtime status.');
 }
 
 function parseTurn(value: unknown, threadId: string): CodexTurnSnapshot {
@@ -1705,7 +2056,7 @@ function nullableNonNegativeSafeInteger(value: unknown, label: string): number |
 function parseChatGptLogin(value: unknown, generationId: string): CodexChatGptLogin {
   const response = asRecord(value);
   if (response.type !== 'chatgpt' || typeof response.loginId !== 'string' || !response.loginId || typeof response.authUrl !== 'string') {
-    throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex account/login/start returned an invalid ChatGPT login.');
+    throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex account/login/start returned an invalid account login.');
   }
   let authUrl: URL;
   try {
@@ -1919,6 +2270,25 @@ function pendingKey(generationId: string, id: CodexWireId): string {
   return `${generationId}\u0000${typeof id}:${String(id)}`;
 }
 
+function providerVersionFromInitialize(value: unknown): string | null {
+  const response = asRecord(value);
+  // 新版 app-server 的 initialize 响应可能只返回 userAgent/codexHome/platform，
+  // 不再保证携带旧版 serverInfo。版本字段缺失不能使已成功的握手失败。
+  const serverInfo = isRecord(response.serverInfo) ? response.serverInfo : {};
+  for (const candidate of [serverInfo.version, response.version]) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim().slice(0, 120);
+  }
+  if (typeof response.userAgent === 'string') {
+    const match = response.userAgent.match(/(?:^|\s|\/)(?:codex|codex-cli|codex\s+desktop)[/@]([A-Za-z0-9_.+-]{1,120})/iu);
+    if (match?.[1]) return match[1];
+  }
+  return null;
+}
+
+function normalizeProviderVersion(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim().slice(0, 120) : null;
+}
+
 function serverRequestKey(generationId: string, id: CodexWireId): string {
   return pendingKey(generationId, id);
 }
@@ -1970,6 +2340,21 @@ function summarizeStderr(value: string): string {
 
 function managerError(code: string, message: string): Error {
   return Object.assign(new Error(message), { code });
+}
+
+function isAccountReadTransportFailure(error: unknown): boolean {
+  if (!error || typeof error !== 'object' || !('code' in error)) return false;
+  const code = error.code;
+  return (
+    code === 'ZEUS_CODEX_RPC_TIMEOUT' ||
+    code === 'ZEUS_CODEX_NOT_READY' ||
+    code === 'ZEUS_CODEX_STALE_GENERATION' ||
+    code === 'ZEUS_CODEX_GENERATION_EXITED' ||
+    code === 'EPIPE' ||
+    code === 'ECONNRESET' ||
+    code === 'ECONNREFUSED' ||
+    code === 'ETIMEDOUT'
+  );
 }
 
 function asError(error: unknown): Error {

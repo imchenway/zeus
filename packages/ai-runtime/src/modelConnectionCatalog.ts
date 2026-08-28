@@ -13,6 +13,10 @@ export type PiThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'x
 
 export type OpenAiThinkingFormat = 'openai' | 'openrouter' | 'deepseek' | 'together' | 'zai' | 'qwen' | 'qwen-chat-template' | 'string-thinking' | 'ant-ling';
 
+export type ModelProtocolFamily = 'openai_responses' | 'openai_completions' | 'anthropic_messages';
+
+export type ModelAuthenticationScheme = 'protocol_default' | 'bearer' | 'x_api_key';
+
 export interface ModelCapabilityEvidence {
   source: 'template' | 'catalog' | 'manual' | 'probe';
   state: ModelCapabilityState;
@@ -41,9 +45,13 @@ export interface ConfiguredModelDefinition {
   id: string;
   displayName: string;
   enabled: boolean;
+  supports1MContext: boolean;
   contextWindow: number;
   maxTokens: number;
   speedLabel: 'standard' | 'high_speed' | 'flash' | 'turbo';
+  runtimeAdapter: 'codex_app_server' | 'pi_sdk';
+  protocolFamily: ModelProtocolFamily;
+  authenticationScheme: ModelAuthenticationScheme;
   capability: ConfiguredModelCapability;
 }
 
@@ -93,6 +101,11 @@ export interface SelectableConnectionModel {
   speedLabel: ConfiguredModelDefinition['speedLabel'];
   tools: ModelCapabilityState;
   imageInput: ModelCapabilityState;
+  runtimeAdapter: ConfiguredModelDefinition['runtimeAdapter'];
+  protocolFamily: ConfiguredModelDefinition['protocolFamily'];
+  authenticationScheme: ConfiguredModelDefinition['authenticationScheme'];
+  supports1MContext: boolean;
+  contextWindow: number;
 }
 
 const thinkingLevels = new Set<PiThinkingLevel>(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
@@ -156,7 +169,8 @@ export function normalizeModelConnection(input: SaveModelConnectionInput, option
   const name = normalizeSingleLine(input.name || template?.name || '', '供应商名称', 80);
   const baseUrl = normalizeModelBaseUrl(input.baseUrl || template?.baseUrl || '');
   const modelsPath = normalizeModelsPath(input.modelsPath ?? template?.modelsPath ?? '/models');
-  const models = normalizeConfiguredModels(input.models ?? [], template?.thinkingFormat ?? 'openai').map((model) => applyAutomaticCapabilityProfile(model, templateId));
+  const routeIdentity = { templateId, baseUrl };
+  const models = normalizeConfiguredModels(input.models ?? [], template?.thinkingFormat ?? 'openai').map((model) => applyModelRoute(applyAutomaticCapabilityProfile(model, templateId), routeIdentity));
   return {
     id: normalizeIdentifier(options.id, '连接 ID'),
     name,
@@ -234,10 +248,22 @@ export function modelConnectionAgentKind(connection: Pick<ModelConnectionRecord,
   return isOfficialDeepSeekResponsesModel(connection, modelId) ? 'codex' : 'pi';
 }
 
+export function modelConnectionRoute(
+  connection: Pick<ModelConnectionRecord, 'templateId' | 'baseUrl'>,
+  modelId: string,
+  configuredProtocol: ModelProtocolFamily = 'openai_completions',
+): Pick<ConfiguredModelDefinition, 'runtimeAdapter' | 'protocolFamily'> {
+  if (isOfficialDeepSeekResponsesModel(connection, modelId)) return { runtimeAdapter: 'codex_app_server', protocolFamily: 'openai_responses' };
+  return {
+    runtimeAdapter: 'pi_sdk',
+    protocolFamily: configuredProtocol,
+  };
+}
+
 export function listSelectableConnectionModels(connections: readonly ModelConnectionRecord[]): SelectableConnectionModel[] {
   return connections.flatMap((connection) =>
     connection.models.map((model) => {
-      const agentKind = modelConnectionAgentKind(connection, model.id);
+      const agentKind = model.runtimeAdapter === 'codex_app_server' ? 'codex' : 'pi';
       const tools = agentKind === 'codex' ? 'supported' : model.capability.tools.state;
       const imageInput = agentKind === 'codex' ? 'unsupported' : model.capability.imageInput.state;
       const available = connection.enabled && connection.apiKeyConfigured && model.enabled;
@@ -269,6 +295,11 @@ export function listSelectableConnectionModels(connections: readonly ModelConnec
         speedLabel: model.speedLabel,
         tools,
         imageInput,
+        runtimeAdapter: model.runtimeAdapter,
+        protocolFamily: model.protocolFamily,
+        authenticationScheme: model.authenticationScheme,
+        supports1MContext: model.supports1MContext,
+        contextWindow: model.contextWindow,
       };
     }),
   );
@@ -281,9 +312,13 @@ export function createConfiguredModelDefinition(id: string, input: Partial<Confi
       id: normalizedId,
       displayName: input.displayName ?? normalizedId,
       enabled: input.enabled ?? true,
-      contextWindow: input.contextWindow ?? 128_000,
+      supports1MContext: input.supports1MContext ?? false,
+      contextWindow: input.contextWindow ?? 256_000,
       maxTokens: input.maxTokens ?? 8_192,
       speedLabel: input.speedLabel ?? inferSpeedLabel(normalizedId),
+      runtimeAdapter: input.runtimeAdapter ?? 'pi_sdk',
+      protocolFamily: input.protocolFamily ?? 'openai_completions',
+      authenticationScheme: input.authenticationScheme ?? 'protocol_default',
       capability:
         input.capability ??
         ({
@@ -327,7 +362,33 @@ export function modelConnectionSecretAccount(connectionId: string): string {
 }
 
 export function buildModelsUrl(connection: Pick<ModelConnectionRecord, 'baseUrl' | 'modelsPath'>): string {
-  return new URL(connection.modelsPath.replace(/^\/+/, ''), `${connection.baseUrl.replace(/\/+$/u, '')}/`).toString();
+  const catalogBaseUrl = connection.baseUrl.replace(/\/(?:v1\/messages|chat\/completions|responses)$/u, '');
+  return new URL(connection.modelsPath.replace(/^\/+/, ''), `${catalogBaseUrl.replace(/\/+$/u, '')}/`).toString();
+}
+
+/**
+ * Pi 的协议适配器负责追加最终请求路径；这里统一把用户可能填写的标准完整端点还原为适配器需要的 Base URL。
+ */
+export function modelConnectionRuntimeBaseUrl(baseUrl: string, protocolFamily: ModelProtocolFamily): string {
+  const normalized = baseUrl.replace(/\/+$/u, '');
+  if (protocolFamily === 'anthropic_messages') return normalized.replace(/\/v1\/messages$/u, '').replace(/\/v1$/u, '');
+  if (protocolFamily === 'openai_completions') return normalized.replace(/\/chat\/completions$/u, '');
+  return normalized.replace(/\/responses$/u, '');
+}
+
+/** 返回不含密钥的最终 HTTP 端点，供运行证据和诊断展示使用。 */
+export function modelConnectionRequestEndpoint(baseUrl: string, protocolFamily: ModelProtocolFamily): string {
+  const runtimeBaseUrl = modelConnectionRuntimeBaseUrl(baseUrl, protocolFamily);
+  const requestPath = protocolFamily === 'anthropic_messages' ? 'v1/messages' : protocolFamily === 'openai_responses' ? 'responses' : 'chat/completions';
+  return new URL(requestPath, `${runtimeBaseUrl.replace(/\/+$/u, '')}/`).toString();
+}
+
+/**
+ * 认证摆放方式属于语义路由。默认方式保持旧快照身份；显式覆盖后使用新的凭据槽身份，避免排队任务静默改头。
+ */
+export function modelConnectionCredentialSlotId(connectionId: string, authenticationScheme: ModelAuthenticationScheme): string {
+  const base = `model-connection:${normalizeIdentifier(connectionId, '连接 ID')}`;
+  return authenticationScheme === 'protocol_default' ? base : `${base}:${authenticationScheme}`;
 }
 
 function normalizeConfiguredModels(value: readonly ConfiguredModelDefinition[], fallbackThinkingFormat: OpenAiThinkingFormat): ConfiguredModelDefinition[] {
@@ -345,11 +406,22 @@ function normalizeConfiguredModel(value: ConfiguredModelDefinition, fallbackThin
   if (!isRecord(value)) throw new Error('模型配置必须是对象。');
   const id = normalizeSingleLine(value.id, '模型 ID', 200);
   const displayName = normalizeSingleLine(value.displayName || id, '模型名称', 200);
-  const contextWindow = normalizePositiveInteger(value.contextWindow, '上下文窗口', 1_000, 10_000_000);
-  const maxTokens = normalizePositiveInteger(value.maxTokens, '最大输出 Token', 1, contextWindow);
+  const supports1MContext = value.supports1MContext === true;
+  const contextWindow = supports1MContext ? 1_000_000 : 256_000;
+  // 有效窗口是权威值：历史配置可能保留超过 256K 的 maxTokens，取消 1M 后不应让整条连接不可保存。
+  const requestedMaxTokens = normalizePositiveInteger(value.maxTokens, '最大输出 Token', 1, 10_000_000);
+  const maxTokens = Math.min(requestedMaxTokens, contextWindow);
   const speedLabel = speedLabels.has(value.speedLabel) ? value.speedLabel : inferSpeedLabel(id);
   const capability = normalizeCapability(value.capability, fallbackThinkingFormat);
-  return { id, displayName, enabled: value.enabled !== false, contextWindow, maxTokens, speedLabel, capability };
+  const runtimeAdapter = value.runtimeAdapter === 'codex_app_server' ? 'codex_app_server' : 'pi_sdk';
+  const protocolFamily: ModelProtocolFamily = value.protocolFamily === 'openai_responses' ? 'openai_responses' : value.protocolFamily === 'anthropic_messages' ? 'anthropic_messages' : 'openai_completions';
+  const requestedAuthenticationScheme: ModelAuthenticationScheme = value.authenticationScheme === 'bearer' ? 'bearer' : value.authenticationScheme === 'x_api_key' ? 'x_api_key' : 'protocol_default';
+  const authenticationScheme: ModelAuthenticationScheme = protocolFamily === 'anthropic_messages' || requestedAuthenticationScheme !== 'x_api_key' ? requestedAuthenticationScheme : 'protocol_default';
+  return { id, displayName, enabled: value.enabled !== false, supports1MContext, contextWindow, maxTokens, speedLabel, runtimeAdapter, protocolFamily, authenticationScheme, capability };
+}
+
+function applyModelRoute(model: ConfiguredModelDefinition, connection: Pick<ModelConnectionRecord, 'templateId' | 'baseUrl'>): ConfiguredModelDefinition {
+  return { ...model, ...modelConnectionRoute(connection, model.id, model.protocolFamily) };
 }
 
 /** 根据渠道和已知模型档案自动生成能力，未知能力保持未验证。 */
@@ -368,8 +440,7 @@ function applyAutomaticCapabilityProfile(model: ConfiguredModelDefinition, templ
     return {
       ...baseModel,
       displayName: catalogModel.name,
-      contextWindow: catalogModel.contextWindow,
-      maxTokens: catalogModel.maxTokens,
+      // 连接中持久化的窗口与输出限制属于该路由的执行配置；内置目录只补全能力证据，不能静默覆盖用户已经确认的限制。
       capability: {
         ...baseModel.capability,
         reasoning:

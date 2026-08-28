@@ -15,11 +15,13 @@ export interface ZeusDataPathDescriptor {
 }
 
 export type ZeusDataPathKey =
+  | 'rootIdentity'
   | 'database'
   | 'localConfig'
   | 'localLogs'
   | 'taskAttachments'
   | 'conversationAttachments'
+  | 'conversationToolResults'
   | 'browserComments'
   | 'browserDownloads'
   | 'turnChangeSets'
@@ -49,11 +51,13 @@ export interface ZeusDataLayout {
   electronUserData: string;
   migrationState: string;
   migrationQuarantine: string;
+  rootIdentity: string;
   database: string;
   localConfig: string;
   localLogs: string;
   taskAttachments: string;
   conversationAttachments: string;
+  conversationToolResults: string;
   conversationAttachmentGrantSecret: string;
   browserComments: string;
   browserDownloads: string;
@@ -101,11 +105,13 @@ export function createZeusDataLayout(rootPath: string): ZeusDataLayout {
     electronUserData,
     migrationState: join(runtimeDirectory, 'migrations'),
     migrationQuarantine: join(runtimeDirectory, 'quarantine'),
+    rootIdentity: join(root, '.zeus-root-identity.json'),
     database,
     localConfig: join(dataDirectory, 'zeus.config.json'),
     localLogs: join(dataDirectory, 'logs', 'local-server'),
     taskAttachments: join(artifactsDirectory, 'task-attachments'),
     conversationAttachments: join(artifactsDirectory, 'conversation-attachments'),
+    conversationToolResults: join(artifactsDirectory, 'conversation-tool-results'),
     conversationAttachmentGrantSecret: join(dataDirectory, 'conversation-attachment-grant.secret'),
     browserComments: join(artifactsDirectory, 'browser-comments'),
     browserDownloads: join(artifactsDirectory, 'browser-downloads'),
@@ -146,11 +152,13 @@ export function createLegacyFlatZeusDataLayout(rootPath: string): ZeusDataLayout
     electronUserData: root,
     migrationState: join(root, '.layout-migrations'),
     migrationQuarantine: join(root, '.layout-quarantine'),
+    rootIdentity: join(root, '.zeus-root-identity.json'),
     database,
     localConfig: join(root, 'zeus.config.json'),
     localLogs: `${database}.logs`,
     taskAttachments: join(root, 'task-attachments'),
     conversationAttachments: join(root, 'conversation-attachments'),
+    conversationToolResults: join(root, 'conversation-tool-results'),
     conversationAttachmentGrantSecret: join(root, 'conversation-attachment-grant.secret'),
     browserComments: join(root, 'browser-comments'),
     browserDownloads: join(root, 'browser-downloads'),
@@ -198,11 +206,13 @@ function finalizeLayout(layout: Omit<ZeusDataLayout, 'entries'>): ZeusDataLayout
   return {
     ...layout,
     entries: [
+      entry('rootIdentity', 'zeus', 'core', false, false, null),
       entry('database', 'zeus', 'core', false, false, null),
       entry('localConfig', 'zeus', 'core', false, false, null),
       entry('localLogs', 'zeus', 'managed', false, false, null),
       entry('taskAttachments', 'zeus', 'managed', false, false, null),
       entry('conversationAttachments', 'zeus', 'managed', false, false, null),
+      entry('conversationToolResults', 'zeus', 'managed', false, false, null),
       entry('browserComments', 'browser', 'managed', false, false, null),
       entry('browserDownloads', 'browser', 'managed', false, false, null),
       entry('turnChangeSets', 'zeus', 'managed', false, false, null),

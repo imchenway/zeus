@@ -106,6 +106,60 @@
   inline-size: 100%;
 }
 
+.qa-source-preview-page {
+  background: var(--session-canvas);
+  box-sizing: border-box;
+  color: var(--session-text);
+  display: grid;
+  gap: 18px;
+  grid-template-rows: auto minmax(0, 1fr);
+  inline-size: 100%;
+  min-block-size: 100vh;
+  padding: 24px;
+}
+
+.qa-source-preview-page > header {
+  align-items: end;
+  display: flex;
+  gap: 24px;
+  justify-content: space-between;
+}
+
+.qa-source-preview-page > header div {
+  display: grid;
+  gap: 4px;
+}
+
+.qa-source-preview-page :where(h1, p) {
+  margin: 0;
+}
+
+.qa-source-preview-page p {
+  color: var(--session-text-muted);
+  font-size: 12px;
+}
+
+.qa-source-preview-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.qa-source-preview-actions button {
+  background: var(--session-control);
+  border: 1px solid var(--session-line);
+  border-radius: 8px;
+  color: var(--session-text);
+  cursor: pointer;
+  padding: 7px 12px;
+}
+
+.qa-source-preview-workspace {
+  border: 1px solid var(--session-line);
+  border-radius: 12px;
+  min-block-size: 0;
+  overflow: hidden;
+}
+
 @media (max-width: 1000px) {
   .qa-list-comparison,
   .qa-approval-comparison {
@@ -176,6 +230,124 @@
   gap: 3px;
 }
 
+.qa-motion-send-preview {
+  background: var(--session-canvas);
+  border: 1px solid var(--session-line);
+  border-radius: 16px;
+  color: var(--session-text);
+  display: grid;
+  gap: 12px;
+  padding: 20px;
+}
+
+.qa-motion-send-preview > div:first-child {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.qa-motion-send-preview h3 {
+  font-size: 13px;
+  margin: 0;
+}
+
+.qa-motion-send-preview button {
+  background: var(--session-accent);
+  border: 0;
+  border-radius: 8px;
+  color: white;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 7px 12px;
+}
+
+.qa-motion-fixture-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.qa-motion-fixture-actions button,
+.qa-motion-theme > .qa-motion-fixture-actions button {
+  background: var(--session-accent);
+  border: 0;
+  border-radius: 8px;
+  color: white;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 7px 12px;
+}
+
+.qa-motion-fixture-actions button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.qa-motion-fixture-actions output,
+.qa-motion-send-preview > output {
+  color: var(--session-text-muted);
+  font-size: 11px;
+}
+
+.qa-send-transcript {
+  border: 1px solid var(--session-line-soft);
+  border-radius: 12px;
+  min-block-size: 280px;
+  overflow: hidden;
+}
+
+.qa-send-transcript .session-transcript {
+  block-size: 230px;
+  padding-block: 18px;
+}
+
+.qa-long-scroll-transcript .session-transcript {
+  block-size: 420px;
+}
+
+.qa-no-refill-results {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+}
+
+.qa-no-refill-results > div,
+.qa-error-contract-lines > p {
+  background: var(--session-sidebar);
+  border: 1px solid var(--session-line-soft);
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  min-inline-size: 0;
+  padding: 10px 12px;
+}
+
+.qa-no-refill-results :where(dt, dd) {
+  margin: 0;
+}
+
+.qa-no-refill-results dt {
+  color: var(--session-text-muted);
+  font-size: 11px;
+}
+
+.qa-no-refill-results dd,
+.qa-error-contract-lines code {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.qa-error-contract-lines {
+  display: grid;
+  gap: 8px;
+}
+
 .qa-motion-theme > header small,
 .qa-motion-theme h3 {
   color: var(--session-text-muted);
@@ -217,6 +389,49 @@
   margin: 0;
 }
 
+.qa-motion-activity-flow {
+  grid-column: 1 / -1;
+}
+
+.qa-motion-activity-flow > header {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.qa-motion-activity-flow > header > div {
+  display: grid;
+  gap: 3px;
+}
+
+.qa-motion-activity-flow > header small {
+  color: var(--session-text-muted);
+  font-size: 11px;
+}
+
+.qa-motion-activity-flow > header button {
+  background: var(--session-selected);
+  border: 1px solid var(--session-line);
+  border-radius: 8px;
+  color: var(--session-text);
+  flex: 0 0 auto;
+  font: inherit;
+  padding: 6px 10px;
+}
+
+.qa-motion-activity-flow > .ai-workspace {
+  border: 1px solid var(--session-line-soft);
+  border-radius: 9px;
+  block-size: 240px;
+  overflow: hidden;
+}
+
+.qa-motion-activity-flow .session-transcript {
+  block-size: 240px;
+  padding-block: 14px;
+}
+
 .qa-motion-grid .session-transcript {
   block-size: 110px;
   padding: 10px 0;
@@ -256,10 +471,29 @@
   grid-column: 1 / -1;
 }
 
-.qa-motion-loading .session-loading {
-  inline-size: 100%;
-  margin: 0;
-  padding-block: 10px;
+.qa-motion-cold-history {
+  block-size: 150px;
+  border: 1px solid var(--session-line-soft);
+  border-radius: 9px;
+  min-block-size: 0;
+  overflow: hidden;
+}
+
+.qa-defect-page {
+  background: var(--session-canvas);
+}
+
+.qa-defect-transcript {
+  block-size: 720px;
+  inline-size: min(920px, 100%);
+  justify-self: center;
+  overflow: hidden;
+  padding: 0;
+}
+
+.qa-defect-transcript .session-transcript {
+  block-size: 720px;
+  padding-block: 32px;
 }
 
 @media (max-width: 760px) {
@@ -280,6 +514,10 @@
   }
 
   .qa-motion-loading {
+    grid-column: auto;
+  }
+
+  .qa-motion-activity-flow {
     grid-column: auto;
   }
 }

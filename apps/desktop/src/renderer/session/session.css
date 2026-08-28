@@ -203,6 +203,11 @@
   background: var(--session-control-hover);
 }
 
+.session-codex-parity-v1 button.session-quick-actions-row:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
 .session-codex-parity-v1 .session-quick-actions-row.is-static {
   cursor: default;
 }
@@ -978,7 +983,7 @@
 }
 
 .session-codex-parity-v1 .session-loading-line {
-  animation: session-loading-pulse 1000ms ease-in-out infinite alternate;
+  animation: session-loading-pulse 650ms ease-in-out infinite alternate;
   background: var(--session-selected);
   border-radius: 5px;
   block-size: 12px;
@@ -1102,15 +1107,24 @@
 .session-codex-parity-v1 .session-runtime-summary-primary {
   align-items: center;
   display: flex;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 6px 14px;
   min-inline-size: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-  white-space: nowrap;
 }
 
-.session-codex-parity-v1 .session-runtime-summary-primary::-webkit-scrollbar {
-  display: none;
+.session-codex-parity-v1 .session-runtime-summary-metric {
+  align-items: baseline;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.session-codex-parity-v1 .session-runtime-summary-metric b {
+  color: var(--session-text);
+  font-weight: 620;
 }
 
 .session-codex-parity-v1 .session-runtime-context-row {
@@ -1166,17 +1180,34 @@
   color: var(--session-warning);
 }
 
-.session-codex-parity-v1 .session-runtime-details > dl {
+.session-codex-parity-v1 .session-runtime-detail-groups {
   background: var(--session-control);
   border-block-start: 1px solid var(--session-line-soft);
   display: grid;
-  gap: 6px 18px;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  margin: 0;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
   padding: 9px var(--session-gutter) 11px;
 }
 
-.session-codex-parity-v1 .session-runtime-details > dl > div {
+.session-codex-parity-v1 .session-runtime-detail-group {
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group > h3 {
+  color: var(--session-text);
+  font-size: 11px;
+  font-weight: 680;
+  margin: 0 0 7px;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group > dl {
+  display: grid;
+  gap: 6px 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
+  margin: 0;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group > dl > div {
   display: grid;
   gap: 2px;
   min-inline-size: 0;
@@ -1379,6 +1410,10 @@
 
 .session-codex-parity-v1 .session-queued-message[data-queue-status='paused'] {
   background: color-mix(in srgb, var(--session-warning) 5%, transparent);
+}
+
+.session-codex-parity-v1 .session-queued-message[data-queue-status='steering'] {
+  background: var(--session-working-soft, var(--session-selected));
 }
 
 .session-codex-parity-v1 .session-queued-message-content {
@@ -2003,7 +2038,7 @@
 }
 
 .session-codex-parity-v1 .session-thinking-pulse {
-  animation: session-loading-pulse 900ms ease-in-out infinite alternate;
+  animation: session-loading-pulse 600ms ease-in-out infinite alternate;
   background: currentColor;
   block-size: 6px;
   border-radius: 999px;
@@ -2011,87 +2046,18 @@
 }
 
 .session-codex-parity-v1 .session-message-delivery-feedback {
-  align-items: flex-start;
   box-sizing: border-box;
   color: var(--session-text-muted);
-  display: grid;
   font-size: var(--session-readable-font-size);
-  gap: 8px;
-  grid-template-columns: auto minmax(0, 1fr) auto;
   inline-size: min(var(--session-thread-max), calc(100% - (2 * var(--session-gutter))));
   margin: 8px auto;
 }
 
-.session-codex-parity-v1 .session-message-delivery-feedback > .session-thinking-pulse {
-  flex: 0 0 auto;
-  margin-block-start: 7px;
-}
-
-.session-codex-parity-v1 .session-message-delivery-copy {
-  display: grid;
-  gap: 2px;
-  min-inline-size: 0;
-}
-
-.session-codex-parity-v1 .session-message-delivery-summary {
-  align-items: baseline;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px 8px;
-  min-inline-size: 0;
-}
-
-.session-codex-parity-v1 .session-message-delivery-feedback :where(strong, small, details) {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.session-codex-parity-v1 .session-message-delivery-feedback strong {
-  color: inherit;
-  font-size: inherit;
-  font-weight: 560;
-}
-
-.session-codex-parity-v1 .session-message-delivery-feedback small {
-  color: inherit;
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.session-codex-parity-v1 .session-message-delivery-feedback button {
-  align-self: center;
-  background: color-mix(in srgb, var(--session-danger) 7%, transparent);
-  border: 1px solid color-mix(in srgb, var(--session-danger) 22%, var(--session-line));
-  border-radius: 7px;
-  color: var(--session-danger);
-  cursor: pointer;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  min-block-size: 28px;
-  padding: 4px 9px;
-  white-space: nowrap;
-}
-
-.session-codex-parity-v1 .session-message-delivery-feedback button:hover {
-  background: color-mix(in srgb, var(--session-danger) 12%, transparent);
-  border-color: color-mix(in srgb, var(--session-danger) 34%, var(--session-line));
-}
-
-.session-codex-parity-v1 .session-message-delivery-feedback button:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--session-danger) 62%, transparent);
-  outline-offset: 2px;
-}
-
-.session-codex-parity-v1 .session-message-delivery-feedback details {
-  font-size: 11px;
-  margin-block-start: 2px;
-}
-
 .session-codex-parity-v1 .session-message-delivery-feedback code {
   display: block;
-  margin-block-start: 4px;
-  white-space: pre-wrap;
+  font: 500 12px/19px var(--session-font-mono);
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .session-codex-parity-v1 .session-message-delivery-feedback[data-state='unconfirmed'] {
@@ -2112,31 +2078,6 @@
   color: var(--session-text);
   inline-size: min(680px, calc(100% - (2 * var(--session-gutter))));
   padding: 8px 10px 8px 9px;
-}
-
-.session-codex-parity-v1 .session-message-delivery-feedback[data-state='failed'] strong {
-  color: var(--session-danger);
-}
-
-.session-codex-parity-v1 .session-message-delivery-feedback[data-state='unconfirmed'] strong {
-  color: var(--session-warning);
-}
-
-.session-codex-parity-v1 .session-message-delivery-feedback[data-state='failed'] > .session-thinking-pulse {
-  animation: none;
-  color: var(--session-danger);
-}
-
-.session-codex-parity-v1 .session-message-delivery-feedback[data-state='unconfirmed'] > .session-thinking-pulse {
-  animation: none;
-  color: var(--session-warning);
-}
-
-@media (max-width: 760px) {
-  .session-codex-parity-v1 .session-message-delivery-feedback[data-state='failed'] > button {
-    grid-column: 2;
-    justify-self: start;
-  }
 }
 
 .session-codex-parity-v1 .session-thinking-indicator::after {
@@ -2491,6 +2432,39 @@
   padding: 7px;
 }
 
+.session-codex-parity-v1 .session-activity-item-output {
+  display: grid;
+  gap: 5px;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-activity-item-output > button {
+  background: var(--session-control);
+  border: 1px solid var(--session-line-soft);
+  border-radius: 6px;
+  color: var(--session-text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  justify-self: start;
+  padding: 4px 8px;
+}
+
+.session-codex-parity-v1 .session-activity-item-output > button:hover:not(:disabled) {
+  border-color: var(--session-line);
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .session-activity-item-output > button:focus-visible {
+  outline: 2px solid var(--session-focus-outline);
+  outline-offset: 2px;
+}
+
+.session-codex-parity-v1 .session-activity-item-output > button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 .session-codex-parity-v1 .session-turn-duration {
   align-items: center;
   color: var(--session-text-muted);
@@ -2527,6 +2501,13 @@
   inline-size: min(var(--session-thread-max), 100%);
   margin-inline: auto;
   padding: 13px 15px;
+}
+
+.session-codex-parity-v1 .session-turn-failure > code {
+  display: block;
+  font: 500 12px/19px var(--session-font-mono);
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .session-codex-parity-v1 .session-turn-failure > strong {
@@ -5256,6 +5237,230 @@
   }
 }
 
+/* TASK-20260822-004：复刻 Codex 的轮次操作组；摘要保持一行，展开后显示明细和图片缩略图。 */
+.session-codex-parity-v1 .session-activity-group > details > summary {
+  justify-content: flex-start;
+}
+
+.session-codex-parity-v1 .session-activity-group > details > summary > span:nth-child(2) {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-activity-group > details > summary .session-activity-caret {
+  margin-inline-start: 0;
+}
+
+.session-codex-parity-v1 .session-activity-resource-link {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-block-end: 1px dotted currentColor;
+  color: var(--session-text);
+  cursor: pointer;
+  font: inherit;
+  max-inline-size: min(72ch, 100%);
+  overflow: hidden;
+  padding: 0;
+  text-overflow: ellipsis;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-activity-resource-link:hover {
+  border-block-end-style: solid;
+}
+
+.session-codex-parity-v1 .session-activity-resource-link:focus-visible {
+  border-radius: 3px;
+  outline: 2px solid var(--session-focus-outline);
+  outline-offset: 2px;
+}
+
+.session-codex-parity-v1 .session-activity-images {
+  margin-block-start: 5px;
+}
+
+.session-codex-parity-v1 .session-activity-images .session-resource-card-list[data-layout='images'] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.session-codex-parity-v1 .session-activity-images .session-resource-image {
+  block-size: 112px;
+  inline-size: 112px;
+  max-inline-size: 112px;
+}
+
+/* 计划、命令、文件、技能和上下文整理是语义图标，不得作为加载环旋转。 */
+.session-codex-parity-v1 :where(.session-activity-group-icon, .session-activity-item-icon, .session-plan-summary-symbol) {
+  animation: none !important;
+  transform: none !important;
+  will-change: auto !important;
+}
+
+/* reasoning 使用无端点停驻的连续扫光；其他状态继续沿用既有节奏。 */
+.session-codex-parity-v1 .session-reasoning-summary[data-status='active'] > .zeus-fidelity-text {
+  animation: session-reasoning-continuous-sweep 1.85s linear infinite;
+  background: linear-gradient(90deg, var(--session-text-muted) 0%, var(--session-text-muted) 36%, color-mix(in oklab, var(--session-text) 28%, transparent) 50%, var(--session-text-muted) 64%, var(--session-text-muted) 100%);
+  background-clip: text;
+  background-size: 240% 100%;
+  color: transparent;
+  -webkit-background-clip: text;
+}
+
+.session-codex-parity-v1 .session-current-status-text {
+  animation: session-working-sweep 3.4s linear infinite;
+  background: linear-gradient(90deg, var(--session-text-muted) 0%, var(--session-text-muted) 36%, color-mix(in oklab, var(--session-text) 28%, transparent) 50%, var(--session-text-muted) 64%, var(--session-text-muted) 100%);
+  background-clip: text;
+  background-size: 240% 100%;
+  color: transparent;
+  -webkit-background-clip: text;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-codex-parity-v1 .session-reasoning-summary[data-status='active'] > .zeus-fidelity-text,
+  .session-codex-parity-v1 .session-current-status-text {
+    animation: none;
+    background: none;
+    color: var(--session-text-muted);
+  }
+}
+
+/* 会话外壳保持常驻；切换时只让新标题轻微落位，避免整块页头先消失再闪回。 */
+.session-codex-parity-v1 .session-thread-title-copy[data-conversation-transition='true'] {
+  animation: session-title-flow-in 140ms var(--session-ease-out) both;
+}
+
+/* 冷会话在消息区原位接管，骨架层和记录区共享同一尺寸，不触发布局跳变。 */
+.session-codex-parity-v1 .session-transcript-loading {
+  align-content: center;
+  background: var(--session-canvas);
+  display: grid;
+  gap: 10px;
+  inset: 0;
+  justify-items: center;
+  opacity: 0;
+  padding: 48px var(--session-gutter);
+  pointer-events: none;
+  position: absolute;
+  visibility: hidden;
+  z-index: 3;
+}
+
+.session-codex-parity-v1 .session-transcript-loading[data-visible='true'] {
+  animation: session-history-takeover 140ms var(--session-ease-out) both;
+  opacity: 1;
+  visibility: visible;
+}
+
+.session-codex-parity-v1 .session-transcript-loading .session-loading-line {
+  inline-size: min(32rem, 74%);
+}
+
+.session-codex-parity-v1 .session-transcript-loading .session-loading-line:nth-child(2) {
+  inline-size: min(24rem, 56%);
+}
+
+/* 已完成且离开视口的长历史交给浏览器跳过绘制，活动内容和键盘焦点始终完整渲染。 */
+.session-codex-parity-v1
+  .session-transcript
+  > :where(.session-thread-item, .session-activity-group, .session-reasoning-summary, .session-plan-summary, .session-turn-change-card, .session-turn-process, .session-turn-duration, .session-answered-request) {
+  contain-intrinsic-block-size: auto 96px;
+  content-visibility: auto;
+}
+
+.session-codex-parity-v1
+  .session-transcript
+  > :where(.session-thread-item, .session-activity-group, .session-reasoning-summary, .session-plan-summary, .session-turn-change-card, .session-turn-process, .session-turn-duration, .session-answered-request):where(
+    [data-motion-active='true'],
+    [data-active='true'],
+    [data-open='true'],
+    :focus-within,
+    .is-entering
+  ) {
+  contain-intrinsic-block-size: none;
+  content-visibility: visible;
+}
+
+@keyframes session-title-flow-in {
+  from {
+    opacity: 0.72;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes session-history-takeover {
+  from {
+    opacity: 0.9;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-codex-parity-v1 .session-thread-title-copy[data-conversation-transition='true'],
+  .session-codex-parity-v1 .session-transcript-loading[data-visible='true'] {
+    animation: none;
+    transform: none;
+  }
+}
+
+/* 长历史只挂载视口、前后缓冲和显式保留行；占位层维持完整滚动尺度。 */
+.session-codex-parity-v1 .session-transcript-window {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 14px;
+  inline-size: 100%;
+  min-block-size: 0;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-transcript-window-row {
+  contain: layout style;
+  display: grid;
+  flex: 0 0 auto;
+  gap: 14px;
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-transcript-window-spacer {
+  flex: 0 0 auto;
+  inline-size: 1px;
+  min-block-size: 0;
+  pointer-events: none;
+}
+
+.session-codex-parity-v1
+  .session-transcript-window-row
+  > :where(
+    .session-thread-item,
+    .session-activity-group,
+    .session-reasoning-summary,
+    .session-plan-summary,
+    .session-plan-entry,
+    .session-question-panel,
+    .session-plan-progress,
+    .session-turn-change-card,
+    .session-turn-process,
+    .session-turn-duration,
+    .session-answered-request
+  ) {
+  inline-size: min(var(--session-thread-max), 100%);
+  margin-inline: auto;
+  min-inline-size: 0;
+}
+
 @media (max-width: 559px) {
   .session-codex-parity-v1 .session-new-conversation-context {
     align-items: stretch;
@@ -6123,6 +6328,15 @@
   min-inline-size: 0;
 }
 
+/* 非图片资源需要同时容纳文件名和打开方式；用户消息附件还需覆盖自身的紧凑图片列宽。 */
+.session-codex-parity-v1 .session-resource-card-list[data-layout='files'],
+.session-codex-parity-v1 .session-resource-card-list[data-layout='mixed'],
+.session-codex-parity-v1 .session-user-message-attachments > .session-resource-card-list[data-layout='files'],
+.session-codex-parity-v1 .session-user-message-attachments > .session-resource-card-list[data-layout='mixed'] {
+  grid-template-columns: minmax(0, 1fr);
+  max-inline-size: 420px;
+}
+
 .session-codex-parity-v1 .session-resource-image {
   align-items: center;
   appearance: none;
@@ -6704,6 +6918,12 @@
   padding-inline: 8px;
 }
 
+.session-codex-parity-v1 .session-context-workspace-header .session-source-view-action[aria-pressed='true'] {
+  background: var(--session-control-hover);
+  color: var(--session-text);
+  font-weight: 610;
+}
+
 .session-codex-parity-v1 .session-source-meta {
   align-items: center;
   background: var(--session-sidebar);
@@ -6721,6 +6941,23 @@
   flex: 1 1 auto;
   min-block-size: 0;
   overflow: auto;
+}
+
+.session-codex-parity-v1 .session-source-markdown-scroll {
+  background: var(--session-canvas);
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  min-block-size: 0;
+  overflow: auto;
+    padding: 34px clamp(20px, 2.4vw, 36px) 68px;
+}
+
+.session-codex-parity-v1 .session-source-markdown-scroll > .session-markdown {
+  font-size: 15px;
+    inline-size: 100%;
+  line-height: 25px;
+  margin-inline: auto;
+    max-inline-size: 64rem;
 }
 
 .session-codex-parity-v1 .session-image-preview {
@@ -7588,6 +7825,10 @@
   font-weight: 590;
 }
 
+.session-answered-request.is-answer-unavailable .session-answered-request-heading > :where(svg, strong) {
+  color: var(--session-danger);
+}
+
 .session-answered-request-body {
   border-inline-start: 1px solid var(--session-line-soft);
   display: grid;
@@ -7620,6 +7861,15 @@
   margin: 0;
   overflow-wrap: anywhere;
   white-space: break-spaces;
+}
+
+.session-answered-request.is-answer-unavailable .session-answered-request-body {
+  border-inline-start-color: color-mix(in srgb, var(--session-danger) 34%, var(--session-line-soft));
+}
+
+.session-answered-request-body .session-answered-request-sync-error {
+  color: var(--session-danger);
+  font-weight: 540;
 }
 
 .session-answered-request-options {
@@ -8277,7 +8527,7 @@
 }
 
 .session-codex-parity-v1 .session-loading-line {
-  animation: session-loading-pulse 1000ms ease-in-out infinite alternate;
+  animation: session-loading-pulse 650ms ease-in-out infinite alternate;
   background: var(--session-selected);
   border-radius: 5px;
   block-size: 12px;
@@ -8390,15 +8640,24 @@
 .session-codex-parity-v1 .session-runtime-summary-primary {
   align-items: center;
   display: flex;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 6px 14px;
   min-inline-size: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-  white-space: nowrap;
 }
 
-.session-codex-parity-v1 .session-runtime-summary-primary::-webkit-scrollbar {
-  display: none;
+.session-codex-parity-v1 .session-runtime-summary-metric {
+  align-items: baseline;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.session-codex-parity-v1 .session-runtime-summary-metric b {
+  color: var(--session-text);
+  font-weight: 620;
 }
 
 .session-codex-parity-v1 .session-runtime-context-row {
@@ -8454,17 +8713,34 @@
   color: var(--session-warning);
 }
 
-.session-codex-parity-v1 .session-runtime-details > dl {
+.session-codex-parity-v1 .session-runtime-detail-groups {
   background: var(--session-control);
   border-block-start: 1px solid var(--session-line-soft);
   display: grid;
-  gap: 6px 18px;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  margin: 0;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
   padding: 9px var(--session-gutter) 11px;
 }
 
-.session-codex-parity-v1 .session-runtime-details > dl > div {
+.session-codex-parity-v1 .session-runtime-detail-group {
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group > h3 {
+  color: var(--session-text);
+  font-size: 11px;
+  font-weight: 680;
+  margin: 0 0 7px;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group > dl {
+  display: grid;
+  gap: 6px 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
+  margin: 0;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group > dl > div {
   display: grid;
   gap: 2px;
   min-inline-size: 0;
@@ -8897,7 +9173,7 @@
 }
 
 .session-codex-parity-v1 .session-thinking-pulse {
-  animation: session-loading-pulse 900ms ease-in-out infinite alternate;
+  animation: session-loading-pulse 600ms ease-in-out infinite alternate;
   background: currentColor;
   block-size: 6px;
   border-radius: 999px;
@@ -9057,8 +9333,8 @@
   display: grid;
   font-size: 14px;
   font-weight: 590;
-  gap: 9px;
-  grid-template-columns: 19px minmax(0, 1fr);
+  gap: 0;
+  grid-template-columns: minmax(0, 1fr);
   line-height: 1.5;
   margin-block: 0;
   min-block-size: 28px;
@@ -9069,31 +9345,6 @@
   min-inline-size: 0;
   overflow-wrap: anywhere;
   white-space: break-spaces;
-}
-
-.session-codex-parity-v1 .session-reasoning-summary-icon {
-  block-size: 19px;
-  display: grid;
-  inline-size: 19px;
-  place-items: center;
-}
-
-.session-codex-parity-v1 .session-reasoning-summary-icon > svg {
-  block-size: 19px;
-  inline-size: 19px;
-}
-
-.session-codex-parity-v1 .session-reasoning-summary[data-status='active'] .session-reasoning-summary-icon {
-  animation: session-spinner 900ms linear infinite;
-  color: var(--session-accent);
-}
-
-.session-codex-parity-v1 .session-reasoning-summary[data-status='completed'] .session-reasoning-summary-icon {
-  color: var(--session-success);
-}
-
-.session-codex-parity-v1 .session-reasoning-summary[data-status='failed'] .session-reasoning-summary-icon {
-  color: var(--session-danger);
 }
 
 .session-codex-parity-v1 .session-activity-group > details > summary {
@@ -13615,6 +13866,14 @@
   margin: 0;
 }
 
+.session-codex-parity-v1 .session-turn-duration[data-status='interrupted'] > p {
+    color: var(--session-warning);
+}
+
+.session-codex-parity-v1 .session-turn-duration[data-status='failed'] > p {
+    color: var(--session-danger);
+}
+
 .session-codex-parity-v1 .session-turn-duration::before,
 .session-codex-parity-v1 .session-turn-duration::after {
   content: none;
@@ -13648,9 +13907,18 @@
 
 .session-codex-parity-v1 .session-turn-duration-body {
   display: grid;
-  gap: 14px;
+  gap: 6px;
   min-inline-size: 0;
   padding-block-end: 6px;
+}
+
+/* 活动轮次的行保留稳定布局层，由合成器承接同一状态行在时间线中的位置变化。 */
+.session-codex-parity-v1 .session-live-turn-row {
+  display: grid;
+  inline-size: 100%;
+  min-inline-size: 0;
+  transform-origin: center top;
+  will-change: transform;
 }
 
 .session-codex-parity-v1
@@ -13660,10 +13928,46 @@
   margin-inline: 0;
 }
 
+.session-codex-parity-v1
+  .session-live-turn-row
+  > :where(.session-thread-item, .session-activity-group, .session-reasoning-summary, .session-plan-summary, .session-plan-entry, .session-question-panel, .session-plan-progress, .session-transcript-thinking) {
+  inline-size: 100%;
+  margin-inline: 0;
+}
+
 /* 用户中途引导仍是用户消息；进入当前轮次的网格过程区后继续保持右对齐。 */
-.session-codex-parity-v1 .session-turn-duration-body > .session-thread-item-user {
+.session-codex-parity-v1 .session-turn-duration-body > .session-thread-item-user,
+.session-codex-parity-v1 .session-live-turn-row > .session-thread-item-user {
   justify-self: end;
   margin-inline: 0 !important;
+}
+
+/* 每条用户可见的中间摘要都是单轮处理过程内部的阶段锚点；顶层始终只有一个折叠入口。 */
+.session-codex-parity-v1 .session-turn-process-stage {
+    display: grid;
+    gap: 6px;
+    min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-turn-process-stage + .session-turn-process-stage {
+    margin-block-start: 10px;
+}
+
+.session-codex-parity-v1 .session-turn-stage-summary {
+  display: grid;
+    inline-size: 100%;
+    margin-inline: 0;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-turn-stage-summary > .session-thread-item {
+  inline-size: 100%;
+  margin-inline: 0;
+}
+
+.session-codex-parity-v1 .session-turn-stage-summary .session-thread-item-assistant .session-markdown {
+  color: var(--session-process-text);
+  font-size: var(--session-readable-font-size);
 }
 
 .session-codex-parity-v1 .session-turn-process {
@@ -13728,13 +14032,168 @@
 
 .session-codex-parity-v1 .session-turn-process-body {
   display: grid;
-  gap: 14px;
+  gap: 6px;
   min-inline-size: 0;
   padding-block: 6px 2px;
 }
 
 .session-codex-parity-v1 .session-turn-process-body[hidden] {
   display: none;
+}
+
+.session-codex-parity-v1 .session-v2-history-sentinel {
+  block-size: 1px;
+  inline-size: 1px;
+  inset-block-start: 0;
+  inset-inline-start: 50%;
+  pointer-events: none;
+  position: absolute;
+}
+
+.session-codex-parity-v1 .session-v2-history-status {
+  backdrop-filter: blur(10px);
+  background: color-mix(in oklab, var(--session-canvas) 92%, transparent);
+  border: 1px solid var(--session-line-soft);
+  border-radius: 999px;
+  box-shadow: 0 4px 14px var(--session-shadow);
+  color: var(--session-text-muted);
+  font-size: 11px;
+  inline-size: max-content;
+  inset-block-start: 10px;
+  inset-inline: 0;
+  line-height: 18px;
+  margin-inline: auto;
+  max-inline-size: calc(100% - (2 * var(--session-gutter)));
+  padding: 4px 10px;
+  pointer-events: none;
+  position: absolute;
+  z-index: 2;
+}
+
+.session-codex-parity-v1 .session-v2-history-status[data-state='error'] {
+  background: color-mix(in oklab, var(--session-danger) 7%, var(--session-canvas));
+  border-color: color-mix(in oklab, var(--session-danger) 25%, var(--session-line-soft));
+  color: var(--session-danger);
+}
+
+.session-codex-parity-v1 :where(.session-v2-content, .session-v2-deferred-artifacts) button {
+  background: var(--session-control);
+  border: 1px solid var(--session-line-soft);
+  border-radius: 7px;
+  color: var(--session-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  min-block-size: 26px;
+  padding: 3px 9px;
+}
+
+.session-codex-parity-v1 :where(.session-v2-content, .session-v2-deferred-artifacts) button:hover:not(:disabled) {
+  background: var(--session-control-hover);
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 :where(.session-v2-content, .session-v2-deferred-artifacts) button:focus-visible {
+  outline: 2px solid var(--session-focus-outline);
+  outline-offset: 2px;
+}
+
+.session-codex-parity-v1 :where(.session-v2-content, .session-v2-deferred-artifacts) button:disabled {
+  cursor: wait;
+  opacity: 0.64;
+}
+
+.session-codex-parity-v1 .session-v2-page-status,
+.session-codex-parity-v1 .session-v2-page-error {
+  color: var(--session-text-muted);
+  font-size: 11px;
+  margin: 2px 0;
+}
+
+.session-codex-parity-v1 .session-v2-page-error {
+  color: var(--session-danger);
+}
+
+.session-codex-parity-v1 .session-v2-page-action {
+  justify-self: start;
+}
+
+.session-codex-parity-v1 .session-v2-auto-page {
+  color: var(--session-text-muted);
+  font-size: 11px;
+  min-block-size: 1px;
+}
+
+.session-codex-parity-v1 .session-v2-deferred-artifacts {
+  background: color-mix(in oklab, var(--session-surface-subtle) 70%, transparent);
+  border: 1px solid var(--session-line-soft);
+  border-radius: 9px;
+  display: grid;
+  gap: 10px;
+  margin-block-start: 4px;
+  min-inline-size: 0;
+  padding: 10px;
+}
+
+.session-codex-parity-v1 .session-v2-deferred-artifacts > div {
+  display: grid;
+  gap: 5px;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-v2-deferred-artifacts :where(p, ul) {
+  margin: 0;
+}
+
+.session-codex-parity-v1 .session-v2-deferred-artifacts ul {
+  display: grid;
+  gap: 6px;
+  list-style: none;
+  padding: 0;
+}
+
+.session-codex-parity-v1 .session-v2-deferred-artifacts li {
+  align-items: baseline;
+  display: grid;
+  gap: 5px 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-v2-deferred-artifacts li > span {
+  overflow-wrap: anywhere;
+}
+
+.session-codex-parity-v1 .session-v2-deferred-artifacts li > small {
+  color: var(--session-text-muted);
+}
+
+.session-codex-parity-v1 .session-v2-content {
+  display: grid;
+  gap: 5px;
+  grid-column: 1 / -1;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-v2-content > button {
+  justify-self: start;
+}
+
+.session-codex-parity-v1 .session-v2-content-navigation {
+  display: flex;
+  gap: 6px;
+}
+
+.session-codex-parity-v1 .session-v2-content > pre {
+  background: var(--session-code);
+  border-radius: 7px;
+  font-size: 11px;
+  margin: 0;
+  max-block-size: 360px;
+  max-inline-size: 100%;
+  overflow: auto;
+  padding: 9px;
+  white-space: pre-wrap;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -13780,6 +14239,12 @@
 
 .session-creation-status.is-failed {
   color: var(--session-danger);
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.session-creation-status.is-failed > :first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .session-creation-status.is-warning {
@@ -13797,7 +14262,7 @@
 }
 
 .session-connection-symbol {
-  animation: session-connection-pulse 1200ms ease-in-out infinite;
+  animation: session-connection-pulse 700ms ease-in-out infinite;
   block-size: 20px;
   display: block;
   inline-size: 20px;
@@ -14059,12 +14524,6 @@
 .session-codex-parity-v1 :where(.session-turn-duration-body, .session-turn-process-body) .session-thread-item-assistant .session-markdown {
   color: var(--session-process-text);
   font-size: var(--session-readable-font-size);
-}
-
-/* 多行摘要保持顶部锚定，图标只在首行行盒内居中。 */
-.session-codex-parity-v1 .session-reasoning-summary-icon {
-  block-size: 1.5em;
-  align-self: start;
 }
 
 .session-codex-parity-v1 .session-command-summary-copy strong,
@@ -14520,6 +14979,19 @@
   inline-size: 12px;
 }
 
+.session-codex-parity-v1 .session-stop-button[aria-busy='true']:disabled {
+  background: color-mix(in oklab, var(--session-working-color) 8%, var(--session-canvas)) !important;
+  border: 1px solid color-mix(in oklab, var(--session-working-color) 28%, var(--session-line-soft)) !important;
+  color: var(--session-working-color) !important;
+  cursor: progress;
+  opacity: 1;
+}
+
+.session-codex-parity-v1 .session-stop-button[aria-busy='true'] > .session-command-spinner {
+  border-color: currentColor;
+  border-inline-end-color: transparent;
+}
+
 .session-codex-parity-v1 .session-command-spinner {
   animation: session-spinner 700ms linear infinite;
   block-size: 19px;
@@ -14689,51 +15161,10 @@
 }
 
 /* Ultra 智能体使用右侧原生线程面板，协调事件不再挤占主会话正文。 */
-.session-workspace-root .session-agents-toggle {
-  align-items: center;
-  appearance: none;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  color: var(--session-text-muted);
-  display: inline-flex;
-  font: inherit;
-  gap: 6px;
-  min-block-size: 30px;
-  padding: 0 8px;
-}
-
-.session-workspace-root .session-agents-toggle:hover,
-.session-workspace-root .session-agents-toggle.selected {
-  background: var(--session-control-hover);
-  border-color: var(--session-line);
-  color: var(--session-text);
-}
-
-.session-workspace-root .session-agents-toggle:focus-visible,
 .session-workspace-root .session-subagent-workspace button:focus-visible {
   box-shadow: 0 0 0 3px var(--session-focus);
   outline: 1px solid var(--session-focus-outline);
   outline-offset: 1px;
-}
-
-.session-workspace-root .session-agents-toggle > svg {
-  block-size: 16px;
-  inline-size: 16px;
-}
-
-.session-workspace-root .session-agents-toggle > small {
-  align-items: center;
-  background: var(--session-selected);
-  border-radius: 999px;
-  color: var(--session-text-secondary);
-  display: inline-flex;
-  font-size: 10px;
-  font-weight: 650;
-  justify-content: center;
-  line-height: 18px;
-  min-inline-size: 18px;
-  padding-inline: 5px;
 }
 
 .session-workspace-root .session-subagent-workspace {
@@ -14825,11 +15256,105 @@
 }
 
 .session-workspace-root .session-subagent-list,
-.session-workspace-root .session-subagent-thread {
+.session-workspace-root .session-subagent-detail {
   box-sizing: border-box;
   flex: 1 1 auto;
   min-block-size: 0;
   overflow-y: auto;
+}
+
+.session-workspace-root .session-subagent-detail {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+  overflow: hidden;
+}
+
+.session-workspace-root .session-subagent-detail > .session-runtime-details {
+  inline-size: 100%;
+}
+
+.session-workspace-root .session-subagent-detail .session-runtime-details :where(code, a) {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.session-workspace-root .session-subagent-instruction {
+  background: color-mix(in oklab, var(--session-control-hover) 72%, var(--session-canvas));
+  border-block-end: 1px solid var(--session-line-soft);
+  display: grid;
+  gap: 8px;
+  padding: 12px clamp(12px, 3vw, 28px);
+}
+
+.session-workspace-root .session-subagent-instruction > header {
+  align-items: baseline;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.session-workspace-root .session-subagent-instruction > header strong {
+  color: var(--session-text);
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.session-workspace-root .session-subagent-instruction > header span {
+  color: var(--session-text-muted);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-workspace-root .session-subagent-instruction-content,
+.session-workspace-root .session-subagent-inherited-context > div {
+  color: var(--session-text);
+  font-size: 12px;
+  line-height: 1.6;
+  max-block-size: 280px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+
+.session-workspace-root .session-subagent-instruction-content > :first-child,
+.session-workspace-root .session-subagent-inherited-context > div > :first-child {
+  margin-block-start: 0;
+}
+
+.session-workspace-root .session-subagent-instruction-content > :last-child,
+.session-workspace-root .session-subagent-inherited-context > div > :last-child {
+  margin-block-end: 0;
+}
+
+.session-workspace-root .session-subagent-instruction-unavailable {
+  color: var(--session-text-muted);
+  display: grid;
+  font-size: 11px;
+  gap: 3px;
+  line-height: 16px;
+}
+
+.session-workspace-root .session-subagent-instruction-unavailable strong {
+  color: var(--session-text);
+  font-weight: 620;
+}
+
+.session-workspace-root .session-subagent-inherited-context {
+  border-block-start: 1px solid var(--session-line-soft);
+  color: var(--session-text-muted);
+  font-size: 11px;
+  padding-block-start: 8px;
+}
+
+.session-workspace-root .session-subagent-inherited-context > summary {
+  cursor: pointer;
+  font-weight: 620;
+}
+
+.session-workspace-root .session-subagent-inherited-context > div {
+  margin-block-start: 8px;
 }
 
 .session-workspace-root .session-subagent-list {
@@ -14938,13 +15463,38 @@
 }
 
 .session-workspace-root .session-subagent-thread {
-  padding: 18px clamp(12px, 3vw, 28px) 44px;
+  box-sizing: border-box;
+  display: flex;
+  flex: 1 1 auto;
+  min-block-size: 0;
+  min-inline-size: 0;
+  padding: 0;
 }
 
-.session-workspace-root .session-subagent-thread .session-thread-item {
-  inline-size: 100%;
-  margin-inline: 0;
-  max-inline-size: none;
+.session-workspace-root .session-subagent-boundary-notice {
+  background: color-mix(in oklab, var(--session-warning) 8%, var(--session-canvas));
+  border-block-end: 1px solid color-mix(in oklab, var(--session-warning) 24%, var(--session-line-soft));
+  color: var(--session-text-muted);
+  display: grid;
+  font-size: 11px;
+  gap: 3px;
+  padding: 9px clamp(12px, 3vw, 28px);
+}
+
+.session-workspace-root .session-subagent-boundary-notice strong {
+  color: var(--session-text);
+  font-weight: 650;
+}
+
+.session-workspace-root .session-subagent-boundary-notice :where(span, small) {
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+
+.session-workspace-root .session-subagent-thread > .session-transcript-shell {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  min-inline-size: 0;
 }
 
 .session-workspace-root .session-subagent-loading,
@@ -15018,51 +15568,32 @@
   padding: 4px 10px;
 }
 
-@media (max-width: 759px) {
-  .session-workspace-root .session-agents-toggle > span {
-    block-size: 1px;
-    clip: rect(0 0 0 0);
-    clip-path: inset(50%);
-    inline-size: 1px;
-    overflow: hidden;
-    position: absolute;
-    white-space: nowrap;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .session-workspace-root .session-subagent-status-dot[data-status='running'] {
     box-shadow: none;
   }
 }
 
-/* ZEUS-0306：队列靠近输入区完整呈现，阻塞交互紧跟当前会话过程。 */
+/* ZEUS-0306：队列靠近输入区完整呈现。 */
 .session-codex-parity-v1 .session-queued-message-reference span {
   overflow-wrap: anywhere;
   text-overflow: clip;
   white-space: pre-wrap;
 }
 
-.session-codex-parity-v1 .session-transcript > .session-interaction-dock {
-  inline-size: min(var(--session-composer-max), 100%);
-  margin-block: 0;
-  padding-block-end: 0;
-}
-
-/* ZEUS-0307：会话工作态共享低饱和蓝灰与慢节奏；正文区由唯一活动焦点决定谁可以循环动画。 */
+/* ZEUS-0307、ZEUS-0338：会话工作态共享低饱和蓝灰；正文流焦点与工具状态各自保持连续反馈。 */
 .session-codex-parity-v1 {
   --session-working-color: color-mix(in oklab, var(--session-accent) 38%, var(--session-text-muted));
   --session-working-halo: color-mix(in oklab, var(--session-working-color) 15%, transparent);
   --session-working-soft: color-mix(in oklab, var(--session-working-color) 12%, var(--session-selected));
   --session-working-cycle: 1800ms;
-  --session-working-spinner-cycle: 1200ms;
+  --session-working-spinner-cycle: 1800ms;
 }
 
 .session-codex-parity-v1 .session-activity-live,
 .session-codex-parity-v1 .session-thinking-indicator,
 .session-codex-parity-v1 .session-thinking-indicator::after,
 .session-codex-parity-v1 .session-thinking-pulse,
-.session-codex-parity-v1 .session-reasoning-summary[data-status='active'] .session-reasoning-summary-icon,
 .session-codex-parity-v1 .session-streaming-markdown-placeholder,
 .session-codex-parity-v1 .session-streaming-markdown-placeholder span {
   animation: none;
@@ -15072,7 +15603,7 @@
   display: none;
 }
 
-.session-codex-parity-v1 :where(.session-reasoning-summary-icon, .session-activity-group-icon, .session-activity-item-icon, .session-plan-summary-symbol) {
+.session-codex-parity-v1 :where(.session-activity-group-icon, .session-activity-item-icon, .session-plan-summary-symbol) {
   align-items: center;
   border-radius: 999px;
   display: inline-grid;
@@ -15092,14 +15623,16 @@
   inline-size: 17px;
 }
 
-.session-codex-parity-v1 .session-reasoning-summary[data-motion-active='true'] .session-reasoning-summary-icon,
 .session-codex-parity-v1 .session-activity-group[data-motion-active='true'] > .session-activity-live .session-activity-item-icon,
 .session-codex-parity-v1 .session-activity-group[data-motion-active='true'] .session-activity-body li[data-motion-active='true'] > .session-activity-item-icon,
 .session-codex-parity-v1 .session-plan-summary[data-motion-active='true'] .session-plan-summary-symbol {
-  animation: session-working-breathe var(--session-working-cycle) var(--session-ease-out) infinite;
+  animation: session-working-breathe var(--session-working-cycle) ease-in-out infinite;
+  backface-visibility: hidden;
   background: var(--session-working-halo);
   box-shadow: 0 0 0 3px var(--session-working-halo);
   color: var(--session-working-color);
+  transform-origin: center;
+  will-change: opacity, transform;
 }
 
 .session-codex-parity-v1 .session-transcript-thinking[data-motion-active='true'] .session-thinking-pulse {
@@ -15154,7 +15687,7 @@
 }
 
 .session-codex-parity-v1 .session-loading-line {
-  animation: session-working-sweep 2200ms var(--session-ease-out) infinite;
+  animation: session-working-sweep 1500ms var(--session-ease-out) infinite;
   background: linear-gradient(90deg, var(--session-working-soft) 0%, color-mix(in oklab, var(--session-working-color) 20%, var(--session-canvas)) 48%, var(--session-working-soft) 76%);
   background-size: 220% 100%;
 }
@@ -15189,7 +15722,7 @@
 }
 
 .session-codex-parity-v1 .session-reconnect-symbol {
-  animation: session-working-spin 1400ms linear infinite;
+  animation: session-working-spin 900ms linear infinite;
   block-size: 18px;
   color: var(--session-working-color);
   display: grid;
@@ -15239,6 +15772,24 @@
   inline-size: 16px;
 }
 
+/* 活动态统一使用纯旋转；位置和透明度保持稳定，避免把工作图标误做成卡顿的呼吸灯。 */
+.session-codex-parity-v1 .session-transcript {
+  /* 自动跟随由滚动控制器逐帧收敛；不能再被全局 smooth 变成延迟滚动。 */
+  scroll-behavior: auto;
+}
+
+.session-codex-parity-v1 .session-activity-group[data-active='true'] .session-activity-group-icon,
+.session-codex-parity-v1 .session-activity-group[data-active='true'] > .session-activity-live .session-activity-item-icon,
+.session-codex-parity-v1 .session-activity-group[data-active='true'] .session-activity-body li[data-motion-active='true'] > .session-activity-item-icon,
+.session-codex-parity-v1 .session-plan-summary[data-streaming='true'] .session-plan-summary-symbol {
+  animation: session-working-spin var(--session-working-spinner-cycle) linear infinite;
+  background: var(--session-working-halo);
+  box-shadow: 0 0 0 3px var(--session-working-halo);
+  color: var(--session-working-color);
+  transform-origin: center;
+  will-change: transform;
+}
+
 .session-codex-parity-v1 .session-plan-body li[data-status='completed'] > .session-plan-step-icon {
   color: var(--session-success);
 }
@@ -15250,14 +15801,12 @@
 
 @keyframes session-working-breathe {
   0%,
-  20%,
-  72%,
   100% {
-    opacity: 0.44;
+    opacity: 0.5;
     transform: scale(0.96);
   }
-  48% {
-    opacity: 0.94;
+  50% {
+    opacity: 1;
     transform: scale(1);
   }
 }
@@ -15269,6 +15818,15 @@
   }
   72%,
   100% {
+    background-position: -120% 0;
+  }
+}
+
+@keyframes session-reasoning-continuous-sweep {
+  from {
+    background-position: 120% 0;
+  }
+  to {
     background-position: -120% 0;
   }
 }
@@ -15296,7 +15854,6 @@
 @media (prefers-reduced-motion: reduce) {
   .session-codex-parity-v1
     :where(
-      .session-reasoning-summary-icon,
       .session-activity-item-icon,
       .session-plan-summary-symbol,
       .session-thinking-pulse,
@@ -15322,5 +15879,188 @@
   .session-codex-parity-v1 .session-markdown [data-streaming-tail-anchor='true']::after,
   .session-codex-parity-v1 .session-markdown > .session-streaming-cursor {
     opacity: 0.72;
+  }
+}
+
+/* 最终覆盖：语义图标保持静止，只有专用 CircleNotch / CSS 加载环旋转。 */
+.session-codex-parity-v1 :where(.session-activity-group-icon, .session-activity-item-icon, .session-plan-summary-symbol) {
+  animation: none !important;
+  transform: none !important;
+  will-change: auto !important;
+}
+
+/* 命令与工具图标只表达活动类型，不再叠加蓝色圆底或光晕。 */
+.session-codex-parity-v1 :where(.session-activity-group-icon, .session-activity-item-icon) {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+/* 最终覆盖：运行详情按会话/费用双栏与通栏数据表排列。 */
+.session-codex-parity-v1 .session-runtime-detail-groups {
+  gap: 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.session-codex-parity-v1 .session-runtime-detail-split {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group {
+  align-items: start;
+  display: grid;
+  gap: 10px 18px;
+  grid-template-columns: minmax(108px, 0.12fr) minmax(0, 1fr);
+  padding-block: 8px;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group + .session-runtime-detail-group {
+  border-block-start: 1px solid var(--session-line-soft);
+}
+
+.session-codex-parity-v1 .session-runtime-detail-split + .session-runtime-detail-group {
+  border-block-start: 1px solid var(--session-line-soft);
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group > h3 {
+  color: var(--session-text);
+  font-size: 12px;
+  font-weight: 740;
+  letter-spacing: 0.015em;
+  line-height: 1.35;
+  margin: 1px 0 0;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group > dl {
+  align-items: start;
+  grid-template-columns: repeat(auto-fit, minmax(min(132px, 100%), 1fr));
+}
+
+.session-codex-parity-v1 .session-runtime-detail-split > .session-runtime-detail-group {
+  display: block;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-split > .session-runtime-detail-group + .session-runtime-detail-group {
+  border-block-start: 0;
+  border-inline-start: 1px solid var(--session-line-soft);
+  padding-inline-start: 18px;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-split > .session-runtime-detail-group > h3 {
+  margin-block-end: 8px;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group[data-group='session'] > dl {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group[data-group='cost'] > dl {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group > dl > div[data-wide='true'] {
+  grid-column: 1 / -1;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group[data-group='environment'] > dl {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group[data-group='environment'] > dl > div {
+  align-items: center;
+  column-gap: 12px;
+  grid-template-columns: minmax(92px, 0.12fr) minmax(0, 1fr);
+}
+
+.session-codex-parity-v1 .session-runtime-code-value {
+  align-items: center;
+  display: flex;
+  gap: 5px;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-runtime-code-value > code {
+  display: block;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-runtime-copy-button {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: var(--session-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 auto;
+  justify-content: center;
+  margin: -3px;
+  padding: 3px;
+}
+
+.session-codex-parity-v1 .session-runtime-copy-button:hover,
+.session-codex-parity-v1 .session-runtime-copy-button:focus-visible,
+.session-codex-parity-v1 .session-runtime-copy-button[data-copied='true'] {
+  background: var(--session-control-hover);
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .session-runtime-copy-button:focus-visible {
+  box-shadow: 0 0 0 3px var(--session-focus);
+  outline: 0;
+}
+
+.session-codex-parity-v1 .session-runtime-copy-button > svg {
+  block-size: 14px;
+  display: block;
+  inline-size: 14px;
+}
+
+.session-codex-parity-v1 .session-runtime-pricing-source {
+  display: inline-block;
+  margin-inline-end: 9px;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-runtime-pricing-source > a {
+  border-block-end: 1px dotted currentColor;
+  color: inherit;
+  text-decoration: none;
+}
+
+.session-codex-parity-v1 .session-runtime-pricing-source > a:hover {
+  border-block-end-style: solid;
+}
+
+@media (max-width: 720px) {
+  .session-codex-parity-v1 .session-runtime-detail-group {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .session-codex-parity-v1 .session-runtime-detail-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .session-codex-parity-v1 .session-runtime-detail-split > .session-runtime-detail-group + .session-runtime-detail-group {
+    border-block-start: 1px solid var(--session-line-soft);
+    border-inline-start: 0;
+    padding-inline-start: 0;
+  }
+
+  .session-codex-parity-v1 .session-runtime-detail-group[data-group='environment'] > dl > div {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 460px) {
+  .session-codex-parity-v1 .session-runtime-detail-group[data-group='session'] > dl,
+  .session-codex-parity-v1 .session-runtime-detail-group[data-group='cost'] > dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

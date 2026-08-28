@@ -1,16 +1,25 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { ArrowsInIcon as ArrowsIn } from '@phosphor-icons/react/dist/csr/ArrowsIn';
 import { ArrowsOutIcon as ArrowsOut } from '@phosphor-icons/react/dist/csr/ArrowsOut';
 import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
 import { FileImageIcon as FileImage } from '@phosphor-icons/react/dist/csr/FileImage';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { ConversationResourcePreview } from './sessionTypes.js';
-import type { SessionUiLanguage } from './ThreadItemView.js';
+import { SafeMarkdown, type SessionUiLanguage } from './ThreadItemView.js';
 import type { ConversationCodeComment, ConversationCodeCommentPosition } from '@zeus/shared';
 import { CodeCommentPanel } from './CodeCommentPanel.js';
+import { SyntaxHighlightedLine, useSyntaxHighlightedLines } from '../code/SyntaxHighlightedCode.js';
+
+export type SourceWorkspaceViewMode = 'preview' | 'source';
+
+export function defaultSourceWorkspaceViewMode(preview: ConversationResourcePreview): SourceWorkspaceViewMode {
+  return supportsMarkdownPreview(preview) ? 'preview' : 'source';
+}
 
 export function SourceWorkspace(props: {
   preview: ConversationResourcePreview;
+  viewMode: SourceWorkspaceViewMode;
+  onViewModeChange: (viewMode: SourceWorkspaceViewMode) => void;
   language: SessionUiLanguage;
   fullWidth: boolean;
   onFullWidthChange: (fullWidth: boolean) => void;
@@ -22,7 +31,10 @@ export function SourceWorkspace(props: {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const titleRef = useRef<HTMLSpanElement | null>(null);
   const sourcePreview = props.preview.kind === 'source' ? props.preview : null;
-  const lines = useMemo(() => (sourcePreview ? sourcePreviewLines(sourcePreview.content) : []), [sourcePreview]);
+  const displayPath = props.preview.resource.kind === 'file' ? props.preview.resource.projectRelativePath : props.preview.resource.displayName;
+  const markdownPreview = supportsMarkdownPreview(props.preview);
+  const renderedMarkdown = Boolean(sourcePreview && markdownPreview && props.viewMode === 'preview');
+  const lines = useSyntaxHighlightedLines(displayPath, sourcePreview?.content ?? '', sourcePreview?.language ?? null);
   const targetLine = sourcePreview?.location?.line ?? null;
   const targetEndLine = sourcePreview?.location?.endLine ?? targetLine;
   const [draftPosition, setDraftPosition] = useState<ConversationCodeCommentPosition | null>(null);
@@ -34,12 +46,11 @@ export function SourceWorkspace(props: {
   }, [props.preview.resource.id]);
 
   useEffect(() => {
-    if (!targetLine) return;
+    if (renderedMarkdown || !targetLine) return;
     const target = contentRef.current?.querySelector<HTMLElement>(`[data-source-line='${targetLine}']`);
     target?.scrollIntoView({ block: 'center' });
-  }, [props.preview.resource.id, targetLine]);
+  }, [props.preview.resource.id, renderedMarkdown, targetLine]);
 
-  const displayPath = props.preview.resource.kind === 'file' ? props.preview.resource.projectRelativePath : props.preview.resource.displayName;
   const comments = (props.comments ?? []).filter((comment) => comment.position.path === displayPath && comment.position.side === 'right');
 
   function saveComment(position: ConversationCodeCommentPosition, body: string, existingId?: string): void {
@@ -51,7 +62,10 @@ export function SourceWorkspace(props: {
   }
 
   return (
-    <section className="session-context-workspace session-source-workspace" aria-label={props.preview.kind === 'image' ? (zh ? '图片预览' : 'Image preview') : zh ? '源码预览' : 'Source preview'}>
+    <section
+      className="session-context-workspace session-source-workspace"
+      aria-label={props.preview.kind === 'image' ? (zh ? '图片预览' : 'Image preview') : renderedMarkdown ? (zh ? 'Markdown 预览' : 'Markdown preview') : zh ? '源码预览' : 'Source preview'}
+    >
       <header className="session-context-workspace-header">
         <span className="session-context-workspace-title" ref={titleRef} tabIndex={-1}>
           {props.preview.kind === 'image' ? <FileImage aria-hidden="true" weight="regular" /> : <FileCode aria-hidden="true" weight="regular" />}
@@ -61,6 +75,16 @@ export function SourceWorkspace(props: {
           </span>
         </span>
         <nav aria-label={zh ? '源码预览操作' : 'Source preview actions'}>
+          {markdownPreview ? (
+            <>
+              <button type="button" className="session-context-text-action session-source-view-action" aria-pressed={renderedMarkdown} onClick={() => props.onViewModeChange('preview')}>
+                {zh ? '预览' : 'Preview'}
+              </button>
+              <button type="button" className="session-context-text-action session-source-view-action" aria-pressed={!renderedMarkdown} onClick={() => props.onViewModeChange('source')}>
+                {zh ? '源码' : 'Source'}
+              </button>
+            </>
+          ) : null}
           <button
             type="button"
             aria-label={props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width'}
@@ -88,9 +112,11 @@ export function SourceWorkspace(props: {
           </>
         )}
       </div>
-      <div className={`session-source-scroll ${props.preview.kind === 'image' ? 'session-image-preview' : ''}`} ref={contentRef}>
+      <div className={renderedMarkdown ? 'session-source-markdown-scroll' : `session-source-scroll ${props.preview.kind === 'image' ? 'session-image-preview' : ''}`} ref={contentRef}>
         {props.preview.kind === 'image' ? (
           <img src={props.preview.dataUrl} alt={props.preview.resource.displayName} />
+        ) : renderedMarkdown ? (
+          <SafeMarkdown text={props.preview.content} language={props.language} />
         ) : (
           <pre aria-label={zh ? `${displayPath} 源码` : `${displayPath} source`}>
             <code>
@@ -121,7 +147,9 @@ export function SourceWorkspace(props: {
                       <span className="session-source-line-number" aria-hidden="true">
                         {lineNumber}
                       </span>
-                      <span className="session-source-line-code">{line || '\u00a0'}</span>
+                      <span className="session-source-line-code">
+                        <SyntaxHighlightedLine line={line} />
+                      </span>
                     </span>
                     {lineComments.map((comment) =>
                       editingCommentId === comment.id ? (
@@ -164,15 +192,18 @@ export function SourceWorkspace(props: {
   );
 }
 
+function supportsMarkdownPreview(preview: ConversationResourcePreview): boolean {
+  if (preview.kind !== 'source') return false;
+  if (preview.resource.iconKind === 'markdown') return true;
+  const language = preview.language?.trim().toLowerCase();
+  if (language === 'markdown' || language === 'md' || language === 'mdx') return true;
+  const displayPath = preview.resource.kind === 'file' ? preview.resource.projectRelativePath : preview.resource.displayName;
+  return /\.(?:md|markdown|mdx)$/iu.test(displayPath);
+}
+
 function basename(path: string): string {
   const normalized = path.replaceAll('\\', '/');
   return normalized.split('/').filter(Boolean).at(-1) ?? path;
-}
-
-function sourcePreviewLines(content: string): string[] {
-  const normalized = content.replace(/\r\n?/gu, '\n');
-  if (normalized === '') return [''];
-  return (normalized.endsWith('\n') ? normalized.slice(0, -1) : normalized).split('\n');
 }
 
 function formatBytes(bytes: number): string {

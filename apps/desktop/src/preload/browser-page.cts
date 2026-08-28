@@ -1,5 +1,21 @@
 import { ipcRenderer } from 'electron';
 
+function invokeBrowserPageCommand(commandType: string, body: unknown): Promise<unknown> {
+  const commandId = globalThis.crypto.randomUUID();
+  const envelope = Object.freeze({
+    schemaGeneration: 'zeus-command-envelope-v1',
+    commandId,
+    commandType,
+    actor: Object.freeze({ kind: 'user', id: 'desktop-browser-page-user' }),
+    scope: Object.freeze({ kind: 'artifact', id: 'browser-page-comment' }),
+    expectedRevision: null,
+    idempotencyKey: `desktop-browser-page:${commandId}`,
+    issuedAt: new Date().toISOString(),
+    payload: Object.freeze({ transport: 'electron-ipc', channel: 'zeus:browser-page:save-comment' }),
+  });
+  return ipcRenderer.invoke('zeus:browser-page:save-comment', Object.freeze({ envelope, body }));
+}
+
 type Rect = { x: number; y: number; width: number; height: number };
 type DesignChange = { kind: 'text' | 'style'; selector?: string; property?: string; previous: string; next: string };
 type PageAnchor = {
@@ -429,7 +445,7 @@ async function saveComment(): Promise<void> {
   editor.hidden = true;
   render();
   try {
-    await ipcRenderer.invoke('zeus:browser-page:save-comment', {
+    await invokeBrowserPageCommand('desktop.browser.save_comment', {
       body,
       anchor: state.editorAnchor,
       designChanges,

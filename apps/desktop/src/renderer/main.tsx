@@ -1,33 +1,78 @@
-import { useEffect } from 'react';
+import { Profiler, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { RendererErrorBoundary } from './ErrorBoundary.js';
-import { createDashboardClient, type DashboardClient, type ExecutionHostTransition } from './apiClient.js';
+import { createDashboardClient, type DashboardClient, type ExecutionHostTransition, type ReadOnlyValidationIdentity, ZeusApiError } from './apiClient.js';
 import { openGraphSourceInMain, revealProjectInFinderInMain } from './appShellBridge.js';
 import { initializeNativeCloseLayerRouting } from './ui/nativeCloseLayer.js';
-import { ApplicationErrorDialogHost, reportApplicationError } from './ui/ApplicationErrorDialog.js';
+import { ApplicationErrorDialogHost, formatVisibleApplicationError, reportApplicationError } from './ui/ApplicationErrorDialog.js';
+import { RendererPerformanceCollector } from './rendererPerformanceObservability.js';
+import { primePersistedSessionViewCache } from './session/sessionHotCache.js';
 
 initializeNativeCloseLayerRouting();
+const rendererPerformance = new RendererPerformanceCollector();
+const rendererHydrationStartedAt = performance.now();
+rendererPerformance.install();
+Object.defineProperty(window, '__zeusPerformanceSnapshot', {
+  configurable: false,
+  enumerable: false,
+  value: () => rendererPerformance.snapshot(),
+  writable: false,
+});
 
-async function renderWithClient(client: DashboardClient, executionHostTransition?: ExecutionHostTransition): Promise<void> {
-  const { App, buildGraphConversationTaskIntent, buildGraphNodeTaskIntent, buildProjectDirectoryResolution, buildTemplateTaskDraft } = await import('./App.js');
-  const snapshot = await client.loadDashboard();
-  const appShellSettings = await client.loadAppShellSettings();
+async function renderWithClient(
+  client: DashboardClient,
+  executionHostTransition?: ExecutionHostTransition,
+  readOnlyValidation?: ReadOnlyValidationIdentity,
+  bootstrap?: {
+    appModule: Promise<typeof import('./App.js')>;
+    sessionViewCache: Promise<unknown | null>;
+  },
+): Promise<void> {
+  const [appModule, snapshot, appShellSettings, sessionViewCache] = await Promise.all([
+    bootstrap?.appModule ?? import('./App.js'),
+    client.loadDashboard(),
+    client.settings.loadAppShellSettings(),
+    bootstrap?.sessionViewCache ?? Promise.resolve(null),
+  ]);
+  const { App, buildGraphConversationTaskIntent, buildGraphNodeTaskIntent, buildProjectDirectoryResolution, buildTemplateTaskDraft } = appModule;
+  primePersistedSessionViewCache(sessionViewCache);
   const root = document.getElementById('root');
   if (!root) throw new Error('Zeus renderer root element is missing');
   const reactRoot = createRoot(root);
   const errorLanguage = appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en';
   reactRoot.render(
     <>
+      {readOnlyValidation ? (
+        <aside
+          data-zeus-read-only-validation="true"
+          style={{
+            position: 'fixed',
+            zIndex: 2147483647,
+            left: '50%',
+            top: 8,
+            transform: 'translateX(-50%)',
+            maxWidth: 'calc(100vw - 32px)',
+            padding: '6px 12px',
+            border: '1px solid rgba(146, 99, 20, 0.45)',
+            borderRadius: 999,
+            background: 'rgba(255, 247, 224, 0.96)',
+            color: '#68430b',
+            boxShadow: '0 6px 22px rgba(48, 32, 8, 0.14)',
+            fontSize: 12,
+            fontWeight: 650,
+            lineHeight: 1.4,
+            pointerEvents: 'none',
+          }}
+        >
+          正式数据只读验证 · 不会写副本或连接外部服务 · run {readOnlyValidation.runId} · manifest {readOnlyValidation.manifestHash.slice(0, 12)}
+        </aside>
+      ) : null}
       <RendererErrorBoundary
         appLanguage={appShellSettings.appLanguage}
-        onFatalError={(error, info) => {
+        onFatalError={(error) => {
           reportRendererFatalFailure(error);
           reportApplicationError(error, {
             language: errorLanguage,
-            title: errorLanguage === 'zh-CN' ? 'Zeus 遇到界面错误' : 'Zeus encountered an interface error',
-            summary: errorLanguage === 'zh-CN' ? '当前界面已安全暂停。你可以查看详情，然后刷新窗口恢复。' : 'The current interface is safely paused. Review the details, then refresh the window to recover.',
-            source: 'RendererErrorBoundary',
-            details: `${error.message}\n${info.componentStack ?? ''}`,
             primaryAction: {
               label: errorLanguage === 'zh-CN' ? '刷新窗口' : 'Refresh window',
               run: () => globalThis.location?.reload(),
@@ -35,284 +80,287 @@ async function renderWithClient(client: DashboardClient, executionHostTransition
           });
         }}
       >
-        <App
-          initialAppShellSettings={appShellSettings}
-          snapshot={snapshot}
-          executionHostTransition={executionHostTransition}
-          nativeConversationClient={client}
-          commandClient={client}
-          onChooseProjectDirectory={async () => {
-            const selectedPath = await window.zeus?.chooseProjectDirectory?.();
-            // 选择真实仓库失败或取消时保留现有列表；开源分发包不能内置维护者本机路径。
-            const resolved = buildProjectDirectoryResolution(selectedPath, appShellSettings.appLanguage);
-            return resolved.path;
-          }}
-          onCreateCurrentProject={async (request) => {
-            await client.createProject(request);
-            return client.loadDashboard();
-          }}
-          onArchiveProject={async (projectId) => {
-            await client.archiveProject(projectId);
-            return client.loadDashboard();
-          }}
-          onLoadProjects={(query) => client.loadProjects({ query })}
-          onLoadProject={(projectId) => client.loadProject(projectId)}
-          onLoadProjectConfig={(projectId) => client.loadProjectConfig(projectId)}
-          onSaveProjectConfig={(projectId, input) => client.saveProjectConfig(projectId, input)}
-          onSaveProjectModelServiceTierPreference={(projectId, input) => client.saveProjectModelServiceTierPreference(projectId, input)}
-          onLoadProjectDatabaseSecret={(projectId) => client.loadProjectDatabaseSecret(projectId)}
-          onSaveProjectDatabasePassword={(projectId, password) => client.saveProjectDatabasePassword(projectId, password)}
-          onClearProjectDatabasePassword={(projectId) => client.clearProjectDatabasePassword(projectId)}
-          onUpdateProject={async (projectId, input) => {
-            await client.updateProject(projectId, input);
-            return client.loadDashboard();
-          }}
-          onRevealProjectInFinder={(projectPath) => revealProjectInFinderInMain({ zeus: window.zeus, projectPath })}
-          onDeleteProject={async (projectId) => {
-            await client.deleteProject(projectId);
-            return client.loadDashboard();
-          }}
-          onCreateProjectArchiveConfirmation={(projectId) => client.createProjectArchiveConfirmation(projectId)}
-          onRestoreProject={async (projectId) => {
-            await client.restoreProject(projectId);
-            return client.loadDashboard();
-          }}
-          onLoadArchivedProjects={() => client.loadArchivedProjects()}
-          onLoadArchivedTasks={(projectId) => client.loadArchivedTasks(projectId)}
-          onSetProjectDefaultTemplate={async (projectId, templateId) => {
-            await client.setProjectDefaultTemplate(projectId, templateId);
-            return client.loadDashboard();
-          }}
-          onAuthorizeTaskFiles={(files, source) => window.zeus?.authorizeTaskFiles?.(files, source) ?? Promise.resolve({ resources: [], failedCount: files.length })}
-          onMaterializeTaskResources={(resources) => window.zeus?.materializeTaskResources?.(resources) ?? Promise.resolve([])}
-          onReadTaskClipboardResources={() => window.zeus?.readTaskClipboardResources?.() ?? Promise.resolve({ resources: [], text: '' })}
-          onLoadTaskAttachmentPreview={(path) => window.zeus?.getTaskAttachmentPreview?.(path) ?? Promise.resolve(null)}
-          onOpenTaskAttachment={(path) => window.zeus?.openTaskAttachment?.(path) ?? Promise.resolve({ opened: false, error: 'open_attachment_unavailable' })}
-          onCreateTaskFromGraphNode={async (nodeId, projectId, idempotencyKey) => {
-            await client.createTaskFromGraphNode(nodeId, {
-              projectId,
-              intent: buildGraphNodeTaskIntent(appShellSettings.appLanguage),
-              idempotencyKey,
-            });
-            return client.loadDashboard();
-          }}
-          onCreateTaskFromTemplate={async (templateId, projectId, idempotencyKey) => {
-            const templateTaskDraft = buildTemplateTaskDraft(appShellSettings.appLanguage);
-            await client.createTaskFromTemplate(templateId, {
-              idempotencyKey,
-              projectId,
-              title: templateTaskDraft.title,
-              variables: {
-                project_path: snapshot.projects.find((project) => project.id === projectId)?.localPath ?? snapshot.projects[0]?.localPath ?? '',
-                ...templateTaskDraft.variables,
-              },
-            });
-            return client.loadDashboard();
-          }}
-          onChooseConversationResources={() => window.zeus?.chooseConversationResources?.() ?? Promise.resolve([])}
-          onChooseTaskAttachments={() => window.zeus?.chooseTaskAttachments?.() ?? Promise.resolve([])}
-          onCreateTaskDraft={async (projectId, draft, idempotencyKey) => {
-            await client.createTask({
-              idempotencyKey,
-              projectId,
-              parentTaskId: draft.parentTaskId,
-              title: draft.title,
-              taskType: draft.taskType,
-              description: draft.description,
-              defectCurrentState: draft.defectCurrentState,
-              defectExpectedOutcome: draft.defectExpectedOutcome,
-              defectReproductionSteps: draft.defectReproductionSteps,
-              optimizationCurrentState: draft.optimizationCurrentState,
-              optimizationExpectedOutcome: draft.optimizationExpectedOutcome,
-              tags: draft.tags,
-              priority: draft.priority,
-              sourceContext: {
-                path: snapshot.projects.find((project) => project.id === projectId)?.localPath ?? snapshot.projects[0]?.localPath ?? '',
-                attachments: draft.attachments,
-              },
-            });
-            return client.loadDashboard();
-          }}
-          onLoadTasks={async (projectId, query, managementStatus, tag, sortBy) =>
-            client.loadTasks({
-              projectId,
-              query,
-              managementStatus,
-              tag,
-              sortBy,
-              sortDirection: 'asc',
-            })
-          }
-          onLoadTask={(taskId) => client.loadTask(taskId)}
-          onUpdateTask={async (taskId, input) => {
-            await client.updateTask(taskId, input);
-            return client.loadDashboard();
-          }}
-          onUpdateTaskRelationships={async (taskId, input) => {
-            await client.updateTaskRelationships(taskId, input);
-            return client.loadDashboard();
-          }}
-          onUpdateTaskTags={async (taskId, tags, expectedUpdatedAt) => {
-            await client.updateTaskTags(taskId, tags, expectedUpdatedAt);
-            return client.loadDashboard();
-          }}
-          onDeleteTask={async (taskId, input) => {
-            await client.deleteTask(taskId, input);
-            return client.loadDashboard();
-          }}
-          onRunTask={async (taskId) => {
-            const result = await client.runTask(taskId);
-            return {
-              snapshot: await client.loadDashboard(),
-              task: result.task,
-              conversation: result.conversation,
-              runtimeError: result.runtimeError,
-            };
-          }}
-          onPauseTask={async (taskId) => {
-            await client.pauseTask(taskId);
-            return client.loadDashboard();
-          }}
-          onContinueTask={async (taskId) => {
-            const result = await client.continueTask(taskId);
-            return {
-              snapshot: await client.loadDashboard(),
-              task: result.task,
-              conversation: result.conversation,
-              runtimeError: result.runtimeError,
-            };
-          }}
-          onCancelTask={async (taskId) => {
-            await client.cancelTask(taskId);
-            return client.loadDashboard();
-          }}
-          onRetryTask={async (taskId) => {
-            await client.retryTask(taskId);
-            return client.loadDashboard();
-          }}
-          onScanCurrentGraph={async () => {
-            await client.scanCurrentGraph();
-            return client.loadDashboard();
-          }}
-          onLoadGraphView={(viewType) => client.loadGraphView(viewType ?? 'architecture')}
-          onLoadGraphNeighborhood={(nodeId, depth) => client.loadGraphNeighborhood(nodeId, depth)}
-          onSearchGraph={(query, nodeType, edgeType, minConfidence) => client.searchGraph({ query, nodeType, edgeType, minConfidence })}
-          onScanProjectGraph={async (projectId) => {
-            await client.scanProject(projectId);
-            return client.loadDashboard();
-          }}
-          onLoadProjectGraphView={(projectId, viewType) => client.loadProjectGraphView(projectId, viewType ?? 'architecture')}
-          onLoadProjectGraphNeighborhood={(projectId, nodeId, depth) => client.loadProjectGraphNeighborhood(projectId, nodeId, depth)}
-          onSearchProjectGraph={(projectId, query, nodeType, edgeType, minConfidence) => client.searchProjectGraph(projectId, { query, nodeType, edgeType, minConfidence })}
-          onAskGraph={(projectId, question) => client.askGraph(projectId, { question })}
-          onLoadGraphConversations={(projectId, input) => client.loadGraphConversations(projectId, input)}
-          onLoadGraphConversation={(projectId, conversationId) => client.loadGraphConversation(projectId, conversationId)}
-          onSendConversationMessage={(projectId, conversationId, content) => client.sendConversationMessage(projectId, conversationId, content)}
-          onSubscribeRealtimeEvents={(onEvent, onConnectionState) => client.subscribeEvents(onEvent, onConnectionState)}
-          onArchiveGraphConversation={(projectId, conversationId) => client.archiveGraphConversation(projectId, conversationId)}
-          onRestoreGraphConversation={(projectId, conversationId) => client.restoreGraphConversation(projectId, conversationId)}
-          onCreateTaskFromGraphConversation={async (projectId, conversationId, idempotencyKey) => {
-            await client.createTaskFromGraphConversation(projectId, conversationId, { intent: buildGraphConversationTaskIntent(appShellSettings.appLanguage), idempotencyKey });
-            return client.loadDashboard();
-          }}
-          onOpenGraphSource={(source) => openGraphSourceInMain({ zeus: window.zeus, source })}
-          onExportMermaidDiagramFile={(payload) => window.zeus?.exportMermaidDiagramToFile?.(payload) ?? Promise.resolve({ saved: false, filePath: null })}
-          onExportPlantUmlDiagramFile={(payload) => window.zeus?.exportPlantUmlDiagramToFile?.(payload) ?? Promise.resolve({ saved: false, filePath: null })}
-          onLoadTaskTemplates={(projectId) => client.loadTaskTemplates(projectId)}
-          onLoadGitDiff={() => client.loadGitDiff()}
-          onExportGitPatch={() => client.exportGitPatch()}
-          onExportPatchFile={(patch) => window.zeus?.exportPatchToFile?.(patch) ?? Promise.resolve({ saved: false, filePath: null })}
-          onLoadRuntimeStatus={() => client.loadRuntimeStatus()}
-          onLoadReleaseStatus={() => client.loadReleaseStatus()}
-          onCheckReleaseUpdate={() => client.checkReleaseUpdate()}
-          onLoadRuntimeSettings={() => client.loadRuntimeSettings()}
-          onSaveRuntimeSettings={(input) => client.saveRuntimeSettings(input)}
-          onLoadCodeMapSettings={() => client.loadCodeMapSettings()}
-          onSaveCodeMapSettings={(input) => client.saveCodeMapSettings(input)}
-          onLoadAppShellSettings={() => client.loadAppShellSettings()}
-          onSaveAppShellSettings={(input) => client.saveAppShellSettings(input)}
-          onLoadCodexLegacyImports={() => client.loadCodexLegacyImports()}
-          onStartCodexLegacyImport={(sourceConversationIds) => client.startCodexLegacyImport(sourceConversationIds)}
-          onInspectCodexConfigImport={() => client.inspectCodexConfigImport()}
-          onImportCodexConfig={() => client.importCodexConfig()}
-          onActivateCodexConfig={() => client.activateCodexConfig()}
-          onClearLocalCaches={() => client.clearLocalCaches()}
-          onExportLocalSettings={() => client.exportLocalSettings()}
-          onImportLocalSettings={(input) => client.importLocalSettings(input)}
-          onExportLocalBusinessData={() => client.exportLocalBusinessData()}
-          onImportLocalBusinessData={(input) => client.importLocalBusinessData(input)}
-          onExportSettingsFile={(snapshot) => window.zeus?.exportSettingsSnapshotToFile?.(snapshot) ?? Promise.resolve({ saved: false, filePath: null })}
-          onExportBusinessDataFile={(snapshot) => window.zeus?.exportSettingsSnapshotToFile?.(snapshot) ?? Promise.resolve({ saved: false, filePath: null })}
-          onImportSettingsFile={() => window.zeus?.importSettingsSnapshotFromFile?.() ?? Promise.resolve({ imported: false, filePath: null })}
-          onImportBusinessDataFile={() => window.zeus?.importBusinessDataSnapshotFromFile?.() ?? Promise.resolve({ imported: false, filePath: null })}
-          onLoadRuntimeAdapters={() => client.loadRuntimeAdapters()}
-          onCheckRuntimeAdapter={(adapterId) => client.checkRuntimeAdapter(adapterId)}
-          onLoadRuntimeSessions={() => client.loadRuntimeSessions()}
-          onCreateRuntimeConfirmation={(input) => client.createRuntimeConfirmation(input)}
-          onConfirmRuntimeOperation={(confirmationId) => client.confirmRuntimeOperation(confirmationId)}
-          onRejectRuntimeOperation={(confirmationId, reason) => client.rejectRuntimeOperation(confirmationId, reason)}
-          onStartRuntimeSession={(input) => client.startRuntimeSession(input)}
-          onStopRuntimeSession={(sessionId) => client.stopRuntimeSession(sessionId)}
-          onLoadRuntimeSessionLogs={(sessionId) => client.loadRuntimeSessionLogs(sessionId)}
-          onSendRuntimeInput={(sessionId, input) => client.sendRuntimeInput(sessionId, input)}
-          onInterruptRuntimeSession={(sessionId) => client.interruptRuntimeSession(sessionId)}
-          onResizeRuntimeSession={(sessionId, size) => client.resizeRuntimeSession(sessionId, size)}
-          onLoadRuntimeTerminalSnapshot={(sessionId) => client.loadRuntimeTerminalSnapshot(sessionId)}
-          onLoadRuntimeTerminalEvents={(sessionId, input) => client.loadRuntimeTerminalEvents(sessionId, input)}
-          onGenerateRuntimeSessionSummary={(sessionId) => client.generateRuntimeSessionSummary(sessionId)}
-          onSetRuntimeSessionFavorite={(sessionId, favorite) => client.setRuntimeSessionFavorite(sessionId, favorite)}
-          onArchiveRuntimeSession={(sessionId) => client.archiveRuntimeSession(sessionId)}
-          onRestoreRuntimeSession={(sessionId) => client.restoreRuntimeSession(sessionId)}
-          onDeleteRuntimeSession={(sessionId) => client.deleteRuntimeSession(sessionId)}
-          onCreateTaskFromRuntimeSession={async (sessionId, input, idempotencyKey) => {
-            await client.createTaskFromRuntimeSession(sessionId, { ...input, idempotencyKey });
-            return client.loadDashboard();
-          }}
-          onLoadSecuritySecrets={() => client.loadSecuritySecrets()}
-          onLoadSecurityAuditLogs={() => client.loadSecurityAuditLogs()}
-          onSaveTelegramBotToken={(token) => client.saveTelegramBotToken(token)}
-          onClearTelegramBotToken={() => client.clearTelegramBotToken()}
-          onSaveExternalApiKey={(key) => client.saveExternalApiKey(key)}
-          onClearExternalApiKey={() => client.clearExternalApiKey()}
-          onResetSecurity={() => client.resetSecurity()}
-          onLoadTelegramPollingStatus={() => client.loadTelegramPollingStatus()}
-          onLoadTelegramPollingLogs={() => client.loadTelegramMessages()}
-          onStartTelegramPolling={() => client.startTelegramPolling()}
-          onStopTelegramPolling={() => client.stopTelegramPolling()}
-          onPollTelegramOnce={() => client.pollTelegramOnce()}
-          onTestTelegramConnection={() => client.testTelegramConnection()}
-          onLoadTelegramNotificationSettings={() => client.loadTelegramNotificationSettings()}
-          onSaveTelegramNotificationSettings={(input) => client.saveTelegramNotificationSettings(input)}
-          onLoadTelegramSecuritySettings={() => client.loadTelegramSecuritySettings()}
-          onSaveTelegramSecuritySettings={(input) => client.saveTelegramSecuritySettings(input)}
-          onLoadTaskEvents={(taskId) => client.loadTaskEvents(taskId)}
-          onUpdateTaskStatus={async (taskId, status) => {
-            await client.updateTaskStatus(taskId, status);
-            return client.loadDashboard();
-          }}
-          onUpdateTaskManagementStatus={async (taskId, status, expectedUpdatedAt, confirmWorktreeCleanup, reopenConversationId) => {
-            await client.updateTaskManagementStatus(taskId, status, expectedUpdatedAt, confirmWorktreeCleanup, reopenConversationId);
-            return client.loadDashboard();
-          }}
-          onArchiveTask={async (taskId) => {
-            await client.archiveTask(taskId);
-            return client.loadDashboard();
-          }}
-          onRestoreTask={async (taskId) => {
-            await client.restoreTask(taskId);
-            return client.loadDashboard();
-          }}
-          onCreateGitConfirmation={(operation, message) =>
-            client.createGitConfirmation({
-              operation,
-              reason: gitOperationReason(operation),
-              message,
-            })
-          }
-          onConfirmGitOperation={(confirmationId) => client.confirmGitOperation(confirmationId)}
-          onRejectGitOperation={(confirmationId, reason) => client.rejectGitOperation(confirmationId, reason)}
-          onExecuteGitOperation={(input) => client.executeGitOperation(input)}
-        />
+        <Profiler id="App" onRender={rendererPerformance.onReactRender}>
+          <App
+            initialAppShellSettings={appShellSettings}
+            snapshot={snapshot}
+            executionHostTransition={executionHostTransition}
+            nativeConversationClient={client}
+            commandClient={client}
+            onChooseProjectDirectory={async () => {
+              const selectedPath = await window.zeus?.chooseProjectDirectory?.();
+              // 选择真实仓库失败或取消时保留现有列表；开源分发包不能内置维护者本机路径。
+              const resolved = buildProjectDirectoryResolution(selectedPath, appShellSettings.appLanguage);
+              return resolved.path;
+            }}
+            onCreateCurrentProject={async (request) => {
+              await client.projects.createProject(request);
+              return client.loadDashboard();
+            }}
+            onArchiveProject={async (projectId) => {
+              await client.projects.archiveProject(projectId);
+              return client.loadDashboard();
+            }}
+            onLoadProjects={(query) => client.projects.loadProjects({ query })}
+            onLoadProject={(projectId) => client.projects.loadProject(projectId)}
+            onLoadProjectConfig={(projectId) => client.projects.loadProjectConfig(projectId)}
+            onSaveProjectConfig={(projectId, input) => client.projects.saveProjectConfig(projectId, input)}
+            onSaveProjectModelServiceTierPreference={(projectId, input) => client.projects.saveProjectModelServiceTierPreference(projectId, input)}
+            onLoadProjectDatabaseSecret={(projectId) => client.projects.loadProjectDatabaseSecret(projectId)}
+            onSaveProjectDatabasePassword={(projectId, password) => client.projects.saveProjectDatabasePassword(projectId, password)}
+            onClearProjectDatabasePassword={(projectId) => client.projects.clearProjectDatabasePassword(projectId)}
+            onUpdateProject={async (projectId, input) => {
+              await client.projects.updateProject(projectId, input);
+              return client.loadDashboard();
+            }}
+            onRevealProjectInFinder={(projectPath) => revealProjectInFinderInMain({ zeus: window.zeus, projectPath })}
+            onDeleteProject={async (projectId) => {
+              await client.projects.deleteProject(projectId);
+              return client.loadDashboard();
+            }}
+            onCreateProjectArchiveConfirmation={(projectId) => client.projects.createProjectArchiveConfirmation(projectId)}
+            onRestoreProject={async (projectId) => {
+              await client.projects.restoreProject(projectId);
+              return client.loadDashboard();
+            }}
+            onLoadArchivedProjects={() => client.projects.loadArchivedProjects()}
+            onLoadArchivedTasks={(projectId) => client.tasks.loadArchivedTasks(projectId)}
+            onSetProjectDefaultTemplate={async (projectId, templateId) => {
+              await client.projects.setProjectDefaultTemplate(projectId, templateId);
+              return client.loadDashboard();
+            }}
+            onAuthorizeTaskFiles={(files, source) => window.zeus?.authorizeTaskFiles?.(files, source) ?? Promise.resolve({ resources: [], failedCount: files.length })}
+            onMaterializeTaskResources={(resources) => window.zeus?.materializeTaskResources?.(resources) ?? Promise.resolve([])}
+            onReadTaskClipboardResources={() => window.zeus?.readTaskClipboardResources?.() ?? Promise.resolve({ resources: [], text: '' })}
+            onParseZentaoTaskLink={(url) => window.zeus?.parseZentaoTaskLink?.(url) ?? Promise.resolve({ kind: 'unsupported', sourceUrl: url })}
+            onLoadTaskAttachmentPreview={(path) => window.zeus?.getTaskAttachmentPreview?.(path) ?? Promise.resolve(null)}
+            onOpenTaskAttachment={(path) => window.zeus?.openTaskAttachment?.(path) ?? Promise.resolve({ opened: false, error: 'open_attachment_unavailable' })}
+            onCreateTaskFromGraphNode={async (nodeId, projectId, idempotencyKey) => {
+              await client.createTaskFromGraphNode(nodeId, {
+                projectId,
+                intent: buildGraphNodeTaskIntent(appShellSettings.appLanguage),
+                idempotencyKey,
+              });
+              return client.loadDashboard();
+            }}
+            onCreateTaskFromTemplate={async (templateId, projectId, idempotencyKey) => {
+              const templateTaskDraft = buildTemplateTaskDraft(appShellSettings.appLanguage);
+              await client.createTaskFromTemplate(templateId, {
+                idempotencyKey,
+                projectId,
+                title: templateTaskDraft.title,
+                variables: {
+                  project_path: snapshot.projects.find((project) => project.id === projectId)?.localPath ?? snapshot.projects[0]?.localPath ?? '',
+                  ...templateTaskDraft.variables,
+                },
+              });
+              return client.loadDashboard();
+            }}
+            onChooseConversationResources={() => window.zeus?.chooseConversationResources?.() ?? Promise.resolve([])}
+            onChooseTaskAttachments={() => window.zeus?.chooseTaskAttachments?.() ?? Promise.resolve([])}
+            onCreateTaskDraft={async (projectId, draft, idempotencyKey) => {
+              await client.tasks.createTask({
+                idempotencyKey,
+                projectId,
+                parentTaskId: draft.parentTaskId,
+                title: draft.title,
+                taskType: draft.taskType,
+                description: draft.description,
+                defectCurrentState: draft.defectCurrentState,
+                defectExpectedOutcome: draft.defectExpectedOutcome,
+                defectReproductionSteps: draft.defectReproductionSteps,
+                optimizationCurrentState: draft.optimizationCurrentState,
+                optimizationExpectedOutcome: draft.optimizationExpectedOutcome,
+                tags: draft.tags,
+                priority: draft.priority,
+                sourceContext: {
+                  path: snapshot.projects.find((project) => project.id === projectId)?.localPath ?? snapshot.projects[0]?.localPath ?? '',
+                  attachments: draft.attachments,
+                },
+              });
+              return client.loadDashboard();
+            }}
+            onLoadTasks={async (projectId, query, managementStatus, tag, sortBy) =>
+              client.tasks.loadTasks({
+                projectId,
+                query,
+                managementStatus,
+                tag,
+                sortBy,
+                sortDirection: 'asc',
+              })
+            }
+            onLoadTask={(taskId) => client.tasks.loadTask(taskId)}
+            onUpdateTask={async (taskId, input) => {
+              await client.tasks.updateTask(taskId, input);
+              return client.loadDashboard();
+            }}
+            onUpdateTaskRelationships={async (taskId, input) => {
+              await client.tasks.updateTaskRelationships(taskId, input);
+              return client.loadDashboard();
+            }}
+            onUpdateTaskTags={async (taskId, tags, expectedUpdatedAt) => {
+              await client.tasks.updateTaskTags(taskId, tags, expectedUpdatedAt);
+              return client.loadDashboard();
+            }}
+            onDeleteTask={async (taskId, input) => {
+              await client.tasks.deleteTask(taskId, input);
+              return client.loadDashboard();
+            }}
+            onRunTask={async (taskId) => {
+              const result = await client.tasks.runTask(taskId);
+              return {
+                snapshot: await client.loadDashboard(),
+                task: result.task,
+                conversation: result.conversation,
+                runtimeError: result.runtimeError,
+              };
+            }}
+            onPauseTask={async (taskId) => {
+              await client.tasks.pauseTask(taskId);
+              return client.loadDashboard();
+            }}
+            onContinueTask={async (taskId) => {
+              const result = await client.tasks.continueTask(taskId);
+              return {
+                snapshot: await client.loadDashboard(),
+                task: result.task,
+                conversation: result.conversation,
+                runtimeError: result.runtimeError,
+              };
+            }}
+            onCancelTask={async (taskId) => {
+              await client.tasks.cancelTask(taskId);
+              return client.loadDashboard();
+            }}
+            onRetryTask={async (taskId) => {
+              await client.tasks.retryTask(taskId);
+              return client.loadDashboard();
+            }}
+            onScanCurrentGraph={async () => {
+              await client.scanCurrentGraph();
+              return client.loadDashboard();
+            }}
+            onLoadGraphView={(viewType) => client.loadGraphView(viewType ?? 'architecture')}
+            onLoadGraphNeighborhood={(nodeId, depth) => client.loadGraphNeighborhood(nodeId, depth)}
+            onSearchGraph={(query, nodeType, edgeType, minConfidence) => client.searchGraph({ query, nodeType, edgeType, minConfidence })}
+            onScanProjectGraph={async (projectId) => {
+              await client.scanProject(projectId);
+              return client.loadDashboard();
+            }}
+            onLoadProjectGraphView={(projectId, viewType) => client.loadProjectGraphView(projectId, viewType ?? 'architecture')}
+            onLoadProjectGraphNeighborhood={(projectId, nodeId, depth) => client.loadProjectGraphNeighborhood(projectId, nodeId, depth)}
+            onSearchProjectGraph={(projectId, query, nodeType, edgeType, minConfidence) => client.searchProjectGraph(projectId, { query, nodeType, edgeType, minConfidence })}
+            onAskGraph={(projectId, question) => client.askGraph(projectId, { question })}
+            onLoadGraphConversations={(projectId, input) => client.loadGraphConversations(projectId, input)}
+            onLoadGraphConversation={(projectId, conversationId) => client.loadGraphConversation(projectId, conversationId)}
+            onSendConversationMessage={(projectId, conversationId, content) => client.sendConversationMessage(projectId, conversationId, content)}
+            onSubscribeRealtimeEvents={(onEvent, onConnectionState) => client.subscribeEvents(onEvent, onConnectionState)}
+            onArchiveGraphConversation={(projectId, conversationId) => client.archiveGraphConversation(projectId, conversationId)}
+            onRestoreGraphConversation={(projectId, conversationId) => client.restoreGraphConversation(projectId, conversationId)}
+            onCreateTaskFromGraphConversation={async (projectId, conversationId, idempotencyKey) => {
+              await client.createTaskFromGraphConversation(projectId, conversationId, { intent: buildGraphConversationTaskIntent(appShellSettings.appLanguage), idempotencyKey });
+              return client.loadDashboard();
+            }}
+            onOpenGraphSource={(source) => openGraphSourceInMain({ zeus: window.zeus, source })}
+            onExportMermaidDiagramFile={(payload) => window.zeus?.exportMermaidDiagramToFile?.(payload) ?? Promise.resolve({ saved: false, filePath: null })}
+            onExportPlantUmlDiagramFile={(payload) => window.zeus?.exportPlantUmlDiagramToFile?.(payload) ?? Promise.resolve({ saved: false, filePath: null })}
+            onLoadTaskTemplates={(projectId) => client.loadTaskTemplates(projectId)}
+            onLoadGitDiff={() => client.git.loadGitDiff()}
+            onExportGitPatch={() => client.git.exportGitPatch()}
+            onExportPatchFile={(patch) => window.zeus?.exportPatchToFile?.(patch) ?? Promise.resolve({ saved: false, filePath: null })}
+            onLoadRuntimeStatus={() => client.loadRuntimeStatus()}
+            onLoadReleaseStatus={() => client.loadReleaseStatus()}
+            onCheckReleaseUpdate={() => client.checkReleaseUpdate()}
+            onLoadRuntimeSettings={() => client.settings.loadRuntimeSettings()}
+            onSaveRuntimeSettings={(input) => client.settings.saveRuntimeSettings(input)}
+            onLoadCodeMapSettings={() => client.settings.loadCodeMapSettings()}
+            onSaveCodeMapSettings={(input) => client.settings.saveCodeMapSettings(input)}
+            onLoadAppShellSettings={() => client.settings.loadAppShellSettings()}
+            onSaveAppShellSettings={(input) => client.settings.saveAppShellSettings(input)}
+            onLoadCodexLegacyImports={() => client.loadCodexLegacyImports()}
+            onStartCodexLegacyImport={(sourceConversationIds) => client.startCodexLegacyImport(sourceConversationIds)}
+            onInspectCodexConfigImport={() => client.inspectCodexConfigImport()}
+            onImportCodexConfig={() => client.importCodexConfig()}
+            onActivateCodexConfig={() => client.activateCodexConfig()}
+            onClearLocalCaches={() => client.settings.clearLocalCaches()}
+            onExportLocalSettings={() => client.settings.exportLocalSettings()}
+            onImportLocalSettings={(input) => client.settings.importLocalSettings(input)}
+            onExportLocalBusinessData={() => client.exportLocalBusinessData()}
+            onImportLocalBusinessData={(input) => client.importLocalBusinessData(input)}
+            onExportSettingsFile={(snapshot) => window.zeus?.exportSettingsSnapshotToFile?.(snapshot) ?? Promise.resolve({ saved: false, filePath: null })}
+            onExportBusinessDataFile={(snapshot) => window.zeus?.exportSettingsSnapshotToFile?.(snapshot) ?? Promise.resolve({ saved: false, filePath: null })}
+            onImportSettingsFile={() => window.zeus?.importSettingsSnapshotFromFile?.() ?? Promise.resolve({ imported: false, filePath: null })}
+            onImportBusinessDataFile={() => window.zeus?.importBusinessDataSnapshotFromFile?.() ?? Promise.resolve({ imported: false, filePath: null })}
+            onLoadRuntimeAdapters={() => client.loadRuntimeAdapters()}
+            onCheckRuntimeAdapter={(adapterId) => client.checkRuntimeAdapter(adapterId)}
+            onLoadRuntimeSessions={() => client.loadRuntimeSessions()}
+            onCreateRuntimeConfirmation={(input) => client.createRuntimeConfirmation(input)}
+            onConfirmRuntimeOperation={(confirmationId) => client.confirmRuntimeOperation(confirmationId)}
+            onRejectRuntimeOperation={(confirmationId, reason) => client.rejectRuntimeOperation(confirmationId, reason)}
+            onStartRuntimeSession={(input) => client.startRuntimeSession(input)}
+            onStopRuntimeSession={(sessionId) => client.stopRuntimeSession(sessionId)}
+            onLoadRuntimeSessionLogs={(sessionId) => client.loadRuntimeSessionLogs(sessionId)}
+            onSendRuntimeInput={(sessionId, input) => client.sendRuntimeInput(sessionId, input)}
+            onInterruptRuntimeSession={(sessionId) => client.interruptRuntimeSession(sessionId)}
+            onResizeRuntimeSession={(sessionId, size) => client.resizeRuntimeSession(sessionId, size)}
+            onLoadRuntimeTerminalSnapshot={(sessionId) => client.loadRuntimeTerminalSnapshot(sessionId)}
+            onLoadRuntimeTerminalEvents={(sessionId, input) => client.loadRuntimeTerminalEvents(sessionId, input)}
+            onGenerateRuntimeSessionSummary={(sessionId) => client.generateRuntimeSessionSummary(sessionId)}
+            onSetRuntimeSessionFavorite={(sessionId, favorite) => client.setRuntimeSessionFavorite(sessionId, favorite)}
+            onArchiveRuntimeSession={(sessionId) => client.archiveRuntimeSession(sessionId)}
+            onRestoreRuntimeSession={(sessionId) => client.restoreRuntimeSession(sessionId)}
+            onDeleteRuntimeSession={(sessionId) => client.deleteRuntimeSession(sessionId)}
+            onCreateTaskFromRuntimeSession={async (sessionId, input, idempotencyKey) => {
+              await client.createTaskFromRuntimeSession(sessionId, { ...input, idempotencyKey });
+              return client.loadDashboard();
+            }}
+            onLoadSecuritySecrets={() => client.loadSecuritySecrets()}
+            onLoadSecurityAuditLogs={() => client.loadSecurityAuditLogs()}
+            onSaveTelegramBotToken={(token) => client.saveTelegramBotToken(token)}
+            onClearTelegramBotToken={() => client.clearTelegramBotToken()}
+            onSaveExternalApiKey={(key) => client.saveExternalApiKey(key)}
+            onClearExternalApiKey={() => client.clearExternalApiKey()}
+            onResetSecurity={() => client.resetSecurity()}
+            onLoadTelegramPollingStatus={() => client.loadTelegramPollingStatus()}
+            onLoadTelegramPollingLogs={() => client.loadTelegramMessages()}
+            onStartTelegramPolling={() => client.startTelegramPolling()}
+            onStopTelegramPolling={() => client.stopTelegramPolling()}
+            onPollTelegramOnce={() => client.pollTelegramOnce()}
+            onTestTelegramConnection={() => client.testTelegramConnection()}
+            onLoadTelegramNotificationSettings={() => client.loadTelegramNotificationSettings()}
+            onSaveTelegramNotificationSettings={(input) => client.saveTelegramNotificationSettings(input)}
+            onLoadTelegramSecuritySettings={() => client.loadTelegramSecuritySettings()}
+            onSaveTelegramSecuritySettings={(input) => client.saveTelegramSecuritySettings(input)}
+            onLoadTaskEvents={(taskId) => client.tasks.loadTaskEvents(taskId)}
+            onUpdateTaskStatus={async (taskId, status) => {
+              await client.tasks.updateTaskStatus(taskId, status);
+              return client.loadDashboard();
+            }}
+            onUpdateTaskManagementStatus={async (taskId, status, expectedUpdatedAt, confirmWorktreeCleanup, reopenConversationId) => {
+              await client.tasks.updateTaskManagementStatus(taskId, status, expectedUpdatedAt, confirmWorktreeCleanup, reopenConversationId);
+              return client.loadDashboard();
+            }}
+            onArchiveTask={async (taskId) => {
+              await client.tasks.archiveTask(taskId);
+              return client.loadDashboard();
+            }}
+            onRestoreTask={async (taskId) => {
+              await client.tasks.restoreTask(taskId);
+              return client.loadDashboard();
+            }}
+            onCreateGitConfirmation={(operation, message) =>
+              client.git.createGitConfirmation({
+                operation,
+                reason: gitOperationReason(operation),
+                message,
+              })
+            }
+            onConfirmGitOperation={(confirmationId) => client.git.confirmGitOperation(confirmationId)}
+            onRejectGitOperation={(confirmationId, reason) => client.git.rejectGitOperation(confirmationId, reason)}
+            onExecuteGitOperation={(input) => client.git.executeGitOperation(input)}
+          />
+        </Profiler>
         <RendererBootstrapReady />
       </RendererErrorBoundary>
       <ApplicationErrorDialogHost language={errorLanguage} />
@@ -321,7 +369,7 @@ async function renderWithClient(client: DashboardClient, executionHostTransition
 }
 
 async function renderMenuBarUsageWithClient(client: DashboardClient): Promise<void> {
-  const [{ MenuBarUsageWindow }, appShellSettings] = await Promise.all([import('./settings/MenuBarUsageWindow.js'), client.loadAppShellSettings().catch(() => ({ appLanguage: 'zh-CN' as const, appearance: 'system' as const }))]);
+  const [{ MenuBarUsageWindow }, appShellSettings] = await Promise.all([import('./settings/MenuBarUsageWindow.js'), client.settings.loadAppShellSettings().catch(() => ({ appLanguage: 'zh-CN' as const, appearance: 'system' as const }))]);
   const root = document.getElementById('root');
   if (!root) throw new Error('Zeus renderer root element is missing');
   document.body.dataset.surface = 'menu-bar-usage';
@@ -339,9 +387,9 @@ async function renderMenuBarUsageWithClient(client: DashboardClient): Promise<vo
 async function renderTaskGitDeliveryWithClient(client: DashboardClient, taskId: string): Promise<void> {
   const [{ TaskGitDeliveryWindow }, task, snapshot, appShellSettings, currentContext] = await Promise.all([
     import('./task/TaskGitDeliveryWindow.js'),
-    client.loadTask(taskId),
+    client.tasks.loadTask(taskId),
     client.loadDashboard(),
-    client.loadAppShellSettings(),
+    client.settings.loadAppShellSettings(),
     window.zeus?.getTaskGitDeliveryCurrentContext?.() ?? Promise.resolve({ taskId: null, workspaceId: null }),
   ]);
   const root = document.getElementById('root');
@@ -362,7 +410,7 @@ async function renderTaskGitDeliveryWithClient(client: DashboardClient, taskId: 
 }
 
 async function renderProjectGitDiffWithClient(client: DashboardClient, parameters: URLSearchParams): Promise<void> {
-  const [{ ProjectGitDiffWindow }, appShellSettings] = await Promise.all([import('./git/ProjectGitDiffViewer.js'), client.loadAppShellSettings()]);
+  const [{ ProjectGitDiffWindow }, appShellSettings] = await Promise.all([import('./git/ProjectGitDiffViewer.js'), client.settings.loadAppShellSettings()]);
   const projectId = parameters.get('projectId')?.trim();
   const repositoryId = parameters.get('repositoryId')?.trim();
   const filePath = parameters.get('filePath') ?? '';
@@ -397,6 +445,14 @@ async function renderProjectGitDiffWithClient(client: DashboardClient, parameter
 function RendererBootstrapReady(): null {
   useEffect(() => {
     window.zeus?.reportRendererBootstrapReady?.();
+    let contentFrame: number | null = null;
+    const frame = requestAnimationFrame(() => {
+      contentFrame = requestAnimationFrame(() => rendererPerformance.recordFirstContentFrame(rendererHydrationStartedAt));
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      if (contentFrame !== null) cancelAnimationFrame(contentFrame);
+    };
   }, []);
   return null;
 }
@@ -417,9 +473,26 @@ function gitOperationReason(operation: string): string {
 
 async function hydrateRenderer(): Promise<void> {
   if (!window.zeus?.getLocalServerConfig) throw new Error('Electron 本地桥接未就绪');
+  await waitForConversationStoreMigration();
+  const parameters = new URLSearchParams(window.location.search);
+  const surface = parameters.get('surface');
+  // App 模块和纯本地显示缓存不依赖执行宿主，先与宿主就绪检查并行。
+  const mainWindowBootstrap = surface
+    ? undefined
+    : {
+        appModule: import('./App.js'),
+        sessionViewCache: window.zeus.loadSessionViewCache?.().catch(() => null) ?? Promise.resolve(null),
+      };
+  const executionHostMaintenance = await window.zeus.getExecutionHostMaintenanceStatus?.();
+  if (executionHostMaintenance) {
+    renderExecutionHostMaintenance(executionHostMaintenance);
+    window.zeus.reportRendererBootstrapReady?.();
+    return;
+  }
   const config = await window.zeus.getLocalServerConfig();
   const client = createDashboardClient({
     ...config,
+    onPerformanceSpan: rendererPerformance.onApiSpan,
     refreshLocalServerConfig: window.zeus.getLocalServerConfig,
     ...(window.zeus.loadProjectGitWorkbench
       ? {
@@ -432,8 +505,6 @@ async function hydrateRenderer(): Promise<void> {
         }
       : {}),
   });
-  const parameters = new URLSearchParams(window.location.search);
-  const surface = parameters.get('surface');
   if (surface === 'menu-bar-usage') {
     await renderMenuBarUsageWithClient(client);
     return;
@@ -448,19 +519,182 @@ async function hydrateRenderer(): Promise<void> {
     await renderProjectGitDiffWithClient(client, parameters);
     return;
   }
-  await renderWithClient(client, config.executionHostTransition);
+  await renderWithClient(client, config.executionHostTransition, config.readOnlyValidation, mainWindowBootstrap);
 }
 
-hydrateRenderer().catch((error: unknown) => {
+function renderExecutionHostMaintenance(status: NonNullable<Awaited<ReturnType<NonNullable<Window['zeus']>['getExecutionHostMaintenanceStatus']>>>): void {
+  const root = document.getElementById('root');
+  if (!root) return;
+  document.body.dataset.surface = 'execution-host-maintenance';
+  const shell = document.createElement('main');
+  shell.className = 'zeus-execution-host-maintenance';
+  Object.assign(shell.style, {
+    minHeight: '100%',
+    display: 'grid',
+    placeItems: 'center',
+    padding: '32px',
+    boxSizing: 'border-box',
+    background: '#f7f7f8',
+    color: '#202124',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  });
+  const panel = document.createElement('section');
+  Object.assign(panel.style, { width: 'min(680px, 100%)', padding: '28px', border: '1px solid #dedfe3', borderRadius: '18px', background: '#fff', boxSizing: 'border-box' });
+  const title = document.createElement('h1');
+  title.textContent = '执行宿主正在等待安全升级';
+  Object.assign(title.style, { margin: '0 0 12px', fontSize: '22px', lineHeight: '1.3' });
+  const detail = document.createElement('p');
+  const ownerFacts = [
+    status.hostAppVersion ? `Zeus ${status.hostAppVersion}` : null,
+    status.hostProtocolVersion === null ? null : `协议 ${status.hostProtocolVersion}`,
+    status.hostPid === null ? null : `PID ${status.hostPid}`,
+    status.hostGenerationId ? `generation ${status.hostGenerationId}` : null,
+    status.stage ? `阶段 ${status.stage}` : null,
+  ].filter((value): value is string => Boolean(value));
+  detail.textContent = `${status.message}${ownerFacts.length > 0 ? `\n\n已验证宿主信息：${ownerFacts.join(' · ')}` : ''}\n当前协议：${status.currentProtocolVersion}\n\nZeus 没有删除锁、强制结束旧进程或创建第二个数据库写入者。请先让旧版本完成或停止活动任务，再重试。`;
+  Object.assign(detail.style, { margin: '0', color: '#5f6368', lineHeight: '1.65', whiteSpace: 'pre-wrap' });
+  const actions = document.createElement('div');
+  Object.assign(actions.style, { display: 'flex', gap: '10px', marginTop: '22px', flexWrap: 'wrap' });
+  const retry = migrationButton('重新检查', true);
+  retry.onclick = async () => {
+    retry.disabled = true;
+    retry.textContent = '正在重新启动…';
+    try {
+      await window.zeus?.retryExecutionHostMaintenance?.();
+    } catch (error) {
+      retry.disabled = false;
+      retry.textContent = '重新检查';
+      title.remove();
+      detail.textContent = formatVisibleApplicationError(error, 'zh-CN');
+    }
+  };
+  const exit = migrationButton('退出 Zeus', false);
+  exit.onclick = () => void window.zeus?.exitExecutionHostMaintenance?.();
+  actions.append(retry, exit);
+  panel.append(title, detail, actions);
+  shell.append(panel);
+  root.replaceChildren(shell);
+}
+
+async function waitForConversationStoreMigration(): Promise<void> {
+  const bridge = window.zeus;
+  if (!bridge?.getConversationStoreMigrationStatus) return;
+  await new Promise((resolve) => setTimeout(resolve, 180));
+  let status = await bridge.getConversationStoreMigrationStatus();
+  if (!status || status.phase === 'completed' || status.phase === 'not_required') return;
+  bridge.reportRendererBootstrapReady?.();
+  while (status && status.phase !== 'completed' && status.phase !== 'not_required') {
+    renderConversationStoreMigration(status);
+    if (status.phase === 'failed' || status.phase === 'promoted_but_validation_failed') await new Promise<void>(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    status = await bridge.getConversationStoreMigrationStatus();
+  }
+  document.getElementById('root')?.replaceChildren();
+}
+
+function renderConversationStoreMigration(status: NonNullable<Awaited<ReturnType<NonNullable<Window['zeus']>['getConversationStoreMigrationStatus']>>>): void {
+  const root = document.getElementById('root');
+  if (!root) return;
+  const shell = document.createElement('main');
+  shell.className = 'zeus-conversation-migration';
+  Object.assign(shell.style, {
+    minHeight: '100%',
+    display: 'grid',
+    placeItems: 'center',
+    padding: '32px',
+    boxSizing: 'border-box',
+    background: '#f7f7f8',
+    color: '#202124',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  });
+  const panel = document.createElement('section');
+  Object.assign(panel.style, { width: 'min(620px, 100%)', padding: '28px', border: '1px solid #dedfe3', borderRadius: '18px', background: '#fff', boxSizing: 'border-box' });
+  const title = document.createElement('h1');
+  const migrationFailed = status.phase === 'failed' || status.phase === 'promoted_but_validation_failed';
+  title.textContent = migrationFailed ? '会话数据升级已安全暂停' : '正在升级会话数据';
+  Object.assign(title.style, { margin: '0 0 12px', fontSize: '22px', lineHeight: '1.3' });
+  const detail = document.createElement('p');
+  detail.textContent = migrationFailed
+    ? formatVisibleApplicationError(status.error ?? (status.phase === 'promoted_but_validation_failed' ? '候选库提升后校验未完成。' : '候选库未通过校验。'), 'zh-CN')
+    : `${migrationPhaseLabel(status.phase)}。升级完成前，本地服务和正常业务界面不会启动。`;
+  Object.assign(detail.style, { margin: '0', color: '#5f6368', lineHeight: '1.65', whiteSpace: 'pre-wrap' });
+  if (!migrationFailed) panel.append(title);
+  panel.append(detail);
+  if (migrationFailed) {
+    const actions = document.createElement('div');
+    Object.assign(actions.style, { display: 'flex', gap: '10px', marginTop: '22px', flexWrap: 'wrap' });
+    const retry = migrationButton('重试迁移', true);
+    retry.onclick = async () => {
+      retry.disabled = true;
+      retry.textContent = '正在重试…';
+      try {
+        await window.zeus?.retryConversationStoreMigration?.();
+      } catch (error) {
+        retry.disabled = false;
+        retry.textContent = '重试迁移';
+        detail.textContent = formatVisibleApplicationError(error, 'zh-CN');
+      }
+    };
+    const diagnostics = migrationButton('查看诊断', false);
+    diagnostics.onclick = () => void window.zeus?.openConversationStoreMigrationDiagnostics?.();
+    const exit = migrationButton('退出 Zeus', false);
+    exit.onclick = () => void window.zeus?.exitConversationStoreMigration?.();
+    actions.append(retry, diagnostics, exit);
+    panel.append(actions);
+  }
+  shell.append(panel);
+  root.replaceChildren(shell);
+}
+
+function migrationButton(label: string, primary: boolean): HTMLButtonElement {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = label;
+  Object.assign(button.style, {
+    minHeight: '38px',
+    padding: '0 16px',
+    borderRadius: '10px',
+    border: primary ? '1px solid #202124' : '1px solid #d0d2d7',
+    background: primary ? '#202124' : '#fff',
+    color: primary ? '#fff' : '#202124',
+    cursor: 'pointer',
+  });
+  return button;
+}
+
+function migrationPhaseLabel(phase: string): string {
+  if (phase === 'preflight') return '正在检查磁盘空间、权限和数据库锁';
+  if (phase === 'candidate_build') return '正在构建候选库和安全回退库';
+  if (phase === 'candidate_validation') return '正在逐项校验迁移映射和数据库一致性';
+  if (phase === 'promotion') return '正在同卷原子提升候选库';
+  if (phase === 'promoted_but_validation_failed') return '候选库已经提升，正在等待提升后校验收敛';
+  return '正在准备会话数据';
+}
+
+const executionHostDrainRecoveryLimitMs = 120_000;
+
+async function hydrateRendererWithExecutionHostRecovery(): Promise<void> {
+  const deadline = Date.now() + executionHostDrainRecoveryLimitMs;
+  while (true) {
+    try {
+      await hydrateRenderer();
+      return;
+    } catch (error) {
+      // 跨版本持久化交接会暂时拒绝普通 API。它不是 Renderer 模块、React 或本地数据库启动失败，
+      // 不能上报给 Main 的 fatal startup 路径（该路径会用同步系统弹窗阻塞心跳，反过来拖死交接）。
+      if (!(error instanceof ZeusApiError) || error.error !== 'ZEUS_EXECUTION_HOST_DRAINING' || Date.now() >= deadline) throw error;
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 500));
+    }
+  }
+}
+
+hydrateRendererWithExecutionHostRecovery().catch((error: unknown) => {
   const surface = new URLSearchParams(window.location.search).get('surface');
   const auxiliarySurface = surface === 'menu-bar-usage' || surface === 'task-git-delivery' || surface === 'project-git-diff';
   console.error(surface === 'menu-bar-usage' ? 'Zeus menu bar usage hydration failed' : surface === 'task-git-delivery' ? 'Zeus task Git delivery hydration failed' : 'Zeus dashboard hydration failed', error);
   const root = document.getElementById('root');
   reportApplicationError(error, {
     language: 'zh-CN',
-    title: auxiliarySurface ? '窗口加载失败' : 'Zeus 启动失败',
-    summary: auxiliarySurface ? '当前窗口未能完成加载。查看详情后请关闭窗口并重试。' : 'Zeus 未能完成界面加载。查看详情后请重新打开应用。',
-    source: surface ?? 'dashboard',
   });
   if (root) createRoot(root).render(<ApplicationErrorDialogHost language="zh-CN" />);
   if (!auxiliarySurface) reportRendererFatalFailure(error);
@@ -470,9 +704,6 @@ function reportSurfaceFatalError(error: Error, language: 'zh-CN' | 'en', source:
   console.error(`Zeus ${source} render failed`, error);
   reportApplicationError(error, {
     language,
-    title: language === 'zh-CN' ? '窗口遇到界面错误' : 'The window encountered an interface error',
-    summary: language === 'zh-CN' ? '当前窗口已安全暂停。请查看详情，然后关闭并重新打开窗口。' : 'The window is safely paused. Review the details, then close and reopen it.',
-    source,
   });
 }
 

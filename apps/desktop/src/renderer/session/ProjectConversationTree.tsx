@@ -11,6 +11,7 @@ import { PauseCircleIcon as PauseCircle } from '@phosphor-icons/react/dist/csr/P
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { ShieldCheckIcon as ShieldCheck } from '@phosphor-icons/react/dist/csr/ShieldCheck';
 import { WarningIcon as Warning } from '@phosphor-icons/react/dist/csr/Warning';
+import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import type { NativeConversationChoice, NativeConversationSnapshot, NativeSessionState } from './sessionTypes.js';
 import { compareConversationStageUpdatedDesc } from './conversationOrdering.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
@@ -18,6 +19,7 @@ import { conversationDisplayTitle } from './conversationDisplayTitle.js';
 import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
 import type { TaskAgentRunStatus } from '../apiClient.js';
 import { taskAgentRunStatusLabels } from '../task/TaskRunStatusChip.js';
+import { beginConversationNavigationTrace } from '../performanceTraceContext.js';
 
 export interface ProjectConversationTaskGroup {
   taskId: string;
@@ -143,6 +145,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
   });
   const conversationIds = visibleConversations.map((entry) => conversationNavigationId(entry.conversation));
   const allConversationIds = props.groups.flatMap((project) => flattenProjectConversations(project, '').flatConversations.map((entry) => conversationNavigationId(entry.conversation)));
+  const conversationLayoutDependency = allConversationIds.join('\u0000');
   const enteringConversationIds = useNewItemMotionIds(allConversationIds);
   const fallbackTabStopId = props.selectedConversationId && conversationIds.includes(props.selectedConversationId) ? null : (conversationIds[0] ?? null);
 
@@ -172,6 +175,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
           className="session-conversation-tree-item"
           key={navigationId}
           layout={reduceMotion ? false : 'position'}
+          layoutDependency={conversationLayoutDependency}
           initial={false}
           animate={reduceMotion ? { opacity: 1 } : { opacity: 1, height: 'auto', overflow: 'visible' }}
           exit={reduceMotion ? { opacity: 0, transition: { duration: 0 } } : { opacity: 0, height: 0, overflow: 'hidden', transition: { duration: 0.16, ease: [0.22, 1, 0.36, 1] } }}
@@ -186,7 +190,12 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
             tabIndex={current || navigationId === fallbackTabStopId ? 0 : -1}
             data-conversation-tree-item="true"
             data-conversation-runtime-state={runtimeState}
-            onClick={() => props.onSelectConversation(conversation)}
+            onClick={() => {
+              if (!current && conversation.transportKind === 'codex_native' && !conversation.taskPushCreating) {
+                beginConversationNavigationTrace(conversation.projectId, conversation.id);
+              }
+              props.onSelectConversation(conversation);
+            }}
           >
             <span className="session-conversation-title" title={displayTitle}>
               {displayTitle}
@@ -374,14 +383,14 @@ function ConversationRowState(props: { conversation: NativeConversationChoice; r
   }
   if (props.conversation.hasUnreadAttention) {
     if (props.conversation.attentionKind === 'failed') return <ConversationStatusIcon status="failed" label={taskAgentRunStatusLabels[props.language].failed} />;
-    if (props.conversation.attentionKind === 'interrupted') return <ConversationStatusIcon status="paused" label={taskAgentRunStatusLabels[props.language].paused} />;
+    if (props.conversation.attentionKind === 'interrupted') return <ConversationStatusIcon status="interrupted" label={props.language === 'zh-CN' ? '本轮已中断' : 'Turn interrupted'} />;
     if (props.conversation.attentionKind === 'completed') return <ConversationStatusIcon status="completed" label={props.language === 'zh-CN' ? '已完成' : 'Completed'} />;
     return <ConversationStatusIcon status="unread" label={props.language === 'zh-CN' ? '有未读回复' : 'Unread reply'} />;
   }
   return null;
 }
 
-type ConversationStatusIconKind = TaskAgentRunStatus | 'completed' | 'unread';
+type ConversationStatusIconKind = TaskAgentRunStatus | 'completed' | 'interrupted' | 'unread';
 
 function ConversationStatusIcon(props: { status: ConversationStatusIconKind; label: string }) {
   let icon = null;
@@ -395,6 +404,8 @@ function ConversationStatusIcon(props: { status: ConversationStatusIconKind; lab
     icon = <PauseCircle aria-hidden="true" />;
   } else if (props.status === 'failed') {
     icon = <Warning aria-hidden="true" />;
+  } else if (props.status === 'interrupted') {
+    icon = <WarningCircle aria-hidden="true" />;
   } else if (props.status === 'completed') {
     icon = <CheckCircle aria-hidden="true" />;
   } else if (props.status === 'legacy_readonly') {
@@ -481,13 +492,13 @@ function visibleConversationCount(group: Pick<FlattenedProjectConversations, 'fl
 
 /** 将当前已连接 controller 的权威状态映射为全局 source tree 的可读状态。 */
 export function conversationTreeRuntimeStateFromSession(state: NativeSessionState): ConversationTreeRuntimeState {
-  if (state.transportState === 'failed' || state.conversationState === 'turn_failed') return 'error';
-  if (state.transportState === 'connecting' || state.transportState === 'hydrating' || state.transportState === 'disconnected') return 'connecting';
-  if (state.transportState === 'reconnecting') return 'reconnecting';
+  if (state.conversationState === 'turn_failed') return 'error';
+  // 侧栏表达会话本身的运行态，不表达当前窗口读取本地快照或建立实时订阅的短暂状态。
+  // 读取、连接、重连失败都属于当前窗口的瞬时 transport，不再污染全局会话树状态。
   if (state.snapshot?.providerState === 'archived' || (state.queue?.state.type === 'paused' && state.queue.state.reason === 'provider_archived')) {
     return (state.queue?.submissions.length ?? 0) > 0 ? 'queued' : 'ready';
   }
-  if (state.queue?.state.type === 'paused' && state.queue.state.reason === 'recovery_required') return 'error';
+  if (state.queue?.state.type === 'paused' && state.queue.state.reason === 'recovery_required') return 'paused';
   const pendingRequest = state.pendingRequests.find((request) => request.status === 'pending');
   if (pendingRequest?.type === 'request_user_input' || pendingRequest?.type === 'userInput' || state.conversationState === 'waiting_user_input') return 'pending_user_input';
   if (pendingRequest || state.conversationState === 'waiting_approval') return 'pending_approval';
@@ -526,12 +537,10 @@ export function conversationTreeRuntimeStateFromConversation(
   conversation: Pick<NativeConversationChoice, 'status' | 'transportKind' | 'providerState' | 'pendingRequestKind' | 'listRuntimeState'> & { readOnly?: boolean },
 ): ConversationTreeRuntimeState {
   if (conversation.listRuntimeState) return conversation.listRuntimeState;
-  if (conversation.readOnly || conversation.transportKind !== 'codex_native') return 'legacy_readonly';
+  if (conversation.transportKind !== 'codex_native') return 'legacy_readonly';
   const providerState = `${conversation.providerState ?? ''}`.toLocaleLowerCase();
   const recordState = conversation.status.toLocaleLowerCase();
   if (providerState.includes('failed') || providerState.includes('error') || recordState.includes('failed') || recordState.includes('error')) return 'error';
-  if (providerState.includes('reconnect')) return 'reconnecting';
-  if (providerState.includes('connect') || providerState.includes('hydrat') || providerState.includes('disconnected')) return 'connecting';
   if (providerState.includes('paused') || recordState.includes('paused')) return 'paused';
   if (conversation.pendingRequestKind === 'user_input') return 'pending_user_input';
   if (conversation.pendingRequestKind === 'approval') return 'pending_approval';

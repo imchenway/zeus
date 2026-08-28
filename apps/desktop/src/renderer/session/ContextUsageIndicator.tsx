@@ -1,18 +1,22 @@
 import { type CSSProperties, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { NativeTokenUsageSnapshot } from './sessionTypes.js';
+import type { NativeUnifiedUsageSnapshot } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
+import { formatTokenCount } from './tokenUsageFormat.js';
 
 type ContextUsageSeverity = 'unavailable' | 'normal' | 'warning' | 'danger';
 
-export function ContextUsageIndicator(props: { usage: NativeTokenUsageSnapshot | null; language: SessionUiLanguage }) {
+export function ContextUsageIndicator(props: { unifiedUsage: NativeUnifiedUsageSnapshot | null; language: SessionUiLanguage }) {
   const tooltipId = `session-context-usage-${useId().replaceAll(':', '')}`;
   const indicatorRef = useRef<HTMLSpanElement | null>(null);
   const tooltipRef = useRef<HTMLSpanElement | null>(null);
   const [tooltipOpen, setTooltipOpen] = useState(false);
   const [tooltipPosition, setTooltipPosition] = useState<{ left: number; top: number } | null>(null);
-  const used = props.usage?.last.inputTokens ?? null;
-  const capacity = props.usage?.modelContextWindow ?? null;
+  // 上下文规模只认最后一次真实模型请求：totalTokens（提示词 + 本次输出）就是下一次请求要携带的上下文，
+  // 与 Pi 运行内核的压缩阈值口径一致。轮次累计用量不是上下文规模，任何情况下都不能当分子。
+  const latestRequest = props.unifiedUsage?.latestModelRequest ?? null;
+  const used = latestRequest?.totalTokens ?? null;
+  const capacity = latestRequest?.contextWindow ?? null;
   const available = used !== null && capacity !== null && capacity > 0;
   const ratio = available ? used / capacity : null;
   const progress = ratio === null ? 0 : Math.min(100, Math.max(0, ratio * 100));
@@ -58,11 +62,11 @@ export function ContextUsageIndicator(props: { usage: NativeTokenUsageSnapshot |
           </div>
           <div>
             <dt>{copy.usedLabel}</dt>
-            <dd>{copy.used}</dd>
+            <dd title={copy.usedTitle}>{copy.used}</dd>
           </div>
           <div>
             <dt>{copy.remainingLabel}</dt>
-            <dd>{copy.remaining}</dd>
+            <dd title={copy.remainingTitle}>{copy.remaining}</dd>
           </div>
         </dl>
       ) : (
@@ -128,21 +132,26 @@ function contextUsageCopy(language: SessionUiLanguage, used: number | null, capa
       percentage: '',
       usedLabel: '',
       used: '',
+      usedTitle: '',
       remainingLabel: '',
       remaining: '',
+      remainingTitle: '',
       empty,
       risk: null,
     };
   }
 
   const percentage = new Intl.NumberFormat(language, { style: 'percent', maximumFractionDigits: 1 }).format(Math.max(0, ratio));
-  const usedTokens = formatExactTokens(used, language);
-  const capacityTokens = formatExactTokens(capacity, language);
-  const remainingTokens = formatExactTokens(Math.max(0, capacity - used), language);
+  const usedTokens = formatTokenCount(Math.max(0, used), language);
+  const capacityTokens = formatTokenCount(Math.max(0, capacity), language);
+  const remainingTokens = formatTokenCount(Math.max(0, capacity - used), language);
   const risk = severity === 'danger' ? (zh ? '上下文接近上限' : 'Context is near its limit') : severity === 'warning' ? (zh ? '上下文占用较高' : 'Context usage is high') : null;
-  const usedDetail = `${usedTokens} / ${capacityTokens} Token`;
-  const remainingDetail = `${remainingTokens} Token`;
-  const accessibleLabel = `${title}：${percentage}；${zh ? '已用' : 'Used'} ${usedDetail}；${zh ? '剩余' : 'Remaining'} ${remainingDetail}${risk ? `；${risk}` : ''}`;
+  // 可见文本用 K/M 紧凑单位，精确位数只留在无障碍标签与悬停标题里，避免长数字撑破气泡。
+  const usedDetail = `${usedTokens.compact} / ${capacityTokens.compact} Token`;
+  const usedDetailExact = `${usedTokens.exact} / ${capacityTokens.exact} Token`;
+  const remainingDetail = `${remainingTokens.compact} Token`;
+  const remainingDetailExact = `${remainingTokens.exact} Token`;
+  const accessibleLabel = `${title}：${percentage}；${zh ? '已用' : 'Used'} ${usedDetailExact}；${zh ? '剩余' : 'Remaining'} ${remainingDetailExact}${risk ? `；${risk}` : ''}`;
 
   return {
     title,
@@ -151,13 +160,11 @@ function contextUsageCopy(language: SessionUiLanguage, used: number | null, capa
     percentage,
     usedLabel: zh ? '已用 / 容量' : 'Used / capacity',
     used: usedDetail,
+    usedTitle: usedDetailExact,
     remainingLabel: zh ? '剩余' : 'Remaining',
     remaining: remainingDetail,
+    remainingTitle: remainingDetailExact,
     empty: '',
     risk,
   };
-}
-
-function formatExactTokens(value: number, language: SessionUiLanguage): string {
-  return new Intl.NumberFormat(language, { maximumFractionDigits: 0 }).format(Math.max(0, value));
 }

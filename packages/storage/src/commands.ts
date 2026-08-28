@@ -1,16 +1,8 @@
-import {nanoid} from 'nanoid';
-import {createHash} from 'node:crypto';
-import {
-  defaultCommandRiskFlags,
-  type CommandArtifact,
-  type CommandDefinition,
-  type CommandDefinitionInput,
-  type CommandRun,
-  type CommandRunStatus,
-  type CommandRunTrigger,
-  type CommandScope,
-} from '@zeus/shared';
-import type {ZeusDatabase} from './index.js';
+import { nanoid } from 'nanoid';
+import { createHash } from 'node:crypto';
+import { defaultCommandRiskFlags, type CommandArtifact, type CommandDefinition, type CommandDefinitionInput, type CommandRun, type CommandRunStatus, type CommandRunTrigger, type CommandScope } from '@zeus/shared';
+import type { ArtifactRef, ArtifactStore } from './artifactStore.js';
+import type { ZeusDatabasePort } from './databasePort.js';
 
 interface DbCommandDefinitionRow {
   id: string;
@@ -59,6 +51,7 @@ interface DbCommandArtifactRow {
   run_id: string;
   relative_path: string;
   absolute_path: string;
+  artifact_ref_json: string | null;
   mime_type: string | null;
   byte_length: number;
   created_at: string;
@@ -106,9 +99,12 @@ export interface UpdateCommandRunRecordInput {
 }
 
 /** 命令中心迁移只创建结构和索引，不注入任何默认命令或用户脚本。 */
-export function migrateCommandCenterSchema(db: ZeusDatabase): void {
+export function migrateCommandCenterSchema(db: ZeusDatabasePort): void {
   const migrationId = '20260728_0009_command_center';
-  if (db.get<{migration_id: string}>(`SELECT migration_id FROM schema_migrations WHERE migration_id = ?`, [migrationId])) return;
+  if (db.get<{ migration_id: string }>(`SELECT migration_id FROM schema_migrations WHERE migration_id = ?`, [migrationId])) {
+    migrateCommandArtifactRefColumn(db);
+    return;
+  }
   db.transaction(() => {
     db.execute(`
       CREATE TABLE IF NOT EXISTS command_definitions (
@@ -166,6 +162,7 @@ export function migrateCommandCenterSchema(db: ZeusDatabase): void {
         run_id TEXT NOT NULL,
         relative_path TEXT NOT NULL,
         absolute_path TEXT NOT NULL,
+        artifact_ref_json TEXT,
         mime_type TEXT,
         byte_length INTEGER NOT NULL,
         created_at TEXT NOT NULL
@@ -183,15 +180,21 @@ export function migrateCommandCenterSchema(db: ZeusDatabase): void {
       db.execute(statement);
     }
     const checksum = `sha256:${createHash('sha256').update('command_definitions,command_aliases,command_runs,command_artifacts:v1').digest('hex')}`;
-    db.execute(
-      `INSERT INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)`,
-      [migrationId, '增加通用命令定义、别名、执行记录与产物持久化', checksum, nowIso()],
-    );
+    db.execute(`INSERT INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)`, [migrationId, '增加通用命令定义、别名、执行记录与产物持久化', checksum, nowIso()]);
   });
+  migrateCommandArtifactRefColumn(db);
+}
+
+function migrateCommandArtifactRefColumn(db: ZeusDatabasePort): void {
+  try {
+    db.execute(`ALTER TABLE command_artifacts ADD COLUMN artifact_ref_json TEXT`);
+  } catch {
+    // 新库已由 CREATE TABLE 包含；旧库幂等补列。
+  }
 }
 
 export class CommandDefinitionRepository {
-  constructor(private readonly db: ZeusDatabase) {}
+  constructor(private readonly db: ZeusDatabasePort) {}
 
   create(input: CreateStoredCommandInput): CommandDefinition {
     const timestamp = input.createdAt ?? nowIso();
@@ -216,7 +219,7 @@ export class CommandDefinitionRepository {
           input.timeoutSeconds ?? 300,
           input.enabled === false ? 0 : 1,
           input.telegramEnabled ? 1 : 0,
-          JSON.stringify({...defaultCommandRiskFlags, ...(input.riskFlags ?? {})}),
+          JSON.stringify({ ...defaultCommandRiskFlags, ...(input.riskFlags ?? {}) }),
           input.revision ?? 1,
           timestamp,
           timestamp,
@@ -248,7 +251,7 @@ export class CommandDefinitionRepository {
           input.timeoutSeconds ?? 300,
           input.enabled === false ? 0 : 1,
           input.telegramEnabled ? 1 : 0,
-          JSON.stringify({...defaultCommandRiskFlags, ...(input.riskFlags ?? {})}),
+          JSON.stringify({ ...defaultCommandRiskFlags, ...(input.riskFlags ?? {}) }),
           input.revision,
           timestamp,
           id,
@@ -263,19 +266,12 @@ export class CommandDefinitionRepository {
     const existing = this.getById(id);
     if (!existing) throw new Error(`Command definition not found: ${id}`);
     const timestamp = nowIso();
-    this.db.execute(`UPDATE command_definitions SET deleted_at = ?, enabled = 0, telegram_enabled = 0, revision = revision + 1, updated_at = ? WHERE id = ?`, [
-      timestamp,
-      timestamp,
-      id,
-    ]);
+    this.db.execute(`UPDATE command_definitions SET deleted_at = ?, enabled = 0, telegram_enabled = 0, revision = revision + 1, updated_at = ? WHERE id = ?`, [timestamp, timestamp, id]);
     return existing;
   }
 
   getById(id: string): CommandDefinition | undefined {
-    const row = this.db.get<DbCommandDefinitionRow>(
-      `${commandDefinitionSelectSql()} WHERE command_definitions.id = ? AND command_definitions.deleted_at IS NULL`,
-      [id],
-    );
+    const row = this.db.get<DbCommandDefinitionRow>(`${commandDefinitionSelectSql()} WHERE command_definitions.id = ? AND command_definitions.deleted_at IS NULL`, [id]);
     return row ? this.mapRow(row) : undefined;
   }
 
@@ -289,10 +285,7 @@ export class CommandDefinitionRepository {
 
   listMerged(projectId: string, enabledOnly = false): CommandDefinition[] {
     const enabledClause = enabledOnly ? ' AND command_definitions.enabled = 1' : '';
-    return this.listWhere(
-      `(command_definitions.scope = 'global' OR (command_definitions.scope = 'project' AND command_definitions.project_id = ?))${enabledClause}`,
-      [projectId],
-    );
+    return this.listWhere(`(command_definitions.scope = 'global' OR (command_definitions.scope = 'project' AND command_definitions.project_id = ?))${enabledClause}`, [projectId]);
   }
 
   findByToken(projectId: string, token: string, enabledOnly = true): CommandDefinition | undefined {
@@ -313,12 +306,7 @@ export class CommandDefinitionRepository {
     return row ? this.mapRow(row) : undefined;
   }
 
-  findTokenConflicts(input: {
-    scope: CommandScope;
-    projectId: string | null;
-    tokens: string[];
-    excludeCommandId?: string;
-  }): CommandTokenConflict[] {
+  findTokenConflicts(input: { scope: CommandScope; projectId: string | null; tokens: string[]; excludeCommandId?: string }): CommandTokenConflict[] {
     const normalizedTokens = [...new Set(input.tokens.map(normalizeCommandToken))];
     if (normalizedTokens.length === 0) return [];
     const definitions = this.db.select<DbCommandDefinitionRow>(
@@ -363,17 +351,12 @@ export class CommandDefinitionRepository {
   private replaceAliases(commandId: string, aliases: string[], createdAt: string): void {
     this.db.execute(`DELETE FROM command_aliases WHERE command_id = ?`, [commandId]);
     for (const alias of aliases) {
-      this.db.execute(
-        `INSERT INTO command_aliases (id, command_id, alias, normalized_alias, created_at) VALUES (?, ?, ?, ?, ?)`,
-        [`command_alias_${nanoid(12)}`, commandId, alias.trim(), normalizeCommandToken(alias), createdAt],
-      );
+      this.db.execute(`INSERT INTO command_aliases (id, command_id, alias, normalized_alias, created_at) VALUES (?, ?, ?, ?, ?)`, [`command_alias_${nanoid(12)}`, commandId, alias.trim(), normalizeCommandToken(alias), createdAt]);
     }
   }
 
   private listAliases(commandId: string): string[] {
-    return this.db
-      .select<DbCommandAliasRow>(`SELECT command_id, alias FROM command_aliases WHERE command_id = ? ORDER BY rowid`, [commandId])
-      .map((row) => row.alias);
+    return this.db.select<DbCommandAliasRow>(`SELECT command_id, alias FROM command_aliases WHERE command_id = ? ORDER BY rowid`, [commandId]).map((row) => row.alias);
   }
 
   private mapRow(row: DbCommandDefinitionRow): CommandDefinition {
@@ -390,7 +373,7 @@ export class CommandDefinitionRepository {
       timeoutSeconds: row.timeout_seconds,
       enabled: row.enabled === 1,
       telegramEnabled: row.telegram_enabled === 1,
-      riskFlags: {...defaultCommandRiskFlags, ...parseJsonObject(row.risk_flags_json)},
+      riskFlags: { ...defaultCommandRiskFlags, ...parseJsonObject(row.risk_flags_json) },
       revision: row.revision,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -399,7 +382,7 @@ export class CommandDefinitionRepository {
 }
 
 export class CommandRunRepository {
-  constructor(private readonly db: ZeusDatabase) {}
+  constructor(private readonly db: ZeusDatabasePort) {}
 
   create(input: CreateCommandRunRecordInput): CommandRun {
     const id = input.id ?? `command_run_${nanoid(12)}`;
@@ -410,19 +393,7 @@ export class CommandRunRepository {
           parameter_snapshot_json, cwd, timeout_seconds, exit_code, failure_reason,
           started_at, ended_at, created_at, updated_at)
        VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?)`,
-      [
-        id,
-        input.commandId,
-        input.projectId,
-        input.trigger,
-        input.status,
-        JSON.stringify(input.commandSnapshot),
-        JSON.stringify(input.parameterSnapshot),
-        input.cwd,
-        input.timeoutSeconds,
-        timestamp,
-        timestamp,
-      ],
+      [id, input.commandId, input.projectId, input.trigger, input.status, JSON.stringify(input.commandSnapshot), JSON.stringify(input.parameterSnapshot), input.cwd, input.timeoutSeconds, timestamp, timestamp],
     );
     return this.getById(id)!;
   }
@@ -461,44 +432,67 @@ export class CommandRunRepository {
   }
 
   listByProject(projectId: string, limit = 100): CommandRun[] {
-    return this.db
-      .select<DbCommandRunRow>(`${commandRunSelectSql()} WHERE project_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`, [projectId, Math.max(1, Math.min(500, Math.trunc(limit)))])
-      .map(mapCommandRunRow);
+    return this.db.select<DbCommandRunRow>(`${commandRunSelectSql()} WHERE project_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`, [projectId, Math.max(1, Math.min(500, Math.trunc(limit)))]).map(mapCommandRunRow);
   }
 
   listActive(): CommandRun[] {
-    return this.db
-      .select<DbCommandRunRow>(`${commandRunSelectSql()} WHERE status IN ('pending_confirmation', 'running') ORDER BY created_at`)
-      .map(mapCommandRunRow);
+    return this.db.select<DbCommandRunRow>(`${commandRunSelectSql()} WHERE status IN ('pending_confirmation', 'starting', 'running', 'stopping') ORDER BY created_at`).map(mapCommandRunRow);
   }
 }
 
 export class CommandArtifactRepository {
-  constructor(private readonly db: ZeusDatabase) {}
+  constructor(
+    private readonly db: ZeusDatabasePort,
+    private readonly artifactStore?: ArtifactStore,
+  ) {}
 
   create(input: Omit<CommandArtifact, 'id' | 'createdAt'>): CommandArtifact {
-    const existing = this.db.get<DbCommandArtifactRow>(
-      `${commandArtifactSelectSql()} WHERE run_id = ? AND relative_path = ?`,
-      [input.runId, input.relativePath],
-    );
+    const existing = this.db.get<DbCommandArtifactRow>(`${commandArtifactSelectSql()} WHERE run_id = ? AND relative_path = ?`, [input.runId, input.relativePath]);
     if (existing) return mapCommandArtifactRow(existing);
     const record: CommandArtifact = {
       id: `command_artifact_${nanoid(12)}`,
       ...input,
+      artifactRef: input.artifactRef ?? null,
       createdAt: nowIso(),
     };
     this.db.execute(
-      `INSERT INTO command_artifacts (id, run_id, relative_path, absolute_path, mime_type, byte_length, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [record.id, record.runId, record.relativePath, record.absolutePath, record.mimeType, record.byteLength, record.createdAt],
+      `INSERT INTO command_artifacts (id, run_id, relative_path, absolute_path, artifact_ref_json, mime_type, byte_length, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [record.id, record.runId, record.relativePath, record.absolutePath, record.artifactRef ? JSON.stringify(record.artifactRef) : null, record.mimeType, record.byteLength, record.createdAt],
     );
     return record;
   }
 
+  createFromFile(input: { runId: string; projectId: string; relativePath: string; sourcePath: string; mimeType: string | null; createdAt?: string }): CommandArtifact {
+    if (!this.artifactStore) throw new Error('ZEUS_COMMAND_ARTIFACT_STORE_REQUIRED');
+    const existing = this.db.get<DbCommandArtifactRow>(`${commandArtifactSelectSql()} WHERE run_id = ? AND relative_path = ?`, [input.runId, input.relativePath]);
+    if (existing) return mapCommandArtifactRow(existing);
+    const id = `command_artifact_${nanoid(12)}`;
+    const createdAt = input.createdAt ?? nowIso();
+    const owner = { kind: 'command_artifact', id, generationId: '2026-08-21-command-artifact-v1', projectId: input.projectId };
+    const artifactRef = this.artifactStore.putFileSync({ sourcePath: input.sourcePath, mimeType: input.mimeType ?? 'application/octet-stream', owner, createdAt });
+    const hold = this.artifactStore.hold({ sha256: artifactRef.sha256, owner, ownerClass: 'active_task', reason: `命令执行产物 ${id} 仍由运行记录引用`, createdAt });
+    try {
+      this.db.execute(
+        `INSERT INTO command_artifacts (id, run_id, relative_path, absolute_path, artifact_ref_json, mime_type, byte_length, created_at)
+         VALUES (?, ?, ?, '', ?, ?, ?, ?)`,
+        [id, input.runId, input.relativePath, JSON.stringify(artifactRef), input.mimeType, artifactRef.contentByteLength, createdAt],
+      );
+    } catch (error) {
+      this.artifactStore.releaseHold({ id: hold.id, releasedAt: createdAt });
+      this.artifactStore.detachOwner({ sha256: artifactRef.sha256, owner });
+      throw error;
+    }
+    return this.getById(id)!;
+  }
+
+  getById(id: string): CommandArtifact | undefined {
+    const row = this.db.get<DbCommandArtifactRow>(`${commandArtifactSelectSql()} WHERE id = ?`, [id]);
+    return row ? mapCommandArtifactRow(row) : undefined;
+  }
+
   listByRun(runId: string): CommandArtifact[] {
-    return this.db
-      .select<DbCommandArtifactRow>(`${commandArtifactSelectSql()} WHERE run_id = ? ORDER BY created_at, id`, [runId])
-      .map(mapCommandArtifactRow);
+    return this.db.select<DbCommandArtifactRow>(`${commandArtifactSelectSql()} WHERE run_id = ? ORDER BY created_at, id`, [runId]).map(mapCommandArtifactRow);
   }
 }
 
@@ -520,7 +514,7 @@ function commandRunSelectSql(): string {
 }
 
 function commandArtifactSelectSql(): string {
-  return `SELECT id, run_id, relative_path, absolute_path, mime_type, byte_length, created_at
+  return `SELECT id, run_id, relative_path, absolute_path, artifact_ref_json, mime_type, byte_length, created_at
           FROM command_artifacts`;
 }
 
@@ -551,10 +545,24 @@ function mapCommandArtifactRow(row: DbCommandArtifactRow): CommandArtifact {
     runId: row.run_id,
     relativePath: row.relative_path,
     absolutePath: row.absolute_path,
+    artifactRef: parseCommandArtifactRef(row.artifact_ref_json),
     mimeType: row.mime_type,
     byteLength: row.byte_length,
     createdAt: row.created_at,
   };
+}
+
+function parseCommandArtifactRef(value: string | null): ArtifactRef | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as Partial<ArtifactRef>;
+    if (typeof parsed.sha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(parsed.sha256) || typeof parsed.contentSha256 !== 'string' || typeof parsed.relativePath !== 'string') {
+      throw new Error('Command ArtifactRef 字段无效。');
+    }
+    return parsed as ArtifactRef;
+  } catch (error) {
+    throw new Error('Command ArtifactRef 无法解析。', { cause: error });
+  }
 }
 
 function normalizeCommandToken(value: string): string {
@@ -564,7 +572,7 @@ function normalizeCommandToken(value: string): string {
 function parseJsonArray<T>(value: string): T[] {
   try {
     const parsed = JSON.parse(value) as unknown;
-    return Array.isArray(parsed) ? parsed as T[] : [];
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
   } catch {
     return [];
   }
@@ -573,7 +581,7 @@ function parseJsonArray<T>(value: string): T[] {
 function parseJsonObject<T extends Record<string, unknown>>(value: string): T {
   try {
     const parsed = JSON.parse(value) as unknown;
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as T : {} as T;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as T) : ({} as T);
   } catch {
     return {} as T;
   }

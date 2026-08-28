@@ -1,5 +1,6 @@
 import type { DashboardClientOptions, LocalBusinessDataSnapshot, LocalSettingsExportSnapshot } from './apiClient.js';
 import type { ZeusBrowserApprovalDecision, ZeusBrowserCommand, ZeusBrowserConversationSnapshot, ZeusBrowserEvent, ZeusBrowserPreparedSubmission, ZeusBrowserSettings } from '@zeus/shared';
+import type { ZentaoTaskExtract } from '@zeus/shared';
 import type { ConversationFileLocation, ConversationOpenTarget, ConversationResourceOpenTarget } from '@zeus/shared';
 import type {
   CreateProjectSourceEntryInput,
@@ -36,9 +37,57 @@ type TaskInputResourceBridge = {
 
 declare global {
   interface Window {
+    /** 仅返回当前窗口的无正文、有界性能投影，供隔离 Test 现场提取。 */
+    __zeusPerformanceSnapshot?: () => import('./rendererPerformanceObservability.js').RendererPerformanceSnapshot;
     zeus?: {
       appName: 'Zeus';
+      getConversationStoreMigrationStatus: () => Promise<{
+        phase: 'not_required' | 'preflight' | 'candidate_build' | 'candidate_validation' | 'promotion' | 'promoted_but_validation_failed' | 'completed' | 'failed';
+        migrationId: string;
+        databasePath: string;
+        candidatePath: string | null;
+        safeRollbackPath: string | null;
+        diagnosticPath: string;
+        updatedAt: string;
+        error: { message: string; code: string | null } | null;
+      } | null>;
+      retryConversationStoreMigration: () => Promise<unknown>;
+      openConversationStoreMigrationDiagnostics: () => Promise<void>;
+      exitConversationStoreMigration: () => Promise<void>;
+      getExecutionHostMaintenanceStatus: () => Promise<{
+        code: 'ZEUS_EXECUTION_HOST_PROTOCOL_INCOMPATIBLE' | 'ZEUS_EXECUTION_HOST_OWNER_METADATA_CONFLICT' | 'ZEUS_EXECUTION_HOST_OWNER_UNCONFIRMED' | 'ZEUS_EXECUTION_HOST_STARTUP_TIMEOUT';
+        currentProtocolVersion: number;
+        hostProtocolVersion: number | null;
+        hostAppVersion: string | null;
+        hostPid: number | null;
+        hostGenerationId: string | null;
+        stage: string | null;
+        detectedAt: string;
+        message: string;
+      } | null>;
+      retryExecutionHostMaintenance: () => Promise<void>;
+      exitExecutionHostMaintenance: () => Promise<void>;
       getLocalServerConfig: () => Promise<DashboardClientOptions>;
+      loadSessionViewCache: () => Promise<unknown | null>;
+      persistSessionViewCache: (value: import('./session/sessionHotCache.js').PersistedSessionViewCache) => void;
+      runStorageRecoveryPreflightAndRestart: () => Promise<{
+        faultId: string;
+        transactionRolledBack: true;
+        quickCheck: 'ok';
+        walCheckpoint: 'ok';
+        foreignKeyCheck: 'ok';
+        commandLedgerCheck: 'ok';
+        commandLedgerViolations: 0;
+        preparedCommands: number;
+        providerWritesAwaitingReconciliation: number;
+        recoveryRequiredCommands: number;
+        artifactStagingWrite: 'ok';
+        artifactFreeSpace: 'ok';
+        eligibleForCoreRestart: true;
+        coreRestartRequired: true;
+        checkedAt: string;
+        restartScheduled: true;
+      }>;
       openTaskGitDeliveryWindow: (input: { taskId: string; workspaceId?: string | null }) => Promise<{ opened: true; reused: boolean; taskId: string }>;
       closeTaskGitDeliveryWindow: () => Promise<{ closed: true; taskId: string }>;
       getTaskGitDeliveryCurrentContext: () => Promise<{ taskId: string | null; workspaceId: string | null }>;
@@ -85,6 +134,14 @@ declare global {
       reportRendererFatalFailure: (message: string) => void;
       reportRendererBootstrapReady: () => void;
       chooseProjectDirectory: () => Promise<string | null>;
+      chooseRecoveryBackupDestinations: () => Promise<{
+        cancelled: boolean;
+        destinations: Array<{
+          grantId: string;
+          destinationId: string;
+          displayName: string;
+        }>;
+      }>;
       revealProjectInFinder: (projectPath: string) => Promise<{ revealed: true; path: string }>;
       chooseConversationResources: () => Promise<ConversationInputResourceBridge[]>;
       authorizeConversationFiles: (
@@ -141,6 +198,7 @@ declare global {
       ) => Promise<TaskInputResourceBridge[]>;
       getTaskAttachmentPreview: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
       openTaskAttachment: (path: string) => Promise<{ opened: boolean; error?: string }>;
+      parseZentaoTaskLink: (url: string) => Promise<ZentaoTaskExtract>;
       exportSettingsSnapshotToFile: (snapshot: unknown) => Promise<{ saved: boolean; filePath: string | null }>;
       importSettingsSnapshotFromFile: () => Promise<{
         imported: boolean;

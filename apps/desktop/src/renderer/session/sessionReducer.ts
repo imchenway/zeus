@@ -3,6 +3,7 @@ import type {
   NativeConversationAttachment,
   NativeConversationEvent,
   NativeConversationSnapshot,
+  NativeGoalResponse,
   NativeItemSnapshot,
   NativeNextTurnSettings,
   NativePendingRequest,
@@ -13,23 +14,41 @@ import type {
   NativeQueueSnapshot,
   NativeSessionError,
   NativeSessionItemBuffer,
+  NativeSessionMetricsSnapshot,
   NativeSessionState,
   NativeTokenUsageSnapshot,
   NativeTurnPlanSnapshot,
   NativeTurnSnapshot,
+  NativeUnifiedUsageSnapshot,
   TransportState,
 } from './sessionTypes.js';
-import { emptyConversationContextDraft, type ConversationContextDraft, type TaskPushMessageLayout } from '@zeus/shared';
 import type { ZeusBrowserComment, ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import { type ConversationContextDraft, emptyConversationContextDraft, type TaskPushMessageLayout } from '@zeus/shared';
 
 export type NativeSessionAction =
   | { type: 'transport_changed'; transportState: TransportState; reconnectAttempt?: number; error?: NativeSessionError | null }
   | { type: 'snapshot_hydrated'; snapshot: NativeConversationSnapshot }
+  | { type: 'snapshot_v2_page_merged'; snapshot: NativeConversationSnapshot }
+  | { type: 'session_metrics_hydrated'; conversationId: string; sessionMetrics: NativeSessionMetricsSnapshot }
+  | { type: 'goal_hydrated'; conversationId: string; response: NativeGoalResponse }
   | { type: 'next_turn_settings_changed'; settings: NativeNextTurnSettings }
-  | { type: 'pending_requests_hydrated'; requests: NativePendingRequest[]; turns?: NativeTurnSnapshot[]; items?: NativeItemSnapshot[] }
+  | {
+      type: 'pending_requests_hydrated';
+      requests: NativePendingRequest[];
+      planImplementationRequests?: NativePlanImplementationRequest[];
+      turns?: NativeTurnSnapshot[];
+      items?: NativeItemSnapshot[];
+    }
+  | {
+      type: 'plan_implementation_response_accepted';
+      request: NativePlanImplementationRequest;
+      queue: NativeQueueSnapshot;
+      collaborationMode?: 'plan' | 'default';
+    }
   | { type: 'queue_hydrated'; queue: NativeQueueSnapshot }
   | { type: 'queued_submission_deleted'; submissionId: string; clientUserMessageId?: string; queue: NativeQueueSnapshot }
   | { type: 'steering_submission_hydrated'; submission: NativeQueuedSubmission; queue?: NativeQueueSnapshot }
+  | { type: 'steering_submission_failed'; submissionId: string; clientUserMessageId?: string; error: NativeSessionError }
   | { type: 'operation_started'; operation: string }
   | { type: 'operation_finished'; operation: string; error?: NativeSessionError | null }
   | { type: 'interrupt_started'; turnId: string }
@@ -54,25 +73,18 @@ export type NativeSessionAction =
       previousConversationState: ConversationState;
       startedAt: string;
       queuedUntilHydrated?: boolean;
+      preserveComposer?: boolean;
       taskPushLayout?: TaskPushMessageLayout;
     }
   | {
       type: 'send_failed';
       clientUserMessageId: string;
-      draft: string;
-      attachments: NativeConversationAttachment[];
-      browserSubmission: ZeusBrowserPreparedSubmission | null;
-      contextDraft: ConversationContextDraft;
       previousConversationState: ConversationState;
       error: NativeSessionError;
     }
   | {
       type: 'send_uncertain';
       clientUserMessageId: string;
-      draft: string;
-      attachments: NativeConversationAttachment[];
-      browserSubmission: ZeusBrowserPreparedSubmission | null;
-      contextDraft: ConversationContextDraft;
       previousConversationState: ConversationState;
       error: NativeSessionError;
     }
@@ -105,6 +117,8 @@ export function createInitialSessionState(): NativeSessionState {
     planImplementationRequests: [],
     providerSettings: null,
     tokenUsage: null,
+    unifiedUsage: null,
+    sessionMetrics: null,
     rateLimits: null,
     mcpStartup: null,
     seenEventIds: {},
@@ -146,6 +160,37 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
       };
     case 'snapshot_hydrated':
       return hydrateSnapshot(state, action.snapshot);
+    case 'snapshot_v2_page_merged':
+      return mergeSnapshotV2Page(state, action.snapshot);
+    case 'session_metrics_hydrated': {
+      if (state.conversationId !== action.conversationId || state.snapshot?.id !== action.conversationId) return state;
+      const currentUpdatedAt = state.sessionMetrics?.updatedAt;
+      const nextUpdatedAt = action.sessionMetrics.updatedAt;
+      if (currentUpdatedAt && (!nextUpdatedAt || currentUpdatedAt > nextUpdatedAt)) return state;
+      return {
+        ...state,
+        unifiedUsage: action.sessionMetrics.usage,
+        sessionMetrics: action.sessionMetrics,
+        snapshot: {
+          ...state.snapshot,
+          usage: action.sessionMetrics.usage,
+          sessionMetrics: action.sessionMetrics,
+          snapshotV2: state.snapshot.snapshotV2 ? { ...state.snapshot.snapshotV2, sessionMetrics: action.sessionMetrics } : undefined,
+        },
+      };
+    }
+    case 'goal_hydrated':
+      return state.conversationId === action.conversationId && state.snapshot?.id === action.conversationId
+        ? {
+            ...state,
+            snapshot: {
+              ...state.snapshot,
+              goal: action.response.goal,
+              goalTimeline: action.response.timeline,
+              goalCapability: action.response.capability,
+            },
+          }
+        : state;
     case 'next_turn_settings_changed':
       return state.snapshot
         ? {
@@ -161,8 +206,23 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
       return {
         ...state,
         pendingRequests: requests,
+        planImplementationRequests: action.planImplementationRequests ?? state.planImplementationRequests,
         conversationState: requestConversationState(requests) ?? conversationStateWithoutRequests(state),
       };
+    }
+    case 'plan_implementation_response_accepted': {
+      const nextState: NativeSessionState = {
+        ...state,
+        planImplementationRequests: [...state.planImplementationRequests.filter((request) => request.id !== action.request.id), action.request],
+        snapshot:
+          state.snapshot && action.collaborationMode
+            ? {
+                ...state.snapshot,
+                collaborationMode: action.collaborationMode,
+              }
+            : state.snapshot,
+      };
+      return projectQueueSubmissionMessages(nextState, action.queue);
     }
     case 'queue_hydrated': {
       return projectQueueSubmissionMessages(state, action.queue);
@@ -171,6 +231,8 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
       return removeQueuedSubmissionProjection(state, action.submissionId, action.clientUserMessageId, action.queue);
     case 'steering_submission_hydrated':
       return projectSteeringSubmission(state, action.submission, action.queue);
+    case 'steering_submission_failed':
+      return markSteeringSubmissionUnconfirmed(state, action.submissionId, action.clientUserMessageId, action.error);
     case 'operation_started':
       return { ...state, busyOperation: action.operation, error: null };
     case 'operation_finished':
@@ -224,10 +286,6 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
           : {}),
         transcriptRevision: state.transcriptRevision + (optimisticEntry ? 1 : 0),
         conversationState: action.previousConversationState,
-        draft: action.draft,
-        attachments: action.attachments,
-        browserSubmission: action.browserSubmission,
-        contextDraft: action.contextDraft,
         error: action.error,
       };
     }
@@ -253,10 +311,6 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
             }
           : {}),
         conversationState: action.previousConversationState,
-        draft: action.draft,
-        attachments: action.attachments,
-        browserSubmission: action.browserSubmission,
-        contextDraft: action.contextDraft,
         error: action.error,
         transcriptRevision: state.transcriptRevision + (optimistic ? 1 : 0),
       };
@@ -308,10 +362,19 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
   const threadId = snapshot.providerThreadId ?? 'unbound-thread';
   const previousUserItemKeys = new Map<string, string>();
   const previousUserStableIndexes = new Map<string, number>();
+  const previousItemStableIndexes = new Map(state.itemOrder.map((key, index) => [key, index]));
+  const previousItemsByProviderId = new Map<string, NativeSessionItemBuffer>();
+  const previousItemsByLocalId = new Map<string, NativeSessionItemBuffer>();
   const previousUserItemsByClientId = new Map<string, NativeSessionItemBuffer>();
+  const previousUserItemsBySubmissionId = new Map<string, NativeSessionItemBuffer>();
   state.itemOrder.forEach((key, index) => {
     const item = state.items[key];
-    if (!item || item.conversationId !== snapshot.id || !isUserMessageItem(item)) return;
+    if (!item || item.conversationId !== snapshot.id) return;
+    if (item.providerItemId) previousItemsByProviderId.set(item.providerItemId, item);
+    if (item.localItemId) previousItemsByLocalId.set(item.localItemId, item);
+    if (!isUserMessageItem(item)) return;
+    const submissionId = stringValue(item.payload.submissionId);
+    if (submissionId) previousUserItemsBySubmissionId.set(submissionId, item);
     for (const clientId of userMessageClientIds(item)) {
       previousUserItemKeys.set(clientId, key);
       previousUserStableIndexes.set(clientId, index);
@@ -336,11 +399,23 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
     const turnId = providerTurnIdByLocalId.get(item.turnId) ?? item.turnId;
     const itemId = item.providerItemId ?? item.id;
     const timelineAt = item.startedAt ?? item.updatedAt;
-    const itemClientId = isUserMessageType(item.type) ? (stringValue(item.payload.clientId) ?? stringValue(item.payload.clientUserMessageId)) : null;
-    const previousUserItem = itemClientId ? previousUserItemsByClientId.get(itemClientId) : undefined;
-    if (itemClientId && providerUserItemKeyByClientId.has(itemClientId)) continue;
+    const itemSubmissionId = isUserMessageType(item.type) ? stringValue(item.payload.submissionId) : null;
+    let itemClientId = isUserMessageType(item.type) ? (stringValue(item.payload.clientId) ?? stringValue(item.payload.clientUserMessageId)) : null;
+    const previousUserItem = (itemClientId ? previousUserItemsByClientId.get(itemClientId) : undefined) ?? (itemSubmissionId ? previousUserItemsBySubmissionId.get(itemSubmissionId) : undefined);
+    itemClientId ??= previousUserItem ? (userMessageClientIds(previousUserItem)[0] ?? null) : null;
+    const existingProviderUserKey = itemClientId ? providerUserItemKeyByClientId.get(itemClientId) : undefined;
+    if (existingProviderUserKey) {
+      // Provider 可能用多个 item 回放同一客户端用户消息；别名也要指向已有可见项，
+      // 否则其持久消息会失去身份并以原始纯文本再次进入时间线。
+      if (item.providerItemId) providerItemKeyById.set(item.providerItemId, existingProviderUserKey);
+      continue;
+    }
     // 同一条用户消息从本地发送态交接为 Provider item 时沿用可见身份，避免气泡被卸载后重建。
     const key = (itemClientId ? previousUserItemKeys.get(itemClientId) : undefined) ?? nativeSessionItemKey(snapshot.id, threadId, turnId, itemId);
+    // 资源分页已经补齐到 Renderer 后，后续轻量权威快照仍可能只携带正文、把 resources
+    // 投影为空。资源属于同一持久 item 的展示增量，必须按稳定身份合并，不能在新一轮
+    // 对账时倒退为“图片不可用”。
+    const previousDurableItem = state.items[key] ?? (item.providerItemId ? previousItemsByProviderId.get(item.providerItemId) : undefined) ?? previousItemsByLocalId.get(item.id);
     items[key] = {
       key,
       conversationId: snapshot.id,
@@ -354,7 +429,7 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
       phase: item.phase,
       text: item.text,
       payload: previousUserItem ? mergeStableUserMessagePresentation(previousUserItem.payload, item.payload) : item.payload,
-      resources: item.resources ?? [],
+      resources: mergeDurableItemResources(previousDurableItem?.resources, item.resources),
       timelineAt,
       updatedAt: item.updatedAt,
       ...(itemClientId ? { clientUserMessageId: itemClientId, durableClientUserMessageId: itemClientId } : {}),
@@ -365,6 +440,40 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
       durableClientIds.add(itemClientId);
       providerUserItemKeyByClientId.set(itemClientId, key);
     }
+  }
+
+  // Snapshot V2 的权威首屏只重新拥有有界历史，不代表已经分页取得的旧正文和过程被删除。
+  // 普通水合必须保留稳定页与仍属当前活动轮次的过程项，否则每次新轮次对账都会让旧命令消失。
+  const activeTurnIdentities = new Set(
+    snapshot.turns.filter((turn) => turn.status === 'running' || turn.status === 'dispatching' || turn.status === 'waiting').flatMap((turn) => [turn.id, turn.providerTurnId].filter((identity): identity is string => Boolean(identity))),
+  );
+  const projectedLocalItemIds = new Set(
+    Object.values(items)
+      .map((item) => item.localItemId)
+      .filter((identity): identity is string => Boolean(identity)),
+  );
+  const projectedProviderItemIds = new Set(
+    Object.values(items)
+      .map((item) => item.providerItemId)
+      .filter((identity): identity is string => Boolean(identity)),
+  );
+  for (const key of state.itemOrder) {
+    const previous = state.items[key];
+    if (
+      !previous ||
+      previous.conversationId !== snapshot.id ||
+      key in items ||
+      (previous.localItemId ? projectedLocalItemIds.has(previous.localItemId) : false) ||
+      (previous.providerItemId ? projectedProviderItemIds.has(previous.providerItemId) : false) ||
+      !shouldPreserveBoundedTranscriptItem(previous, activeTurnIdentities)
+    )
+      continue;
+    items[key] = previous;
+    orderedItems.push({
+      key,
+      timestamp: previous.timelineAt ?? previous.updatedAt ?? snapshot.updatedAt,
+      stableIndex: previousItemStableIndexes.get(key) ?? stableIndex++,
+    });
   }
 
   for (const message of snapshot.messages) {
@@ -426,9 +535,26 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
   for (const submission of snapshot.submissions) {
     const clientUserMessageId = submission.clientUserMessageId;
     const pendingStatus = shouldProjectSubmissionMessage(submission);
-    if (!pendingStatus || !clientUserMessageId || durableClientIds.has(clientUserMessageId)) continue;
+    if (!pendingStatus || !clientUserMessageId) continue;
     const providerTurnId = submission.providerTurnId ?? `pending:${clientUserMessageId}`;
     const itemId = `${submission.delivery === 'steer_now' ? 'steering' : 'submission'}:${submission.id}`;
+    const existingUserEntry = Object.entries(items).find(([, item]) => isUserMessageItem(item) && (userMessageClientIds(item).includes(clientUserMessageId) || stringValue(item.payload.submissionId) === submission.id));
+    if (existingUserEntry) {
+      const [key, existing] = existingUserEntry;
+      const submissionItem = submissionUserMessageItem(snapshot.id, threadId, submission, key, itemId, providerTurnId);
+      items[key] = {
+        ...existing,
+        status: submissionItem.status,
+        payload: mergeStableUserMessagePresentation(existing.payload, submissionItem.payload),
+        optimistic: submissionItem.optimistic,
+        clientUserMessageId,
+        durableClientUserMessageId: clientUserMessageId,
+        updatedAt: submissionItem.updatedAt ?? existing.updatedAt,
+      };
+      durableClientIds.add(clientUserMessageId);
+      continue;
+    }
+    if (durableClientIds.has(clientUserMessageId)) continue;
     const key = previousUserItemKeys.get(clientUserMessageId) ?? nativeSessionItemKey(snapshot.id, threadId, providerTurnId, itemId);
     const submissionItem = submissionUserMessageItem(snapshot.id, threadId, submission, key, itemId, providerTurnId);
     const previousUserItem = previousUserItemsByClientId.get(clientUserMessageId);
@@ -495,6 +621,8 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
     planImplementationRequests: snapshot.planImplementationRequests ?? [],
     providerSettings: snapshot.providerSettings ?? null,
     tokenUsage: snapshot.tokenUsage ?? null,
+    unifiedUsage: snapshot.sessionMetrics?.usage ?? snapshot.usage,
+    sessionMetrics: snapshot.sessionMetrics ?? null,
     rateLimits: snapshot.rateLimits ?? null,
     mcpStartup: snapshot.mcpStartup ?? null,
     conversationState: requestConversationState(pendingRequests) ?? conversationStateFromSnapshot(snapshot),
@@ -502,6 +630,128 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
     feedbackEpoch,
     visibleFeedbackEpoch: hasVisibleActiveFeedback ? feedbackEpoch : Math.min(state.visibleFeedbackEpoch, feedbackEpoch),
     error: null,
+  };
+}
+
+const boundedProcessItemTypes = new Set(['commandexecution', 'command', 'mcptoolcall', 'dynamictoolcall', 'websearch', 'imageview', 'toolcall', 'tool', 'filechange', 'file', 'contextcompaction', 'providerevent']);
+
+function shouldPreserveBoundedTranscriptItem(item: NativeSessionItemBuffer, activeTurnIdentities: ReadonlySet<string>): boolean {
+  if (item.optimistic) return false;
+  const contentKind = stringValue(item.payload.v2ContentKind);
+  if (contentKind === 'model_history') return isTerminalItemStatus(item.status);
+  const type = item.type.toLocaleLowerCase().replace(/[\s_\-/]+/gu, '');
+  const processItem = contentKind === 'process_detail' || boundedProcessItemTypes.has(type);
+  return processItem && (isTerminalItemStatus(item.status) || activeTurnIdentities.has(item.turnId));
+}
+
+function mergeSnapshotPageItem(previous: NativeSessionItemBuffer, projected: NativeSessionItemBuffer, canonicalKey: string): NativeSessionItemBuffer {
+  const previousProcessDetail = stringValue(previous.payload.v2ContentKind) === 'process_detail';
+  const projectedProcessDetail = stringValue(projected.payload.v2ContentKind) === 'process_detail';
+  const presentation = previousProcessDetail && !projectedProcessDetail ? previous : projected;
+  const fallback = presentation === previous ? projected : previous;
+  return {
+    ...fallback,
+    ...presentation,
+    key: canonicalKey,
+    status: isTerminalItemStatus(previous.status) && !isTerminalItemStatus(projected.status) ? previous.status : projected.status,
+    payload: { ...fallback.payload, ...presentation.payload },
+    resources: presentation.resources.length > 0 ? presentation.resources : fallback.resources,
+    timelineAt: previous.timelineAt ?? projected.timelineAt,
+    updatedAt: (previous.updatedAt ?? previous.timelineAt ?? '').localeCompare(projected.updatedAt ?? projected.timelineAt ?? '') > 0 ? previous.updatedAt : projected.updatedAt,
+  };
+}
+
+/**
+ * 按需 V2 页只补充历史、过程与游标，不拥有实时轮次终态。
+ * 若用普通水合处理，较早的分页基准会把刚完成的轮次降回运行中并丢掉实时最终答复。
+ */
+function mergeSnapshotV2Page(state: NativeSessionState, snapshot: NativeConversationSnapshot): NativeSessionState {
+  const hydrated = hydrateSnapshot(state, snapshot);
+  const items = { ...hydrated.items };
+  const canonicalKeyByProviderItemId = new Map<string, string>();
+  const canonicalKeyByAlias = new Map<string, string>();
+
+  // 水合页本身也可能同时带回模型历史和过程详情；先按 Provider 身份压成一个条目。
+  for (const [key, item] of Object.entries(items)) {
+    if (!item.providerItemId) continue;
+    const canonicalKey = canonicalKeyByProviderItemId.get(item.providerItemId);
+    if (!canonicalKey) {
+      canonicalKeyByProviderItemId.set(item.providerItemId, key);
+      continue;
+    }
+    if (canonicalKey === key) continue;
+    const canonical = items[canonicalKey];
+    if (!canonical) {
+      canonicalKeyByProviderItemId.set(item.providerItemId, key);
+      continue;
+    }
+    items[canonicalKey] = mergeSnapshotPageItem(canonical, item, canonicalKey);
+    delete items[key];
+    canonicalKeyByAlias.set(key, canonicalKey);
+  }
+
+  for (const [key, previous] of Object.entries(state.items)) {
+    const canonicalKey = previous.providerItemId ? (canonicalKeyByProviderItemId.get(previous.providerItemId) ?? key) : (canonicalKeyByAlias.get(key) ?? key);
+    canonicalKeyByAlias.set(key, canonicalKey);
+    const projected = items[canonicalKey];
+    if (!projected) {
+      items[canonicalKey] = canonicalKey === key ? previous : { ...previous, key: canonicalKey };
+      if (previous.providerItemId) canonicalKeyByProviderItemId.set(previous.providerItemId, canonicalKey);
+      continue;
+    }
+    items[canonicalKey] = mergeSnapshotPageItem(previous, projected, canonicalKey);
+    if (canonicalKey !== key && items[key]?.providerItemId === previous.providerItemId) delete items[key];
+  }
+
+  const canonicalOrderKey = (key: string): string => canonicalKeyByAlias.get(key) ?? key;
+  const previousOrder = new Map<string, number>();
+  state.itemOrder.forEach((key, index) => {
+    const canonicalKey = canonicalOrderKey(key);
+    if (!previousOrder.has(canonicalKey)) previousOrder.set(canonicalKey, index);
+  });
+  const itemOrder = [...new Set([...state.itemOrder, ...hydrated.itemOrder].map(canonicalOrderKey))]
+    .filter((key) => Boolean(items[key]))
+    .sort((leftKey, rightKey) => {
+      const left = items[leftKey];
+      const right = items[rightKey];
+      if (!left || !right) return left ? -1 : right ? 1 : 0;
+      const chronology = (left.timelineAt ?? left.updatedAt ?? '').localeCompare(right.timelineAt ?? right.updatedAt ?? '');
+      if (chronology !== 0) return chronology;
+      return (previousOrder.get(leftKey) ?? Number.MAX_SAFE_INTEGER) - (previousOrder.get(rightKey) ?? Number.MAX_SAFE_INTEGER) || leftKey.localeCompare(rightKey);
+    });
+
+  const turnsByProviderId = { ...hydrated.turnsByProviderId };
+  for (const [turnId, previous] of Object.entries(state.turnsByProviderId)) {
+    const projected = turnsByProviderId[turnId];
+    if (!projected || (isTerminalTurnStatus(previous.status) && !isTerminalTurnStatus(projected.status)) || previous.updatedAt.localeCompare(projected.updatedAt) > 0) turnsByProviderId[turnId] = previous;
+  }
+  const turns = [...new Map([...snapshot.turns, ...Object.values(turnsByProviderId)].map((turn) => [turn.providerTurnId ?? turn.id, turn])).values()].sort(
+    (left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+  );
+
+  return {
+    ...hydrated,
+    snapshot: { ...snapshot, turns },
+    turnsByProviderId,
+    terminalTurnIds: { ...hydrated.terminalTurnIds, ...state.terminalTurnIds },
+    items,
+    itemOrder,
+    activeTurnId: state.activeTurnId,
+    startedTurnId: state.startedTurnId,
+    queue: state.queue,
+    pendingRequests: state.pendingRequests,
+    planImplementationRequests: state.planImplementationRequests,
+    providerSettings: state.providerSettings,
+    tokenUsage: state.tokenUsage,
+    unifiedUsage: state.unifiedUsage,
+    sessionMetrics: state.sessionMetrics,
+    rateLimits: state.rateLimits,
+    mcpStartup: state.mcpStartup,
+    conversationState: state.conversationState,
+    transcriptRevision: state.transcriptRevision + 1,
+    feedbackEpoch: state.feedbackEpoch,
+    visibleFeedbackEpoch: state.visibleFeedbackEpoch,
+    error: state.error,
   };
 }
 
@@ -554,6 +804,15 @@ function sameSerializableValue(left: unknown, right: unknown): boolean {
 
 function sameStringArray(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+/** 同一持久消息的资源是渐进补齐数据；空快照不能撤销已经取得的图片与交付物。 */
+function mergeDurableItemResources(previous: NativeSessionItemBuffer['resources'] | undefined, incoming: NativeSessionItemBuffer['resources'] | undefined): NativeSessionItemBuffer['resources'] {
+  if (!previous?.length) return incoming ?? [];
+  if (!incoming?.length) return previous;
+  const resourcesById = new Map(previous.map((resource) => [resource.id, resource]));
+  for (const resource of incoming) resourcesById.set(resource.id, resource);
+  return [...resourcesById.values()];
 }
 
 function reduceNativeEvent(state: NativeSessionState, event: NativeConversationEvent, suppressRequestAuthority = false): NativeSessionState {
@@ -721,7 +980,11 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
     case 'conversation.settings.changed':
       return { ...base, providerSettings: providerSettingsFrom(payload) };
     case 'conversation.tokenUsage.changed':
-      return { ...base, tokenUsage: tokenUsageFrom(payload) };
+      return { ...base, tokenUsage: tokenUsageFrom(payload), unifiedUsage: unifiedUsageFrom(payload.unifiedUsage) ?? base.unifiedUsage };
+    case 'conversation.sessionMetrics.changed': {
+      const sessionMetrics = sessionMetricsFrom(payload.sessionMetrics);
+      return sessionMetrics ? { ...base, sessionMetrics, unifiedUsage: sessionMetrics.usage } : base;
+    }
     case 'conversation.rateLimits.changed':
       return { ...base, rateLimits: providerValueFrom(payload) };
     case 'conversation.mcpStartup.changed':
@@ -755,7 +1018,15 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
     case 'conversation.request.resolved': {
       const requestId = stringValue(payload.requestId);
       const wasPending = requestId ? state.pendingRequests.some((request) => request.id === requestId) : false;
-      const pendingRequests = requestId ? state.pendingRequests.filter((request) => request.id !== requestId) : state.pendingRequests;
+      const rawEventRequest = requestId ? pendingRequestFromEvent(payload.request, requestId) : null;
+      const eventRequest = rawEventRequest ? normalizePendingRequests(base, [rawEventRequest])[0] : null;
+      const pendingRequests = requestId
+        ? eventRequest
+          ? state.pendingRequests.some((request) => request.id === requestId)
+            ? state.pendingRequests.map((request) => (request.id === requestId ? eventRequest : request))
+            : [...state.pendingRequests, eventRequest]
+          : state.pendingRequests.filter((request) => request.id !== requestId)
+        : state.pendingRequests;
       return {
         ...base,
         pendingRequests,
@@ -805,8 +1076,20 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
             resolvedAt: status === 'pending' ? null : event.createdAt,
             updatedAt: event.createdAt,
           };
-      return {
+      const providerPlanItemId = stringValue(payload.providerPlanItemId);
+      const formalPlanEntry = Object.entries(base.items).find(([, item]) => (providerPlanItemId !== null && item.providerItemId === providerPlanItemId) || item.localItemId === updated.planItemId || item.itemId === updated.planItemId);
+      const items = formalPlanEntry
+        ? {
+            ...base.items,
+            [formalPlanEntry[0]]: {
+              ...formalPlanEntry[1],
+              payload: { ...formalPlanEntry[1].payload, formalPlan: true },
+            },
+          }
+        : base.items;
+      const nextState: NativeSessionState = {
         ...base,
+        items,
         planImplementationRequests: [...base.planImplementationRequests.filter((request) => request.id !== requestId), updated],
         snapshot: base.snapshot
           ? {
@@ -815,6 +1098,8 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
             }
           : base.snapshot,
       };
+      const queue = isRecord(payload.queue) ? (payload.queue as unknown as NativeQueueSnapshot) : null;
+      return queue ? projectQueueSubmissionMessages(nextState, queue) : nextState;
     }
     case 'conversation.collaboration_mode.changed':
       return base.snapshot && (payload.collaborationMode === 'default' || payload.collaborationMode === 'plan')
@@ -880,6 +1165,9 @@ function reduceItemEvent(state: NativeSessionState, event: NativeConversationEve
   const optimisticText = optimisticEntry?.[1].text ?? '';
   const matchedUserText = matchedUserItem?.text ?? '';
   const resolvedClientId = matchedUserItem?.clientUserMessageId ?? matchedUserItem?.durableClientUserMessageId ?? providerClientId;
+  const compatibilitySnapshotItem = /^item-\d+$/u.test(itemId) || Boolean(incomingPayload && stringValue(incomingPayload.compatibilitySnapshotItemId));
+  const durableUserText = compatibilitySnapshotItem && resolvedClientId ? durableUserMessageText(state, resolvedClientId) : null;
+  const completedText = compatibilitySnapshotItem && durableUserText !== null && incomingText !== durableUserText ? durableUserText : incomingText;
   const next: NativeSessionItemBuffer = {
     key,
     conversationId,
@@ -890,7 +1178,7 @@ function reduceItemEvent(state: NativeSessionState, event: NativeConversationEve
     type: effectiveType,
     status: stringValue(payload.status) ?? (completed ? 'completed' : (previous?.status ?? 'in_progress')),
     phase: stringValue(payload.phase) ?? previous?.phase ?? matchedUserItem?.phase ?? 'prework',
-    text: completed ? incomingText || previous?.text || matchedUserText || optimisticText : reconcileCumulativeText(previous?.text ?? matchedUserText ?? optimisticText, incomingText),
+    text: completed ? completedText || previous?.text || matchedUserText || optimisticText : reconcileCumulativeText(previous?.text ?? matchedUserText ?? optimisticText, incomingText),
     // 进行中事件以 started 的类型壳为基础合并权威进度字段；completed 仍是最终投影。
     payload: completed
       ? isUserMessageType(effectiveType)
@@ -919,6 +1207,15 @@ function reduceItemEvent(state: NativeSessionState, event: NativeConversationEve
     visibleFeedbackEpoch,
     conversationState: terminal ? state.conversationState : phase,
   };
+}
+
+function durableUserMessageText(state: NativeSessionState, clientUserMessageId: string): string | null {
+  const message = state.snapshot?.messages.find((candidate) => candidate.role === 'user' && stringValue(candidate.metadata.clientUserMessageId) === clientUserMessageId);
+  if (message) return message.content;
+  const submission = state.snapshot?.submissions.find((candidate) => candidate.clientUserMessageId === clientUserMessageId);
+  if (submission) return submission.composerDraft ?? submission.content;
+  const item = Object.values(state.items).find((candidate) => !candidate.optimistic && isUserMessageItem(candidate) && userMessageClientIds(candidate).includes(clientUserMessageId));
+  return item?.text ?? null;
 }
 
 function reconcileCumulativeText(current: string, incoming: string): string {
@@ -963,6 +1260,7 @@ function mergeStableUserMessagePresentation(previous: Record<string, unknown> | 
   if (!previous) return next;
   return {
     ...next,
+    ...(next.submissionId === undefined && previous.submissionId !== undefined ? { submissionId: previous.submissionId } : {}),
     ...(next.taskPushLayout === undefined && previous.taskPushLayout !== undefined ? { taskPushLayout: previous.taskPushLayout } : {}),
     ...(next.attachments === undefined && previous.attachments !== undefined ? { attachments: previous.attachments } : {}),
   };
@@ -1005,10 +1303,14 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
     itemOrder: existingOptimisticEntry || state.items[key] ? state.itemOrder : [...state.itemOrder, key],
     transcriptRevision: state.transcriptRevision + 1,
     conversationState: action.queuedUntilHydrated ? action.previousConversationState : keepActiveState ? action.previousConversationState : 'starting_turn',
-    draft: '',
-    attachments: [],
-    browserSubmission: null,
-    contextDraft: structuredClone(emptyConversationContextDraft),
+    ...(action.preserveComposer
+      ? {}
+      : {
+          draft: '',
+          attachments: [],
+          browserSubmission: null,
+          contextDraft: structuredClone(emptyConversationContextDraft),
+        }),
     error: null,
   };
 }
@@ -1019,13 +1321,18 @@ function projectQueueSubmissionMessages(state: NativeSessionState, queue: Native
   let transcriptChanged = false;
   const conversationId = state.conversationId;
   const threadId = state.providerThreadId ?? state.snapshot?.providerThreadId ?? 'unbound-thread';
+  // send-now 的本地交接先于 HTTP/事件确认完成。旧的 queued/dispatching 快照不能把
+  // 已经进入当前 turn 的 steer 消息重新画回队列，否则会出现“队列消失后又闪回”的断层。
+  const projectedQueue: NativeQueueSnapshot = {
+    ...queue,
+    submissions: queue.submissions.filter((submission) => !hasPendingSteeringProjection(state.items, submission)),
+  };
 
   if (conversationId) {
-    for (const submission of queue.submissions) {
+    for (const submission of projectedQueue.submissions) {
       const clientUserMessageId = submission.clientUserMessageId;
       if (!clientUserMessageId || !shouldProjectSubmissionMessage(submission)) continue;
-      const matchedEntry = Object.entries(items).find(([, item]) => isUserMessageItem(item) && userMessageClientIds(item).includes(clientUserMessageId));
-      if (matchedEntry && !matchedEntry[1].optimistic) continue;
+      const matchedEntry = Object.entries(items).find(([, item]) => isUserMessageItem(item) && (userMessageClientIds(item).includes(clientUserMessageId) || stringValue(item.payload.submissionId) === submission.id));
 
       const key = matchedEntry?.[0] ?? optimisticUserItemKey(state, clientUserMessageId);
       const previous = matchedEntry?.[1];
@@ -1035,6 +1342,15 @@ function projectQueueSubmissionMessages(state: NativeSessionState, queue: Native
       const next = previous
         ? {
             ...projected,
+            ...(!previous.optimistic
+              ? {
+                  itemId: previous.itemId,
+                  turnId: previous.turnId,
+                  ...(previous.localItemId ? { localItemId: previous.localItemId } : {}),
+                  ...(previous.providerItemId ? { providerItemId: previous.providerItemId } : {}),
+                }
+              : {}),
+            text: previous.text || projected.text,
             resources: previous.resources,
             payload: mergeSubmissionUserMessagePayload(previous.payload, submission),
             timelineAt: previous.timelineAt ?? projected.timelineAt,
@@ -1052,29 +1368,27 @@ function projectQueueSubmissionMessages(state: NativeSessionState, queue: Native
     ...state,
     items,
     itemOrder,
-    queue,
-    conversationState: conversationStateFromQueue(queue, state),
+    queue: projectedQueue,
+    conversationState: conversationStateFromQueue(projectedQueue, state),
     transcriptRevision: state.transcriptRevision + (transcriptChanged ? 1 : 0),
   };
 }
 
 function shouldProjectSubmissionMessage(submission: NativeQueuedSubmission): boolean {
-  if (shouldRecoverSubmissionToComposer(submission)) return false;
   if (submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active' || submission.status === 'failed' || submission.status === 'completed' || submission.status === 'resolved') return true;
-  // user_confirmation 尚未确认进入会话记录，继续回到输入框；其余暂停态保留原消息和可见原因。
-  return submission.status === 'paused' && submission.pausedReason !== 'user_confirmation';
+  return submission.status === 'paused';
 }
 
 function shouldDiscardSubmissionProjection(submission: NativeQueuedSubmission): boolean {
   return submission.status === 'cancelled' || submission.status === 'deleted';
 }
 
-function shouldRecoverSubmissionToComposer(submission: NativeQueuedSubmission): boolean {
-  return (submission.status === 'queued' || submission.status === 'paused') && submission.pausedReason === 'user_confirmation' && !submission.providerTurnId;
-}
-
 function projectSteeringSubmission(state: NativeSessionState, submission: NativeQueuedSubmission, authoritativeQueue?: NativeQueueSnapshot): NativeSessionState {
-  const queue = authoritativeQueue ?? (state.queue ? { ...state.queue, submissions: state.queue.submissions.filter((entry) => entry.id !== submission.id) } : null);
+  const queue = authoritativeQueue
+    ? { ...authoritativeQueue, submissions: authoritativeQueue.submissions.filter((entry) => entry.id !== submission.id) }
+    : state.queue
+      ? { ...state.queue, submissions: state.queue.submissions.filter((entry) => entry.id !== submission.id) }
+      : null;
   const clientUserMessageId = submission.clientUserMessageId;
   const turnId = submission.providerTurnId;
   const conversationId = state.conversationId;
@@ -1107,6 +1421,44 @@ function projectSteeringSubmission(state: NativeSessionState, submission: Native
     ...(queue ? { queue, conversationState: conversationStateFromQueue(queue, state) } : {}),
     transcriptRevision: state.transcriptRevision + 1,
   };
+}
+
+function markSteeringSubmissionUnconfirmed(state: NativeSessionState, submissionId: string, clientUserMessageId: string | undefined, error: NativeSessionError): NativeSessionState {
+  const matchedEntry = Object.entries(state.items).find(
+    ([, item]) => item.optimistic && isUserMessageItem(item) && ((clientUserMessageId ? userMessageClientIds(item).includes(clientUserMessageId) : false) || stringValue(item.payload.submissionId) === submissionId),
+  );
+  if (!matchedEntry) return { ...state, error };
+  const [key, previous] = matchedEntry;
+  return {
+    ...state,
+    items: {
+      ...state.items,
+      [key]: {
+        ...previous,
+        status: 'unconfirmed',
+        payload: {
+          ...previous.payload,
+          deliveryError: error,
+        },
+      },
+    },
+    transcriptRevision: state.transcriptRevision + 1,
+    error,
+  };
+}
+
+function hasPendingSteeringProjection(items: Record<string, NativeSessionItemBuffer>, submission: NativeQueuedSubmission): boolean {
+  if (submission.status !== 'queued' && submission.status !== 'dispatching') return false;
+  if (submission.providerTurnId) return false;
+  return Object.values(items).some(
+    (item) =>
+      item.optimistic &&
+      isUserMessageItem(item) &&
+      stringValue(item.payload.delivery) === 'steer_now' &&
+      item.status !== 'failed' &&
+      item.status !== 'unconfirmed' &&
+      ((submission.clientUserMessageId ? userMessageClientIds(item).includes(submission.clientUserMessageId) : false) || stringValue(item.payload.submissionId) === submission.id),
+  );
 }
 
 function removeQueuedSubmissionProjection(state: NativeSessionState, submissionId: string, requestedClientUserMessageId: string | undefined, queue: NativeQueueSnapshot): NativeSessionState {
@@ -1152,20 +1504,30 @@ function submissionUserMessageItem(conversationId: string, threadId: string, sub
 }
 
 function submissionUserMessagePayload(submission: NativeQueuedSubmission): Record<string, unknown> {
+  const deliveryError =
+    submission.error ??
+    (submission.pausedReason === 'user_confirmation'
+      ? {
+          code: 'ZEUS_NATIVE_SUBMISSION_NOT_DISPATCHED',
+          message: 'The submission was not dispatched to the provider.',
+          recoveryRequired: false,
+          retryable: true,
+        }
+      : null);
   return {
     delivery: submission.delivery ?? 'queue',
     submissionId: submission.id,
     attachments: submission.attachments ?? [],
     ...(submission.conversationContext ? { conversationContext: submission.conversationContext } : {}),
     ...(submission.pausedReason ? { pausedReason: submission.pausedReason } : {}),
-    ...(submission.error ? { error: submission.error, deliveryError: submission.error } : {}),
+    ...(deliveryError ? { error: deliveryError, deliveryError } : {}),
   };
 }
 
 function mergeSubmissionUserMessagePayload(previous: Record<string, unknown>, submission: NativeQueuedSubmission): Record<string, unknown> {
   const next = { ...previous, ...submissionUserMessagePayload(submission) };
   if (!submission.pausedReason) delete next.pausedReason;
-  if (!submission.error) {
+  if (!submission.error && submission.pausedReason !== 'user_confirmation') {
     delete next.error;
     delete next.deliveryError;
   }
@@ -1182,7 +1544,9 @@ function isUserMessageType(type: string): boolean {
 }
 
 function userMessageClientIds(item: NativeSessionItemBuffer): string[] {
-  return [item.clientUserMessageId, item.durableClientUserMessageId].filter((value, index, values): value is string => Boolean(value) && values.indexOf(value) === index);
+  return [item.clientUserMessageId, item.durableClientUserMessageId, stringValue(item.payload.clientId), stringValue(item.payload.clientUserMessageId)].filter(
+    (value, index, values): value is string => Boolean(value) && values.indexOf(value) === index,
+  );
 }
 
 function optimisticUserItemEntry(state: NativeSessionState, clientUserMessageId: string): [string, NativeSessionItemBuffer] | undefined {
@@ -1383,6 +1747,16 @@ function tokenUsageFrom(payload: Record<string, unknown>): NativeTokenUsageSnaps
     pricingSourceUrls: Array.isArray(payload.pricingSourceUrls) ? payload.pricingSourceUrls.filter((value): value is string => typeof value === 'string') : [],
     historyComplete: payload.historyComplete === true,
   };
+}
+
+function unifiedUsageFrom(value: unknown): NativeUnifiedUsageSnapshot | null {
+  if (!isRecord(value) || !isRecord(value.conversationTotal) || !isRecord(value.turnTotal)) return null;
+  return value as unknown as NativeUnifiedUsageSnapshot;
+}
+
+function sessionMetricsFrom(value: unknown): NativeSessionMetricsSnapshot | null {
+  if (!isRecord(value) || !isRecord(value.usage) || !isRecord(value.cost) || !isRecord(value.performance) || !isRecord(value.activity) || !isRecord(value.changeSummary)) return null;
+  return value as unknown as NativeSessionMetricsSnapshot;
 }
 
 function tokenBreakdownFrom(value: unknown): NativeTokenUsageSnapshot['total'] {

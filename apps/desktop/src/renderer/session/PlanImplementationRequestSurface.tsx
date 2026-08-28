@@ -28,8 +28,6 @@ export function PlanImplementationRequestSurface(props: {
 
   useApplicationErrorDialog(props.error, {
     language: zh ? 'zh-CN' : 'en',
-    title: zh ? '计划操作失败' : 'Plan action failed',
-    source: 'PlanImplementationRequestSurface',
   });
 
   useEffect(() => {

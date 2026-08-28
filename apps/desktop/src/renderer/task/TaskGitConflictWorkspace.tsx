@@ -3,10 +3,14 @@ import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/Arr
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
 import { MagicWandIcon as MagicWand } from '@phosphor-icons/react/dist/csr/MagicWand';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
-import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { TaskIntegrationConflictPermissionMode, TaskIntegrationRecord } from '../session/sessionTypes.js';
+import { SkillSelector } from '../features/skills/SkillSelector.js';
+import { readSkillWorkflowDefault } from '../features/skills/skillWorkflowPreferences.js';
+import type { NativeConversationAppClient } from '../features/workspace/workspaceSupport.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
+import { SyntaxHighlightedLine, useDeferredSyntaxHighlightedLines, useSyntaxHighlightedLines } from '../code/SyntaxHighlightedCode.js';
 import {
   applyConflictDocumentEdit,
   applyConflictSideAction,
@@ -31,9 +35,6 @@ interface CodeSnippet {
   conflictEndLine: number;
 }
 
-const slashCommentSyntaxPattern = buildSyntaxPattern('//.*$|/\\*.*?\\*/');
-const hashCommentSyntaxPattern = buildSyntaxPattern('#.*$');
-
 export { countConflictBlocks, resolveSimpleConflictDraft } from './taskConflictModel.js';
 
 export function TaskGitConflictWorkspace(props: {
@@ -46,7 +47,9 @@ export function TaskGitConflictWorkspace(props: {
   conflict: ConflictDocument | null;
   onSelectPath: (path: string) => void;
   onDocumentChange: (document: ConflictDocument) => void;
-  onAskAi: (content: string, fingerprint: string, permissionMode: TaskIntegrationConflictPermissionMode) => Promise<void>;
+  onAskAi: (content: string, fingerprint: string, permissionMode: TaskIntegrationConflictPermissionMode, skillId?: string) => Promise<void>;
+  skillClient: Pick<NativeConversationAppClient, 'loadSkills'> | null;
+  projectId: string;
 }) {
   const document = props.conflict;
   const blocks = document?.blocks ?? [];
@@ -57,6 +60,7 @@ export function TaskGitConflictWorkspace(props: {
   const [undoDraft, setUndoDraft] = useState<ConflictDocument | null>(null);
   const [aiPermissionOpen, setAiPermissionOpen] = useState(false);
   const [aiPermissionMode, setAiPermissionMode] = useState<TaskIntegrationConflictPermissionMode>('auto');
+  const [aiSkillId, setAiSkillId] = useState('');
   const currentFileResolved = document !== null && unresolvedCount === 0;
   const selectedBlock = blocks[Math.min(selectedBlockIndex, Math.max(0, blocks.length - 1))] ?? null;
   const activeBlock = currentFileResolved ? null : selectedBlock;
@@ -128,7 +132,7 @@ export function TaskGitConflictWorkspace(props: {
   async function askAi(): Promise<void> {
     if (!document) return;
     try {
-      await props.onAskAi(serializeConflictForAi(document), document.fingerprint, aiPermissionMode);
+      await props.onAskAi(serializeConflictForAi(document), document.fingerprint, aiPermissionMode, aiSkillId || undefined);
       setAiPermissionOpen(false);
     } catch {
       // 具体失败原因由代码交付弹窗统一展示，避免在两个状态区重复报错。
@@ -160,6 +164,7 @@ export function TaskGitConflictWorkspace(props: {
 
   function openAiPermissionDialog(): void {
     setAiPermissionMode('auto');
+    setAiSkillId(readSkillWorkflowDefault('conflict_resolution'));
     setAiPermissionOpen(true);
   }
 
@@ -299,6 +304,19 @@ export function TaskGitConflictWorkspace(props: {
                   </span>
                 </label>
               </fieldset>
+              <label className="task-git-conflict-ai-skill">
+                <span>{props.zh ? '本次使用的 Skill' : 'Skill for this run'}</span>
+                <SkillSelector
+                  client={props.skillClient}
+                  projectId={props.projectId}
+                  value={aiSkillId}
+                  onChange={setAiSkillId}
+                  language={props.zh ? 'zh-CN' : 'en-US'}
+                  disabled={props.aiBusy}
+                  ariaLabel={props.zh ? '选择冲突处理 Skill' : 'Choose conflict resolution skill'}
+                />
+                <small>{props.zh ? '默认值可在侧边栏的 Skill 管理中配置；这里只影响本次处理。' : 'Configure the default in Skill management. This choice applies only to this run.'}</small>
+              </label>
               <footer>
                 <Button variant="secondary" size="regular" onClick={() => setAiPermissionOpen(false)} disabled={props.aiBusy}>
                   {props.zh ? '取消' : 'Cancel'}
@@ -464,7 +482,7 @@ function FocusedSidePane(props: {
       </header>
       <small className="task-git-conflict-side-state">{sideStateLabel(props.state)}</small>
       <pre ref={props.paneRef} className="task-git-highlighted-code" onScroll={(event) => props.onScroll(event.currentTarget)}>
-        {renderCodeLines(props.snippet.text, props.path, lineKinds, props.snippet.startLine - 1)}
+        <ConflictCodeLines content={props.snippet.text} path={props.path} lineKinds={lineKinds} lineNumberOffset={props.snippet.startLine - 1} />
       </pre>
     </section>
   );
@@ -494,7 +512,7 @@ function FocusedResultEditor(props: {
       <strong>{props.title}</strong>
       <span className="task-git-conflict-edit-surface">
         <pre ref={highlightRef} className="task-git-highlighted-code" aria-hidden="true">
-          {renderCodeLines(props.snippet.text, props.path, lineKinds, props.snippet.startLine - 1)}
+          <DeferredConflictCodeLines content={props.snippet.text} path={props.path} lineKinds={lineKinds} lineNumberOffset={props.snippet.startLine - 1} />
         </pre>
         <textarea ref={props.textareaRef} value={props.snippet.text} onChange={(event) => props.onChange(event.target.value)} onScroll={syncScroll} disabled={props.disabled} spellCheck={false} aria-label={props.title} />
       </span>
@@ -537,8 +555,9 @@ function FullFileColumns(props: {
   if (!props.document) return <div className="task-git-conflict-columns is-full" />;
   return (
     <div className="task-git-conflict-columns is-full">
-      <FullFilePane textareaRef={sourceRef} title={props.targetTitle} content={props.document.source} readOnly onScroll={syncScroll} />
+      <FullFilePane path={props.path} textareaRef={sourceRef} title={props.targetTitle} content={props.document.source} readOnly onScroll={syncScroll} />
       <FullFilePane
+        path={props.path}
         textareaRef={resultRef}
         title={props.resultTitle}
         content={props.document.visibleContent}
@@ -548,12 +567,13 @@ function FullFileColumns(props: {
         blocks={props.document.blocks}
         onSideAction={props.onSideAction}
       />
-      <FullFilePane textareaRef={taskRef} title={props.taskTitle} content={props.document.task} readOnly onScroll={syncScroll} />
+      <FullFilePane path={props.path} textareaRef={taskRef} title={props.taskTitle} content={props.document.task} readOnly onScroll={syncScroll} />
     </div>
   );
 }
 
 function FullFilePane(props: {
+  path: string;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   title: string;
   content: string;
@@ -564,16 +584,25 @@ function FullFilePane(props: {
   onScroll: (source: HTMLTextAreaElement) => void;
 }) {
   const [scrollTop, setScrollTop] = useState(0);
+  const highlightRef = useRef<HTMLPreElement>(null);
+  const lineKinds = useMemo(() => fullFileLineKinds(props.content, props.blocks), [props.content, props.blocks]);
   return (
     <section className={`task-git-conflict-code-pane task-git-conflict-full-pane${props.blocks ? ' is-result' : ''}`}>
       <strong>{props.title}</strong>
       <span className="task-git-conflict-full-editor-surface">
+        <pre ref={highlightRef} className="task-git-highlighted-code" aria-hidden="true">
+          {props.blocks ? <DeferredConflictCodeLines content={props.content} path={props.path} lineKinds={lineKinds} /> : <ConflictCodeLines content={props.content} path={props.path} lineKinds={lineKinds} />}
+        </pre>
         <textarea
           ref={props.textareaRef}
           value={props.content}
           readOnly={props.readOnly}
           onChange={props.onChange ? (event) => props.onChange?.(event.target.value) : undefined}
           onScroll={(event) => {
+            if (highlightRef.current) {
+              highlightRef.current.scrollTop = event.currentTarget.scrollTop;
+              highlightRef.current.scrollLeft = event.currentTarget.scrollLeft;
+            }
             props.onScroll(event.currentTarget);
             if (props.blocks) setScrollTop(event.currentTarget.scrollTop);
           }}
@@ -645,48 +674,40 @@ function conflictLineKinds(snippet: CodeSnippet): Map<number, LineKind> {
   return kinds;
 }
 
-function renderCodeLines(content: string, path: string, lineKinds: Map<number, LineKind>, lineNumberOffset = 0): ReactNode[] {
-  const lines = normalizeLineEndings(content).split('\n');
+function ConflictCodeLines(props: { content: string; path: string; lineKinds: Map<number, LineKind>; lineNumberOffset?: number }) {
+  const lines = useSyntaxHighlightedLines(props.path, props.content);
   return lines.map((line, index) => (
-    <span key={index} className="task-git-code-line" data-kind={lineKinds.get(index)}>
-      <span className="task-git-code-line-number">{lineNumberOffset + index + 1}</span>
-      <code>{highlightSyntax(line, path)}</code>
+    <span key={index} className="task-git-code-line" data-kind={props.lineKinds.get(index)}>
+      <span className="task-git-code-line-number">{(props.lineNumberOffset ?? 0) + index + 1}</span>
+      <code>
+        <SyntaxHighlightedLine line={line} empty="" />
+      </code>
       {index < lines.length - 1 ? '\n' : null}
     </span>
   ));
 }
 
-function highlightSyntax(line: string, path: string): ReactNode[] {
-  const extension = path.split('.').pop()?.toLowerCase() ?? '';
-  const hashComment = ['py', 'rb', 'sh', 'bash', 'zsh', 'yaml', 'yml', 'toml'].includes(extension);
-  const pattern = hashComment ? hashCommentSyntaxPattern : slashCommentSyntaxPattern;
-  pattern.lastIndex = 0;
-  const nodes: ReactNode[] = [];
-  let cursor = 0;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(line))) {
-    if (match.index > cursor) nodes.push(line.slice(cursor, match.index));
-    const className = match[1] ? 'is-comment' : match[2] ? 'is-string' : match[3] ? 'is-number' : match[4] ? 'is-keyword' : match[5] ? 'is-function' : 'is-tag';
-    nodes.push(
-      <span key={`${match.index}:${match[0]}`} className={`task-git-syntax-token ${className}`}>
-        {match[0]}
-      </span>,
-    );
-    cursor = pattern.lastIndex;
+function DeferredConflictCodeLines(props: { content: string; path: string; lineKinds: Map<number, LineKind>; lineNumberOffset?: number }) {
+  const lines = useDeferredSyntaxHighlightedLines(props.path, props.content);
+  return lines.map((line, index) => (
+    <span key={index} className="task-git-code-line" data-kind={props.lineKinds.get(index)}>
+      <span className="task-git-code-line-number">{(props.lineNumberOffset ?? 0) + index + 1}</span>
+      <code>
+        <SyntaxHighlightedLine line={line} empty="" />
+      </code>
+      {index < lines.length - 1 ? '\n' : null}
+    </span>
+  ));
+}
+
+function fullFileLineKinds(content: string, blocks: ConflictBlock[] | undefined): Map<number, LineKind> {
+  const kinds = new Map<number, LineKind>();
+  for (const block of blocks ?? []) {
+    const startLine = countNewlines(content.slice(0, block.visibleStart));
+    const endLine = startLine + Math.max(1, countNewlines(content.slice(block.visibleStart, block.visibleEnd)) + 1);
+    for (let line = startLine; line < endLine; line += 1) kinds.set(line, 'conflict');
   }
-  if (cursor < line.length) nodes.push(line.slice(cursor));
-  return nodes;
-}
-
-function buildSyntaxPattern(comment: string): RegExp {
-  return new RegExp(
-    `(${comment}|<!--.*?-->)|("(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'|\`(?:\\\\.|[^\`\\\\])*\`)|(\\b(?:0x[\\da-f]+|\\d+(?:\\.\\d+)?)\\b)|(\\b(?:abstract|async|await|boolean|break|case|catch|class|const|def|default|delete|do|else|enum|export|extends|false|finally|for|from|function|if|implements|import|in|instanceof|interface|let|namespace|new|null|package|private|protected|public|return|static|string|super|switch|this|throw|true|try|type|typeof|undefined|var|void|while|with|yield)\\b)|(\\b[A-Za-z_$][\\w$]*(?=\\s*\\())|(<\\/?[A-Za-z][^>]*>)`,
-    'giu',
-  );
-}
-
-function normalizeLineEndings(content: string): string {
-  return content.replace(/\r\n/gu, '\n');
+  return kinds;
 }
 
 function countLines(content: string, offset: number): number {

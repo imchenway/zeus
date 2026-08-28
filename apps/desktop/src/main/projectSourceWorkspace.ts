@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, watch, type FSWatcher } from 'node:fs';
 import { access, lstat, mkdir, open, opendir, readFile, realpath, rename, stat, unlink } from 'node:fs/promises';
-import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { detectSourceLanguage } from '@zeus/shared';
 import type {
   CreateProjectSourceEntryInput,
   MoveProjectSourceEntryInput,
@@ -99,7 +100,7 @@ export class ProjectSourceWorkspaceService {
     return {
       relativePath: target.relativePath,
       name: basename(target.relativePath),
-      language: sourceLanguageForPath(target.relativePath),
+      language: detectSourceLanguage(target.relativePath) ?? 'text',
       content: rawContent.replace(/\r\n?|\n/gu, '\n'),
       encoding: 'utf-8',
       eol,
@@ -157,11 +158,18 @@ export class ProjectSourceWorkspaceService {
     assertSafeRelativePath(relativePath, false);
     const absolutePath = resolveLexicalPath(root, relativePath);
     await assertMissing(absolutePath);
-    if (input.kind === 'directory') await mkdir(absolutePath, { mode: 0o755 });
-    else {
+    if (input.kind === 'directory') {
+      await mkdir(absolutePath, { mode: 0o755 });
+      await syncDirectory(absolutePath);
+    } else {
       const handle = await open(absolutePath, 'wx', 0o644);
-      await handle.close();
+      try {
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
     }
+    await syncDirectory(parent.absolutePath);
     return describeEntry(root, relativePath);
   }
 
@@ -180,6 +188,8 @@ export class ProjectSourceWorkspaceService {
     const targetAbsolutePath = resolveLexicalPath(root, targetRelativePath);
     await assertMissing(targetAbsolutePath);
     await rename(source.absolutePath, targetAbsolutePath);
+    await syncDirectory(dirname(source.absolutePath));
+    if (dirname(source.absolutePath) !== dirname(targetAbsolutePath)) await syncDirectory(dirname(targetAbsolutePath));
     return describeEntry(root, targetRelativePath);
   }
 
@@ -220,6 +230,15 @@ export class ProjectSourceWorkspaceService {
     const root = await realpath(await this.#services.loadProjectRoot(projectId));
     if (!(await stat(root)).isDirectory()) throw workspaceError('ZEUS_PROJECT_SOURCE_ROOT_INVALID', '项目目录不可用。');
     return root;
+  }
+}
+
+async function syncDirectory(path: string): Promise<void> {
+  const handle = await open(path, 'r');
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
   }
 }
 
@@ -330,7 +349,7 @@ function readOnlyDocument(relativePath: string, revision: ProjectSourceRevision,
   return {
     relativePath,
     name: basename(relativePath),
-    language: sourceLanguageForPath(relativePath),
+    language: detectSourceLanguage(relativePath) ?? 'text',
     content: '',
     encoding: 'utf-8',
     eol: 'lf',
@@ -345,35 +364,6 @@ function detectEol(content: string): ProjectSourceDocument['eol'] {
   if (content.includes('\r\n')) return 'crlf';
   if (content.includes('\r')) return 'cr';
   return 'lf';
-}
-
-function sourceLanguageForPath(path: string): string {
-  const extension = extname(path).slice(1).toLocaleLowerCase();
-  const languages: Record<string, string> = {
-    c: 'c',
-    cc: 'cpp',
-    cpp: 'cpp',
-    css: 'css',
-    go: 'go',
-    h: 'c',
-    hpp: 'cpp',
-    html: 'html',
-    java: 'java',
-    js: 'javascript',
-    json: 'json',
-    jsx: 'javascript',
-    md: 'markdown',
-    py: 'python',
-    rs: 'rust',
-    sh: 'shell',
-    sql: 'sql',
-    ts: 'typescript',
-    tsx: 'typescript',
-    xml: 'xml',
-    yaml: 'yaml',
-    yml: 'yaml',
-  };
-  return languages[extension] ?? 'text';
 }
 
 function joinRelative(parent: string, name: string): string {

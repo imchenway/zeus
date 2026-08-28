@@ -16,10 +16,111 @@
   --zeus-scrollbar-thumb: oklch(58% 0.004 255 / 0.2);
   --zeus-scrollbar-thumb-hover: oklch(52% 0.005 255 / 0.34);
   --zeus-scrollbar-thumb-active: oklch(46% 0.006 255 / 0.46);
+  --zeus-syntax-comment: oklch(50% 0.035 150);
+  --zeus-syntax-keyword: oklch(45% 0.16 268);
+  --zeus-syntax-literal: oklch(48% 0.14 300);
+  --zeus-syntax-string: oklch(43% 0.12 145);
+  --zeus-syntax-string-special: oklch(45% 0.11 195);
+  --zeus-syntax-definition: oklch(43% 0.13 55);
+  --zeus-syntax-type: oklch(45% 0.13 220);
+  --zeus-syntax-property: oklch(45% 0.11 25);
+  --zeus-syntax-meta: oklch(46% 0.1 265);
+  --zeus-syntax-link: oklch(45% 0.14 250);
+  --zeus-syntax-invalid: oklch(48% 0.18 25);
   --zeus-source-list-root-row-radius: 10px;
   --zeus-source-list-row-radius: 8px;
   --zeus-source-list-row-motion: 140ms var(--zeus-motion-ease-out);
   user-select: none;
+}
+
+.macos-ai-app.zeus-shell.theme-dark,
+html[data-zeus-theme='dark'] body > .macos-ai-app {
+  --zeus-syntax-comment: oklch(72% 0.035 150);
+  --zeus-syntax-keyword: oklch(77% 0.12 268);
+  --zeus-syntax-literal: oklch(77% 0.11 300);
+  --zeus-syntax-string: oklch(77% 0.1 145);
+  --zeus-syntax-string-special: oklch(77% 0.09 195);
+  --zeus-syntax-definition: oklch(80% 0.09 65);
+  --zeus-syntax-type: oklch(78% 0.1 220);
+  --zeus-syntax-property: oklch(78% 0.1 28);
+  --zeus-syntax-meta: oklch(75% 0.09 265);
+  --zeus-syntax-link: oklch(76% 0.11 250);
+  --zeus-syntax-invalid: oklch(76% 0.14 25);
+}
+
+@media (prefers-color-scheme: dark) {
+  .macos-ai-app.zeus-shell.theme-system,
+  html[data-zeus-theme='system'] body > .macos-ai-app {
+    --zeus-syntax-comment: oklch(72% 0.035 150);
+    --zeus-syntax-keyword: oklch(77% 0.12 268);
+    --zeus-syntax-literal: oklch(77% 0.11 300);
+    --zeus-syntax-string: oklch(77% 0.1 145);
+    --zeus-syntax-string-special: oklch(77% 0.09 195);
+    --zeus-syntax-definition: oklch(80% 0.09 65);
+    --zeus-syntax-type: oklch(78% 0.1 220);
+    --zeus-syntax-property: oklch(78% 0.1 28);
+    --zeus-syntax-meta: oklch(75% 0.09 265);
+    --zeus-syntax-link: oklch(76% 0.11 250);
+    --zeus-syntax-invalid: oklch(76% 0.14 25);
+  }
+}
+
+.macos-ai-app :where(.tok-comment) {
+  color: var(--zeus-syntax-comment) !important;
+  font-style: italic;
+}
+
+.macos-ai-app :where(.tok-keyword) {
+  color: var(--zeus-syntax-keyword) !important;
+  font-weight: 600;
+}
+
+.macos-ai-app :where(.tok-atom, .tok-bool, .tok-literal, .tok-number) {
+  color: var(--zeus-syntax-literal) !important;
+}
+
+.macos-ai-app :where(.tok-string) {
+  color: var(--zeus-syntax-string) !important;
+}
+
+.macos-ai-app :where(.tok-string2, .tok-variableName2) {
+  color: var(--zeus-syntax-string-special) !important;
+}
+
+.macos-ai-app :where(.tok-definition, .tok-labelName, .tok-macroName) {
+  color: var(--zeus-syntax-definition) !important;
+  font-weight: 600;
+}
+
+.macos-ai-app :where(.tok-typeName, .tok-className, .tok-namespace) {
+  color: var(--zeus-syntax-type) !important;
+}
+
+.macos-ai-app :where(.tok-propertyName) {
+  color: var(--zeus-syntax-property) !important;
+}
+
+.macos-ai-app :where(.tok-meta) {
+  color: var(--zeus-syntax-meta) !important;
+}
+
+.macos-ai-app :where(.tok-link, .tok-url) {
+  color: var(--zeus-syntax-link) !important;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.macos-ai-app :where(.tok-heading, .tok-strong) {
+  font-weight: 650;
+}
+
+.macos-ai-app :where(.tok-emphasis) {
+  font-style: italic;
+}
+
+.macos-ai-app :where(.tok-invalid) {
+  color: var(--zeus-syntax-invalid) !important;
+  text-decoration: underline wavy currentColor;
 }
 
 /* Zeus 默认使用 App 式界面选择边界；只有真正需要复制的内容显式恢复选文。 */
@@ -746,91 +847,35 @@
   transform-origin: center center;
 }
 
-/* 全应用错误只在这一处呈现；主层给恢复提示，详情层承载已脱敏诊断事实。 */
+/* 全应用错误只显示一条已脱敏的原始错误；动作区仅保留必要的关闭或恢复操作。 */
 .application-error-dialog-portal-root.macos-ai-app {
   z-index: 12000;
 }
 
 .macos-ai-app .application-error-dialog {
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr);
-  gap: 16px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
   inline-size: min(520px, calc(100vw - 32px));
   max-block-size: min(680px, calc(100vh - 32px));
   overflow: hidden;
-  padding: 20px;
+  padding: 16px;
   border: 1px solid var(--zeus-solid-surface-edge, var(--zeus-product-border));
   border-radius: 14px;
   background: var(--zeus-solid-surface-bg, var(--zeus-product-panel));
   box-shadow: 0 24px 70px oklch(15% 0.01 255 / 0.22);
 }
 
-.macos-ai-app .application-error-dialog-icon {
-  display: grid;
-  place-items: center;
-  align-self: start;
-  inline-size: 40px;
-  block-size: 40px;
-  border-radius: 50%;
-  color: var(--zeus-control-danger-text);
-  background: var(--zeus-control-danger-bg);
-}
-
-.macos-ai-app .application-error-dialog-icon svg {
-  inline-size: 22px;
-  block-size: 22px;
-}
-
 .macos-ai-app .application-error-dialog-content {
-  display: grid;
-  min-inline-size: 0;
-  min-block-size: 0;
-  gap: 14px;
-  overflow: auto;
-}
-
-.macos-ai-app .application-error-dialog-content header {
-  display: grid;
-  gap: 6px;
-}
-
-.macos-ai-app .application-error-dialog-content header > strong {
-  color: var(--zeus-product-text);
-  font-size: 15px;
-  line-height: 22px;
-}
-
-.macos-ai-app .application-error-dialog-content header > p {
-  margin: 0;
-  color: var(--zeus-product-text-muted);
-  font-size: 13px;
-  line-height: 19px;
-}
-
-.macos-ai-app .application-error-dialog-details {
-  display: grid;
-  gap: 8px;
   min-inline-size: 0;
 }
 
-.macos-ai-app .application-error-dialog-details > strong {
-  color: var(--zeus-product-text);
-  font-size: 12px;
-  line-height: 16px;
-}
-
-.macos-ai-app .application-error-dialog-details > pre {
-  max-block-size: 260px;
-  margin: 0;
-  overflow: auto;
-  padding: 10px 12px;
-  border: 1px solid var(--zeus-product-border-soft, var(--zeus-product-border));
-  border-radius: 8px;
-  color: var(--zeus-product-text-muted);
-  background: var(--zeus-product-panel-muted);
-  font: 400 12px/18px var(--zeus-font-mono, 'SFMono-Regular', Consolas, monospace);
+.macos-ai-app .application-error-dialog-content > code {
+  display: block;
+  color: var(--zeus-control-danger-text, var(--zeus-product-text));
+  font: 500 12px/19px var(--zeus-font-mono, 'SFMono-Regular', Consolas, monospace);
   overflow-wrap: anywhere;
-  white-space: pre-wrap;
+  white-space: normal;
 }
 
 .macos-ai-app .application-error-dialog > footer {
@@ -852,14 +897,7 @@
   }
 
   .macos-ai-app .application-error-dialog {
-    grid-template-columns: 32px minmax(0, 1fr);
-    gap: 12px;
     padding: 16px;
-  }
-
-  .macos-ai-app .application-error-dialog-icon {
-    inline-size: 32px;
-    block-size: 32px;
   }
 
   .macos-ai-app .application-error-dialog > footer {

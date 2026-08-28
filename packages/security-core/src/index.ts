@@ -15,6 +15,11 @@ export interface SecretPresenceLabel {
   label: '已安全保存' | '未配置';
 }
 
+export interface MacOSKeychainStoreOptions {
+  /** 生产默认保持 `Zeus`；独立测试身份必须传入自己的 service。 */
+  service?: string;
+}
+
 /** Zeus 本地服务默认只允许本机监听地址。 */
 export function isLocalOnlyHost(host: string): boolean {
   return localHosts.has(host);
@@ -31,8 +36,8 @@ export function redactSensitiveText(input: string): string {
 }
 
 /** 创建 macOS Keychain 适配器；始终调用系统 security 命令。 */
-export function createMacOSKeychainStore(): SecretStore {
-  const service = 'Zeus';
+export function createMacOSKeychainStore(options: MacOSKeychainStoreOptions = {}): SecretStore {
+  const service = validateKeychainService(options.service ?? 'Zeus');
   return {
     async setSecret(account: string, value: string): Promise<void> {
       validateSecretAccount(account);
@@ -74,6 +79,18 @@ function validateSecretAccount(account: string): void {
   if (!/^[a-z0-9_.:-]+$/iu.test(account)) {
     throw new Error('Invalid Zeus Keychain account name');
   }
+}
+
+function validateKeychainService(service: string): string {
+  if (service.trim() !== service || service.length < 1 || service.length > 160 || Array.from(service).some(isControlCharacter)) {
+    throw new Error('Invalid Zeus Keychain service name');
+  }
+  return service;
+}
+
+function isControlCharacter(character: string): boolean {
+  const codePoint = character.codePointAt(0) ?? 0;
+  return codePoint <= 31 || codePoint === 127;
 }
 
 function isSecurityItemNotFound(error: unknown): boolean {

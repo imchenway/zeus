@@ -132,11 +132,9 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const [goalInputOpen, setGoalInputOpen] = useState(false);
   const [goalDraft, setGoalDraft] = useState('');
   const [goalSubmitting, setGoalSubmitting] = useState(false);
-  const [inputResourceError, setInputResourceError] = useState<string | null>(null);
+  const [inputResourceError, setInputResourceError] = useState<unknown>(null);
   useApplicationErrorDialog(inputResourceError, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-    title: props.language === 'zh-CN' ? '会话附件处理失败' : 'Conversation attachment failed',
-    source: 'ConversationComposer',
   });
   const [selectedModel, setSelectedModel] = useState(initialModel);
   const [selectedEffort, setSelectedEffort] = useState(initialEffort);
@@ -150,10 +148,11 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const goalDraftValid = goalCount > 0 && goalCount <= 4_000;
   const goalOperationBusy = goalSubmitting || props.goalBusy === true;
   const showSendCommand = goalInputActive || !active || hasDraft;
-  const modelPresentation = useMemo(() => presentModelOptions(props.capabilities?.models ?? [], selectedModel, props.language), [props.capabilities?.models, props.language, selectedModel]);
+  const modelPresentation = useMemo(() => presentModelOptions(props.capabilities?.models ?? [], selectedModel, props.language, { preserveMissingSelection: true }), [props.capabilities?.models, props.language, selectedModel]);
   const effectiveModel = modelPresentation.selectedId || selectedModel;
   const selectedCapability = resolveModelCapability(modelPresentation.models, effectiveModel);
   const settingsWritable = props.readOnly !== true && Boolean(selectedCapability);
+  const modelSelectionWritable = props.readOnly !== true && modelPresentation.options.length > 0;
   const modelOptions = modelPresentation.options;
   const selectedModelLabel = modelPresentation.triggerLabel || copy.unsynced;
   const effortOptions = selectedCapability?.supportedReasoningEfforts.map((effort) => ({ value: effort, label: effort })) ?? [];
@@ -223,6 +222,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
   }, [textareaRef]);
 
   function submit(nextDelivery: 'queue' | 'steer_now'): void {
+    if (nextDelivery === 'queue' && !selectedCapability) return;
     const settings =
       nextDelivery === 'queue' && effectiveModel
         ? {
@@ -424,7 +424,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
                 onClick={() => {
                   setInputResourceError(null);
                   void Promise.resolve(props.onChooseAttachments?.()).catch((error: unknown) => {
-                    setInputResourceError(error instanceof Error ? error.message : String(error));
+                    setInputResourceError(error);
                   });
                 }}
                 disabled={!writable || busy || inputResources.processing}
@@ -483,7 +483,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
           </span>
           <span className="session-composer-trailing-actions">
             <span className="session-composer-runtime-settings">
-              <ContextUsageIndicator usage={props.state.tokenUsage} language={props.language} />
+              <ContextUsageIndicator unifiedUsage={props.state.unifiedUsage} language={props.language} />
               <ServiceTierToggle
                 language={props.language}
                 model={selectedCapability}
@@ -502,7 +502,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
                 className="session-composer-model-dropdown"
                 value={effectiveModel}
                 options={modelOptions}
-                disabled={!settingsWritable}
+                disabled={!modelSelectionWritable}
                 searchable
                 searchPlaceholder={copy.searchModel}
                 emptyLabel={copy.noModel}
@@ -537,7 +537,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
                   className="session-send-button"
                   aria-label={goalInputActive ? copy.createGoal : copy.send}
                   onClick={() => (goalInputActive ? void setGoalObjective(goalDraft) : submit('queue'))}
-                  disabled={!writable || busy || goalOperationBusy || (goalInputActive ? !goalDraftValid : !hasDraft)}
+                  disabled={!writable || !settingsWritable || busy || goalOperationBusy || (goalInputActive ? !goalDraftValid : !hasDraft)}
                   aria-busy={busy || goalOperationBusy || undefined}
                 >
                   {busy || goalOperationBusy ? <span className="session-command-spinner" aria-hidden="true" /> : <ArrowUp aria-hidden="true" weight="bold" />}
@@ -546,11 +546,12 @@ export function ConversationComposer(props: ConversationComposerProps) {
                 <button
                   type="button"
                   className="session-stop-button"
-                  aria-label={copy.stop}
+                  aria-label={busy ? (props.language === 'zh-CN' ? '正在暂停' : 'Pausing') : copy.stop}
+                  aria-busy={busy || undefined}
                   onClick={() => props.state.activeTurnId && void props.onInterrupt(props.state.activeTurnId)}
                   disabled={!writable || !props.state.activeTurnId || props.state.startedTurnId !== props.state.activeTurnId || busy}
                 >
-                  <Square aria-hidden="true" weight="fill" />
+                  {busy ? <span className="session-command-spinner" aria-hidden="true" /> : <Square aria-hidden="true" weight="fill" />}
                 </button>
               )}
             </span>
@@ -639,9 +640,8 @@ export function canSteerActiveTurn(state: NativeSessionState): boolean {
 function resolveComposerModel(capabilities: CodexConversationCapabilities | null | undefined, providerModel: string | undefined): string {
   const normalized = providerModel?.trim();
   const availableModels = capabilities?.models.filter((model) => model.available !== false);
-  const capability = resolveModelCapability(availableModels, normalized);
-  if (capability) return capability.id;
-  return resolveModelCapability(availableModels, capabilities?.preferredModel)?.id ?? availableModels?.[0]?.id ?? normalized ?? '';
+  if (normalized) return resolveModelCapability(availableModels, normalized)?.id ?? normalized;
+  return resolveModelCapability(availableModels, capabilities?.preferredModel)?.id ?? availableModels?.[0]?.id ?? '';
 }
 
 function resolveComposerEffort(capabilities: CodexConversationCapabilities | null | undefined, model: string, providerEffort: string | undefined): string {

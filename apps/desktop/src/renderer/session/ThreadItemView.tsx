@@ -10,7 +10,7 @@ import type { ConversationContextDraft, ConversationFileLocation, ConversationOp
 import type { ConversationResponseAnnotation, ConversationResponseTextAnchor } from '@zeus/shared';
 import { ConversationGeneratedImage, ConversationInlineResource, ConversationMarkdownImage, ConversationPendingAttachmentImages, ConversationResourceCards, isImageResource, isPendingImageAttachment } from './ConversationResources.js';
 import { ResponseSelectionActions } from './ResponseSelectionActions.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 
 export type SessionUiLanguage = 'zh-CN' | 'en-US';
 export type ThreadItemRole = 'user' | 'assistant' | 'commentary' | 'notice' | 'tool' | 'file' | 'image' | 'request' | 'error' | 'unknown';
@@ -18,12 +18,12 @@ export const MAX_MARKDOWN_CHARACTERS = 200_000;
 export const MAX_MARKDOWN_BLOCK_CHARACTERS = 50_000;
 export const MAX_MARKDOWN_BLOCKS = 512;
 export const MAX_MARKDOWN_NODES = 4_096;
-const STREAM_IDLE_FLUSH_MS = 48;
-const STREAM_MAX_FLUSH_MS = 80;
+const STREAM_IDLE_FLUSH_MS = 32;
+const STREAM_MAX_FLUSH_MS = 64;
 const STREAM_MIN_BATCH_CHARACTERS = 4;
 const STREAM_IMMEDIATE_CHUNK_CHARACTERS = 24;
 const STREAM_CATCH_UP_CHARACTERS = 64;
-const STREAM_STRUCTURED_IDLE_FLUSH_MS = 700;
+const STREAM_STRUCTURED_IDLE_FLUSH_MS = 180;
 
 const copy = {
   'zh-CN': {
@@ -47,7 +47,6 @@ const copy = {
     editInput: '在原消息中编辑',
     cancelEdit: '取消',
     sendEdit: '发送编辑内容',
-    editFailed: '发送失败，编辑内容已保留。',
     good: '好的回答',
     bad: '不好的回答',
     expandMessage: '展开消息',
@@ -63,8 +62,6 @@ const copy = {
     deliveryPaused: '发送已暂停',
     waitingConnection: '等待连接恢复',
     providerArchived: '等待恢复原会话',
-    sendFailed: '发送失败',
-    sendUnconfirmed: '发送结果待确认',
     steering: '引导中',
     steerUnconfirmed: '引导结果待确认',
     remoteDevice: '由远程设备发送',
@@ -90,7 +87,6 @@ const copy = {
     editInput: 'Edit in the original message',
     cancelEdit: 'Cancel',
     sendEdit: 'Send edited message',
-    editFailed: 'Send failed. Your edited message is preserved.',
     good: 'Good response',
     bad: 'Bad response',
     expandMessage: 'Expand message',
@@ -106,8 +102,6 @@ const copy = {
     deliveryPaused: 'Sending paused',
     waitingConnection: 'Waiting for connection',
     providerArchived: 'Waiting for conversation restore',
-    sendFailed: 'Send failed',
-    sendUnconfirmed: 'Send outcome unconfirmed',
     steering: 'Steering',
     steerUnconfirmed: 'Steer outcome unconfirmed',
     remoteDevice: 'Sent from a remote device',
@@ -123,9 +117,9 @@ export interface ThreadItemViewProps {
   showAssistantActions?: boolean;
   isLatestUser?: boolean;
   onEdit?: (item: NativeSessionItemBuffer, content: string) => void | Promise<void>;
-  onRetry?: (item: NativeSessionItemBuffer) => void;
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
+  onLoadResources?: (turnId: string) => void | Promise<void>;
   onVisibleContentChange?: () => void;
   responseAnnotations?: ConversationResponseAnnotation[];
   onAddResponseAnnotation?: (anchor: ConversationResponseTextAnchor) => string;
@@ -169,14 +163,19 @@ function TaskPushMessageContent(
             <strong>{block.contextKind === 'current' ? block.taskTitle : `${block.contextKind === 'parent' ? '父任务' : '关联任务'}：${block.taskCode ?? block.taskId} · ${block.taskTitle}`}</strong>
           </header>
           {block.fields.map((field) => {
-            const resources = field.attachmentKeys.flatMap((key) => {
+            const markdownResources = field.attachmentKeys.flatMap((key) => {
               const resource = resourcesByKey.get(key);
               return resource ? [resource] : [];
             });
+            // 乐观消息尚未落库时使用本地图片；一旦权威资源到达就立即接管。历史
+            // payload 会永久保留原始 localPath，但该路径在 Test 数据根、迁移或清理
+            // 后不再受信，不能反过来遮住已经可用的耐久资源。
+            const authoritativeImageKeys = new Set(field.attachmentKeys.filter((key) => resourcesByKey.has(key)));
+            const resources = markdownResources;
             const attachmentNames = new Map(block.attachments.map((attachment) => [attachment.key, attachment.name]));
             const pendingImages = field.attachmentKeys.flatMap((key) => {
               const attachment = pendingImagesByKey.get(key);
-              return attachment ? [attachment] : [];
+              return attachment && !authoritativeImageKeys.has(key) ? [attachment] : [];
             });
             const missingAttachmentKeys = field.attachmentKeys.filter((key) => !resourcesByKey.has(key) && !pendingImagesByKey.has(key));
             return (
@@ -189,7 +188,7 @@ function TaskPushMessageContent(
                     附件 · {attachmentNames.get(key) ?? key}
                   </span>
                 ))}
-                {field.text ? <SafeMarkdown text={field.text} language={props.language} resources={resources} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} /> : null}
+                {field.text ? <SafeMarkdown text={field.text} language={props.language} resources={markdownResources} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} /> : null}
               </section>
             );
           })}
@@ -217,6 +216,7 @@ function TaskPushMessageContent(
           />
           <ConversationPendingAttachmentImages
             attachments={supplementalAttachments.flatMap((attachment) => {
+              if (resourcesByKey.has(attachment.key)) return [];
               const pending = pendingImagesByKey.get(attachment.key);
               return pending ? [pending] : [];
             })}
@@ -249,19 +249,16 @@ function TaskPushMessageContent(
 function optimisticDeliveryStatus(item: NativeSessionItemBuffer, labels: (typeof copy)[SessionUiLanguage]): string | null {
   const delivery = primitiveText(item.payload.delivery);
   const pausedReason = primitiveText(item.payload.pausedReason);
-  if (item.status === 'failed') return labels.sendFailed;
+  if (item.status === 'failed' || item.status === 'unconfirmed' || pausedReason === 'recovery_required' || pausedReason === 'conflict_preparation_failed' || pausedReason === 'user_confirmation') return null;
   if (delivery === 'steer_now') {
-    const unconfirmed = item.status === 'paused' || item.status === 'unconfirmed' || primitiveText(item.payload.pausedReason) === 'recovery_required';
-    return unconfirmed ? labels.steerUnconfirmed : labels.steering;
+    return item.status === 'paused' ? null : labels.steering;
   }
   if (item.status === 'paused') {
     if (pausedReason === 'conflict_preparing') return labels.conflictPreparing;
-    if (pausedReason === 'conflict_preparation_failed') return labels.conflictPreparationFailed;
     if (pausedReason === 'transport_unavailable') return labels.waitingConnection;
     if (pausedReason === 'provider_archived') return labels.providerArchived;
-    if (pausedReason !== 'recovery_required') return labels.deliveryPaused;
+    return labels.deliveryPaused;
   }
-  if (item.status === 'unconfirmed' || pausedReason === 'recovery_required') return labels.sendUnconfirmed;
   return item.status === 'queued' ? labels.queued : null;
 }
 
@@ -272,11 +269,9 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const [feedback, setFeedback] = useState<'good' | 'bad' | null>(null);
   const [editing, setEditing] = useState(false);
   const [editDraft, setEditDraft] = useState('');
-  const [editError, setEditError] = useState<string | null>(null);
+  const [editError, setEditError] = useState<unknown>(null);
   useApplicationErrorDialog(editError, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-    title: props.language === 'zh-CN' ? '消息重新发送失败' : 'Message failed to resend',
-    source: 'ThreadItemView.submitEditedMessage',
   });
   const [submittingEdit, setSubmittingEdit] = useState(false);
   const editTextareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -287,6 +282,16 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const conversationContext = role === 'user' ? conversationContextDraft(props.item.payload.conversationContext) : null;
   const hasAuthoritativeAttachmentResources = props.item.resources.some((resource) => resource.kind === 'attachment' && resource.presentation === 'card');
   const pendingImageAttachments = !taskPushLayout && !hasAuthoritativeAttachmentResources ? pendingAttachments.filter(isPendingImageAttachment) : [];
+  const needsAuthoritativeAttachmentResources =
+    role === 'user' &&
+    !props.item.optimistic &&
+    pendingAttachments.some(
+      (attachment) =>
+        isPendingImageAttachment(attachment) &&
+        !props.item.resources.some(
+          (resource) => resource.kind === 'attachment' && isImageResource(resource) && ((attachment.taskPushAttachmentKey && resource.taskPushAttachmentKey === attachment.taskPushAttachmentKey) || resource.displayName === attachment.name),
+        ),
+    );
   const showUserMessageAttachmentGroup = role === 'user' && !taskPushLayout;
   const taskPushAttachmentKeys = new Set([...(taskPushLayout?.blocks.flatMap((block) => block.attachments.map((attachment) => attachment.key)) ?? []), ...(taskPushLayout?.supplementalAttachments ?? []).map((attachment) => attachment.key)]);
   const itemResources = taskPushLayout
@@ -308,7 +313,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const label = roleLabel(role, labels);
   const command = normalizeType(props.item.type) === 'commandexecution' || normalizeType(props.item.type) === 'command';
   const accessibleLabel = command ? (props.language === 'zh-CN' ? '命令执行' : 'Command execution') : label;
-  const showVisibleRoleLabel = role !== 'user' && role !== 'assistant' && role !== 'commentary';
+  const showVisibleRoleLabel = role !== 'user' && role !== 'assistant' && role !== 'commentary' && role !== 'error';
   // 任务首发消息已经是工作面的稳定内容，内部创建进度只在底部统一呈现。
   const optimisticStatus = props.item.optimistic && !taskPushLayout ? optimisticDeliveryStatus(props.item, labels) : null;
   const showMeta = !command && (showVisibleRoleLabel || Boolean(optimisticStatus));
@@ -326,6 +331,11 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
     textarea.focus();
     textarea.setSelectionRange(textarea.value.length, textarea.value.length);
   }, [editing]);
+
+  useEffect(() => {
+    if (!needsAuthoritativeAttachmentResources || !props.onLoadResources) return;
+    void Promise.resolve(props.onLoadResources(props.item.turnId)).catch(() => undefined);
+  }, [needsAuthoritativeAttachmentResources, props.item.turnId, props.onLoadResources]);
 
   useLayoutEffect(() => {
     if (!editing || !editTextareaRef.current) return;
@@ -346,8 +356,8 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
     try {
       await props.onEdit(props.item, editDraft);
       setEditing(false);
-    } catch {
-      setEditError(labels.editFailed);
+    } catch (error) {
+      setEditError(error);
     } finally {
       setSubmittingEdit(false);
     }
@@ -425,6 +435,8 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
             </button>
           </footer>
         </form>
+      ) : role === 'error' ? (
+        <VisibleApplicationError error={visibleThreadItemError(props.item)} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
       ) : role === 'image' ? (
         <GeneratedImageItem item={props.item} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} onVisibleContentChange={props.onVisibleContentChange} />
       ) : command ? (
@@ -446,7 +458,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
         <TaskPushMessageContent
           layout={taskPushLayout}
           resources={props.item.resources}
-          pendingAttachments={hasAuthoritativeAttachmentResources ? [] : pendingAttachments}
+          pendingAttachments={pendingAttachments}
           language={props.language}
           onOpenResource={props.onOpenResource}
           onLoadResourcePreview={props.onLoadResourcePreview}
@@ -473,13 +485,13 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
         <span className="session-thinking-indicator">{labels.thinking}</span>
       ) : null}
       {!command ? <TypedItemFacts item={props.item} role={role} language={props.language} /> : null}
-      {conversationContext ? <UserConversationContextSummary draft={conversationContext} language={props.language} /> : null}
-      {!showUserMessageAttachmentGroup && !taskPushLayout ? <ItemAttachments item={props.item} label={labels.attachments} hideImages={pendingImageAttachments.length > 0} /> : null}
-      {!showUserMessageAttachmentGroup ? <ConversationPendingAttachmentImages attachments={pendingImageAttachments} language={props.language} onVisibleContentChange={props.onVisibleContentChange} /> : null}
-      {!showUserMessageAttachmentGroup && role !== 'image' ? (
+      {role !== 'error' && conversationContext ? <UserConversationContextSummary draft={conversationContext} language={props.language} /> : null}
+      {role !== 'error' && !showUserMessageAttachmentGroup && !taskPushLayout ? <ItemAttachments item={props.item} label={labels.attachments} hideImages={pendingImageAttachments.length > 0} /> : null}
+      {role !== 'error' && !showUserMessageAttachmentGroup ? <ConversationPendingAttachmentImages attachments={pendingImageAttachments} language={props.language} onVisibleContentChange={props.onVisibleContentChange} /> : null}
+      {role !== 'error' && !showUserMessageAttachmentGroup && role !== 'image' ? (
         <ConversationResourceCards resources={unplacedResources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
       ) : null}
-      {!showUserMessageAttachmentGroup && !taskPushLayout ? <ItemImages item={props.item} label={labels.conversationImage} /> : null}
+      {role !== 'error' && !showUserMessageAttachmentGroup && !taskPushLayout ? <ItemImages item={props.item} label={labels.conversationImage} /> : null}
       {remoteDeviceInput ? (
         <span className="session-message-remote-origin" aria-label={labels.remoteDevice} title={labels.remoteDevice}>
           <MessageRemoteDeviceIcon />
@@ -892,6 +904,14 @@ export function itemRole(item: NativeSessionItemBuffer): ThreadItemRole {
   return 'unknown';
 }
 
+function visibleThreadItemError(item: NativeSessionItemBuffer): unknown {
+  const nested = [item.payload.deliveryError, item.payload.error].find((value) => typeof value === 'string' || isRecord(value));
+  if (nested) return nested;
+  const code = primitiveText(item.payload.code ?? item.payload.errorCode);
+  const message = item.text.trim() || primitiveText(item.payload.message) || 'Unknown error.';
+  return code ? { code, message } : message;
+}
+
 export function transcriptItemText(item: NativeSessionItemBuffer): string {
   if (typeof item.payload.displayText === 'string' && item.payload.displayText.trim()) return item.payload.displayText;
   if (normalizeType(item.type) === 'reasoning') {
@@ -1064,7 +1084,7 @@ function roleLabel(role: ThreadItemRole, labels: (typeof copy)[SessionUiLanguage
 }
 
 function TypedItemFacts(props: { item: NativeSessionItemBuffer; role: ThreadItemRole; language: SessionUiLanguage }) {
-  if (props.role === 'user' || props.role === 'assistant' || props.role === 'commentary' || props.role === 'notice' || props.role === 'image') return null;
+  if (props.role === 'user' || props.role === 'assistant' || props.role === 'commentary' || props.role === 'notice' || props.role === 'image' || props.role === 'error') return null;
   const facts = itemFacts(props.item, props.role);
   if (facts.length === 0 && props.role !== 'unknown') return null;
   return (
@@ -1080,7 +1100,7 @@ function TypedItemFacts(props: { item: NativeSessionItemBuffer; role: ThreadItem
           ))}
         </dl>
       ) : null}
-      {props.role === 'unknown' || props.role === 'error' ? <pre>{safePayloadJson(props.item.payload)}</pre> : null}
+      {props.role === 'unknown' ? <pre>{safePayloadJson(props.item.payload)}</pre> : null}
     </details>
   );
 }
@@ -1242,7 +1262,14 @@ function formatMessageTimestamp(item: NativeSessionItemBuffer, language: Session
   if (!source) return null;
   const date = new Date(source);
   if (Number.isNaN(date.getTime())) return null;
-  return new Intl.DateTimeFormat(language, { hour: '2-digit', minute: '2-digit', hour12: false }).format(date);
+  const now = new Date();
+  const isToday = date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate();
+  return new Intl.DateTimeFormat(language, {
+    ...(isToday ? {} : { year: 'numeric', month: '2-digit', day: '2-digit' }),
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date);
 }
 
 function commandText(value: unknown): string | null {

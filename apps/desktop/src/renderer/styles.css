@@ -6,6 +6,248 @@
   text-rendering: optimizeLegibility;
 }
 
+/* 任务阶段工作流：以一条连续轨道呈现阶段、尝试和版本化交付物。 */
+.task-workflow-section {
+  container-type: inline-size;
+}
+
+.task-workflow-empty > p {
+  margin: 0;
+  color: var(--zeus-product-muted);
+  line-height: 1.6;
+}
+
+.task-workflow-heading > span,
+.task-workflow-stage > .task-workflow-stage-body,
+.task-workflow-stage header > span:first-child,
+.task-workflow-deliverable-list button > span {
+  min-width: 0;
+}
+
+.task-workflow-stage-list,
+.task-workflow-deliverable-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.task-workflow-stage-list {
+  display: grid;
+  gap: 0;
+}
+
+.task-workflow-stage {
+  position: relative;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 10px;
+  padding: 0 0 18px;
+}
+
+.task-workflow-stage:not(:last-child)::before {
+  position: absolute;
+  top: 28px;
+  bottom: 0;
+  left: 15px;
+  width: 1px;
+  content: '';
+  background: var(--zeus-product-line-soft);
+}
+
+.task-workflow-stage-marker {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 50%;
+  color: var(--zeus-product-muted);
+  background: var(--zeus-product-panel);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.task-workflow-stage-ready .task-workflow-stage-marker,
+.task-workflow-stage-running .task-workflow-stage-marker,
+.task-workflow-stage-awaiting_acceptance .task-workflow-stage-marker,
+.task-workflow-stage-changes_requested .task-workflow-stage-marker {
+  border-color: var(--zeus-accent-blue);
+  color: var(--zeus-accent-blue);
+}
+
+.task-workflow-stage-accepted .task-workflow-stage-marker,
+.task-workflow-stage-skipped .task-workflow-stage-marker {
+  border-color: var(--zeus-status-success-text);
+  color: var(--zeus-status-success-text);
+}
+
+.task-workflow-stage-body {
+  display: grid;
+  gap: 10px;
+  padding-top: 3px;
+}
+
+.task-workflow-stage-body > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.task-workflow-stage-body > header > span:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.task-workflow-stage-body > header small,
+.task-workflow-deliverable-list small {
+  color: var(--zeus-product-muted);
+  overflow-wrap: anywhere;
+}
+
+.task-workflow-stage-status {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border-radius: 999px;
+  color: var(--zeus-product-muted);
+  background: var(--zeus-product-panel-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.task-workflow-stage-meta,
+.task-workflow-stage-actions,
+.task-workflow-stage-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.task-workflow-stage-meta > span {
+  padding: 3px 7px;
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 6px;
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.task-workflow-stage-editor {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 10px;
+  background: var(--zeus-product-panel-muted);
+}
+
+.task-workflow-stage-editor label,
+.task-workflow-manual-deliverable {
+  display: grid;
+  gap: 6px;
+}
+
+.task-workflow-stage-editor .task-workflow-stage-prompt,
+.task-workflow-stage-editor-actions {
+  grid-column: 1 / -1;
+}
+
+.task-workflow-stage-editor textarea,
+.task-workflow-manual-deliverable textarea {
+  width: 100%;
+  min-width: 0;
+  resize: vertical;
+}
+
+.task-workflow-manual-deliverable {
+  padding: 10px;
+  border-left: 2px solid var(--zeus-accent-blue);
+}
+
+.task-workflow-manual-deliverable .button {
+  justify-self: start;
+}
+
+.task-workflow-deliverable-list {
+  display: grid;
+  gap: 6px;
+}
+
+.task-workflow-deliverable-list button {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 10px;
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 8px;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.task-workflow-deliverable-list button:hover {
+  border-color: var(--zeus-product-line);
+  background: var(--zeus-product-panel-muted);
+}
+
+.task-workflow-deliverable-list button > span {
+  display: grid;
+  gap: 3px;
+}
+
+.task-workflow-deliverable-preview {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--zeus-product-line-soft);
+}
+
+.task-workflow-deliverable-preview pre {
+  max-height: 420px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border-radius: 8px;
+  background: var(--zeus-product-panel-muted);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.task-model-push-stage-lock {
+  display: block;
+  margin-top: -4px;
+  color: var(--zeus-product-muted);
+  line-height: 1.5;
+}
+
+@container (max-width: 520px) {
+  .task-workflow-stage-editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .task-workflow-stage-editor .task-workflow-stage-prompt,
+  .task-workflow-stage-editor-actions {
+    grid-column: 1;
+  }
+
+  .task-workflow-stage-body > header,
+  .task-workflow-deliverable-list button {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
 body {
   inline-size: 100%;
   margin: 0;
@@ -937,6 +1179,564 @@ a {
   }
 }
 
+/* ZEUS-0351：Skill 是 Codex 原生目录的管理与选择面，不复制成 Zeus 私有执行协议。 */
+.macos-ai-app.zeus-shell .project-first-sidebar .codex-source-list-quick-actions .project-quick-action.is-active {
+  background: var(--zeus-native-row-hover);
+  border-color: var(--zeus-product-line-soft);
+  color: var(--zeus-product-accent);
+}
+
+.macos-ai-app .codex-skill-selector {
+  display: grid;
+  gap: 4px;
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .codex-skill-selector-error {
+  color: var(--zeus-control-danger-text);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.macos-ai-app .skills-workspace {
+  align-content: start;
+  background: radial-gradient(circle at 8% -12%, color-mix(in oklab, var(--zeus-product-accent) 9%, transparent), transparent 34%), var(--zeus-product-panel);
+  color: var(--zeus-product-text);
+  gap: 28px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: clamp(28px, 5vw, 64px) clamp(24px, 6vw, 88px) 72px;
+}
+
+.macos-ai-app .skills-workspace-header,
+.macos-ai-app .skills-workflow-defaults,
+.macos-ai-app .skills-catalog {
+  inline-size: min(980px, 100%);
+  margin-inline: auto;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .skills-workspace-header {
+  display: grid;
+  gap: 11px;
+}
+
+.macos-ai-app .skills-workspace-kicker,
+.macos-ai-app .skill-install-dialog > header > div > span {
+  color: var(--zeus-product-accent);
+  font-size: 10px;
+  font-weight: 760;
+  letter-spacing: 0.14em;
+}
+
+.macos-ai-app .skills-workspace-title-row {
+  align-items: end;
+  display: flex;
+  gap: 24px;
+  justify-content: space-between;
+}
+
+.macos-ai-app .skills-workspace-title-row > div {
+  display: grid;
+  gap: 7px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .skills-workspace-title-row h1,
+.macos-ai-app .skills-section-heading h2,
+.macos-ai-app .skill-install-dialog h2 {
+  margin: 0;
+}
+
+.macos-ai-app .skills-workspace-title-row h1 {
+  font-size: clamp(26px, 3.6vw, 38px);
+  font-weight: 710;
+  letter-spacing: -0.035em;
+  line-height: 1.08;
+}
+
+.macos-ai-app .skills-workspace-title-row p,
+.macos-ai-app .skills-section-heading p {
+  color: var(--zeus-product-muted);
+  line-height: 1.55;
+  margin: 0;
+}
+
+.macos-ai-app .skills-workspace-title-row p {
+  font-size: 14px;
+}
+
+.macos-ai-app .skills-workspace-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.macos-ai-app .skills-workspace-actions button,
+.macos-ai-app .skill-list-item button,
+.macos-ai-app .skill-install-path-control button {
+  gap: 6px;
+}
+
+.macos-ai-app .skills-workspace-actions svg,
+.macos-ai-app .skill-list-item button svg,
+.macos-ai-app .skill-install-path-control button svg {
+  block-size: 15px;
+  inline-size: 15px;
+}
+
+.macos-ai-app .skills-workflow-defaults {
+  background: color-mix(in oklab, var(--zeus-product-panel-muted) 82%, transparent);
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 16px;
+  display: grid;
+  gap: 15px;
+  padding: 19px 20px 20px;
+}
+
+.macos-ai-app .skills-section-heading {
+  align-items: end;
+  display: flex;
+  gap: 20px;
+  justify-content: space-between;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .skills-section-heading > div {
+  display: grid;
+  gap: 4px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .skills-section-heading h2 {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.macos-ai-app .skills-section-heading p {
+  font-size: 12px;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.macos-ai-app .skills-workflow-grid {
+  display: grid;
+  gap: 0;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.macos-ai-app .skills-workflow-default-row {
+  border-inline-start: 1px solid var(--zeus-product-line-soft);
+  display: grid;
+  gap: 12px;
+  min-inline-size: 0;
+  padding: 4px 18px 2px;
+}
+
+.macos-ai-app .skills-workflow-default-row:first-child {
+  border-inline-start: 0;
+  padding-inline-start: 0;
+}
+
+.macos-ai-app .skills-workflow-default-row:last-child {
+  padding-inline-end: 0;
+}
+
+.macos-ai-app .skills-workflow-default-row > span {
+  display: grid;
+  gap: 4px;
+}
+
+.macos-ai-app .skills-workflow-default-row strong {
+  font-size: 13px;
+}
+
+.macos-ai-app .skills-workflow-default-row small {
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.macos-ai-app .skills-catalog {
+  display: grid;
+  gap: 14px;
+}
+
+.macos-ai-app .skills-catalog-heading > input,
+.macos-ai-app .skill-install-fields input {
+  appearance: none;
+  background: var(--zeus-control-bg);
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 10px;
+  box-sizing: border-box;
+  color: var(--zeus-product-text);
+  font: inherit;
+  min-block-size: 34px;
+  outline: 0;
+  padding: 0 11px;
+}
+
+.macos-ai-app .skills-catalog-heading > input {
+  inline-size: min(280px, 38vw);
+}
+
+.macos-ai-app .skills-catalog-heading > input:focus,
+.macos-ai-app .skill-install-fields input:focus {
+  border-color: var(--zeus-product-accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--zeus-product-accent) 18%, transparent);
+}
+
+.macos-ai-app .skills-inline-error,
+.macos-ai-app .skills-catalog-warning {
+  border-radius: 9px;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
+  overflow-wrap: anywhere;
+  padding: 9px 11px;
+}
+
+.macos-ai-app .skills-inline-error {
+  background: var(--zeus-control-danger-bg);
+  color: var(--zeus-control-danger-text);
+}
+
+.macos-ai-app .skills-catalog-warning {
+  background: color-mix(in oklab, var(--zeus-warning, #b7791f) 10%, var(--zeus-product-panel));
+  color: var(--zeus-product-muted);
+}
+
+.macos-ai-app .skills-empty-state {
+  border-block: 1px solid var(--zeus-product-line-soft);
+  color: var(--zeus-product-muted);
+  font-size: 13px;
+  padding: 30px 4px;
+  text-align: center;
+}
+
+.macos-ai-app .skills-scope-groups,
+.macos-ai-app .skills-scope-group,
+.macos-ai-app .skills-list {
+  display: grid;
+}
+
+.macos-ai-app .skills-scope-groups {
+  gap: 24px;
+}
+
+.macos-ai-app .skills-scope-group {
+  gap: 0;
+}
+
+.macos-ai-app .skills-scope-group > header {
+  align-items: center;
+  border-block-end: 1px solid var(--zeus-product-line);
+  display: flex;
+  gap: 8px;
+  min-block-size: 33px;
+}
+
+.macos-ai-app .skills-scope-group > header > strong {
+  font-size: 12px;
+}
+
+.macos-ai-app .skills-scope-group > header > span,
+.macos-ai-app .skill-list-managed-badge,
+.macos-ai-app .skill-list-title em {
+  background: var(--zeus-product-panel-muted);
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 999px;
+  color: var(--zeus-product-muted);
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1;
+  padding: 3px 6px;
+}
+
+.macos-ai-app .skill-list-item {
+  align-items: center;
+  border-block-end: 1px solid var(--zeus-product-line-soft);
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  min-inline-size: 0;
+  padding: 14px 3px;
+}
+
+.macos-ai-app .skill-list-glyph {
+  align-items: center;
+  aspect-ratio: 1;
+  background: color-mix(in oklab, var(--zeus-product-accent) 10%, var(--zeus-product-panel-muted));
+  border: 1px solid color-mix(in oklab, var(--zeus-product-accent) 16%, var(--zeus-product-line-soft));
+  border-radius: 10px;
+  color: var(--zeus-product-accent);
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 760;
+  justify-content: center;
+}
+
+.macos-ai-app .skill-list-copy,
+.macos-ai-app .skill-list-title {
+  min-inline-size: 0;
+}
+
+.macos-ai-app .skill-list-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.macos-ai-app .skill-list-title {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.macos-ai-app .skill-list-title strong {
+  font-size: 13px;
+}
+
+.macos-ai-app .skill-list-title code {
+  color: var(--zeus-product-accent);
+  font-size: 11px;
+}
+
+.macos-ai-app .skill-list-copy > span:not(.skill-list-title) {
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.macos-ai-app .skill-list-copy > small {
+  color: var(--zeus-product-subtle);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-install-portal-root.macos-ai-app {
+  inset: 0;
+  pointer-events: none;
+  position: fixed;
+  z-index: 126;
+}
+
+.macos-ai-app .skill-install-backdrop {
+  display: grid;
+  padding: 20px;
+  place-items: center;
+}
+
+.macos-ai-app .skill-install-dialog {
+  background: var(--zeus-solid-surface-bg);
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 16px;
+  box-shadow: 0 28px 76px oklch(18% 0.015 255 / 0.32);
+  color: var(--zeus-product-text);
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  inline-size: min(560px, calc(100vw - 40px));
+  max-block-size: min(720px, calc(100vh - 40px));
+  overflow: hidden;
+}
+
+.macos-ai-app .skill-install-dialog > header,
+.macos-ai-app .skill-install-dialog > footer {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding-inline: 20px;
+}
+
+.macos-ai-app .skill-install-dialog > header {
+  padding-block: 18px 10px;
+}
+
+.macos-ai-app .skill-install-dialog > header > div {
+  display: grid;
+  gap: 4px;
+}
+
+.macos-ai-app .skill-install-dialog > header button {
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--zeus-product-muted);
+  display: grid;
+  inline-size: 30px;
+  min-block-size: 30px;
+  padding: 0;
+  place-items: center;
+}
+
+.macos-ai-app .skill-install-dialog > header button:hover:not(:disabled) {
+  background: var(--zeus-control-bg-hover);
+  color: var(--zeus-product-text);
+}
+
+.macos-ai-app .skill-install-source-tabs {
+  border-block-end: 1px solid var(--zeus-product-line-soft);
+  display: flex;
+  gap: 18px;
+  padding-inline: 20px;
+}
+
+.macos-ai-app .skill-install-source-tabs button {
+  background: transparent;
+  border: 0;
+  border-block-end: 2px solid transparent;
+  border-radius: 0;
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+  min-block-size: 36px;
+  padding: 0 1px;
+}
+
+.macos-ai-app .skill-install-source-tabs button.is-active {
+  border-block-end-color: var(--zeus-product-accent);
+  color: var(--zeus-product-text);
+  font-weight: 680;
+}
+
+.macos-ai-app .skill-install-fields {
+  display: grid;
+  gap: 15px;
+  min-block-size: 0;
+  overflow-y: auto;
+  padding: 18px 20px;
+}
+
+.macos-ai-app .skill-install-fields label,
+.macos-ai-app .skill-install-grid {
+  display: grid;
+  gap: 7px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .skill-install-fields label > span:first-child {
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+}
+
+.macos-ai-app .skill-install-fields input {
+  inline-size: 100%;
+}
+
+.macos-ai-app .skill-install-path-control {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .skill-install-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.macos-ai-app .skill-install-security-note {
+  background: color-mix(in oklab, var(--zeus-product-accent) 6%, var(--zeus-product-panel-muted));
+  border-inline-start: 3px solid color-mix(in oklab, var(--zeus-product-accent) 55%, var(--zeus-product-line));
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+  line-height: 1.55;
+  margin: 2px 0 0;
+  padding: 9px 11px;
+}
+
+.macos-ai-app .skill-install-dialog > footer {
+  border-block-start: 1px solid var(--zeus-product-line-soft);
+  justify-content: flex-end;
+  padding-block: 12px 16px;
+}
+
+/* 冲突确认弹窗原有 label 规则服务于单选项；Skill 选择器需要恢复为独立纵向字段。 */
+.macos-ai-app .task-git-conflict-ai-permission {
+  inline-size: min(480px, 100%);
+}
+
+.macos-ai-app .task-git-conflict-ai-permission .task-git-conflict-ai-skill {
+  align-items: stretch;
+  border: 0;
+  cursor: default;
+  display: grid;
+  gap: 6px;
+  grid-template-columns: minmax(0, 1fr);
+  min-block-size: 0;
+  padding: 2px 0;
+}
+
+.macos-ai-app .task-git-conflict-ai-permission .task-git-conflict-ai-skill > span:first-child {
+  color: var(--zeus-product-muted);
+  display: block;
+  font-size: 12px;
+}
+
+@media (max-width: 780px) {
+  .macos-ai-app .skills-workspace {
+    gap: 22px;
+    padding: 30px 20px 56px;
+  }
+
+  .macos-ai-app .skills-workspace-title-row,
+  .macos-ai-app .skills-section-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .macos-ai-app .skills-workspace-actions {
+    align-self: flex-start;
+  }
+
+  .macos-ai-app .skills-workflow-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .macos-ai-app .skills-workflow-default-row,
+  .macos-ai-app .skills-workflow-default-row:first-child,
+  .macos-ai-app .skills-workflow-default-row:last-child {
+    border-block-start: 1px solid var(--zeus-product-line-soft);
+    border-inline-start: 0;
+    padding: 13px 0;
+  }
+
+  .macos-ai-app .skills-catalog-heading > input {
+    inline-size: 100%;
+  }
+}
+
+@media (max-width: 520px) {
+  .macos-ai-app .skills-workspace-title-row h1 {
+    font-size: 28px;
+  }
+
+  .macos-ai-app .skills-workspace-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    inline-size: 100%;
+  }
+
+  .macos-ai-app .skill-list-item {
+    align-items: start;
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .macos-ai-app .skill-list-item > :last-child {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .macos-ai-app .skill-install-grid,
+  .macos-ai-app .skill-install-path-control {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 /* ZEUS-0293：任务看板沿用 Zeus 控件和颜色变量，只复刻可观察的看板行为。 */
 .macos-ai-app .task-table-page-view-segments,
 .macos-ai-app .task-table-view-mode-segments {
@@ -1815,6 +2615,10 @@ a {
 }
 .project-sidebar-conversations .session-conversation-status-icon:is(.is-waiting_user, .is-waiting_approval, .is-paused) {
   color: var(--zeus-task-status-amber);
+}
+
+.project-sidebar-conversations .session-conversation-status-icon.is-interrupted {
+    color: var(--zeus-task-status-amber);
 }
 .project-sidebar-conversations .session-conversation-status-icon.is-failed {
   color: var(--zeus-danger-text);
@@ -3330,14 +4134,42 @@ a {
 }
 
 .project-git-changes-layout {
-  grid-template-columns: clamp(250px, 26%, 340px) minmax(520px, 1fr) clamp(190px, 20%, 250px);
+  grid-template-areas:
+    'tree diff'
+    'commit commit';
+  grid-template-columns: clamp(260px, 26%, 340px) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
 }
 .project-git-change-tree {
+  grid-area: tree;
   padding: 8px 6px;
 }
 .project-git-change-repository {
   border-radius: 6px;
-  min-height: 31px;
+  grid-template-areas:
+    'icon name'
+    'icon branch';
+  grid-template-columns: 14px minmax(0, 1fr);
+  min-height: 42px;
+}
+.project-git-change-repository > svg {
+  align-self: start;
+  grid-area: icon;
+  margin-top: 2px;
+}
+.project-git-change-repository > strong {
+  grid-area: name;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-git-change-repository > small {
+  grid-area: branch;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .project-git-change-repository:hover {
   background: var(--zeus-source-list-hover);
@@ -3431,7 +4263,47 @@ a {
 }
 
 .project-git-change-diff {
+  grid-area: diff;
   overflow: hidden;
+}
+.project-git-commit-rail {
+  align-items: center;
+  border-left: 0;
+  border-top: 1px solid var(--zeus-product-line);
+  display: grid;
+  gap: 12px;
+  grid-area: commit;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  min-height: 58px;
+  overflow: hidden;
+  padding: 8px 12px;
+}
+.project-git-commit-summary {
+  align-items: center;
+  display: flex;
+  gap: 18px;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+}
+.project-git-commit-summary > span {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 1px;
+  max-width: 220px;
+}
+.project-git-commit-summary b,
+.project-git-commit-summary small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-git-commit-summary small {
+  color: var(--zeus-product-muted);
+}
+.project-git-commit-rail .zeus-button {
+  margin-top: 0;
 }
 .project-git-diff-preview {
   background: var(--zeus-product-panel);
@@ -3503,24 +4375,29 @@ a {
   border-left: 1px solid var(--zeus-product-line);
 }
 .project-git-diff-side-scroll {
+  display: grid;
   flex: 1;
   font: 11px/19px var(--zeus-font-mono);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.project-git-diff-side-pane {
   min-height: 0;
   min-width: 0;
   overflow: auto;
+  overscroll-behavior: contain;
 }
-.project-git-diff-side-row {
-  display: grid;
-  grid-template-columns: minmax(max-content, 1fr) minmax(max-content, 1fr);
-  min-width: 900px;
+.project-git-diff-side-pane + .project-git-diff-side-pane {
+  border-left: 1px solid var(--zeus-product-line);
 }
 .project-git-diff-side-cell {
   display: grid;
   grid-template-columns: 44px minmax(max-content, 1fr);
   min-height: 19px;
-}
-.project-git-diff-side-cell + .project-git-diff-side-cell {
-  border-left: 1px solid var(--zeus-product-line);
+  min-width: 100%;
+  width: max-content;
 }
 .project-git-diff-side-cell i {
   color: var(--zeus-product-muted);
@@ -3546,8 +4423,10 @@ a {
   background: color-mix(in oklch, var(--zeus-control-accent, #1473e6) 7%, transparent);
   color: var(--zeus-control-accent, #1473e6);
   font: 10.5px/22px var(--zeus-font-mono);
-  min-width: 900px;
+  min-width: 100%;
   padding: 0 8px;
+  white-space: nowrap;
+  width: max-content;
 }
 .project-git-diff-unified {
   flex: 1;
@@ -3690,9 +4569,19 @@ body[data-surface='project-git-diff'] #root {
     display: none;
   }
   .project-git-changes-layout {
-    grid-template-columns: 270px minmax(520px, 1fr);
+    grid-template-columns: clamp(230px, 32%, 280px) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
+  .project-git-changes-layout {
+    grid-template-columns: 220px minmax(0, 1fr);
   }
   .project-git-commit-rail {
+    gap: 8px;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .project-git-commit-rail > strong {
     display: none;
   }
 }
@@ -3723,26 +4612,52 @@ body[data-surface='project-git-diff'] #root {
 
 .macos-ai-app .model-connections-layout {
   display: grid;
-  grid-template-columns: 176px minmax(0, 1fr);
-  gap: 16px;
+  grid-template-columns: 164px minmax(0, 1fr);
+  gap: 18px;
 }
 
 .macos-ai-app .model-connection-list {
   align-content: start;
+  align-self: start;
   display: grid;
-  gap: 6px;
+  gap: 2px;
+  min-inline-size: 0;
+  max-block-size: calc(100vh - 56px);
+  padding: 4px;
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 10px;
+  background: var(--zeus-product-panel-muted);
+  overflow-y: auto;
+  position: sticky;
+  inset-block-start: 8px;
 }
 
 .macos-ai-app .model-connection-list > button {
   align-items: start;
   display: grid;
-  gap: 6px;
-  padding: 10px;
-  border: 1px solid var(--zeus-product-line);
-  border-radius: 10px;
-  background: var(--zeus-product-panel);
+  gap: 4px;
+  min-inline-size: 0;
+  min-block-size: 48px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
   color: var(--zeus-product-text);
   text-align: left;
+}
+
+.macos-ai-app .model-connection-list > button:hover {
+  background: var(--zeus-control-bg-hover);
+}
+
+.macos-ai-app .model-connection-list > button.selected,
+.macos-ai-app .model-connection-list > button.selected:hover {
+  background: var(--zeus-product-selected);
+}
+
+.macos-ai-app .model-connection-list > button:focus-visible {
+  box-shadow: var(--zeus-control-focus);
+  outline: 0;
 }
 
 .macos-ai-app .model-connection-list > button > span,
@@ -3757,6 +4672,23 @@ body[data-surface='project-git-diff'] #root {
   color: var(--zeus-product-muted);
   font-size: 11px;
   font-style: normal;
+  line-height: 15px;
+}
+
+.macos-ai-app .model-connection-list strong,
+.macos-ai-app .model-connection-list small,
+.macos-ai-app .model-connection-list em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macos-ai-app .model-connection-list > p {
+  margin: 0;
+  padding: 9px 8px;
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+  line-height: 16px;
 }
 
 .macos-ai-app .model-connection-list em[data-configured='true'] {
@@ -3790,8 +4722,8 @@ body[data-surface='project-git-diff'] #root {
 }
 
 .macos-ai-app .model-connection-enabled,
-.macos-ai-app .model-definition-card > header,
-.macos-ai-app .model-definition-card > header label,
+.macos-ai-app .model-definition-header,
+.macos-ai-app .model-definition-identity,
 .macos-ai-app .model-definition-section > header,
 .macos-ai-app .model-add-row,
 .macos-ai-app .model-connection-actions {
@@ -3801,62 +4733,250 @@ body[data-surface='project-git-diff'] #root {
 }
 
 .macos-ai-app .model-definition-section > header,
-.macos-ai-app .model-definition-card > header {
+.macos-ai-app .model-definition-header {
   justify-content: space-between;
 }
 
 .macos-ai-app .model-definition-list {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .macos-ai-app .model-definition-card {
   display: grid;
-  gap: 10px;
-  padding: 12px;
+  min-inline-size: 0;
   border: 1px solid var(--zeus-product-line);
-  border-radius: 11px;
+  border-radius: 9px;
   background: var(--zeus-product-panel);
+  content-visibility: auto;
+  contain-intrinsic-size: auto 210px;
+  overflow: clip;
+  transition:
+    border-color 120ms var(--zeus-motion-ease-out),
+    background-color 120ms var(--zeus-motion-ease-out);
 }
 
-.macos-ai-app .model-definition-card > header > button {
-  min-block-size: 24px;
-  min-inline-size: 24px;
+.macos-ai-app .model-definition-card:hover {
+  border-color: var(--zeus-control-border-hover);
+}
+
+.macos-ai-app .model-definition-card[data-enabled='false'] {
+  border-color: var(--zeus-product-line-soft);
+}
+
+.macos-ai-app .model-definition-header {
+  box-sizing: border-box;
+  min-block-size: 48px;
+  padding: 8px 10px 8px 12px;
+}
+
+.macos-ai-app .model-definition-identity {
+  min-inline-size: 0;
+}
+
+.macos-ai-app .model-definition-identity > input {
+  flex: 0 0 auto;
+}
+
+.macos-ai-app .model-definition-identity > span {
+  display: grid;
+  gap: 1px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .model-definition-identity strong,
+.macos-ai-app .model-definition-identity small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macos-ai-app .model-definition-identity strong {
+  color: var(--zeus-product-text);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 18px;
+}
+
+.macos-ai-app .model-definition-identity small {
+  color: var(--zeus-product-muted);
+  font-size: 10.5px;
+  line-height: 14px;
+}
+
+.macos-ai-app .model-definition-card[data-enabled='false'] .model-definition-identity strong {
+  color: var(--zeus-product-muted);
+}
+
+.macos-ai-app .model-definition-remove {
+  align-items: center;
+  display: inline-flex;
+  flex: 0 0 auto;
+  justify-content: center;
+  block-size: 28px;
+  inline-size: 28px;
   padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--zeus-product-muted);
+}
+
+.macos-ai-app .model-definition-remove:hover {
+  background: var(--zeus-control-bg-hover);
+  color: var(--zeus-product-text);
+}
+
+.macos-ai-app .model-definition-remove:focus-visible {
+  box-shadow: var(--zeus-control-focus);
+  outline: 0;
+}
+
+.macos-ai-app .model-definition-remove svg {
+  block-size: 13px;
+  inline-size: 13px;
+}
+
+.macos-ai-app .model-route-controls,
+.macos-ai-app .model-route-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 7px 12px 6px;
+  border-block-start: 1px solid var(--zeus-product-line-soft);
+}
+
+.macos-ai-app .model-route-controls label,
+.macos-ai-app .model-route-facts > div {
+  display: grid;
+  gap: 4px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .model-route-controls label > span,
+.macos-ai-app .model-route-facts dt {
+  color: var(--zeus-product-muted);
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 14px;
+}
+
+.macos-ai-app .model-route-facts dd {
+  margin: 0;
+  color: var(--zeus-product-text);
+  font-size: 11.5px;
+  font-weight: 620;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+
+.macos-ai-app .model-route-controls .model-protocol-select,
+.macos-ai-app .model-route-controls .model-protocol-select > .zeus-select-trigger {
+  inline-size: 100%;
+}
+
+.macos-ai-app .model-context-declaration-value {
+  align-items: center;
+  display: flex;
+  gap: 7px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .model-context-declaration-label {
+  color: var(--zeus-product-text);
+  font-size: 11.5px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.macos-ai-app .model-route-description {
+  margin: 0;
+  padding: 0 12px 7px;
+  color: var(--zeus-product-muted);
+  font-size: 10.5px;
+  line-height: 15px;
 }
 
 .macos-ai-app .model-capability-summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
   margin: 0;
+  border-block: 1px solid var(--zeus-product-line-soft);
+  background: var(--zeus-product-panel-muted);
 }
 
 .macos-ai-app .model-capability-summary > div {
   display: grid;
   align-content: start;
-  gap: 3px;
+  gap: 1px;
   min-inline-size: 0;
-  padding: 8px 9px;
-  border: 1px solid var(--zeus-product-line);
-  border-radius: 8px;
-  background: var(--zeus-product-subtle, var(--zeus-product-panel));
+  padding: 7px 12px;
 }
 
-.macos-ai-app .model-capability-summary dt,
-.macos-ai-app .model-capability-summary small {
+.macos-ai-app .model-capability-summary > div + div {
+  border-inline-start: 1px solid var(--zeus-product-line-soft);
+}
+
+.macos-ai-app .model-capability-summary dt {
   color: var(--zeus-product-muted);
-  font-size: 11px;
-  line-height: 16px;
+  font-size: 10px;
+  line-height: 13px;
 }
 
 .macos-ai-app .model-capability-summary dd {
   margin: 0;
   color: var(--zeus-product-text);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 18px;
+  font-size: 11.5px;
+  font-weight: 620;
+  line-height: 16px;
   overflow-wrap: anywhere;
+}
+
+.macos-ai-app .model-capability-evidence {
+  color: var(--zeus-product-muted);
+  font-size: 10.5px;
+  line-height: 15px;
+}
+
+.macos-ai-app .model-capability-evidence > summary {
+  box-sizing: border-box;
+  inline-size: fit-content;
+  min-block-size: 29px;
+  padding: 7px 12px;
+  cursor: pointer;
+}
+
+.macos-ai-app .model-capability-evidence > summary:hover {
+  color: var(--zeus-product-text);
+}
+
+.macos-ai-app .model-capability-evidence > summary:focus-visible {
+  border-radius: 5px;
+  box-shadow: var(--zeus-control-focus);
+  outline: 0;
+}
+
+.macos-ai-app .model-capability-evidence > dl {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0 12px 9px;
+}
+
+.macos-ai-app .model-capability-evidence > dl > div {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.macos-ai-app .model-capability-evidence :where(dt, dd) {
+  margin: 0;
+}
+
+.macos-ai-app .model-capability-evidence dt {
+  color: var(--zeus-product-text-subtle);
+  font-weight: 600;
 }
 
 .macos-ai-app .model-connection-diagnostic,
@@ -3960,13 +5080,25 @@ body[data-surface='project-git-diff'] #root {
 @media (max-width: 780px) {
   .macos-ai-app .model-connections-layout,
   .macos-ai-app .model-connection-field-grid,
-  .macos-ai-app .model-capability-summary,
   .macos-ai-app .project-model-settings {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .macos-ai-app .model-connection-wide-field {
     grid-column: auto;
+  }
+
+  .macos-ai-app .model-connection-list {
+    max-block-size: none;
+    overflow: visible;
+    position: static;
+  }
+}
+
+@media (max-width: 520px) {
+  .macos-ai-app .model-route-controls,
+  .macos-ai-app .model-route-facts {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -15306,6 +16438,35 @@ body[data-surface='project-git-diff'] #root {
   box-shadow: 0 24px 64px oklch(20% 0.01 255 / 0.25);
 }
 
+.macos-ai-app .task-model-push-step-modal {
+  pointer-events: auto;
+  inline-size: min(520px, calc(100vw - 40px));
+  max-block-size: min(680px, calc(100vh - 48px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 16px;
+  background: var(--zeus-solid-surface-bg);
+  color: var(--zeus-product-text);
+  box-shadow: 0 24px 64px oklch(20% 0.01 255 / 0.25);
+}
+
+.macos-ai-app .task-model-push-step-body {
+  min-block-size: 0;
+  overflow-y: auto;
+  display: grid;
+  gap: 12px;
+  padding: 18px var(--zeus-solid-surface-edge);
+}
+
+.macos-ai-app .task-model-push-step-body > p,
+.macos-ai-app .task-model-push-step-body > small {
+  margin: 0;
+  color: var(--zeus-product-muted);
+  line-height: 1.5;
+}
+
 .macos-ai-app .task-model-push-header,
 .macos-ai-app .task-model-push-footer {
   display: flex;
@@ -15521,6 +16682,56 @@ body[data-surface='project-git-diff'] #root {
 .macos-ai-app .task-model-push-direct-summary {
   display: grid;
   gap: 8px;
+}
+
+.macos-ai-app .task-model-push-existing-environment {
+  min-inline-size: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.macos-ai-app .task-model-push-existing-environment .zeus-select {
+  inline-size: 100%;
+}
+
+.macos-ai-app .task-model-push-existing-repositories {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 10px;
+  background: var(--zeus-control-bg);
+  list-style: none;
+}
+
+.macos-ai-app .task-model-push-existing-repositories li {
+  min-inline-size: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 3px 10px;
+  padding: 9px 10px;
+}
+
+.macos-ai-app .task-model-push-existing-repositories li + li {
+  border-block-start: 1px solid var(--zeus-product-line-soft);
+}
+
+.macos-ai-app .task-model-push-existing-repositories code,
+.macos-ai-app .task-model-push-existing-repositories small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macos-ai-app .task-model-push-existing-repositories code {
+  color: var(--zeus-product-text);
+  font-size: 12px;
+}
+
+.macos-ai-app .task-model-push-existing-repositories small {
+  grid-column: 1 / -1;
+  color: var(--zeus-product-muted);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -15966,31 +17177,6 @@ body[data-surface='project-git-diff'] #root {
   margin: 0;
   color: var(--zeus-product-muted);
 }
-.macos-ai-app .task-model-push-account {
-  display: grid;
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid var(--zeus-warning-line, var(--zeus-product-line-soft));
-  border-radius: 12px;
-  background: var(--zeus-product-panel-muted);
-}
-.macos-ai-app .task-model-push-account > span {
-  display: grid;
-  gap: 3px;
-}
-.macos-ai-app .task-model-push-account.is-success {
-  border-color: color-mix(in oklab, var(--zeus-status-success-text) 36%, var(--zeus-product-line-soft));
-}
-.macos-ai-app .task-model-push-account.is-success strong {
-  color: var(--zeus-status-success-text);
-}
-.macos-ai-app .task-model-push-account small,
-.macos-ai-app .task-model-push-account p {
-  margin: 0;
-  color: var(--zeus-product-muted);
-  font-size: 12px;
-  line-height: 1.5;
-}
 .macos-ai-app .task-model-push-config-import ul {
   display: grid;
   gap: 4px;
@@ -16020,6 +17206,10 @@ body[data-surface='project-git-diff'] #root {
   .macos-ai-app .task-model-push-workspace-grid,
   .macos-ai-app .task-model-push-mode-choice,
   .macos-ai-app .task-model-push-parent-resources {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .macos-ai-app .task-model-push-existing-repositories li {
     grid-template-columns: minmax(0, 1fr);
   }
 }
@@ -17770,9 +18960,31 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
   overflow: hidden;
 }
 
+.macos-ai-app .task-git-conflict-full-editor-surface > .task-git-highlighted-code,
 .macos-ai-app .task-git-conflict-full-editor-surface > textarea {
   position: absolute;
   inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+}
+
+.macos-ai-app .task-git-conflict-full-editor-surface > .task-git-highlighted-code {
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.macos-ai-app .task-git-conflict-full-editor-surface > textarea {
+  z-index: 1;
+  padding-inline: 50px 12px;
+  background: transparent;
+  caret-color: var(--zeus-product-text);
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+.macos-ai-app .task-git-conflict-full-editor-surface > textarea::selection {
+  background: color-mix(in oklab, var(--zeus-accent, #3977db) 27%, transparent);
+  -webkit-text-fill-color: transparent;
 }
 
 .macos-ai-app .task-git-conflict-full-controls {
@@ -17781,6 +18993,7 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
   inset-inline-end: 3px;
   inline-size: 30px;
   pointer-events: none;
+  z-index: 2;
 }
 
 .macos-ai-app .task-git-conflict-full-control {
@@ -17915,6 +19128,8 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
 .macos-ai-app .task-create-attachment-picker:focus-visible,
 .macos-ai-app .task-create-attachment-row button:focus-visible,
 .macos-ai-app .task-create-title-input:focus-visible,
+.macos-ai-app .task-create-zentao-input:focus-visible,
+.macos-ai-app .task-create-zentao-open-button:focus-visible,
 .macos-ai-app .task-create-description-input:focus-visible,
 .macos-ai-app .task-create-tags-input:focus-visible {
   outline: 0;
@@ -17934,6 +19149,58 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
   display: grid;
   gap: 6px;
   min-inline-size: 0;
+}
+
+.macos-ai-app .task-create-zentao-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+}
+
+.macos-ai-app .task-create-zentao-input {
+  min-inline-size: 0;
+}
+
+.macos-ai-app .task-create-zentao-parse-button {
+  min-block-size: 34px;
+  white-space: nowrap;
+}
+
+.macos-ai-app .task-create-zentao-hint {
+  margin: 0;
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+  line-height: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.macos-ai-app .task-create-zentao-hint-ok {
+  color: var(--zeus-success-text, #267a4c);
+}
+
+.macos-ai-app .task-create-zentao-hint-error {
+  color: var(--zeus-danger-text);
+}
+
+.macos-ai-app .task-create-zentao-open-button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  color: var(--zeus-accent);
+  font: inherit;
+  font-size: 12px;
+  line-height: 16px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.macos-ai-app .task-create-zentao-open-button:hover {
+  opacity: 0.82;
 }
 
 .macos-ai-app .task-create-title-input,
@@ -19308,6 +20575,7 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
 
 /* 2026-07-02 任务页多场景原型高还原最终覆盖：分组工具条优先，默认 7 列不画假横条，列设置与新任务保持悬浮 overlay。 */
 .macos-ai-app .task-table-workbench {
+  align-content: start;
   block-size: auto;
   gap: 6px;
   grid-auto-flow: row;
@@ -23912,7 +25180,15 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   position: absolute;
   inset-block-start: -2px;
   inset-inline-end: -4px;
-  opacity: 0.58;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+/* 拖动把手默认隐藏，悬停、键盘聚焦或拖动中才显现，减少卡片常驻噪音。 */
+.macos-ai-app .task-board-card:hover .task-board-drag-handle,
+.macos-ai-app .task-board-card.is-dragging .task-board-drag-handle,
+.macos-ai-app .task-board-drag-handle:focus-visible {
+  opacity: 1;
 }
 
 .macos-ai-app .task-board-card-properties {
@@ -23921,12 +25197,40 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 
 .macos-ai-app .task-board-card-property {
   min-block-size: 19px;
-  padding: 2px 5px;
+  padding: 2px 7px;
   border: 1px solid color-mix(in oklab, var(--zeus-product-line-soft, var(--zeus-control-border)) 74%, transparent);
-  border-radius: 5px;
+  border-radius: 999px;
   background: color-mix(in oklab, var(--zeus-product-panel-muted) 72%, transparent);
   font-size: 10.5px;
   line-height: 1.2;
+}
+
+/* 语义色胶囊：文字、边框、浅底均由单一主色派生，配色体系与任务列表的状态胶囊同源。 */
+.macos-ai-app .task-board-card-property.is-toned {
+  --task-board-property-color: var(--zeus-product-muted);
+  border-color: color-mix(in srgb, var(--task-board-property-color) 32%, transparent);
+  color: color-mix(in oklab, var(--task-board-property-color) 82%, var(--zeus-product-text));
+  background: color-mix(in srgb, var(--task-board-property-color) 11%, var(--zeus-product-panel));
+  font-weight: 600;
+}
+
+.macos-ai-app .task-board-card-property-tone-blue {
+  --task-board-property-color: var(--zeus-task-status-blue);
+}
+.macos-ai-app .task-board-card-property-tone-violet {
+  --task-board-property-color: var(--zeus-task-status-violet);
+}
+.macos-ai-app .task-board-card-property-tone-green {
+  --task-board-property-color: var(--zeus-task-status-green);
+}
+.macos-ai-app .task-board-card-property-tone-amber {
+  --task-board-property-color: var(--zeus-task-status-amber);
+}
+.macos-ai-app .task-board-card-property-tone-orange {
+  --task-board-property-color: var(--zeus-task-status-orange);
+}
+.macos-ai-app .task-board-card-property-tone-red {
+  --task-board-property-color: var(--zeus-danger-text, oklch(54% 0.14 25));
 }
 
 .macos-ai-app .task-board-card-property-code {
@@ -24009,6 +25313,11 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   .macos-ai-app .task-board-column-hide,
   .macos-ai-app .task-board-move-menu {
     opacity: 1;
+  }
+
+  /* 触屏没有悬停态，拖动把手保持半透明常显。 */
+  .macos-ai-app .task-board-drag-handle {
+    opacity: 0.58;
   }
 }
 

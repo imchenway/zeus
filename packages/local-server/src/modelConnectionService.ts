@@ -46,6 +46,7 @@ export interface ModelConnectionService {
   list(): Promise<ModelConnectionRecord[]>;
   get(id: string): Promise<ModelConnectionRecord | undefined>;
   create(input: SaveModelConnectionRequest): Promise<ModelConnectionRecord>;
+  createWithId(id: string, input: SaveModelConnectionRequest): Promise<ModelConnectionRecord>;
   update(id: string, input: SaveModelConnectionRequest): Promise<ModelConnectionRecord>;
   remove(id: string): Promise<void>;
   clearApiKey(id: string): Promise<ModelConnectionRecord>;
@@ -53,6 +54,8 @@ export interface ModelConnectionService {
   diagnose(id: string): Promise<ModelConnectionDiagnostic>;
   listSelectableModels(): Promise<SelectableConnectionModel[]>;
   getProjectSelection(projectId: string): Promise<ProjectModelSelection>;
+  prepareProjectSelection(projectId: string, value: unknown): Promise<ProjectModelSelection>;
+  savePreparedProjectSelectionInCurrentTransaction(selection: ProjectModelSelection): ProjectModelSelection;
   saveProjectSelection(projectId: string, value: unknown): Promise<ProjectModelSelection>;
   loadRuntimeConnections(): Promise<Array<ModelConnectionRecord & { apiKey?: string }>>;
 }
@@ -161,6 +164,11 @@ export function createModelConnectionService(options: { settings: SettingReposit
       const id = `model_connection_${randomUUID().replace(/-/gu, '')}`;
       return saveConnection(id, withTemplateDefaults(input));
     },
+    async createWithId(id, input) {
+      if (!/^model_connection_[a-zA-Z0-9_-]{8,200}$/u.test(id)) throw serviceError('ZEUS_MODEL_CONNECTION_ID_INVALID', '模型连接身份无效。', 400);
+      if (readStored().some((candidate) => candidate.id === id)) throw serviceError('ZEUS_MODEL_CONNECTION_ALREADY_EXISTS', '模型连接已存在。', 409);
+      return saveConnection(id, withTemplateDefaults(input));
+    },
     async update(id, input) {
       const existing = await requireConnection(id);
       return saveConnection(id, withTemplateDefaults(input), existing);
@@ -218,13 +226,21 @@ export function createModelConnectionService(options: { settings: SettingReposit
       const models = await this.listSelectableModels();
       return normalizeProjectModelSelection(projectId, options.settings.getJson<unknown>(projectModelsSettingPrefix + projectId), new Set(models.map((model) => model.id)));
     },
-    async saveProjectSelection(projectId, value) {
+    async prepareProjectSelection(projectId, value) {
       const models = await this.listSelectableModels();
       const availableRefs = new Set(models.map((model) => model.id));
       const selection = normalizeProjectModelSelection(projectId, value, availableRefs);
       const requested = isRecord(value) && Array.isArray(value.allowedModelRefs) ? value.allowedModelRefs : [];
       if (requested.some((reference) => typeof reference !== 'string' || !availableRefs.has(reference))) throw serviceError('ZEUS_PROJECT_MODEL_SELECTION_INVALID', '项目选择包含不存在的模型。', 400);
-      options.settings.setJson(projectModelsSettingPrefix + projectId, selection);
+      return selection;
+    },
+    savePreparedProjectSelectionInCurrentTransaction(selection) {
+      options.settings.setJson(projectModelsSettingPrefix + selection.projectId, selection);
+      return selection;
+    },
+    async saveProjectSelection(projectId, value) {
+      const selection = await this.prepareProjectSelection(projectId, value);
+      this.savePreparedProjectSelectionInCurrentTransaction(selection);
       await options.save();
       return selection;
     },

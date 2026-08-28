@@ -16,9 +16,10 @@ import type {
 } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError, useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { TaskGitConflictWorkspace } from './TaskGitConflictWorkspace.js';
+import { TaskGitDiffTable } from './TaskGitDiffTable.js';
 import { type ConflictDocument, countUnresolvedConflictBlocks, createConflictDocument, serializeConflictForGit } from './taskConflictModel.js';
 
 type DeliveryClient = Pick<
@@ -34,6 +35,7 @@ type DeliveryClient = Pick<
   | 'startTaskIntegrationConflictAi'
   | 'resolveTaskIntegrationConflict'
   | 'finalizeTaskIntegration'
+  | 'loadSkills'
 >;
 
 type DiffScope = 'committed' | 'working';
@@ -77,6 +79,7 @@ export interface PendingConflictAiStart {
   content: string;
   fingerprint: string;
   permissionMode: TaskIntegrationConflictPermissionMode;
+  skillId?: string;
 }
 
 const pendingConflictAiStartPrefix = 'zeus.conflict-ai-start:';
@@ -104,6 +107,7 @@ export function listPendingConflictAiStarts(): PendingConflictAiStart[] {
         typeof parsed.path === 'string' &&
         typeof parsed.content === 'string' &&
         typeof parsed.fingerprint === 'string' &&
+        (parsed.skillId === undefined || (typeof parsed.skillId === 'string' && /^[a-f0-9]{32}$/u.test(parsed.skillId))) &&
         (parsed.permissionMode === 'auto' || parsed.permissionMode === 'full-access')
       ) {
         pending.push(parsed as PendingConflictAiStart);
@@ -183,8 +187,6 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   const workspaceError = selectedWorkspace?.comparisonError ?? selectedWorkspace?.reviewError ?? null;
   useApplicationErrorDialog(error ?? workspaceError, {
     language: zh ? 'zh-CN' : 'en',
-    title: zh ? '代码交付操作失败' : 'Code delivery operation failed',
-    source: 'TaskGitMergeModal',
   });
   const targetBranch = selectedWorkspace?.sourceBranch ?? '';
   const workingFiles = useMemo(() => collectWorkingFiles(selectedWorkspace), [selectedWorkspace]);
@@ -205,14 +207,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   const totalCommittedFiles = useMemo(() => Object.values(workspaceDetails).reduce((total, workspace) => total + (workspace.branchComparison?.files.length ?? 0), 0), [workspaceDetails]);
   const selectedWorkspaceIdSet = useMemo(() => new Set(selectedWorkspaceIds), [selectedWorkspaceIds]);
   const selectedCommitFileCount = useMemo(() => selectedWorkspaceIds.reduce((total, selectedId) => total + (selectedPathsByWorkspace[selectedId]?.length ?? 0), 0), [selectedWorkspaceIds, selectedPathsByWorkspace]);
-  const selectedMergeCandidateCount = useMemo(
-    () =>
-      selectedWorkspaceIds.filter((selectedId) => {
-        const workspace = workspaceDetails[selectedId];
-        return Boolean(workspace?.branchComparison && collectWorkingFiles(workspace).length === 0 && !findDeliveredIntegration(workspace, integrations) && !findRecoverableIntegration(integrations, selectedId));
-      }).length,
-    [selectedWorkspaceIds, workspaceDetails, integrations],
-  );
+  const selectedMergeCandidateCount = useMemo(() => selectedWorkspaceIds.filter((selectedId) => mergeWorkspaceAction(workspaceDetails[selectedId], integrations) !== null).length, [selectedWorkspaceIds, workspaceDetails, integrations]);
   const selectedPushCandidateCount = useMemo(
     () => selectedWorkspaceIds.filter((selectedId) => Boolean(workspaceDetails[selectedId]?.remoteName && findDeliveredIntegration(workspaceDetails[selectedId], integrations))).length,
     [selectedWorkspaceIds, workspaceDetails, integrations],
@@ -468,22 +463,48 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     setFeedback(null);
     setBatchResults([]);
     try {
+      let mergeBlockingError: string | null = null;
       const outcomes = await Promise.all(
         selectedWorkspaceIds.map(async (selectedId): Promise<{ result: BatchDeliveryResult; integration?: TaskIntegrationRecord }> => {
           const workspace = workspaceDetails[selectedId];
           if (!workspace) return { result: { workspaceId: selectedId, repositoryName: selectedId, status: 'skipped', message: zh ? '仓库详情尚未读取。' : 'Repository details are not loaded.' } };
           const label = repositoryLabel(workspace, zh);
-          if (collectWorkingFiles(workspace).length > 0) return { result: { workspaceId: workspace.id, repositoryName: label, status: 'skipped', message: zh ? '仍有未提交文件。' : 'Uncommitted files remain.' } };
-          const recoverable = findRecoverableIntegration(integrations, workspace.id);
-          if (recoverable)
+          const action = mergeWorkspaceAction(workspace, integrations);
+          if (action?.type === 'resolve_conflict')
             return {
-              integration: recoverable,
-              result: { workspaceId: workspace.id, repositoryName: label, status: 'attention', message: zh ? '已有合入冲突或本地同步现场，需继续处理。' : 'An existing merge conflict or local sync needs attention.' },
+              integration: action.integration,
+              result: {
+                workspaceId: workspace.id,
+                repositoryName: label,
+                status: 'attention',
+                message: zh ? `已有 ${action.integration.conflictFiles.length} 个合入冲突，已进入原处理现场。` : `${action.integration.conflictFiles.length} merge conflict(s) remain. The existing workspace was opened.`,
+              },
             };
-          if (!workspace.branchComparison || !workspace.sourceBranch || workspace.sourceBranch === workspace.branchName)
+          if (action?.type === 'finalize') {
+            try {
+              const response = await client.finalizeTaskIntegration(taskId, action.integration.id);
+              const resultFeedback = deliveryFeedback(response.result, zh);
+              return {
+                integration: response.integration,
+                result: {
+                  workspaceId: workspace.id,
+                  repositoryName: label,
+                  status: response.integration.state === 'merged' ? 'succeeded' : 'attention',
+                  message: resultFeedback.text,
+                },
+              };
+            } catch (reason) {
+              const message = errorMessage(reason, zh);
+              if (isTargetBranchDirty(reason)) mergeBlockingError = mergeBlockingError ?? message;
+              return { result: { workspaceId: workspace.id, repositoryName: label, status: 'failed', message } };
+            }
+          }
+          if (!action) {
+            if (collectWorkingFiles(workspace).length > 0) return { result: { workspaceId: workspace.id, repositoryName: label, status: 'skipped', message: zh ? '仍有未提交文件。' : 'Uncommitted files remain.' } };
+            if (findDeliveredIntegration(workspace, integrations))
+              return { result: { workspaceId: workspace.id, repositoryName: label, status: 'skipped', message: zh ? '当前任务提交已经合入。' : 'The current task commit is already merged.' } };
             return { result: { workspaceId: workspace.id, repositoryName: label, status: 'skipped', message: zh ? '没有可合入的任务分支成果。' : 'No task branch result is ready to merge.' } };
-          if (findDeliveredIntegration(workspace, integrations))
-            return { result: { workspaceId: workspace.id, repositoryName: label, status: 'skipped', message: zh ? '当前任务提交已经合入。' : 'The current task commit is already merged.' } };
+          }
           try {
             const response = await client.startTaskIntegration(taskId, workspace.id, { targetBranch: workspace.sourceBranch, mode });
             if (response.integration.state === 'conflicted') {
@@ -499,21 +520,30 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
             }
             return {
               integration: response.integration,
-              result: { workspaceId: workspace.id, repositoryName: label, status: 'succeeded', message: response.result ? deliveryFeedback(response.result, zh).text : zh ? '已准备合入结果。' : 'Merge result prepared.' },
+              result: {
+                workspaceId: workspace.id,
+                repositoryName: label,
+                status: response.integration.state === 'merged' ? 'succeeded' : 'attention',
+                message: response.result ? deliveryFeedback(response.result, zh).text : zh ? '已准备合入结果。' : 'Merge result prepared.',
+              },
             };
           } catch (reason) {
-            return { result: { workspaceId: workspace.id, repositoryName: label, status: 'failed', message: errorMessage(reason, zh) } };
+            const message = errorMessage(reason, zh);
+            if (isTargetBranchDirty(reason)) mergeBlockingError = mergeBlockingError ?? message;
+            return { result: { workspaceId: workspace.id, repositoryName: label, status: 'failed', message } };
           }
         }),
       );
       const results = outcomes.map((outcome) => outcome.result);
       setBatchResults(results);
+      if (mergeBlockingError) setError(mergeBlockingError);
       const firstAttention = outcomes.find((outcome) => outcome.result.status === 'attention' && outcome.integration);
       await reload(firstAttention?.result.workspaceId ?? workspaceId);
       if (firstAttention?.integration) {
         setWorkspaceId(firstAttention.result.workspaceId);
         setIntegration(firstAttention.integration);
         setConflictPath(firstAttention.integration.conflictFiles[0] ?? '');
+        setConflictWorkspaceOpen(firstAttention.integration.state === 'conflicted');
       }
       await props.onChanged?.();
       setFeedback(batchDeliveryFeedback('merge', results, zh));
@@ -558,7 +588,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     }
   }
 
-  async function startAiConflictSession(content: string, fingerprint: string, permissionMode: TaskIntegrationConflictPermissionMode): Promise<void> {
+  async function startAiConflictSession(content: string, fingerprint: string, permissionMode: TaskIntegrationConflictPermissionMode, skillId?: string): Promise<void> {
     if (!props.task || !props.client || !activeConflict || !conflictPath) throw new Error(zh ? '当前没有可处理的冲突。' : 'No conflict is available.');
     setBusyAction('ai');
     setError(null);
@@ -566,7 +596,17 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
       const idempotencyKey = crypto.randomUUID();
       if (props.executionReady === false) {
         if (!props.onQueueConflictAiStart) throw new Error(zh ? '当前操作暂时无法进入准备队列。' : 'This operation cannot be queued yet.');
-        const cancel = props.onQueueConflictAiStart({ idempotencyKey, taskId: props.task.id, projectId: props.task.projectId, integrationId: activeConflict.id, path: conflictPath, content, fingerprint, permissionMode });
+        const cancel = props.onQueueConflictAiStart({
+          idempotencyKey,
+          taskId: props.task.id,
+          projectId: props.task.projectId,
+          integrationId: activeConflict.id,
+          path: conflictPath,
+          content,
+          fingerprint,
+          permissionMode,
+          ...(skillId ? { skillId } : {}),
+        });
         setFeedback({
           tone: 'info',
           text: zh ? '正在准备，完成后自动开始。' : 'Preparing. This will start automatically when ready.',
@@ -578,7 +618,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
         });
         return;
       }
-      const operation = await props.client.startTaskIntegrationConflictAi(props.task.id, activeConflict.id, conflictPath, content, fingerprint, permissionMode, idempotencyKey);
+      const operation = await props.client.startTaskIntegrationConflictAi(props.task.id, activeConflict.id, conflictPath, content, fingerprint, permissionMode, idempotencyKey, skillId);
       await props.onOpenConversation(props.task.id, operation.conversationId);
       props.onClose();
     } catch (reason) {
@@ -770,6 +810,8 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
               conflict={conflictDocument}
               onDocumentChange={setConflictDocument}
               onAskAi={startAiConflictSession}
+              skillClient={props.client}
+              projectId={props.task.projectId}
             />
           ) : conflictReadyToFinalize && activeConflict ? (
             <ConflictCompletion zh={zh} targetBranch={activeConflict.targetBranch} taskBranch={selectedWorkspace?.branchName ?? ''} />
@@ -811,7 +853,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                         </small>
                       ) : null}
                     </span>
-                    {diffLoading ? <p className="task-git-review-empty">{zh ? '正在读取差异…' : 'Loading diff…'}</p> : <SideBySideDiff diff={fileDiff?.fileDiffs[0] ?? null} hasSelection={Boolean(selectedFile)} zh={zh} />}
+                    {diffLoading ? <p className="task-git-review-empty">{zh ? '正在读取差异…' : 'Loading diff…'}</p> : <TaskGitDiffTable diff={fileDiff?.fileDiffs[0] ?? null} hasSelection={Boolean(selectedFile)} zh={zh} />}
                   </section>
                 </main>
 
@@ -828,21 +870,25 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                     <div>
                       <dt>{zh ? '来源分支远端' : 'Source branch remote'}</dt>
                       <dd>
-                        {!selectedWorkspace?.remoteName
-                          ? zh
-                            ? '纯本地模式'
-                            : 'Local-only mode'
-                          : selectedWorkspace.remoteRefreshError
-                            ? zh
-                              ? '远端信息暂不可用'
-                              : 'Remote information unavailable'
-                            : selectedWorkspace.sourceRemoteVerified
-                              ? zh
-                                ? '本机记录显示已推送'
-                                : 'Locally recorded as pushed'
-                              : zh
-                                ? '合入后可选推送'
-                                : 'Optional push after merge'}
+                        {!selectedWorkspace?.remoteName ? (
+                          zh ? (
+                            '纯本地模式'
+                          ) : (
+                            'Local-only mode'
+                          )
+                        ) : selectedWorkspace.remoteRefreshError ? (
+                          <VisibleApplicationError error={selectedWorkspace.remoteRefreshError} language={zh ? 'zh-CN' : 'en'} />
+                        ) : selectedWorkspace.sourceRemoteVerified ? (
+                          zh ? (
+                            '本机记录显示已推送'
+                          ) : (
+                            'Locally recorded as pushed'
+                          )
+                        ) : zh ? (
+                          '合入后可选推送'
+                        ) : (
+                          'Optional push after merge'
+                        )}
                       </dd>
                     </div>
                   </dl>
@@ -879,8 +925,8 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                     <strong>{zh ? '③ 合入来源分支' : '③ Merge into source branch'}</strong>
                     <small>
                       {zh
-                        ? `对 ${selectedMergeCandidateCount} 个已选且可合入仓库执行本地合入；未提交或已合入仓库会跳过。`
-                        : `Locally merge ${selectedMergeCandidateCount} selected eligible repositories; dirty or already merged repositories are skipped.`}
+                        ? `对 ${selectedMergeCandidateCount} 个已选仓库新建或继续本地合入；待同步和待确认现场也从这里继续。`
+                        : `Start or continue local merges for ${selectedMergeCandidateCount} selected repositories, including pending sync and confirmation states.`}
                     </small>
                     <ZeusSelect
                       size="compact"
@@ -915,12 +961,16 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                     ) : null}
                     {pendingLocalSync ? (
                       <small className="task-git-delivery-local-pending">
-                        {zh ? '合入结果已保留；来源分支存在未提交改动。处理原目录后，在底部重新同步。' : 'The integration result is preserved. Clean the source worktree, then retry local sync below.'}
+                        {zh
+                          ? '来源分支存在未提交代码，当前不能继续合入。处理原目录后，再点“合入所选仓库”。'
+                          : 'The source worktree has uncommitted changes, so the merge is blocked. Clean the source worktree, then use “Merge selected repositories” again.'}
                       </small>
                     ) : null}
                     {integrationResult?.localSyncStatus === 'pending' ? (
                       <small className="task-git-delivery-local-pending">
-                        {zh ? '来源分支工作区有未提交代码，合入结果已保留；处理后再重新同步本地分支。' : 'The source worktree has uncommitted changes. The merge result is preserved; clean it before retrying local sync.'}
+                        {zh
+                          ? '来源分支存在未提交代码，当前不能继续合入。处理原目录后，再点“合入所选仓库”。'
+                          : 'The source worktree has uncommitted changes, so the merge is blocked. Clean the source worktree, then use “Merge selected repositories” again.'}
                       </small>
                     ) : null}
                   </section>
@@ -970,10 +1020,6 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                 {zh ? '完成合入来源分支' : 'Finish merging into source branch'}
               </Button>
             )
-          ) : pendingLocalSync ? (
-            <Button variant="primary" size="regular" busy={busyAction === 'merge'} onClick={() => void finalize()}>
-              {zh ? '重新同步本地来源分支' : 'Retry local source sync'}
-            </Button>
           ) : null}
         </footer>
       </section>
@@ -983,9 +1029,9 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
 
 function InitialLoadState(props: { zh: boolean; error?: string | null; onRetry?: () => void }) {
   return (
-    <section className="task-git-delivery-load-state" role="status">
-      <strong>{props.error ? (props.zh ? '当前没有可显示的交付信息' : 'No delivery information is available') : props.zh ? '正在读取本机 Git 信息…' : 'Loading local Git information…'}</strong>
-      <small>{props.zh ? '这里只读取本机分支、提交和工作区，不会连接远端仓库。' : 'This reads local branches, commits, and worktrees without contacting a remote repository.'}</small>
+    <section className="task-git-delivery-load-state" role={props.error ? 'alert' : 'status'}>
+      {props.error ? <VisibleApplicationError error={props.error} language={props.zh ? 'zh-CN' : 'en'} /> : <strong>{props.zh ? '正在读取本机 Git 信息…' : 'Loading local Git information…'}</strong>}
+      {!props.error ? <small>{props.zh ? '这里只读取本机分支、提交和工作区，不会连接远端仓库。' : 'This reads local branches, commits, and worktrees without contacting a remote repository.'}</small> : null}
       {props.onRetry ? (
         <Button variant="secondary" size="compact" onClick={props.onRetry}>
           {props.zh ? '重新读取' : 'Retry'}
@@ -1084,9 +1130,6 @@ function DeliveryRepositoryFileTree(props: {
                       </label>
                     </header>
                     {props.detailStates[workspaceId] === 'loading' ? <small className="task-git-delivery-repository-state">{props.zh ? '正在读取文件…' : 'Loading files…'}</small> : null}
-                    {props.detailStates[workspaceId] === 'error' ? (
-                      <small className="task-git-delivery-repository-state is-error">{props.zh ? '读取失败，其他仓库仍可继续。' : 'Load failed; other repositories remain available.'}</small>
-                    ) : null}
                     {group.files.length > 0 ? (
                       <ol>
                         {group.files.map((file) => (
@@ -1278,7 +1321,7 @@ function workspaceStateLabel(workspace: TaskWorkspaceIndexSnapshot, detail: Task
     const status = recovery.conflictFiles.length > 0 ? (zh ? `${recovery.conflictFiles.length} 个冲突待处理` : `${recovery.conflictFiles.length} conflict(s) pending`) : zh ? '冲突已处理 · 待确认' : 'Conflicts resolved · confirm';
     return `${status}${activeSuffix}`;
   }
-  if (recovery?.state === 'pending_local_sync') return `${zh ? '合入完成 · 待同步' : 'Merged · sync pending'}${activeSuffix}`;
+  if (recovery?.state === 'pending_local_sync') return `${zh ? '来源分支有未提交代码 · 待处理' : 'Source worktree dirty · merge blocked'}${activeSuffix}`;
   if (workspace.state === 'merged') {
     if (!workspace.remoteName) return `${zh ? '已合入 · 无远端' : 'Merged · no remote'}${activeSuffix}`;
     if (!detail) return `${zh ? '已合入 · 远端待读取' : 'Merged · remote not loaded'}${activeSuffix}`;
@@ -1286,7 +1329,7 @@ function workspaceStateLabel(workspace: TaskWorkspaceIndexSnapshot, detail: Task
   }
   if (workspace.state === 'discarded') return zh ? '已放弃' : 'Discarded';
   if (loadState === 'loading') return `${zh ? '正在读取…' : 'Loading…'}${activeSuffix}`;
-  if (loadState === 'error') return `${zh ? '读取失败' : 'Load failed'}${activeSuffix}`;
+  if (loadState === 'error') return activeSuffix;
   if (!detail) return `${zh ? '尚未读取' : 'Not loaded'}${activeSuffix}`;
   const workingCount = collectWorkingFiles(detail).length;
   if (workingCount > 0) return `${zh ? `${workingCount} 个未提交文件` : `${workingCount} uncommitted file(s)`}${activeSuffix}`;
@@ -1296,6 +1339,19 @@ function workspaceStateLabel(workspace: TaskWorkspaceIndexSnapshot, detail: Task
 function findRecoverableIntegration(integrations: TaskIntegrationRecord[], workspaceId?: string): TaskIntegrationRecord | undefined {
   if (!workspaceId) return undefined;
   return integrations.find((candidate) => candidate.workspaceId === workspaceId && (candidate.state === 'conflicted' || candidate.state === 'pending_local_sync'));
+}
+
+type MergeWorkspaceAction = { type: 'start' } | { type: 'resolve_conflict' | 'finalize'; integration: TaskIntegrationRecord };
+
+function mergeWorkspaceAction(workspace: TaskWorkspaceSnapshot | undefined, integrations: TaskIntegrationRecord[]): MergeWorkspaceAction | null {
+  if (!workspace || collectWorkingFiles(workspace).length > 0) return null;
+  const recoverable = findRecoverableIntegration(integrations, workspace.id);
+  if (recoverable) {
+    if (recoverable.state === 'pending_local_sync' || recoverable.conflictFiles.length === 0) return { type: 'finalize', integration: recoverable };
+    return { type: 'resolve_conflict', integration: recoverable };
+  }
+  if (!workspace.branchComparison || !workspace.sourceBranch || workspace.sourceBranch === workspace.branchName || findDeliveredIntegration(workspace, integrations)) return null;
+  return { type: 'start' };
 }
 
 function confirmActiveSessionRisk(activeConversationCount: number, zh: boolean): boolean {
@@ -1342,45 +1398,6 @@ function workingFileLabel(file: TaskGitFileStatus, zh: boolean): string {
   return labels[file.category];
 }
 
-function SideBySideDiff(props: { diff: TaskGitFileDiff | null; hasSelection: boolean; zh: boolean }) {
-  if (!props.diff)
-    return (
-      <p className="task-git-review-empty">{props.hasSelection ? (props.zh ? '该文件暂无可显示的文本差异。' : 'No text diff is available for this file.') : props.zh ? '请选择文件查看代码差异。' : 'Select a file to view its code diff.'}</p>
-    );
-  if (props.diff.hunks.length === 0)
-    return <p className="task-git-review-empty">{props.zh ? '文件已经变化，但没有可显示的文本内容，可能是二进制文件或仅文件属性变化。' : 'The file changed, but no text content is available; it may be binary or metadata-only.'}</p>;
-  const rows = props.diff.hunks.flatMap((hunk) => [
-    {
-      key: `${hunk.header}-header`,
-      kind: 'header' as const,
-      leftNumber: '',
-      left: hunk.header,
-      rightNumber: '',
-      right: hunk.header,
-    },
-    ...hunk.lines.map((line, index) => ({
-      key: `${hunk.header}-${index}`,
-      kind: line.type,
-      leftNumber: line.oldLineNumber ?? '',
-      left: line.type === 'addition' ? '' : line.content,
-      rightNumber: line.newLineNumber ?? '',
-      right: line.type === 'deletion' ? '' : line.content,
-    })),
-  ]);
-  return (
-    <div className="task-git-review-diff-table" role="table">
-      {rows.map((row) => (
-        <div key={row.key} className={`task-git-review-diff-row is-${row.kind}`} role="row">
-          <span className="line-number">{row.leftNumber}</span>
-          <code>{row.left}</code>
-          <span className="line-number">{row.rightNumber}</span>
-          <code>{row.right}</code>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function deliveryFeedback(result: TaskIntegrationResult, zh: boolean): DeliveryFeedback {
   return result.localSyncStatus === 'pending'
     ? {
@@ -1416,21 +1433,9 @@ function isTargetHeadChanged(error: unknown): boolean {
 }
 
 function errorMessage(error: unknown, zh: boolean): string {
-  if (zh && error instanceof ZeusApiError) {
-    const localizedMessages: Record<string, string> = {
-      ZEUS_TASK_WORKSPACE_NOT_FOUND: '当前任务工作区已不存在，请关闭后重新打开该任务的代码交付。',
-      ZEUS_TASK_WORKSPACE_CONFLICTED: '任务工作区存在未解决冲突，请先完成冲突处理。',
-      ZEUS_TASK_WORKSPACE_DIRTY: '任务分支还有未提交代码，请先完成提交再合入。',
-      ZEUS_TASK_WORKTREE_UNAVAILABLE: '任务 worktree 当前不可用，不能执行提交或任务分支推送。',
-      ZEUS_TARGET_BRANCH_UNAVAILABLE: '来源分支当前不可用，请确认本地分支状态。',
-      ZEUS_TARGET_HEAD_CHANGED: '来源分支在合入期间发生变化，正在从最新本地提交安全重建。',
-      ZEUS_TASK_HEAD_CHANGED: '任务分支在合入候选创建后发生变化，请确认后重新合入。',
-      ZEUS_TASK_REMOTE_DIVERGED: '远端来源分支包含本地没有的提交，已停止普通推送；请先人工处理分支差异。',
-      ZEUS_GIT_REMOTE_REFRESH_FAILED: '推送前刷新远端失败；本地提交和合入结果不受影响，请检查网络或仓库凭据。',
-      ZEUS_TASK_REMOTE_VERIFICATION_FAILED: '远端提交校验失败，请检查网络和远端分支状态后重试。',
-      ZEUS_GIT_COMMAND_FAILED: 'Git 操作失败，请检查分支和远端状态后重试。',
-    };
-    if (error.error && localizedMessages[error.error]) return localizedMessages[error.error];
-  }
-  return error instanceof Error ? error.message : String(error);
+  return formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en');
+}
+
+function isTargetBranchDirty(error: unknown): boolean {
+  return error instanceof ZeusApiError && error.error === 'ZEUS_TARGET_BRANCH_DIRTY';
 }

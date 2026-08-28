@@ -1,13 +1,37 @@
 import type { CodexServerRequestResponse } from '@zeus/ai-runtime';
-import type { TaskPushMessageLayout } from '@zeus/shared';
+import type { CodexBootstrapAdditionalContext, TaskPushMessageLayout } from '@zeus/shared';
 import type { ConversationCollaborationMode, ConversationPermissionMode, ZeusConversationGoalRecord } from '@zeus/storage';
+import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
 
 export type NativeConversationRunState =
   | { type: 'idle' }
   | { type: 'dispatching'; submissionId: string }
   | { type: 'active'; turnId: string; phase: 'prework' | 'final_answer' }
   | { type: 'waiting'; turnId: string; requestId: string; reason: 'approval' | 'user_input' }
-  | { type: 'paused'; reason: 'interrupted' | 'transport_unavailable' | 'provider_archived' | 'recovery_required' | 'conflict_preparing' | 'conflict_preparation_failed' };
+  | { type: 'paused'; reason: 'interrupted' | 'transport_unavailable' | 'provider_archived' | 'recovery_required' | 'runtime_rejected' | 'conflict_preparing' | 'conflict_preparation_failed' };
+
+export interface ConversationDispatchContext {
+  projectId: string;
+  projectLocalPath: string;
+  taskId: string | null;
+  executionWorkspaceMode?: 'direct' | 'worktree';
+  model: string;
+  modelSourceId: string | null;
+  effort?: string;
+  serviceTier?: string | null;
+  allowCodeChanges: boolean;
+  allowTests: boolean;
+  allowGitCommit: boolean;
+  permissionMode: ConversationPermissionMode;
+  allowedAttachmentRoots?: string[];
+  writableRoots?: string[];
+  workMode: ConversationCollaborationMode;
+  applyLegacyTaskGuards?: boolean;
+  ephemeral?: boolean;
+  additionalContext?: CodexBootstrapAdditionalContext;
+  operationContext?: Record<string, unknown>;
+  holdDispatch?: boolean;
+}
 
 export type NativeOperationStatus = 'queued' | 'active' | 'steering' | 'steered' | 'interrupted' | 'responded' | 'provider_archived' | 'recovery_required';
 
@@ -18,6 +42,12 @@ export interface NativeAcceptedOperation {
   status: NativeOperationStatus;
   providerThreadId: string | null;
   providerTurnId: string | null;
+}
+
+export interface NativeTurnResultWaiter {
+  resolve(result: NativeTurnResult): void;
+  reject(error: Error): void;
+  timer: ReturnType<typeof setTimeout>;
 }
 
 export interface NativeSubmissionError {
@@ -59,6 +89,7 @@ export type NativeQueueWaitReason =
   | 'transport_unavailable'
   | 'provider_archived'
   | 'recovery_required'
+  | 'runtime_rejected'
   | 'conflict_preparing'
   | 'conflict_preparation_failed'
   | 'user_confirmation'
@@ -93,6 +124,14 @@ export interface NativeConversationAttachmentInput {
   taskPushAttachmentKey?: string;
 }
 
+export interface NativeConversationSkillInput {
+  id: string;
+  name: string;
+  description: string;
+  /** Runtime Adapter 内部使用的绝对 SKILL.md 投影路径。 */
+  path: string;
+}
+
 export interface NativeQuestionAnswerAttachmentInput {
   questionId: string;
   attachments: NativeConversationAttachmentInput[];
@@ -114,6 +153,7 @@ export interface StartTaskConversationInput {
   taskTitle: string;
   prompt: string;
   model: string;
+  skill?: NativeConversationSkillInput;
   modelSourceId?: string | null;
   effort?: string;
   serviceTier?: string | null;
@@ -132,8 +172,10 @@ export interface StartTaskConversationInput {
   deferInitialDispatch?: boolean;
   /** 执行现场尚未就绪时只持久接受消息；释放前所有队列消息都不得派发。 */
   holdDispatch?: boolean;
-  /** 由专用业务入口保存的可恢复准备信封，不参与用户消息正文。 */
-  additionalContext?: Record<string, unknown>;
+  /** 已经编码为 app-server v2 线协议的模型上下文。 */
+  additionalContext?: CodexBootstrapAdditionalContext;
+  /** 由专用业务入口保存的可恢复准备信封，只供 Zeus 使用。 */
+  operationContext?: Record<string, unknown>;
   /** 后台追赶分支产生的 Provider turn，不投影成新的用户消息。 */
   internalOperation?: boolean;
   /** Codex composer 的协作模式，仅用于显式任务推送。 */
@@ -144,6 +186,7 @@ export interface StartTaskConversationInput {
   ephemeral?: boolean;
   providerWriteLifecycle?: NativeProviderWriteLifecycle;
   goalObjective?: string;
+  segmentLifecycle?: ConversationSegmentLifecycle;
 }
 
 export interface StartProjectConversationInput {
@@ -153,6 +196,7 @@ export interface StartProjectConversationInput {
   projectLocalPath: string;
   prompt: string;
   model: string;
+  skill?: NativeConversationSkillInput;
   modelSourceId?: string | null;
   effort?: string;
   serviceTier?: string | null;
@@ -164,6 +208,7 @@ export interface StartProjectConversationInput {
   attachments?: NativeConversationAttachmentInput[];
   providerWriteLifecycle?: NativeProviderWriteLifecycle;
   goalObjective?: string;
+  segmentLifecycle?: ConversationSegmentLifecycle;
 }
 
 export interface SetNativeGoalInput {
@@ -191,6 +236,14 @@ export interface SubmitNativeMessageInput {
   idempotencyKey: string;
   clientUserMessageId: string;
   providerWriteLifecycle?: NativeProviderWriteLifecycle;
+  segmentLifecycle?: ConversationSegmentLifecycle;
+}
+
+export interface DispatchQueuedNativeMessageInput {
+  conversationId: string;
+  submissionId: string;
+  /** 统一执行层根据提交已冻结的路由创建；协调器只复用原提交，不重新生成持久化输入。 */
+  segmentLifecycle: ConversationSegmentLifecycle;
 }
 
 export interface SteerNativeMessageInput {
@@ -215,6 +268,8 @@ export interface RespondPlanImplementationRequestInput {
   requestId: string;
   action: 'implement' | 'refine' | 'dismiss';
   feedback?: string;
+  /** 公开 Command 的稳定 operationIdentity；用于避免崩溃重入时生成不同 submission。 */
+  operationIdentity?: string;
 }
 
 export interface EditQueuedSubmissionInput {
@@ -224,6 +279,11 @@ export interface EditQueuedSubmissionInput {
 }
 
 export interface DeleteQueuedSubmissionInput {
+  conversationId: string;
+  submissionId: string;
+}
+
+export interface RetryQueuedSubmissionInput {
   conversationId: string;
   submissionId: string;
 }
@@ -277,11 +337,15 @@ export interface SnoozeNativeRequestInput {
 }
 
 export interface StartNativeEphemeralConversationInput {
+  /** 公开父 Command 派生的稳定子资源身份；Graph 问答不得在重连时改号。 */
+  conversationId?: string;
+  submissionId?: string;
   projectId: string;
   projectLocalPath: string;
   title: string;
   prompt: string;
   model: string;
+  skill?: NativeConversationSkillInput;
   effort?: string;
   serviceTier?: string | null;
   idempotencyKey: string;
@@ -306,8 +370,11 @@ export interface CodexNativeConversationCoordinator {
   startTaskConversation(input: StartTaskConversationInput): Promise<NativeAcceptedOperation>;
   startProjectConversation(input: StartProjectConversationInput): Promise<NativeAcceptedOperation>;
   submitMessage(input: SubmitNativeMessageInput): Promise<NativeAcceptedOperation>;
+
+  dispatchQueuedMessage(input: DispatchQueuedNativeMessageInput): Promise<NativeAcceptedOperation>;
   steerMessage(input: SteerNativeMessageInput): Promise<NativeAcceptedOperation>;
   editQueuedSubmission(input: EditQueuedSubmissionInput): Promise<NativeQueueSnapshot>;
+  retryQueuedSubmission(input: RetryQueuedSubmissionInput): Promise<NativeQueueSnapshot>;
   deleteQueuedSubmission(input: DeleteQueuedSubmissionInput): Promise<NativeQueueSnapshot>;
   reorderQueue(input: ReorderNativeQueueInput): Promise<NativeQueueSnapshot>;
   sendQueuedNow(input: SendQueuedNowInput): Promise<NativeAcceptedOperation>;

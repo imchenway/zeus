@@ -4,6 +4,8 @@ import { spawn, spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
+import { commandFailureDetail, commandResultSucceeded, releaseRemoteReadAttempts, releaseRemoteReadTimeoutMs, runRemoteReadWithRetrySync } from './release-remote-read.mjs';
+import { releaseWorkflowWaitLimitMs } from './release-workflow-wait-policy.mjs';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const repository = 'imchenway/zeus';
@@ -13,8 +15,6 @@ const documentationWhitespaceExtensions = new Set(['.md', '.mdx', '.markdown']);
 const documentationHtmlExtensions = new Set(['.html', '.htm']);
 const isolatedSourceEnvironment = 'ZEUS_RELEASE_ISOLATED_SOURCE';
 const isolationValidationEnvironment = 'ZEUS_RELEASE_VALIDATE_ISOLATION';
-const remoteReadTimeoutMs = 60_000;
-const remoteReadAttempts = 3;
 let activeReleaseStage = '初始化发布';
 let activeReleaseState = null;
 
@@ -472,7 +472,7 @@ function rebindUnpublishedReleaseRepair(state, headSha) {
   if (recoveringUnpushedCommit && previousReleaseIsOnRemote) return false;
   const localMainContainsRemote = capture('git', ['merge-base', '--is-ancestor', remoteMainSha, headSha], true).status === 0;
   if (recoveringFailedPushedCommit && (!previousReleaseIsOnRemote || !localMainContainsRemote)) return false;
-  if (recoveringFailedPushedCommit) assertNoActiveReleaseWorkflow();
+  if (recoveringFailedPushedCommit) assertNoActiveReleaseWorkflow(state.releaseCommit, headSha);
   assertAncestor(state.baseTag, headSha);
   state.sourceHead = headSha;
   state.releaseCommit = headSha;
@@ -486,12 +486,31 @@ function rebindUnpublishedReleaseRepair(state, headSha) {
   return true;
 }
 
-function assertNoActiveReleaseWorkflow() {
-  const runs = JSON.parse(gh(['run', 'list', '--repo', repository, '--workflow', 'Release', '--limit', '50', '--json', 'databaseId,status,headSha,url']));
+function assertNoActiveReleaseWorkflow(replacedCommit, replacementCommit) {
+  const runs = JSON.parse(gh(['run', 'list', '--repo', repository, '--workflow', 'Release', '--limit', '50', '--json', 'databaseId,status,headSha,url,createdAt']));
   const activeRuns = runs.filter((run) => run.status !== 'completed');
   if (activeRuns.length === 0) return;
-  const details = activeRuns.map((run) => `${run.databaseId}:${run.status}:${run.headSha}:${run.url}`).join('\n');
+
+  const remoteMainSha = resolveRemoteReference('refs/heads/main');
+  const supersededRuns = activeRuns.filter((run) => isSupersededUnstartedReleaseRun(run, replacedCommit, replacementCommit, remoteMainSha));
+  const supersededRunIds = new Set(supersededRuns.map((run) => run.databaseId));
+  const blockingRuns = activeRuns.filter((run) => !supersededRunIds.has(run.databaseId));
+  for (const run of supersededRuns) {
+    console.warn(`隔离忽略已被 main 替代且超过 15 分钟仍未启动的 Release Workflow：${run.databaseId} ${run.url}`);
+  }
+  if (blockingRuns.length === 0) return;
+  const details = blockingRuns.map((run) => `${run.databaseId}:${run.status}:${run.headSha}:${run.url}`).join('\n');
   throw new Error(`仍有 Release Workflow 在运行或排队，拒绝重新绑定失败发布候选：\n${details}`);
+}
+
+function isSupersededUnstartedReleaseRun(run, replacedCommit, replacementCommit, remoteMainSha) {
+  const createdAtMs = Date.parse(run.createdAt ?? '');
+  if (run.status !== 'queued' || run.headSha !== replacedCommit || remoteMainSha !== replacementCommit || !Number.isFinite(createdAtMs) || Date.now() - createdAtMs < releaseWorkflowWaitLimitMs) {
+    return false;
+  }
+
+  const detail = JSON.parse(gh(['run', 'view', String(run.databaseId), '--repo', repository, '--json', 'databaseId,status,headSha,jobs']));
+  return detail.status === 'queued' && detail.headSha === replacedCommit && Array.isArray(detail.jobs) && detail.jobs.length === 0;
 }
 
 function validateState(state, stableRelease) {
@@ -927,19 +946,25 @@ function run(command, args) {
   if (result.status !== 0) throw new Error(`${command} ${args.join(' ')} 执行失败，退出码 ${result.status ?? 'unknown'}。`);
 }
 
-function runRemoteReadInherited(label, command, args, timeout = remoteReadTimeoutMs, attempts = remoteReadAttempts) {
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    if (attempt > 1) console.error(`远程只读操作正在重试：${label}（第 ${attempt}/${attempts} 次，每次最多 ${Math.round(timeout / 1_000)} 秒）`);
-    const result = spawnSync(command, args, {
-      cwd: repositoryRoot,
-      encoding: 'utf8',
-      stdio: 'inherit',
-      timeout,
-    });
-    if (!result.error && result.status === 0) return;
-    if (isTransientRemoteFailure(result) && attempt < attempts) continue;
-    throw releaseCommandError(label, command, args, result, timeout, attempt, attempts);
+function runRemoteReadInherited(label, command, args, timeout = releaseRemoteReadTimeoutMs, attempts = releaseRemoteReadAttempts) {
+  const outcome = runRemoteReadWithRetrySync({
+    attempts,
+    execute: () =>
+      spawnSync(command, args, {
+        cwd: repositoryRoot,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout,
+        maxBuffer: 16 * 1024 * 1024,
+      }),
+    onRetry: (retry) => announceRemoteReadRetry(label, retry, timeout),
+  });
+  if (commandResultSucceeded(outcome.result)) {
+    if (outcome.result.stdout) process.stdout.write(outcome.result.stdout);
+    if (outcome.result.stderr) process.stderr.write(outcome.result.stderr);
+    return;
   }
+  throw releaseCommandError(label, command, args, outcome.result, timeout, outcome.attemptsUsed, attempts);
 }
 
 function pushMainWithVerification(state) {
@@ -1008,32 +1033,32 @@ function resolveOutputDirectory() {
   return commandRunDirectory ? resolve(commandRunDirectory) : mkdtempSync(join(tmpdir(), 'zeus-release-all-'));
 }
 
-function captureRemoteRead(label, command, args, timeout = remoteReadTimeoutMs, attempts = remoteReadAttempts) {
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    if (attempt > 1) console.error(`远程只读操作正在重试：${label}（第 ${attempt}/${attempts} 次，每次最多 ${Math.round(timeout / 1_000)} 秒）`);
-    const result = spawnSync(command, args, {
-      cwd: repositoryRoot,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout,
-      maxBuffer: 16 * 1024 * 1024,
-    });
-    if (!result.error && result.status === 0) return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
-    if (isTransientRemoteFailure(result) && attempt < attempts) continue;
-    throw releaseCommandError(label, command, args, result, timeout, attempt, attempts);
+function captureRemoteRead(label, command, args, timeout = releaseRemoteReadTimeoutMs, attempts = releaseRemoteReadAttempts) {
+  const outcome = runRemoteReadWithRetrySync({
+    attempts,
+    execute: () =>
+      spawnSync(command, args, {
+        cwd: repositoryRoot,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout,
+        maxBuffer: 16 * 1024 * 1024,
+      }),
+    onRetry: (retry) => announceRemoteReadRetry(label, retry, timeout),
+  });
+  if (commandResultSucceeded(outcome.result)) {
+    return { status: outcome.result.status, stdout: outcome.result.stdout ?? '', stderr: outcome.result.stderr ?? '' };
   }
-  throw new Error(`${label}未返回结果。`);
+  throw releaseCommandError(label, command, args, outcome.result, timeout, outcome.attemptsUsed, attempts);
 }
 
-function isTransientRemoteFailure(result) {
-  if (result.error?.code === 'ETIMEDOUT') return true;
-  const detail = `${result.stderr ?? ''}\n${result.stdout ?? ''}\n${result.error?.message ?? ''}`;
-  return /(timed?\s*out|timeout|connection reset|connection closed|temporary failure|could not resolve host|network is unreachable|http 5\d\d|tls.*closed)/iu.test(detail);
+function announceRemoteReadRetry(label, retry, timeout) {
+  console.error(`远程只读操作暂时失败：${label}；${retry.delayMs / 1_000} 秒后重试（第 ${retry.nextAttempt}/${retry.attempts} 次，每次最多 ${Math.round(timeout / 1_000)} 秒）：${retry.detail}`);
 }
 
 function releaseCommandError(label, command, args, result, timeout, attempt, attempts) {
   const timedOut = result.error?.code === 'ETIMEDOUT';
-  const detail = String(result.stderr ?? '').trim() || String(result.stdout ?? '').trim() || result.error?.message || `退出码 ${result.status ?? 'unknown'}`;
+  const detail = commandFailureDetail(result);
   const error = new Error(`${label}失败：${detail}`);
   error.name = 'ReleaseCommandError';
   error.command = [command, ...args].join(' ');

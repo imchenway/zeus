@@ -14,7 +14,7 @@ import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/c
 import type { DashboardClient, ProjectGitAction, ProjectGitCommitDetail, ProjectGitRepositoryWorkbenchItem, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError, useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { SideBySideDiff } from './ProjectGitDiffViewer.js';
 
 type GitTab = 'changes' | 'shelf' | 'stash' | 'log' | 'console';
@@ -49,8 +49,6 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const [error, setError] = useState<string | null>(null);
   useApplicationErrorDialog(error, {
     language: zh ? 'zh-CN' : 'en',
-    title: zh ? 'Git 操作失败' : 'Git operation failed',
-    source: 'ProjectGitWorkbench',
   });
   const [tab, setTab] = useState<GitTab>(() => readRememberedTab(props.project.id));
   const [selectedRepositoryId, setSelectedRepositoryId] = useState('');
@@ -71,6 +69,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const [operationRecords, setOperationRecords] = useState<OperationRecord[]>([]);
   const [pushResults, setPushResults] = useState<Array<{ repositoryId: string; repositoryName: string; tone: OperationTone; message: string }>>([]);
   const requestVersionRef = useRef(0);
+  const operationErrorsByRepositoryRef = useRef<Record<string, string>>({});
 
   const repositories = snapshot?.repositories ?? [];
   const selectedRepository = repositories.find((repository) => repository.id === selectedRepositoryId) ?? repositories[0] ?? null;
@@ -97,6 +96,29 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   }, [props.project.id, tab]);
 
   useEffect(() => {
+    if (tab !== 'changes' || !snapshot) return;
+    const repository = snapshot.repositories.find((candidate) => candidate.id === selectedRepositoryId && candidate.snapshot.fileStatuses.length > 0) ?? snapshot.repositories.find((candidate) => candidate.snapshot.fileStatuses.length > 0);
+    if (!repository) {
+      if (selectedFilePath) setSelectedFilePath('');
+      return;
+    }
+    if (repository.id !== selectedRepositoryId) setSelectedRepositoryId(repository.id);
+    const unstagedPaths = new Set(repository.snapshot.fileStatuses.filter((file) => file.workingTreeStatus !== ' ' || file.indexStatus === '?').map((file) => file.path));
+    const stagedPaths = new Set(repository.snapshot.fileStatuses.filter((file) => file.indexStatus !== ' ' && file.indexStatus !== '?').map((file) => file.path));
+    const selectedPaths = selectedFileStage === 'staged' ? stagedPaths : unstagedPaths;
+    if (selectedPaths.has(selectedFilePath)) return;
+    const otherStagePaths = selectedFileStage === 'staged' ? unstagedPaths : stagedPaths;
+    if (otherStagePaths.has(selectedFilePath)) {
+      setSelectedFileStage(selectedFileStage === 'staged' ? 'unstaged' : 'staged');
+      return;
+    }
+    const firstUnstagedPath = unstagedPaths.values().next().value;
+    const firstStagedPath = stagedPaths.values().next().value;
+    setSelectedFilePath(firstUnstagedPath ?? firstStagedPath ?? '');
+    setSelectedFileStage(firstUnstagedPath ? 'unstaged' : 'staged');
+  }, [snapshot, tab, selectedRepositoryId, selectedFilePath, selectedFileStage]);
+
+  useEffect(() => {
     if (!selectedRepository) {
       setSelectedCommitHash('');
       setCommitDetail(null);
@@ -121,7 +143,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         setSelectedFilePath(detail.files[0]?.path ?? '');
       })
       .catch((reason: unknown) => {
-        if (!cancelled) setError(errorMessage(reason));
+        if (!cancelled) setError(errorMessage(reason, zh));
       })
       .finally(() => {
         if (!cancelled) setCommitLoading(false);
@@ -144,7 +166,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
     } catch (reason) {
       if (version !== requestVersionRef.current) return;
       setLoadState('error');
-      setError(errorMessage(reason));
+      setError(errorMessage(reason, zh));
     }
   }
 
@@ -152,6 +174,9 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
     const started = performance.now();
     setBusy({ repositoryId: repository.id, action: action.type });
     setError(null);
+    const previousOperationErrors = { ...operationErrorsByRepositoryRef.current };
+    delete previousOperationErrors[repository.id];
+    operationErrorsByRepositoryRef.current = previousOperationErrors;
     try {
       const response = await props.client.executeProjectGitAction(props.project.id, repository.id, action);
       setSnapshot((current) =>
@@ -174,7 +199,8 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       if (response.result.outcome === 'conflict') setTab('changes');
       return response.result.outcome;
     } catch (reason) {
-      const message = errorMessage(reason);
+      const message = errorMessage(reason, zh);
+      operationErrorsByRepositoryRef.current = { ...operationErrorsByRepositoryRef.current, [repository.id]: message };
       setError(message);
       addOperationRecord(repository, action.type, label, 'error', message, performance.now() - started);
       return null;
@@ -229,10 +255,8 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
 
   if (loadState === 'error' && !snapshot) {
     return (
-      <section className="project-git-workbench-state" role="status">
-        <WarningCircle aria-hidden="true" />
-        <strong>{zh ? '当前没有可显示的 Git 现场' : 'No Git state is currently available'}</strong>
-        <span>{zh ? '可以重新读取本机仓库。' : 'You can reload the local repositories.'}</span>
+      <section className="project-git-workbench-state" role="alert">
+        <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
         <Button variant="secondary" onClick={() => void loadWorkbench()}>
           {zh ? '重新读取' : 'Reload'}
         </Button>
@@ -394,7 +418,16 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       )}
 
       <CommitDialog open={commitOpen} zh={zh} repositories={repositories} busy={busy} onClose={() => setCommitOpen(false)} onExecute={execute} />
-      <UpdateProjectDialog open={updateOpen} projectId={props.project.id} zh={zh} repositories={repositories} busy={busy} onClose={() => setUpdateOpen(false)} onExecute={execute} />
+      <UpdateProjectDialog
+        open={updateOpen}
+        projectId={props.project.id}
+        zh={zh}
+        repositories={repositories}
+        busy={busy}
+        errorsByRepository={operationErrorsByRepositoryRef.current}
+        onClose={() => setUpdateOpen(false)}
+        onExecute={execute}
+      />
       <NewBranchDialog open={newBranchOpen} zh={zh} repositories={repositories} selectedRepository={selectedRepository} baseRef={newBranchBase} busy={busy} onClose={() => setNewBranchOpen(false)} onExecute={execute} />
       <CheckoutRevisionDialog open={revisionOpen} zh={zh} repositories={repositories} selectedRepository={selectedRepository} busy={busy} onClose={() => setRevisionOpen(false)} onExecute={execute} />
       <PushDialog
@@ -420,9 +453,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                 ? zh
                   ? `已推送 ${repository.snapshot.outgoingCommits.length} 个提交`
                   : `Pushed ${repository.snapshot.outgoingCommits.length} commits`
-                : zh
-                  ? '推送失败，其他仓库结果不回滚'
-                  : 'Push failed; other repository results are not rolled back',
+                : (operationErrorsByRepositoryRef.current[repository.id] ?? (zh ? '推送失败。' : 'Push failed.')),
             });
           }
           setPushResults(results);
@@ -704,6 +735,7 @@ function UpdateProjectDialog(props: {
   zh: boolean;
   repositories: ProjectGitRepositoryWorkbenchItem[];
   busy: BusyState;
+  errorsByRepository: Readonly<Record<string, string>>;
   onClose: () => void;
   onExecute: (repository: ProjectGitRepositoryWorkbenchItem, action: ProjectGitAction, label: string) => Promise<ExecutionOutcome>;
 }) {
@@ -760,7 +792,11 @@ function UpdateProjectDialog(props: {
                   <small>{repository.snapshot.detached ? (props.zh ? '游离提交状态，无法更新' : 'Detached HEAD; cannot update') : (repository.snapshot.upstream ?? (props.zh ? '没有跟踪远端' : 'No tracked remote'))}</small>
                   {repository.snapshot.fileStatuses.length > 0 ? <em>{props.zh ? `Smart Stash · ${repository.snapshot.fileStatuses.length} 个变化` : `Smart Stash · ${repository.snapshot.fileStatuses.length} changes`}</em> : null}
                   {result ? <i className={`is-${result}`}>{result === 'completed' ? (props.zh ? '已完成' : 'Completed') : props.zh ? '存在冲突' : 'Conflicts'}</i> : null}
-                  {result === null && results.some((item) => item.id === repository.id) ? <i className="is-error">{props.zh ? '失败' : 'Failed'}</i> : null}
+                  {result === null && results.some((item) => item.id === repository.id) ? (
+                    <i className="is-error">
+                      <VisibleApplicationError error={props.errorsByRepository[repository.id]} language={props.zh ? 'zh-CN' : 'en'} />
+                    </i>
+                  ) : null}
                 </span>
               );
             })}
@@ -1294,6 +1330,11 @@ function LocalChangesSurface(props: {
 }) {
   const stageDiff = props.selectedFileStage === 'staged' ? props.selectedRepository?.snapshot.stagedDiff : props.selectedRepository?.snapshot.unstagedDiff;
   const selectedDiff = stageDiff?.fileDiffs.find((file) => file.newPath === props.selectedFilePath || file.oldPath === props.selectedFilePath) ?? stageDiff?.fileDiffs[0] ?? null;
+  const changedRepositories = props.repositories.filter((repository) => repository.snapshot.fileStatuses.length > 0);
+  const stagedRepositories = props.repositories.flatMap((repository) => {
+    const count = repository.snapshot.fileStatuses.filter((file) => file.indexStatus !== ' ' && file.indexStatus !== '?').length;
+    return count > 0 ? [{ repository, count }] : [];
+  });
   return (
     <div className="project-git-changes-layout">
       <aside className="project-git-change-tree">
@@ -1301,15 +1342,15 @@ function LocalChangesSurface(props: {
           <strong>{props.zh ? '变更文件' : 'Changed files'}</strong>
           <span>{props.repositories.reduce((total, repository) => total + repository.snapshot.fileStatuses.length, 0)}</span>
         </header>
-        {props.repositories.map((repository) => {
+        {changedRepositories.map((repository) => {
           const staged = repository.snapshot.fileStatuses.filter((file) => file.indexStatus !== ' ' && file.indexStatus !== '?');
           const unstaged = repository.snapshot.fileStatuses.filter((file) => file.workingTreeStatus !== ' ' || file.indexStatus === '?');
           return (
             <section key={repository.id}>
               <button className="project-git-change-repository" type="button" onClick={() => props.onSelectRepository(repository.id)}>
                 <GitBranch aria-hidden="true" />
-                <strong>{repository.name}</strong>
-                <small>{repository.snapshot.branch}</small>
+                <strong title={repository.name}>{repository.name}</strong>
+                <small title={repository.snapshot.branch}>{repository.snapshot.branch}</small>
               </button>
               {unstaged.length > 0 ? <span className="project-git-change-group-title">{props.zh ? '未暂存' : 'Unstaged'}</span> : null}
               <ChangeDirectoryTree
@@ -1350,16 +1391,19 @@ function LocalChangesSurface(props: {
       </main>
       <aside className="project-git-commit-rail">
         <strong>{props.zh ? '提交' : 'Commit'}</strong>
-        {props.repositories.map((repository) => {
-          const count = repository.snapshot.fileStatuses.filter((file) => file.indexStatus !== ' ' && file.indexStatus !== '?').length;
-          return (
-            <span key={repository.id}>
-              <b>{repository.name}</b>
-              <small>{props.zh ? `${count} 个已暂存文件` : `${count} staged files`}</small>
-            </span>
-          );
-        })}
-        <Button variant="primary" onClick={props.onCommit} disabled={props.repositories.every((repository) => repository.snapshot.fileStatuses.every((file) => file.indexStatus === ' ' || file.indexStatus === '?'))}>
+        <div className="project-git-commit-summary" role="status">
+          {stagedRepositories.length > 0 ? (
+            stagedRepositories.map(({ repository, count }) => (
+              <span key={repository.id} title={`${repository.name} · ${repository.snapshot.branch}`}>
+                <b>{repository.name}</b>
+                <small>{props.zh ? `${count} 个已暂存文件` : `${count} staged files`}</small>
+              </span>
+            ))
+          ) : (
+            <small>{props.zh ? '暂存文件后可在这里逐仓创建提交。' : 'Stage files to create a commit for each repository.'}</small>
+          )}
+        </div>
+        <Button variant="primary" onClick={props.onCommit} disabled={stagedRepositories.length === 0}>
           {props.zh ? '提交已暂存变更' : 'Commit staged changes'}
         </Button>
       </aside>
@@ -1857,9 +1901,9 @@ function PushDialog(props: {
                 {resultMode ? (
                   result?.tone === 'success' ? (
                     <CheckCircle aria-hidden="true" />
-                  ) : (
+                  ) : result?.tone === 'warning' ? (
                     <WarningCircle aria-hidden="true" />
-                  )
+                  ) : null
                 ) : (
                   <input
                     type="checkbox"
@@ -1898,8 +1942,12 @@ function PushDialog(props: {
                   )}
                 </span>
                 <em>
-                  {result?.message ??
-                    (repository.snapshot.outgoingCommits.length > 0 ? (props.zh ? `${repository.snapshot.outgoingCommits.length} 个提交` : `${repository.snapshot.outgoingCommits.length} commits`) : props.zh ? '无需推送' : 'Up to date')}
+                  {result?.tone === 'error' ? (
+                    <VisibleApplicationError error={result.message} language={props.zh ? 'zh-CN' : 'en'} />
+                  ) : (
+                    (result?.message ??
+                    (repository.snapshot.outgoingCommits.length > 0 ? (props.zh ? `${repository.snapshot.outgoingCommits.length} 个提交` : `${repository.snapshot.outgoingCommits.length} commits`) : props.zh ? '无需推送' : 'Up to date'))
+                  )}
                 </em>
               </section>
             );
@@ -1953,9 +2001,8 @@ function displayStashSubject(subject: string, zh: boolean): string {
   return cleaned || (zh ? '未命名 Stash' : 'Untitled stash');
 }
 
-function errorMessage(error: unknown): string {
-  if (error instanceof Error && error.message.trim()) return error.message;
-  return typeof error === 'string' && error.trim() ? error : 'Git operation failed.';
+function errorMessage(error: unknown, zh: boolean): string {
+  return formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en');
 }
 
 function formatRelativeTime(value: string, zh: boolean): string {

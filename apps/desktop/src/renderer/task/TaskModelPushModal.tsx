@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type Dispatch, type FormEvent, type KeyboardEvent, type SetStateAction } from 'react';
+import { type Dispatch, type FormEvent, type KeyboardEvent, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
 import {
   buildTaskPushLayout,
   renderTaskPushLayoutText,
@@ -14,6 +14,7 @@ import {
 } from '@zeus/shared';
 import type { CodexConfigImportPreview, ProjectModelServiceTierPreference, TaskRecord } from '../apiClient.js';
 import type {
+  CodexConversationCapabilities,
   CodexTaskPushCapabilities,
   CodexTaskPushModelCapability,
   NativeConversationAttachment,
@@ -28,20 +29,26 @@ import { readConversationRuntimePreferences, writeConversationRuntimePreferences
 import { resolveModelCapability } from '../session/modelSelection.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
 import { projectModelServiceTierSelection } from '../session/projectServiceTierPreferences.js';
 import { TaskPushSupplementalAttachmentCards } from './TaskPushSupplementalAttachmentCards.js';
+import { SkillSelector } from '../features/skills/SkillSelector.js';
+import type { CodexApiClient } from '../features/codex/codexApiClient.js';
 
 export interface TaskModelPushForm {
+  stageId?: string;
   model: string;
   effort: string;
   serviceTier: NativeServiceTierSelection;
   serviceTierDowngraded: boolean;
   workMode: 'default' | 'plan';
   permissionMode: NativePermissionMode;
+  skillId: string;
   workspaceMode: 'direct' | 'worktree';
+  taskBranchMode: 'create' | 'existing';
+  environmentId: string;
   directConcurrencyConfirmed: boolean;
   repositorySelections: Record<string, { sourceRef: string; branchName: string; includeLocalChanges: boolean }>;
   currentConversationIds: string[];
@@ -60,6 +67,7 @@ export type TaskModelPushPreferences = Pick<TaskModelPushForm, 'model' | 'effort
 type TaskPushRepositoryCapability = CodexTaskPushCapabilities['repositories'][number];
 type TaskPushSourceRef = TaskPushRepositoryCapability['sourceRefs'][number];
 type TaskPushContextCapability = CodexTaskPushCapabilities['parentContextOptions'][number] | CodexTaskPushCapabilities['relatedContextOptions'][number];
+type TaskPushEnvironmentCapability = NonNullable<CodexTaskPushCapabilities['existingEnvironments']>[number];
 
 interface TaskPushCommonSource {
   key: string;
@@ -84,6 +92,7 @@ export function normalizeTaskModelPushCapabilities(capabilities: CodexTaskPushCa
     currentConversationOptions: Array.isArray(capabilities.currentConversationOptions) ? capabilities.currentConversationOptions : [],
     parentContextOptions: Array.isArray(capabilities.parentContextOptions) ? capabilities.parentContextOptions.map(normalizeContext) : [],
     relatedContextOptions: Array.isArray(capabilities.relatedContextOptions) ? capabilities.relatedContextOptions.map(normalizeContext) : [],
+    existingEnvironments: Array.isArray(capabilities.existingEnvironments) ? capabilities.existingEnvironments : [],
   };
 }
 
@@ -135,6 +144,15 @@ function resolveSelectedTaskPushCommonSourceKey(repositories: TaskPushRepository
 function taskPushCommonSourceLabel(source: TaskPushCommonSource, repositoryCount: number, zh: boolean): string {
   if (zh) return `${source.label} · ${source.kind === 'local' ? '本地' : `${source.group} 远端`} · ${repositoryCount} 个仓库`;
   return `${source.label} · ${source.kind === 'local' ? 'local' : `${source.group} remote`} · ${repositoryCount} repositories`;
+}
+
+function taskPushEnvironmentLabel(environment: TaskPushEnvironmentCapability, zh: boolean): string {
+  const branches = Array.from(new Set(environment.repositories.map((repository) => repository.branchName)));
+  const branchLabel = branches.length === 1 ? branches[0]! : branches.join(zh ? '、' : ', ');
+  const repositoryLabel = environment.repositories.length === 1 ? environment.repositories[0]!.repositoryName : zh ? `${environment.repositories.length} 个仓库` : `${environment.repositories.length} repositories`;
+  const unavailableLabel =
+    environment.unavailableReason === 'active_conversation' ? (zh ? ' · 正有会话使用' : ' · active conversation') : environment.unavailableReason === 'closed_workspace' ? (zh ? ' · 已部分关闭' : ' · partially closed') : '';
+  return `${branchLabel} · ${repositoryLabel}${unavailableLabel}`;
 }
 
 export function buildTaskModelPushMessage(
@@ -484,7 +502,7 @@ export function readTaskModelPushPreferences(storage: Pick<Storage, 'getItem'> |
       return {
         model: current.model,
         effort: current.effort ?? '',
-        serviceTier: current.serviceTier,
+        serviceTier: { type: 'standard' },
         workMode: current.collaborationMode,
         permissionMode: current.permissionMode,
         ...(current.workspaceMode ? { workspaceMode: current.workspaceMode } : {}),
@@ -529,7 +547,12 @@ export function writeTaskModelPushPreferences(storage: Pick<Storage, 'getItem' |
   );
 }
 
-export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapabilities, remembered: TaskModelPushPreferences | null, serviceTierPreferences: readonly ProjectModelServiceTierPreference[] = []): TaskModelPushForm {
+export function resolveTaskModelPushInitialForm(
+  capabilities: CodexTaskPushCapabilities,
+  remembered: TaskModelPushPreferences | null,
+  serviceTierPreferences: readonly ProjectModelServiceTierPreference[] = [],
+  skillId = '',
+): TaskModelPushForm {
   const availableModels = capabilities.models.filter((model) => model.available !== false);
   const rememberedModel = resolveModelCapability(availableModels, remembered?.model);
   const selectedModel = rememberedModel ?? resolveModelCapability(availableModels, capabilities.preferredModel) ?? availableModels[0];
@@ -537,6 +560,7 @@ export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapab
   const effort = rememberedModel && remembered && selectedModel.supportedReasoningEfforts.includes(remembered.effort) ? remembered.effort : (selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? '');
   const requestedServiceTier = projectModelServiceTierSelection(serviceTierPreferences, selectedModel);
   const normalizedServiceTier = normalizeServiceTierSelection(requestedServiceTier, selectedModel);
+  const firstAvailableEnvironment = capabilities.existingEnvironments?.find((environment) => environment.available);
   return {
     model: selectedModel.id,
     effort,
@@ -545,7 +569,10 @@ export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapab
     workMode: remembered?.workMode ?? 'default',
     // 用户已确认：项目没有成功记忆时，权限必须回退为只读。
     permissionMode: remembered?.permissionMode ?? 'read-only',
+    skillId,
     workspaceMode: remembered?.workspaceMode ?? (capabilities.repositories.length > 0 ? 'worktree' : 'direct'),
+    taskBranchMode: 'create',
+    environmentId: firstAvailableEnvironment?.id ?? '',
     directConcurrencyConfirmed: false,
     repositorySelections: Object.fromEntries(
       capabilities.repositories.map((repository) => {
@@ -569,12 +596,162 @@ export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapab
   };
 }
 
+function TaskModelPushLoginDialog(props: { language: 'zh-CN' | 'en-US'; status: Extract<TaskModelPushModalStatus, 'inspecting-config' | 'authenticating' | 'authenticated'>; onCancel: () => void }) {
+  const zh = props.language === 'zh-CN';
+  const authenticated = props.status === 'authenticated';
+  const inspectingConfig = props.status === 'inspecting-config';
+  const title = zh ? '登录 Zeus 专属 Codex' : 'Sign in to Codex for Zeus';
+  return (
+    <ModalPortal rootClassName="task-model-push-portal-root" backdropClassName="task-model-push-backdrop" dismissDisabled={authenticated} onDismiss={props.onCancel}>
+      <section className="task-model-push-step-modal zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="task-model-push-login-title" aria-describedby="task-model-push-login-description">
+        <header className="task-model-push-header">
+          <span>
+            <strong id="task-model-push-login-title">{title}</strong>
+            <small>{zh ? '账号登录' : 'Account sign-in'}</small>
+          </span>
+          <button type="button" aria-label={zh ? '返回推送设置' : 'Back to push settings'} onClick={props.onCancel} disabled={authenticated}>
+            ×
+          </button>
+        </header>
+        <div className="task-model-push-step-body" role="status" aria-live="polite" aria-atomic="true">
+          <strong>
+            {authenticated ? (zh ? '登录成功，正在返回 Zeus' : 'Signed in, returning to Zeus') : inspectingConfig ? (zh ? '正在准备登录' : 'Preparing sign-in') : zh ? '请在官方页面完成登录' : 'Complete sign-in on the official page'}
+          </strong>
+          <p id="task-model-push-login-description">
+            {authenticated
+              ? zh
+                ? 'Zeus 已验证专属账号，正在恢复刚才的推送设置并创建会话。'
+                : 'Zeus verified its dedicated account and is restoring your push settings to create the conversation.'
+              : inspectingConfig
+                ? zh
+                  ? '正在检查是否有可安全导入的 Codex App 配置；有可导入内容时会单独询问。'
+                  : 'Checking for Codex App configuration that can be imported safely. If anything is available, Zeus will ask in a separate dialog.'
+                : zh
+                  ? '官方登录页已在系统浏览器中打开。完成授权后无需点击网页中的其他产品按钮，Zeus 会自动回到前台并继续。'
+                  : 'The official sign-in page is open in your system browser. After authorization, do not choose another product button there; Zeus will return to the foreground and continue automatically.'}
+          </p>
+          <small>{zh ? 'Zeus 只读取登录结果，不会读取、复制或覆盖 Codex App 的账号信息。' : 'Zeus only reads the sign-in result and does not read, copy, or overwrite the Codex App account.'}</small>
+        </div>
+        <footer className="task-model-push-footer">
+          <small>{zh ? '当前模型、工作区、权限、补充信息和附件都会保留。' : 'Your model, workspace, permissions, supplemental information, and attachments are preserved.'}</small>
+          {authenticated ? (
+            <Button variant="primary" size="regular" busy disabled>
+              {zh ? '正在继续…' : 'Continuing…'}
+            </Button>
+          ) : (
+            <Button variant="secondary" size="regular" onClick={props.onCancel}>
+              {zh ? '返回' : 'Back'}
+            </Button>
+          )}
+        </footer>
+      </section>
+    </ModalPortal>
+  );
+}
+
+function TaskModelPushConfigImportDialog(props: {
+  language: 'zh-CN' | 'en-US';
+  preview: CodexConfigImportPreview | null;
+  needsActivation: boolean;
+  importing: boolean;
+  onCancel: () => void;
+  onClose: () => void;
+  onSkip: () => void;
+  onImport: () => void;
+}) {
+  const zh = props.language === 'zh-CN';
+  const dismiss = props.needsActivation ? props.onClose : props.onCancel;
+  return (
+    <ModalPortal rootClassName="task-model-push-portal-root" backdropClassName="task-model-push-backdrop" dismissDisabled={props.importing} onDismiss={dismiss}>
+      <section
+        className="task-model-push-step-modal task-model-push-config-dialog zeus-solid-form-surface"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="task-model-push-config-import-title"
+        aria-describedby="task-model-push-config-import-description"
+      >
+        <header className="task-model-push-header">
+          <span>
+            <strong id="task-model-push-config-import-title">{props.needsActivation ? (zh ? '启用已导入配置' : 'Enable imported configuration') : zh ? '导入 Codex 配置' : 'Import Codex configuration'}</strong>
+            <small>{zh ? '配置导入' : 'Configuration import'}</small>
+          </span>
+          <button type="button" aria-label={zh ? (props.needsActivation ? '关闭' : '返回登录') : props.needsActivation ? 'Close' : 'Back to sign-in'} onClick={dismiss} disabled={props.importing}>
+            ×
+          </button>
+        </header>
+        <div className="task-model-push-step-body task-model-push-config-import">
+          <p id="task-model-push-config-import-description">
+            {props.needsActivation
+              ? zh
+                ? '配置文件已经安全导入。Zeus 需要先启动新的 Codex 运行服务，才能保证本次新会话使用这些配置。'
+                : 'The configuration was imported safely. Zeus must start a fresh Codex runtime before this conversation can use it.'
+              : zh
+                ? 'Zeus 会把普通偏好、指令、规则、提示词、技能以及 Computer/Browser 工具组件复制到专属目录；不会导入账号、密钥或历史会话。'
+                : 'Zeus will copy preferences, instructions, rules, prompts, skills, and Computer/Browser tool components into its own directory. Accounts, secrets, and conversation history are excluded.'}
+          </p>
+          {props.preview ? (
+            <ul aria-label={zh ? '可导入配置' : 'Configuration available to import'}>
+              {props.preview.entries.map((entry) => (
+                <li key={entry.path}>
+                  <strong>{entry.path}</strong>
+                  <small>{zh ? `${entry.nodeCount} 项` : `${entry.nodeCount} item(s)`}</small>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {(props.preview?.skipped.length ?? 0) > 0 ? (
+            <small>
+              {zh
+                ? `另有 ${props.preview!.skipped.length} 项因安全限制、缺失、格式不支持或属于运行缓存而跳过。`
+                : `${props.preview!.skipped.length} item(s) will be skipped because they are missing, unsafe, unsupported, or generated runtime cache.`}
+            </small>
+          ) : null}
+        </div>
+        <footer className="task-model-push-footer">
+          <small>
+            {props.needsActivation
+              ? zh
+                ? '启用成功前不会创建本次会话。'
+                : 'This conversation will not be created until activation succeeds.'
+              : zh
+                ? '只询问这一次；暂不导入后仍可在设置中手动导入。'
+                : 'You will only be asked once. You can still import later from Settings.'}
+          </small>
+          <span>
+            <Button variant="secondary" size="regular" onClick={props.needsActivation ? props.onClose : props.onSkip} disabled={props.importing}>
+              {props.needsActivation ? (zh ? '关闭' : 'Close') : zh ? '暂不导入' : 'Not now'}
+            </Button>
+            <Button type="button" variant="primary" size="regular" busy={props.importing} disabled={props.importing} onClick={props.onImport}>
+              {props.importing
+                ? props.needsActivation
+                  ? zh
+                    ? '正在启用…'
+                    : 'Enabling…'
+                  : zh
+                    ? '正在导入并启用…'
+                    : 'Importing and enabling…'
+                : props.needsActivation
+                  ? zh
+                    ? '重试启用'
+                    : 'Retry enabling'
+                  : zh
+                    ? '导入并继续'
+                    : 'Import and continue'}
+            </Button>
+          </span>
+        </footer>
+      </section>
+    </ModalPortal>
+  );
+}
+
 export function TaskModelPushModal(props: {
   open: boolean;
   language: 'zh-CN' | 'en-US';
   task: TaskRecord | null;
   projectName?: string;
   capabilities: CodexTaskPushCapabilities | null;
+  runtimeCapabilities: CodexConversationCapabilities | null;
   serviceTierPreferences: readonly ProjectModelServiceTierPreference[];
   form: TaskModelPushForm;
   status: TaskModelPushModalStatus;
@@ -582,11 +759,13 @@ export function TaskModelPushModal(props: {
   configImportNeedsActivation: boolean;
   refreshingRepositoryId: string | null;
   error: string | null;
+  skillClient: Pick<CodexApiClient, 'loadSkills'> | null;
   onChange: Dispatch<SetStateAction<TaskModelPushForm>>;
   onServiceTierPreferenceChange: (model: CodexTaskPushModelCapability, selection: NativeServiceTierSelection) => void | Promise<void>;
   onRefreshRepository: (repositoryId: string) => void;
   onClose: () => void;
   onCancelAuthentication: () => void;
+  onCancelCodexConfigImport: () => void;
   onImportCodexConfig: () => void;
   onSkipCodexConfigImport: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
@@ -597,8 +776,6 @@ export function TaskModelPushModal(props: {
   const repositoryRefreshError = props.capabilities?.repositories.find((repository) => repository.remoteRefreshError)?.remoteRefreshError ?? null;
   useApplicationErrorDialog(props.error ?? supplementalResourceError ?? repositoryRefreshError, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-    title: props.language === 'zh-CN' ? '模型推送操作失败' : 'Model push operation failed',
-    source: 'TaskModelPushModal',
   });
   const resourceInputDisabled = !props.open || props.status === 'inspecting-config' || props.status === 'importing-config' || props.status === 'authenticating' || props.status === 'submitting';
   const inputResources = useConversationInputResources({
@@ -619,8 +796,10 @@ export function TaskModelPushModal(props: {
   useEffect(() => {
     setSupplementalResourceError(null);
   }, [props.open, props.task?.id]);
-  const requestedModel = resolveModelCapability(props.capabilities?.models, props.form.model);
-  const modelPresentation = useMemo(() => presentModelOptions(props.capabilities?.models ?? [], requestedModel?.id ?? props.form.model, props.language), [props.capabilities?.models, props.form.model, props.language, requestedModel?.id]);
+  const runtimeCapabilities = props.capabilities ?? props.runtimeCapabilities;
+  const codexAccount = props.runtimeCapabilities?.codexAccount ?? props.capabilities?.codexAccount;
+  const requestedModel = resolveModelCapability(runtimeCapabilities?.models, props.form.model);
+  const modelPresentation = useMemo(() => presentModelOptions(runtimeCapabilities?.models ?? [], requestedModel?.id ?? props.form.model, props.language), [props.form.model, props.language, requestedModel?.id, runtimeCapabilities?.models]);
   const selectedModel = resolveModelCapability(modelPresentation.models, modelPresentation.selectedId);
   useEffect(() => {
     if (!props.open || !selectedModel || props.form.model === selectedModel.id) return;
@@ -643,8 +822,11 @@ export function TaskModelPushModal(props: {
   const inspectingConfig = props.status === 'inspecting-config';
   const importingConfig = props.status === 'importing-config';
   const busy = inspectingConfig || importingConfig || authenticating || authenticated || props.status === 'submitting' || inputResources.processing;
-  const codexLoginRequired = selectedModel?.agentKind !== 'pi' && selectedModel?.sourceId === 'codex' && props.capabilities?.codexAccount.requiresOpenaiAuth === true && !props.capabilities.codexAccount.signedIn;
+  const codexLoginRequired = selectedModel?.agentKind !== 'pi' && selectedModel?.sourceId === 'codex' && codexAccount?.requiresOpenaiAuth === true && !codexAccount.signedIn;
   const repositories = props.capabilities?.repositories ?? [];
+  const existingEnvironments = props.capabilities?.existingEnvironments ?? [];
+  const availableEnvironments = existingEnvironments.filter((environment) => environment.available);
+  const selectedEnvironment = existingEnvironments.find((environment) => environment.id === props.form.environmentId);
   const selectedCommonSourceKey = resolveSelectedTaskPushCommonSourceKey(repositories, props.form.repositorySelections, commonSources);
   const selectedCommonSource = commonSources.find((source) => source.key === selectedCommonSourceKey);
   const hasRepositorySourceSelection = repositories.some((repository) => Boolean(props.form.repositorySelections[repository.id]?.sourceRef));
@@ -668,7 +850,7 @@ export function TaskModelPushModal(props: {
   );
 
   function onModelChange(model: string): void {
-    const capability = resolveModelCapability(props.capabilities?.models, model);
+    const capability = resolveModelCapability(runtimeCapabilities?.models, model);
     const normalizedTier = normalizeServiceTierSelection(projectModelServiceTierSelection(props.serviceTierPreferences, capability), capability);
     props.onChange({
       ...props.form,
@@ -705,6 +887,25 @@ export function TaskModelPushModal(props: {
     props.onChange({ ...props.form, repositorySelections });
   }
 
+  if (props.configImportPreview || props.configImportNeedsActivation) {
+    return (
+      <TaskModelPushConfigImportDialog
+        language={props.language}
+        preview={props.configImportPreview}
+        needsActivation={props.configImportNeedsActivation}
+        importing={importingConfig}
+        onCancel={props.onCancelCodexConfigImport}
+        onClose={props.onClose}
+        onSkip={props.onSkipCodexConfigImport}
+        onImport={props.onImportCodexConfig}
+      />
+    );
+  }
+
+  if (inspectingConfig || authenticating || authenticated) {
+    return <TaskModelPushLoginDialog language={props.language} status={authenticated ? 'authenticated' : authenticating ? 'authenticating' : 'inspecting-config'} onCancel={props.onCancelAuthentication} />;
+  }
+
   const modal = (
     <ModalPortal rootClassName="task-model-push-portal-root" backdropClassName="task-model-push-backdrop" dismissDisabled={busy} onDismiss={props.onClose}>
       <form className="task-model-push-modal zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="task-model-push-title" onSubmit={props.onSubmit} onKeyDown={handleKeyDown}>
@@ -722,7 +923,7 @@ export function TaskModelPushModal(props: {
           <section className="task-model-push-workspace" aria-label={zh ? '本次推送工作区' : 'Workspace for this push'}>
             <span className="task-model-push-section-heading">
               <strong>{zh ? '本次推送工作区' : 'Workspace for this push'}</strong>
-              <small>{zh ? '直接使用项目目录，或按需创建独立分支和 worktree' : 'Use the project directory directly, or create isolated branches and worktrees'}</small>
+              <small>{zh ? '直接使用项目目录，或创建、继续独立分支和 worktree' : 'Use the project directory directly, or create and continue isolated branches and worktrees'}</small>
             </span>
             <fieldset className="task-model-push-mode-choice">
               <legend>{zh ? '工作方式' : 'Workspace mode'}</legend>
@@ -751,10 +952,44 @@ export function TaskModelPushModal(props: {
                 />
                 <span>
                   <strong>Worktree</strong>
-                  <small>{zh ? '自动发现全部 Git 仓库，并创建独立任务分支' : 'Discover all Git repositories and create isolated task branches'}</small>
+                  <small>{zh ? '自动发现全部 Git 仓库，并创建或继续独立任务分支' : 'Discover all Git repositories, then create or continue isolated task branches'}</small>
                 </span>
               </label>
             </fieldset>
+            {props.form.workspaceMode === 'worktree' && existingEnvironments.length > 0 ? (
+              <fieldset className="task-model-push-mode-choice task-model-push-branch-choice">
+                <legend>{zh ? '任务分支方式' : 'Task branch mode'}</legend>
+                <label className={props.form.taskBranchMode === 'create' ? 'is-selected' : undefined}>
+                  <input type="radio" name="task-branch-mode" value="create" checked={props.form.taskBranchMode === 'create'} onChange={() => props.onChange({ ...props.form, taskBranchMode: 'create' })} disabled={busy} />
+                  <span>
+                    <strong>{zh ? '创建新的任务分支' : 'Create new task branches'}</strong>
+                    <small>{zh ? '从下方来源分支创建新的独立开发线' : 'Create a new isolated development line from the source branches below'}</small>
+                  </span>
+                </label>
+                <label className={props.form.taskBranchMode === 'existing' ? 'is-selected' : undefined}>
+                  <input
+                    type="radio"
+                    name="task-branch-mode"
+                    value="existing"
+                    checked={props.form.taskBranchMode === 'existing'}
+                    onChange={() => props.onChange({ ...props.form, taskBranchMode: 'existing', environmentId: availableEnvironments[0]?.id ?? '' })}
+                    disabled={busy || availableEnvironments.length === 0}
+                  />
+                  <span>
+                    <strong>{zh ? '继续已有任务分支' : 'Continue existing task branches'}</strong>
+                    <small>
+                      {availableEnvironments.length > 0
+                        ? zh
+                          ? '创建新会话，继续使用原 worktree 和分支'
+                          : 'Create a new conversation in the original worktree and branches'
+                        : zh
+                          ? '现有任务分支正在写入或已部分关闭'
+                          : 'Existing task branches are active or partially closed'}
+                    </small>
+                  </span>
+                </label>
+              </fieldset>
+            ) : null}
             {props.form.workspaceMode === 'direct' ? (
               <div className="task-model-push-direct-summary">
                 <small>
@@ -774,15 +1009,52 @@ export function TaskModelPushModal(props: {
                   </label>
                 ) : null}
               </div>
+            ) : props.form.taskBranchMode === 'existing' ? (
+              <section className="task-model-push-existing-environment" aria-labelledby="task-model-push-existing-environment-title">
+                <span className="task-model-push-section-heading">
+                  <strong id="task-model-push-existing-environment-title">{zh ? '选择已有任务分支' : 'Choose existing task branches'}</strong>
+                  <small>{zh ? '多仓任务会整体继续，保持原执行目录与可写根一致' : 'Multi-repository tasks continue as one environment to preserve the execution root'}</small>
+                </span>
+                <ZeusSelect
+                  size="regular"
+                  ariaLabel={zh ? '选择已有任务分支' : 'Choose existing task branches'}
+                  value={props.form.environmentId}
+                  options={existingEnvironments.map((environment) => ({
+                    value: environment.id,
+                    label: taskPushEnvironmentLabel(environment, zh),
+                    group: environment.available ? (zh ? '可继续' : 'Available') : zh ? '暂不可用' : 'Unavailable',
+                    disabled: !environment.available,
+                  }))}
+                  onChange={(environmentId) => props.onChange({ ...props.form, environmentId })}
+                  disabled={busy || availableEnvironments.length === 0}
+                  searchPlaceholder={zh ? '搜索任务分支或仓库' : 'Search task branches or repositories'}
+                  emptyLabel={zh ? '没有匹配的任务分支' : 'No matching task branches'}
+                />
+                {selectedEnvironment ? (
+                  <ul className="task-model-push-existing-repositories">
+                    {selectedEnvironment.repositories.map((repository) => (
+                      <li key={`${repository.repositoryId ?? repository.repositoryRelativePath}:${repository.branchName}`}>
+                        <span>{repository.repositoryName}</span>
+                        <code>{repository.branchName}</code>
+                        <small>{zh ? `来源：${repository.sourceBranch}` : `Source: ${repository.sourceBranch}`}</small>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="task-model-push-error" role="alert">
+                    {zh ? '请选择一组当前可继续的任务分支。' : 'Choose a task branch environment that is currently available.'}
+                  </p>
+                )}
+              </section>
             ) : !props.capabilities ? (
               <p className={props.status === 'error' ? 'task-model-push-error' : 'task-model-push-message'} role="status">
-                {props.status === 'error'
-                  ? zh
-                    ? 'Git 仓库检查未完成，不能判断项目是否存在仓库。请根据下方错误处理后重试。'
-                    : 'The Git repository check did not complete, so repository presence is unknown. Resolve the error below and try again.'
-                  : zh
-                    ? '正在扫描项目目录下的 Git 仓库…'
-                    : 'Scanning the project directory for Git repositories…'}
+                {props.status === 'error' ? (
+                  <VisibleApplicationError error={props.error ?? (zh ? 'Git 仓库检查未完成。' : 'The Git repository check did not complete.')} language={zh ? 'zh-CN' : 'en'} />
+                ) : zh ? (
+                  '正在读取任务工作区与 Git 仓库…'
+                ) : (
+                  'Loading the task workspace and Git repositories…'
+                )}
               </p>
             ) : repositories.length > 0 ? (
               <div className="task-model-push-repository-list">
@@ -900,21 +1172,25 @@ export function TaskModelPushModal(props: {
                         </label>
                       </div>
                       <p className={repository.remoteRefreshError ? 'task-model-push-error' : 'task-model-push-warning'}>
-                        {repository.remoteRefreshError
-                          ? zh
-                            ? '远端信息暂不可用；本地分支、已知远端分支和当前选择不受影响。'
-                            : 'Remote information is unavailable; local branches, known remote branches, and the current selection remain available.'
-                          : repository.remoteRefreshStatus === 'succeeded'
-                            ? zh
-                              ? '远端分支已手动刷新。来源分支仍由你选择。'
-                              : 'Remote branches were refreshed manually. The source branch remains your choice.'
-                            : repository.defaultRemoteName
-                              ? zh
-                                ? '当前展示本地分支和本机已知的远端分支；需要最新远端状态时再手动刷新。'
-                                : 'Local branches and locally known remote branches are shown. Refresh manually when current remote state is needed.'
-                              : zh
-                                ? '该仓库没有远端，当前使用本地分支快照。默认不带入原工作区未提交内容。'
-                                : 'This repository has no remote, so a local branch snapshot is used. Local uncommitted changes are excluded by default.'}
+                        {repository.remoteRefreshError ? (
+                          <VisibleApplicationError error={repository.remoteRefreshError} language={zh ? 'zh-CN' : 'en'} />
+                        ) : repository.remoteRefreshStatus === 'succeeded' ? (
+                          zh ? (
+                            '远端分支已手动刷新。来源分支仍由你选择。'
+                          ) : (
+                            'Remote branches were refreshed manually. The source branch remains your choice.'
+                          )
+                        ) : repository.defaultRemoteName ? (
+                          zh ? (
+                            '当前展示本地分支和本机已知的远端分支；需要最新远端状态时再手动刷新。'
+                          ) : (
+                            'Local branches and locally known remote branches are shown. Refresh manually when current remote state is needed.'
+                          )
+                        ) : zh ? (
+                          '该仓库没有远端，当前使用本地分支快照。默认不带入原工作区未提交内容。'
+                        ) : (
+                          'This repository has no remote, so a local branch snapshot is used. Local uncommitted changes are excluded by default.'
+                        )}
                       </p>
                       {selectedSource?.kind === 'local' && repository.clean === false ? (
                         <label className="task-model-push-concurrency-confirm">
@@ -947,7 +1223,7 @@ export function TaskModelPushModal(props: {
                 {zh ? '项目目录下没有发现 Git 仓库。请先自行初始化仓库，或改用“直接使用项目目录”。' : 'No Git repository was found. Initialize one first, or use the project directory directly.'}
               </p>
             )}
-            {props.form.workspaceMode === 'worktree' ? (
+            {props.form.workspaceMode === 'worktree' && props.form.taskBranchMode === 'create' ? (
               <small className="task-model-push-worktree-root">
                 {zh ? '新工作区路径' : 'New workspace path'}：{props.capabilities?.git.worktreeRoot ?? '—'}/&lt;{zh ? '项目' : 'project'}&gt;/&lt;{zh ? '推送标识' : 'push-id'}&gt;/{props.task.taskCode ?? props.task.id}
               </small>
@@ -964,9 +1240,21 @@ export function TaskModelPushModal(props: {
                 options={modelPresentation.options}
                 triggerLabel={modelPresentation.triggerLabel}
                 onChange={onModelChange}
-                disabled={!props.capabilities || modelPresentation.options.length === 0 || busy}
+                disabled={!runtimeCapabilities || modelPresentation.options.length === 0 || busy || Boolean(props.form.stageId)}
                 searchPlaceholder={zh ? '搜索供应商或模型' : 'Search providers or models'}
                 emptyLabel={zh ? '没有匹配模型' : 'No matching models'}
+              />
+            </label>
+            <label>
+              <span>Skill</span>
+              <SkillSelector
+                client={props.skillClient}
+                projectId={props.task.projectId}
+                value={props.form.skillId}
+                onChange={(skillId) => props.onChange({ ...props.form, skillId })}
+                language={props.language}
+                disabled={busy}
+                ariaLabel={zh ? '推送任务使用的 Skill' : 'Skill for task push'}
               />
             </label>
             {selectedModel?.supportedReasoningEfforts.length ? (
@@ -981,7 +1269,7 @@ export function TaskModelPushModal(props: {
                     label: effort,
                   }))}
                   onChange={(effort) => props.onChange({ ...props.form, effort })}
-                  disabled={busy}
+                  disabled={busy || Boolean(props.form.stageId)}
                   searchable={false}
                 />
               </label>
@@ -996,10 +1284,14 @@ export function TaskModelPushModal(props: {
                 onChange={(value) => {
                   if (!selectedModel) return;
                   const selection = serviceTierSelectionFromValue(value);
-                  props.onChange({ ...props.form, serviceTier: selection, serviceTierDowngraded: !selectedModel.serviceTiers.some((tier) => tier.id === 'priority') && selection.type === 'catalog' });
+                  props.onChange({
+                    ...props.form,
+                    serviceTier: selection,
+                    serviceTierDowngraded: !selectedModel.serviceTiers.some((tier) => tier.id === 'priority') && selection.type === 'catalog',
+                  });
                   void props.onServiceTierPreferenceChange(selectedModel, selection);
                 }}
-                disabled={!selectedModel || busy}
+                disabled={!selectedModel || busy || Boolean(props.form.stageId)}
                 searchable={false}
               />
             </label>
@@ -1019,7 +1311,7 @@ export function TaskModelPushModal(props: {
                   { value: 'plan', label: zh ? '规划' : 'Plan' },
                 ]}
                 onChange={(workMode) => props.onChange({ ...props.form, workMode })}
-                disabled={busy}
+                disabled={busy || Boolean(props.form.stageId)}
                 searchable={false}
               />
             </label>
@@ -1035,74 +1327,17 @@ export function TaskModelPushModal(props: {
                   { value: 'full-access', label: zh ? '完全访问' : 'Full access' },
                 ]}
                 onChange={(permissionMode) => props.onChange({ ...props.form, permissionMode })}
-                disabled={busy}
+                disabled={busy || Boolean(props.form.stageId)}
                 searchable={false}
               />
             </label>
           </div>
-
-          {codexLoginRequired || authenticating || authenticated ? (
-            <section className={`task-model-push-account${authenticated ? ' is-success' : ''}`} role="status" aria-live="polite" aria-atomic="true">
-              <span>
-                <strong>{authenticated ? (zh ? '登录成功，正在继续' : 'Signed in, continuing') : zh ? 'Zeus 专属 Codex 需要登录' : 'Sign in to Codex for Zeus'}</strong>
-                <small>
-                  {authenticated
-                    ? zh
-                      ? 'Zeus 已验证专属 Codex 账号，正在恢复刚才的配置并创建会话。'
-                      : 'Zeus verified its Codex account and is restoring your configuration to create the conversation.'
-                    : zh
-                      ? 'Zeus 与 Codex App 使用独立账号状态，不会复制或覆盖 Codex App 的登录信息。'
-                      : 'Zeus keeps a separate account state and does not copy or overwrite the Codex App sign-in.'}
-                </small>
-              </span>
-              <p>
-                {authenticated
-                  ? zh
-                    ? '无需再次确认，请稍候。'
-                    : 'No further confirmation is needed.'
-                  : authenticating
-                    ? zh
-                      ? '官方登录页已打开。完成后无需点击网页中的“打开 ChatGPT”或“打开 Codex”，Zeus 会自动返回并继续。'
-                      : 'The official sign-in page is open. You do not need to choose “Open ChatGPT” or “Open Codex”; Zeus will return and continue automatically.'
-                    : zh
-                      ? '点击“登录并继续”会打开官方登录页。完成后无需点击网页中的其他按钮，Zeus 会自动返回；当前模型、工作区、权限、补充信息和本次附件都会保留。'
-                      : 'Choose “Sign in and continue” to open the official sign-in page. You do not need to choose another button there; Zeus will return automatically and preserve your model, workspace, permissions, supplemental information, and attachments for this push.'}
-              </p>
-            </section>
-          ) : null}
-
-          {props.configImportPreview || props.configImportNeedsActivation ? (
-            <section className="task-model-push-account task-model-push-config-import" role="status" aria-live="polite" aria-atomic="true">
-              <span>
-                <strong>{props.configImportNeedsActivation ? (zh ? '配置已导入，等待启用' : 'Configuration imported, waiting to be enabled') : zh ? '使用 Codex App 的配置？' : 'Use your Codex App configuration?'}</strong>
-                <small>
-                  {props.configImportNeedsActivation
-                    ? zh
-                      ? 'Zeus 需要先启动新的 Codex 运行服务，才能保证本次新会话使用已导入配置。'
-                      : 'Zeus must start a fresh Codex runtime before this conversation can use the imported configuration.'
-                    : zh
-                      ? 'Zeus 会把普通偏好、指令、规则、提示词、技能和用户插件复制到专属目录；不会导入账号、密钥或历史会话。'
-                      : 'Zeus will copy preferences, instructions, rules, prompts, skills, and user plugins into its own directory. Accounts, secrets, and conversation history are excluded.'}
-                </small>
-              </span>
-              {props.configImportPreview ? (
-                <ul aria-label={zh ? '可导入配置' : 'Configuration available to import'}>
-                  {props.configImportPreview.entries.map((entry) => (
-                    <li key={entry.path}>
-                      <strong>{entry.path}</strong>
-                      <small>{zh ? `${entry.nodeCount} 项` : `${entry.nodeCount} item(s)`}</small>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-              {(props.configImportPreview?.skipped.length ?? 0) > 0 ? (
-                <p>
-                  {zh
-                    ? `另有 ${props.configImportPreview!.skipped.length} 项因安全限制、缺失、格式不支持或属于运行缓存而跳过。`
-                    : `${props.configImportPreview!.skipped.length} item(s) will be skipped because they are missing, unsafe, unsupported, or generated runtime cache.`}
-                </p>
-              ) : null}
-            </section>
+          {props.form.stageId ? (
+            <small className="task-model-push-stage-lock">
+              {zh
+                ? '模型、推理强度、速度、工作模式与权限已由任务阶段冻结；如需调整，请返回任务详情修改尚未启动的阶段配置。'
+                : 'Model, effort, speed, work mode, and permissions are frozen by the task stage. Return to task details to edit an unstarted stage.'}
+            </small>
           ) : null}
 
           <TaskPushCurrentConversationPicker
@@ -1146,96 +1381,56 @@ export function TaskModelPushModal(props: {
 
           <TaskPushLayoutPreview layout={taskPushLayout} language={props.language} />
 
-          {props.status === 'loading' ? <p className="task-model-push-message">{zh ? '正在连接 app-server 并读取可用模型…' : 'Connecting to app-server and loading models…'}</p> : null}
+          {props.status === 'loading' ? (
+            <p className="task-model-push-message">
+              {runtimeCapabilities
+                ? zh
+                  ? '模型已就绪；正在读取任务上下文和 Git 工作区…'
+                  : 'Models are ready; loading task context and the Git workspace…'
+                : zh
+                  ? '正在连接运行内核并读取可用模型…'
+                  : 'Connecting to the runtime and loading models…'}
+            </p>
+          ) : null}
         </div>
 
         <footer className="task-model-push-footer">
           <small>
-            {props.configImportPreview || props.configImportNeedsActivation
+            {codexLoginRequired
               ? zh
-                ? props.configImportNeedsActivation
-                  ? '配置文件已安全导入；启用成功前不会创建本次会话。'
-                  : '只询问这一次；暂不导入后仍可在设置中手动导入。'
-                : props.configImportNeedsActivation
-                  ? 'The configuration is safely imported. This conversation will not be created until it is enabled.'
-                  : 'You will only be asked once. You can still import later from Settings.'
+                ? '需要先登录 Zeus 专属 Codex；当前推送设置会完整保留。'
+                : 'Sign in to Codex for Zeus first; the current push settings will be preserved.'
               : zh
                 ? '确认后会创建新会话并立即进入；历史会话不会被覆盖。'
                 : 'A new conversation will be created and opened; history remains unchanged.'}
           </small>
           <span>
-            {props.configImportPreview || props.configImportNeedsActivation ? (
-              <>
-                <Button variant="secondary" size="regular" onClick={props.configImportNeedsActivation ? props.onClose : props.onSkipCodexConfigImport} disabled={importingConfig}>
-                  {props.configImportNeedsActivation ? (zh ? '关闭' : 'Close') : zh ? '暂不导入' : 'Not now'}
-                </Button>
-                <Button type="button" variant="primary" size="regular" busy={importingConfig} disabled={importingConfig} onClick={props.onImportCodexConfig}>
-                  {importingConfig
-                    ? props.configImportNeedsActivation
-                      ? zh
-                        ? '正在启用…'
-                        : 'Enabling…'
-                      : zh
-                        ? '正在导入并启用…'
-                        : 'Importing and enabling…'
-                    : props.configImportNeedsActivation
-                      ? zh
-                        ? '重试启用'
-                        : 'Retry enabling'
-                      : zh
-                        ? '导入并继续'
-                        : 'Import and continue'}
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button variant="secondary" size="regular" onClick={authenticating ? props.onCancelAuthentication : props.onClose} disabled={props.status === 'submitting' || importingConfig}>
-                  {authenticating ? (zh ? '取消登录' : 'Cancel sign-in') : zh ? '取消' : 'Cancel'}
-                </Button>
-                <Button
-                  type="submit"
-                  variant="primary"
-                  size="regular"
-                  busy={busy}
-                  disabled={
-                    busy ||
-                    props.status === 'loading' ||
-                    !props.form.model ||
-                    (props.form.workspaceMode === 'direct'
-                      ? directWorkspaceNeedsConfirmation && !props.form.directConcurrencyConfirmed
-                      : repositories.length === 0 ||
-                        repositories.some((repository) => {
-                          const selection = props.form.repositorySelections[repository.id];
-                          return !selection?.sourceRef || !selection.branchName.trim();
-                        }))
-                  }
-                >
-                  {inspectingConfig
-                    ? zh
-                      ? '正在检查 Codex 配置…'
-                      : 'Checking Codex configuration…'
-                    : authenticating
-                      ? zh
-                        ? '等待登录…'
-                        : 'Waiting for sign-in…'
-                      : authenticated
-                        ? zh
-                          ? '登录成功，正在继续…'
-                          : 'Signed in, continuing…'
-                        : props.status === 'submitting'
-                          ? zh
-                            ? '正在创建…'
-                            : 'Creating…'
-                          : codexLoginRequired
-                            ? zh
-                              ? '登录并继续'
-                              : 'Sign in and continue'
-                            : zh
-                              ? '创建新会话'
-                              : 'Create conversation'}
-                </Button>
-              </>
-            )}
+            <Button variant="secondary" size="regular" onClick={props.onClose} disabled={props.status === 'submitting'}>
+              {zh ? '取消' : 'Cancel'}
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              size="regular"
+              busy={busy}
+              disabled={
+                busy ||
+                !props.capabilities ||
+                props.status === 'loading' ||
+                !props.form.model ||
+                (props.form.workspaceMode === 'direct'
+                  ? directWorkspaceNeedsConfirmation && !props.form.directConcurrencyConfirmed
+                  : props.form.taskBranchMode === 'existing'
+                    ? !selectedEnvironment?.available
+                    : repositories.length === 0 ||
+                      repositories.some((repository) => {
+                        const selection = props.form.repositorySelections[repository.id];
+                        return !selection?.sourceRef || !selection.branchName.trim();
+                      }))
+              }
+            >
+              {props.status === 'submitting' ? (zh ? '正在创建…' : 'Creating…') : codexLoginRequired ? (zh ? '登录并继续' : 'Sign in and continue') : zh ? '创建新会话' : 'Create conversation'}
+            </Button>
           </span>
         </footer>
       </form>

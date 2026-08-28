@@ -19,16 +19,15 @@ export function resolveNativeUserMessageSubmission(input: ResolveNativeUserMessa
   const providerClientId = nonEmptyString(input.providerClientId) ?? null;
   const existingClientId = nonEmptyString(input.existingMessage?.clientMessageId) ?? null;
   const existingClientMessageIds = input.existingClientMessageIds ?? new Set<string>();
-  const providerClientIdIsAvailable = providerClientId !== null && !existingClientMessageIds.has(providerClientId);
-  // 同一 Provider 项的重复事件沿用原绑定；新项优先使用未被其他消息占用的 Provider 客户端 ID。
-  // 若 Provider 返回的 ID 已绑定到其他项，不把另一条 submission 错绑过来。
-  const durableClientId = existingClientId ?? (providerClientIdIsAvailable ? providerClientId : null);
+  // Provider 客户端消息编号是跨实时事件、历史回放和兼容项别名的稳定身份。
+  // 即使另一个 Provider item 已经使用该编号，也必须继续沿用同一消息身份，不能降级成第二条远端消息。
+  const durableClientId = existingClientId ?? providerClientId;
   const submission = durableClientId
     ? input.submissions.find((entry) => entry.clientMessageId === durableClientId)
     : providerClientId
       ? undefined
       : (input.submissions.find((entry) => entry.id === input.clientSubmissionId && !existingClientMessageIds.has(entry.clientMessageId)) ??
-        input.submissions.find((entry) => entry.providerTurnId === input.providerTurnId && !existingClientMessageIds.has(entry.clientMessageId)));
+        input.submissions.find((entry) => entry.providerTurnId === input.providerTurnId && !(entry.kind === 'steer' && entry.requestedDelivery === 'send_now') && !existingClientMessageIds.has(entry.clientMessageId)));
 
   return {
     clientMessageId: durableClientId ?? submission?.clientMessageId ?? null,

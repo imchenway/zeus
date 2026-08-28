@@ -1,6 +1,10 @@
 /** Zeus 任务状态：只描述真实任务生命周期，不承载任何示例或 mock 业务数据。 */
 export * from './taskPush.js';
 export * from './codexUsage.js';
+export * from './commandEnvelope.js';
+export * from './commandGovernance.js';
+export * from './executionHostStopCommand.js';
+export * from './readOnlyValidation.js';
 
 export type TaskStatus = 'draft' | 'ready' | 'running' | 'paused' | 'waiting_confirmation' | 'completed' | 'failed' | 'cancelled';
 
@@ -469,5 +473,120 @@ export * from './browser.js';
 export * from './commands.js';
 export * from './conversationContext.js';
 export * from './conversationResources.js';
+export * from './portableConversationContext.js';
 export * from './projectSourceWorkspace.js';
 export * from './requestUserInput.js';
+export * from './sourceLanguage.js';
+
+/** 禅道对象类型只从链接结构识别；Zeus 不会主动调用禅道接口。 */
+export type ZentaoLinkKind = 'bug' | 'story' | 'task';
+
+export type ZentaoLinkInfo = { kind: 'zentao'; zentaoKind: ZentaoLinkKind; objectId: string; url: string } | { kind: 'unsupported'; url: string } | { kind: 'invalid' };
+
+/** 解析禅道详情页链接：支持 /bug-view-123.html 路径形式与 ?m=bug&f=view&bugID=123 旧版参数形式。 */
+export function parseZentaoTaskUrl(rawUrl: string): ZentaoLinkInfo {
+  const url = rawUrl.trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return { kind: 'invalid' };
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return { kind: 'unsupported', url };
+  const pathname = decodeURIComponent(parsed.pathname);
+  const pathMatch = pathname.match(/\/(bug|story|task)-view-(\d+)(?:\.html)?/iu);
+  if (pathMatch) {
+    const zentaoKind = pathMatch[1].toLowerCase() as ZentaoLinkKind;
+    return { kind: 'zentao', zentaoKind, objectId: pathMatch[2], url };
+  }
+  const moduleName = parsed.searchParams.get('m')?.toLowerCase();
+  if (moduleName === 'bug' || moduleName === 'story' || moduleName === 'task') {
+    const objectId = parsed.searchParams.get(`${moduleName}ID`) ?? parsed.searchParams.get('id');
+    if (objectId && /^\d+$/u.test(objectId)) {
+      return { kind: 'zentao', zentaoKind: moduleName, objectId, url };
+    }
+  }
+  return { kind: 'unsupported', url };
+}
+
+/** 粘贴文本恰好是一个禅道链接时返回该链接，否则返回 null；用于粘贴后自动解析。 */
+export function extractZentaoTaskLink(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed || /\s/u.test(trimmed)) return null;
+  const link = parseZentaoTaskUrl(trimmed);
+  return link.kind === 'zentao' ? trimmed : null;
+}
+
+/** 禅道对象映射到 Zeus 任务类型：缺陷归入缺陷，需求与任务归入需求。 */
+export function zentaoTaskType(zentaoKind: ZentaoLinkKind): TaskType {
+  return zentaoKind === 'bug' ? 'defect' : 'requirement';
+}
+
+export type ZentaoTaskExtract =
+  | {
+      kind: 'ok';
+      zentaoKind: ZentaoLinkKind;
+      objectId: string;
+      taskType: TaskType;
+      title: string;
+      description: string;
+      currentState: string;
+      reproductionSteps: string;
+      expectedOutcome: string;
+      sourceUrl: string;
+    }
+  | { kind: 'login_required'; zentaoKind: ZentaoLinkKind; objectId: string; sourceUrl: string }
+  | { kind: 'unsupported'; sourceUrl: string }
+  | { kind: 'failed'; sourceUrl: string; reason: string; cause?: 'credential_missing' | 'auth_failed' | 'network' };
+
+/** 禅道实例元数据；host 保存 origin（协议+主机+端口），basePath 为子目录路径，根目录部署时为空字符串。 */
+export interface ZentaoInstanceRecord {
+  id: string;
+  host: string;
+  basePath: string;
+  account: string;
+  passwordConfigured: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SaveZentaoInstanceRequest {
+  baseUrl: string;
+  account: string;
+  password?: string;
+}
+
+export type ZentaoInstanceVerifyCode = 'verified' | 'password_missing' | 'auth_failed' | 'api_unavailable' | 'network_failed' | 'bad_request';
+
+export interface ZentaoInstanceVerifyResult {
+  ok: boolean;
+  code: ZentaoInstanceVerifyCode;
+  checkedAt: string;
+  message: string;
+}
+
+/** Keychain 记录名；与 local-server 写入时的账号命名保持一致。 */
+export function zentaoSecretAccount(instanceId: string): string {
+  return `zentao:${instanceId}`;
+}
+
+/** 将实例地址解析为 host(origin) 与 basePath；只接受 http/https 且不带查询参数与片段。 */
+export function parseZentaoInstanceBaseUrl(rawBaseUrl: string): { host: string; basePath: string } | null {
+  const trimmed = rawBaseUrl.trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) return null;
+  const host = `${parsed.protocol}//${parsed.host}`;
+  const basePath = parsed.pathname.replace(/\/+$/u, '');
+  return { host, basePath };
+}
+
+/** 构造实例的禅道 REST 基址；根目录部署时为 /api.php/v1。 */
+export function zentaoInstanceApiBase(instance: Pick<ZentaoInstanceRecord, 'host' | 'basePath'>): string {
+  return `${instance.host}${instance.basePath}/api.php/v1`;
+}

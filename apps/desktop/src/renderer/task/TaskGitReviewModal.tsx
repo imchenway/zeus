@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { buildTaskCommitMessageSuggestion } from '@zeus/shared';
-import { type DashboardClient, type TaskRecord, ZeusApiError } from '../apiClient.js';
-import type { BatchTaskWorkspaceResponse, TaskGitDiffSummary, TaskGitFileDiff, TaskGitFileStatus, TaskWorkspaceIndexCollection, TaskWorkspaceIndexSnapshot, TaskWorkspaceSnapshot } from '../session/sessionTypes.js';
+import { type DashboardClient, type TaskRecord } from '../apiClient.js';
+import type { BatchTaskWorkspaceResponse, TaskGitDiffSummary, TaskGitFileStatus, TaskWorkspaceIndexCollection, TaskWorkspaceIndexSnapshot, TaskWorkspaceSnapshot } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError, useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { TaskWorkspaceBranchList } from './TaskWorkspaceBranchList.js';
+import { TaskGitDiffTable } from './TaskGitDiffTable.js';
 
 type ReviewMode = 'commit' | 'commit-only' | 'push-only' | 'delivery';
 type ReviewStatus = 'loading' | 'ready' | 'submitting' | 'error';
@@ -64,8 +65,6 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
   const workspaceError = activeWorkspace?.reviewError ?? activeWorkspace?.remoteRefreshError ?? null;
   useApplicationErrorDialog(error ?? workspaceError, {
     language: zh ? 'zh-CN' : 'en',
-    title: zh ? 'Git 审核操作失败' : 'Git review operation failed',
-    source: 'TaskGitReviewModal',
   });
 
   useEffect(() => {
@@ -339,7 +338,11 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
                 <small>{files.length}</small>
               </span>
               {status === 'loading' || detailStates[activeWorkspaceId] === 'loading' ? <p>{zh ? '正在读取当前仓库 Git 状态…' : 'Loading Git status for this repository…'}</p> : null}
-              {detailStates[activeWorkspaceId] === 'error' ? <p className="task-git-review-error">{zh ? '当前仓库读取失败，其他仓库仍可继续操作。' : 'This repository failed to load. Other repositories remain available.'}</p> : null}
+              {detailStates[activeWorkspaceId] === 'error' ? (
+                <p className="task-git-review-error" role="alert">
+                  <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
+                </p>
+              ) : null}
               {activeReview?.conflictFiles.length ? (
                 <p className="task-git-review-error">{zh ? `存在 ${activeReview.conflictFiles.length} 个冲突文件，请先进入冲突处理。` : `${activeReview.conflictFiles.length} conflicted files require resolution.`}</p>
               ) : null}
@@ -375,7 +378,7 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
                   </small>
                 ) : null}
               </span>
-              <SideBySideDiff diff={fileDiff?.fileDiffs[0] ?? null} zh={zh} />
+              <TaskGitDiffTable diff={fileDiff?.fileDiffs[0] ?? null} hasSelection={Boolean(selectedFile)} zh={zh} />
             </section>
           </main>
 
@@ -423,9 +426,8 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
               </section>
             ) : null}
             {activeWorkspace?.remoteRefreshError ? (
-              <section className="task-git-review-active-sessions">
-                <strong>{zh ? '远端信息暂不可用' : 'Remote information is unavailable'}</strong>
-                <small>{zh ? '本地查看、提交和合入仍可继续；推送时会重新核对真实远端状态。' : 'Local review, commits, and merge remain available; pushing will verify the live remote state again.'}</small>
+              <section className="task-git-review-active-sessions" role="alert">
+                <VisibleApplicationError error={activeWorkspace.remoteRefreshError} language={zh ? 'zh-CN' : 'en'} />
               </section>
             ) : null}
           </aside>
@@ -543,39 +545,12 @@ function workspaceStateLabel(workspace: TaskWorkspaceIndexSnapshot, detail: Task
   if (workspace.state === 'merged') return zh ? '已合入' : 'Merged';
   if (workspace.state === 'discarded') return zh ? '已放弃' : 'Discarded';
   if (loadState === 'loading') return zh ? '正在读取…' : 'Loading…';
-  if (loadState === 'error') return zh ? '读取失败' : 'Load failed';
+  if (loadState === 'error') return '';
   if (!detail) return zh ? '尚未读取' : 'Not loaded';
   if (detail.review?.conflictFiles.length) return zh ? '存在冲突' : 'Conflicted';
   if (detail.remoteRefreshError && detail.review?.clean) return zh ? '工作区干净 · 远端受阻' : 'Clean · remote unavailable';
   if (detail.review?.clean) return zh ? '工作区干净' : 'Clean';
   return zh ? '待审查' : 'Review required';
-}
-
-function SideBySideDiff(props: { diff: TaskGitFileDiff | null; zh: boolean }) {
-  if (!props.diff) return <p className="task-git-review-empty">{props.zh ? '暂无可显示的文本差异。' : 'No text diff to display.'}</p>;
-  const rows = props.diff.hunks.flatMap((hunk) => [
-    { key: `${hunk.header}-header`, kind: 'header' as const, leftNumber: '', left: hunk.header, rightNumber: '', right: hunk.header },
-    ...hunk.lines.map((line, index) => ({
-      key: `${hunk.header}-${index}`,
-      kind: line.type,
-      leftNumber: line.oldLineNumber ?? '',
-      left: line.type === 'addition' ? '' : line.content,
-      rightNumber: line.newLineNumber ?? '',
-      right: line.type === 'deletion' ? '' : line.content,
-    })),
-  ]);
-  return (
-    <div className="task-git-review-diff-table" role="table">
-      {rows.map((row) => (
-        <div key={row.key} className={`task-git-review-diff-row is-${row.kind}`} role="row">
-          <span className="line-number">{row.leftNumber}</span>
-          <code>{row.left}</code>
-          <span className="line-number">{row.rightNumber}</span>
-          <code>{row.right}</code>
-        </div>
-      ))}
-    </div>
-  );
 }
 
 function confirmActiveSessionRisk(action: 'reclaim' | 'discard', activeConversationCount: number, zh: boolean): boolean {
@@ -588,16 +563,5 @@ function confirmActiveSessionRisk(action: 'reclaim' | 'discard', activeConversat
 }
 
 function errorMessage(error: unknown, zh: boolean): string {
-  if (zh && error instanceof ZeusApiError) {
-    const localizedMessages: Record<string, string> = {
-      ZEUS_TASK_WORKSPACE_NOT_FOUND: '当前任务工作区已不存在，请关闭后重新打开该任务的提交或推送窗口。',
-      ZEUS_TASK_WORKSPACE_CONFLICTED: '任务工作区存在未解决冲突，请先完成冲突处理。',
-      ZEUS_TASK_WORKSPACE_DETACHED: '任务工作区当前未绑定命名分支，无法提交或推送。',
-      ZEUS_TASK_WORKTREE_UNAVAILABLE: '任务 worktree 当前不可用，无法提交或推送。',
-      ZEUS_TASK_REMOTE_VERIFICATION_FAILED: '推送后远端分支与本地 HEAD 不一致，请检查远端状态后重试。',
-      ZEUS_TASK_GIT_OPERATION_FAILED: 'Git 操作失败，请检查任务分支与远端状态后重试。',
-    };
-    if (error.error && localizedMessages[error.error]) return localizedMessages[error.error];
-  }
-  return error instanceof Error ? error.message : String(error);
+  return formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en');
 }

@@ -242,6 +242,10 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
             progressRow.isHidden = true
             progressIndicator.isHidden = true
             setButtons(secondary: localized("later"), primary: localized("download"))
+        case "downloading":
+            progressRow.isHidden = false
+            progressIndicator.isHidden = false
+            setButtons(secondary: command["canReconnect"] as? Bool == true ? localized("reconnect") : nil, primary: nil)
         case "ready":
             progressRow.isHidden = true
             progressIndicator.isHidden = true
@@ -290,6 +294,7 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
 
     private func setButtons(secondary: String?, primary: String?) {
         secondaryButton.isHidden = secondary == nil
+        secondaryButton.isEnabled = true
         secondaryButton.title = secondary ?? ""
         primaryButton.isHidden = primary == nil
         primaryButton.title = primary ?? ""
@@ -297,6 +302,11 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
     }
 
     @objc private func secondaryAction() {
+        if currentState == "downloading" {
+            secondaryButton.isEnabled = false
+            emit(action: "reconnect")
+            return
+        }
         panel.orderOut(nil)
         if currentState == "failed" {
             emit(action: "close")
@@ -376,6 +386,7 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
         case "softwareUpdate": return english ? "Software Update" : "软件更新"
         case "later": return english ? "Later" : "稍后"
         case "download": return english ? "Download Update" : "下载更新"
+        case "reconnect": return english ? "Reconnect" : "重新连接"
         case "restart": return english ? "Restart Now" : "立即重启"
         case "ok": return english ? "OK" : "好"
         case "close": return english ? "Close" : "关闭"

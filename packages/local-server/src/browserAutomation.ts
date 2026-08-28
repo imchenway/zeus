@@ -7,9 +7,7 @@ export interface BrowserAutomationToolCall {
   arguments: Record<string, unknown>;
 }
 
-export type BrowserAutomationContentItem =
-  | { type: 'inputText'; text: string }
-  | { type: 'inputImage'; imageUrl: string };
+export type BrowserAutomationContentItem = { type: 'inputText'; text: string } | { type: 'inputImage'; imageUrl: string };
 
 /**
  * Electron Main 实现此端口；local-server 只负责编排 app-server 动态工具，

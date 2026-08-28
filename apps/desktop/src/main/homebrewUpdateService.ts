@@ -1,22 +1,30 @@
 import { execFile as execFileCallback, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { createReadStream, constants as fsConstants, type Stats } from 'node:fs';
+import { constants as fsConstants, createReadStream, type Stats } from 'node:fs';
 import { access, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { executionHostProtocolVersion } from './executionHostProtocol.js';
 import type { DesktopReleaseUpdateStatus } from './releaseUpdateService.js';
 
 const execFile = promisify(execFileCallback);
 const caskToken = 'imchenway/tap/zeus';
 const commandOutputLimit = 8 * 1024 * 1024;
 const progressOutputLimit = 4 * 1024;
+const downloadProgressPollIntervalMs = 500;
+const downloadSpeedDisplayWindowMs = 5_000;
+const defaultDownloadStallWindowMs = 30_000;
+const defaultMinimumDownloadBytesPerSecond = 16 * 1024;
+const defaultMinimumRemainingBytesForReconnect = 8 * 1024 * 1024;
 const ansiEscapePattern = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, 'gu');
 
 export interface HomebrewUpdateProgress {
-  phase: 'updating' | 'downloading' | 'verifying' | 'installing';
+  phase: 'updating' | 'downloading' | 'reconnecting' | 'verifying' | 'installing';
   downloadedBytes?: number;
   totalBytes?: number;
+  bytesPerSecond?: number;
+  reconnectCount?: number;
 }
 
 export interface HomebrewPreparedUpdate {
@@ -35,6 +43,8 @@ export interface HomebrewInstalledUpdate {
 export interface HomebrewUpdateService {
   prepare(update: DesktopReleaseUpdateStatus, onProgress: (progress: HomebrewUpdateProgress) => void): Promise<HomebrewPreparedUpdate>;
   install(prepared: HomebrewPreparedUpdate, onProgress: (progress: HomebrewUpdateProgress) => void): Promise<HomebrewInstalledUpdate>;
+
+  reconnectDownload(): boolean;
 }
 
 export class HomebrewUpdateError extends Error {
@@ -75,8 +85,16 @@ interface VerifiedArtifactIdentity {
   changedAtMs: number;
 }
 
+interface DownloadRecoveryPolicy {
+  stallWindowMs: number;
+  minimumBytesPerSecond: number;
+  minimumRemainingBytes: number;
+}
+
 /** Homebrew 继续拥有 Cask 版本登记；Zeus 只编排预取、复验和用户确认后的安装。 */
 export function createHomebrewUpdateService(options: CreateHomebrewUpdateServiceOptions): HomebrewUpdateService {
+  const recoveryPolicy = downloadRecoveryPolicy(options.testMode);
+  let reconnectActiveDownload: (() => boolean) | null = null;
   return {
     async prepare(update, onProgress) {
       assertUpdateCanUseHomebrew(update, options);
@@ -96,7 +114,19 @@ export function createHomebrewUpdateService(options: CreateHomebrewUpdateService
       if (cachedArtifact) return { update, brewPath, cachePath, verifiedArtifact: cachedArtifact };
 
       onProgress({ phase: 'downloading', ...(artifact.sizeBytes === null ? {} : { totalBytes: artifact.sizeBytes }) });
-      await retryOperation(() => fetchCask(brewPath, cachePath, artifact.sizeBytes, onProgress, options.testMode), 2, isTransientHomebrewDownloadError);
+      let fetchAttempt = 0;
+      await retryOperation(
+        () => {
+          const reconnectCount = fetchAttempt;
+          fetchAttempt += 1;
+          if (reconnectCount > 0) onProgress({ phase: 'reconnecting', reconnectCount });
+          return fetchCask(brewPath, cachePath, artifact.sizeBytes, onProgress, options.testMode, reconnectCount, recoveryPolicy, (reconnect) => {
+            reconnectActiveDownload = reconnect;
+          });
+        },
+        2,
+        isTransientHomebrewDownloadError,
+      );
       onProgress({ phase: 'verifying' });
       const downloadedArtifact = await verifyArtifact(cachePath, artifact.sha256, artifact.sizeBytes);
       if (!downloadedArtifact) throw new Error('Homebrew 下载完成，但缓存安装包未通过发布清单校验。');
@@ -128,6 +158,10 @@ export function createHomebrewUpdateService(options: CreateHomebrewUpdateService
       }
       if (!installed.appTarget) throw new Error('Homebrew 安装后没有返回 Zeus App 的精确位置。');
       return inspectInstalledApp(installed.appTarget, options.bundleId, prepared.update.latestVersion);
+    },
+
+    reconnectDownload() {
+      return reconnectActiveDownload?.() ?? false;
     },
   };
 }
@@ -168,7 +202,7 @@ function assertUpdateCanUseHomebrew(update: DesktopReleaseUpdateStatus, options:
   if (process.platform !== 'darwin') throw new Error('Homebrew Cask 升级只支持 macOS。');
   if (update.status !== 'available' || !update.artifact) throw new Error('当前没有可预取的 Zeus 更新。');
   if (update.currentVersion !== options.currentAppVersion) throw new Error('更新状态与当前 Zeus App 版本不一致。');
-  if (update.executionHostProtocolVersion !== 1) throw new Error('新版 Zeus 与当前执行宿主协议不兼容，不能继续升级。');
+  if (update.executionHostProtocolVersion !== executionHostProtocolVersion) throw new Error('新版 Zeus 与当前执行宿主协议不兼容，不能继续升级。');
   const expectedArch = process.arch === 'x64' ? 'x64' : 'arm64';
   if (update.artifact.arch !== expectedArch) throw new Error('更新安装包与当前 Mac 架构不一致。');
 }
@@ -261,12 +295,22 @@ async function readCachePath(brewPath: string, testMode: boolean): Promise<strin
   return cachePath;
 }
 
-async function fetchCask(brewPath: string, cachePath: string, expectedSizeBytes: number | null, onProgress: (progress: HomebrewUpdateProgress) => void, testMode: boolean): Promise<void> {
+async function fetchCask(
+  brewPath: string,
+  cachePath: string,
+  expectedSizeBytes: number | null,
+  onProgress: (progress: HomebrewUpdateProgress) => void,
+  testMode: boolean,
+  reconnectCount: number,
+  recoveryPolicy: DownloadRecoveryPolicy,
+  setReconnect: (reconnect: (() => boolean) | null) => void,
+): Promise<void> {
   const brewArgs = ['fetch', '--cask', '--retry', caskToken];
   const executable = !testMode && (await isExecutable('/usr/bin/script')) ? '/usr/bin/script' : brewPath;
   const args = executable === brewPath ? brewArgs : ['-q', '/dev/null', brewPath, ...brewArgs];
   await new Promise<void>((resolveFetch, rejectFetch) => {
     const child = spawn(executable, args, {
+      detached: true,
       env: homebrewEnvironment(false),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -275,14 +319,19 @@ async function fetchCask(brewPath: string, cachePath: string, expectedSizeBytes:
     let progressOutput = '';
     let lastDownloadedBytes: number | undefined;
     let lastTotalBytes: number | undefined;
+    let lastBytesPerSecond: number | undefined;
     let fetchFinished = false;
-    const timeout = setTimeout(() => child.kill('SIGTERM'), 15 * 60_000);
+    let terminationReason: 'manual' | 'low_speed' | 'timeout' | null = null;
+    let forceTerminationTimer: ReturnType<typeof setTimeout> | null = null;
+    const speedSamples: Array<{ observedAtMs: number; downloadedBytes: number }> = [];
+    const timeout = setTimeout(() => requestTermination('timeout'), 15 * 60_000);
     const cacheProgressTimer =
       expectedSizeBytes === null
         ? undefined
         : setInterval(() => {
             void publishCachedProgress();
-          }, 500);
+          }, downloadProgressPollIntervalMs);
+    setReconnect(() => requestTermination('manual'));
     const inspect = (chunk: Buffer) => {
       const rawText = chunk.toString('utf8');
       const text = stripTerminalFormatting(rawText);
@@ -311,36 +360,88 @@ async function fetchCask(brewPath: string, cachePath: string, expectedSizeBytes:
       try {
         const partialArtifact = await stat(`${cachePath}.incomplete`);
         if (fetchFinished || !partialArtifact.isFile()) return;
+        const downloadedBytes = Math.min(partialArtifact.size, expectedSizeBytes);
+        const bytesPerSecond = observeDownloadSpeed(downloadedBytes, expectedSizeBytes);
         publishProgress({
-          downloadedBytes: Math.min(partialArtifact.size, expectedSizeBytes),
+          downloadedBytes,
           totalBytes: expectedSizeBytes,
+          ...(bytesPerSecond === undefined ? {} : { bytesPerSecond }),
         });
       } catch {
         // 下载尚未创建临时文件时，继续等待 Homebrew 输出。
       }
     }
 
-    function publishProgress(parsed: { downloadedBytes: number; totalBytes?: number }): void {
-      if (parsed.downloadedBytes === lastDownloadedBytes && parsed.totalBytes === lastTotalBytes) return;
+    function publishProgress(parsed: { downloadedBytes: number; totalBytes?: number; bytesPerSecond?: number }): void {
+      const roundedBytesPerSecond = parsed.bytesPerSecond === undefined ? lastBytesPerSecond : Math.max(0, Math.round(parsed.bytesPerSecond));
+      if (parsed.downloadedBytes === lastDownloadedBytes && parsed.totalBytes === lastTotalBytes && roundedBytesPerSecond === lastBytesPerSecond) return;
       lastDownloadedBytes = parsed.downloadedBytes;
       lastTotalBytes = parsed.totalBytes;
-      onProgress({ phase: 'downloading', ...parsed });
+      lastBytesPerSecond = roundedBytesPerSecond;
+      onProgress({
+        phase: 'downloading',
+        ...parsed,
+        ...(roundedBytesPerSecond === undefined ? {} : { bytesPerSecond: roundedBytesPerSecond }),
+        reconnectCount,
+      });
+    }
+
+    function observeDownloadSpeed(downloadedBytes: number, totalBytes: number): number | undefined {
+      const observedAtMs = Date.now();
+      const previousSample = speedSamples.at(-1);
+      if (previousSample && downloadedBytes < previousSample.downloadedBytes) speedSamples.length = 0;
+      speedSamples.push({ observedAtMs, downloadedBytes });
+      const oldestNeededAtMs = observedAtMs - Math.max(recoveryPolicy.stallWindowMs, downloadSpeedDisplayWindowMs);
+      while (speedSamples.length > 2 && speedSamples[1]!.observedAtMs <= oldestNeededAtMs) speedSamples.shift();
+
+      const displaySample = sampleAtOrBefore(speedSamples, observedAtMs - downloadSpeedDisplayWindowMs);
+      const displayElapsedMs = displaySample ? observedAtMs - displaySample.observedAtMs : 0;
+      const bytesPerSecond = displaySample && displayElapsedMs >= 1_000 ? ((downloadedBytes - displaySample.downloadedBytes) * 1_000) / displayElapsedMs : undefined;
+
+      const stallSample = sampleAtOrBefore(speedSamples, observedAtMs - recoveryPolicy.stallWindowMs);
+      const stallElapsedMs = stallSample ? observedAtMs - stallSample.observedAtMs : 0;
+      const remainingBytes = Math.max(0, totalBytes - downloadedBytes);
+      if (stallSample && stallElapsedMs >= recoveryPolicy.stallWindowMs && remainingBytes >= recoveryPolicy.minimumRemainingBytes) {
+        const stallBytesPerSecond = ((downloadedBytes - stallSample.downloadedBytes) * 1_000) / stallElapsedMs;
+        if (stallBytesPerSecond < recoveryPolicy.minimumBytesPerSecond) requestTermination('low_speed');
+      }
+      return bytesPerSecond;
+    }
+
+    function requestTermination(reason: 'manual' | 'low_speed' | 'timeout'): boolean {
+      if (fetchFinished || terminationReason) return false;
+      terminationReason = reason;
+      const signaled = terminateProcessGroup(child.pid, 'SIGTERM');
+      if (!signaled) {
+        terminationReason = null;
+        return false;
+      }
+      forceTerminationTimer = setTimeout(() => terminateProcessGroup(child.pid, 'SIGKILL'), 3_000);
+      forceTerminationTimer.unref();
+      return true;
     }
 
     function stopProgressMonitoring(): void {
       fetchFinished = true;
       clearTimeout(timeout);
       if (cacheProgressTimer) clearInterval(cacheProgressTimer);
+      if (forceTerminationTimer) clearTimeout(forceTerminationTimer);
+      setReconnect(null);
     }
 
     child.once('error', (error) => {
       stopProgressMonitoring();
+      if (terminationReason) {
+        rejectFetch(new HomebrewUpdateError(downloadReconnectMessage(terminationReason), 'transient_download'));
+        return;
+      }
       const kind = isTransientDownloadFailure(error.message, typeof (error as NodeJS.ErrnoException).code === 'string' ? (error as NodeJS.ErrnoException).code : undefined) ? 'transient_download' : 'structural';
       rejectFetch(new HomebrewUpdateError(`Homebrew 下载更新失败：${error.message}`, kind));
     });
     child.once('exit', (code, signal) => {
       stopProgressMonitoring();
       if (code === 0) resolveFetch();
+      else if (terminationReason) rejectFetch(new HomebrewUpdateError(downloadReconnectMessage(terminationReason), 'transient_download'));
       else {
         const detail = stderr || stdout;
         const kind = isTransientDownloadFailure(detail, signal ?? undefined) ? 'transient_download' : 'structural';
@@ -348,6 +449,64 @@ async function fetchCask(brewPath: string, cachePath: string, expectedSizeBytes:
       }
     });
   });
+}
+
+function sampleAtOrBefore(
+  samples: ReadonlyArray<{
+    observedAtMs: number;
+    downloadedBytes: number;
+  }>,
+  cutoffMs: number,
+): { observedAtMs: number; downloadedBytes: number } | undefined {
+  let match: { observedAtMs: number; downloadedBytes: number } | undefined;
+  for (const sample of samples) {
+    if (sample.observedAtMs > cutoffMs) break;
+    match = sample;
+  }
+  return match;
+}
+
+function terminateProcessGroup(pid: number | undefined, signal: NodeJS.Signals): boolean {
+  if (!pid) return false;
+  try {
+    process.kill(-pid, signal);
+    return true;
+  } catch {
+    try {
+      process.kill(pid, signal);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+function downloadReconnectMessage(reason: 'manual' | 'low_speed' | 'timeout'): string {
+  if (reason === 'manual') return '已按用户要求重新建立 Homebrew 下载连接。';
+  if (reason === 'low_speed') return 'Homebrew 下载连接持续异常低速，Zeus 已重新建立连接。';
+  return 'Homebrew 下载超过单次等待上限，Zeus 已重新建立连接。';
+}
+
+function downloadRecoveryPolicy(testMode: boolean): DownloadRecoveryPolicy {
+  if (!testMode) {
+    return {
+      stallWindowMs: defaultDownloadStallWindowMs,
+      minimumBytesPerSecond: defaultMinimumDownloadBytesPerSecond,
+      minimumRemainingBytes: defaultMinimumRemainingBytesForReconnect,
+    };
+  }
+  return {
+    stallWindowMs: readPositiveIntegerEnvironment('ZEUS_HOMEBREW_STALL_WINDOW_MS', defaultDownloadStallWindowMs, 2_000),
+    minimumBytesPerSecond: readPositiveIntegerEnvironment('ZEUS_HOMEBREW_MIN_SPEED_BPS', defaultMinimumDownloadBytesPerSecond, 1),
+    minimumRemainingBytes: readPositiveIntegerEnvironment('ZEUS_HOMEBREW_MIN_REMAINING_BYTES', defaultMinimumRemainingBytesForReconnect, 1),
+  };
+}
+
+function readPositiveIntegerEnvironment(name: string, fallback: number, minimum: number): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) && parsed >= minimum ? parsed : fallback;
 }
 
 /** 只有明确的网络中断、服务端暂时不可用或下载超时才进入后台重试。 */

@@ -1,15 +1,11 @@
-import { useEffect, useState } from 'react';
-import type { CodexRemoteControlPairing, CodexRemoteControlSnapshot, DashboardClient } from '../apiClient.js';
+import { useEffect } from 'react';
+import type { RemoteControlApiClient } from '../features/remote/remoteControlApiClient.js';
+import { useRemoteControlFeatureController } from '../features/remote/useRemoteControlFeatureController.js';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
-
-type RemoteControlClient = Pick<
-  DashboardClient,
-  'loadCodexRemoteControl' | 'enableCodexRemoteControl' | 'disableCodexRemoteControl' | 'startCodexRemoteControlPairing' | 'loadCodexRemoteControlPairingStatus' | 'revokeCodexRemoteControlClient'
->;
 
 interface CodexRemoteControlSettingsProps {
   language: 'zh-CN' | 'en-US';
-  client: RemoteControlClient | null;
+  client: RemoteControlApiClient | null;
 }
 
 const copy = {
@@ -104,87 +100,28 @@ const copy = {
 
 export function CodexRemoteControlSettings(props: CodexRemoteControlSettingsProps) {
   const labels = copy[props.language];
-  const [snapshot, setSnapshot] = useState<CodexRemoteControlSnapshot | null>(null);
-  const [pairing, setPairing] = useState<CodexRemoteControlPairing | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const controller = useRemoteControlFeatureController(props.client);
+  const snapshot = controller.snapshot.value;
+  const pairing = controller.snapshot.pairing;
+  const refreshPairing = controller.refreshPairing;
+  const busy = controller.snapshot.command !== 'idle';
+  const message = controller.snapshot.message;
+  const error = props.client ? controller.snapshot.error : labels.unavailable;
   useApplicationErrorDialog(error, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-    title: props.language === 'zh-CN' ? '远程接管操作失败' : 'Remote Control operation failed',
-    source: 'CodexRemoteControlSettings',
   });
-
-  useEffect(() => {
-    let active = true;
-    if (!props.client) {
-      setError(labels.unavailable);
-      return;
-    }
-    void props.client
-      .loadCodexRemoteControl()
-      .then((value) => {
-        if (active) setSnapshot(value);
-      })
-      .catch((loadError) => {
-        if (active) setError(errorMessage(loadError, labels.failed));
-      });
-    return () => {
-      active = false;
-    };
-  }, [labels.failed, labels.unavailable, props.client]);
 
   useEffect(() => {
     if (!props.client || !pairing || pairing.claimed || pairingExpiresAtMs(pairing.expiresAt) <= Date.now()) return;
     const timer = window.setInterval(() => {
-      void props
-        .client!.loadCodexRemoteControlPairingStatus({ pairingCode: pairing.pairingCode })
-        .then(async ({ claimed }) => {
-          if (!claimed) return;
-          setPairing((current) => (current ? { ...current, claimed: true } : current));
-          setMessage(labels.pairingClaimed);
-          setSnapshot(await props.client!.loadCodexRemoteControl());
-        })
-        .catch(() => undefined);
+      void refreshPairing(labels.pairingClaimed);
     }, 2_000);
     return () => window.clearInterval(timer);
-  }, [labels.pairingClaimed, pairing, props.client]);
-
-  async function run(action: () => Promise<CodexRemoteControlSnapshot>): Promise<void> {
-    setBusy(true);
-    setMessage(null);
-    setError(null);
-    try {
-      setSnapshot(await action());
-    } catch (actionError) {
-      setError(errorMessage(actionError, labels.failed));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function pair(): Promise<void> {
-    if (!props.client) return;
-    setBusy(true);
-    setMessage(null);
-    setError(null);
-    try {
-      let current = snapshot;
-      if (!current?.enabled || current.status.status === 'disabled') {
-        current = await props.client.enableCodexRemoteControl();
-        setSnapshot(current);
-      }
-      setPairing(await props.client.startCodexRemoteControlPairing());
-    } catch (pairError) {
-      setError(errorMessage(pairError, labels.failed));
-    } finally {
-      setBusy(false);
-    }
-  }
+  }, [labels.pairingClaimed, pairing, props.client, refreshPairing]);
 
   async function copyValue(value: string): Promise<void> {
     await navigator.clipboard.writeText(value);
-    setMessage(labels.copied);
+    controller.setMessage(labels.copied);
   }
 
   const stateLabel = snapshot ? labels[snapshot.status.status] : labels.loading;
@@ -207,7 +144,7 @@ export function CodexRemoteControlSettings(props: CodexRemoteControlSettingsProp
             <span>{stateLabel}</span>
           </span>
           <span className="settings-row-action-rail">
-            <button type="button" disabled={busy || !props.client} onClick={() => void run(() => props.client!.loadCodexRemoteControl())}>
+            <button type="button" disabled={busy || !props.client} onClick={() => void controller.reload()}>
               {labels.refresh}
             </button>
             {snapshot?.enabled ? (
@@ -215,17 +152,17 @@ export function CodexRemoteControlSettings(props: CodexRemoteControlSettingsProp
                 type="button"
                 disabled={busy || !props.client}
                 onClick={() => {
-                  if (window.confirm(labels.disableConfirm)) void run(() => props.client!.disableCodexRemoteControl());
+                  if (window.confirm(labels.disableConfirm)) void controller.disable();
                 }}
               >
                 {labels.disable}
               </button>
             ) : (
-              <button type="button" disabled={busy || !props.client || standaloneBlocked} onClick={() => void run(() => props.client!.enableCodexRemoteControl())}>
+              <button type="button" disabled={busy || !props.client || standaloneBlocked} onClick={() => void controller.enable()}>
                 {labels.enable}
               </button>
             )}
-            <button type="button" disabled={busy || !props.client || standaloneBlocked} onClick={() => void pair()}>
+            <button type="button" disabled={busy || !props.client || standaloneBlocked} onClick={() => void controller.startPairing()}>
               {labels.pair}
             </button>
           </span>
@@ -242,7 +179,7 @@ export function CodexRemoteControlSettings(props: CodexRemoteControlSettingsProp
             </span>
             <span className="settings-row-action-rail">
               {!standaloneReady ? (
-                <button type="button" disabled={busy} onClick={() => void copyValue(managedStandalone.installCommand).then(() => setMessage(labels.installCopied))}>
+                <button type="button" disabled={busy} onClick={() => void copyValue(managedStandalone.installCommand).then(() => controller.setMessage(labels.installCopied))}>
                   {labels.copyInstall}
                 </button>
               ) : null}
@@ -300,7 +237,7 @@ export function CodexRemoteControlSettings(props: CodexRemoteControlSettingsProp
                   disabled={busy || !snapshot.status.environmentId || !props.client}
                   onClick={() => {
                     if (snapshot.status.environmentId && window.confirm(labels.revokeConfirm)) {
-                      void run(() => props.client!.revokeCodexRemoteControlClient(snapshot.status.environmentId!, device.clientId));
+                      void controller.revoke(snapshot.status.environmentId, device.clientId);
                     }
                   }}
                 >
@@ -314,10 +251,6 @@ export function CodexRemoteControlSettings(props: CodexRemoteControlSettingsProp
       {message ? <p role="status">{message}</p> : null}
     </section>
   );
-}
-
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message ? error.message : fallback;
 }
 
 function pairingExpiresAtMs(value: number): number {

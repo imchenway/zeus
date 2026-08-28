@@ -1,4 +1,4 @@
-import { type FocusEvent, type KeyboardEvent, type ReactNode, memo, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { type FocusEvent, type KeyboardEvent, memo, type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
 import { CircleIcon as Circle } from '@phosphor-icons/react/dist/csr/Circle';
@@ -11,8 +11,11 @@ import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr
 import { PlugsIcon as Plugs } from '@phosphor-icons/react/dist/csr/Plugs';
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import { WrenchIcon as Wrench } from '@phosphor-icons/react/dist/csr/Wrench';
-import { isAssistantDeliverableItem, type NativePendingRequest, type NativeSessionItemBuffer, type NativeTurnPlanSnapshot, type NativeTurnSnapshot } from './sessionTypes.js';
+import type { ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourcePreview } from '@zeus/shared';
+import { ConversationResourceCards, defaultOpenTarget, isImageResource } from './ConversationResources.js';
+import { isAssistantDeliverableItem, type NativeConversationToolResultPage, type NativePendingRequest, type NativeSessionItemBuffer, type NativeTurnPlanSnapshot, type NativeTurnSnapshot } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 
 const operationalTypes = new Set(['commandexecution', 'command', 'mcptoolcall', 'dynamictoolcall', 'websearch', 'imageview', 'toolcall', 'tool', 'filechange', 'file', 'contextcompaction', 'providerevent']);
 const MAX_ACTIVITY_OUTPUT_CHARACTERS = 40_000;
@@ -24,14 +27,35 @@ export function isOperationalActivityItem(item: NativeSessionItemBuffer): boolea
   return operationalTypes.has(type);
 }
 
-export const SessionActivityGroup = memo(function SessionActivityGroup(props: { items: NativeSessionItemBuffer[]; language: SessionUiLanguage; motionActive?: boolean }) {
+export type SessionActivityCategory = 'commands' | 'tools' | 'files' | 'context' | 'mixed';
+
+export function activityCategory(item: NativeSessionItemBuffer): SessionActivityCategory {
+  const type = normalizeType(item.type);
+  if (type === 'commandexecution' || type === 'command') return 'commands';
+  if (type === 'filechange' || type === 'file') return 'files';
+  if (type === 'contextcompaction') return 'context';
+  return 'tools';
+}
+
+interface SessionActivityGroupProps {
+  items: NativeSessionItemBuffer[];
+  language: SessionUiLanguage;
+  category: SessionActivityCategory;
+  motionActive?: boolean;
+  onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
+  onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
+  onLoadToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage>;
+}
+
+export const SessionActivityGroup = memo(function SessionActivityGroup(props: SessionActivityGroupProps) {
   const liveItem = [...props.items].reverse().find((item) => item.status !== 'completed' && item.status !== 'failed') ?? null;
   const active = Boolean(liveItem);
   const summary = activitySummary(props.items, props.language, active);
-  const skillNames = activitySkillNames(props.items);
+  const imageResources = activityImageResources(props.items);
+  const detailItems = imageResources.length > 0 ? props.items.filter((item) => normalizeType(item.type) !== 'imageview' || item.resources.length === 0) : props.items;
   const [open, setOpen] = useState(false);
   const previousActiveRef = useRef(active);
-  const GroupIcon = activityItemIcon(liveItem ?? props.items[props.items.length - 1]!);
+  const GroupIcon = activityGroupIcon(props.items, liveItem);
 
   useEffect(() => {
     if (previousActiveRef.current && !active) setOpen(false);
@@ -39,7 +63,7 @@ export const SessionActivityGroup = memo(function SessionActivityGroup(props: { 
   }, [active]);
 
   return (
-    <section className="session-activity-group" data-active={active || undefined} data-motion-active={props.motionActive || undefined} aria-label={props.language === 'zh-CN' ? '工作活动' : 'Work activity'}>
+    <section className="session-activity-group" data-active={active || undefined} data-activity-category={props.category} data-item-count={props.items.length} data-motion-active={props.motionActive || undefined} aria-label={summary}>
       <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
         <summary>
           <span className="session-activity-group-icon" aria-hidden="true">
@@ -50,19 +74,25 @@ export const SessionActivityGroup = memo(function SessionActivityGroup(props: { 
         </summary>
         {open ? (
           <div className="session-activity-body">
-            {skillNames.length > 0 ? (
-              <p className="session-activity-skills">
-                <span>{props.language === 'zh-CN' ? '技能' : 'Skills'}</span>
-                {skillNames.map((name) => (
-                  <code key={name}>{name}</code>
+            {detailItems.length > 0 ? (
+              <ol>
+                {detailItems.map((item) => (
+                  <ActivityItemRow
+                    key={item.key}
+                    item={item}
+                    language={props.language}
+                    motionActive={Boolean(active && props.motionActive && item.key === liveItem?.key)}
+                    onOpenResource={props.onOpenResource}
+                    onLoadToolResult={props.onLoadToolResult}
+                  />
                 ))}
-              </p>
+              </ol>
             ) : null}
-            <ol>
-              {props.items.map((item) => (
-                <ActivityItemRow key={item.key} item={item} language={props.language} motionActive={Boolean(props.motionActive && item.key === liveItem?.key)} />
-              ))}
-            </ol>
+            {imageResources.length > 0 ? (
+              <div className="session-activity-images">
+                <ConversationResourceCards resources={imageResources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
+              </div>
+            ) : null}
           </div>
         ) : null}
       </details>
@@ -71,22 +101,28 @@ export const SessionActivityGroup = memo(function SessionActivityGroup(props: { 
   );
 }, sameActivityGroupProps);
 
-function sameActivityGroupProps(
-  previous: Readonly<{
-    items: NativeSessionItemBuffer[];
-    language: SessionUiLanguage;
-    motionActive?: boolean;
-  }>,
-  next: Readonly<{ items: NativeSessionItemBuffer[]; language: SessionUiLanguage; motionActive?: boolean }>,
-): boolean {
-  if (previous.language !== next.language || previous.motionActive !== next.motionActive || previous.items.length !== next.items.length) return false;
+function sameActivityGroupProps(previous: Readonly<SessionActivityGroupProps>, next: Readonly<SessionActivityGroupProps>): boolean {
+  if (
+    previous.language !== next.language ||
+    previous.category !== next.category ||
+    previous.motionActive !== next.motionActive ||
+    previous.onOpenResource !== next.onOpenResource ||
+    previous.onLoadResourcePreview !== next.onLoadResourcePreview ||
+    previous.onLoadToolResult !== next.onLoadToolResult ||
+    previous.items.length !== next.items.length
+  )
+    return false;
   return previous.items.every((item, index) => item === next.items[index]);
+}
+
+export function isLiveActivityItem(item: Pick<NativeSessionItemBuffer, 'status'>): boolean {
+  return item.status !== 'completed' && item.status !== 'failed';
 }
 
 function ActivityLiveRow(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage }) {
   const Icon = activityItemIcon(props.item);
   return (
-    <p className="session-activity-live" key={`${props.item.key}:${props.item.updatedAt ?? props.item.status}`} role="status" aria-live="polite" aria-atomic="true">
+    <p className="session-activity-live" role="status" aria-live="polite" aria-atomic="true">
       <span className="session-activity-item-icon" aria-hidden="true">
         <Icon weight="regular" />
       </span>
@@ -95,12 +131,29 @@ function ActivityLiveRow(props: { item: NativeSessionItemBuffer; language: Sessi
   );
 }
 
-const ActivityItemRow = memo(function ActivityItemRow(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage; motionActive?: boolean }) {
+const ActivityItemRow = memo(function ActivityItemRow(props: {
+  item: NativeSessionItemBuffer;
+  language: SessionUiLanguage;
+  motionActive?: boolean;
+  onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
+  onLoadToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage>;
+}) {
   const title = activityItemTitle(props.item, props.language);
   const detail = activityItemDetail(props.item);
+  const target = activityItemTarget(props.item, props.language);
   const [open, setOpen] = useState(false);
   const Icon = activityItemIcon(props.item);
-  const outputPreview = open && detail?.output ? activityOutputPreview(detail.output) : null;
+  const toolResult = activityToolResult(props.item);
+  const titleNode = target ? (
+    <span className="session-activity-item-title">
+      <span>{target.prefix}</span>{' '}
+      <button type="button" className="session-activity-resource-link" title={target.title} onClick={() => void props.onOpenResource?.(target.resource, defaultOpenTarget(target.resource))}>
+        {target.label}
+      </button>
+    </span>
+  ) : (
+    <span className="session-activity-item-title">{title}</span>
+  );
   return (
     <li data-status={props.item.status} data-motion-active={props.motionActive || undefined}>
       <span className="session-activity-item-icon" aria-hidden="true">
@@ -110,31 +163,174 @@ const ActivityItemRow = memo(function ActivityItemRow(props: { item: NativeSessi
         {detail ? (
           <details className="session-activity-item-detail" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
             <summary className="session-activity-item-summary">
-              <span className="session-activity-item-title">{title}</span>
+              {titleNode}
               <CaretDown className="session-activity-item-caret" aria-hidden="true" weight="bold" />
             </summary>
             {open ? (
               <div className="session-activity-item-detail-body">
                 {detail.command ? <code>{detail.command}</code> : null}
                 {detail.cwd ? <small>{detail.cwd}</small> : null}
-                {outputPreview ? <pre>{outputPreview.text}</pre> : null}
-                {outputPreview?.truncated ? (
-                  <small>
-                    {props.language === 'zh-CN'
-                      ? `输出较大，仅显示前 ${MAX_ACTIVITY_OUTPUT_CHARACTERS.toLocaleString('zh-CN')} 个字符。`
-                      : `Large output; showing the first ${MAX_ACTIVITY_OUTPUT_CHARACTERS.toLocaleString('en-US')} characters.`}
-                  </small>
-                ) : null}
+                {detail.output || toolResult ? <ActivityItemOutput output={detail.output} toolResult={toolResult} language={props.language} onLoadToolResult={props.onLoadToolResult} /> : null}
               </div>
             ) : null}
           </details>
         ) : (
-          <span className="session-activity-item-title">{title}</span>
+          titleNode
         )}
       </div>
     </li>
   );
 });
+
+function ActivityItemOutput(props: { output: string | null; toolResult: ActivityToolResult | null; language: SessionUiLanguage; onLoadToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage> }) {
+  const [pages, setPages] = useState<NativeConversationToolResultPage[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<unknown>(null);
+  const [showFull, setShowFull] = useState(false);
+  const loadingRef = useRef(false);
+  const projectedOutput = props.output ?? props.toolResult?.projection ?? null;
+  const loadedOutput = pages.map((page) => page.text).join('');
+  const sourceOutput = normalizeActivityToolText(loadedOutput || projectedOutput || '').text ?? '';
+  const outputPreview = showFull ? { text: sourceOutput, truncated: false } : activityOutputPreview(sourceOutput);
+  const lastPage = pages.at(-1) ?? null;
+  const canLoadMore = Boolean(props.toolResult?.handle && props.onLoadToolResult && (pages.length > 0 ? lastPage?.nextOffset !== null : props.toolResult.projectionTruncated));
+  const canShowFull = !canLoadMore && !showFull && sourceOutput.length > MAX_ACTIVITY_OUTPUT_CHARACTERS;
+
+  useEffect(() => {
+    setPages([]);
+    setLoading(false);
+    setLoadError(null);
+    setShowFull(false);
+    loadingRef.current = false;
+  }, [props.toolResult?.handle]);
+
+  async function loadNextPage(): Promise<void> {
+    if (!props.toolResult?.handle || !props.onLoadToolResult || loadingRef.current) return;
+    loadingRef.current = true;
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const page = await props.onLoadToolResult(props.toolResult.handle, lastPage?.nextOffset ?? undefined);
+      setPages((current) => [...current.filter((candidate) => candidate.offset !== page.offset), page].sort((left, right) => left.offset - right.offset));
+    } catch (error) {
+      setLoadError(error);
+    } finally {
+      loadingRef.current = false;
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="session-activity-item-output" aria-busy={loading || undefined}>
+      {outputPreview.text ? <pre>{outputPreview.text}</pre> : null}
+      {outputPreview.truncated ? (
+        <small>
+          {props.language === 'zh-CN' ? `输出较大，当前显示前 ${MAX_ACTIVITY_OUTPUT_CHARACTERS.toLocaleString('zh-CN')} 个字符。` : `Large output; showing the first ${MAX_ACTIVITY_OUTPUT_CHARACTERS.toLocaleString('en-US')} characters.`}
+        </small>
+      ) : null}
+      {canLoadMore || canShowFull || loadError ? (
+        <button
+          type="button"
+          disabled={loading}
+          onClick={() => {
+            if (canShowFull) {
+              setShowFull(true);
+              return;
+            }
+            void loadNextPage();
+          }}
+        >
+          {loading ? (props.language === 'zh-CN' ? '正在展开…' : 'Expanding…') : loadError ? (props.language === 'zh-CN' ? '重试展开' : 'Retry expansion') : props.language === 'zh-CN' ? '展开剩余内容' : 'Expand remaining content'}
+        </button>
+      ) : null}
+      {loadError ? (
+        <small className="session-v2-page-error" role="alert">
+          <VisibleApplicationError error={loadError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
+        </small>
+      ) : null}
+    </div>
+  );
+}
+
+interface ActivityToolResult {
+  handle: string;
+  projection: string | null;
+  projectionTruncated: boolean;
+}
+
+function activityToolResult(item: NativeSessionItemBuffer): ActivityToolResult | null {
+  const result = isRecord(item.payload.toolResult) ? item.payload.toolResult : null;
+  const handle = primitive(result?.handle);
+  if (!handle) return null;
+  const rawProjection = typeof result?.projection === 'string' ? result.projection : '';
+  const parsedProjection = parseToolResultProjection(rawProjection);
+  return {
+    handle,
+    projection: parsedProjection.text,
+    projectionTruncated: result?.projectionTruncated === true || parsedProjection.truncated,
+  };
+}
+
+function parseToolResultProjection(value: string): { text: string | null; truncated: boolean } {
+  if (!value.trim()) return { text: null, truncated: false };
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (isRecord(parsed) && typeof parsed.text === 'string') {
+      const normalized = normalizeActivityToolText(parsed.text);
+      return { text: normalized.text, truncated: parsed.truncated === true || normalized.truncated };
+    }
+  } catch {
+    // Snapshot V2 会对描述符本身做有界截断；下方只提取开头的 text 字段，不展示协议 JSON。
+  }
+  const text = extractJsonStringField(value, 'text');
+  if (text === null) return normalizeActivityToolText(value, true);
+  const normalized = normalizeActivityToolText(text, true);
+  return { text: normalized.text, truncated: true };
+}
+
+function normalizeActivityToolText(value: string, truncated = false): { text: string | null; truncated: boolean } {
+  const trimmed = value.trim();
+  if (!trimmed) return { text: null, truncated };
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (isRecord(parsed)) {
+      if (typeof parsed.text === 'string') return normalizeActivityToolText(parsed.text, truncated || parsed.truncated === true);
+      if (isCommandExecutionRecord(parsed)) {
+        return {
+          text: primitive(parsed.aggregatedOutput ?? parsed.output ?? parsed.stdout ?? parsed.stderr),
+          truncated,
+        };
+      }
+    }
+  } catch {
+    // 历史资源可能只返回协议 JSON 的一个有界片段，继续按字段提取，不能回退展示协议正文。
+  }
+  if (looksLikeCommandExecutionProtocol(trimmed)) {
+    const output = ['aggregatedOutput', 'output', 'stdout', 'stderr'].map((field) => extractJsonStringField(trimmed, field)).find((candidate) => candidate !== null) ?? null;
+    return { text: output, truncated: true };
+  }
+  return { text: value, truncated };
+}
+
+function isCommandExecutionRecord(value: Record<string, unknown>): boolean {
+  const type = normalizeType(primitive(value.type) ?? '');
+  return type === 'commandexecution' || type === 'command';
+}
+
+function looksLikeCommandExecutionProtocol(value: string): boolean {
+  return /^\s*\{/u.test(value) && /"type"\s*:\s*"(?:commandExecution|command)"/iu.test(value);
+}
+
+function extractJsonStringField(value: string, field: string): string | null {
+  const escapedField = field.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  const match = new RegExp(`"${escapedField}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)`, 'u').exec(value);
+  if (match?.[1] === undefined) return null;
+  try {
+    return JSON.parse(`"${match[1]}"`) as string;
+  } catch {
+    return match[1].replaceAll('\\n', '\n').replaceAll('\\r', '\r').replaceAll('\\t', '\t').replaceAll('\\"', '"').replaceAll('\\\\', '\\');
+  }
+}
 
 function activityOutputPreview(output: string): { text: string; truncated: boolean } {
   if (output.length <= MAX_ACTIVITY_OUTPUT_CHARACTERS) return { text: output, truncated: false };
@@ -244,31 +440,101 @@ export function SessionTurnDuration(props: { turn: NativeTurnSnapshot; requests:
   const duration = useMemo(() => turnDurationMs(props.turn, props.requests, now), [now, props.requests, props.turn]);
   if (duration === null) return null;
   const value = formatDuration(duration, props.language);
-  const label = props.language === 'zh-CN' ? `已处理 ${value}` : active ? `Processing for ${value}` : `Processed in ${value}`;
+  const terminalStatus = props.turn.status === 'interrupted' || props.turn.status === 'failed' ? props.turn.status : 'completed';
+  const label =
+    props.language === 'zh-CN'
+      ? active
+        ? `处理中 ${value}`
+        : terminalStatus === 'interrupted'
+          ? `处理已中断（${value}）`
+          : terminalStatus === 'failed'
+            ? `处理失败（${value}）`
+            : `已处理 ${value}`
+      : active
+        ? `Processing for ${value}`
+        : terminalStatus === 'interrupted'
+          ? `Interrupted after ${value}`
+          : terminalStatus === 'failed'
+            ? `Failed after ${value}`
+            : `Processed in ${value}`;
   const hasDetails = props.children !== undefined && props.children !== null;
   const time = <time dateTime={`PT${Math.max(0, Math.round(duration / 1_000))}S`}>{label}</time>;
   return (
-    <section className="session-turn-duration" data-active={active || undefined}>
+    <section className="session-turn-duration" data-active={active || undefined} data-status={active ? 'active' : terminalStatus}>
       {hasDetails ? <div className="session-turn-duration-body">{props.children}</div> : null}
       <p>{time}</p>
     </section>
   );
 }
 
-export function SessionTurnProcessDisclosure(props: { language: SessionUiLanguage; children: ReactNode }) {
-  const [open, setOpen] = useState(false);
+export function SessionTurnProcessDisclosure(props: {
+  language: SessionUiLanguage;
+  children: ReactNode;
+  onOpen?: () => void | Promise<void>;
+  loading?: boolean;
+  error?: string | null;
+  labelKind?: 'process' | 'details';
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+}) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = props.open ?? internalOpen;
+  const onOpenRef = useRef(props.onOpen);
+  onOpenRef.current = props.onOpen;
   const bodyId = useId();
-  const label = props.language === 'zh-CN' ? (open ? '收起思考过程' : '查看思考过程') : open ? 'Hide thinking process' : 'View thinking process';
+  useEffect(() => {
+    if (!open || !onOpenRef.current) return;
+    void Promise.resolve(onOpenRef.current()).catch(() => undefined);
+  }, [open]);
+  const label =
+    props.labelKind === 'details'
+      ? props.language === 'zh-CN'
+        ? open
+          ? '收起轮次详情'
+          : '查看轮次详情'
+        : open
+          ? 'Hide turn details'
+          : 'View turn details'
+      : props.language === 'zh-CN'
+        ? open
+          ? '收起处理过程'
+          : '查看处理过程'
+        : open
+          ? 'Hide process'
+          : 'View process';
   return (
-    <section className="session-turn-process" data-open={open || undefined}>
+    <section className="session-turn-process" data-open={open || undefined} aria-busy={props.loading || undefined}>
       <div className="session-turn-process-control">
-        <button type="button" aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen((value) => !value)}>
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={bodyId}
+          onClick={() => {
+            const nextOpen = !open;
+            if (props.open === undefined) setInternalOpen(nextOpen);
+            props.onOpenChange?.(nextOpen);
+          }}
+        >
           <span>{label}</span>
           <CaretDown className="session-turn-process-caret" aria-hidden="true" weight="bold" />
         </button>
       </div>
       <div id={bodyId} className="session-turn-process-body" hidden={!open}>
-        {props.children}
+        {open ? (
+          <>
+            {props.children}
+            {props.loading ? (
+              <p className="session-v2-page-status" role="status">
+                {props.labelKind === 'details' ? (props.language === 'zh-CN' ? '正在读取这轮的详情…' : 'Loading this turn’s details…') : props.language === 'zh-CN' ? '正在读取这轮的处理过程…' : 'Loading this turn’s process…'}
+              </p>
+            ) : null}
+            {props.error ? (
+              <p className="session-v2-page-error" role="alert">
+                <VisibleApplicationError error={props.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
+              </p>
+            ) : null}
+          </>
+        ) : null}
       </div>
     </section>
   );
@@ -279,26 +545,82 @@ function activitySummary(items: NativeSessionItemBuffer[], language: SessionUiLa
   if (compactions.length === items.length) {
     return language === 'zh-CN' ? (active ? '正在整理较早对话以继续工作' : '已整理较早对话') : active ? 'Organizing earlier conversation to continue' : 'Organized earlier conversation';
   }
+  const fileChanges = items.filter((item) => ['filechange', 'file'].includes(normalizeType(item.type))).length;
   const skills = activitySkillNames(items);
-  if (skills.length > 0) {
-    if (language === 'zh-CN') return `${active ? '正在加载' : '已加载'} ${skills.length} 个技能`;
-    return `${active ? 'Loading' : 'Loaded'} ${skills.length} ${skills.length === 1 ? 'skill' : 'skills'}`;
-  }
-  const commands = items.filter((item) => ['commandexecution', 'command'].includes(normalizeType(item.type))).length;
-  const tools = items.length - commands;
-  const actionTypes = new Set(items.flatMap((item) => commandActions(item).map((action) => primitive(action.type))).filter((value): value is string => Boolean(value)));
-  if (commands > 0 && tools === 0) {
-    if (language === 'zh-CN') {
-      if (actionTypes.has('search')) return `${active ? '正在搜索文件并运行' : '已搜索文件并运行'} ${commands} 个命令`;
-      if (actionTypes.has('read') || actionTypes.has('listFiles')) return `${active ? '正在读取文件并运行' : '已读取文件并运行'} ${commands} 个命令`;
-      return `${active ? '正在运行' : '已运行'} ${commands} 个命令`;
+  const commandItems = items.filter((item) => ['commandexecution', 'command'].includes(normalizeType(item.type)));
+  const webSearches = items.filter((item) => normalizeType(item.type) === 'websearch').length;
+  const imageViews = items.filter((item) => normalizeType(item.type) === 'imageview').length;
+  const actionTypes = new Set(commandItems.flatMap((item) => commandActions(item).map((action) => normalizeType(primitive(action.type) ?? ''))));
+  const genericCommandCount = commandItems.filter((item) => {
+    const actions = commandActions(item);
+    if (actions.length === 0) return true;
+    if (activitySkillNames([item]).length > 0 && actions.every((action) => ['read', 'listfiles'].includes(normalizeType(primitive(action.type) ?? '')))) return false;
+    return actions.some((action) => !['read', 'listfiles', 'search'].includes(normalizeType(primitive(action.type) ?? '')));
+  }).length;
+  const otherTools = items.filter((item) => !['commandexecution', 'command', 'websearch', 'imageview', 'filechange', 'file', 'contextcompaction'].includes(normalizeType(item.type))).length;
+  if (language === 'zh-CN') {
+    if (active) {
+      const activeParts = [
+        fileChanges > 0 ? '编辑文件' : null,
+        actionTypes.has('read') || actionTypes.has('listfiles') ? '读取文件' : null,
+        actionTypes.has('search') ? '搜索文件' : null,
+        webSearches > 0 ? '搜索网页' : null,
+        skills.length > 0 ? '读取技能' : null,
+        imageViews > 0 ? '查看图像' : null,
+        genericCommandCount > 0 ? '运行命令' : null,
+        otherTools > 0 ? '使用工具' : null,
+      ].filter(Boolean);
+      return `正在处理：${activeParts.join('、')}`;
     }
-    if (actionTypes.has('search')) return `${active ? 'Searching files and running' : 'Searched files and ran'} ${commands} ${commands === 1 ? 'command' : 'commands'}`;
-    if (actionTypes.has('read') || actionTypes.has('listFiles')) return `${active ? 'Reading files and running' : 'Read files and ran'} ${commands} ${commands === 1 ? 'command' : 'commands'}`;
-    return `${active ? 'Running' : 'Ran'} ${commands} ${commands === 1 ? 'command' : 'commands'}`;
+    const completedParts = [
+      fileChanges > 0 ? '编辑了文件' : null,
+      actionTypes.has('read') || actionTypes.has('listfiles') ? '读取文件' : null,
+      actionTypes.has('search') ? '搜索文件' : null,
+      webSearches > 0 ? '搜索了网页' : null,
+      skills.length > 0 ? `读取了${skills.length === 1 ? skills[0] : `${skills.length} 个`}技能` : null,
+      imageViews > 0 ? `查看了 ${imageViews} 张图像` : null,
+      genericCommandCount > 0 ? '运行了命令' : null,
+      otherTools > 0 ? '使用了工具' : null,
+    ].filter(Boolean);
+    return completedParts.join('、') || '完成了处理';
   }
-  if (commands === 0) return language === 'zh-CN' ? `${active ? '正在使用' : '已使用'} ${tools} 个工具` : `${active ? 'Using' : 'Used'} ${tools} ${tools === 1 ? 'tool' : 'tools'}`;
-  return language === 'zh-CN' ? `${active ? '正在运行' : '已运行'} ${commands} 个命令并使用 ${tools} 个工具` : `${active ? 'Running' : 'Ran'} ${commands} commands and ${active ? 'using' : 'used'} ${tools} tools`;
+  const englishParts = [
+    fileChanges > 0 ? (active ? 'editing files' : 'edited files') : null,
+    actionTypes.has('read') || actionTypes.has('listfiles') ? (active ? 'reading files' : 'read files') : null,
+    actionTypes.has('search') ? (active ? 'searching files' : 'searched files') : null,
+    webSearches > 0 ? (active ? 'searching the web' : 'searched the web') : null,
+    skills.length > 0 ? `${active ? 'reading' : 'read'} ${skills.length === 1 ? skills[0] : `${skills.length} skills`}` : null,
+    imageViews > 0 ? `${active ? 'viewing' : 'viewed'} ${imageViews} ${imageViews === 1 ? 'image' : 'images'}` : null,
+    genericCommandCount > 0 ? (active ? 'running commands' : 'ran commands') : null,
+    otherTools > 0 ? (active ? 'using tools' : 'used tools') : null,
+  ].filter(Boolean);
+  return `${active ? 'Working: ' : ''}${englishParts.join(', ') || (active ? 'processing' : 'completed work')}`;
+}
+
+function activityImageResources(items: NativeSessionItemBuffer[]): ConversationResource[] {
+  const resources = items.flatMap((item) => item.resources).filter(isImageResource);
+  const unique = new Map<string, ConversationResource>();
+  for (const resource of resources)
+    unique.set(
+      resource.id,
+      resource.presentation === 'card'
+        ? resource
+        : {
+            ...resource,
+            presentation: 'card',
+          },
+    );
+  return [...unique.values()];
+}
+
+function activityGroupIcon(items: NativeSessionItemBuffer[], liveItem: NativeSessionItemBuffer | null) {
+  if (items.some((item) => ['filechange', 'file'].includes(normalizeType(item.type)))) return PencilSimple;
+  if (items.every((item) => normalizeType(item.type) === 'imageview')) return Image;
+  if (items.every((item) => activitySkillNames([item]).length > 0)) return Wrench;
+  if (liveItem) return activityItemIcon(liveItem);
+  if (items.some((item) => commandActions(item).some((action) => normalizeType(primitive(action.type) ?? '') === 'search') || normalizeType(item.type) === 'websearch')) return MagnifyingGlass;
+  if (items.some((item) => commandActions(item).some((action) => ['read', 'listfiles'].includes(normalizeType(primitive(action.type) ?? ''))))) return BookOpen;
+  return activityItemIcon(items[items.length - 1]!);
 }
 
 function activitySkillNames(items: NativeSessionItemBuffer[]): string[] {
@@ -342,12 +664,12 @@ function activityItemTitle(item: NativeSessionItemBuffer, language: SessionUiLan
     const active = item.status !== 'completed' && item.status !== 'failed';
     return path
       ? language === 'zh-CN'
-        ? `${active ? '正在变更' : '已变更'} ${path}`
+        ? `${active ? '正在编辑' : '已编辑'} ${path}`
         : `${active ? 'Changing' : 'Changed'} ${path}`
       : language === 'zh-CN'
         ? active
-          ? '正在变更文件'
-          : '已变更文件'
+          ? '正在编辑文件'
+          : '已编辑文件'
         : active
           ? 'Changing file'
           : 'Changed file';
@@ -357,6 +679,60 @@ function activityItemTitle(item: NativeSessionItemBuffer, language: SessionUiLan
   if (progress) return progress;
   const active = item.status !== 'completed' && item.status !== 'failed';
   return tool ? (language === 'zh-CN' ? `${active ? '正在使用' : '已使用'} ${tool}` : `${active ? 'Using' : 'Used'} ${tool}`) : language === 'zh-CN' ? (active ? '正在使用工具' : '已使用工具') : active ? 'Using tool' : 'Used tool';
+}
+
+function activityItemTarget(
+  item: NativeSessionItemBuffer,
+  language: SessionUiLanguage,
+): {
+  prefix: string;
+  label: string;
+  title: string;
+  resource: ConversationResource;
+} | null {
+  const resource = item.resources.find((candidate) => candidate.kind === 'file' || candidate.kind === 'website');
+  if (!resource) return null;
+  const type = normalizeType(item.type);
+  const actionType = normalizeType(primitive(commandActions(item)[0]?.type) ?? '');
+  const active = isLiveActivityItem(item);
+  const prefix =
+    language === 'zh-CN'
+      ? type === 'filechange' || type === 'file'
+        ? active
+          ? '正在编辑'
+          : '已编辑'
+        : actionType === 'read' || actionType === 'listfiles'
+          ? active
+            ? '正在读取'
+            : '已读取'
+          : type === 'websearch' || actionType === 'search'
+            ? active
+              ? '正在搜索'
+              : '已搜索'
+            : active
+              ? '正在使用'
+              : '已使用'
+      : type === 'filechange' || type === 'file'
+        ? active
+          ? 'Editing'
+          : 'Edited'
+        : actionType === 'read' || actionType === 'listfiles'
+          ? active
+            ? 'Reading'
+            : 'Read'
+          : type === 'websearch' || actionType === 'search'
+            ? active
+              ? 'Searching'
+              : 'Searched'
+            : active
+              ? 'Using'
+              : 'Used';
+  return {
+    prefix,
+    label: resource.displayName,
+    title: resource.kind === 'file' ? resource.projectRelativePath : resource.url,
+    resource,
+  };
 }
 
 function activityItemIcon(item: NativeSessionItemBuffer) {
@@ -383,7 +759,7 @@ function activityItemDetail(item: NativeSessionItemBuffer): {
 } | null {
   const command = commandText(item.payload.command);
   const cwd = primitive(item.payload.cwd);
-  const output = primitive(item.payload.aggregatedOutput ?? item.payload.output ?? item.payload.stdout ?? item.payload.stderr) ?? presentationLiveText(item);
+  const output = primitive(item.payload.aggregatedOutput ?? item.payload.output ?? item.payload.stdout ?? item.payload.stderr) ?? activityToolResult(item)?.projection ?? presentationLiveText(item);
   return command || cwd || output ? { command, cwd, output } : null;
 }
 

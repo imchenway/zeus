@@ -1,9 +1,4 @@
 import { memo, useLayoutEffect } from 'react';
-import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
-import { CircleIcon as Circle } from '@phosphor-icons/react/dist/csr/Circle';
-import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
-import { StopCircleIcon as StopCircle } from '@phosphor-icons/react/dist/csr/StopCircle';
-import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import type { ConversationState, NativeSessionItemBuffer } from './sessionTypes.js';
 import { type SessionUiLanguage, useAdaptiveTranscriptText } from './ThreadItemView.js';
 
@@ -22,7 +17,6 @@ export const SessionReasoningSummary = memo(function SessionReasoningSummary(pro
     if (adaptiveText.revision > 0) props.onVisibleContentChange?.();
   }, [adaptiveText.revision, props.onVisibleContentChange]);
   if (!sourceText) return null;
-  const StatusIcon = reasoningStatusIcon(props.status);
   const statusLabel = reasoningStatusLabel(props.status, props.language);
 
   return (
@@ -30,36 +24,10 @@ export const SessionReasoningSummary = memo(function SessionReasoningSummary(pro
       <span className="session-sr-only" role="status" aria-live="polite">
         {statusLabel}
       </span>
-      <span className="session-reasoning-summary-icon" aria-hidden="true">
-        <StatusIcon weight={props.status === 'completed' ? 'fill' : 'regular'} />
-      </span>
       <span className="zeus-fidelity-text">{adaptiveText.text}</span>
     </p>
   );
 });
-
-export function latestReasoningItemsByTurn(items: readonly NativeSessionItemBuffer[], activeTurnId: string | null = null): NativeSessionItemBuffer[] {
-  const latestKeyByTurn = new Map<string, string>();
-  for (const item of items) {
-    if (isReasoningItem(item) && latestReasoningSummaryText(item)) latestKeyByTurn.set(item.turnId, item.key);
-  }
-  const projectedItems = items.filter((item) => !isReasoningItem(item) || latestKeyByTurn.get(item.turnId) === item.key);
-  if (!activeTurnId) return projectedItems;
-
-  const activeReasoningIndex = projectedItems.findIndex((item) => item.turnId === activeTurnId && isReasoningItem(item));
-  if (activeReasoningIndex < 0) return projectedItems;
-
-  let lastActiveTurnItemIndex = activeReasoningIndex;
-  for (let index = activeReasoningIndex + 1; index < projectedItems.length; index += 1) {
-    if (projectedItems[index]!.turnId === activeTurnId) lastActiveTurnItemIndex = index;
-  }
-  if (lastActiveTurnItemIndex === activeReasoningIndex) return projectedItems;
-
-  const reorderedItems = [...projectedItems];
-  const [activeReasoningItem] = reorderedItems.splice(activeReasoningIndex, 1);
-  reorderedItems.splice(lastActiveTurnItemIndex, 0, activeReasoningItem!);
-  return reorderedItems;
-}
 
 export function latestReasoningSummaryText(item: NativeSessionItemBuffer): string {
   const presentation = recordValue(item.payload.presentation);
@@ -80,10 +48,6 @@ export function reasoningSummaryStatus(
   return 'active';
 }
 
-function isReasoningItem(item: NativeSessionItemBuffer): boolean {
-  return item.type.toLocaleLowerCase().replace(/[\s_\-/]+/gu, '') === 'reasoning';
-}
-
 function stringSegments(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((entry) => {
@@ -97,25 +61,24 @@ function stringSegments(value: unknown): string[] {
 function cleanReasoningSummary(value: string): string {
   const text = value.trim();
   if (!text) return '';
-  const bold = /^\*\*([^\n]+)\*\*$/u.exec(text);
-  return bold?.[1] ?? value;
-}
-
-function reasoningStatusIcon(status: ReasoningSummaryStatus) {
-  if (status === 'active') return CircleNotch;
-  if (status === 'completed') return CheckCircle;
-  if (status === 'failed') return WarningCircle;
-  if (status === 'interrupted') return StopCircle;
-  return Circle;
+  // Provider 可能把连续更新的多个动作标题合并进同一摘要项。活动区只应表达
+  // 最新动作，否则一个转圈图标会带出两三行“同时进行中”的错觉。
+  const latest = text
+    .split(/\n\s*\n/gu)
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+    .at(-1)!;
+  const bold = /^\*\*([^\n]+)\*\*$/u.exec(latest);
+  return bold?.[1] ?? latest;
 }
 
 function reasoningStatusLabel(status: ReasoningSummaryStatus, language: SessionUiLanguage): string {
   if (language === 'zh-CN') {
-    if (status === 'active') return '思考中';
-    if (status === 'waiting') return '等待继续';
-    if (status === 'failed') return '思考失败';
-    if (status === 'interrupted') return '思考已中断';
-    return '思考完成';
+    if (status === 'active') return '正在生成思考摘要';
+    if (status === 'waiting') return '思考摘要等待继续';
+    if (status === 'failed') return '思考摘要生成失败';
+    if (status === 'interrupted') return '思考摘要已中断';
+    return '思考摘要';
   }
   if (status === 'active') return 'Thinking';
   if (status === 'waiting') return 'Waiting to continue';

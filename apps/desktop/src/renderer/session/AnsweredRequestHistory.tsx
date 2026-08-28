@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type MouseEvent as ReactMouseEvent, type SyntheticEvent } from 'react';
 import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
+import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { useNativeCloseLayer } from '../ui/nativeCloseLayer.js';
 import { normalizeRequestQuestions, type RequestQuestion } from './PendingRequestSurface.js';
@@ -25,9 +26,12 @@ const labels = {
   'zh-CN': {
     answered: '已回答',
     answeredCount: (count: number) => `已回答 ${count} 个问题`,
+    answerSyncFailed: '答案同步失败',
+    answerSyncFailedDetail: '该询问已在其他端结束，但 Codex 未把具体选择同步给 Zeus。',
     secretAnswer: '敏感回答已提交',
     redactedAnswer: '回答已提交，历史内容已脱敏',
     region: '已回答询问',
+    syncFailedRegion: '答案同步失败的询问',
     separator: '、',
     selected: '已选择',
     userChoice: '用户选择',
@@ -44,9 +48,12 @@ const labels = {
   'en-US': {
     answered: 'Answered',
     answeredCount: (count: number) => `Answered ${count} questions`,
+    answerSyncFailed: 'Answer sync failed',
+    answerSyncFailedDetail: 'This question was completed on another client, but Codex did not sync the exact selection to Zeus.',
     secretAnswer: 'Secret answer submitted',
     redactedAnswer: 'Answer submitted; historical content is redacted',
     region: 'Answered questions',
+    syncFailedRegion: 'Question with an answer sync failure',
     separator: ', ',
     selected: 'Selected',
     userChoice: 'User choice',
@@ -66,15 +73,14 @@ export function AnsweredRequestHistory(props: AnsweredRequestHistoryProps) {
   const copy = labels[props.language];
   const entries = answeredQuestions(props.request);
   const [previewAttachment, setPreviewAttachment] = useState<NativeConversationAttachment | null>(null);
-  const [resourceError, setResourceError] = useState<string | null>(null);
+  const [resourceError, setResourceError] = useState<unknown>(null);
   const previewTriggerRef = useRef<HTMLButtonElement | null>(null);
   useApplicationErrorDialog(resourceError, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-    title: props.language === 'zh-CN' ? '回答附件打开失败' : 'Answer attachment failed to open',
-    source: 'AnsweredRequestHistory',
   });
   if (entries.length === 0) return null;
-  const heading = entries.length === 1 ? copy.answered : copy.answeredCount(entries.length);
+  const answerUnavailable = isExternalUserInputResolution(props.request.response);
+  const heading = answerUnavailable ? copy.answerSyncFailed : entries.length === 1 ? copy.answered : copy.answeredCount(entries.length);
 
   async function activateAttachment(attachment: NativeConversationAttachment, trigger: HTMLButtonElement): Promise<void> {
     setResourceError(null);
@@ -91,8 +97,8 @@ export function AnsweredRequestHistory(props: AnsweredRequestHistoryProps) {
     try {
       const result = await bridge({ ...(attachment.localPath ? { localPath: attachment.localPath } : {}), ...(attachment.uploadRef ? { uploadRef: attachment.uploadRef } : {}) });
       if (!result.opened) setResourceError(copy.openFailed);
-    } catch {
-      setResourceError(copy.openFailed);
+    } catch (error) {
+      setResourceError(error);
     }
   }
 
@@ -102,12 +108,17 @@ export function AnsweredRequestHistory(props: AnsweredRequestHistoryProps) {
   }
 
   return (
-    <article className="session-answered-request" aria-label={copy.region}>
+    <article className={`session-answered-request${answerUnavailable ? ' is-answer-unavailable' : ''}`} aria-label={answerUnavailable ? copy.syncFailedRegion : copy.region}>
       <header className="session-answered-request-heading">
-        <CheckCircle aria-hidden="true" />
+        {answerUnavailable ? <WarningCircle aria-hidden="true" /> : <CheckCircle aria-hidden="true" />}
         <strong>{heading}</strong>
       </header>
       <div className="session-answered-request-body">
+        {answerUnavailable ? (
+          <p className="session-answered-request-sync-error" role="status">
+            {copy.answerSyncFailedDetail}
+          </p>
+        ) : null}
         {entries.map((entry, index) => {
           const selectedAnswers = new Set(entry.answers ?? []);
           const optionLabels = new Set(entry.question.options.map((option) => option.label));
@@ -115,7 +126,7 @@ export function AnsweredRequestHistory(props: AnsweredRequestHistoryProps) {
           const customAnswers = entry.question.options.length > 0 ? visibleSelfAuthoredAnswers.filter((answer) => !optionLabels.has(answer)) : [];
           const selfAuthoredAnswers = entry.question.kind === 'freeform' ? visibleSelfAuthoredAnswers : customAnswers;
           const showSelfAuthoredRow = (!entry.question.secret && selfAuthoredAnswers.length > 0) || entry.attachments.length > 0;
-          const showAnswerText = !showSelfAuthoredRow && (entry.question.kind === 'freeform' || entry.question.secret || entry.answers === null);
+          const showAnswerText = !answerUnavailable && !showSelfAuthoredRow && (entry.question.kind === 'freeform' || entry.question.secret || entry.answers === null);
           return (
             <section key={entry.question.id}>
               <small>{entry.question.header || `${index + 1}`}</small>
@@ -308,6 +319,10 @@ function normalizeAnswerAttachment(value: unknown): NativeConversationAttachment
 function canonicalAnswers(response: Record<string, unknown> | null): Record<string, string[]> {
   if (!response || !isRecord(response.answers)) return {};
   return answerMap(response.answers);
+}
+
+function isExternalUserInputResolution(response: Record<string, unknown> | null): boolean {
+  return response?.type === 'external_resolution';
 }
 
 function nonSecretAnswers(response: Record<string, unknown> | null): Record<string, string[]> {

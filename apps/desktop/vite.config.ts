@@ -33,7 +33,9 @@ export default defineConfig({
               name: 'code-editor-runtime',
               test: /node_modules[\\/](?:codemirror|@codemirror[\\/][^/]+|@lezer[\\/][^/]+|crelt|style-mod|w3c-keyname)[\\/]/u,
               priority: 96,
-              maxSize: 2 * 1024 * 1024,
+              // maxSize 依据压缩前模块体积切分；2 MiB 会把最终约 1.1 MiB 的运行时拆成循环依赖分块。
+              // 提高内部切分阈值后，产物仍低于仓库 2 MiB 的实际单文件门禁，同时保证构造器初始化顺序。
+              maxSize: 8 * 1024 * 1024,
             },
             {
               name: 'motion-runtime',
@@ -67,7 +69,8 @@ export default defineConfig({
             },
             {
               name: 'renderer-runtime',
-              test: /src[\\/]renderer[\\/]/u,
+              // 三个高亮重模块必须保留为动态入口；renderer-runtime 若吞入它们，Vite 会重新在首屏预加载全部语法解析器。
+              test: /src[\\/]renderer[\\/](?!code[\\/](?:CodeEditor|sourceLanguageRegistry|syntaxHighlightRuntime)\.(?:ts|tsx)$)/u,
               priority: 10,
             },
           ],

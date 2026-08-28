@@ -67,6 +67,8 @@ export interface CreateTurnChangeSetServiceOptions {
   now?: () => string;
   maxFileBytes?: number;
   maxChangeSetBytes?: number;
+  /** 正式副本验证只开放历史读取，不创建 recovery 目录，也不接受任何变更集写操作。 */
+  readOnlyValidation?: boolean;
 }
 
 const absentDigest = 'sha256:absent';
@@ -175,7 +177,16 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
   const maxFileBytes = options.maxFileBytes ?? 20 * 1024 * 1024;
   const maxChangeSetBytes = options.maxChangeSetBytes ?? 100 * 1024 * 1024;
   const busy = new Set<string>();
-  mkdirSync(options.recoveryRoot, { recursive: true, mode: 0o700 });
+  if (!options.readOnlyValidation) mkdirSync(options.recoveryRoot, { recursive: true, mode: 0o700 });
+
+  function assertMutationAllowed(): void {
+    if (!options.readOnlyValidation) return;
+    throw Object.assign(new Error('正式数据只读验证不允许变更文件或写入变更集。'), {
+      code: 'ZEUS_READ_ONLY_VALIDATION_CAPABILITY_BLOCKED',
+      statusCode: 503,
+      recoveryRequired: false,
+    });
+  }
 
   function ensureChangeSet(conversation: ZeusConversationWithMessagesRecord, turn: ZeusConversationTurnRecord, timestamp: string): ZeusTurnChangeSetRecord {
     const existing = options.changeSets.getByTurn(conversation.id, turn.id);
@@ -198,6 +209,7 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
   }
 
   function capture(input: TurnChangeSetCaptureInput): TurnChangeSet | null {
+    assertMutationAllowed();
     const changes = normalizeProviderChanges(input.changes);
     if (changes.length === 0) return null;
     const project = options.projects.getById(input.conversation.projectId);
@@ -205,57 +217,72 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
     const executionRoot = conversationExecutionRoot(input.conversation.id, project.localPath);
     const changeSet = ensureChangeSet(input.conversation, input.turn, input.timestamp);
     let capturedBytes = existingCaptureBytes(changeSet.id);
-    changes.forEach((change, sourceIndex) => {
-      const paths = changePaths(change, executionRoot);
-      const existing = options.files.listByChangeSet(changeSet.id).find((candidate) => candidate.sourceItemId === input.providerItemId && candidate.sourceIndex === sourceIndex);
-      const snapshotPath = input.phase === 'pre' ? paths.oldAbsolutePath : paths.newAbsolutePath;
-      const expectedAbsent = input.phase === 'pre' ? paths.oldPath === null : paths.newPath === null;
-      const snapshot = expectedAbsent ? absentSnapshot() : snapshotPath ? captureSnapshot(changeSet.id, input.providerItemId, sourceIndex, input.phase, snapshotPath, capturedBytes) : unavailableSnapshot('Missing authorized file path.');
-      if (snapshot.blobRef) capturedBytes += statSync(snapshot.blobRef).size;
-      const counts = countDiffLines(change.diff);
-      const binary = isBinaryDiff(change.diff);
-      const changeType = binary ? 'binary' : paths.changeType;
-      let pre = input.phase === 'pre' ? snapshot : existing ? snapshotFromRecord(existing, 'pre') : unavailableSnapshot('The provider patch was observed after the pre-image capture point.');
-      const post = input.phase === 'post' ? snapshot : existing ? snapshotFromRecord(existing, 'post') : unavailableSnapshot('Post-image has not been captured yet.');
-      if (input.phase === 'post' && changeType !== 'binary') {
-        pre = reconcileTextPreImage({
+    const snapshotCandidates = new Set<string>();
+    try {
+      changes.forEach((change, sourceIndex) => {
+        const paths = changePaths(change, executionRoot);
+        const existing = options.files.listByChangeSet(changeSet.id).find((candidate) => candidate.sourceItemId === input.providerItemId && candidate.sourceIndex === sourceIndex);
+        if (existing?.preBlobRef) snapshotCandidates.add(existing.preBlobRef);
+        if (existing?.postBlobRef) snapshotCandidates.add(existing.postBlobRef);
+        const snapshotPath = input.phase === 'pre' ? paths.oldAbsolutePath : paths.newAbsolutePath;
+        const expectedAbsent = input.phase === 'pre' ? paths.oldPath === null : paths.newPath === null;
+        const snapshot = expectedAbsent ? absentSnapshot() : snapshotPath ? captureSnapshot(changeSet.id, input.providerItemId, sourceIndex, input.phase, snapshotPath, capturedBytes) : unavailableSnapshot('Missing authorized file path.');
+        if (snapshot.blobRef) {
+          snapshotCandidates.add(snapshot.blobRef);
+          capturedBytes += statSync(snapshot.blobRef).size;
+        }
+        const counts = countDiffLines(change.diff);
+        const binary = isBinaryDiff(change.diff);
+        const changeType = binary ? 'binary' : paths.changeType;
+        let pre = input.phase === 'pre' ? snapshot : existing ? snapshotFromRecord(existing, 'pre') : unavailableSnapshot('The provider patch was observed after the pre-image capture point.');
+        const post = input.phase === 'post' ? snapshot : existing ? snapshotFromRecord(existing, 'post') : unavailableSnapshot('Post-image has not been captured yet.');
+        if (input.phase === 'post' && changeType !== 'binary') {
+          pre = reconcileTextPreImage({
+            changeSetId: changeSet.id,
+            providerItemId: input.providerItemId,
+            sourceIndex,
+            change,
+            changeType,
+            pre,
+            post,
+            capturedBytes,
+          });
+          if (pre.blobRef && pre.blobRef !== existing?.preBlobRef) {
+            snapshotCandidates.add(pre.blobRef);
+            capturedBytes += statSync(pre.blobRef).size;
+          }
+        }
+        if (pre.blobRef) snapshotCandidates.add(pre.blobRef);
+        if (post.blobRef) snapshotCandidates.add(post.blobRef);
+        const semanticUnavailableReason = input.phase === 'post' ? snapshotSemanticUnavailableReason(changeType, pre, post, change.diff) : null;
+        const unavailableReason = input.phase === 'post' ? (pre.unavailableReason ?? post.unavailableReason ?? semanticUnavailableReason) : (pre.unavailableReason ?? post.unavailableReason);
+        options.files.upsert({
           changeSetId: changeSet.id,
-          providerItemId: input.providerItemId,
+          sourceItemId: input.providerItemId,
           sourceIndex,
-          change,
+          oldPath: paths.oldPath,
+          newPath: paths.newPath,
           changeType,
-          pre,
-          post,
-          capturedBytes,
+          addedLines: counts.added,
+          deletedLines: counts.deleted,
+          preHash: pre.hash,
+          postHash: post.hash,
+          preExists: pre.exists,
+          postExists: post.exists,
+          preMode: pre.mode,
+          postMode: post.mode,
+          unifiedDiff: change.diff,
+          preBlobRef: pre.blobRef,
+          postBlobRef: post.blobRef,
+          reversible: input.phase === 'post' && !unavailableReason,
+          unavailableReason,
+          updatedAt: input.timestamp,
+          replacePreImage: input.phase === 'post',
         });
-        if (pre.blobRef && pre.blobRef !== existing?.preBlobRef) capturedBytes += statSync(pre.blobRef).size;
-      }
-      const semanticUnavailableReason = input.phase === 'post' ? snapshotSemanticUnavailableReason(changeType, pre, post, change.diff) : null;
-      const unavailableReason = input.phase === 'post' ? (pre.unavailableReason ?? post.unavailableReason ?? semanticUnavailableReason) : (pre.unavailableReason ?? post.unavailableReason);
-      options.files.upsert({
-        changeSetId: changeSet.id,
-        sourceItemId: input.providerItemId,
-        sourceIndex,
-        oldPath: paths.oldPath,
-        newPath: paths.newPath,
-        changeType,
-        addedLines: counts.added,
-        deletedLines: counts.deleted,
-        preHash: pre.hash,
-        postHash: post.hash,
-        preExists: pre.exists,
-        postExists: post.exists,
-        preMode: pre.mode,
-        postMode: post.mode,
-        unifiedDiff: change.diff,
-        preBlobRef: pre.blobRef,
-        postBlobRef: post.blobRef,
-        reversible: input.phase === 'post' && !unavailableReason,
-        unavailableReason,
-        updatedAt: input.timestamp,
-        replacePreImage: input.phase === 'post',
       });
-    });
+    } finally {
+      pruneSupersededSnapshotCandidates(changeSet.id, snapshotCandidates);
+    }
     options.changeSets.upsert({
       ...changeSet,
       state: 'capturing',
@@ -332,6 +359,7 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
   }
 
   function updateUnifiedDiff(input: { conversation: ZeusConversationWithMessagesRecord; turn: ZeusConversationTurnRecord; diff: string; timestamp: string }): TurnChangeSet {
+    assertMutationAllowed();
     const changeSet = ensureChangeSet(input.conversation, input.turn, input.timestamp);
     const updated = options.changeSets.upsert({
       ...changeSet,
@@ -344,6 +372,7 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
   }
 
   function seal(input: { conversation: ZeusConversationWithMessagesRecord; turn: ZeusConversationTurnRecord; timestamp: string }): TurnChangeSet | null {
+    assertMutationAllowed();
     const changeSet = options.changeSets.getByTurn(input.conversation.id, input.turn.id);
     if (!changeSet) return null;
     const files = aggregateChangeFiles(options.files.listByChangeSet(changeSet.id));
@@ -388,6 +417,7 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
   }
 
   async function operate(input: { projectId: string; conversationId: string; turnId: string; action: 'undo' | 'reapply'; request: TurnChangeSetOperationRequest }): Promise<TurnChangeSetOperationResult> {
+    assertMutationAllowed();
     const changeSet = options.changeSets.getById(input.request.changeSetId);
     if (!changeSet || changeSet.projectId !== input.projectId || changeSet.conversationId !== input.conversationId || changeSet.turnId !== input.turnId) {
       throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_NOT_FOUND', 'Turn change set not found.');
@@ -556,6 +586,7 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
   }
 
   async function recoverInterruptedOperations(): Promise<void> {
+    assertMutationAllowed();
     for (const changeSet of options.changeSets.listInProgress()) {
       const project = options.projects.getById(changeSet.projectId);
       const files = aggregateChangeFiles(options.files.listByChangeSet(changeSet.id));
@@ -592,12 +623,14 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
   }
 
   function broadcastChangeSet(changeSet: TurnChangeSet): void {
+    const realtimeChangeSet = toRealtimeChangeSet(changeSet);
     options.broadcast?.('conversation.turn.change_set.changed', {
       projectId: changeSet.projectId,
       conversationId: changeSet.conversationId,
       turnId: changeSet.providerTurnId,
       changeSetId: changeSet.id,
-      changeSet,
+      entityRevision: changeSet.updatedAt,
+      changeSet: realtimeChangeSet,
     });
   }
 
@@ -638,6 +671,40 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
       }
       return total;
     }, 0);
+  }
+
+  /**
+   * Provider 会重复更新同一个 fileChange item。数据库只保留当前 pre/post 引用，
+   * 捕获阶段产生但最终未被选中的快照若继续留在目录中，会随长会话永久累积。
+   * 这里只删除当前变更集目录内、且已不被任何 file row 引用的普通文件。
+   */
+  function pruneSupersededSnapshotCandidates(changeSetId: string, candidates: ReadonlySet<string>): void {
+    if (candidates.size === 0) return;
+    let retained: Set<string>;
+    try {
+      retained = new Set(
+        options.files
+          .listByChangeSet(changeSetId)
+          .flatMap((file) => [file.preBlobRef, file.postBlobRef])
+          .filter((entry): entry is string => Boolean(entry))
+          .map((entry) => resolve(entry)),
+      );
+    } catch {
+      return;
+    }
+    const blobRoot = resolve(options.recoveryRoot, changeSetId, 'blobs');
+    for (const candidate of candidates) {
+      const path = resolve(candidate);
+      if (retained.has(path) || dirname(path) !== blobRoot || !isInsideRoot(path, blobRoot)) continue;
+      try {
+        const stat = lstatSync(path);
+        if (stat.isSymbolicLink() || !stat.isFile()) continue;
+        unlinkSync(path);
+      } catch (error) {
+        if (isNodeError(error) && error.code === 'ENOENT') continue;
+        // 快照回收失败不能把已经持久化成功的 Provider 轮次反向标记为失败。
+      }
+    }
   }
 }
 
@@ -853,6 +920,21 @@ function toPublicChangeSet(record: ZeusTurnChangeSetRecord, files: AggregatedCha
     conflict: parseConflict(record.conflictJson),
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
+    contentProjection: 'full',
+  };
+}
+
+/**
+ * 实时事件只负责告诉 Renderer“哪一个变更集的哪个修订发生了变化”。
+ * diff 正文已经由 turn_change_sets / turn_change_files 权威保存，继续在每个累计更新里复制
+ * 会把一次逐步增长的变更写成近二次存储量。终态 UI 通过既有 change-set API 按需补齐全文。
+ */
+export function toRealtimeChangeSet(changeSet: TurnChangeSet): TurnChangeSet {
+  return {
+    ...changeSet,
+    files: changeSet.files.map((file) => ({ ...file, unifiedDiff: '' })),
+    unifiedDiff: '',
+    contentProjection: 'summary',
   };
 }
 

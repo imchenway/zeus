@@ -2,8 +2,8 @@ import { useEffect, useRef } from 'react';
 import { ArrowSquareOutIcon as ArrowSquareOut } from '@phosphor-icons/react/dist/csr/ArrowSquareOut';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
 import { SpinnerGapIcon as SpinnerGap } from '@phosphor-icons/react/dist/csr/SpinnerGap';
-import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import type { ReleaseUpdateStatusSnapshot } from '../apiClient.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 
@@ -100,14 +100,32 @@ export function ReleaseUpdateDialog(props: ReleaseUpdateDialogProps) {
     return () => window.cancelAnimationFrame(frame);
   }, [props.state.kind, update?.status, update?.latestVersion]);
 
+  if (failed || unavailable) {
+    const error = props.state.kind === 'failed' ? props.state.reason?.trim() || copy.failedTitle : update?.reason?.trim() || copy.unavailableTitle;
+    return (
+      <ModalPortal rootClassName="release-update-dialog-portal-root" backdropClassName="release-update-dialog-backdrop" onDismiss={props.onDismiss}>
+        <section className="release-update-dialog zeus-solid-form-surface" role="alertdialog" aria-modal="true" aria-label={copy.failedTitle} data-state="failed">
+          <div className="release-update-dialog-content">
+            <VisibleApplicationError error={error} language={props.language} />
+          </div>
+          <footer>
+            <Button variant="secondary" size="regular" onClick={props.onDismiss}>
+              {copy.cancel}
+            </Button>
+            <Button ref={primaryActionRef} variant="primary" size="regular" onClick={props.onRetry}>
+              {copy.retry}
+            </Button>
+          </footer>
+        </section>
+      </ModalPortal>
+    );
+  }
+
   let title: string = copy.checkingTitle;
   let description: string = copy.checkingDescription;
   if (props.state.kind === 'installing') {
     title = copy.installingTitle;
     description = copy.installingDescription;
-  } else if (props.state.kind === 'failed') {
-    title = copy.failedTitle;
-    description = props.state.reason?.trim() || copy.unavailableDescription;
   } else if (upToDate) {
     title = copy.currentTitle;
     description = copy.currentDescription;
@@ -122,13 +140,13 @@ export function ReleaseUpdateDialog(props: ReleaseUpdateDialogProps) {
   return (
     <ModalPortal rootClassName="release-update-dialog-portal-root" backdropClassName="release-update-dialog-backdrop" dismissDisabled={installing} onDismiss={props.onDismiss}>
       <section className="release-update-dialog zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="release-update-dialog-title" aria-describedby="release-update-dialog-description" data-state={props.state.kind}>
-        <div className="release-update-dialog-icon" data-tone={failed || unavailable ? 'warning' : upToDate ? 'success' : 'progress'} aria-hidden="true">
-          {busy ? <SpinnerGap className="release-update-dialog-spinner" weight="regular" /> : failed || unavailable ? <WarningCircle weight="regular" /> : upToDate ? <CheckCircle weight="regular" /> : <ArrowSquareOut weight="regular" />}
+        <div className="release-update-dialog-icon" data-tone={upToDate ? 'success' : 'progress'} aria-hidden="true">
+          {busy ? <SpinnerGap className="release-update-dialog-spinner" weight="regular" /> : upToDate ? <CheckCircle weight="regular" /> : <ArrowSquareOut weight="regular" />}
         </div>
         <div className="release-update-dialog-content">
           <header>
             <strong id="release-update-dialog-title">{title}</strong>
-            <p id="release-update-dialog-description" role={failed || unavailable ? 'alert' : 'status'}>
+            <p id="release-update-dialog-description" role="status">
               {description}
             </p>
           </header>
@@ -165,15 +183,6 @@ export function ReleaseUpdateDialog(props: ReleaseUpdateDialogProps) {
             <Button ref={primaryActionRef} variant="primary" size="regular" onClick={props.onDismiss}>
               {copy.done}
             </Button>
-          ) : unavailable || failed ? (
-            <>
-              <Button variant="secondary" size="regular" onClick={props.onDismiss}>
-                {copy.cancel}
-              </Button>
-              <Button ref={primaryActionRef} variant="primary" size="regular" onClick={props.onRetry}>
-                {copy.retry}
-              </Button>
-            </>
           ) : available && update ? (
             <>
               <Button variant="secondary" size="regular" onClick={props.onDismiss}>

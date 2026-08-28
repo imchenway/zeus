@@ -1,7 +1,8 @@
 # 发布工程
 
 Zeus 发布工程必须基于真实构建、真实运行检查和真实产物。Apple signing / notarization 未配置时，可以公开交付
-ad-hoc 签名的 unsigned DMG，但必须显式标注签名、公证和 Gatekeeper 限制，不得伪造 Apple 分发认证。
+ad-hoc 签名的 unsigned DMG，但必须显式标注签名、公证和 Gatekeeper 限制，不得伪造 Apple 分发认证。生产 ad-hoc 包额外写入稳定的
+`assets/zeus-adhoc.requirement`，用于避免应用代码变化后 macOS 仅按 `cdhash` 识别出新的 TCC 主体；这不会改变 ad-hoc 的信任边界。
 
 ## 发布脚本
 
@@ -24,7 +25,7 @@ ad-hoc 签名的 unsigned DMG，但必须显式标注签名、公证和 Gatekeep
 pnpm verify:publish
 ```
 
-CI 通过 `ZEUS_VERIFY_BASE` 与 `ZEUS_VERIFY_HEAD` 传入本次推送或 PR 的提交范围；本地则自动合并未提交、已暂存、未跟踪和尚未推送的变更。Prettier 只检查该范围内的代码与配置文件，避免历史格式欠账让每次无关文档提交都固定失败。优点是本地与远端结果一致、执行入口简单；缺点是正式推送前会执行一次完整生产构建，耗时高于只跑 lint。依赖审计按需单独运行 `pnpm security:audit`，不放进普通推送或实用发布的自动门禁。
+CI 通过 `ZEUS_VERIFY_BASE` 与 `ZEUS_VERIFY_HEAD` 传入本次推送或 PR 的提交范围；本地则自动合并未提交、已暂存、未跟踪和尚未推送的变更。Prettier 只检查该范围内的代码与配置文件，避免历史格式欠账让每次无关文档提交都固定失败。优点是本地与远端结果一致、执行入口简单；缺点是正式推送前会执行一次完整生产构建，耗时高于只跑 lint。依赖审计按需单独运行 `pnpm security:audit`，不放进普通推送或本地候选的自动门禁。
 
 ## 快速一键发布
 
@@ -323,7 +324,7 @@ Apple signing / notarization 未配置时，允许进行明确标注的实用发
 - 不得把 ad-hoc 产物描述为已完成 Developer ID 签名或 Apple 公证。
 
 当前方案优点是无需等待 Apple Developer 凭据即可稳定形成 Release、Tap 和一键安装链路；缺点是首次启动体验不如已公证应用，
-也不能启用静默自动更新。Developer ID 签名和公证保留为后续增强。
+升级后也可能再次触发目录授权。Developer ID 签名和公证保留为后续增强。
 
 ## Homebrew cask
 
@@ -349,7 +350,7 @@ sha256 由 release 脚本从真实 DMG 计算，不允许 sha256 :no_check。
   最后把 `dist/homebrew/zeus.rb` 同步为 Tap 仓库的 `Casks/zeus.rb`。
 - 每个新版本必须在 `docs/releases/v<version>.md` 提供面向用户的 Release notes；文件缺失或为空时拒绝公开发布。
 - 同名 Release 已存在时只允许 DMG SHA256 完全一致的幂等续跑，禁止用同一版本静默替换二进制。
-- 应用内更新检查读取 GitHub Release manifest；签名和公证完成前只允许打开 GitHub Release 手动安装，不做静默替换。
+- 应用内更新检查读取 GitHub Release manifest；历史未签名版本只允许手动安装，不做静默替换。
 
 ## 禁止项
 

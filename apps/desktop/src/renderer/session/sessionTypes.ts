@@ -176,11 +176,73 @@ export interface NativeSubagentThreadTurn {
   items: NativeItemSnapshot[];
 }
 
+export type NativeRuntimeFact<T> = { state: 'available'; value: T } | { state: 'unavailable'; reason: string };
+
+export interface NativeRuntimeDetailsSnapshot {
+  model: NativeRuntimeFact<string>;
+  effort: NativeRuntimeFact<string>;
+  serviceTier: NativeRuntimeFact<string | null>;
+  usage: {
+    serviceTier: NativeRuntimeFact<string | null>;
+    totalTokens: NativeRuntimeFact<number>;
+    inputTokens: NativeRuntimeFact<number>;
+    outputTokens: NativeRuntimeFact<number>;
+    reasoningOutputTokens: NativeRuntimeFact<number>;
+    contextTokens: NativeRuntimeFact<number>;
+    contextWindow: NativeRuntimeFact<number>;
+    cacheHitRate: NativeRuntimeFact<number>;
+    apiEquivalentUsd: NativeRuntimeFact<number>;
+    priceCoverage: NativeRuntimeFact<number>;
+    pricingCatalogDate: NativeRuntimeFact<string>;
+    pricingSourceUrls: NativeRuntimeFact<string[]>;
+    historyComplete: NativeRuntimeFact<boolean>;
+  };
+  performance: {
+    latestOutputTokensPerSecond: NativeRuntimeFact<number>;
+    latestFirstVisibleResponseMs: NativeRuntimeFact<number>;
+    cumulativeProcessedDurationMs: NativeRuntimeFact<number>;
+  };
+  activity: {
+    turnCount: NativeRuntimeFact<number>;
+    modelRequestCount: NativeRuntimeFact<number>;
+    toolOrCommandCount: NativeRuntimeFact<number>;
+    retryCount: NativeRuntimeFact<number>;
+    failedTurnCount: NativeRuntimeFact<number>;
+  };
+  changeSummary: NativeRuntimeFact<{ fileCount: number; addedLines: number; deletedLines: number; complete: boolean }>;
+  environment: {
+    cwd: NativeRuntimeFact<string>;
+    branch: NativeRuntimeFact<string>;
+    nativeSessionId: NativeRuntimeFact<string>;
+    nativeSessionPath: NativeRuntimeFact<string>;
+  };
+}
+
+export interface NativeSubagentHistoryBoundary {
+  state: 'confirmed' | 'unavailable';
+  createdAt: string | null;
+  ownedTurnCount: number;
+  hiddenInheritedTurnCount: number;
+  hiddenAmbiguousTurnCount: number;
+  reason: string | null;
+}
+
 export interface NativeSubagentThreadSnapshot {
   conversationId: string;
   parentThreadId: string;
   agent: NativeSubagentSummary;
+  taskInstruction: NativeSubagentPromptFact;
+  inheritedContext: NativeSubagentPromptFact;
+  historyBoundary: NativeSubagentHistoryBoundary;
+  runtime: NativeRuntimeDetailsSnapshot;
   turns: NativeSubagentThreadTurn[];
+}
+
+export interface NativeSubagentPromptFact {
+  state: 'available' | 'unavailable';
+  text: string | null;
+  source: 'collaboration_prompt' | 'provider_thread_source' | 'provider_thread_preview' | null;
+  reason: string | null;
 }
 
 export interface NativeQueuedSubmission {
@@ -214,7 +276,7 @@ export type NativeConversationRunState =
   | { type: 'dispatching'; submissionId: string }
   | { type: 'active'; turnId: string; phase: 'prework' | 'final_answer' }
   | { type: 'waiting'; turnId: string; requestId: string; reason: 'approval' | 'user_input' }
-  | { type: 'paused'; reason: 'interrupted' | 'transport_unavailable' | 'provider_archived' | 'recovery_required' | 'conflict_preparing' | 'conflict_preparation_failed' };
+  | { type: 'paused'; reason: 'interrupted' | 'transport_unavailable' | 'provider_archived' | 'recovery_required' | 'runtime_rejected' | 'conflict_preparing' | 'conflict_preparation_failed' };
 
 export type NativeQueueWaitReason =
   | 'current_turn'
@@ -227,6 +289,7 @@ export type NativeQueueWaitReason =
   | 'transport_unavailable'
   | 'provider_archived'
   | 'recovery_required'
+  | 'runtime_rejected'
   | 'conflict_preparing'
   | 'conflict_preparation_failed'
   | 'user_confirmation'
@@ -267,6 +330,12 @@ export interface NativePlanImplementationRequest {
   updatedAt: string;
 }
 
+export interface NativePendingInteractionsSnapshot {
+  conversationId: string;
+  requests: NativePendingRequest[];
+  planImplementationRequests?: NativePlanImplementationRequest[];
+}
+
 export interface NativeProviderSettingsSnapshot {
   generationId?: string;
   sequence?: number;
@@ -285,6 +354,75 @@ export interface NativeNextTurnSettings {
 
 export type NativeTokenUsageSnapshot = SharedNativeTokenUsageSnapshot;
 
+export interface NativeNullableUsageBreakdown {
+  inputTokens: number | null;
+  cachedInputTokens: number | null;
+  cacheWriteInputTokens: number | null;
+  outputTokens: number | null;
+  reasoningOutputTokens: number | null;
+  totalTokens: number | null;
+  estimatedUsd: number | null;
+  complete: boolean;
+}
+
+export interface NativeModelRequestUsageObservation extends Omit<NativeNullableUsageBreakdown, 'complete'> {
+  id: string;
+  turnId: string | null;
+  segmentId: string;
+  requestKind: 'inference' | 'tool_continuation' | 'retry' | 'context_compaction';
+  requestSequence: number;
+  modelId: string;
+  contextWindow: number | null;
+  usageComplete: boolean;
+  providerRequestId: string | null;
+  firstVisibleOutputAt: string | null;
+  firstTextOutputAt: string | null;
+  completedAt: string | null;
+  measurementComplete: boolean;
+  occurredAt: string;
+}
+
+export interface NativeUnifiedUsageSnapshot {
+  conversationTotal: NativeNullableUsageBreakdown;
+  turnTotal: NativeNullableUsageBreakdown;
+  latestModelRequest: NativeModelRequestUsageObservation | null;
+  preflightEstimate: null;
+}
+
+export interface NativeSessionMetricsSnapshot {
+  usage: NativeUnifiedUsageSnapshot;
+  cost: {
+    apiEquivalentUsd: number | null;
+    priceCoverage: number | null;
+    pricingCatalogDate: string | null;
+    pricingSourceUrls: string[];
+    historyComplete: boolean;
+    complete: boolean;
+  };
+  performance: {
+    latestOutputTokensPerSecond: number | null;
+    latestFirstVisibleResponseMs: number | null;
+    cumulativeProcessedDurationMs: number | null;
+    complete: boolean;
+  };
+  activity: {
+    turnCount: number;
+    modelRequestCount: number;
+    toolOrCommandCount: number;
+    retryCount: number;
+    failedTurnCount: number;
+    complete: boolean;
+  };
+  changeSummary: {
+    available: boolean;
+    fileCount: number | null;
+    addedLines: number | null;
+    deletedLines: number | null;
+    complete: boolean;
+  };
+  updatedAt: string | null;
+}
+
 export interface NativeProviderValueSnapshot {
   generationId?: string;
   sequence?: number;
@@ -300,6 +438,19 @@ export interface NativeConversationExecutionContext {
 export type NativeConversationStage = 'created' | 'connecting' | 'queued' | 'running' | 'waiting_user' | 'waiting_approval' | 'completed' | 'failed' | 'paused' | 'ready' | 'archived';
 
 export interface NativeConversationSnapshot {
+  conversationSchemaGeneration: '2026-08-16-unified-conversation-segments';
+  syncStreamGeneration: 'zeus-conversation-sync-v2';
+  throughEventSeq: number;
+  productConversation: Record<string, unknown>;
+  openSegment: Record<string, unknown> | null;
+  segments: Record<string, unknown>[];
+  composerPreset: Record<string, unknown>;
+  executionQueue: NativeQueueSnapshot;
+  process: Record<string, unknown>[];
+  usage: NativeUnifiedUsageSnapshot;
+  contextState: Record<string, unknown>;
+  persistentWarnings: Record<string, unknown>[];
+  configurationEvidence: Record<string, unknown>[];
   id: string;
   projectId: string;
   taskId: string | null;
@@ -344,6 +495,7 @@ export interface NativeConversationSnapshot {
   providerSettings?: NativeProviderSettingsSnapshot;
   nextTurnSettings?: NativeNextTurnSettings;
   tokenUsage?: NativeTokenUsageSnapshot;
+  sessionMetrics?: NativeSessionMetricsSnapshot;
   rateLimits?: NativeProviderValueSnapshot;
   mcpStartup?: NativeProviderValueSnapshot;
   executionContext?: NativeConversationExecutionContext;
@@ -352,6 +504,243 @@ export interface NativeConversationSnapshot {
   goal?: NativeGoalSnapshot | null;
   goalTimeline?: NativeGoalTimelineEvent[];
   goalCapability?: NativeGoalCapability;
+  /** V2 首屏与按需页的客户端游标状态；旧 V1 快照不存在该字段。 */
+  snapshotV2?: NativeConversationSnapshotV2;
+  v2Paging?: NativeConversationV2PagingState;
+}
+
+export interface NativeBoundedContentProjection {
+  preview: string;
+  byteLength: number;
+  truncated: boolean;
+  redacted: boolean;
+  contentHandle: string | null;
+  refreshRequired: boolean;
+}
+
+export interface NativeConversationSnapshotV2Turn {
+  id: string;
+  providerTurnId: string | null;
+  submissionId: string | null;
+  status: string;
+  hasError: boolean;
+  hasPlan: boolean;
+  plan: NativeTurnPlanSnapshot | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  agentKind: string | null;
+  openingUserMessage: NativeConversationModelHistoryV2Item | null;
+  process: { available: boolean; latestSequence: number };
+  resourcesAvailable: boolean;
+  changeSetAvailable: boolean;
+}
+
+export interface NativeConversationSnapshotV2 {
+  schemaVersion: 2;
+  structureGeneration: '2026-08-21-conversation-snapshot-v2';
+  conversationSchemaGeneration: '2026-08-16-unified-conversation-segments';
+  throughEventSeq: number;
+  eventStreamGeneration: string | null;
+  conversation: {
+    id: string;
+    projectId: string;
+    taskId: string | null;
+    title: string;
+    titleRedacted: boolean;
+    status: string;
+    stage: NativeConversationStage;
+    stageUpdatedAt: string;
+    archived: boolean;
+    transportKind: string;
+    providerState: string;
+    providerModel: string | null;
+    providerSettings: NativeProviderSettingsSnapshot | null;
+    nextTurnSettings: NativeNextTurnSettings | null;
+    agentKind: string | null;
+    createdAt: string;
+    updatedAt: string;
+  };
+  openSegment: {
+    id: string;
+    runtimeKind: string;
+    state: string;
+    nativeSessionId: string | null;
+    providerModel: string | null;
+    openedAt: string;
+    acceptedAt: string | null;
+    updatedAt: string;
+  } | null;
+  activeTurn: NativeConversationSnapshotV2Turn | null;
+  recentClosedTurns: NativeConversationSnapshotV2Turn[];
+  sessionMetrics: NativeSessionMetricsSnapshot | null;
+  collections: {
+    timeline: { throughSequence: number };
+    modelHistory: { throughSequence: number };
+    process: { throughSequence: number };
+    resources: { available: boolean };
+  };
+  limits: { closedTurnLimit: number; byteLimit: number; returnedTurnCount: number; responseBytes: number };
+}
+
+export interface NativeConversationSnapshotV2Page<T> {
+  schemaVersion: 2;
+  structureGeneration: '2026-08-21-conversation-snapshot-v2';
+  conversationId: string;
+  kind: 'timeline' | 'model_history' | 'process' | 'commands' | 'resources' | 'change_files';
+  throughEventSeq: number;
+  throughSequence: number;
+  items: T[];
+  hasMore: boolean;
+  nextCursor: string | null;
+  limits: { entryLimit: number; byteLimit: number; returnedItems: number; responseBytes: number };
+}
+
+export interface NativeConversationModelHistoryV2Item {
+  id: string;
+  sequence: number;
+  turnId: string;
+  submissionId: string | null;
+  clientUserMessageId: string | null;
+  providerItemId: string | null;
+  reasoningSummary: boolean;
+  phase: string | null;
+  formalPlan?: boolean;
+  segmentId: string;
+  role: string;
+  toolPairId: string | null;
+  confirmedAt: string;
+  content: NativeBoundedContentProjection;
+  toolResult: {
+    handle: string;
+    sha256: string;
+    byteLength: number;
+    mimeType: string;
+    projection: string;
+    projectionTruncated: boolean;
+    redacted: boolean;
+  } | null;
+}
+
+export interface NativeConversationProcessV2Item {
+  id: string;
+  sequence: number;
+  turnId: string;
+  segmentId: string;
+  providerItemId: string | null;
+  kind: 'reasoning' | 'tool' | 'command' | 'retry' | 'context_compaction' | 'waiting' | 'warning';
+  status: string;
+  title: string;
+  sourceEventId: string | null;
+  startedAt: string;
+  completedAt: string | null;
+  detail: NativeBoundedContentProjection;
+  toolResult: NativeConversationModelHistoryV2Item['toolResult'];
+}
+
+export interface NativeConversationResourceV2Item {
+  id: string;
+  turnId: string;
+  itemId: string;
+  sourceIndex: number;
+  kind: string;
+  presentation: string;
+  displayName: string;
+  mimeType: string | null;
+  previewKind: string | null;
+  iconKind: string | null;
+  attachmentRef?: string | null;
+  taskPushAttachmentKey?: string | null;
+  origin?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  accessPolicy: 'authorized_open_intent_or_preview';
+}
+
+export interface NativeConversationChangeSetV2Summary {
+  id: string;
+  projectId: string;
+  conversationId: string;
+  turnId: string;
+  providerTurnId: string;
+  state: string;
+  preImageDigest: string | null;
+  postImageDigest: string | null;
+  hasConflict: boolean;
+  unavailableReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+  fileCount: number;
+  addedLines: number;
+  deletedLines: number;
+  diffBytes: number;
+}
+
+export interface NativeConversationChangeFileV2Item {
+  id: string;
+  changeSetId: string;
+  sourceItemId: string | null;
+  sourceIndex: number;
+  oldPath: string | null;
+  newPath: string | null;
+  changeType: string;
+  addedLines: number;
+  deletedLines: number;
+  preHash: string | null;
+  postHash: string | null;
+  preExists: boolean;
+  postExists: boolean;
+  reversible: boolean;
+  unavailableReason: string | null;
+  diffBytes: number;
+  diffHandle: string | null;
+  detailState: 'available' | 'transitioning';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NativeConversationContentV2Page {
+  schemaVersion: 2;
+  structureGeneration: '2026-08-21-conversation-snapshot-v2';
+  conversationId: string;
+  kind: 'timeline_payload' | 'model_content' | 'process_detail' | 'change_file_diff';
+  mimeType: string;
+  text: string;
+  offset: number;
+  nextOffset: number | null;
+  totalCharacters: number;
+  totalBytes: number;
+  contentByteLimit: number;
+  redacted: boolean;
+}
+
+export interface NativeConversationToolResultPage {
+  text: string;
+  offset: number;
+  nextOffset: number | null;
+  totalCharacters: number;
+  sha256: string;
+}
+
+export interface NativeConversationV2PagingState {
+  history: { nextCursor: string | null; hasMore: boolean; loading: boolean; error: string | null };
+  /** 旧 Renderer 快照在升级后的首次导航中可能尚未携带该字段。 */
+  historyByTurn?: Record<string, { nextCursor: string | null; hasMore: boolean; loading: boolean; loaded: boolean; error: string | null }>;
+  processByTurn: Record<string, { nextCursor: string | null; hasMore: boolean; loading: boolean; loaded: boolean; error: string | null }>;
+  resources: { nextCursor: string | null; hasMore: boolean; loading: boolean; loaded: boolean; error: string | null; items: NativeConversationResourceV2Item[] };
+  changeSetsByTurn: Record<
+    string,
+    {
+      loading: boolean;
+      loaded: boolean;
+      error: string | null;
+      summary: NativeConversationChangeSetV2Summary | null;
+      files: NativeConversationChangeFileV2Item[];
+      nextCursor: string | null;
+      hasMore: boolean;
+    }
+  >;
 }
 
 export interface NativeConversationMessage {
@@ -390,6 +779,8 @@ export interface NativeConversationChoice {
   legacySourceConversationId?: string | null;
   createdAt: string;
   updatedAt: string;
+  /** 最近一次真实会话活动；不包含打开、水合、统计刷新等维护写入。 */
+  activityAt?: string;
   archived: boolean;
   hasUnreadAttention: boolean;
   attentionKind: NativeConversationAttentionKind;
@@ -477,6 +868,7 @@ export interface CodexTaskPushModelCapability {
   sourceId?: string;
   sourceName?: string;
   available?: boolean;
+  supports1MContext?: boolean;
   availabilityReason?: string;
   speedLabel?: 'standard' | 'high_speed' | 'flash' | 'turbo';
   tools?: 'supported' | 'unsupported' | 'unverified';
@@ -554,6 +946,20 @@ export interface CodexTaskPushCapabilities {
     path: string;
     activeWritableConversationCount: number;
   };
+  existingEnvironments?: Array<{
+    id: string;
+    available: boolean;
+    unavailableReason: 'active_conversation' | 'closed_workspace' | null;
+    repositories: Array<{
+      repositoryId: string | null;
+      repositoryName: string;
+      repositoryRelativePath: string;
+      branchName: string;
+      sourceBranch: string;
+    }>;
+    createdAt: string;
+    updatedAt: string;
+  }>;
   sharedWritablePaths: ProjectSharedPathRecord[];
   git: {
     primaryWorkspacePath: string;
@@ -833,13 +1239,16 @@ export interface StartTaskModelPushRequest {
   agentKind?: 'codex' | 'pi' | 'claude';
   mode: 'create';
   source: 'task_push';
+  stageId?: string;
   model: string;
   effort?: string;
   serviceTier?: string | null;
   workMode: 'default' | 'plan';
   permissionMode: NativePermissionMode;
+  skillId?: string;
   workspace:
     | { mode: 'direct'; confirmConcurrentWrites: boolean }
+    | { mode: 'existing'; environmentId: string }
     | {
         mode: 'create';
         repositoryRevision: string;
@@ -866,7 +1275,9 @@ export type StartNativeConversationRequest =
   | {
       mode: 'create';
       source?: 'code_review';
+      stageId?: string;
       content?: string;
+      skillId?: string;
       attachments?: NativeConversationAttachment[];
       inheritConversationId?: string;
       permissionMode: NativePermissionMode;
@@ -941,6 +1352,19 @@ export interface NativeOperationAcceptance {
   submission?: Record<string, unknown> & { id: string };
 }
 
+export interface NativePlanImplementationResponseAcceptance {
+  operation: NativeOperationAcceptance['operation'];
+  request: NativePlanImplementationRequest;
+  queue: NativeQueueSnapshot;
+  acknowledged: true;
+}
+
+/** Graph Command 会把本地重连 id 派生为外部 operation identity；两者必须同时保留并分别校验。 */
+export interface NativeConversationStartDispatchResult {
+  acceptance: NativeOperationAcceptance;
+  operationIdentity: string;
+}
+
 export interface NativeRealtimeEventEnvelope {
   id: string;
   type: string;
@@ -948,11 +1372,26 @@ export interface NativeRealtimeEventEnvelope {
   createdAt: string;
 }
 
+export interface NativeConversationEventPage {
+  conversationId: string;
+  conversationSchemaGeneration: '2026-08-16-unified-conversation-segments';
+  syncStreamGeneration: 'zeus-conversation-sync-v2';
+  baseSequence: number | null;
+  throughEventSeq: number;
+  nextCursor: number;
+  hasMore: boolean;
+  requestedBeforeBaseline: boolean;
+  events: NativeRealtimeEventEnvelope[];
+}
+
 interface NativeEventIdentity extends Record<string, unknown> {
   projectId: string;
   conversationId: string;
   threadId?: string;
   generationId: string;
+  conversationSchemaGeneration: '2026-08-16-unified-conversation-segments';
+  syncStreamGeneration: 'zeus-conversation-sync-v2';
+  entityRevision: number | string;
   sequence: number;
 }
 
@@ -997,6 +1436,7 @@ export type NativeConversationEvent =
   | NativeEvent<'conversation.item.completed', NativeItemEventPayload & { textContent: string }>
   | NativeEvent<'conversation.settings.changed', NativeEventIdentity & { model: string; effort?: string }>
   | NativeEvent<'conversation.tokenUsage.changed', NativeEventIdentity & SharedNativeTokenUsageSnapshot>
+  | NativeEvent<'conversation.sessionMetrics.changed', NativeEventIdentity & { sessionMetrics: NativeSessionMetricsSnapshot }>
   | NativeEvent<'conversation.rateLimits.changed', NativeEventIdentity & { value: Record<string, unknown> }>
   | NativeEvent<'conversation.mcpStartup.changed', NativeEventIdentity & { value: Record<string, unknown> }>
   | NativeEvent<'conversation.queue.changed', NativeEventIdentity & { queue: NativeQueueSnapshot }>
@@ -1010,7 +1450,17 @@ export type NativeConversationEvent =
         request?: NativePendingRequest;
       }
     >
-  | NativeEvent<'conversation.request.resolved', NativeEventIdentity & { turnId?: string; requestId: string; requestKind?: string }>
+  | NativeEvent<
+      'conversation.request.resolved',
+      NativeEventIdentity & {
+        turnId?: string;
+        requestId: string;
+        requestKind?: string;
+        resolvedBy?: string;
+        answerAvailability?: 'complete' | 'unavailable' | 'not_applicable';
+        request?: NativePendingRequest;
+      }
+    >
   | NativeEvent<'conversation.request.snoozed', NativeEventIdentity & { requestId: string }>
   | NativeEvent<
       'conversation.plan_implementation_request.changed',
@@ -1045,6 +1495,7 @@ export const nativeConversationEventTypes = new Set<NativeConversationEvent['typ
   'conversation.item.completed',
   'conversation.settings.changed',
   'conversation.tokenUsage.changed',
+  'conversation.sessionMetrics.changed',
   'conversation.rateLimits.changed',
   'conversation.mcpStartup.changed',
   'conversation.queue.changed',
@@ -1118,6 +1569,8 @@ export interface NativeSessionState {
   planImplementationRequests: NativePlanImplementationRequest[];
   providerSettings: NativeProviderSettingsSnapshot | null;
   tokenUsage: NativeTokenUsageSnapshot | null;
+  unifiedUsage: NativeUnifiedUsageSnapshot | null;
+  sessionMetrics: NativeSessionMetricsSnapshot | null;
   rateLimits: NativeProviderValueSnapshot | null;
   mcpStartup: NativeProviderValueSnapshot | null;
   seenEventIds: Record<string, true>;

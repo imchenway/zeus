@@ -39,10 +39,12 @@ import {
 import { memo, useEffect, useId, useMemo, useState, type CSSProperties } from 'react';
 import type { TaskAgentRunStatus, TaskRecord } from '../apiClient.js';
 import { Button } from '../ui/Button.js';
+import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { parseTaskAttachments } from './taskAttachments.js';
 import { buildTaskBoardGroups, taskBoardActiveContent, taskBoardCardPropertyValues, taskBoardGroupOptions, type TaskBoardCardModel, type TaskBoardGroupModel, type TaskBoardProjectionContext } from './taskBoardModel.js';
 import { formatTaskType, type TaskBranchStatus } from './taskWorkspaceModel.js';
+import { taskBranchStatusTone, taskPriorityTone, taskRunStatusTone, taskTypeTone, type TaskSemanticTone } from './TaskRunStatusChip.js';
 
 export interface TaskBoardViewProps {
   projectId: string;
@@ -151,6 +153,19 @@ function taskBoardPropertyLabel(property: TaskBoardCardProperty, task: TaskRecor
   return values.filter((value) => value !== taskBoardEmptyGroupId).join(' · ') || '—';
 }
 
+/** 卡片属性胶囊的语义配色：任务状态跟随用户自定义主色，其余属性复用全应用统一的语义色调，保持与任务列表一致。 */
+function taskBoardPropertyAccent(property: TaskBoardCardProperty, task: TaskRecord, context: TaskBoardProjectionContext): { tone: TaskSemanticTone; color?: string } {
+  if (property === 'managementStatus') {
+    const color = context.statusDefinitions.find((status) => status.id === (task.managementStatus ?? 'todo'))?.color;
+    return { tone: 'neutral', color };
+  }
+  if (property === 'priority') return { tone: taskPriorityTone(task.priority ?? null) };
+  if (property === 'taskType') return { tone: taskTypeTone(task.taskType) };
+  if (property === 'runStatus') return { tone: taskRunStatusTone(context.runStatuses[task.id] ?? 'not_started') };
+  if (property === 'branchStatus') return { tone: taskBranchStatusTone(context.branchStatuses[task.id] ?? 'not_created') };
+  return { tone: 'neutral' };
+}
+
 function TaskBoardImagePreview(props: { task: TaskRecord; settings: TaskBoardViewSettings; loadPreview?: TaskBoardViewProps['onLoadAttachmentPreview'] }) {
   const image = parseTaskAttachments(props.task.sourceContextJson).find((attachment) => attachment.kind === 'image');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -214,12 +229,21 @@ const TaskBoardCard = memo(function TaskBoardCard(props: {
         </button>
       </div>
       <div className="task-board-card-properties">
-        {visibleProperties.map((property) => (
-          <span className={`task-board-card-property task-board-card-property-${property}`} key={property} title={translate(cardPropertyLabels[property], props.context.language)}>
-            <small>{translate(cardPropertyLabels[property], props.context.language)}</small>
-            <span>{taskBoardPropertyLabel(property, props.card.task, props.context)}</span>
-          </span>
-        ))}
+        {visibleProperties.map((property) => {
+          const accent = taskBoardPropertyAccent(property, props.card.task, props.context);
+          const toned = Boolean(accent.color) || accent.tone !== 'neutral';
+          return (
+            <span
+              className={`task-board-card-property task-board-card-property-${property}${toned ? ` is-toned task-board-card-property-tone-${accent.tone}` : ''}`}
+              style={accent.color ? ({ '--task-board-property-color': accent.color } as CSSProperties) : undefined}
+              key={property}
+              title={translate(cardPropertyLabels[property], props.context.language)}
+            >
+              <small>{translate(cardPropertyLabels[property], props.context.language)}</small>
+              <span>{taskBoardPropertyLabel(property, props.card.task, props.context)}</span>
+            </span>
+          );
+        })}
       </div>
       <label className="task-board-move-menu">
         <span className="sr-only">{props.context.language === 'zh-CN' ? '移动到分组' : 'Move to group'}</span>
@@ -1097,7 +1121,7 @@ export function TaskBoardView(props: TaskBoardViewProps) {
   if (props.error && !snapshot)
     return (
       <section className="task-board-state is-error" role="alert">
-        <strong>{props.language === 'zh-CN' ? '看板暂时无法载入' : 'Board unavailable'}</strong>
+        <VisibleApplicationError error={props.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
         <Button variant="secondary" size="compact" onClick={props.onReload}>
           {props.language === 'zh-CN' ? '重新读取' : 'Reload'}
         </Button>
@@ -1113,7 +1137,7 @@ export function TaskBoardView(props: TaskBoardViewProps) {
       setAnnouncement(props.language === 'zh-CN' ? '看板设置已保存。' : 'Board settings saved.');
       return updated;
     } catch (error) {
-      setAnnouncement(props.language === 'zh-CN' ? '看板设置保存失败，已重新读取最新配置。' : 'Could not save board settings. The latest settings were reloaded.');
+      setAnnouncement(formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'));
       props.onReload();
       throw error;
     } finally {
@@ -1150,7 +1174,7 @@ export function TaskBoardView(props: TaskBoardViewProps) {
     } catch (error) {
       setLocalTasks(previousTasks);
       setLocalSnapshot(previousSnapshot);
-      setAnnouncement(props.language === 'zh-CN' ? `“${card.task.title}”移动失败，已恢复原位置。` : `Could not move “${card.task.title}”; its previous position was restored.`);
+      setAnnouncement(formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'));
       throw error;
     } finally {
       setMoving(false);

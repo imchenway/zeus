@@ -1,24 +1,29 @@
-import { useEffect, useId, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { isTaskPriority, type TaskAttachmentField, type TaskAttachmentReference, type TaskManagementStatusDefinition } from '@zeus/shared';
-import { ZeusApiError, type TaskEventRecord, type TaskManagementStatus, type TaskPriority, type TaskRecord, type TaskType, type UpdateTaskRelationshipsRequest, type UpdateTaskRequest } from '../apiClient.js';
+import { type TaskEventRecord, type TaskManagementStatus, type TaskPriority, type TaskRecord, type TaskType, type UpdateTaskRelationshipsRequest, type UpdateTaskRequest, ZeusApiError } from '../apiClient.js';
 import type { NativeConversationChoice } from '../session/sessionTypes.js';
+import type { CodexTaskPushCapabilities } from '../session/sessionTypes.js';
 import { compareConversationCreatedAsc } from '../session/conversationOrdering.js';
 import { Button } from '../ui/Button.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError, useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../ui/pendingResourcePolicy.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { TaskAttachmentPreviewList } from './TaskAttachmentPreviewList.js';
+import { TaskDigitalEmployeePanel } from '../features/digital-employees/TaskDigitalEmployeePanel.js';
+import type { DigitalEmployeeApiClient } from '../features/digital-employees/digitalEmployeeApiClient.js';
+import { TaskWorkflowSection, type TaskWorkflowClient } from './TaskWorkflowSection.js';
+import type { TaskStageRecord } from '../features/tasks/taskContracts.js';
 import {
   mergeTaskAttachments,
   parseTaskAttachments,
-  taskAttachmentsForField,
-  toPersistedTaskAttachment,
   type TaskAttachmentCandidate,
+  taskAttachmentsForField,
   type TaskAttachmentView,
   type TaskResourceAuthorizationResult,
   type TaskResourcePayload,
+  toPersistedTaskAttachment,
 } from './taskAttachments.js';
-import { formatTaskSource, formatTaskType, formatTaskUpdatedAt, resolveTaskManagementStatus, taskTypes, type TaskSourceLabels } from './taskWorkspaceModel.js';
+import { formatTaskSource, formatTaskType, formatTaskUpdatedAt, resolveTaskManagementStatus, type TaskSourceLabels, taskTypes } from './taskWorkspaceModel.js';
 
 export interface TaskDetailPaneCopy {
   requestTitle: string;
@@ -70,6 +75,7 @@ export interface TaskDetailPaneContentProps {
   priorityOptions: ReadonlyArray<{ value: TaskPriority; label: string }>;
   busy: boolean;
   terminalReadOnly: boolean;
+  digitalEmployeeClient?: DigitalEmployeeApiClient | null;
   conversations?: NativeConversationChoice[];
   conversationsLoading?: boolean;
   conversationsError?: string | null;
@@ -91,6 +97,9 @@ export interface TaskDetailPaneContentProps {
   onReloadConversations?: (taskId: string) => void;
   onLoadAttachmentPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
   onOpenAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }>;
+  workflowClient?: TaskWorkflowClient;
+  onLoadWorkflowCapabilities?: () => Promise<CodexTaskPushCapabilities>;
+  onStartTaskStage?: (stage: TaskStageRecord) => Promise<void>;
 }
 
 export type TaskEditResult = { kind: 'updated'; task: TaskRecord } | { kind: 'conflict'; latest: TaskRecord };
@@ -163,8 +172,8 @@ const taskEditCopies: Record<'zh-CN' | 'en-US', TaskEditCopy> = {
   },
 };
 
-function taskEditErrorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message.trim() ? error.message : fallback;
+function taskEditErrorMessage(error: unknown, fallback: string, language: 'zh-CN' | 'en'): string {
+  return error === null || error === undefined || error === '' ? fallback : formatVisibleApplicationError(error, language);
 }
 
 function normalizeTaskTagsInput(value: string): string[] {
@@ -209,7 +218,7 @@ function taskClipboardFiles(clipboardData: DataTransfer): File[] {
 
 function TaskEditFeedback(props: { state: TaskFieldSaveState; copy: TaskEditCopy; statusId: string; onRetry?: () => void; onLoadLatest?: () => void }) {
   if (props.state.kind !== 'error' && props.state.kind !== 'conflict') return null;
-  const message = props.state.kind === 'conflict' ? props.copy.conflict : `${props.copy.saveFailed}：${props.state.message}`;
+  const message = props.state.kind === 'conflict' ? props.copy.conflict : props.state.message;
   return (
     <span className="task-inline-edit-feedback is-error">
       <small id={props.statusId} role="status" aria-live="polite">
@@ -369,7 +378,7 @@ function InlineTaskTextField(props: {
       setSaveState({ kind: 'saved' });
       setEditing(false);
     } catch (error) {
-      setSaveState({ kind: 'error', message: taskEditErrorMessage(error, props.copy.saveFailed) });
+      setSaveState({ kind: 'error', message: taskEditErrorMessage(error, props.copy.saveFailed, props.copy === taskEditCopies['zh-CN'] ? 'zh-CN' : 'en') });
     }
   }
 
@@ -565,7 +574,7 @@ function TaskImmediateSelect<T extends string>(props: {
       desiredValueRef.current = null;
       setSaveState({ kind: 'saved' });
     } catch (error) {
-      setSaveState({ kind: 'error', message: taskEditErrorMessage(error, props.copy.saveFailed) });
+      setSaveState({ kind: 'error', message: taskEditErrorMessage(error, props.copy.saveFailed, props.copy === taskEditCopies['zh-CN'] ? 'zh-CN' : 'en') });
     }
   }
 
@@ -635,13 +644,6 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
   const [relatedTaskCandidateId, setRelatedTaskCandidateId] = useState('');
   useApplicationErrorDialog(props.conversationsError, {
     language: zh ? 'zh-CN' : 'en',
-    title: props.copy.conversationError,
-    source: 'TaskDetailPaneContent.loadConversations',
-  });
-  useApplicationErrorDialog(modelPushFailed ? props.modelPushOperation?.error : null, {
-    language: zh ? 'zh-CN' : 'en',
-    title: zh ? '会话创建失败' : 'Conversation creation failed',
-    source: 'TaskDetailPaneContent.modelPush',
   });
   useEffect(() => {
     setAttachmentSaveState({ kind: 'idle' });
@@ -661,7 +663,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
     },
     [],
   );
-  const conversations = [...(props.conversations ?? [])].filter((conversation) => props.terminalReadOnly || !conversation.archived).sort(compareConversationCreatedAsc);
+  const conversations = [...(props.conversations ?? [])].sort(compareConversationCreatedAsc);
   const taskWorkspaces = Array.from(
     new Map(
       conversations
@@ -736,7 +738,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
             ? zh
               ? '不能把当前任务移动到它自己下面。'
               : 'A task cannot be moved below itself.'
-            : taskEditErrorMessage(error, editCopy.saveFailed);
+            : taskEditErrorMessage(error, editCopy.saveFailed, zh ? 'zh-CN' : 'en');
       setRelationshipSaveState({ kind: 'error', message: relationshipMessage });
     }
   }
@@ -757,7 +759,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
       setAttachmentSaveState({ kind: 'saved' });
       return result;
     } catch (error) {
-      setAttachmentSaveState({ kind: 'error', message: taskEditErrorMessage(error, editCopy.saveFailed) });
+      setAttachmentSaveState({ kind: 'error', message: taskEditErrorMessage(error, editCopy.saveFailed, zh ? 'zh-CN' : 'en') });
       return null;
     }
   }
@@ -1032,6 +1034,8 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         </span>
       </section>
 
+      <TaskDigitalEmployeePanel taskId={props.task.id} projectId={props.task.projectId} terminalReadOnly={props.terminalReadOnly} client={props.digitalEmployeeClient ?? null} language={props.language} />
+
       {typedContentFields.map((field) => (
         <section key={field.key} className="task-detail-block task-detail-request-block" aria-label={field.label}>
           <span className="task-detail-section-heading">
@@ -1196,6 +1200,18 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         <TaskEditFeedback state={relationshipSaveState} copy={editCopy} statusId={`${attachmentStatusId}-relationships`} />
       </section>
 
+      {props.workflowClient && props.onLoadWorkflowCapabilities && props.onStartTaskStage ? (
+        <TaskWorkflowSection
+          language={props.language}
+          task={props.task}
+          terminalReadOnly={props.terminalReadOnly}
+          client={props.workflowClient}
+          loadCapabilities={props.onLoadWorkflowCapabilities}
+          onStartStage={props.onStartTaskStage}
+          onOpenConversation={(conversationId) => props.onOpenConversation(props.task.id, conversationId)}
+        />
+      ) : null}
+
       <section className="task-detail-block task-detail-conversations" aria-label={props.copy.conversationsTitle}>
         <span className="task-detail-section-heading">
           <strong>{props.copy.conversationsTitle}</strong>
@@ -1239,7 +1255,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
                       </small>
                     </span>
                     <span className="task-detail-conversation-row-meta">
-                      <time dateTime={conversation.updatedAt}>{formatTaskUpdatedAt(conversation.updatedAt, props.copy.updatedAtMissing ?? '未记录')}</time>
+                      <time dateTime={conversation.activityAt ?? conversation.createdAt}>{formatTaskUpdatedAt(conversation.activityAt ?? conversation.createdAt, props.copy.updatedAtMissing ?? '未记录')}</time>
                       <small>{props.copy.openConversation}</small>
                     </span>
                   </button>

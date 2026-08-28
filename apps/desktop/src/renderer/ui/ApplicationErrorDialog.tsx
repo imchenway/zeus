@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { Button } from './Button.js';
 import { ModalPortal } from './ModalPortal.js';
 
@@ -7,11 +6,6 @@ export type ApplicationErrorLanguage = 'zh-CN' | 'en';
 
 export interface ApplicationErrorOptions {
   language?: ApplicationErrorLanguage;
-  title?: string;
-  summary?: string;
-  source?: string;
-  details?: string;
-  occurredAt?: string;
   primaryAction?: {
     label: string;
     run: () => void;
@@ -19,17 +13,13 @@ export interface ApplicationErrorOptions {
 }
 
 interface ApplicationErrorEntry {
-  id: number;
   language: ApplicationErrorLanguage;
-  title: string;
-  summary: string;
-  details: string;
+  visibleText: string;
   primaryAction?: ApplicationErrorOptions['primaryAction'];
 }
 
 const listeners = new Set<() => void>();
 let queue: ApplicationErrorEntry[] = [];
-let nextErrorId = 1;
 
 const secretPatterns: ReadonlyArray<[RegExp, string]> = [
   [/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [已脱敏]'],
@@ -40,28 +30,12 @@ const secretPatterns: ReadonlyArray<[RegExp, string]> = [
 
 const copyByLanguage = {
   'zh-CN': {
-    title: '操作未完成',
-    summary: 'Zeus 没有完成这项操作。请查看详情后重试，或关闭弹窗返回当前工作面。',
-    details: '查看详情',
-    hideDetails: '收起详情',
     close: '关闭',
-    detailTitle: '错误详情',
-    occurredAt: '发生时间',
-    source: '错误来源',
-    originalMessage: '原始信息',
-    unknown: '没有可用的错误详情。',
+    unknown: '未知错误。',
   },
   en: {
-    title: 'Operation not completed',
-    summary: 'Zeus could not complete this operation. Review the details and try again, or close this dialog to return to your work.',
-    details: 'View Details',
-    hideDetails: 'Hide Details',
     close: 'Close',
-    detailTitle: 'Error details',
-    occurredAt: 'Occurred at',
-    source: 'Source',
-    originalMessage: 'Original message',
-    unknown: 'No error details are available.',
+    unknown: 'Unknown error.',
   },
 } as const;
 
@@ -80,11 +54,28 @@ function errorMessage(error: unknown, language: ApplicationErrorLanguage): strin
   return copyByLanguage[language].unknown;
 }
 
-function detailText(error: unknown, options: ApplicationErrorOptions, language: ApplicationErrorLanguage): string {
-  const copy = copyByLanguage[language];
-  const occurredAt = options.occurredAt ?? new Date().toISOString();
-  const originalMessage = options.details?.trim() || errorMessage(error, language);
-  return redactDetails([`${copy.occurredAt}: ${occurredAt}`, options.source?.trim() ? `${copy.source}: ${options.source.trim()}` : '', `${copy.originalMessage}: ${originalMessage}`].filter(Boolean).join('\n'));
+function errorCode(error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null;
+  const value = error as { code?: unknown; error?: unknown };
+  const apiErrorCode = typeof value.error === 'string' && /^[A-Z][A-Z0-9_]+$/u.test(value.error.trim()) ? value.error : null;
+  const candidate = typeof value.code === 'string' ? value.code : apiErrorCode;
+  return candidate?.trim() || null;
+}
+
+/** 全应用唯一的可见错误格式：错误码与原始消息合成一行，堆栈和诊断元数据不进入 DOM。 */
+export function formatVisibleApplicationError(error: unknown, language: ApplicationErrorLanguage = 'zh-CN'): string {
+  const code = errorCode(error);
+  const message = errorMessage(error, language).replace(/\s+/gu, ' ').trim() || copyByLanguage[language].unknown;
+  const text = code && message !== code && !message.startsWith(`${code}:`) ? `${code}: ${message}` : message;
+  return redactDetails(text);
+}
+
+export function VisibleApplicationError(props: { error: unknown; language?: ApplicationErrorLanguage; className?: string }) {
+  return (
+    <code className={props.className} data-zeus-selectable="text">
+      {formatVisibleApplicationError(props.error, props.language)}
+    </code>
+  );
 }
 
 /**
@@ -92,19 +83,13 @@ function detailText(error: unknown, options: ApplicationErrorOptions, language: 
  */
 export function reportApplicationError(error: unknown, options: ApplicationErrorOptions = {}): void {
   const language = options.language ?? 'zh-CN';
-  const copy = copyByLanguage[language];
-  const details = detailText(error, options, language);
   const entry: ApplicationErrorEntry = {
-    id: nextErrorId,
     language,
-    title: options.title?.trim() || copy.title,
-    summary: options.summary?.trim() || copy.summary,
-    details,
+    visibleText: formatVisibleApplicationError(error, language),
     ...(options.primaryAction ? { primaryAction: options.primaryAction } : {}),
   };
-  nextErrorId += 1;
 
-  const duplicate = queue.some((candidate) => candidate.title === entry.title && candidate.details === entry.details);
+  const duplicate = queue.some((candidate) => candidate.visibleText === entry.visibleText);
   if (duplicate) return;
   queue = [...queue, entry];
   notifyListeners();
@@ -114,11 +99,6 @@ export function reportApplicationError(error: unknown, options: ApplicationError
 export function useApplicationErrorDialog(error: unknown, options: ApplicationErrorOptions = {}): void {
   const previousErrorRef = useRef<unknown>(undefined);
   const language = options.language;
-  const title = options.title;
-  const summary = options.summary;
-  const source = options.source;
-  const details = options.details;
-  const occurredAt = options.occurredAt;
   const primaryAction = options.primaryAction;
 
   useEffect(() => {
@@ -130,14 +110,9 @@ export function useApplicationErrorDialog(error: unknown, options: ApplicationEr
     previousErrorRef.current = error;
     reportApplicationError(error, {
       ...(language ? { language } : {}),
-      ...(title ? { title } : {}),
-      ...(summary ? { summary } : {}),
-      ...(source ? { source } : {}),
-      ...(details ? { details } : {}),
-      ...(occurredAt ? { occurredAt } : {}),
       ...(primaryAction ? { primaryAction } : {}),
     });
-  }, [details, error, language, occurredAt, primaryAction, source, summary, title]);
+  }, [error, language, primaryAction]);
 }
 
 function subscribe(listener: () => void): () => void {
@@ -153,11 +128,9 @@ function dismissCurrentError(): void {
 
 export function ApplicationErrorDialogHost(props: { language: ApplicationErrorLanguage }) {
   const [, forceRender] = useState(0);
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const current = queue[0];
 
   useEffect(() => subscribe(() => forceRender((value) => value + 1)), []);
-  useEffect(() => setDetailsOpen(false), [current?.id]);
 
   if (!current) return null;
   const copy = copyByLanguage[current.language ?? props.language];
@@ -170,26 +143,13 @@ export function ApplicationErrorDialogHost(props: { language: ApplicationErrorLa
 
   return (
     <ModalPortal rootClassName="application-error-dialog-portal-root" backdropClassName="application-error-dialog-backdrop" onDismiss={dismissCurrentError}>
-      <section className="application-error-dialog zeus-solid-form-surface" role="alertdialog" aria-modal="true" aria-labelledby="application-error-dialog-title" aria-describedby="application-error-dialog-summary">
-        <div className="application-error-dialog-icon" aria-hidden="true">
-          <WarningCircle weight="fill" />
-        </div>
+      <section className="application-error-dialog zeus-solid-form-surface" role="alertdialog" aria-modal="true" aria-labelledby="application-error-dialog-message">
         <div className="application-error-dialog-content">
-          <header>
-            <strong id="application-error-dialog-title">{current.title}</strong>
-            <p id="application-error-dialog-summary">{current.summary}</p>
-          </header>
-          {detailsOpen ? (
-            <section className="application-error-dialog-details" aria-labelledby="application-error-dialog-details-title">
-              <strong id="application-error-dialog-details-title">{copy.detailTitle}</strong>
-              <pre data-zeus-selectable="text">{current.details}</pre>
-            </section>
-          ) : null}
+          <code id="application-error-dialog-message" data-zeus-selectable="text">
+            {current.visibleText}
+          </code>
         </div>
         <footer>
-          <Button variant="secondary" size="regular" onClick={() => setDetailsOpen((open) => !open)} aria-expanded={detailsOpen} aria-controls="application-error-dialog-details-title">
-            {detailsOpen ? copy.hideDetails : copy.details}
-          </Button>
           {current.primaryAction ? (
             <>
               <Button variant="secondary" size="regular" onClick={dismissCurrentError}>

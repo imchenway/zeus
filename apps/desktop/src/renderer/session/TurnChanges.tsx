@@ -20,7 +20,8 @@ import {
 } from '@zeus/shared';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { CodeCommentPanel } from './CodeCommentPanel.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { SyntaxHighlightedLine, useSyntaxHighlightedSegments, type HighlightedLine } from '../code/SyntaxHighlightedCode.js';
 
 type ChangeAction = 'undo' | 'reapply';
 const maximumRenderedDiffLines = 2_000;
@@ -34,11 +35,9 @@ export function TurnChangeCard(props: {
   const zh = props.language === 'zh-CN';
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState<ChangeAction | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   useApplicationErrorDialog(error && error !== props.changeSet.conflict?.message && error !== props.changeSet.unavailableReason ? error : null, {
     language: zh ? 'zh-CN' : 'en',
-    title: zh ? '文件变更操作失败' : 'File change operation failed',
-    source: 'TurnChangeCard',
   });
   const [optimisticChangeSet, setOptimisticChangeSet] = useState<TurnChangeSet | null>(null);
   const changeSet = optimisticChangeSet && optimisticChangeSet.id === props.changeSet.id && optimisticChangeSet.updatedAt >= props.changeSet.updatedAt ? optimisticChangeSet : props.changeSet;
@@ -54,7 +53,7 @@ export function TurnChangeCard(props: {
       const result = await props.onOperate(changeSet, action);
       setOptimisticChangeSet(result.changeSet);
     } catch (operationError) {
-      setError(operationError instanceof Error ? operationError.message : String(operationError));
+      setError(operationError);
     } finally {
       setBusy(null);
     }
@@ -84,15 +83,14 @@ export function TurnChangeCard(props: {
               <span>{busy ? (zh ? '处理中…' : 'Working…') : action === 'undo' ? (zh ? '撤销' : 'Undo') : zh ? '重新应用' : 'Reapply'}</span>
             </button>
           ) : null}
-          <button type="button" className="session-turn-change-review" disabled={!props.onReview || changeSet.files.length === 0} onClick={() => props.onReview?.(changeSet)}>
+          <button type="button" className="session-turn-change-review" disabled={!props.onReview || changeSet.files.length === 0 || changeSet.contentProjection === 'summary'} onClick={() => props.onReview?.(changeSet)}>
             {zh ? '审核' : 'Review'}
           </button>
         </nav>
       </header>
       {changeSet.conflict ? (
         <p className="session-turn-change-error" role="alert">
-          <WarningCircle aria-hidden="true" />
-          <span>{changeSet.conflict.message}</span>
+          <VisibleApplicationError error={changeSet.conflict} language={zh ? 'zh-CN' : 'en'} />
         </p>
       ) : null}
       {!changeSet.conflict && changeSet.state === 'unavailable' && changeSet.unavailableReason ? (
@@ -144,11 +142,9 @@ export function TurnDiffWorkspace(props: {
   const [activeFileId, setActiveFileId] = useState(props.initialFileId ?? props.changeSet.files[0]?.id ?? null);
   const titleRef = useRef<HTMLSpanElement | null>(null);
   const [busy, setBusy] = useState<ChangeAction | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   useApplicationErrorDialog(error && error !== props.changeSet.conflict?.message && error !== props.changeSet.unavailableReason ? error : null, {
     language: zh ? 'zh-CN' : 'en',
-    title: zh ? '变更审核操作失败' : 'Change review operation failed',
-    source: 'TurnDiffWorkspace',
   });
   const [optimisticChangeSet, setOptimisticChangeSet] = useState<TurnChangeSet | null>(null);
   const [draftPosition, setDraftPosition] = useState<ConversationCodeCommentPosition | null>(null);
@@ -160,6 +156,10 @@ export function TurnDiffWorkspace(props: {
   const diff = useMemo(() => diffLines(activeFile?.unifiedDiff ?? ''), [activeFile?.unifiedDiff]);
   const activePath = activeFile ? commentPath(activeFile) : null;
   const comments = (props.comments ?? []).filter((comment) => comment.position.path === activePath);
+  const leftHighlightInput = useMemo(() => buildDiffHighlightInput(diff.lines, 'left'), [diff.lines]);
+  const rightHighlightInput = useMemo(() => buildDiffHighlightInput(diff.lines, 'right'), [diff.lines]);
+  const leftHighlights = useSyntaxHighlightedSegments(activeFile?.oldPath ?? activePath ?? '', leftHighlightInput.contents);
+  const rightHighlights = useSyntaxHighlightedSegments(activeFile?.newPath ?? activePath ?? '', rightHighlightInput.contents);
 
   useEffect(() => {
     titleRef.current?.focus();
@@ -200,7 +200,7 @@ export function TurnDiffWorkspace(props: {
       const result = await props.onOperate(changeSet, action);
       setOptimisticChangeSet(result.changeSet);
     } catch (operationError) {
-      setError(operationError instanceof Error ? operationError.message : String(operationError));
+      setError(operationError);
     } finally {
       setBusy(null);
     }
@@ -212,7 +212,7 @@ export function TurnDiffWorkspace(props: {
     try {
       await props.onOpenFile(file, line);
     } catch (openError) {
-      setError(openError instanceof Error ? openError.message : String(openError));
+      setError(openError);
     }
   }
 
@@ -248,8 +248,7 @@ export function TurnDiffWorkspace(props: {
       </header>
       {changeSet.conflict ? (
         <p className="session-turn-change-error session-turn-diff-error" role="alert">
-          <WarningCircle aria-hidden="true" />
-          <span>{changeSet.conflict.message}</span>
+          <VisibleApplicationError error={changeSet.conflict} language={zh ? 'zh-CN' : 'en'} />
         </p>
       ) : null}
       {!changeSet.conflict && changeSet.state === 'unavailable' && changeSet.unavailableReason ? (
@@ -300,6 +299,7 @@ export function TurnDiffWorkspace(props: {
                     const position = activePath ? commentPosition(activePath, line) : null;
                     const lineComments = position ? comments.filter((comment) => comment.position.line === position.line && comment.position.side === position.side) : [];
                     const draftHere = Boolean(position && draftPosition?.line === position.line && draftPosition.side === position.side);
+                    const highlightedLine = highlightedDiffLine(line, index, leftHighlightInput, leftHighlights, rightHighlightInput, rightHighlights);
                     return (
                       <Fragment key={`${index}:${line.text}`}>
                         <span className="session-diff-line" data-kind={line.kind}>
@@ -339,7 +339,9 @@ export function TurnDiffWorkspace(props: {
                               {lineNumberLabel(line)}
                             </span>
                           )}
-                          <span>{line.text || '\u00a0'}</span>
+                          <span>
+                            <SyntaxHighlightedLine line={highlightedLine} />
+                          </span>
                         </span>
                         {lineComments.map((comment) =>
                           editingCommentId === comment.id ? (
@@ -464,6 +466,44 @@ interface DisplayDiffLine {
   text: string;
   oldLine: number | null;
   newLine: number | null;
+}
+
+interface DiffHighlightInput {
+  contents: string[];
+  positions: Map<number, { segment: number; line: number }>;
+}
+
+function buildDiffHighlightInput(lines: DisplayDiffLine[], side: ConversationCodeCommentSide): DiffHighlightInput {
+  const contents: string[] = [];
+  const positions = new Map<number, { segment: number; line: number }>();
+  let segment = -1;
+  let segmentLine = 0;
+  lines.forEach((line, index) => {
+    if (line.kind === 'hunk') {
+      segment = contents.length;
+      segmentLine = 0;
+      contents.push('');
+      return;
+    }
+    const belongsToSide = line.kind === 'context' || (side === 'left' ? line.kind === 'deleted' : line.kind === 'added');
+    if (!belongsToSide) return;
+    if (segment < 0) {
+      segment = contents.length;
+      segmentLine = 0;
+      contents.push('');
+    }
+    positions.set(index, { segment, line: segmentLine });
+    contents[segment] = `${contents[segment]}${segmentLine > 0 ? '\n' : ''}${line.text}`;
+    segmentLine += 1;
+  });
+  return { contents, positions };
+}
+
+function highlightedDiffLine(line: DisplayDiffLine, index: number, leftInput: DiffHighlightInput, leftHighlights: HighlightedLine[][], rightInput: DiffHighlightInput, rightHighlights: HighlightedLine[][]): HighlightedLine {
+  const input = line.kind === 'deleted' ? leftInput : rightInput;
+  const highlights = line.kind === 'deleted' ? leftHighlights : rightHighlights;
+  const position = input.positions.get(index);
+  return (position ? highlights[position.segment]?.[position.line] : null) ?? (line.text ? [{ text: line.text }] : []);
 }
 
 function diffLines(diff: string): {

@@ -1,13 +1,13 @@
 {
   "name": "zeus",
-  "version": "0.3.16",
+  "version": "0.3.67",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "pnpm --filter @zeus/desktop dev",
     "qa:browser": "pnpm --filter @zeus/desktop exec vite --host 127.0.0.1 --port 4179 --strictPort",
     "lint": "eslint .",
-    "typecheck": "tsc -b",
+    "typecheck": "pnpm verify:architecture && tsc -b",
     "build": "pnpm -r --if-present build",
     "package:mac": "pnpm --filter @zeus/desktop package:mac",
     "package:mac:test": "pnpm --filter @zeus/desktop package:mac:test",
@@ -19,8 +19,29 @@
     "release:prepare": "node scripts/prepare-release-candidate.mjs",
     "release:publish": "node scripts/publish-release.mjs",
     "verify:publish": "node scripts/verify-publish.mjs",
+    "verify:release-remote-read": "node scripts/verify-release-remote-read-resilience.mjs",
     "verify:release": "bash scripts/verify-release.sh",
     "verify:acceptance-matrix": "node scripts/verify-acceptance-matrix.mjs --check",
+    "verify:architecture": "tsx scripts/verify-architecture-governance.ts",
+    "verify:detached-host": "node scripts/probe-detached-execution-host.mjs",
+    "verify:execution-host-legacy-lock": "node scripts/probe-execution-host-legacy-lock.mjs",
+    "verify:execution-host-v2-crash-recovery": "tsx scripts/verify-execution-host-v2-crash-recovery.ts",
+    "verify:command-center-command": "tsx scripts/verify-command-center-command-behavior.ts",
+    "verify:work-management-command": "tsx scripts/verify-work-management-command-behavior.ts",
+    "verify:runtime-session-command": "tsx scripts/verify-runtime-session-command-behavior.ts",
+    "verify:subagent-detail": "tsx scripts/verify-subagent-detail-behavior.ts",
+    "verify:conversation-command": "tsx scripts/verify-conversation-command-behavior.ts",
+    "verify:conversation-dispatch-command": "tsx scripts/verify-conversation-dispatch-command-behavior.ts",
+    "verify:integration-command": "tsx scripts/verify-integration-command-behavior.ts",
+    "verify:workspace-git-command": "tsx scripts/verify-workspace-git-command-behavior.ts",
+    "verify:memory-command": "tsx scripts/verify-memory-command-behavior.ts",
+    "data-root:adopt-offline": "tsx scripts/adopt-zeus-data-root-offline.ts",
+    "verify:data-root-offline-adoption": "tsx scripts/verify-data-root-offline-adoption.ts",
+    "verify:storage-recovery-restart": "tsx scripts/verify-storage-recovery-restart-scheduling.ts",
+    "audit:internal-side-effects": "tsx scripts/audit-internal-side-effect-entries.ts --require-complete",
+    "verify:command-governance": "tsx scripts/verify-command-governance-registry.ts",
+    "audit:conversation-event-durability": "tsx scripts/audit-conversation-event-durability-registry.ts",
+    "verify:zarch-gates": "node scripts/verify-zarch-gates.mjs",
     "format": "prettier --write \"**/*.{ts,tsx,cts,cjs,mjs,js,json,yml,yaml}\" --ignore-path .prettierignore",
     "format:check": "prettier --check \"**/*.{ts,tsx,cts,cjs,mjs,js,json,yml,yaml}\" --ignore-path .prettierignore",
     "security:audit": "pnpm audit --audit-level=moderate",
@@ -71,7 +92,22 @@
   "homepage": "https://github.com/imchenway/zeus#readme",
   "pnpm": {
     "overrides": {
-      "esbuild": "0.28.1"
+      "esbuild": "0.28.1",
+      "@earendil-works/pi-ai@0.83.0>@aws-sdk/client-bedrock-runtime": "-",
+      "@earendil-works/pi-ai@0.83.0>@google/genai": "-",
+      "@earendil-works/pi-ai@0.83.0>@mistralai/mistralai": "-",
+      "@earendil-works/pi-ai@0.83.0>@opentelemetry/api": "-",
+      "@earendil-works/pi-ai@0.83.0>@smithy/node-http-handler": "-",
+      "@earendil-works/pi-ai@0.83.0>http-proxy-agent": "-",
+      "@earendil-works/pi-ai@0.83.0>https-proxy-agent": "-",
+      "@earendil-works/pi-coding-agent@0.83.0>@earendil-works/pi-tui": "-",
+      "@earendil-works/pi-coding-agent@0.83.0>@mariozechner/clipboard": "-",
+      "@earendil-works/pi-coding-agent@0.83.0>@silvia-odwyer/photon-node": "-",
+      "@earendil-works/pi-coding-agent@0.83.0>highlight.js": "-"
+    },
+    "patchedDependencies": {
+      "@earendil-works/pi-ai@0.83.0": "patches/@earendil-works__pi-ai@0.83.0.patch",
+      "@earendil-works/pi-coding-agent@0.83.0": "patches/@earendil-works__pi-coding-agent@0.83.0.patch"
     }
   }
 }
