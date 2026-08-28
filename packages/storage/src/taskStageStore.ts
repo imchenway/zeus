@@ -999,8 +999,8 @@ function normalizeStageUpdate(stage: ZeusTaskStageRecord, input: UpdateTaskStage
 }
 
 function assertKindExecutionPolicy(stage: Pick<ZeusTaskStageRecord, 'kind' | 'workMode' | 'permissionMode'>): void {
-  if (stage.kind === 'plan' && (stage.workMode !== 'plan' || stage.permissionMode !== 'read-only')) {
-    throw storeError('ZEUS_TASK_STAGE_INVALID_ARGUMENT', '计划阶段固定为计划工作态和只读权限。', 400);
+  if (stage.kind === 'plan' && stage.permissionMode !== 'read-only') {
+    throw storeError('ZEUS_TASK_STAGE_INVALID_ARGUMENT', '计划阶段固定为只读权限；工作态由具体编排决定。', 400);
   }
   if (stage.kind === 'code_review' && (stage.workMode !== 'default' || stage.permissionMode !== 'read-only')) {
     throw storeError('ZEUS_TASK_STAGE_INVALID_ARGUMENT', '代码审查阶段固定为默认工作态和只读权限。', 400);

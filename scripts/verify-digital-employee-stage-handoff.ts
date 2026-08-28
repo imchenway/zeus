@@ -59,6 +59,7 @@ try {
     let planStage = workflow.stages[0]!;
     workflow = stages.assignEmployee(planStage.id, assignment(planStage, product));
     planStage = workflow.stages[0]!;
+    observed.planUsesNonInteractiveConversation = planStage.workMode === 'default' && planStage.permissionMode === 'read-only';
     let execution = executions.create({
       id: 'digital_employee_execution_zeus_0373',
       employee: product,
@@ -322,6 +323,7 @@ try {
     );
     observed.sqliteIntegrity = db.get<{ quick_check: string }>(`PRAGMA quick_check`)?.quick_check ?? null;
 
+    assertProbe(observed.planUsesNonInteractiveConversation === true, '产品阶段必须使用可自然结束的只读默认会话，不能进入 Codex 内部 PLAN 审批');
     assertProbe(observed.candidateBeforeConfirmation === true && observed.noExternalDeliveryBeforeConfirmation === true, '候选方案生成前后不得触发外部交付');
     assertProbe(observed.handoffCommandReplay === true && observed.preciseAcceptedInput === true, '交接命令必须幂等并精确传递已接受方案');
     assertProbe(observed.independentConversations === true && observed.frozenEmployeeSnapshots === true, '阶段必须使用独立会话并冻结各自员工快照');
@@ -367,7 +369,7 @@ function defaultStages() {
       description: '形成产品方案',
       agentKind: 'codex' as const,
       modelRef: '',
-      workMode: 'plan' as const,
+      workMode: 'default' as const,
       permissionMode: 'read-only' as const,
       advanceMode: 'manual' as const,
       prompt: '输出正式方案',
@@ -411,7 +413,7 @@ function assignment(stage: ZeusTaskStageRecord, employee: DigitalEmployeeRecord)
     modelRef: employee.model ?? 'gpt-5.4',
     effort: employee.reasoningEffort,
     serviceTier: employee.serviceTier,
-    workMode: stage.kind === 'plan' ? ('plan' as const) : employee.workMode,
+    workMode: stage.kind === 'plan' || stage.kind === 'code_review' ? ('default' as const) : employee.workMode,
     permissionMode: stage.kind === 'plan' || stage.kind === 'code_review' ? ('read-only' as const) : employee.permissionMode,
     prompt: stage.prompt,
   };

@@ -460,7 +460,9 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
       if (!taskStage || taskStage.taskId !== task.id || taskStage.workflowId !== execution.workflowId) throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_STAGE_MISSING', '阶段化工作执行的当前阶段已经不可用。', true);
       if (taskStage.employeeMode !== 'explicit' || taskStage.employeeId !== snapshot.id) throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_STAGE_EMPLOYEE_CONFLICT', '当前阶段指派与工作执行员工快照不一致。', true);
       const stagePermissionMode = taskStage.kind === 'plan' || taskStage.kind === 'code_review' ? 'read-only' : permissionMode;
-      const stageWorkMode = taskStage.kind === 'plan' ? 'plan' : taskStage.kind === 'code_review' ? 'default' : snapshot.workMode;
+      // 阶段交付物必须由一次可自然结束的独立会话生成。Codex 的 PLAN 模式会停在
+      // “实施此计划？”内部审批，和 Zeus 的阶段交接确认形成重复且不可见的门禁。
+      const stageWorkMode = taskStage.kind === 'plan' || taskStage.kind === 'code_review' ? 'default' : snapshot.workMode;
       if (taskStage.status === 'running') {
         const frozenMatches =
           taskStage.agentKind === model.agentKind &&

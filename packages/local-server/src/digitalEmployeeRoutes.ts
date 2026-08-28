@@ -615,7 +615,7 @@ function ensureDigitalEmployeeWorkflow(options: DigitalEmployeeRouteOptions, tas
         description: '分析任务并形成可独立交接、可验收的正式方案。',
         agentKind: 'codex',
         modelRef: '',
-        workMode: 'plan',
+        workMode: 'default',
         permissionMode: 'read-only',
         advanceMode: 'manual',
         prompt: '核对需求、边界、取舍和验收标准，输出可供下一位数字员工直接执行的正式方案。',
@@ -661,7 +661,7 @@ function stageEmployeeInput(stage: ZeusTaskStageRecord, employee: DigitalEmploye
     modelRef,
     effort: employee.reasoningEffort,
     serviceTier: employee.serviceTier,
-    workMode: stage.kind === 'plan' ? ('plan' as const) : employee.workMode,
+    workMode: stage.kind === 'plan' || stage.kind === 'code_review' ? ('default' as const) : employee.workMode,
     permissionMode: constrained ? ('read-only' as const) : employee.permissionMode,
     prompt: stage.prompt,
   };
