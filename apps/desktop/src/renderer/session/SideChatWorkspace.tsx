@@ -1,6 +1,7 @@
 import { type FormEvent, useState } from 'react';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
-import { SafeMarkdown, type SessionUiLanguage } from './ThreadItemView.js';
+import type { SessionUiLanguage } from './ThreadItemView.js';
+import { ConversationMarkdown } from './ConversationMarkdown.js';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
 interface SideChatMessage {
@@ -61,7 +62,7 @@ export function SideChatWorkspace(props: { selectedText: string; language: Sessi
         ) : (
           messages.map((message) => (
             <article key={message.id} data-role={message.role}>
-              {message.role === 'assistant' ? <SafeMarkdown text={message.text} language={props.language} /> : <p>{message.text}</p>}
+              <ConversationMarkdown text={message.text} streamId={`side-chat:${message.id}`} phase="final" language={props.language} />
             </article>
           ))
         )}

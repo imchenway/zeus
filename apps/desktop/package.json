@@ -17,7 +17,8 @@
     "@zeus/local-server": "workspace:*",
     "@zeus/security-core": "workspace:*",
     "@zeus/shared": "workspace:*",
-    "@zeus/terminal-core": "workspace:*"
+    "@zeus/terminal-core": "workspace:*",
+    "markstream-react": "2.0.6"
   },
   "devDependencies": {
     "@codemirror/commands": "^6.10.4",

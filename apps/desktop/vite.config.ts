@@ -22,9 +22,10 @@ export default defineConfig({
               priority: 100,
             },
             {
-              // Markdown 解析链路内部存在互相引用，保持在同一代码包中，避免按全局体积拆分后形成运行时循环依赖。
+              // 两套 Markdown 解析链路分别服务会话流式正文和文件预览；其内部存在互相引用，保持在同一代码包中，
+              // 避免按全局体积拆分后形成运行时循环依赖。实际产物仍受仓库 2 MiB 单文件门禁约束。
               name: 'markdown-runtime',
-              test: /node_modules[\\/](?:react-markdown|remark-[^\\/]+|unified|vfile|unist-util-[^\\/]+|mdast-util-[^\\/]+|hast-util-[^\\/]+|micromark(?:-extension-[^\\/]+)?|html-url-attributes|property-information|space-separated-tokens|comma-separated-tokens|decode-named-character-reference|character-entities[^\\/]*|trim-lines|longest-streak|markdown-table|devlop|bail|trough)[\\/]/u,
+              test: /node_modules[\\/](?:markstream-react|markstream-core|stream-markdown-parser|markdown-it(?:-[^\\/]+)?|linkify-it|mdurl|uc\.micro|entities|punycode\.js|@floating-ui[\\/][^\\/]+|clsx|react-markdown|remark-[^\\/]+|unified|vfile|unist-util-[^\\/]+|mdast-util-[^\\/]+|hast-util-[^\\/]+|micromark(?:-extension-[^\\/]+)?|html-url-attributes|property-information|space-separated-tokens|comma-separated-tokens|decode-named-character-reference|character-entities[^\\/]*|trim-lines|longest-streak|markdown-table|devlop|bail|trough)[\\/]/u,
               priority: 95,
               maxSize: 2 * 1024 * 1024,
             },

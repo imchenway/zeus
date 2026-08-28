@@ -3,7 +3,8 @@ import { ArrowsOutIcon as ArrowsOut } from '@phosphor-icons/react/dist/csr/Arrow
 import { LightbulbIcon as Lightbulb } from '@phosphor-icons/react/dist/csr/Lightbulb';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { NativeSessionItemBuffer } from './sessionTypes.js';
-import { SafeMarkdown, type SessionUiLanguage } from './ThreadItemView.js';
+import type { SessionUiLanguage } from './ThreadItemView.js';
+import { ConversationMarkdown, conversationMarkdownPhaseForStatus } from './ConversationMarkdown.js';
 
 export function PlanWorkspace(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage; fullWidth: boolean; onFullWidthChange: (fullWidth: boolean) => void; onClose: () => void }) {
   const zh = props.language === 'zh-CN';
@@ -25,7 +26,7 @@ export function PlanWorkspace(props: { item: NativeSessionItemBuffer; language: 
         </nav>
       </header>
       <section className="session-plan-workspace-content">
-        <SafeMarkdown text={props.item.text} language={props.language} />
+        <ConversationMarkdown text={props.item.text} streamId={`plan-workspace:${props.item.itemId}`} phase={conversationMarkdownPhaseForStatus(props.item.status)} language={props.language} />
       </section>
     </aside>
   );
