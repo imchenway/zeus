@@ -45,6 +45,7 @@ import { isAbsolute } from 'node:path';
 import { parseJsonObject } from './codeIntelligenceGraphStore.js';
 import { createCodexNativeConversationCoordinator } from './codexNativeConversationCoordinator.js';
 import { nativePendingRequestProjection } from './codexNativeConversationPolicy.js';
+import { isProviderStopPendingTurn } from './codexProviderStopRecoveryApplication.js';
 import type { ZeusSkillService } from './zeusSkillService.js';
 import { resolveConversationAttachmentGrant } from './conversationAttachmentGrant.js';
 import { type ConversationCapabilitiesSnapshot, ConversationCapabilityQueryApplication } from './conversationCapabilityQueryApplication.js';
@@ -386,6 +387,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
     const dispatching = conversationSubmissions.listByConversation(conversation.id).find((submission) => submission.status === 'dispatching' && !submission.providerTurnId);
     if (dispatching) return { type: 'dispatching' as const, submissionId: dispatching.id };
     const paused = conversationSubmissions.listByConversation(conversation.id).filter((submission) => submission.status === 'paused' && !submission.providerTurnId);
+    if (paused.some((submission) => submission.pausedReason === 'provider_stop_pending')) return { type: 'paused' as const, reason: 'provider_stop_pending' as const };
+    if (conversation.providerState === 'paused' && conversationTurns.listByConversation(conversation.id).some(isProviderStopPendingTurn)) {
+      return { type: 'paused' as const, reason: 'provider_stop_pending' as const };
+    }
     if (paused.some((submission) => submission.pausedReason === 'runtime_rejected')) return { type: 'paused' as const, reason: 'runtime_rejected' as const };
     if (paused.some((submission) => submission.pausedReason === 'recovery_required')) return { type: 'paused' as const, reason: 'recovery_required' as const };
     if (paused.some((submission) => submission.pausedReason === 'interrupted')) return { type: 'paused' as const, reason: 'interrupted' as const };

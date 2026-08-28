@@ -2102,6 +2102,38 @@
   padding: 8px 10px 8px 9px;
 }
 
+.session-codex-parity-v1 .session-message-delivery-feedback[data-state='provider-stop-pending'] {
+  background: color-mix(in srgb, var(--session-warning) 3%, var(--session-canvas));
+  border: 1px solid color-mix(in srgb, var(--session-warning) 18%, var(--session-line-soft));
+  border-inline-start: 3px solid color-mix(in srgb, var(--session-warning) 62%, transparent);
+  border-radius: 8px;
+  color: var(--session-text);
+  inline-size: min(680px, calc(100% - (2 * var(--session-gutter))));
+  padding: 8px 10px 8px 9px;
+}
+
+.session-codex-parity-v1 .session-message-delivery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-block-start: 8px;
+}
+
+.session-codex-parity-v1 .session-message-delivery-actions button {
+  background: transparent;
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-radius: 6px;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 4px 9px;
+}
+
+.session-codex-parity-v1 .session-message-delivery-actions button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
 .session-codex-parity-v1 .session-message-delivery-feedback[data-state='failed'] {
   background: color-mix(in srgb, var(--session-danger) 3%, var(--session-canvas));
   border: 1px solid color-mix(in srgb, var(--session-danger) 18%, var(--session-line-soft));

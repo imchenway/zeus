@@ -112,6 +112,7 @@ import { codexProviderEventIdentity, createCodexProviderEventFlow } from './code
 import { projectCodexProviderEvent } from './codexProviderEventProjection.js';
 import { createCodexProviderHistoryProjection } from './codexProviderHistoryProjection.js';
 import { createCodexProviderThreadAuthorityApplication } from './codexProviderThreadAuthority.js';
+import { createCodexProviderStopRecoveryApplication, type CodexProviderStopRequestResult } from './codexProviderStopRecoveryApplication.js';
 import { createCodexRemoteControlConversationSyncApplication } from './codexRemoteControlConversationSyncApplication.js';
 import { createCodexRecoveryStateApplication } from './codexRecoveryStateApplication.js';
 import type { CodexUsageService } from './codexUsageService.js';
@@ -194,6 +195,14 @@ export interface CodexNativeConversationRuntime extends CodexNativeConversationC
   reconcilePersistedTerminalSubmissions(): Promise<number>;
   synchronizeOpenConversation(input: { conversationId: string }): Promise<void>;
   synchronizeConversations(input: { conversationIds: readonly string[] }): Promise<void>;
+  /** 退出编排专用：中断写入统一 Provider 命令账本，并在有界窗口内只读确认精确 turn 终态。 */
+  requestProviderTurnStop(input: {
+    conversationId: string;
+    providerThreadId: string;
+    providerTurnId: string;
+    stopCommandId: string;
+    confirmationTimeoutMs: number;
+  }): Promise<CodexProviderStopRequestResult>;
   close(input?: { mode: 'handoff' | 'final' }): Promise<void>;
 }
 
@@ -1152,6 +1161,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     await input.segmentLifecycle?.prepare(submission);
     await persist();
     await input.providerWriteLifecycle?.markPrepared(submission.id);
+    if (!requiresNewSegment && providerStopRecovery.hasPendingEvidence(conversation.id)) {
+      const recovery = await providerStopRecovery.recoverForNewSubmission(conversation.id);
+      if (recovery === 'pending') return accepted(options.submissions.getById(submission.id) ?? submission, 'queued', conversation.providerThreadId, null);
+      if (recovery === 'recovery_required') return accepted(options.submissions.getById(submission.id) ?? submission, 'recovery_required', conversation.providerThreadId, null);
+    }
     if (context.holdDispatch) return accepted(submission, 'queued', conversation.providerThreadId, null);
     if (hasPendingPlanImplementationRequest(conversation.id)) return accepted(submission, 'queued', conversation.providerThreadId, null);
     try {
@@ -1510,6 +1524,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     try {
       await ensureConversationExecutionContext(conversation.id, 'dispatch', segmentLifecycle?.requiresNewSegment === true);
       const recoveryState = runStates.get(conversation.id) ?? inferRunState(conversation);
+      if (!segmentLifecycle?.requiresNewSegment && recoveryState.type === 'paused' && recoveryState.reason === 'provider_stop_pending') {
+        return accepted(submission, 'queued', conversation.providerThreadId, null);
+      }
       if (!segmentLifecycle?.requiresNewSegment && recoveryState.type === 'paused' && recoveryState.reason === 'recovery_required') {
         conversation = await recoverPausedConversation(conversation.id, 'dispatch');
       }
@@ -2418,6 +2435,10 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     if (conversation.archived || conversation.providerState === 'archived') {
       throw coordinatorError('ZEUS_NATIVE_QUEUE_PROVIDER_ARCHIVED', 'The provider conversation must be restored explicitly before its queue can be recovered.');
     }
+    if (providerStopRecovery.hasPendingEvidence(conversation.id)) {
+      const stopRecovery = await providerStopRecovery.retry(conversation.id);
+      if (stopRecovery === 'pending' || stopRecovery === 'recovery_required') return toQueueSnapshot(conversation.id);
+    }
     await ensureGenerationReconciled([conversation.id]);
     conversation = requireConversation(input.conversationId);
     const deliveryUnconfirmed = options.submissions.listByConversation(conversation.id).find((submission) => submission.status === 'paused' && submission.pausedReason === 'recovery_required' && Boolean(submission.providerTurnId));
@@ -3133,6 +3154,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   async function recover(): Promise<void> {
     assertOpen();
     await reconcilePersistedTerminalSubmissions();
+    await providerStopRecovery.recoverPersisted();
     const automaticRecoveryConversationIds = new Set(
       options.conversations
         .listNativeBoundRecords('codex')
@@ -3436,7 +3458,21 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     requestQueueDrain,
   });
 
-  const { synchronizeOpenConversation, synchronizeConversations } = createCodexRemoteControlConversationSyncApplication({
+  const providerStopRecovery = createCodexProviderStopRecoveryApplication({
+    manager: options.manager,
+    providerCommands,
+    conversations: options.conversations,
+    submissions: options.submissions,
+    turns: options.turns,
+    runStates,
+    ensureProviderReady: () => options.manager.ensureReady({ commandPath: commandPath(), ...(options.externalAgentHome ? { externalAgentHome: options.externalAgentHome } : {}) }),
+    persist,
+    broadcast: options.broadcast,
+    requestQueueDrain,
+    now,
+  });
+
+  const remoteControlConversationSync = createCodexRemoteControlConversationSyncApplication({
     isClosed: () => closing || closed,
     manager: options.manager,
     syncCheckpoints,
@@ -3447,6 +3483,26 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     reconcile: (conversation) => enqueueProviderTurnReconciliation(conversation, { priority: 'control' }),
     persist,
   });
+
+  async function synchronizeOpenConversation(input: { conversationId: string }): Promise<void> {
+    if (providerStopRecovery.hasPendingEvidence(input.conversationId)) {
+      await providerStopRecovery.recoverForNewSubmission(input.conversationId);
+      return;
+    }
+    await remoteControlConversationSync.synchronizeOpenConversation(input);
+  }
+
+  async function synchronizeConversations(input: { conversationIds: readonly string[] }): Promise<void> {
+    const ordinaryConversationIds: string[] = [];
+    for (const conversationId of [...new Set(input.conversationIds)]) {
+      if (providerStopRecovery.hasPendingEvidence(conversationId)) {
+        await providerStopRecovery.recoverForNewSubmission(conversationId);
+      } else {
+        ordinaryConversationIds.push(conversationId);
+      }
+    }
+    await remoteControlConversationSync.synchronizeConversations({ conversationIds: ordinaryConversationIds });
+  }
 
   function failSubmissionBeforeProviderDispatch(submission: ZeusConversationSubmissionRecord): void {
     const timestamp = now();
@@ -3729,6 +3785,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   function beginHandoff(waiterError: Error): Promise<void> {
     if (handoffPromise) return handoffPromise;
     closing = true;
+    providerStopRecovery.close();
     const providerAuthorityClose = providerThreadAuthority.close();
     for (const requestId of [...autoResolutionTimers.keys()]) clearAutoResolutionTimer(requestId);
     externalAnswerRecovery.close();
@@ -3773,6 +3830,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     clearGoal,
     synchronizeOpenConversation,
     synchronizeConversations,
+    requestProviderTurnStop: (input) => providerStopRecovery.requestStop(input),
     recover,
     close(input = { mode: 'final' }) {
       if (input.mode === 'handoff') {

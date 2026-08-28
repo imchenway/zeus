@@ -32,6 +32,11 @@ export interface ExecuteCodexSessionCommandInput<T> extends ExecuteCodexProvider
 export interface ExecuteCodexTurnCommandInput<T> extends ExecuteCodexProviderCommandBase<T> {
   nativeSessionId: string;
   nativeTurnId(result: T): string;
+  /**
+   * Provider 已接纳同一 turn 命令时，只允许沿账本中的精确 session/turn 身份继续只读核对。
+   * 未提供恢复器的调用仍然失败关闭，绝不把账本回放变成再次写出。
+   */
+  recoverAccepted?(nativeSessionId: string, nativeTurnId: string, receipt: CommandDeliveryReceiptRecord): Promise<T>;
 }
 
 interface CodexProviderCommandPayload extends Record<string, unknown> {
@@ -85,7 +90,12 @@ export class CodexProviderCommandApplicationService {
 
   async executeTurn<T>(input: ExecuteCodexTurnCommandInput<T>): Promise<T> {
     const attempt = this.prepare(input, 'provider_turn');
-    if (attempt.state === 'accepted_replay') throw commandError('ZEUS_CODEX_PROVIDER_ACCEPTED_RECOVERY_REQUIRED', 'Codex Provider turn 已接纳，必须通过 turn 对账恢复，禁止重放。');
+    if (attempt.state === 'accepted_replay') {
+      const nativeSessionId = requiredIdentity(attempt.receipt.nativeSessionId, 'nativeSessionId');
+      const nativeTurnId = requiredIdentity(attempt.receipt.nativeTurnId, 'nativeTurnId');
+      if (!input.recoverAccepted) throw commandError('ZEUS_CODEX_PROVIDER_ACCEPTED_RECOVERY_REQUIRED', 'Codex Provider turn 已接纳，必须通过 turn 对账恢复，禁止重放。');
+      return input.recoverAccepted(nativeSessionId, nativeTurnId, attempt.receipt);
+    }
     let writeStarted = false;
     try {
       this.commandDeliveries.markProviderWriteStarted({ outboxId: attempt.outboxId, occurredAt: this.now() });
@@ -148,7 +158,7 @@ export class CodexProviderCommandApplicationService {
     } catch (error) {
       if (readErrorCode(error) !== 'ZEUS_COMMAND_DELIVERY_REPLAY_BLOCKED') throw error;
       const latest = this.commandDeliveries.get(commandId)?.attempts.at(-1);
-      if (latest?.outcome !== 'accepted' || !latest.receipt || destinationKind !== 'provider_session') throw error;
+      if (latest?.outcome !== 'accepted' || !latest.receipt) throw error;
       return { state: 'accepted_replay', receipt: latest.receipt };
     }
   }

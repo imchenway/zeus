@@ -3,6 +3,7 @@ import type { AiRuntimeSessionManager, CodexAppServerManager } from '@zeus/ai-ru
 import type { ExecutionHostStopActiveCommandRequest, ExecutionHostStopActiveFailure, ExecutionHostStopActiveResult } from '@zeus/shared';
 import { ConversationGoalRepository, ConversationRepository, ConversationServerRequestRepository, ConversationSubmissionRepository, ConversationTurnRepository, ExecutionHostWorkRepository, type ZeusConversationRecord } from '@zeus/storage';
 import type { CommandCenterController } from './commandCenter.js';
+import { providerStopPendingError, type CodexProviderStopRequestResult } from './codexProviderStopRecoveryApplication.js';
 import { ExecutionHostStopCommandApplication, executionHostStopCommandHttpError, executionHostStopCommandPolicy, type ParsedExecutionHostStopActiveCommand } from './executionHostStopCommandApplication.js';
 
 export interface ExecutionHostWorkStatusSnapshot {
@@ -42,7 +43,16 @@ interface ExecutionHostControlApiOptions {
   host?: { instanceId: string; protocolVersion: number; mode: 'embedded' | 'detached'; startedAt: string };
   work: ExecutionHostWorkRepository;
   codexManager: CodexAppServerManager;
-  codexCoordinator: { pauseGoal(input: { conversationId: string }): Promise<unknown> };
+  codexCoordinator: {
+    pauseGoal(input: { conversationId: string }): Promise<unknown>;
+    requestProviderTurnStop(input: {
+      conversationId: string;
+      providerThreadId: string;
+      providerTurnId: string;
+      stopCommandId: string;
+      confirmationTimeoutMs: number;
+    }): Promise<CodexProviderStopRequestResult>;
+  };
   piCoordinator: { interruptTurn(input: { conversation: ZeusConversationRecord; providerTurnId: string }): Promise<unknown> };
   goals: ConversationGoalRepository;
   conversations: ConversationRepository;
@@ -139,38 +149,61 @@ interface StopActiveWorkPlan {
   activeRuntimeSessions: ReturnType<AiRuntimeSessionManager['listSessions']>;
   providerInterrupts: Array<{
     conversationId: string;
+    providerThreadId: string;
     providerTurnId: string;
-    invoke(): Promise<unknown>;
+    agentKind: ZeusConversationRecord['agentKind'];
+    invoke(): Promise<CodexProviderStopRequestResult>;
   }>;
 }
 
 function prepareStopActiveWork(options: ExecutionHostControlApiOptions, parsed: ParsedExecutionHostStopActiveCommand): StopActiveWorkPlan {
   const recoverableSubmissions = options.submissions.listRecoverable();
+  const inProgressTurns = options.turns.listInProgress();
   const requestedTurns = new Set<string>();
   const providerInterrupts: StopActiveWorkPlan['providerInterrupts'] = [];
-  for (const submission of recoverableSubmissions) {
-    if ((submission.status !== 'dispatching' && submission.status !== 'active') || !submission.providerTurnId) continue;
-    const providerTurnId = submission.providerTurnId;
-    const identity = `${submission.conversationId}\0${providerTurnId}`;
-    if (requestedTurns.has(identity)) continue;
+  const appendProviderInterrupt = (input: { conversationId: string; providerThreadId: string; providerTurnId: string }): void => {
+    const identity = `${input.providerThreadId}\0${input.providerTurnId}`;
+    if (requestedTurns.has(identity)) return;
     requestedTurns.add(identity);
-    const conversation = options.conversations.getById(submission.conversationId);
+    const conversation = options.conversations.getById(input.conversationId);
     providerInterrupts.push({
-      conversationId: submission.conversationId,
-      providerTurnId,
-      invoke: () => {
+      conversationId: input.conversationId,
+      providerThreadId: input.providerThreadId,
+      providerTurnId: input.providerTurnId,
+      agentKind: conversation?.agentKind ?? 'codex',
+      invoke: async () => {
         if (!conversation) return Promise.reject(new Error('活动轮次缺少本机会话身份。'));
-        if (conversation.agentKind === 'pi') return options.piCoordinator.interruptTurn({ conversation, providerTurnId });
+        if (conversation.agentKind === 'pi') {
+          await options.piCoordinator.interruptTurn({ conversation, providerTurnId: input.providerTurnId });
+          return { terminalConfirmed: true };
+        }
         if (!conversation.providerThreadId) return Promise.reject(new Error('活动轮次缺少 Provider 会话身份。'));
-        return options.codexManager.interruptTurn({ threadId: conversation.providerThreadId, turnId: providerTurnId });
+        if (conversation.providerThreadId !== input.providerThreadId) return Promise.reject(new Error('活动轮次与会话的 Provider thread 身份不一致。'));
+        return options.codexCoordinator.requestProviderTurnStop({
+          conversationId: conversation.id,
+          providerThreadId: input.providerThreadId,
+          providerTurnId: input.providerTurnId,
+          stopCommandId: parsed.command.commandId,
+          confirmationTimeoutMs: 8_000,
+        });
       },
     });
+  };
+  for (const turn of inProgressTurns) {
+    if (!turn.providerTurnId || !turn.providerThreadId) continue;
+    appendProviderInterrupt({ conversationId: turn.conversationId, providerThreadId: turn.providerThreadId, providerTurnId: turn.providerTurnId });
+  }
+  for (const submission of recoverableSubmissions) {
+    if ((submission.status !== 'dispatching' && submission.status !== 'active') || !submission.providerTurnId) continue;
+    const conversation = options.conversations.getById(submission.conversationId);
+    if (!conversation?.providerThreadId) continue;
+    appendProviderInterrupt({ conversationId: submission.conversationId, providerThreadId: conversation.providerThreadId, providerTurnId: submission.providerTurnId });
   }
   return {
     parsed,
     activeGoals: options.goals.listActive(),
     recoverableSubmissions,
-    inProgressTurns: options.turns.listInProgress(),
+    inProgressTurns,
     pendingRequests: options.requests.listPending(),
     activeRuntimeSessions: options.runtimeManager.listSessions().filter((session) => session.status === 'running'),
     providerInterrupts,
@@ -202,10 +235,14 @@ async function stopActiveWork(options: ExecutionHostControlApiOptions, plan: Sto
 
   let providerInterruptFailureCount = 0;
   const failedTurns: ExecutionHostStopActiveFailure[] = [];
+  const providerStopPendingTurns = new Set<string>();
   interruptResults.forEach((result, index) => {
+    const interrupt = plan.providerInterrupts[index]!;
+    if (interrupt.agentKind === 'codex' && (result.status === 'rejected' || result.value.terminalConfirmed !== true)) {
+      providerStopPendingTurns.add(`${interrupt.providerThreadId}\0${interrupt.providerTurnId}`);
+    }
     if (result.status === 'fulfilled') return;
     providerInterruptFailureCount += 1;
-    const interrupt = plan.providerInterrupts[index]!;
     if (failedTurns.length < executionHostStopCommandPolicy.failedTurnMaximumEntries) {
       failedTurns.push({
         conversationId: interrupt.conversationId,
@@ -223,13 +260,44 @@ async function stopActiveWork(options: ExecutionHostControlApiOptions, plan: Sto
   const forcedExitError = {
     code: 'ZEUS_FORCED_QUIT_INTERRUPTED',
     message: '用户停止活动工作并退出 Zeus。',
-    providerOutcomeUnconfirmed: true,
+    providerOutcomeUnconfirmed: false,
     stopCommandId: plan.parsed.command.commandId,
   };
   const interruptedConversationIds = new Set<string>();
+  const providerStopPendingConversationIds = new Set<string>();
   for (const turn of plan.inProgressTurns) {
-    options.turns.upsert({ ...turn, status: 'interrupted', error: forcedExitError, completedAt: requestedAt, updatedAt: requestedAt });
+    const stopPending = Boolean(turn.providerTurnId && providerStopPendingTurns.has(`${turn.providerThreadId}\0${turn.providerTurnId}`));
+    const error =
+      stopPending && turn.providerTurnId
+        ? providerStopPendingError({
+            providerThreadId: turn.providerThreadId,
+            providerTurnId: turn.providerTurnId,
+            stopCommandId: plan.parsed.command.commandId,
+            requestedAt,
+          })
+        : forcedExitError;
+    options.turns.upsert({ ...turn, status: 'interrupted', error, completedAt: requestedAt, updatedAt: requestedAt });
+    if (stopPending) providerStopPendingConversationIds.add(turn.conversationId);
     interruptedConversationIds.add(turn.conversationId);
+  }
+  for (const interrupt of plan.providerInterrupts) {
+    if (!providerStopPendingTurns.has(`${interrupt.providerThreadId}\0${interrupt.providerTurnId}`)) continue;
+    providerStopPendingConversationIds.add(interrupt.conversationId);
+    interruptedConversationIds.add(interrupt.conversationId);
+    const existingTurn = options.turns.listByConversation(interrupt.conversationId).find((turn) => turn.providerThreadId === interrupt.providerThreadId && turn.providerTurnId === interrupt.providerTurnId);
+    if (!existingTurn || plan.inProgressTurns.some((turn) => turn.id === existingTurn.id)) continue;
+    options.turns.upsert({
+      ...existingTurn,
+      status: 'interrupted',
+      error: providerStopPendingError({
+        providerThreadId: interrupt.providerThreadId,
+        providerTurnId: interrupt.providerTurnId,
+        stopCommandId: plan.parsed.command.commandId,
+        requestedAt,
+      }),
+      completedAt: existingTurn.completedAt ?? requestedAt,
+      updatedAt: requestedAt,
+    });
   }
   for (const submission of plan.recoverableSubmissions) {
     options.submissions.updateStatus(submission.id, 'cancelled', {
@@ -241,7 +309,9 @@ async function stopActiveWork(options: ExecutionHostControlApiOptions, plan: Sto
     interruptedConversationIds.add(submission.conversationId);
   }
   for (const request of plan.pendingRequests) options.requests.fail(request.id, { error: forcedExitError, resolvedAt: requestedAt });
-  for (const conversationId of interruptedConversationIds) options.conversations.updateAgentRuntime(conversationId, { providerState: 'ready', status: 'open' });
+  for (const conversationId of interruptedConversationIds) {
+    options.conversations.updateAgentRuntime(conversationId, { providerState: providerStopPendingConversationIds.has(conversationId) ? 'paused' : 'ready', status: 'open' });
+  }
 
   const stoppedCommandRunCount = options.commandCenter.stopActiveRuns('用户停止活动工作并退出 Zeus');
   for (const session of plan.activeRuntimeSessions) {
@@ -258,7 +328,7 @@ async function stopActiveWork(options: ExecutionHostControlApiOptions, plan: Sto
     stoppedCommandRunCount,
     failedGoalPauseCount,
     failedTurns,
-    providerOutcomeUnconfirmed: true,
+    providerOutcomeUnconfirmed: providerInterruptFailureCount > 0 || providerStopPendingTurns.size > 0,
     requestedAt,
   };
 }

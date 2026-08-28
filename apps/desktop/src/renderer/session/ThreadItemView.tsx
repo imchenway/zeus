@@ -62,6 +62,7 @@ const copy = {
     deliveryPaused: '发送已暂停',
     waitingConnection: '等待连接恢复',
     providerArchived: '等待恢复原会话',
+    providerStopPending: '正在确认上次运行已停止',
     steering: '引导中',
     steerUnconfirmed: '引导结果待确认',
     remoteDevice: '由远程设备发送',
@@ -102,6 +103,7 @@ const copy = {
     deliveryPaused: 'Sending paused',
     waitingConnection: 'Waiting for connection',
     providerArchived: 'Waiting for conversation restore',
+    providerStopPending: 'Confirming the previous run has stopped',
     steering: 'Steering',
     steerUnconfirmed: 'Steer outcome unconfirmed',
     remoteDevice: 'Sent from a remote device',
@@ -257,6 +259,7 @@ function optimisticDeliveryStatus(item: NativeSessionItemBuffer, labels: (typeof
     if (pausedReason === 'conflict_preparing') return labels.conflictPreparing;
     if (pausedReason === 'transport_unavailable') return labels.waitingConnection;
     if (pausedReason === 'provider_archived') return labels.providerArchived;
+    if (pausedReason === 'provider_stop_pending') return labels.providerStopPending;
     return labels.deliveryPaused;
   }
   return item.status === 'queued' ? labels.queued : null;

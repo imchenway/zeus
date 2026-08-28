@@ -276,7 +276,7 @@ export type NativeConversationRunState =
   | { type: 'dispatching'; submissionId: string }
   | { type: 'active'; turnId: string; phase: 'prework' | 'final_answer' }
   | { type: 'waiting'; turnId: string; requestId: string; reason: 'approval' | 'user_input' }
-  | { type: 'paused'; reason: 'interrupted' | 'transport_unavailable' | 'provider_archived' | 'recovery_required' | 'runtime_rejected' | 'conflict_preparing' | 'conflict_preparation_failed' };
+  | { type: 'paused'; reason: 'interrupted' | 'transport_unavailable' | 'provider_archived' | 'provider_stop_pending' | 'recovery_required' | 'runtime_rejected' | 'conflict_preparing' | 'conflict_preparation_failed' };
 
 export type NativeQueueWaitReason =
   | 'current_turn'
@@ -288,6 +288,7 @@ export type NativeQueueWaitReason =
   | 'interrupted'
   | 'transport_unavailable'
   | 'provider_archived'
+  | 'provider_stop_pending'
   | 'recovery_required'
   | 'runtime_rejected'
   | 'conflict_preparing'

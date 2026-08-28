@@ -24,7 +24,7 @@ export interface ExecutionHostStopActiveFailure {
   message: string;
 }
 
-/** Provider interrupt 只等待 RPC 接纳，不等待远端 turn 终态；本机事实提交后才返回。 */
+/** Provider interrupt 在有界窗口内确认终态；超时退出时以 providerOutcomeUnconfirmed 明确留下恢复边界。 */
 export interface ExecutionHostStopActiveResult {
   requestedTurnCount: number;
   providerInterruptFailureCount: number;
@@ -34,7 +34,7 @@ export interface ExecutionHostStopActiveResult {
   stoppedCommandRunCount: number;
   failedGoalPauseCount: number;
   failedTurns: ExecutionHostStopActiveFailure[];
-  providerOutcomeUnconfirmed: true;
+  providerOutcomeUnconfirmed: boolean;
   requestedAt: string;
 }
 

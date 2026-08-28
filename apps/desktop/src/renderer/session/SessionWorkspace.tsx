@@ -2419,6 +2419,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     onLatestContentVisibilityChange={props.onLatestContentVisibilityChange}
                     creationStatus={props.creationStatus}
                     onEditUserItem={transcriptInteractionsEnabled ? actions.onEditUserItem : undefined}
+                    onRecoverQueue={transcriptInteractionsEnabled ? actions.onRecoverQueue : undefined}
+                    onCancelQueuedSubmission={transcriptInteractionsEnabled ? actions.onDeleteQueuedSubmission : undefined}
                     openPlanItemKey={planWorkspaceItemKey}
                     onOpenPlan={
                       transcriptInteractionsEnabled
