@@ -1,4 +1,4 @@
-import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { calculateUncachedInputTokens, type CodexOfficialRateWindow, type UsageOverviewSnapshot, type UsageProviderSummary } from '@zeus/shared';
 import type { AppShellSettings, DashboardClient } from '../apiClient.js';
 import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
@@ -21,9 +21,11 @@ const copy = {
     quota: '配额剩余',
     noQuota: '暂无官方配额数据',
     today: '今日 Zeus Token',
-    todayShort: '今日 Token',
-    sevenDays: '近 7 日 Token',
-    sevenDaysShort: '7 日 Token',
+    todayShort: '今日 Zeus Token',
+    todaySummary: '今日',
+    sevenDays: '近 7 日 Zeus Token',
+    sevenDaysShort: '近 7 日 Zeus',
+    sevenDaysSummary: '近 7 日',
     cache: '缓存命中率',
     cacheUnsupported: '供应源未提供',
     cost: '近 7 日估算费用',
@@ -32,12 +34,11 @@ const copy = {
     localEstimate: 'Zeus 本地估算',
     localUsage: 'Zeus 本地统计',
     localUsageIncomplete: 'Zeus 本地记录不完整',
-    officialCredits: '官方积分余额',
-    unlimited: '不限量',
-    recentUsage: '近 7 日用量',
-    accountRecentUsage: '账户近 7 日用量',
+    recentUsage: 'Zeus 本地 Token',
+    accountRecentUsage: 'Codex 账户 Token',
     officialUsageUnavailable: '官方账户暂未提供日用量',
     insufficientHistory: '用量积累后显示趋势',
+    missingDay: '暂无数据',
     fullStatistics: '查看完整统计',
     showZeus: '显示 Zeus',
     quitZeus: '退出 Zeus',
@@ -50,8 +51,7 @@ const copy = {
     resets: '重置于',
     subscription: '订阅账户',
     api: 'API 供应源',
-    deleted: '配置已移除，历史用量仍保留',
-    calls: '次调用',
+    deleted: '配置已移除，历史用量保留',
   },
   'en-US': {
     all: 'All',
@@ -62,9 +62,11 @@ const copy = {
     quota: 'Quota remaining',
     noQuota: 'No official quota data',
     today: 'Zeus tokens today',
-    todayShort: 'Today',
-    sevenDays: 'Tokens in 7 days',
-    sevenDaysShort: '7 days',
+    todayShort: 'Zeus today',
+    todaySummary: 'Today',
+    sevenDays: 'Zeus tokens in 7 days',
+    sevenDaysShort: 'Zeus · 7 days',
+    sevenDaysSummary: '7 days',
     cache: 'Cache hit rate',
     cacheUnsupported: 'Not provided',
     cost: 'Estimated cost · 7 days',
@@ -73,12 +75,11 @@ const copy = {
     localEstimate: 'Zeus local estimate',
     localUsage: 'Zeus local usage',
     localUsageIncomplete: 'Incomplete Zeus local history',
-    officialCredits: 'Official credits',
-    unlimited: 'Unlimited',
-    recentUsage: 'Usage · 7 days',
-    accountRecentUsage: 'Account usage · 7 days',
+    recentUsage: 'Zeus local tokens',
+    accountRecentUsage: 'Codex account tokens',
     officialUsageUnavailable: 'Official daily account usage is unavailable',
     insufficientHistory: 'A trend appears after usage is recorded',
+    missingDay: 'No data',
     fullStatistics: 'View full statistics',
     showZeus: 'Show Zeus',
     quitZeus: 'Quit Zeus',
@@ -91,8 +92,7 @@ const copy = {
     resets: 'Resets',
     subscription: 'Subscription',
     api: 'API provider',
-    deleted: 'Configuration removed; history retained',
-    calls: 'calls',
+    deleted: 'Configuration removed; usage history retained',
   },
 } as const;
 
@@ -164,6 +164,7 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
     storeSelection(providerId);
   };
   const selectedProvider = snapshot?.providers.find((provider) => provider.providerId === selection) ?? null;
+  const selectedProviderName = selectedProvider ? providerDisplayName(selectedProvider) : null;
   const updatedAt = selectedProvider?.updatedAt ?? snapshot?.updatedAt;
   const stale = Boolean(selectedProvider?.stale || error);
   const freshness = updatedAt ? formatUpdatedAt(updatedAt, surfaceSettings.language, stale ? text.stale : text.updated) : loading ? text.loading : error ? text.failed : text.loading;
@@ -178,7 +179,7 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
             </span>
             <span>
               <strong>Zeus</strong>
-              <small>{selectedProvider?.name ?? text.allProviders}</small>
+              <small title={selectedProvider?.deleted ? (selectedProviderName ?? undefined) : undefined}>{selectedProvider ? providerDisplayName(selectedProvider, true) : text.allProviders}</small>
             </span>
           </span>
           <span className="menu-bar-usage-freshness" data-loading={loading ? 'true' : 'false'} data-stale={stale && !loading ? 'true' : 'false'} aria-live="polite">
@@ -192,8 +193,16 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
             {text.all}
           </button>
           {snapshot?.providers.map((provider) => (
-            <button key={provider.providerId} type="button" role="tab" aria-selected={selection === provider.providerId} onClick={() => select(provider.providerId)}>
-              {provider.name}
+            <button
+              key={provider.providerId}
+              type="button"
+              role="tab"
+              aria-label={providerDisplayName(provider)}
+              aria-selected={selection === provider.providerId}
+              title={provider.deleted ? providerDisplayName(provider) : undefined}
+              onClick={() => select(provider.providerId)}
+            >
+              {providerDisplayName(provider, true)}
             </button>
           ))}
         </nav>
@@ -263,18 +272,24 @@ function AllProviders(props: { providers: UsageProviderSummary[]; language: Lang
     <section className="menu-bar-usage-provider-list" aria-label={text.allProviders}>
       {props.providers.map((provider) => {
         const urgent = findMostUrgentWindow(provider.rateLimitWindows);
+        const fullName = providerDisplayName(provider);
+        const providerDetail = provider.deleted
+          ? text.deleted
+          : provider.kind === 'subscription'
+            ? [provider.planType || text.subscription, urgent ? `${text.quota} ${formatPercent(urgent.remainingPercent / 100, props.language)}` : null].filter(Boolean).join(' · ')
+            : text.api;
         return (
-          <button key={provider.providerId} type="button" onClick={() => props.onSelect(provider.providerId)}>
+          <button key={provider.providerId} type="button" title={provider.deleted ? fullName : undefined} onClick={() => props.onSelect(provider.providerId)}>
             <span className="menu-bar-usage-provider-symbol" aria-hidden="true">
-              {provider.name.slice(0, 1).toUpperCase()}
+              {fullName.slice(0, 1).toUpperCase()}
             </span>
             <span className="menu-bar-usage-provider-copy">
-              <strong>{provider.name}</strong>
-              <small>{provider.deleted ? text.deleted : provider.kind === 'subscription' ? provider.planType || text.subscription : text.api}</small>
+              <strong title={provider.deleted ? fullName : undefined}>{fullName}</strong>
+              <small>{providerDetail}</small>
             </span>
             <span className="menu-bar-usage-provider-value">
-              <strong>{urgent ? formatPercent(urgent.remainingPercent / 100, props.language) : formatTokens(provider.todayLocal.totalTokens, props.language)}</strong>
-              <small>{urgent ? text.quota : text.todayShort}</small>
+              <strong>{formatIncompleteTokens(provider.todayLocal.totalTokens, provider.todayLocalComplete, props.language)}</strong>
+              <small>{text.todayShort}</small>
             </span>
             <Chevron />
           </button>
@@ -287,50 +302,25 @@ function AllProviders(props: { providers: UsageProviderSummary[]; language: Lang
 function ProviderDetail(props: { provider: UsageProviderSummary; language: Language }) {
   const { provider, language } = props;
   const text = copy[language];
-  const urgent = useMemo(() => findMostUrgentWindow(provider.rateLimitWindows), [provider.rateLimitWindows]);
+  const urgent = findMostUrgentWindow(provider.rateLimitWindows);
   const cacheAvailable = provider.cacheUsageAvailable ?? (provider.providerId === 'codex' || provider.sevenDayLocal.cachedInputTokens > 0 || provider.sevenDayLocal.cacheWriteInputTokens > 0);
-  const todayLocalComplete = provider.todayLocalComplete === true;
   const sevenDayLocalComplete = provider.sevenDayLocalComplete === true;
-  const todayLocalValue = formatTokens(provider.todayLocal.totalTokens, language);
   return (
     <article className="menu-bar-usage-detail">
-      {provider.kind === 'subscription' ? (
-        <section className="menu-bar-usage-quota" aria-label={text.quota}>
-          <div>
-            <span>{urgent?.limitName || text.quota}</span>
-            <strong>{urgent ? formatPercent(urgent.remainingPercent / 100, language) : '—'}</strong>
-            <small>{urgent?.resetsAt ? formatReset(urgent.resetsAt, language, text.resets) : text.noQuota}</small>
-          </div>
-          <span
-            className="menu-bar-usage-ring"
-            style={{ '--remaining': urgent?.remainingPercent ?? 0 } as CSSProperties}
-            role="progressbar"
-            aria-label={text.quota}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={urgent?.remainingPercent}
-          >
-            <i aria-hidden="true" />
-          </span>
-        </section>
-      ) : (
-        <section className="menu-bar-usage-api-hero">
-          <span>{text.today}</span>
-          <strong>{formatTokens(provider.todayLocal.totalTokens, language)}</strong>
-          <small>
-            {formatTokens(provider.sevenDayLocal.totalTokens, language)} · {provider.sevenDayLocal.turnCount} {text.calls}
-          </small>
-        </section>
-      )}
+      <section className="menu-bar-usage-token-hero" aria-label={text.today}>
+        <span>{text.today}</span>
+        <strong>{formatIncompleteTokens(provider.todayLocal.totalTokens, provider.todayLocalComplete, language)}</strong>
+        <small>{provider.todayLocalComplete ? text.localUsage : text.localUsageIncomplete}</small>
+      </section>
 
-      {provider.rateLimitWindows.length > 0 ? <RateWindows windows={provider.rateLimitWindows} language={language} /> : null}
+      {urgent ? <QuotaSummary window={urgent} language={language} /> : null}
 
       <dl className="menu-bar-usage-metrics">
         <Metric
-          label={provider.kind === 'api' ? text.sevenDaysShort : text.today}
-          accessibleLabel={provider.kind === 'api' ? text.sevenDays : text.today}
-          value={provider.kind === 'api' ? formatTokens(provider.sevenDayLocal.totalTokens, language) : todayLocalComplete ? todayLocalValue : `≥${todayLocalValue}`}
-          hint={provider.kind === 'subscription' ? (todayLocalComplete ? text.localUsage : text.localUsageIncomplete) : undefined}
+          label={text.sevenDaysShort}
+          accessibleLabel={text.sevenDays}
+          value={formatIncompleteTokens(provider.sevenDayLocal.totalTokens, provider.sevenDayLocalComplete, language)}
+          hint={provider.sevenDayLocalComplete ? text.localUsage : text.localUsageIncomplete}
         />
         <Metric
           label={text.cache}
@@ -344,34 +334,24 @@ function ProviderDetail(props: { provider: UsageProviderSummary; language: Langu
         <Metric label={text.costShort} accessibleLabel={text.cost} value={sevenDayLocalComplete ? formatCost(provider, language, text.noPrice) : '—'} hint={sevenDayLocalComplete ? text.localEstimate : text.localUsageIncomplete} />
       </dl>
 
-      {provider.officialCreditsUnlimited || provider.officialCreditBalance ? (
-        <div className="menu-bar-usage-credit">
-          <span>{text.officialCredits}</span>
-          <strong>{provider.officialCreditsUnlimited ? text.unlimited : provider.officialCreditBalance}</strong>
-        </div>
-      ) : null}
-
       <DailyBars provider={provider} language={language} />
     </article>
   );
 }
 
-function RateWindows(props: { windows: CodexOfficialRateWindow[]; language: Language }) {
+function QuotaSummary(props: { window: CodexOfficialRateWindow; language: Language }) {
   const text = copy[props.language];
+  const label = props.window.limitName || windowLabel(props.window, props.language);
   return (
-    <section className="menu-bar-usage-windows" aria-label={text.quota}>
-      {props.windows.slice(0, 3).map((window, index) => (
-        <div key={`${window.limitId ?? 'limit'}-${window.kind}-${index}`}>
-          <span>
-            <strong>{window.limitName || windowLabel(window, props.language)}</strong>
-            <small>{window.resetsAt ? formatReset(window.resetsAt, props.language, text.resets) : ''}</small>
-          </span>
-          <span className="menu-bar-usage-progress" role="progressbar" aria-label={window.limitName || text.quota} aria-valuemin={0} aria-valuemax={100} aria-valuenow={window.remainingPercent}>
-            <i style={{ inlineSize: `${Math.max(0, Math.min(100, window.remainingPercent))}%` }} />
-          </span>
-          <b>{formatPercent(window.remainingPercent / 100, props.language)}</b>
-        </div>
-      ))}
+    <section className="menu-bar-usage-quota-summary" aria-label={text.quota}>
+      <span>
+        <strong>{label}</strong>
+        <small>{props.window.resetsAt ? formatReset(props.window.resetsAt, props.language, text.resets) : text.noQuota}</small>
+      </span>
+      <span className="menu-bar-usage-progress" role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={props.window.remainingPercent}>
+        <i style={{ inlineSize: `${Math.max(0, Math.min(100, props.window.remainingPercent))}%` }} />
+      </span>
+      <b>{formatPercent(props.window.remainingPercent / 100, props.language)}</b>
     </section>
   );
 }
@@ -388,27 +368,45 @@ function DailyBars(props: { provider: UsageProviderSummary; language: Language }
         <small>{text.officialUsageUnavailable}</small>
       </div>
     );
-  if (buckets.length === 0)
+  if (buckets.length === 0 && (accountUsage || !props.provider.collectionStartedAt))
     return (
       <div className="menu-bar-usage-chart-empty">
         <span>{label}</span>
         <small>{text.insufficientHistory}</small>
       </div>
     );
-  const maximum = Math.max(...buckets.map((bucket) => bucket.totalTokens), 1);
+  const slots = buildDailySlots(props.provider, buckets, accountUsage);
+  const maximum = Math.max(...slots.flatMap((slot) => (slot.totalTokens && slot.totalTokens > 0 ? [slot.totalTokens] : [])), 1);
+  const todayValue = accountUsage ? formatOptionalTokens(props.provider.accountTodayTokens, props.language) : formatIncompleteTokens(props.provider.todayLocal.totalTokens, props.provider.todayLocalComplete, props.language);
+  const sevenDayValue = accountUsage ? formatOptionalTokens(props.provider.accountSevenDayTokens, props.language) : formatIncompleteTokens(props.provider.sevenDayLocal.totalTokens, props.provider.sevenDayLocalComplete, props.language);
   return (
-    <figure className="menu-bar-usage-bars" aria-label={`${props.provider.name} ${label}`}>
+    <figure className="menu-bar-usage-bars" aria-label={`${providerDisplayName(props.provider)} ${label}`}>
       <figcaption>
         <span>{label}</span>
-        <strong>{accountUsage ? formatOptionalTokens(props.provider.accountSevenDayTokens, props.language) : formatTokens(props.provider.sevenDayLocal.totalTokens, props.language)}</strong>
+        <dl>
+          <div>
+            <dt>{text.todaySummary}</dt>
+            <dd>{todayValue}</dd>
+          </div>
+          <div>
+            <dt>{text.sevenDaysSummary}</dt>
+            <dd>{sevenDayValue}</dd>
+          </div>
+        </dl>
       </figcaption>
-      <div>
-        {buckets.map((bucket) => (
-          <span key={bucket.date} aria-label={`${formatShortDate(bucket.date, props.language)} ${formatTokens(bucket.totalTokens, props.language)}`} title={`${bucket.date} · ${formatTokens(bucket.totalTokens, props.language)} Token`}>
-            <i style={{ blockSize: `${Math.max(8, (bucket.totalTokens / maximum) * 100)}%` }} />
-            <small>{formatShortDate(bucket.date, props.language)}</small>
-          </span>
-        ))}
+      <div className="menu-bar-usage-bars-plot">
+        {slots.map((slot) => {
+          const state = slot.totalTokens === null ? 'missing' : slot.totalTokens === 0 ? 'zero' : 'positive';
+          const value = slot.totalTokens === null ? text.missingDay : `${formatTokens(slot.totalTokens, props.language)} Token`;
+          return (
+            <span key={slot.date} data-state={state} aria-label={`${formatShortDate(slot.date, props.language)} ${value}`} title={`${slot.date} · ${value}`}>
+              <span className="menu-bar-usage-bar-slot">
+                {slot.totalTokens === null ? <em aria-hidden="true">—</em> : <i style={{ blockSize: slot.totalTokens === 0 ? '2px' : `${Math.max(10, (slot.totalTokens / maximum) * 100)}%` }} />}
+              </span>
+              <small>{formatShortDate(slot.date, props.language)}</small>
+            </span>
+          );
+        })}
       </div>
     </figure>
   );
@@ -446,6 +444,42 @@ function findMostUrgentWindow(windows: CodexOfficialRateWindow[]): CodexOfficial
   return windows.reduce<CodexOfficialRateWindow | undefined>((selected, candidate) => (!selected || candidate.remainingPercent < selected.remainingPercent ? candidate : selected), undefined);
 }
 
+function providerDisplayName(provider: UsageProviderSummary, compact = false): string {
+  const name = provider.deleted ? provider.sourceId.trim() || provider.providerId : provider.name;
+  if (!compact || !provider.deleted || name.length <= 22) return name;
+  return `${name.slice(0, 12)}…${name.slice(-8)}`;
+}
+
+function buildDailySlots(provider: UsageProviderSummary, buckets: ReadonlyArray<{ date: string; totalTokens: number }>, accountUsage: boolean): Array<{ date: string; totalTokens: number | null }> {
+  const bucketsByDate = new Map(buckets.map((bucket) => [bucket.date, bucket.totalTokens]));
+  const collectionStart = accountUsage ? null : timestampDateKey(provider.collectionStartedAt);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(today);
+    date.setDate(date.getDate() - 6 + index);
+    const dateKey = localDateKey(date);
+    const recorded = bucketsByDate.get(dateKey);
+    return {
+      date: dateKey,
+      totalTokens: recorded === undefined ? (!accountUsage && collectionStart !== null && dateKey >= collectionStart ? 0 : null) : Math.max(0, recorded),
+    };
+  });
+}
+
+function timestampDateKey(value: string | null): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : localDateKey(date);
+}
+
+function localDateKey(value: Date): string {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function windowLabel(window: CodexOfficialRateWindow, language: Language): string {
   if (!window.windowDurationMins) return copy[language].quota;
   if (window.windowDurationMins >= 24 * 60) return language === 'zh-CN' ? `${Math.round(window.windowDurationMins / 1_440)} 日窗口` : `${Math.round(window.windowDurationMins / 1_440)} day window`;
@@ -454,6 +488,11 @@ function windowLabel(window: CodexOfficialRateWindow, language: Language): strin
 
 function formatTokens(value: number, language: Language): string {
   return new Intl.NumberFormat(language, { notation: 'compact', maximumFractionDigits: 1 }).format(value);
+}
+
+function formatIncompleteTokens(value: number, complete: boolean | undefined, language: Language): string {
+  const formatted = formatTokens(value, language);
+  return complete === true ? formatted : `≥${formatted}`;
 }
 
 function formatOptionalTokens(value: number | null | undefined, language: Language): string {
@@ -479,7 +518,7 @@ function formatUpdatedAt(value: string, language: Language, prefix: string): str
 }
 
 function formatShortDate(value: string, language: Language): string {
-  return new Intl.DateTimeFormat(language, { weekday: 'narrow' }).format(new Date(`${value}T12:00:00`));
+  return new Intl.DateTimeFormat(language, { month: 'numeric', day: 'numeric' }).format(new Date(`${value}T12:00:00`));
 }
 
 function readStoredSnapshot(): UsageOverviewSnapshot | null {
