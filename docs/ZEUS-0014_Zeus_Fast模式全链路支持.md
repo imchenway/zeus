@@ -175,3 +175,10 @@ SQLite 只读复核确认提交输入的三层事实：Fast 为请求 `priority`
 - 最终组合态重新执行 `pnpm package:mac`，生成 `dist/test/mac-arm64/Zeus Test.app` 与 `Zeus-Test-0.3.69-arm64.dmg`。包健康检查确认 54 个 Renderer assets、Main、两个 Preload 与更新助手完整；反读 bundle ID 为 `dev.hypha.zeus.test`、版本为 `0.3.69`，严格 deep codesign 与 DMG 校验均通过；签名仍为本机 ad-hoc 且未公证。
 - 新增组合差异只涉及 ZEUS-0327 的环境弹层层级/浏览器暂停、ZEUS-0359 的待处理请求投影和本地服务导出，以及独立菜单栏状态 UI；没有改变 Fast 偏好、能力判定、请求档位、调度档位或 Provider 用量链路。逐文件差异审计、最终组合态类型/构建/行为探针和当前包检查均通过，因此沿用前一节已经在同一 `test`、同一 `0.3.69` 测试身份上完成的 Fast GUI 冷重启与真实 Provider `priority` 证据，不因随后无关合入重复启动第二个同 bundle ID 实例。
 - 另一任务的独立 `Zeus Test` 实例仍在运行；本任务没有关闭、借用或操作该实例。ZEUS-0014 的独立实例已清理，最终验收结论为通过，可以执行本地 `main` 合入；全程不 push。
+
+## 2026-08-28 本地 `main` 合入完成
+
+- 合入时 `test` 与 `main` 仍在接收其他任务提交。为避免夹带随后进入 `test`、不属于本轮验收范围的 ZEUS-0296，最终来源冻结为已验收并已固化记录的 `test@2e347d6055e3fc8a74ee494b26fb71ca0b025cfc`；当前 `main` 基线为 `2021a9d`，已包含 ZEUS-0327、ZEUS-0364 与 ZEUS-0369。
+- 三方合并只有 ZEUS-0327 任务文档发生内容冲突；保留 `main` 已记录的 `test`/`main` 合入事实与措辞。ZEUS-0014 源码全部自动合并，最终暂存范围为 Fast 偏好、界面入口、请求/调度/Provider 档位、用量、降级和相应中文文档，没有夹带冻结点之后的 `test` 提交。
+- 合入中的最终 `main` 组合态重新执行 `pnpm lint`、`pnpm typecheck`（含架构门禁）、`pnpm build`、Renderer 事件流、设置命令、会话命令、会话调度命令与 Subagent 详情行为探针，全部通过；两种 diff check 与未解决冲突检查均通过。
+- 本地 merge commit 为 `55f201364a25942b6bc9c4430fbd8ea32fcf939e`。祖先复核确认已验收冻结点 `2e347d6` 与功能提交 `e673318` 均已进入 `main`，工作树和索引干净，不存在 `MERGE_HEAD`；未执行 push 或远端刷新。
