@@ -569,6 +569,15 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
     if (!execution.conversationId) throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_CONVERSATION_MISSING', '数字员工执行缺少关联会话身份。', true);
     const conversation = options.conversations.getById(execution.conversationId);
     if (!conversation || conversation.taskId !== execution.taskId || conversation.projectId !== execution.projectId) throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_CONVERSATION_MISSING', '数字员工关联会话已经不可用。', true);
+    if (execution.executionMode === 'staged' && execution.status === 'waiting') {
+      const candidateId = typeof execution.deliveryState.candidateDeliverableId === 'string' ? execution.deliveryState.candidateDeliverableId : null;
+      const candidate = candidateId ? options.stages.getDeliverable(candidateId) : null;
+      if (candidate && candidate.taskId === execution.taskId && candidate.stageId === execution.currentStageId && candidate.status === 'submitted') {
+        // 候选交付物已耐久化后，等待态只由用户的交接、返工或最终确认命令推进。
+        // 重复监控已完成会话会徒增执行修订，使用户刚打开的确认弹窗立即过期。
+        return;
+      }
+    }
     if (conversation.stage === 'waiting_user' || conversation.stage === 'waiting_approval' || conversation.providerState === 'waiting') {
       if (execution.status !== 'waiting') publishExecution(options.executions.update(execution.id, { status: 'waiting' }));
       return;
