@@ -17,6 +17,7 @@ import type {
   ZeusConversationServerRequestRecord,
   ZeusConversationSubmissionRecord,
   ZeusConversationTurnRecord,
+  ZeusConversationRecord,
   ZeusConversationWithMessagesRecord,
 } from '@zeus/storage';
 import type { NativeConversationAttachmentInput, NativeSubmissionError, RespondNativeRequestInput } from './codexNativeConversationContracts.js';
@@ -64,7 +65,22 @@ export function stripRequestTransport(response: CodexServerRequestResponse): Res
   return effectiveResponse as RespondNativeRequestInput['response'];
 }
 
-export function nativePendingRequestProjection(request: ZeusConversationServerRequestRecord): Record<string, unknown> {
+export type FileApprovalTargetAuditStatus = 'auditable' | 'outside_project' | 'provider_root_scope' | 'unavailable';
+
+export interface FileApprovalTargetAudit {
+  status: FileApprovalTargetAuditStatus;
+  paths: string[];
+}
+
+export function nativePendingRequestProjection(
+  request: ZeusConversationServerRequestRecord,
+  authority?: {
+    conversation: ZeusConversationRecord;
+    projectRoot: string | null;
+    providerItems: ConversationProviderItemRepository;
+  },
+): Record<string, unknown> {
+  const payload = parseJsonRecord(request.payloadJson);
   return {
     id: request.id,
     conversationId: request.conversationId,
@@ -73,13 +89,18 @@ export function nativePendingRequestProjection(request: ZeusConversationServerRe
     generationId: request.transportGenerationId,
     type: request.requestKind === 'request_user_input' ? 'userInput' : request.requestKind === 'mcp' ? 'MCP' : request.requestKind,
     status: request.status,
-    payload: parseJsonRecord(request.payloadJson),
+    payload,
     response: request.responseJson ? parseJsonRecord(request.responseJson) : null,
     containsSecret: request.containsSecret,
     expiresAt: request.expiresAt,
     autoResolutionState: request.autoResolutionState,
     createdAt: request.createdAt,
     resolvedAt: request.resolvedAt,
+    ...(request.requestKind === 'file' && authority
+      ? {
+          fileApproval: inspectFileApprovalTargets(payload, authority.conversation, authority.projectRoot, authority.providerItems),
+        }
+      : {}),
   };
 }
 
@@ -470,23 +491,47 @@ export function isAdvertisedCommandDecision(payload: Record<string, unknown>, de
 }
 
 export function hasAuditableFileApprovalTarget(payload: Record<string, unknown>, conversation: ZeusConversationWithMessagesRecord, context: ConversationDispatchContext, providerItems: ConversationProviderItemRepository): boolean {
+  return inspectFileApprovalTargets(payload, conversation, context.projectLocalPath, providerItems).status === 'auditable';
+}
+
+export function inspectFileApprovalTargets(payload: Record<string, unknown>, conversation: ZeusConversationRecord, projectRoot: string | null, providerItems: ConversationProviderItemRepository): FileApprovalTargetAudit {
+  if (!projectRoot || !existingDirectoryRealpath(projectRoot)) return { status: 'unavailable', paths: [] };
+
+  const grantRoot = payload.grantRoot;
+  if (grantRoot !== undefined && grantRoot !== null) {
+    return {
+      status: 'provider_root_scope',
+      paths: typeof grantRoot === 'string' && grantRoot.trim() ? [grantRoot.trim()] : [],
+    };
+  }
+
   const directTargetKeys = ['path', 'filePath', 'targetPath'] as const;
   const directTargets: string[] = [];
   for (const key of directTargetKeys) {
     const value = payload[key];
     if (value === undefined || value === null) continue;
-    if (typeof value !== 'string' || !value.trim()) return false;
+    if (typeof value !== 'string' || !value.trim()) return { status: 'unavailable', paths: [] };
     directTargets.push(value.trim());
   }
-  if (directTargets.length > 0) return directTargets.every((target) => isAuditableProjectTarget(target, context.projectLocalPath));
+  if (directTargets.length > 0) {
+    return {
+      status: directTargets.every((target) => isAuditableProjectTarget(target, projectRoot)) ? 'auditable' : 'outside_project',
+      paths: [...new Set(directTargets)],
+    };
+  }
 
-  if (typeof payload.itemId !== 'string' || !payload.itemId || !conversation.providerThreadId) return false;
+  if (typeof payload.itemId !== 'string' || !payload.itemId || !conversation.providerThreadId) return { status: 'unavailable', paths: [] };
   const item = providerItems.getByProvider(conversation.providerThreadId, payload.itemId);
-  if (!item || item.conversationId !== conversation.id || item.itemType !== 'fileChange') return false;
+  if (!item || item.conversationId !== conversation.id || item.itemType !== 'fileChange') return { status: 'unavailable', paths: [] };
   const itemPayload = parseJsonRecord(item.payloadJson);
-  if (!Array.isArray(itemPayload.changes) || itemPayload.changes.length === 0) return false;
+  if (!Array.isArray(itemPayload.changes) || itemPayload.changes.length === 0) return { status: 'unavailable', paths: [] };
   const linkedTargets = itemPayload.changes.map((change) => (isRecord(change) && typeof change.path === 'string' && change.path.trim() ? change.path.trim() : null));
-  return linkedTargets.every((target): target is string => target !== null) && linkedTargets.every((target) => isAuditableProjectTarget(target, context.projectLocalPath));
+  if (!linkedTargets.every((target): target is string => target !== null)) return { status: 'unavailable', paths: [] };
+  const paths = [...new Set(linkedTargets)];
+  return {
+    status: paths.every((target) => isAuditableProjectTarget(target, projectRoot)) ? 'auditable' : 'outside_project',
+    paths,
+  };
 }
 
 export function isAuditableProjectTarget(value: string, projectRoot: string): boolean {

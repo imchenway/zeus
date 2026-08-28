@@ -35,6 +35,7 @@ export const conversationEventTypeRegistry = {
     'conversation.turn.started',
     'conversation.turn.completed',
     'conversation.request.created',
+    'conversation.request.changed',
     'conversation.request.resolved',
     'conversation.request.snoozed',
     'conversation.submission.accepted',

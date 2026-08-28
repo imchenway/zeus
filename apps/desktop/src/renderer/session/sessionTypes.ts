@@ -315,6 +315,10 @@ export interface NativePendingRequest {
   autoResolutionState?: 'none' | 'scheduled' | 'snoozed';
   createdAt: string;
   resolvedAt: string | null;
+  fileApproval?: {
+    status: 'auditable' | 'outside_project' | 'provider_root_scope' | 'unavailable';
+    paths: string[];
+  };
 }
 
 export interface NativePlanImplementationRequest {
@@ -1450,6 +1454,15 @@ export type NativeConversationEvent =
       }
     >
   | NativeEvent<
+      'conversation.request.changed',
+      NativeEventIdentity & {
+        turnId?: string;
+        requestId: string;
+        requestKind: string;
+        request: NativePendingRequest;
+      }
+    >
+  | NativeEvent<
       'conversation.request.resolved',
       NativeEventIdentity & {
         turnId?: string;
@@ -1500,6 +1513,7 @@ export const nativeConversationEventTypes = new Set<NativeConversationEvent['typ
   'conversation.queue.changed',
   'conversation.submission.steering',
   'conversation.request.created',
+  'conversation.request.changed',
   'conversation.request.resolved',
   'conversation.request.snoozed',
   'conversation.plan_implementation_request.changed',
