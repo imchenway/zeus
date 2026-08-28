@@ -1,14 +1,14 @@
 import type {
-    ConversationAttentionKind,
-    ConversationRepository,
-    ConversationServerRequestRepository,
-    ConversationSubmissionRepository,
-    ConversationTurnRepository,
-    ProjectRepository,
-    TaskRepository,
-    TaskWorkspaceRepository,
-    ZeusConversationRecord,
-    ZeusTaskWorkspaceRecord,
+  ConversationAttentionKind,
+  ConversationRepository,
+  ConversationServerRequestRepository,
+  ConversationSubmissionRepository,
+  ConversationTurnRepository,
+  ProjectRepository,
+  TaskRepository,
+  TaskWorkspaceRepository,
+  ZeusConversationRecord,
+  ZeusTaskWorkspaceRecord,
 } from '@zeus/storage';
 
 export type ProjectConversationAttentionState = 'idle' | 'running' | 'unread' | 'completed' | 'failed' | 'interrupted' | 'reply_required';
@@ -26,7 +26,7 @@ export interface NativeConversationChoiceProjectionContext {
 interface ConversationChoiceQueryPorts {
   projects: Pick<ProjectRepository, 'list' | 'listArchived' | 'getById'>;
   tasks: Pick<TaskRepository, 'getById' | 'listByProject'>;
-    conversations: Pick<ConversationRepository, 'getById' | 'listRecordsByProject' | 'listRecordsByTask' | 'listUnarchivedRecords' | 'meaningfulActivityAt'>;
+  conversations: Pick<ConversationRepository, 'getById' | 'listRecordsByProject' | 'listRecordsByTask' | 'listUnarchivedRecords' | 'meaningfulActivityAt'>;
   requests: Pick<ConversationServerRequestRepository, 'listPending' | 'listPendingByConversation'>;
   submissions: Pick<ConversationSubmissionRepository, 'listRecoverable' | 'getFirstByConversation'>;
   turns: Pick<ConversationTurnRepository, 'listInProgress'>;
@@ -200,11 +200,11 @@ export class ConversationChoiceQueryApplication {
    * 只有未归档、Provider 从未绑定且首次提交已被取消/删除的原生壳才不进入任务历史。
    */
   private isMeaningfulTaskHistoryItem(conversation: ZeusConversationRecord): boolean {
-      if (conversation.archived) return true;
+    if (conversation.archived) return true;
     if (conversation.transportKind !== 'codex_native' || conversation.providerThreadId?.trim()) return true;
     const firstSubmission = this.ports.submissions.getFirstByConversation(conversation.id);
-      const hasMessages = (this.ports.conversations.getById(conversation.id)?.messages.length ?? 0) > 0;
-      return hasMessages || Boolean(firstSubmission && firstSubmission.status !== 'cancelled' && firstSubmission.status !== 'deleted');
+    const hasMessages = (this.ports.conversations.getById(conversation.id)?.messages.length ?? 0) > 0;
+    return hasMessages || Boolean(firstSubmission && firstSubmission.status !== 'cancelled' && firstSubmission.status !== 'deleted');
   }
 
   private isEphemeral(conversation: Pick<ZeusConversationRecord, 'id'>): boolean {
