@@ -157,3 +157,21 @@ SQLite 只读复核确认提交输入的三层事实：Fast 为请求 `priority`
 - 官方导入后的同一 Zeus 会话新 turn 仍复用原生 Provider session `01a045f5-7aed-7151-b615-ea3b1632212d`，Computer Use 继续报告缺少 `NODE_REPL_TRUSTED_SERVICES`。因此上一节“下一轮或新会话”的口径收紧为：必须新建任务会话，单纯在当前会话发送下一条消息不足以切换 Provider session。
 - 当前还有另一任务 `ZEUS-0358` 的同 bundle ID `Zeus Test.app` 使用独立资料根运行。本任务不关闭、借用、复用或操作该实例；新任务会话恢复 Computer Use 后仍需等待该实例自然退出，再启动 ZEUS-0014 的最终测试包。
 - `test` 已包含干净 `main` 的 `v0.3.69`，两边工作树均干净。GUI/Provider 验收与最终 main merge 仍未完成，没有 push。
+
+## 2026-08-28 独立 Zeus Test GUI 与真实 Provider 验收
+
+- 等待其他任务的同 bundle ID 实例自然退出后，使用最终 `0.3.69` 测试包、独立资料根 `/tmp/zeus-0014-final.MI1v2x` 和 `ZEUS_TEST_DISPLAY_ID=3` 启动。主进程日志两次确认首窗均以 `matchKind=first-launch` 创建在非主外接屏 ID 3，实际边界为 `x=-1268, y=268, 1240×820`，`corrected=false`。
+- 在独立资料根中新建项目 `ZEUS-0014 验收`。项目新会话初始为 `Codex / GPT-5.6-Sol`、`low`、Standard；真实点击 Fast 后界面显示 `速度：Fast`。SQLite 只读复核确认项目配置写入 `gpt-5.6-sol -> priority`，且只产生一条 `project.service_tier_preference.updated` 审计记录。
+- 将模型切换到 `GPT-5.6-Luna` 后界面回到 Standard，再切回 `GPT-5.6-Sol` 后恢复 Fast，证明偏好按模型身份隔离。使用同一资料根冷重启后，项目与 Sol/Fast 选择均恢复；首窗仍位于外接屏 ID 3。
+- 从任务 `ZEUS-0001 Fast 模式任务入口验收` 执行“推送到新会话”，生成独立会话 `conversation_e1d1123b2794f3b5ef9ac02d`。持久提交 `conversation_submission_d861e14343e4dd3c8de5f244` 的请求档位、冻结调度上下文和实际下发档位均为 `priority`，模型保持 `gpt-5.6-sol`，reasoning effort 保持 `low`。
+- 配置证据的 `selected`、`frozen`、`adapter_serialized`、`runtime_acknowledged` 各层均无 mismatch，档位均为 `priority`。真实 Provider 产生完整用量记录：`codex_usage_ledger.model=gpt-5.6-sol`、`service_tier=priority`、`usage_complete=1`；这证明打包应用实际采用 Fast，不是只验证界面选择或请求字段。
+- Provider 随后请求通过 shell 执行 `screencapture`。该请求违反本轮只允许使用 Computer Use 操作 GUI 的验收边界，因此通过正式会话请求响应接口明确取消；请求已解析且当前无 pending request。对应 turn 标记为 `interrupted` 是拒绝非合规截图命令的预期结果，不改变此前已完成的真实推理、实际 `priority` 档位和完整用量证据。
+- 验收结束后只关闭本任务测试包进程，并确认独立资料根对应的主进程与 execution host 已退出；没有读取、复制或覆盖正式 Zeus、日常 Codex 或其他任务的认证资料。
+
+## 2026-08-28 最终并发主线同步与组合态复核
+
+- 验收后 `test` 又合入 ZEUS-0327，本地 `main` 同时推进了 ZEUS-0358 与 ZEUS-0359。为避免把旧共同基线结果冒充最终组合结果，先将干净 `main@11c70f4` 无冲突合入 `test`，生成 merge commit `cd41df3`。
+- 最终组合态重新执行 `pnpm lint`、`pnpm typecheck`（含架构门禁）、`pnpm build`、会话命令、会话调度命令与 Subagent 详情行为探针，全部通过；架构门禁仍为 97 张 Core 表和 11 张可重建辅助表，构建仅有既有的大分块提示。
+- 最终组合态重新执行 `pnpm package:mac`，生成 `dist/test/mac-arm64/Zeus Test.app` 与 `Zeus-Test-0.3.69-arm64.dmg`。包健康检查确认 54 个 Renderer assets、Main、两个 Preload 与更新助手完整；反读 bundle ID 为 `dev.hypha.zeus.test`、版本为 `0.3.69`，严格 deep codesign 与 DMG 校验均通过；签名仍为本机 ad-hoc 且未公证。
+- 新增组合差异只涉及 ZEUS-0327 的环境弹层层级/浏览器暂停、ZEUS-0359 的待处理请求投影和本地服务导出，以及独立菜单栏状态 UI；没有改变 Fast 偏好、能力判定、请求档位、调度档位或 Provider 用量链路。逐文件差异审计、最终组合态类型/构建/行为探针和当前包检查均通过，因此沿用前一节已经在同一 `test`、同一 `0.3.69` 测试身份上完成的 Fast GUI 冷重启与真实 Provider `priority` 证据，不因随后无关合入重复启动第二个同 bundle ID 实例。
+- 另一任务的独立 `Zeus Test` 实例仍在运行；本任务没有关闭、借用或操作该实例。ZEUS-0014 的独立实例已清理，最终验收结论为通过，可以执行本地 `main` 合入；全程不 push。
