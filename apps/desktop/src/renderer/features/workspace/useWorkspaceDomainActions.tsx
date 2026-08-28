@@ -47,12 +47,14 @@ import {
   createTaskModelPushPendingState,
   enqueueTaskModelPushMessage,
   failTaskModelPushPendingState,
+  identifyTaskModelPushPendingOperation,
   retryTaskModelPushPendingState,
   taskModelPushHasRealChoice,
   type TaskModelPushPendingState,
   updateTaskModelPushAttachments,
   updateTaskModelPushDeferredMessages,
   updateTaskModelPushDraft,
+  updateTaskModelPushRetryProgress,
 } from '../../task/TaskModelPushPendingWorkspace.js';
 import { type TaskResourceAuthorizationResult, type TaskResourcePayload } from '../../task/taskAttachments.js';
 import { normalizeTaskTableEnumSortOrders, resolveTaskManagementStatus } from '../../task/taskWorkspaceModel.js';
@@ -522,6 +524,26 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     };
     const unsubscribe = subscribeRealtimeEvents(
       (event) => {
+        if (event.type === 'codex.rpc.retrying') {
+          const operationIdentity = typeof event.payload.operationIdentity === 'string' ? event.payload.operationIdentity : null;
+          const method = typeof event.payload.method === 'string' ? event.payload.method : null;
+          const retryAttempt = typeof event.payload.retryAttempt === 'number' && Number.isInteger(event.payload.retryAttempt) ? event.payload.retryAttempt : null;
+          const maxRetries = typeof event.payload.maxRetries === 'number' && Number.isInteger(event.payload.maxRetries) ? event.payload.maxRetries : null;
+          if (operationIdentity && method && retryAttempt !== null && maxRetries !== null && retryAttempt >= 1 && retryAttempt <= maxRetries) {
+            updateTaskModelPushPendingByTask((current) => {
+              let changed = false;
+              const next = Object.fromEntries(
+                Object.entries(current).map(([taskId, pending]) => {
+                  if (pending.operationIdentity !== operationIdentity || pending.status !== 'submitting') return [taskId, pending];
+                  changed = true;
+                  return [taskId, { ...updateTaskModelPushRetryProgress(pending, { method, retryAttempt, maxRetries }), origin: pending.origin }];
+                }),
+              );
+              return changed ? next : current;
+            });
+          }
+          return;
+        }
         if (event.type === 'storage.write_fault') {
           reportStorageReadOnlyFault(appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en', event.payload.readsAvailable === true, (error) => recordLocalError('storage-recovery-preflight-and-restart', error));
           return;
@@ -670,6 +692,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     props.onSubscribeRealtimeEvents,
     reconcileNativeConversationProjectSnapshot,
     reconcileNativeConversationProjectionStates,
+    updateTaskModelPushPendingByTask,
   ]);
 
   const taskDetailPaneTaskSource = taskDetailPaneTaskId ? (taskDetail?.id === taskDetailPaneTaskId ? taskDetail : snapshot.tasks.find((task) => task.id === taskDetailPaneTaskId)) : undefined;
@@ -2851,7 +2874,15 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       return;
     }
     try {
-      const result = await client.startTaskModelPush(pending.task.id, pending.request);
+      const result = await client.startTaskModelPush(pending.task.id, pending.request, {
+        onOperationIdentity(operationIdentity) {
+          updateTaskModelPushPendingByTask((current) => {
+            const active = current[pending.task.id];
+            if (!active || active.request.idempotencyKey !== pending.request.idempotencyKey) return current;
+            return { ...current, [pending.task.id]: { ...identifyTaskModelPushPendingOperation(active, operationIdentity), origin: active.origin } };
+          });
+        },
+      });
       const { acceptance } = result;
       if (acceptance.operation.status !== 'accepted' || acceptance.operation.idempotencyKey !== result.operationIdentity) {
         throw new Error('Task model push did not return a durable accepted operation.');

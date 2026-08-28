@@ -1551,18 +1551,43 @@ function CreationFailureExclusivityPreview() {
         <h3>创建失败与思考状态互斥</h3>
         <small>失败后只保留完整宽度错误与重试入口，不能继续显示“正在思考”。</small>
       </div>
-      <div className="qa-send-transcript ai-workspace">
-        <ConversationTranscript
-          state={failedStartingSessionState}
-          language="zh-CN"
-          creationStatus={{
-            state: 'failed',
-            message: '连接失败',
-            error: { code: 'ZEUS_CODEX_RPC_TIMEOUT', message: 'Codex app-server request timed out: account/read' },
-            retryLabel: '重试',
-            onRetry: () => undefined,
-          }}
-        />
+      <div className="qa-creation-status-grid">
+        <div className="qa-send-transcript ai-workspace" aria-label="桌面宽度最终失败态">
+          <CreationFailureTranscript />
+        </div>
+        <div className="qa-send-transcript qa-creation-status-narrow ai-workspace" aria-label="窄容器最终失败态">
+          <CreationFailureTranscript />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function CreationFailureTranscript() {
+  return (
+    <ConversationTranscript
+      state={failedStartingSessionState}
+      language="zh-CN"
+      creationStatus={{
+        state: 'failed',
+        message: '连接失败',
+        error: { code: 'ZEUS_CODEX_RPC_TIMEOUT', message: 'Codex app-server request timed out: account/read' },
+        retryLabel: '重试',
+        onRetry: () => undefined,
+      }}
+    />
+  );
+}
+
+function CreationRetryProgressPreview() {
+  return (
+    <section className="qa-motion-send-preview session-codex-parity-v1" data-testid="creation-retry-progress-preview">
+      <div>
+        <h3>创建期自动重试进度</h3>
+        <small>只显示当前次数和连接图标，不提前暴露完整错误或手动按钮。</small>
+      </div>
+      <div className="qa-send-transcript qa-creation-status-narrow ai-workspace">
+        <ConversationTranscript state={failedStartingSessionState} language="zh-CN" creationStatus={{ state: 'retrying', message: '正在重试', retryAttempt: 3, maxRetries: 5 }} />
       </div>
     </section>
   );
@@ -1667,6 +1692,7 @@ function MotionApp() {
       <InterruptedProcessPreview />
       <SendScrollPreview />
       <DeliveryFailurePreview />
+      <CreationRetryProgressPreview />
       <CreationFailureExclusivityPreview />
       <PlanCustomAnswerProjectionPreview />
       <HistoryPagingPreview />
@@ -1686,6 +1712,19 @@ function MotionApp() {
       </section>
       <SubagentTranscriptPreview />
       <ApplicationErrorDialogHost language="zh-CN" />
+    </main>
+  );
+}
+
+function TimeoutRetryQaApp() {
+  return (
+    <main className="macos-ai-app zeus-shell qa-page qa-motion-page" data-testid="timeout-retry-qa">
+      <header className="qa-heading">
+        <p>ZEUS-0364 · 真实 DOM 错误栏验收</p>
+        <h1>Codex RPC timeout 自动重试</h1>
+      </header>
+      <CreationRetryProgressPreview />
+      <CreationFailureExclusivityPreview />
     </main>
   );
 }
@@ -2133,7 +2172,8 @@ const motionQa = new URLSearchParams(window.location.search).has('motion');
 const defectQa = new URLSearchParams(window.location.search).has('zeus0323');
 const taskPushQa = new URLSearchParams(window.location.search).has('task-push');
 const sourcePreviewQa = new URLSearchParams(window.location.search).has('source-preview');
+const timeoutRetryQa = new URLSearchParams(window.location.search).has('timeout-retry');
 // 开发态热更新复用同一根节点，避免视觉验收页重复挂载并制造无关控制台错误。
 const qaRoot = window.__zeusSessionStylesRoot ?? createRoot(document.getElementById('root')!);
 window.__zeusSessionStylesRoot = qaRoot;
-qaRoot.render(sourcePreviewQa ? <SourcePreviewQaApp /> : taskPushQa ? <TaskPushDecouplingApp /> : defectQa ? <ConversationDefectApp /> : motionQa ? <MotionApp /> : <App />);
+qaRoot.render(sourcePreviewQa ? <SourcePreviewQaApp /> : taskPushQa ? <TaskPushDecouplingApp /> : defectQa ? <ConversationDefectApp /> : timeoutRetryQa ? <TimeoutRetryQaApp /> : motionQa ? <MotionApp /> : <App />);

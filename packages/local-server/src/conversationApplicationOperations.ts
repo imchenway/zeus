@@ -1,4 +1,4 @@
-import { type AiRuntimeSession, createAiRuntimeSessionManager, modelConnectionCredentialSlotId, modelRef, parseModelRef, piRuntimeWorkerProtocolVersion } from '@zeus/ai-runtime';
+import { type AiRuntimeSession, createAiRuntimeSessionManager, modelConnectionCredentialSlotId, modelRef, parseModelRef, piRuntimeWorkerProtocolVersion, runWithCodexRpcRetryContext } from '@zeus/ai-runtime';
 import { getGitBranchHead, getGitRepositoryContext, type ProjectGitAction } from '@zeus/git-core';
 import {
   parseCanonicalRequestUserInputQuestions,
@@ -1332,20 +1332,22 @@ export function createConversationApplicationOperations(dependencies: Conversati
     const stableOperationId = nativeStableOperationId(scope, idempotencyKey, requestHash);
     const reservation = createTaskConversationAcceptanceReservation(scope, requestHash, stableOperationId, body);
     const resourceId = encodeProjectConversationAcceptanceReservation(reservation);
-    return executeIdempotentJson(
-      scope,
-      idempotencyKey,
-      body,
-      202,
-      async (ownedOperationId, lifecycle) => {
-        if (ownedOperationId !== reservation.operationId) throw nativeApiError('ZEUS_NATIVE_RESERVED_RESOURCE_CONFLICT', 'Stable operation identity changed while accepting a project conversation.');
-        const accepted = await acceptProjectConversation(project, body, idempotencyKey, ownedOperationId, reservation, lifecycle);
-        await checkpointInProgressIdempotentResponse(scope, idempotencyKey, 202, accepted);
-        return accepted;
-      },
-      (_ownedOperationId, persistedResourceId) => recoverProjectConversationAcceptance(project, idempotencyKey, reservation, persistedResourceId),
-      resourceId,
-      markExternalWriteStarted,
+    return runWithCodexRpcRetryContext({ operationIdentity: idempotencyKey, projectId: project.id }, () =>
+      executeIdempotentJson(
+        scope,
+        idempotencyKey,
+        body,
+        202,
+        async (ownedOperationId, lifecycle) => {
+          if (ownedOperationId !== reservation.operationId) throw nativeApiError('ZEUS_NATIVE_RESERVED_RESOURCE_CONFLICT', 'Stable operation identity changed while accepting a project conversation.');
+          const accepted = await acceptProjectConversation(project, body, idempotencyKey, ownedOperationId, reservation, lifecycle);
+          await checkpointInProgressIdempotentResponse(scope, idempotencyKey, 202, accepted);
+          return accepted;
+        },
+        (_ownedOperationId, persistedResourceId) => recoverProjectConversationAcceptance(project, idempotencyKey, reservation, persistedResourceId),
+        resourceId,
+        markExternalWriteStarted,
+      ),
     );
   }
 
@@ -1507,20 +1509,22 @@ export function createConversationApplicationOperations(dependencies: Conversati
     const stableOperationId = nativeStableOperationId(scope, idempotencyKey, requestHash);
     const reservation = createTaskConversationAcceptanceReservation(scope, requestHash, stableOperationId, body);
     const resourceId = encodeTaskConversationAcceptanceReservation(reservation);
-    return executeIdempotentJson(
-      scope,
-      idempotencyKey,
-      body,
-      202,
-      async (ownedOperationId, lifecycle) => {
-        if (ownedOperationId !== reservation.operationId) throw nativeApiError('ZEUS_NATIVE_RESERVED_RESOURCE_CONFLICT', 'Stable operation identity changed while accepting a task conversation.');
-        const accepted = await acceptTaskConversation(project, task, body, idempotencyKey, ownedOperationId, reservation, lifecycle);
-        await checkpointInProgressIdempotentResponse(scope, idempotencyKey, 202, accepted);
-        return accepted;
-      },
-      (_ownedOperationId, persistedResourceId) => recoverTaskConversationAcceptance(project, task, idempotencyKey, reservation, persistedResourceId),
-      resourceId,
-      markExternalWriteStarted,
+    return runWithCodexRpcRetryContext({ operationIdentity: idempotencyKey, projectId: project.id, taskId: task.id }, () =>
+      executeIdempotentJson(
+        scope,
+        idempotencyKey,
+        body,
+        202,
+        async (ownedOperationId, lifecycle) => {
+          if (ownedOperationId !== reservation.operationId) throw nativeApiError('ZEUS_NATIVE_RESERVED_RESOURCE_CONFLICT', 'Stable operation identity changed while accepting a task conversation.');
+          const accepted = await acceptTaskConversation(project, task, body, idempotencyKey, ownedOperationId, reservation, lifecycle);
+          await checkpointInProgressIdempotentResponse(scope, idempotencyKey, 202, accepted);
+          return accepted;
+        },
+        (_ownedOperationId, persistedResourceId) => recoverTaskConversationAcceptance(project, task, idempotencyKey, reservation, persistedResourceId),
+        resourceId,
+        markExternalWriteStarted,
+      ),
     );
   }
 

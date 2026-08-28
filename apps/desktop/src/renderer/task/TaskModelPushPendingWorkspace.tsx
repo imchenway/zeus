@@ -18,6 +18,12 @@ import { parseTaskAttachments } from './taskAttachments.js';
 
 export type TaskModelPushPendingStatus = 'submitting' | 'failed' | 'accepted';
 
+export interface TaskModelPushRetryProgress {
+  method: string;
+  retryAttempt: number;
+  maxRetries: number;
+}
+
 export interface TaskModelPushDeferredMessage {
   id: string;
   idempotencyKey: string;
@@ -44,6 +50,8 @@ export interface TaskModelPushPendingState {
   session: NativeSessionState;
   deferredMessages: TaskModelPushDeferredMessage[];
   contextRefreshRequired: boolean;
+  operationIdentity: string | null;
+  retryProgress: TaskModelPushRetryProgress | null;
   status: TaskModelPushPendingStatus;
   error: string | null;
 }
@@ -93,6 +101,8 @@ export function createTaskModelPushPendingState(input: {
     session: buildPendingTaskPushSession(choice, input.request, input.prompt, attachments, input.layout),
     deferredMessages: [],
     contextRefreshRequired: false,
+    operationIdentity: null,
+    retryProgress: null,
     status: 'submitting',
     error: null,
   };
@@ -103,6 +113,7 @@ export function retryTaskModelPushPendingState(pending: TaskModelPushPendingStat
     ...pending,
     status: 'submitting',
     error: null,
+    retryProgress: null,
   };
 }
 
@@ -153,6 +164,7 @@ export function failTaskModelPushPendingState(pending: TaskModelPushPendingState
     },
     status: 'failed',
     error: message,
+    retryProgress: null,
   };
 }
 
@@ -165,6 +177,7 @@ export function attachTaskModelPushChoice(pending: TaskModelPushPendingState, ch
     session: remapPendingSession(pending.session, projectedChoice),
     status: 'submitting',
     error: null,
+    retryProgress: null,
   };
 }
 
@@ -177,7 +190,17 @@ export function acceptTaskModelPushPendingState(pending: TaskModelPushPendingSta
     choice: { ...pending.choice, taskPushCreating: false },
     status: 'accepted',
     error: null,
+    retryProgress: null,
   };
+}
+
+export function identifyTaskModelPushPendingOperation(pending: TaskModelPushPendingState, operationIdentity: string): TaskModelPushPendingState {
+  if (pending.operationIdentity === operationIdentity) return pending;
+  return { ...pending, operationIdentity, retryProgress: null };
+}
+
+export function updateTaskModelPushRetryProgress(pending: TaskModelPushPendingState, retryProgress: TaskModelPushRetryProgress): TaskModelPushPendingState {
+  return pending.status === 'submitting' ? { ...pending, retryProgress } : pending;
 }
 
 export function taskModelPushHasRealChoice(pending: TaskModelPushPendingState): boolean {

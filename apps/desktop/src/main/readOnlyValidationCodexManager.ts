@@ -19,6 +19,7 @@ export function createReadOnlyValidationCodexManager(): CodexAppServerManager {
     listRuntimeGenerations: () => [],
     subscribe: () => () => undefined,
     subscribeExternalAgentImport: () => () => undefined,
+    subscribeRpcRetries: () => () => undefined,
     prepareForShutdown: async () => undefined,
     close: async () => undefined,
   };

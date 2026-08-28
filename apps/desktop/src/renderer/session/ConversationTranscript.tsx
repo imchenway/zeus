@@ -58,8 +58,10 @@ export interface ConversationTranscriptProps {
 }
 
 export interface SessionCreationStatus {
-  state: 'creating' | 'failed' | 'warning';
+  state: 'creating' | 'retrying' | 'failed' | 'warning';
   message: string;
+  retryAttempt?: number;
+  maxRetries?: number;
   error?: string | null;
   retryLabel?: string;
   onRetry?: () => void | Promise<void>;
@@ -280,7 +282,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const showActiveStatus = !props.historyOnly && shouldShowTranscriptThinking(props.state, items);
   const motionFocus = props.historyOnly ? null : resolveSessionMotionFocus(props.state, transcriptItems, showActiveStatus);
   const activeStatusKind = props.state.conversationState === 'starting_turn' ? 'starting' : 'thinking';
-  const creatingSession = props.creationStatus?.state === 'creating';
+  const creatingSession = props.creationStatus?.state === 'creating' || props.creationStatus?.state === 'retrying';
   const creationFailed = props.creationStatus?.state === 'failed';
   const realTurnStarted = Boolean(activeTurnId);
   // 创建期只保留一个主进度：真实轮次建立前显示连接，建立后由轮次状态或真实过程内容接管。
@@ -850,10 +852,12 @@ function V2AutoPageSentinel(props: { loading: boolean; error: string | null | un
 }
 
 function SessionCreationNotice(props: { status: SessionCreationStatus; language: SessionUiLanguage }) {
-  if (props.status.state !== 'creating') {
+  if (props.status.state !== 'creating' && props.status.state !== 'retrying') {
     return (
       <section className={`session-creation-status is-${props.status.state}`} role="alert" aria-live="assertive">
-        <VisibleApplicationError error={props.status.error ?? props.status.message} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
+        <div className="session-creation-status-error">
+          <VisibleApplicationError error={props.status.error ?? props.status.message} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
+        </div>
         {props.status.onRetry ? (
           <button type="button" onClick={() => void props.status.onRetry?.()}>
             {props.status.retryLabel ?? (props.language === 'zh-CN' ? '重试' : 'Retry')}
@@ -862,11 +866,12 @@ function SessionCreationNotice(props: { status: SessionCreationStatus; language:
       </section>
     );
   }
+  const retryingMessage = props.status.state === 'retrying' ? `${props.language === 'zh-CN' ? '正在重试' : 'Retrying'}… ${props.status.retryAttempt ?? 1}/${props.status.maxRetries ?? 5}` : props.status.message;
   return (
-    <section className="session-creation-status is-creating" role="status" aria-live="polite">
+    <section className={`session-creation-status is-${props.status.state}`} role="status" aria-live="polite">
       {sessionConnectionSymbol}
       <span className="session-creation-status-copy">
-        <strong>{props.status.message}</strong>
+        <strong>{retryingMessage}</strong>
       </span>
     </section>
   );

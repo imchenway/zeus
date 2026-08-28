@@ -305,6 +305,24 @@
   padding-block: 18px;
 }
 
+.qa-creation-status-grid {
+  align-items: start;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) 320px;
+}
+
+.qa-creation-status-narrow {
+  inline-size: 320px;
+  max-inline-size: 100%;
+}
+
+@media (width <= 760px) {
+  .qa-creation-status-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .qa-long-scroll-transcript .session-transcript {
   block-size: 420px;
 }
