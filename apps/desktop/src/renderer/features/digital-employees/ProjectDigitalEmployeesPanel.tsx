@@ -1,6 +1,9 @@
 import type { CommandDefinition } from '@zeus/shared';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { DashboardClient } from '../../dashboardClient.js';
+import { presentModelOptions } from '../../modelOptionPresentation.js';
+import { resolveModelCapability } from '../../session/modelSelection.js';
+import type { CodexConversationCapabilities } from '../../session/sessionTypes.js';
 import { Button } from '../../ui/Button.js';
 import { ZeusSelect } from '../../ZeusSelect.js';
 import { SkillSelector } from '../skills/SkillSelector.js';
@@ -28,7 +31,7 @@ export interface ProjectDigitalEmployeesPanelProps {
   projectId: string;
   projectName: string;
   client: DashboardClient | null;
-  skillClient: Pick<NativeConversationAppClient, 'loadSkills'> | null;
+  skillClient: Pick<NativeConversationAppClient, 'loadSkills' | 'loadCodexConversationCapabilities'> | null;
   language: DigitalEmployeeLanguage;
 }
 
@@ -41,6 +44,7 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
   const [automations, setAutomations] = useState<DigitalEmployeeAutomationRecord[]>([]);
   const [executions, setExecutions] = useState<DigitalEmployeeExecutionRecord[]>([]);
   const [commands, setCommands] = useState<CommandDefinition[]>([]);
+  const [capabilities, setCapabilities] = useState<CodexConversationCapabilities | null>(null);
   const [section, setSection] = useState<ProjectPanelSection>('employees');
   const [templateId, setTemplateId] = useState('');
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
@@ -55,18 +59,21 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
     setLoadState('loading');
     setError(null);
     try {
-      const [nextTemplates, nextEmployees, nextAutomations, nextExecutions, nextCommands] = await Promise.all([
+      const capabilitiesPromise = props.skillClient?.loadCodexConversationCapabilities?.(props.projectId).catch(() => null) ?? Promise.resolve(null);
+      const [nextTemplates, nextEmployees, nextAutomations, nextExecutions, nextCommands, nextCapabilities] = await Promise.all([
         props.client.loadDigitalEmployeeTemplates(),
         props.client.loadProjectDigitalEmployees(props.projectId),
         props.client.loadDigitalEmployeeAutomations(props.projectId),
         props.client.loadProjectDigitalEmployeeExecutions(props.projectId),
         props.client.loadProjectCommands(props.projectId),
+        capabilitiesPromise,
       ]);
       setTemplates(nextTemplates);
       setEmployees(nextEmployees);
       setAutomations(nextAutomations);
       setExecutions(nextExecutions);
       setCommands(nextCommands);
+      setCapabilities(nextCapabilities);
       setTemplateId((current) => (current && nextTemplates.some((template) => template.id === current) ? current : (nextTemplates[0]?.id ?? '')));
       setSelectedEmployeeId((current) => {
         const selected = current ? nextEmployees.find((employee) => employee.id === current) : undefined;
@@ -79,7 +86,7 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
       setLoadState('failed');
       setError(errorMessage(cause, zh ? '无法读取项目数字员工配置。' : 'Could not load project digital employee configuration.'));
     }
-  }, [props.client, props.projectId, zh]);
+  }, [props.client, props.projectId, props.skillClient, zh]);
 
   const refreshExecutions = useCallback(async () => {
     if (!props.client) return;
@@ -347,7 +354,7 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
             </section>
             <section className="digital-employee-editor-pane" aria-label={zh ? '项目员工配置' : 'Project employee configuration'}>
               {selectedEmployeeId && employeeDraftState ? (
-                <EmployeeEditor draft={employeeDraftState} projectId={props.projectId} skillClient={props.skillClient} language={props.language} deployCommands={deployCommands} onChange={setEmployeeDraftState} />
+                <EmployeeEditor draft={employeeDraftState} projectId={props.projectId} skillClient={props.skillClient} language={props.language} deployCommands={deployCommands} capabilities={capabilities} onChange={setEmployeeDraftState} />
               ) : (
                 <div className="digital-employee-empty-state">
                   <strong>{zh ? '选择员工查看项目配置' : 'Select an employee to configure'}</strong>
@@ -464,10 +471,32 @@ function EmployeeEditor(props: {
   skillClient: Pick<NativeConversationAppClient, 'loadSkills'> | null;
   language: DigitalEmployeeLanguage;
   deployCommands: CommandDefinition[];
+  capabilities: CodexConversationCapabilities | null;
   onChange: (draft: DigitalEmployeeDraft) => void;
 }) {
   const zh = props.language === 'zh-CN';
   const patch = (value: Partial<DigitalEmployeeDraft>) => props.onChange({ ...props.draft, ...value });
+  const runtimeModels = useMemo(() => (props.capabilities?.models ?? []).filter((model) => model.available !== false && (model.agentKind ?? 'codex') === props.draft.agentKind), [props.capabilities?.models, props.draft.agentKind]);
+  const modelPresentation = useMemo(() => presentModelOptions(runtimeModels, props.draft.model, props.language, { preserveMissingSelection: true }), [props.draft.model, props.language, runtimeModels]);
+  const selectedModel = resolveModelCapability(runtimeModels, props.draft.model);
+  const modelOptions = useMemo(() => [{ value: '', label: zh ? '跟随项目默认' : 'Use project default', searchText: zh ? '项目默认 不指定' : 'project default unspecified' }, ...modelPresentation.options], [modelPresentation.options, zh]);
+  const reasoningEffortOptions = useMemo(
+    () => capabilityValueOptions(props.draft.reasoningEffort, selectedModel?.supportedReasoningEfforts ?? [], zh ? '跟随模型默认' : 'Use model default', zh ? '当前值不受此模型支持' : 'Current value is unsupported by this model'),
+    [props.draft.reasoningEffort, selectedModel?.supportedReasoningEfforts, zh],
+  );
+  const serviceTierOptions = useMemo(
+    () =>
+      capabilityValueOptions(
+        props.draft.serviceTier,
+        selectedModel?.serviceTiers.map((tier) => ({ value: tier.id, label: tier.name || tier.id })) ?? [],
+        zh ? '跟随模型默认' : 'Use model default',
+        zh ? '当前值不受此模型支持' : 'Current value is unsupported by this model',
+      ),
+    [props.draft.serviceTier, selectedModel?.serviceTiers, zh],
+  );
+  const selectModel = (model: string) => {
+    patch({ model, reasoningEffort: '', serviceTier: '' });
+  };
   const patchGrant = (key: 'allowCommit' | 'allowPush' | 'allowMerge' | 'allowDeploy' | 'allowComplete', checked: boolean) => {
     if (key === 'allowCommit' && !checked) {
       patch({ allowCommit: false, allowPush: false, allowMerge: false });
@@ -505,7 +534,7 @@ function EmployeeEditor(props: {
               size="regular"
               ariaLabel={zh ? '选择员工运行时' : 'Choose employee runtime'}
               value={props.draft.agentKind}
-              onChange={(agentKind) => patch({ agentKind })}
+              onChange={(agentKind) => patch({ agentKind, model: '', reasoningEffort: '', serviceTier: '' })}
               searchable={false}
               options={[
                 { value: 'codex', label: 'Codex' },
@@ -515,15 +544,40 @@ function EmployeeEditor(props: {
           </label>
           <label>
             <span>{zh ? '模型（可选）' : 'Model (optional)'}</span>
-            <input value={props.draft.model} onChange={(event) => patch({ model: event.currentTarget.value })} />
+            <ZeusSelect
+              size="regular"
+              ariaLabel={zh ? '选择员工模型' : 'Choose employee model'}
+              value={selectedModel?.id ?? props.draft.model}
+              onChange={selectModel}
+              options={modelOptions}
+              triggerLabel={props.draft.model ? modelPresentation.triggerLabel : zh ? '跟随项目默认' : 'Use project default'}
+              searchPlaceholder={zh ? '搜索供应商或模型' : 'Search providers or models'}
+              emptyLabel={zh ? '没有匹配模型' : 'No matching models'}
+            />
           </label>
           <label>
             <span>{zh ? '推理强度（可选）' : 'Reasoning effort (optional)'}</span>
-            <input value={props.draft.reasoningEffort} onChange={(event) => patch({ reasoningEffort: event.currentTarget.value })} maxLength={64} />
+            <ZeusSelect
+              size="regular"
+              ariaLabel={zh ? '选择员工推理强度' : 'Choose employee reasoning effort'}
+              value={props.draft.reasoningEffort}
+              onChange={(reasoningEffort) => patch({ reasoningEffort })}
+              options={reasoningEffortOptions}
+              disabled={!selectedModel}
+              searchable={false}
+            />
           </label>
           <label>
             <span>{zh ? '服务层级（可选）' : 'Service tier (optional)'}</span>
-            <input value={props.draft.serviceTier} onChange={(event) => patch({ serviceTier: event.currentTarget.value })} maxLength={64} />
+            <ZeusSelect
+              size="regular"
+              ariaLabel={zh ? '选择员工服务层级' : 'Choose employee service tier'}
+              value={props.draft.serviceTier}
+              onChange={(serviceTier) => patch({ serviceTier })}
+              options={serviceTierOptions}
+              disabled={!selectedModel}
+              searchable={false}
+            />
           </label>
           <label>
             <span>{zh ? '工作模式' : 'Work mode'}</span>
@@ -690,6 +744,18 @@ function EmployeeEditor(props: {
       </section>
     </div>
   );
+}
+
+function capabilityValueOptions(
+  currentValue: string,
+  values: readonly string[] | ReadonlyArray<{ value: string; label: string }>,
+  defaultLabel: string,
+  unsupportedLabel: string,
+): Array<{ value: string; label: string; disabled?: boolean }> {
+  const normalized = values.map((entry) => (typeof entry === 'string' ? { value: entry, label: entry } : entry));
+  const options: Array<{ value: string; label: string; disabled?: boolean }> = [{ value: '', label: defaultLabel }, ...normalized];
+  if (currentValue && !normalized.some((entry) => entry.value === currentValue)) options.push({ value: currentValue, label: `${currentValue} · ${unsupportedLabel}`, disabled: true });
+  return options;
 }
 
 function AutomationEditor(props: {

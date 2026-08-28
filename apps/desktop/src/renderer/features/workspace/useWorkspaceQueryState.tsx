@@ -757,7 +757,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   };
   const [projectPanel, setProjectPanel] = useState<ProjectDetailPanel>(() => {
     if (props.initialMainNavTarget === 'git-diff' || props.initialGitDiff || props.initialGitConfirmation) return 'diff';
-    if (props.initialProjectConfig || props.initialProjectDatabaseSecret) return 'config';
     if (props.initialArchivedProjects?.length) return 'archive';
     return undefined;
   });
