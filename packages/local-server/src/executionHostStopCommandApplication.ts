@@ -249,7 +249,7 @@ function validateStopResult(value: unknown): ExecutionHostStopActiveResult {
     };
   });
   const requestedAt = typeof result.requestedAt === 'string' && Number.isFinite(Date.parse(result.requestedAt)) ? result.requestedAt : null;
-  if (!requestedAt || result.providerOutcomeUnconfirmed !== true) throw invalidResult('Execution Host stop result timestamp or Provider outcome boundary is invalid.');
+  if (!requestedAt || typeof result.providerOutcomeUnconfirmed !== 'boolean') throw invalidResult('Execution Host stop result timestamp or Provider outcome boundary is invalid.');
   return {
     requestedTurnCount: nonNegativeInteger(result.requestedTurnCount, 'requestedTurnCount'),
     providerInterruptFailureCount: nonNegativeInteger(result.providerInterruptFailureCount, 'providerInterruptFailureCount'),
@@ -259,7 +259,7 @@ function validateStopResult(value: unknown): ExecutionHostStopActiveResult {
     stoppedCommandRunCount: nonNegativeInteger(result.stoppedCommandRunCount, 'stoppedCommandRunCount'),
     failedGoalPauseCount: nonNegativeInteger(result.failedGoalPauseCount, 'failedGoalPauseCount'),
     failedTurns: normalizedFailures,
-    providerOutcomeUnconfirmed: true,
+    providerOutcomeUnconfirmed: result.providerOutcomeUnconfirmed,
     requestedAt,
   };
 }

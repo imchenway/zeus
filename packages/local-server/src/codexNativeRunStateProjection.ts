@@ -7,6 +7,7 @@ import type {
   ZeusConversationWithMessagesRecord,
 } from '@zeus/storage';
 import type { NativeConversationRunState } from './codexNativeConversationContracts.js';
+import { isProviderStopPendingTurn } from './codexProviderStopRecoveryApplication.js';
 
 export function interruptedQueueSubmissions(submissions: readonly ZeusConversationSubmissionRecord[]): ZeusConversationSubmissionRecord[] {
   return submissions.filter((submission) => !submission.providerTurnId && (submission.status === 'queued' || (submission.status === 'paused' && submission.pausedReason === 'interrupted')));
@@ -22,6 +23,9 @@ export function inferNativeConversationRunState(
   isPendingInteractionAuthority: (request: ZeusConversationServerRequestRecord) => boolean,
 ): NativeConversationRunState {
   if (conversation.providerState === 'archived') return { type: 'paused', reason: 'provider_archived' };
+  if (conversation.providerState === 'paused' && repositories.turns.listByConversation(conversation.id).some(isProviderStopPendingTurn)) {
+    return { type: 'paused', reason: 'provider_stop_pending' };
+  }
   if (interruptedQueueSubmissions(repositories.submissions.listByConversation(conversation.id)).some((submission) => submission.status === 'paused')) {
     return { type: 'paused', reason: 'interrupted' };
   }

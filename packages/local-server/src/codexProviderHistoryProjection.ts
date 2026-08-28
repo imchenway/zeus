@@ -22,6 +22,7 @@ import {
 } from './codexNativeConversationPolicy.js';
 import { appendProviderSyncAudit, type ProviderSyncAuditOutcome } from './providerSyncAudit.js';
 import { sanitizeConversationItemPayload } from './conversationResources.js';
+import { shouldPreserveProviderStopTerminalTurn } from './codexProviderStopRecoveryApplication.js';
 
 const compatibilitySnapshotItemIdPattern = /^item-\d+$/u;
 
@@ -291,6 +292,11 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     const startedAt = providerTimestamp(providerTurn.startedAt, existingTurn?.startedAt ?? timestamp);
     const completedAt = classification === 'active' ? null : providerTimestamp(providerTurn.completedAt, existingTurn?.completedAt ?? timestamp);
     const submissions = options.submissions.listByConversation(conversation.id);
+    if (classification === 'active' && existingTurn && shouldPreserveProviderStopTerminalTurn({ turn: existingTurn, submissions })) {
+      options.conversations.bindProvider(conversation.id, { providerId: 'codex', providerThreadId, providerModel: conversation.providerModel, providerState: 'paused' });
+      runStates.set(conversation.id, { type: 'paused', reason: 'provider_stop_pending' });
+      return existingTurn;
+    }
     const providerClientId = providerTurnUserClientId(providerTurn);
     const providerMatchedSubmission = providerClientId ? submissions.find((candidate) => candidate.clientMessageId === providerClientId) : undefined;
     const existingOwnedSubmission = existingTurn?.clientSubmissionId ? submissions.find((candidate) => candidate.id === existingTurn.clientSubmissionId) : undefined;
@@ -566,6 +572,19 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       }
     }
     if (inFlight.length === 0) {
+      const protectedProviderStopTurn = options.turns
+        .listByConversation(conversation.id)
+        .find((turn) => shouldPreserveProviderStopTerminalTurn({ turn, submissions }) && snapshot.status?.type === 'active');
+      if (protectedProviderStopTurn) {
+        options.conversations.bindProvider(conversation.id, {
+          providerId: 'codex',
+          providerThreadId: requireString(conversation.providerThreadId, 'provider thread id'),
+          providerModel: conversation.providerModel,
+          providerState: 'paused',
+        });
+        runStates.set(conversation.id, { type: 'paused', reason: 'provider_stop_pending' });
+        return;
+      }
       const activeProviderTurn = (Array.isArray(snapshot.turns) ? snapshot.turns.filter(isRecord) : []).find((candidate) => classifySnapshotTurn(candidate) === 'active');
       const activeProviderTurnId = activeProviderTurn && typeof activeProviderTurn.id === 'string' ? activeProviderTurn.id : null;
       const projectedRemoteTurn = activeProviderTurnId ? options.turns.listByConversation(conversation.id).find((turn) => turn.providerTurnId === activeProviderTurnId && !turn.clientSubmissionId) : undefined;

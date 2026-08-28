@@ -55,6 +55,8 @@ export interface ConversationTranscriptProps {
   onLoadTurnArtifacts?: (turnId: string) => void | Promise<void>;
   onLoadV2Content?: (handle: string, offset?: number) => Promise<NativeConversationContentV2Page>;
   onLoadV2ToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage>;
+  onRecoverQueue?: () => void | Promise<void>;
+  onCancelQueuedSubmission?: (submissionId: string) => void | Promise<void>;
 }
 
 export interface SessionCreationStatus {
@@ -1036,7 +1038,14 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         onRemoveResponseAnnotation={options.props.onRemoveResponseAnnotation}
         onOpenSideChat={options.props.onOpenSideChat}
       />
-      {showPendingDeliveryFeedback ? <MessageDeliveryOutcomeFeedback item={row.item} language={options.props.language} /> : null}
+      {showPendingDeliveryFeedback ? (
+        <MessageDeliveryOutcomeFeedback
+          item={row.item}
+          language={options.props.language}
+          onRecoverQueue={options.props.onRecoverQueue}
+          onCancelQueuedSubmission={options.props.onCancelQueuedSubmission}
+        />
+      ) : null}
     </>
   );
 }
@@ -1050,16 +1059,58 @@ function TranscriptActiveStatus(props: { language: SessionUiLanguage; kind: 'sta
   );
 }
 
-function MessageDeliveryOutcomeFeedback(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage }): ReactNode {
+function MessageDeliveryOutcomeFeedback(props: {
+  item: NativeSessionItemBuffer;
+  language: SessionUiLanguage;
+  onRecoverQueue?: () => void | Promise<void>;
+  onCancelQueuedSubmission?: (submissionId: string) => void | Promise<void>;
+}): ReactNode {
+  const [busyAction, setBusyAction] = useState<'recover' | 'cancel' | null>(null);
+  const pausedReason = props.item.payload.pausedReason;
+  if (pausedReason === 'provider_stop_pending') {
+    return (
+      <section className="session-message-delivery-feedback" data-state="provider-stop-pending" role="status" aria-live="polite">
+        {props.language === 'zh-CN' ? '正在确认上次运行已停止，确认后将自动继续' : 'Confirming the previous run has stopped. This message will continue automatically afterward.'}
+      </section>
+    );
+  }
   const deliveryError = nativeSessionErrorFrom(props.item.payload.deliveryError) ?? nativeSessionErrorFrom(props.item.payload.error);
   const unconfirmed = props.item.status === 'unconfirmed' || props.item.status === 'paused';
   const failed = props.item.status === 'failed';
   if (!deliveryError || (!failed && !unconfirmed)) return null;
   const feedbackState = failed ? 'failed' : 'unconfirmed';
 
+  const providerStopRecoveryFailed = pausedReason === 'recovery_required' && deliveryError.code === 'ZEUS_PROVIDER_STOP_RECOVERY_REQUIRED';
+  const submissionId = props.item.localItemId || (typeof props.item.payload.submissionId === 'string' ? props.item.payload.submissionId : null);
+  const runAction = (action: 'recover' | 'cancel', operation: (() => void | Promise<void>) | undefined) => {
+    if (!operation || busyAction) return;
+    setBusyAction(action);
+    void Promise.resolve()
+      .then(operation)
+      .finally(() => setBusyAction(null));
+  };
+
   return (
     <section className="session-message-delivery-feedback" data-state={feedbackState} role="alert" aria-live="assertive">
-      <VisibleApplicationError error={deliveryError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
+      {providerStopRecoveryFailed ? (
+        <span>{props.language === 'zh-CN' ? '无法确认上次运行已安全停止。' : 'The previous run could not be confirmed as safely stopped.'}</span>
+      ) : (
+        <VisibleApplicationError error={deliveryError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
+      )}
+      {providerStopRecoveryFailed ? (
+        <div className="session-message-delivery-actions">
+          <button type="button" disabled={busyAction !== null} onClick={() => runAction('recover', props.onRecoverQueue)}>
+            {props.language === 'zh-CN' ? '重新核对' : 'Check again'}
+          </button>
+          <button
+            type="button"
+            disabled={busyAction !== null || !submissionId}
+            onClick={() => runAction('cancel', submissionId && props.onCancelQueuedSubmission ? () => props.onCancelQueuedSubmission?.(submissionId) : undefined)}
+          >
+            {props.language === 'zh-CN' ? '取消消息' : 'Cancel message'}
+          </button>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -1067,7 +1118,7 @@ function MessageDeliveryOutcomeFeedback(props: { item: NativeSessionItemBuffer; 
 function shouldShowPendingMessageDeliveryFeedback(item: NativeSessionItemBuffer, showActiveStatus: boolean): boolean {
   if (item.status === 'failed' || item.status === 'unconfirmed') return true;
   if (item.status === 'queued') return false;
-  if (item.status === 'paused') return item.payload.pausedReason === 'recovery_required';
+  if (item.status === 'paused') return item.payload.pausedReason === 'recovery_required' || item.payload.pausedReason === 'provider_stop_pending';
   return !showActiveStatus;
 }
 
@@ -1689,6 +1740,7 @@ function projectQueuedSubmissionItems(state: NativeSessionState, submissions: Re
         payload: {
           role: 'user',
           content: text,
+          submissionId: submission.id,
           delivery: submission.delivery ?? 'queue',
           pausedReason: submission.pausedReason,
           ...(submission.attachments?.length ? { attachments: submission.attachments } : {}),
