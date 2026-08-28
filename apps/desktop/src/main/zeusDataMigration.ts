@@ -66,7 +66,7 @@ export interface MigrationManifest {
   };
 }
 
-const structuredRootNames = new Set(['data', 'artifacts', 'providers', 'backups', 'runtime', 'profile']);
+const structuredRootNames = new Set(['data', 'artifacts', 'providers', 'tool-runtimes', 'backups', 'runtime', 'profile']);
 const electronProfileEntries = new Set([
   '.DS_Store',
   'blob_storage',

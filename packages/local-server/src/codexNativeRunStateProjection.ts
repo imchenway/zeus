@@ -22,11 +22,12 @@ export function inferNativeConversationRunState(
   },
   isPendingInteractionAuthority: (request: ZeusConversationServerRequestRecord) => boolean,
 ): NativeConversationRunState {
+  const submissions = repositories.submissions.listByConversation(conversation.id);
   if (conversation.providerState === 'archived') return { type: 'paused', reason: 'provider_archived' };
   if (conversation.providerState === 'paused' && repositories.turns.listByConversation(conversation.id).some(isProviderStopPendingTurn)) {
     return { type: 'paused', reason: 'provider_stop_pending' };
   }
-  if (interruptedQueueSubmissions(repositories.submissions.listByConversation(conversation.id)).some((submission) => submission.status === 'paused')) {
+  if (interruptedQueueSubmissions(submissions).some((submission) => submission.status === 'paused')) {
     return { type: 'paused', reason: 'interrupted' };
   }
   const activeTurn = [...repositories.turns.listByConversation(conversation.id)].reverse().find((turn) => turn.status === 'running' || turn.status === 'waiting' || turn.status === 'dispatching');
@@ -43,6 +44,9 @@ export function inferNativeConversationRunState(
       }
     }
     return { type: 'active', turnId: activeTurn.providerTurnId, phase: 'prework' };
+  }
+  if (submissions.some((submission) => submission.status === 'paused' && !submission.providerTurnId && submission.pausedReason === 'recovered_unsent')) {
+    return { type: 'paused', reason: 'recovered_unsent' };
   }
   return conversation.providerState === 'paused' ? { type: 'paused', reason: 'recovery_required' } : { type: 'idle' };
 }

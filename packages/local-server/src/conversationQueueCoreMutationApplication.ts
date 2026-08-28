@@ -91,7 +91,11 @@ export class ConversationQueueCoreMutationApplication {
   retry(input: { conversationId: string; submissionId: string }): unknown {
     const submission = this.requireOwnedSubmission(input.conversationId, input.submissionId);
     const queueHead = this.queueEntries(input.conversationId)[0];
-    if (!queueHead || queueHead.id !== submission.id) throw mutationError('ZEUS_NATIVE_QUEUE_HEAD_REQUIRED', '只能重试暂停的队首提交。');
+    // 多条恢复消息由用户逐条点选；显式选择本身就是越过其他 recovered_unsent 的授权。
+    // 其他暂停/失败原因仍必须保持队首闸机，禁止借普通重试绕过真实阻塞。
+    if ((!queueHead || queueHead.id !== submission.id) && submission.pausedReason !== 'recovered_unsent') {
+      throw mutationError('ZEUS_NATIVE_QUEUE_HEAD_REQUIRED', '只能重试暂停的队首提交。');
+    }
     if ((submission.status !== 'paused' && submission.status !== 'failed') || submission.providerTurnId) {
       throw mutationError('ZEUS_NATIVE_SUBMISSION_NOT_RETRYABLE', '只有 Provider 写入前失败且未产生 turn 的队首可以重试。');
     }

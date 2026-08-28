@@ -2147,6 +2147,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         onRemoveAttachment={actions.onRemoveAttachment}
         onRemoveBrowserSubmission={actions.onRemoveBrowserSubmission}
         onContextDraftChange={actions.onContextDraftChange}
+        readOnly={interactionReadOnly || props.state.queue?.submissions.some((submission) => submission.pausedReason === 'recovered_unsent')}
         runtimeSettings={composerRuntimeSettings}
         onRuntimeSettingsChange={updateComposerRuntimeSettings}
         permissionMode={composerRuntimeSettings?.permissionMode ?? props.state.snapshot?.nextTurnSettings?.permissionMode ?? props.state.snapshot?.permissionMode ?? props.conversation?.permissionMode ?? 'read-only'}
@@ -2420,6 +2421,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     creationStatus={props.creationStatus}
                     onEditUserItem={transcriptInteractionsEnabled ? actions.onEditUserItem : undefined}
                     onRecoverQueue={transcriptInteractionsEnabled ? actions.onRecoverQueue : undefined}
+                    onRetryQueuedSubmission={transcriptInteractionsEnabled ? actions.onRetryQueuedSubmission : undefined}
                     onCancelQueuedSubmission={transcriptInteractionsEnabled ? actions.onDeleteQueuedSubmission : undefined}
                     openPlanItemKey={planWorkspaceItemKey}
                     onOpenPlan={

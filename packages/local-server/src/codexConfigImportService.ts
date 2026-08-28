@@ -40,12 +40,23 @@ export interface CodexConfigImportService {
   import(): Promise<CodexConfigImportResult>;
 }
 
-export function createCodexConfigImportService(options: { sourceRoot: string; targetRoot: string; backupRoot: string; now?: () => Date }): CodexConfigImportService {
+export function createCodexConfigImportService(options: { sourceRoot: string; targetRoot: string; toolRuntimeCodexHome: string; backupRoot: string; now?: () => Date }): CodexConfigImportService {
   const sourceRoot = resolveAbsolute(options.sourceRoot, 'Codex 配置来源目录');
   const targetRoot = resolveAbsolute(options.targetRoot, 'Zeus Codex 目录');
+  const toolRuntimeCodexHome = resolveAbsolute(options.toolRuntimeCodexHome, 'Zeus 工具运行目录');
   const backupRoot = resolveAbsolute(options.backupRoot, 'Codex 配置导入备份目录');
   if (sourceRoot === targetRoot || isInside(sourceRoot, targetRoot) || isInside(targetRoot, sourceRoot)) {
     throw new Error('Codex 配置来源目录与 Zeus Codex 目录不能相同或互相包含。');
+  }
+  if (
+    toolRuntimeCodexHome === sourceRoot ||
+    toolRuntimeCodexHome === targetRoot ||
+    isInside(sourceRoot, toolRuntimeCodexHome) ||
+    isInside(toolRuntimeCodexHome, sourceRoot) ||
+    isInside(targetRoot, toolRuntimeCodexHome) ||
+    isInside(toolRuntimeCodexHome, targetRoot)
+  ) {
+    throw new Error('Zeus 工具运行目录必须与配置来源和 Provider Home 完全隔离。');
   }
 
   async function inspect(): Promise<CodexConfigImportPreview> {
@@ -170,7 +181,7 @@ export function createCodexConfigImportService(options: { sourceRoot: string; ta
       if (preview.entries.some((entry) => entry.path === 'config.toml')) {
         const stagedConfigPath = join(stagingRoot, 'config.toml');
         const stagedConfig = await readFile(stagedConfigPath, 'utf8');
-        const rewrittenConfig = rewriteIsolatedRuntimePaths(stagedConfig, sourceRoot, targetRoot);
+        const rewrittenConfig = rewriteIsolatedRuntimePaths(stagedConfig, sourceRoot, targetRoot, toolRuntimeCodexHome);
         if (rewrittenConfig !== stagedConfig) await writeFile(stagedConfigPath, rewrittenConfig, { encoding: 'utf8', mode: 0o600 });
       }
       for (const entry of preview.entries) {
@@ -237,13 +248,25 @@ export function createCodexConfigImportService(options: { sourceRoot: string; ta
   return { inspect, import: importConfiguration };
 }
 
-function rewriteIsolatedRuntimePaths(config: string, sourceRoot: string, targetRoot: string): string {
+function rewriteIsolatedRuntimePaths(config: string, sourceRoot: string, targetRoot: string, toolRuntimeCodexHome: string): string {
+  let currentTable = '';
   return config
     .split('\n')
     .map((line) => {
-      const assignment = /^\s*([A-Za-z0-9_-]+)\s*=/.exec(line);
-      if (!assignment || !isolatedRuntimePathAssignments.has(assignment[1])) return line;
-      return line.split(sourceRoot).join(targetRoot).split('~/.codex').join(targetRoot);
+      const table = /^\s*\[([^\x5d]+)\]\s*(?:#.*)?$/u.exec(line);
+      if (table) {
+        currentTable = table[1]!.trim();
+        return line;
+      }
+      const assignment = /^(\s*([A-Za-z0-9_-]+)\s*=\s*)(.*)$/u.exec(line);
+      if (!assignment || !isolatedRuntimePathAssignments.has(assignment[2]!)) return line;
+      // MCP 子进程里的 Codex 不能与主 app-server 共用 Provider Home；否则其旧版
+      // models_cache、线程与锁文件会反向污染当前 Core 的能力和写入所有权。
+      if (assignment[2] === 'CODEX_HOME' && /^mcp_servers\.(?:node_repl|"node_repl")\.env$/u.test(currentTable)) {
+        return `${assignment[1]}${JSON.stringify(toolRuntimeCodexHome)}`;
+      }
+      const replacementRoot = targetRoot;
+      return line.split(sourceRoot).join(replacementRoot).split('~/.codex').join(replacementRoot);
     })
     .join('\n');
 }

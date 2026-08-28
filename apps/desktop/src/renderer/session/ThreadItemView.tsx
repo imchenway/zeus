@@ -251,7 +251,8 @@ function TaskPushMessageContent(
 function optimisticDeliveryStatus(item: NativeSessionItemBuffer, labels: (typeof copy)[SessionUiLanguage]): string | null {
   const delivery = primitiveText(item.payload.delivery);
   const pausedReason = primitiveText(item.payload.pausedReason);
-  if (item.status === 'failed' || item.status === 'unconfirmed' || pausedReason === 'recovery_required' || pausedReason === 'conflict_preparation_failed' || pausedReason === 'user_confirmation') return null;
+  if (item.status === 'failed' || item.status === 'unconfirmed' || pausedReason === 'recovery_required' || pausedReason === 'recovered_unsent' || pausedReason === 'conflict_preparation_failed' || pausedReason === 'user_confirmation')
+    return null;
   if (delivery === 'steer_now') {
     return item.status === 'paused' ? null : labels.steering;
   }

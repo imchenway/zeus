@@ -52,12 +52,20 @@ export interface CreateReleaseUpdateServiceOptions {
   isPackaged: boolean;
   testMode: boolean;
   allowUntrustedTestUpdate: boolean;
-  onInstallReady: () => void;
+  onInstallReady: (activate: () => void | Promise<void>) => Promise<boolean>;
 }
 
 interface PreparedUpdate {
   update: DesktopReleaseUpdateStatus;
   dmgPath: string;
+}
+
+interface PreparedInstallerHandoff {
+  updateVersion: string;
+  artifactSha256: string;
+  bootstrapPath: string;
+  transactionId: string;
+  activationStarted: boolean;
 }
 
 export interface ReleaseUpdateService {
@@ -92,6 +100,7 @@ export async function cleanupStaleReleaseBackups(currentAppPath: string): Promis
 /** Main 负责下载与安装准备；真正替换 App 的动作交给脱离界面生命周期的辅助进程。 */
 export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOptions): ReleaseUpdateService {
   let prepared: PreparedUpdate | null = null;
+  let preparedInstallerHandoff: PreparedInstallerHandoff | null = null;
   let operationChain: Promise<DesktopReleaseUpdateOperation> | null = null;
 
   function exclusive(operation: () => Promise<DesktopReleaseUpdateOperation>): Promise<DesktopReleaseUpdateOperation> {
@@ -133,6 +142,17 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
       exclusive(async () => {
         const update = await loadUpdateStatus(options);
         assertDownloadAllowed(update, options);
+        if (preparedInstallerHandoff) {
+          if (preparedInstallerHandoff.updateVersion !== update.latestVersion || preparedInstallerHandoff.artifactSha256 !== update.artifact!.sha256) {
+            throw new Error('已有另一版本的更新等待重启，请先重新启动 Zeus 再检查新版本。');
+          }
+          const accepted = await requestInstallerHandoff(preparedInstallerHandoff);
+          return {
+            accepted: true,
+            update,
+            reason: accepted ? '安装辅助进程已就绪；Zeus 将完整关闭并在成功后自动重新打开。' : '更新已经准备完成，等待你确认停止活动工作并重启。',
+          };
+        }
         if (!prepared || prepared.update.latestVersion !== update.latestVersion || prepared.update.artifact?.sha256 !== update.artifact?.sha256) {
           return { accepted: false, update, reason: '已下载更新与当前发布清单不一致，请重新下载。' };
         }
@@ -160,15 +180,36 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
           testMode: options.testMode && options.allowUntrustedTestUpdate,
           createdAt: new Date().toISOString(),
         });
-        await launchInstallerAndWaitUntilReady(bootstrapPath, options.userDataPath, transactionId);
-        options.onInstallReady();
+        preparedInstallerHandoff = {
+          updateVersion: update.latestVersion,
+          artifactSha256: update.artifact!.sha256,
+          bootstrapPath,
+          transactionId,
+          activationStarted: false,
+        };
+        const accepted = await requestInstallerHandoff(preparedInstallerHandoff);
         return {
           accepted: true,
           update,
-          reason: '安装辅助进程已就绪；Zeus 将退出界面、替换 App，并在成功后自动重新打开。',
+          reason: accepted ? '安装辅助进程已就绪；Zeus 将完整关闭并在成功后自动重新打开。' : '更新已经准备完成，等待你确认停止活动工作并重启。',
         };
       }),
   };
+
+  async function requestInstallerHandoff(handoff: PreparedInstallerHandoff): Promise<boolean> {
+    const accepted = await options.onInstallReady(async () => {
+      if (handoff.activationStarted) return;
+      handoff.activationStarted = true;
+      try {
+        await launchInstallerAndWaitUntilReady(handoff.bootstrapPath, options.userDataPath, handoff.transactionId);
+      } catch (error) {
+        handoff.activationStarted = false;
+        throw error;
+      }
+    });
+    if (accepted) preparedInstallerHandoff = null;
+    return accepted;
+  }
 }
 
 async function loadUpdateStatus(options: CreateReleaseUpdateServiceOptions): Promise<DesktopReleaseUpdateStatus> {

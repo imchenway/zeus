@@ -656,6 +656,7 @@ export async function startOwnedDesktopLocalServer(options: StartDesktopLocalSer
     ? createReadOnlyValidationCodexManager()
     : createCodexRuntimeGenerationManager({
         codexHome: options.codexHome ?? dataLayout.codexHome,
+        toolRuntimeCodexHome: dataLayout.codexToolRuntimeHome,
       });
   let closingIntentionally = false;
   let restartTimer: ReturnType<typeof setTimeout> | undefined;

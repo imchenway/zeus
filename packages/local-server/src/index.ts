@@ -111,8 +111,6 @@ import { type CodexRemoteControlSnapshot } from './codexPublicCommandRoutes.js';
 import { createCodexUsageService } from './codexUsageService.js';
 import { createContextDispatchAuditPort } from './contextDispatchAudit.js';
 import { ContextDispatchApplicationService, type ContextDispatchEnvelope } from './contextDispatchService.js';
-import { resolveVerifiedCodexModelBudget } from './codexVerifiedModelBudgetCatalog.js';
-import { resolveCodexModelCacheBudget } from './codexModelCacheBudget.js';
 import { createConversationApplicationOperations, isNativeApiRecord, nativeApiError } from './conversationApplicationOperations.js';
 import { ConversationCapabilityQueryApplication } from './conversationCapabilityQueryApplication.js';
 import { compareConversationStageUpdatedDesc, ConversationChoiceQueryApplication, type ProjectConversationAttentionState } from './conversationChoiceQueryApplication.js';
@@ -1244,6 +1242,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       ? createCodexConfigImportService({
           sourceRoot: options.codexConfigImportSourceRoot,
           targetRoot: codexHome,
+          toolRuntimeCodexHome: dataLayout.codexToolRuntimeHome,
           backupRoot: dataLayout.codexConfigImportBackups,
           now,
         })
@@ -1397,6 +1396,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     createCodexRuntimeGenerationManager({
       accountFingerprintSalt: codexAccountFingerprintSalt,
       ...(codexHome ? { codexHome } : {}),
+      toolRuntimeCodexHome: dataLayout.codexToolRuntimeHome,
     });
   const codexPublicCommands = new CodexPublicCommandApplicationService({
     db,
@@ -1424,23 +1424,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (state.type !== 'ready') return null;
     const model = resolveModelCapability(state.capabilities.models, modelId);
     if (!model) return null;
-    const contextWindowTokens = positiveIntegerOrNull(model.raw.contextWindow ?? model.raw.context_window ?? model.raw.modelContextWindow ?? model.raw.model_context_window);
-    const modelCacheEvidence = contextWindowTokens ? null : resolveCodexModelCacheBudget({ codexHome: codexHome ?? null, providerVersion: state.capabilities.providerVersion, modelId: model.model, now: now() });
-    // 上下文窗口与输出预留是两份独立证据。CLI 缓存当前只证明 context_window，
-    // 不能因此丢弃同版本、同模型已经核验的 reservedOutputTokens。
-    const verifiedFallback = resolveVerifiedCodexModelBudget(state.capabilities.providerVersion, model.model);
-    if (!contextWindowTokens && !modelCacheEvidence && !verifiedFallback) return null;
-    const reportedReservedOutput = positiveIntegerOrNull(model.raw.maxOutputTokens ?? model.raw.max_output_tokens ?? model.raw.maximumOutputTokens ?? model.raw.maximum_output_tokens);
-    const effectiveContextWindow = contextWindowTokens ?? modelCacheEvidence?.contextWindowTokens ?? verifiedFallback!.contextWindowTokens;
-    const reservedOutputTokens = Math.min(effectiveContextWindow, reportedReservedOutput ?? verifiedFallback?.reservedOutputTokens ?? Math.min(32_768, Math.max(8_192, Math.floor(effectiveContextWindow / 8))));
-    const contextWindowSource = contextWindowTokens ? `codex_app_server:${state.capabilities.generationId}:model_catalog` : (modelCacheEvidence?.evidenceSource ?? verifiedFallback!.evidenceSource);
-    return {
-      contextWindowTokens: effectiveContextWindow,
-      reservedOutputTokens,
-      contextWindowSource,
-      reservedOutputSource: reportedReservedOutput ? `codex_app_server:${state.capabilities.generationId}:model_catalog` : verifiedFallback ? verifiedFallback.evidenceSource : 'zeus_conservative_window_eighth_max_32768',
-      checkedAt: modelCacheEvidence?.checkedAt ?? verifiedFallback?.checkedAt ?? state.capabilities.initializedAt,
-    };
+    return state.capabilities.modelBudgets[model.model] ?? null;
   };
 
   async function activateCurrentCodexConfiguration(): Promise<{ runtimeReloaded: true; runtimeGenerationId: string; restartRequired: false }> {
@@ -2657,7 +2641,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   });
   const {
     resolveModelCapability,
-    positiveIntegerOrNull,
     resolveConversationCapabilities,
     assertCodexAccountReady,
     readServiceTierOverride,
