@@ -144,3 +144,10 @@ SQLite 只读复核确认提交输入的三层事实：Fast 为请求 `priority`
 - 启动前没有其他 Zeus Test 实例，外接竖屏 ID 3 可用。最终包使用独立资料根 `/tmp/zeus-0014-v0369-RjvwsP` 启动；真实 Renderer、`0.3.69` execution host ready、UI attached 与测试数据根身份成立。验收停止后只向本任务 PID 16569 发送 TERM，相关进程已全部退出。
 - Computer Use 仍在读取窗口前返回 `sky requires node_repl; configure NODE_REPL_TRUSTED_SERVICES`。只读核对确认来源 `/Users/david/.codex/config.toml` 已声明受信服务，而当前正式 Zeus Provider 配置缺少 `NODE_REPL_TRUSTED_SERVICES`，目标 Computer Use 支撑 App 也不存在；这与 TASK_20260827_003 记录的“需要重新执行官方配置导入并重启会话”边界一致。
 - 本任务不修改正式 Zeus Provider 配置或复制正式认证。因而 Fast 控件点击、跨入口、冷重启恢复和打包身份下 Provider 实际档位截图仍未完成；在官方配置导入与新会话恢复 Computer Use 前，不宣称 GUI/Provider 验收通过，也不合入 `main`。没有 push。
+
+## 2026-08-28 官方配置导入授权与运行代切换
+
+- 用户明确授权通过正式 Zeus 的官方接口导入 Codex 配置并续验。执行前的只读预览确认来源为 `/Users/david/.codex`、目标为 `/Users/david/.zeus/providers/codex`，只导入配置、AGENTS、rules、prompts、skills、Computer Use 支撑 App 和 Browser/Chrome/Computer Use 三个精确插件目录；生成缓存继续排除。
+- 导入使用 `codex.configuration.import` 的幂等命令信封与正式 execution host API 完成，返回 `restartRequired=true`。可恢复备份位于 `/Users/david/.zeus/backups/imports/codex/2026-08-28T09-02-27-112Z-05f7c513-4f92-411c-bc36-ce787d35b025`，manifest 完整记录 9 个导入条目和 8 个被替换条目。
+- 导入后确认目标配置已包含改写到 Zeus 资料根的 `NODE_REPL_TRUSTED_SERVICES` 与 `SKY_CUA_SERVICE_PATH`，Browser service、Computer Use 插件及支撑 App 均存在，支撑 App 严格 codesign 校验通过。随后通过 `codex.configuration.activate` 建立新运行代 `1fe30068-119d-4027-9c15-986054dc11e0`，返回 `runtimeReloaded=true`、`restartRequired=false`。
+- 当前正在执行的 Provider turn 创建于导入前，其 node_repl 可信服务清单不会在 turn 内热更新；重置内核后仍返回同一缺失配置错误。后续必须由新运行代创建下一轮或新会话，再继续 Computer Use GUI/Provider 验收。当前仍不合入 `main`，没有 push。
