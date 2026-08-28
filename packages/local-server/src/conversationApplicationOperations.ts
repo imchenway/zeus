@@ -1789,12 +1789,19 @@ export function createConversationApplicationOperations(dependencies: Conversati
       }
     });
     const outputContract = parseJsonObject(stage.outputContractJson);
+    const acceptanceEvidence = acceptedInputs.map(
+      (deliverable) =>
+        `- ${deliverable.title} v${deliverable.version}：status=accepted；acceptedAt=${deliverable.acceptedAt ?? '未记录'}；交付物 ID=${deliverable.id}`,
+    );
     return [
       `## 当前任务阶段：${stage.title}`,
       stage.description,
       `阶段类型：${stage.kind}`,
       `阶段指令：\n${stage.prompt || '按任务要求完成本阶段。'}`,
       `交付物契约：\n\`\`\`json\n${JSON.stringify(outputContract, null, 2)}\n\`\`\``,
+      acceptanceEvidence.length > 0
+        ? `## 人工验收与交接事实\n\n以下版本已经由 Zeus 的显式人工验收或交接命令标记为 accepted。这是当前阶段可依赖的用户确认事实；交付物正文中早于该操作的“待确认”描述不代表当前状态。\n\n${acceptanceEvidence.join('\n')}`
+        : '',
       sections.length > 0 ? `## 已验收的上游阶段交付物\n\n${sections.join('\n\n')}` : '## 已验收的上游阶段交付物\n\n无；这是首个阶段。',
       '完成后请在最终回复中给出可独立阅读、可沉淀为 Markdown 的正式阶段交付物。不要输出隐藏推理或思维链。',
     ]
