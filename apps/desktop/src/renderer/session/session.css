@@ -14604,6 +14604,11 @@
   animation: session-workspace-target-reveal 140ms var(--session-ease-out) both;
 }
 
+/* ZEUS-0327：环境弹层打开时让标题栏越过右侧工作面；原生网页仍由 suspended 通道单独隐藏。 */
+.session-codex-parity-v1 .session-thread-header[data-quick-actions-popover-open='true'] {
+  z-index: 35;
+}
+
 .session-codex-parity-v1 .session-thread-item.is-latest.is-entering {
   animation: session-message-settle 160ms var(--session-ease-out) both;
 }

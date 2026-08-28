@@ -2039,7 +2039,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       }}
     >
       {displayedHeader ? (
-        <header className="session-thread-header" data-motion-title={titleMotion}>
+        <header className="session-thread-header" data-motion-title={titleMotion} data-quick-actions-popover-open={quickActionsPopoverOpen || undefined}>
           <span className="session-thread-title-copy">
             <span className="session-thread-title-row">
               {displayedHeader.taskId && actions.onOpenTaskDetail ? (
