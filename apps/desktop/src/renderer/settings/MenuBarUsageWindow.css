@@ -356,7 +356,7 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-provider-value {
-  max-inline-size: 88px;
+  max-inline-size: 102px;
   text-align: end;
 }
 
@@ -376,115 +376,75 @@ body:has(.menu-bar-usage-root),
 
 .menu-bar-usage-detail {
   display: grid;
-  gap: 9px;
+  gap: 8px;
   padding-block-end: 10px;
 }
 
-.menu-bar-usage-quota,
-.menu-bar-usage-api-hero {
-  min-block-size: 92px;
+.menu-bar-usage-token-hero {
+  display: grid;
+  min-block-size: 76px;
+  align-content: center;
+  gap: 2px;
+  padding: 11px 16px;
   border: 1px solid color-mix(in srgb, var(--usage-accent) 17%, transparent);
   border-radius: 14px;
   background: linear-gradient(135deg, var(--usage-accent-soft), var(--usage-panel-strong));
 }
 
-.menu-bar-usage-quota {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 13px 17px;
-}
-
-.menu-bar-usage-quota > div,
-.menu-bar-usage-api-hero {
-  display: grid;
-  gap: 2px;
-}
-
-.menu-bar-usage-quota span,
-.menu-bar-usage-api-hero span {
+.menu-bar-usage-token-hero span {
   color: var(--usage-muted);
   font-size: 10.5px;
   font-weight: 650;
 }
 
-.menu-bar-usage-quota strong,
-.menu-bar-usage-api-hero strong {
-  font-size: 27px;
+.menu-bar-usage-token-hero strong {
+  font-size: 25px;
   font-weight: 760;
   line-height: 1.1;
   letter-spacing: -0.04em;
 }
 
-.menu-bar-usage-quota small,
-.menu-bar-usage-api-hero small {
+.menu-bar-usage-token-hero small {
   color: var(--usage-muted);
-  font-size: 10px;
+  font-size: 9.5px;
 }
 
-.menu-bar-usage-api-hero {
-  align-content: center;
-  padding: 13px 17px;
-}
-
-.menu-bar-usage-ring {
+.menu-bar-usage-quota-summary {
   display: grid;
-  inline-size: 51px;
-  block-size: 51px;
-  flex: 0 0 51px;
-  place-items: center;
-  border-radius: 999px;
-  background: conic-gradient(var(--usage-accent) calc(var(--remaining) * 1%), color-mix(in srgb, var(--usage-accent) 12%, transparent) 0);
-  transform: rotate(-90deg);
-}
-
-.menu-bar-usage-ring i {
-  inline-size: 41px;
-  block-size: 41px;
-  border-radius: inherit;
-  background: var(--usage-bg);
-}
-
-.menu-bar-usage-windows {
-  display: grid;
-  gap: 7px;
-  padding: 9px 10px;
+  grid-template-columns: minmax(84px, auto) 1fr 36px;
+  align-items: center;
+  gap: 8px;
+  min-block-size: 42px;
+  padding: 7px 10px;
   border: 1px solid var(--usage-line);
-  border-radius: 12px;
+  border-radius: 11px;
   background: var(--usage-panel);
 }
 
-.menu-bar-usage-windows > div {
-  display: grid;
-  grid-template-columns: minmax(74px, auto) 1fr 36px;
-  align-items: center;
-  gap: 8px;
-}
-
-.menu-bar-usage-windows > div > span:first-child {
+.menu-bar-usage-quota-summary > span:first-child {
   display: grid;
   min-inline-size: 0;
 }
 
-.menu-bar-usage-windows strong,
-.menu-bar-usage-windows small {
+.menu-bar-usage-quota-summary strong,
+.menu-bar-usage-quota-summary small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.menu-bar-usage-windows strong,
-.menu-bar-usage-windows b {
+.menu-bar-usage-quota-summary strong,
+.menu-bar-usage-quota-summary b {
   font-size: 9.5px;
   font-weight: 650;
 }
 
-.menu-bar-usage-windows small {
+.menu-bar-usage-quota-summary small {
   color: var(--usage-muted);
   font-size: 8.5px;
 }
 
-.menu-bar-usage-windows b {
+.menu-bar-usage-quota-summary b {
   text-align: end;
 }
 
@@ -544,70 +504,102 @@ body:has(.menu-bar-usage-root),
   white-space: nowrap;
 }
 
-.menu-bar-usage-credit {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-block-size: 30px;
-  padding: 6px 10px;
-  border-radius: 9px;
-  background: var(--usage-panel);
-  font-size: 10.5px;
-}
-
-.menu-bar-usage-credit span {
-  color: var(--usage-muted);
-}
-
 .menu-bar-usage-bars {
   display: grid;
-  gap: 6px;
+  gap: 7px;
   margin: 0;
-  padding: 9px 10px 7px;
+  padding: 8px 10px 7px;
   border-radius: 12px;
   background: var(--usage-panel);
 }
 
 .menu-bar-usage-bars figcaption {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
   font-size: 10px;
 }
 
-.menu-bar-usage-bars figcaption span {
+.menu-bar-usage-bars figcaption > span {
+  overflow: hidden;
   color: var(--usage-muted);
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.menu-bar-usage-bars > div {
-  display: flex;
-  align-items: end;
-  justify-content: space-around;
-  block-size: 46px;
-  gap: 7px;
+.menu-bar-usage-bars figcaption dl {
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  gap: 10px;
+  margin: 0;
+  text-align: end;
 }
 
-.menu-bar-usage-bars > div > span {
+.menu-bar-usage-bars figcaption dl > div {
+  display: grid;
+  gap: 1px;
+}
+
+.menu-bar-usage-bars figcaption dt {
+  color: var(--usage-muted);
+  font-size: 8px;
+}
+
+.menu-bar-usage-bars figcaption dd {
+  font-size: 10px;
+  font-weight: 680;
+}
+
+.menu-bar-usage-bars-plot {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  block-size: 48px;
+  gap: 5px;
+}
+
+.menu-bar-usage-bars-plot > span {
   display: grid;
   block-size: 100%;
-  flex: 1 1 0;
   grid-template-rows: minmax(0, 1fr) auto;
-  align-items: end;
   gap: 2px;
   text-align: center;
 }
 
-.menu-bar-usage-bars i {
+.menu-bar-usage-bar-slot {
+  display: grid;
+  min-block-size: 0;
+  align-items: end;
+}
+
+.menu-bar-usage-bar-slot i {
   display: block;
-  inline-size: min(16px, 100%);
+  inline-size: min(14px, 100%);
   justify-self: center;
   border-radius: 3px 3px 1px 1px;
   background: var(--usage-accent);
   opacity: 0.78;
 }
 
-.menu-bar-usage-bars small {
+.menu-bar-usage-bars-plot > span[data-state='zero'] .menu-bar-usage-bar-slot i {
+  background: var(--usage-muted);
+  opacity: 0.42;
+}
+
+.menu-bar-usage-bar-slot em {
+  align-self: end;
+  color: var(--usage-faint);
+  font-size: 9px;
+  font-style: normal;
+}
+
+.menu-bar-usage-bars-plot small {
+  overflow: hidden;
   color: var(--usage-muted);
-  font-size: 8px;
+  font-size: 7.5px;
+  text-overflow: clip;
+  white-space: nowrap;
 }
 
 .menu-bar-usage-chart-empty {
