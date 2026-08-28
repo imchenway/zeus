@@ -40,6 +40,7 @@ export interface CodexApiClient {
   startTaskModelPush: (
     taskId: string,
     input: StartTaskModelPushRequest,
+    lifecycle?: { onOperationIdentity?: (operationIdentity: string) => void },
   ) => Promise<{
     acceptance: NativeOperationAcceptance;
     operationIdentity: string;
@@ -159,7 +160,7 @@ export function createCodexApiClient(transport: LocalApiTransport): CodexApiClie
       });
       await transport.request<{ cancelled: true }>(`/api/codex/account/login/${encodeURIComponent(loginId)}/cancel`, { method: 'POST', body: JSON.stringify(body) });
     },
-    startTaskModelPush: async (taskId, input) => {
+    startTaskModelPush: async (taskId, input, lifecycle) => {
       const { idempotencyKey, ...body } = input;
       const commandBody = await buildGraphConversationCommandRequest({
         commandType: graphConversationClientCommandTypes.taskConversationCreate,
@@ -169,6 +170,7 @@ export function createCodexApiClient(transport: LocalApiTransport): CodexApiClie
         reconnectIdentity: idempotencyKey,
         value: body,
       });
+      lifecycle?.onOperationIdentity?.(commandBody.command.payload.operationIdentity);
       const acceptance = await transport.request<NativeOperationAcceptance>(`/api/tasks/${encodeURIComponent(taskId)}/conversations`, {
         method: 'POST',
         body: JSON.stringify(commandBody),

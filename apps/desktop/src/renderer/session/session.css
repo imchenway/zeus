@@ -14244,13 +14244,17 @@
 }
 
 .session-creation-status.is-failed {
+  align-items: flex-start;
   color: var(--session-danger);
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
+  flex-wrap: wrap;
 }
 
-.session-creation-status.is-failed > :first-child {
-  min-width: 0;
+.session-creation-status-error {
+  flex: 1 1 30rem;
+  min-inline-size: 0;
   overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .session-creation-status.is-warning {
@@ -14263,8 +14267,12 @@
   border-radius: 7px;
   color: var(--session-text);
   flex: 0 0 auto;
+  inline-size: max-content;
+  margin-inline-start: auto;
   min-block-size: 28px;
+  min-inline-size: 24px;
   padding-inline: 9px;
+  white-space: nowrap;
 }
 
 .session-connection-symbol {

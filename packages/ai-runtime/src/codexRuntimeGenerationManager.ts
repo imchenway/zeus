@@ -4,6 +4,7 @@ import {
   type CodexCapabilitiesSnapshot,
   type CodexResponsesModelProvider,
   type CodexResponsesRuntime,
+  type CodexRpcRetryProgress,
   type CodexServerRequestResponse,
   type CodexTransportState,
   createCodexAppServerManager,
@@ -26,6 +27,7 @@ interface RuntimeEntry {
   pendingRequests: Map<string, { generationId: string; threadId: string | null }>;
   unsubscribe: () => void;
   unsubscribeExternalImport: () => void;
+  unsubscribeRpcRetry: () => void;
   activationSequence: number;
   inFlightWrites: number;
   closing: boolean;
@@ -100,6 +102,7 @@ export function createCodexRuntimeGenerationManager(
   const threadHandoffChains = new Map<string, Promise<void>>();
   const listeners = new Set<(event: CodexAppServerEvent) => void | Promise<void>>();
   const externalImportListeners = new Set<(event: ExternalAgentImportEvent) => void>();
+  const rpcRetryListeners = new Set<(event: CodexRpcRetryProgress) => void>();
   let activeEntry: RuntimeEntry | null = null;
   let preparingForShutdown = false;
   let closePromise: Promise<void> | null = null;
@@ -372,6 +375,16 @@ export function createCodexRuntimeGenerationManager(
     }
   }
 
+  function forwardRpcRetry(event: CodexRpcRetryProgress): void {
+    for (const listener of rpcRetryListeners) {
+      try {
+        listener(event);
+      } catch {
+        // 重试进度不参与运行时所有权；单个展示消费者失败不能改变 RPC 生命周期。
+      }
+    }
+  }
+
   async function activate(input: RuntimeActivationInput, forceFreshGeneration = false): Promise<CodexCapabilitiesSnapshot> {
     if (preparingForShutdown) throw managerError('ZEUS_CODEX_CLOSED', 'Codex runtime generation manager is closing.');
     const requestedHome = input.externalAgentHome ?? null;
@@ -444,6 +457,7 @@ export function createCodexRuntimeGenerationManager(
       pendingRequests: new Map<string, { generationId: string; threadId: string | null }>(),
       unsubscribe: () => undefined,
       unsubscribeExternalImport: () => undefined,
+      unsubscribeRpcRetry: () => undefined,
       activationSequence: 0,
       inFlightWrites: 0,
       closing: false,
@@ -451,6 +465,7 @@ export function createCodexRuntimeGenerationManager(
     };
     provisional.unsubscribe = manager.subscribe((event) => forwardEvent(provisional, event));
     provisional.unsubscribeExternalImport = manager.subscribeExternalAgentImport(forwardExternalImport);
+    provisional.unsubscribeRpcRetry = manager.subscribeRpcRetries(forwardRpcRetry);
     entries.add(provisional);
     try {
       const capabilities = await manager.ensureReady(normalizedInput);
@@ -462,6 +477,7 @@ export function createCodexRuntimeGenerationManager(
     } catch (error) {
       provisional.unsubscribe();
       provisional.unsubscribeExternalImport();
+      provisional.unsubscribeRpcRetry();
       entries.delete(provisional);
       await manager.close().catch(() => undefined);
       throw error;
@@ -475,6 +491,7 @@ export function createCodexRuntimeGenerationManager(
     entry.closePromise = (async () => {
       entry.unsubscribe();
       entry.unsubscribeExternalImport();
+      entry.unsubscribeRpcRetry();
       await entry.manager.prepareForShutdown().catch(() => undefined);
       // close 只有在子进程确认退出后才完成；失败时保留 owner 映射，禁止假定 writer 锁已经释放。
       await entry.manager.close();
@@ -681,6 +698,10 @@ export function createCodexRuntimeGenerationManager(
       externalImportListeners.add(listener);
       return () => externalImportListeners.delete(listener);
     },
+    subscribeRpcRetries(listener) {
+      rpcRetryListeners.add(listener);
+      return () => rpcRetryListeners.delete(listener);
+    },
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -723,6 +744,7 @@ export function createCodexRuntimeGenerationManager(
         for (const entry of entries) {
           entry.unsubscribe();
           entry.unsubscribeExternalImport();
+          entry.unsubscribeRpcRetry();
         }
         entries.clear();
         entriesByGeneration.clear();
@@ -732,6 +754,7 @@ export function createCodexRuntimeGenerationManager(
         threadHandoffChains.clear();
         listeners.clear();
         externalImportListeners.clear();
+        rpcRetryListeners.clear();
         activeEntry = null;
       })();
       return closePromise;

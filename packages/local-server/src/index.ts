@@ -3350,7 +3350,13 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     writeTaskCompletionToGraphNode,
     zentaoCredentials,
   });
-  closeLocalServerResources = platformRoutes.close;
+  const unsubscribeCodexRpcRetries = codexAppServerManager.subscribeRpcRetries((progress) => {
+    publishRealtimeEvent('codex.rpc.retrying', { ...progress });
+  });
+  closeLocalServerResources = async () => {
+    unsubscribeCodexRpcRetries();
+    await platformRoutes.close();
+  };
   projectGitQueries = platformRoutes.projectGitQueries;
   conversationCapabilityQueries = platformRoutes.conversationCapabilityQueries;
   const { commandCenter } = platformRoutes;

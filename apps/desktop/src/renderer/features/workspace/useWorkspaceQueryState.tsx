@@ -856,13 +856,13 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     selectedConversationPresentation: selectedNativeConversationPresentation,
     taskDetailPaneTaskId,
   };
-  function updateTaskModelPushPendingByTask(update: (current: Record<string, TrackedTaskModelPushState>) => Record<string, TrackedTaskModelPushState>): Record<string, TrackedTaskModelPushState> {
+  const updateTaskModelPushPendingByTask = useCallback((update: (current: Record<string, TrackedTaskModelPushState>) => Record<string, TrackedTaskModelPushState>): Record<string, TrackedTaskModelPushState> => {
     // ref 是首发操作的同步事实源；React state 只负责投影，不能再把较旧提交反写进 ref。
     const next = update(taskModelPushPendingByTaskRef.current);
     taskModelPushPendingByTaskRef.current = next;
     setTaskModelPushPendingByTask(next);
     return next;
-  }
+  }, []);
   const graphViewRequestVersionRef = useRef(0);
   const graphSearchRequestVersionRef = useRef(0);
   const graphQuestionRequestVersionRef = useRef(0);

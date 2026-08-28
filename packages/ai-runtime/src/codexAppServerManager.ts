@@ -1,6 +1,7 @@
 import { spawn as nodeSpawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { createConnection } from 'node:net';
 import { isAbsolute, join } from 'node:path';
 import { type RawData, WebSocket } from 'ws';
@@ -359,6 +360,29 @@ export interface CodexAppServerEvent {
   requestId?: CodexWireId;
 }
 
+export interface CodexRpcRetryContext {
+  operationIdentity?: string;
+  projectId?: string;
+  taskId?: string;
+  conversationId?: string;
+}
+
+export interface CodexRpcRetryProgress extends CodexRpcRetryContext {
+  generationId: string;
+  method: string;
+  retryAttempt: number;
+  maxRetries: number;
+  delayMs: number;
+  occurredAt: string;
+}
+
+const codexRpcRetryContext = new AsyncLocalStorage<CodexRpcRetryContext>();
+
+/** 把一次前台产品操作的身份旁路带到内部只读 RPC；不改变 Provider wire payload。 */
+export function runWithCodexRpcRetryContext<T>(context: CodexRpcRetryContext, operation: () => T): T {
+  return codexRpcRetryContext.run({ ...context }, operation);
+}
+
 export type CodexTransportState =
   | { type: 'idle' }
   | { type: 'starting'; generationId: string }
@@ -457,6 +481,7 @@ export interface CodexAppServerManager {
   startExternalAgentImport(input: ExternalAgentConfigImportParams): Promise<ExternalAgentConfigImportResponse>;
   readExternalAgentImportHistories(): Promise<ExternalAgentConfigImportHistory[]>;
   subscribeExternalAgentImport(listener: (event: ExternalAgentImportEvent) => void): () => void;
+  subscribeRpcRetries(listener: (event: CodexRpcRetryProgress) => void): () => void;
   subscribe(listener: (event: CodexAppServerEvent) => void | Promise<void>): () => void;
   getState(): CodexTransportState;
   hasGeneration(generationId: string): boolean;
@@ -508,6 +533,27 @@ type ServerRequestRecord = {
 const RESTART_DELAYS_MS = [250, 500, 1_000, 2_000, 5_000] as const;
 const ACCOUNT_SNAPSHOT_TTL_MS = 30_000;
 const ACCOUNT_USAGE_SNAPSHOT_TTL_MS = 15_000;
+const SAFE_READ_RPC_METHODS = new Set([
+  'model/list',
+  'experimentalFeature/list',
+  'account/read',
+  'account/rateLimits/read',
+  'account/usage/read',
+  'thread/read',
+  'thread/list',
+  'thread/goal/get',
+  'thread/turns/list',
+  'skills/list',
+  'remoteControl/status/read',
+  'remoteControl/pairing/status',
+  'remoteControl/client/list',
+  'externalAgentConfig/detect',
+  'externalAgentConfig/import/readHistories',
+]);
+const SAFE_READ_RPC_MAX_RETRIES = 5;
+const SAFE_READ_RPC_ATTEMPT_TIMEOUT_MS = 4_000;
+const SAFE_READ_RPC_DEADLINE_MS = 30_000;
+const SAFE_READ_RPC_INITIAL_DELAY_MS = 200;
 
 type TimedGenerationSnapshot<T extends { generationId: string }> = {
   value: T;
@@ -544,6 +590,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
   if (codexHome !== null && !isAbsolute(codexHome)) throw managerError('ZEUS_CODEX_HOME_INVALID', 'Codex home must be an absolute path.');
   const listeners = new Set<(event: CodexAppServerEvent) => void | Promise<void>>();
   const externalAgentImportListeners = new Set<(event: ExternalAgentImportEvent) => void>();
+  const rpcRetryListeners = new Set<(event: CodexRpcRetryProgress) => void>();
   const eventReplayBuffer: CodexAppServerEvent[] = [];
   const pendingRequests = new Map<string, PendingRequest>();
   const serverRequests = new Map<string, ServerRequestRecord>();
@@ -645,7 +692,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
         capabilities: { experimentalApi: true, requestAttestation: false },
       });
       write({ method: 'initialized' });
-      const modelList = await rpc(generationId, 'model/list', {});
+      const modelList = await retryableReadRpc(generationId, 'model/list', {});
       const models = parseModels(modelList);
       const goals = await readGoalCapability(generationId);
       if (remoteControlEnabled || remoteControlTransport) await rpc(generationId, 'remoteControl/enable', {});
@@ -798,9 +845,54 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     });
   }
 
+  async function retryableReadRpc(generationId: string, method: string, params: unknown, input: { traceIdentity?: string | null; timeoutMs?: number } = {}): Promise<unknown> {
+    const approved = SAFE_READ_RPC_METHODS.has(method) && (method !== 'account/read' || (isRecord(params) && params.refreshToken !== true));
+    if (!approved) throw managerError('ZEUS_CODEX_RPC_RETRY_METHOD_UNSAFE', `Codex RPC is not approved for automatic retry: ${method}`);
+    const deadline = Date.now() + SAFE_READ_RPC_DEADLINE_MS;
+    let lastTimeout: unknown;
+    for (let attempt = 0; attempt <= SAFE_READ_RPC_MAX_RETRIES; attempt += 1) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0 && lastTimeout) throw lastTimeout;
+      const timeoutMs = Math.max(1, Math.min(input.timeoutMs ?? requestTimeoutMs, SAFE_READ_RPC_ATTEMPT_TIMEOUT_MS, Math.max(1, remainingMs)));
+      try {
+        return await rpc(generationId, method, params, { ...input, timeoutMs });
+      } catch (error) {
+        if (!isCodexRpcTimeout(error) || attempt >= SAFE_READ_RPC_MAX_RETRIES) throw error;
+        lastTimeout = error;
+        const retryAttempt = attempt + 1;
+        const nominalDelayMs = SAFE_READ_RPC_INITIAL_DELAY_MS * 2 ** attempt;
+        const jitteredDelayMs = Math.max(0, Math.round(nominalDelayMs * (0.9 + Math.random() * 0.2)));
+        const remainingAfterAttemptMs = Math.max(0, deadline - Date.now());
+        const remainingAttempts = SAFE_READ_RPC_MAX_RETRIES - retryAttempt + 1;
+        const delayMs = Math.min(jitteredDelayMs, Math.max(0, remainingAfterAttemptMs - remainingAttempts));
+        emitRpcRetry({
+          generationId,
+          method,
+          retryAttempt,
+          maxRetries: SAFE_READ_RPC_MAX_RETRIES,
+          delayMs,
+          occurredAt: now(),
+          ...(codexRpcRetryContext.getStore() ?? {}),
+        });
+        if (delayMs > 0) await waitFor(delayMs);
+      }
+    }
+    throw lastTimeout;
+  }
+
+  function emitRpcRetry(event: CodexRpcRetryProgress): void {
+    for (const listener of rpcRetryListeners) {
+      try {
+        listener(event);
+      } catch {
+        // 重试进度只用于诊断和临时 UI，消费者失败不能改变真实 RPC 生命周期。
+      }
+    }
+  }
+
   async function readGoalCapability(generationId: string): Promise<CodexCapabilitiesSnapshot['goals']> {
     try {
-      const response = asRecord(await rpc(generationId, 'experimentalFeature/list', { limit: 200 }));
+      const response = asRecord(await retryableReadRpc(generationId, 'experimentalFeature/list', { limit: 200 }));
       if (!Array.isArray(response.data)) return { supported: false, enabled: false, stage: null };
       const goal = response.data.find((entry) => isRecord(entry) && entry.name === 'goals');
       if (!isRecord(goal)) return { supported: false, enabled: false, stage: null };
@@ -1071,8 +1163,9 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       let request = accountReadInFlight.get(flightKey);
       if (!request) {
         request = (async () => {
+          const accountRead = refreshToken ? rpc : retryableReadRpc;
           const snapshot = parseAccountSnapshot(
-            await rpc(capabilities.generationId, 'account/read', { refreshToken }, { ...(refreshToken ? {} : { timeoutMs: Math.min(requestTimeoutMs, 8_000) }) }),
+            await accountRead(capabilities.generationId, 'account/read', { refreshToken }, { ...(refreshToken ? {} : { timeoutMs: Math.min(requestTimeoutMs, 8_000) }) }),
             capabilities.generationId,
             accountFingerprintSalt,
           );
@@ -1100,7 +1193,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       const existing = accountRateLimitsReadInFlight.get(capabilities.generationId);
       if (existing) return existing;
       const request: Promise<CodexAccountRateLimitsSnapshot> = (async () => {
-        const snapshot = parseAccountRateLimitsSnapshot(await rpc(capabilities.generationId, 'account/rateLimits/read', {}, { timeoutMs: Math.min(requestTimeoutMs, 8_000) }), capabilities.generationId);
+        const snapshot = parseAccountRateLimitsSnapshot(await retryableReadRpc(capabilities.generationId, 'account/rateLimits/read', {}, { timeoutMs: Math.min(requestTimeoutMs, 8_000) }), capabilities.generationId);
         lastAccountRateLimitsSnapshot = { value: snapshot, cachedAt: Date.now() };
         return snapshot;
       })().finally(() => {
@@ -1116,7 +1209,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       const existing = accountUsageReadInFlight.get(capabilities.generationId);
       if (existing) return existing;
       const request: Promise<CodexAccountUsageSnapshot> = (async () => {
-        const snapshot = parseAccountUsageSnapshot(await rpc(capabilities.generationId, 'account/usage/read', {}, { timeoutMs: Math.min(requestTimeoutMs, 8_000) }), capabilities.generationId);
+        const snapshot = parseAccountUsageSnapshot(await retryableReadRpc(capabilities.generationId, 'account/usage/read', {}, { timeoutMs: Math.min(requestTimeoutMs, 8_000) }), capabilities.generationId);
         lastAccountUsageSnapshot = { value: snapshot, cachedAt: Date.now() };
         return snapshot;
       })().finally(() => {
@@ -1216,12 +1309,12 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     },
     async readThread(input) {
       const capabilities = await awaitCapabilities();
-      const response = asRecord(await rpc(capabilities.generationId, 'thread/read', { threadId: input.threadId, includeTurns: input.includeTurns ?? false }));
+      const response = asRecord(await retryableReadRpc(capabilities.generationId, 'thread/read', { threadId: input.threadId, includeTurns: input.includeTurns ?? false }));
       return parseThread(response.thread);
     },
     async listThreads(input) {
       const capabilities = await awaitCapabilities();
-      const response = asRecord(await rpc(capabilities.generationId, 'thread/list', compactObject({ ...input })));
+      const response = asRecord(await retryableReadRpc(capabilities.generationId, 'thread/list', compactObject({ ...input })));
       if (!Array.isArray(response.data) || (response.nextCursor !== null && typeof response.nextCursor !== 'string')) {
         throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex thread/list returned an invalid page.');
       }
@@ -1233,7 +1326,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     async readThreadGoal(input) {
       const capabilities = await awaitCapabilities();
       assertGoalsEnabled(capabilities);
-      const response = asRecord(await rpc(capabilities.generationId, 'thread/goal/get', input));
+      const response = asRecord(await retryableReadRpc(capabilities.generationId, 'thread/goal/get', input));
       return response.goal === null ? null : parseThreadGoal(response.goal);
     },
     async setThreadGoal(input) {
@@ -1255,7 +1348,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     async listThreadTurns(input) {
       const capabilities = await awaitCapabilities();
       const response = asRecord(
-        await rpc(
+        await retryableReadRpc(
           capabilities.generationId,
           'thread/turns/list',
           compactObject({
@@ -1277,7 +1370,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     },
     async listSkills(input) {
       const capabilities = await awaitCapabilities();
-      return parseSkillsList(await rpc(capabilities.generationId, 'skills/list', compactObject(input)));
+      return parseSkillsList(await retryableReadRpc(capabilities.generationId, 'skills/list', compactObject(input)));
     },
     async startTurn(input) {
       const capabilities = await awaitCapabilities();
@@ -1407,7 +1500,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     },
     async readRemoteControlStatus() {
       const capabilities = await awaitCapabilities();
-      return parseRemoteControlStatus(await rpc(capabilities.generationId, 'remoteControl/status/read', undefined));
+      return parseRemoteControlStatus(await retryableReadRpc(capabilities.generationId, 'remoteControl/status/read', undefined));
     },
     async enableRemoteControl(input = {}) {
       const capabilities = await awaitCapabilities();
@@ -1427,13 +1520,13 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     },
     async readRemoteControlPairingStatus(input) {
       const capabilities = await awaitCapabilities();
-      const response = asRecord(await rpc(capabilities.generationId, 'remoteControl/pairing/status', compactObject(input)));
+      const response = asRecord(await retryableReadRpc(capabilities.generationId, 'remoteControl/pairing/status', compactObject(input)));
       if (typeof response.claimed !== 'boolean') throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex remote pairing status omitted claimed.');
       return { claimed: response.claimed };
     },
     async listRemoteControlClients(input) {
       const capabilities = await awaitCapabilities();
-      return parseRemoteControlClients(await rpc(capabilities.generationId, 'remoteControl/client/list', compactObject(input)));
+      return parseRemoteControlClients(await retryableReadRpc(capabilities.generationId, 'remoteControl/client/list', compactObject(input)));
     },
     async revokeRemoteControlClient(input) {
       const capabilities = await awaitCapabilities();
@@ -1442,7 +1535,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     async detectExternalAgentConfig(input = {}) {
       const capabilities = await awaitCapabilities();
       return parseExternalAgentConfigDetectResponse(
-        await rpc(
+        await retryableReadRpc(
           capabilities.generationId,
           'externalAgentConfig/detect',
           compactObject({
@@ -1460,11 +1553,15 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     },
     async readExternalAgentImportHistories() {
       const capabilities = await awaitCapabilities();
-      return parseExternalAgentConfigImportHistoriesResponse(await rpc(capabilities.generationId, 'externalAgentConfig/import/readHistories', {})).data;
+      return parseExternalAgentConfigImportHistoriesResponse(await retryableReadRpc(capabilities.generationId, 'externalAgentConfig/import/readHistories', {})).data;
     },
     subscribeExternalAgentImport(listener) {
       externalAgentImportListeners.add(listener);
       return () => externalAgentImportListeners.delete(listener);
+    },
+    subscribeRpcRetries(listener) {
+      rpcRetryListeners.add(listener);
+      return () => rpcRetryListeners.delete(listener);
     },
     subscribe(listener) {
       listeners.add(listener);
@@ -1527,6 +1624,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
         if (child === process) child = null;
         listeners.clear();
         externalAgentImportListeners.clear();
+        rpcRetryListeners.clear();
         eventReplayBuffer.length = 0;
         serverRequests.clear();
         pendingInterrupts.clear();
@@ -2340,6 +2438,14 @@ function summarizeStderr(value: string): string {
 
 function managerError(code: string, message: string): Error {
   return Object.assign(new Error(message), { code });
+}
+
+function isCodexRpcTimeout(error: unknown): boolean {
+  return !!error && typeof error === 'object' && 'code' in error && error.code === 'ZEUS_CODEX_RPC_TIMEOUT';
+}
+
+function waitFor(delayMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
 function isAccountReadTransportFailure(error: unknown): boolean {

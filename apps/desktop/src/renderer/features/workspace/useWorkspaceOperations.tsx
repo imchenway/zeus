@@ -1896,10 +1896,17 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
                   retryLabel: pending.contextRefreshRequired ? (appShellSettings.appLanguage === 'zh-CN' ? '重新确认' : 'Review') : appShellSettings.appLanguage === 'zh-CN' ? '重试' : 'Retry',
                   onRetry: () => retryTaskModelPush(pending.task.id),
                 }
-              : {
-                  state: 'creating',
-                  message: appShellSettings.appLanguage === 'zh-CN' ? '正在连接' : 'Connecting',
-                }
+              : pending.retryProgress
+                ? {
+                    state: 'retrying',
+                    message: appShellSettings.appLanguage === 'zh-CN' ? '正在重试' : 'Retrying',
+                    retryAttempt: pending.retryProgress.retryAttempt,
+                    maxRetries: pending.retryProgress.maxRetries,
+                  }
+                : {
+                    state: 'creating',
+                    message: appShellSettings.appLanguage === 'zh-CN' ? '正在连接' : 'Connecting',
+                  }
           }
           localActions={taskModelPushWorkspaceActions(pending, onOpenTaskDetail)}
           onStartConversation={startNativeConversation}
@@ -1934,10 +1941,17 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           stableConversationId={selectedTaskModelPushOperation?.navigationId}
           creationStatus={
             selectedTaskModelPushOperation
-              ? {
-                  state: 'creating',
-                  message: appShellSettings.appLanguage === 'zh-CN' ? '正在连接' : 'Connecting',
-                }
+              ? selectedTaskModelPushOperation.retryProgress
+                ? {
+                    state: 'retrying',
+                    message: appShellSettings.appLanguage === 'zh-CN' ? '正在重试' : 'Retrying',
+                    retryAttempt: selectedTaskModelPushOperation.retryProgress.retryAttempt,
+                    maxRetries: selectedTaskModelPushOperation.retryProgress.maxRetries,
+                  }
+                : {
+                    state: 'creating',
+                    message: appShellSettings.appLanguage === 'zh-CN' ? '正在连接' : 'Connecting',
+                  }
               : undefined
           }
           readOnlyGate={taskReadOnlyGate}
