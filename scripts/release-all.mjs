@@ -478,7 +478,7 @@ function rebindUnpublishedReleaseRepair(state, headSha) {
   if (recoveringUnpushedCommit && previousReleaseIsOnRemote) return false;
   const localMainContainsRemote = capture('git', ['merge-base', '--is-ancestor', remoteMainSha, headSha], true).status === 0;
   if (recoveringFailedPushedCommit && (!previousReleaseIsOnRemote || !localMainContainsRemote)) return false;
-  if (recoveringFailedPushedCommit) assertNoActiveReleaseWorkflow(state.releaseCommit, headSha);
+    if (recoveringFailedPushedCommit) assertNoActiveReleaseWorkflow(headSha);
   assertAncestor(state.baseTag, headSha);
   state.sourceHead = headSha;
   state.releaseCommit = headSha;
@@ -492,13 +492,13 @@ function rebindUnpublishedReleaseRepair(state, headSha) {
   return true;
 }
 
-function assertNoActiveReleaseWorkflow(replacedCommit, replacementCommit) {
+function assertNoActiveReleaseWorkflow(replacementCommit) {
   const runs = JSON.parse(gh(['run', 'list', '--repo', repository, '--workflow', 'Release', '--limit', '50', '--json', 'databaseId,status,headSha,url,createdAt']));
   const activeRuns = runs.filter((run) => run.status !== 'completed');
   if (activeRuns.length === 0) return;
 
   const remoteMainSha = resolveRemoteReference('refs/heads/main');
-  const supersededRuns = activeRuns.filter((run) => isSupersededUnstartedReleaseRun(run, replacedCommit, replacementCommit, remoteMainSha));
+    const supersededRuns = activeRuns.filter((run) => isSupersededUnstartedReleaseRun(run, replacementCommit, remoteMainSha));
   const supersededRunIds = new Set(supersededRuns.map((run) => run.databaseId));
   const blockingRuns = activeRuns.filter((run) => !supersededRunIds.has(run.databaseId));
   for (const run of supersededRuns) {
@@ -509,14 +509,26 @@ function assertNoActiveReleaseWorkflow(replacedCommit, replacementCommit) {
   throw new Error(`仍有 Release Workflow 在运行或排队，拒绝重新绑定失败发布候选：\n${details}`);
 }
 
-function isSupersededUnstartedReleaseRun(run, replacedCommit, replacementCommit, remoteMainSha) {
+function isSupersededUnstartedReleaseRun(run, replacementCommit, remoteMainSha) {
   const createdAtMs = Date.parse(run.createdAt ?? '');
-  if (run.status !== 'queued' || run.headSha !== replacedCommit || remoteMainSha !== replacementCommit || !Number.isFinite(createdAtMs) || Date.now() - createdAtMs < releaseWorkflowWaitLimitMs) {
+    // 重新绑定发生在新候选 push 之前；安全链必须是“幽灵提交 < 当前远程 main < 本地新候选”。
+    // 旧 Workflow 即使随后苏醒，也会在公开写入预检中因不再等于 origin/main 而失败。
+    if (
+        run.status !== 'queued' ||
+        !run.headSha ||
+        run.headSha === replacementCommit ||
+        !remoteMainSha ||
+        run.headSha === remoteMainSha ||
+        !Number.isFinite(createdAtMs) ||
+        Date.now() - createdAtMs < releaseWorkflowWaitLimitMs ||
+        capture('git', ['merge-base', '--is-ancestor', run.headSha, remoteMainSha], true).status !== 0 ||
+        capture('git', ['merge-base', '--is-ancestor', remoteMainSha, replacementCommit], true).status !== 0
+    ) {
     return false;
   }
 
   const detail = JSON.parse(gh(['run', 'view', String(run.databaseId), '--repo', repository, '--json', 'databaseId,status,headSha,jobs']));
-  return detail.status === 'queued' && detail.headSha === replacedCommit && Array.isArray(detail.jobs) && detail.jobs.length === 0;
+    return detail.status === 'queued' && detail.headSha === run.headSha && Array.isArray(detail.jobs) && detail.jobs.length === 0;
 }
 
 function validateState(state, stableRelease) {
