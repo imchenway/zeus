@@ -9713,6 +9713,118 @@ body[data-surface='project-git-diff'] #root {
   place-items: center;
 }
 
+/* 启动失败是独立页，不使用弹窗、卡片、遮罩或背景虚化。 */
+.startup-failure-shell {
+    background: oklch(98.7% 0.003 255);
+    color: oklch(23% 0.018 255);
+    display: grid;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    min-block-size: 100vh;
+    padding: clamp(48px, 10vh, 112px) clamp(36px, 8vw, 128px);
+    place-items: center start;
+}
+
+.startup-failure-content {
+    display: grid;
+    gap: 0;
+    inline-size: min(520px, 100%);
+}
+
+.startup-failure-mark {
+    align-items: center;
+    background: oklch(94.5% 0.028 285);
+    border: 1px solid oklch(88% 0.035 285);
+    border-radius: 11px;
+    color: oklch(48% 0.15 285);
+    display: inline-flex;
+    font-size: 20px;
+    font-weight: 760;
+    block-size: 42px;
+    inline-size: 42px;
+    justify-content: center;
+    margin-block-end: 28px;
+}
+
+.startup-failure-content h1 {
+    font-size: clamp(30px, 4vw, 42px);
+    font-weight: 720;
+    letter-spacing: -0.035em;
+    line-height: 1.08;
+    margin: 0;
+}
+
+.startup-failure-description {
+    color: oklch(42% 0.014 255);
+    font-size: 16px;
+    line-height: 1.65;
+    margin: 20px 0 0;
+}
+
+.startup-failure-log-hint {
+    color: oklch(56% 0.012 255);
+    font-size: 13px;
+    line-height: 1.5;
+    margin: 8px 0 0;
+}
+
+.startup-failure-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-block-start: 30px;
+}
+
+.startup-failure-button {
+    background: transparent;
+    border: 1px solid oklch(82% 0.012 255);
+    border-radius: 9px;
+    color: oklch(30% 0.018 255);
+    cursor: pointer;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 650;
+    min-block-size: 38px;
+    padding: 0 16px;
+}
+
+.startup-failure-button.is-primary {
+    background: oklch(28% 0.025 255);
+    border-color: oklch(28% 0.025 255);
+    color: oklch(98% 0.003 255);
+}
+
+.startup-failure-button:hover:not(:disabled),
+.startup-failure-button:focus-visible {
+    border-color: oklch(60% 0.02 255);
+    outline: none;
+}
+
+.startup-failure-button.is-primary:hover:not(:disabled),
+.startup-failure-button.is-primary:focus-visible {
+    background: oklch(23% 0.025 255);
+    border-color: oklch(23% 0.025 255);
+}
+
+.startup-failure-button:focus-visible {
+    box-shadow: 0 0 0 3px oklch(58% 0.12 255 / 0.18);
+}
+
+.startup-failure-button:disabled {
+    cursor: wait;
+    opacity: 0.58;
+}
+
+@media (max-width: 640px) {
+    .startup-failure-shell {
+        padding: 40px 28px;
+    }
+
+    .startup-failure-actions,
+    .startup-failure-button {
+        inline-size: 100%;
+    }
+}
+
 .renderer-crash-workspace {
   inline-size: min(640px, calc(100vw - 48px));
 }

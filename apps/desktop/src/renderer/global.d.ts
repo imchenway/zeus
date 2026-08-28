@@ -1,17 +1,24 @@
-import type { DashboardClientOptions, LocalBusinessDataSnapshot, LocalSettingsExportSnapshot } from './apiClient.js';
-import type { ZeusBrowserApprovalDecision, ZeusBrowserCommand, ZeusBrowserConversationSnapshot, ZeusBrowserEvent, ZeusBrowserPreparedSubmission, ZeusBrowserSettings } from '@zeus/shared';
-import type { ZentaoTaskExtract } from '@zeus/shared';
-import type { ConversationFileLocation, ConversationOpenTarget, ConversationResourceOpenTarget } from '@zeus/shared';
+import type {DashboardClientOptions, LocalBusinessDataSnapshot, LocalSettingsExportSnapshot} from './apiClient.js';
 import type {
-  CreateProjectSourceEntryInput,
-  MoveProjectSourceEntryInput,
-  ProjectSourceDirectorySnapshot,
-  ProjectSourceDocument,
-  ProjectSourceEntry,
-  ProjectSourceEvent,
-  ProjectSourceSearchResult,
-  SaveProjectSourceFileInput,
-  TrashProjectSourceEntryInput,
+    ConversationFileLocation,
+    ConversationOpenTarget,
+    ConversationResourceOpenTarget,
+    CreateProjectSourceEntryInput,
+    MoveProjectSourceEntryInput,
+    ProjectSourceDirectorySnapshot,
+    ProjectSourceDocument,
+    ProjectSourceEntry,
+    ProjectSourceEvent,
+    ProjectSourceSearchResult,
+    SaveProjectSourceFileInput,
+    TrashProjectSourceEntryInput,
+    ZentaoTaskExtract,
+    ZeusBrowserApprovalDecision,
+    ZeusBrowserCommand,
+    ZeusBrowserConversationSnapshot,
+    ZeusBrowserEvent,
+    ZeusBrowserPreparedSubmission,
+    ZeusBrowserSettings
 } from '@zeus/shared';
 
 type ConversationInputResourceBridge = {
@@ -67,6 +74,8 @@ declare global {
       } | null>;
       retryExecutionHostMaintenance: () => Promise<void>;
       exitExecutionHostMaintenance: () => Promise<void>;
+        restartAfterStartupFailure: () => Promise<void>;
+        exitAfterStartupFailure: () => Promise<void>;
       getLocalServerConfig: () => Promise<DashboardClientOptions>;
       loadSessionViewCache: () => Promise<unknown | null>;
       persistSessionViewCache: (value: import('./session/sessionHotCache.js').PersistedSessionViewCache) => void;
@@ -132,6 +141,7 @@ declare global {
       unwatchProjectSource: () => Promise<{ watching: false }>;
       onProjectSourceEvent: (listener: (event: ProjectSourceEvent) => void) => () => void;
       reportRendererFatalFailure: (message: string) => void;
+        reportRendererRuntimeError: (message: string) => void;
       reportRendererBootstrapReady: () => void;
       chooseProjectDirectory: () => Promise<string | null>;
       chooseRecoveryBackupDestinations: () => Promise<{

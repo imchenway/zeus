@@ -1,6 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
-import { Button } from './Button.js';
-import { ModalPortal } from './ModalPortal.js';
+import {useEffect, useRef} from 'react';
 
 export type ApplicationErrorLanguage = 'zh-CN' | 'en';
 
@@ -12,15 +10,6 @@ export interface ApplicationErrorOptions {
   };
 }
 
-interface ApplicationErrorEntry {
-  language: ApplicationErrorLanguage;
-  visibleText: string;
-  primaryAction?: ApplicationErrorOptions['primaryAction'];
-}
-
-const listeners = new Set<() => void>();
-let queue: ApplicationErrorEntry[] = [];
-
 const secretPatterns: ReadonlyArray<[RegExp, string]> = [
   [/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [已脱敏]'],
   [/\bsk-[A-Za-z0-9_-]{12,}\b/g, 'sk-[已脱敏]'],
@@ -30,18 +19,14 @@ const secretPatterns: ReadonlyArray<[RegExp, string]> = [
 
 const copyByLanguage = {
   'zh-CN': {
-    close: '关闭',
+      unavailable: '当前操作未完成，请稍后重试。',
     unknown: '未知错误。',
   },
   en: {
-    close: 'Close',
+      unavailable: 'The current operation did not complete. Please try again.',
     unknown: 'Unknown error.',
   },
 } as const;
-
-function notifyListeners(): void {
-  for (const listener of listeners) listener();
-}
 
 function redactDetails(value: string): string {
   return secretPatterns.reduce((result, [pattern, replacement]) => result.replace(pattern, replacement), value).trim();
@@ -62,40 +47,32 @@ function errorCode(error: unknown): string | null {
   return candidate?.trim() || null;
 }
 
-/** 全应用唯一的可见错误格式：错误码与原始消息合成一行，堆栈和诊断元数据不进入 DOM。 */
+/**
+ * 界面只提供稳定、可理解的操作结果；错误码和内部消息不再进入 DOM。
+ * 真实诊断信息由 reportApplicationError 写入本机运行日志。
+ */
 export function formatVisibleApplicationError(error: unknown, language: ApplicationErrorLanguage = 'zh-CN'): string {
-  const code = errorCode(error);
-  const message = errorMessage(error, language).replace(/\s+/gu, ' ').trim() || copyByLanguage[language].unknown;
-  const text = code && message !== code && !message.startsWith(`${code}:`) ? `${code}: ${message}` : message;
-  return redactDetails(text);
+    void error;
+    return copyByLanguage[language].unavailable;
 }
 
 export function VisibleApplicationError(props: { error: unknown; language?: ApplicationErrorLanguage; className?: string }) {
-  return (
-    <code className={props.className} data-zeus-selectable="text">
-      {formatVisibleApplicationError(props.error, props.language)}
-    </code>
-  );
+    return <span className={props.className}>{formatVisibleApplicationError(props.error, props.language)}</span>;
 }
 
 /**
- * 全应用统一错误出口：业务组件只上报失败事实，不再自行决定错误卡片、横条或提示位置。
+ * 全应用统一错误出口：运行期错误只写入本机运行日志，不再生成弹窗、遮罩或全局错误卡片。
  */
 export function reportApplicationError(error: unknown, options: ApplicationErrorOptions = {}): void {
   const language = options.language ?? 'zh-CN';
-  const entry: ApplicationErrorEntry = {
-    language,
-    visibleText: formatVisibleApplicationError(error, language),
-    ...(options.primaryAction ? { primaryAction: options.primaryAction } : {}),
-  };
-
-  const duplicate = queue.some((candidate) => candidate.visibleText === entry.visibleText);
-  if (duplicate) return;
-  queue = [...queue, entry];
-  notifyListeners();
+    const code = errorCode(error);
+    const message = errorMessage(error, language).replace(/\s+/gu, ' ').trim() || copyByLanguage[language].unknown;
+    const detail = redactDetails(code && message !== code && !message.startsWith(`${code}:`) ? `${code}: ${message}` : message);
+    console.error('[Zeus runtime]', detail);
+    window.zeus?.reportRendererRuntimeError?.(detail);
 }
 
-/** 同一个失败值只上报一次；清空后再次出现同样的错误仍会重新弹窗。 */
+/** 同一个失败值只写入一次运行日志。 */
 export function useApplicationErrorDialog(error: unknown, options: ApplicationErrorOptions = {}): void {
   const previousErrorRef = useRef<unknown>(undefined);
   const language = options.language;
@@ -115,57 +92,8 @@ export function useApplicationErrorDialog(error: unknown, options: ApplicationEr
   }, [error, language, primaryAction]);
 }
 
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
-}
-
-function dismissCurrentError(): void {
-  if (queue.length === 0) return;
-  queue = queue.slice(1);
-  notifyListeners();
-}
-
+/** 保留旧挂载点以避免业务页批量改动；全局错误弹窗已永久停用。 */
 export function ApplicationErrorDialogHost(props: { language: ApplicationErrorLanguage }) {
-  const [, forceRender] = useState(0);
-  const current = queue[0];
-
-  useEffect(() => subscribe(() => forceRender((value) => value + 1)), []);
-
-  if (!current) return null;
-  const copy = copyByLanguage[current.language ?? props.language];
-
-  function runPrimaryAction(): void {
-    const action = current?.primaryAction;
-    dismissCurrentError();
-    action?.run();
-  }
-
-  return (
-    <ModalPortal rootClassName="application-error-dialog-portal-root" backdropClassName="application-error-dialog-backdrop" onDismiss={dismissCurrentError}>
-      <section className="application-error-dialog zeus-solid-form-surface" role="alertdialog" aria-modal="true" aria-labelledby="application-error-dialog-message">
-        <div className="application-error-dialog-content">
-          <code id="application-error-dialog-message" data-zeus-selectable="text">
-            {current.visibleText}
-          </code>
-        </div>
-        <footer>
-          {current.primaryAction ? (
-            <>
-              <Button variant="secondary" size="regular" onClick={dismissCurrentError}>
-                {copy.close}
-              </Button>
-              <Button variant="primary" size="regular" onClick={runPrimaryAction}>
-                {current.primaryAction.label}
-              </Button>
-            </>
-          ) : (
-            <Button variant="primary" size="regular" onClick={dismissCurrentError} autoFocus>
-              {copy.close}
-            </Button>
-          )}
-        </footer>
-      </section>
-    </ModalPortal>
-  );
+    void props.language;
+    return null;
 }

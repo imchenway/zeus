@@ -1,17 +1,17 @@
 import type {
-  NativeConversationChoice,
-  NativeConversationModelHistoryV2Item,
-  NativeConversationProcessV2Item,
-  NativeConversationSnapshot,
-  NativeConversationSnapshotV2,
-  NativeConversationSnapshotV2Page,
-  NativeGoalResponse,
-  NativeItemSnapshot,
-  NativePendingRequest,
-  NativePlanImplementationRequest,
-  NativeQueueSnapshot,
-  NativeTurnSnapshot,
-  NativeUnifiedUsageSnapshot,
+    NativeConversationChoice,
+    NativeConversationModelHistoryV2Item,
+    NativeConversationProcessV2Item,
+    NativeConversationSnapshot,
+    NativeConversationSnapshotV2,
+    NativeConversationSnapshotV2Page,
+    NativeGoalResponse,
+    NativeItemSnapshot,
+    NativePendingRequest,
+    NativePlanImplementationRequest,
+    NativeQueueSnapshot,
+    NativeTurnSnapshot,
+    NativeUnifiedUsageSnapshot,
 } from './sessionTypes.js';
 
 const syncStreamProtocolGeneration = 'zeus-conversation-sync-v2' as const;
@@ -304,7 +304,12 @@ function historyItems(items: NativeConversationModelHistoryV2Item[], providerTur
     const reasoning = item.reasoningSummary || typeof contentRecord?.provenance === 'string';
     const text = projectionText(content, item.content.preview, item.content.truncated);
     const persistedPlan = item.phase === 'plan';
-    const phase = item.role === 'assistant' && (item.phase === 'final_answer' || item.phase === 'finalAnswer') ? 'final_answer' : 'prework';
+      // 旧 Pi/DeepSeek 历史没有 phase；没有 reasoning/plan 证据的 assistant 内容是用户正文，
+      // 不能因为缺少新版元数据就折叠进“处理过程”。
+      const phase =
+          item.role === 'assistant' && (item.phase === 'final_answer' || item.phase === 'finalAnswer' || (!persistedPlan && !reasoning))
+              ? 'final_answer'
+              : 'prework';
     const historicalUserPayload =
       item.role === 'user' && contentRecord
         ? {

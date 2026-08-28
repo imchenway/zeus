@@ -1,4 +1,4 @@
-import { Component, type ErrorInfo, type ReactNode } from 'react';
+import {Component, type ErrorInfo, type ReactNode} from 'react';
 
 type RendererCrashLanguage = 'zh-CN' | 'en-US';
 
@@ -20,22 +20,25 @@ const rendererCrashCopy: Record<
     status: string;
     title: string;
     description: string;
-    refresh: string;
+      restart: string;
+      exit: string;
   }
 > = {
   'zh-CN': {
     ariaLabel: 'Zeus 界面错误边界',
-    status: '界面已安全暂停',
-    title: 'Zeus 遇到界面错误',
-    description: '请刷新窗口或重新打开 Zeus。当前页面不会展示错误堆栈、token 或终端输出，避免泄露本机敏感信息。',
-    refresh: '刷新窗口',
+      status: '详细信息已写入本机运行日志',
+      title: '启动失败',
+      description: 'Zeus 现在无法使用。重新启动会停止遗留工作，并重新启动全部相关进程。',
+      restart: '重新启动',
+      exit: '退出',
   },
   'en-US': {
     ariaLabel: 'Zeus interface error boundary',
-    status: 'The interface is safely paused',
-    title: 'Zeus interface error',
-    description: 'Refresh this window or reopen Zeus. This page does not show stack traces, tokens, or terminal output, so local sensitive data stays hidden.',
-    refresh: 'Refresh window',
+      status: 'Details were written to the local runtime log',
+      title: 'Startup failed',
+      description: 'Zeus cannot be used right now. Restarting stops remaining work and restarts all related processes.',
+      restart: 'Restart',
+      exit: 'Exit',
   },
 };
 
@@ -67,8 +70,28 @@ export class RendererErrorBoundary extends Component<RendererErrorBoundaryProps,
   render(): ReactNode {
     if (this.state.hasError) {
       const copy = getRendererCrashCopy(this.props.appLanguage);
-      // 真实错误由应用级弹窗承载；这里仅保留稳定底面，避免再次渲染故障组件。
-      return <main className="renderer-crash-shell" data-theme="system" aria-label={copy.ariaLabel} />;
+        return (
+            <main className="startup-failure-shell" data-theme="system" aria-label={copy.ariaLabel}>
+                <section className="startup-failure-content">
+            <span className="startup-failure-mark" aria-hidden="true">
+              Z
+            </span>
+                    <h1>{copy.title}</h1>
+                    <p className="startup-failure-description">{copy.description}</p>
+                    <p className="startup-failure-log-hint">{copy.status}</p>
+                    <div className="startup-failure-actions">
+                        <button className="startup-failure-button is-primary" type="button"
+                                onClick={() => void window.zeus?.restartAfterStartupFailure?.()}>
+                            {copy.restart}
+                        </button>
+                        <button className="startup-failure-button" type="button"
+                                onClick={() => void window.zeus?.exitAfterStartupFailure?.()}>
+                            {copy.exit}
+                        </button>
+                    </div>
+                </section>
+            </main>
+        );
     }
     return this.props.children;
   }

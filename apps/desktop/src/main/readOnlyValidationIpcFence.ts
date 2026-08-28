@@ -1,5 +1,5 @@
-import type { IpcMain, IpcMainEvent, IpcMainInvokeEvent } from 'electron';
-import type { ReadOnlyValidationDescriptor } from '@zeus/shared';
+import type {IpcMain, IpcMainEvent, IpcMainInvokeEvent} from 'electron';
+import type {ReadOnlyValidationDescriptor} from '@zeus/shared';
 
 const allowedChannels = new Set([
   'zeus:get-local-server-config',
@@ -14,6 +14,9 @@ const allowedChannels = new Set([
   'zeus:renderer-bootstrap-failed',
   'zeus:renderer-bootstrap-ready',
   'zeus:renderer-runtime-failed',
+    'zeus:renderer-runtime-log',
+    'zeus:startup-failure:restart',
+    'zeus:startup-failure:exit',
   'zeus:task-table-layout-dirty-changed',
   'zeus:unsaved-change-state',
   'zeus:sensitive-request-draft-changed',

@@ -1,5 +1,5 @@
-import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import { createRendererBootstrapReporter, shouldReportRendererWindowError } from './rendererBootstrapState.cjs';
+import {contextBridge, ipcRenderer, webUtils} from 'electron';
+import {createRendererBootstrapReporter, shouldReportRendererWindowError} from './rendererBootstrapState.cjs';
 
 type MainCommandScopeKind = 'project' | 'product_conversation' | 'approval' | 'git_repository' | 'artifact' | 'settings' | 'execution_host';
 
@@ -131,6 +131,8 @@ contextBridge.exposeInMainWorld('zeus', {
   getExecutionHostMaintenanceStatus: () => ipcRenderer.invoke('zeus:execution-host-maintenance:get-status'),
   retryExecutionHostMaintenance: () => ipcRenderer.invoke('zeus:execution-host-maintenance:retry'),
   exitExecutionHostMaintenance: () => ipcRenderer.invoke('zeus:execution-host-maintenance:exit'),
+    restartAfterStartupFailure: () => ipcRenderer.invoke('zeus:startup-failure:restart'),
+    exitAfterStartupFailure: () => ipcRenderer.invoke('zeus:startup-failure:exit'),
   getLocalServerConfig: () => ipcRenderer.invoke('zeus:get-local-server-config'),
   loadSessionViewCache: () => ipcRenderer.invoke('zeus:session-view-cache:load'),
   persistSessionViewCache: (value: unknown) => ipcRenderer.send('zeus:session-view-cache:persist', value),
@@ -206,6 +208,7 @@ contextBridge.exposeInMainWorld('zeus', {
     return () => ipcRenderer.removeListener('zeus:project-source-event', handler);
   },
   reportRendererFatalFailure: (message: string) => rendererBootstrapReporter.reportFailure(message),
+    reportRendererRuntimeError: (message: string) => ipcRenderer.send('zeus:renderer-runtime-log', message),
   reportRendererBootstrapReady: () => rendererBootstrapReporter.reportReady(),
   chooseProjectDirectory: () => ipcRenderer.invoke('zeus:choose-project-directory'),
   chooseRecoveryBackupDestinations: () => ipcRenderer.invoke('zeus:choose-recovery-backup-destinations'),
