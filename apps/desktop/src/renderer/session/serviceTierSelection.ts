@@ -15,30 +15,33 @@ export function serviceTierSelectionFromValue(value: string): NativeServiceTierS
 
 export function serviceTierWireOverride(selection: NativeServiceTierSelection): { serviceTier?: string | null } {
   if (selection.type === 'follow' || selection.type === 'standard') return { serviceTier: null };
-  return { serviceTier: selection.id };
+  return { serviceTier: selection.id === 'priority' ? 'priority' : null };
 }
 
 export function fastServiceTier(model: CodexTaskPushModelCapability | null | undefined) {
-  return model?.serviceTiers.find((tier) => {
-    const id = tier.id.trim().toLowerCase();
-    const name = tier.name.trim().toLowerCase();
-    return id === 'fast' || id === 'priority' || name === 'fast';
-  });
+  return model?.serviceTiers.find((tier) => tier.id === 'priority');
 }
 
 export function serviceTierOptions(model: CodexTaskPushModelCapability | null | undefined, language: 'zh-CN' | 'en-US') {
   const fast = fastServiceTier(model);
-  return [{ value: standardValue, label: language === 'zh-CN' ? '标准' : 'Standard' }, ...(fast ? [{ value: fast.id, label: 'Fast' }] : [])];
+  return [
+    { value: standardValue, label: language === 'zh-CN' ? '标准' : 'Standard' },
+    {
+      value: 'priority',
+      label: fast ? 'Fast' : language === 'zh-CN' ? 'Fast（当前模型不支持）' : 'Fast (unsupported by this model)',
+      disabled: !fast,
+    },
+  ];
 }
 
 export function normalizeServiceTierSelection(selection: NativeServiceTierSelection, model: CodexTaskPushModelCapability | null | undefined): { selection: NativeServiceTierSelection; downgraded: boolean } {
   if (selection.type === 'follow') return { selection: { type: 'standard' }, downgraded: false };
   if (selection.type === 'standard') return { selection, downgraded: false };
-  if (fastServiceTier(model)?.id === selection.id) return { selection, downgraded: false };
+  if (selection.id === 'priority') return { selection, downgraded: !fastServiceTier(model) };
   return { selection: { type: 'standard' }, downgraded: true };
 }
 
-export function selectionFromEffectiveServiceTier(serviceTier: string | null | undefined, model: CodexTaskPushModelCapability | null | undefined): NativeServiceTierSelection {
+export function selectionFromEffectiveServiceTier(serviceTier: string | null | undefined): NativeServiceTierSelection {
   if (!serviceTier || serviceTier === 'default') return { type: 'standard' };
-  return fastServiceTier(model)?.id === serviceTier ? { type: 'catalog', id: serviceTier } : { type: 'standard' };
+  return serviceTier === 'priority' ? { type: 'catalog', id: 'priority' } : { type: 'standard' };
 }

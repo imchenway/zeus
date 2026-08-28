@@ -90,10 +90,12 @@ import {
 } from './session/SessionWorkspace.js';
 import type {
   CodexTaskPushCapabilities,
+  CodexTaskPushModelCapability,
   NativeConversationAttachment,
   NativeConversationChoice,
   NativeConversationChoicesSnapshot,
   NativeProjectConversationChoicesSnapshot,
+  NativeServiceTierSelection,
   NativeSessionState,
   NativeTurnSettingsSelection,
   SessionConversationOwner,
@@ -104,6 +106,7 @@ import { compareConversationStageUpdatedDesc } from './session/conversationOrder
 import { conversationDisplayTitle } from './session/conversationDisplayTitle.js';
 import { rememberSessionHotState, type SessionHotCache } from './session/sessionHotCache.js';
 import { serviceTierWireOverride } from './session/serviceTierSelection.js';
+import { toProjectModelServiceTierPreference, upsertProjectModelServiceTierPreference } from './session/projectServiceTierPreferences.js';
 import type { SessionControllerClient } from './session/useSessionController.js';
 import { TaskDetailPaneContent, type TaskEditResult } from './task/TaskDetailPaneContent.js';
 import { TaskGitReviewModal } from './task/TaskGitReviewModal.js';
@@ -219,6 +222,7 @@ import {
   type LocalSettingsExportSnapshot,
   type ProjectArchiveConfirmation,
   type ProjectConfig,
+  type ProjectModelServiceTierPreference,
   type ProjectConversationAttentionState,
   type ProjectDatabaseSecretSnapshot,
   type ProjectGitAction,
@@ -6758,6 +6762,7 @@ export function App(props: {
   onLoadProject?: (projectId: string) => Promise<ProjectRecord>;
   onLoadProjectConfig?: (projectId: string) => Promise<ProjectConfig>;
   onSaveProjectConfig?: (projectId: string, input: SaveProjectConfigRequest) => Promise<ProjectConfig>;
+  onSaveProjectModelServiceTierPreference?: (projectId: string, input: ProjectModelServiceTierPreference) => Promise<ProjectConfig>;
   onLoadProjectDatabaseSecret?: (projectId: string) => Promise<ProjectDatabaseSecretSnapshot>;
   onSaveProjectDatabasePassword?: (projectId: string, password: string) => Promise<ProjectDatabaseSecretSnapshot>;
   onClearProjectDatabasePassword?: (projectId: string) => Promise<ProjectDatabaseSecretSnapshot>;
@@ -7316,6 +7321,7 @@ export function App(props: {
     supplementalAttachments: [],
   });
   const [taskModelPushStatus, setTaskModelPushStatus] = useState<TaskModelPushModalStatus>('loading');
+  const [taskModelPushServiceTierPreferences, setTaskModelPushServiceTierPreferences] = useState<ProjectModelServiceTierPreference[]>([]);
   const [taskModelPushConfigImportPreview, setTaskModelPushConfigImportPreview] = useState<CodexConfigImportPreview | null>(null);
   const [taskModelPushConfigImportNeedsActivation, setTaskModelPushConfigImportNeedsActivation] = useState(false);
   const [taskModelPushRefreshingRepositoryId, setTaskModelPushRefreshingRepositoryId] = useState<string | null>(null);
@@ -10131,12 +10137,21 @@ export function App(props: {
     }
   }
 
+  async function saveProjectModelServiceTierPreference(projectId: string, model: CodexTaskPushModelCapability, selection: NativeServiceTierSelection): Promise<ProjectConfig> {
+    if (!props.onSaveProjectModelServiceTierPreference) throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '项目模型速度偏好保存入口不可用。' : 'Project model speed preference saving is unavailable.');
+    const saved = normalizeProjectConfig(await props.onSaveProjectModelServiceTierPreference(projectId, toProjectModelServiceTierPreference(model, selection)), projectId);
+    if (!saved) throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '项目模型速度偏好保存结果无效。' : 'The saved project model speed preference is invalid.');
+    if (projectConfig?.projectId === projectId) setProjectConfig(saved);
+    return saved;
+  }
+
   async function openTaskModelPush(taskId: string): Promise<void> {
     const task = snapshot.tasks.find((candidate) => candidate.id === taskId);
     const client = props.nativeConversationClient;
     if (!task || taskModelPushPendingByTask[task.id]?.status === 'submitting') return;
     setTaskModelPushTaskId(task.id);
     setTaskModelPushCapabilities(null);
+    setTaskModelPushServiceTierPreferences([]);
     setTaskModelPushConfigImportPreview(null);
     setTaskModelPushConfigImportNeedsActivation(false);
     setTaskModelPushForm({
@@ -10168,11 +10183,14 @@ export function App(props: {
     }
     try {
       // 与 Codex App 一致：打开 composer 时只连接并读取能力，不提前创建 thread/turn。
-      const capabilities = normalizeTaskModelPushCapabilities(await client.loadCodexTaskPushCapabilities(task.projectId, task.id));
+      const [rawCapabilities, loadedProjectConfig] = await Promise.all([client.loadCodexTaskPushCapabilities(task.projectId, task.id), props.onLoadProjectConfig?.(task.projectId) ?? Promise.resolve(undefined)]);
+      const capabilities = normalizeTaskModelPushCapabilities(rawCapabilities);
       if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
       const remembered = readTaskModelPushPreferences(browserNativeConversationStartStorage(), task.projectId);
+      const serviceTierPreferences = normalizeProjectConfig(loadedProjectConfig, task.projectId)?.serviceTierPreferences ?? [];
       setTaskModelPushCapabilities(capabilities);
-      setTaskModelPushForm(resolveTaskModelPushInitialForm(capabilities, remembered));
+      setTaskModelPushServiceTierPreferences(serviceTierPreferences);
+      setTaskModelPushForm(resolveTaskModelPushInitialForm(capabilities, remembered, serviceTierPreferences));
       setTaskModelPushStatus('ready');
     } catch (error) {
       if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
@@ -10191,6 +10209,7 @@ export function App(props: {
     if (taskModelPushTaskId) taskModelPushEnvelopeRef.current.delete(taskModelPushTaskId);
     setTaskModelPushTaskId(null);
     setTaskModelPushCapabilities(null);
+    setTaskModelPushServiceTierPreferences([]);
     setTaskModelPushConfigImportPreview(null);
     setTaskModelPushConfigImportNeedsActivation(false);
     setTaskModelPushRefreshingRepositoryId(null);
@@ -12515,6 +12534,8 @@ export function App(props: {
           localActions={taskModelPushWorkspaceActions(pending, onOpenTaskDetail)}
           onStartConversation={startNativeConversation}
           onStartProjectConversation={startProjectConversation}
+          onLoadProjectConfig={props.onLoadProjectConfig}
+          onSaveProjectModelServiceTierPreference={props.onSaveProjectModelServiceTierPreference}
           onOpenTaskDetail={onOpenTaskDetail}
           onTaskManagementStatusChange={(taskId, status) => updateTaskManagementStatus(taskId, status)}
           onLoadTaskWorkspaces={props.nativeConversationClient.loadTaskGitWorkspaces}
@@ -12561,6 +12582,8 @@ export function App(props: {
           }}
           onStartConversation={startNativeConversation}
           onStartProjectConversation={startProjectConversation}
+          onLoadProjectConfig={props.onLoadProjectConfig}
+          onSaveProjectModelServiceTierPreference={props.onSaveProjectModelServiceTierPreference}
           onOpenTaskDetail={onOpenTaskDetail}
           onTaskManagementStatusChange={(taskId, status) => updateTaskManagementStatus(taskId, status)}
           onLoadTaskWorkspaces={props.nativeConversationClient.loadTaskGitWorkspaces}
@@ -12613,6 +12636,8 @@ export function App(props: {
           onOpenTaskDetail,
           onTaskManagementStatusChange: (taskId, status) => updateTaskManagementStatus(taskId, status),
           onLoadCapabilities: props.nativeConversationClient?.loadCodexConversationCapabilities,
+          onLoadProjectConfig: props.onLoadProjectConfig,
+          onSaveProjectModelServiceTierPreference: props.onSaveProjectModelServiceTierPreference,
           onSelectNewConversationProject: selectNewConversationProject,
           onLoadNewConversationProjectGit: props.nativeConversationClient?.loadProjectGitWorkbench,
           onExecuteNewConversationProjectGit: props.nativeConversationClient ? executeNewConversationProjectGit : undefined,
@@ -13719,6 +13744,7 @@ export function App(props: {
                 task={snapshot.tasks.find((task) => task.id === taskModelPushTaskId) ?? null}
                 projectName={snapshot.projects.find((project) => project.id === snapshot.tasks.find((task) => task.id === taskModelPushTaskId)?.projectId)?.name}
                 capabilities={taskModelPushCapabilities}
+                serviceTierPreferences={taskModelPushServiceTierPreferences}
                 form={taskModelPushForm}
                 status={taskModelPushStatus}
                 configImportPreview={taskModelPushConfigImportPreview}
@@ -13732,6 +13758,15 @@ export function App(props: {
                     if (task) writeTaskModelPushPreferences(browserNativeConversationStartStorage(), task.projectId, resolved);
                     return resolved;
                   });
+                }}
+                onServiceTierPreferenceChange={(model, selection) => {
+                  const task = snapshot.tasks.find((candidate) => candidate.id === taskModelPushTaskId);
+                  if (!task) return;
+                  const preference = toProjectModelServiceTierPreference(model, selection);
+                  setTaskModelPushServiceTierPreferences((current) => upsertProjectModelServiceTierPreference(current, preference));
+                  void saveProjectModelServiceTierPreference(task.projectId, model, selection)
+                    .then((saved) => setTaskModelPushServiceTierPreferences(saved.serviceTierPreferences))
+                    .catch((error) => setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error))));
                 }}
                 onRefreshRepository={(repositoryId) => void refreshTaskModelPushRepository(repositoryId)}
                 onClose={closeTaskModelPush}
@@ -19617,6 +19652,12 @@ function normalizeProjectConfig(config?: Partial<ProjectConfig>, projectId?: str
   return {
     projectId: resolvedProjectId,
     defaultModel: config?.defaultModel ?? null,
+    serviceTierPreferences: Array.isArray(config?.serviceTierPreferences)
+      ? config.serviceTierPreferences.filter(
+          (entry): entry is ProjectModelServiceTierPreference =>
+            Boolean(entry) && (entry.modelSourceId === null || typeof entry.modelSourceId === 'string') && typeof entry.modelId === 'string' && (entry.serviceTier === 'standard' || entry.serviceTier === 'priority'),
+        )
+      : [],
     defaultWorkMode: config?.defaultWorkMode ?? 'plan',
     defaultTaskPrompt: config?.defaultTaskPrompt ?? '',
     scan: {
@@ -19653,6 +19694,7 @@ function toProjectConfigForm(config?: ProjectConfig): ProjectConfigFormState {
   const normalized = normalizeProjectConfig(config, config?.projectId) ?? {
     projectId: '',
     defaultModel: null,
+    serviceTierPreferences: [],
     defaultWorkMode: 'plan',
     defaultTaskPrompt: '',
     scan: {

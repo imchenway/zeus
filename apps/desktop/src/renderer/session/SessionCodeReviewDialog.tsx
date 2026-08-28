@@ -9,6 +9,8 @@ import { ZeusSelect } from '../ZeusSelect.js';
 import { readConversationRuntimePreferences, writeConversationRuntimePreferences } from './conversationRuntimePreferences.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import type { ProjectModelServiceTierPreference } from '../apiClient.js';
+import { projectModelServiceTierSelection } from './projectServiceTierPreferences.js';
 
 export interface SessionCodeReviewSelection {
   agentKind: 'codex' | 'pi';
@@ -32,6 +34,8 @@ interface SessionCodeReviewDialogProps {
   state: NativeSessionState;
   workspace: TaskWorkspaceSnapshot | null;
   capabilities: CodexConversationCapabilities | null;
+  serviceTierPreferences: readonly ProjectModelServiceTierPreference[];
+  onServiceTierPreferenceChange?: (model: CodexTaskPushModelCapability, selection: NativeServiceTierSelection) => void | Promise<void>;
   onLoadCapabilities?: (projectId: string) => Promise<CodexConversationCapabilities>;
   onClose: () => void;
   onStart?: (selection: SessionCodeReviewSelection) => void | boolean | { state: 'preparing'; cancel: () => void } | Promise<void | boolean | { state: 'preparing'; cancel: () => void }>;
@@ -42,7 +46,6 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
   const permissionMode: NativePermissionMode = 'read-only';
   const inheritedModel = props.state.snapshot?.nextTurnSettings?.model ?? props.state.providerSettings?.model ?? props.conversation.providerModel ?? '';
   const inheritedEffort = props.state.snapshot?.nextTurnSettings?.effort ?? props.state.providerSettings?.effort ?? '';
-  const inheritedServiceTier = props.state.snapshot?.nextTurnSettings?.serviceTier ?? props.state.providerSettings?.serviceTier;
   const [capabilities, setCapabilities] = useState<CodexConversationCapabilities | null>(null);
   const [form, setForm] = useState<SessionCodeReviewForm | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'submitting' | 'preparing' | 'error'>('loading');
@@ -69,16 +72,16 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
       if (!active) return;
       const remembered = readConversationRuntimePreferences(browserStorage(), props.conversation.projectId, 'code_review');
       setCapabilities(nextCapabilities);
-      setForm(
-        (current) =>
-          current ??
-          resolveInitialForm(
-            nextCapabilities,
-            remembered?.model ?? inheritedModel,
-            remembered?.effort ?? inheritedEffort,
-            remembered?.serviceTier.type === 'catalog' ? remembered.serviceTier.id : remembered?.serviceTier.type === 'standard' ? null : inheritedServiceTier,
-          ),
-      );
+      setForm((current) => {
+        if (!current) return resolveInitialForm(nextCapabilities, remembered?.model ?? inheritedModel, remembered?.effort ?? inheritedEffort, props.serviceTierPreferences);
+        const capability = findModel(nextCapabilities, current.model);
+        const normalizedTier = normalizeServiceTierSelection(projectModelServiceTierSelection(props.serviceTierPreferences, capability), capability);
+        return {
+          ...current,
+          serviceTierSelection: normalizedTier.selection,
+          serviceTierDowngraded: normalizedTier.downgraded,
+        };
+      });
       setStatus('ready');
       setError(null);
     };
@@ -111,7 +114,7 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
     return () => {
       active = false;
     };
-  }, [inheritedEffort, inheritedModel, inheritedServiceTier, props.capabilities, props.conversation.projectId, props.onLoadCapabilities, props.open, zh]);
+  }, [inheritedEffort, inheritedModel, props.capabilities, props.conversation.projectId, props.onLoadCapabilities, props.open, props.serviceTierPreferences, zh]);
 
   const modelPresentation = useMemo(() => presentModelOptions(capabilities?.models ?? [], form?.model ?? '', props.language), [capabilities?.models, form?.model, props.language]);
   const selectedModel = useMemo(() => resolveModelCapability(modelPresentation.models, modelPresentation.selectedId) ?? undefined, [modelPresentation.models, modelPresentation.selectedId]);
@@ -137,7 +140,7 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
   function changeModel(model: string): void {
     if (!form) return;
     const capability = findModel(capabilities, model);
-    const normalizedTier = normalizeServiceTierSelection(form.serviceTierSelection, capability);
+    const normalizedTier = normalizeServiceTierSelection(projectModelServiceTierSelection(props.serviceTierPreferences, capability), capability);
     setForm({
       model: capability?.id ?? model,
       effort: capability?.defaultReasoningEffort ?? capability?.supportedReasoningEfforts[0] ?? '',
@@ -254,21 +257,20 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
                 ariaLabel={zh ? '代码审查速度' : 'Code review speed'}
                 value={serviceTierSelectionValue(form?.serviceTierSelection ?? { type: 'standard' })}
                 options={serviceTierOptions(selectedModel, props.language)}
-                onChange={(value) =>
-                  setForm((current) =>
-                    current
-                      ? {
-                          ...current,
-                          serviceTierSelection: serviceTierSelectionFromValue(value),
-                          serviceTierDowngraded: false,
-                        }
-                      : current,
-                  )
-                }
+                onChange={(value) => {
+                  const selection = serviceTierSelectionFromValue(value);
+                  setForm((current) => (current ? { ...current, serviceTierSelection: selection, serviceTierDowngraded: false } : current));
+                  if (selectedModel) void props.onServiceTierPreferenceChange?.(selectedModel, selection);
+                }}
                 disabled={!form || !selectedModel || busy}
                 searchable={false}
               />
             </label>
+            {form?.serviceTierDowngraded ? (
+              <p className="session-code-review-message" role="status">
+                {zh ? '已记住 Fast，但当前模型不再支持；本次将按 Standard 继续。' : 'Fast is remembered, but this model no longer supports it. This run will continue on Standard.'}
+              </p>
+            ) : null}
           </section>
 
           {status === 'loading' ? <p className="session-code-review-message">{zh ? '正在读取当前模型配置…' : 'Loading the current model configuration…'}</p> : null}
@@ -311,12 +313,11 @@ function browserStorage(): Storage | undefined {
   }
 }
 
-function resolveInitialForm(capabilities: CodexConversationCapabilities, inheritedModel: string, inheritedEffort: string, inheritedServiceTier: string | null | undefined): SessionCodeReviewForm {
+function resolveInitialForm(capabilities: CodexConversationCapabilities, inheritedModel: string, inheritedEffort: string, serviceTierPreferences: readonly ProjectModelServiceTierPreference[]): SessionCodeReviewForm {
   const selectedModel = findModel(capabilities, inheritedModel) ?? findModel(capabilities, capabilities.preferredModel) ?? capabilities.models.find((model) => model.available !== false);
   if (!selectedModel) throw new Error('No review model is available.');
   const effort = selectedModel.supportedReasoningEfforts.includes(inheritedEffort) ? inheritedEffort : (selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? '');
-  const inheritedSelection: NativeServiceTierSelection = inheritedServiceTier ? { type: 'catalog', id: inheritedServiceTier } : { type: 'standard' };
-  const normalizedTier = normalizeServiceTierSelection(inheritedSelection, selectedModel);
+  const normalizedTier = normalizeServiceTierSelection(projectModelServiceTierSelection(serviceTierPreferences, selectedModel), selectedModel);
   return {
     model: selectedModel.id,
     effort,

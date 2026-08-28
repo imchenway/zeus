@@ -47,7 +47,7 @@ import {
 } from '@zeus/shared';
 import { type ProjectScanResult, scanProjectSource } from '@zeus/code-indexer';
 import { buildProjectGraph, GRAPH_VIEW_SCHEMA_VERSION, type ProjectGraph } from '@zeus/graph-engine';
-import { createDefaultProjectConfig, normalizeProjectConfig, type ProjectConfigSnapshot, type UpdateProjectConfigBody } from '@zeus/project-core';
+import { createDefaultProjectConfig, normalizeProjectConfig, normalizeProjectModelServiceTierPreference, type ProjectConfigSnapshot, type ProjectModelServiceTierPreference, type UpdateProjectConfigBody } from '@zeus/project-core';
 import {
   type AutoUpdatePolicy,
   buildAutoUpdatePolicy,
@@ -5247,6 +5247,53 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     return readProjectConfig(project.id);
   });
 
+  server.put(
+    '/api/projects/:projectId/model-service-tier-preference',
+    async (
+      request: FastifyRequest<{
+        Params: { projectId: string };
+        Body: ProjectModelServiceTierPreference;
+      }>,
+      reply,
+    ): Promise<ProjectConfigSnapshot | unknown> => {
+      const project = projects.getById(request.params.projectId);
+      if (!project)
+        return reply.code(404).send({
+          error: 'ZEUS_PROJECT_NOT_FOUND',
+          message: 'Project not found',
+        });
+      const preference = normalizeProjectModelServiceTierPreference(request.body);
+      if (!preference)
+        return reply.code(400).send({
+          error: 'ZEUS_INVALID_PROJECT_SERVICE_TIER_PREFERENCE',
+          message: 'Project model service tier preference must identify one model and use standard or priority',
+        });
+      const current = readProjectConfig(project.id);
+      const replacesExisting = current.serviceTierPreferences.some((entry) => entry.modelSourceId === preference.modelSourceId && entry.modelId === preference.modelId);
+      if (!replacesExisting && current.serviceTierPreferences.length >= 100)
+        return reply.code(409).send({
+          error: 'ZEUS_PROJECT_SERVICE_TIER_PREFERENCE_LIMIT',
+          message: 'Project model service tier preference limit reached',
+        });
+      const nextConfig: ProjectConfigSnapshot = {
+        ...current,
+        serviceTierPreferences: [...current.serviceTierPreferences.filter((entry) => entry.modelSourceId !== preference.modelSourceId || entry.modelId !== preference.modelId), preference],
+      };
+      db.transaction(() => {
+        settings.setJson(projectConfigSettingsPrefix + project.id, nextConfig);
+        appendAuditLog({
+          actorType: 'local_api',
+          action: 'project.service_tier_preference.updated',
+          resourceType: 'project',
+          resourceId: project.id,
+          payload: { ...preference },
+        });
+      });
+      await db.save();
+      return nextConfig;
+    },
+  );
+
   server.get('/api/projects/:projectId/database/secret', async (request: FastifyRequest<{ Params: { projectId: string } }>, reply): Promise<ProjectDatabaseSecretSnapshot | unknown> => {
     const project = projects.getById(request.params.projectId);
     if (!project)
@@ -5353,7 +5400,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           message: 'Project not found',
         });
       }
-      const nextConfig = normalizeProjectConfig(project.id, request.body, readProjectConfig(project.id));
+      // 普通项目设置保存不拥有模型速度偏好，避免旧界面快照覆盖专用接口写入的显式选择。
+      const ordinaryConfigBody: UpdateProjectConfigBody = { ...(request.body ?? {}) };
+      delete ordinaryConfigBody.serviceTierPreferences;
+      const nextConfig = normalizeProjectConfig(project.id, ordinaryConfigBody, readProjectConfig(project.id));
       if (!nextConfig) {
         return reply.code(400).send({
           error: 'ZEUS_INVALID_PROJECT_CONFIG',
@@ -14747,11 +14797,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     };
   }
 
-  function inferNativeQueueWaitReason(
-    conversation: ZeusConversationRecord,
-    state: ReturnType<typeof inferNativeConversationSnapshotState>,
-    submissions: ReturnType<ConversationSubmissionRepository['listQueueByConversation']>,
-  ) {
+  function inferNativeQueueWaitReason(conversation: ZeusConversationRecord, state: ReturnType<typeof inferNativeConversationSnapshotState>, submissions: ReturnType<ConversationSubmissionRepository['listQueueByConversation']>) {
     if (state.type === 'active') return 'current_turn' as const;
     if (state.type === 'dispatching') return 'dispatching' as const;
     if (state.type === 'waiting') return state.reason;
@@ -14957,6 +15003,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
               ...(selectedModel ? { modelSourceId: selectedModelSourceId } : {}),
               ...(selectedEffort ? { effort: selectedEffort } : {}),
               ...(requestedServiceTier.present ? { serviceTier: selectedServiceTier ?? null } : {}),
+              ...(requestedServiceTier.present ? { requestedServiceTier: requestedServiceTier.value } : {}),
               ...(permissionMode ? { permissionMode } : {}),
               ...(collaborationMode ? { collaborationMode } : {}),
               idempotencyKey,
@@ -15397,6 +15444,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       modelSourceId: selectedModel.sourceId ?? null,
       effort: requestedEffort ?? selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? undefined,
       ...(requestedServiceTier.present ? { serviceTier } : {}),
+      ...(requestedServiceTier.present ? { requestedServiceTier: requestedServiceTier.value } : {}),
       permissionMode,
       collaborationMode,
       idempotencyKey,
@@ -15514,6 +15562,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     effort?: string;
     serviceTier?: string | null;
     serviceTierPresent?: boolean;
+    requestedServiceTier?: string | null;
     permissionMode: ConversationPermissionMode;
     workMode?: ConversationCollaborationMode;
     environmentId?: string;
@@ -15585,6 +15634,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       modelSourceId: plan.model.sourceId,
       ...(plan.effort ? { effort: plan.effort } : {}),
       ...(plan.serviceTierPresent ? { serviceTier: plan.serviceTier ?? null } : {}),
+      ...(plan.serviceTierPresent ? { requestedServiceTier: plan.requestedServiceTier ?? null } : {}),
       allowCodeChanges: plan.allowCodeChanges,
       allowTests: plan.allowTests,
       allowGitCommit: plan.allowGitCommit,
@@ -15705,6 +15755,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           ...(selectedEffort ? { effort: selectedEffort } : {}),
           serviceTier,
           serviceTierPresent: requestedServiceTier.present,
+          ...(requestedServiceTier.present ? { requestedServiceTier: requestedServiceTier.value } : {}),
           permissionMode,
           workMode,
           ...(taskEnvironment
@@ -15789,6 +15840,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           ...(selectedEffort ? { effort: selectedEffort } : {}),
           serviceTier,
           serviceTierPresent: requestedServiceTier.present,
+          ...(requestedServiceTier.present ? { requestedServiceTier: requestedServiceTier.value } : {}),
           permissionMode,
           workMode: 'default',
           environmentId: inheritedEnvironment.environment.id,
@@ -15888,6 +15940,13 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           commitMessage: conflictCommitMessage,
         });
         const selectedAgentKind = modelConversation.agentKind;
+        const serviceTierPlan =
+          selectedAgentKind === 'codex'
+            ? await resolveProjectModelServiceTierPlan(project, {
+                sourceId: modelConversation.modelSourceId,
+                modelId,
+              })
+            : null;
         if (selectedAgentKind === 'codex') await assertCodexAccountReady(modelConversation.modelSourceId, modelId);
         nativeOperation = await startNativeTaskConversationFromPlan({
           agentKind: selectedAgentKind,
@@ -15901,7 +15960,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           prompt,
           model: { sourceId: modelConversation.modelSourceId, modelId, displayName: null },
           ...(settings?.effort ? { effort: settings.effort } : {}),
-          ...(settings && Object.prototype.hasOwnProperty.call(settings, 'serviceTier') ? { serviceTier: settings.serviceTier, serviceTierPresent: true } : {}),
+          ...(serviceTierPlan ?? {}),
           permissionMode,
           workMode: 'default',
           workspaceId: conflictWorkspace.id,
@@ -16023,6 +16082,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           model: { sourceId: selectedModel.sourceId ?? null, modelId: selectedModel.model, displayName: selectedModel.displayName ?? null },
           serviceTier,
           serviceTierPresent: requestedServiceTier.present,
+          ...(requestedServiceTier.present ? { requestedServiceTier: requestedServiceTier.value } : {}),
           permissionMode,
           workMode: collaborationMode,
           ...(inheritedEnvironment
@@ -17455,6 +17515,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           : settings?.model
             ? { sourceId: null, modelId: settings.model, displayName: null }
             : input.model;
+      const serviceTierPlan = input.agentKind === 'codex' ? await resolveProjectModelServiceTierPlan(project, selectedModel) : null;
       const prompt = buildTaskConflictAiPrompt({
         sourceBranch: integration.targetBranch,
         taskBranch: workspace.branchName,
@@ -17474,7 +17535,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         prompt,
         model: selectedModel,
         ...(settings?.effort ? { effort: settings.effort } : {}),
-        ...(settings && Object.prototype.hasOwnProperty.call(settings, 'serviceTier') ? { serviceTier: settings.serviceTier, serviceTierPresent: true } : {}),
+        ...(serviceTierPlan ?? {}),
         permissionMode: settings?.permissionMode ?? conversations.getById(attempt.conversationId)?.permissionMode ?? 'auto',
         workMode: settings?.collaborationMode ?? 'default',
         workspaceId: conflictWorkspace.id,
@@ -17878,6 +17939,21 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     };
   }
 
+  async function resolveProjectModelServiceTierPlan(project: ZeusProjectRecord, model: { sourceId: string | null; modelId: string }): Promise<{ serviceTier: string | null; serviceTierPresent: true; requestedServiceTier: string | null }> {
+    const capabilities = await resolveConversationCapabilities(project);
+    const capability =
+      capabilities.models.find((candidate) => (candidate.sourceId ?? null) === model.sourceId && (candidate.id === model.modelId || candidate.model === model.modelId)) ??
+      (model.sourceId === null ? capabilities.models.find((candidate) => candidate.agentKind === 'codex' && (candidate.id === model.modelId || candidate.model === model.modelId)) : undefined);
+    if (!capability) return { serviceTier: null, serviceTierPresent: true, requestedServiceTier: null };
+    const preference = readProjectConfig(project.id).serviceTierPreferences.find((entry) => entry.modelSourceId === (capability.sourceId ?? null) && entry.modelId === capability.model);
+    const requestedServiceTier = preference?.serviceTier === 'priority' ? 'priority' : null;
+    return {
+      serviceTier: requestedServiceTier === 'priority' && capability.serviceTiers.some((tier) => tier.id === 'priority') ? 'priority' : null,
+      serviceTierPresent: true,
+      requestedServiceTier,
+    };
+  }
+
   async function assertCodexAccountReady(modelSourceId: string | null = 'codex', model = ''): Promise<void> {
     if (model && (await resolveResponsesRuntime({ modelSourceId, model }))) return;
     const account = await codexAppServerManager.readAccount({ refreshToken: true });
@@ -17889,14 +17965,14 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (!Object.prototype.hasOwnProperty.call(value, 'serviceTier')) return { present: false };
     const serviceTier = (value as { serviceTier?: unknown }).serviceTier;
     if (serviceTier === null) return { present: true, value: null };
-    if (typeof serviceTier === 'string' && serviceTier.trim()) return { present: true, value: serviceTier.trim() };
+    if (typeof serviceTier === 'string' && serviceTier.trim()) return { present: true, value: serviceTier };
     throw nativeApiError('ZEUS_INVALID_CONVERSATION_SETTINGS', 'serviceTier must be null, a non-empty catalog id, or omitted.');
   }
 
   function normalizeServiceTierForCapability(requested: { present: false } | { present: true; value: string | null }, capability: { serviceTiers: Array<{ id: string }> }): string | null | undefined {
     if (!requested.present) return undefined;
     if (requested.value === null) return null;
-    return capability.serviceTiers.some((tier) => tier.id === requested.value) ? requested.value : null;
+    return requested.value === 'priority' && capability.serviceTiers.some((tier) => tier.id === 'priority') ? 'priority' : null;
   }
 
   /** 代码审查提示词由服务端基于冻结工作区生成，Renderer 不能扩大仓库或写操作范围。 */

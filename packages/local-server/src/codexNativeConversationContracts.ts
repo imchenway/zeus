@@ -117,6 +117,7 @@ export interface StartTaskConversationInput {
   modelSourceId?: string | null;
   effort?: string;
   serviceTier?: string | null;
+  requestedServiceTier?: string | null;
   allowCodeChanges: boolean;
   allowTests: boolean;
   allowGitCommit: boolean;
@@ -155,6 +156,7 @@ export interface StartProjectConversationInput {
   modelSourceId?: string | null;
   effort?: string;
   serviceTier?: string | null;
+  requestedServiceTier?: string | null;
   permissionMode?: ConversationPermissionMode;
   collaborationMode?: ConversationCollaborationMode;
   idempotencyKey: string;
@@ -183,6 +185,7 @@ export interface SubmitNativeMessageInput {
   modelSourceId?: string | null;
   effort?: string;
   serviceTier?: string | null;
+  requestedServiceTier?: string | null;
   permissionMode?: ConversationPermissionMode;
   collaborationMode?: ConversationCollaborationMode;
   idempotencyKey: string;

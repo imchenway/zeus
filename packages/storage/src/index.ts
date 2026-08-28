@@ -822,6 +822,7 @@ export interface ConversationProviderSettingsSnapshot extends ProviderSequenceSn
 }
 
 export interface ConversationProviderTokenUsageSnapshot extends ProviderSequenceSnapshot {
+  serviceTier?: string | null;
   total: TokenUsageBreakdown;
   last: TokenUsageBreakdown;
   modelContextWindow: number | null;
@@ -7653,6 +7654,7 @@ function validateProviderTokenUsageSnapshot(snapshot: unknown): asserts snapshot
     [
       'generationId',
       'sequence',
+      'serviceTier',
       'total',
       'last',
       'modelContextWindow',
@@ -7670,6 +7672,7 @@ function validateProviderTokenUsageSnapshot(snapshot: unknown): asserts snapshot
   );
   validateTokenUsageBreakdown(candidate.total);
   validateTokenUsageBreakdown(candidate.last);
+  if (candidate.serviceTier !== undefined && candidate.serviceTier !== null && typeof candidate.serviceTier !== 'string') throw new Error('Invalid provider token usage snapshot');
   for (const value of [candidate.modelContextWindow, candidate.cacheHitRate, candidate.estimatedCredits, candidate.apiEquivalentUsd, candidate.lastApiEquivalentUsd, candidate.cacheSavingsUsd, candidate.priceCoverage]) {
     if (value !== null && (typeof value !== 'number' || !Number.isFinite(value) || value < 0)) throw new Error('Invalid provider token usage snapshot');
   }

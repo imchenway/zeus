@@ -157,10 +157,18 @@ export interface ProjectWorkspaceConfigSnapshot {
 
 export type ProjectWorkMode = 'plan' | 'develop' | 'review' | 'debug';
 export type ProjectIndexScope = 'project' | 'src' | 'custom';
+export type ProjectServiceTierPreference = 'standard' | 'priority';
+
+export interface ProjectModelServiceTierPreference {
+  modelSourceId: string | null;
+  modelId: string;
+  serviceTier: ProjectServiceTierPreference;
+}
 
 export interface ProjectConfig {
   projectId: string;
   defaultModel: string | null;
+  serviceTierPreferences: ProjectModelServiceTierPreference[];
   defaultWorkMode: ProjectWorkMode;
   defaultTaskPrompt: string;
   scan: {
@@ -192,7 +200,7 @@ export interface ProjectConfig {
   };
 }
 
-export type SaveProjectConfigRequest = Omit<ProjectConfig, 'projectId' | 'vcs'> & { vcs?: ProjectConfig['vcs'] };
+export type SaveProjectConfigRequest = Omit<ProjectConfig, 'projectId' | 'vcs' | 'serviceTierPreferences'> & { vcs?: ProjectConfig['vcs'] };
 
 export interface TaskRecord {
   id: string;
@@ -1836,6 +1844,7 @@ export interface DashboardClient {
   loadProject: (projectId: string) => Promise<ProjectRecord>;
   loadProjectConfig: (projectId: string) => Promise<ProjectConfig>;
   saveProjectConfig: (projectId: string, input: SaveProjectConfigRequest) => Promise<ProjectConfig>;
+  saveProjectModelServiceTierPreference: (projectId: string, input: ProjectModelServiceTierPreference) => Promise<ProjectConfig>;
   loadProjectWorkspaceConfig: (projectId: string) => Promise<ProjectWorkspaceConfigSnapshot>;
   saveProjectWorkspaceConfig: (projectId: string, input: { sharedWritablePaths: Array<{ localPath: string }> }) => Promise<ProjectWorkspaceConfigSnapshot>;
   loadProjectDatabaseSecret: (projectId: string) => Promise<ProjectDatabaseSecretSnapshot>;
@@ -2553,6 +2562,11 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
     loadProjectConfig: (projectId) => request<ProjectConfig>(`/api/projects/${projectId}/config`),
     saveProjectConfig: (projectId, input) =>
       request<ProjectConfig>(`/api/projects/${projectId}/config`, {
+        method: 'PUT',
+        body: JSON.stringify(input),
+      }),
+    saveProjectModelServiceTierPreference: (projectId, input) =>
+      request<ProjectConfig>(`/api/projects/${encodeURIComponent(projectId)}/model-service-tier-preference`, {
         method: 'PUT',
         body: JSON.stringify(input),
       }),

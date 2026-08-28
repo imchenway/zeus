@@ -9,7 +9,7 @@ import { UsersThreeIcon as UsersThree } from '@phosphor-icons/react/dist/csr/Use
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { animate as animateMotion, motion, useMotionValue, useTransform } from 'framer-motion';
 import { calculateUncachedInputTokens, type ConversationContextDraft, type ConversationFileLocation, type ConversationOpenTarget, type TurnChangeFile, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
-import type { ProjectGitAction, ProjectGitActionResponse, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
+import type { ProjectConfig, ProjectGitAction, ProjectGitActionResponse, ProjectGitWorkbenchSnapshot, ProjectModelServiceTierPreference, ProjectRecord } from '../apiClient.js';
 import { openConversationResourceInMain, openTurnChangeFileInMain } from '../appShellBridge.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { canSteerActiveTurn, type ComposerRuntimeSettings, ConversationComposer, resolveComposerKeyIntent } from './ConversationComposer.js';
@@ -31,6 +31,7 @@ import { SubagentWorkspace } from './SubagentWorkspace.js';
 import { defaultOpenTarget } from './ConversationResources.js';
 import type {
   CodexConversationCapabilities,
+  CodexTaskPushModelCapability,
   ConversationResource,
   ConversationResourcePreview,
   NativeCollaborationMode,
@@ -55,7 +56,7 @@ import type {
   TurnChangeSet,
   TurnChangeSetOperationResult,
 } from './sessionTypes.js';
-import { normalizeServiceTierSelection, selectionFromEffectiveServiceTier, serviceTierWireOverride } from './serviceTierSelection.js';
+import { selectionFromEffectiveServiceTier, serviceTierSelectionValue, serviceTierWireOverride } from './serviceTierSelection.js';
 import { reconnectDelayMs, type SessionController, type SessionControllerClient, useSessionController } from './useSessionController.js';
 import { createSessionEscapeController, type SessionEscapeController, type SessionEscapeLayer, type SessionEscapeResult } from './useThreadScrollController.js';
 import { SafeMarkdown, type SessionUiLanguage } from './ThreadItemView.js';
@@ -73,6 +74,7 @@ import { GoalPanel, GoalRail } from './GoalPanel.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
 import { NewConversationExecutionContext } from './NewConversationExecutionContext.js';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { projectModelServiceTierSelection, toProjectModelServiceTierPreference, upsertProjectModelServiceTierPreference } from './projectServiceTierPreferences.js';
 
 export interface SessionWorkspaceTaskManagementStatus {
   id: string;
@@ -124,6 +126,8 @@ export interface SessionWorkspaceActions {
   onStartConversation?: (input: SessionWorkspaceStartInput) => void | boolean | NativeConversationStartPreparation | Promise<void | boolean | NativeConversationStartPreparation>;
   onStartProjectConversation?: (input: ProjectSessionWorkspaceStartInput) => void | boolean | Promise<void | boolean>;
   onLoadCapabilities?: (projectId: string) => Promise<CodexConversationCapabilities>;
+  onLoadProjectConfig?: (projectId: string) => Promise<ProjectConfig>;
+  onSaveProjectModelServiceTierPreference?: (projectId: string, input: ProjectModelServiceTierPreference) => Promise<ProjectConfig>;
   onSelectNewConversationProject?: (projectId: string) => void;
   onLoadNewConversationProjectGit?: (projectId: string) => Promise<ProjectGitWorkbenchSnapshot>;
   onExecuteNewConversationProjectGit?: (projectId: string, repositoryId: string, action: ProjectGitAction) => Promise<ProjectGitActionResponse>;
@@ -263,6 +267,8 @@ export interface ConnectedSessionWorkspaceProps {
   stableConversationId?: string;
   onStartConversation?: SessionWorkspaceActions['onStartConversation'];
   onStartProjectConversation?: SessionWorkspaceActions['onStartProjectConversation'];
+  onLoadProjectConfig?: SessionWorkspaceActions['onLoadProjectConfig'];
+  onSaveProjectModelServiceTierPreference?: SessionWorkspaceActions['onSaveProjectModelServiceTierPreference'];
   onOpenTaskDetail?: SessionWorkspaceActions['onOpenTaskDetail'];
   onTaskManagementStatusChange?: SessionWorkspaceActions['onTaskManagementStatusChange'];
   taskManagementStatusChangeBusy?: boolean;
@@ -465,6 +471,8 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
           : {}),
         onStartConversation: props.onStartConversation,
         onStartProjectConversation: props.onStartProjectConversation,
+        onLoadProjectConfig: props.onLoadProjectConfig,
+        onSaveProjectModelServiceTierPreference: props.onSaveProjectModelServiceTierPreference,
         onOpenTaskDetail: props.onOpenTaskDetail,
         onTaskManagementStatusChange: props.onTaskManagementStatusChange,
         onLoadTaskWorkspaces: props.onLoadTaskWorkspaces,
@@ -567,11 +575,7 @@ export function createConnectedSessionActions(input: { controller: SessionContro
           ? {
               model: selectedSettings?.model ?? current.providerSettings!.model,
               ...((selectedSettings?.effort ?? current.providerSettings?.effort) ? { effort: selectedSettings?.effort ?? current.providerSettings?.effort } : {}),
-              ...(selectedSettings && Object.prototype.hasOwnProperty.call(selectedSettings, 'serviceTier')
-                ? { serviceTier: selectedSettings.serviceTier }
-                : current.providerSettings && Object.prototype.hasOwnProperty.call(current.providerSettings, 'serviceTier')
-                  ? { serviceTier: current.providerSettings.serviceTier }
-                  : {}),
+              ...(selectedSettings && Object.prototype.hasOwnProperty.call(selectedSettings, 'serviceTier') ? { serviceTier: selectedSettings.serviceTier } : { serviceTier: null }),
               permissionMode: current.snapshot?.nextTurnSettings?.permissionMode ?? current.snapshot?.permissionMode ?? 'read-only',
               collaborationMode: current.snapshot?.nextTurnSettings?.collaborationMode ?? current.snapshot?.collaborationMode ?? 'default',
             }
@@ -1128,6 +1132,8 @@ const labels = {
     attach: '添加附件',
     removeAttachment: '移除附件',
     runtimeDetails: '运行时详情',
+    providerActualServiceTier: 'Provider 实际档位',
+    usageActualServiceTier: '计费用量档位',
     model: '模型',
     usage: 'Token 用量',
     cacheHitRate: '缓存 Token 命中率',
@@ -1190,6 +1196,8 @@ const labels = {
     attach: 'Add attachment',
     removeAttachment: 'Remove attachment',
     runtimeDetails: 'Runtime details',
+    providerActualServiceTier: 'Provider actual tier',
+    usageActualServiceTier: 'Usage billing tier',
     model: 'Model',
     usage: 'Token usage',
     cacheHitRate: 'Cached-token hit rate',
@@ -1314,6 +1322,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const copy = labels[props.language];
   const actions = props.actions ?? {};
   const owner: SessionConversationOwner | undefined = props.owner ?? (props.task ? { kind: 'task', projectId: props.task.projectId, projectName: props.task.projectId, taskId: props.task.id, taskTitle: props.task.title } : undefined);
+  const serviceTierPreferenceProjectId = props.conversation?.projectId ?? owner?.projectId ?? null;
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const responseGuard = useRef(createRequestResponseGuard()).current;
   const escapeController = useRef(createSessionEscapeController()).current;
@@ -1333,6 +1342,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const [goalPanelOpen, setGoalPanelOpen] = useState(false);
   const [goalBusy, setGoalBusy] = useState(false);
   const [goalError, setGoalError] = useState<string | null>(null);
+  const [serviceTierPreferences, setServiceTierPreferences] = useState<ProjectModelServiceTierPreference[]>([]);
+  const [serviceTierPreferenceError, setServiceTierPreferenceError] = useState<string | null>(null);
   const browserSplitRef = useRef<HTMLDivElement | null>(null);
   const browserResizeActiveRef = useRef(false);
   const browserMotionStopRef = useRef<(() => void) | null>(null);
@@ -1376,6 +1387,51 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     title: props.language === 'zh-CN' ? '会话连接失败' : 'Conversation connection failed',
     source: 'SessionWorkspace.transport',
   });
+  useApplicationErrorDialog(serviceTierPreferenceError, {
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+    title: props.language === 'zh-CN' ? '项目模型速度偏好保存失败' : 'Project model speed preference failed to save',
+    source: 'SessionWorkspace.serviceTierPreference',
+  });
+
+  useEffect(() => {
+    setServiceTierPreferences([]);
+    setServiceTierPreferenceError(null);
+    if (!serviceTierPreferenceProjectId || !actions.onLoadProjectConfig) return;
+    let active = true;
+    void actions
+      .onLoadProjectConfig(serviceTierPreferenceProjectId)
+      .then((config) => {
+        if (active) setServiceTierPreferences(config.serviceTierPreferences ?? []);
+      })
+      .catch((error: unknown) => {
+        if (active) setServiceTierPreferenceError(error instanceof Error ? error.message : String(error));
+      });
+    return () => {
+      active = false;
+    };
+  }, [actions.onLoadProjectConfig, serviceTierPreferenceProjectId]);
+
+  async function saveServiceTierPreference(model: CodexTaskPushModelCapability, selection: NativeServiceTierSelection): Promise<void> {
+    if (!serviceTierPreferenceProjectId || !actions.onSaveProjectModelServiceTierPreference) {
+      setServiceTierPreferenceError(props.language === 'zh-CN' ? '项目模型速度偏好保存入口不可用。' : 'Project model speed preference saving is unavailable.');
+      return;
+    }
+    const preference = toProjectModelServiceTierPreference(model, selection);
+    setServiceTierPreferenceError(null);
+    setServiceTierPreferences((current) => upsertProjectModelServiceTierPreference(current, preference));
+    try {
+      const config = await actions.onSaveProjectModelServiceTierPreference(serviceTierPreferenceProjectId, preference);
+      setServiceTierPreferences(config.serviceTierPreferences ?? []);
+    } catch (error) {
+      setServiceTierPreferenceError(error instanceof Error ? error.message : String(error));
+      try {
+        const config = await actions.onLoadProjectConfig?.(serviceTierPreferenceProjectId);
+        if (config) setServiceTierPreferences(config.serviceTierPreferences ?? []);
+      } catch {
+        // 保存失败后的重新读取只用于回滚乐观展示，原始保存错误已向用户明确展示。
+      }
+    }
+  }
   const effectiveResumable = props.state?.snapshot ? !['closed', 'failed'].includes(effectiveProviderState ?? '') : effectiveProviderState === 'archived' ? true : props.conversation?.resumable;
   const nonResumableNative = Boolean(props.conversation && !legacy && !effectiveResumable);
   const pendingRequests = props.state?.pendingRequests.filter((request) => request.status === 'pending' && hasPendingRequestDetails(request)) ?? [];
@@ -1455,13 +1511,12 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     const conversationId = props.state?.conversationId ?? props.conversation?.id;
     if (!props.state || !projectId || !conversationId || legacy || interactionReadOnly) return;
     writeConversationNextTurnSettings(browserConversationStorage(), projectId, conversationId, settings);
-    const capability = props.capabilities?.models.find((candidate) => candidate.model === settings.model || candidate.id === settings.model);
     const preferenceKind = conversationRuntimePreferenceKind(owner, props.conversation?.title);
     const currentPreference = readConversationRuntimePreferences(browserConversationStorage(), projectId, preferenceKind);
     writeConversationRuntimePreferences(browserConversationStorage(), projectId, preferenceKind, {
       model: settings.model,
       ...(settings.effort ? { effort: settings.effort } : {}),
-      serviceTier: selectionFromEffectiveServiceTier(settings.serviceTier, capability),
+      serviceTier: selectionFromEffectiveServiceTier(settings.serviceTier),
       permissionMode: settings.permissionMode,
       collaborationMode: settings.collaborationMode,
       ...(currentPreference?.workspaceMode ? { workspaceMode: currentPreference.workspaceMode } : {}),
@@ -1901,6 +1956,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         state={props.state}
         language={props.language}
         capabilities={props.capabilities}
+        serviceTierPreferences={serviceTierPreferences}
+        onServiceTierPreferenceChange={saveServiceTierPreference}
         onDraftChange={(draft) => actions.onDraftChange?.(draft)}
         onSubmit={(delivery, settings) => actions.onSubmit?.(delivery, settings)}
         onInterrupt={(turnId) => actions.onInterrupt?.(turnId)}
@@ -2115,6 +2172,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 forceCollapsed={contextOpen || contextMounted}
                 suppressed={props.quickActionsSuppressed}
                 capabilities={props.capabilities}
+                serviceTierPreferences={serviceTierPreferences}
+                onServiceTierPreferenceChange={saveServiceTierPreference}
                 onLoadCapabilities={actions.onLoadCapabilities}
                 onLoadTaskWorkspaces={actions.onLoadTaskWorkspaces}
                 onOpenTaskDetail={actions.onOpenTaskDetail}
@@ -2396,6 +2455,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
           loadState={props.loadState}
           loadError={props.loadError}
           capabilities={props.capabilities}
+          serviceTierPreferences={serviceTierPreferences}
+          onServiceTierPreferenceChange={saveServiceTierPreference}
           onStartTask={actions.onStartConversation}
           onStartProject={actions.onStartProjectConversation}
           onLoadCapabilities={actions.onLoadCapabilities}
@@ -2504,6 +2565,8 @@ function NewConversationComposer(props: {
   loadState?: SessionWorkspaceProps['loadState'];
   loadError?: string | null;
   capabilities?: CodexConversationCapabilities | null;
+  serviceTierPreferences: readonly ProjectModelServiceTierPreference[];
+  onServiceTierPreferenceChange?: (model: CodexTaskPushModelCapability, selection: NativeServiceTierSelection) => void | Promise<void>;
   onStartTask?: SessionWorkspaceActions['onStartConversation'];
   onStartProject?: SessionWorkspaceActions['onStartProjectConversation'];
   onLoadCapabilities?: SessionWorkspaceActions['onLoadCapabilities'];
@@ -2565,7 +2628,7 @@ function NewConversationComposer(props: {
       setSelectedEffort(remembered?.effort ?? '');
       setPermissionMode(remembered?.permissionMode ?? 'auto');
       setCollaborationMode(remembered?.collaborationMode ?? 'default');
-      setServiceTierSelection(remembered?.serviceTier ?? { type: 'standard' });
+      setServiceTierSelection({ type: 'standard' });
       runtimePreferencesInitializedRef.current = true;
     }
     if (props.capabilities) {
@@ -2609,10 +2672,9 @@ function NewConversationComposer(props: {
     if (!selectedModel) return;
     if (selectedModelId !== selectedModel.id) setSelectedModelId(selectedModel.id);
     if (!selectedModel.supportedReasoningEfforts.includes(selectedEffort)) setSelectedEffort(selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? '');
-    const normalized = normalizeServiceTierSelection(serviceTierSelection, selectedModel);
-    if (!normalized.downgraded) return;
-    setServiceTierSelection(normalized.selection);
-  }, [selectedEffort, selectedModel, selectedModelId, serviceTierSelection]);
+    const projectSelection = projectModelServiceTierSelection(props.serviceTierPreferences, selectedModel);
+    if (serviceTierSelectionValue(projectSelection) !== serviceTierSelectionValue(serviceTierSelection)) setServiceTierSelection(projectSelection);
+  }, [props.serviceTierPreferences, selectedEffort, selectedModel, selectedModelId, serviceTierSelection]);
 
   useEffect(() => {
     const projectId = props.owner?.projectId;
@@ -2836,7 +2898,16 @@ function NewConversationComposer(props: {
           <span className="session-composer-trailing-actions">
             <span className="session-composer-runtime-settings">
               <ContextUsageIndicator usage={null} language={props.language} />
-              <ServiceTierToggle language={props.language} model={selectedModel} value={serviceTierSelection} disabled={submitting || !props.owner} onChange={setServiceTierSelection} />
+              <ServiceTierToggle
+                language={props.language}
+                model={selectedModel}
+                value={serviceTierSelection}
+                disabled={submitting || !props.owner}
+                onChange={(selection) => {
+                  setServiceTierSelection(selection);
+                  if (selectedModel) void props.onServiceTierPreferenceChange?.(selectedModel, selection);
+                }}
+              />
               <ComposerDropdown
                 label={props.language === 'zh-CN' ? '模型' : 'Model'}
                 triggerLabel={`${props.language === 'zh-CN' ? '模型' : 'Model'}：${selectedModelLabel}`}
@@ -2852,8 +2923,7 @@ function NewConversationComposer(props: {
                   const nextModel = resolveModelCapability(modelPresentation.models, value);
                   setSelectedModelId(nextModel?.id ?? value);
                   setSelectedEffort(nextModel?.defaultReasoningEffort ?? nextModel?.supportedReasoningEfforts[0] ?? '');
-                  const normalized = normalizeServiceTierSelection(serviceTierSelection, nextModel);
-                  setServiceTierSelection(normalized.selection);
+                  setServiceTierSelection(projectModelServiceTierSelection(props.serviceTierPreferences, nextModel));
                 }}
               />
               <ComposerDropdown
@@ -2951,13 +3021,13 @@ function composerRuntimeSettingsFromState(
   const requestedEffort = source?.effort ?? state.providerSettings?.effort;
   const effort = requestedEffort && (!capability || capability.supportedReasoningEfforts.includes(requestedEffort)) ? requestedEffort : (capability?.defaultReasoningEffort ?? capability?.supportedReasoningEfforts[0]);
   const hasSourceServiceTier = source ? Object.prototype.hasOwnProperty.call(source, 'serviceTier') : false;
-  const hasProviderServiceTier = state.providerSettings ? Object.prototype.hasOwnProperty.call(state.providerSettings, 'serviceTier') : false;
-  const requestedServiceTier = hasSourceServiceTier ? source?.serviceTier : hasProviderServiceTier ? state.providerSettings?.serviceTier : undefined;
+  // Provider 设置是上一轮实际采用事实，不得反向成为下一轮意图；只有已保存的下一轮设置可以继续兼容。
+  const requestedServiceTier = hasSourceServiceTier ? source?.serviceTier : null;
   const serviceTier = typeof requestedServiceTier === 'string' && capability && !capability.serviceTiers.some((tier) => tier.id === requestedServiceTier) ? null : requestedServiceTier;
   return {
     model,
     ...(effort ? { effort } : {}),
-    ...(hasSourceServiceTier || hasProviderServiceTier ? { serviceTier } : {}),
+    serviceTier,
     // 任务首发创建期还没有服务端快照，先使用本次已确认的会话选择；
     // 快照到达后仍由服务端权限覆盖，缺失事实继续安全回退为只读。
     permissionMode: source?.permissionMode ?? state.snapshot?.permissionMode ?? conversation?.permissionMode ?? 'read-only',
@@ -3019,7 +3089,8 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
   const usage = props.state.tokenUsage;
   const mcpStartup = props.state.mcpStartup?.value ?? null;
   const warning = runtimeValueNeedsAttention(mcpStartup);
-  const modelLabel = [model, effort, serviceTier].join(' · ');
+  const modelLabel = [model, effort].join(' · ');
+  const usageServiceTier = usageServiceTierLabel(props.state.tokenUsage?.serviceTier, props.language);
   const executionContext = props.state.snapshot?.executionContext;
   const executionCwd = executionContext?.cwd ?? copy.unavailable;
   const executionBranch = executionContext?.cwd ? (executionContext.branch ?? copy.nonGitDirectory) : copy.unavailable;
@@ -3061,8 +3132,10 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
             <dd>{modelLabel}</dd>
           </div>
         ) : null}
+        <RuntimeUsageRow label={copy.providerActualServiceTier} value={serviceTier} />
         {usage ? (
           <>
+            {Object.prototype.hasOwnProperty.call(usage, 'serviceTier') ? <RuntimeUsageRow label={copy.usageActualServiceTier} value={usageServiceTier} /> : null}
             <RuntimeUsageRow label={copy.usage} value={<TokenUsageValue count={usage.total.totalTokens} label="tokens" language={props.language} />} />
             <RuntimeUsageRow label={props.language === 'zh-CN' ? '总输入' : 'Total input'} value={<TokenUsageValue count={usage.total.inputTokens} label="in" language={props.language} />} />
             <RuntimeUsageRow label={copy.cacheRead} value={<TokenUsageValue count={usage.total.cachedInputTokens} label="tokens" language={props.language} />} />
@@ -3129,6 +3202,11 @@ function RuntimeUsageRow(props: { label: string; value: ReactNode }) {
       <dd>{props.value}</dd>
     </div>
   );
+}
+
+function usageServiceTierLabel(serviceTier: string | null | undefined, language: SessionUiLanguage): string {
+  if (!serviceTier || serviceTier === 'default') return language === 'zh-CN' ? '标准' : 'Standard';
+  return serviceTier === 'priority' ? 'Fast（priority）' : serviceTier;
 }
 
 function formatPercentage(value: number | null, language: SessionUiLanguage): string {

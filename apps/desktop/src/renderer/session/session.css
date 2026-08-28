@@ -1277,6 +1277,32 @@
   animation: session-latest-turn-enter 500ms var(--session-ease-out) both;
 }
 
+.session-codex-parity-v1 .session-thread-item-notice {
+  color: var(--session-text-muted);
+  padding-inline: 2px;
+}
+
+.session-codex-parity-v1 .session-service-tier-notice {
+  background: color-mix(in srgb, var(--session-warning) 7%, transparent);
+  border-inline-start: 2px solid color-mix(in srgb, var(--session-warning) 62%, transparent);
+  border-radius: 0 8px 8px 0;
+  max-inline-size: var(--session-markdown-max);
+  padding: 7px 10px;
+}
+
+.session-codex-parity-v1 .session-service-tier-notice .session-markdown {
+  color: inherit;
+  font-size: 12px;
+}
+
+.session-codex-parity-v1 .session-service-tier-toggle > span {
+  font-size: 10px;
+  max-inline-size: 13rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .session-codex-parity-v1 .session-thread-item-user {
   align-self: flex-end;
   background: var(--session-selected);
@@ -14275,6 +14301,12 @@
 
 .session-codex-parity-v1 .session-service-tier-toggle[data-active='true'] {
   color: var(--session-accent);
+}
+
+.session-codex-parity-v1 .session-service-tier-toggle[data-unavailable='true'] {
+  gap: 5px;
+  inline-size: auto;
+  padding-inline: 8px !important;
 }
 
 .session-codex-parity-v1 .session-service-tier-toggle:hover:not(:disabled) {

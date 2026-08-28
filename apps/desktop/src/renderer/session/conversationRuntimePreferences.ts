@@ -27,13 +27,12 @@ export function readConversationRuntimePreferences(storage: Pick<Storage, 'getIt
     const parsed = JSON.parse(storage.getItem(preferenceKey(projectId, kind)) ?? 'null') as Partial<ConversationRuntimePreferences> | null;
     if (!parsed || (parsed.model !== undefined && typeof parsed.model !== 'string')) return null;
     if (parsed.effort !== undefined && typeof parsed.effort !== 'string') return null;
-    if (!isServiceTierSelection(parsed.serviceTier)) return null;
     if (!isPermissionMode(parsed.permissionMode) || !isCollaborationMode(parsed.collaborationMode)) return null;
     return {
       ...(parsed.model ? { model: parsed.model } : {}),
       ...(parsed.effort ? { effort: parsed.effort } : {}),
-      // 历史“跟随 Codex”偏好迁移为明确的标准速度，后续只保存标准或 Fast。
-      serviceTier: parsed.serviceTier.type === 'follow' ? { type: 'standard' } : parsed.serviceTier,
+      // 旧记录无法证明速度是否由用户显式选择，因此不把它迁移为项目模型偏好。
+      serviceTier: { type: 'standard' },
       permissionMode: parsed.permissionMode,
       collaborationMode: parsed.collaborationMode,
       ...(parsed.workspaceMode === 'direct' || parsed.workspaceMode === 'worktree' ? { workspaceMode: parsed.workspaceMode } : {}),
@@ -45,7 +44,16 @@ export function readConversationRuntimePreferences(storage: Pick<Storage, 'getIt
 
 export function writeConversationRuntimePreferences(storage: Pick<Storage, 'setItem'> | undefined, projectId: string, kind: ConversationRuntimePreferenceKind, preferences: ConversationRuntimePreferences): void {
   if (!storage || !projectId) return;
-  storage.setItem(preferenceKey(projectId, kind), JSON.stringify({ ...preferences, serviceTier: preferences.serviceTier.type === 'follow' ? { type: 'standard' } : preferences.serviceTier }));
+  storage.setItem(
+    preferenceKey(projectId, kind),
+    JSON.stringify({
+      ...(preferences.model ? { model: preferences.model } : {}),
+      ...(preferences.effort ? { effort: preferences.effort } : {}),
+      permissionMode: preferences.permissionMode,
+      collaborationMode: preferences.collaborationMode,
+      ...(preferences.workspaceMode ? { workspaceMode: preferences.workspaceMode } : {}),
+    }),
+  );
 }
 
 function preferenceKey(projectId: string, kind: ConversationRuntimePreferenceKind): string {
@@ -58,10 +66,4 @@ function isPermissionMode(value: unknown): value is NativePermissionMode {
 
 function isCollaborationMode(value: unknown): value is NativeCollaborationMode {
   return value === 'default' || value === 'plan';
-}
-
-function isServiceTierSelection(value: unknown): value is NativeServiceTierSelection {
-  if (!value || typeof value !== 'object') return false;
-  const type = (value as { type?: unknown }).type;
-  return type === 'follow' || type === 'standard' || (type === 'catalog' && typeof (value as { id?: unknown }).id === 'string');
 }
