@@ -501,6 +501,14 @@ export type StartTaskConversationBody = (
       permissionMode?: ConversationPermissionMode;
       source?: 'task_push' | 'code_review' | 'conflict_resolution';
       stageId?: string;
+      stageExecution?: {
+        workExecutionId: string;
+        employeeId: string;
+        employeeRevision: number;
+        employeeSnapshot: Record<string, unknown>;
+        skillId?: string | null;
+        effectivePermissions: Record<string, unknown>;
+      };
       model?: string;
       effort?: string;
       serviceTier?: string | null;

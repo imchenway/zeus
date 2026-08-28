@@ -18,6 +18,7 @@ import { DatabasePerformanceCollector, type DatabasePerformanceSnapshot } from '
 import { migrateExecutionHostHandoffSchema } from './executionHostHandoffStore.js';
 import { migrateExecutionHostWorkSchema } from './executionHostWorkStore.js';
 import { migrateDigitalEmployeeSchema } from './digitalEmployeeStore.js';
+import { migrateDigitalEmployeeStageHandoffSchema } from './digitalEmployeeStageHandoffMigration.js';
 import { migrateLongTermMemorySchema } from './longTermMemoryStore.js';
 import { migrateTaskEventFileProjectionSchema } from './taskEventFileProjectionStore.js';
 import { migrateTaskStageSchema } from './taskStageStore.js';
@@ -32,6 +33,7 @@ export * from './commandDeliveryStore.js';
 export * from './databasePerformance.js';
 export * from './databasePort.js';
 export * from './digitalEmployeeStore.js';
+export * from './digitalEmployeeStageHandoffMigration.js';
 export * from './executionHostHandoffStore.js';
 export * from './executionHostWorkStore.js';
 export * from './conversationHotQueryIndexes.js';
@@ -1105,6 +1107,7 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
     migrateCommandDeliverySchema(zeusDb);
     migrateTaskEventFileProjectionSchema(zeusDb);
     migrateTaskStageSchema(zeusDb);
+    migrateDigitalEmployeeStageHandoffSchema(zeusDb);
     migrateProviderEventReceipts(zeusDb);
     migrateUnifiedConversationStoreSchema(zeusDb);
     migrateConversationLegacyCutoverSchema(zeusDb);

@@ -1,3 +1,5 @@
+import type { TaskWorkflowSnapshot } from '../tasks/taskContracts.js';
+
 export type DigitalEmployeeAgentKind = 'codex' | 'pi';
 export type DigitalEmployeePermissionMode = 'read-only' | 'auto' | 'full-access';
 export type DigitalEmployeeWorkMode = 'default' | 'plan';
@@ -5,6 +7,7 @@ export type DigitalEmployeeAutomationTriggerKind = 'immediate' | 'once' | 'daily
 export type DigitalEmployeeAutomationActionKind = 'assign_task' | 'create_and_assign_task' | 'explore_project';
 export type DigitalEmployeeExecutionStatus = 'queued' | 'dispatching' | 'running' | 'waiting' | 'delivery_pending' | 'delivered' | 'blocked' | 'failed' | 'cancelled';
 export type DigitalEmployeeDeliveryStage = 'none' | 'commit' | 'push' | 'merge' | 'deploy' | 'complete' | 'done';
+export type DigitalEmployeeExecutionMode = 'legacy_single_conversation' | 'staged';
 
 export interface DigitalEmployeeDeliveryGrants {
   allowCommit: boolean;
@@ -83,6 +86,10 @@ export interface DigitalEmployeeExecutionRecord {
   source: 'manual' | 'task_pool' | 'exploration' | 'automation';
   sourceRef: string | null;
   status: DigitalEmployeeExecutionStatus;
+  executionMode: DigitalEmployeeExecutionMode;
+  workflowId: string | null;
+  currentStageId: string | null;
+  revision: number;
   employeeSnapshot: DigitalEmployeeRecord;
   deliveryGrantsSnapshot: DigitalEmployeeDeliveryGrants;
   conversationId: string | null;
@@ -94,8 +101,24 @@ export interface DigitalEmployeeExecutionRecord {
   errorMessage: string | null;
   startedAt: string | null;
   completedAt: string | null;
+  finalizedAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface DigitalEmployeeCollaborationProjection {
+  execution: DigitalEmployeeExecutionRecord | null;
+  workflow: TaskWorkflowSnapshot | null;
+  blockingReasons: Array<{ code: string; message: string }>;
+  legacyAdoptionAvailable: boolean;
+}
+
+export interface DigitalEmployeeStageDecisionInput {
+  sourceStageId: string;
+  deliverableId: string;
+  deliverableVersion: number;
+  expectedExecutionRevision: number;
+  expectedSourceStageRevision: number;
 }
 
 export interface DigitalEmployeeTemplateInput {

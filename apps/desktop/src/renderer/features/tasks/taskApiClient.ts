@@ -191,23 +191,50 @@ export function createTaskApiClient(transport: LocalApiTransport): TaskApiClient
       return transport.request<TaskRecord>(`${taskPath(taskId)}/restore`, jsonRequest('POST', body));
     },
     loadTaskWorkflow: (taskId) => transport.request<TaskWorkflowSnapshot | null>(`${taskPath(taskId)}/workflow`),
-    initializeTaskWorkflow: (taskId, stages) => transport.request<TaskWorkflowSnapshot>(`${taskPath(taskId)}/workflow`, jsonRequest('POST', { templateKey: 'default-plan-implement-review', templateRevision: 1, stages })),
-    updateTaskStage: (taskId, stageId, input) => transport.request<TaskWorkflowSnapshot>(`${taskPath(taskId)}/workflow/stages/${encodeURIComponent(stageId)}`, jsonRequest('PATCH', input)),
-    captureTaskStageDeliverable: (taskId, stageId) =>
-      transport.request<TaskWorkflowSnapshot>(`${taskPath(taskId)}/workflow/stages/${encodeURIComponent(stageId)}/deliverables/capture`, jsonRequest('POST', { operationIdentity: taskStageOperationIdentity('capture') })),
-    createTaskStageDeliverable: (taskId, stageId, content) =>
-      transport.request<TaskWorkflowSnapshot>(`${taskPath(taskId)}/workflow/stages/${encodeURIComponent(stageId)}/deliverables`, jsonRequest('POST', { content, operationIdentity: taskStageOperationIdentity('manual') })),
-    acceptTaskStageDeliverable: (taskId, deliverableId, expectedStageRevision) =>
-      transport.request<TaskWorkflowSnapshot>(`${taskPath(taskId)}/workflow/deliverables/${encodeURIComponent(deliverableId)}/accept`, jsonRequest('POST', { expectedStageRevision })),
-    requestTaskStageChanges: (taskId, deliverableId, expectedStageRevision, reason) =>
-      transport.request<TaskWorkflowSnapshot>(`${taskPath(taskId)}/workflow/deliverables/${encodeURIComponent(deliverableId)}/request-changes`, jsonRequest('POST', { expectedStageRevision, reason })),
-    skipTaskStage: (taskId, stageId, expectedRevision, reason) => transport.request<TaskWorkflowSnapshot>(`${taskPath(taskId)}/workflow/stages/${encodeURIComponent(stageId)}/skip`, jsonRequest('POST', { expectedRevision, reason })),
+    initializeTaskWorkflow: async (taskId, stages) => {
+      const value = { templateKey: 'default-plan-implement-review', templateRevision: 1, stages };
+      const body = await taskStageCommand(workManagementClientCommandTypes.taskWorkflowInitialize, taskId, 'task_workflow_initialize_', value);
+      return transport.request<TaskWorkflowSnapshot>(`${taskPath(taskId)}/workflow`, jsonRequest('POST', body));
+    },
+    updateTaskStage: async (taskId, stageId, input) => {
+      const body = await taskStageCommand(workManagementClientCommandTypes.taskStageUpdate, taskId, 'task_stage_update_', input, input.expectedRevision);
+      return transport.request<TaskWorkflowSnapshot>(`${taskPath(taskId)}/workflow/stages/${encodeURIComponent(stageId)}`, jsonRequest('PATCH', body));
+    },
+    captureTaskStageDeliverable: async (taskId, stageId) => {
+      const value = { operationIdentity: taskStageOperationIdentity('capture') };
+      const body = await taskStageCommand(workManagementClientCommandTypes.taskStageDeliverableCapture, taskId, 'task_stage_capture_', value);
+      return transport.request<TaskWorkflowSnapshot>(`${taskPath(taskId)}/workflow/stages/${encodeURIComponent(stageId)}/deliverables/capture`, jsonRequest('POST', body));
+    },
+    createTaskStageDeliverable: async (taskId, stageId, content) => {
+      const value = { content, operationIdentity: taskStageOperationIdentity('manual') };
+      const body = await taskStageCommand(workManagementClientCommandTypes.taskStageDeliverableCreate, taskId, 'task_stage_deliverable_', value);
+      return transport.request<TaskWorkflowSnapshot>(`${taskPath(taskId)}/workflow/stages/${encodeURIComponent(stageId)}/deliverables`, jsonRequest('POST', body));
+    },
+    acceptTaskStageDeliverable: async (taskId, deliverableId, expectedStageRevision) => {
+      const value = { expectedStageRevision };
+      const body = await taskStageCommand(workManagementClientCommandTypes.taskStageDeliverableAccept, taskId, 'task_stage_accept_', value, expectedStageRevision);
+      return transport.request<TaskWorkflowSnapshot>(`${taskPath(taskId)}/workflow/deliverables/${encodeURIComponent(deliverableId)}/accept`, jsonRequest('POST', body));
+    },
+    requestTaskStageChanges: async (taskId, deliverableId, expectedStageRevision, reason) => {
+      const value = { expectedStageRevision, reason };
+      const body = await taskStageCommand(workManagementClientCommandTypes.taskStageDeliverableRequestChanges, taskId, 'task_stage_changes_', value, expectedStageRevision);
+      return transport.request<TaskWorkflowSnapshot>(`${taskPath(taskId)}/workflow/deliverables/${encodeURIComponent(deliverableId)}/request-changes`, jsonRequest('POST', body));
+    },
+    skipTaskStage: async (taskId, stageId, expectedRevision, reason) => {
+      const value = { expectedRevision, reason };
+      const body = await taskStageCommand(workManagementClientCommandTypes.taskStageSkip, taskId, 'task_stage_skip_', value, expectedRevision);
+      return transport.request<TaskWorkflowSnapshot>(`${taskPath(taskId)}/workflow/stages/${encodeURIComponent(stageId)}/skip`, jsonRequest('POST', body));
+    },
     loadTaskStageDeliverableContent: (taskId, deliverableId) => transport.request(`${taskPath(taskId)}/workflow/deliverables/${encodeURIComponent(deliverableId)}/content`),
   };
 }
 
 function taskStageOperationIdentity(kind: string): string {
   return `task_stage_${kind}_${crypto.randomUUID()}`;
+}
+
+function taskStageCommand<TInput extends object>(commandType: Parameters<typeof buildWorkManagementCommandRequest<TInput>>[0]['commandType'], taskId: string, operationPrefix: string, value: TInput, expectedRevision?: number) {
+  return buildWorkManagementCommandRequest({ commandType, scopeKind: 'task', scopeId: () => taskId, operationPrefix, value, ...(expectedRevision === undefined ? {} : { expectedRevision }) });
 }
 
 function emptyTaskCommand(taskId: string, commandType: (typeof workManagementClientCommandTypes)['taskRetry' | 'taskRun' | 'taskPause' | 'taskContinue' | 'taskCancel'], operationPrefix: string) {

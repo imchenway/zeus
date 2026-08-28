@@ -86,7 +86,6 @@ export class TaskStageApplication {
       });
       this.publishWorkflowChanged(workflow, 'initialized');
     }
-    await this.ports.db.save();
     return workflow;
   }
 
@@ -112,7 +111,6 @@ export class TaskStageApplication {
       },
     });
     this.publishWorkflowChanged(workflow, 'stage_configured');
-    await this.ports.db.save();
     return workflow;
   }
 
@@ -170,7 +168,6 @@ export class TaskStageApplication {
       payload: { stageId: deliverable.stageId, attemptId: deliverable.attemptId, deliverableId: deliverable.id, version: deliverable.version },
     });
     this.publishWorkflowChanged(workflow, 'deliverable_accepted');
-    await this.ports.db.save();
     return workflow;
   }
 
@@ -189,7 +186,6 @@ export class TaskStageApplication {
       payload: { stageId: deliverable.stageId, attemptId: deliverable.attemptId, deliverableId: deliverable.id, version: deliverable.version, reason },
     });
     this.publishWorkflowChanged(workflow, 'changes_requested');
-    await this.ports.db.save();
     return workflow;
   }
 
@@ -205,7 +201,6 @@ export class TaskStageApplication {
       payload: { stageId, reason },
     });
     this.publishWorkflowChanged(workflow, 'stage_skipped');
-    await this.ports.db.save();
     return workflow;
   }
 
@@ -295,7 +290,6 @@ export class TaskStageApplication {
       },
     });
     this.publishWorkflowChanged(workflow, deliverable?.status === 'accepted' ? 'deliverable_auto_accepted' : 'deliverable_submitted');
-    await this.ports.db.save();
     return workflow;
   }
 

@@ -15,6 +15,7 @@ export type TaskStageAdvanceMode = 'manual' | 'auto';
 export type TaskStageAgentKind = 'codex' | 'pi';
 export type TaskStagePermissionMode = 'read-only' | 'auto' | 'full-access';
 export type TaskStageWorkMode = 'default' | 'plan';
+export type TaskStageEmployeeMode = 'none' | 'inherit' | 'explicit';
 
 export type TaskStageStoreErrorCode =
   | 'ZEUS_TASK_WORKFLOW_NOT_FOUND'
@@ -66,6 +67,8 @@ export interface ZeusTaskStageRecord {
   title: string;
   description: string;
   status: TaskStageStatus;
+  employeeMode: TaskStageEmployeeMode;
+  employeeId: string | null;
   agentKind: TaskStageAgentKind;
   modelRef: string;
   effort: string | null;
@@ -91,6 +94,12 @@ export interface ZeusTaskStageAttemptRecord {
   segmentId: string | null;
   workspaceId: string | null;
   environmentId: string | null;
+  workExecutionId: string | null;
+  employeeId: string | null;
+  employeeRevision: number | null;
+  employeeSnapshot: Record<string, unknown> | null;
+  skillId: string | null;
+  effectivePermissions: Record<string, unknown> | null;
   agentKind: TaskStageAgentKind;
   modelRef: string;
   effort: string | null;
@@ -174,6 +183,25 @@ export interface PrepareTaskStageAttemptInput {
   stageId: string;
   operationIdentity: string;
   sourceSnapshot?: Record<string, unknown>;
+  workExecutionId?: string | null;
+  employeeId?: string | null;
+  employeeRevision?: number | null;
+  employeeSnapshot?: Record<string, unknown> | null;
+  skillId?: string | null;
+  effectivePermissions?: Record<string, unknown> | null;
+}
+
+export interface AssignTaskStageEmployeeInput {
+  expectedRevision: number;
+  employeeMode: Exclude<TaskStageEmployeeMode, 'none'>;
+  employeeId: string;
+  agentKind: TaskStageAgentKind;
+  modelRef: string;
+  effort?: string | null;
+  serviceTier?: string | null;
+  workMode: TaskStageWorkMode;
+  permissionMode: TaskStagePermissionMode;
+  prompt: string;
 }
 
 export interface BindTaskStageAttemptInput {
@@ -189,6 +217,13 @@ export interface BindTaskStageAttemptInput {
   serviceTier?: string | null;
   workMode: TaskStageWorkMode;
   permissionMode: TaskStagePermissionMode;
+}
+
+export interface BindExistingTaskStageAttemptInput {
+  attemptId: string;
+  conversationId: string;
+  workspaceId?: string | null;
+  environmentId?: string | null;
 }
 
 export interface CreateTaskStageDeliverableInput {
@@ -224,6 +259,8 @@ interface TaskStageRow {
   title: string;
   description: string;
   status: TaskStageStatus;
+  employee_mode: TaskStageEmployeeMode;
+  employee_id: string | null;
   agent_kind: TaskStageAgentKind;
   model_ref: string;
   effort: string | null;
@@ -249,6 +286,12 @@ interface TaskStageAttemptRow {
   segment_id: string | null;
   workspace_id: string | null;
   environment_id: string | null;
+  work_execution_id: string | null;
+  employee_id: string | null;
+  employee_revision: number | null;
+  employee_snapshot_json: string | null;
+  skill_id: string | null;
+  effective_permissions_json: string | null;
   agent_kind: TaskStageAgentKind;
   model_ref: string;
   effort: string | null;
@@ -289,9 +332,9 @@ interface TaskStageDeliverableRow {
 
 const selectWorkflowFields = 'id, task_id, template_key, template_revision, status, current_stage_id, revision, created_at, updated_at';
 const selectStageFields =
-  'id, workflow_id, task_id, stage_key, sequence, kind, title, description, status, agent_kind, model_ref, effort, service_tier, work_mode, permission_mode, advance_mode, prompt, output_contract_json, revision, created_at, updated_at';
+  'id, workflow_id, task_id, stage_key, sequence, kind, title, description, status, employee_mode, employee_id, agent_kind, model_ref, effort, service_tier, work_mode, permission_mode, advance_mode, prompt, output_contract_json, revision, created_at, updated_at';
 const selectAttemptFields =
-  'id, task_id, stage_id, attempt_number, operation_identity, conversation_id, submission_id, segment_id, workspace_id, environment_id, agent_kind, model_ref, effort, service_tier, work_mode, permission_mode, input_deliverable_ids_json, source_snapshot_json, status, error_json, started_at, completed_at, created_at, updated_at';
+  'id, task_id, stage_id, attempt_number, operation_identity, conversation_id, submission_id, segment_id, workspace_id, environment_id, work_execution_id, employee_id, employee_revision, employee_snapshot_json, skill_id, effective_permissions_json, agent_kind, model_ref, effort, service_tier, work_mode, permission_mode, input_deliverable_ids_json, source_snapshot_json, status, error_json, started_at, completed_at, created_at, updated_at';
 const selectDeliverableFields =
   'id, task_id, stage_id, attempt_id, version, kind, title, summary, mime_type, artifact_sha256, artifact_ref_json, content_sha256, content_byte_length, operation_identity, status, decision_reason, accepted_at, created_at, updated_at';
 const selectJoinedDeliverableFields = selectDeliverableFields
@@ -544,6 +587,40 @@ export class TaskStageRepository {
     return this.requireWorkflow(stage.taskId);
   }
 
+  assignEmployee(stageId: string, input: AssignTaskStageEmployeeInput): ZeusTaskWorkflowSnapshot {
+    const stage = this.requireStage(stageId);
+    if (stage.revision !== input.expectedRevision) throw revisionConflict(stage);
+    if (stage.status !== 'pending' && stage.status !== 'ready' && stage.status !== 'changes_requested' && stage.status !== 'failed') {
+      throw storeError('ZEUS_TASK_STAGE_NOT_READY', '活动阶段不允许切换数字员工；请等待本次尝试结束。', 409, { stageId, status: stage.status });
+    }
+    const activeAttempt = this.db.get<{ id: string }>(`SELECT id FROM task_stage_attempts WHERE stage_id = ? AND status IN ('starting', 'active')`, [stage.id]);
+    if (activeAttempt) throw storeError('ZEUS_TASK_STAGE_ACTIVE_ATTEMPT_EXISTS', '当前阶段已有活动尝试，不能切换数字员工。', 409, { stageId, attemptId: activeAttempt.id });
+    const normalized = normalizeStageUpdate(stage, {
+      expectedRevision: input.expectedRevision,
+      agentKind: input.agentKind,
+      modelRef: input.modelRef,
+      effort: input.effort,
+      serviceTier: input.serviceTier,
+      workMode: input.workMode,
+      permissionMode: input.permissionMode,
+      prompt: input.prompt,
+    });
+    const employeeMode = enumValue(input.employeeMode, ['inherit', 'explicit'] as const, 'employeeMode');
+    const employeeId = boundedString(input.employeeId, 'employeeId', 256);
+    const timestamp = nextTimestamp(stage.updatedAt, this.now());
+    this.db.transaction(() => {
+      this.db.execute(
+        `UPDATE task_stages
+            SET employee_mode = ?, employee_id = ?, agent_kind = ?, model_ref = ?, effort = ?, service_tier = ?, work_mode = ?, permission_mode = ?, prompt = ?, revision = revision + 1, updated_at = ?
+          WHERE id = ? AND revision = ?`,
+        [employeeMode, employeeId, normalized.agentKind, normalized.modelRef, normalized.effort, normalized.serviceTier, normalized.workMode, normalized.permissionMode, normalized.prompt, timestamp, stage.id, input.expectedRevision],
+      );
+      if (changesCount(this.db) !== 1) throw revisionConflict(this.requireStage(stage.id));
+      this.bumpWorkflow(stage.workflowId, timestamp);
+    });
+    return this.requireWorkflow(stage.taskId);
+  }
+
   prepareAttempt(input: PrepareTaskStageAttemptInput): ZeusTaskStageAttemptRecord {
     const operationIdentity = boundedString(input.operationIdentity, 'operationIdentity', 256);
     const existing = this.getAttemptByOperation(operationIdentity);
@@ -565,17 +642,32 @@ export class TaskStageRepository {
     const attemptNumber = (this.db.get<{ maximum: number }>(`SELECT COALESCE(MAX(attempt_number), 0) AS maximum FROM task_stage_attempts WHERE stage_id = ?`, [stage.id])?.maximum ?? 0) + 1;
     const attemptId = `task_stage_attempt_${nanoid(16)}`;
     const inputDeliverableIds = this.acceptedInputDeliverables(stage).map((deliverable) => deliverable.id);
+    const employeeId = nullableString(input.employeeId, 'employeeId', 256);
+    if (stage.employeeMode === 'explicit' && employeeId !== stage.employeeId) {
+      throw storeError('ZEUS_TASK_STAGE_INVALID_ARGUMENT', '阶段尝试的实际员工与阶段指派不一致。', 409, { stageId: stage.id });
+    }
+    const employeeRevision = input.employeeRevision === null || input.employeeRevision === undefined ? null : nonNegativeInteger(input.employeeRevision, 'employeeRevision');
+    const employeeSnapshot = input.employeeSnapshot === null || input.employeeSnapshot === undefined ? null : plainRecord(input.employeeSnapshot, 'employeeSnapshot');
+    const effectivePermissions = input.effectivePermissions === null || input.effectivePermissions === undefined ? null : plainRecord(input.effectivePermissions, 'effectivePermissions');
     this.db.transaction(() => {
       this.db.execute(
         `INSERT INTO task_stage_attempts
-         (id, task_id, stage_id, attempt_number, operation_identity, conversation_id, submission_id, segment_id, workspace_id, environment_id, agent_kind, model_ref, effort, service_tier, work_mode, permission_mode, input_deliverable_ids_json, source_snapshot_json, status, error_json, started_at, completed_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', NULL, ?, NULL, ?, ?)`,
+         (id, task_id, stage_id, attempt_number, operation_identity, conversation_id, submission_id, segment_id, workspace_id, environment_id,
+          work_execution_id, employee_id, employee_revision, employee_snapshot_json, skill_id, effective_permissions_json,
+          agent_kind, model_ref, effort, service_tier, work_mode, permission_mode, input_deliverable_ids_json, source_snapshot_json, status, error_json, started_at, completed_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', NULL, ?, NULL, ?, ?)`,
         [
           attemptId,
           stage.taskId,
           stage.id,
           attemptNumber,
           operationIdentity,
+          nullableString(input.workExecutionId, 'workExecutionId', 256),
+          employeeId,
+          employeeRevision,
+          employeeSnapshot ? JSON.stringify(employeeSnapshot) : null,
+          nullableString(input.skillId, 'skillId', 256),
+          effectivePermissions ? JSON.stringify(effectivePermissions) : null,
           stage.agentKind,
           stage.modelRef,
           stage.effort,
@@ -610,6 +702,23 @@ export class TaskStageRepository {
           SET conversation_id = ?, submission_id = ?, segment_id = ?, workspace_id = ?, environment_id = ?, status = 'active', updated_at = ?
         WHERE id = ? AND conversation_id IS NULL`,
       [input.conversationId, input.submissionId, input.segmentId ?? null, input.workspaceId ?? null, input.environmentId ?? null, timestamp, attempt.id],
+    );
+    if (changesCount(this.db) !== 1) return this.requireAttempt(attempt.id);
+    return this.requireAttempt(attempt.id);
+  }
+
+  bindExistingConversationAttempt(input: BindExistingTaskStageAttemptInput): ZeusTaskStageAttemptRecord {
+    const attempt = this.requireAttempt(input.attemptId);
+    if (attempt.conversationId) {
+      if (attempt.conversationId !== input.conversationId) throw storeError('ZEUS_TASK_STAGE_CONVERSATION_CONFLICT', '阶段尝试已经绑定到另一条会话。', 409, { attemptId: attempt.id });
+      return attempt;
+    }
+    const timestamp = nextTimestamp(attempt.updatedAt, this.now());
+    this.db.execute(
+      `UPDATE task_stage_attempts
+          SET conversation_id = ?, workspace_id = ?, environment_id = ?, status = 'active', updated_at = ?
+        WHERE id = ? AND conversation_id IS NULL`,
+      [boundedString(input.conversationId, 'conversationId', 256), nullableString(input.workspaceId, 'workspaceId', 256), nullableString(input.environmentId, 'environmentId', 256), timestamp, attempt.id],
     );
     if (changesCount(this.db) !== 1) return this.requireAttempt(attempt.id);
     return this.requireAttempt(attempt.id);
@@ -707,7 +816,7 @@ export class TaskStageRepository {
     return this.requireWorkflow(deliverable.taskId);
   }
 
-  requestChanges(deliverableId: string, input: { expectedStageRevision: number; reason: string }): ZeusTaskWorkflowSnapshot {
+  requestChanges(deliverableId: string, input: { expectedStageRevision: number; reason: string; stayOnStage?: boolean }): ZeusTaskWorkflowSnapshot {
     const deliverable = this.requireDeliverable(deliverableId);
     const stage = this.requireStage(deliverable.stageId);
     const reason = boundedString(input.reason, 'reason', 4_000);
@@ -720,7 +829,7 @@ export class TaskStageRepository {
     const timestamp = nextTimestamp(stage.updatedAt, this.now());
     this.db.transaction(() => {
       this.db.execute(`UPDATE task_stage_deliverables SET status = 'changes_requested', decision_reason = ?, accepted_at = NULL, updated_at = ? WHERE id = ?`, [reason, timestamp, deliverable.id]);
-      if (stage.kind === 'code_review') {
+      if (stage.kind === 'code_review' && input.stayOnStage !== true) {
         const implementation = this.previousImplementationStage(stage);
         if (!implementation) throw storeError('ZEUS_TASK_STAGE_INVALID_ARGUMENT', '代码审查阶段缺少可返工的实施阶段。', 409, { stageId: stage.id });
         this.db.execute(`UPDATE task_stages SET status = 'changes_requested', revision = revision + 1, updated_at = ? WHERE id = ?`, [timestamp, implementation.id]);
@@ -890,8 +999,8 @@ function normalizeStageUpdate(stage: ZeusTaskStageRecord, input: UpdateTaskStage
 }
 
 function assertKindExecutionPolicy(stage: Pick<ZeusTaskStageRecord, 'kind' | 'workMode' | 'permissionMode'>): void {
-  if (stage.kind === 'plan' && (stage.workMode !== 'plan' || stage.permissionMode !== 'read-only')) {
-    throw storeError('ZEUS_TASK_STAGE_INVALID_ARGUMENT', '计划阶段固定为计划工作态和只读权限。', 400);
+  if (stage.kind === 'plan' && stage.permissionMode !== 'read-only') {
+    throw storeError('ZEUS_TASK_STAGE_INVALID_ARGUMENT', '计划阶段固定为只读权限；工作态由具体编排决定。', 400);
   }
   if (stage.kind === 'code_review' && (stage.workMode !== 'default' || stage.permissionMode !== 'read-only')) {
     throw storeError('ZEUS_TASK_STAGE_INVALID_ARGUMENT', '代码审查阶段固定为默认工作态和只读权限。', 400);
@@ -950,6 +1059,11 @@ function positiveInteger(value: unknown, label: string): number {
   return Number(value);
 }
 
+function nonNegativeInteger(value: unknown, label: string): number {
+  if (!Number.isSafeInteger(value) || Number(value) < 0) throw storeError('ZEUS_TASK_STAGE_INVALID_ARGUMENT', `${label} 必须是非负整数。`, 400);
+  return Number(value);
+}
+
 function changesCount(db: ZeusDatabasePort): number {
   return db.get<{ count: number }>(`SELECT changes() AS count`)?.count ?? 0;
 }
@@ -993,6 +1107,8 @@ function mapStageRow(row: TaskStageRow): ZeusTaskStageRecord {
     title: row.title,
     description: row.description,
     status: row.status,
+    employeeMode: enumValue(row.employee_mode, ['none', 'inherit', 'explicit'] as const, 'employeeMode'),
+    employeeId: row.employee_id,
     agentKind: row.agent_kind,
     modelRef: row.model_ref,
     effort: row.effort,
@@ -1020,6 +1136,12 @@ function mapAttemptRow(row: TaskStageAttemptRow): ZeusTaskStageAttemptRecord {
     segmentId: row.segment_id,
     workspaceId: row.workspace_id,
     environmentId: row.environment_id,
+    workExecutionId: row.work_execution_id,
+    employeeId: row.employee_id,
+    employeeRevision: row.employee_revision,
+    employeeSnapshot: row.employee_snapshot_json ? plainRecord(JSON.parse(row.employee_snapshot_json), 'employeeSnapshot') : null,
+    skillId: row.skill_id,
+    effectivePermissions: row.effective_permissions_json ? plainRecord(JSON.parse(row.effective_permissions_json), 'effectivePermissions') : null,
     agentKind: row.agent_kind,
     modelRef: row.model_ref,
     effort: row.effort,

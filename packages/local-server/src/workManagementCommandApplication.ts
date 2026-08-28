@@ -47,8 +47,19 @@ export const workManagementCommandTypes = {
   digitalEmployeeAutomationDelete: 'work_management.digital_employee_automation.delete',
   digitalEmployeeAutomationRun: 'work_management.digital_employee_automation.run',
   digitalEmployeeExecutionCreate: 'work_management.digital_employee_execution.create',
+  digitalEmployeeExecutionHandoff: 'work_management.digital_employee_execution.handoff',
+  digitalEmployeeExecutionRework: 'work_management.digital_employee_execution.rework',
+  digitalEmployeeExecutionFinalize: 'work_management.digital_employee_execution.finalize',
+  digitalEmployeeExecutionAdoptLegacy: 'work_management.digital_employee_execution.adopt_legacy',
   digitalEmployeeExecutionRetry: 'work_management.digital_employee_execution.retry',
   digitalEmployeeExecutionCancel: 'work_management.digital_employee_execution.cancel',
+  taskWorkflowInitialize: 'work_management.task.workflow.initialize',
+  taskStageUpdate: 'work_management.task.stage.update',
+  taskStageDeliverableCapture: 'work_management.task.stage.deliverable.capture',
+  taskStageDeliverableCreate: 'work_management.task.stage.deliverable.create',
+  taskStageSkip: 'work_management.task.stage.skip',
+  taskStageDeliverableAccept: 'work_management.task.stage.deliverable.accept',
+  taskStageDeliverableRequestChanges: 'work_management.task.stage.deliverable.request_changes',
 } as const;
 
 export type WorkManagementCommandType = (typeof workManagementCommandTypes)[keyof typeof workManagementCommandTypes];

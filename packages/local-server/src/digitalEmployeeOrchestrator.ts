@@ -11,6 +11,7 @@ import {
   TaskEventRepository,
   TaskIntegrationRepository,
   TaskRepository,
+  TaskStageRepository,
   TaskWorkspaceRepository,
   type CreateDigitalEmployeeExecutionInput,
   type DigitalEmployeeAutomationRecord,
@@ -20,11 +21,13 @@ import {
   type DigitalEmployeeRecord,
   type ZeusProjectRecord,
   type ZeusTaskRecord,
+  type ZeusTaskStageRecord,
   type ZeusTaskWorkspaceRecord,
 } from '@zeus/storage';
 import type { FastifyInstance } from 'fastify';
 import { commandCenterCommandTypes, commandCenterInputSha256 } from './commandCenterCommandApplication.js';
 import type { ConversationCapabilityQueryApplication } from './conversationCapabilityQueryApplication.js';
+import type { TaskStageApplication } from './taskStageApplication.js';
 import type { CreateUserTaskInput } from './workManagementCoreCommandRoutes.js';
 import { WorkManagementCommandApplication, workManagementCommandTypes, workManagementInputSha256, type ParsedWorkManagementMutation } from './workManagementCommandApplication.js';
 import { WorkspaceGitCommandApplication, workspaceGitCommandTypes, workspaceGitInputSha256, type WorkspaceGitCommandType, type WorkspaceGitScopeKind } from './workspaceGitCommandApplication.js';
@@ -50,6 +53,8 @@ interface DigitalEmployeeOrchestratorOptions {
   taskEvents: TaskEventRepository;
   taskIntegrations: Pick<TaskIntegrationRepository, 'listByTask'>;
   taskWorkspaces: TaskWorkspaceRepository;
+  stages: TaskStageRepository;
+  taskStageApplication: TaskStageApplication;
   conversations: ConversationRepository;
   commandRuns: CommandRunRepository;
   conversationCapabilities: ConversationCapabilityQueryApplication;
@@ -447,20 +452,98 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
     }
 
     const permissionMode = execution.source === 'exploration' || (!allowCodeChanges && !allowTests) ? 'read-only' : snapshot.permissionMode;
-    const supplementalInfo = buildEmployeeSupplementalInfo(execution, snapshot, { allowCodeChanges, allowTests });
-    const body: Record<string, unknown> = {
+    const reworkReason = typeof execution.deliveryState.reason === 'string' ? execution.deliveryState.reason.trim() : '';
+    const supplementalInfo = [
+      buildEmployeeSupplementalInfo(execution, snapshot, { allowCodeChanges, allowTests }),
+      reworkReason ? `## 用户要求完善的内容\n\n${reworkReason}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+    let taskStage: ZeusTaskStageRecord | null = null;
+    if (execution.executionMode === 'staged') {
+      if (!execution.currentStageId || !execution.workflowId) throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_STAGE_MISSING', '阶段化工作执行缺少当前阶段身份。', true);
+      taskStage = options.stages.getStage(execution.currentStageId);
+      if (!taskStage || taskStage.taskId !== task.id || taskStage.workflowId !== execution.workflowId) throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_STAGE_MISSING', '阶段化工作执行的当前阶段已经不可用。', true);
+      if (taskStage.employeeMode !== 'explicit' || taskStage.employeeId !== snapshot.id) throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_STAGE_EMPLOYEE_CONFLICT', '当前阶段指派与工作执行员工快照不一致。', true);
+      const stagePermissionMode = taskStage.kind === 'plan' || taskStage.kind === 'code_review' ? 'read-only' : permissionMode;
+      // 阶段交付物必须由一次可自然结束的独立会话生成。Codex 的 PLAN 模式会停在
+      // “实施此计划？”内部审批，和 Zeus 的阶段交接确认形成重复且不可见的门禁。
+      const stageWorkMode = taskStage.kind === 'plan' || taskStage.kind === 'code_review' ? 'default' : snapshot.workMode;
+      if (taskStage.status === 'running') {
+        const frozenMatches =
+          taskStage.agentKind === model.agentKind &&
+          taskStage.modelRef === model.id &&
+          taskStage.effort === snapshot.reasoningEffort &&
+          taskStage.serviceTier === snapshot.serviceTier &&
+          taskStage.workMode === stageWorkMode &&
+          taskStage.permissionMode === stagePermissionMode;
+        if (!frozenMatches) throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_STAGE_CONFIGURATION_CONFLICT', '已启动阶段的冻结配置与当前派发意图不一致。', true);
+      } else {
+        const configured = options.stages.assignEmployee(taskStage.id, {
+          expectedRevision: taskStage.revision,
+          employeeMode: 'explicit',
+          employeeId: snapshot.id,
+          agentKind: model.agentKind,
+          modelRef: model.id,
+          effort: snapshot.reasoningEffort,
+          serviceTier: snapshot.serviceTier,
+          workMode: stageWorkMode,
+          permissionMode: stagePermissionMode,
+          prompt: taskStage.prompt,
+        });
+        taskStage = configured.stages.find((stage) => stage.id === taskStage!.id) ?? null;
+        if (!taskStage) throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_STAGE_MISSING', '更新阶段执行配置后无法读取当前阶段。', true);
+      }
+    }
+    const effectivePermissionMode = taskStage?.kind === 'plan' || taskStage?.kind === 'code_review' ? 'read-only' : permissionMode;
+    const stageExecution = taskStage
+      ? {
+          workExecutionId: execution.id,
+          employeeId: snapshot.id,
+          employeeRevision: snapshot.revision,
+          employeeSnapshot: snapshot,
+          skillId: snapshot.skillIds[0] ?? null,
+          effectivePermissions: {
+            permissionMode: effectivePermissionMode,
+            allowCodeChanges: taskStage.kind === 'implementation' ? allowCodeChanges : false,
+            allowTests: taskStage.kind === 'implementation' ? allowTests : false,
+            deliveryGrants: execution.deliveryGrantsSnapshot,
+          },
+        }
+      : null;
+    const commonBody = {
       mode: 'create',
-      source: 'task_push',
       model: model.id,
       ...(snapshot.reasoningEffort ? { effort: snapshot.reasoningEffort } : {}),
       ...(snapshot.serviceTier ? { serviceTier: snapshot.serviceTier } : {}),
-      workMode: snapshot.workMode,
-      permissionMode,
+      permissionMode: effectivePermissionMode,
       agentKind: model.agentKind,
       ...(snapshot.skillIds[0] ? { skillId: snapshot.skillIds[0] } : {}),
-      supplementalInfo,
-      workspace,
+      ...(taskStage ? { stageId: taskStage.id, stageExecution } : {}),
     };
+    const reviewSource = taskStage?.kind === 'code_review' ? reviewSourceConversation(taskStage) : null;
+    const canReviewPersistedWorkspace = Boolean(reviewSource?.environmentId && reviewSource.workspaceId);
+    const body: Record<string, unknown> =
+      taskStage?.kind === 'code_review' && canReviewPersistedWorkspace
+        ? {
+            ...commonBody,
+            source: 'code_review',
+            collaborationMode: 'default',
+            inheritConversationId: reviewSource!.id,
+          }
+        : {
+            ...commonBody,
+            source: 'task_push',
+            workMode: taskStage?.workMode ?? snapshot.workMode,
+            supplementalInfo:
+              taskStage?.kind === 'code_review'
+                ? [
+                    supplementalInfo,
+                    '已确认实施交付物的来源会话没有可继承的精确任务工作区。本阶段只能审查已确认的实施报告，不得声称已审查仓库现场；如需仓库级代码审查，应明确报告为现场未验证项。',
+                  ].join('\n\n')
+                : supplementalInfo,
+            workspace,
+          };
     const accepted = await options.executeTaskConversationIdempotent(project, task, body, `digital-employee:${execution.id}:attempt:${execution.attempt}`);
     const acceptance = isRecord(accepted.body) ? accepted.body : null;
     const conversationProjection = acceptance && isRecord(acceptance.conversation) ? acceptance.conversation : null;
@@ -475,6 +558,12 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
       errorCode: null,
       errorMessage: null,
     });
+    if (taskStage) {
+      const attempt = options.stages.getAttemptByConversation(conversation.id);
+      if (!attempt || attempt.stageId !== taskStage.id || attempt.workExecutionId !== execution.id || attempt.employeeId !== snapshot.id) {
+        throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_STAGE_ATTEMPT_NOT_DURABLE', '阶段会话没有冻结到当前工作执行和员工快照。', true);
+      }
+    }
     options.taskEvents.create({
       taskId: task.id,
       eventType: 'task.digital_employee.started',
@@ -494,6 +583,15 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
     if (!execution.conversationId) throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_CONVERSATION_MISSING', '数字员工执行缺少关联会话身份。', true);
     const conversation = options.conversations.getById(execution.conversationId);
     if (!conversation || conversation.taskId !== execution.taskId || conversation.projectId !== execution.projectId) throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_CONVERSATION_MISSING', '数字员工关联会话已经不可用。', true);
+    if (execution.executionMode === 'staged' && execution.status === 'waiting') {
+      const candidateId = typeof execution.deliveryState.candidateDeliverableId === 'string' ? execution.deliveryState.candidateDeliverableId : null;
+      const candidate = candidateId ? options.stages.getDeliverable(candidateId) : null;
+      if (candidate && candidate.taskId === execution.taskId && candidate.stageId === execution.currentStageId && candidate.status === 'submitted') {
+        // 候选交付物已耐久化后，等待态只由用户的交接、返工或最终确认命令推进。
+        // 重复监控已完成会话会徒增执行修订，使用户刚打开的确认弹窗立即过期。
+        return;
+      }
+    }
     if (conversation.stage === 'waiting_user' || conversation.stage === 'waiting_approval' || conversation.providerState === 'waiting') {
       if (execution.status !== 'waiting') publishExecution(options.executions.update(execution.id, { status: 'waiting' }));
       return;
@@ -501,6 +599,37 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
     if (conversation.stage === 'failed' || conversation.providerState === 'failed') throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_CONVERSATION_FAILED', '数字员工会话执行失败，请查看会话详情。', false);
     if (conversation.stage !== 'completed') {
       if (execution.status !== 'running') publishExecution(options.executions.update(execution.id, { status: 'running' }));
+      return;
+    }
+    if (execution.executionMode === 'staged') {
+      if (!execution.currentStageId) throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_STAGE_MISSING', '阶段化工作执行缺少当前阶段身份。', true);
+      const attempt = options.stages.getAttemptByConversation(conversation.id);
+      if (!attempt || attempt.stageId !== execution.currentStageId || attempt.workExecutionId !== execution.id) {
+        throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_STAGE_ATTEMPT_NOT_DURABLE', '已完成会话不属于当前阶段尝试。', true);
+      }
+      const workflow = await options.taskStageApplication.captureLatestConversationOutput(execution.taskId, execution.currentStageId, {
+        operationIdentity: `digital-employee-final-output:${execution.id}:${execution.currentStageId}:${attempt.attemptNumber}`,
+      });
+      const stage = workflow.stages.find((candidate) => candidate.id === execution.currentStageId);
+      const deliverable = stage?.deliverables.filter((candidate) => candidate.attemptId === attempt.id).sort((left, right) => right.version - left.version)[0];
+      if (!deliverable || deliverable.status !== 'submitted') throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_DELIVERABLE_NOT_DURABLE', '数字员工最终回复未能固化为待确认交付物。', true);
+      const waiting = options.executions.update(execution.id, {
+        status: 'waiting',
+        completedAt: now().toISOString(),
+        deliveryState: {
+          candidateDeliverableId: deliverable.id,
+          candidateDeliverableVersion: deliverable.version,
+          candidateStageId: deliverable.stageId,
+          candidateContentSha256: deliverable.contentSha256,
+        },
+      });
+      options.taskEvents.create({
+        taskId: execution.taskId,
+        eventType: 'task.digital_employee.stage_output_ready',
+        title: '数字员工阶段方案已生成，等待确认',
+        payload: { executionId: execution.id, stageId: deliverable.stageId, attemptId: attempt.id, deliverableId: deliverable.id, version: deliverable.version },
+      });
+      publishExecution(waiting);
       return;
     }
     const hasDelivery = execution.source !== 'exploration' && Object.values(execution.deliveryGrantsSnapshot).some(Boolean);
@@ -769,6 +898,12 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
     if (!current || current.status === 'delivered' || current.status === 'cancelled') return;
     const retryUnsafe = retryWouldDuplicateUnknownWork(failure.code);
     const deliveryState = retryUnsafe ? { ...current.deliveryState, retryUnsafe: true } : current.deliveryState;
+    if (current.executionMode === 'staged' && current.conversationId) {
+      const attempt = options.stages.getAttemptByConversation(current.conversationId);
+      if (attempt && (attempt.status === 'starting' || attempt.status === 'active')) {
+        options.stages.failAttempt(attempt.id, { outcomeUnknown: failure.recoveryRequired, error: { code: failure.code, message: failure.message } });
+      }
+    }
     const updated = options.executions.update(execution.id, { status, deliveryState, errorCode: failure.code, errorMessage: failure.message, completedAt: now().toISOString() });
     options.taskEvents.create({
       taskId: execution.taskId,
@@ -787,6 +922,19 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
     });
     publishExecution(updated);
     await options.save();
+  }
+
+  function reviewSourceConversation(stage: ZeusTaskStageRecord) {
+    const workflow = options.stages.getWorkflowByTask(stage.taskId);
+    const implementation = workflow?.stages.filter((candidate) => candidate.sequence < stage.sequence && candidate.kind === 'implementation').sort((left, right) => right.sequence - left.sequence)[0];
+    const accepted = implementation?.deliverables.filter((deliverable) => deliverable.status === 'accepted').sort((left, right) => right.version - left.version)[0];
+    const attempt = accepted ? implementation?.attempts.find((candidate) => candidate.id === accepted.attemptId) : null;
+    if (!attempt?.conversationId) throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_REVIEW_SOURCE_MISSING', '代码审查阶段缺少已确认实施交付物的精确会话。', false);
+    const conversation = options.conversations.getById(attempt.conversationId);
+    if (!conversation || conversation.taskId !== stage.taskId) {
+      throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_REVIEW_SOURCE_MISSING', '代码审查阶段的实施来源会话已经不可用。', false);
+    }
+    return conversation;
   }
 
   function executionWorkspaces(execution: DigitalEmployeeExecutionRecord): ZeusTaskWorkspaceRecord[] {

@@ -101,6 +101,7 @@ export type TaskStageAdvanceMode = 'manual' | 'auto';
 export type TaskStageAgentKind = 'codex' | 'pi';
 export type TaskStagePermissionMode = 'read-only' | 'auto' | 'full-access';
 export type TaskStageWorkMode = 'default' | 'plan';
+export type TaskStageEmployeeMode = 'none' | 'inherit' | 'explicit';
 
 export interface TaskWorkflowRecord {
   id: string;
@@ -125,6 +126,12 @@ export interface TaskStageAttemptRecord {
   segmentId: string | null;
   workspaceId: string | null;
   environmentId: string | null;
+  workExecutionId: string | null;
+  employeeId: string | null;
+  employeeRevision: number | null;
+  employeeSnapshot: Record<string, unknown> | null;
+  skillId: string | null;
+  effectivePermissions: Record<string, unknown> | null;
   agentKind: TaskStageAgentKind;
   modelRef: string;
   effort: string | null;
@@ -173,6 +180,8 @@ export interface TaskStageRecord {
   title: string;
   description: string;
   status: TaskStageStatus;
+  employeeMode: TaskStageEmployeeMode;
+  employeeId: string | null;
   agentKind: TaskStageAgentKind;
   modelRef: string;
   effort: string | null;

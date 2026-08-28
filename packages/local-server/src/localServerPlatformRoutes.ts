@@ -584,7 +584,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     recordTaskEvent,
     publishRealtimeEvent,
   });
-  registerTaskStageRoutes({ server, application: taskStageApplication });
+  registerTaskStageRoutes({ server, application: taskStageApplication, commands: workManagementCommands, save: () => db.save() });
 
   const runtimeQueries = new RuntimeQueryApplication({
     runtimeSessions,
@@ -2125,6 +2125,9 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     executions: digitalEmployeeExecutions,
     projectEvents: digitalEmployeeProjectEvents,
     commandDefinitions: digitalEmployeeCommandDefinitions,
+    stages: taskStages,
+    conversations,
+    taskStageApplication,
     appendAuditLog,
     publishRealtimeEvent,
     isTaskTerminal: taskManagementStatusIsTerminal,
@@ -2152,6 +2155,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       taskEvents,
       taskIntegrations,
       taskWorkspaces,
+      stages: taskStages,
+      taskStageApplication,
       conversations,
       commandRuns,
       conversationCapabilities: conversationCapabilityQueries,

@@ -1737,6 +1737,36 @@ export function createConversationApplicationOperations(dependencies: Conversati
     return stage;
   }
 
+  function requestedStageExecution(body: Record<string, unknown>, stage: ZeusTaskStageRecord | null) {
+    if (!stage || body.stageExecution === undefined) return null;
+    if (!isNativeApiRecord(body.stageExecution)) throw nativeApiError('ZEUS_TASK_STAGE_INVALID_ARGUMENT', 'stageExecution must be an object.');
+    const value = body.stageExecution;
+    if (
+      typeof value.workExecutionId !== 'string' ||
+      !value.workExecutionId.trim() ||
+      typeof value.employeeId !== 'string' ||
+      !value.employeeId.trim() ||
+      !Number.isSafeInteger(value.employeeRevision) ||
+      Number(value.employeeRevision) < 0 ||
+      !isNativeApiRecord(value.employeeSnapshot) ||
+      !isNativeApiRecord(value.effectivePermissions)
+    ) {
+      throw nativeApiError('ZEUS_TASK_STAGE_INVALID_ARGUMENT', 'stageExecution is incomplete or invalid.');
+    }
+    if (stage.employeeMode !== 'explicit' || stage.employeeId !== value.employeeId) {
+      throw nativeApiError('ZEUS_TASK_STAGE_CONFIGURATION_MISMATCH', 'The staged work execution employee no longer matches the explicit stage assignment.');
+    }
+    const skillId = value.skillId === undefined || value.skillId === null ? null : typeof value.skillId === 'string' && value.skillId.trim() ? value.skillId.trim() : null;
+    return {
+      workExecutionId: value.workExecutionId.trim(),
+      employeeId: value.employeeId.trim(),
+      employeeRevision: Number(value.employeeRevision),
+      employeeSnapshot: value.employeeSnapshot,
+      skillId,
+      effectivePermissions: value.effectivePermissions,
+    };
+  }
+
   function assertTaskStageExecutionMatches(
     stage: ZeusTaskStageRecord,
     input: {
@@ -1776,12 +1806,19 @@ export function createConversationApplicationOperations(dependencies: Conversati
       }
     });
     const outputContract = parseJsonObject(stage.outputContractJson);
+    const acceptanceEvidence = acceptedInputs.map(
+      (deliverable) =>
+        `- ${deliverable.title} v${deliverable.version}：status=accepted；acceptedAt=${deliverable.acceptedAt ?? '未记录'}；交付物 ID=${deliverable.id}`,
+    );
     return [
       `## 当前任务阶段：${stage.title}`,
       stage.description,
       `阶段类型：${stage.kind}`,
       `阶段指令：\n${stage.prompt || '按任务要求完成本阶段。'}`,
       `交付物契约：\n\`\`\`json\n${JSON.stringify(outputContract, null, 2)}\n\`\`\``,
+      acceptanceEvidence.length > 0
+        ? `## 人工验收与交接事实\n\n以下版本已经由 Zeus 的显式人工验收或交接命令标记为 accepted。这是当前阶段可依赖的用户确认事实；交付物正文中早于该操作的“待确认”描述不代表当前状态。\n\n${acceptanceEvidence.join('\n')}`
+        : '',
       sections.length > 0 ? `## 已验收的上游阶段交付物\n\n${sections.join('\n\n')}` : '## 已验收的上游阶段交付物\n\n无；这是首个阶段。',
       '完成后请在最终回复中给出可独立阅读、可沉淀为 Markdown 的正式阶段交付物。不要输出隐藏推理或思维链。',
     ]
@@ -1799,7 +1836,22 @@ export function createConversationApplicationOperations(dependencies: Conversati
     }
   }
 
-  async function startTaskStageConversation(stage: ZeusTaskStageRecord | null, plan: NativeTaskConversationStartPlan, input: { operationIdentity: string; modelRef: string }) {
+  async function startTaskStageConversation(
+    stage: ZeusTaskStageRecord | null,
+    plan: NativeTaskConversationStartPlan,
+    input: {
+      operationIdentity: string;
+      modelRef: string;
+      stageExecution?: {
+        workExecutionId: string;
+        employeeId: string;
+        employeeRevision: number;
+        employeeSnapshot: Record<string, unknown>;
+        skillId: string | null;
+        effectivePermissions: Record<string, unknown>;
+      } | null;
+    },
+  ) {
     if (!stage) return startNativeTaskConversationFromPlan(plan);
     const actual = {
       agentKind: plan.agentKind,
@@ -1818,6 +1870,16 @@ export function createConversationApplicationOperations(dependencies: Conversati
         stageRevision: stage.revision,
         inputDeliverables: acceptedInputs.map((deliverable) => ({ id: deliverable.id, version: deliverable.version, contentSha256: deliverable.contentSha256 })),
       },
+      ...(input.stageExecution
+        ? {
+            workExecutionId: input.stageExecution.workExecutionId,
+            employeeId: input.stageExecution.employeeId,
+            employeeRevision: input.stageExecution.employeeRevision,
+            employeeSnapshot: input.stageExecution.employeeSnapshot,
+            skillId: input.stageExecution.skillId,
+            effectivePermissions: input.stageExecution.effectivePermissions,
+          }
+        : {}),
     });
     await db.save();
     let rpcStarted = false;
@@ -1922,7 +1984,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
         const effort = typeof body.effort === 'string' ? body.effort.trim() : '';
         const workMode = body.workMode === 'plan' || body.workMode === 'default' ? body.workMode : null;
         const supplementalInfo = typeof body.supplementalInfo === 'string' ? body.supplementalInfo.trim() : '';
-        const taskStage = requestedTaskStage(body, task, ['plan', 'implementation']);
+        // 阶段化数字员工在没有可继承任务工作区时，代码审查只能审查已确认的
+        // 实施交付报告。它仍需通过 task_push 创建独立只读会话，而不能伪造
+        // environmentId/workspaceId 或绕过阶段尝试与交付物冻结。
+        const taskStage = requestedTaskStage(body, task, ['plan', 'implementation', 'code_review']);
         if (!modelName) throw nativeApiError('ZEUS_INVALID_TASK_PUSH', 'Task push model is required.');
         if (!workMode) throw nativeApiError('ZEUS_INVALID_TASK_PUSH', 'Task push workMode must be default or plan.');
         if (supplementalInfo.length > 20_000) throw nativeApiError('ZEUS_INVALID_TASK_PUSH', 'Task push supplementalInfo must be no longer than 20000 characters.');
@@ -2020,7 +2085,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             providerWriteLifecycle: reservedLifecycle,
             ...(skill ? { skill } : {}),
           },
-          { operationIdentity: stableOperationId, modelRef: modelName },
+          { operationIdentity: stableOperationId, modelRef: modelName, stageExecution: requestedStageExecution(body, taskStage) },
         );
       } else if (body.source === 'code_review') {
         if (body.attachments !== undefined) throw nativeApiError('ZEUS_INVALID_CODE_REVIEW', 'Code review attachments are not accepted; the server reviews the persisted workspace directly.');
@@ -2110,7 +2175,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             providerWriteLifecycle: reservedLifecycle,
             ...(skill ? { skill } : {}),
           },
-          { operationIdentity: stableOperationId, modelRef: modelName },
+          { operationIdentity: stableOperationId, modelRef: modelName, stageExecution: requestedStageExecution(body, taskStage) },
         );
       } else if (body.source === 'conflict_resolution') {
         const integrationId = typeof body.integrationId === 'string' ? body.integrationId.trim() : '';
