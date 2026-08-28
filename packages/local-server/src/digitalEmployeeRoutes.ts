@@ -53,6 +53,7 @@ interface DigitalEmployeeRouteOptions {
 type DeleteInput = { expectedRevision: number };
 type CreateEmployeeBody = { templateId?: string; overrides?: Partial<Omit<CreateDigitalEmployeeInput, 'projectId' | 'templateId'>> } & Partial<Omit<CreateDigitalEmployeeInput, 'projectId'>>;
 type CreateExecutionBody = { employeeId: string };
+type RetryStagedExecutionBody = { targetEmployeeId: string; expectedExecutionRevision: number };
 type HandoffExecutionBody = {
   sourceStageId: string;
   deliverableId: string;
@@ -421,6 +422,31 @@ function registerExecutionRoutes(options: DigitalEmployeeRouteOptions): void {
   );
 
   options.server.post(
+    '/api/tasks/:taskId/digital-employee-executions/:executionId/retries',
+    async (request: FastifyRequest<{ Params: { taskId: string; executionId: string }; Body: WorkManagementMutationRequest<RetryStagedExecutionBody> }>, reply) =>
+      runRoute(reply, async () => {
+        const current = requireOwnedStagedExecution(options, request.params.taskId, request.params.executionId);
+        const parsed = options.application.parse<RetryStagedExecutionBody>({
+          value: request.body,
+          commandType: workManagementCommandTypes.digitalEmployeeExecutionRetry,
+          scopeKind: 'task',
+          expectedScopeId: () => current.taskId,
+        });
+        const employee = requireEmployee(options, current.projectId, parsed.input.targetEmployeeId)!;
+        if (!employee.enabled) throw new DigitalEmployeeStoreError('ZEUS_DIGITAL_EMPLOYEE_DISABLED', '数字员工已停用，不能接收失败重试。');
+        const mutation = options.application.executeCore({
+          parsed,
+          destinationId: 'digital-employee-stage-retry',
+          resourceId: `digital_employee_execution:${current.id}`,
+          mutateBusinessState: () => retryStagedExecution(options, current, employee, parsed.input),
+        });
+        await finishMutation(options, mutation.replayed, 'digital_employee.execution.changed', { projectId: current.projectId, taskId: current.taskId, executionId: current.id, reason: 'retry' });
+        options.kick();
+        return reply.code(202).send(mutation.result);
+      }),
+  );
+
+  options.server.post(
     '/api/tasks/:taskId/digital-employee-executions/:executionId/handoffs',
     async (request: FastifyRequest<{ Params: { taskId: string; executionId: string }; Body: WorkManagementMutationRequest<HandoffExecutionBody> }>, reply) =>
       runRoute(reply, async () => {
@@ -736,6 +762,40 @@ function handoffExecution(options: DigitalEmployeeRouteOptions, execution: Digit
   return updated;
 }
 
+function retryStagedExecution(options: DigitalEmployeeRouteOptions, execution: DigitalEmployeeExecutionRecord, employee: DigitalEmployeeRecord, input: RetryStagedExecutionBody) {
+  if (execution.revision !== input.expectedExecutionRevision) {
+    throw new DigitalEmployeeStoreError('ZEUS_DIGITAL_EMPLOYEE_REVISION_CONFLICT', '数字员工协作执行已更新，请刷新后重试。', { statusCode: 409 });
+  }
+  if (execution.status !== 'failed' && execution.status !== 'blocked') {
+    throw new DigitalEmployeeStoreError('ZEUS_DIGITAL_EMPLOYEE_EXECUTION_NOT_RETRYABLE', '只有失败或阻塞的阶段执行可以创建新尝试。', { statusCode: 409 });
+  }
+  if (execution.deliveryState.retryUnsafe === true) {
+    throw new DigitalEmployeeStoreError('ZEUS_DIGITAL_EMPLOYEE_RECOVERY_REQUIRED', '该执行的外部结果未知，不能自动创建新尝试；请先核对关联会话、Git 或部署现场。', { statusCode: 409 });
+  }
+  if (!execution.currentStageId) throw new DigitalEmployeeStoreError('ZEUS_TASK_STAGE_NOT_FOUND', '失败执行缺少当前阶段身份。', { statusCode: 409 });
+  const currentStage = options.stages.getStage(execution.currentStageId);
+  if (!currentStage || currentStage.taskId !== execution.taskId) throw new DigitalEmployeeStoreError('ZEUS_TASK_STAGE_NOT_FOUND', '失败执行的当前阶段不存在。', { statusCode: 404 });
+  const assigned = options.stages.assignEmployee(currentStage.id, stageEmployeeInput(currentStage, employee));
+  const assignedStage = assigned.stages.find((stage) => stage.id === currentStage.id)!;
+  const updated = options.executions.advanceStage(execution.id, {
+    expectedRevision: input.expectedExecutionRevision,
+    employee,
+    currentStageId: assignedStage.id,
+    deliveryState: {
+      retryOfExecutionAttempt: execution.attempt,
+      retryOfErrorCode: execution.errorCode,
+      retryAt: new Date().toISOString(),
+    },
+  });
+  options.taskEvents.create({
+    taskId: execution.taskId,
+    eventType: 'task.digital_employee.stage_retry.created',
+    title: `失败阶段已交给${employee.name}重新尝试`,
+    payload: { executionId: execution.id, stageId: assignedStage.id, employeeId: employee.id, previousAttempt: execution.attempt, nextAttempt: updated.attempt },
+  });
+  return updated;
+}
+
 function reworkExecution(options: DigitalEmployeeRouteOptions, execution: DigitalEmployeeExecutionRecord, employee: DigitalEmployeeRecord, input: ReworkExecutionBody) {
   const source = requireCandidateDeliverable(options, execution, input);
   const changed = options.stages.requestChanges(source.deliverable.id, {
@@ -819,6 +879,12 @@ function readCollaborationProjection(options: DigitalEmployeeRouteOptions, taskI
     blockingReasons.push({ code: 'legacy_execution_active', message: '旧版执行仍在运行，不会在线改写为阶段协作。' });
   } else if (execution.executionMode === 'staged' && execution.status === 'waiting') {
     blockingReasons.push({ code: 'awaiting_user_confirmation', message: '当前交付物等待用户确认交接、返工或最终交付。' });
+  } else if (execution.executionMode === 'staged' && (execution.status === 'failed' || execution.status === 'blocked')) {
+    blockingReasons.push(
+      execution.deliveryState.retryUnsafe === true
+        ? { code: 'recovery_required', message: '当前尝试的外部结果未知；创建新尝试前必须先核对关联会话、Git 或部署现场。' }
+        : { code: 'failed_attempt_retry_available', message: '失败尝试已保留；请选择同一或另一位数字员工创建新尝试。' },
+    );
   }
   return {
     execution,
@@ -826,9 +892,9 @@ function readCollaborationProjection(options: DigitalEmployeeRouteOptions, taskI
     blockingReasons,
     legacyAdoptionAvailable: Boolean(
       execution?.executionMode === 'legacy_single_conversation' &&
-        execution.conversationId &&
-        options.conversations.getById(execution.conversationId)?.stage === 'completed' &&
-        !['queued', 'dispatching', 'running', 'waiting', 'delivery_pending'].includes(execution.status),
+      execution.conversationId &&
+      options.conversations.getById(execution.conversationId)?.stage === 'completed' &&
+      !['queued', 'dispatching', 'running', 'waiting', 'delivery_pending'].includes(execution.status),
     ),
   };
 }

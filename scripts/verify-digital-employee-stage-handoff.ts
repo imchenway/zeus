@@ -41,7 +41,17 @@ try {
     const commands = new WorkManagementCommandApplication({ db, deliveries: new CommandDeliveryRepository(db), redactSensitiveText: (value) => ({ text: value }), now: () => new Date((clock += 1_000)) });
 
     const project = projects.create({ id: 'project_zeus_0373_probe', name: 'ZEUS-0373 回放项目', localPath: projectPath });
-    const task = tasks.create({ id: 'task_zeus_0373_probe', projectId: project.id, title: '数字员工手动接力', taskType: 'optimization', description: '产品方案交给开发执行', createdFrom: 'verification_probe', sourceContext: {}, allowCodeChanges: true, allowTests: true });
+    const task = tasks.create({
+      id: 'task_zeus_0373_probe',
+      projectId: project.id,
+      title: '数字员工手动接力',
+      taskType: 'optimization',
+      description: '产品方案交给开发执行',
+      createdFrom: 'verification_probe',
+      sourceContext: {},
+      allowCodeChanges: true,
+      allowTests: true,
+    });
     const product = createEmployee(employees, project.id, 'product', '产品数字员工', '产品', 'plan', 'read-only');
     const developer = createEmployee(employees, project.id, 'developer', '开发数字员工', '开发', 'default', 'auto');
 
@@ -49,7 +59,16 @@ try {
     let planStage = workflow.stages[0]!;
     workflow = stages.assignEmployee(planStage.id, assignment(planStage, product));
     planStage = workflow.stages[0]!;
-    let execution = executions.create({ id: 'digital_employee_execution_zeus_0373', employee: product, taskId: task.id, source: 'manual', sourceRef: 'probe:staged', executionMode: 'staged', workflowId: workflow.workflow.id, currentStageId: planStage.id });
+    let execution = executions.create({
+      id: 'digital_employee_execution_zeus_0373',
+      employee: product,
+      taskId: task.id,
+      source: 'manual',
+      sourceRef: 'probe:staged',
+      executionMode: 'staged',
+      workflowId: workflow.workflow.id,
+      currentStageId: planStage.id,
+    });
     execution = executions.update(execution.id, { status: 'dispatching', startedAt: now() });
     execution = executions.update(execution.id, { status: 'running' });
 
@@ -66,7 +85,17 @@ try {
     });
     stages.bindExistingConversationAttempt({ attemptId: planAttempt.id, conversationId: planConversationId });
     const planContent = '# 产品方案\n\n实施必须只读取本方案，并在独立会话中完成。';
-    const planDeliverable = await persistDeliverable(artifacts, stages, { taskId: task.id, projectId: project.id, stageId: planStage.id, attemptId: planAttempt.id, conversationId: planConversationId, id: 'task_stage_deliverable_zeus_0373_plan', operationIdentity: 'probe:plan:deliverable:1', title: '产品方案', content: planContent });
+    const planDeliverable = await persistDeliverable(artifacts, stages, {
+      taskId: task.id,
+      projectId: project.id,
+      stageId: planStage.id,
+      attemptId: planAttempt.id,
+      conversationId: planConversationId,
+      id: 'task_stage_deliverable_zeus_0373_plan',
+      operationIdentity: 'probe:plan:deliverable:1',
+      title: '产品方案',
+      content: planContent,
+    });
     execution = executions.update(execution.id, { status: 'waiting', completedAt: now(), deliveryState: { candidateDeliverableId: planDeliverable.id, candidateDeliverableVersion: planDeliverable.version } });
 
     observed.candidateBeforeConfirmation = planDeliverable.status === 'submitted' && executions.getById(execution.id)?.deliveryStage === 'none';
@@ -127,7 +156,17 @@ try {
     observed.activeEmployeeSwitchRejected = captureStageCode(() => stages.assignEmployee(implementationStage.id, assignment(stages.getStage(implementationStage.id)!, product)));
 
     const implementationContent = '# 实施结果\n\n已严格依据产品方案完成。';
-    const implementationDeliverable = await persistDeliverable(artifacts, stages, { taskId: task.id, projectId: project.id, stageId: implementationStage.id, attemptId: developmentAttempt.id, conversationId: developmentConversationId, id: 'task_stage_deliverable_zeus_0373_implementation', operationIdentity: 'probe:implementation:deliverable:1', title: '实施结果', content: implementationContent });
+    const implementationDeliverable = await persistDeliverable(artifacts, stages, {
+      taskId: task.id,
+      projectId: project.id,
+      stageId: implementationStage.id,
+      attemptId: developmentAttempt.id,
+      conversationId: developmentConversationId,
+      id: 'task_stage_deliverable_zeus_0373_implementation',
+      operationIdentity: 'probe:implementation:deliverable:1',
+      title: '实施结果',
+      content: implementationContent,
+    });
     execution = executions.update(execution.id, { status: 'waiting', completedAt: now() });
     const changed = stages.requestChanges(implementationDeliverable.id, { expectedStageRevision: stages.getStage(implementationStage.id)!.revision, reason: '补充边界验证' });
     const changedStage = changed.stages.find((stage) => stage.id === implementationStage.id)!;
@@ -143,6 +182,84 @@ try {
       effectivePermissions: { permissionMode: 'auto', allowCodeChanges: true, allowTests: true },
     });
     observed.reworkPreservesHistory = reassigned.stages.find((stage) => stage.id === implementationStage.id)!.attempts.length === 1 && reworkAttempt.attemptNumber === 2 && stages.getAttempt(developmentAttempt.id)?.status === 'completed';
+
+    const retryTask = tasks.create({
+      id: 'task_zeus_0373_failed_retry_probe',
+      projectId: project.id,
+      title: '失败阶段选择员工创建新尝试',
+      taskType: 'optimization',
+      description: '保留失败尝试并允许改派',
+      createdFrom: 'verification_probe',
+      sourceContext: {},
+      allowCodeChanges: false,
+      allowTests: false,
+    });
+    let retryWorkflow = stages.initializeDefault({ taskId: retryTask.id, templateKey: 'digital-employee-plan-implement-review', templateRevision: 1, stages: defaultStages() });
+    let retryStage = retryWorkflow.stages[0]!;
+    retryWorkflow = stages.assignEmployee(retryStage.id, assignment(retryStage, product));
+    retryStage = retryWorkflow.stages[0]!;
+    let failedExecution = executions.create({
+      id: 'digital_employee_execution_zeus_0373_failed_retry',
+      employee: product,
+      taskId: retryTask.id,
+      source: 'manual',
+      sourceRef: 'probe:failed-retry',
+      executionMode: 'staged',
+      workflowId: retryWorkflow.workflow.id,
+      currentStageId: retryStage.id,
+    });
+    failedExecution = executions.update(failedExecution.id, { status: 'dispatching', startedAt: now() });
+    failedExecution = executions.update(failedExecution.id, { status: 'running' });
+    const failedConversationId = createConversation(db, conversations, project.id, retryTask.id, 'conversation_zeus_0373_failed_attempt', product, now());
+    const failedAttempt = stages.prepareAttempt({
+      stageId: retryStage.id,
+      operationIdentity: 'probe:failed-retry:attempt:1',
+      workExecutionId: failedExecution.id,
+      employeeId: product.id,
+      employeeRevision: product.revision,
+      employeeSnapshot: { ...product },
+      effectivePermissions: { permissionMode: 'read-only', allowCodeChanges: false, allowTests: false },
+    });
+    stages.bindExistingConversationAttempt({ attemptId: failedAttempt.id, conversationId: failedConversationId });
+    stages.failAttempt(failedAttempt.id, { outcomeUnknown: false, error: { code: 'PROBE_PROVIDER_FAILED', message: 'provider failed before output' } });
+    failedExecution = executions.update(failedExecution.id, { status: 'failed', completedAt: now(), errorCode: 'PROBE_PROVIDER_FAILED', errorMessage: 'provider failed before output' });
+    const retryInput = { targetEmployeeId: developer.id, expectedExecutionRevision: failedExecution.revision };
+    const retryRequest = commandRequest('command_zeus_0373_failed_retry', workManagementCommandTypes.digitalEmployeeExecutionRetry, retryTask.id, 'operation_zeus_0373_failed_retry', retryInput);
+    const parsedRetry = commands.parse<typeof retryInput>({ value: retryRequest, commandType: workManagementCommandTypes.digitalEmployeeExecutionRetry, scopeKind: 'task', expectedScopeId: () => retryTask.id });
+    let retryMutationCount = 0;
+    const retryFailedStage = () =>
+      commands.executeCore({
+        parsed: parsedRetry,
+        destinationId: 'digital-employee-stage-retry',
+        resourceId: `digital_employee_execution:${failedExecution.id}`,
+        mutateBusinessState: () => {
+          retryMutationCount += 1;
+          const failedStage = stages.getStage(retryStage.id)!;
+          const assignedRetry = stages.assignEmployee(failedStage.id, assignment(failedStage, developer));
+          const assignedRetryStage = assignedRetry.stages.find((stage) => stage.id === failedStage.id)!;
+          return executions.advanceStage(failedExecution.id, { expectedRevision: retryInput.expectedExecutionRevision, employee: developer, currentStageId: assignedRetryStage.id });
+        },
+      });
+    retryFailedStage();
+    const replayedRetry = retryFailedStage();
+    failedExecution = executions.getById(failedExecution.id)!;
+    const retriedAttempt = stages.prepareAttempt({
+      stageId: retryStage.id,
+      operationIdentity: 'probe:failed-retry:attempt:2',
+      workExecutionId: failedExecution.id,
+      employeeId: developer.id,
+      employeeRevision: developer.revision,
+      employeeSnapshot: { ...developer },
+      effectivePermissions: { permissionMode: 'read-only', allowCodeChanges: false, allowTests: false },
+    });
+    observed.failedRetryPreservesHistory =
+      retryMutationCount === 1 &&
+      replayedRetry.replayed &&
+      failedExecution.employeeId === developer.id &&
+      failedExecution.attempt === 2 &&
+      stages.getAttempt(failedAttempt.id)?.status === 'failed' &&
+      retriedAttempt.attemptNumber === 2 &&
+      retriedAttempt.employeeId === developer.id;
 
     const activeLegacy = executions.create({ id: 'digital_employee_execution_zeus_0373_legacy_active', employee: product, taskId: task.id, source: 'manual', sourceRef: 'probe:legacy-active' });
     observed.legacyNotFabricated = activeLegacy.executionMode === 'legacy_single_conversation' && activeLegacy.workflowId === null && activeLegacy.currentStageId === null;
@@ -198,18 +315,17 @@ try {
       candidateContentSha256: legacyDeliverable.contentSha256,
     });
     observed.legacyCompletedAdopted =
-      adoptedLegacy.executionMode === 'staged' &&
-      adoptedLegacy.status === 'waiting' &&
-      adoptedLegacy.conversationId === legacyConversationId &&
-      adoptedLegacy.deliveryState.candidateDeliverableId === legacyDeliverable.id;
+      adoptedLegacy.executionMode === 'staged' && adoptedLegacy.status === 'waiting' && adoptedLegacy.conversationId === legacyConversationId && adoptedLegacy.deliveryState.candidateDeliverableId === legacyDeliverable.id;
     observed.legacyActiveUnchanged = executions.getById(activeLegacy.id)?.executionMode === 'legacy_single_conversation' && executions.getById(activeLegacy.id)?.workflowId === null;
-    observed.migrationsPresent = [digitalEmployeeSchemaMigrationId, taskStageSchemaMigrationId, digitalEmployeeStageHandoffMigrationId].every((migrationId) => Boolean(db.get(`SELECT migration_id FROM schema_migrations WHERE migration_id = ?`, [migrationId])));
+    observed.migrationsPresent = [digitalEmployeeSchemaMigrationId, taskStageSchemaMigrationId, digitalEmployeeStageHandoffMigrationId].every((migrationId) =>
+      Boolean(db.get(`SELECT migration_id FROM schema_migrations WHERE migration_id = ?`, [migrationId])),
+    );
     observed.sqliteIntegrity = db.get<{ quick_check: string }>(`PRAGMA quick_check`)?.quick_check ?? null;
 
     assertProbe(observed.candidateBeforeConfirmation === true && observed.noExternalDeliveryBeforeConfirmation === true, '候选方案生成前后不得触发外部交付');
     assertProbe(observed.handoffCommandReplay === true && observed.preciseAcceptedInput === true, '交接命令必须幂等并精确传递已接受方案');
     assertProbe(observed.independentConversations === true && observed.frozenEmployeeSnapshots === true, '阶段必须使用独立会话并冻结各自员工快照');
-    assertProbe(observed.activeEmployeeSwitchRejected === 'ZEUS_TASK_STAGE_NOT_READY' && observed.reworkPreservesHistory === true, '活动阶段不可换人，返工必须保留旧尝试并新建尝试');
+    assertProbe(observed.activeEmployeeSwitchRejected === 'ZEUS_TASK_STAGE_NOT_READY' && observed.reworkPreservesHistory === true && observed.failedRetryPreservesHistory === true, '活动阶段不可换人；返工和失败重试必须保留旧尝试并新建尝试');
     assertProbe(observed.deliveryStillClosedAfterHandoff === true && observed.legacyNotFabricated === true, '最终确认前不得打开交付，旧记录不得伪造阶段');
     assertProbe(observed.legacyCompletedAdopted === true && observed.legacyActiveUnchanged === true, '已结束旧执行应可显式接入，活动旧执行必须保持原状');
     assertProbe(observed.migrationsPresent === true && observed.sqliteIntegrity === 'ok', '迁移账本与 SQLite 完整性必须通过');
@@ -244,9 +360,45 @@ function createEmployee(repository: DigitalEmployeeRepository, projectId: string
 
 function defaultStages() {
   return [
-    { stageKey: 'plan', kind: 'plan' as const, title: '方案规划', description: '形成产品方案', agentKind: 'codex' as const, modelRef: '', workMode: 'plan' as const, permissionMode: 'read-only' as const, advanceMode: 'manual' as const, prompt: '输出正式方案', outputContract: { format: 'markdown' } },
-    { stageKey: 'implementation', kind: 'implementation' as const, title: '实施', description: '执行确认方案', agentKind: 'codex' as const, modelRef: '', workMode: 'default' as const, permissionMode: 'auto' as const, advanceMode: 'manual' as const, prompt: '执行已确认方案', outputContract: { format: 'markdown' } },
-    { stageKey: 'code-review', kind: 'code_review' as const, title: '代码审查', description: '审查实施结果', agentKind: 'codex' as const, modelRef: '', workMode: 'default' as const, permissionMode: 'read-only' as const, advanceMode: 'manual' as const, prompt: '审查实施结果', outputContract: { format: 'markdown' } },
+    {
+      stageKey: 'plan',
+      kind: 'plan' as const,
+      title: '方案规划',
+      description: '形成产品方案',
+      agentKind: 'codex' as const,
+      modelRef: '',
+      workMode: 'plan' as const,
+      permissionMode: 'read-only' as const,
+      advanceMode: 'manual' as const,
+      prompt: '输出正式方案',
+      outputContract: { format: 'markdown' },
+    },
+    {
+      stageKey: 'implementation',
+      kind: 'implementation' as const,
+      title: '实施',
+      description: '执行确认方案',
+      agentKind: 'codex' as const,
+      modelRef: '',
+      workMode: 'default' as const,
+      permissionMode: 'auto' as const,
+      advanceMode: 'manual' as const,
+      prompt: '执行已确认方案',
+      outputContract: { format: 'markdown' },
+    },
+    {
+      stageKey: 'code-review',
+      kind: 'code_review' as const,
+      title: '代码审查',
+      description: '审查实施结果',
+      agentKind: 'codex' as const,
+      modelRef: '',
+      workMode: 'default' as const,
+      permissionMode: 'read-only' as const,
+      advanceMode: 'manual' as const,
+      prompt: '审查实施结果',
+      outputContract: { format: 'markdown' },
+    },
   ];
 }
 
@@ -265,15 +417,7 @@ function assignment(stage: ZeusTaskStageRecord, employee: DigitalEmployeeRecord)
   };
 }
 
-function createConversation(
-  db: Awaited<ReturnType<typeof createZeusDatabase>>,
-  conversations: ConversationRepository,
-  projectId: string,
-  taskId: string,
-  id: string,
-  employee: DigitalEmployeeRecord,
-  timestamp: string,
-): string {
+function createConversation(db: Awaited<ReturnType<typeof createZeusDatabase>>, conversations: ConversationRepository, projectId: string, taskId: string, id: string, employee: DigitalEmployeeRecord, timestamp: string): string {
   conversations.create({
     id,
     projectId,
@@ -297,8 +441,21 @@ async function persistDeliverable(
   stages: TaskStageRepository,
   input: { taskId: string; projectId: string; stageId: string; attemptId: string; conversationId: string; id: string; operationIdentity: string; title: string; content: string },
 ) {
-  const ref = await artifacts.putText({ text: input.content, mimeType: 'text/markdown', owner: { kind: 'task_stage_deliverable', id: input.id, generationId: '2026-08-28-zeus-0373-probe', projectId: input.projectId, conversationId: input.conversationId } });
-  const workflow = stages.createDeliverable({ taskId: input.taskId, stageId: input.stageId, attemptId: input.attemptId, operationIdentity: input.operationIdentity, kind: 'stage_output', title: input.title, summary: input.content.replace(/\s+/gu, ' ').slice(0, 280), artifactRef: ref });
+  const ref = await artifacts.putText({
+    text: input.content,
+    mimeType: 'text/markdown',
+    owner: { kind: 'task_stage_deliverable', id: input.id, generationId: '2026-08-28-zeus-0373-probe', projectId: input.projectId, conversationId: input.conversationId },
+  });
+  const workflow = stages.createDeliverable({
+    taskId: input.taskId,
+    stageId: input.stageId,
+    attemptId: input.attemptId,
+    operationIdentity: input.operationIdentity,
+    kind: 'stage_output',
+    title: input.title,
+    summary: input.content.replace(/\s+/gu, ' ').slice(0, 280),
+    artifactRef: ref,
+  });
   return workflow.stages.flatMap((stage) => stage.deliverables).find((deliverable) => deliverable.id === input.id)!;
 }
 

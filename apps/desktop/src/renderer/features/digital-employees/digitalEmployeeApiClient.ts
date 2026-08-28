@@ -31,6 +31,7 @@ export interface DigitalEmployeeApiClient {
   loadTaskDigitalEmployeeCollaboration(taskId: string): Promise<DigitalEmployeeCollaborationProjection>;
   assignTaskToDigitalEmployee(taskId: string, employeeId: string): Promise<DigitalEmployeeExecutionRecord>;
   retryDigitalEmployeeExecution(executionId: string, taskId: string): Promise<DigitalEmployeeExecutionRecord>;
+  retryStagedDigitalEmployeeExecution(executionId: string, taskId: string, input: { targetEmployeeId: string; expectedExecutionRevision: number }): Promise<DigitalEmployeeExecutionRecord>;
   cancelDigitalEmployeeExecution(executionId: string, taskId: string): Promise<DigitalEmployeeExecutionRecord>;
   handoffDigitalEmployeeExecution(executionId: string, taskId: string, input: DigitalEmployeeStageDecisionInput & { targetEmployeeId: string }): Promise<DigitalEmployeeExecutionRecord>;
   reworkDigitalEmployeeExecution(executionId: string, taskId: string, input: DigitalEmployeeStageDecisionInput & { targetEmployeeId: string; reason: string }): Promise<DigitalEmployeeExecutionRecord>;
@@ -100,6 +101,10 @@ export function createDigitalEmployeeApiClient(transport: LocalApiTransport): Di
     retryDigitalEmployeeExecution: async (executionId, taskId) => {
       const body = await command(workManagementClientCommandTypes.digitalEmployeeExecutionRetry, 'task', () => taskId, 'digital_employee_execution_retry_', {});
       return transport.request(`/api/digital-employee-executions/${encodeURIComponent(executionId)}/retry`, jsonRequest('POST', body));
+    },
+    retryStagedDigitalEmployeeExecution: async (executionId, taskId, input) => {
+      const body = await command(workManagementClientCommandTypes.digitalEmployeeExecutionRetry, 'task', () => taskId, 'digital_employee_stage_retry_', input, input.expectedExecutionRevision);
+      return transport.request(`${taskPath(taskId)}/digital-employee-executions/${encodeURIComponent(executionId)}/retries`, jsonRequest('POST', body));
     },
     cancelDigitalEmployeeExecution: async (executionId, taskId) => {
       const body = await command(workManagementClientCommandTypes.digitalEmployeeExecutionCancel, 'task', () => taskId, 'digital_employee_execution_cancel_', {});
