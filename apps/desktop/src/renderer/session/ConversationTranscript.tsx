@@ -6,7 +6,6 @@ import { PlanSummary } from './PlanSummary.js';
 import type {
   ConversationResource,
   ConversationResourcePreview,
-  NativeConversationContentV2Page,
   NativeConversationToolResultPage,
   NativePendingRequest,
   NativeQueueSnapshot,
@@ -53,7 +52,7 @@ export interface ConversationTranscriptProps {
   onLoadEarlierHistory?: () => void | Promise<void>;
   onLoadTurnProcess?: (turnId: string) => void | Promise<void>;
   onLoadTurnArtifacts?: (turnId: string) => void | Promise<void>;
-  onLoadV2Content?: (handle: string, offset?: number) => Promise<NativeConversationContentV2Page>;
+  onLoadV2Content?: (handle: string) => Promise<void>;
   onLoadV2ToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage>;
 }
 
@@ -157,6 +156,9 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const activeTurnTrackingInitializedRef = useRef(false);
   const scrollController = useThreadScrollController();
   const [returnToLatestVisible, setReturnToLatestVisible] = useState(false);
+  const [historyPagingGate, setHistoryPagingGate] = useState<{ conversationId: string | null; positioned: boolean; userIntent: boolean }>({ conversationId: null, positioned: false, userIntent: false });
+  const [historyPagingRequestedConversationId, setHistoryPagingRequestedConversationId] = useState<string | null>(null);
+  const [historySentinelIntersection, setHistorySentinelIntersection] = useState<{ conversationId: string | null; intersecting: boolean }>({ conversationId: null, intersecting: false });
   const [completedAnnouncement, setCompletedAnnouncement] = useState<{ key: string; text: string } | null>(null);
   const completedAnnouncementTrackerRef = useRef<CompletedItemAnnouncementTracker>({ hydrated: false, lastCompletedKey: null });
   const positionedConversationIdRef = useRef<string | null>(null);
@@ -167,6 +169,17 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const [rowExpansionOverrides, setRowExpansionOverrides] = useState<ReadonlyMap<string, boolean>>(() => new Map());
   const [focusedRowKey, setFocusedRowKey] = useState<string | null>(null);
   const [historyAnchorRowKey, setHistoryAnchorRowKey] = useState<string | null>(null);
+  const historyPagingArmed = historyPagingGate.conversationId === props.state.conversationId && historyPagingGate.positioned && historyPagingGate.userIntent;
+  const historyPagingRequested = historyPagingRequestedConversationId === props.state.conversationId;
+  const historySentinelIntersecting = historySentinelIntersection.conversationId === props.state.conversationId && historySentinelIntersection.intersecting;
+  const armHistoryPaging = useCallback(() => {
+    const conversationId = props.state.conversationId;
+    setHistoryPagingGate((current) => {
+      if (current.conversationId !== conversationId || !current.positioned || current.userIntent) return current;
+      return { ...current, userIntent: true };
+    });
+  }, [props.state.conversationId]);
+  const updateHistorySentinelIntersection = useCallback((intersecting: boolean) => setHistorySentinelIntersection({ conversationId: props.state.conversationId, intersecting }), [props.state.conversationId]);
   const activeTurnId = props.historyOnly ? null : props.state.activeTurnId;
   const queuedSubmissions = useMemo(() => visibleQueuedSubmissions(props.state.queue), [props.state.queue]);
   const queuedClientUserMessageIds = useMemo(() => new Set(queuedSubmissions.map((submission) => submission.clientUserMessageId).filter((value): value is string => Boolean(value))), [queuedSubmissions]);
@@ -350,6 +363,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     if (!loadEarlier || !container || !frozenCursor || historyPrependAnchorRef.current) return;
     const anchor = { frozenCursor, ...captureTranscriptViewportAnchor(container) };
     historyPrependAnchorRef.current = anchor;
+    setHistoryPagingRequestedConversationId(props.state.conversationId);
     setHistoryAnchorRowKey(anchor.rowKey);
     try {
       await loadEarlier();
@@ -360,7 +374,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       }
       throw error;
     }
-  }, [props.state.snapshot?.v2Paging?.history.nextCursor, renderProps.onLoadEarlierHistory]);
+  }, [props.state.conversationId, props.state.snapshot?.v2Paging?.history.nextCursor, renderProps.onLoadEarlierHistory]);
 
   useLayoutEffect(() => {
     const anchor = historyPrependAnchorRef.current;
@@ -463,6 +477,9 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     scrollToLatest(container, latestContentMarkerRef.current);
     settleLatestPosition();
     setReturnToLatestVisible(false);
+    setHistoryPagingGate({ conversationId, positioned: true, userIntent: false });
+    setHistoryPagingRequestedConversationId(null);
+    setHistorySentinelIntersection({ conversationId, intersecting: false });
   }, [historyHydrated, props.state.conversationId, props.state.transcriptRevision, settleLatestPosition]);
 
   useLayoutEffect(() => {
@@ -690,14 +707,24 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           role="log"
           aria-live="off"
           aria-label={props.language === 'zh-CN' ? '对话记录' : 'Conversation transcript'}
+          onWheel={(event) => {
+            if (event.deltaY < 0) armHistoryPaging();
+          }}
           onScroll={(event) => {
             const mode = scrollController.onUserScroll(metrics(event.currentTarget));
             setReturnToLatestVisible(mode.mode === 'static');
+            if (mode.mode === 'static') armHistoryPaging();
             viewportVirtualizer.synchronizeViewport(event.currentTarget);
             scheduleLatestContentVisibility();
           }}
         >
-          <V2HistoryPageSentinel state={props.state} onLoadEarlier={renderProps.onLoadEarlierHistory ? loadEarlierHistoryWithAnchor : undefined} />
+          <V2HistoryPageSentinel
+            key={props.state.conversationId}
+            state={props.state}
+            enabled={historyPagingArmed}
+            onIntersectionChange={updateHistorySentinelIntersection}
+            onLoadEarlier={renderProps.onLoadEarlierHistory ? loadEarlierHistoryWithAnchor : undefined}
+          />
           {turnRows.length > 0 ? (
             <div className="session-transcript-window" data-rendered-row-count={viewportVirtualizer.projection.renderedRowCount} data-total-row-count={turnRows.length} data-measurement-cache-count={viewportVirtualizer.measurementCacheSize}>
               {viewportVirtualizer.projection.slots.map((slot) => {
@@ -741,7 +768,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           {showStandaloneActiveStatus ? <TranscriptActiveStatus language={props.language} kind={activeStatusKind} /> : null}
           <span ref={latestContentMarkerRef} className="session-latest-content-marker" aria-hidden="true" />
         </section>
-        <V2HistoryPageStatus state={props.state} language={props.language} />
+        <V2HistoryPageStatus state={props.state} language={props.language} enabled={historyPagingArmed && historyPagingRequested} intersecting={historySentinelIntersecting} />
         <button
           type="button"
           className="session-return-latest"
@@ -775,39 +802,42 @@ function TranscriptHistoryLoading(props: { visible: boolean; language: SessionUi
   );
 }
 
-function V2HistoryPageSentinel(props: { state: NativeSessionState; onLoadEarlier?: () => void | Promise<void> }) {
+function V2HistoryPageSentinel(props: { state: NativeSessionState; enabled: boolean; onIntersectionChange: (intersecting: boolean) => void; onLoadEarlier?: () => void | Promise<void> }) {
   const paging = props.state.snapshot?.v2Paging?.history;
   const sentinelRef = useRef<HTMLSpanElement | null>(null);
+  const requestedCursorRef = useRef<string | null>(null);
+  const [intersecting, setIntersecting] = useState(false);
   const cursor = paging?.nextCursor ?? null;
+  const visible = Boolean(props.state.snapshot?.snapshotV2 && paging && (paging.hasMore || paging.error));
   useEffect(() => {
     const sentinel = sentinelRef.current;
-    if (!sentinel || !cursor || !paging?.hasMore || paging.loading || paging.error || !props.onLoadEarlier) return;
-    let requested = false;
-    const requestPage = (): void => {
-      if (requested) return;
-      requested = true;
-      void Promise.resolve(props.onLoadEarlier?.()).catch(() => undefined);
-    };
+    if (!sentinel) return;
     if (typeof IntersectionObserver === 'undefined') {
-      requestPage();
+      setIntersecting(true);
       return;
     }
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) requestPage();
+        setIntersecting(entries.some((entry) => entry.isIntersecting));
       },
-      { root: sentinel.closest('.session-transcript'), rootMargin: '180px 0px 0px' },
+      { root: sentinel.closest('.session-transcript'), rootMargin: '0px' },
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [cursor, paging?.error, paging?.hasMore, paging?.loading, props.onLoadEarlier]);
-  if (!props.state.snapshot?.snapshotV2 || !paging || (!paging.hasMore && !paging.error)) return null;
+  }, [visible]);
+  useEffect(() => props.onIntersectionChange(intersecting), [intersecting, props.onIntersectionChange]);
+  useEffect(() => {
+    if (!props.enabled || !intersecting || !cursor || !paging?.hasMore || paging.loading || paging.error || !props.onLoadEarlier || requestedCursorRef.current === cursor) return;
+    requestedCursorRef.current = cursor;
+    void Promise.resolve(props.onLoadEarlier()).catch(() => undefined);
+  }, [cursor, intersecting, paging?.error, paging?.hasMore, paging?.loading, props.enabled, props.onLoadEarlier]);
+  if (!visible) return null;
   return <span ref={sentinelRef} className="session-v2-history-sentinel" aria-hidden="true" />;
 }
 
-function V2HistoryPageStatus(props: { state: NativeSessionState; language: SessionUiLanguage }) {
+function V2HistoryPageStatus(props: { state: NativeSessionState; language: SessionUiLanguage; enabled: boolean; intersecting: boolean }) {
   const paging = props.state.snapshot?.v2Paging?.history;
-  if (!props.state.snapshot?.snapshotV2 || !paging || (!paging.loading && !paging.error)) return null;
+  if (!props.enabled || !props.intersecting || !props.state.snapshot?.snapshotV2 || !paging || (!paging.loading && !paging.hasMore && !paging.error)) return null;
   const failed = Boolean(paging.error);
   return (
     <section className="session-v2-history-status" data-state={failed ? 'error' : 'loading'} role={failed ? 'alert' : 'status'} aria-live={failed ? undefined : 'polite'}>
@@ -1001,22 +1031,28 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
     );
   }
   if (row.item.type === 'plan') {
-    return <PlanSummary item={row.item} language={options.props.language} motionActive={row.item.key === options.motionFocus?.itemKey} panelOpen={options.props.openPlanItemKey === row.item.key} onOpenPanel={options.props.onOpenPlan} />;
+    return (
+      <TranscriptV2ContentBoundary item={row.item} language={options.props.language} onLoadContent={options.props.onLoadV2Content}>
+        <PlanSummary item={row.item} language={options.props.language} motionActive={row.item.key === options.motionFocus?.itemKey} panelOpen={options.props.openPlanItemKey === row.item.key} onOpenPanel={options.props.onOpenPlan} />
+      </TranscriptV2ContentBoundary>
+    );
   }
   if (normalizeItemType(row.item.type) === 'reasoning') {
     return (
-      <SessionReasoningSummary
-        item={row.item}
-        language={options.props.language}
-        status={reasoningSummaryStatus(row.item, options.props.state)}
-        motionActive={row.item.key === options.motionFocus?.itemKey}
-        onVisibleContentChange={options.onVisibleContentChange}
-      />
+      <TranscriptV2ContentBoundary item={row.item} language={options.props.language} onLoadContent={options.props.onLoadV2Content}>
+        <SessionReasoningSummary
+          item={row.item}
+          language={options.props.language}
+          status={reasoningSummaryStatus(row.item, options.props.state)}
+          motionActive={row.item.key === options.motionFocus?.itemKey}
+          onVisibleContentChange={options.onVisibleContentChange}
+        />
+      </TranscriptV2ContentBoundary>
     );
   }
   const showPendingDeliveryFeedback = row.item.optimistic && shouldShowPendingMessageDeliveryFeedback(row.item, options.showThinking);
   return (
-    <>
+    <TranscriptV2ContentBoundary item={row.item} language={options.props.language} onLoadContent={options.props.onLoadV2Content}>
       <ThreadItemView
         item={row.item}
         language={options.props.language}
@@ -1037,6 +1073,69 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         onOpenSideChat={options.props.onOpenSideChat}
       />
       {showPendingDeliveryFeedback ? <MessageDeliveryOutcomeFeedback item={row.item} language={options.props.language} /> : null}
+    </TranscriptV2ContentBoundary>
+  );
+}
+
+function TranscriptV2ContentBoundary(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage; onLoadContent?: (handle: string) => Promise<void>; children: ReactNode }): ReactNode {
+  const handle = typeof props.item.payload.v2ContentHandle === 'string' && props.item.payload.v2ContentHandle ? props.item.payload.v2ContentHandle : null;
+  const truncated = props.item.payload.v2ContentKind === 'model_history' && props.item.payload.v2ContentTruncated === true;
+  const canLoad = Boolean(handle && props.onLoadContent);
+  const attemptedHandleRef = useRef<string | null>(null);
+  const loadingHandleRef = useRef<string | null>(null);
+  const requestEpochRef = useRef(0);
+  const [attempt, setAttempt] = useState<{ handle: string; loading: boolean; error: unknown } | null>(null);
+  const activeAttempt = attempt?.handle === handle ? attempt : null;
+
+  const load = useCallback(async (): Promise<void> => {
+    if (!handle || !props.onLoadContent || loadingHandleRef.current === handle) return;
+    const epoch = ++requestEpochRef.current;
+    loadingHandleRef.current = handle;
+    setAttempt({ handle, loading: true, error: null });
+    try {
+      await props.onLoadContent(handle);
+    } catch (error) {
+      if (epoch === requestEpochRef.current) setAttempt({ handle, loading: false, error });
+    } finally {
+      if (epoch === requestEpochRef.current) {
+        loadingHandleRef.current = null;
+        setAttempt((current) => (current?.handle === handle && current.error === null ? { ...current, loading: false } : current));
+      }
+    }
+  }, [handle, props.onLoadContent]);
+
+  useEffect(() => {
+    if (!truncated || !canLoad || !handle || attemptedHandleRef.current === handle) return;
+    attemptedHandleRef.current = handle;
+    void load();
+  }, [canLoad, handle, load, truncated]);
+
+  useEffect(
+    () => () => {
+      requestEpochRef.current += 1;
+    },
+    [],
+  );
+
+  return (
+    <>
+      {props.children}
+      {truncated ? (
+        <div className="session-message-content-state" aria-busy={activeAttempt?.loading || undefined}>
+          {activeAttempt?.error ? (
+            <>
+              <span role="alert" title={activeAttempt.error instanceof Error ? activeAttempt.error.message : undefined}>
+                {props.language === 'zh-CN' ? '消息未完整加载。' : 'The message did not load completely.'}
+              </span>
+              <button type="button" disabled={activeAttempt.loading || !canLoad} onClick={() => void load()}>
+                {props.language === 'zh-CN' ? '重试' : 'Retry'}
+              </button>
+            </>
+          ) : (
+            <span role="status">{canLoad ? (props.language === 'zh-CN' ? '正在读取完整消息…' : 'Loading the complete message…') : props.language === 'zh-CN' ? '完整消息暂时无法读取。' : 'The complete message is temporarily unavailable.'}</span>
+          )}
+        </div>
+      ) : null}
     </>
   );
 }

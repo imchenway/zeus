@@ -1555,6 +1555,38 @@
   gap: 4px;
 }
 
+.session-codex-parity-v1 .session-message-content-state {
+  align-items: center;
+  box-sizing: border-box;
+  color: var(--session-text-muted);
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+  inline-size: min(var(--session-thread-max), calc(100% - (2 * var(--session-gutter))));
+  margin: 8px auto 0;
+}
+
+.session-codex-parity-v1 .session-message-content-state button {
+  background: transparent;
+  border: 0;
+  color: var(--session-accent);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+}
+
+.session-codex-parity-v1 .session-message-content-state button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.session-codex-parity-v1 .session-message-content-state button:focus-visible {
+  border-radius: 3px;
+  box-shadow: 0 0 0 2px var(--session-focus);
+  outline: 1px solid var(--session-focus-outline);
+  outline-offset: 1px;
+}
+
 .session-codex-parity-v1 .session-markdown {
   inline-size: min(var(--session-markdown-max), 100%);
   line-height: 1.58;

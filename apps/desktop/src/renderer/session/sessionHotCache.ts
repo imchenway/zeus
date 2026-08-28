@@ -1,5 +1,6 @@
 import { emptyConversationContextDraft } from '@zeus/shared';
 import type { NativeSessionState } from './sessionTypes.js';
+import { resumeCachedConversationSnapshot } from './conversationSnapshotV2Adapter.js';
 
 export const ordinarySessionHotCacheLimit = 6;
 export const sessionHotCacheByteLimit = 32 * 1024 * 1024;
@@ -152,12 +153,13 @@ function sanitizeSessionStateForPersistence(state: NativeSessionState): NativeSe
     const authoritativeItemOrder = state.itemOrder.filter((key) => state.items[key] && !state.items[key].optimistic);
     const authoritativeItems = Object.fromEntries(authoritativeItemOrder.map((key) => [key, state.items[key]]));
     const emptyQueue = { state: { type: 'idle' as const }, submissions: [] };
+    const resumedSnapshot = resumeCachedConversationSnapshot(state.snapshot);
     return {
       ...state,
       transportState: 'disconnected',
       reconnectAttempt: 0,
       snapshot: {
-        ...state.snapshot,
+        ...resumedSnapshot,
         pendingRequestKind: null,
         executionQueue: emptyQueue,
         submissions: [],

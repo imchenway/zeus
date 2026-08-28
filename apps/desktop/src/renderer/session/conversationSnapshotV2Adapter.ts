@@ -5,6 +5,7 @@ import type {
   NativeConversationSnapshot,
   NativeConversationSnapshotV2,
   NativeConversationSnapshotV2Page,
+  NativeConversationV2PagingState,
   NativeGoalResponse,
   NativeItemSnapshot,
   NativePendingRequest,
@@ -24,6 +25,13 @@ export interface ConversationSnapshotV2BootstrapInput {
   planImplementationRequests: NativePlanImplementationRequest[];
   choice: NativeConversationChoice;
   goal: NativeGoalResponse;
+}
+
+type HistoryPagingState = NativeConversationV2PagingState['history'];
+
+export interface ConversationHistoryCacheReconciliation {
+  snapshot: NativeConversationSnapshot;
+  preserveCachedHistory: boolean;
 }
 
 /**
@@ -130,7 +138,14 @@ export function adaptConversationSnapshotV2(input: ConversationSnapshotV2Bootstr
     goalCapability: input.goal.capability,
     snapshotV2: snapshot,
     v2Paging: {
-      history: { nextCursor: input.history.nextCursor, hasMore: input.history.hasMore, loading: false, error: null },
+      history: {
+        nextCursor: input.history.nextCursor,
+        hasMore: input.history.hasMore,
+        loading: false,
+        error: null,
+        loadedThroughSequence: input.history.throughSequence,
+        oldestLoadedSequence: oldestHistorySequence(input.history.items),
+      },
       historyByTurn: {},
       processByTurn: {},
       resources: { nextCursor: null, hasMore: snapshot.collections.resources.available, loading: false, loaded: false, error: null, items: [] },
@@ -162,20 +177,157 @@ export function mergeConversationHistoryV2(snapshot: NativeConversationSnapshot,
   if (!snapshot.snapshotV2 || !snapshot.v2Paging || page.schemaVersion !== 2 || page.structureGeneration !== snapshot.snapshotV2.structureGeneration || page.conversationId !== snapshot.id || page.kind !== 'model_history')
     throw new Error('会话 V2 历史页与当前快照不匹配。');
   const items = mergeItemsByProviderIdentity(snapshot.items, historyItems(page.items, providerTurnIdentityMap(snapshot.turns)));
+  const currentHistory = snapshot.v2Paging.history;
+  const pageOldestSequence = oldestHistorySequence(page.items);
   return {
     ...snapshot,
     items,
     contextState: {
       ...snapshot.contextState,
-      throughModelHistorySequence: page.throughSequence,
+      throughModelHistorySequence: maximumKnownSequence(currentHistory.loadedThroughSequence, page.throughSequence) ?? page.throughSequence,
       confirmedEntryCount: items.length,
       partial: page.hasMore,
     },
     v2Paging: {
       ...snapshot.v2Paging,
-      history: { nextCursor: page.nextCursor, hasMore: page.hasMore, loading: false, error: null },
+      history: {
+        nextCursor: page.nextCursor,
+        hasMore: page.hasMore,
+        loading: false,
+        error: null,
+        loadedThroughSequence: maximumKnownSequence(currentHistory.loadedThroughSequence, page.throughSequence),
+        oldestLoadedSequence: minimumKnownSequence(currentHistory.oldestLoadedSequence, pageOldestSequence),
+      },
     },
   };
+}
+
+/**
+ * 完整正文读取成功后只替换同一稳定句柄对应的模型历史投影。
+ * 句柄包含正文 revision；后续权威快照只有携带同一句柄时才能复用该全文。
+ */
+export function mergeConversationModelContentV2(snapshot: NativeConversationSnapshot, handle: string, text: string, redacted: boolean): NativeConversationSnapshot {
+  if (!snapshot.snapshotV2) throw new Error('当前会话不支持 Snapshot V2 完整正文。');
+  let matched = false;
+  const items = snapshot.items.map((item) => {
+    if (item.payload.v2ContentHandle !== handle) return item;
+    if (item.payload.v2ContentKind !== 'model_history') throw new Error('正文句柄没有指向模型历史。');
+    matched = true;
+    const content = parseProjection(text, false);
+    return {
+      ...item,
+      text: projectionText(content, text, false),
+      payload: {
+        ...item.payload,
+        content,
+        ...historicalUserPresentation(content, item.type === 'userMessage'),
+        v2ContentTruncated: false,
+        v2ContentCompleteHandle: handle,
+        v2ContentRedacted: item.payload.v2ContentRedacted === true || redacted,
+      },
+    };
+  });
+  if (!matched) throw new Error('完整正文句柄不属于当前会话快照。');
+  return { ...snapshot, items };
+}
+
+/**
+ * 热缓存重新接管时只恢复可复用的展示进度，不恢复已取消请求的瞬时状态。
+ * 旧 session-view-cache-v1 没有范围字段时，从 V2 高水位与可见历史序列保守推导；
+ * 无法证明时写入 null，让下一次权威水合按尾页安全回退。
+ */
+export function resumeCachedConversationSnapshot(snapshot: NativeConversationSnapshot): NativeConversationSnapshot {
+  if (!snapshot.snapshotV2 || !snapshot.v2Paging) return snapshot;
+  const history = normalizeHistoryPaging(snapshot);
+  return {
+    ...snapshot,
+    v2Paging: {
+      ...snapshot.v2Paging,
+      history: { ...history, loading: false, error: null },
+    },
+  };
+}
+
+/**
+ * 权威尾页只有在覆盖到缓存最高水位时才能继续沿用缓存深游标。
+ * 若高水位倒退、两段范围断开或旧缓存范围不可证明，则由权威尾页重新拥有时间线。
+ */
+export function reconcileConversationHistoryCache(previous: NativeConversationSnapshot | null, authoritative: NativeConversationSnapshot): ConversationHistoryCacheReconciliation {
+  const next = resumeCachedConversationSnapshot(authoritative);
+  if (!previous?.snapshotV2 || !previous.v2Paging || !next.snapshotV2 || !next.v2Paging || previous.id !== next.id || previous.snapshotV2.structureGeneration !== next.snapshotV2.structureGeneration)
+    return { snapshot: next, preserveCachedHistory: false };
+
+  const cached = normalizeHistoryPaging(previous);
+  const fresh = next.v2Paging.history;
+  if (!historyRangesJoin(cached, fresh)) return { snapshot: next, preserveCachedHistory: false };
+
+  return {
+    snapshot: {
+      ...next,
+      v2Paging: {
+        ...next.v2Paging,
+        history: {
+          ...fresh,
+          nextCursor: cached.nextCursor,
+          hasMore: cached.hasMore,
+          loadedThroughSequence: maximumKnownSequence(cached.loadedThroughSequence, fresh.loadedThroughSequence),
+          oldestLoadedSequence: minimumKnownSequence(cached.oldestLoadedSequence, fresh.oldestLoadedSequence),
+        },
+      },
+    },
+    preserveCachedHistory: true,
+  };
+}
+
+function normalizeHistoryPaging(snapshot: NativeConversationSnapshot): HistoryPagingState {
+  const history = snapshot.v2Paging!.history as HistoryPagingState;
+  if (validHistoryRange(history.loadedThroughSequence, history.oldestLoadedSequence)) return history;
+  const throughSequence = snapshot.snapshotV2?.collections?.modelHistory?.throughSequence;
+  const visibleSequences = snapshot.items
+    .filter((item) => item.payload.v2ContentKind === 'model_history')
+    .map((item) => item.payload.v2Sequence)
+    .filter((sequence): sequence is number => validNonNegativeSequence(sequence));
+  const inferredOldest = visibleSequences.length > 0 ? Math.min(...visibleSequences) : null;
+  const canInfer = validNonNegativeSequence(throughSequence) && ((throughSequence === 0 && inferredOldest === null) || (inferredOldest !== null && inferredOldest <= throughSequence));
+  return {
+    ...history,
+    loadedThroughSequence: canInfer ? throughSequence : null,
+    oldestLoadedSequence: canInfer ? inferredOldest : null,
+  };
+}
+
+function historyRangesJoin(cached: HistoryPagingState, fresh: HistoryPagingState): boolean {
+  const cachedThrough = cached.loadedThroughSequence;
+  const freshThrough = fresh.loadedThroughSequence;
+  if (!validHistoryRange(cachedThrough, cached.oldestLoadedSequence) || !validHistoryRange(freshThrough, fresh.oldestLoadedSequence)) return false;
+  if (cachedThrough === null || freshThrough === null || freshThrough < cachedThrough) return false;
+  if (cachedThrough === 0) return freshThrough === 0;
+  if (cached.oldestLoadedSequence === null || fresh.oldestLoadedSequence === null) return false;
+  return fresh.oldestLoadedSequence <= cachedThrough + 1;
+}
+
+function validHistoryRange(throughSequence: number | null | undefined, oldestSequence: number | null | undefined): boolean {
+  if (!validNonNegativeSequence(throughSequence)) return false;
+  if (throughSequence === 0) return oldestSequence === null;
+  return validNonNegativeSequence(oldestSequence) && oldestSequence > 0 && oldestSequence <= throughSequence;
+}
+
+function validNonNegativeSequence(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+function oldestHistorySequence(items: NativeConversationModelHistoryV2Item[]): number | null {
+  return items.length > 0 ? Math.min(...items.map((item) => item.sequence)) : null;
+}
+
+function maximumKnownSequence(left: number | null | undefined, right: number | null | undefined): number | null {
+  const values = [left, right].filter(validNonNegativeSequence);
+  return values.length > 0 ? Math.max(...values) : null;
+}
+
+function minimumKnownSequence(left: number | null | undefined, right: number | null | undefined): number | null {
+  const values = [left, right].filter(validNonNegativeSequence);
+  return values.length > 0 ? Math.min(...values) : null;
 }
 
 export function mergeConversationProcessV2(snapshot: NativeConversationSnapshot, turnId: string, page: NativeConversationSnapshotV2Page<NativeConversationProcessV2Item>): NativeConversationSnapshot {
@@ -305,14 +457,7 @@ function historyItems(items: NativeConversationModelHistoryV2Item[], providerTur
     const text = projectionText(content, item.content.preview, item.content.truncated);
     const persistedPlan = item.phase === 'plan';
     const phase = item.role === 'assistant' && (item.phase === 'final_answer' || item.phase === 'finalAnswer') ? 'final_answer' : 'prework';
-    const historicalUserPayload =
-      item.role === 'user' && contentRecord
-        ? {
-            ...(Array.isArray(contentRecord.attachments) ? { attachments: contentRecord.attachments } : {}),
-            ...(recordValue(contentRecord.taskPushLayout) ? { taskPushLayout: contentRecord.taskPushLayout } : {}),
-            ...(recordValue(contentRecord.conversationContext) ? { conversationContext: contentRecord.conversationContext } : {}),
-          }
-        : {};
+    const historicalUserPayload = historicalUserPresentation(content, item.role === 'user');
     return [
       {
         id: item.id,
@@ -348,6 +493,16 @@ function historyItems(items: NativeConversationModelHistoryV2Item[], providerTur
       },
     ];
   });
+}
+
+function historicalUserPresentation(content: unknown, userMessage: boolean): Record<string, unknown> {
+  const contentRecord = userMessage ? recordValue(content) : null;
+  if (!contentRecord) return {};
+  return {
+    ...(Array.isArray(contentRecord.attachments) ? { attachments: contentRecord.attachments } : {}),
+    ...(recordValue(contentRecord.taskPushLayout) ? { taskPushLayout: contentRecord.taskPushLayout } : {}),
+    ...(recordValue(contentRecord.conversationContext) ? { conversationContext: contentRecord.conversationContext } : {}),
+  };
 }
 
 function processItems(items: NativeConversationProcessV2Item[], providerTurnByLocalId: ReadonlyMap<string, string>): NativeItemSnapshot[] {
@@ -454,7 +609,7 @@ function leadingJsonString(preview: string, field: string): string | null {
 function projectionText(value: unknown, fallback: string, truncated: boolean): string {
   const fragments = textFragments(value);
   const text = fragments.join('\n\n').trim();
-  if (text) return text;
+  if (text) return truncated && !text.endsWith('…') ? `${text}…` : text;
   return truncated ? `${fallback.trim()}…` : fallback;
 }
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
@@ -12,6 +12,7 @@ import type {
   CodexTaskPushCapabilities,
   NativeConversationAttachment,
   NativeConversationChoice,
+  NativeConversationSnapshot,
   NativePendingRequest,
   NativeQueuedSubmission,
   NativeRuntimeDetailsSnapshot,
@@ -30,6 +31,8 @@ import { SubagentWorkspace } from '../src/renderer/session/SubagentWorkspace.js'
 import { defaultSourceWorkspaceViewMode, SourceWorkspace } from '../src/renderer/session/SourceWorkspace.js';
 import { SessionPlanProgress } from '../src/renderer/session/SessionActivity.js';
 import { createInitialSessionState, sessionReducer } from '../src/renderer/session/sessionReducer.js';
+import { createSessionController, type SessionControllerClient } from '../src/renderer/session/useSessionController.js';
+import { reconcileConversationHistoryCache } from '../src/renderer/session/conversationSnapshotV2Adapter.js';
 import { resolveNativeConversationSelectionPresentation } from '../src/renderer/features/workspace/workspaceSupport.js';
 import { ApplicationErrorDialogHost, reportApplicationError, VisibleApplicationError } from '../src/renderer/ui/ApplicationErrorDialog.js';
 import type { TaskRecord } from '../src/renderer/apiClient.js';
@@ -551,7 +554,7 @@ const historyPagingSessionState: NativeSessionState = {
     id: historyPagingConversationId,
     snapshotV2: { activeTurn: null, recentClosedTurns: [] },
     v2Paging: {
-      history: { nextCursor: 'history-page-2', hasMore: true, loading: true, error: null },
+      history: { nextCursor: 'history-page-2', hasMore: true, loading: false, error: null, loadedThroughSequence: 96, oldestLoadedSequence: 49 },
       historyByTurn: {},
       processByTurn: {},
       resources: { nextCursor: null, hasMore: false, loading: false, loaded: true, error: null, items: [] },
@@ -561,6 +564,105 @@ const historyPagingSessionState: NativeSessionState = {
   items: Object.fromEntries(historyPagingItems.map((item) => [item.key, item])),
   itemOrder: historyPagingItems.map((item) => item.key),
 };
+
+const completeMessageHandle = 'qa-complete-message-handle';
+const completeMessageEndMarker = '【完整消息结尾：ZEUS-0369】';
+const completeMessageText = `${Array.from({ length: 52 }, (_, index) => `完整回答第 ${index + 1} 段：打开会话时可以先显示有界预览，但必须继续读取正文，不能把预览冒充最终回答。`).join('\n\n')}\n\n${completeMessageEndMarker}`;
+const completeMessageCodePoints = Array.from(completeMessageText);
+const completeMessagePageBoundary = 1_300;
+const completeMessageItem: NativeSessionItemBuffer = {
+  ...motionItem('complete-message', 'agentMessage', 'completed', `${completeMessageText.slice(0, 2_048)}…`, {
+    phase: 'final_answer',
+    v2ContentKind: 'model_history',
+    v2Sequence: 96,
+    v2ContentHandle: completeMessageHandle,
+    v2ContentTruncated: true,
+    v2ContentBytes: new TextEncoder().encode(completeMessageText).byteLength,
+  }, 'final_answer'),
+  conversationId: 'complete-message-conversation',
+  threadId: 'complete-message-thread',
+  turnId: 'complete-message-turn',
+};
+const completeMessageSessionState: NativeSessionState = {
+  ...createInitialSessionState(),
+  transportState: 'ready',
+  conversationState: 'ready',
+  projectId: 'project-zeus',
+  conversationId: completeMessageItem.conversationId,
+  providerThreadId: completeMessageItem.threadId,
+  snapshot: {
+    id: completeMessageItem.conversationId,
+    projectId: 'project-zeus',
+    items: [
+      {
+        id: completeMessageItem.itemId,
+        turnId: completeMessageItem.turnId,
+        providerItemId: null,
+        type: completeMessageItem.type,
+        status: completeMessageItem.status,
+        phase: completeMessageItem.phase,
+        text: completeMessageItem.text,
+        payload: completeMessageItem.payload,
+        resources: [],
+        startedAt: completeMessageItem.updatedAt ?? null,
+        completedAt: completeMessageItem.updatedAt ?? null,
+        updatedAt: completeMessageItem.updatedAt ?? '2026-08-28T00:00:00.000Z',
+      },
+    ],
+    snapshotV2: { structureGeneration: '2026-08-21-conversation-snapshot-v2', activeTurn: null, recentClosedTurns: [] },
+  } as NonNullable<NativeSessionState['snapshot']>,
+  items: { [completeMessageItem.key]: completeMessageItem },
+  itemOrder: [completeMessageItem.key],
+  transcriptRevision: 1,
+};
+
+function historyPagingRangeSnapshot(input: { through: number; oldest: number; cursor: string; hasMore: boolean }): NativeConversationSnapshot {
+  return {
+    id: historyPagingConversationId,
+    items: [],
+    snapshotV2: {
+      structureGeneration: '2026-08-21-conversation-snapshot-v2',
+    },
+    v2Paging: {
+      history: {
+        nextCursor: input.cursor,
+        hasMore: input.hasMore,
+        loading: false,
+        error: null,
+        loadedThroughSequence: input.through,
+        oldestLoadedSequence: input.oldest,
+      },
+    },
+  } as unknown as NativeConversationSnapshot;
+}
+
+const historyPagingCachedRange = historyPagingRangeSnapshot({ through: 96, oldest: 1, cursor: 'cached-deepest', hasMore: false });
+const historyPagingRangeEvidence = {
+  sameHighWater: reconcileConversationHistoryCache(historyPagingCachedRange, historyPagingRangeSnapshot({ through: 96, oldest: 49, cursor: 'fresh-tail', hasMore: true })).snapshot.v2Paging?.history.nextCursor,
+  overlappingTail: reconcileConversationHistoryCache(historyPagingCachedRange, historyPagingRangeSnapshot({ through: 120, oldest: 73, cursor: 'fresh-overlap', hasMore: true })).snapshot.v2Paging?.history.nextCursor,
+  disconnectedTail: reconcileConversationHistoryCache(historyPagingCachedRange, historyPagingRangeSnapshot({ through: 200, oldest: 153, cursor: 'fresh-gap', hasMore: true })).snapshot.v2Paging?.history.nextCursor,
+};
+
+function earlierHistoryPagingItems(page: number): NativeSessionItemBuffer[] {
+  return Array.from({ length: 4 }, (_, index) => {
+    const sequence = 48 - (page - 2) * 4 - index;
+    return {
+      ...motionItem(`history-page-${page}-${sequence}`, 'agentMessage', 'completed', `更早回答 ${sequence}：分页前插后当前可见消息应保持原位。`, {
+        phase: 'final_answer',
+        v2ContentKind: 'model_history',
+        v2Sequence: sequence,
+      }),
+      conversationId: historyPagingConversationId,
+      threadId: 'history-paging-thread',
+      turnId: `history-paging-turn-${sequence}`,
+      updatedAt: new Date(Date.UTC(2026, 7, 15, 2, sequence)).toISOString(),
+    };
+  });
+}
+
+function nextPaint(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+}
 
 const deliveryFailureConversationId = 'delivery-failure-conversation';
 const deliveryFailureItem: NativeSessionItemBuffer = {
@@ -1342,14 +1444,260 @@ function SendScrollPreview() {
 }
 
 function HistoryPagingPreview() {
+  const previewRef = useRef<HTMLElement | null>(null);
+  const stateRef = useRef(historyPagingSessionState);
+  const inFlightRef = useRef(false);
+  const failNextRequestRef = useRef(false);
+  const statusVisibleRef = useRef(false);
+  const [state, setState] = useState(historyPagingSessionState);
+  const [transcriptKey, setTranscriptKey] = useState(0);
+  const [reopenCount, setReopenCount] = useState(0);
+  const [requestCount, setRequestCount] = useState(0);
+  const [statusMountCount, setStatusMountCount] = useState(0);
+  const [anchorDrift, setAnchorDrift] = useState<number | null>(null);
+  const [eventLog, setEventLog] = useState('初次打开：尚未请求更早历史');
+  stateRef.current = state;
+
+  useEffect(() => {
+    const preview = previewRef.current;
+    if (!preview || typeof MutationObserver === 'undefined') return;
+    const recordStatus = (): void => {
+      const visible = Boolean(preview.querySelector('.session-v2-history-status'));
+      if (visible && !statusVisibleRef.current) setStatusMountCount((count) => count + 1);
+      statusVisibleRef.current = visible;
+    };
+    const observer = new MutationObserver(recordStatus);
+    observer.observe(preview, { childList: true, subtree: true, attributes: true });
+    recordStatus();
+    return () => observer.disconnect();
+  }, []);
+
+  const resetScene = (mode: 'normal' | 'short' | 'failure'): void => {
+    const itemOrder = mode === 'short' ? historyPagingSessionState.itemOrder.slice(-1) : historyPagingSessionState.itemOrder;
+    const next = {
+      ...historyPagingSessionState,
+      itemOrder,
+      transcriptRevision: historyPagingSessionState.transcriptRevision + transcriptKey + 1,
+    };
+    failNextRequestRef.current = mode === 'failure';
+    inFlightRef.current = false;
+    statusVisibleRef.current = false;
+    setState(next);
+    setTranscriptKey((key) => key + 1);
+    setReopenCount(0);
+    setRequestCount(0);
+    setStatusMountCount(0);
+    setAnchorDrift(null);
+    setEventLog(mode === 'short' ? '短内容现场：请在消息区明确向上滚动' : mode === 'failure' ? '失败现场：向上滚动后才会发起失败请求' : '现场已重置：打开不会自动请求');
+  };
+
+  const reopenConversation = (): void => {
+    setTranscriptKey((key) => key + 1);
+    setReopenCount((count) => count + 1);
+    setEventLog('会话已切回；请求计数应保持不变');
+  };
+
+  const readEarlierAtTop = (): void => {
+    const container = previewRef.current?.querySelector<HTMLElement>('.session-transcript');
+    if (!container) return;
+    container.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -120 }));
+    container.scrollTop = 0;
+    container.dispatchEvent(new Event('scroll', { bubbles: true }));
+  };
+
+  const loadEarlierHistory = async (): Promise<void> => {
+    const current = stateRef.current;
+    const paging = current.snapshot?.v2Paging?.history;
+    if (inFlightRef.current || !paging?.hasMore || !paging.nextCursor) return;
+    const frozenCursor = paging.nextCursor;
+    const container = previewRef.current?.querySelector<HTMLElement>('.session-transcript') ?? null;
+    const anchorRow = container ? [...container.querySelectorAll<HTMLElement>('[data-transcript-row-key]')].find((row) => row.getBoundingClientRect().bottom > container.getBoundingClientRect().top) : undefined;
+    const anchorKey = anchorRow?.dataset.transcriptRowKey ?? null;
+    const anchorOffset = anchorRow && container ? anchorRow.getBoundingClientRect().top - container.getBoundingClientRect().top : null;
+    inFlightRef.current = true;
+    setRequestCount((count) => count + 1);
+    setEventLog(`请求 ${frozenCursor}`);
+    setState((value) => ({
+      ...value,
+      snapshot: value.snapshot
+        ? {
+            ...value.snapshot,
+            v2Paging: value.snapshot.v2Paging ? { ...value.snapshot.v2Paging, history: { ...value.snapshot.v2Paging.history, loading: true, error: null } } : value.snapshot.v2Paging,
+          }
+        : value.snapshot,
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 240));
+
+    if (failNextRequestRef.current) {
+      failNextRequestRef.current = false;
+      inFlightRef.current = false;
+      setState((value) => ({
+        ...value,
+        snapshot: value.snapshot
+          ? {
+              ...value.snapshot,
+              v2Paging: value.snapshot.v2Paging ? { ...value.snapshot.v2Paging, history: { ...value.snapshot.v2Paging.history, loading: false, error: 'QA 模拟：更早历史读取失败' } } : value.snapshot.v2Paging,
+            }
+          : value.snapshot,
+      }));
+      setEventLog('分页失败：错误只应在本次用户触发后出现');
+      throw new Error('QA 模拟：更早历史读取失败');
+    }
+
+    const page = frozenCursor === 'history-page-2' ? 2 : 3;
+    // 第二页模拟仅含被 Renderer 折叠的工具配对：游标推进但没有可见高度变化，
+    // 哨兵仍相交并连续读取第三页，用于核对提示不会逐页闪灭。
+    const prepended = page === 2 ? [] : earlierHistoryPagingItems(page);
+    const finalPage = page === 3;
+    inFlightRef.current = false;
+    setState((value) => {
+      const nextItems = Object.fromEntries(prepended.map((item) => [item.key, item]));
+      return {
+        ...value,
+        items: { ...nextItems, ...value.items },
+        itemOrder: [...prepended.map((item) => item.key), ...value.itemOrder.filter((key) => !(key in nextItems))],
+        transcriptRevision: value.transcriptRevision + 1,
+        snapshot: value.snapshot
+          ? {
+              ...value.snapshot,
+              v2Paging: value.snapshot.v2Paging
+                ? {
+                    ...value.snapshot.v2Paging,
+                    history: {
+                      ...value.snapshot.v2Paging.history,
+                      nextCursor: finalPage ? null : 'history-page-3',
+                      hasMore: !finalPage,
+                      loading: false,
+                      error: null,
+                      oldestLoadedSequence: finalPage ? 41 : 45,
+                    },
+                  }
+                : value.snapshot.v2Paging,
+            }
+          : value.snapshot,
+      };
+    });
+    setEventLog(finalPage ? '连续分页完成：没有更多历史' : '第一页完成：哨兵仍在顶部，将连续读取下一页');
+    await nextPaint();
+    if (anchorKey && anchorOffset !== null && container) {
+      const anchoredRow = [...container.querySelectorAll<HTMLElement>('[data-transcript-row-key]')].find((row) => row.dataset.transcriptRowKey === anchorKey);
+      if (anchoredRow) setAnchorDrift(Math.abs(anchoredRow.getBoundingClientRect().top - container.getBoundingClientRect().top - anchorOffset));
+    }
+  };
+
   return (
-    <section className="qa-motion-send-preview session-codex-parity-v1" data-testid="history-paging-preview">
+    <section ref={previewRef} className="qa-motion-send-preview session-codex-parity-v1" data-testid="history-paging-preview">
       <div>
         <h3>向上读取历史消息</h3>
-        <small>加载状态覆盖在滚动区顶部，不参与消息排版。</small>
+        <small>打开和切回只定位最新；真实向上阅读到顶部后才分页。</small>
       </div>
+      <div className="qa-motion-fixture-actions">
+        <button type="button" data-testid="history-read-earlier" onClick={readEarlierAtTop}>
+          向上阅读到顶部
+        </button>
+        <button type="button" data-testid="history-reopen" onClick={reopenConversation}>
+          切回会话
+        </button>
+        <button type="button" data-testid="history-reset" onClick={() => resetScene('normal')}>
+          重置正常现场
+        </button>
+        <button type="button" data-testid="history-short" onClick={() => resetScene('short')}>
+          短内容现场
+        </button>
+        <button type="button" data-testid="history-failure" onClick={() => resetScene('failure')}>
+          分页失败现场
+        </button>
+      </div>
+      <output data-testid="history-paging-counters">
+        请求 {requestCount} 次 · 切回 {reopenCount} 次 · 提示挂载 {statusMountCount} 次 · 锚点漂移 {anchorDrift === null ? '待触发' : `${anchorDrift.toFixed(1)}px`}
+      </output>
+      <output data-testid="history-paging-events">{eventLog}</output>
+      <output data-testid="history-range-evidence">
+        同高水位 {historyPagingRangeEvidence.sameHighWater} · 新尾页重叠 {historyPagingRangeEvidence.overlappingTail} · 范围断开 {historyPagingRangeEvidence.disconnectedTail}
+      </output>
       <div className="qa-send-transcript ai-workspace">
-        <ConversationTranscript state={historyPagingSessionState} language="zh-CN" />
+        <ConversationTranscript key={transcriptKey} state={state} language="zh-CN" onLoadEarlierHistory={loadEarlierHistory} />
+      </div>
+    </section>
+  );
+}
+
+function CompleteMessagePreview() {
+  const failNextRequestRef = useRef(false);
+  const [controllerEpoch, setControllerEpoch] = useState(0);
+  const [transcriptKey, setTranscriptKey] = useState(0);
+  const [requestCount, setRequestCount] = useState(0);
+  const controller = useMemo(
+    () =>
+      createSessionController({
+        client: {
+          async loadNativeConversationContentV2(_projectId, _conversationId, handle, options) {
+            const offset = options?.offset ?? 0;
+            if (handle !== completeMessageHandle || (offset !== 0 && offset !== completeMessagePageBoundary)) throw new Error('QA 完整正文分页身份错误。');
+            setRequestCount((count) => count + 1);
+            await new Promise((resolve) => setTimeout(resolve, 220));
+            if (failNextRequestRef.current) {
+              failNextRequestRef.current = false;
+              throw new Error('QA 模拟：完整消息读取失败');
+            }
+            const nextOffset = offset === 0 ? completeMessagePageBoundary : null;
+            return {
+              schemaVersion: 2 as const,
+              structureGeneration: '2026-08-21-conversation-snapshot-v2' as const,
+              conversationId: completeMessageItem.conversationId,
+              kind: 'model_content' as const,
+              mimeType: 'text/plain; charset=utf-8',
+              text: completeMessageCodePoints.slice(offset, nextOffset ?? undefined).join(''),
+              offset,
+              nextOffset,
+              totalCharacters: completeMessageCodePoints.length,
+              totalBytes: new TextEncoder().encode(completeMessageText).byteLength,
+              contentByteLimit: 64 * 1024,
+              redacted: false,
+            };
+          },
+        } as unknown as SessionControllerClient,
+        projectId: 'project-zeus',
+        conversationId: completeMessageItem.conversationId,
+        initialCachedState: completeMessageSessionState,
+        storage: { getItem: () => null, setItem: () => undefined, removeItem: () => undefined },
+      }),
+    [controllerEpoch],
+  );
+  const state = useSyncExternalStore(controller.subscribe, controller.getState, controller.getState);
+
+  useEffect(() => () => controller.dispose(), [controller]);
+
+  const reset = (fail: boolean): void => {
+    failNextRequestRef.current = fail;
+    setControllerEpoch((epoch) => epoch + 1);
+    setTranscriptKey((key) => key + 1);
+    setRequestCount(0);
+  };
+
+  const complete = state.items[completeMessageItem.key]?.text.endsWith(completeMessageEndMarker) === true;
+  return (
+    <section className="qa-motion-send-preview session-codex-parity-v1" data-testid="complete-message-preview">
+      <div>
+        <h3>长消息完整正文</h3>
+        <small>可见预览自动读取完整正文；失败时明确提示并允许重试。</small>
+      </div>
+      <div className="qa-motion-fixture-actions">
+        <button type="button" data-testid="complete-message-reset" onClick={() => reset(false)}>
+          重置自动补全
+        </button>
+        <button type="button" data-testid="complete-message-failure" onClick={() => reset(true)}>
+          模拟补全失败
+        </button>
+        <button type="button" data-testid="complete-message-reopen" onClick={() => setTranscriptKey((key) => key + 1)}>
+          切回已补全会话
+        </button>
+      </div>
+      <output data-testid="complete-message-evidence">
+        正文请求 {requestCount} 次 · 结尾标记 {complete ? '已显示' : '未显示'}
+      </output>
+      <div className="qa-send-transcript ai-workspace">
+        <ConversationTranscript key={transcriptKey} state={state} language="zh-CN" onLoadV2Content={controller.loadV2Content} />
       </div>
     </section>
   );
@@ -1670,6 +2018,7 @@ function MotionApp() {
       <CreationFailureExclusivityPreview />
       <PlanCustomAnswerProjectionPreview />
       <HistoryPagingPreview />
+      <CompleteMessagePreview />
       <LongScrollPreview />
       <NoRefillPreview />
       <ErrorContractPreview />
