@@ -11,7 +11,7 @@ import { ZeusSelect } from '../ZeusSelect.js';
 import { TaskAttachmentPreviewList } from './TaskAttachmentPreviewList.js';
 import { TaskDigitalEmployeePanel } from '../features/digital-employees/TaskDigitalEmployeePanel.js';
 import type { DigitalEmployeeApiClient } from '../features/digital-employees/digitalEmployeeApiClient.js';
-import { TaskWorkflowSection, type TaskWorkflowClient } from './TaskWorkflowSection.js';
+import type { TaskWorkflowClient } from './TaskWorkflowSection.js';
 import type { TaskStageRecord } from '../features/tasks/taskContracts.js';
 import {
   mergeTaskAttachments,
@@ -1034,7 +1034,14 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         </span>
       </section>
 
-      <TaskDigitalEmployeePanel taskId={props.task.id} projectId={props.task.projectId} terminalReadOnly={props.terminalReadOnly} client={props.digitalEmployeeClient ?? null} language={props.language} />
+      <TaskDigitalEmployeePanel
+        taskId={props.task.id}
+        projectId={props.task.projectId}
+        terminalReadOnly={props.terminalReadOnly}
+        client={props.digitalEmployeeClient ?? null}
+        language={props.language}
+        onOpenConversation={(conversationId) => props.onOpenConversation(props.task.id, conversationId)}
+      />
 
       {typedContentFields.map((field) => (
         <section key={field.key} className="task-detail-block task-detail-request-block" aria-label={field.label}>
@@ -1199,18 +1206,6 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         </div>
         <TaskEditFeedback state={relationshipSaveState} copy={editCopy} statusId={`${attachmentStatusId}-relationships`} />
       </section>
-
-      {props.workflowClient && props.onLoadWorkflowCapabilities && props.onStartTaskStage ? (
-        <TaskWorkflowSection
-          language={props.language}
-          task={props.task}
-          terminalReadOnly={props.terminalReadOnly}
-          client={props.workflowClient}
-          loadCapabilities={props.onLoadWorkflowCapabilities}
-          onStartStage={props.onStartTaskStage}
-          onOpenConversation={(conversationId) => props.onOpenConversation(props.task.id, conversationId)}
-        />
-      ) : null}
 
       <section className="task-detail-block task-detail-conversations" aria-label={props.copy.conversationsTitle}>
         <span className="task-detail-section-heading">

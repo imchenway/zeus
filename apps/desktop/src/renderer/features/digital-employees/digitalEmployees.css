@@ -653,6 +653,235 @@
   gap: 2px;
 }
 
+.macos-ai-app .task-digital-collaboration {
+  gap: 14px;
+}
+
+.macos-ai-app .digital-collaboration-candidate {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid color-mix(in oklab, var(--zeus-product-accent) 34%, var(--zeus-control-border));
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--zeus-product-accent) 7%, var(--zeus-product-panel-muted));
+}
+
+.macos-ai-app .digital-collaboration-candidate > span:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.macos-ai-app .digital-collaboration-candidate :where(p, small) {
+  margin: 0;
+  color: var(--zeus-control-muted-text);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.macos-ai-app .digital-collaboration-candidate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.macos-ai-app .digital-collaboration-timeline {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 2px 0 0;
+  list-style: none;
+}
+
+.macos-ai-app .digital-collaboration-timeline > li {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
+  position: relative;
+  padding-block-end: 16px;
+}
+
+.macos-ai-app .digital-collaboration-timeline > li:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  inset-block: 26px 0;
+  inset-inline-start: 13px;
+  width: 1px;
+  background: var(--zeus-control-border);
+}
+
+.macos-ai-app .digital-collaboration-stage-index {
+  display: grid;
+  place-items: center;
+  align-self: start;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 999px;
+  background: var(--zeus-product-panel);
+  color: var(--zeus-control-muted-text);
+  font-size: 11px;
+  font-weight: 700;
+  z-index: 1;
+}
+
+.macos-ai-app .digital-collaboration-timeline > li:is(.is-running, .is-awaiting_acceptance, .is-ready) .digital-collaboration-stage-index {
+  border-color: var(--zeus-product-accent);
+  color: var(--zeus-product-accent);
+}
+
+.macos-ai-app .digital-collaboration-timeline > li:is(.is-accepted, .is-skipped) .digital-collaboration-stage-index {
+  border-color: #2d9b67;
+  background: #2d9b67;
+  color: white;
+}
+
+.macos-ai-app .digital-collaboration-timeline > li > div {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+}
+
+.macos-ai-app .digital-collaboration-timeline header,
+.macos-ai-app .digital-collaboration-attempt,
+.macos-ai-app .digital-collaboration-deliverable,
+.macos-ai-app .digital-collaboration-legacy > span,
+.macos-ai-app .digital-collaboration-dialog > header,
+.macos-ai-app .digital-collaboration-preview > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.macos-ai-app .digital-collaboration-timeline :where(p, small),
+.macos-ai-app .digital-collaboration-dialog small,
+.macos-ai-app .digital-collaboration-legacy :where(p, small) {
+  margin: 0;
+  color: var(--zeus-control-muted-text);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.macos-ai-app .digital-collaboration-attempt {
+  padding: 8px 10px;
+  border-inline-start: 2px solid var(--zeus-control-border);
+  background: color-mix(in oklab, var(--zeus-product-panel-muted) 55%, transparent);
+}
+
+.macos-ai-app .digital-collaboration-attempt > span,
+.macos-ai-app .digital-collaboration-deliverable > span:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.macos-ai-app .digital-collaboration-attempt button,
+.macos-ai-app .digital-collaboration-deliverable {
+  border: 0;
+  color: var(--zeus-product-accent);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+}
+
+.macos-ai-app .digital-collaboration-deliverable {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 7px;
+  color: inherit;
+  text-align: start;
+}
+
+.macos-ai-app .digital-collaboration-deliverable:hover {
+  border-color: color-mix(in oklab, var(--zeus-product-accent) 42%, var(--zeus-control-border));
+  background: color-mix(in oklab, var(--zeus-product-accent) 5%, transparent);
+}
+
+.macos-ai-app .digital-collaboration-legacy {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 9px;
+}
+
+.digital-collaboration-modal-root {
+  inset: 0;
+  position: fixed;
+  z-index: 1700;
+}
+
+.digital-collaboration-modal-backdrop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: absolute;
+  inset: 0;
+  padding: 24px;
+  background: rgb(12 14 21 / 46%);
+  backdrop-filter: blur(6px);
+}
+
+.macos-ai-app .digital-collaboration-dialog,
+.macos-ai-app .digital-collaboration-preview {
+  display: grid;
+  width: min(620px, calc(100vw - 32px));
+  max-height: min(760px, calc(100vh - 40px));
+  gap: 16px;
+  padding: 20px;
+  overflow: auto;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 16px;
+  background: var(--zeus-solid-surface-bg, var(--zeus-product-panel));
+  box-shadow: 0 24px 80px rgb(8 10 18 / 28%);
+}
+
+.macos-ai-app .digital-collaboration-dialog > header > span {
+  display: grid;
+  gap: 3px;
+}
+
+.macos-ai-app .digital-collaboration-dialog > label {
+  display: grid;
+  gap: 7px;
+  color: var(--zeus-control-text);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.macos-ai-app .digital-collaboration-dialog textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--zeus-product-panel-muted);
+  color: inherit;
+  font: inherit;
+}
+
+.macos-ai-app .digital-collaboration-dialog > footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.macos-ai-app .digital-collaboration-preview {
+  width: min(880px, calc(100vw - 32px));
+}
+
+.macos-ai-app .digital-collaboration-preview pre {
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  border-radius: 9px;
+  background: var(--zeus-product-panel-muted);
+  color: var(--zeus-control-text);
+  font: 12px/1.65 var(--zeus-font-mono, ui-monospace, monospace);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 1080px) {
   .macos-ai-app .digital-employee-grant-flow {
     grid-template-columns: repeat(2, minmax(150px, 1fr));
@@ -680,6 +909,13 @@
   .macos-ai-app .digital-employee-assignment-strip,
   .macos-ai-app .task-digital-employee-assignment {
     grid-template-columns: 1fr;
+  }
+
+  .macos-ai-app .digital-collaboration-candidate-actions,
+  .macos-ai-app .digital-collaboration-dialog > header,
+  .macos-ai-app .digital-collaboration-preview > header {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .macos-ai-app .digital-employee-policy-grid,

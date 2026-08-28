@@ -3,9 +3,11 @@ import { buildWorkManagementCommandRequest, workManagementClientCommandTypes } f
 import type {
   DigitalEmployeeAutomationInput,
   DigitalEmployeeAutomationRecord,
+  DigitalEmployeeCollaborationProjection,
   DigitalEmployeeExecutionRecord,
   DigitalEmployeeInput,
   DigitalEmployeeRecord,
+  DigitalEmployeeStageDecisionInput,
   DigitalEmployeeTemplateInput,
   DigitalEmployeeTemplateRecord,
 } from './digitalEmployeeContracts.js';
@@ -26,9 +28,15 @@ export interface DigitalEmployeeApiClient {
   runDigitalEmployeeAutomation(projectId: string, automationId: string): Promise<DigitalEmployeeAutomationRecord>;
   loadProjectDigitalEmployeeExecutions(projectId: string): Promise<DigitalEmployeeExecutionRecord[]>;
   loadTaskDigitalEmployeeExecutions(taskId: string): Promise<DigitalEmployeeExecutionRecord[]>;
+  loadTaskDigitalEmployeeCollaboration(taskId: string): Promise<DigitalEmployeeCollaborationProjection>;
   assignTaskToDigitalEmployee(taskId: string, employeeId: string): Promise<DigitalEmployeeExecutionRecord>;
   retryDigitalEmployeeExecution(executionId: string, taskId: string): Promise<DigitalEmployeeExecutionRecord>;
   cancelDigitalEmployeeExecution(executionId: string, taskId: string): Promise<DigitalEmployeeExecutionRecord>;
+  handoffDigitalEmployeeExecution(executionId: string, taskId: string, input: DigitalEmployeeStageDecisionInput & { targetEmployeeId: string }): Promise<DigitalEmployeeExecutionRecord>;
+  reworkDigitalEmployeeExecution(executionId: string, taskId: string, input: DigitalEmployeeStageDecisionInput & { targetEmployeeId: string; reason: string }): Promise<DigitalEmployeeExecutionRecord>;
+  finalizeDigitalEmployeeExecution(executionId: string, taskId: string, input: DigitalEmployeeStageDecisionInput): Promise<DigitalEmployeeExecutionRecord>;
+  adoptLegacyDigitalEmployeeExecution(executionId: string, taskId: string, expectedExecutionRevision: number): Promise<DigitalEmployeeExecutionRecord>;
+  loadDigitalEmployeeDeliverableContent(taskId: string, deliverableId: string): Promise<{ content: string }>;
 }
 
 export function createDigitalEmployeeApiClient(transport: LocalApiTransport): DigitalEmployeeApiClient {
@@ -84,6 +92,7 @@ export function createDigitalEmployeeApiClient(transport: LocalApiTransport): Di
     },
     loadProjectDigitalEmployeeExecutions: (projectId) => transport.request(`${projectPath(projectId)}/digital-employee-executions`),
     loadTaskDigitalEmployeeExecutions: (taskId) => transport.request(`${taskPath(taskId)}/digital-employee-executions`),
+    loadTaskDigitalEmployeeCollaboration: (taskId) => transport.request(`${taskPath(taskId)}/digital-employee-collaboration`),
     assignTaskToDigitalEmployee: async (taskId, employeeId) => {
       const body = await command(workManagementClientCommandTypes.digitalEmployeeExecutionCreate, 'task', () => taskId, 'digital_employee_execution_', { employeeId });
       return transport.request(`${taskPath(taskId)}/digital-employee-executions`, jsonRequest('POST', body));
@@ -96,6 +105,24 @@ export function createDigitalEmployeeApiClient(transport: LocalApiTransport): Di
       const body = await command(workManagementClientCommandTypes.digitalEmployeeExecutionCancel, 'task', () => taskId, 'digital_employee_execution_cancel_', {});
       return transport.request(`/api/digital-employee-executions/${encodeURIComponent(executionId)}/cancel`, jsonRequest('POST', body));
     },
+    handoffDigitalEmployeeExecution: async (executionId, taskId, input) => {
+      const body = await command(workManagementClientCommandTypes.digitalEmployeeExecutionHandoff, 'task', () => taskId, 'digital_employee_handoff_', input, input.expectedExecutionRevision);
+      return transport.request(`${taskPath(taskId)}/digital-employee-executions/${encodeURIComponent(executionId)}/handoffs`, jsonRequest('POST', body));
+    },
+    reworkDigitalEmployeeExecution: async (executionId, taskId, input) => {
+      const body = await command(workManagementClientCommandTypes.digitalEmployeeExecutionRework, 'task', () => taskId, 'digital_employee_rework_', input, input.expectedExecutionRevision);
+      return transport.request(`${taskPath(taskId)}/digital-employee-executions/${encodeURIComponent(executionId)}/reworks`, jsonRequest('POST', body));
+    },
+    finalizeDigitalEmployeeExecution: async (executionId, taskId, input) => {
+      const body = await command(workManagementClientCommandTypes.digitalEmployeeExecutionFinalize, 'task', () => taskId, 'digital_employee_finalize_', input, input.expectedExecutionRevision);
+      return transport.request(`${taskPath(taskId)}/digital-employee-executions/${encodeURIComponent(executionId)}/finalize`, jsonRequest('POST', body));
+    },
+    adoptLegacyDigitalEmployeeExecution: async (executionId, taskId, expectedExecutionRevision) => {
+      const value = { expectedExecutionRevision };
+      const body = await command(workManagementClientCommandTypes.digitalEmployeeExecutionAdoptLegacy, 'task', () => taskId, 'digital_employee_adopt_legacy_', value, expectedExecutionRevision);
+      return transport.request(`${taskPath(taskId)}/digital-employee-executions/${encodeURIComponent(executionId)}/adopt-stage-handoff`, jsonRequest('POST', body));
+    },
+    loadDigitalEmployeeDeliverableContent: (taskId, deliverableId) => transport.request(`${taskPath(taskId)}/workflow/deliverables/${encodeURIComponent(deliverableId)}/content`),
   };
 }
 

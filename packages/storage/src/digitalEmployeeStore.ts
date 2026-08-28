@@ -12,6 +12,7 @@ export const digitalEmployeeAutomationActionKinds = ['assign_task', 'create_and_
 export const digitalEmployeeExecutionStatuses = ['queued', 'dispatching', 'running', 'waiting', 'delivery_pending', 'delivered', 'blocked', 'failed', 'cancelled'] as const;
 export const digitalEmployeeExecutionSources = ['manual', 'task_pool', 'exploration', 'automation'] as const;
 export const digitalEmployeeDeliveryStages = ['none', 'commit', 'push', 'merge', 'deploy', 'complete', 'done'] as const;
+export const digitalEmployeeExecutionModes = ['legacy_single_conversation', 'staged'] as const;
 
 export type DigitalEmployeeAgentKind = (typeof digitalEmployeeAgentKinds)[number];
 export type DigitalEmployeePermissionMode = (typeof digitalEmployeePermissionModes)[number];
@@ -21,6 +22,7 @@ export type DigitalEmployeeAutomationActionKind = (typeof digitalEmployeeAutomat
 export type DigitalEmployeeExecutionStatus = (typeof digitalEmployeeExecutionStatuses)[number];
 export type DigitalEmployeeExecutionSource = (typeof digitalEmployeeExecutionSources)[number];
 export type DigitalEmployeeDeliveryStage = (typeof digitalEmployeeDeliveryStages)[number];
+export type DigitalEmployeeExecutionMode = (typeof digitalEmployeeExecutionModes)[number];
 
 export interface DigitalEmployeeDeliveryGrants {
   allowCommit: boolean;
@@ -99,6 +101,10 @@ export interface DigitalEmployeeExecutionRecord {
   source: DigitalEmployeeExecutionSource;
   sourceRef: string | null;
   status: DigitalEmployeeExecutionStatus;
+  executionMode: DigitalEmployeeExecutionMode;
+  workflowId: string | null;
+  currentStageId: string | null;
+  revision: number;
   employeeSnapshot: DigitalEmployeeRecord;
   deliveryGrantsSnapshot: DigitalEmployeeDeliveryGrants;
   conversationId: string | null;
@@ -112,6 +118,7 @@ export interface DigitalEmployeeExecutionRecord {
   leaseExpiresAt: string | null;
   startedAt: string | null;
   completedAt: string | null;
+  finalizedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -173,6 +180,9 @@ export interface CreateDigitalEmployeeExecutionInput {
   automationId?: string | null;
   source: DigitalEmployeeExecutionSource;
   sourceRef?: string | null;
+  executionMode?: DigitalEmployeeExecutionMode;
+  workflowId?: string | null;
+  currentStageId?: string | null;
 }
 
 const builtInDigitalEmployeeTemplates: ReadonlyArray<CreateDigitalEmployeeTemplateInput & { id: string }> = [
@@ -860,8 +870,9 @@ export class DigitalEmployeeExecutionRepository {
     this.db.execute(
       `INSERT INTO digital_employee_executions
        (id, project_id, task_id, employee_id, template_id, automation_id, source, source_ref, status, employee_snapshot_json, delivery_grants_snapshot_json,
-        conversation_id, environment_id, delivery_stage, delivery_state_json, attempt, error_code, error_message, lease_owner, lease_expires_at, started_at, completed_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, NULL, NULL, 'none', '{}', 1, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?)`,
+        conversation_id, environment_id, delivery_stage, delivery_state_json, attempt, error_code, error_message, lease_owner, lease_expires_at, started_at, completed_at, created_at, updated_at,
+        execution_mode, workflow_id, current_stage_id, revision, finalized_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, NULL, NULL, 'none', '{}', 1, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, 1, NULL)`,
       [
         id,
         input.employee.projectId,
@@ -875,6 +886,9 @@ export class DigitalEmployeeExecutionRepository {
         JSON.stringify(snapshot.deliveryGrants),
         timestamp,
         timestamp,
+        oneOf(input.executionMode ?? 'legacy_single_conversation', digitalEmployeeExecutionModes, 'execution.executionMode'),
+        nullableIdentity(input.workflowId, 'workflowId'),
+        nullableIdentity(input.currentStageId, 'currentStageId'),
       ],
     );
     return this.getById(id)!;
@@ -896,7 +910,7 @@ export class DigitalEmployeeExecutionRepository {
 
   update(
     id: string,
-    input: Partial<Pick<DigitalEmployeeExecutionRecord, 'status' | 'conversationId' | 'environmentId' | 'deliveryStage' | 'deliveryState' | 'errorCode' | 'errorMessage' | 'startedAt' | 'completedAt' | 'attempt'>>,
+    input: Partial<Pick<DigitalEmployeeExecutionRecord, 'status' | 'conversationId' | 'environmentId' | 'deliveryStage' | 'deliveryState' | 'errorCode' | 'errorMessage' | 'startedAt' | 'completedAt' | 'finalizedAt' | 'attempt' | 'workflowId' | 'currentStageId'>>,
   ): DigitalEmployeeExecutionRecord {
     const existing = this.require(id);
     const status = input.status ? oneOf(input.status, digitalEmployeeExecutionStatuses, 'execution.status') : existing.status;
@@ -912,10 +926,13 @@ export class DigitalEmployeeExecutionRepository {
       startedAt: input.startedAt === undefined ? existing.startedAt : nullableTimestamp(input.startedAt, 'startedAt'),
       completedAt: input.completedAt === undefined ? existing.completedAt : nullableTimestamp(input.completedAt, 'completedAt'),
       attempt: input.attempt === undefined ? existing.attempt : positiveInteger(input.attempt, 'attempt', 100),
+      workflowId: input.workflowId === undefined ? existing.workflowId : nullableIdentity(input.workflowId, 'workflowId'),
+      currentStageId: input.currentStageId === undefined ? existing.currentStageId : nullableIdentity(input.currentStageId, 'currentStageId'),
+      finalizedAt: input.finalizedAt === undefined ? existing.finalizedAt : nullableTimestamp(input.finalizedAt, 'finalizedAt'),
     };
     const timestamp = nextTimestamp(existing.updatedAt);
     this.db.execute(
-      `UPDATE digital_employee_executions SET status = ?, conversation_id = ?, environment_id = ?, delivery_stage = ?, delivery_state_json = ?, attempt = ?, error_code = ?, error_message = ?, started_at = ?, completed_at = ?, updated_at = ? WHERE id = ?`,
+      `UPDATE digital_employee_executions SET status = ?, conversation_id = ?, environment_id = ?, delivery_stage = ?, delivery_state_json = ?, attempt = ?, error_code = ?, error_message = ?, started_at = ?, completed_at = ?, workflow_id = ?, current_stage_id = ?, finalized_at = ?, revision = revision + 1, updated_at = ? WHERE id = ?`,
       [
         values.status,
         values.conversationId,
@@ -927,6 +944,9 @@ export class DigitalEmployeeExecutionRepository {
         values.errorMessage,
         values.startedAt,
         values.completedAt,
+        values.workflowId,
+        values.currentStageId,
+        values.finalizedAt,
         timestamp,
         existing.id,
       ],
@@ -964,6 +984,87 @@ export class DigitalEmployeeExecutionRepository {
         existing.id,
       ],
     );
+    return this.getById(existing.id)!;
+  }
+
+  advanceStage(
+    id: string,
+    input: { expectedRevision: number; employee: DigitalEmployeeRecord; currentStageId: string; deliveryState?: Record<string, unknown> },
+  ): DigitalEmployeeExecutionRecord {
+    const existing = this.require(id);
+    if (existing.executionMode !== 'staged') throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_EXECUTION_TRANSITION_INVALID', '旧版单会话执行不能直接切换阶段。');
+    if (existing.revision !== input.expectedRevision) throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_REVISION_CONFLICT', '数字员工协作执行已更新，请刷新后重试。');
+    if (existing.status !== 'waiting' && existing.status !== 'failed' && existing.status !== 'blocked') {
+      throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_EXECUTION_ACTIVE', '只有等待确认、失败或阻塞的阶段可以创建下一次尝试。');
+    }
+    if (input.employee.projectId !== existing.projectId) throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_INVALID', '下一阶段数字员工不属于当前项目。');
+    const snapshot = structuredClone(input.employee);
+    const timestamp = nextTimestamp(existing.updatedAt);
+    this.db.execute(
+      `UPDATE digital_employee_executions
+          SET employee_id = ?, template_id = ?, employee_snapshot_json = ?, delivery_grants_snapshot_json = ?, status = 'queued', conversation_id = NULL,
+              environment_id = NULL, delivery_stage = 'none', delivery_state_json = ?, attempt = attempt + 1, error_code = NULL, error_message = NULL,
+              lease_owner = NULL, lease_expires_at = NULL, started_at = NULL, completed_at = NULL, current_stage_id = ?, revision = revision + 1, updated_at = ?
+        WHERE id = ? AND revision = ?`,
+      [
+        snapshot.id,
+        snapshot.templateId,
+        JSON.stringify(snapshot),
+        JSON.stringify(snapshot.deliveryGrants),
+        JSON.stringify(normalizeJsonRecord(input.deliveryState ?? {}, 'execution.deliveryState', 32_000)),
+        requiredIdentity(input.currentStageId, 'currentStageId'),
+        timestamp,
+        existing.id,
+        input.expectedRevision,
+      ],
+    );
+    assertChanged(this.db, '数字员工协作执行已更新，请刷新后重试。');
+    return this.getById(existing.id)!;
+  }
+
+  finalizeStaged(id: string, expectedRevision: number): DigitalEmployeeExecutionRecord {
+    const existing = this.require(id);
+    if (existing.executionMode !== 'staged') throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_EXECUTION_TRANSITION_INVALID', '旧版单会话执行不能进入阶段化最终交付。');
+    if (existing.revision !== expectedRevision) throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_REVISION_CONFLICT', '数字员工协作执行已更新，请刷新后重试。');
+    if (existing.status !== 'waiting') throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_EXECUTION_ACTIVE', '只有等待最终确认的协作执行可以进入交付。');
+    const timestamp = nextTimestamp(existing.updatedAt);
+    this.db.execute(
+      `UPDATE digital_employee_executions
+          SET status = 'delivery_pending', delivery_stage = 'none', finalized_at = ?, revision = revision + 1, updated_at = ?
+        WHERE id = ? AND revision = ? AND status = 'waiting'`,
+      [timestamp, timestamp, existing.id, expectedRevision],
+    );
+    assertChanged(this.db, '数字员工协作执行已更新，请刷新后重试。');
+    return this.getById(existing.id)!;
+  }
+
+  adoptLegacyAsStaged(
+    id: string,
+    input: { expectedRevision: number; workflowId: string; currentStageId: string; candidateDeliverableId: string; candidateDeliverableVersion: number; candidateContentSha256: string },
+  ): DigitalEmployeeExecutionRecord {
+    const existing = this.require(id);
+    if (existing.executionMode === 'staged') return existing;
+    if (existing.revision !== input.expectedRevision) throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_REVISION_CONFLICT', '旧版执行已更新，请刷新后重试。');
+    if (!existing.conversationId || existing.status === 'queued' || existing.status === 'dispatching' || existing.status === 'running' || existing.status === 'waiting' || existing.status === 'delivery_pending') {
+      throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_EXECUTION_ACTIVE', '只有已结束且保留真实会话的旧版执行可以接入阶段链。');
+    }
+    const timestamp = nextTimestamp(existing.updatedAt);
+    const deliveryState = {
+      candidateDeliverableId: requiredIdentity(input.candidateDeliverableId, 'candidateDeliverableId'),
+      candidateDeliverableVersion: positiveInteger(input.candidateDeliverableVersion, 'candidateDeliverableVersion', Number.MAX_SAFE_INTEGER),
+      candidateStageId: requiredIdentity(input.currentStageId, 'currentStageId'),
+      candidateContentSha256: boundedText(input.candidateContentSha256, 'candidateContentSha256', 64, 64),
+      adoptedLegacyConversationId: existing.conversationId,
+      adoptedAt: timestamp,
+    };
+    this.db.execute(
+      `UPDATE digital_employee_executions
+          SET execution_mode = 'staged', workflow_id = ?, current_stage_id = ?, status = 'waiting', delivery_stage = 'none', delivery_state_json = ?,
+              error_code = NULL, error_message = NULL, finalized_at = NULL, revision = revision + 1, updated_at = ?
+        WHERE id = ? AND revision = ? AND execution_mode = 'legacy_single_conversation'`,
+      [requiredIdentity(input.workflowId, 'workflowId'), requiredIdentity(input.currentStageId, 'currentStageId'), JSON.stringify(deliveryState), timestamp, existing.id, input.expectedRevision],
+    );
+    assertChanged(this.db, '旧版执行已更新，请刷新后重试。');
     return this.getById(existing.id)!;
   }
 
@@ -1120,6 +1221,10 @@ interface DigitalEmployeeExecutionRow {
   source: DigitalEmployeeExecutionSource;
   source_ref: string | null;
   status: DigitalEmployeeExecutionStatus;
+  execution_mode: DigitalEmployeeExecutionMode;
+  workflow_id: string | null;
+  current_stage_id: string | null;
+  revision: number;
   employee_snapshot_json: string;
   delivery_grants_snapshot_json: string;
   conversation_id: string | null;
@@ -1133,6 +1238,7 @@ interface DigitalEmployeeExecutionRow {
   lease_expires_at: string | null;
   started_at: string | null;
   completed_at: string | null;
+  finalized_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1230,6 +1336,10 @@ function mapExecutionRow(row: DigitalEmployeeExecutionRow): DigitalEmployeeExecu
     source: oneOf(row.source, digitalEmployeeExecutionSources, 'execution.source'),
     sourceRef: row.source_ref,
     status: oneOf(row.status, digitalEmployeeExecutionStatuses, 'execution.status'),
+    executionMode: oneOf(row.execution_mode, digitalEmployeeExecutionModes, 'execution.executionMode'),
+    workflowId: row.workflow_id,
+    currentStageId: row.current_stage_id,
+    revision: positiveInteger(row.revision, 'execution.revision', Number.MAX_SAFE_INTEGER),
     employeeSnapshot,
     deliveryGrantsSnapshot: normalizeDeliveryGrants(grants),
     conversationId: row.conversation_id,
@@ -1243,6 +1353,7 @@ function mapExecutionRow(row: DigitalEmployeeExecutionRow): DigitalEmployeeExecu
     leaseExpiresAt: row.lease_expires_at,
     startedAt: row.started_at,
     completedAt: row.completed_at,
+    finalizedAt: row.finalized_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

@@ -1720,6 +1720,36 @@ export function createConversationApplicationOperations(dependencies: Conversati
     return stage;
   }
 
+  function requestedStageExecution(body: Record<string, unknown>, stage: ZeusTaskStageRecord | null) {
+    if (!stage || body.stageExecution === undefined) return null;
+    if (!isNativeApiRecord(body.stageExecution)) throw nativeApiError('ZEUS_TASK_STAGE_INVALID_ARGUMENT', 'stageExecution must be an object.');
+    const value = body.stageExecution;
+    if (
+      typeof value.workExecutionId !== 'string' ||
+      !value.workExecutionId.trim() ||
+      typeof value.employeeId !== 'string' ||
+      !value.employeeId.trim() ||
+      !Number.isSafeInteger(value.employeeRevision) ||
+      Number(value.employeeRevision) < 0 ||
+      !isNativeApiRecord(value.employeeSnapshot) ||
+      !isNativeApiRecord(value.effectivePermissions)
+    ) {
+      throw nativeApiError('ZEUS_TASK_STAGE_INVALID_ARGUMENT', 'stageExecution is incomplete or invalid.');
+    }
+    if (stage.employeeMode !== 'explicit' || stage.employeeId !== value.employeeId) {
+      throw nativeApiError('ZEUS_TASK_STAGE_CONFIGURATION_MISMATCH', 'The staged work execution employee no longer matches the explicit stage assignment.');
+    }
+    const skillId = value.skillId === undefined || value.skillId === null ? null : typeof value.skillId === 'string' && value.skillId.trim() ? value.skillId.trim() : null;
+    return {
+      workExecutionId: value.workExecutionId.trim(),
+      employeeId: value.employeeId.trim(),
+      employeeRevision: Number(value.employeeRevision),
+      employeeSnapshot: value.employeeSnapshot,
+      skillId,
+      effectivePermissions: value.effectivePermissions,
+    };
+  }
+
   function assertTaskStageExecutionMatches(
     stage: ZeusTaskStageRecord,
     input: {
@@ -1782,7 +1812,22 @@ export function createConversationApplicationOperations(dependencies: Conversati
     }
   }
 
-  async function startTaskStageConversation(stage: ZeusTaskStageRecord | null, plan: NativeTaskConversationStartPlan, input: { operationIdentity: string; modelRef: string }) {
+  async function startTaskStageConversation(
+    stage: ZeusTaskStageRecord | null,
+    plan: NativeTaskConversationStartPlan,
+    input: {
+      operationIdentity: string;
+      modelRef: string;
+      stageExecution?: {
+        workExecutionId: string;
+        employeeId: string;
+        employeeRevision: number;
+        employeeSnapshot: Record<string, unknown>;
+        skillId: string | null;
+        effectivePermissions: Record<string, unknown>;
+      } | null;
+    },
+  ) {
     if (!stage) return startNativeTaskConversationFromPlan(plan);
     const actual = {
       agentKind: plan.agentKind,
@@ -1801,6 +1846,16 @@ export function createConversationApplicationOperations(dependencies: Conversati
         stageRevision: stage.revision,
         inputDeliverables: acceptedInputs.map((deliverable) => ({ id: deliverable.id, version: deliverable.version, contentSha256: deliverable.contentSha256 })),
       },
+      ...(input.stageExecution
+        ? {
+            workExecutionId: input.stageExecution.workExecutionId,
+            employeeId: input.stageExecution.employeeId,
+            employeeRevision: input.stageExecution.employeeRevision,
+            employeeSnapshot: input.stageExecution.employeeSnapshot,
+            skillId: input.stageExecution.skillId,
+            effectivePermissions: input.stageExecution.effectivePermissions,
+          }
+        : {}),
     });
     await db.save();
     let rpcStarted = false;
@@ -2002,7 +2057,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             providerWriteLifecycle: reservedLifecycle,
             ...(skill ? { skill } : {}),
           },
-          { operationIdentity: stableOperationId, modelRef: modelName },
+          { operationIdentity: stableOperationId, modelRef: modelName, stageExecution: requestedStageExecution(body, taskStage) },
         );
       } else if (body.source === 'code_review') {
         if (body.attachments !== undefined) throw nativeApiError('ZEUS_INVALID_CODE_REVIEW', 'Code review attachments are not accepted; the server reviews the persisted workspace directly.');
@@ -2091,7 +2146,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             providerWriteLifecycle: reservedLifecycle,
             ...(skill ? { skill } : {}),
           },
-          { operationIdentity: stableOperationId, modelRef: modelName },
+          { operationIdentity: stableOperationId, modelRef: modelName, stageExecution: requestedStageExecution(body, taskStage) },
         );
       } else if (body.source === 'conflict_resolution') {
         const integrationId = typeof body.integrationId === 'string' ? body.integrationId.trim() : '';
