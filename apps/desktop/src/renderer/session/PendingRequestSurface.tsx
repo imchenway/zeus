@@ -61,7 +61,6 @@ const labels = {
     accept: '允许一次',
     acceptWithExecpolicyAmendment: '允许类似命令',
     acceptForSession: '本会话允许',
-    allowAllEdits: '允许所有编辑',
     decline: '拒绝',
     cancel: '取消',
     submit: '提交回答',
@@ -79,6 +78,12 @@ const labels = {
     mcpUrlOpenFailed: '无法打开 MCP 请求页面，请重试。',
     incompleteApproval: '审批详情不完整',
     incompleteApprovalHelp: 'Zeus 无法确认命令或文件目标，因此只提供拒绝或取消操作。',
+    fileTargetUnavailable: '文件目标尚未同步',
+    fileTargetUnavailableHelp: 'Zeus 暂时无法确认本次修改的文件目标，因此只提供拒绝或取消操作。',
+    fileTargetOutsideProject: '文件不在当前项目内',
+    fileTargetOutsideProjectHelp: 'Zeus 只允许审批当前项目内可审计的文件；以下项目外目标只能拒绝或取消。',
+    fileTargetProviderScope: '授权范围无法审计',
+    fileTargetProviderScopeHelp: '该请求要求授权 Provider 根范围，超出单个项目的文件审批边界，因此只提供拒绝或取消操作。',
     cwd: '工作目录',
     mode: '当前模式',
     required: '必填',
@@ -91,7 +96,7 @@ const labels = {
     moreFiles: (count: number) => `另有 ${count} 个文件`,
     grantOptions: '授权选项',
     similarCommandRule: '适用规则',
-    allEditScope: '本会话仅对已审批文件免重复询问；新文件仍可能再次申请。',
+    allEditScope: '本会话后续仅自动允许当前项目内可审计的文件；项目外目标仍会被拒绝。',
   },
   'en-US': {
     approval: 'Approval required',
@@ -99,7 +104,6 @@ const labels = {
     accept: 'Allow once',
     acceptWithExecpolicyAmendment: 'Allow similar commands',
     acceptForSession: 'Allow for session',
-    allowAllEdits: 'Allow all edits',
     decline: 'Decline',
     cancel: 'Cancel',
     submit: 'Submit answers',
@@ -117,6 +121,12 @@ const labels = {
     mcpUrlOpenFailed: 'Could not open the MCP request page. Please try again.',
     incompleteApproval: 'Incomplete approval details',
     incompleteApprovalHelp: 'Zeus cannot verify the command or file target, so only decline or cancel actions are available.',
+    fileTargetUnavailable: 'File target not yet available',
+    fileTargetUnavailableHelp: 'Zeus cannot yet verify the file target for this change. Only decline or cancel actions are available.',
+    fileTargetOutsideProject: 'File is outside the current project',
+    fileTargetOutsideProjectHelp: 'Zeus only permits auditable files inside the current project. The targets below can only be declined or cancelled.',
+    fileTargetProviderScope: 'Approval scope cannot be audited',
+    fileTargetProviderScopeHelp: 'This request asks for a provider-root grant beyond the single-project approval boundary. Only decline or cancel actions are available.',
     cwd: 'Working directory',
     mode: 'Current mode',
     required: 'Required',
@@ -129,7 +139,7 @@ const labels = {
     moreFiles: (count: number) => `${count} more file${count === 1 ? '' : 's'}`,
     grantOptions: 'Grant options',
     similarCommandRule: 'Applies to',
-    allEditScope: 'Previously approved files are remembered for this session; new files may still ask again.',
+    allEditScope: 'This session only auto-allows auditable files inside the current project; outside targets remain blocked.',
   },
 } as const;
 
@@ -185,8 +195,8 @@ export function PendingRequestSurface(props: PendingRequestSurfaceProps) {
   if (!isRui) {
     if (kind === 'command' || kind === 'file') {
       const filePaths = kind === 'file' ? approvalFilePaths(props.request, props.filePaths) : [];
-      const incompleteApproval = !hasCompleteApprovalDetails(props.request) || (kind === 'file' && filePaths.length === 0);
-      const compactDecisions = incompleteApproval ? decisions.filter(isFailClosedDecision) : decisions;
+      const approvalIssue = approvalIssueFor(props.request, props.language, filePaths);
+      const compactDecisions = approvalIssue ? decisions.filter(isFailClosedDecision) : decisions;
       return (
         <CompactApprovalPanel
           request={props.request}
@@ -197,7 +207,7 @@ export function PendingRequestSurface(props: PendingRequestSurfaceProps) {
           busy={props.busy === true}
           error={props.error}
           autoFocus={props.autoFocus !== false}
-          incompleteApproval={incompleteApproval}
+          approvalIssue={approvalIssue}
           permissionMode={props.permissionMode ?? 'read-only'}
           onDecision={(decision) => void props.onRespond(props.request.id, buildPendingRequestResponse(props.request, { decision: [decision] }))}
         />
@@ -269,7 +279,7 @@ interface CompactApprovalPanelProps {
   busy: boolean;
   error?: string | null;
   autoFocus: boolean;
-  incompleteApproval: boolean;
+  approvalIssue: { title: string; help: string } | null;
   permissionMode: NativePermissionMode;
   onDecision: (decision: SupportedRequestDecision) => void;
 }
@@ -349,10 +359,10 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
           </span>
         </header>
         <h2 className="session-compact-approval-question zeus-fidelity-text">{props.kind === 'command' ? copy.commandQuestion : copy.fileQuestion}</h2>
-        {props.incompleteApproval ? (
+        {props.approvalIssue ? (
           <p className="session-request-invalid" role="alert">
-            <strong>{copy.incompleteApproval}</strong>
-            <span>{copy.incompleteApprovalHelp}</span>
+            <strong>{props.approvalIssue.title}</strong>
+            <span>{props.approvalIssue.help}</span>
           </p>
         ) : null}
         <div className="session-compact-approval-decision-row">
@@ -394,7 +404,7 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
                       onClick={() => choose(decision)}
                     >
                       <span className="session-approval-grant-menu-label">
-                        <span>{props.kind === 'file' && decision === 'acceptForSession' ? copy.allowAllEdits : copy[decision]}</span>
+                        <span>{copy[decision]}</span>
                         {props.kind === 'file' && decision === 'acceptForSession' ? (
                           <span className="session-approval-grant-info" role="img" aria-label={copy.allEditScope} title={copy.allEditScope}>
                             <Info aria-hidden="true" />
@@ -448,8 +458,31 @@ function FileApprovalTargetList(props: { paths: readonly string[]; moreLabel: (c
 }
 
 function approvalFilePaths(request: NativePendingRequest, linkedPaths: readonly string[] | undefined): string[] {
+  const audit = fileApprovalAudit(request);
+  if (audit) return audit.paths;
   const candidates = [request.payload.path, request.payload.filePath, request.payload.targetPath, ...(linkedPaths ?? [])];
   return [...new Set(candidates.flatMap((value) => (typeof value === 'string' && value.trim() ? [value.trim()] : [])))];
+}
+
+function approvalIssueFor(request: NativePendingRequest, language: SessionUiLanguage, filePaths: readonly string[]): { title: string; help: string } | null {
+  const copy = labels[language];
+  if (requestKind(request) === 'command') {
+    return hasCompleteApprovalDetails(request) ? null : { title: copy.incompleteApproval, help: copy.incompleteApprovalHelp };
+  }
+  const audit = fileApprovalAudit(request);
+  if (!audit) {
+    return hasCompleteApprovalDetails(request) && filePaths.length > 0 ? null : { title: copy.incompleteApproval, help: copy.incompleteApprovalHelp };
+  }
+  if (audit.status === 'auditable' && filePaths.length > 0) return null;
+  if (audit.status === 'outside_project') return { title: copy.fileTargetOutsideProject, help: copy.fileTargetOutsideProjectHelp };
+  if (audit.status === 'provider_root_scope') return { title: copy.fileTargetProviderScope, help: copy.fileTargetProviderScopeHelp };
+  return { title: copy.fileTargetUnavailable, help: copy.fileTargetUnavailableHelp };
+}
+
+function fileApprovalAudit(request: NativePendingRequest): NativePendingRequest['fileApproval'] | null {
+  const audit = request.fileApproval;
+  if (!audit || !['auditable', 'outside_project', 'provider_root_scope', 'unavailable'].includes(audit.status) || !Array.isArray(audit.paths)) return null;
+  return audit;
 }
 
 function approvalPathParts(path: string): { directory: string; name: string } {
@@ -1379,7 +1412,11 @@ function hasCompleteApprovalDetails(request: NativePendingRequest): boolean {
     const command = request.payload.command;
     return typeof command === 'string' ? Boolean(command.trim()) : Array.isArray(command) && command.length > 0 && command.every((part) => typeof part === 'string' && Boolean(part.trim()));
   }
-  if (kind === 'file') return Boolean(stringValue(request.payload.path) ?? stringValue(request.payload.filePath) ?? stringValue(request.payload.grantRoot)) || hasCanonicalLinkedFileApprovalDetails(request);
+  if (kind === 'file') {
+    const audit = fileApprovalAudit(request);
+    if (audit) return audit.status === 'auditable' && audit.paths.length > 0;
+    return Boolean(stringValue(request.payload.path) ?? stringValue(request.payload.filePath) ?? stringValue(request.payload.grantRoot)) || hasCanonicalLinkedFileApprovalDetails(request);
+  }
   return true;
 }
 

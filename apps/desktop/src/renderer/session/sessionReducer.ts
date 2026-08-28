@@ -998,7 +998,8 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
       const queue = isRecord(payload.queue) ? (payload.queue as unknown as NativeQueueSnapshot) : undefined;
       return submission ? projectSteeringSubmission(base, submission, queue) : base;
     }
-    case 'conversation.request.created': {
+    case 'conversation.request.created':
+    case 'conversation.request.changed': {
       if (suppressRequestAuthority) return base;
       const requestId = stringValue(payload.requestId);
       const requestKind = stringValue(payload.requestKind) ?? 'approval';
@@ -1652,6 +1653,11 @@ function pendingRequestFromEvent(value: unknown, requestId: string): NativePendi
   if (value.expiresAt !== null && typeof value.expiresAt !== 'string') return null;
   if (value.resolvedAt !== null && typeof value.resolvedAt !== 'string') return null;
   if (value.autoResolutionState !== undefined && value.autoResolutionState !== 'none' && value.autoResolutionState !== 'scheduled' && value.autoResolutionState !== 'snoozed') return null;
+  if (value.fileApproval !== undefined) {
+    if (!isRecord(value.fileApproval)) return null;
+    if (!['auditable', 'outside_project', 'provider_root_scope', 'unavailable'].includes(String(value.fileApproval.status))) return null;
+    if (!Array.isArray(value.fileApproval.paths) || !value.fileApproval.paths.every((path) => typeof path === 'string' && Boolean(path.trim()))) return null;
+  }
   return value as unknown as NativePendingRequest;
 }
 

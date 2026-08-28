@@ -127,6 +127,26 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
   let sessionMetricsChanged = false;
   let createdPlanImplementationRequest: ReturnType<ConversationPlanActionRepository['getById']> | null = null;
 
+  function broadcastLinkedFileApprovalChanges(providerItemId: string, providerTurnId: string): void {
+    if (!conversation) return;
+    const linkedRequests = options.requests.listPendingByConversation(conversation.id).filter((request) => request.requestKind === 'file' && parseJsonRecord(request.payloadJson).itemId === providerItemId);
+    if (linkedRequests.length === 0) return;
+    const approvalContext = contexts.get(conversation.id) ?? contextFromConversation(conversation);
+    for (const request of linkedRequests) {
+      options.broadcast('conversation.request.changed', {
+        conversationId: conversation.id,
+        requestId: request.id,
+        requestKind: request.requestKind,
+        providerTurnId,
+        request: nativePendingRequestProjection(request, {
+          conversation,
+          projectRoot: approvalContext.projectLocalPath,
+          providerItems: options.providerItems,
+        }),
+      });
+    }
+  }
+
   if (event.method === 'thread/goal/updated' && conversation && threadId) {
     const goal = await options.manager.readThreadGoal({ threadId });
     if (goal) projectGoal(conversation.id, goal, typeof params.turnId === 'string' ? params.turnId : null, event.receivedAt);
@@ -534,6 +554,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
         phase: 'pre',
         timestamp: event.receivedAt,
       });
+      broadcastLinkedFileApprovalChanges(providerItemId, providerTurnId);
     }
     projectProcessItem({
       conversationId: conversation.id,
@@ -591,6 +612,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       phase: 'pre',
       timestamp: event.receivedAt,
     });
+    broadcastLinkedFileApprovalChanges(providerItemId, providerTurnId);
     broadcast = {
       type: 'conversation.item.updated',
       payload: {
@@ -915,6 +937,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
         phase: 'post',
         timestamp: event.receivedAt,
       });
+      broadcastLinkedFileApprovalChanges(providerItemId, providerTurnId);
     }
     if (item.phase === 'final_answer') runStates.set(conversation.id, { type: 'active', turnId: providerTurnId, phase: 'final_answer' });
     const itemResources = syncItemResources(conversation, turn, item, presentedItemPayload, item.textContent, event.receivedAt);
@@ -1329,7 +1352,11 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
               requestId: request.id,
               requestKind,
               providerTurnId,
-              request: nativePendingRequestProjection(request),
+              request: nativePendingRequestProjection(request, {
+                conversation,
+                projectRoot: (contexts.get(conversation.id) ?? contextFromConversation(conversation)).projectLocalPath,
+                providerItems: options.providerItems,
+              }),
               notificationEligible: !goals.get(conversation.id),
             },
           };

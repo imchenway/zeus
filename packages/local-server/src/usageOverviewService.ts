@@ -43,7 +43,7 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
         return {
           providerId,
           sourceId,
-          name: isCodex ? 'Codex' : (connectionName ?? '已删除供应源'),
+          name: isCodex ? 'Codex' : (connectionName ?? sourceId),
           kind: isCodex ? 'subscription' : 'api',
           deleted: !isCodex && !connectionName,
           cacheUsageAvailable: isCodex || connection?.templateId === 'deepseek' || rows.some((row) => row.usage.cachedInputTokens > 0 || row.usage.cacheWriteInputTokens > 0),
