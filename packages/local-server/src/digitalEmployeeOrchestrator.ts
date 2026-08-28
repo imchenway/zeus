@@ -452,7 +452,13 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
     }
 
     const permissionMode = execution.source === 'exploration' || (!allowCodeChanges && !allowTests) ? 'read-only' : snapshot.permissionMode;
-    const supplementalInfo = buildEmployeeSupplementalInfo(execution, snapshot, { allowCodeChanges, allowTests });
+    const reworkReason = typeof execution.deliveryState.reason === 'string' ? execution.deliveryState.reason.trim() : '';
+    const supplementalInfo = [
+      buildEmployeeSupplementalInfo(execution, snapshot, { allowCodeChanges, allowTests }),
+      reworkReason ? `## 用户要求完善的内容\n\n${reworkReason}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n\n');
     let taskStage: ZeusTaskStageRecord | null = null;
     if (execution.executionMode === 'staged') {
       if (!execution.currentStageId || !execution.workflowId) throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_STAGE_MISSING', '阶段化工作执行缺少当前阶段身份。', true);
