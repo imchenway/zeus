@@ -22,6 +22,7 @@ import type {
 } from '../src/renderer/session/sessionTypes.js';
 import { SafeMarkdown, ThreadItemView } from '../src/renderer/session/ThreadItemView.js';
 import { ConversationTranscript } from '../src/renderer/session/ConversationTranscript.js';
+import { BrowserWorkspace } from '../src/renderer/session/BrowserWorkspace.js';
 import { ConversationComposer } from '../src/renderer/session/ConversationComposer.js';
 import { PlanSummary } from '../src/renderer/session/PlanSummary.js';
 import { RuntimeDetails } from '../src/renderer/session/RuntimeDetails.js';
@@ -1226,11 +1227,11 @@ function MotionPreview(props: { dark?: boolean }) {
         <section className="qa-motion-activity-flow">
           <header>
             <div>
-              <h3>活动行连续更新</h3>
-              <small>同一思考状态换条目、移动到底部时保留节点与动效</small>
+              <h3>当前摘要固定在底部</h3>
+              <small>Provider 摘要无论原始到达位置如何，都只保留最新一条并显示在全部活动之后</small>
             </div>
             <button type="button" onClick={() => setFlowLatest((value) => !value)}>
-              {flowLatest ? '恢复中间位置' : '推进到底部'}
+              {flowLatest ? '恢复前一条摘要' : '模拟新的末尾摘要'}
             </button>
           </header>
           <div className="ai-workspace" data-testid="motion-active-flow">
@@ -1387,13 +1388,28 @@ function ExecutionPhasePreview() {
   );
 }
 
+function BrowserNavigationFailurePreview() {
+  if (!window.zeus?.getBrowserSnapshot || !window.zeus.openBrowserTab || !window.zeus.runBrowserCommand || !window.zeus.onBrowserEvent) return null;
+  return (
+    <section className="qa-motion-theme session-codex-parity-v1 theme-light" data-testid="browser-navigation-failure-preview">
+      <header>
+        <strong>内置浏览器页面级失败</strong>
+        <small>输入无法连接的本机地址后，只保留 Chromium 失败页，不显示 Zeus 全局错误弹窗与遮罩。</small>
+      </header>
+      <div className="ai-workspace" style={{ blockSize: 620 }}>
+        <BrowserWorkspace conversationId="qa-browser-navigation-failure" language="zh-CN" onClose={() => undefined} onToggleExpanded={() => undefined} onResetSize={() => undefined} onStageComments={() => undefined} />
+      </div>
+    </section>
+  );
+}
+
 function InterruptedProcessPreview() {
   const [processLoadCount, setProcessLoadCount] = useState(0);
   return (
     <section className="qa-motion-theme session-codex-parity-v1 theme-light" data-testid="interrupted-process-preview">
       <header>
         <strong>重启后最后一轮中断过程</strong>
-        <small>编排已收口为 interrupted，但思考没有正常结束，因此首次打开保持展开且自动读取详情。</small>
+        <small>编排已收口为 interrupted，过程首次打开仍保持展开并自动读取详情；执行期摘要不再作为历史正文保留。</small>
       </header>
       <output data-testid="interrupted-process-load-count">处理过程读取 {processLoadCount} 次</output>
       <div className="qa-motion-transcript ai-workspace" data-testid="interrupted-process-transcript">
@@ -1647,6 +1663,7 @@ function MotionApp() {
       <MotionPreview />
       <MotionPreview dark />
       <ExecutionPhasePreview />
+      <BrowserNavigationFailurePreview />
       <InterruptedProcessPreview />
       <SendScrollPreview />
       <DeliveryFailurePreview />

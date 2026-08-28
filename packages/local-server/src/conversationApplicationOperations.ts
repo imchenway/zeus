@@ -139,6 +139,7 @@ export interface NativeTaskConversationStartPlan {
   effort?: string;
   serviceTier?: string | null;
   serviceTierPresent?: boolean;
+  requestedServiceTier?: string | null;
   permissionMode: ConversationPermissionMode;
   workMode?: ConversationCollaborationMode;
   environmentId?: string;
@@ -933,6 +934,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           modelSourceId: effectiveModelSourceId,
           ...(selectedEffort ? { effort: selectedEffort } : {}),
           ...(requestedServiceTier.present ? { serviceTier: selectedServiceTier ?? null } : {}),
+          ...(requestedServiceTier.present ? { requestedServiceTier: requestedServiceTier.value } : {}),
           ...(permissionMode ? { permissionMode } : {}),
           ...(collaborationMode ? { collaborationMode } : {}),
           idempotencyKey,
@@ -960,6 +962,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             modelSourceId: effectiveModelSourceId,
             ...(selectedEffort ? { effort: selectedEffort } : {}),
             ...(requestedServiceTier.present ? { serviceTier: selectedServiceTier ?? null } : {}),
+            ...(requestedServiceTier.present ? { requestedServiceTier: requestedServiceTier.value } : {}),
             allowCodeChanges: (permissionMode ?? conversation.permissionMode) !== 'read-only',
             allowTests: (permissionMode ?? conversation.permissionMode) !== 'read-only',
             allowGitCommit: false,
@@ -985,6 +988,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           modelSourceId: effectiveModelSourceId,
           ...(selectedEffort ? { effort: selectedEffort } : {}),
           ...(requestedServiceTier.present ? { serviceTier: selectedServiceTier ?? null } : {}),
+          ...(requestedServiceTier.present ? { requestedServiceTier: requestedServiceTier.value } : {}),
           permissionMode: permissionMode ?? conversation.permissionMode,
           collaborationMode: collaborationMode ?? conversation.collaborationMode,
           idempotencyKey,
@@ -1008,6 +1012,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         ...(selectedModel ? { modelSourceId: selectedModelSourceId } : {}),
         ...(selectedEffort ? { effort: selectedEffort } : {}),
         ...(requestedServiceTier.present ? { serviceTier: selectedServiceTier ?? null } : {}),
+        ...(requestedServiceTier.present ? { requestedServiceTier: requestedServiceTier.value } : {}),
         ...(permissionMode ? { permissionMode } : {}),
         ...(collaborationMode ? { collaborationMode } : {}),
         idempotencyKey,
@@ -1031,6 +1036,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           ...(selectedModel ? { model: selectedModel } : {}),
           ...(selectedEffort ? { effort: selectedEffort } : {}),
           ...(requestedServiceTier.present ? { serviceTier: selectedServiceTier ?? null } : {}),
+          ...(requestedServiceTier.present ? { requestedServiceTier: requestedServiceTier.value } : {}),
           ...(permissionMode ? { permissionMode } : {}),
           ...(collaborationMode ? { collaborationMode } : {}),
         }),
@@ -1454,6 +1460,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       modelSourceId: selectedModel.sourceId ?? null,
       ...(effectiveEffort ? { effort: effectiveEffort } : {}),
       ...(requestedServiceTier.present ? { serviceTier } : {}),
+      ...(requestedServiceTier.present ? { requestedServiceTier: requestedServiceTier.value } : {}),
       permissionMode,
       collaborationMode,
       idempotencyKey,
@@ -1691,6 +1698,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       modelSourceId: plan.model.sourceId,
       ...(plan.effort ? { effort: plan.effort } : {}),
       ...(plan.serviceTierPresent ? { serviceTier: plan.serviceTier ?? null } : {}),
+      ...(plan.serviceTierPresent ? { requestedServiceTier: plan.requestedServiceTier ?? null } : {}),
       allowCodeChanges: plan.allowCodeChanges,
       allowTests: plan.allowTests,
       allowGitCommit: plan.allowGitCommit,
@@ -1983,6 +1991,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             ...(selectedEffort ? { effort: selectedEffort } : {}),
             serviceTier,
             serviceTierPresent: requestedServiceTier.present,
+            ...(requestedServiceTier.present ? { requestedServiceTier: requestedServiceTier.value } : {}),
             permissionMode,
             workMode,
             ...(taskEnvironment
@@ -2076,6 +2085,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             ...(selectedEffort ? { effort: selectedEffort } : {}),
             serviceTier,
             serviceTierPresent: requestedServiceTier.present,
+            ...(requestedServiceTier.present ? { requestedServiceTier: requestedServiceTier.value } : {}),
             permissionMode,
             workMode: 'default',
             environmentId: inheritedEnvironment.environment.id,
@@ -2180,6 +2190,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           commitMessage: conflictCommitMessage,
         });
         const selectedAgentKind = modelConversation.agentKind;
+        const serviceTierPlan = selectedAgentKind === 'codex' ? await resolveProjectModelServiceTierPlan(project, { sourceId: modelConversation.modelSourceId, modelId }) : null;
         const skill = await resolveWorkflowSkill(body.skillId, project.localPath);
         if (selectedAgentKind === 'codex') await assertCodexAccountReady(modelConversation.modelSourceId, modelId);
         nativeOperation = await startNativeTaskConversationFromPlan({
@@ -2194,7 +2205,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           prompt,
           model: { sourceId: modelConversation.modelSourceId, modelId, displayName: null },
           ...(settings?.effort ? { effort: settings.effort } : {}),
-          ...(settings && Object.prototype.hasOwnProperty.call(settings, 'serviceTier') ? { serviceTier: settings.serviceTier, serviceTierPresent: true } : {}),
+          ...(serviceTierPlan ?? {}),
           permissionMode,
           workMode: 'default',
           workspaceId: conflictWorkspace.id,
@@ -2329,6 +2340,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           ...(selectedEffort ? { effort: selectedEffort } : {}),
           serviceTier,
           serviceTierPresent: requestedServiceTier.present,
+          ...(requestedServiceTier.present ? { requestedServiceTier: requestedServiceTier.value } : {}),
           permissionMode,
           workMode: collaborationMode,
           ...(inheritedEnvironment
@@ -2915,6 +2927,23 @@ export function createConversationApplicationOperations(dependencies: Conversati
     return firstSupported;
   }
 
+  async function resolveProjectModelServiceTierPlan(project: ZeusProjectRecord, model: { sourceId: string | null; modelId: string }): Promise<{ serviceTier: string | null; serviceTierPresent: true; requestedServiceTier: string | null }> {
+    const capabilities = await resolveConversationCapabilities(project);
+    const capability =
+      capabilities.models.find((candidate) => (candidate.sourceId ?? null) === model.sourceId && (candidate.id === model.modelId || candidate.model === model.modelId)) ??
+      (model.sourceId === null ? capabilities.models.find((candidate) => candidate.agentKind === 'codex' && (candidate.id === model.modelId || candidate.model === model.modelId)) : undefined);
+    if (!capability) return { serviceTier: null, serviceTierPresent: true, requestedServiceTier: null };
+    const preference = readProjectConfig(project.id).serviceTierPreferences.find(
+      (entry: { modelSourceId: string | null; modelId: string; serviceTier: string }) => entry.modelSourceId === (capability.sourceId ?? null) && entry.modelId === capability.model,
+    );
+    const requestedServiceTier = preference?.serviceTier === 'priority' ? 'priority' : null;
+    return {
+      serviceTier: requestedServiceTier === 'priority' && capability.serviceTiers.some((tier) => tier.id === 'priority') ? 'priority' : null,
+      serviceTierPresent: true,
+      requestedServiceTier,
+    };
+  }
+
   return {
     archiveNativeConversation,
     restoreNativeConversation,
@@ -2972,5 +3001,6 @@ export function createConversationApplicationOperations(dependencies: Conversati
     nativeIdempotencyRequestHash,
     nativeStableOperationId,
     resolveCodexModel,
+    resolveProjectModelServiceTierPlan,
   };
 }

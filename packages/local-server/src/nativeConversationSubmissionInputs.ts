@@ -2,8 +2,33 @@ import type { TaskPushMessageLayout } from '@zeus/shared';
 import type { ZeusConversationSubmissionRecord } from '@zeus/storage';
 import { realpathSync, statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
-import type { NativeConversationSkillInput } from './codexNativeConversationContracts.js';
+import type { ConversationDispatchContext, NativeConversationAttachmentInput, NativeConversationSkillInput } from './codexNativeConversationContracts.js';
 import { coordinatorError, isRecord, parseJsonRecord } from './codexNativeConversationPolicy.js';
+
+export interface PersistedSubmissionInput {
+  text: string;
+  requestedServiceTier?: string | null;
+  serviceTierDowngrade?: {
+    reason: 'model_unsupported' | 'app_server_rejected' | 'provider_reported_standard';
+    actualServiceTier: string | null;
+  };
+  composerDraft?: string;
+  attachments?: NativeConversationAttachmentInput[];
+  browserComments?: Record<string, unknown>[];
+  browserCommentContent?: string;
+  conversationContext?: Record<string, unknown>;
+  context: ConversationDispatchContext;
+  displayText?: string;
+  origin?: 'implement_plan' | 'refine_plan';
+  planItemId?: string;
+  delivery?: 'queue' | 'steer_now';
+  expectedTurnId?: string | null;
+  taskPushLayout?: TaskPushMessageLayout;
+  internalOperation?: boolean;
+  requestAnswerId?: string;
+  goalObjective?: string;
+  skill?: NativeConversationSkillInput;
+}
 
 export function readNativeSubmissionTaskPushLayout(submission: ZeusConversationSubmissionRecord): TaskPushMessageLayout | null {
   const value = parseJsonRecord(submission.inputJson).taskPushLayout;

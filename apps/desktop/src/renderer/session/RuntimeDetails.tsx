@@ -40,7 +40,8 @@ export function RuntimeDetails(props: RuntimeDetailsProps) {
           <RuntimeDetailGroup title={zh ? '会话' : 'Session'} kind="session">
             <RuntimeUsageRow label={zh ? '模型' : 'Model'} value={factValue(props.runtime.model, props.language)} />
             <RuntimeUsageRow label={zh ? '推理强度' : 'Reasoning effort'} value={factValue(props.runtime.effort, props.language)} />
-            <RuntimeUsageRow label={zh ? '服务层级' : 'Service tier'} value={<ServiceTierValue fact={props.runtime.serviceTier} language={props.language} />} />
+            <RuntimeUsageRow label={zh ? 'Provider 实际服务档位' : 'Provider actual service tier'} value={<ServiceTierValue fact={props.runtime.serviceTier} language={props.language} />} />
+            <RuntimeUsageRow label={zh ? '用量计费服务档位' : 'Usage billing service tier'} value={<ServiceTierValue fact={props.runtime.usage.serviceTier} language={props.language} />} />
             <RuntimeUsageRow label={tokenScopeLabel} value={formatTokenFact(props.runtime.usage.totalTokens, props.language)} />
             <RuntimeUsageRow label={zh ? '累计输入 Token' : 'Input tokens'} value={formatTokenFact(props.runtime.usage.inputTokens, props.language)} />
             <RuntimeUsageRow label={zh ? '累计输出 Token' : 'Output tokens'} value={formatTokenFact(props.runtime.usage.outputTokens, props.language)} />

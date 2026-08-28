@@ -270,7 +270,7 @@ try {
     );
     assertProbe(unknownInvocations === 1 && unknownCode === 'ZEUS_SETTINGS_COMMAND_OUTCOME_UNKNOWN' && replayCode === 'ZEUS_COMMAND_DELIVERY_REPLAY_BLOCKED', 'Unknown after write must block automatic resend.');
     assertProbe(secretWrites === 1 && !durableText.includes(secretSentinel) && !unknownAttempt.receipt.evidenceJson.includes(secretSentinel), 'Secret plaintext must not enter durable command evidence.');
-    assertProbe((observed.routeCounts as { total: number }).total === 10, 'Settings command inventory must cover exactly ten routes.');
+    assertProbe((observed.routeCounts as { total: number }).total === 11, 'Settings command inventory must cover exactly eleven routes.');
     assertProbe(observed.quickCheck === 'ok', 'Temporary SQLite quick_check must pass.');
     console.log(JSON.stringify({ status: 'passed', observed }, null, 2));
   } finally {

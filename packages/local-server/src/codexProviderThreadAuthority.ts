@@ -1,6 +1,6 @@
 import type { CodexAppServerManager, CodexResponsesRuntime, CodexThreadRuntimeStatus, CodexThreadSnapshot } from '@zeus/ai-runtime';
 import type { ConversationSubmissionRepository, ZeusConversationWithMessagesRecord } from '@zeus/storage';
-import type { ConversationDispatchContext } from './codexNativeConversationCoordinator.js';
+import type { ConversationDispatchContext } from './codexNativeConversationContracts.js';
 import type { NativeConversationRunState } from './codexNativeConversationContracts.js';
 import { coordinatorError, isRecord, requireString, serializeError } from './codexNativeConversationPolicy.js';
 

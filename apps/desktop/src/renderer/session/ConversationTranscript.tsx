@@ -221,7 +221,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   );
   const lastUserKey = [...items].reverse().find((entry) => `${entry.type}`.toLocaleLowerCase().includes('user'))?.key;
   const answeredRequests = useMemo(() => props.state.pendingRequests.filter(isAnsweredUserInputRequest), [props.state.pendingRequests]);
-  const transcriptRows = useMemo(() => projectTranscriptRows(items, answeredRequests, activeTurnId, props.historyOnly), [activeTurnId, answeredRequests, items, props.historyOnly]);
+  const transcriptRows = useMemo(() => projectTranscriptRows(items, answeredRequests, activeTurnId, props.historyOnly, props.state.terminalTurnIds), [activeTurnId, answeredRequests, items, props.historyOnly, props.state.terminalTurnIds]);
   const turnRows = useMemo(() => projectTranscriptTurnRows(transcriptRows, activeTurnId, props.state.terminalTurnIds), [activeTurnId, props.state.terminalTurnIds, transcriptRows]);
   const defaultExpandedRowKeys = useMemo(() => defaultExpandedTurnProcessKeys(turnRows, props.state.turnsByProviderId, props.state.terminalTurnIds), [props.state.terminalTurnIds, props.state.turnsByProviderId, turnRows]);
   const activeProcessExpansionKey = useMemo(() => {
@@ -1314,9 +1314,17 @@ export function isFinalAnswerItem(item: NativeSessionItemBuffer): boolean {
   return itemRole(item) === 'assistant' && (providerPhase === 'final_answer' || providerPhase === 'finalAnswer');
 }
 
-export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[], answeredRequests: readonly NativePendingRequest[] = [], activeTurnId: string | null = null, historyOnly = false): TranscriptRow[] {
+export function projectTranscriptRows(
+  items: readonly NativeSessionItemBuffer[],
+  answeredRequests: readonly NativePendingRequest[] = [],
+  activeTurnId: string | null = null,
+  historyOnly = false,
+  terminalTurnIds: NativeSessionState['terminalTurnIds'] = {},
+): TranscriptRow[] {
   const rows: TranscriptRow[] = [];
-  const effectiveActiveTurnId = historyOnly ? null : activeTurnId && items.some((item) => item.turnId === activeTurnId) ? activeTurnId : latestLiveTurnId(items);
+  const candidateActiveTurnId = historyOnly ? null : activeTurnId && items.some((item) => item.turnId === activeTurnId) ? activeTurnId : latestLiveTurnId(items);
+  // Provider 可能在终态到达后仍留下一条 in_progress reasoning；终态表优先，不能把旧摘要重新判成当前执行。
+  const effectiveActiveTurnId = candidateActiveTurnId && !terminalTurnIds[candidateActiveTurnId] ? candidateActiveTurnId : null;
   const currentActivityItemKey = latestCurrentActivityItemKey(items, effectiveActiveTurnId);
   const timeline: Array<{ kind: 'item'; item: NativeSessionItemBuffer } | { kind: 'answered_request'; request: NativePendingRequest }> = items.map((item) => ({ kind: 'item', item }));
   for (const request of [...answeredRequests].sort((left, right) => (left.resolvedAt ?? left.createdAt).localeCompare(right.resolvedAt ?? right.createdAt))) {
@@ -1344,13 +1352,8 @@ export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[],
   });
 
   const activitiesByStage = new Map<string, NativeSessionItemBuffer[]>();
-  const latestReasoningIndexByStage = new Map<string, number>();
-  const latestStageIdentityByTurn = new Map<string, string>();
   timeline.forEach((entry, index) => {
     const stageIdentity = stageIdentityByTimelineIndex.get(index);
-    const turnId = entry.kind === 'item' ? entry.item.turnId : entry.request.turnId;
-    if (stageIdentity && turnId) latestStageIdentityByTurn.set(turnId, stageIdentity);
-    if (entry.kind === 'item' && stageIdentity && normalizeItemType(entry.item.type) === 'reasoning') latestReasoningIndexByStage.set(stageIdentity, index);
     if (entry.kind !== 'item' || isSubagentCoordinationItem(entry.item) || !isOperationalActivityItem(entry.item)) return;
     const activityStageIdentity = stageIdentity ?? `${entry.item.turnId}\u00000`;
     const activities = activitiesByStage.get(activityStageIdentity) ?? [];
@@ -1358,6 +1361,10 @@ export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[],
     activitiesByStage.set(activityStageIdentity, activities);
   });
   const emittedActivityStages = new Set<string>();
+  const activeReasoningItem =
+    effectiveActiveTurnId && !items.some((item) => item.turnId === effectiveActiveTurnId && isFinalAnswerItem(item))
+      ? [...items].reverse().find((item) => item.turnId === effectiveActiveTurnId && normalizeItemType(item.type) === 'reasoning')
+      : undefined;
 
   for (let index = 0; index < timeline.length; index += 1) {
     const entry = timeline[index]!;
@@ -1368,10 +1375,9 @@ export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[],
       // 多智能体协调事件统一进入右侧智能体面板，不在主会话重复暴露协议载荷。
       if (!isSubagentCoordinationItem(item)) {
         const stageIdentity = stageIdentityByTimelineIndex.get(index) ?? `${item.turnId}\u00000`;
-        // 运行中最后阶段维持原有“只显示最新思考摘要”语义；已经结束的阶段和历史轮次则把完整过程保留在各自折叠组中。
-        if (normalizeItemType(item.type) === 'reasoning' && item.turnId === effectiveActiveTurnId && latestStageIdentityByTurn.get(item.turnId) === stageIdentity && latestReasoningIndexByStage.get(stageIdentity) !== index) {
-          continue;
-        }
+        // Reasoning 只表达活动轮次的当前状态，不是历史正文。当前轮只保留最新一条，
+        // 并在完成普通时间线投影后固定放到该轮最底部；最终回答到达或轮次结束后全部隐藏。
+        if (normalizeItemType(item.type) === 'reasoning') continue;
         if (!isOperationalActivityItem(item)) {
           rows.push({ kind: 'item', key: transcriptItemRenderKey(item), item });
         } else {
@@ -1389,6 +1395,12 @@ export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[],
         }
       }
     }
+  }
+  if (activeReasoningItem) {
+    const reasoningRow: TranscriptRow = { kind: 'item', key: transcriptItemRenderKey(activeReasoningItem), item: activeReasoningItem };
+    let lastActiveTurnRowIndex = rows.length - 1;
+    while (lastActiveTurnRowIndex >= 0 && transcriptRowTurnId(rows[lastActiveTurnRowIndex]!) !== activeReasoningItem.turnId) lastActiveTurnRowIndex -= 1;
+    rows.splice(lastActiveTurnRowIndex < 0 ? rows.length : lastActiveTurnRowIndex + 1, 0, reasoningRow);
   }
   return rows;
 }
@@ -1445,9 +1457,9 @@ export function isSubagentCoordinationItem(item: Pick<NativeSessionItemBuffer, '
 }
 
 function transcriptItemRenderKey(item: NativeSessionItemBuffer): string {
-  // 同一轮可以有多条思考摘要；每条都必须保留独立且稳定的 React 身份，
-  // 否则完成态折叠时会因重复 key 遗留活动态 DOM，形成看似重复的处理过程。
-  if (normalizeItemType(item.type) === 'reasoning') return `reasoning-summary:${encodeURIComponent(item.turnId)}:${encodeURIComponent(item.itemId)}`;
+  // 活动轮次只投影一条当前摘要；Provider 换 item 时仍沿用轮次级 DOM 身份，
+  // 让文字原位更新并固定在过程底部，不因新 item 被卸载后重新跳位。
+  if (normalizeItemType(item.type) === 'reasoning') return `reasoning-summary:${encodeURIComponent(item.turnId)}`;
   const clientUserMessageId = itemRole(item) === 'user' ? (item.clientUserMessageId ?? item.durableClientUserMessageId) : null;
   // 用户消息的可见身份来自客户端消息 id；Provider 技术条目接管时不能替换整个消息节点。
   return clientUserMessageId ? `user-message:${encodeURIComponent(clientUserMessageId)}` : item.key;

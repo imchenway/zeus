@@ -577,12 +577,11 @@ export class BrowserHost implements BrowserAutomationPort {
     this.emitSnapshot(input.conversationId);
     if (url !== 'about:blank') {
       // 标签和浏览器工作面先进入可交互状态，网页继续在 WebContents 内按正常导航生命周期加载。
-      void view.webContents.loadURL(url).catch((error) => {
+      void loadUserFacingBrowserUrl(view.webContents, url).then(() => {
         if (this.tabs.get(id) !== tab || view.webContents.isDestroyed()) return;
         tab.snapshot = { ...tab.snapshot, loading: false, updatedAt: this.now() };
         this.schedulePersist();
         this.emitSnapshot(input.conversationId);
-        this.emitError(tab, error);
       });
     }
     return this.snapshotFor(input.conversationId);
@@ -714,7 +713,7 @@ export class BrowserHost implements BrowserAutomationPort {
       return { action: 'deny' };
     });
     if (loadSnapshotUrl && tab.snapshot.url && tab.snapshot.url !== 'about:blank') {
-      void view.webContents.loadURL(tab.snapshot.url).catch((error) => this.emitError(tab, error));
+      void loadUserFacingBrowserUrl(view.webContents, tab.snapshot.url);
     }
     return view;
   }
@@ -728,7 +727,7 @@ export class BrowserHost implements BrowserAutomationPort {
     if (!command || typeof command !== 'object' || typeof command.action !== 'string') throw new TypeError('Browser command is invalid.');
     switch (command.action) {
       case 'navigate':
-        await view.webContents.loadURL(normalizeBrowserUrl(command.url));
+        await loadUserFacingBrowserUrl(view.webContents, normalizeBrowserUrl(command.url));
         break;
       case 'back':
         if (view.webContents.navigationHistory.canGoBack()) view.webContents.navigationHistory.goBack();
@@ -1406,6 +1405,18 @@ export class BrowserHost implements BrowserAutomationPort {
 
 export function createBrowserHost(options: CreateBrowserHostOptions): BrowserHost {
   return new BrowserHost(options);
+}
+
+/**
+ * 用户主动打开的网页由 Chromium 自己呈现网络、证书和协议失败页。
+ * `loadURL` 对同一次失败还会拒绝 Promise；这里消费该拒绝，避免把页面级错误重复提升为 Zeus 全局错误弹窗。
+ */
+async function loadUserFacingBrowserUrl(webContents: WebContents, url: string): Promise<void> {
+  try {
+    await webContents.loadURL(url);
+  } catch {
+    // 浏览器页面已经展示可诊断的失败状态，Zeus 不再叠加模态遮罩。
+  }
 }
 
 async function syncDirectory(path: string): Promise<void> {

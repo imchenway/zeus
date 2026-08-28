@@ -105,6 +105,7 @@ async function renderWithClient(
             onLoadProject={(projectId) => client.projects.loadProject(projectId)}
             onLoadProjectConfig={(projectId) => client.projects.loadProjectConfig(projectId)}
             onSaveProjectConfig={(projectId, input) => client.projects.saveProjectConfig(projectId, input)}
+            onSaveProjectModelServiceTierPreference={(projectId, input) => client.projects.saveProjectModelServiceTierPreference(projectId, input)}
             onLoadProjectDatabaseSecret={(projectId) => client.projects.loadProjectDatabaseSecret(projectId)}
             onSaveProjectDatabasePassword={(projectId, password) => client.projects.saveProjectDatabasePassword(projectId, password)}
             onClearProjectDatabasePassword={(projectId) => client.projects.clearProjectDatabasePassword(projectId)}

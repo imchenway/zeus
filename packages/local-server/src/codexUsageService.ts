@@ -247,6 +247,7 @@ export function createCodexUsageService(options: CreateCodexUsageServiceOptions)
     const snapshot: NativeTokenUsageSnapshot = {
       generationId: input.generationId,
       sequence: input.sequence,
+      serviceTier: input.serviceTier ?? null,
       total: input.total,
       last: input.last,
       modelContextWindow: input.modelContextWindow,

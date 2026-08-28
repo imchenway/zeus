@@ -1025,6 +1025,7 @@ export function normalizeProjectConfig(config?: Partial<ProjectConfig>, projectI
   if (!resolvedProjectId) return undefined;
   return {
     projectId: resolvedProjectId,
+    serviceTierPreferences: config?.serviceTierPreferences ?? [],
     defaultModel: config?.defaultModel ?? null,
     defaultWorkMode: config?.defaultWorkMode ?? 'plan',
     defaultTaskPrompt: config?.defaultTaskPrompt ?? '',

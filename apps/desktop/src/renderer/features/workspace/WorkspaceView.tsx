@@ -1,5 +1,4 @@
 import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
-import { useMemo } from 'react';
 import { openAutomaticUpdateIndicatorInMain } from '../../appShellBridge.js';
 import { ProjectGitWorkbench } from '../../git/ProjectGitWorkbench.js';
 import { conversationDisplayTitle } from '../../session/conversationDisplayTitle.js';
@@ -13,7 +12,6 @@ import { BrowserSettingsPane } from '../../settings/BrowserSettingsPane.js';
 import { CodexRemoteControlSettings } from '../../settings/CodexRemoteControlSettings.js';
 import { ModelConnectionsSettingsPane } from '../../settings/ModelConnectionsSettingsPane.js';
 import { ZentaoSettingsPane } from '../../settings/ZentaoSettingsPane.js';
-import { ProjectModelsSettings } from '../../settings/ProjectModelsSettings.js';
 import { TaskManagementStatusEditor } from '../../settings/TaskManagementStatusEditor.js';
 import { CodexUsageSettingsPane } from '../../settings/CodexUsageSettingsPane.js';
 import { MemorySettingsPane } from '../memory/MemorySettingsPane.js';
@@ -28,13 +26,7 @@ import { taskAgentRunStatusLabels } from '../../task/TaskRunStatusChip.js';
 import { WorkspaceDrawer } from '../../ui/WorkspaceDrawer.js';
 import { CommandCenterPanel } from '../../CommandCenterPanel.js';
 import { ProjectSourceWorkspace } from '../../code/ProjectSourceWorkspace.js';
-import { SyntaxHighlightedLine, useSyntaxHighlightedSegments } from '../../code/SyntaxHighlightedCode.js';
-import type { GitDiffHunk } from '../../apiClient.js';
 import {
-  formatProjectDatabase,
-  formatProjectDatabaseHelp,
-  formatProjectDependencies,
-  formatProjectLanguage,
   formatRuntimeAdapterDetectionFacts,
   formatRuntimeDefaultArgs,
   formatRuntimeTerminalEnv,
@@ -46,15 +38,7 @@ import {
   ProjectWorkspaceModeToolbar,
   SidebarNav,
 } from './WorkspaceChrome.js';
-import {
-  buildGitDiffDecisionSummary,
-  buildGitHunkReviewKey,
-  formatGitConfirmationExpiry,
-  formatGitConfirmationStatus,
-  formatGitOperationLabel,
-  formatGraphConversationStatus,
-  GENERIC_SHELL_CRITICAL_CONFIRMATION_PHRASE,
-} from './workspaceFormatters.js';
+import { formatGraphConversationStatus, GENERIC_SHELL_CRITICAL_CONFIRMATION_PHRASE } from './workspaceFormatters.js';
 import { handleInlineRailKeyboardNavigation, RuntimeXtermPane } from '../graph/GraphCanvas.js';
 import {
   browserNativeConversationStartStorage,
@@ -62,7 +46,6 @@ import {
   executionHostSupportsConversationSource,
   formatArchivedConversationDate,
   formatConfiguredTaskManagementStatus,
-  formatProjectScanStatus,
   formatReleaseArtifactKind,
   formatReleaseAutoUpdateLabel,
   formatReleasePresenceStatus,
@@ -83,7 +66,6 @@ import {
   taskHierarchyDepth,
   TaskTableLayoutDecisionDialog,
   TaskTerminalCleanupDialog,
-  workModeValues,
 } from './workspaceSupport.js';
 import type { WorkspaceQueryState } from './useWorkspaceQueryState.js';
 import type { WorkspaceDomainActions } from './useWorkspaceDomainActions.js';
@@ -94,8 +76,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     actionState,
     activeGraphView,
     activeNavTarget,
-    activeProjectGraphSummary,
-    activeProjectGraphSummaryBoundary,
     activeProjectId,
     activeProjectSection,
     activeTaskManagementStatusConfig,
@@ -116,7 +96,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     codexLegacyImportLoading,
     codexLegacyImportSnapshot,
     codexUsageRevision,
-    confirmingGitOperationBusy,
     conversationDrawer,
     creatingGitConfirmationBusy,
     creatingProjectBusy,
@@ -124,24 +103,13 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     currentProjectTasks,
     currentTaskConversationChoices,
     dataPortabilityStatusCopy,
-    executingGitOperationBusy,
     expandedTaskIds,
     externalApiKeyInput,
     genericShellCriticalConfirmed,
     genericShellRisk,
-    gitBaseRef,
     gitBranchName,
-    gitCommitMessage,
-    gitConfirmation,
-    gitDiff,
     gitDiffCopy,
-    gitHunkDecisions,
-    gitLabel,
-    gitOperationStatus,
     gitRemote,
-    gitRollbackRef,
-    gitStashRef,
-    gitSwitchBranchName,
     gitTargetRef,
     graphAnswer,
     graphConversations,
@@ -155,28 +123,17 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     nativeConversationStatusSyncState,
     nativeConversationTaskRunStatuses,
     orderedProjects,
-    patchExportStatus,
-    patchProjectConfigForm,
-    patchProjectEditForm,
     pendingProjectDeleteId,
     projectCodeWorkspaceMode,
-    projectConfig,
-    projectConfigCopy,
-    projectConfigForm,
     projectCreateDialogOpen,
     projectCreateError,
     projectCreateForm,
     projectCreationReady,
-    projectDatabaseSecret,
     projectDetail,
     projectDirectoryChoosing,
-    projectEditCopy,
-    projectEditForm,
     projectPanel,
-    projectSharedWritablePaths,
     projectSidebarResizing,
     projectSourceWorkspaceRef,
-    projectWorkspaceConfigStatus,
     projectedRuntimeLogOutput,
     props,
     releaseStatus,
@@ -220,19 +177,12 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     setAppShellSettings,
     setConversationDrawer,
     setExternalApiKeyInput,
-    setGitBaseRef,
     setGitBranchName,
-    setGitCommitMessage,
     setGitRemote,
-    setGitRollbackRef,
-    setGitStashRef,
-    setGitSwitchBranchName,
-    setGitTargetRef,
     setPendingProjectDeleteId,
     setProjectCreateError,
     setProjectCreateForm,
     setProjectPanel,
-    setProjectSharedWritablePaths,
     setRuntimeConfirmation,
     setRuntimeConfirmationCommand,
     setRuntimeConfirmationStatus,
@@ -289,6 +239,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     taskModelPushForm,
     taskModelPushRefreshingRepositoryId,
     taskModelPushRuntimeCapabilities,
+    taskModelPushServiceTierPreferences,
     taskModelPushStatus,
     taskModelPushTaskId,
     taskPageViewMode,
@@ -336,8 +287,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     effectiveTaskStatusSettingsTargetId,
     importTaskModelPushCodexConfig,
     loadGraphConversationDetail,
-    loadProjectConfig,
-    loadProjectWorkspaceConfig,
     materializeTaskCreateResources,
     openProjectCreateDialog,
     openTaskConflictAiConversation,
@@ -358,9 +307,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     restoreProject,
     restoreTaskConversation,
     revealProjectInFinder,
-    saveProjectConfig,
-    saveProjectWorkspaceConfig,
-    scanActiveProjectGraph,
     selectNativeConversation,
     selectProjectCodeWorkspaceMode,
     skipTaskModelPushCodexConfigImport,
@@ -371,7 +317,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     taskStatusSettingsConfig,
     taskStatusSettingsUsageCounts,
     taskTableEnumSortOrders,
-    updateProject,
     updateTaskContent,
     updateTaskCreateForm,
     updateTaskCreatePriority,
@@ -394,7 +339,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     clearTelegramBotToken,
     closeTaskDetail,
     confirmAndStartGenericRuntime,
-    confirmGitOperation,
     copyRuntimeLogs,
     createGenericRuntimeConfirmation,
     createGitConfirmation,
@@ -404,8 +348,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     deleteTaskWithRelationshipStrategy,
     discardSourceWorkspaceAndLeave,
     discardTaskTableLayoutAndLeave,
-    executeConfirmedGitOperation,
-    exportGitPatch,
     exportLocalSettings,
     exportRuntimeLogs,
     generateRuntimeSessionSummary,
@@ -431,7 +373,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     refreshCodexLegacyImports,
     refreshRuntimeSessions,
     rejectGenericRuntimeConfirmation,
-    rejectGitOperation,
     renderNativeConversationWorkspace,
     renderProjectCodeMapStage,
     renderTaskDetailPaneContent,
@@ -454,7 +395,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     saveTelegramNotificationSettings,
     saveTelegramSecuritySettings,
     sendRuntimeInput,
-    setGitHunkDecision,
     setRuntimeSessionFavorite,
     startCodexLegacyImport,
     startRuntimeSession,
@@ -648,645 +588,13 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           <section className="workspace-view workspace-view-project-settings" aria-label={codeWorkspaceCopy.projectSettingsAria}>
             <section className="workspace-detail-pane project-detail-pane" aria-label={codeWorkspaceCopy.detailAria}>
               {selectedProject ? (
-                <div className="project-repository-workbench project-settings-workbench">
-                  <section className="project-repository-status-row zeus-object-toolbar" aria-label={codeWorkspaceCopy.repositoryAria}>
-                    <span className="native-folder-icon zeus-avatar-token zeus-object-toolbar-avatar" aria-hidden="true" />
-                    <span className="project-repository-main zeus-object-toolbar-copy">
-                      <strong>{selectedProject.name}</strong>
-                      <span>{selectedProject.localPath}</span>
-                    </span>
-                    <span className="project-state-meta zeus-object-toolbar-status">{codeWorkspaceCopy.stateProjectSettings}</span>
-                  </section>
-
-                  <section className="project-code-primary" aria-label={codeWorkspaceCopy.overviewAria}>
-                    {activeProjectSection === 'project-settings' || !activeGraphView ? (
-                      <section className="project-code-context-rail" aria-label={codeWorkspaceCopy.contextRailAria}>
-                        <section className="code-repository-facts" aria-label={codeWorkspaceCopy.repositoryStatusAria}>
-                          <div className="code-context-rail-heading">
-                            <strong>{codeWorkspaceCopy.repositoryStatusTitle}</strong>
-                            <span>{selectedProject.name}</span>
-                          </div>
-                          <dl>
-                            <div className="code-repository-fact-row">
-                              <dt>{codeWorkspaceCopy.localPath}</dt>
-                              <dd>{selectedProject.localPath}</dd>
-                            </div>
-                            <div className="code-repository-fact-row">
-                              <dt>{codeWorkspaceCopy.scan}</dt>
-                              <dd>{formatProjectScanStatus(selectedProject.scanStatus, codeWorkspaceCopy)}</dd>
-                            </div>
-                            <div className="code-repository-fact-row">
-                              <dt>{codeWorkspaceCopy.git}</dt>
-                              <dd>
-                                {gitLabel}
-                                {changedFiles.length > 0 ? ` · ${changedFiles.length} ${codeWorkspaceCopy.changeUnit}` : ''}
-                              </dd>
-                            </div>
-                            <div className="code-repository-fact-row">
-                              <dt>{codeWorkspaceCopy.graph}</dt>
-                              <dd>
-                                {activeProjectGraphSummary.nodeCount > 0
-                                  ? `${codeWorkspaceCopy.graphCounts(activeProjectGraphSummary.nodeCount, activeProjectGraphSummary.edgeCount)} · ${activeProjectGraphSummaryBoundary}`
-                                  : codeWorkspaceCopy.waitingRealScan}
-                              </dd>
-                            </div>
-                          </dl>
-                        </section>
-
-                        <section className="code-graph-status-strip" aria-label={codeWorkspaceCopy.graphSummaryAria}>
-                          <div className="code-context-rail-heading">
-                            <strong>{codeWorkspaceCopy.graphTitle}</strong>
-                            <span>{activeProjectGraphSummary.nodeCount > 0 ? activeProjectGraphSummaryBoundary : codeWorkspaceCopy.waitingRealScan}</span>
-                          </div>
-                          <p>
-                            {activeProjectGraphSummary.nodeCount > 0
-                              ? `${activeProjectGraphSummaryBoundary} · ${codeWorkspaceCopy.graphCounts(activeProjectGraphSummary.nodeCount, activeProjectGraphSummary.edgeCount)}`
-                              : codeWorkspaceCopy.emptyGraphHelp}
-                          </p>
-                        </section>
-
-                        <div className="code-repository-primary-rail" aria-label={codeWorkspaceCopy.primaryActionsAria}>
-                          {/* 代码库主路径只有三件事：扫描、打开图谱、查看变更；其余项目操作收进次要操作行。 */}
-                          <button
-                            type="button"
-                            onClick={() => {
-                              void scanActiveProjectGraph();
-                            }}
-                            disabled={(!props.onScanProjectGraph && !props.onScanCurrentGraph) || !activeProjectId || scanBusy}
-                            {...controlBusyProps(scanBusy)}
-                          >
-                            {codeWorkspaceCopy.scanProject}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              void handleCodeMapAction();
-                            }}
-                            disabled={(!props.onLoadProjectGraphView && !props.onLoadGraphView && !props.onScanProjectGraph && !props.onScanCurrentGraph) || !activeProjectId || scanBusy}
-                            {...controlBusyProps(scanBusy)}
-                          >
-                            {codeMapActionLabel()}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setProjectPanel('diff');
-                              void loadGitDiff();
-                            }}
-                            disabled={!props.onLoadGitDiff || loadingDiffBusy}
-                            {...controlBusyProps(loadingDiffBusy)}
-                          >
-                            {codeWorkspaceCopy.viewChanges}
-                          </button>
-                        </div>
-
-                        <div className="code-repository-secondary-rail" aria-label={codeWorkspaceCopy.secondaryActionsAria}>
-                          <button type="button" onClick={() => setProjectPanel(projectPanel === 'edit' ? undefined : 'edit')}>
-                            {codeWorkspaceCopy.edit}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setProjectPanel(projectPanel === 'config' ? undefined : 'config');
-                              if (selectedProject.id) {
-                                void loadProjectConfig(selectedProject.id);
-                                void loadProjectWorkspaceConfig(selectedProject.id);
-                              }
-                            }}
-                          >
-                            {codeWorkspaceCopy.configure}
-                          </button>
-                          <button type="button" onClick={() => setProjectPanel(projectPanel === 'archive' ? undefined : 'archive')}>
-                            {codeWorkspaceCopy.moreProjectActions}
-                          </button>
-                        </div>
-                      </section>
-                    ) : null}
-                  </section>
-
-                  <ProjectDigitalEmployeesPanel
-                    projectId={selectedProject.id}
-                    projectName={selectedProject.name}
-                    client={props.commandClient ?? null}
-                    skillClient={props.nativeConversationClient ?? null}
-                    language={appShellSettings.appLanguage}
-                  />
-
-                  {projectPanel ? (
-                    <WorkspaceDrawer
-                      {...projectDrawerVisualProps}
-                      label={projectPanel === 'config' ? projectConfigCopy.formAria : codeWorkspaceCopy.drawerLabel}
-                      backdropLabel={codeWorkspaceCopy.drawerBackdrop}
-                      closeLabel={codeWorkspaceCopy.drawerClose}
-                      className="project-drawer"
-                      portalStyle={workspaceDrawerPortalStyle}
-                      onClose={() => setProjectPanel(undefined)}
-                    >
-                      {projectPanel === 'diff' ? (
-                        <section className="product-drawer-pane git-diff-drawer-workbench" aria-label={gitDiffCopy.drawerAria}>
-                          {/* Git review flat workbench：文件、hunk 与确认参数按连续审查流呈现，不再使用 panel/card 壳层。 */}
-                          <div className="drawer-header-row">
-                            <strong>{gitDiffCopy.title}</strong>
-                            <button type="button" onClick={exportGitPatch} disabled={loadingDiffBusy} {...controlBusyProps(loadingDiffBusy)}>
-                              {gitDiffCopy.exportPatch}
-                            </button>
-                          </div>
-                          <section className="git-worktree-state-row" aria-label={gitDiffCopy.worktreeStateAria}>
-                            <strong>{gitDiffCopy.worktreeStateTitle}</strong>
-                            <span>{snapshot.git.clean === true ? gitDiffCopy.cleanStatus : gitDiffCopy.changedStatus(changedFiles.length)}</span>
-                            <em>{gitDiffCopy.worktreeMeta(snapshot.git.conflictFiles?.length ?? 0, snapshot.git.remoteBranches?.length ?? 0, snapshot.git.recentCommits?.[0]?.shortHash)}</em>
-                          </section>
-                          <section className="git-file-change-list" aria-label={gitDiffCopy.changedFilesAria}>
-                            {changedFiles.length === 0 ? <span>{gitDiffCopy.emptyChangedFiles}</span> : changedFiles.slice(0, 12).map((file) => <code key={file}>{file}</code>)}
-                          </section>
-                          {gitDiff?.fileDiffs.slice(0, 4).map((file) => (
-                            <section className="git-review-workbench git-file-review-workbench" key={`${file.oldPath}-${file.newPath}`} aria-label={gitDiffCopy.fileReviewAria(file.newPath)}>
-                              <div className="git-file-review-heading">
-                                <strong>{gitDiffCopy.fileDiffTitle(file.newPath)}</strong>
-                                <span>
-                                  +{file.addedLines} / -{file.deletedLines}
-                                </span>
-                              </div>
-                              {file.hunks.slice(0, 2).map((hunk) => (
-                                <div className="git-hunk-decision git-hunk-review-row" key={hunk.header}>
-                                  <div className="git-hunk-lines">
-                                    <span className="git-hunk-meta">{hunk.header}</span>
-                                    <CompactGitHunkLines oldPath={file.oldPath} newPath={file.newPath} hunk={hunk} />
-                                    <small>{gitHunkDecisions[buildGitHunkReviewKey(file, hunk)] ?? gitDiffCopy.pendingDecision}</small>
-                                  </div>
-                                  <div className="git-hunk-command-rail" aria-label={gitDiffCopy.hunkActionsAria(hunk.header)}>
-                                    <button type="button" onClick={() => setGitHunkDecision(file, hunk, 'accepted')}>
-                                      {gitDiffCopy.acceptHunk}
-                                    </button>
-                                    <button type="button" onClick={() => setGitHunkDecision(file, hunk, 'rejected')}>
-                                      {gitDiffCopy.rejectHunk}
-                                    </button>
-                                  </div>
-                                </div>
-                              ))}
-                            </section>
-                          ))}
-                          {gitDiff ? <small>{buildGitDiffDecisionSummary(gitDiff, gitHunkDecisions, appShellSettings.appLanguage)}</small> : null}
-                          <section className="git-risk-row-list" aria-label={gitDiffCopy.riskParamsAria}>
-                            <strong>{gitDiffCopy.riskParamsTitle}</strong>
-                            {/* Git 高风险参数必须显式说明影响范围，避免用户把危险 Git 写操作当作普通输入框。 */}
-                            <section className="git-risk-input-row" aria-label={gitDiffCopy.branchNameAria}>
-                              <span className="git-risk-input-copy">
-                                <strong>{gitDiffCopy.branchNameTitle}</strong>
-                                <small>{gitDiffCopy.branchNameHelp}</small>
-                              </span>
-                              <span className="git-risk-input-field">
-                                <input aria-label={gitDiffCopy.branchNameAria} value={gitBranchName} onChange={(event) => setGitBranchName(event.currentTarget.value)} />
-                              </span>
-                            </section>
-                            <section className="git-risk-input-row" aria-label={gitDiffCopy.switchBranchAria}>
-                              <span className="git-risk-input-copy">
-                                <strong>{gitDiffCopy.switchBranchTitle}</strong>
-                                <small>{gitDiffCopy.switchBranchHelp}</small>
-                              </span>
-                              <span className="git-risk-input-field">
-                                <input aria-label={gitDiffCopy.switchBranchAria} value={gitSwitchBranchName} onChange={(event) => setGitSwitchBranchName(event.currentTarget.value)} />
-                              </span>
-                            </section>
-                            <section className="git-risk-input-row" aria-label={gitDiffCopy.baseRefAria}>
-                              <span className="git-risk-input-copy">
-                                <strong>{gitDiffCopy.baseRefTitle}</strong>
-                                <small>{gitDiffCopy.baseRefHelp}</small>
-                              </span>
-                              <span className="git-risk-input-field">
-                                <input aria-label={gitDiffCopy.baseRefAria} value={gitBaseRef} onChange={(event) => setGitBaseRef(event.currentTarget.value)} />
-                              </span>
-                            </section>
-                            <section className="git-risk-input-row" aria-label={gitDiffCopy.stashRefAria}>
-                              <span className="git-risk-input-copy">
-                                <strong>{gitDiffCopy.stashRefTitle}</strong>
-                                <small>{gitDiffCopy.stashRefHelp}</small>
-                              </span>
-                              <span className="git-risk-input-field">
-                                <input aria-label={gitDiffCopy.stashRefAria} value={gitStashRef} onChange={(event) => setGitStashRef(event.currentTarget.value)} />
-                              </span>
-                            </section>
-                            <section className="git-risk-input-row" aria-label={gitDiffCopy.remoteNameAria}>
-                              <span className="git-risk-input-copy">
-                                <strong>{gitDiffCopy.remoteNameTitle}</strong>
-                                <small>{gitDiffCopy.remoteNameHelp}</small>
-                              </span>
-                              <span className="git-risk-input-field">
-                                <input aria-label={gitDiffCopy.remoteNameAria} value={gitRemote} onChange={(event) => setGitRemote(event.currentTarget.value)} />
-                              </span>
-                            </section>
-                            <section className="git-risk-input-row" aria-label={gitDiffCopy.targetRefAria}>
-                              <span className="git-risk-input-copy">
-                                <strong>{gitDiffCopy.targetRefTitle}</strong>
-                                <small>{gitDiffCopy.targetRefHelp}</small>
-                              </span>
-                              <span className="git-risk-input-field">
-                                <input aria-label={gitDiffCopy.targetRefAria} value={gitTargetRef} onChange={(event) => setGitTargetRef(event.currentTarget.value)} />
-                              </span>
-                            </section>
-                            <section className="git-risk-input-row" aria-label={gitDiffCopy.rollbackTargetAria}>
-                              <span className="git-risk-input-copy">
-                                <strong>{gitDiffCopy.rollbackTargetTitle}</strong>
-                                <small>{gitDiffCopy.rollbackTargetHelp}</small>
-                              </span>
-                              <span className="git-risk-input-field">
-                                <input aria-label={gitDiffCopy.rollbackTargetAria} value={gitRollbackRef} onChange={(event) => setGitRollbackRef(event.currentTarget.value)} />
-                              </span>
-                            </section>
-                          </section>
-                          <section className="git-confirmation-risk-list git-confirmation-row-list" aria-label={gitDiffCopy.confirmationAria}>
-                            <section className="git-risk-input-row git-confirmation-message-row" aria-label={gitDiffCopy.commitMessageAria}>
-                              <span className="git-risk-input-copy">
-                                <strong>{gitDiffCopy.commitMessageTitle}</strong>
-                                <small>{gitDiffCopy.commitMessageHelp}</small>
-                              </span>
-                              <span className="git-risk-input-field">
-                                <input aria-label={gitDiffCopy.commitMessageAria} value={gitCommitMessage} onChange={(event) => setGitCommitMessage(event.currentTarget.value)} />
-                              </span>
-                            </section>
-                            <section className="git-confirmation-state-row" aria-label={gitDiffCopy.commitMessageStatusAria}>
-                              <span className="git-confirmation-state-copy">
-                                <strong>{gitDiffCopy.commitMessageStatusTitle}</strong>
-                                <small>{gitDiffCopy.commitMessageStatusHelp}</small>
-                              </span>
-                              <span>{gitDiffCopy.commitMessageStatusText}</span>
-                            </section>
-                            <div className="git-confirmation-command-rail">
-                              <button type="button" onClick={() => createGitConfirmation('stash')} disabled={creatingGitConfirmationBusy} {...controlBusyProps(creatingGitConfirmationBusy)}>
-                                {gitDiffCopy.requestStashConfirmation}
-                              </button>
-                              <button type="button" onClick={() => createGitConfirmation('commit')} disabled={creatingGitConfirmationBusy || !gitCommitMessage.trim()} {...controlBusyProps(creatingGitConfirmationBusy)}>
-                                {gitDiffCopy.requestCommitConfirmation}
-                              </button>
-                            </div>
-                            {gitConfirmation ? (
-                              <section className="git-confirmation-state-row" aria-label={gitDiffCopy.currentConfirmationAria}>
-                                <span className="git-confirmation-state-copy">
-                                  <strong>{gitDiffCopy.currentConfirmationTitle}</strong>
-                                  <small>{formatGitConfirmationStatus(gitConfirmation.status, appShellSettings.appLanguage)}</small>
-                                </span>
-                                <span>{gitConfirmation.confirmationText}</span>
-                              </section>
-                            ) : (
-                              <section className="git-confirmation-state-row" aria-label={gitDiffCopy.patchStatusAria}>
-                                <span className="git-confirmation-state-copy">
-                                  <strong>{gitDiffCopy.patchStatusTitle}</strong>
-                                  <small>{gitDiffCopy.localExport}</small>
-                                </span>
-                                <span>{patchExportStatus}</span>
-                              </section>
-                            )}
-                            {gitConfirmation?.expiresAt ? (
-                              <section className="git-confirmation-state-row" aria-label={gitDiffCopy.confirmationExpiryAria}>
-                                <span className="git-confirmation-state-copy">
-                                  <strong>{gitDiffCopy.confirmationExpiryTitle}</strong>
-                                  <small>{gitDiffCopy.confirmationExpiryHelp}</small>
-                                </span>
-                                <span>{formatGitConfirmationExpiry(gitConfirmation.expiresAt, appShellSettings.appLanguage)}</span>
-                              </section>
-                            ) : null}
-                            {gitConfirmation?.status === 'pending' ? (
-                              <div className="git-confirmation-command-rail">
-                                <button type="button" onClick={confirmGitOperation} disabled={!props.onConfirmGitOperation || confirmingGitOperationBusy} {...controlBusyProps(confirmingGitOperationBusy)}>
-                                  {gitDiffCopy.confirmOperation}
-                                </button>
-                                <button type="button" onClick={rejectGitOperation} disabled={!props.onRejectGitOperation || confirmingGitOperationBusy} {...controlBusyProps(confirmingGitOperationBusy)}>
-                                  {gitDiffCopy.rejectConfirmation}
-                                </button>
-                              </div>
-                            ) : null}
-                            {gitConfirmation?.status === 'pending' ? (
-                              <section className="git-confirmation-state-row" aria-label={gitDiffCopy.rejectImpactAria}>
-                                <span className="git-confirmation-state-copy">
-                                  <strong>{gitDiffCopy.rejectImpactTitle}</strong>
-                                  <small>{gitDiffCopy.safetyBoundary}</small>
-                                </span>
-                                <span>{gitDiffCopy.rejectImpactText}</span>
-                              </section>
-                            ) : null}
-                            {gitConfirmation?.status === 'rejected' ? (
-                              <section className="git-confirmation-rejected-row" aria-label={gitDiffCopy.rejectedAria}>
-                                <span className="git-confirmation-state-copy">
-                                  <strong>{gitDiffCopy.rejectedTitle}</strong>
-                                  <small>{gitDiffCopy.rejectedHelp}</small>
-                                </span>
-                                <span>{gitConfirmation.rejectedReason ?? gitDiffCopy.rejectedFallback}</span>
-                              </section>
-                            ) : null}
-                            {gitConfirmation?.status === 'confirmed' ? (
-                              <section className="git-confirmation-state-row" aria-label={gitDiffCopy.whitelistScopeAria}>
-                                <span className="git-confirmation-state-copy">
-                                  <strong>{gitDiffCopy.executionScopeTitle}</strong>
-                                  <small>{gitDiffCopy.whitelistCommandHelp}</small>
-                                </span>
-                                <span>{gitDiffCopy.whitelistCommandText}</span>
-                              </section>
-                            ) : null}
-                            {gitConfirmation?.status === 'confirmed' ? (
-                              <div className="git-confirmation-command-rail">
-                                <button type="button" onClick={executeConfirmedGitOperation} disabled={!props.onExecuteGitOperation || executingGitOperationBusy} {...controlBusyProps(executingGitOperationBusy)}>
-                                  {gitDiffCopy.executeConfirmed}
-                                  {formatGitOperationLabel(gitConfirmation.operation, appShellSettings.appLanguage)}
-                                </button>
-                              </div>
-                            ) : null}
-                            <section className="git-confirmation-state-row" aria-label={gitDiffCopy.operationStatusAria}>
-                              <span className="git-confirmation-state-copy">
-                                <strong>{gitDiffCopy.operationStatusTitle}</strong>
-                                <small>{gitDiffCopy.localExecutionChain}</small>
-                              </span>
-                              <span>{gitOperationStatus}</span>
-                            </section>
-                          </section>
-                        </section>
-                      ) : null}
-
-                      {projectPanel === 'edit' ? (
-                        <form className="product-drawer-pane project-edit-row-list" aria-label={projectEditCopy.formAria} onSubmit={(event) => updateProject(selectedProject.id, event)}>
-                          {/* 项目编辑属于项目级危险入口，常规字段和删除确认必须分行，避免误点。 */}
-                          <div className="project-edit-identity-row" aria-label={projectEditCopy.currentProjectAria}>
-                            <strong>{projectEditCopy.currentProjectTitle}</strong>
-                            <span>{selectedProject.name}</span>
-                            <em>{selectedProject.localPath}</em>
-                          </div>
-                          {/* 项目编辑字段保持说明列 + 控件列，避免修改入口继续呈现为旧后台表单。 */}
-                          <section className="project-edit-setting-row" aria-label={projectEditCopy.nameAria}>
-                            <span className="project-edit-setting-copy">
-                              <strong>{projectEditCopy.nameTitle}</strong>
-                              <small>{projectEditCopy.nameHelp}</small>
-                            </span>
-                            <span className="project-edit-setting-field">
-                              <input aria-label={projectEditCopy.nameAria} value={projectEditForm.name} onChange={(event) => patchProjectEditForm({ name: event.currentTarget.value })} />
-                            </span>
-                          </section>
-                          <section className="project-edit-setting-row" aria-label={projectEditCopy.pathAria}>
-                            <span className="project-edit-setting-copy">
-                              <strong>{projectEditCopy.pathTitle}</strong>
-                              <small>{projectEditCopy.pathHelp}</small>
-                            </span>
-                            <span className="project-edit-setting-field">
-                              <input aria-label={projectEditCopy.pathAria} value={projectEditForm.localPath} onChange={(event) => patchProjectEditForm({ localPath: event.currentTarget.value })} />
-                            </span>
-                          </section>
-                          <section className="project-edit-setting-row project-edit-textarea-row" aria-label={projectEditCopy.descriptionAria}>
-                            <span className="project-edit-setting-copy">
-                              <strong>{projectEditCopy.descriptionTitle}</strong>
-                              <small>{projectEditCopy.descriptionHelp}</small>
-                            </span>
-                            <span className="project-edit-setting-field">
-                              <textarea aria-label={projectEditCopy.descriptionAria} value={projectEditForm.description} onChange={(event) => patchProjectEditForm({ description: event.currentTarget.value })} />
-                            </span>
-                          </section>
-                          <div className="project-edit-command-rail" aria-label={projectEditCopy.saveAria}>
-                            <button type="submit" disabled={!projectEditForm.name.trim() || creatingProjectBusy} {...controlBusyProps(creatingProjectBusy)}>
-                              {projectEditCopy.save}
-                            </button>
-                          </div>
-                          <section className="project-edit-danger-row" aria-label={projectEditCopy.deleteAria}>
-                            <span className="project-edit-danger-copy">
-                              <strong>{projectEditCopy.deleteTitle}</strong>
-                              <small>{projectEditCopy.deleteHelp}</small>
-                            </span>
-                            <span className="project-edit-danger-rail">
-                              <button type="button" className="danger-action" onClick={() => setPendingProjectDeleteId(selectedProject.id)}>
-                                {projectEditCopy.deleteTitle}
-                              </button>
-                              {pendingProjectDeleteId === selectedProject.id ? (
-                                <button type="button" className="danger-action" onClick={() => deleteProject(selectedProject.id)}>
-                                  {projectEditCopy.confirmDelete}
-                                </button>
-                              ) : null}
-                            </span>
-                          </section>
-                        </form>
-                      ) : null}
-
-                      {projectPanel === 'config' ? (
-                        <form className="product-drawer-pane project-config-row-list" aria-label={projectConfigCopy.formAria} onSubmit={(event) => saveProjectConfig(selectedProject.id, event)}>
-                          {/* 项目配置抽屉必须覆盖完整保存契约，避免隐藏字段只能靠默认值写回。 */}
-                          <div className="project-config-state-row" aria-label={projectConfigCopy.currentStateAria}>
-                            <strong>{projectConfigCopy.currentStateTitle}</strong>
-                            <span>{projectConfig ? uiCopy.workModes[projectConfig.defaultWorkMode] : projectConfigCopy.waitingToLoad}</span>
-                            <em>
-                              {formatProjectLanguage(projectConfigForm)} · {formatProjectDependencies(projectConfigForm, projectConfigCopy)}
-                            </em>
-                          </div>
-                          <section className="project-workspace-config" aria-label="共享可写目录">
-                            <span className="project-config-setting-copy">
-                              <strong>共享可写目录</strong>
-                              <small>Worktree 会直接引用这些真实目录，适合保存跨任务持续使用的 docs 和项目记忆。</small>
-                            </span>
-                            <div className="project-workspace-config-body">
-                              <label className="project-shared-paths-field">
-                                <span>每行一个项目目录内的真实路径</span>
-                                <textarea
-                                  value={projectSharedWritablePaths}
-                                  onChange={(event) => setProjectSharedWritablePaths(event.currentTarget.value)}
-                                  placeholder={`${selectedProject.localPath}/docs`}
-                                  disabled={projectWorkspaceConfigStatus === 'saving'}
-                                />
-                                <small>内容不会复制进任务 worktree，也不会随 worktree 回收；并发任务会写入同一份真实内容。</small>
-                              </label>
-                              <div className="project-config-command-rail">
-                                <button
-                                  type="button"
-                                  onClick={() => void saveProjectWorkspaceConfig(selectedProject.id)}
-                                  disabled={!props.nativeConversationClient || projectWorkspaceConfigStatus === 'loading' || projectWorkspaceConfigStatus === 'saving'}
-                                >
-                                  {projectWorkspaceConfigStatus === 'saving' ? '正在保存…' : '保存共享目录'}
-                                </button>
-                              </div>
-                            </div>
-                          </section>
-                          <ProjectModelsSettings projectId={selectedProject.id} language={appShellSettings.appLanguage} client={props.nativeConversationClient ?? null} />
-                          {/* 项目配置字段拆成说明列和控件列，保留 form 提交语义，但不再把字段直接堆成 label 列表。 */}
-                          <section className="project-config-setting-row" aria-label={projectConfigCopy.defaultModelAria}>
-                            <span className="project-config-setting-copy">
-                              <strong>{projectConfigCopy.defaultModelTitle}</strong>
-                              <small>{projectConfigCopy.defaultModelHelp}</small>
-                            </span>
-                            <span className="project-config-setting-field">
-                              <input aria-label={projectConfigCopy.defaultModelAria} value={projectConfigForm.defaultModel} onChange={(event) => patchProjectConfigForm({ defaultModel: event.currentTarget.value })} />
-                            </span>
-                          </section>
-                          <section className="project-config-setting-row" aria-label={projectConfigCopy.defaultWorkModeAria}>
-                            <span className="project-config-setting-copy">
-                              <strong>{projectConfigCopy.defaultWorkModeTitle}</strong>
-                              <small>{projectConfigCopy.defaultWorkModeHelp}</small>
-                            </span>
-                            <span className="project-config-setting-field">
-                              <ZeusSelect
-                                size="roomy"
-                                ariaLabel={projectConfigCopy.defaultWorkModeAria}
-                                value={projectConfigForm.defaultWorkMode}
-                                onChange={(value) => patchProjectConfigForm({ defaultWorkMode: value })}
-                                searchPlaceholder={selectSearchPlaceholder}
-                                emptyLabel={selectNoResults}
-                                options={workModeValues.map((mode) => ({
-                                  value: mode,
-                                  label: uiCopy.workModes[mode],
-                                }))}
-                              />
-                            </span>
-                          </section>
-                          <section className="project-config-setting-row project-config-textarea-row" aria-label={projectConfigCopy.defaultTaskPromptAria}>
-                            <span className="project-config-setting-copy">
-                              <strong>{projectConfigCopy.defaultTaskPromptTitle}</strong>
-                              <small>{projectConfigCopy.defaultTaskPromptHelp}</small>
-                            </span>
-                            <span className="project-config-setting-field">
-                              <textarea aria-label={projectConfigCopy.defaultTaskPromptAria} value={projectConfigForm.defaultTaskPrompt} onChange={(event) => patchProjectConfigForm({ defaultTaskPrompt: event.currentTarget.value })} />
-                            </span>
-                          </section>
-                          <section className="project-config-setting-row" aria-label={projectConfigCopy.scanIgnoreAria}>
-                            <span className="project-config-setting-copy">
-                              <strong>{projectConfigCopy.scanIgnoreTitle}</strong>
-                              <small>{projectConfigCopy.scanIgnoreHelp}</small>
-                            </span>
-                            <span className="project-config-setting-field">
-                              <input aria-label={projectConfigCopy.scanIgnoreAria} value={projectConfigForm.scanIgnoreDirectories} onChange={(event) => patchProjectConfigForm({ scanIgnoreDirectories: event.currentTarget.value })} />
-                            </span>
-                          </section>
-                          <section className="project-config-setting-row" aria-label={projectConfigCopy.indexScopeAria}>
-                            <span className="project-config-setting-copy">
-                              <strong>{projectConfigCopy.indexScopeTitle}</strong>
-                              <small>{projectConfigCopy.indexScopeHelp}</small>
-                            </span>
-                            <span className="project-config-setting-field">
-                              <ZeusSelect
-                                size="roomy"
-                                ariaLabel={projectConfigCopy.indexScopeAria}
-                                value={projectConfigForm.indexScope}
-                                onChange={(value) => patchProjectConfigForm({ indexScope: value })}
-                                searchPlaceholder={selectSearchPlaceholder}
-                                emptyLabel={selectNoResults}
-                                options={[
-                                  { value: 'project', label: projectConfigCopy.indexScopeOptions.project },
-                                  { value: 'src', label: projectConfigCopy.indexScopeOptions.src },
-                                  { value: 'custom', label: projectConfigCopy.indexScopeOptions.custom },
-                                ]}
-                              />
-                            </span>
-                          </section>
-                          <section className="project-config-setting-row" aria-label={projectConfigCopy.primaryLanguageAria}>
-                            <span className="project-config-setting-copy">
-                              <strong>{projectConfigCopy.primaryLanguageTitle}</strong>
-                              <small>{projectConfigCopy.primaryLanguageHelp}</small>
-                            </span>
-                            <span className="project-config-setting-field">
-                              <input aria-label={projectConfigCopy.primaryLanguageAria} value={projectConfigForm.languagePrimary} onChange={(event) => patchProjectConfigForm({ languagePrimary: event.currentTarget.value })} />
-                            </span>
-                          </section>
-                          <section className="project-config-setting-row" aria-label={projectConfigCopy.additionalLanguagesAria}>
-                            <span className="project-config-setting-copy">
-                              <strong>{projectConfigCopy.additionalLanguagesTitle}</strong>
-                              <small>{projectConfigCopy.additionalLanguagesHelp}</small>
-                            </span>
-                            <span className="project-config-setting-field">
-                              <input aria-label={projectConfigCopy.additionalLanguagesAria} value={projectConfigForm.languageAdditional} onChange={(event) => patchProjectConfigForm({ languageAdditional: event.currentTarget.value })} />
-                            </span>
-                          </section>
-                          <section className="project-config-setting-row" aria-label={projectConfigCopy.packageManagersAria}>
-                            <span className="project-config-setting-copy">
-                              <strong>{projectConfigCopy.packageManagersTitle}</strong>
-                              <small>{projectConfigCopy.packageManagersHelp}</small>
-                            </span>
-                            <span className="project-config-setting-field">
-                              <input aria-label={projectConfigCopy.packageManagersAria} value={projectConfigForm.packageManagers} onChange={(event) => patchProjectConfigForm({ packageManagers: event.currentTarget.value })} />
-                            </span>
-                          </section>
-                          <section className="project-config-setting-row" aria-label={projectConfigCopy.manifestPathsAria}>
-                            <span className="project-config-setting-copy">
-                              <strong>{projectConfigCopy.manifestPathsTitle}</strong>
-                              <small>{projectConfigCopy.manifestPathsHelp}</small>
-                            </span>
-                            <span className="project-config-setting-field">
-                              <input aria-label={projectConfigCopy.manifestPathsAria} value={projectConfigForm.manifestPaths} onChange={(event) => patchProjectConfigForm({ manifestPaths: event.currentTarget.value })} />
-                            </span>
-                          </section>
-                          <section className="project-config-setting-row" aria-label={projectConfigCopy.databaseConnectionAria}>
-                            <span className="project-config-setting-copy">
-                              <strong>{projectConfigCopy.databaseConnectionTitle}</strong>
-                              <small>{projectConfigCopy.databaseConnectionHelp}</small>
-                            </span>
-                            <span className="project-config-setting-field">
-                              <input
-                                aria-label={projectConfigCopy.databaseConnectionAria}
-                                value={projectConfigForm.databaseConnectionName}
-                                onChange={(event) => patchProjectConfigForm({ databaseConnectionName: event.currentTarget.value })}
-                              />
-                            </span>
-                          </section>
-                          <section className="project-config-setting-row" aria-label={projectConfigCopy.schemaPathsAria}>
-                            <span className="project-config-setting-copy">
-                              <strong>{projectConfigCopy.schemaPathsTitle}</strong>
-                              <small>{projectConfigCopy.schemaPathsHelp}</small>
-                            </span>
-                            <span className="project-config-setting-field">
-                              <input aria-label={projectConfigCopy.schemaPathsAria} value={projectConfigForm.databaseSchemaPaths} onChange={(event) => patchProjectConfigForm({ databaseSchemaPaths: event.currentTarget.value })} />
-                            </span>
-                          </section>
-                          <section className="project-config-setting-row" aria-label={projectConfigCopy.telegramAliasAria}>
-                            <span className="project-config-setting-copy">
-                              <strong>{projectConfigCopy.telegramAliasTitle}</strong>
-                              <small>{projectConfigCopy.telegramAliasHelp}</small>
-                            </span>
-                            <span className="project-config-setting-field">
-                              <input aria-label={projectConfigCopy.telegramAliasAria} value={projectConfigForm.telegramAlias} onChange={(event) => patchProjectConfigForm({ telegramAlias: event.currentTarget.value })} />
-                            </span>
-                          </section>
-                          <section className="project-config-setting-row project-config-toggle-row" aria-label={projectConfigCopy.allowShellAria}>
-                            <span className="project-config-setting-copy">
-                              <strong>{projectConfigCopy.allowShellTitle}</strong>
-                              <small>{projectConfigCopy.allowShellHelp}</small>
-                            </span>
-                            <span className="project-config-setting-field">
-                              <input aria-label={projectConfigCopy.allowShellAria} type="checkbox" checked={projectConfigForm.allowShell} onChange={(event) => patchProjectConfigForm({ allowShell: event.currentTarget.checked })} />
-                            </span>
-                          </section>
-                          <section className="project-config-setting-row project-config-toggle-row" aria-label={projectConfigCopy.allowGitWriteAria}>
-                            <span className="project-config-setting-copy">
-                              <strong>{projectConfigCopy.allowGitWriteTitle}</strong>
-                              <small>{projectConfigCopy.allowGitWriteHelp}</small>
-                            </span>
-                            <span className="project-config-setting-field">
-                              <input aria-label={projectConfigCopy.allowGitWriteAria} type="checkbox" checked={projectConfigForm.allowGitWrite} onChange={(event) => patchProjectConfigForm({ allowGitWrite: event.currentTarget.checked })} />
-                            </span>
-                          </section>
-                          <div className="project-config-state-row" aria-label={projectConfigCopy.databaseStateAria}>
-                            <strong>{projectConfigCopy.databaseTitle}</strong>
-                            <span>{formatProjectDatabase(projectConfigForm, projectConfigCopy)}</span>
-                            <em>{formatProjectDatabaseHelp(projectConfigForm, projectConfigCopy)}</em>
-                          </div>
-                          {projectDatabaseSecret ? (
-                            <div className="project-config-state-row" aria-label={projectConfigCopy.passwordStateAria}>
-                              <strong>{projectConfigCopy.passwordTitle}</strong>
-                              {/* 敏感状态只消费 configured 结构化事实，避免后端 label 语言或密钥提示泄漏到当前 UI。 */}
-                              <span>{projectDatabaseSecret.password.configured ? projectConfigCopy.passwordConfigured : projectConfigCopy.passwordNotConfigured}</span>
-                              <em>{projectConfigCopy.passwordHelp}</em>
-                            </div>
-                          ) : null}
-                          <div className="project-config-command-rail">
-                            <button type="submit" disabled={!props.onSaveProjectConfig || creatingProjectBusy} {...controlBusyProps(creatingProjectBusy)}>
-                              {projectConfigCopy.save}
-                            </button>
-                          </div>
-                        </form>
-                      ) : null}
-
-                      {projectPanel === 'archive' ? (
-                        <ProjectArchiveWorkbench
-                          projects={archivedProjects}
-                          copy={codeWorkspaceCopy.projectArchive}
-                          codeCopy={codeWorkspaceCopy}
-                          onRefresh={refreshArchivedProjects}
-                          refreshDisabled={!props.onLoadArchivedProjects}
-                          onRestore={restoreProject}
-                        />
-                      ) : null}
-                    </WorkspaceDrawer>
-                  ) : null}
-                </div>
+                <ProjectDigitalEmployeesPanel
+                  projectId={selectedProject.id}
+                  projectName={selectedProject.name}
+                  client={props.commandClient ?? null}
+                  skillClient={props.nativeConversationClient ?? null}
+                  language={appShellSettings.appLanguage}
+                />
               ) : (
                 <>
                   <InlineRecoveryPrompt
@@ -1326,7 +634,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             </section>
           </section>
         ) : null}
-
         {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && (activeProjectSection === 'tasks' || activeProjectSection === 'sessions') ? (
           <section
             className={`workspace-view ${activeProjectSection === 'tasks' ? 'workspace-view-project-tasks' : 'workspace-view-project-sessions'}`}
@@ -1522,6 +829,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                 projectName={snapshot.projects.find((project) => project.id === snapshot.tasks.find((task) => task.id === taskModelPushTaskId)?.projectId)?.name}
                 capabilities={taskModelPushCapabilities}
                 runtimeCapabilities={taskModelPushRuntimeCapabilities}
+                serviceTierPreferences={taskModelPushServiceTierPreferences}
                 form={taskModelPushForm}
                 status={taskModelPushStatus}
                 configImportPreview={taskModelPushConfigImportPreview}
@@ -1537,6 +845,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     return resolved;
                   });
                 }}
+                onServiceTierPreferenceChange={domainActions.saveTaskModelPushServiceTierPreference}
                 onRefreshRepository={(repositoryId) => void refreshTaskModelPushRepository(repositoryId)}
                 onClose={closeTaskModelPush}
                 onCancelAuthentication={cancelTaskModelPushAuthentication}
@@ -2968,34 +2277,4 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       </section>
     </main>
   );
-}
-
-function CompactGitHunkLines(props: { oldPath: string; newPath: string; hunk: GitDiffHunk }) {
-  const leftInput = useMemo(() => compactHunkHighlightInput(props.hunk, 'left'), [props.hunk]);
-  const rightInput = useMemo(() => compactHunkHighlightInput(props.hunk, 'right'), [props.hunk]);
-  const leftHighlights = useSyntaxHighlightedSegments(props.oldPath, leftInput.contents);
-  const rightHighlights = useSyntaxHighlightedSegments(props.newPath, rightInput.contents);
-  return props.hunk.lines.slice(0, 4).map((line, index) => {
-    const input = line.type === 'deletion' ? leftInput : rightInput;
-    const highlights = line.type === 'deletion' ? leftHighlights : rightHighlights;
-    const position = input.positions.get(index);
-    const highlighted = (position ? highlights[0]?.[position] : null) ?? (line.content ? [{ text: line.content }] : []);
-    return (
-      <code key={`${props.hunk.header}-${index}`} className={`is-${line.type}`}>
-        <SyntaxHighlightedLine line={highlighted} empty="" />
-      </code>
-    );
-  });
-}
-
-function compactHunkHighlightInput(hunk: GitDiffHunk, side: 'left' | 'right'): { contents: string[]; positions: Map<number, number> } {
-  const lines: string[] = [];
-  const positions = new Map<number, number>();
-  hunk.lines.forEach((line, index) => {
-    const belongsToSide = line.type === 'context' || (side === 'left' ? line.type === 'deletion' : line.type === 'addition');
-    if (!belongsToSide) return;
-    positions.set(index, lines.length);
-    lines.push(line.content);
-  });
-  return { contents: [lines.join('\n')], positions };
 }

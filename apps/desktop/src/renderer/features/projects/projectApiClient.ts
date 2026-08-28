@@ -4,6 +4,7 @@ import type {
   ProjectArchiveConfirmation,
   ProjectConfig,
   ProjectDatabaseSecretSnapshot,
+  ProjectModelServiceTierPreference,
   ProjectRecord,
   ProjectWorkspaceConfigSnapshot,
   SaveProjectConfigRequest,
@@ -18,6 +19,7 @@ export interface ProjectApiClient {
   loadProject: (projectId: string) => Promise<ProjectRecord>;
   loadProjectConfig: (projectId: string) => Promise<ProjectConfig>;
   saveProjectConfig: (projectId: string, input: SaveProjectConfigRequest) => Promise<ProjectConfig>;
+  saveProjectModelServiceTierPreference: (projectId: string, input: ProjectModelServiceTierPreference) => Promise<ProjectConfig>;
   loadProjectWorkspaceConfig: (projectId: string) => Promise<ProjectWorkspaceConfigSnapshot>;
   saveProjectWorkspaceConfig: (projectId: string, input: { sharedWritablePaths: Array<{ localPath: string }> }) => Promise<ProjectWorkspaceConfigSnapshot>;
   loadProjectDatabaseSecret: (projectId: string) => Promise<ProjectDatabaseSecretSnapshot>;
@@ -42,6 +44,16 @@ export function createProjectApiClient(transport: LocalApiTransport): ProjectApi
     saveProjectConfig: async (projectId, input: SaveProjectConfigRequest) => {
       const body = await buildSettingsCommandRequest({ commandType: settingsClientCommandTypes.projectConfigPut, scopeKind: 'project', scopeId: projectId, operationPrefix: 'project_config', value: input });
       return transport.request<ProjectConfig>(`${projectPath(projectId)}/config`, jsonRequest('PUT', body));
+    },
+    saveProjectModelServiceTierPreference: async (projectId, input) => {
+      const body = await buildSettingsCommandRequest({
+        commandType: settingsClientCommandTypes.projectModelServiceTierPreferencePut,
+        scopeKind: 'project',
+        scopeId: projectId,
+        operationPrefix: 'project_model_service_tier_preference',
+        value: input,
+      });
+      return transport.request<ProjectConfig>(`${projectPath(projectId)}/model-service-tier-preference`, jsonRequest('PUT', body));
     },
     loadProjectWorkspaceConfig: (projectId) => transport.request<ProjectWorkspaceConfigSnapshot>(`${projectPath(projectId)}/workspace-config`),
     saveProjectWorkspaceConfig: async (projectId, input) => {

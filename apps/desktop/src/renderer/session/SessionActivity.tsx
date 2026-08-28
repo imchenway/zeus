@@ -440,11 +440,27 @@ export function SessionTurnDuration(props: { turn: NativeTurnSnapshot; requests:
   const duration = useMemo(() => turnDurationMs(props.turn, props.requests, now), [now, props.requests, props.turn]);
   if (duration === null) return null;
   const value = formatDuration(duration, props.language);
-  const label = props.language === 'zh-CN' ? `已处理 ${value}` : active ? `Processing for ${value}` : `Processed in ${value}`;
+  const terminalStatus = props.turn.status === 'interrupted' || props.turn.status === 'failed' ? props.turn.status : 'completed';
+  const label =
+    props.language === 'zh-CN'
+      ? active
+        ? `处理中 ${value}`
+        : terminalStatus === 'interrupted'
+          ? `处理已中断（${value}）`
+          : terminalStatus === 'failed'
+            ? `处理失败（${value}）`
+            : `已处理 ${value}`
+      : active
+        ? `Processing for ${value}`
+        : terminalStatus === 'interrupted'
+          ? `Interrupted after ${value}`
+          : terminalStatus === 'failed'
+            ? `Failed after ${value}`
+            : `Processed in ${value}`;
   const hasDetails = props.children !== undefined && props.children !== null;
   const time = <time dateTime={`PT${Math.max(0, Math.round(duration / 1_000))}S`}>{label}</time>;
   return (
-    <section className="session-turn-duration" data-active={active || undefined}>
+    <section className="session-turn-duration" data-active={active || undefined} data-status={active ? 'active' : terminalStatus}>
       {hasDetails ? <div className="session-turn-duration-body">{props.children}</div> : null}
       <p>{time}</p>
     </section>

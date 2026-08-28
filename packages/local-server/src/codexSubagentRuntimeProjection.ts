@@ -14,6 +14,7 @@ export interface SubagentRuntimeDetails {
   effort: SubagentRuntimeFact<string>;
   serviceTier: SubagentRuntimeFact<string | null>;
   usage: {
+    serviceTier: SubagentRuntimeFact<string | null>;
     totalTokens: SubagentRuntimeFact<number>;
     inputTokens: SubagentRuntimeFact<number>;
     outputTokens: SubagentRuntimeFact<number>;
@@ -242,6 +243,7 @@ function toRuntimeDetails(thread: CodexThreadSnapshot, ownedTurns: Record<string
     effort,
     serviceTier,
     usage: {
+      serviceTier,
       totalTokens: usageFact(usage?.totalTokens, usageReason),
       inputTokens: usageFact(usage?.inputTokens, usageReason),
       outputTokens: usageFact(usage?.outputTokens, usageReason),

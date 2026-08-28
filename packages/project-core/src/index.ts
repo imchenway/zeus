@@ -1,9 +1,17 @@
 export type ProjectWorkMode = 'plan' | 'develop' | 'review' | 'debug';
 export type ProjectIndexScope = 'project' | 'src' | 'custom';
+export type ProjectServiceTierPreference = 'standard' | 'priority';
+
+export interface ProjectModelServiceTierPreference {
+  modelSourceId: string | null;
+  modelId: string;
+  serviceTier: ProjectServiceTierPreference;
+}
 
 export interface ProjectConfigSnapshot {
   projectId: string;
   defaultModel: string | null;
+  serviceTierPreferences: ProjectModelServiceTierPreference[];
   defaultWorkMode: ProjectWorkMode;
   defaultTaskPrompt: string;
   scan: {
@@ -37,6 +45,7 @@ export interface ProjectConfigSnapshot {
 
 export interface UpdateProjectConfigBody {
   defaultModel?: unknown;
+  serviceTierPreferences?: unknown;
   defaultWorkMode?: unknown;
   defaultTaskPrompt?: unknown;
   scan?: { ignoreDirectories?: unknown; indexScope?: unknown };
@@ -57,6 +66,7 @@ export function createDefaultProjectConfig(projectId: string): ProjectConfigSnap
   return {
     projectId,
     defaultModel: null,
+    serviceTierPreferences: [],
     defaultWorkMode: 'plan',
     defaultTaskPrompt: '',
     scan: {
@@ -80,6 +90,7 @@ export function normalizeProjectConfig(projectId: string, value: unknown, fallba
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const raw = value as UpdateProjectConfigBody;
   const defaultModel = normalizeOptionalSingleLine(raw.defaultModel, 80, fallback.defaultModel);
+  const serviceTierPreferences = normalizeProjectModelServiceTierPreferences(raw.serviceTierPreferences, fallback.serviceTierPreferences);
   const defaultTaskPrompt = normalizeSingleLineText(raw.defaultTaskPrompt, 600, fallback.defaultTaskPrompt);
   const scanIgnoreDirectories = normalizeProjectIgnoreDirectories(raw.scan?.ignoreDirectories, fallback.scan.ignoreDirectories);
   const languagePrimary = normalizeIdentifierText(raw.language?.primary, fallback.language.primary);
@@ -92,6 +103,7 @@ export function normalizeProjectConfig(projectId: string, value: unknown, fallba
   const telegramAlias = normalizeOptionalSingleLine(raw.telegram?.alias, 80, fallback.telegram.alias);
   if (
     (defaultModel === null && raw.defaultModel !== undefined && raw.defaultModel !== null) ||
+    serviceTierPreferences === null ||
     defaultTaskPrompt === null ||
     scanIgnoreDirectories === null ||
     languagePrimary === null ||
@@ -107,6 +119,7 @@ export function normalizeProjectConfig(projectId: string, value: unknown, fallba
   return {
     projectId,
     defaultModel,
+    serviceTierPreferences,
     defaultWorkMode: isProjectWorkMode(raw.defaultWorkMode) ? raw.defaultWorkMode : fallback.defaultWorkMode,
     defaultTaskPrompt,
     scan: {
@@ -123,6 +136,35 @@ export function normalizeProjectConfig(projectId: string, value: unknown, fallba
       allowGitWrite: typeof raw.security?.allowGitWrite === 'boolean' ? raw.security.allowGitWrite : fallback.security.allowGitWrite,
     },
   };
+}
+
+/**
+ * 校验一条用户显式保存的项目模型服务档位偏好。
+ */
+export function normalizeProjectModelServiceTierPreference(value: unknown): ProjectModelServiceTierPreference | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as { modelSourceId?: unknown; modelId?: unknown; serviceTier?: unknown };
+  const modelSourceId = raw.modelSourceId === undefined || raw.modelSourceId === null ? null : normalizeOptionalSingleLine(raw.modelSourceId, 120, null);
+  const modelId = normalizeOptionalSingleLine(raw.modelId, 160, null);
+  if ((raw.modelSourceId !== undefined && raw.modelSourceId !== null && modelSourceId === null) || modelId === null) return null;
+  if (raw.serviceTier !== 'standard' && raw.serviceTier !== 'priority') return null;
+  return { modelSourceId, modelId, serviceTier: raw.serviceTier };
+}
+
+function normalizeProjectModelServiceTierPreferences(value: unknown, fallback: ProjectModelServiceTierPreference[]): ProjectModelServiceTierPreference[] | null {
+  if (value === undefined) return fallback;
+  if (!Array.isArray(value) || value.length > 100) return null;
+  const identities = new Set<string>();
+  const preferences: ProjectModelServiceTierPreference[] = [];
+  for (const item of value) {
+    const preference = normalizeProjectModelServiceTierPreference(item);
+    if (!preference) return null;
+    const identity = `${preference.modelSourceId ?? ''}\0${preference.modelId}`;
+    if (identities.has(identity)) return null;
+    identities.add(identity);
+    preferences.push(preference);
+  }
+  return preferences;
 }
 
 function normalizeVcsConfig(value: unknown, fallback: ProjectConfigSnapshot['vcs']): ProjectConfigSnapshot['vcs'] | null {

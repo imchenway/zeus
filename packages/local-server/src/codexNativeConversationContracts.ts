@@ -10,6 +10,29 @@ export type NativeConversationRunState =
   | { type: 'waiting'; turnId: string; requestId: string; reason: 'approval' | 'user_input' }
   | { type: 'paused'; reason: 'interrupted' | 'transport_unavailable' | 'provider_archived' | 'recovery_required' | 'runtime_rejected' | 'conflict_preparing' | 'conflict_preparation_failed' };
 
+export interface ConversationDispatchContext {
+  projectId: string;
+  projectLocalPath: string;
+  taskId: string | null;
+  executionWorkspaceMode?: 'direct' | 'worktree';
+  model: string;
+  modelSourceId: string | null;
+  effort?: string;
+  serviceTier?: string | null;
+  allowCodeChanges: boolean;
+  allowTests: boolean;
+  allowGitCommit: boolean;
+  permissionMode: ConversationPermissionMode;
+  allowedAttachmentRoots?: string[];
+  writableRoots?: string[];
+  workMode: ConversationCollaborationMode;
+  applyLegacyTaskGuards?: boolean;
+  ephemeral?: boolean;
+  additionalContext?: CodexBootstrapAdditionalContext;
+  operationContext?: Record<string, unknown>;
+  holdDispatch?: boolean;
+}
+
 export type NativeOperationStatus = 'queued' | 'active' | 'steering' | 'steered' | 'interrupted' | 'responded' | 'provider_archived' | 'recovery_required';
 
 export interface NativeAcceptedOperation {
@@ -19,6 +42,12 @@ export interface NativeAcceptedOperation {
   status: NativeOperationStatus;
   providerThreadId: string | null;
   providerTurnId: string | null;
+}
+
+export interface NativeTurnResultWaiter {
+  resolve(result: NativeTurnResult): void;
+  reject(error: Error): void;
+  timer: ReturnType<typeof setTimeout>;
 }
 
 export interface NativeSubmissionError {
@@ -128,6 +157,7 @@ export interface StartTaskConversationInput {
   modelSourceId?: string | null;
   effort?: string;
   serviceTier?: string | null;
+  requestedServiceTier?: string | null;
   allowCodeChanges: boolean;
   allowTests: boolean;
   allowGitCommit: boolean;
@@ -170,6 +200,7 @@ export interface StartProjectConversationInput {
   modelSourceId?: string | null;
   effort?: string;
   serviceTier?: string | null;
+  requestedServiceTier?: string | null;
   permissionMode?: ConversationPermissionMode;
   collaborationMode?: ConversationCollaborationMode;
   idempotencyKey: string;
@@ -199,6 +230,7 @@ export interface SubmitNativeMessageInput {
   modelSourceId?: string | null;
   effort?: string;
   serviceTier?: string | null;
+  requestedServiceTier?: string | null;
   permissionMode?: ConversationPermissionMode;
   collaborationMode?: ConversationCollaborationMode;
   idempotencyKey: string;

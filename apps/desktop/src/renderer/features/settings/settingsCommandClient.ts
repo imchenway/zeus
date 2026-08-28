@@ -4,6 +4,7 @@ export const settingsClientCommandTypes = {
   projectDatabaseSecretPut: 'settings.project_database_secret.put',
   projectDatabaseSecretDelete: 'settings.project_database_secret.delete',
   projectConfigPut: 'settings.project_config.put',
+  projectModelServiceTierPreferencePut: 'settings.project_model_service_tier_preference.put',
   runtimeSettingsPut: 'settings.runtime.put',
   appShellSettingsPut: 'settings.app_shell.put',
   projectionCacheClear: 'settings.projection_cache.clear',

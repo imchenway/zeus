@@ -1308,6 +1308,32 @@
   animation: session-latest-turn-enter 500ms var(--session-ease-out) both;
 }
 
+.session-codex-parity-v1 .session-thread-item-notice {
+  color: var(--session-text-muted);
+  padding-inline: 2px;
+}
+
+.session-codex-parity-v1 .session-service-tier-notice {
+  background: color-mix(in srgb, var(--session-warning) 7%, transparent);
+  border-inline-start: 2px solid color-mix(in srgb, var(--session-warning) 62%, transparent);
+  border-radius: 0 8px 8px 0;
+  max-inline-size: var(--session-markdown-max);
+  padding: 7px 10px;
+}
+
+.session-codex-parity-v1 .session-service-tier-notice .session-markdown {
+  color: inherit;
+  font-size: 12px;
+}
+
+.session-codex-parity-v1 .session-service-tier-toggle > span {
+  font-size: 10px;
+  max-inline-size: 13rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .session-codex-parity-v1 .session-thread-item-user {
   align-self: flex-end;
   background: var(--session-selected);
@@ -13840,6 +13866,14 @@
   margin: 0;
 }
 
+.session-codex-parity-v1 .session-turn-duration[data-status='interrupted'] > p {
+    color: var(--session-warning);
+}
+
+.session-codex-parity-v1 .session-turn-duration[data-status='failed'] > p {
+    color: var(--session-danger);
+}
+
 .session-codex-parity-v1 .session-turn-duration::before,
 .session-codex-parity-v1 .session-turn-duration::after {
   content: none;
@@ -14726,6 +14760,12 @@
 
 .session-codex-parity-v1 .session-service-tier-toggle[data-active='true'] {
   color: var(--session-accent);
+}
+
+.session-codex-parity-v1 .session-service-tier-toggle[data-unavailable='true'] {
+  gap: 5px;
+  inline-size: auto;
+  padding-inline: 8px !important;
 }
 
 .session-codex-parity-v1 .session-service-tier-toggle:hover:not(:disabled) {
@@ -15847,6 +15887,12 @@
   animation: none !important;
   transform: none !important;
   will-change: auto !important;
+}
+
+/* 命令与工具图标只表达活动类型，不再叠加蓝色圆底或光晕。 */
+.session-codex-parity-v1 :where(.session-activity-group-icon, .session-activity-item-icon) {
+  background: transparent !important;
+  box-shadow: none !important;
 }
 
 /* 最终覆盖：运行详情按会话/费用双栏与通栏数据表排列。 */
