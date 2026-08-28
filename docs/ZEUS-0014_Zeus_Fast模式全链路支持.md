@@ -151,3 +151,9 @@ SQLite 只读复核确认提交输入的三层事实：Fast 为请求 `priority`
 - 导入使用 `codex.configuration.import` 的幂等命令信封与正式 execution host API 完成，返回 `restartRequired=true`。可恢复备份位于 `/Users/david/.zeus/backups/imports/codex/2026-08-28T09-02-27-112Z-05f7c513-4f92-411c-bc36-ce787d35b025`，manifest 完整记录 9 个导入条目和 8 个被替换条目。
 - 导入后确认目标配置已包含改写到 Zeus 资料根的 `NODE_REPL_TRUSTED_SERVICES` 与 `SKY_CUA_SERVICE_PATH`，Browser service、Computer Use 插件及支撑 App 均存在，支撑 App 严格 codesign 校验通过。随后通过 `codex.configuration.activate` 建立新运行代 `1fe30068-119d-4027-9c15-986054dc11e0`，返回 `runtimeReloaded=true`、`restartRequired=false`。
 - 当前正在执行的 Provider turn 创建于导入前，其 node_repl 可信服务清单不会在 turn 内热更新；重置内核后仍返回同一缺失配置错误。后续必须由新运行代创建下一轮或新会话，再继续 Computer Use GUI/Provider 验收。当前仍不合入 `main`，没有 push。
+
+## 2026-08-28 新 turn 复核
+
+- 官方导入后的同一 Zeus 会话新 turn 仍复用原生 Provider session `01a045f5-7aed-7151-b615-ea3b1632212d`，Computer Use 继续报告缺少 `NODE_REPL_TRUSTED_SERVICES`。因此上一节“下一轮或新会话”的口径收紧为：必须新建任务会话，单纯在当前会话发送下一条消息不足以切换 Provider session。
+- 当前还有另一任务 `ZEUS-0358` 的同 bundle ID `Zeus Test.app` 使用独立资料根运行。本任务不关闭、借用、复用或操作该实例；新任务会话恢复 Computer Use 后仍需等待该实例自然退出，再启动 ZEUS-0014 的最终测试包。
+- `test` 已包含干净 `main` 的 `v0.3.69`，两边工作树均干净。GUI/Provider 验收与最终 main merge 仍未完成，没有 push。
