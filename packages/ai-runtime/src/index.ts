@@ -12,6 +12,7 @@ import { expandCliSearchPath } from './cliSearchPath.js';
 export * from './codexAppServerManager.js';
 export * from './codexAppServerProtocol.js';
 export * from './codexRuntimeGenerationManager.js';
+export * from './codexModelBudgetSnapshot.js';
 export * from './agentRuntimeContracts.js';
 export * from './agentRuntimeRegistry.js';
 export * from './agentCapabilityCatalog.js';

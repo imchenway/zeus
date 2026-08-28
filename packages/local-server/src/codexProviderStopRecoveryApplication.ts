@@ -1,12 +1,5 @@
 import type { CodexAppServerManager } from '@zeus/ai-runtime';
-import type {
-  ConversationRepository,
-  ConversationSubmissionRepository,
-  ConversationTurnRepository,
-  ZeusConversationSubmissionRecord,
-  ZeusConversationTurnRecord,
-  ZeusConversationWithMessagesRecord,
-} from '@zeus/storage';
+import type { ConversationRepository, ConversationSubmissionRepository, ConversationTurnRepository, ZeusConversationSubmissionRecord, ZeusConversationTurnRecord, ZeusConversationWithMessagesRecord } from '@zeus/storage';
 import type { NativeConversationRunState } from './codexNativeConversationContracts.js';
 import { classifySnapshotTurn, coordinatorError, isRecord, serializeError } from './codexNativeConversationPolicy.js';
 import { CodexProviderCommandApplicationService } from './codexProviderCommandApplication.js';
@@ -15,6 +8,7 @@ const providerStopRecoveryDelaysMs = [1_000, 2_000, 5_000, 15_000] as const;
 const providerStopConfirmationDelaysMs = [0, 250, 500, 1_000, 2_000, 4_000] as const;
 const providerStopPendingCode = 'ZEUS_PROVIDER_STOP_PENDING';
 const providerStopRecoveryRequiredCode = 'ZEUS_PROVIDER_STOP_RECOVERY_REQUIRED';
+const recoveredUnsentConfirmationRequiredCode = 'ZEUS_RECOVERED_UNSENT_CONFIRMATION_REQUIRED';
 
 type ProviderStopCandidate = {
   turn: ZeusConversationTurnRecord;
@@ -24,10 +18,7 @@ type ProviderStopCandidate = {
   historicalStopEvidence: boolean;
 };
 
-type ProviderStopAuthority =
-  | { type: 'terminal'; status: 'completed' | 'interrupted' | 'failed' }
-  | { type: 'target_active' }
-  | { type: 'unknown_active'; providerTurnIds: string[] };
+type ProviderStopAuthority = { type: 'terminal'; status: 'completed' | 'interrupted' | 'failed' } | { type: 'target_active' } | { type: 'unknown_active'; providerTurnIds: string[] };
 
 export interface CodexProviderStopRequestResult {
   terminalConfirmed: boolean;
@@ -48,13 +39,7 @@ interface CodexProviderStopRecoveryOptions {
 }
 
 export interface CodexProviderStopRecoveryApplication {
-  requestStop(input: {
-    conversationId: string;
-    providerThreadId: string;
-    providerTurnId: string;
-    stopCommandId: string;
-    confirmationTimeoutMs: number;
-  }): Promise<CodexProviderStopRequestResult>;
+  requestStop(input: { conversationId: string; providerThreadId: string; providerTurnId: string; stopCommandId: string; confirmationTimeoutMs: number }): Promise<CodexProviderStopRequestResult>;
   hasPendingEvidence(conversationId: string): boolean;
   recoverForNewSubmission(conversationId: string): Promise<'not_applicable' | 'ready' | 'pending' | 'recovery_required'>;
   recoverPersisted(): Promise<void>;
@@ -117,17 +102,12 @@ export function createCodexProviderStopRecoveryApplication(options: CodexProvide
       return submission.status === 'cancelled' && error.code === 'ZEUS_FORCED_QUIT_INTERRUPTED' && (submission.resolvedAt ?? submission.updatedAt) <= pendingSubmission.createdAt;
     });
     if (!historicalStopSubmission) return null;
-    const compatibleTurn = [...turns]
-      .reverse()
-      .find((turn) => Boolean(turn.providerTurnId) && turn.providerThreadId === conversation.providerThreadId && isTerminalTurn(turn) && turn.createdAt <= pendingSubmission.createdAt);
+    const compatibleTurn = [...turns].reverse().find((turn) => Boolean(turn.providerTurnId) && turn.providerThreadId === conversation.providerThreadId && isTerminalTurn(turn) && turn.createdAt <= pendingSubmission.createdAt);
     if (!compatibleTurn?.providerTurnId) return null;
     const historicalStopError = parseError(historicalStopSubmission.errorJson);
     return {
       turn: compatibleTurn,
-      stopCommandId:
-        typeof historicalStopError.stopCommandId === 'string' && historicalStopError.stopCommandId
-          ? historicalStopError.stopCommandId
-          : `legacy:${compatibleTurn.providerTurnId}`,
+      stopCommandId: typeof historicalStopError.stopCommandId === 'string' && historicalStopError.stopCommandId ? historicalStopError.stopCommandId : `legacy:${compatibleTurn.providerTurnId}`,
       requestedAt: historicalStopSubmission.resolvedAt ?? historicalStopSubmission.updatedAt,
       compatibility: true,
       historicalStopEvidence: true,
@@ -138,13 +118,7 @@ export function createCodexProviderStopRecoveryApplication(options: CodexProvide
     return candidateForConversation(conversationId) !== null;
   }
 
-  async function requestStop(input: {
-    conversationId: string;
-    providerThreadId: string;
-    providerTurnId: string;
-    stopCommandId: string;
-    confirmationTimeoutMs: number;
-  }): Promise<CodexProviderStopRequestResult> {
+  async function requestStop(input: { conversationId: string; providerThreadId: string; providerTurnId: string; stopCommandId: string; confirmationTimeoutMs: number }): Promise<CodexProviderStopRequestResult> {
     await requestInterrupt({ ...input, attempt: 0 });
     const deadline = Date.now() + Math.max(0, Math.min(8_000, input.confirmationTimeoutMs));
     for (const delay of providerStopConfirmationDelaysMs) {
@@ -152,10 +126,8 @@ export function createCodexProviderStopRecoveryApplication(options: CodexProvide
       try {
         const remainingMs = Math.max(0, deadline - Date.now());
         if (remainingMs === 0) break;
-        const authority = await withTimeout(
-          readProviderStopAuthority(input.providerThreadId, input.providerTurnId),
-          remainingMs,
-          () => coordinatorError('ZEUS_PROVIDER_STOP_CONFIRMATION_TIMEOUT', 'Provider turn terminal confirmation exceeded its bounded exit window.'),
+        const authority = await withTimeout(readProviderStopAuthority(input.providerThreadId, input.providerTurnId), remainingMs, () =>
+          coordinatorError('ZEUS_PROVIDER_STOP_CONFIRMATION_TIMEOUT', 'Provider turn terminal confirmation exceeded its bounded exit window.'),
         );
         if (authority.type === 'terminal') return { terminalConfirmed: true };
       } catch {
@@ -334,9 +306,20 @@ export function createCodexProviderStopRecoveryApplication(options: CodexProvide
       completedAt: candidate.turn.completedAt ?? timestamp,
       updatedAt: timestamp,
     });
-    for (const submission of resumableSubmissions(conversation.id, candidate)) {
-      if (submission.status !== 'paused' || submission.providerTurnId) continue;
-      options.submissions.updateStatus(submission.id, 'queued', { pausedReason: null, updatedAt: timestamp });
+    const resumable = resumableSubmissions(conversation.id, candidate).filter((submission) => !submission.providerTurnId);
+    const requiresIndividualConfirmation = resumable.length > 1;
+    const recoveredUnsentError = {
+      code: recoveredUnsentConfirmationRequiredCode,
+      message: '恢复后发现多条尚未发送的消息，请逐条重试或取消。',
+      recoveryRequired: false,
+      retryable: true,
+    };
+    for (const submission of resumable) {
+      if (requiresIndividualConfirmation) {
+        options.submissions.updateStatus(submission.id, 'paused', { pausedReason: 'recovered_unsent', error: recoveredUnsentError, updatedAt: timestamp });
+      } else if (submission.status === 'paused') {
+        options.submissions.updateStatus(submission.id, 'queued', { pausedReason: null, updatedAt: timestamp });
+      }
     }
     options.conversations.bindProvider(conversation.id, {
       providerId: 'codex',
@@ -344,12 +327,17 @@ export function createCodexProviderStopRecoveryApplication(options: CodexProvide
       providerModel: conversation.providerModel,
       providerState: 'ready',
     });
-    options.runStates.set(conversation.id, { type: 'idle' });
+    options.runStates.set(conversation.id, requiresIndividualConfirmation ? { type: 'paused', reason: 'recovered_unsent' } : { type: 'idle' });
     await options.persist();
     options.broadcast('conversation.native.provider_stop_recovered', { conversationId: conversation.id, providerThreadId, providerTurnId, providerTerminalStatus: providerStatus });
     options.broadcast('conversation.thread.changed', { conversationId: conversation.id, providerThreadId, providerState: 'ready' });
-    options.broadcast('conversation.queue.changed', { conversationId: conversation.id, providerThreadId, providerState: 'ready' });
-    options.requestQueueDrain();
+    options.broadcast('conversation.queue.changed', {
+      conversationId: conversation.id,
+      providerThreadId,
+      providerState: 'ready',
+      ...(requiresIndividualConfirmation ? { waitReason: 'recovered_unsent', recoveredUnsentCount: resumable.length } : {}),
+    });
+    if (!requiresIndividualConfirmation && resumable.length === 1) options.requestQueueDrain();
   }
 
   async function failRecovery(conversation: ZeusConversationWithMessagesRecord, candidate: ProviderStopCandidate, cause: unknown, unknownProviderTurnIds: string[] = []): Promise<void> {
@@ -440,18 +428,11 @@ export function isProviderStopPendingTurn(turn: ZeusConversationTurnRecord): boo
   return isTerminalTurn(turn) && isProviderStopPendingError(parseError(turn.errorJson));
 }
 
-export function shouldPreserveProviderStopTerminalTurn(input: {
-  turn: ZeusConversationTurnRecord;
-  submissions: readonly ZeusConversationSubmissionRecord[];
-}): boolean {
+export function shouldPreserveProviderStopTerminalTurn(input: { turn: ZeusConversationTurnRecord; submissions: readonly ZeusConversationSubmissionRecord[] }): boolean {
   if (!isTerminalTurn(input.turn) || !input.turn.providerTurnId) return false;
   if (isProviderStopPendingTurn(input.turn)) return true;
   const pendingSubmission = input.submissions.find(
-    (submission) =>
-      !submission.providerTurnId &&
-      submission.status === 'paused' &&
-      (submission.pausedReason === 'provider_stop_pending' || submission.pausedReason === 'recovery_required') &&
-      submission.createdAt >= input.turn.createdAt,
+    (submission) => !submission.providerTurnId && submission.status === 'paused' && (submission.pausedReason === 'provider_stop_pending' || submission.pausedReason === 'recovery_required') && submission.createdAt >= input.turn.createdAt,
   );
   if (!pendingSubmission) return false;
   return input.submissions.some((submission) => {

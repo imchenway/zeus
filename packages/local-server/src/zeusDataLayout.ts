@@ -29,6 +29,7 @@ export type ZeusDataPathKey =
   | 'commandScripts'
   | 'commandRuns'
   | 'codexHome'
+  | 'codexToolRuntimeHome'
   | 'piConfig'
   | 'piSessions'
   | 'codexLegacyImports'
@@ -67,6 +68,7 @@ export interface ZeusDataLayout {
   commandScripts: string;
   commandRuns: string;
   codexHome: string;
+  codexToolRuntimeHome: string;
   piConfig: string;
   piSessions: string;
   codexLegacyImports: string;
@@ -81,7 +83,8 @@ export interface ZeusDataLayout {
 }
 
 /**
- * 创建分层目录布局。顶层只表达六类稳定边界，业务模块不得自行在根目录新增文件。
+ * 创建分层目录布局。顶层只表达稳定的数据、产物、Provider、工具运行时、备份、
+ * 进程运行态与 Electron 资料边界，业务模块不得自行在根目录新增文件。
  */
 export function createZeusDataLayout(rootPath: string): ZeusDataLayout {
   const root = normalizeRoot(rootPath);
@@ -121,6 +124,7 @@ export function createZeusDataLayout(rootPath: string): ZeusDataLayout {
     commandScripts: join(artifactsDirectory, 'command-scripts'),
     commandRuns: join(artifactsDirectory, 'command-runs'),
     codexHome: join(providersDirectory, 'codex'),
+    codexToolRuntimeHome: join(root, 'tool-runtimes', 'codex'),
     piConfig: join(providersDirectory, 'pi', 'config'),
     piSessions: join(providersDirectory, 'pi', 'sessions'),
     codexLegacyImports: join(backupsDirectory, 'imports', 'codex-legacy'),
@@ -168,6 +172,7 @@ export function createLegacyFlatZeusDataLayout(rootPath: string): ZeusDataLayout
     commandScripts: join(root, 'command-scripts'),
     commandRuns: join(root, 'command-runs'),
     codexHome: join(root, 'agent-runtimes', 'codex'),
+    codexToolRuntimeHome: join(root, 'tool-runtimes', 'codex'),
     piConfig: join(root, 'agent-runtimes', 'pi', 'config'),
     piSessions: join(root, 'agent-runtimes', 'pi', 'sessions'),
     codexLegacyImports: join(root, 'codex-legacy-import'),
@@ -220,6 +225,7 @@ function finalizeLayout(layout: Omit<ZeusDataLayout, 'entries'>): ZeusDataLayout
       entry('commandScripts', 'zeus', 'managed', false, false, null),
       entry('commandRuns', 'zeus', 'runtime', true, false, null),
       entry('codexHome', 'provider', 'managed', false, false, null),
+      entry('codexToolRuntimeHome', 'provider', 'runtime', true, false, null),
       entry('piConfig', 'provider', 'managed', false, false, null),
       entry('piSessions', 'provider', 'managed', false, false, null),
       entry('codexLegacyImports', 'provider', 'backup', false, false, null),

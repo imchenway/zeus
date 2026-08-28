@@ -388,6 +388,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     if (dispatching) return { type: 'dispatching' as const, submissionId: dispatching.id };
     const paused = conversationSubmissions.listByConversation(conversation.id).filter((submission) => submission.status === 'paused' && !submission.providerTurnId);
     if (paused.some((submission) => submission.pausedReason === 'provider_stop_pending')) return { type: 'paused' as const, reason: 'provider_stop_pending' as const };
+    if (paused.some((submission) => submission.pausedReason === 'recovered_unsent')) return { type: 'paused' as const, reason: 'recovered_unsent' as const };
     if (conversation.providerState === 'paused' && conversationTurns.listByConversation(conversation.id).some(isProviderStopPendingTurn)) {
       return { type: 'paused' as const, reason: 'provider_stop_pending' as const };
     }

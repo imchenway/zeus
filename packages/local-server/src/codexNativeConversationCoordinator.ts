@@ -120,6 +120,7 @@ import type { ContextDispatchEnvelope } from './contextDispatchService.js';
 import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
 import { conversationToolResultDynamicTools, type ManagedConversationToolResultStore } from './conversationPortableContext.js';
 import { ConversationQueueCoreMutationApplication } from './conversationQueueCoreMutationApplication.js';
+import { createCodexRecoveredUnsentQueueApplication, hasRecoveredUnsentSubmission } from './codexRecoveredUnsentQueueApplication.js';
 import { normalizeConversationResources, toConversationResource } from './conversationResources.js';
 import { archiveUnboundConversationLocally, restoreUnboundConversationLocally } from './unboundConversationArchiveApplication.js';
 import { persistThreadProviderSettings as persistProviderThreadMetadata, threadPath } from './codexThreadMetadataProjection.js';
@@ -196,13 +197,7 @@ export interface CodexNativeConversationRuntime extends CodexNativeConversationC
   synchronizeOpenConversation(input: { conversationId: string }): Promise<void>;
   synchronizeConversations(input: { conversationIds: readonly string[] }): Promise<void>;
   /** 退出编排专用：中断写入统一 Provider 命令账本，并在有界窗口内只读确认精确 turn 终态。 */
-  requestProviderTurnStop(input: {
-    conversationId: string;
-    providerThreadId: string;
-    providerTurnId: string;
-    stopCommandId: string;
-    confirmationTimeoutMs: number;
-  }): Promise<CodexProviderStopRequestResult>;
+  requestProviderTurnStop(input: { conversationId: string; providerThreadId: string; providerTurnId: string; stopCommandId: string; confirmationTimeoutMs: number }): Promise<CodexProviderStopRequestResult>;
   close(input?: { mode: 'handoff' | 'final' }): Promise<void>;
 }
 
@@ -1145,6 +1140,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     assertOpen();
     const requiresNewSegment = input.segmentLifecycle?.requiresNewSegment === true;
     const conversation = requiresNewSegment ? requireProductConversation(input.conversationId) : requireConversation(input.conversationId);
+    if (!requiresNewSegment && hasRecoveredUnsentSubmission(options.submissions.listByConversation(conversation.id))) {
+      throw coordinatorError('ZEUS_RECOVERED_UNSENT_CONFIRMATION_REQUIRED', '恢复后有多条尚未发送的消息，请先逐条重试或取消。');
+    }
     const previousContext = contextWithLatestNextTurnSettings(conversation.id, contexts.get(conversation.id) ?? contextFromConversation(conversation));
     const context: ConversationDispatchContext = {
       ...previousContext,
@@ -2281,19 +2279,17 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     return snapshot;
   }
 
-  async function deleteQueuedSubmission(input: { conversationId: string; submissionId: string }): Promise<NativeQueueSnapshot> {
-    const snapshot = options.db.transaction(() => queueCoreMutations.delete(input)) as NativeQueueSnapshot;
-    providerThreadAuthority.queueChanged(input.conversationId);
-    await persist();
-    return snapshot;
-  }
-
-  async function retryQueuedSubmission(input: { conversationId: string; submissionId: string }): Promise<NativeQueueSnapshot> {
-    const snapshot = options.db.transaction(() => queueCoreMutations.retry(input)) as NativeQueueSnapshot;
-    await persist();
-    options.broadcast('conversation.queue.changed', { conversationId: input.conversationId });
-    return snapshot;
-  }
+  const { deleteQueuedSubmission, retryQueuedSubmission } = createCodexRecoveredUnsentQueueApplication({
+    transaction: (operation) => options.db.transaction(operation),
+    mutations: queueCoreMutations,
+    submissions: options.submissions,
+    runStates,
+    snapshot: toQueueSnapshot,
+    queueChanged: (conversationId) => providerThreadAuthority.queueChanged(conversationId),
+    persist,
+    broadcast: options.broadcast,
+    requestQueueDrain,
+  });
 
   async function reorderQueue(input: { conversationId: string; orderedSubmissionIds: string[] }): Promise<NativeQueueSnapshot> {
     const snapshot = options.db.transaction(() => queueCoreMutations.reorder(input)) as NativeQueueSnapshot;

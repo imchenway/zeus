@@ -11,6 +11,8 @@ import {
   type ExternalAgentImportEvent,
 } from './codexAppServerManager.js';
 import { spawn as nodeSpawn } from 'node:child_process';
+import { closeSync, constants, fstatSync, mkdirSync, openSync, readFileSync } from 'node:fs';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 interface RuntimeEntry {
   manager: CodexAppServerManager;
@@ -73,6 +75,46 @@ function responsesProviderFlags(provider: CodexResponsesModelProvider | null): s
   ];
 }
 
+/** 只在真实配置声明了 node_repl 时覆盖其环境，避免凭空创建不完整的 MCP server。 */
+function nodeReplToolRuntimeFlags(codexHome: string | undefined, toolRuntimeCodexHome: string | undefined): string[] {
+  if (!toolRuntimeCodexHome) return [];
+  if (!codexHome || !isAbsolute(codexHome) || !isAbsolute(toolRuntimeCodexHome)) {
+    throw managerError('ZEUS_CODEX_TOOL_HOME_INVALID', 'Codex tool runtime home and provider home must be absolute paths.');
+  }
+  const providerRoot = resolve(codexHome);
+  const toolRoot = resolve(toolRuntimeCodexHome);
+  if (isSameOrInside(providerRoot, toolRoot) || isSameOrInside(toolRoot, providerRoot)) {
+    throw managerError('ZEUS_CODEX_TOOL_HOME_INVALID', 'Codex tool runtime home must be isolated from the provider home.');
+  }
+  if (!configDeclaresNodeRepl(providerRoot)) return [];
+  mkdirSync(toolRoot, { recursive: true, mode: 0o700 });
+  return ['-c', `mcp_servers.node_repl.env.CODEX_HOME=${JSON.stringify(toolRoot)}`];
+}
+
+function isSameOrInside(parent: string, candidate: string): boolean {
+  const pathFromParent = relative(parent, candidate);
+  return pathFromParent === '' || (pathFromParent !== '..' && !pathFromParent.startsWith(`..${sep}`) && !isAbsolute(pathFromParent));
+}
+
+function configDeclaresNodeRepl(codexHome: string): boolean {
+  let fileDescriptor: number;
+  try {
+    fileDescriptor = openSync(join(codexHome, 'config.toml'), constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch {
+    return false;
+  }
+  try {
+    const stat = fstatSync(fileDescriptor);
+    if (!stat.isFile() || stat.size <= 0 || stat.size > 4 * 1024 * 1024) return false;
+    const config = readFileSync(fileDescriptor, 'utf8');
+    return /^\s*\[\s*mcp_servers\.(?:node_repl|"node_repl")(?:\.[^\x5d]+)?\s*\]\s*(?:#.*)?$/mu.test(config);
+  } catch {
+    return false;
+  } finally {
+    closeSync(fileDescriptor);
+  }
+}
+
 const supportedServerRequestMethods = new Set([
   'item/commandExecution/requestApproval',
   'item/fileChange/requestApproval',
@@ -90,6 +132,7 @@ export function createCodexRuntimeGenerationManager(
   options: {
     accountFingerprintSalt?: string;
     codexHome?: string;
+    toolRuntimeCodexHome?: string;
     runtimeEnvironment?: Record<string, string>;
     providerVersionProbe?: (commandPath: string) => Promise<string | null>;
   } = {},
@@ -422,11 +465,12 @@ export function createCodexRuntimeGenerationManager(
     }
 
     const providerVersionFallback = await (options.providerVersionProbe ?? probeCodexProviderVersion)(input.commandPath);
+    const appServerFlags = [...nodeReplToolRuntimeFlags(options.codexHome, options.toolRuntimeCodexHome), ...responsesProviderFlags(requestedResponsesProvider)];
     const manager = createCodexAppServerManager({
       ...(options.accountFingerprintSalt ? { accountFingerprintSalt: options.accountFingerprintSalt } : {}),
       ...(options.codexHome ? { codexHome: options.codexHome } : {}),
       ...(options.runtimeEnvironment ? { runtimeEnvironment: options.runtimeEnvironment } : {}),
-      ...(requestedResponsesProvider ? { appServerFlags: responsesProviderFlags(requestedResponsesProvider) } : {}),
+      ...(appServerFlags.length > 0 ? { appServerFlags } : {}),
       providerVersionFallback,
     });
     const provisional: RuntimeEntry = {
@@ -443,6 +487,7 @@ export function createCodexRuntimeGenerationManager(
         protocolVersion: 'codex-app-server-v2',
         models: [],
         supportedModels: [],
+        modelBudgets: Object.freeze({}),
         preflightTokenCount: {
           state: 'unavailable',
           exact: false,

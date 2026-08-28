@@ -1,5 +1,5 @@
 import type { DesktopReleaseUpdateStatus } from './releaseUpdateService.js';
-import { type HomebrewPreparedUpdate, type HomebrewUpdateProgress, type HomebrewUpdateService, isTransientHomebrewDownloadError } from './homebrewUpdateService.js';
+import { type HomebrewInstalledUpdate, type HomebrewPreparedUpdate, type HomebrewUpdateProgress, type HomebrewUpdateService, isTransientHomebrewDownloadError } from './homebrewUpdateService.js';
 import { createNativeUpdateProgressHost, type NativeUpdateProgressHost, type NativeUpdateProgressState } from './nativeUpdateProgress.js';
 
 export type HomebrewUpdateIndicatorPhase = 'idle' | 'available' | 'preparing' | 'retrying' | 'ready' | 'failed';
@@ -31,7 +31,7 @@ interface CreateHomebrewUpdateControllerOptions {
   homebrew: HomebrewUpdateService;
   currentVersion: string;
   canInstall: () => void;
-  onInstallReady: () => void;
+  onInstallReady: (activate: () => void | Promise<void>) => Promise<boolean>;
   retryDelaysMs?: readonly number[];
 }
 
@@ -47,6 +47,7 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
   let closed = false;
   let currentUpdate: DesktopReleaseUpdateStatus | null = null;
   let prepared: HomebrewPreparedUpdate | null = null;
+  let installed: HomebrewInstalledUpdate | null = null;
   let lastState: NativeUpdateProgressState | null = null;
   let lastFailureStep: 'check' | 'prepare' | 'install' = 'check';
   let operation: Promise<void> | null = null;
@@ -112,6 +113,7 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
   async function checkForUpdate(present: boolean, updateIndicator: boolean): Promise<DesktopReleaseUpdateStatus | null> {
     phase = 'checking';
     prepared = null;
+    installed = null;
     currentUpdate = null;
     lastFailureStep = 'check';
     if (present) {
@@ -194,12 +196,18 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
       options.canInstall();
       phase = 'installing';
       await publish(copyFor(options.language(), 'installing', options.currentVersion, prepared.update));
-      const installed = await options.homebrew.install(prepared, (progress) => {
+      installed ??= await options.homebrew.install(prepared, (progress) => {
         void publish(progressCopy(options.language(), progress, prepared!.update));
       });
-      const currentHost = await ensureHost();
-      currentHost.relaunchAfterProcessExit({ pid: process.pid, ...installed });
-      options.onInstallReady();
+      const accepted = await options.onInstallReady(async () => {
+        const currentHost = await ensureHost();
+        currentHost.relaunchAfterProcessExit({ pid: process.pid, ...installed! });
+      });
+      if (!accepted) {
+        phase = 'ready';
+        setIndicator(indicatorForReady(options.language(), prepared.update));
+        await publish(copyFor(options.language(), 'ready', options.currentVersion, prepared.update));
+      }
     } catch (error) {
       phase = 'failed';
       setIndicator(indicatorForFailed(options.language(), prepared.update));
@@ -215,6 +223,9 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
   }
 
   async function checkAutomatically(input?: { blockedPrepareVersion?: string | null }): Promise<boolean> {
+    // 用户取消重启后，新 App 已由 Homebrew 安装但接力尚未武装；周期检查不能
+    // 清掉精确安装路径并再次执行 brew upgrade，保持 ready 等待下一次显式重启。
+    if (phase === 'ready' && prepared && installed) return true;
     hidden = true;
     let loaded = false;
     await runExclusive(async () => {

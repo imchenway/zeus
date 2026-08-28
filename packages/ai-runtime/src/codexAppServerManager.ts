@@ -22,6 +22,7 @@ import {
   parseExternalAgentImportNotification,
 } from './codexAppServerProtocol.js';
 import { expandCliSearchPath } from './cliSearchPath.js';
+import { resolveCodexModelBudgetSnapshot, type CodexModelBudgetEvidence } from './codexModelBudgetSnapshot.js';
 
 export type {
   ExternalAgentConfigDetectParams,
@@ -79,6 +80,8 @@ export interface CodexCapabilitiesSnapshot {
   protocolVersion: 'codex-app-server-v2';
   models: CodexModelCapability[];
   supportedModels: string[];
+  /** 与 generationId 同时冻结；派发期间禁止重新读取可变 Provider 缓存。 */
+  modelBudgets: Readonly<Record<string, Readonly<CodexModelBudgetEvidence>>>;
   preflightTokenCount: {
     state: 'unavailable';
     exact: false;
@@ -696,13 +699,16 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       const models = parseModels(modelList);
       const goals = await readGoalCapability(generationId);
       if (remoteControlEnabled || remoteControlTransport) await rpc(generationId, 'remoteControl/enable', {});
+      const initializedAt = now();
+      const providerVersion = providerVersionFromInitialize(initializeResponse) ?? providerVersionFallback;
       const capabilities: CodexCapabilitiesSnapshot = {
         generationId,
-        initializedAt: now(),
-        providerVersion: providerVersionFromInitialize(initializeResponse) ?? providerVersionFallback,
+        initializedAt,
+        providerVersion,
         protocolVersion: 'codex-app-server-v2',
         models,
         supportedModels: models.map((model) => model.model),
+        modelBudgets: resolveCodexModelBudgetSnapshot({ codexHome, generationId, initializedAt, providerVersion, models }),
         preflightTokenCount: {
           state: 'unavailable',
           exact: false,

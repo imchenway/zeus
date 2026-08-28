@@ -171,12 +171,17 @@ let taskTableLayoutQuitPending = false;
 let taskTableLayoutQuitApproved = false;
 let upgradeHandoffRequested = false;
 let fullRestartRequested = false;
+let fullRestartRelaunchScheduled = false;
+let pendingUpgradeHandoff: {
+  activate: () => void | Promise<void>;
+  result: Promise<boolean>;
+  resolve: (accepted: boolean) => void;
+} | null = null;
 
 /** 所有“重新启动”入口都必须经过 before-quit，完整关闭 Core 和子进程。 */
 function requestFullAppRestart(): void {
   fullRestartRequested = true;
   taskTableLayoutQuitApproved = true;
-  scheduleExactAppRelaunchAfterCurrentProcessExit();
   app.quit();
 }
 
@@ -186,6 +191,8 @@ function requestFullAppRestart(): void {
  * 这样新 Main 不会在旧单实例锁尚未释放时被误判为“第二实例”而退出。
  */
 function scheduleExactAppRelaunchAfterCurrentProcessExit(): void {
+  if (fullRestartRelaunchScheduled) return;
+  fullRestartRelaunchScheduled = true;
   const relauncher = spawn(
     '/bin/sh',
     [
@@ -205,11 +212,18 @@ function scheduleExactAppRelaunchAfterCurrentProcessExit(): void {
   relauncher.unref();
 }
 
-/** 更新辅助程序已经拿到精确新版路径后，完整关闭当前 Core，再由辅助程序拉起新版。 */
-function requestUpgradeHandoffQuit(): void {
+/** 升级接力只登记为待确认；辅助程序必须等活动工作确认通过后才能真正武装。 */
+function requestUpgradeHandoffQuit(activate: () => void | Promise<void>): Promise<boolean> {
+  if (pendingUpgradeHandoff) return pendingUpgradeHandoff.result;
+  let resolveDecision: (accepted: boolean) => void = () => undefined;
+  const result = new Promise<boolean>((resolve) => {
+    resolveDecision = resolve;
+  });
+  pendingUpgradeHandoff = { activate, result, resolve: resolveDecision };
   upgradeHandoffRequested = true;
   taskTableLayoutQuitApproved = true;
   setImmediate(() => app.quit());
+  return result;
 }
 
 const storageRecoveryRestart = new StorageRecoveryRestartCoordinator();
@@ -1030,7 +1044,6 @@ async function checkForUpdatesFromMenu(): Promise<void> {
     await homebrewUpdateController.showOrCheck();
     return { opened: true, externalOperationId: command.externalOperationId };
   });
-  if (upgradeHandoffRequested) setImmediate(() => app.quit());
 }
 
 /** 打开本机日志目录；长日志和导出文件留在用户 Mac 上，不发送到远端渠道。 */
@@ -1715,7 +1728,6 @@ function setupIpc(): void {
       await command.markWriteStarted();
       return service.install();
     });
-    if (result.accepted && upgradeHandoffRequested) setImmediate(() => app.quit());
     return result;
   });
   ipcMain.handle('zeus:automatic-update-indicator:get', (event) => {
@@ -1733,7 +1745,6 @@ function setupIpc(): void {
       await controller.showOrCheck();
       return { opened: true, externalOperationId: command.externalOperationId };
     });
-    if (upgradeHandoffRequested) setImmediate(() => app.quit());
     return result;
   });
   ipcMain.handle('zeus:automatic-update-indicator:record-manual-check', (event, request: MainCommandRequest) => {
@@ -2924,22 +2935,41 @@ async function resolveDesktopQuitMode(): Promise<'continue_in_background' | 'upg
   if (readOnlyValidationDescriptor) return 'final_quit';
   if (storageRecoveryRestart.isRequested()) return 'final_quit';
   const runtime = localServerRuntime;
-  if (!runtime) return 'final_quit';
+  if (!runtime) {
+    if (!fullRestartRequested && !upgradeHandoffRequested) return 'final_quit';
+    const confirmed = await confirmRequestedRestart('Zeus 当前无法取得 Core 状态。继续重启可能中断尚未完成的工作。');
+    return confirmed ? requestedRestartQuitMode() : cancelRequestedRestart();
+  }
   let status;
   try {
     status = await runtime.getStatus();
   } catch {
-    // 用户明确要求完整重启/更新时不能再保留未知旧 Core；有界关闭失败后由退出兜底收口进程。
-    return fullRestartRequested || upgradeHandoffRequested ? 'force_quit' : 'cancel';
-  }
-  if (!status.hasActiveWork) return 'final_quit';
-  if (fullRestartRequested || upgradeHandoffRequested) {
+    if (!fullRestartRequested && !upgradeHandoffRequested) return 'cancel';
+    const confirmed = await confirmRequestedRestart('Zeus 无法读取当前 Core 的活动数量。继续重启可能中断尚未完成的轮次、等待交互、其他 Runtime 或命令执行。');
+    if (!confirmed) return cancelRequestedRestart();
     try {
       await runtime.stopActiveWork();
-      return 'final_quit';
     } catch (error) {
-      console.error('Zeus 完整重启前未能正常终结全部活动工作，将进入强制退出兜底。', error);
-      return 'force_quit';
+      console.error('Zeus 无法读取活动数量，且显式停止活动工作失败；已取消重启。', error);
+      await showRestartCancelled('当前 Core 无法确认活动数量，也未能安全记录中断状态。本次重启已取消。');
+      return cancelRequestedRestart();
+    }
+    return requestedRestartQuitMode();
+  }
+  if (!status.hasActiveWork) return requestedRestartQuitMode();
+  if (fullRestartRequested || upgradeHandoffRequested) {
+    const effectfulTurnDetail = typeof status.effectfulTurnCount === 'number' ? `其中已进入副作用阶段 ${status.effectfulTurnCount} 个` : '其中已进入副作用阶段的数量无法由当前 Core 确认';
+    const confirmed = await confirmRequestedRestart(
+      `重启会停止正在执行的轮次 ${status.activeTurnCount} 个（${effectfulTurnDetail}）、等待交互 ${status.waitingRequestCount} 个、其他 Runtime ${status.activeRuntimeCount} 个、命令执行 ${status.activeCommandRunCount} 个。`,
+    );
+    if (!confirmed) return cancelRequestedRestart();
+    try {
+      await runtime.stopActiveWork();
+      return requestedRestartQuitMode();
+    } catch (error) {
+      console.error('Zeus 完整重启前未能安全记录全部活动工作的中断状态；已取消重启。', error);
+      await showRestartCancelled('活动工作未能安全停止，本次重启已取消。');
+      return cancelRequestedRestart();
     }
   }
   const mayContinueInBackground = !isTestDistribution() && appShellSettings.backgroundModeEnabled;
@@ -2967,6 +2997,69 @@ async function resolveDesktopQuitMode(): Promise<'continue_in_background' | 'upg
     console.error('Zeus 未能记录全部活动工作的中断状态，已取消本次退出。', error);
     return 'cancel';
   }
+}
+
+async function requestedRestartQuitMode(): Promise<'upgrade_handoff' | 'final_quit' | 'cancel'> {
+  if (upgradeHandoffRequested) {
+    const handoff = pendingUpgradeHandoff;
+    if (!handoff) {
+      await showRestartCancelled('升级接力信息已经失效。本次重启已取消，更新保持等待重启。');
+      return cancelRequestedRestart();
+    }
+    try {
+      await handoff.activate();
+    } catch (error) {
+      console.error('Zeus 无法在确认后启动升级接力；已取消重启。', error);
+      await showRestartCancelled('升级辅助程序未能安全启动。本次重启已取消，更新保持等待重启。');
+      return cancelRequestedRestart();
+    }
+    handoff.resolve(true);
+    pendingUpgradeHandoff = null;
+    return 'upgrade_handoff';
+  }
+  if (fullRestartRequested) scheduleExactAppRelaunchAfterCurrentProcessExit();
+  return 'final_quit';
+}
+
+function cancelRequestedRestart(): 'cancel' {
+  pendingUpgradeHandoff?.resolve(false);
+  pendingUpgradeHandoff = null;
+  fullRestartRequested = false;
+  upgradeHandoffRequested = false;
+  taskTableLayoutQuitApproved = false;
+  return 'cancel';
+}
+
+async function confirmRequestedRestart(detail: string): Promise<boolean> {
+  const options = {
+    type: 'warning' as const,
+    title: '重启会停止活动工作',
+    message: '确认停止活动工作并完整重启 Zeus？',
+    detail,
+    buttons: ['停止活动工作并重启', '取消'],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+  };
+  const targetWindow = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+  const result = targetWindow ? await dialog.showMessageBox(targetWindow, options) : await dialog.showMessageBox(options);
+  return result.response === 0;
+}
+
+async function showRestartCancelled(detail: string): Promise<void> {
+  const options = {
+    type: 'warning' as const,
+    title: '重启已取消',
+    message: 'Zeus 没有关闭当前 Core。',
+    detail,
+    buttons: ['知道了'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  };
+  const targetWindow = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+  if (targetWindow) await dialog.showMessageBox(targetWindow, options);
+  else await dialog.showMessageBox(options);
 }
 
 app.on(

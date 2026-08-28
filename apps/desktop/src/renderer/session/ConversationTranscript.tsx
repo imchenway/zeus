@@ -55,6 +55,7 @@ export interface ConversationTranscriptProps {
   onLoadV2Content?: (handle: string) => Promise<void>;
   onLoadV2ToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage>;
   onRecoverQueue?: () => void | Promise<void>;
+  onRetryQueuedSubmission?: (submissionId: string) => void | Promise<void>;
   onCancelQueuedSubmission?: (submissionId: string) => void | Promise<void>;
 }
 
@@ -336,6 +337,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     onLoadTurnArtifacts: useStableOptionalCallback(props.onLoadTurnArtifacts),
     onLoadV2Content: useStableOptionalCallback(props.onLoadV2Content),
     onLoadV2ToolResult: useStableOptionalCallback(props.onLoadV2ToolResult),
+    onRetryQueuedSubmission: useStableOptionalCallback(props.onRetryQueuedSubmission),
   };
   const itemNeedingImageResources = useMemo(() => items.find(itemNeedsImageResources) ?? null, [items]);
   const resourcePaging = props.state.snapshot?.v2Paging?.resources;
@@ -1084,6 +1086,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
           item={row.item}
           language={options.props.language}
           onRecoverQueue={options.props.onRecoverQueue}
+          onRetryQueuedSubmission={options.props.onRetryQueuedSubmission}
           onCancelQueuedSubmission={options.props.onCancelQueuedSubmission}
         />
       ) : null}
@@ -1146,7 +1149,9 @@ function TranscriptV2ContentBoundary(props: { item: NativeSessionItemBuffer; lan
               </button>
             </>
           ) : (
-            <span role="status">{canLoad ? (props.language === 'zh-CN' ? '正在读取完整消息…' : 'Loading the complete message…') : props.language === 'zh-CN' ? '完整消息暂时无法读取。' : 'The complete message is temporarily unavailable.'}</span>
+            <span role="status">
+              {canLoad ? (props.language === 'zh-CN' ? '正在读取完整消息…' : 'Loading the complete message…') : props.language === 'zh-CN' ? '完整消息暂时无法读取。' : 'The complete message is temporarily unavailable.'}
+            </span>
           )}
         </div>
       ) : null}
@@ -1167,9 +1172,10 @@ function MessageDeliveryOutcomeFeedback(props: {
   item: NativeSessionItemBuffer;
   language: SessionUiLanguage;
   onRecoverQueue?: () => void | Promise<void>;
+  onRetryQueuedSubmission?: (submissionId: string) => void | Promise<void>;
   onCancelQueuedSubmission?: (submissionId: string) => void | Promise<void>;
 }): ReactNode {
-  const [busyAction, setBusyAction] = useState<'recover' | 'cancel' | null>(null);
+  const [busyAction, setBusyAction] = useState<'recover' | 'retry' | 'cancel' | null>(null);
   const pausedReason = props.item.payload.pausedReason;
   if (pausedReason === 'provider_stop_pending') {
     return (
@@ -1185,8 +1191,10 @@ function MessageDeliveryOutcomeFeedback(props: {
   const feedbackState = failed ? 'failed' : 'unconfirmed';
 
   const providerStopRecoveryFailed = pausedReason === 'recovery_required' && deliveryError.code === 'ZEUS_PROVIDER_STOP_RECOVERY_REQUIRED';
+  const recoveredUnsent = pausedReason === 'recovered_unsent' && deliveryError.code === 'ZEUS_RECOVERED_UNSENT_CONFIRMATION_REQUIRED';
+  const modelWindowUnavailable = deliveryError.code === 'ZEUS_CONTEXT_MODEL_WINDOW_UNAVAILABLE';
   const submissionId = props.item.localItemId || (typeof props.item.payload.submissionId === 'string' ? props.item.payload.submissionId : null);
-  const runAction = (action: 'recover' | 'cancel', operation: (() => void | Promise<void>) | undefined) => {
+  const runAction = (action: 'recover' | 'retry' | 'cancel', operation: (() => void | Promise<void>) | undefined) => {
     if (!operation || busyAction) return;
     setBusyAction(action);
     void Promise.resolve()
@@ -1198,6 +1206,10 @@ function MessageDeliveryOutcomeFeedback(props: {
     <section className="session-message-delivery-feedback" data-state={feedbackState} role="alert" aria-live="assertive">
       {providerStopRecoveryFailed ? (
         <span>{props.language === 'zh-CN' ? '无法确认上次运行已安全停止。' : 'The previous run could not be confirmed as safely stopped.'}</span>
+      ) : recoveredUnsent ? (
+        <span>{props.language === 'zh-CN' ? '这条消息尚未发送，请逐条重试或取消。' : 'This message was not sent. Retry or cancel each recovered message individually.'}</span>
+      ) : modelWindowUnavailable ? (
+        <span>{props.language === 'zh-CN' ? 'Codex 模型能力尚未就绪，这条消息未发送。' : 'Codex model capabilities are not ready. This message was not sent.'}</span>
       ) : (
         <VisibleApplicationError error={deliveryError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
       )}
@@ -1206,13 +1218,20 @@ function MessageDeliveryOutcomeFeedback(props: {
           <button type="button" disabled={busyAction !== null} onClick={() => runAction('recover', props.onRecoverQueue)}>
             {props.language === 'zh-CN' ? '重新核对' : 'Check again'}
           </button>
-          <button
-            type="button"
-            disabled={busyAction !== null || !submissionId}
-            onClick={() => runAction('cancel', submissionId && props.onCancelQueuedSubmission ? () => props.onCancelQueuedSubmission?.(submissionId) : undefined)}
-          >
+          <button type="button" disabled={busyAction !== null || !submissionId} onClick={() => runAction('cancel', submissionId && props.onCancelQueuedSubmission ? () => props.onCancelQueuedSubmission?.(submissionId) : undefined)}>
             {props.language === 'zh-CN' ? '取消消息' : 'Cancel message'}
           </button>
+        </div>
+      ) : recoveredUnsent || modelWindowUnavailable ? (
+        <div className="session-message-delivery-actions">
+          <button type="button" disabled={busyAction !== null || !submissionId} onClick={() => runAction('retry', submissionId && props.onRetryQueuedSubmission ? () => props.onRetryQueuedSubmission?.(submissionId) : undefined)}>
+            {props.language === 'zh-CN' ? '重试' : 'Retry'}
+          </button>
+          {recoveredUnsent ? (
+            <button type="button" disabled={busyAction !== null || !submissionId} onClick={() => runAction('cancel', submissionId && props.onCancelQueuedSubmission ? () => props.onCancelQueuedSubmission?.(submissionId) : undefined)}>
+              {props.language === 'zh-CN' ? '取消消息' : 'Cancel message'}
+            </button>
+          ) : null}
         </div>
       ) : null}
     </section>
@@ -1222,7 +1241,7 @@ function MessageDeliveryOutcomeFeedback(props: {
 function shouldShowPendingMessageDeliveryFeedback(item: NativeSessionItemBuffer, showActiveStatus: boolean): boolean {
   if (item.status === 'failed' || item.status === 'unconfirmed') return true;
   if (item.status === 'queued') return false;
-  if (item.status === 'paused') return item.payload.pausedReason === 'recovery_required' || item.payload.pausedReason === 'provider_stop_pending';
+  if (item.status === 'paused') return item.payload.pausedReason === 'recovery_required' || item.payload.pausedReason === 'provider_stop_pending' || item.payload.pausedReason === 'recovered_unsent';
   return !showActiveStatus;
 }
 
