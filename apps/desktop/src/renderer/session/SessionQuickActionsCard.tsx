@@ -53,6 +53,7 @@ interface SessionQuickActionsCardProps {
   onAddSources?: () => void | Promise<void>;
   onOpenSource?: (resource: ConversationResource) => void | Promise<void>;
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
+  onPopoverOpenChange?: (open: boolean) => void;
 }
 
 interface SourceRow {
@@ -106,6 +107,14 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const persistent = hasPersistentSpace && !props.forceCollapsed;
   const cardVisible = !props.suppressed && (persistent || open);
   const cardMounted = cardVisible || Boolean(props.suppressed && persistent);
+  const popoverOpen = cardVisible && !persistent;
+
+  useLayoutEffect(() => {
+    props.onPopoverOpenChange?.(popoverOpen);
+    return () => {
+      if (popoverOpen) props.onPopoverOpenChange?.(false);
+    };
+  }, [popoverOpen, props.onPopoverOpenChange]);
 
   useEffect(() => {
     const workspaceRoot = rootRef.current?.closest<HTMLElement>('.session-workspace-root');

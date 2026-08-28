@@ -1495,6 +1495,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const [contextFullWidth, setContextFullWidth] = useState(false);
   const [browserPaneShare, setBrowserPaneShare] = useState(56);
   const [browserResizing, setBrowserResizing] = useState(false);
+  const [quickActionsPopoverOpen, setQuickActionsPopoverOpen] = useState(false);
   const [browserLayoutWidth, setBrowserLayoutWidth] = useState(0);
   const [goalPanelOpen, setGoalPanelOpen] = useState(false);
   const [goalBusy, setGoalBusy] = useState(false);
@@ -1588,6 +1589,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     browserVisibilityProgress.set(0);
     setContextMounted(false);
     setBrowserResizing(false);
+    setQuickActionsPopoverOpen(false);
     browserResizeActiveRef.current = false;
   }, [browserVisibilityProgress, escapeController, props.conversation?.id]);
 
@@ -2168,7 +2170,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       }}
     >
       {displayedHeader ? (
-        <header className="session-thread-header">
+        <header className="session-thread-header" data-quick-actions-popover-open={quickActionsPopoverOpen || undefined}>
           <span key={displayedHeader.conversationId} className="session-thread-title-copy" data-conversation-transition="true">
             <span className="session-thread-title-row">
               {displayedHeader.taskId && actions.onOpenTaskDetail ? (
@@ -2292,6 +2294,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 onAddSources={actions.onChooseAttachments}
                 onOpenSource={(resource) => openConversationResource(resource, defaultOpenTarget(resource))}
                 onLoadResourcePreview={actions.onLoadResourcePreview}
+                onPopoverOpenChange={setQuickActionsPopoverOpen}
               />
             ) : null}
           </div>
@@ -2445,7 +2448,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                           conversationId={props.state?.conversationId ?? props.conversation.id}
                           language={props.language}
                           disabled={interactionReadOnly || nonResumableNative}
-                          suspended={browserResizing}
+                          suspended={browserResizing || quickActionsPopoverOpen}
                           expanded={contextFullWidth}
                           onClose={closeContextWorkspace}
                           onToggleExpanded={() => setContextFullWidth((expanded) => !expanded)}
