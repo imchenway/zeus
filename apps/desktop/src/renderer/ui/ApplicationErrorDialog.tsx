@@ -1,13 +1,9 @@
-import { useEffect, useRef } from 'react';
+import {useEffect, useRef} from 'react';
 
 export type ApplicationErrorLanguage = 'zh-CN' | 'en';
 
 export interface ApplicationErrorOptions {
   language?: ApplicationErrorLanguage;
-  primaryAction?: {
-    label: string;
-    run: () => void;
-  };
 }
 
 const secretPatterns: ReadonlyArray<[RegExp, string]> = [
@@ -76,7 +72,6 @@ export function reportApplicationError(error: unknown, options: ApplicationError
 export function useApplicationErrorDialog(error: unknown, options: ApplicationErrorOptions = {}): void {
   const previousErrorRef = useRef<unknown>(undefined);
   const language = options.language;
-  const primaryAction = options.primaryAction;
 
   useEffect(() => {
     if (error === null || error === undefined || error === '') {
@@ -85,11 +80,8 @@ export function useApplicationErrorDialog(error: unknown, options: ApplicationEr
     }
     if (Object.is(previousErrorRef.current, error)) return;
     previousErrorRef.current = error;
-    reportApplicationError(error, {
-      ...(language ? { language } : {}),
-      ...(primaryAction ? { primaryAction } : {}),
-    });
-  }, [error, language, primaryAction]);
+      reportApplicationError(error, language ? {language} : {});
+  }, [error, language]);
 }
 
 /** 保留旧挂载点以避免业务页批量改动；全局错误弹窗已永久停用。 */

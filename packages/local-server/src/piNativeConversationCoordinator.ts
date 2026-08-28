@@ -1,48 +1,60 @@
-import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { realpathSync, statSync } from 'node:fs';
-import { readdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
-import { promisify } from 'node:util';
+import {execFile} from 'node:child_process';
+import {createHash} from 'node:crypto';
+import {realpathSync, statSync} from 'node:fs';
+import {readdir, readFile, writeFile} from 'node:fs/promises';
+import {dirname, extname, isAbsolute, relative, resolve, sep} from 'node:path';
+import {promisify} from 'node:util';
 import {
-  type AgentImageInput,
-  type AgentModelIdentity,
-  type AgentProviderPayloadDiagnostic,
-  type AgentRuntimeEvent,
-  type AgentSessionIdentity,
-  createPiRuntimeWorkerDriver,
-  isOfficialDeepSeekApiConnection,
-  modelConnectionRequestEndpoint,
-  modelRef,
-  parseModelRef,
-  piRuntimeWorkerProtocolVersion,
-  type PiZeusToolBroker,
-  type PiZeusToolRequest,
-  type PiZeusToolResult,
+    type AgentImageInput,
+    type AgentModelIdentity,
+    type AgentProviderPayloadDiagnostic,
+    type AgentRuntimeEvent,
+    type AgentSessionIdentity,
+    createPiRuntimeWorkerDriver,
+    isOfficialDeepSeekApiConnection,
+    modelConnectionRequestEndpoint,
+    modelRef,
+    parseModelRef,
+    piRuntimeWorkerProtocolVersion,
+    type PiZeusToolBroker,
+    type PiZeusToolRequest,
+    type PiZeusToolResult,
 } from '@zeus/ai-runtime';
-import { buildTaskPushInputParts, calculateCacheHitRate, emptyTokenUsageBreakdown, estimateDeepSeekUsage, type CodexUsageEstimate, type NativeTokenUsageSnapshot, type TaskPushMessageLayout, type TokenUsageBreakdown } from '@zeus/shared';
+import {
+    buildTaskPushInputParts,
+    calculateCacheHitRate,
+    type CodexUsageEstimate,
+    emptyTokenUsageBreakdown,
+    estimateDeepSeekUsage,
+    type NativeTokenUsageSnapshot,
+    type TaskPushMessageLayout,
+    type TokenUsageBreakdown
+} from '@zeus/shared';
 import type {
-  CodexUsageLedgerRepository,
-  CommandDeliveryRepository,
-  ConversationProviderItemRepository,
-  ConversationExecutionRepository,
-  ConversationRepository,
-  ConversationServerRequestRepository,
-  ConversationSubmissionRepository,
-  ConversationTurnRepository,
-  ZeusConversationServerRequestRecord,
-  ZeusConversationWithMessagesRecord,
-  ZeusDatabase,
+    CodexUsageLedgerRepository,
+    CommandDeliveryRepository,
+    ConversationExecutionRepository,
+    ConversationProviderItemRepository,
+    ConversationRepository,
+    ConversationServerRequestRepository,
+    ConversationSubmissionRepository,
+    ConversationTurnRepository,
+    ZeusConversationServerRequestRecord,
+    ZeusConversationWithMessagesRecord,
+    ZeusDatabase,
 } from '@zeus/storage';
-import type { ModelConnectionService } from './modelConnectionService.js';
-import type { NativeConversationAttachmentInput, NativeConversationSkillInput } from './codexNativeConversationContracts.js';
-import { readNativeSubmissionSkill } from './nativeConversationSubmissionInputs.js';
-import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
-import type { ManagedConversationToolResultStore } from './conversationPortableContext.js';
-import { TurnProcessProjector } from './turnProcessProjector.js';
-import type { ContextDispatchEnvelope } from './contextDispatchService.js';
-import { PiProviderCommandApplicationService, type PiProviderCommandAttempt } from './piProviderCommandDelivery.js';
-import { projectLocallyAcceptedUserMessage } from './localUserSubmissionProjection.js';
+import type {ModelConnectionService} from './modelConnectionService.js';
+import type {
+    NativeConversationAttachmentInput,
+    NativeConversationSkillInput
+} from './codexNativeConversationContracts.js';
+import {readNativeSubmissionSkill} from './nativeConversationSubmissionInputs.js';
+import type {ConversationSegmentLifecycle} from './conversationExecutionCoordinator.js';
+import type {ManagedConversationToolResultStore} from './conversationPortableContext.js';
+import {TurnProcessProjector} from './turnProcessProjector.js';
+import type {ContextDispatchEnvelope} from './contextDispatchService.js';
+import {PiProviderCommandApplicationService, type PiProviderCommandAttempt} from './piProviderCommandDelivery.js';
+import {projectLocallyAcceptedUserMessage} from './localUserSubmissionProjection.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -1269,7 +1281,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         role: 'assistant',
         content: text,
         source: 'pi_sdk',
-        metadata: { agentKind: 'pi' },
+          metadata: {agentKind: 'pi', phase: itemInput.phase},
         createdAt: event.createdAt,
         providerThreadId: event.nativeSessionId ?? undefined,
         providerTurnId: run.providerTurnId,

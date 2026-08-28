@@ -15018,6 +15018,24 @@ body[data-surface='project-git-diff'] #root {
   z-index: 120;
 }
 
+/* 存储故障使用工作区内联恢复条，不遮罩页面，也不暴露内部错误码。 */
+.macos-ai-app .storage-recovery-prompt {
+    box-shadow: 0 10px 28px color-mix(in oklch, var(--zeus-product-shadow, black) 14%, transparent);
+    inline-size: min(680px, calc(100vw - 40px));
+    inset-block-start: 44px;
+    inset-inline-start: 50%;
+    margin: 0;
+    position: fixed;
+    transform: translateX(-50%);
+    z-index: 121;
+}
+
+.macos-ai-app .storage-recovery-prompt .project-inline-recovery-copy > :where(strong, small) {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+}
+
 .macos-ai-app .conversation-status-sync-spinner {
   animation: conversation-status-sync-spin 0.85s linear infinite;
   block-size: 11px;

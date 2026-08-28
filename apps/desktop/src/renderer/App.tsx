@@ -1,7 +1,7 @@
-import { type ComponentProps, useCallback, useEffect, useState } from 'react';
-import { RendererErrorBoundary } from './ErrorBoundary.js';
-import { reportApplicationError } from './ui/ApplicationErrorDialog.js';
-import { WorkspacePage, type MainNavTarget, type SettingsCategory } from './WorkspacePage.js';
+import {type ComponentProps, useCallback, useEffect, useState} from 'react';
+import {RendererErrorBoundary} from './ErrorBoundary.js';
+import {reportApplicationError} from './ui/ApplicationErrorDialog.js';
+import {type MainNavTarget, type SettingsCategory, WorkspacePage} from './WorkspacePage.js';
 
 export { buildGraphConversationTaskIntent, buildGraphNodeTaskIntent, buildProjectDirectoryResolution, buildTemplateTaskDraft } from './WorkspacePage.js';
 
@@ -43,10 +43,6 @@ export function App(props: AppProps) {
       onFatalError={(error) =>
         reportApplicationError(error, {
           language: language === 'zh-CN' ? 'zh-CN' : 'en',
-          primaryAction: {
-            label: language === 'zh-CN' ? '刷新窗口' : 'Refresh window',
-            run: () => globalThis.location?.reload(),
-          },
         })
       }
     >

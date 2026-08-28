@@ -1,11 +1,17 @@
 #!/usr/bin/env node
 /* global console, process */
-import { spawn, spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
-import { commandFailureDetail, commandResultSucceeded, releaseRemoteReadAttempts, releaseRemoteReadTimeoutMs, runRemoteReadWithRetrySync } from './release-remote-read.mjs';
-import { releaseWorkflowWaitLimitMs } from './release-workflow-wait-policy.mjs';
+import {spawn, spawnSync} from 'node:child_process';
+import {copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {basename, dirname, extname, isAbsolute, join, resolve, sep} from 'node:path';
+import {
+    commandFailureDetail,
+    commandResultSucceeded,
+    releaseRemoteReadAttempts,
+    releaseRemoteReadTimeoutMs,
+    runRemoteReadWithRetrySync
+} from './release-remote-read.mjs';
+import {releaseWorkflowWaitLimitMs} from './release-workflow-wait-policy.mjs';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const repository = 'imchenway/zeus';
@@ -88,8 +94,8 @@ async function main() {
   await ensureReleaseNotes(releaseState);
   announceReleaseStage('写入版本并创建发布提交');
   await ensureReleaseCommit(releaseState);
-  announceReleaseStage('执行本地快速发布门禁');
-  ensureFastLocalGate(releaseState);
+    announceReleaseStage('执行本地阻塞级发布门禁');
+    await ensureFastLocalGate(releaseState);
   announceReleaseStage('安全推送 main');
   ensureMainPushed(releaseState);
   announceReleaseStage('创建并回验公开发布');
@@ -724,7 +730,7 @@ async function ensureCandidatePreflight(state) {
   console.log('快速前置检查通过：候选提交、工作区、Git 候选检查和目标标签均正常。');
 }
 
-function ensureFastLocalGate(state) {
+async function ensureFastLocalGate(state) {
   if (state.gateSummaryPath && existsSync(state.gateSummaryPath)) return;
   assertReleaseHead(state);
   if (resolveLocalTagSha(state.tag) || resolveRemoteReference(`refs/tags/${state.tag}`)) {
@@ -735,6 +741,8 @@ function ensureFastLocalGate(state) {
     diffArgs: [`${state.releaseCommit}^`, state.releaseCommit],
     allowAutoFix: false,
   });
+    // 自动格式化和版本文件都已进入固定候选；必须在任何 main 推送前运行与 CI 相同的阻塞级检查。
+    await runStage('本地阻塞级 TypeScript 检查', 'pnpm', ['typecheck'], process.env);
   const gateDirectory = join(state.stateDirectory, 'gate');
   mkdirSync(gateDirectory, { recursive: true, mode: 0o700 });
   const summaryPath = join(gateDirectory, `Zeus-${state.version}-release-fast-preflight-summary.md`);
@@ -749,7 +757,8 @@ function ensureFastLocalGate(state) {
       '- 工作区：干净。',
       '- 版本文件与 Release notes：已写入固定候选提交。',
       '- Git 空白错误检查：通过。',
-      '- typecheck、正式 DMG 打包、包内容健康检查、hdiutil 与 manifest 对账：交由同一固定提交的 Release Workflow 并行执行。',
+        '- 本地阻塞级 typecheck：通过。',
+        '- 正式 DMG 打包、包内容健康检查、hdiutil 与 manifest 对账：交由同一固定提交的 Release Workflow 执行。',
       '',
     ].join('\n'),
     { mode: 0o600 },
@@ -757,7 +766,7 @@ function ensureFastLocalGate(state) {
   state.gateSummaryPath = summaryPath;
   state.phase = 'gate_passed';
   writeState(state);
-  console.log(`本地快速发布前置检查通过：${summaryPath}`);
+    console.log(`本地阻塞级发布前置检查通过：${summaryPath}`);
 }
 
 function ensureMainPushed(state) {
