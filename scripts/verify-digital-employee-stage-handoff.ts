@@ -262,6 +262,114 @@ try {
       retriedAttempt.attemptNumber === 2 &&
       retriedAttempt.employeeId === developer.id;
 
+    const reviewReworkTask = tasks.create({
+      id: 'task_zeus_0373_review_rework_probe',
+      projectId: project.id,
+      title: '最终审查阶段继续完善',
+      taskType: 'optimization',
+      description: '代码审查交付物返工必须停留在当前阶段',
+      createdFrom: 'verification_probe',
+      sourceContext: {},
+      allowCodeChanges: false,
+      allowTests: false,
+    });
+    let reviewWorkflow = stages.initializeDefault({ taskId: reviewReworkTask.id, templateKey: 'digital-employee-plan-implement-review', templateRevision: 1, stages: defaultStages() });
+    let reviewPlanStage = reviewWorkflow.stages[0]!;
+    reviewWorkflow = stages.assignEmployee(reviewPlanStage.id, assignment(reviewPlanStage, product));
+    reviewPlanStage = reviewWorkflow.stages.find((stage) => stage.id === reviewPlanStage.id)!;
+    const reviewPlanAttempt = stages.prepareAttempt({
+      stageId: reviewPlanStage.id,
+      operationIdentity: 'probe:review-rework:plan-attempt',
+      employeeId: product.id,
+      employeeRevision: product.revision,
+      employeeSnapshot: { ...product },
+      effectivePermissions: { permissionMode: 'read-only', allowCodeChanges: false, allowTests: false },
+    });
+    const reviewPlanConversation = createConversation(db, conversations, project.id, reviewReworkTask.id, 'conversation_zeus_0373_review_rework_plan', product, now());
+    stages.bindExistingConversationAttempt({ attemptId: reviewPlanAttempt.id, conversationId: reviewPlanConversation });
+    const reviewPlanDeliverable = await persistDeliverable(artifacts, stages, {
+      taskId: reviewReworkTask.id,
+      projectId: project.id,
+      stageId: reviewPlanStage.id,
+      attemptId: reviewPlanAttempt.id,
+      conversationId: reviewPlanConversation,
+      id: 'task_stage_deliverable_zeus_0373_review_rework_plan',
+      operationIdentity: 'probe:review-rework:plan-deliverable',
+      title: '审查返工产品方案',
+      content: '# 产品方案',
+    });
+    reviewWorkflow = stages.acceptDeliverable(reviewPlanDeliverable.id, stages.getStage(reviewPlanStage.id)!.revision);
+    let reviewImplementationStage = reviewWorkflow.stages.find((stage) => stage.kind === 'implementation')!;
+    reviewWorkflow = stages.assignEmployee(reviewImplementationStage.id, assignment(reviewImplementationStage, developer));
+    reviewImplementationStage = reviewWorkflow.stages.find((stage) => stage.id === reviewImplementationStage.id)!;
+    const reviewImplementationAttempt = stages.prepareAttempt({
+      stageId: reviewImplementationStage.id,
+      operationIdentity: 'probe:review-rework:implementation-attempt',
+      employeeId: developer.id,
+      employeeRevision: developer.revision,
+      employeeSnapshot: { ...developer },
+      effectivePermissions: { permissionMode: 'read-only', allowCodeChanges: false, allowTests: false },
+    });
+    const reviewImplementationConversation = createConversation(db, conversations, project.id, reviewReworkTask.id, 'conversation_zeus_0373_review_rework_implementation', developer, now());
+    stages.bindExistingConversationAttempt({ attemptId: reviewImplementationAttempt.id, conversationId: reviewImplementationConversation });
+    const reviewImplementationDeliverable = await persistDeliverable(artifacts, stages, {
+      taskId: reviewReworkTask.id,
+      projectId: project.id,
+      stageId: reviewImplementationStage.id,
+      attemptId: reviewImplementationAttempt.id,
+      conversationId: reviewImplementationConversation,
+      id: 'task_stage_deliverable_zeus_0373_review_rework_implementation',
+      operationIdentity: 'probe:review-rework:implementation-deliverable',
+      title: '审查返工实施结果',
+      content: '# 实施结果',
+    });
+    reviewWorkflow = stages.acceptDeliverable(reviewImplementationDeliverable.id, stages.getStage(reviewImplementationStage.id)!.revision);
+    let reviewStage = reviewWorkflow.stages.find((stage) => stage.kind === 'code_review')!;
+    reviewWorkflow = stages.assignEmployee(reviewStage.id, assignment(reviewStage, developer));
+    reviewStage = reviewWorkflow.stages.find((stage) => stage.id === reviewStage.id)!;
+    const reviewAttempt = stages.prepareAttempt({
+      stageId: reviewStage.id,
+      operationIdentity: 'probe:review-rework:review-attempt:1',
+      employeeId: developer.id,
+      employeeRevision: developer.revision,
+      employeeSnapshot: { ...developer },
+      effectivePermissions: { permissionMode: 'read-only', allowCodeChanges: false, allowTests: false },
+    });
+    const reviewConversation = createConversation(db, conversations, project.id, reviewReworkTask.id, 'conversation_zeus_0373_review_rework_review_1', developer, now());
+    stages.bindExistingConversationAttempt({ attemptId: reviewAttempt.id, conversationId: reviewConversation });
+    const reviewDeliverable = await persistDeliverable(artifacts, stages, {
+      taskId: reviewReworkTask.id,
+      projectId: project.id,
+      stageId: reviewStage.id,
+      attemptId: reviewAttempt.id,
+      conversationId: reviewConversation,
+      id: 'task_stage_deliverable_zeus_0373_review_rework_review_1',
+      operationIdentity: 'probe:review-rework:review-deliverable:1',
+      title: '代码审查报告',
+      content: '# 代码审查报告 v1',
+    });
+    reviewWorkflow = stages.requestChanges(reviewDeliverable.id, {
+      expectedStageRevision: stages.getStage(reviewStage.id)!.revision,
+      reason: '补充人工验收事实',
+      stayOnStage: true,
+    });
+    const reviewReworkStage = reviewWorkflow.stages.find((stage) => stage.id === reviewStage.id)!;
+    const reviewReworkAttempt = stages.prepareAttempt({
+      stageId: reviewReworkStage.id,
+      operationIdentity: 'probe:review-rework:review-attempt:2',
+      employeeId: developer.id,
+      employeeRevision: developer.revision,
+      employeeSnapshot: { ...developer },
+      effectivePermissions: { permissionMode: 'read-only', allowCodeChanges: false, allowTests: false },
+    });
+    observed.finalStageReworkStaysOnReview =
+      reviewWorkflow.workflow.currentStageId === reviewStage.id &&
+      reviewReworkStage.status === 'changes_requested' &&
+      reviewWorkflow.stages.find((stage) => stage.id === reviewImplementationStage.id)?.status === 'accepted' &&
+      reviewDeliverable.status === 'submitted' &&
+      stages.getDeliverable(reviewDeliverable.id)?.status === 'changes_requested' &&
+      reviewReworkAttempt.attemptNumber === 2;
+
     const activeLegacy = executions.create({ id: 'digital_employee_execution_zeus_0373_legacy_active', employee: product, taskId: task.id, source: 'manual', sourceRef: 'probe:legacy-active' });
     observed.legacyNotFabricated = activeLegacy.executionMode === 'legacy_single_conversation' && activeLegacy.workflowId === null && activeLegacy.currentStageId === null;
 
@@ -327,7 +435,13 @@ try {
     assertProbe(observed.candidateBeforeConfirmation === true && observed.noExternalDeliveryBeforeConfirmation === true, '候选方案生成前后不得触发外部交付');
     assertProbe(observed.handoffCommandReplay === true && observed.preciseAcceptedInput === true, '交接命令必须幂等并精确传递已接受方案');
     assertProbe(observed.independentConversations === true && observed.frozenEmployeeSnapshots === true, '阶段必须使用独立会话并冻结各自员工快照');
-    assertProbe(observed.activeEmployeeSwitchRejected === 'ZEUS_TASK_STAGE_NOT_READY' && observed.reworkPreservesHistory === true && observed.failedRetryPreservesHistory === true, '活动阶段不可换人；返工和失败重试必须保留旧尝试并新建尝试');
+    assertProbe(
+      observed.activeEmployeeSwitchRejected === 'ZEUS_TASK_STAGE_NOT_READY' &&
+        observed.reworkPreservesHistory === true &&
+        observed.failedRetryPreservesHistory === true &&
+        observed.finalStageReworkStaysOnReview === true,
+      '活动阶段不可换人；返工和失败重试必须保留旧尝试并新建尝试，最终审查返工必须停留当前阶段',
+    );
     assertProbe(observed.deliveryStillClosedAfterHandoff === true && observed.legacyNotFabricated === true, '最终确认前不得打开交付，旧记录不得伪造阶段');
     assertProbe(observed.legacyCompletedAdopted === true && observed.legacyActiveUnchanged === true, '已结束旧执行应可显式接入，活动旧执行必须保持原状');
     assertProbe(observed.migrationsPresent === true && observed.sqliteIntegrity === 'ok', '迁移账本与 SQLite 完整性必须通过');

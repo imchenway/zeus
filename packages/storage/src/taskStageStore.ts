@@ -816,7 +816,7 @@ export class TaskStageRepository {
     return this.requireWorkflow(deliverable.taskId);
   }
 
-  requestChanges(deliverableId: string, input: { expectedStageRevision: number; reason: string }): ZeusTaskWorkflowSnapshot {
+  requestChanges(deliverableId: string, input: { expectedStageRevision: number; reason: string; stayOnStage?: boolean }): ZeusTaskWorkflowSnapshot {
     const deliverable = this.requireDeliverable(deliverableId);
     const stage = this.requireStage(deliverable.stageId);
     const reason = boundedString(input.reason, 'reason', 4_000);
@@ -829,7 +829,7 @@ export class TaskStageRepository {
     const timestamp = nextTimestamp(stage.updatedAt, this.now());
     this.db.transaction(() => {
       this.db.execute(`UPDATE task_stage_deliverables SET status = 'changes_requested', decision_reason = ?, accepted_at = NULL, updated_at = ? WHERE id = ?`, [reason, timestamp, deliverable.id]);
-      if (stage.kind === 'code_review') {
+      if (stage.kind === 'code_review' && input.stayOnStage !== true) {
         const implementation = this.previousImplementationStage(stage);
         if (!implementation) throw storeError('ZEUS_TASK_STAGE_INVALID_ARGUMENT', '代码审查阶段缺少可返工的实施阶段。', 409, { stageId: stage.id });
         this.db.execute(`UPDATE task_stages SET status = 'changes_requested', revision = revision + 1, updated_at = ? WHERE id = ?`, [timestamp, implementation.id]);

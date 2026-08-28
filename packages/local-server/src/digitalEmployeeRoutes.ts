@@ -801,6 +801,9 @@ function reworkExecution(options: DigitalEmployeeRouteOptions, execution: Digita
   const changed = options.stages.requestChanges(source.deliverable.id, {
     expectedStageRevision: input.expectedSourceStageRevision,
     reason: requiredText(input.reason, 'reason', 4_000),
+    // 数字员工的“继续完善”只重做当前阶段交付物。普通阶段代码审查的
+    // “要求修改”仍沿用退回实施阶段的既有领域语义。
+    stayOnStage: true,
   });
   const currentStage = changed.stages.find((stage) => stage.id === source.stage.id);
   if (!currentStage) throw new DigitalEmployeeStoreError('ZEUS_TASK_STAGE_NOT_FOUND', '返工阶段不存在。', { statusCode: 404 });
