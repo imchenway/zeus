@@ -66,6 +66,12 @@ const copy = {
     providerStopPending: '正在确认上次运行已停止',
     steering: '引导中',
     steerUnconfirmed: '引导结果待确认',
+    queuedActions: '排队消息操作',
+    steerQueued: '引导',
+    steerQueuedHelp: '补充给当前回复，不中断当前执行',
+    deleteQueued: '删除',
+    steeringQueued: '正在引导…',
+    deletingQueued: '正在删除…',
     remoteDevice: '由远程设备发送',
   },
   'en-US': {
@@ -107,6 +113,12 @@ const copy = {
     providerStopPending: 'Confirming the previous run has stopped',
     steering: 'Steering',
     steerUnconfirmed: 'Steer outcome unconfirmed',
+    queuedActions: 'Queued message actions',
+    steerQueued: 'Steer',
+    steerQueuedHelp: 'Add this to the current response without interrupting it',
+    deleteQueued: 'Delete',
+    steeringQueued: 'Steering…',
+    deletingQueued: 'Deleting…',
     remoteDevice: 'Sent from a remote device',
   },
 } as const;
@@ -129,6 +141,10 @@ export interface ThreadItemViewProps {
   onUpdateResponseAnnotation?: (id: string, note: string) => void;
   onRemoveResponseAnnotation?: (id: string) => void;
   onOpenSideChat?: (selectedText: string) => void;
+  queuedSubmissionId?: string;
+  queuedSteerDisabledReason?: string | null;
+  onSteerQueuedSubmission?: (submissionId: string) => void | Promise<void>;
+  onDeleteQueuedSubmission?: (submissionId: string) => void | Promise<void>;
 }
 
 function taskPushMessageLayout(value: unknown): TaskPushMessageLayout | null {
@@ -295,6 +311,11 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   useApplicationErrorDialog(editError, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
   });
+  const [queuedAction, setQueuedAction] = useState<'steer' | 'delete' | null>(null);
+  const [queuedActionError, setQueuedActionError] = useState<unknown>(null);
+  useApplicationErrorDialog(queuedActionError, {
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+  });
   const [submittingEdit, setSubmittingEdit] = useState(false);
   const [markdownSettled, setMarkdownSettled] = useState(false);
   const editTextareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -402,6 +423,19 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
     }
   }
 
+  async function runQueuedAction(action: 'steer' | 'delete', operation: (() => void | Promise<void>) | undefined): Promise<void> {
+    if (!operation || queuedAction) return;
+    setQueuedActionError(null);
+    setQueuedAction(action);
+    try {
+      await operation();
+    } catch (error) {
+      setQueuedActionError(error);
+    } finally {
+      setQueuedAction(null);
+    }
+  }
+
   return (
     <article
       ref={articleRef}
@@ -409,6 +443,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
       data-item-status={props.item.status}
       data-item-phase={props.item.phase}
       data-item-type={props.item.type}
+      data-queued-submission={props.queuedSubmissionId || undefined}
       data-motion-active={props.motionActive || undefined}
       data-motion-block="markdown"
       aria-label={accessibleLabel}
@@ -537,6 +572,36 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
         <span className="session-message-remote-origin" aria-label={labels.remoteDevice} title={labels.remoteDevice}>
           <MessageRemoteDeviceIcon />
         </span>
+      ) : null}
+      {props.queuedSubmissionId && (props.onSteerQueuedSubmission || props.onDeleteQueuedSubmission) ? (
+        <div className="session-queued-thread-actions" role="group" aria-label={labels.queuedActions}>
+          {props.onSteerQueuedSubmission ? (
+            <button
+              type="button"
+              className="session-queued-thread-steer"
+              aria-disabled={Boolean(queuedAction || props.queuedSteerDisabledReason)}
+              aria-label={`${labels.steerQueued}: ${props.queuedSteerDisabledReason ?? labels.steerQueuedHelp}`}
+              title={props.queuedSteerDisabledReason ?? labels.steerQueuedHelp}
+              onClick={() => {
+                if (queuedAction || props.queuedSteerDisabledReason) return;
+                void runQueuedAction('steer', () => props.onSteerQueuedSubmission?.(props.queuedSubmissionId!));
+              }}
+            >
+              {queuedAction === 'steer' ? labels.steeringQueued : labels.steerQueued}
+            </button>
+          ) : null}
+          {props.onDeleteQueuedSubmission ? (
+            <button
+              type="button"
+              className="session-queued-thread-delete"
+              disabled={queuedAction !== null}
+              aria-label={props.language === 'zh-CN' ? '删除排队消息' : 'Delete queued message'}
+              onClick={() => void runQueuedAction('delete', () => props.onDeleteQueuedSubmission?.(props.queuedSubmissionId!))}
+            >
+              {queuedAction === 'delete' ? labels.deletingQueued : labels.deleteQueued}
+            </button>
+          ) : null}
+        </div>
       ) : null}
       <ResponseSelectionActions
         articleRef={articleRef}

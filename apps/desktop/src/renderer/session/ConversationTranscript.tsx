@@ -8,6 +8,7 @@ import type {
   ConversationResourcePreview,
   NativeConversationToolResultPage,
   NativePendingRequest,
+  NativeQueuedSubmission,
   NativeQueueSnapshot,
   NativeSessionError,
   NativeSessionItemBuffer,
@@ -24,8 +25,9 @@ import { reasoningSummaryStatus, SessionReasoningSummary } from './SessionReason
 import { AnsweredRequestHistory, isAnsweredUserInputRequest } from './AnsweredRequestHistory.js';
 import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
 import { captureTranscriptViewportAnchor, compensateTranscriptViewportAnchor, type TranscriptViewportAnchor, useTranscriptViewportVirtualizer } from './transcriptViewportVirtualizer.js';
-import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { isImageResource } from './ConversationResources.js';
+import { canSteerActiveTurn } from './ConversationComposer.js';
 
 export interface ConversationTranscriptProps {
   state: NativeSessionState;
@@ -57,6 +59,7 @@ export interface ConversationTranscriptProps {
   onRecoverQueue?: () => void | Promise<void>;
   onRetryQueuedSubmission?: (submissionId: string) => void | Promise<void>;
   onCancelQueuedSubmission?: (submissionId: string) => void | Promise<void>;
+  onSendQueuedNow?: (submissionId: string) => void | Promise<void>;
 }
 
 export interface SessionCreationStatus {
@@ -1060,6 +1063,9 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
     );
   }
   const showPendingDeliveryFeedback = row.item.optimistic && shouldShowPendingMessageDeliveryFeedback(row.item, options.showThinking);
+  const queuedSubmission = queuedSubmissionForItem(row.item, options.props.state.queue);
+  const queuedSubmissionId = queuedSubmission && !queuedSubmission.controlAction && !queuedSubmission.providerTurnId ? queuedSubmission.id : undefined;
+  const queuedSteerDisabledReason = queuedSubmissionId && queuedSubmission?.status === 'queued' ? queuedSteerUnavailableReason(options.props.state, queuedSubmission, options.props.language) : undefined;
   return (
     <TranscriptV2ContentBoundary item={row.item} language={options.props.language} onLoadContent={options.props.onLoadV2Content}>
       <ThreadItemView
@@ -1080,6 +1086,10 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         onUpdateResponseAnnotation={options.props.onUpdateResponseAnnotation}
         onRemoveResponseAnnotation={options.props.onRemoveResponseAnnotation}
         onOpenSideChat={options.props.onOpenSideChat}
+        queuedSubmissionId={queuedSubmissionId}
+        queuedSteerDisabledReason={queuedSteerDisabledReason}
+        onSteerQueuedSubmission={queuedSubmission?.status === 'queued' ? options.props.onSendQueuedNow : undefined}
+        onDeleteQueuedSubmission={queuedSubmission?.status === 'queued' || queuedSubmission?.status === 'paused' ? options.props.onCancelQueuedSubmission : undefined}
       />
       {showPendingDeliveryFeedback ? (
         <MessageDeliveryOutcomeFeedback
@@ -1176,6 +1186,8 @@ function MessageDeliveryOutcomeFeedback(props: {
   onCancelQueuedSubmission?: (submissionId: string) => void | Promise<void>;
 }): ReactNode {
   const [busyAction, setBusyAction] = useState<'recover' | 'retry' | 'cancel' | null>(null);
+  const [actionError, setActionError] = useState<unknown>(null);
+  useApplicationErrorDialog(actionError, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' });
   const pausedReason = props.item.payload.pausedReason;
   if (pausedReason === 'provider_stop_pending') {
     return (
@@ -1196,9 +1208,11 @@ function MessageDeliveryOutcomeFeedback(props: {
   const submissionId = props.item.localItemId || (typeof props.item.payload.submissionId === 'string' ? props.item.payload.submissionId : null);
   const runAction = (action: 'recover' | 'retry' | 'cancel', operation: (() => void | Promise<void>) | undefined) => {
     if (!operation || busyAction) return;
+    setActionError(null);
     setBusyAction(action);
     void Promise.resolve()
       .then(operation)
+      .catch(setActionError)
       .finally(() => setBusyAction(null));
   };
 
@@ -1819,6 +1833,23 @@ function visibleQueuedSubmissions(queue: NativeQueueSnapshot | null) {
   return [...(queue?.submissions ?? [])]
     .filter((submission) => (submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'steering' || submission.status === 'paused') && !submission.providerTurnId)
     .sort((left, right) => left.position - right.position || (left.createdAt ?? '').localeCompare(right.createdAt ?? '') || left.id.localeCompare(right.id));
+}
+
+function queuedSubmissionForItem(item: NativeSessionItemBuffer, queue: NativeQueueSnapshot | null): NativeQueuedSubmission | null {
+  const submissionIds = [item.localItemId, item.itemId, primitiveValue(item.payload.submissionId)].filter((value): value is string => Boolean(value));
+  if (submissionIds.length === 0) return null;
+  const identities = new Set(submissionIds);
+  return queue?.submissions.find((submission) => identities.has(submission.id)) ?? null;
+}
+
+function queuedSteerUnavailableReason(state: NativeSessionState, submission: NativeQueuedSubmission, language: SessionUiLanguage): string | null {
+  const queueHead = [...(state.queue?.submissions ?? [])]
+    .filter((candidate) => candidate.status === 'queued' || candidate.status === 'paused' || candidate.status === 'failed')
+    .sort((left, right) => left.position - right.position || (left.createdAt ?? '').localeCompare(right.createdAt ?? '') || left.id.localeCompare(right.id))[0];
+  if (!queueHead) return language === 'zh-CN' ? '队列状态尚未就绪' : 'The queue state is not ready yet';
+  if (queueHead.id !== submission.id) return language === 'zh-CN' ? '请先处理更早的排队消息' : 'Handle the earlier queued message first';
+  if (!canSteerActiveTurn(state)) return language === 'zh-CN' ? '当前回复还未准备好接受引导' : 'The current response is not ready for steering';
+  return null;
 }
 
 /**
