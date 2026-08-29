@@ -27,6 +27,11 @@ export interface DigitalEmployeeTemplateDraft {
 }
 
 export interface DigitalEmployeeDraft extends DigitalEmployeeTemplateDraft {
+  entrypointKind: 'agent' | 'command';
+  skillIds: string[];
+  allowedModels: string;
+  allowedReasoningEfforts: string;
+  allowedServiceTiers: string;
   enabled: boolean;
   autoClaim: boolean;
   autonomousExploration: boolean;
@@ -110,8 +115,16 @@ export function templateDraft(record?: DigitalEmployeeTemplateRecord | DigitalEm
 }
 
 export function employeeDraft(record: DigitalEmployeeRecord): DigitalEmployeeDraft {
+  const agentEntrypoint = record.entrypoint?.kind === 'agent' ? record.entrypoint : null;
+  const commandEntrypoint = record.entrypoint?.kind === 'command' ? record.entrypoint : null;
   return {
     ...templateDraft(record),
+    entrypointKind: record.entrypoint?.kind ?? 'agent',
+    skillIds: agentEntrypoint?.skillPolicy.allowedSkillIds ?? record.skillIds,
+    model: agentEntrypoint?.modelPolicy.defaultModel ?? record.model ?? '',
+    allowedModels: (agentEntrypoint?.modelPolicy.allowedModels ?? (record.model ? [record.model] : [])).join(', '),
+    allowedReasoningEfforts: (agentEntrypoint?.modelPolicy.allowedReasoningEfforts ?? (record.reasoningEffort ? [record.reasoningEffort] : [])).join(', '),
+    allowedServiceTiers: (agentEntrypoint?.modelPolicy.allowedServiceTiers ?? (record.serviceTier ? [record.serviceTier] : [])).join(', '),
     enabled: record.enabled,
     autoClaim: record.autoClaim,
     autonomousExploration: record.autonomousExploration,
@@ -126,7 +139,7 @@ export function employeeDraft(record: DigitalEmployeeRecord): DigitalEmployeeDra
     allowMerge: record.deliveryGrants.allowMerge,
     allowDeploy: record.deliveryGrants.allowDeploy,
     allowComplete: record.deliveryGrants.allowComplete,
-    deployCommandId: record.deployCommandId ?? '',
+    deployCommandId: commandEntrypoint?.commandId ?? record.deployCommandId ?? '',
   };
 }
 
@@ -148,8 +161,22 @@ export function templateInput(draft: DigitalEmployeeTemplateDraft): DigitalEmplo
 }
 
 export function employeeInput(draft: DigitalEmployeeDraft): DigitalEmployeeInput {
+  const allowedModels = includeDefault(splitList(draft.allowedModels), draft.model);
+  const allowedReasoningEfforts = includeDefault(splitList(draft.allowedReasoningEfforts), draft.reasoningEffort);
+  const allowedServiceTiers = includeDefault(splitList(draft.allowedServiceTiers), draft.serviceTier);
+  const authorityPolicy = {
+    permissionMode: draft.permissionMode,
+    allowCodeChanges: draft.allowCodeChanges,
+    allowTests: draft.allowTests,
+    allowCommit: draft.allowCommit,
+    allowPush: draft.allowPush,
+    allowMerge: draft.allowMerge,
+    allowDeploy: draft.allowDeploy,
+    allowComplete: draft.allowComplete,
+  } as const;
   return {
-    ...templateInput(draft),
+    ...templateInput({ ...draft, skillId: draft.skillIds[0] ?? '' }),
+    skillIds: draft.entrypointKind === 'agent' ? draft.skillIds : [],
     enabled: draft.enabled,
     autoClaim: draft.autoClaim,
     autonomousExploration: draft.autonomousExploration,
@@ -168,8 +195,30 @@ export function employeeInput(draft: DigitalEmployeeDraft): DigitalEmployeeInput
       allowDeploy: draft.allowDeploy,
       allowComplete: draft.allowComplete,
     },
-    deployCommandId: nullable(draft.deployCommandId),
+    deployCommandId: draft.entrypointKind === 'command' ? nullable(draft.deployCommandId) : null,
+    entrypoint:
+      draft.entrypointKind === 'command'
+        ? { kind: 'command', commandId: draft.deployCommandId.trim() }
+        : {
+            kind: 'agent',
+            prompt: draft.prompt.trim(),
+            agentKind: draft.agentKind,
+            modelPolicy: {
+              defaultMode: draft.model.trim() ? 'explicit' : 'project',
+              defaultModel: nullable(draft.model),
+              allowedModels,
+              allowedReasoningEfforts,
+              allowedServiceTiers,
+            },
+            skillPolicy: { allowedSkillIds: draft.skillIds },
+            authorityPolicy,
+          },
   };
+}
+
+function includeDefault(values: string[], defaultValue: string): string[] {
+  const normalized = defaultValue.trim();
+  return normalized && !values.includes(normalized) ? [normalized, ...values] : values;
 }
 
 export function splitList(value: string): string[] {

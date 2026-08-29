@@ -420,6 +420,13 @@ export function createConversationApplicationOperations(dependencies: Conversati
     if (!project) throw Object.assign(nativeApiError('ZEUS_PROJECT_NOT_FOUND', 'Project not found'), { statusCode: 404 });
     const conversation = conversations.getById(input.params.conversationId);
     if (!conversation || conversation.projectId !== project.id) throw Object.assign(nativeApiError('ZEUS_CONVERSATION_NOT_FOUND', 'Conversation not found'), { statusCode: 404 });
+    const managedRun = db.get<{ work_item_id: string }>(`SELECT work_item_id FROM task_work_runs WHERE conversation_id = ? LIMIT 1`, [conversation.id]);
+    if (managedRun) {
+      throw Object.assign(nativeApiError('ZEUS_TASK_WORK_CONVERSATION_MANAGED', 'This conversation is read-only evidence for a managed work item. Reply, approve, or accept from the task management cockpit.'), {
+        statusCode: 409,
+        workItemId: managedRun.work_item_id,
+      });
+    }
     if (conversation.taskId) {
       const task = tasks.getById(conversation.taskId);
       if (task && taskManagementStatusIsTerminal(task)) {

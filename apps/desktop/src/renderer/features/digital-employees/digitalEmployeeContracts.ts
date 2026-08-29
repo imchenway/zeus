@@ -9,6 +9,31 @@ export type DigitalEmployeeExecutionStatus = 'queued' | 'dispatching' | 'running
 export type DigitalEmployeeDeliveryStage = 'none' | 'commit' | 'push' | 'merge' | 'deploy' | 'complete' | 'done';
 export type DigitalEmployeeExecutionMode = 'legacy_single_conversation' | 'staged';
 
+export interface ModelPolicyV1 {
+  defaultMode: 'project' | 'explicit';
+  defaultModel: string | null;
+  allowedModels: string[];
+  allowedReasoningEfforts: string[];
+  allowedServiceTiers: string[];
+}
+
+export interface SkillPolicyV1 {
+  allowedSkillIds: string[];
+}
+
+export interface AuthorityPolicyV1 {
+  permissionMode: DigitalEmployeePermissionMode;
+  allowCodeChanges: boolean;
+  allowTests: boolean;
+  allowCommit: boolean;
+  allowPush: boolean;
+  allowMerge: boolean;
+  allowDeploy: boolean;
+  allowComplete: boolean;
+}
+
+export type EmployeeEntrypointV2 = { kind: 'agent'; prompt: string; agentKind: DigitalEmployeeAgentKind; modelPolicy: ModelPolicyV1; skillPolicy: SkillPolicyV1; authorityPolicy: AuthorityPolicyV1 } | { kind: 'command'; commandId: string };
+
 export interface DigitalEmployeeDeliveryGrants {
   allowCommit: boolean;
   allowPush: boolean;
@@ -23,7 +48,7 @@ export interface DigitalEmployeeTemplateRecord {
   description: string;
   role: string;
   domain: string;
-  /** 首版只返回零或一个默认 Zeus Skill 稳定身份。 */
+  /** 允许的 Zeus Skill 稳定身份集合。 */
   skillIds: string[];
   prompt: string;
   agentKind: DigitalEmployeeAgentKind;
@@ -56,6 +81,8 @@ export interface DigitalEmployeeRecord extends Omit<DigitalEmployeeTemplateRecor
   allowTests: boolean;
   deliveryGrants: DigitalEmployeeDeliveryGrants;
   deployCommandId: string | null;
+  entrypoint: EmployeeEntrypointV2 | null;
+  entrypointMigrationState: 'ready' | 'requires_selection' | 'requires_configuration';
 }
 
 export interface DigitalEmployeeAutomationRecord {
@@ -146,6 +173,146 @@ export interface DigitalEmployeeInput extends DigitalEmployeeTemplateInput {
   allowTests?: boolean;
   deliveryGrants?: Partial<DigitalEmployeeDeliveryGrants>;
   deployCommandId?: string | null;
+  entrypoint?: EmployeeEntrypointV2 | null;
+  entrypointKind?: EmployeeEntrypointV2['kind'];
+}
+
+export type TaskWorkItemStatus = 'queued' | 'active' | 'waiting_manager' | 'completed' | 'blocked' | 'failed' | 'cancelled';
+export type TaskWorkRunStatus = 'prepared' | 'dispatching' | 'active' | 'waiting_input' | 'runtime_completed' | 'succeeded' | 'failed' | 'outcome_unknown' | 'cancelled';
+export type TaskWorkDeliverableStatus = 'submitted' | 'accepted' | 'changes_requested' | 'superseded';
+export type TaskWorkDecisionStatus = 'pending' | 'resolved' | 'dismissed' | 'expired';
+
+export interface TaskWorkRunRecord {
+  id: string;
+  projectId: string;
+  taskId: string;
+  workItemId: string;
+  employeeId: string;
+  attempt: number;
+  status: TaskWorkRunStatus;
+  entrypointKind: 'agent' | 'command';
+  employeeRevision: number;
+  employeeSnapshot: Record<string, unknown>;
+  entrypointSnapshot: Record<string, unknown>;
+  modelSnapshot: Record<string, unknown> | null;
+  skillSnapshot: Record<string, unknown>;
+  authoritySnapshot: Record<string, unknown>;
+  contextManifest: Record<string, unknown>;
+  enabledSkillIds: string[];
+  conversationId: string | null;
+  commandRunId: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  runtimeCompletedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface TaskWorkDeliverableRecord {
+  id: string;
+  projectId: string;
+  taskId: string;
+  workItemId: string;
+  runId: string;
+  version: number;
+  status: TaskWorkDeliverableStatus;
+  kind: string;
+  title: string;
+  summary: string;
+  artifactSha256: string;
+  contentSha256: string;
+  sourceMessageId: string | null;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+  acceptedAt: string | null;
+}
+
+export interface TaskWorkItemRecord {
+  id: string;
+  projectId: string;
+  taskId: string;
+  employeeId: string;
+  source: 'manual' | 'automation';
+  sourceRef: string | null;
+  title: string;
+  description: string;
+  entrypointKind: 'agent' | 'command';
+  status: TaskWorkItemStatus;
+  currentRunId: string | null;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  runs: TaskWorkRunRecord[];
+  deliverables: TaskWorkDeliverableRecord[];
+}
+
+export interface TaskWorkDecisionRecord {
+  id: string;
+  projectId: string;
+  taskId: string;
+  workItemId: string;
+  runId: string | null;
+  deliverableId: string | null;
+  kind: 'input_required' | 'authorization' | 'deliverable_acceptance' | 'command_confirmation' | 'command_failure' | 'outcome_unknown';
+  status: TaskWorkDecisionStatus;
+  title: string;
+  prompt: string;
+  requestPayload: Record<string, unknown>;
+  responsePayload: Record<string, unknown> | null;
+  operationIdentity: string;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt: string | null;
+  expiresAt: string | null;
+}
+
+export interface TaskWorkManagementProjection {
+  summary: { workItems: number; activeWorkItems: number; pendingManagerDecisions: number; submittedDeliverables: number; legacyExecutions: number };
+  workItems: TaskWorkItemRecord[];
+  relationships: Array<Record<string, unknown>>;
+  managerDecisions: TaskWorkDecisionRecord[];
+  deliverables: TaskWorkDeliverableRecord[];
+  evidenceRefs: Array<Record<string, unknown>>;
+  revision: string;
+}
+
+export interface TaskWorkPreviewSelection {
+  employeeId: string;
+  modelOverride?: string | null;
+  reasoningEffort?: string | null;
+  serviceTier?: string | null;
+  skillIds?: string[];
+  selectedDeliverableIds?: string[];
+}
+
+export interface TaskWorkPreview {
+  previewSha256: string;
+  expiresAt: string;
+  expectedTaskRevision: string;
+  expectedEmployeeRevision: number;
+  selection: TaskWorkPreviewSelection;
+  employee: { id: string; name: string; role: string; domain: string; revision: number };
+  entrypoint: Record<string, unknown> | null;
+  model: Record<string, unknown> | null;
+  skills: Array<{ id: string; name: string; description: string; directoryName: string; contentSha256: string; resourceCount: number; totalBytes: number }>;
+  authority: Record<string, unknown>;
+  context: Record<string, unknown>;
+  command: null | {
+    id: string;
+    title: string;
+    revision: number;
+    parameters: Array<{ key: string; label: string; description: string; type: string; required: boolean; sensitive: boolean; hasValue: boolean }>;
+    safeParameterSnapshot: Record<string, string | number | boolean>;
+    parameterDigest: string;
+    riskFlags: Record<string, boolean>;
+  };
+  blockers: Array<{ code: string; message: string }>;
 }
 
 export interface DigitalEmployeeAutomationInput {

@@ -138,17 +138,21 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
     if (!props.client || !selectedEmployeeId || !employeeDraftState) return;
     const current = employees.find((employee) => employee.id === selectedEmployeeId);
     if (!current) return;
-    if (!employeeDraftState.name.trim() || !employeeDraftState.role.trim() || !employeeDraftState.prompt.trim()) {
-      setError(zh ? '员工名称、岗位和提示词不能为空。' : 'Employee name, role, and prompt are required.');
+    if (!employeeDraftState.name.trim() || !employeeDraftState.role.trim()) {
+      setError(zh ? '员工名称和岗位不能为空。' : 'Employee name and role are required.');
+      return;
+    }
+    if (employeeDraftState.entrypointKind === 'agent' && !employeeDraftState.prompt.trim()) {
+      setError(zh ? 'Agent 主入口必须配置提示词。' : 'The Agent entrypoint requires a prompt.');
+      return;
+    }
+    if (employeeDraftState.entrypointKind === 'command' && !employeeDraftState.deployCommandId) {
+      setError(zh ? 'Command 主入口必须选择一个已启用的项目命令。' : 'The Command entrypoint requires an enabled project command.');
       return;
     }
     const maxConcurrency = Number.parseInt(employeeDraftState.maxConcurrency, 10);
     if (!Number.isSafeInteger(maxConcurrency) || maxConcurrency < 1 || maxConcurrency > 20) {
       setError(zh ? '并发上限必须是 1 到 20 的整数。' : 'Concurrency must be an integer from 1 to 20.');
-      return;
-    }
-    if (employeeDraftState.allowDeploy && !employeeDraftState.deployCommandId) {
-      setError(zh ? '开启自动部署前必须选择一个无需临时参数的命令中心命令。' : 'Choose a command that needs no runtime parameters before enabling automatic deployment.');
       return;
     }
     setBusyAction('save-employee');
@@ -475,6 +479,7 @@ function EmployeeEditor(props: {
   onChange: (draft: DigitalEmployeeDraft) => void;
 }) {
   const zh = props.language === 'zh-CN';
+  const [skillCandidate, setSkillCandidate] = useState('');
   const patch = (value: Partial<DigitalEmployeeDraft>) => props.onChange({ ...props.draft, ...value });
   const runtimeModels = useMemo(() => (props.capabilities?.models ?? []).filter((model) => model.available !== false && (model.agentKind ?? 'codex') === props.draft.agentKind), [props.capabilities?.models, props.draft.agentKind]);
   const modelPresentation = useMemo(() => presentModelOptions(runtimeModels, props.draft.model, props.language, { preserveMissingSelection: true }), [props.draft.model, props.language, runtimeModels]);
@@ -498,22 +503,14 @@ function EmployeeEditor(props: {
     patch({ model, reasoningEffort: '', serviceTier: '' });
   };
   const patchGrant = (key: 'allowCommit' | 'allowPush' | 'allowMerge' | 'allowDeploy' | 'allowComplete', checked: boolean) => {
-    if (key === 'allowCommit' && !checked) {
-      patch({ allowCommit: false, allowPush: false, allowMerge: false });
-      return;
-    }
-    if ((key === 'allowPush' || key === 'allowMerge') && checked) {
-      patch({ [key]: true, allowCommit: true });
-      return;
-    }
     patch({ [key]: checked });
   };
   return (
     <div className="digital-employee-form digital-employee-project-form">
       <section className="digital-employee-form-section">
         <header>
-          <strong>{zh ? '身份与能力' : 'Identity and capabilities'}</strong>
-          <small>{zh ? '项目覆盖不会回写全局模板。' : 'Project overrides never write back to the global template.'}</small>
+          <strong>{zh ? '身份说明' : 'Identity'}</strong>
+          <small>{zh ? '说明这个员工是谁、负责什么；项目配置不会回写全局模板。' : 'Describe who this employee is and what it owns. Project settings do not change the global template.'}</small>
         </header>
         <div className="digital-employee-form-grid">
           <label>
@@ -528,71 +525,183 @@ function EmployeeEditor(props: {
             <span>{zh ? '业务领域' : 'Business domain'}</span>
             <input value={props.draft.domain} onChange={(event) => patch({ domain: event.currentTarget.value })} maxLength={120} />
           </label>
+        </div>
+        <label>
+          <span>{zh ? '身份说明' : 'Identity description'}</span>
+          <textarea rows={3} value={props.draft.description} onChange={(event) => patch({ description: event.currentTarget.value })} maxLength={2000} />
+        </label>
+      </section>
+
+      <section className="digital-employee-form-section digital-employee-entrypoint-section">
+        <header>
+          <strong>{zh ? '主执行入口' : 'Primary entrypoint'}</strong>
+          <small>{zh ? '每次指派只按这里选择的入口执行；指派次数和尝试次数不会改变员工行为。' : 'Every assignment uses this entrypoint. Assignment and retry counts never change behavior.'}</small>
+        </header>
+        <div className="digital-employee-form-grid">
           <label>
-            <span>{zh ? '运行时' : 'Runtime'}</span>
+            <span>{zh ? '入口类型' : 'Entrypoint type'}</span>
             <ZeusSelect
               size="regular"
-              ariaLabel={zh ? '选择员工运行时' : 'Choose employee runtime'}
-              value={props.draft.agentKind}
-              onChange={(agentKind) => patch({ agentKind, model: '', reasoningEffort: '', serviceTier: '' })}
+              ariaLabel={zh ? '选择主执行入口' : 'Choose primary entrypoint'}
+              value={props.draft.entrypointKind}
+              onChange={(entrypointKind) => patch({ entrypointKind })}
               searchable={false}
               options={[
-                { value: 'codex', label: 'Codex' },
-                { value: 'pi', label: 'Pi' },
+                { value: 'agent', label: zh ? 'Agent · 独立会话' : 'Agent · isolated conversation' },
+                { value: 'command', label: zh ? 'Command · 项目命令' : 'Command · project command' },
               ]}
             />
           </label>
+          {props.draft.entrypointKind === 'agent' ? (
+            <label>
+              <span>{zh ? '运行时' : 'Runtime'}</span>
+              <ZeusSelect
+                size="regular"
+                ariaLabel={zh ? '选择员工运行时' : 'Choose employee runtime'}
+                value={props.draft.agentKind}
+                onChange={(agentKind) => patch({ agentKind, model: '', reasoningEffort: '', serviceTier: '' })}
+                searchable={false}
+                options={[
+                  { value: 'codex', label: 'Codex' },
+                  { value: 'pi', label: 'Pi' },
+                ]}
+              />
+            </label>
+          ) : (
+            <label>
+              <span>{zh ? '项目命令' : 'Project command'}</span>
+              <ZeusSelect
+                size="regular"
+                ariaLabel={zh ? '选择主执行命令' : 'Choose primary command'}
+                value={props.draft.deployCommandId}
+                onChange={(deployCommandId) => patch({ deployCommandId })}
+                options={[
+                  { value: '', label: zh ? '未配置，暂不可指派' : 'Not configured; unavailable for assignment' },
+                  ...props.deployCommands.map((command) => ({ value: command.id, label: command.title, searchText: `${command.name} ${command.description}` })),
+                ]}
+              />
+            </label>
+          )}
+        </div>
+        {props.draft.entrypointKind === 'agent' ? (
           <label>
-            <span>{zh ? '模型（可选）' : 'Model (optional)'}</span>
-            <ZeusSelect
-              size="regular"
-              ariaLabel={zh ? '选择员工模型' : 'Choose employee model'}
-              value={selectedModel?.id ?? props.draft.model}
-              onChange={selectModel}
-              options={modelOptions}
-              triggerLabel={props.draft.model ? modelPresentation.triggerLabel : zh ? '跟随项目默认' : 'Use project default'}
-              searchPlaceholder={zh ? '搜索供应商或模型' : 'Search providers or models'}
-              emptyLabel={zh ? '没有匹配模型' : 'No matching models'}
+            <span>{zh ? 'Agent 提示词' : 'Agent prompt'}</span>
+            <textarea rows={6} value={props.draft.prompt} onChange={(event) => patch({ prompt: event.currentTarget.value })} maxLength={20000} />
+            <small>{zh ? 'Provider 的 default/plan 不再作为员工路线；运行由该入口和冻结策略决定。' : 'Provider default/plan is not an employee workflow; the entrypoint and frozen policies drive each run.'}</small>
+          </label>
+        ) : (
+          <p className="digital-employee-boundary-note">
+            {zh
+              ? '人工指派会在最后一步确认并直接启动命令，不创建模型会话；敏感参数不会进入工作项快照或日志。'
+              : 'Manual assignment confirms and starts the command directly without a model conversation; sensitive parameters are excluded from snapshots and logs.'}
+          </p>
+        )}
+      </section>
+
+      {props.draft.entrypointKind === 'agent' ? (
+        <section className="digital-employee-form-section">
+          <header>
+            <strong>Skills</strong>
+            <small>{zh ? '允许多个 Skill。启动时冻结稳定身份、内容哈希和资源快照，Runtime 按需加载并记录实际启用项。' : 'Allow multiple skills. Runs freeze identities, content hashes, and resources, then load only what is needed.'}</small>
+          </header>
+          <label>
+            <span>{zh ? '添加允许的 Skill' : 'Add an allowed skill'}</span>
+            <SkillSelector
+              client={props.skillClient}
+              projectId={props.projectId}
+              value={skillCandidate}
+              onChange={(skillId) => {
+                setSkillCandidate('');
+                if (skillId && !props.draft.skillIds.includes(skillId)) patch({ skillIds: [...props.draft.skillIds, skillId] });
+              }}
+              language={props.language}
+              ariaLabel={zh ? '添加员工允许使用的 Skill' : 'Add a skill this employee may use'}
             />
           </label>
-          <label>
-            <span>{zh ? '推理强度（可选）' : 'Reasoning effort (optional)'}</span>
-            <ZeusSelect
-              size="regular"
-              ariaLabel={zh ? '选择员工推理强度' : 'Choose employee reasoning effort'}
-              value={props.draft.reasoningEffort}
-              onChange={(reasoningEffort) => patch({ reasoningEffort })}
-              options={reasoningEffortOptions}
-              disabled={!selectedModel}
-              searchable={false}
-            />
-          </label>
-          <label>
-            <span>{zh ? '服务层级（可选）' : 'Service tier (optional)'}</span>
-            <ZeusSelect
-              size="regular"
-              ariaLabel={zh ? '选择员工服务层级' : 'Choose employee service tier'}
-              value={props.draft.serviceTier}
-              onChange={(serviceTier) => patch({ serviceTier })}
-              options={serviceTierOptions}
-              disabled={!selectedModel}
-              searchable={false}
-            />
-          </label>
-          <label>
-            <span>{zh ? '工作模式' : 'Work mode'}</span>
-            <ZeusSelect
-              size="regular"
-              ariaLabel={zh ? '选择员工工作模式' : 'Choose employee work mode'}
-              value={props.draft.workMode}
-              onChange={(workMode) => patch({ workMode })}
-              searchable={false}
-              options={[
-                { value: 'default', label: zh ? '默认' : 'Default' },
-                { value: 'plan', label: zh ? '规划' : 'Plan' },
-              ]}
-            />
-          </label>
+          <div className="digital-employee-skill-policy-list">
+            {props.draft.skillIds.map((skillId) => (
+              <span key={skillId}>
+                <code>{skillId}</code>
+                <button type="button" onClick={() => patch({ skillIds: props.draft.skillIds.filter((id) => id !== skillId) })}>
+                  {zh ? '移除' : 'Remove'}
+                </button>
+              </span>
+            ))}
+            {props.draft.skillIds.length === 0 ? <small>{zh ? '当前未允许任何 Skill。' : 'No skills are currently allowed.'}</small> : null}
+          </div>
+        </section>
+      ) : null}
+
+      {props.draft.entrypointKind === 'agent' ? (
+        <section className="digital-employee-form-section">
+          <header>
+            <strong>{zh ? '模型策略' : 'Model policy'}</strong>
+            <small>{zh ? '指派时展示解析值，运行创建后冻结实际模型；只能在允许范围内显式覆盖。' : 'Assignments show the resolved value and freeze it at run creation; overrides are limited to the allowed ranges.'}</small>
+          </header>
+          <div className="digital-employee-form-grid">
+            <label>
+              <span>{zh ? '默认模型' : 'Default model'}</span>
+              <ZeusSelect
+                size="regular"
+                ariaLabel={zh ? '选择员工模型' : 'Choose employee model'}
+                value={selectedModel?.id ?? props.draft.model}
+                onChange={selectModel}
+                options={modelOptions}
+                triggerLabel={props.draft.model ? modelPresentation.triggerLabel : zh ? '跟随项目默认' : 'Use project default'}
+                searchPlaceholder={zh ? '搜索供应商或模型' : 'Search providers or models'}
+                emptyLabel={zh ? '没有匹配模型' : 'No matching models'}
+              />
+            </label>
+            <label>
+              <span>{zh ? '默认推理强度' : 'Default reasoning effort'}</span>
+              <ZeusSelect
+                size="regular"
+                ariaLabel={zh ? '选择员工推理强度' : 'Choose employee reasoning effort'}
+                value={props.draft.reasoningEffort}
+                onChange={(reasoningEffort) => patch({ reasoningEffort })}
+                options={reasoningEffortOptions}
+                disabled={!selectedModel}
+                searchable={false}
+              />
+            </label>
+            <label>
+              <span>{zh ? '默认服务速率' : 'Default service tier'}</span>
+              <ZeusSelect
+                size="regular"
+                ariaLabel={zh ? '选择员工服务层级' : 'Choose employee service tier'}
+                value={props.draft.serviceTier}
+                onChange={(serviceTier) => patch({ serviceTier })}
+                options={serviceTierOptions}
+                disabled={!selectedModel}
+                searchable={false}
+              />
+            </label>
+            <label>
+              <span>{zh ? '允许覆盖的模型' : 'Allowed model overrides'}</span>
+              <input
+                value={props.draft.allowedModels}
+                onChange={(event) => patch({ allowedModels: event.currentTarget.value })}
+                placeholder={zh ? '模型 ID，逗号分隔；默认模型自动包含' : 'Comma-separated model IDs; default is always included'}
+              />
+            </label>
+            <label>
+              <span>{zh ? '允许的推理强度' : 'Allowed reasoning efforts'}</span>
+              <input value={props.draft.allowedReasoningEfforts} onChange={(event) => patch({ allowedReasoningEfforts: event.currentTarget.value })} placeholder={zh ? '逗号分隔' : 'Comma separated'} />
+            </label>
+            <label>
+              <span>{zh ? '允许的服务速率' : 'Allowed service tiers'}</span>
+              <input value={props.draft.allowedServiceTiers} onChange={(event) => patch({ allowedServiceTiers: event.currentTarget.value })} placeholder={zh ? '逗号分隔' : 'Comma separated'} />
+            </label>
+          </div>
+        </section>
+      ) : null}
+
+      {props.draft.entrypointKind === 'agent' ? (
+        <section className="digital-employee-form-section digital-employee-grants-section">
+          <header>
+            <strong>{zh ? '权限工具' : 'Authority and tools'}</strong>
+            <small>{zh ? '这些值只是运行权限上限，不会在会话完成后自动触发隐藏的提交、部署或完结路线。' : 'These are permission ceilings only; conversation completion never triggers hidden commit, deploy, or completion steps.'}</small>
+          </header>
           <label>
             <span>{zh ? '权限模式' : 'Permission mode'}</span>
             <ZeusSelect
@@ -608,65 +717,83 @@ function EmployeeEditor(props: {
               ]}
             />
           </label>
-        </div>
-        <label>
-          <span>{zh ? '默认 Skill（可选）' : 'Default skill (optional)'}</span>
-          <SkillSelector
-            client={props.skillClient}
-            projectId={props.projectId}
-            value={props.draft.skillId}
-            onChange={(skillId) => patch({ skillId })}
-            language={props.language}
-            ariaLabel={zh ? '选择项目员工默认 Skill' : 'Choose project employee default skill'}
-          />
-          <small>{zh ? '派发时会在项目及最终工作区复验并冻结该 Skill；Skill 不会扩大员工权限。' : 'Resolved again in the project and final workspace at dispatch; the skill cannot expand employee permissions.'}</small>
-        </label>
-        <label>
-          <span>{zh ? '员工提示词' : 'Employee prompt'}</span>
-          <textarea rows={5} value={props.draft.prompt} onChange={(event) => patch({ prompt: event.currentTarget.value })} maxLength={20000} />
-        </label>
-      </section>
+          <div className="digital-employee-policy-grid">
+            <CheckboxRow
+              checked={props.draft.allowCodeChanges}
+              onChange={(allowCodeChanges) => patch({ allowCodeChanges })}
+              title={zh ? '允许修改代码' : 'Allow code changes'}
+              description={zh ? '只影响任务执行；不等于允许提交或推送。' : 'Applies to task execution and does not imply commit or push.'}
+            />
+            <CheckboxRow
+              checked={props.draft.allowTests}
+              onChange={(allowTests) => patch({ allowTests })}
+              title={zh ? '允许执行验证' : 'Allow verification'}
+              description={zh ? '允许执行项目已具备的检查；不会创建单元测试体系。' : 'Allows existing project checks without creating a unit-test system.'}
+            />
+          </div>
+          <div className="digital-employee-grant-flow" aria-label={zh ? '管理动作权限上限' : 'Management action permission ceilings'}>
+            <CheckboxRow
+              checked={props.draft.allowCommit}
+              onChange={(checked) => patchGrant('allowCommit', checked)}
+              title={zh ? '提交' : 'Commit'}
+              description={zh ? '允许显式提交动作；不会自动提交。' : 'Allows an explicit commit action; never commits automatically.'}
+            />
+            <CheckboxRow
+              checked={props.draft.allowPush}
+              onChange={(checked) => patchGrant('allowPush', checked)}
+              title={zh ? '推送' : 'Push'}
+              description={zh ? '允许显式推送动作；必须由管理动作或未来流程节点触发。' : 'Allows an explicit push action from a manager command or future workflow node.'}
+            />
+            <CheckboxRow
+              checked={props.draft.allowMerge}
+              onChange={(checked) => patchGrant('allowMerge', checked)}
+              title={zh ? '合入' : 'Merge'}
+              description={zh ? '允许显式合入动作；冲突即停止。' : 'Allows an explicit merge action and stops on conflicts.'}
+            />
+            <CheckboxRow
+              checked={props.draft.allowDeploy}
+              onChange={(checked) => patchGrant('allowDeploy', checked)}
+              title={zh ? '部署' : 'Deploy'}
+              description={zh ? '允许显式部署动作；Agent 完成不会自动部署。' : 'Allows an explicit deploy action; Agent completion does not deploy.'}
+            />
+            <CheckboxRow
+              checked={props.draft.allowComplete}
+              onChange={(checked) => patchGrant('allowComplete', checked)}
+              title={zh ? '结束任务' : 'Complete task'}
+              description={zh ? '允许显式完结动作；交付物仍需管理者验收。' : 'Allows explicit task completion; deliverables still require manager acceptance.'}
+            />
+          </div>
+        </section>
+      ) : null}
 
       <section className="digital-employee-form-section">
         <header>
-          <strong>{zh ? '找活与执行策略' : 'Work sourcing and execution'}</strong>
-          <small>{zh ? '范围固定为当前项目；自主探索始终只读。' : 'Scope is fixed to this project; autonomous exploration is always read-only.'}</small>
+          <strong>{zh ? '自动化' : 'Automation'}</strong>
+          <small>{zh ? '自动化只决定何时创建工作项；Agent 自动启动，Command 创建待确认事项。' : 'Automation only decides when to create a work item; Agents start automatically, while Commands create a confirmation item.'}</small>
         </header>
         <div className="digital-employee-policy-grid">
           <CheckboxRow
             checked={props.draft.enabled}
             onChange={(enabled) => patch({ enabled })}
             title={zh ? '启用员工' : 'Enable employee'}
-            description={zh ? '停用后不接收新工作，已有执行不被删除。' : 'Stops accepting new work without deleting current executions.'}
+            description={zh ? '停用后不接收新工作，已有运行不被删除。' : 'Stops new work without deleting existing runs.'}
           />
           <CheckboxRow
             checked={props.draft.autoClaim}
             onChange={(autoClaim) => patch({ autoClaim })}
-            title={zh ? '自动从任务池认领' : 'Auto-claim from task pool'}
-            description={zh ? '仅认领符合下面筛选条件的未完成任务。' : 'Claims only unfinished tasks matching the filters below.'}
+            title={zh ? '自动从任务池创建工作项' : 'Create work items from task pool'}
+            description={zh ? '只处理符合筛选条件的未完成任务。' : 'Only handles unfinished tasks matching these filters.'}
           />
           <CheckboxRow
             checked={props.draft.autonomousExploration}
             onChange={(autonomousExploration) => patch({ autonomousExploration })}
             title={zh ? '允许只读自主探索' : 'Allow read-only exploration'}
-            description={zh ? '仍需创建自动化规则决定何时触发，不会无限循环。' : 'Still requires an automation trigger and never runs as an infinite loop.'}
-          />
-          <CheckboxRow
-            checked={props.draft.allowCodeChanges}
-            onChange={(allowCodeChanges) => patch({ allowCodeChanges })}
-            title={zh ? '允许修改代码' : 'Allow code changes'}
-            description={zh ? '只影响任务执行；不等于允许提交或推送。' : 'Applies to task execution and does not imply commit or push.'}
-          />
-          <CheckboxRow
-            checked={props.draft.allowTests}
-            onChange={(allowTests) => patch({ allowTests })}
-            title={zh ? '允许执行验证' : 'Allow verification'}
-            description={zh ? '允许执行项目已具备的检查；不会创建单元测试体系。' : 'Allows existing project checks without creating a unit-test system.'}
+            description={zh ? '仍需自动化规则触发，不会无限循环。' : 'Still requires an automation trigger and never loops indefinitely.'}
           />
         </div>
         <div className="digital-employee-form-grid">
           <label>
-            <span>{zh ? '最大并发' : 'Maximum concurrency'}</span>
+            <span>{zh ? '最大并发工作项' : 'Maximum concurrent work items'}</span>
             <input type="number" min={1} max={20} value={props.draft.maxConcurrency} onChange={(event) => patch({ maxConcurrency: event.currentTarget.value })} />
           </label>
           <label>
@@ -682,65 +809,6 @@ function EmployeeEditor(props: {
             <input value={props.draft.requiredTags} onChange={(event) => patch({ requiredTags: event.currentTarget.value })} placeholder={zh ? '逗号分隔' : 'Comma separated'} />
           </label>
         </div>
-      </section>
-
-      <section className="digital-employee-form-section digital-employee-grants-section">
-        <header>
-          <strong>{zh ? '自动交付授权' : 'Automatic delivery grants'}</strong>
-          <small>{zh ? '默认全部关闭；每次执行固定当前授权快照。' : 'All grants default off and are snapshotted for each execution.'}</small>
-        </header>
-        <div className="digital-employee-grant-flow" aria-label={zh ? '自动交付授权链' : 'Automatic delivery grant chain'}>
-          <CheckboxRow
-            checked={props.draft.allowCommit}
-            onChange={(checked) => patchGrant('allowCommit', checked)}
-            title={zh ? '提交' : 'Commit'}
-            description={zh ? '只提交本次隔离任务工作区的精确变更。' : 'Commits exact changes from this isolated task workspace.'}
-          />
-          <CheckboxRow
-            checked={props.draft.allowPush}
-            onChange={(checked) => patchGrant('allowPush', checked)}
-            title={zh ? '推送' : 'Push'}
-            description={zh ? '自动推送任务分支；合入后也推送来源分支。' : 'Pushes the task branch and the merged source branch.'}
-          />
-          <CheckboxRow
-            checked={props.draft.allowMerge}
-            onChange={(checked) => patchGrant('allowMerge', checked)}
-            title={zh ? '合入' : 'Merge'}
-            description={zh ? '只合入会话创建时记录的来源分支；冲突即停止。' : 'Merges only into the recorded source branch and stops on conflicts.'}
-          />
-          <CheckboxRow
-            checked={props.draft.allowDeploy}
-            onChange={(checked) => patchGrant('allowDeploy', checked)}
-            title={zh ? '部署' : 'Deploy'}
-            description={zh ? '仅运行下方明确选择的命令中心命令。' : 'Runs only the explicitly selected Command Center command.'}
-          />
-          <CheckboxRow
-            checked={props.draft.allowComplete}
-            onChange={(checked) => patchGrant('allowComplete', checked)}
-            title={zh ? '结束任务' : 'Complete task'}
-            description={zh ? '所有前置授权动作完成后修改任务管理状态。' : 'Changes task management status after all prior granted actions finish.'}
-          />
-        </div>
-        <label className="digital-employee-deploy-command">
-          <span>{zh ? '部署命令' : 'Deployment command'}</span>
-          <ZeusSelect
-            size="regular"
-            ariaLabel={zh ? '选择自动部署命令' : 'Choose automatic deployment command'}
-            value={props.draft.deployCommandId}
-            onChange={(deployCommandId) => patch({ deployCommandId })}
-            disabled={!props.draft.allowDeploy}
-            options={[
-              { value: '', label: zh ? '未选择' : 'Not selected' },
-              ...props.deployCommands.map((command) => ({
-                value: command.id,
-                label: command.title,
-                disabled: command.parameters.some((parameter) => parameter.required && parameter.defaultValue === undefined),
-                searchText: `${command.name} ${command.description}`,
-              })),
-            ]}
-          />
-          <small>{zh ? '需要临时必填参数的命令不可用于无人值守部署。' : 'Commands with unresolved required parameters cannot be used for unattended deployment.'}</small>
-        </label>
       </section>
     </div>
   );

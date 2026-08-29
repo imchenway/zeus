@@ -945,3 +945,622 @@
     grid-column: 2;
   }
 }
+
+/* ZEUS-0380 v2 任务管理驾驶舱 */
+.macos-ai-app .task-work-cockpit {
+  min-width: 0;
+  margin: 0;
+  border-block: 1px solid var(--zeus-control-border);
+  background: var(--zeus-product-panel);
+  color: var(--zeus-control-text);
+}
+
+.macos-ai-app .task-work-cockpit-header {
+  display: flex;
+  min-height: 54px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 0 18px;
+  border-block-end: 1px solid var(--zeus-control-border);
+}
+
+.macos-ai-app .task-work-cockpit-header nav,
+.macos-ai-app .task-work-cockpit-header > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.macos-ai-app .task-work-cockpit-header nav button {
+  position: relative;
+  display: inline-flex;
+  min-height: 54px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 0;
+  background: transparent;
+  color: var(--zeus-control-muted-text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.macos-ai-app .task-work-cockpit-header nav button::after {
+  position: absolute;
+  inset: auto 10px -1px;
+  height: 2px;
+  background: transparent;
+  content: '';
+}
+
+.macos-ai-app .task-work-cockpit-header nav button.is-active {
+  color: var(--zeus-control-text);
+}
+
+.macos-ai-app .task-work-cockpit-header nav button.is-active::after {
+  background: var(--zeus-accent, #2478d0);
+}
+
+.macos-ai-app .task-work-cockpit-header nav button small {
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--zeus-accent, #2478d0) 12%, transparent);
+  color: var(--zeus-accent, #2478d0);
+  font-size: 10px;
+  text-align: center;
+}
+
+.macos-ai-app .task-work-cockpit-grid {
+  display: grid;
+  min-height: 420px;
+  grid-template-columns: minmax(0, 1fr) minmax(250px, 0.34fr);
+}
+
+.macos-ai-app .task-work-board,
+.macos-ai-app .task-work-inbox,
+.macos-ai-app .task-work-deliverables,
+.macos-ai-app .task-work-evidence {
+  min-width: 0;
+  padding: 20px;
+}
+
+.macos-ai-app :where(.task-work-board, .task-work-inbox, .task-work-deliverables, .task-work-evidence) > header > span,
+.macos-ai-app :where(.task-work-deliverables, .task-work-evidence) > header {
+  display: grid;
+  gap: 4px;
+}
+
+.macos-ai-app :where(.task-work-board, .task-work-inbox, .task-work-deliverables, .task-work-evidence) > header strong {
+  font-size: 14px;
+}
+
+.macos-ai-app :where(.task-work-board, .task-work-inbox, .task-work-deliverables, .task-work-evidence) > header small {
+  color: var(--zeus-control-muted-text);
+  font-size: 11px;
+}
+
+.macos-ai-app .task-work-inbox {
+  border-inline-start: 1px solid var(--zeus-control-border);
+  background: color-mix(in oklab, var(--zeus-product-panel-muted) 76%, transparent);
+}
+
+.macos-ai-app .task-work-relationship-note {
+  margin: 14px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 8px;
+  color: var(--zeus-control-muted-text);
+  font-size: 11px;
+}
+
+.macos-ai-app .task-work-item-list,
+.macos-ai-app .task-work-inbox > div {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.macos-ai-app .task-work-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 10px;
+  background: var(--zeus-product-panel);
+}
+
+.macos-ai-app .task-work-item.is-waiting_manager,
+.macos-ai-app .task-work-item.is-blocked {
+  border-color: color-mix(in oklab, #d58b26 42%, var(--zeus-control-border));
+}
+
+.macos-ai-app .task-work-item.is-completed {
+  border-color: color-mix(in oklab, #2e9b67 38%, var(--zeus-control-border));
+}
+
+.macos-ai-app .task-work-entry-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--zeus-accent, #2478d0) 10%, transparent);
+  color: var(--zeus-accent, #2478d0);
+}
+
+.macos-ai-app .task-work-item-copy,
+.macos-ai-app .task-work-item-copy > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.macos-ai-app .task-work-item-copy strong {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macos-ai-app .task-work-item-copy :where(small, p) {
+  margin: 0;
+  color: var(--zeus-control-muted-text);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.macos-ai-app .task-work-item-copy small.is-error {
+  color: var(--zeus-danger, #b73542);
+}
+
+.macos-ai-app .task-work-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.macos-ai-app .task-work-empty {
+  display: grid;
+  min-height: 150px;
+  place-items: center;
+  gap: 5px;
+  padding: 24px;
+  border: 1px dashed var(--zeus-control-border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--zeus-control-muted-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.macos-ai-app .task-work-empty strong {
+  color: var(--zeus-control-text);
+  font-size: 13px;
+}
+
+.macos-ai-app .task-work-empty small {
+  max-width: 440px;
+  font-size: 11px;
+}
+
+.macos-ai-app .task-work-inbox button,
+.macos-ai-app .task-work-evidence button {
+  display: grid;
+  width: 100%;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  padding: 11px;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 9px;
+  background: var(--zeus-product-panel);
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.macos-ai-app :where(.task-work-inbox, .task-work-evidence) button > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.macos-ai-app :where(.task-work-inbox, .task-work-evidence) button :where(small, time) {
+  color: var(--zeus-control-muted-text);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.macos-ai-app .task-work-inbox > div > p,
+.macos-ai-app .task-work-evidence > p,
+.macos-ai-app .task-work-deliverables > p {
+  margin: 0;
+  padding: 24px 10px;
+  color: var(--zeus-control-muted-text);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.macos-ai-app .task-work-overview {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--zeus-control-border);
+}
+
+.macos-ai-app .task-work-overview > span {
+  display: grid;
+  min-height: 128px;
+  align-content: start;
+  gap: 6px;
+  padding: 20px;
+  background: var(--zeus-product-panel);
+}
+
+.macos-ai-app .task-work-overview > span small,
+.macos-ai-app .task-work-overview > span p {
+  margin: 0;
+  color: var(--zeus-control-muted-text);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.macos-ai-app .task-work-overview > span strong {
+  font-size: 28px;
+  letter-spacing: -0.04em;
+}
+
+.macos-ai-app .task-work-deliverables,
+.macos-ai-app .task-work-evidence {
+  display: grid;
+  gap: 10px;
+}
+
+.macos-ai-app .task-work-deliverables article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 16px;
+  padding: 14px;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 9px;
+}
+
+.macos-ai-app .task-work-deliverables article span {
+  display: grid;
+  gap: 3px;
+}
+
+.macos-ai-app .task-work-deliverables article p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--zeus-control-muted-text);
+  font-size: 11px;
+}
+
+.macos-ai-app .task-work-assignment-root,
+.macos-ai-app .task-work-decision-root {
+  position: fixed;
+  z-index: 450;
+  inset: 0;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.macos-ai-app .task-work-assignment-backdrop,
+.macos-ai-app .task-work-decision-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(7 10 18 / 32%);
+}
+
+.macos-ai-app .task-work-assignment-drawer,
+.macos-ai-app .task-work-decision-dialog {
+  position: relative;
+  display: grid;
+  width: min(560px, calc(100vw - 36px));
+  height: calc(100dvh - 40px);
+  max-height: calc(100dvh - 40px);
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  border-inline-start: 1px solid var(--zeus-control-border);
+  background: var(--zeus-solid-surface-bg, var(--zeus-product-panel));
+  box-shadow: -18px 0 56px rgb(8 10 18 / 20%);
+}
+
+.macos-ai-app :where(.task-work-assignment-drawer, .task-work-decision-dialog) > header,
+.macos-ai-app :where(.task-work-assignment-drawer, .task-work-decision-dialog) > footer {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 18px 20px;
+  border-block-end: 1px solid var(--zeus-control-border);
+}
+
+.macos-ai-app :where(.task-work-assignment-drawer, .task-work-decision-dialog) > footer {
+  justify-content: flex-end;
+  border-block: 1px solid var(--zeus-control-border) 0;
+}
+
+.macos-ai-app :where(.task-work-assignment-drawer, .task-work-decision-dialog) > header > span {
+  display: grid;
+  gap: 4px;
+}
+
+.macos-ai-app :where(.task-work-assignment-drawer, .task-work-decision-dialog) > header small {
+  color: var(--zeus-control-muted-text);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.macos-ai-app .task-work-assignment-body,
+.macos-ai-app .task-work-decision-dialog > div {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  padding: 20px;
+  overflow: auto;
+}
+
+.macos-ai-app :where(.task-work-assignment-body, .task-work-decision-dialog > div) > label,
+.macos-ai-app .task-work-assignment-body fieldset > label {
+  display: grid;
+  gap: 7px;
+  color: var(--zeus-control-text);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.macos-ai-app .task-work-assignment-body fieldset {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 9px;
+}
+
+.macos-ai-app .task-work-assignment-body legend {
+  padding: 0 6px;
+  color: var(--zeus-control-muted-text);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.macos-ai-app .task-work-assignment-body input:not([type='checkbox']),
+.macos-ai-app .task-work-decision-dialog textarea {
+  width: 100%;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: var(--zeus-product-panel-muted);
+  color: inherit;
+  font: inherit;
+}
+
+.macos-ai-app .task-work-checkbox {
+  grid-template-columns: auto minmax(0, 1fr) !important;
+  align-items: center;
+}
+
+.macos-ai-app .task-work-assignment-impact,
+.macos-ai-app .task-work-preview,
+.macos-ai-app .task-work-decision-deliverable {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 9px;
+  background: color-mix(in oklab, var(--zeus-product-panel-muted) 72%, transparent);
+}
+
+.macos-ai-app :where(.task-work-assignment-impact, .task-work-preview) > span,
+.macos-ai-app .task-work-decision-deliverable {
+  display: grid;
+  gap: 3px;
+}
+
+.macos-ai-app :where(.task-work-assignment-impact, .task-work-preview, .task-work-decision-deliverable) :where(small, p) {
+  margin: 0;
+  color: var(--zeus-control-muted-text);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.macos-ai-app .task-work-decision-dialog pre {
+  max-height: 260px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border-radius: 8px;
+  background: var(--zeus-product-panel-muted);
+  font: 11px/1.55 var(--zeus-font-mono, ui-monospace, monospace);
+  white-space: pre-wrap;
+}
+
+.macos-ai-app .task-work-decision-dialog fieldset {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 9px;
+}
+
+.macos-ai-app .task-work-decision-dialog fieldset label {
+  display: grid;
+  gap: 7px;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.macos-ai-app .task-work-decision-dialog fieldset input {
+  width: 100%;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: var(--zeus-product-panel-muted);
+  color: inherit;
+  font: inherit;
+}
+
+.macos-ai-app .task-work-manager-questions,
+.macos-ai-app .task-work-manager-authorization {
+  display: grid;
+  gap: 12px;
+}
+
+.macos-ai-app .task-work-manager-question {
+  display: grid;
+  gap: 8px;
+  padding: 12px !important;
+  border: 1px solid var(--zeus-control-border) !important;
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--zeus-product-panel-muted) 64%, transparent);
+}
+
+.macos-ai-app .task-work-manager-question > p,
+.macos-ai-app .task-work-manager-question > span,
+.macos-ai-app .task-work-manager-question small {
+  margin: 0;
+  color: var(--zeus-control-muted-text);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.macos-ai-app .task-work-manager-question > label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  padding: 8px;
+  border-radius: 7px;
+  background: var(--zeus-product-panel);
+  cursor: pointer;
+}
+
+.macos-ai-app .task-work-manager-question > label > input[type='radio'],
+.macos-ai-app .task-work-manager-question > label > input[type='checkbox'] {
+  width: auto;
+  margin: 2px 0 0;
+  padding: 0;
+}
+
+.macos-ai-app .task-work-manager-question > label > span {
+  display: grid;
+  gap: 2px;
+}
+
+.macos-ai-app .task-work-manager-authorization {
+  padding: 14px;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 9px;
+}
+
+.macos-ai-app .task-work-command-evidence-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) repeat(2, minmax(90px, 1fr));
+  gap: 10px;
+}
+
+.macos-ai-app .task-work-command-evidence-summary > span,
+.macos-ai-app .task-work-command-artifacts > span {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 8px;
+}
+
+.macos-ai-app .task-work-command-evidence-summary small,
+.macos-ai-app .task-work-command-artifacts small {
+  color: var(--zeus-control-muted-text);
+  font-size: 10px;
+}
+
+.macos-ai-app .task-work-command-log {
+  max-height: min(50vh, 520px) !important;
+}
+
+.macos-ai-app .task-work-command-artifacts {
+  display: grid;
+  gap: 8px;
+}
+
+.macos-ai-app .task-work-deliverable-content {
+  max-height: min(42vh, 420px) !important;
+  color: var(--zeus-control-text);
+}
+
+.macos-ai-app .digital-employee-skill-policy-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.macos-ai-app .digital-employee-skill-policy-list > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 8px;
+  background: var(--zeus-product-panel-muted);
+}
+
+.macos-ai-app .digital-employee-skill-policy-list code {
+  font-size: 10px;
+}
+
+.macos-ai-app .digital-employee-skill-policy-list button {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--zeus-control-accent, var(--zeus-product-accent));
+  font: inherit;
+  cursor: pointer;
+}
+
+@media (max-width: 980px) {
+  .macos-ai-app .task-work-cockpit-grid,
+  .macos-ai-app .task-work-overview {
+    grid-template-columns: 1fr;
+  }
+
+  .macos-ai-app .task-work-inbox {
+    border-block-start: 1px solid var(--zeus-control-border);
+    border-inline-start: 0;
+  }
+}
+
+@media (max-width: 720px) {
+  .macos-ai-app .task-work-cockpit-header,
+  .macos-ai-app .task-work-cockpit-header nav {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .macos-ai-app .task-work-cockpit-header {
+    padding: 10px 14px;
+  }
+
+  .macos-ai-app .task-work-cockpit-header nav button {
+    min-height: 38px;
+  }
+
+  .macos-ai-app .task-work-item {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .macos-ai-app .task-work-item-actions {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+}
