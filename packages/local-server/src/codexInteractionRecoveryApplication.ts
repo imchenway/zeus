@@ -5,6 +5,15 @@ import { coordinatorError, parseJsonRecord, requireString, serializeError } from
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type CodexInteractionRecoveryDependencies = Record<string, any>;
 
+export function isRetiredGenerationFailure(request: ZeusConversationServerRequestRecord): boolean {
+  if (request.status !== 'failed' || !request.responseJson) return false;
+  try {
+    return parseJsonRecord(request.responseJson).error === 'ZEUS_CODEX_REQUEST_GENERATION_STALE';
+  } catch {
+    return false;
+  }
+}
+
 export function createCodexInteractionRecoveryApplication(dependencies: CodexInteractionRecoveryDependencies) {
   const { enqueueProviderTurnReconciliation, executeTurnCommand, isClosed, isPendingInteractionAuthority, now, options, persist, projectedProviderThreadSnapshot, readyGenerationId, reconcileConversationSnapshot, runStates } = dependencies;
   const reconciliationTimers = new Map<string, ReturnType<typeof setTimeout>>();

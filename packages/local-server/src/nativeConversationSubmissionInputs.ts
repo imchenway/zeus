@@ -2,7 +2,7 @@ import type { TaskPushMessageLayout } from '@zeus/shared';
 import type { ZeusConversationSubmissionRecord } from '@zeus/storage';
 import { realpathSync, statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
-import type { ConversationDispatchContext, NativeConversationAttachmentInput, NativeConversationSkillInput } from './codexNativeConversationContracts.js';
+import type { ConversationDispatchContext, NativeConversationAttachmentInput, NativeConversationSkillInput, NativeSubmissionRecoveryKind } from './codexNativeConversationContracts.js';
 import { coordinatorError, isRecord, parseJsonRecord } from './codexNativeConversationPolicy.js';
 
 export interface PersistedSubmissionInput {
@@ -26,8 +26,15 @@ export interface PersistedSubmissionInput {
   taskPushLayout?: TaskPushMessageLayout;
   internalOperation?: boolean;
   requestAnswerId?: string;
+  recoveryKind?: NativeSubmissionRecoveryKind;
   goalObjective?: string;
   skill?: NativeConversationSkillInput;
+}
+
+export function readNativeSubmissionRecoveryKind(submission: ZeusConversationSubmissionRecord, input = parseJsonRecord(submission.inputJson)): NativeSubmissionRecoveryKind | null {
+  if (input.recoveryKind === 'interaction_response') return 'interaction_response';
+  // 0.3.72 等旧版本没有持久化 recoveryKind；只按该内部幂等键识别未进入 Provider turn 的历史续接。
+  return submission.idempotencyKey.startsWith('interaction-recovery-response:') ? 'interaction_response' : null;
 }
 
 export function readNativeSubmissionTaskPushLayout(submission: ZeusConversationSubmissionRecord): TaskPushMessageLayout | null {

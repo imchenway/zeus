@@ -1284,6 +1284,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
       {showPendingDeliveryFeedback ? (
         <MessageDeliveryOutcomeFeedback
           item={row.item}
+          submissionId={queuedSubmissionId}
           language={options.props.language}
           onRecoverQueue={options.props.onRecoverQueue}
           onRetryQueuedSubmission={options.props.onRetryQueuedSubmission}
@@ -1344,6 +1345,7 @@ function InteractionAuthorityMissingNotice(props: { language: SessionUiLanguage;
 
 function MessageDeliveryOutcomeFeedback(props: {
   item: NativeSessionItemBuffer;
+  submissionId?: string;
   language: SessionUiLanguage;
   onRecoverQueue?: () => void | Promise<void>;
   onRetryQueuedSubmission?: (submissionId: string) => void | Promise<void>;
@@ -1353,6 +1355,14 @@ function MessageDeliveryOutcomeFeedback(props: {
   const [actionError, setActionError] = useState<unknown>(null);
   useApplicationErrorDialog(actionError, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' });
   const pausedReason = props.item.payload.pausedReason;
+  const interactionResponseRecovery = props.item.payload.recoveryKind === 'interaction_response';
+  if (interactionResponseRecovery && props.item.status === 'queued') {
+    return (
+      <section className="session-message-delivery-feedback" data-state="interaction-recovery-pending" role="status" aria-live="polite">
+        {props.language === 'zh-CN' ? '回答已保存，正在恢复原会话…' : 'Your answer was saved. Restoring the original conversation…'}
+      </section>
+    );
+  }
   if (pausedReason === 'provider_stop_pending') {
     return (
       <section className="session-message-delivery-feedback" data-state="provider-stop-pending" role="status" aria-live="polite">
@@ -1369,7 +1379,8 @@ function MessageDeliveryOutcomeFeedback(props: {
   const providerStopRecoveryFailed = pausedReason === 'recovery_required' && deliveryError.code === 'ZEUS_PROVIDER_STOP_RECOVERY_REQUIRED';
   const recoveredUnsent = pausedReason === 'recovered_unsent' && deliveryError.code === 'ZEUS_RECOVERED_UNSENT_CONFIRMATION_REQUIRED';
   const modelWindowUnavailable = deliveryError.code === 'ZEUS_CONTEXT_MODEL_WINDOW_UNAVAILABLE';
-  const submissionId = props.item.localItemId || (typeof props.item.payload.submissionId === 'string' ? props.item.payload.submissionId : null);
+  const interactionResumeTimedOut = interactionResponseRecovery && deliveryError.code === 'ZEUS_CODEX_RPC_TIMEOUT' && deliveryError.message.includes('thread/resume');
+  const submissionId = props.submissionId ?? (typeof props.item.payload.submissionId === 'string' ? props.item.payload.submissionId : props.item.localItemId);
   const runAction = (action: 'recover' | 'retry' | 'cancel', operation: (() => void | Promise<void>) | undefined) => {
     if (!operation || busyAction) return;
     setActionError(null);
@@ -1382,7 +1393,17 @@ function MessageDeliveryOutcomeFeedback(props: {
 
   return (
     <section className="session-message-delivery-feedback" data-state={feedbackState} role="alert" aria-live="assertive">
-      {providerStopRecoveryFailed ? (
+      {interactionResponseRecovery ? (
+        <span>
+          {interactionResumeTimedOut
+            ? props.language === 'zh-CN'
+              ? '回答已保存，但原会话恢复超时；续接尚未发送。'
+              : 'Your answer was saved, but restoring the original conversation timed out. The continuation was not sent.'
+            : props.language === 'zh-CN'
+              ? '回答已保存，但原会话恢复失败；续接尚未发送。'
+              : 'Your answer was saved, but the original conversation could not be restored. The continuation was not sent.'}
+        </span>
+      ) : providerStopRecoveryFailed ? (
         <span>{props.language === 'zh-CN' ? '无法确认上次运行已安全停止。' : 'The previous run could not be confirmed as safely stopped.'}</span>
       ) : recoveredUnsent ? (
         <span>{props.language === 'zh-CN' ? '这条消息尚未发送，请逐条重试或取消。' : 'This message was not sent. Retry or cancel each recovered message individually.'}</span>
@@ -1391,7 +1412,16 @@ function MessageDeliveryOutcomeFeedback(props: {
       ) : (
         <VisibleApplicationError error={deliveryError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
       )}
-      {providerStopRecoveryFailed ? (
+      {interactionResponseRecovery ? (
+        <div className="session-message-delivery-actions">
+          <button type="button" disabled={busyAction !== null} onClick={() => runAction('recover', props.onRecoverQueue)}>
+            {props.language === 'zh-CN' ? '重新恢复' : 'Restore again'}
+          </button>
+          <button type="button" disabled={busyAction !== null || !submissionId} onClick={() => runAction('cancel', submissionId && props.onCancelQueuedSubmission ? () => props.onCancelQueuedSubmission?.(submissionId) : undefined)}>
+            {props.language === 'zh-CN' ? '取消续接' : 'Cancel continuation'}
+          </button>
+        </div>
+      ) : providerStopRecoveryFailed ? (
         <div className="session-message-delivery-actions">
           <button type="button" disabled={busyAction !== null} onClick={() => runAction('recover', props.onRecoverQueue)}>
             {props.language === 'zh-CN' ? '重新核对' : 'Check again'}
@@ -1417,6 +1447,7 @@ function MessageDeliveryOutcomeFeedback(props: {
 }
 
 function shouldShowPendingMessageDeliveryFeedback(item: NativeSessionItemBuffer, showActiveStatus: boolean): boolean {
+  if (item.payload.recoveryKind === 'interaction_response' && item.status === 'queued') return true;
   if (item.status === 'failed' || item.status === 'unconfirmed') return true;
   if (item.status === 'queued') return false;
   if (item.status === 'paused') return item.payload.pausedReason === 'recovery_required' || item.payload.pausedReason === 'provider_stop_pending' || item.payload.pausedReason === 'recovered_unsent';
