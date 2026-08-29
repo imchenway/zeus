@@ -2291,7 +2291,10 @@ function MarkdownStreamingQaApp() {
       },
     });
     const transcriptCopyMatches = transcriptCopySucceeded && copiedTranscript === run.fixture;
-    const textNode = root.querySelector('.text-node')?.firstChild;
+    const textRoot = root.querySelector('.text-node');
+    const textWalker = textRoot ? document.createTreeWalker(textRoot, NodeFilter.SHOW_TEXT) : null;
+    let textNode = textWalker?.nextNode() ?? null;
+    while (textNode && !textNode.textContent?.trim()) textNode = textWalker?.nextNode() ?? null;
     let selectionOperable = false;
     if (textNode?.nodeType === Node.TEXT_NODE && textNode.textContent) {
       const range = document.createRange();
@@ -2507,7 +2510,9 @@ function MarkdownStreamingQaApp() {
               <dt>累计正文</dt>
               <dd>{result.sourceMatches ? '一致' : '不一致'}</dd>
               <dt>选择 / 滚动</dt>
-              <dd>{result.selectionOperable && result.scrollOperable ? '可操作' : '失败'}</dd>
+              <dd>
+                {result.selectionOperable ? '可选择' : '选择失败'} / {result.scrollOperable ? '可滚动' : '滚动失败'}
+              </dd>
             </dl>
           ) : (
             <p>运行场景后显示确定性指标。</p>
