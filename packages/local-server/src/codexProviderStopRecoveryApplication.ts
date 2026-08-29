@@ -1,5 +1,14 @@
 import type { CodexAppServerManager } from '@zeus/ai-runtime';
-import type { ConversationRepository, ConversationSubmissionRepository, ConversationTurnRepository, ZeusConversationSubmissionRecord, ZeusConversationTurnRecord, ZeusConversationWithMessagesRecord } from '@zeus/storage';
+import type {
+  ConversationRepository,
+  ConversationServerRequestRepository,
+  ConversationSubmissionRepository,
+  ConversationTurnRepository,
+  ZeusConversationServerRequestRecord,
+  ZeusConversationSubmissionRecord,
+  ZeusConversationTurnRecord,
+  ZeusConversationWithMessagesRecord,
+} from '@zeus/storage';
 import type { NativeConversationRunState } from './codexNativeConversationContracts.js';
 import { classifySnapshotTurn, coordinatorError, isRecord, serializeError } from './codexNativeConversationPolicy.js';
 import { CodexProviderCommandApplicationService } from './codexProviderCommandApplication.js';
@@ -16,6 +25,7 @@ type ProviderStopCandidate = {
   requestedAt: string;
   compatibility: boolean;
   historicalStopEvidence: boolean;
+  orphanedUserInputRequest: ZeusConversationServerRequestRecord | null;
 };
 
 type ProviderStopAuthority = { type: 'terminal'; status: 'completed' | 'interrupted' | 'failed' } | { type: 'target_active' } | { type: 'unknown_active'; providerTurnIds: string[] };
@@ -30,6 +40,7 @@ interface CodexProviderStopRecoveryOptions {
   conversations: ConversationRepository;
   submissions: ConversationSubmissionRepository;
   turns: ConversationTurnRepository;
+  requests: ConversationServerRequestRepository;
   runStates: Map<string, NativeConversationRunState>;
   ensureProviderReady(): Promise<unknown>;
   persist(): Promise<void>;
@@ -91,6 +102,23 @@ export function createCodexProviderStopRecoveryApplication(options: CodexProvide
         requestedAt: typeof error.requestedAt === 'string' && error.requestedAt ? error.requestedAt : (explicit.completedAt ?? explicit.updatedAt),
         compatibility: false,
         historicalStopEvidence: true,
+        orphanedUserInputRequest: orphanedUserInputRequest(conversationId, explicit.id),
+      };
+    }
+    const orphanedRequest = options.requests.listByConversation(conversationId).at(-1);
+    const orphanedTurn = orphanedRequest?.turnId ? turns.find((turn) => turn.id === orphanedRequest.turnId && Boolean(turn.providerTurnId) && turn.providerThreadId === conversation.providerThreadId && isTerminalTurn(turn)) : undefined;
+    const latestProviderTurn = [...turns].reverse().find((turn) => Boolean(turn.providerTurnId));
+    const orphanedTurnSubmission = orphanedTurn?.clientSubmissionId ? submissions.find((submission) => submission.id === orphanedTurn.clientSubmissionId) : undefined;
+    const orphanedStopError = parseError(orphanedTurnSubmission?.errorJson ?? null);
+    const orphanedStopAt = orphanedTurnSubmission?.resolvedAt ?? orphanedTurnSubmission?.updatedAt ?? orphanedRequest?.resolvedAt ?? null;
+    if (orphanedRequest && isOrphanedUserInputRequest(orphanedRequest) && orphanedTurn?.providerTurnId && latestProviderTurn?.id === orphanedTurn.id && orphanedStopAt) {
+      return {
+        turn: orphanedTurn,
+        stopCommandId: typeof orphanedStopError.stopCommandId === 'string' && orphanedStopError.stopCommandId ? orphanedStopError.stopCommandId : `orphaned-request:${orphanedRequest.id}`,
+        requestedAt: orphanedStopAt,
+        compatibility: true,
+        historicalStopEvidence: true,
+        orphanedUserInputRequest: orphanedRequest,
       };
     }
     const pendingSubmission = [...submissions]
@@ -111,7 +139,12 @@ export function createCodexProviderStopRecoveryApplication(options: CodexProvide
       requestedAt: historicalStopSubmission.resolvedAt ?? historicalStopSubmission.updatedAt,
       compatibility: true,
       historicalStopEvidence: true,
+      orphanedUserInputRequest: orphanedUserInputRequest(conversationId, compatibleTurn.id),
     };
+  }
+
+  function orphanedUserInputRequest(conversationId: string, turnId: string): ZeusConversationServerRequestRecord | null {
+    return [...options.requests.listByConversation(conversationId)].reverse().find((request) => request.turnId === turnId && isOrphanedUserInputRequest(request)) ?? null;
   }
 
   function hasPendingEvidence(conversationId: string): boolean {
@@ -160,7 +193,7 @@ export function createCodexProviderStopRecoveryApplication(options: CodexProvide
     const providerTurnId = candidate.turn.providerTurnId;
     try {
       await options.ensureProviderReady();
-      const beforeInterrupt = await readProviderStopAuthority(providerThreadId, providerTurnId);
+      const beforeInterrupt = await readProviderStopAuthority(providerThreadId, providerTurnId, candidate);
       if (beforeInterrupt.type === 'terminal') {
         if (candidate.compatibility && !candidate.historicalStopEvidence) return 'not_applicable';
         await completeRecovery(conversation, candidate, beforeInterrupt.status);
@@ -178,7 +211,7 @@ export function createCodexProviderStopRecoveryApplication(options: CodexProvide
       } catch (error) {
         interruptError = error;
       }
-      const afterInterrupt = await readProviderStopAuthority(providerThreadId, providerTurnId);
+      const afterInterrupt = await readProviderStopAuthority(providerThreadId, providerTurnId, candidate);
       if (afterInterrupt.type === 'terminal') {
         await completeRecovery(options.conversations.getById(conversationId) ?? conversation, candidate, afterInterrupt.status);
         return 'ready';
@@ -214,7 +247,7 @@ export function createCodexProviderStopRecoveryApplication(options: CodexProvide
     }
   }
 
-  async function readProviderStopAuthority(providerThreadId: string, providerTurnId: string): Promise<ProviderStopAuthority> {
+  async function readProviderStopAuthority(providerThreadId: string, providerTurnId: string, candidate?: ProviderStopCandidate): Promise<ProviderStopAuthority> {
     const thread = await options.manager.readThread({ threadId: providerThreadId, priority: 'control' });
     if (thread.id !== providerThreadId) throw coordinatorError('ZEUS_CODEX_THREAD_IDENTITY_MISMATCH', 'Codex returned a different thread while recovering a stopped turn.');
     const status = thread.status;
@@ -230,6 +263,10 @@ export function createCodexProviderStopRecoveryApplication(options: CodexProvide
     if (unknownActiveTurnIds.length > 0) return { type: 'unknown_active', providerTurnIds: unknownActiveTurnIds };
     if (status.type === 'active') {
       if (targetClassification === 'active' && activeTurns.length === 1) return { type: 'target_active' };
+      // Remote Control daemon 可以跨 Zeus 重启继续存活：旧连接已把 turn 标成 interrupted，
+      // 但未答复的 request_user_input 仍会让 thread 保持 waitingOnUserInput。
+      // 只有数据库中存在同一 turn 的失败请求时，才把这一无活动 turn 的状态视为目标遗留交互。
+      if (candidate?.orphanedUserInputRequest && activeTurns.length === 0 && status.activeFlags.includes('waitingOnUserInput')) return { type: 'target_active' };
       return { type: 'unknown_active', providerTurnIds: activeTurns.map((turn) => turn.id) };
     }
     if (targetClassification === 'active') return { type: 'unknown_active', providerTurnIds: [providerTurnId] };
@@ -321,6 +358,44 @@ export function createCodexProviderStopRecoveryApplication(options: CodexProvide
         options.submissions.updateStatus(submission.id, 'queued', { pausedReason: null, updatedAt: timestamp });
       }
     }
+    if (candidate.orphanedUserInputRequest) {
+      options.requests.restorePendingAfterTransportRecovery(candidate.orphanedUserInputRequest.id, {
+        recoveryReason: 'app_server_generation_changed',
+        sourceGenerationId: candidate.orphanedUserInputRequest.transportGenerationId,
+        currentGenerationId: options.manager.generationForThread(providerThreadId),
+        restoredAt: timestamp,
+      });
+      const confirmedTurn = options.turns.getById(candidate.turn.id) ?? candidate.turn;
+      options.turns.upsert({ ...confirmedTurn, status: 'waiting', completedAt: null, updatedAt: timestamp });
+      options.conversations.bindProvider(conversation.id, {
+        providerId: 'codex',
+        providerThreadId,
+        providerModel: conversation.providerModel,
+        providerState: 'waiting',
+      });
+      options.runStates.set(conversation.id, {
+        type: 'waiting',
+        turnId: providerTurnId,
+        requestId: candidate.orphanedUserInputRequest.id,
+        reason: 'user_input',
+      });
+      await options.persist();
+      options.broadcast('conversation.request.changed', {
+        conversationId: conversation.id,
+        requestId: candidate.orphanedUserInputRequest.id,
+        requestKind: candidate.orphanedUserInputRequest.requestKind,
+        recoveredAfterRemoteControlRestart: true,
+      });
+      options.broadcast('conversation.thread.changed', { conversationId: conversation.id, providerThreadId, providerState: 'waiting' });
+      options.broadcast('conversation.queue.changed', {
+        conversationId: conversation.id,
+        providerThreadId,
+        providerState: 'waiting',
+        waitReason: 'user_input',
+        ...(requiresIndividualConfirmation ? { recoveredUnsentCount: resumable.length } : {}),
+      });
+      return;
+    }
     options.conversations.bindProvider(conversation.id, {
       providerId: 'codex',
       providerThreadId,
@@ -380,6 +455,7 @@ export function createCodexProviderStopRecoveryApplication(options: CodexProvide
       if (submission.status === 'queued' && submission.createdAt >= candidate.requestedAt) return true;
       if (submission.pausedReason === 'provider_stop_pending') return true;
       if (parseError(submission.errorJson).code === providerStopRecoveryRequiredCode) return true;
+      if (candidate.orphanedUserInputRequest && submission.createdAt >= candidate.requestedAt && (submission.pausedReason === 'interrupted' || submission.pausedReason === 'runtime_rejected')) return true;
       return candidate.compatibility && submission.pausedReason === 'recovery_required' && submission.createdAt >= candidate.requestedAt;
     });
   }
@@ -406,6 +482,13 @@ export function createCodexProviderStopRecoveryApplication(options: CodexProvide
     retry: (conversationId) => recoverConversation(conversationId, true),
     close,
   };
+}
+
+function isOrphanedUserInputRequest(request: ZeusConversationServerRequestRecord): boolean {
+  if (request.requestKind !== 'request_user_input' || request.status !== 'failed' || !request.turnId) return false;
+  const failure = parseError(request.responseJson);
+  const code = typeof failure.code === 'string' ? failure.code : typeof failure.error === 'string' ? failure.error : '';
+  return code === 'ZEUS_FORCED_QUIT_INTERRUPTED' || code === 'ZEUS_CODEX_FINAL_QUIT_OUTCOME_UNCONFIRMED';
 }
 
 export function providerStopPendingError(input: { providerThreadId: string; providerTurnId: string; stopCommandId: string; requestedAt: string; cause?: unknown }) {

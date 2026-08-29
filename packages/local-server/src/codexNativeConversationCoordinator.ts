@@ -3460,6 +3460,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     conversations: options.conversations,
     submissions: options.submissions,
     turns: options.turns,
+    requests: options.requests,
     runStates,
     ensureProviderReady: () => options.manager.ensureReady({ commandPath: commandPath(), ...(options.externalAgentHome ? { externalAgentHome: options.externalAgentHome } : {}) }),
     persist,
