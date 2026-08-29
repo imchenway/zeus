@@ -617,7 +617,7 @@ const completeMessageSessionState: NativeSessionState = {
         updatedAt: completeMessageItem.updatedAt ?? '2026-08-28T00:00:00.000Z',
       },
     ],
-    snapshotV2: { structureGeneration: '2026-08-21-conversation-snapshot-v2', activeTurn: null, recentClosedTurns: [] },
+    snapshotV2: { structureGeneration: '2026-08-29-conversation-snapshot-v2-recovered-request-input', activeTurn: null, recentClosedTurns: [] },
   } as NonNullable<NativeSessionState['snapshot']>,
   items: { [completeMessageItem.key]: completeMessageItem },
   itemOrder: [completeMessageItem.key],
@@ -629,7 +629,7 @@ function historyPagingRangeSnapshot(input: { through: number; oldest: number; cu
     id: historyPagingConversationId,
     items: [],
     snapshotV2: {
-      structureGeneration: '2026-08-21-conversation-snapshot-v2',
+      structureGeneration: '2026-08-29-conversation-snapshot-v2-recovered-request-input',
     },
     v2Paging: {
       history: {
@@ -1652,7 +1652,7 @@ function CompleteMessagePreview() {
             const nextOffset = offset === 0 ? completeMessagePageBoundary : null;
             return {
               schemaVersion: 2 as const,
-              structureGeneration: '2026-08-21-conversation-snapshot-v2' as const,
+              structureGeneration: '2026-08-29-conversation-snapshot-v2-recovered-request-input' as const,
               conversationId: completeMessageItem.conversationId,
               kind: 'model_content' as const,
               mimeType: 'text/plain; charset=utf-8',
