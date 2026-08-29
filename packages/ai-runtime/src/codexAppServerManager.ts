@@ -1466,8 +1466,16 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       const capabilities = await awaitCapabilities();
       const key = turnKey(input.threadId, input.turnId);
       if (!startedTurns.has(key)) {
-        pendingInterrupts.add(key);
-        return;
+        // 本连接尚未观察到 turn/started 有两种完全不同的含义：
+        // 1. turn/start RPC 仍在途，此时要保留 pendingInterrupt，等 started 事件后立即停止；
+        // 2. Zeus 重启后重新连到仍存活的 Remote Control daemon，活动 turn 属于旧连接。
+        // 第二种若也只记内存 pending，会把“未发出中断”误报成成功，随后 thread/resume
+        // 又会撞上 daemon 自己持有的 active writer。先读取 daemon 权威状态，活动时直接中断。
+        const thread = parseThread(asRecord(await retryableReadRpc(capabilities.generationId, 'thread/read', { threadId: input.threadId, includeTurns: false }, { traceIdentity: input.traceIdentity })).thread);
+        if (thread.status?.type !== 'active') {
+          pendingInterrupts.add(key);
+          return;
+        }
       }
       await rpc(capabilities.generationId, 'turn/interrupt', { threadId: input.threadId, turnId: input.turnId }, { traceIdentity: input.traceIdentity });
     },
