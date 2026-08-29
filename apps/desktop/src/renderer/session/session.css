@@ -1344,6 +1344,55 @@
   padding: 10px 13px;
 }
 
+.session-codex-parity-v1 .session-queued-thread-actions {
+  align-items: center;
+  border-block-start: 1px solid color-mix(in srgb, var(--session-line) 76%, transparent);
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+  margin-block-start: 8px;
+  padding-block-start: 7px;
+}
+
+.session-codex-parity-v1 .session-queued-thread-actions button {
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  color: var(--session-text-muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 590;
+  min-block-size: 28px;
+  padding-inline: 8px;
+}
+
+.session-codex-parity-v1 .session-queued-thread-actions .session-queued-thread-steer {
+  color: var(--session-accent);
+}
+
+.session-codex-parity-v1 .session-queued-thread-actions button:hover:not(:disabled):not([aria-disabled='true']),
+.session-codex-parity-v1 .session-queued-thread-actions button:focus-visible:not(:disabled):not([aria-disabled='true']) {
+  background: var(--session-control-hover);
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .session-queued-thread-actions .session-queued-thread-delete:hover:not(:disabled),
+.session-codex-parity-v1 .session-queued-thread-actions .session-queued-thread-delete:focus-visible:not(:disabled) {
+  color: var(--session-danger);
+}
+
+.session-codex-parity-v1 .session-queued-thread-actions button:focus-visible {
+  box-shadow: 0 0 0 3px var(--session-focus);
+  outline: 1px solid var(--session-focus-outline);
+  outline-offset: 0;
+}
+
+.session-codex-parity-v1 .session-queued-thread-actions button:disabled,
+.session-codex-parity-v1 .session-queued-thread-actions button[aria-disabled='true'] {
+  color: color-mix(in srgb, var(--session-text-muted) 58%, transparent);
+  cursor: default;
+}
+
 .session-codex-parity-v1 .session-queued-messages {
   background: var(--session-control);
   border: 1px solid var(--session-line-soft);

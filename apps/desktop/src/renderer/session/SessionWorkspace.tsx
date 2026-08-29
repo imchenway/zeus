@@ -720,8 +720,10 @@ export function createConnectedSessionActions(input: { controller: SessionContro
     },
     onRetryQueuedSubmission: (submissionId) => settle(input.controller.retryQueuedSubmission(submissionId)),
     onRerouteQueuedSubmission: (submissionId, settings) => settle(input.controller.rerouteQueuedSubmission(submissionId, settings)),
-    // 删除未进入 provider turn 的内容是本地软删除，不会触发 Provider 重发。
-    onDeleteQueuedSubmission: (submissionId) => settle(input.controller.deleteQueuedSubmission(submissionId)),
+    // 删除未进入 provider turn 的内容是本地软删除；失败必须回到气泡，不得静默制造“点了没反应”。
+    onDeleteQueuedSubmission: async (submissionId) => {
+      await input.controller.deleteQueuedSubmission(submissionId);
+    },
     // 引导失败由队列气泡给出可重试结果，技术细节同时写入统一运行日志。
     onSendQueuedNow: async (submissionId) => {
       await input.controller.sendQueuedNow(submissionId);
@@ -2424,6 +2426,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     onRecoverQueue={transcriptInteractionsEnabled ? actions.onRecoverQueue : undefined}
                     onRetryQueuedSubmission={transcriptInteractionsEnabled ? actions.onRetryQueuedSubmission : undefined}
                     onCancelQueuedSubmission={transcriptInteractionsEnabled ? actions.onDeleteQueuedSubmission : undefined}
+                    onSendQueuedNow={transcriptInteractionsEnabled ? actions.onSendQueuedNow : undefined}
                     openPlanItemKey={planWorkspaceItemKey}
                     onOpenPlan={
                       transcriptInteractionsEnabled
