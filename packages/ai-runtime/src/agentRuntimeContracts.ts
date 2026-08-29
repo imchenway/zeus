@@ -89,6 +89,7 @@ export interface ResumeAgentSessionInput {
   nativeSessionId: string;
   nativeSessionPath?: string | null;
   cwd?: string;
+  metadata?: Record<string, unknown>;
   traceIdentity?: string | null;
 }
 

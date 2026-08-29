@@ -31,7 +31,7 @@ import type {
 } from './agentRuntimeContracts.js';
 import { modelConnectionRuntimeBaseUrl, type ConfiguredModelDefinition, type ModelAuthenticationScheme, type ModelConnectionRecord, type PiThinkingLevel } from './modelConnectionCatalog.js';
 import { buildProviderCacheDiagnostic } from './providerCacheDiagnostics.js';
-import { PiHeadlessResourceLoader } from './piHeadlessResourceLoader.js';
+import { PiHeadlessResourceLoader, type PiPluginSkillResource } from './piHeadlessResourceLoader.js';
 
 export interface PiRuntimeConnection extends ModelConnectionRecord {
   apiKey?: string;
@@ -41,9 +41,17 @@ export interface PiZeusToolRequest {
   requestId: string;
   session: AgentSessionIdentity;
   toolCallId: string;
-  toolName: 'read' | 'grep' | 'find' | 'ls' | 'write' | 'edit' | 'bash' | 'read_conversation_tool_result';
+  toolName: string;
   args: Record<string, unknown>;
   signal?: AbortSignal;
+}
+
+export interface PiDynamicToolSpec {
+  name: string;
+  label: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  executionMode?: 'parallel' | 'sequential';
 }
 
 export interface PiZeusToolResult {
@@ -179,6 +187,8 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
     const resourceLoader = new PiHeadlessResourceLoader({
       cwd: input.cwd,
       agentDir: options.agentDirectory,
+      pluginSkills: readPluginSkills('metadata' in input ? input.metadata : undefined),
+      pluginInstructions: readPluginInstructions('metadata' in input ? input.metadata : undefined),
     });
     await resourceLoader.reload();
     if ('metadata' in input) seedPortableContext(sessionManager, input.metadata);
@@ -189,7 +199,7 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
       modelRuntime: runtime,
       ...(model ? { model } : {}),
       noTools: 'builtin',
-      customTools: createZeusTools(() => entryRef, options.toolBroker),
+      customTools: createZeusTools(() => entryRef, options.toolBroker, readDynamicTools('metadata' in input ? input.metadata : undefined)),
       resourceLoader,
       sessionManager,
       settingsManager,
@@ -534,7 +544,7 @@ async function createDurableSessionManager(cwd: string, sessionDirectory: string
   return SessionManager.open(sessionPath, sessionDirectory, cwd);
 }
 
-function createZeusTools(getEntry: () => PiSessionEntry | null, broker: PiZeusToolBroker): ToolDefinition[] {
+function createZeusTools(getEntry: () => PiSessionEntry | null, broker: PiZeusToolBroker, dynamicTools: PiDynamicToolSpec[]): ToolDefinition[] {
   const execute = async (toolCallId: string, toolName: PiZeusToolRequest['toolName'], args: Record<string, unknown>, signal?: AbortSignal) => {
     const entry = getEntry();
     if (!entry) throw runtimeError('ZEUS_PI_TOOL_SESSION_UNBOUND', 'Pi 工具尚未绑定 Zeus 会话。');
@@ -542,7 +552,7 @@ function createZeusTools(getEntry: () => PiSessionEntry | null, broker: PiZeusTo
     if (result.isError) throw runtimeError('ZEUS_PI_TOOL_EXECUTION_FAILED', result.text);
     return { content: [{ type: 'text' as const, text: result.text }], details: result.details ?? null };
   };
-  return [
+  const builtins = [
     defineTool({
       name: 'read',
       label: '读取文件',
@@ -597,6 +607,62 @@ function createZeusTools(getEntry: () => PiSessionEntry | null, broker: PiZeusTo
       execute: (id, args, signal) => execute(id, 'bash', args, signal),
     }),
   ];
+  const builtinNames = new Set(builtins.map((tool) => tool.name));
+  const dynamic = dynamicTools.map((tool) => {
+    if (builtinNames.has(tool.name)) throw runtimeError('ZEUS_PI_DYNAMIC_TOOL_CONFLICT', `Plugin 工具与 Zeus 内置工具重名：${tool.name}`);
+    return defineTool({
+      name: tool.name,
+      label: tool.label,
+      description: tool.description,
+      parameters: Type.Unsafe(tool.inputSchema),
+      ...(tool.executionMode ? { executionMode: tool.executionMode } : {}),
+      execute: (id, args, signal) => execute(id, tool.name, asUnknownRecord(args), signal),
+    });
+  });
+  return [...builtins, ...dynamic];
+}
+
+function readDynamicTools(metadata: Record<string, unknown> | undefined): PiDynamicToolSpec[] {
+  const values = metadata?.zeusPluginTools;
+  if (!Array.isArray(values)) return [];
+  return values.map((value) => {
+    const record = asUnknownRecord(value);
+    const name = boundedMetadataText(record.name, 'Plugin tool name', 160);
+    return {
+      name,
+      label: boundedMetadataText(record.label, 'Plugin tool label', 240),
+      description: boundedMetadataText(record.description, 'Plugin tool description', 8_000),
+      inputSchema: asUnknownRecord(record.inputSchema),
+      ...(record.executionMode === 'sequential' ? { executionMode: 'sequential' as const } : {}),
+    };
+  });
+}
+
+function readPluginSkills(metadata: Record<string, unknown> | undefined): PiPluginSkillResource[] {
+  const values = metadata?.zeusPluginSkills;
+  if (!Array.isArray(values)) return [];
+  return values.map((value) => {
+    const record = asUnknownRecord(value);
+    const path = boundedMetadataText(record.path, 'Plugin skill path', 16_000);
+    if (!isAbsolute(path)) throw runtimeError('ZEUS_PI_PLUGIN_SKILL_INVALID', 'Plugin Skill 路径必须是绝对路径。');
+    return {
+      id: boundedMetadataText(record.id, 'Plugin skill id', 512),
+      name: boundedMetadataText(record.name, 'Plugin skill name', 160),
+      description: boundedMetadataText(record.description, 'Plugin skill description', 8_000),
+      path,
+    };
+  });
+}
+
+function readPluginInstructions(metadata: Record<string, unknown> | undefined): string {
+  const value = metadata?.zeusPluginDeveloperInstructions;
+  if (value === undefined) return '';
+  return boundedMetadataText(value, 'Plugin developer instructions', maximumPiDispatchContextBytes);
+}
+
+function boundedMetadataText(value: unknown, label: string, maximum: number): string {
+  if (typeof value !== 'string' || !value.trim() || value.length > maximum || value.includes('\0')) throw runtimeError('ZEUS_PI_PLUGIN_METADATA_INVALID', `${label} 无效。`);
+  return value.trim();
 }
 
 function toPiModel(model: ConfiguredModelDefinition, providerId: string, connectionBaseUrl: string): Model<Api> {

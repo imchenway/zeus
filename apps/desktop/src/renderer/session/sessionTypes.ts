@@ -1279,6 +1279,12 @@ export interface NativeTurnSettingsSelection {
   serviceTier?: string | null;
   permissionMode: NativePermissionMode;
   collaborationMode: NativeCollaborationMode;
+  pluginReferences?: PluginSkillReference[];
+}
+
+export interface PluginSkillReference {
+  kind: 'plugin' | 'skill';
+  id: string;
 }
 
 export interface StartTaskModelPushRequest {
@@ -1335,6 +1341,7 @@ export type StartNativeConversationRequest =
       clientUserMessageId: string;
       agentKind?: 'codex' | 'pi' | 'claude';
       goalObjective?: string;
+      pluginReferences?: PluginSkillReference[];
     }
   | {
       mode: 'resume';
@@ -1370,6 +1377,7 @@ export interface StartProjectConversationRequest {
   idempotencyKey: string;
   clientUserMessageId: string;
   goalObjective?: string;
+  pluginReferences?: PluginSkillReference[];
 }
 
 export interface SendNativeMessageRequest {
@@ -1388,6 +1396,7 @@ export interface SendNativeMessageRequest {
   serviceTier?: string | null;
   permissionMode?: NativePermissionMode;
   collaborationMode: NativeCollaborationMode;
+  pluginReferences?: PluginSkillReference[];
   idempotencyKey: string;
   clientUserMessageId: string;
 }
@@ -1536,6 +1545,19 @@ export type NativeConversationEvent =
     >
   | NativeEvent<'conversation.goal.updated', NativeEventIdentity & { goal: NativeGoalSnapshot; timeline?: NativeGoalTimelineEvent[]; eventKind?: string | null; notificationEligible?: boolean }>
   | NativeEvent<'conversation.goal.cleared', NativeEventIdentity & { cleared: boolean; timeline?: NativeGoalTimelineEvent[] }>
+  | NativeEvent<
+      'conversation.plugin_app.created',
+      NativeEventIdentity & {
+        providerTurnId?: string;
+        callId: string;
+        pluginId: string;
+        pluginRevisionId: string;
+        serverId: string;
+        toolName: string;
+        app: Record<string, unknown>;
+        toolResult?: { text: string; structuredContent?: unknown; isError: boolean };
+      }
+    >
   | NativeEvent<'conversation.native.error', NativeEventIdentity & { turnId?: string; error?: string | Record<string, unknown>; message?: string; recoveryRequired?: boolean; retryable?: boolean }>;
 
 export const nativeConversationEventTypes = new Set<NativeConversationEvent['type']>([
@@ -1563,6 +1585,7 @@ export const nativeConversationEventTypes = new Set<NativeConversationEvent['typ
   'conversation.collaboration_mode.changed',
   'conversation.goal.updated',
   'conversation.goal.cleared',
+  'conversation.plugin_app.created',
   'conversation.native.error',
 ]);
 

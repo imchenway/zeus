@@ -103,6 +103,26 @@ export interface CodexApiClient {
   loadSkills: (projectId?: string, forceReload?: boolean) => Promise<SkillCatalog>;
   installSkill: (source: SkillInstallSource, projectId?: string) => Promise<SkillInstallResult>;
   removeSkill: (skillId: string, projectId?: string) => Promise<{ removed: true; skillId: string; name: string }>;
+  loadPlugins: (projectId?: string) => Promise<import('./codexContracts.js').PluginDescriptor[]>;
+  loadPluginRuntimeStatus: () => Promise<{ available: boolean; dangerouslyBypassHookTrust: boolean }>;
+  installPlugin: (input: { scope: import('./codexContracts.js').PluginScope; projectId?: string | null; source: import('./codexContracts.js').PluginInstallSource }) => Promise<import('./codexContracts.js').PluginDescriptor>;
+  updatePlugin: (pluginId: string) => Promise<import('./codexContracts.js').PluginDescriptor>;
+  setPluginEnabled: (pluginId: string, enabled: boolean, expectedRevision?: number) => Promise<import('./codexContracts.js').PluginDescriptor>;
+  removePlugin: (pluginId: string, expectedRevision?: number) => Promise<{ removed: true; pluginId: string; retainedRevisionIds: string[] }>;
+  trustPluginHook: (pluginId: string, pluginRevisionId: string, hookId: string, trusted: boolean) => Promise<import('./codexContracts.js').PluginHookTrust>;
+  setPluginHookEnabled: (pluginId: string, pluginRevisionId: string, hookId: string, enabled: boolean) => Promise<import('./codexContracts.js').PluginHookTrust>;
+  loadPluginMarketplaces: (projectId?: string) => Promise<import('./codexContracts.js').PluginMarketplaceCatalog[]>;
+  addPluginMarketplace: (input: { scope: import('./codexContracts.js').PluginScope; projectId?: string | null; source: import('./codexContracts.js').PluginDirectSource }) => Promise<import('./codexContracts.js').PluginMarketplaceCatalog>;
+  refreshPluginMarketplace: (marketplaceId: string) => Promise<import('./codexContracts.js').PluginMarketplaceCatalog>;
+  removePluginMarketplace: (marketplaceId: string) => Promise<{ removed: true; marketplaceId: string }>;
+  bindPluginConnector: (
+    pluginId: string,
+    connectorId: string,
+    input: { appTechnicalId: string; serverConfig: Record<string, unknown>; secret?: string | null; connected: boolean },
+  ) => Promise<import('./codexContracts.js').PluginConnectorBinding>;
+  revokePluginConnectorAuthorization: (connectorId: string) => Promise<{ revoked: true; connectorId: string; affectedPluginIds: string[] }>;
+  setPluginMcpPolicy: (pluginId: string, serverId: string, input: { toolName?: string | null; enabled: boolean; approvalMode: import('./codexContracts.js').PluginApprovalMode }) => Promise<import('./codexContracts.js').PluginMcpPolicy>;
+  invokePluginAppTool: (conversationId: string, pluginId: string, serverId: string, toolName: string, argumentsValue: Record<string, unknown>) => Promise<{ text?: string; structuredContent?: unknown; isError?: boolean }>;
 }
 
 export function createCodexApiClient(transport: LocalApiTransport): CodexApiClient {
@@ -349,6 +369,59 @@ export function createCodexApiClient(transport: LocalApiTransport): CodexApiClie
       });
       return transport.request<{ removed: true; skillId: string; name: string }>(`/api/skills/${encodeURIComponent(skillId)}`, { method: 'DELETE', body: JSON.stringify(body) });
     },
+    loadPlugins: async (projectId) => {
+      const suffix = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
+      const result = await transport.request<{ plugins: import('./codexContracts.js').PluginDescriptor[] }>(`/api/plugins${suffix}`);
+      return result.plugins;
+    },
+    loadPluginRuntimeStatus: () => transport.request<{ available: boolean; dangerouslyBypassHookTrust: boolean }>('/api/plugin-runtime-status'),
+    installPlugin: (input) => transport.request<import('./codexContracts.js').PluginDescriptor>('/api/plugins/install', { method: 'POST', body: JSON.stringify({ ...input, projectId: input.projectId ?? null }) }),
+    updatePlugin: (pluginId) => transport.request<import('./codexContracts.js').PluginDescriptor>(`/api/plugins/${encodeURIComponent(pluginId)}/update`, { method: 'POST' }),
+    setPluginEnabled: (pluginId, enabled, expectedRevision) =>
+      transport.request<import('./codexContracts.js').PluginDescriptor>(`/api/plugins/${encodeURIComponent(pluginId)}/enabled`, {
+        method: 'PATCH',
+        body: JSON.stringify({ enabled, ...(expectedRevision === undefined ? {} : { expectedRevision }) }),
+      }),
+    removePlugin: (pluginId, expectedRevision) =>
+      transport.request<{ removed: true; pluginId: string; retainedRevisionIds: string[] }>(`/api/plugins/${encodeURIComponent(pluginId)}`, {
+        method: 'DELETE',
+        body: JSON.stringify(expectedRevision === undefined ? {} : { expectedRevision }),
+      }),
+    trustPluginHook: (pluginId, pluginRevisionId, hookId, trusted) =>
+      transport.request<import('./codexContracts.js').PluginHookTrust>(`/api/plugins/${encodeURIComponent(pluginId)}/hooks/${encodeURIComponent(hookId)}/trust`, {
+        method: 'POST',
+        body: JSON.stringify({ pluginRevisionId, trusted }),
+      }),
+    setPluginHookEnabled: (pluginId, pluginRevisionId, hookId, enabled) =>
+      transport.request<import('./codexContracts.js').PluginHookTrust>(`/api/plugins/${encodeURIComponent(pluginId)}/hooks/${encodeURIComponent(hookId)}/enabled`, {
+        method: 'PATCH',
+        body: JSON.stringify({ pluginRevisionId, enabled }),
+      }),
+    loadPluginMarketplaces: async (projectId) => {
+      const suffix = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
+      const result = await transport.request<{ marketplaces: import('./codexContracts.js').PluginMarketplaceCatalog[] }>(`/api/plugin-marketplaces${suffix}`);
+      return result.marketplaces;
+    },
+    addPluginMarketplace: (input) => transport.request<import('./codexContracts.js').PluginMarketplaceCatalog>('/api/plugin-marketplaces', { method: 'POST', body: JSON.stringify({ ...input, projectId: input.projectId ?? null }) }),
+    refreshPluginMarketplace: (marketplaceId) => transport.request<import('./codexContracts.js').PluginMarketplaceCatalog>(`/api/plugin-marketplaces/${encodeURIComponent(marketplaceId)}/refresh`, { method: 'POST' }),
+    removePluginMarketplace: (marketplaceId) => transport.request<{ removed: true; marketplaceId: string }>(`/api/plugin-marketplaces/${encodeURIComponent(marketplaceId)}`, { method: 'DELETE' }),
+    bindPluginConnector: (pluginId, connectorId, input) =>
+      transport.request<import('./codexContracts.js').PluginConnectorBinding>(`/api/plugins/${encodeURIComponent(pluginId)}/connectors/${encodeURIComponent(connectorId)}`, {
+        method: 'PUT',
+        body: JSON.stringify(input),
+      }),
+    revokePluginConnectorAuthorization: (connectorId) =>
+      transport.request<{ revoked: true; connectorId: string; affectedPluginIds: string[] }>(`/api/plugin-connectors/${encodeURIComponent(connectorId)}/authorization`, { method: 'DELETE' }),
+    setPluginMcpPolicy: (pluginId, serverId, input) =>
+      transport.request<import('./codexContracts.js').PluginMcpPolicy>(`/api/plugins/${encodeURIComponent(pluginId)}/mcp/${encodeURIComponent(serverId)}/policy`, {
+        method: 'PUT',
+        body: JSON.stringify(input),
+      }),
+    invokePluginAppTool: (conversationId, pluginId, serverId, toolName, argumentsValue) =>
+      transport.request<{ text?: string; structuredContent?: unknown; isError?: boolean }>(
+        `/api/conversations/${encodeURIComponent(conversationId)}/plugin-app-tools/${encodeURIComponent(pluginId)}/${encodeURIComponent(serverId)}/${encodeURIComponent(toolName)}`,
+        { method: 'POST', body: JSON.stringify({ arguments: argumentsValue }) },
+      ),
   };
 }
 

@@ -59,6 +59,8 @@ import { resolveWritableNonCodexLegacyConversation, type WritableNonCodexLegacyC
 import { createPiNativeConversationCoordinator } from './piNativeConversationCoordinator.js';
 import { type RuntimeSettingsSnapshot } from './runtimeQueryApplication.js';
 import { buildTaskConflictAiConversationTitle, buildTaskConflictAiPrompt } from './taskConflictAi.js';
+import type { ZeusConversationPluginRuntime } from './zeusConversationPluginRuntime.js';
+import type { ZeusPluginService } from './zeusPluginService.js';
 
 export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, type ReadOnlyValidationApplicationIdentity } from './readOnlyValidation.js';
 
@@ -69,6 +71,8 @@ export type ConversationApplicationOperationDependencies = Record<string, any> &
   artifactStore: ArtifactStore;
   codexNativeCoordinator: ReturnType<typeof createCodexNativeConversationCoordinator>;
   zeusSkillService?: ZeusSkillService;
+  zeusPluginService?: ZeusPluginService;
+  zeusConversationPluginRuntime?: ZeusConversationPluginRuntime;
   conversationChoiceQueries: ConversationChoiceQueryApplication;
   conversationExecution: ConversationExecutionRepository;
   conversationExecutionCoordinator: ConversationExecutionCoordinator;
@@ -166,6 +170,7 @@ export interface NativeTaskConversationStartPlan {
   providerWriteLifecycle: { markPrepared(submissionId: string): Promise<void>; markRpcStarted(submissionId: string): void };
   goalObjective?: string;
   skill?: NativeConversationSkillInput;
+  pluginReferences?: Array<{ kind: 'plugin' | 'skill'; id: string }>;
 }
 
 export function nativeApiError(code: string, message: string): Error & { code: string } {
@@ -187,6 +192,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
     codexExternalAgentHome,
     codexNativeCoordinator,
     zeusSkillService,
+    zeusPluginService,
+    zeusConversationPluginRuntime,
     codexNativeEnabled,
     conversationChoiceQueries,
     conversationExecution,
@@ -712,6 +719,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
               throw nativeApiError('ZEUS_INVALID_BROWSER_COMMENTS', 'browserCommentContent must be a string no larger than 1 MB.');
             })();
     const conversationContext = normalizeNativeConversationContext(body.conversationContext);
+    if (body.pluginReferences !== undefined) {
+      if (!zeusPluginService) throw nativeApiError('ZEUS_PLUGINS_UNAVAILABLE', 'Zeus Plugin Host 当前不可用，不能接受结构化 Plugin/Skill 引用。');
+      await zeusPluginService.validateConversationReferences({ conversationId: conversation.id, references: body.pluginReferences });
+    }
     if (!content && attachments.length === 0 && browserComments.length === 0 && !conversationContext) {
       throw nativeApiError('ZEUS_INVALID_CONVERSATION_MESSAGE', 'Conversation message content, attachments, comments, or annotations are required.');
     }
@@ -1062,6 +1073,28 @@ export function createConversationApplicationOperations(dependencies: Conversati
     }
     void nativeOperation;
     return toNativeDurableAcceptance(stableOperationId, idempotencyKey, updatedConversation, updatedSubmission);
+  }
+
+  async function submitPluginHookContinuation(input: { conversationId: string; sourceTurnId: string | null; prompt: string }): Promise<void> {
+    const conversation = conversations.getById(input.conversationId);
+    if (!conversation || conversation.transportKind !== 'codex_native') throw nativeApiError('ZEUS_PLUGIN_CONTINUATION_CONVERSATION_NOT_FOUND', 'Plugin Stop Hook 的目标会话不存在或不再由 Native Runtime 承载。');
+    const prompt = input.prompt.trim();
+    if (!prompt || prompt.length > 100_000) throw nativeApiError('ZEUS_PLUGIN_CONTINUATION_INVALID', 'Plugin Stop Hook 的续接提示必须为不超过 100000 字符的非空文本。');
+    const digest = createHash('sha256')
+      .update(`${conversation.id}\0${input.sourceTurnId ?? ''}\0${prompt}`)
+      .digest('hex');
+    const idempotencyKey = `plugin-hook-continuation-${digest}`;
+    const body: CreateConversationMessageBody = {
+      content: prompt,
+      displayText: `Plugin Hook 自动续接：${prompt.slice(0, 200)}`,
+      attachments: [],
+      delivery: 'queue',
+      clientUserMessageId: `plugin_hook_${digest.slice(0, 32)}`,
+      collaborationMode: conversation.collaborationMode,
+    };
+    await executeIdempotentJson(`plugin-hook-continuation:${conversation.id}`, idempotencyKey, { conversationId: conversation.id, sourceTurnId: input.sourceTurnId, promptSha256: digest }, 202, (stableOperationId, providerWriteLifecycle) =>
+      acceptNativeConversationMessage(conversation, prompt, body, idempotencyKey, stableOperationId, providerWriteLifecycle),
+    );
   }
 
   function normalizeNativeConversationAttachments(value: unknown, projectLocalPath: string): NativeConversationAttachment[] {
@@ -1422,6 +1455,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       throw nativeApiError('ZEUS_CODEX_GOALS_UNAVAILABLE', '当前 Agent 或 app-server 不支持原生目标。');
     }
     const clientUserMessageId = normalizeNativeClientUserMessageId(body.clientUserMessageId, `native-client-${createHash('sha256').update(`${project.id}\0${idempotencyKey}`).digest('hex').slice(0, 24)}`);
+    const pluginReferences = await resolveNewConversationPluginReferences(project.id, content, body.pluginReferences);
     const resourceId = encodeProjectConversationAcceptanceReservation(reservation);
     const reservedLifecycle = {
       markPrepared: (submissionId: string) => {
@@ -1456,6 +1490,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       },
       userHistoryContent: { text: content, ...(attachments.length ? { attachments } : {}) },
     });
+    zeusConversationPluginRuntime?.bindExplicitReferences({ conversationId: reservation.conversationId, projectId: project.id, references: pluginReferences });
     const nativeOperation = await codexNativeCoordinator.startProjectConversation({
       conversationId: reservation.conversationId,
       submissionId: reservation.submissionId,
@@ -1624,6 +1659,14 @@ export function createConversationApplicationOperations(dependencies: Conversati
     return { route, configuredModel };
   }
 
+  async function resolveNewConversationPluginReferences(projectId: string, prompt: string, value: unknown): Promise<Array<{ kind: 'plugin' | 'skill'; id: string }>> {
+    if (!zeusPluginService) {
+      if (value !== undefined) throw nativeApiError('ZEUS_PLUGINS_UNAVAILABLE', 'Zeus Plugin Host 当前不可用，不能接受结构化 Plugin/Skill 引用。');
+      return [];
+    }
+    return value === undefined ? zeusPluginService.resolveExplicitReferences({ projectId, text: prompt }) : zeusPluginService.validateExplicitReferences({ projectId, references: value });
+  }
+
   /** 专用入口只生成计划；首发可见正文与实际提示词同源，Provider 分流和持久接受生命周期统一在此执行。 */
   async function startNativeTaskConversationFromPlan(plan: NativeTaskConversationStartPlan) {
     const resolvedRoute = await resolveConversationExecutionRoute({
@@ -1656,6 +1699,9 @@ export function createConversationApplicationOperations(dependencies: Conversati
         ...(plan.legacyReference ? { legacyReference: plan.legacyReference } : {}),
       },
     });
+    if (plan.pluginReferences) {
+      zeusConversationPluginRuntime?.bindExplicitReferences({ conversationId: plan.conversationId, projectId: plan.projectId, references: plan.pluginReferences });
+    }
     if (plan.agentKind === 'pi') {
       const operation = await piNativeCoordinator.startConversation({
         conversationId: plan.conversationId,
@@ -2364,6 +2410,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         const canonicalAttachmentInput = body.attachments === undefined && !explicitContent ? normalizeTaskPushAttachments(task, project.localPath) : null;
         const attachments = canonicalAttachmentInput?.attachments ?? explicitAttachments;
         const content = explicitContent || createTaskRuntimePrompt(task);
+        const pluginReferences = await resolveNewConversationPluginReferences(project.id, content, body.pluginReferences);
         const explicitModel = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : null;
         const capabilities = await resolveConversationCapabilities(project, {
           allowPiWhenCodexUnavailable: body.agentKind === 'pi' || Boolean(explicitModel && parseModelRef(explicitModel)?.sourceId !== 'codex'),
@@ -2429,6 +2476,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           ...(canonicalAttachmentInput?.allowedRoots.length ? { allowedAttachmentRoots: canonicalAttachmentInput.allowedRoots } : {}),
           idempotencyKey,
           clientUserMessageId,
+          pluginReferences,
           providerWriteLifecycle: reservedLifecycle,
           ...(goalObjective ? { goalObjective } : {}),
         });
@@ -3027,6 +3075,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     inferNativeConversationSnapshotState,
     requireNativeQueueConversation,
     executeConversationDispatchMessage,
+    submitPluginHookContinuation,
     executeConversationDispatchSideChat,
     prepareConversationQueueReroute,
     applyConversationQueueReroute,

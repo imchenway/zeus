@@ -32,6 +32,7 @@ import {
 import {
   type AppendAuditLogInput,
   ArtifactStore,
+  AgentCapabilitySnapshotRepository,
   AuditLogRepository,
   CodexLegacyImportRepository,
   CodexUsageLedgerRepository,
@@ -62,6 +63,7 @@ import {
   IdempotencyRequestRepository,
   introspectSqliteSchema,
   LongTermMemoryRepository,
+  PluginRepository,
   ProjectionDatabaseRuntimeManager,
   ProjectRepository,
   ProjectRepositoryRegistrationRepository,
@@ -104,6 +106,8 @@ import { applyCodeMapSettingsToGraph, parseJsonObject, resolveCodeMapScanRoot, r
 import { isUnsafeCodeMapScanRoot, UnsafeCodeMapScanRootError } from './codeMapScanBoundary.js';
 import { createCodexConfigImportService } from './codexConfigImportService.js';
 import { createZeusSkillService } from './zeusSkillService.js';
+import { createZeusPluginService } from './zeusPluginService.js';
+import { createZeusConversationPluginRuntime } from './zeusConversationPluginRuntime.js';
 import { type CodexLegacyImportService, createCodexLegacyImportService } from './codexLegacyImportService.js';
 import { createCodexNativeConversationCoordinator } from './codexNativeConversationCoordinator.js';
 import { CodexPublicCommandApplicationService } from './codexPublicCommandApplication.js';
@@ -196,6 +200,16 @@ const nativeConversationAttentionEventTypes = new Set([
   'conversation.goal.updated',
   'conversation.goal.cleared',
 ]);
+
+function providerToolSchemaRejection(payload: Record<string, unknown>): boolean {
+  const error = isObjectLike(payload.error) ? payload.error : payload;
+  const code = typeof Reflect.get(error, 'code') === 'string' ? String(Reflect.get(error, 'code')) : '';
+  const message = typeof Reflect.get(error, 'message') === 'string' ? String(Reflect.get(error, 'message')) : '';
+  const normalized = `${code} ${message}`.toLocaleLowerCase();
+  const namesTools = normalized.includes('tool') || normalized.includes('function');
+  const rejectsCapability = normalized.includes('unsupported') || normalized.includes('not supported') || normalized.includes('invalid') || normalized.includes('schema');
+  return namesTools && rejectsCapability;
+}
 
 /**
  * 非枚举启动失败元数据：表示新 local-server 已取得并尝试完成 Codex finalization。
@@ -476,6 +490,7 @@ export interface CreateConversationMessageBody {
   permissionMode?: ConversationPermissionMode;
   collaborationMode?: ConversationCollaborationMode;
   agentKind?: 'codex' | 'pi' | 'claude';
+  pluginReferences?: unknown;
 }
 
 export interface NativeConversationAttachment {
@@ -522,6 +537,7 @@ export type StartTaskConversationBody = (
       conflictPath?: string;
       conflictContent?: string;
       goalObjective?: string;
+      pluginReferences?: unknown;
       skillId?: string;
       workspace?:
         | { mode: 'direct'; confirmConcurrentWrites?: boolean }
@@ -557,6 +573,7 @@ export interface StartProjectConversationBody {
   clientUserMessageId?: string;
   agentKind?: 'codex' | 'pi' | 'claude';
   goalObjective?: string;
+  pluginReferences?: unknown;
 }
 
 export interface TaskConversationAcceptanceReservation {
@@ -694,6 +711,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const conversationProviderSyncCheckpoints = new ConversationProviderSyncCheckpointRepository(db);
   const providerEventReceipts = new ProviderEventReceiptRepository(db);
   const commandDeliveries = new CommandDeliveryRepository(db);
+  const pluginRepository = new PluginRepository(db);
+  const agentCapabilitySnapshots = new AgentCapabilitySnapshotRepository(db);
   if (!readOnlyValidation) commandDeliveries.sealUnreceiptedProviderWritesAsUnknown(new Date().toISOString());
   const conversationCommands = new ConversationCommandApplication({ db, deliveries: commandDeliveries, redactSensitiveText, now: () => new Date() });
   const conversationDispatchCommands = new ConversationDispatchCommandApplication({ db, deliveries: commandDeliveries, artifacts: artifactStore, redactSensitiveText, now: () => new Date() });
@@ -947,6 +966,34 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         },
       }
     : createMacOSKeychainStore({ service: options.keychainService });
+  let submitPluginHookContinuation: ((input: { conversationId: string; sourceTurnId: string | null; prompt: string }) => Promise<void>) | null = null;
+  const dangerouslyBypassPluginHookTrust = process.argv.includes('--dangerously-bypass-plugin-hook-trust');
+  const zeusPluginService = readOnlyValidation
+    ? undefined
+    : createZeusPluginService({
+        bundlesRoot: dataLayout.pluginBundles,
+        dataRoot: dataLayout.pluginData,
+        runtimeRoot: dataLayout.pluginRuntime,
+        codexHome: options.codexHome ?? dataLayout.codexHome,
+        repository: pluginRepository,
+        secretStore,
+        save: () => db.save(),
+        now: () => new Date(),
+      });
+  const zeusConversationPluginRuntime = zeusPluginService
+    ? createZeusConversationPluginRuntime({
+        service: zeusPluginService,
+        dataRoot: dataLayout.pluginData,
+        runtimeRoot: dataLayout.pluginRuntime,
+        secretStore,
+        dangerouslyBypassHookTrust: dangerouslyBypassPluginHookTrust,
+        publish: publishNativeConversationEvent,
+        requestContinuation: (input) => {
+          if (!submitPluginHookContinuation) throw Object.assign(new Error('Plugin Stop Hook 续接宿主尚未完成初始化。'), { code: 'ZEUS_PLUGIN_CONTINUATION_HOST_NOT_READY' });
+          return submitPluginHookContinuation(input);
+        },
+      })
+    : undefined;
   const modelConnections = createModelConnectionService({
     settings,
     secretStore,
@@ -1093,6 +1140,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         redactSensitiveText,
         execution: conversationExecution,
         toolResults: conversationToolResults,
+        plugins: zeusConversationPluginRuntime,
         compileDispatchContext: compileProviderDispatchContext,
       });
   const repairedPiConversationIdentityCount = piNativeCoordinator.repairPersistedConversationIdentities();
@@ -1544,6 +1592,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       eventFlow: conversationEventFlow,
       resolveResponsesRuntime,
       browserAutomation: options.browserAutomation,
+      plugins: zeusConversationPluginRuntime,
       trustedAttachmentRoots: trustedConversationAttachmentRoots,
       generatedImageRoot,
       getProjectRoot: (projectId) => projects.getById(projectId)?.localPath ?? null,
@@ -1965,6 +2014,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (readOnlyValidation) return;
     settleCodexPendingOnClose = true;
     await codexLegacyImportService?.close();
+    await zeusConversationPluginRuntime?.close();
     await codexNativeCoordinator.close({ mode: 'final' });
   };
   if (executionHostDispatchMayResume) await turnChangeSetService.recoverInterruptedOperations();
@@ -2336,6 +2386,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         : mappedType === 'conversation.rateLimits.changed' || mappedType === 'conversation.mcpStartup.changed'
           ? conversations.listNativeBoundRecords('codex').map((conversation) => conversation.id)
           : [];
+    if (mappedType === 'conversation.turn.completed' || mappedType === 'conversation.item.started' || mappedType === 'conversation.item.completed') {
+      queueMicrotask(() => void zeusConversationPluginRuntime?.observeConversationEvent(mappedType, payload).catch(() => undefined));
+    }
     if ((mappedType === 'conversation.turn.started' || mappedType === 'conversation.turn.completed') && typeof payload.conversationId === 'string') {
       for (const [attemptId, operation] of taskConflictAiOperations) {
         if (operation.conversationId !== payload.conversationId) continue;
@@ -2361,6 +2414,18 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       // 实时事件只需要会话元数据；禁止在每个增量事件中加载整段消息历史。
       const conversation = conversations.getRecordById(conversationId);
       if (!conversation || conversation.transportKind !== 'codex_native') continue;
+      if (mappedType === 'plugin.mcp.tool_completed' || (mappedType === 'conversation.native.error' && pluginRepository.hasConversationActivationSet(conversationId) && providerToolSchemaRejection(payload))) {
+        const supported = mappedType === 'plugin.mcp.tool_completed';
+        agentCapabilitySnapshots.create({
+          agentKind: conversation.agentKind === 'pi' ? 'pi' : 'codex',
+          transportKind: conversation.agentKind === 'pi' ? 'sdk' : 'app_server',
+          supportStatus: supported ? 'verified' : 'experimental',
+          protocolVersion: conversation.agentKind === 'pi' ? piRuntimeWorkerProtocolVersion : 'app-server',
+          capabilities: { tools: { state: supported ? 'supported' : 'unsupported', reason: supported ? 'Plugin MCP 工具完成了真实调用。' : 'Provider 实际拒绝了 Plugin 工具 Schema。' } },
+          evidence: { source: supported ? 'plugin_mcp_tool_completed' : 'provider_tool_schema_rejection', conversationId, model: conversation.modelId ?? conversation.providerModel ?? null, eventType: mappedType },
+          checkedAt: now().toISOString(),
+        });
+      }
       const generationId = typeof payload.generationId === 'string' ? payload.generationId : nativeLocalEventGenerationId;
       const steeringSubmission = mappedType === 'conversation.submission.steering' && typeof payload.submissionId === 'string' ? conversationSubmissions.getById(payload.submissionId) : undefined;
       const eventPayload = {
@@ -2794,6 +2859,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     codexNativeCoordinator,
     codexNativeEnabled,
     zeusSkillService,
+    zeusPluginService,
+    zeusConversationPluginRuntime,
     conversationChoiceQueries,
     conversationExecution,
     conversationExecutionCoordinator,
@@ -2892,6 +2959,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     parseConversationPermissionMode,
     providerTurnClientMessageId,
   } = conversationOperations;
+  submitPluginHookContinuation = conversationOperations.submitPluginHookContinuation;
   const gitIntegrationOperations = createGitIntegrationOperations({
     aiRuntimeManager,
     appendAuditLog,
@@ -3163,6 +3231,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     codexConfigImportService,
     zeusSkillDefaultCwd: codexHome ?? dataLayout.codexHome,
     zeusSkillService,
+    zeusPluginService,
+    zeusConversationPluginRuntime,
+    dangerouslyBypassPluginHookTrust,
     codexExternalAgentHome,
     codexLegacyImportService,
     codexNativeCoordinator,
@@ -3348,7 +3419,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   });
   closeLocalServerResources = async () => {
     unsubscribeCodexRpcRetries();
-    await platformRoutes.close();
+    await Promise.all([platformRoutes.close(), zeusConversationPluginRuntime?.close()]);
   };
   projectGitQueries = platformRoutes.projectGitQueries;
   conversationCapabilityQueries = platformRoutes.conversationCapabilityQueries;

@@ -7,6 +7,15 @@ import type { AgentRunSkillActivation } from './agentRuntimeContracts.js';
 interface PiHeadlessResourceLoaderOptions {
   cwd: string;
   agentDir: string;
+  pluginSkills?: PiPluginSkillResource[];
+  pluginInstructions?: string;
+}
+
+export interface PiPluginSkillResource {
+  id: string;
+  name: string;
+  description: string;
+  path: string;
 }
 
 export interface PiApplicationContextResource {
@@ -35,6 +44,8 @@ export class PiHeadlessResourceLoader implements ResourceLoader {
   private agentsFiles: ContextFile[] = [];
   private applicationContext: PiApplicationContextResource | null = null;
   private activeSkill: Skill | null = null;
+  private readonly pluginSkills: Skill[];
+  private readonly pluginInstructions: string;
 
   constructor(options: PiHeadlessResourceLoaderOptions) {
     this.cwd = resolve(options.cwd);
@@ -44,6 +55,8 @@ export class PiHeadlessResourceLoader implements ResourceLoader {
       errors: [],
       runtime: createEmptyExtensionRuntime(),
     };
+    this.pluginSkills = (options.pluginSkills ?? []).map(toPiSkill);
+    this.pluginInstructions = options.pluginInstructions?.trim() ?? '';
   }
 
   getExtensions(): LoadExtensionsResult {
@@ -51,7 +64,9 @@ export class PiHeadlessResourceLoader implements ResourceLoader {
   }
 
   getSkills() {
-    return { skills: this.activeSkill ? [this.activeSkill] : [], diagnostics: [] };
+    const active = this.activeSkill;
+    const skills = active ? [active, ...this.pluginSkills.filter((skill) => skill.filePath !== active.filePath && skill.name !== active.name)] : this.pluginSkills;
+    return { skills, diagnostics: [] };
   }
 
   getPrompts() {
@@ -75,13 +90,21 @@ export class PiHeadlessResourceLoader implements ResourceLoader {
   }
 
   getAppendSystemPrompt(): string[] {
-    if (!this.applicationContext) return [];
-    return [`Zeus application context manifest (application-owned):\n${this.applicationContext.manifest}`, ...(this.applicationContext.content ? [`Zeus application context (application-owned):\n${this.applicationContext.content}`] : [])];
+    return [
+      ...(this.pluginInstructions ? [this.pluginInstructions] : []),
+      ...(this.applicationContext
+        ? [`Zeus application context manifest (application-owned):\n${this.applicationContext.manifest}`, ...(this.applicationContext.content ? [`Zeus application context (application-owned):\n${this.applicationContext.content}`] : [])]
+        : []),
+    ];
   }
 
   getAppendSystemPromptSources(): Array<{ path: string }> {
-    if (!this.applicationContext) return [];
-    return [{ path: `zeus-context://${this.applicationContext.fingerprint}/manifest` }, ...(this.applicationContext.content ? [{ path: `zeus-context://${this.applicationContext.fingerprint}/application` }] : [])];
+    return [
+      ...(this.pluginInstructions ? [{ path: 'zeus-plugin://activation-snapshot/instructions' }] : []),
+      ...(this.applicationContext
+        ? [{ path: `zeus-context://${this.applicationContext.fingerprint}/manifest` }, ...(this.applicationContext.content ? [{ path: `zeus-context://${this.applicationContext.fingerprint}/application` }] : [])]
+        : []),
+    ];
   }
 
   replaceApplicationContext(input: PiApplicationContextResource | null): PiApplicationContextResource | null {
@@ -118,6 +141,24 @@ export class PiHeadlessResourceLoader implements ResourceLoader {
   async reload(): Promise<void> {
     this.agentsFiles = loadProjectContextFiles(this.cwd, this.agentDir);
   }
+}
+
+function toPiSkill(input: PiPluginSkillResource): Skill {
+  const baseDir = dirname(input.path);
+  return {
+    name: input.name,
+    description: input.description,
+    filePath: input.path,
+    baseDir,
+    sourceInfo: {
+      path: input.path,
+      source: 'zeus-plugin',
+      scope: 'user',
+      origin: 'top-level',
+      baseDir,
+    },
+    disableModelInvocation: false,
+  };
 }
 
 function createEmptyExtensionRuntime(): LoadExtensionsResult['runtime'] {

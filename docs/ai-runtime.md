@@ -69,6 +69,17 @@ Codex native 会话的服务档位以当前 app-server `model/list` 目录为能
 
 优点是用户不需要识别两套 Browser，且继续复用 BrowserHost 的会话归属和安全审批。缺点是旧会话存在一次性迁移成本，模型是否真实选择 Zeus 工具仍必须通过 provider 回合验证，不能只凭静态声明判断完成。
 
+## Zeus Plugin 运行投影
+
+Plugin 安装、信任、连接、工具审批和会话版本由 Zeus Plugin Host 统一拥有。Codex Adapter 通过结构化 Skill 输入和 dynamic tools 投影，Pi Adapter 通过 ResourceLoader 和 custom tools 投影；两个 Adapter 都只消费 Zeus 生命周期事件，不能让 Provider 原生 Plugin 再执行一次。
+
+- 新会话创建时冻结 Plugin 修订、内容摘要、组件路径和策略；已有会话恢复、模型切换或跨 Adapter 续接仍使用原快照。
+- Hook 信任按定义哈希判断，安装与启用不会自动授权；定义变化后跳过执行并重新审查。显式危险绕过默认关闭且必须持续可见。
+- MCP 工具的真实调用能力未知时仍发送真实请求；Provider 拒绝时持久化能力证据并原样失败，不自动重放或偷偷降级。
+- Connector 认证与 Plugin 安装分离，密钥只由安全存储持有；卸载 Plugin 不撤销可复用授权。
+
+优点是所有模型共享一次安装和同一权限事实。缺点是 Zeus 必须承担 Hook 执行、MCP 连接、UI 沙箱与供应链审查边界；同时，按 Codex 兼容语义信任 Hook 定义而不跟踪脚本内容，供应链防护弱于整包内容信任。
+
 ## 并发与队列
 
 - 默认每个项目最多 1 个运行中 AI 会话。
