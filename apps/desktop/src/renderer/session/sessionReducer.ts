@@ -880,8 +880,7 @@ function mergeDurableItemResources(previous: NativeSessionItemBuffer['resources'
 function reduceNativeEvent(state: NativeSessionState, event: NativeConversationEvent, suppressRequestAuthority = false): NativeSessionState {
   if (state.seenEventIds[event.id]) return state;
   const payload = event.payload;
-  const queuedThreadTransition =
-    (event.type === 'conversation.turn.started' || event.type === 'conversation.queue.changed') && eventNamesKnownQueuedSubmission(state, payload);
+  const queuedThreadTransition = (event.type === 'conversation.turn.started' || event.type === 'conversation.queue.changed') && eventNamesKnownQueuedSubmission(state, payload);
   const identityControlEvent = event.type === 'conversation.transport.changed' || event.type === 'conversation.thread.changed' || queuedThreadTransition;
   if (!isEventForSelectedSession(state, payload, identityControlEvent)) return state;
 
