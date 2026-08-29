@@ -13,7 +13,6 @@ import {
   TaskRepository,
   TaskStageRepository,
   TaskWorkspaceRepository,
-  type CreateDigitalEmployeeExecutionInput,
   type DigitalEmployeeAutomationRecord,
   type DigitalEmployeeExecutionRecord,
   type DigitalEmployeeExecutionSource,
@@ -32,6 +31,7 @@ import type { CreateUserTaskInput } from './workManagementCoreCommandRoutes.js';
 import { WorkManagementCommandApplication, workManagementCommandTypes, workManagementInputSha256, type ParsedWorkManagementMutation } from './workManagementCommandApplication.js';
 import { WorkspaceGitCommandApplication, workspaceGitCommandTypes, workspaceGitInputSha256, type WorkspaceGitCommandType, type WorkspaceGitScopeKind } from './workspaceGitCommandApplication.js';
 import type { PreparedWorkspaceGitCommand, WorkspaceGitCommandRouteOperations } from './workspaceGitCommandRoutes.js';
+import type { TaskWorkManagementController } from './taskWorkManagement.js';
 
 const DEFAULT_TICK_MS = 10_000;
 const LEASE_MS = 45_000;
@@ -58,6 +58,7 @@ interface DigitalEmployeeOrchestratorOptions {
   conversations: ConversationRepository;
   commandRuns: CommandRunRepository;
   conversationCapabilities: ConversationCapabilityQueryApplication;
+  taskWorkManagement: TaskWorkManagementController;
   executeTaskConversationIdempotent(project: ZeusProjectRecord, task: ZeusTaskRecord, body: Record<string, unknown>, idempotencyKey: string): Promise<{ statusCode: number; body: unknown }>;
   readTaskWorkspaceSnapshot(project: ZeusProjectRecord, workspace: ZeusTaskWorkspaceRecord): Promise<Record<string, unknown>>;
   createTask(input: CreateUserTaskInput, taskId: string, context: { commandId: string; operationIdentity: string; actor: CommandActor }): ZeusTaskRecord;
@@ -147,7 +148,7 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
         const employee = options.employees.getById(automation.employeeId);
         if (!employee?.enabled || employee.projectId !== automation.projectId) continue;
         if (automation.actionKind === 'explore_project' && !employee.autonomousExploration) continue;
-        if (options.executions.listActiveByEmployee(employee.id).length >= employee.maxConcurrency) continue;
+        if (options.taskWorkManagement.countActiveByEmployee(employee.id) >= employee.maxConcurrency) continue;
 
         if (automation.nextRunAt && Date.parse(automation.nextRunAt) <= timestamp.getTime()) {
           const identity = `scheduled:${automation.nextRunAt}`;
@@ -186,7 +187,7 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
 
   async function processProjectEvents(automation: DigitalEmployeeAutomationRecord, employee: DigitalEmployeeRecord, events: DigitalEmployeeProjectEvent[]): Promise<void> {
     for (const event of events) {
-      if (options.executions.listActiveByEmployee(employee.id).length >= employee.maxConcurrency) return;
+      if (options.taskWorkManagement.countActiveByEmployee(employee.id) >= employee.maxConcurrency) return;
       if (event.suppressAutomation) {
         options.automations.advance({ id: automation.id, cursorSequence: event.sequence, lastTriggeredAt: automation.lastTriggeredAt ?? automation.createdAt });
         await options.save();
@@ -221,15 +222,15 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
       const configuredTaskId = typeof automation.actionConfig.taskId === 'string' ? automation.actionConfig.taskId : null;
       const useEventTask = automation.actionConfig.useEventTask === true;
       task = configuredTaskId ? (options.tasks.getById(configuredTaskId) ?? null) : event && useEventTask ? (options.tasks.getById(event.taskId) ?? null) : selectEligibleTask(employee);
-      if (!task || task.projectId !== automation.projectId || !taskMatchesEmployee(task, employee) || options.executions.hasActiveTaskExecution(task.id)) {
+      if (!task || task.projectId !== automation.projectId || !taskMatchesEmployee(task, employee)) {
         consumeAutomationWithoutExecution(automation, eventIdentity, '没有符合条件且可认领的任务');
         return true;
       }
     } else {
       task = createAutomationTask(automation, employee, eventIdentity, event);
     }
-    if (!task || options.executions.hasActiveTaskExecution(task.id)) {
-      consumeAutomationWithoutExecution(automation, eventIdentity, '自动化创建的任务已有活动执行');
+    if (!task) {
+      consumeAutomationWithoutExecution(automation, eventIdentity, '自动化没有解析到可用任务');
       return true;
     }
     const source: DigitalEmployeeExecutionSource = automation.actionKind === 'explore_project' ? 'exploration' : 'automation';
@@ -304,13 +305,14 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
   async function processTaskPool(): Promise<void> {
     for (const employee of options.employees.listEnabled()) {
       if (!employee.autoClaim) continue;
-      let capacity = employee.maxConcurrency - options.executions.listActiveByEmployee(employee.id).length;
+      let capacity = employee.maxConcurrency - options.taskWorkManagement.countActiveByEmployee(employee.id);
       if (capacity <= 0) continue;
       for (const task of options.tasks.listByProject(employee.projectId)) {
         if (capacity <= 0) break;
-        if (!taskMatchesEmployee(task, employee) || options.executions.hasActiveTaskExecution(task.id) || options.executions.hasTaskExecutionForEmployee(employee.id, task.id, 'task_pool')) continue;
+        const sourceRef = `task_pool:${employee.id}:${task.id}`;
+        if (!taskMatchesEmployee(task, employee) || options.taskWorkManagement.hasAutomationSource(sourceRef)) continue;
         try {
-          await queueExecution({ employee, task, source: 'task_pool', sourceRef: `task_pool:${task.id}` });
+          await queueExecution({ employee, task, source: 'task_pool', sourceRef });
           capacity -= 1;
         } catch (error) {
           options.appendAuditLog({
@@ -335,65 +337,20 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
     source: DigitalEmployeeExecutionSource;
     sourceRef: string;
     eventIdentity?: string;
-  }): Promise<DigitalEmployeeExecutionRecord> {
-    const operationIdentity = stableIdentity('digital_employee_execution', `${input.employee.id}\0${input.source}\0${input.sourceRef}`);
-    const commandInput = {
-      employeeId: input.employee.id,
-      taskId: input.task.id,
-      source: input.source,
-      sourceRef: input.sourceRef,
-      automationId: input.automation?.id ?? null,
-      eventIdentity: input.eventIdentity ?? null,
-    };
-    const parsed = parseWorkerWorkManagementCommand({
-      application: options.workManagement,
-      commandType: workManagementCommandTypes.digitalEmployeeExecutionCreate,
-      scopeKind: 'task',
-      scopeId: input.task.id,
-      operationIdentity,
-      input: commandInput,
-      actorId: input.employee.id,
-    });
-    const mutation = options.workManagement.executeCore({
-      parsed,
-      destinationId: 'digital-employee-execution-repository',
-      resourceId: operationIdentity,
-      mutateBusinessState: () => {
-        const createInput: CreateDigitalEmployeeExecutionInput = {
-          id: operationIdentity,
-          employee: input.employee,
-          taskId: input.task.id,
-          automationId: input.automation?.id ?? null,
-          source: input.source,
-          sourceRef: input.sourceRef,
-        };
-        const execution = options.executions.create(createInput);
-        if (input.automation && input.eventIdentity) {
-          options.automations.recordEventReceipt({ automationId: input.automation.id, eventIdentity: input.eventIdentity, executionId: execution.id, createdAt: now().toISOString() });
-        }
-        options.taskEvents.create({
-          taskId: input.task.id,
-          eventType: 'task.digital_employee.assigned',
-          title: '任务已指派给数字员工',
-          payload: { executionId: execution.id, employeeId: input.employee.id, employeeName: input.employee.name, source: input.source, automationId: input.automation?.id ?? null },
-        });
-        options.appendAuditLog({
-          actorType: 'worker',
-          actorRef: input.employee.id,
-          action: 'digital_employee.execution.queued',
-          resourceType: 'digital_employee_execution',
-          resourceId: execution.id,
-          payload: { projectId: execution.projectId, taskId: execution.taskId, source: execution.source, automationId: execution.automationId, commandId: parsed.command.commandId },
-          createdAt: now().toISOString(),
-        });
-        return execution;
-      },
-    });
-    if (!mutation.replayed) {
-      options.publishRealtimeEvent('digital_employee.execution.changed', { projectId: mutation.result.projectId, taskId: mutation.result.taskId, executionId: mutation.result.id, status: mutation.result.status });
-      await options.save();
+  }): Promise<void> {
+    if (!input.employee.entrypoint || input.employee.entrypointMigrationState !== 'ready') {
+      throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_ENTRYPOINT_REQUIRED', '数字员工尚未完成主执行入口配置，自动化不会创建旧版执行。', false);
     }
-    return mutation.result;
+    const sourceRef = input.source === 'task_pool' ? input.sourceRef : `${input.employee.id}:${input.sourceRef}`;
+    const created = await options.taskWorkManagement.createAutomatedWorkItem({ taskId: input.task.id, employeeId: input.employee.id, sourceRef });
+    if (input.automation && input.eventIdentity) options.automations.recordEventReceipt({ automationId: input.automation.id, eventIdentity: input.eventIdentity, executionId: null, createdAt: now().toISOString() });
+    options.taskEvents.create({
+      taskId: input.task.id,
+      eventType: 'task.work_item.automation_created',
+      title: input.employee.entrypoint.kind === 'command' ? '自动化已创建命令确认待办' : '自动化已创建 Agent 工作项',
+      payload: { workItemId: created.item.id, runId: created.run.id, employeeId: input.employee.id, source: input.source, automationId: input.automation?.id ?? null, entrypointKind: input.employee.entrypoint.kind },
+    });
+    await options.save();
   }
 
   async function processExecution(execution: DigitalEmployeeExecutionRecord): Promise<void> {

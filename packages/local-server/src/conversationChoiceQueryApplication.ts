@@ -31,6 +31,7 @@ interface ConversationChoiceQueryPorts {
   submissions: Pick<ConversationSubmissionRepository, 'listRecoverable' | 'getFirstByConversation'>;
   turns: Pick<ConversationTurnRepository, 'listInProgress'>;
   workspaces: Pick<TaskWorkspaceRepository, 'listByProject' | 'getById'>;
+  isManagedConversation(conversationId: string): boolean;
   codexNativeEnabled: boolean;
   readOnlyValidation: boolean;
 }
@@ -127,13 +128,15 @@ export class ConversationChoiceQueryApplication {
 
   toChoice(conversation: ZeusConversationRecord, context: NativeConversationChoiceProjectionContext = this.buildContext(conversation.projectId)) {
     const state = this.projectState(conversation, context);
+    const managedByTaskWorkItem = this.ports.isManagedConversation(conversation.id);
     return {
       ...this.toSummary(conversation, context),
       listRuntimeState: state.runtimeState,
       taskRunStatus: state.taskRunStatus,
       // 正式数据库副本中的原生会话只允许历史投影；列表本身就必须显式禁用恢复。
-      resumable: !this.ports.readOnlyValidation && conversation.transportKind === 'codex_native' && !conversation.archived && conversation.providerState !== 'closed' && conversation.providerState !== 'failed',
-      readOnly: this.ports.readOnlyValidation || conversation.transportKind === 'legacy_cli',
+      resumable: !managedByTaskWorkItem && !this.ports.readOnlyValidation && conversation.transportKind === 'codex_native' && !conversation.archived && conversation.providerState !== 'closed' && conversation.providerState !== 'failed',
+      readOnly: managedByTaskWorkItem || this.ports.readOnlyValidation || conversation.transportKind === 'legacy_cli',
+      managedByTaskWorkItem,
     };
   }
 

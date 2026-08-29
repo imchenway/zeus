@@ -132,7 +132,7 @@
     "'/api/projects/:projectId/tables/:tableId/impact'",
     "'/api/projects/:projectId/methods/:methodId/logic'"
   ],
-  "ownedStorageTableCount": 105,
+  "ownedStorageTableCount": 109,
   "ownedAuxiliaryStorageTableCount": 11,
   "lifecycleMatrix": "docs/architecture/ZARCH-003_数据权威与生命周期矩阵.md"
 }

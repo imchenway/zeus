@@ -28,3 +28,42 @@
 - 因此源码组件视觉与测试包结构已验证，但正式 Electron 端到端视觉验收仍未完成。
 
 final result: blocked
+
+---
+
+# ZEUS-0380 工作管理驾驶舱设计 QA
+
+## 对比目标
+
+- 参考：用户提供的固定“方案规划 / 实施 / 代码审查”任务详情截图。
+- 实现：任务详情第二版“概览 / 协作 / 交付物 / 证据”驾驶舱，以及左侧真实工作项、右侧“待我处理”。
+- 正式现场：任务专属 `Zeus Test.app`，bundle ID `dev.hypha.zeus.test`，独立资料根
+  `/tmp/zeus-0380-gui.0emgkv`，窗口位于非主外接屏 `displayId=3`。
+- 同屏对比输入：`/tmp/zeus-0380-comparison-final.png`；当前实现整窗截图：
+  `/tmp/zeus-0380-prototype-active.png`。
+
+## Findings
+
+- 无可见 P0 / P1 / P2 遗留问题。
+- 固定三阶段时间线已从新工作管理视图移除；独立指派明确显示“当前没有依赖关系”，没有用视觉连线暗示不存在的流程。
+- 协作页保持现有 Zeus 深色主题、系统字体、控件圆角和状态色；任务身份、页签、主动作、工作项与待办形成清楚的阅读顺序。
+- 左侧工作项与右侧待办在 `1240 × 820` 窗口内保持固定双栏；信息密度高于旧时间线，但没有遮挡页签或主动作。
+- [P3] 一个窗口高度只能完整展示首个工作项，其余工作项需要在左栏继续滚动。这是选择管理密度的代价；优点是待办始终可见，缺点是不能在该高度同屏展开三项正文。
+- Agent 未登录错误使用现有失败色并直接给出恢复原因；Command 成功态保持中性，不把证据日志挤进协作主视图。
+
+## 交互验收
+
+- 指派抽屉在预览结果增长后仍保持 `calc(100dvh - 40px)` 高度；正文独立滚动，底部“预览实际影响 / 创建工作项”在 `y=754`，可真实点击。
+- Agent 指派仅展示模型、推理强度、速率、Skill 和上下文；Command 指派隐藏模型控件并显示“确认并启动命令”。
+- 三名不同员工在同一任务形成三份并存工作项；第三次指派没有生成方案、实施或审查阶段。
+- Command 证据可从“证据”页下钻，真实显示 `succeeded`、退出码 `0`、标准输出
+  `ZEUS-0380-COMMAND-PASS` 和两个内容寻址日志产物。
+- 实测发现并修复 Command 新尝试的轮询竞态：`waiting_input` 且尚未生成 `commandRunId` 时保持等待管理者确认，不再误判为失败。
+
+## 证据边界
+
+- 当前独立资料根中的 Zeus 专属 Codex 未登录，因此 Agent 在会话创建前以
+  `ZEUS_CODEX_LOGIN_REQUIRED` 明确失败；没有复制正式 Zeus 的 Provider 凭据。
+- 因此真实 Agent 会话、会话请求转管理者待办、交付物验收/返工和受管会话只读恢复仍缺登录后的 GUI 闭环证据；静态实现和 Command 成功不能替代这些证据。
+
+final result: passed for observable packaged Command and cockpit state; authenticated Agent lifecycle blocked by isolated Codex login
