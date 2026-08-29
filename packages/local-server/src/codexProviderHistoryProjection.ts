@@ -34,6 +34,10 @@ function compatibilitySnapshotItemIdentity(item: Pick<ZeusConversationItemRecord
   return JSON.stringify([item.providerThreadId, item.providerTurnId, item.itemType, item.status, item.phase]);
 }
 
+function isInteractionAuthorityMissingTurn(turn: ZeusConversationTurnRecord | undefined): boolean {
+  return Boolean(turn && parseJsonRecord(turn.errorJson ?? '{}').code === 'ZEUS_PROVIDER_INTERACTION_AUTHORITY_MISSING');
+}
+
 function claimCompatibilitySnapshotSourceItems(
   target: Pick<ZeusConversationItemRecord, 'providerThreadId' | 'providerTurnId' | 'itemType' | 'status' | 'phase' | 'textContent'>,
   candidates: readonly ZeusConversationItemRecord[],
@@ -98,11 +102,13 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     providerHistoryReconcileTurnLimit,
     reconcileTerminalTurnSubmissions,
     rejectTurnResultWaiters,
+    resolveTurnResult,
     runStates,
     submissionPresentation,
     syncCheckpoints,
     syncItemResources,
     threadPath,
+    turnResultWaiters,
     upsertRecoveredTurn,
   } = dependencies;
   async function ensureProviderSyncCheckpoint(conversation: ZeusConversationWithMessagesRecord, input: { priority?: 'control' } = {}) {
@@ -297,6 +303,11 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       runStates.set(conversation.id, { type: 'paused', reason: 'provider_stop_pending' });
       return existingTurn;
     }
+    if (classification === 'active' && isInteractionAuthorityMissingTurn(existingTurn)) {
+      options.conversations.bindProvider(conversation.id, { providerId: 'codex', providerThreadId, providerModel: conversation.providerModel, providerState: 'paused' });
+      runStates.set(conversation.id, { type: 'paused', reason: 'interaction_authority_missing' });
+      return existingTurn!;
+    }
     const providerClientId = providerTurnUserClientId(providerTurn);
     const providerMatchedSubmission = providerClientId ? submissions.find((candidate) => candidate.clientMessageId === providerClientId) : undefined;
     const existingOwnedSubmission = existingTurn?.clientSubmissionId ? submissions.find((candidate) => candidate.id === existingTurn.clientSubmissionId) : undefined;
@@ -307,24 +318,36 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     const status = classification === 'active' ? 'running' : classification;
     const wasTerminal = existingTurn?.status === 'completed' || existingTurn?.status === 'interrupted' || existingTurn?.status === 'failed';
     const stateChanged = !existingTurn || existingTurn.status !== status;
-    const turn = options.turns.upsert({
-      ...(existingTurn ? { id: existingTurn.id } : {}),
-      conversationId: conversation.id,
-      providerThreadId,
-      providerTurnId: providerTurn.id,
-      clientSubmissionId,
-      status,
-      ...(classification === 'failed' ? { error: providerTurnFailureRecord({ turn: providerTurn }, providerTurnFailure({ turn: providerTurn }, providerTurn.id)) } : {}),
-      startedAt,
-      completedAt,
-      createdAt: existingTurn?.createdAt ?? startedAt,
-      updatedAt: timestamp,
-    });
+    const turnProjectionChanged = !existingTurn || existingTurn.status !== status || existingTurn.clientSubmissionId !== clientSubmissionId || existingTurn.startedAt !== startedAt || existingTurn.completedAt !== completedAt;
+    let turn = turnProjectionChanged
+      ? options.turns.upsert({
+          ...(existingTurn ? { id: existingTurn.id } : {}),
+          conversationId: conversation.id,
+          providerThreadId,
+          providerTurnId: providerTurn.id,
+          clientSubmissionId,
+          status,
+          ...(classification === 'failed' ? { error: providerTurnFailureRecord({ turn: providerTurn }, providerTurnFailure({ turn: providerTurn }, providerTurn.id)) } : {}),
+          startedAt,
+          completedAt,
+          createdAt: existingTurn?.createdAt ?? startedAt,
+          updatedAt: timestamp,
+        })
+      : existingTurn;
 
     const matchedCompatibilityItemIds = new Set<string>();
+    let itemProjectionChanged = false;
     for (const candidate of Array.isArray(providerTurn.items) ? providerTurn.items : []) {
       if (!isRecord(candidate)) continue;
-      projectProviderSnapshotItem(conversation, turn, candidate, classification, timestamp, matchedCompatibilityItemIds);
+      if (projectProviderSnapshotItem(conversation, turn, candidate, classification, timestamp, matchedCompatibilityItemIds)) itemProjectionChanged = true;
+    }
+    if (itemProjectionChanged && !turnProjectionChanged) {
+      turn = options.turns.upsert({
+        ...turn,
+        status: turn.status,
+        ...(classification === 'failed' ? { error: providerTurnFailureRecord({ turn: providerTurn }, providerTurnFailure({ turn: providerTurn }, providerTurn.id)) } : {}),
+        updatedAt: timestamp,
+      });
     }
 
     if (classification === 'active') {
@@ -369,6 +392,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
         providerState: classification === 'failed' ? 'failed' : recoveryRequired || interruptedWithQueue ? 'paused' : 'ready',
       });
       runStates.set(conversation.id, classification === 'failed' || recoveryRequired ? { type: 'paused', reason: 'recovery_required' } : interruptedWithQueue ? { type: 'paused', reason: 'interrupted' } : { type: 'idle' });
+      options.execution.resolveWarning(conversation.id, 'provider_interaction_authority_missing', completedAt ?? timestamp);
       if (!wasTerminal) options.changeSets?.seal({ conversation, turn, timestamp });
       if (!wasTerminal && !goals.get(conversation.id)) {
         options.conversations.markAttentionUnread(conversation.id, {
@@ -386,6 +410,18 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
           completedAt: completedAt ?? timestamp,
         });
       }
+      const resultKey = `${conversation.id}:${providerTurn.id}`;
+      if (!turnResultWaiters.has(resultKey)) {
+        // 历史同步可能遍历大量旧轮次；没有调用方等待时只落盘状态，避免把结果缓存扩展成无界历史索引。
+      } else if (classification === 'failed') {
+        const failure = providerTurnFailure({ turn: providerTurn }, providerTurn.id);
+        failedTurnResults.set(resultKey, failure);
+        rejectTurnResultWaiters(resultKey, failure);
+      } else {
+        const refreshed = options.conversations.getById(conversation.id);
+        const answer = [...(refreshed?.messages ?? [])].reverse().find((message) => message.providerTurnId === providerTurn.id && message.role === 'assistant')?.content ?? '';
+        resolveTurnResult({ conversationId: conversation.id, providerThreadId, providerTurnId: providerTurn.id, status: classification, answer });
+      }
     }
     return turn;
   }
@@ -397,11 +433,11 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     turnClassification: ReturnType<typeof classifySnapshotTurn>,
     timestamp: string,
     matchedCompatibilityItemIds: Set<string>,
-  ): void {
+  ): boolean {
     const providerThreadId = turn.providerThreadId;
     const providerTurnId = requireString(turn.providerTurnId, 'provider turn id');
     const nativeProviderItemId = typeof itemPayload.id === 'string' && itemPayload.id.trim() ? itemPayload.id : null;
-    if (!nativeProviderItemId) return;
+    if (!nativeProviderItemId) return false;
     const compatibilitySnapshotItem = compatibilitySnapshotItemIdPattern.test(nativeProviderItemId);
     const existingRaw = options.providerItems.getByProvider(providerThreadId, nativeProviderItemId);
     const providerItemId = resolveSnapshotProviderItemId(providerTurnId, nativeProviderItemId, existingRaw);
@@ -410,7 +446,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     const presentedItemPayload = sanitizeConversationItemPayload(itemType === 'userMessage' ? { ...identityPayload, ...submissionPresentation(conversation.id, turn, itemPayload) } : identityPayload);
     const existing = providerItemId === nativeProviderItemId ? existingRaw : options.providerItems.getByProvider(providerThreadId, providerItemId);
     const userMessageProjection = itemType === 'userMessage' ? projectProviderUserMessage(conversation, turn, presentedItemPayload, itemText(itemPayload), providerItemId) : null;
-    if (itemType === 'userMessage' && !userMessageProjection) return;
+    if (itemType === 'userMessage' && !userMessageProjection) return false;
     const completedProjection = userMessageProjection
       ? { ...completedItemProjection(existing, presentedItemPayload, itemType), textContent: userMessageProjection.content }
       : completedItemProjection(existing, presentedItemPayload, itemType);
@@ -432,8 +468,19 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       );
       if (sourceItems.length > 0) {
         for (const sourceItem of sourceItems) matchedCompatibilityItemIds.add(sourceItem.id);
-        return;
+        return false;
       }
+    }
+    const projectedPhase = phaseFromItem(itemPayload);
+    if (
+      existing &&
+      existing.itemType === itemType &&
+      existing.status === projectedStatus &&
+      existing.phase === projectedPhase &&
+      existing.textContent === completedProjection.textContent &&
+      existing.payloadJson === JSON.stringify(completedProjection.payload)
+    ) {
+      return false;
     }
     const item = itemTerminal
       ? options.providerItems.upsertCompleted({
@@ -444,7 +491,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
           providerItemId,
           nativeItemId: nativeProviderItemId,
           itemType,
-          phase: phaseFromItem(itemPayload),
+          phase: projectedPhase,
           payload: completedProjection.payload,
           textContent: completedProjection.textContent,
           status: projectedStatus,
@@ -460,7 +507,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
           providerItemId,
           nativeItemId: nativeProviderItemId,
           itemType,
-          phase: phaseFromItem(itemPayload),
+          phase: projectedPhase,
           payload: completedProjection.payload,
           textContent: completedProjection.textContent,
           startedAt: existing?.startedAt ?? turn.startedAt,
@@ -518,6 +565,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       phase: item.phase,
       itemResources,
     });
+    return true;
   }
 
   /**
@@ -656,6 +704,16 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       }
       const timestamp = now();
       const existingTurn = options.turns.listByConversation(conversation.id).find((turn) => turn.providerTurnId === providerTurnId || turn.clientSubmissionId === submission.id);
+      if (classification === 'active' && isInteractionAuthorityMissingTurn(existingTurn)) {
+        options.conversations.bindProvider(conversation.id, {
+          providerId: 'codex',
+          providerThreadId: requireString(conversation.providerThreadId, 'provider thread id'),
+          providerModel: conversation.providerModel,
+          providerState: 'paused',
+        });
+        runStates.set(conversation.id, { type: 'paused', reason: 'interaction_authority_missing' });
+        continue;
+      }
       const exactDeliveryConfirmed = hasExactProviderUserMessage(conversation, submission, providerTurnId);
       const initialTurnAcceptanceConfirmed = submission.submissionOutcome === 'accepted' && Boolean(submission.acceptedAt);
       const turn = upsertRecoveredTurn(existingTurn, {
@@ -713,8 +771,10 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
         options.conversations.bindProvider(conversation.id, { providerId: 'codex', providerThreadId: turn.providerThreadId, providerModel: conversation.providerModel, providerState: 'failed' });
         runStates.set(conversation.id, { type: 'paused', reason: 'recovery_required' });
         const resultKey = `${conversation.id}:${providerTurnId}`;
-        failedTurnResults.set(resultKey, failure);
-        rejectTurnResultWaiters(resultKey, failure);
+        if (turnResultWaiters.has(resultKey)) {
+          failedTurnResults.set(resultKey, failure);
+          rejectTurnResultWaiters(resultKey, failure);
+        }
       }
     }
   }

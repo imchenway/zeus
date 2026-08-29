@@ -647,6 +647,7 @@ function shouldPreserveBoundedTranscriptItem(item: NativeSessionItemBuffer, acti
   if (item.optimistic) return false;
   const contentKind = stringValue(item.payload.v2ContentKind);
   if (contentKind === 'model_history') return preserveCachedHistory && isTerminalItemStatus(item.status);
+  if (contentKind === 'active_item') return activeTurnIdentities.has(item.turnId);
   const type = item.type.toLocaleLowerCase().replace(/[\s_\-/]+/gu, '');
   const processItem = contentKind === 'process_detail' || boundedProcessItemTypes.has(type);
   return processItem && (isTerminalItemStatus(item.status) || activeTurnIdentities.has(item.turnId));
@@ -1246,7 +1247,7 @@ function reduceItemEvent(state: NativeSessionState, event: NativeConversationEve
       ? isUserMessageType(effectiveType)
         ? mergeStableUserMessagePresentation(previous?.payload ?? matchedUserItem?.payload, incomingPayload)
         : (incomingPayload ?? previous?.payload ?? matchedUserItem?.payload ?? {})
-      : mergeProgressPayload(previous?.payload ?? matchedUserItem?.payload, incomingPayload),
+      : liveProgressPayload(previous?.payload ?? matchedUserItem?.payload, incomingPayload),
     resources: completed ? (incomingResources ?? previous?.resources ?? matchedUserItem?.resources ?? []) : (previous?.resources ?? matchedUserItem?.resources ?? incomingResources ?? []),
     ...(resolvedClientId ? { clientUserMessageId: resolvedClientId, durableClientUserMessageId: resolvedClientId, optimistic: false } : {}),
     // 首次事件确定条目的时间线位置；delta/completed 只更新内容，不能让历史位置漂移。
@@ -1315,6 +1316,15 @@ function mergeProgressPayload(previous: Record<string, unknown> | undefined, inc
     ...incoming,
     ...(previousPresentation || incomingPresentation ? { presentation: { ...(previousPresentation ?? {}), ...(incomingPresentation ?? {}) } } : {}),
   };
+}
+
+/** 任一实时 item 事件都已接管首屏活动项；后续正文恢复正常流式渲染。 */
+function liveProgressPayload(previous: Record<string, unknown> | undefined, incoming: Record<string, unknown> | null): Record<string, unknown> {
+  const payload = mergeProgressPayload(previous, incoming);
+  if (payload.v2SnapshotContentComplete !== true) return payload;
+  const next = { ...payload };
+  delete next.v2SnapshotContentComplete;
+  return next;
 }
 
 function mergeStableUserMessagePresentation(previous: Record<string, unknown> | undefined, incoming: Record<string, unknown> | null): Record<string, unknown> {

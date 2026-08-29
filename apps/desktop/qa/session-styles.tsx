@@ -12,7 +12,10 @@ import type {
   CodexTaskPushCapabilities,
   NativeConversationAttachment,
   NativeConversationChoice,
+  NativeConversationModelHistoryV2Item,
   NativeConversationSnapshot,
+  NativeConversationSnapshotV2,
+  NativeConversationSnapshotV2Page,
   NativePendingRequest,
   NativeQueuedSubmission,
   NativeRuntimeDetailsSnapshot,
@@ -31,9 +34,9 @@ import { RuntimeDetails } from '../src/renderer/session/RuntimeDetails.js';
 import { SubagentWorkspace } from '../src/renderer/session/SubagentWorkspace.js';
 import { defaultSourceWorkspaceViewMode, SourceWorkspace } from '../src/renderer/session/SourceWorkspace.js';
 import { SessionPlanProgress } from '../src/renderer/session/SessionActivity.js';
-import { createInitialSessionState, sessionReducer } from '../src/renderer/session/sessionReducer.js';
+import { createHydratedSessionState, createInitialSessionState, sessionReducer } from '../src/renderer/session/sessionReducer.js';
 import { createSessionController, type SessionControllerClient } from '../src/renderer/session/useSessionController.js';
-import { reconcileConversationHistoryCache } from '../src/renderer/session/conversationSnapshotV2Adapter.js';
+import { adaptConversationSnapshotV2, reconcileConversationHistoryCache } from '../src/renderer/session/conversationSnapshotV2Adapter.js';
 import { resolveNativeConversationSelectionPresentation } from '../src/renderer/features/workspace/workspaceSupport.js';
 import { ApplicationErrorDialogHost, reportApplicationError, VisibleApplicationError } from '../src/renderer/ui/ApplicationErrorDialog.js';
 import type { TaskRecord } from '../src/renderer/apiClient.js';
@@ -1744,6 +1747,230 @@ function ExecutionPhasePreview() {
   );
 }
 
+const activeReentryConversationId = 'qa-active-reentry-conversation';
+const activeReentryLocalTurnId = 'qa-active-reentry-local-turn';
+const activeReentryProviderTurnId = 'qa-active-reentry-provider-turn';
+const activeReentryThreadId = 'qa-active-reentry-thread';
+const activeReentryStartedAt = '2026-08-29T02:07:06.000Z';
+const activeReentryUpdatedAt = '2026-08-29T02:19:45.000Z';
+
+function activeReentryProjection(preview: string) {
+  return {
+    preview,
+    byteLength: new TextEncoder().encode(preview).byteLength,
+    truncated: false,
+    redacted: false,
+    contentHandle: null,
+    refreshRequired: true,
+  };
+}
+
+const activeReentrySnapshot: NativeConversationSnapshotV2 = {
+  schemaVersion: 2,
+  structureGeneration: '2026-08-21-conversation-snapshot-v2',
+  conversationSchemaGeneration: '2026-08-16-unified-conversation-segments',
+  throughEventSeq: 2_948,
+  eventStreamGeneration: 'zeus-conversation-sync-v2',
+  conversation: {
+    id: activeReentryConversationId,
+    projectId: 'project-zeus',
+    taskId: 'ZEUS-0383-QA',
+    title: '思考进行中切换会话',
+    titleRedacted: false,
+    status: 'active',
+    stage: 'running',
+    stageUpdatedAt: activeReentryUpdatedAt,
+    archived: false,
+    transportKind: 'codex_native',
+    providerState: 'active',
+    providerModel: 'gpt-5.6-sol',
+    providerSettings: { model: 'gpt-5.6-sol', effort: 'xhigh' },
+    nextTurnSettings: { model: 'gpt-5.6-sol', effort: 'xhigh', permissionMode: 'read-only', collaborationMode: 'default' },
+    agentKind: 'codex',
+    createdAt: activeReentryStartedAt,
+    updatedAt: activeReentryUpdatedAt,
+  },
+  openSegment: {
+    id: 'qa-active-reentry-segment',
+    runtimeKind: 'codex',
+    state: 'current',
+    nativeSessionId: activeReentryThreadId,
+    providerModel: 'gpt-5.6-sol',
+    openedAt: activeReentryStartedAt,
+    acceptedAt: activeReentryStartedAt,
+    updatedAt: activeReentryUpdatedAt,
+  },
+  activeTurn: {
+    id: activeReentryLocalTurnId,
+    providerTurnId: activeReentryProviderTurnId,
+    submissionId: 'qa-active-reentry-submission',
+    status: 'running',
+    hasError: false,
+    hasPlan: false,
+    plan: null,
+    startedAt: activeReentryStartedAt,
+    completedAt: null,
+    createdAt: activeReentryStartedAt,
+    updatedAt: activeReentryUpdatedAt,
+    agentKind: 'codex',
+    openingUserMessage: null,
+    process: { available: false, latestSequence: 0 },
+    resourcesAvailable: false,
+    changeSetAvailable: false,
+    activeItems: [
+      {
+        id: 'qa-active-reentry-reasoning',
+        order: 0,
+        turnId: activeReentryLocalTurnId,
+        providerItemId: 'item-92',
+        itemType: 'reasoning',
+        status: 'in_progress',
+        phase: 'prework',
+        text: activeReentryProjection('**Outlining key decision points**\n\n**Recommending per automation permission settings**'),
+        payload: activeReentryProjection(JSON.stringify({ type: 'reasoning', summary: ['Outlining key decision points', 'Recommending per automation permission settings'] })),
+        startedAt: activeReentryStartedAt,
+        completedAt: null,
+        updatedAt: activeReentryUpdatedAt,
+      },
+      {
+        id: 'qa-active-reentry-commentary',
+        order: 1,
+        turnId: activeReentryLocalTurnId,
+        providerItemId: 'item-93',
+        itemType: 'agentMessage',
+        status: 'in_progress',
+        phase: 'prework',
+        text: activeReentryProjection('工作区默认已锁定：独立运行中，只读任务直接使用项目目录；允许写入的 Git 项目默认每次运行使用隔离 Worktree。\n\n下一项是无人值守权限。自动化运行不能在后台弹出审批后无限等待。'),
+        payload: activeReentryProjection(JSON.stringify({ type: 'agentMessage', phase: 'commentary' })),
+        startedAt: activeReentryStartedAt,
+        completedAt: null,
+        updatedAt: activeReentryUpdatedAt,
+      },
+    ],
+    activeItemsTruncated: false,
+  },
+  recentClosedTurns: [],
+  sessionMetrics: null,
+  collections: {
+    timeline: { throughSequence: 0 },
+    modelHistory: { throughSequence: 0 },
+    process: { throughSequence: 0 },
+    resources: { available: false },
+  },
+  limits: { closedTurnLimit: 2, byteLimit: 64 * 1024, returnedTurnCount: 1, responseBytes: 0 },
+};
+
+const activeReentryHistory: NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item> = {
+  schemaVersion: 2,
+  structureGeneration: '2026-08-21-conversation-snapshot-v2',
+  conversationId: activeReentryConversationId,
+  kind: 'model_history',
+  throughEventSeq: activeReentrySnapshot.throughEventSeq,
+  throughSequence: 0,
+  items: [],
+  hasMore: false,
+  nextCursor: null,
+  limits: { entryLimit: 48, byteLimit: 96 * 1024, returnedItems: 0, responseBytes: 0 },
+};
+
+const activeReentryChoice: NativeConversationChoice = {
+  ...conversation(activeReentryConversationId, 'ZEUS-0383-QA', activeReentryUpdatedAt),
+  title: '思考进行中切换会话',
+  stage: 'running',
+  providerState: 'active',
+  providerThreadId: activeReentryThreadId,
+};
+
+const activeReentryState = createHydratedSessionState(
+  adaptConversationSnapshotV2({
+    snapshot: activeReentrySnapshot,
+    history: activeReentryHistory,
+    queue: { state: { type: 'active', turnId: activeReentryProviderTurnId, phase: 'prework' }, waitReason: 'current_turn', submissions: [] },
+    requests: [],
+    planImplementationRequests: [],
+    choice: activeReentryChoice,
+    goal: { goal: null, timeline: [], capability: { supported: false, enabled: false, stage: null, reason: 'QA fixture' } },
+  }),
+);
+
+const activeReentryMissingAuthorityState = {
+  ...activeReentryState,
+  conversationState: 'native_idle' as const,
+  queue: {
+    state: { type: 'paused' as const, reason: 'interaction_authority_missing' as const },
+    waitReason: 'interaction_authority_missing' as const,
+    submissions: [],
+  },
+  snapshot: activeReentryState.snapshot
+    ? {
+        ...activeReentryState.snapshot,
+        providerState: 'paused',
+        queue: {
+          state: { type: 'paused' as const, reason: 'interaction_authority_missing' as const },
+          waitReason: 'interaction_authority_missing' as const,
+          submissions: [],
+        },
+        turns: activeReentryState.snapshot.turns.map((turn) => (turn.providerTurnId === activeReentryProviderTurnId ? { ...turn, status: 'waiting' } : turn)),
+      }
+    : null,
+  turnsByProviderId: {
+    ...activeReentryState.turnsByProviderId,
+    ...(activeReentryState.turnsByProviderId[activeReentryProviderTurnId]
+      ? {
+          [activeReentryProviderTurnId]: {
+            ...activeReentryState.turnsByProviderId[activeReentryProviderTurnId],
+            status: 'waiting',
+          },
+        }
+      : {}),
+  },
+};
+
+function ActiveTurnReentryQaApp() {
+  const [selected, setSelected] = useState<'active' | 'missing' | 'other'>('active');
+  const [stopRequested, setStopRequested] = useState(false);
+  return (
+    <main className="macos-ai-app zeus-shell session-codex-parity-v1 qa-page theme-light" data-theme="light" data-testid="active-reentry-fixture">
+      <header className="qa-heading">
+        <p>ZEUS-0383 · Snapshot V2 活动轮次首屏恢复</p>
+        <h1>切走再切回，立即显示已有处理过程</h1>
+      </header>
+      <nav className="qa-motion-fixture-actions" aria-label="会话切换">
+        <button type="button" data-testid="active-reentry-away" onClick={() => setSelected('other')}>
+          切到其他会话
+        </button>
+        <button type="button" data-testid="active-reentry-back" onClick={() => setSelected('active')}>
+          切回运行会话
+        </button>
+        <button type="button" data-testid="active-reentry-missing-authority" onClick={() => setSelected('missing')}>
+          模拟问题通道丢失
+        </button>
+        <output data-testid="active-reentry-selection">{selected === 'active' ? '运行会话已选中' : selected === 'missing' ? '问题通道丢失' : '其他会话已选中'}</output>
+        {stopRequested ? <output data-testid="active-reentry-stop-requested">已请求停止精确轮次</output> : null}
+      </nav>
+      <output data-testid="active-reentry-projection">
+        首屏活动项：
+        {activeReentryState.itemOrder
+          .map((key) => activeReentryState.items[key]?.type)
+          .filter(Boolean)
+          .join('、')}
+      </output>
+      <section className="qa-implementation-panel qa-defect-transcript" data-testid="active-reentry-transcript">
+        {selected === 'active' || selected === 'missing' ? (
+          <div className="ai-workspace">
+            <ConversationTranscript key={`active-${selected}`} state={selected === 'missing' ? activeReentryMissingAuthorityState : activeReentryState} language="zh-CN" onInterrupt={() => setStopRequested(true)} />
+          </div>
+        ) : (
+          <article>
+            <h2>其他会话</h2>
+            <p>这里用于真实卸载运行会话的 Transcript，再从 Snapshot V2 首屏重新挂载。</p>
+          </article>
+        )}
+      </section>
+    </main>
+  );
+}
+
 function BrowserNavigationFailurePreview() {
   if (!window.zeus?.getBrowserSnapshot || !window.zeus.openBrowserTab || !window.zeus.runBrowserCommand || !window.zeus.onBrowserEvent) return null;
   return (
@@ -2944,6 +3171,7 @@ const sourcePreviewQa = new URLSearchParams(window.location.search).has('source-
 const markdownStreamQa = new URLSearchParams(window.location.search).has('markdown-stream');
 const timeoutRetryQa = new URLSearchParams(window.location.search).has('timeout-retry');
 const completeMessageQa = new URLSearchParams(window.location.search).has('complete-message');
+const activeReentryQa = new URLSearchParams(window.location.search).has('active-reentry');
 // 开发态热更新复用同一根节点，避免视觉验收页重复挂载并制造无关控制台错误。
 const qaRoot = window.__zeusSessionStylesRoot ?? createRoot(document.getElementById('root')!);
 window.__zeusSessionStylesRoot = qaRoot;
@@ -2960,6 +3188,8 @@ qaRoot.render(
     <TimeoutRetryQaApp />
   ) : completeMessageQa ? (
     <CompleteMessageQaApp />
+  ) : activeReentryQa ? (
+    <ActiveTurnReentryQaApp />
   ) : motionQa ? (
     <MotionApp />
   ) : (

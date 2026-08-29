@@ -1,5 +1,5 @@
 import { memo, useLayoutEffect } from 'react';
-import type { ConversationState, NativeSessionItemBuffer } from './sessionTypes.js';
+import type { NativeSessionItemBuffer, NativeSessionState } from './sessionTypes.js';
 import { type SessionUiLanguage, useAdaptiveTranscriptText } from './ThreadItemView.js';
 
 export type ReasoningSummaryStatus = 'active' | 'waiting' | 'completed' | 'failed' | 'interrupted';
@@ -36,14 +36,12 @@ export function latestReasoningSummaryText(item: NativeSessionItemBuffer): strin
   return cleanReasoningSummary(summarySegments.at(-1) ?? item.text);
 }
 
-export function reasoningSummaryStatus(
-  item: NativeSessionItemBuffer,
-  state: { activeTurnId: string | null; conversationState: ConversationState; terminalTurnIds: Record<string, 'completed' | 'interrupted' | 'failed'> },
-): ReasoningSummaryStatus {
+export function reasoningSummaryStatus(item: NativeSessionItemBuffer, state: Pick<NativeSessionState, 'activeTurnId' | 'conversationState' | 'queue' | 'terminalTurnIds'>): ReasoningSummaryStatus {
   const terminal = state.terminalTurnIds[item.turnId];
   if (terminal) return terminal;
   if (item.status === 'failed') return 'failed';
   if (state.activeTurnId !== item.turnId) return 'completed';
+  if (state.queue?.state.type === 'paused' && state.queue.state.reason === 'interaction_authority_missing') return 'waiting';
   if (state.conversationState === 'waiting_approval' || state.conversationState === 'waiting_user_input' || state.conversationState === 'interrupt_confirm') return 'waiting';
   return 'active';
 }

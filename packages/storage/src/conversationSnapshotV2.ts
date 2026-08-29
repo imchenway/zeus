@@ -136,12 +136,33 @@ export interface ConversationSnapshotV2TurnSummary {
   updatedAt: string;
   agentKind: string | null;
   openingUserMessage: ConversationModelHistoryPageItem | null;
+  /**
+   * 活动轮次尚未形成 confirmed model history 时的有界可见投影。
+   * 这里只暴露 Snapshot V2 需要的展示字段，不把 Provider 摄取表直接当成客户端协议。
+   */
+  activeItems?: ConversationSnapshotV2ActiveItem[];
+  activeItemsTruncated?: boolean;
   process: {
     available: boolean;
     latestSequence: number;
   };
   resourcesAvailable: boolean;
   changeSetAvailable: boolean;
+}
+
+export interface ConversationSnapshotV2ActiveItem {
+  id: string;
+  order: number;
+  turnId: string;
+  providerItemId: string;
+  itemType: string;
+  status: 'in_progress';
+  phase: 'prework' | 'final_answer';
+  text: BoundedContentProjection;
+  payload: BoundedContentProjection;
+  startedAt: string | null;
+  completedAt: string | null;
+  updatedAt: string;
 }
 
 export interface ConversationSnapshotV2TurnPlan {
@@ -499,6 +520,7 @@ interface ModelHistoryProjectionRow {
 }
 
 const previewCharacterLimit = 2_048;
+const activeTurnItemLimit = 64;
 const maximumCursorLength = 4_096;
 const stableChangeSetStates = new Set(['applied', 'undone', 'conflicted', 'unavailable']);
 
@@ -565,10 +587,14 @@ export class ConversationSnapshotV2Repository {
     const title = redactSensitivePreview(conversation.title);
     const providerSettings = parseProviderSettings(conversation.provider_settings_json);
     const nextTurnSettings = parseNextTurnSettings(conversation.next_turn_settings_json, conversation.permission_mode, conversation.collaboration_mode);
-    const snapshotWithoutMetrics = {
-      schemaVersion: 2 as const,
-      structureGeneration: conversationSnapshotV2StructureGeneration as typeof conversationSnapshotV2StructureGeneration,
-      conversationSchemaGeneration: conversationSchemaGeneration as typeof conversationSchemaGeneration,
+    const activeItemProjection = activeTurn ? this.activeTurnItems(conversationId, activeTurn.id) : { items: [], truncated: false };
+    const activeItems = [...activeItemProjection.items];
+    let activeItemsTruncated = activeItemProjection.truncated;
+    const activeTurnSummary = activeTurn ? this.toTurnSummary(conversationId, activeTurn) : null;
+    const snapshotBase: ConversationSnapshotV2 = {
+      schemaVersion: 2,
+      structureGeneration: conversationSnapshotV2StructureGeneration,
+      conversationSchemaGeneration,
       throughEventSeq: stream?.latest_sequence ?? 0,
       eventStreamGeneration: stream?.generation_id ?? null,
       conversation: {
@@ -602,7 +628,7 @@ export class ConversationSnapshotV2Repository {
             updatedAt: currentSegment.updated_at,
           }
         : null,
-      activeTurn: activeTurn ? this.toTurnSummary(conversationId, activeTurn) : null,
+      activeTurn: activeTurnSummary,
       recentClosedTurns: recentClosedTurns.map((turn) => this.toTurnSummary(conversationId, turn)),
       // 会话正文首屏允许延后读取聚合指标；旧客户端未传该选项时仍保持原响应契约。
       sessionMetrics: options.includeSessionMetrics === false ? null : readConversationSessionMetrics(this.db, conversationId, activeTurn?.id ?? null),
@@ -621,6 +647,24 @@ export class ConversationSnapshotV2Repository {
         responseBytes: 0,
       },
     };
+    const buildSnapshot = (): ConversationSnapshotV2 =>
+      stableResponseBytes({
+        ...snapshotBase,
+        activeTurn: activeTurnSummary
+          ? {
+              ...activeTurnSummary,
+              activeItems: [...activeItems],
+              activeItemsTruncated,
+            }
+          : null,
+        limits: { ...snapshotBase.limits, responseBytes: 0 },
+      });
+    let snapshotWithoutMetrics = buildSnapshot();
+    while (snapshotWithoutMetrics.limits.responseBytes > byteLimit && activeItems.length > 0) {
+      activeItems.shift();
+      activeItemsTruncated = true;
+      snapshotWithoutMetrics = buildSnapshot();
+    }
     return finalizeBoundedResponse(snapshotWithoutMetrics, byteLimit, 'Snapshot V2 固定字段超过响应字节预算。');
   }
 
@@ -1179,6 +1223,62 @@ export class ConversationSnapshotV2Repository {
     return this.db.get<{ id: string }>(`SELECT id FROM conversation_turns WHERE provider_turn_id = ? AND conversation_id = ?`, [turnId, conversationId])?.id ?? null;
   }
 
+  private activeTurnItems(conversationId: string, turnId: string): { items: ConversationSnapshotV2ActiveItem[]; truncated: boolean } {
+    const rows = this.db.select<{
+      id: string;
+      native_item_id: string | null;
+      provider_item_id: string;
+      item_type: string;
+      phase: 'prework' | 'final_answer';
+      text_preview: string;
+      text_bytes: number;
+      payload_preview: string;
+      payload_bytes: number;
+      projection_truncated: number;
+      started_at: string | null;
+      completed_at: string | null;
+      updated_at: string;
+    }>(
+      `SELECT id, native_item_id, provider_item_id, item_type, phase,
+              substr(text_projection, 1, ?) AS text_preview,
+              length(CAST(text_projection AS BLOB)) AS text_bytes,
+              substr(payload_projection_json, 1, ?) AS payload_preview,
+              length(CAST(payload_projection_json AS BLOB)) AS payload_bytes,
+              projection_truncated, started_at, completed_at, updated_at
+         FROM conversation_provider_item_states
+        WHERE conversation_id = ? AND turn_id = ? AND status = 'in_progress'
+        ORDER BY
+          CASE
+            WHEN COALESCE(native_item_id, provider_item_id) GLOB 'item-[0-9]*'
+            THEN CAST(substr(COALESCE(native_item_id, provider_item_id), 6) AS INTEGER)
+            ELSE NULL
+          END DESC,
+          COALESCE(started_at, updated_at) DESC,
+          updated_at DESC,
+          id DESC
+        LIMIT ?`,
+      [previewCharacterLimit, previewCharacterLimit, conversationId, turnId, activeTurnItemLimit + 1],
+    );
+    const selected = rows.slice(0, activeTurnItemLimit).reverse();
+    return {
+      items: selected.map((row, order) => ({
+        id: row.id,
+        order,
+        turnId,
+        providerItemId: row.provider_item_id,
+        itemType: row.item_type,
+        status: 'in_progress' as const,
+        phase: row.phase,
+        text: activeItemProjection(row.text_preview, row.text_bytes, row.projection_truncated === 1),
+        payload: activeItemProjection(row.payload_preview, row.payload_bytes, row.projection_truncated === 1),
+        startedAt: row.started_at,
+        completedAt: row.completed_at,
+        updatedAt: row.updated_at,
+      })),
+      truncated: rows.length > activeTurnItemLimit,
+    };
+  }
+
   private toTurnSummary(conversationId: string, row: TurnRow): ConversationSnapshotV2TurnSummary {
     const latestProcess = this.db.get<{ process_sequence: number }>(
       `SELECT process_sequence
@@ -1518,6 +1618,11 @@ function boundedProjection(previewValue: string, byteLength: number, contentHand
     contentHandle,
     refreshRequired,
   };
+}
+
+function activeItemProjection(previewValue: string, byteLength: number, sourceTruncated: boolean): BoundedContentProjection {
+  const projection = boundedProjection(previewValue, byteLength, null, true);
+  return sourceTruncated && !projection.truncated ? { ...projection, truncated: true } : projection;
 }
 
 function buildSequencePage<T extends { sequence: number }>(context: SequencePageContext, candidates: T[]): ConversationSnapshotV2Page<T> {

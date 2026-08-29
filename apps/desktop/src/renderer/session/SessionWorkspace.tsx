@@ -2131,6 +2131,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
 
   function renderConversationComposer(): ReactNode {
     if (!props.state) return null;
+    const interactionAuthorityMissing = props.state.queue?.state.type === 'paused' && props.state.queue.state.reason === 'interaction_authority_missing';
     return (
       <SessionComposerProjection
         textareaRef={composerRef}
@@ -2148,7 +2149,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         onRemoveAttachment={actions.onRemoveAttachment}
         onRemoveBrowserSubmission={actions.onRemoveBrowserSubmission}
         onContextDraftChange={actions.onContextDraftChange}
-        readOnly={interactionReadOnly || props.state.queue?.submissions.some((submission) => submission.pausedReason === 'recovered_unsent')}
+        readOnly={interactionReadOnly || interactionAuthorityMissing || props.state.queue?.submissions.some((submission) => submission.pausedReason === 'recovered_unsent')}
         runtimeSettings={composerRuntimeSettings}
         onRuntimeSettingsChange={updateComposerRuntimeSettings}
         permissionMode={composerRuntimeSettings?.permissionMode ?? props.state.snapshot?.nextTurnSettings?.permissionMode ?? props.state.snapshot?.permissionMode ?? props.conversation?.permissionMode ?? 'read-only'}
@@ -2422,6 +2423,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     creationStatus={props.creationStatus}
                     onEditUserItem={transcriptInteractionsEnabled ? actions.onEditUserItem : undefined}
                     onRecoverQueue={transcriptInteractionsEnabled ? actions.onRecoverQueue : undefined}
+                    onInterrupt={!props.historyOnly && actions.onInterrupt ? actions.onInterrupt : undefined}
                     onRetryQueuedSubmission={transcriptInteractionsEnabled ? actions.onRetryQueuedSubmission : undefined}
                     onCancelQueuedSubmission={transcriptInteractionsEnabled ? actions.onDeleteQueuedSubmission : undefined}
                     openPlanItemKey={planWorkspaceItemKey}
