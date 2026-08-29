@@ -1512,6 +1512,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const [goalPanelOpen, setGoalPanelOpen] = useState(false);
   const [goalBusy, setGoalBusy] = useState(false);
   const [goalError, setGoalError] = useState<string | null>(null);
+  const [localSubmissionRevision, setLocalSubmissionRevision] = useState(0);
   const [serviceTierPreferences, setServiceTierPreferences] = useState<ProjectModelServiceTierPreference[]>([]);
   const [serviceTierPreferenceError, setServiceTierPreferenceError] = useState<string | null>(null);
   const browserSplitRef = useRef<HTMLDivElement | null>(null);
@@ -2143,7 +2144,10 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         serviceTierPreferences={serviceTierPreferences}
         onServiceTierPreferenceChange={saveServiceTierPreference}
         onDraftChange={(draft) => actions.onDraftChange?.(draft)}
-        onSubmit={(delivery, settings) => actions.onSubmit?.(delivery, settings)}
+        onSubmit={(delivery, settings) => {
+          setLocalSubmissionRevision((revision) => revision + 1);
+          return actions.onSubmit?.(delivery, settings);
+        }}
         onInterrupt={(turnId) => actions.onInterrupt?.(turnId)}
         onChooseAttachments={actions.onChooseAttachments}
         onAddAttachments={actions.onAddAttachments}
@@ -2419,10 +2423,18 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     language={props.language}
                     historyOnly={props.historyOnly}
                     projectPersistedPlans={props.projectPersistedPlans}
+                    localSubmissionRevision={localSubmissionRevision}
                     historyLoading={Boolean(props.transcriptLoading ?? ((props.state.transportState === 'hydrating' || props.state.transportState === 'connecting') && !props.state.snapshot)) && !props.state.snapshot}
                     onLatestContentVisibilityChange={props.onLatestContentVisibilityChange}
                     creationStatus={props.creationStatus}
-                    onEditUserItem={transcriptInteractionsEnabled ? actions.onEditUserItem : undefined}
+                    onEditUserItem={
+                      transcriptInteractionsEnabled && actions.onEditUserItem
+                        ? (item, content) => {
+                            setLocalSubmissionRevision((revision) => revision + 1);
+                            return actions.onEditUserItem?.(item, content);
+                          }
+                        : undefined
+                    }
                     onRecoverQueue={transcriptInteractionsEnabled ? actions.onRecoverQueue : undefined}
                     onRetryQueuedSubmission={transcriptInteractionsEnabled ? actions.onRetryQueuedSubmission : undefined}
                     onCancelQueuedSubmission={transcriptInteractionsEnabled ? actions.onDeleteQueuedSubmission : undefined}

@@ -257,6 +257,8 @@ export function useTranscriptViewportVirtualizer(input: {
   pinnedRowKeys: ReadonlySet<string>;
   containerRef: RefObject<HTMLElement | null>;
   isFollowingLatest?: () => boolean;
+  getReadingAnchor?: () => TranscriptViewportAnchor | null;
+  onFollowingLatestGeometryChange?: () => void;
   suspendAutomaticAnchor?: boolean;
 }) {
   const scopeRef = useRef(input.scopeKey);
@@ -264,6 +266,8 @@ export function useTranscriptViewportVirtualizer(input: {
   const layoutRef = useRef(new TranscriptViewportLayout());
   const bindingsRef = useRef(new Map<string, RowBinding>());
   const rowObserverRef = useRef<ResizeObserver | null>(null);
+  const windowElementRef = useRef<HTMLElement | null>(null);
+  const windowObserverRef = useRef<ResizeObserver | null>(null);
   const updateFrameRef = useRef<number | null>(null);
   const pendingViewportRef = useRef<{ scrollTop: number; viewportHeight: number } | null>(null);
   const measurementAnchorRef = useRef<TranscriptViewportAnchor | null>(null);
@@ -301,12 +305,14 @@ export function useTranscriptViewportVirtualizer(input: {
       if (!rowKey) return;
       const height = element.getBoundingClientRect().height;
       const container = input.containerRef.current;
-      const candidateAnchor = !measurementAnchorRef.current && !input.suspendAutomaticAnchor && !input.isFollowingLatest?.() && container ? captureTranscriptViewportAnchor(container) : null;
+      const followingLatest = Boolean(input.isFollowingLatest?.());
+      const candidateAnchor = !measurementAnchorRef.current && !input.suspendAutomaticAnchor && !followingLatest && container ? (input.getReadingAnchor?.() ?? captureTranscriptViewportAnchor(container)) : null;
       if (!layoutRef.current.updateMeasuredHeight(rowKey, height, cacheRef.current)) return;
       measurementAnchorRef.current ??= candidateAnchor;
       scheduleUpdate();
+      if (followingLatest) input.onFollowingLatestGeometryChange?.();
     },
-    [input.containerRef, input.isFollowingLatest, input.suspendAutomaticAnchor, scheduleUpdate],
+    [input.containerRef, input.getReadingAnchor, input.isFollowingLatest, input.onFollowingLatestGeometryChange, input.suspendAutomaticAnchor, scheduleUpdate],
   );
 
   useLayoutEffect(() => {
@@ -344,10 +350,24 @@ export function useTranscriptViewportVirtualizer(input: {
     if (typeof ResizeObserver !== 'function') return;
     const observer = new ResizeObserver(() => {
       setViewport((current) => ({ ...current, viewportHeight: positiveMetric(container.clientHeight, current.viewportHeight) }));
+      if (input.isFollowingLatest?.()) input.onFollowingLatestGeometryChange?.();
     });
     observer.observe(container);
     return () => observer.disconnect();
-  }, [input.containerRef, input.scopeKey]);
+  }, [input.containerRef, input.isFollowingLatest, input.onFollowingLatestGeometryChange, input.scopeKey]);
+
+  useLayoutEffect(() => {
+    if (typeof ResizeObserver !== 'function') return;
+    const observer = new ResizeObserver(() => {
+      if (input.isFollowingLatest?.()) input.onFollowingLatestGeometryChange?.();
+    });
+    windowObserverRef.current = observer;
+    if (windowElementRef.current) observer.observe(windowElementRef.current);
+    return () => {
+      observer.disconnect();
+      if (windowObserverRef.current === observer) windowObserverRef.current = null;
+    };
+  }, [input.isFollowingLatest, input.onFollowingLatestGeometryChange, input.scopeKey]);
 
   useLayoutEffect(
     () => () => {
@@ -388,6 +408,12 @@ export function useTranscriptViewportVirtualizer(input: {
     [scheduleUpdate],
   );
 
+  const windowRef = useCallback((element: HTMLElement | null): void => {
+    if (windowElementRef.current) windowObserverRef.current?.unobserve(windowElementRef.current);
+    windowElementRef.current = element;
+    if (element) windowObserverRef.current?.observe(element);
+  }, []);
+
   const effectiveViewport = viewport.scopeKey === input.scopeKey ? viewport : { scopeKey: input.scopeKey, scrollTop: null, viewportHeight: 720 };
   const projection = useMemo(() => {
     const anchorRowKey = measurementAnchorRef.current?.rowKey;
@@ -398,6 +424,12 @@ export function useTranscriptViewportVirtualizer(input: {
       pinnedRowKeys,
     });
   }, [effectiveViewport.scrollTop, effectiveViewport.viewportHeight, input.pinnedRowKeys, input.rowKeys, layout, layoutRevision]);
+
+  useLayoutEffect(() => {
+    // 行测量会先修改高度树、再提交新的 spacer/窗口投影。必须在投影真正进入 DOM 后
+    // 再通知一次底部跟随，否则首次请求只会滚到旧 scrollHeight 的底部。
+    if (input.isFollowingLatest?.()) input.onFollowingLatestGeometryChange?.();
+  }, [input.isFollowingLatest, input.onFollowingLatestGeometryChange, projection]);
 
   useLayoutEffect(() => {
     const anchor = measurementAnchorRef.current;
@@ -412,6 +444,7 @@ export function useTranscriptViewportVirtualizer(input: {
 
   return {
     projection,
+    windowRef,
     rowRef,
     rowElement: (rowKey: string): HTMLElement | null => bindingsRef.current.get(rowKey)?.element ?? null,
     synchronizeViewport,
