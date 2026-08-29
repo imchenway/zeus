@@ -23,6 +23,7 @@ import {
 import { appendProviderSyncAudit, type ProviderSyncAuditOutcome } from './providerSyncAudit.js';
 import { sanitizeConversationItemPayload } from './conversationResources.js';
 import { shouldPreserveProviderStopTerminalTurn } from './codexProviderStopRecoveryApplication.js';
+import { inspectCodexRolloutRequestUserInputEvidence } from './codexRolloutRequestUserInput.js';
 
 const compatibilitySnapshotItemIdPattern = /^item-\d+$/u;
 
@@ -94,6 +95,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     failUnsentSubmissionsBeforeProviderDispatch,
     persistProviderUserMessage,
     projectProviderUserMessage,
+    processProjector,
     providerHistoryReconcilePageLimit,
     providerHistoryReconcileTurnLimit,
     reconcileTerminalTurnSubmissions,
@@ -105,6 +107,47 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     threadPath,
     upsertRecoveredTurn,
   } = dependencies;
+  const inspectedRolloutTurnStates = new Set<string>();
+
+  async function reconcileRecoveredRequestUserInput(
+    conversation: ZeusConversationWithMessagesRecord,
+    providerThreadId: string,
+    providerTurns: readonly CodexTurnSnapshot[],
+    localTurns: ReadonlyMap<string, ZeusConversationTurnRecord>,
+  ): Promise<void> {
+    const managerState = options.manager.getState();
+    const generationId = options.manager.generationForThread(providerThreadId) ?? (managerState.type === 'ready' ? managerState.generationId : null);
+    if (!generationId) return;
+    const candidates = providerTurns.filter((turn) => !inspectedRolloutTurnStates.has(`${generationId}:${turn.id}:${classifySnapshotTurn(turn)}`));
+    if (candidates.length === 0) return;
+    const inspection = await inspectCodexRolloutRequestUserInputEvidence({
+      rolloutPath: conversation.nativeSessionPath,
+      providerThreadId,
+      providerTurnIds: candidates.map((turn) => turn.id),
+    });
+    if (inspection.status !== 'found') return;
+    for (const turn of candidates) inspectedRolloutTurnStates.add(`${generationId}:${turn.id}:${classifySnapshotTurn(turn)}`);
+    const providerTurnsById = new Map(candidates.map((turn) => [turn.id, turn]));
+    const segment = options.execution.segmentByNativeSession(providerThreadId, conversation.id);
+    if (!segment || segment.state === 'sealed' || segment.state === 'abandoned') return;
+    for (const evidence of inspection.requests) {
+      const localTurn = localTurns.get(evidence.providerTurnId);
+      const providerTurn = providerTurnsById.get(evidence.providerTurnId);
+      if (!localTurn || !providerTurn) continue;
+      const classification = classifySnapshotTurn(providerTurn);
+      processProjector.projectRecoveredRequestUserInput({
+        conversationId: conversation.id,
+        turnId: localTurn.id,
+        segment,
+        evidence,
+        providerThreadId,
+        turnTerminal: classification !== 'active',
+        turnCompletedAt: localTurn.completedAt,
+        observedAt: now(),
+      });
+    }
+  }
+
   async function ensureProviderSyncCheckpoint(conversation: ZeusConversationWithMessagesRecord, input: { priority?: 'control' } = {}) {
     const providerThreadId = requireString(conversation.providerThreadId, 'provider thread id');
     const existing = syncCheckpoints.getByConversation(conversation.id);
@@ -237,6 +280,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       const projected = projectProviderSnapshotTurn(conversation, providerThreadId, providerTurn, existingTurn);
       localTurns.set(providerTurn.id, projected);
     }
+    await reconcileRecoveredRequestUserInput(options.conversations.getById(conversation.id) ?? conversation, providerThreadId, eligibleDescending, localTurns);
 
     const newest = eligibleDescending[0];
     if (newest) syncCheckpoints.advance({ conversationId: conversation.id, providerThreadId, lastSyncedTurnId: newest.id, timestamp: now() });

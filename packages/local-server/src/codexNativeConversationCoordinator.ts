@@ -3416,6 +3416,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     failUnsentSubmissionsBeforeProviderDispatch,
     persistProviderUserMessage,
     projectProviderUserMessage,
+    processProjector,
     providerHistoryReconcilePageLimit,
     providerHistoryReconcileTurnLimit,
     reconcileTerminalTurnSubmissions,

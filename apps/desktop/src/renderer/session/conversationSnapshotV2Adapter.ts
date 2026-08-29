@@ -510,8 +510,19 @@ function historicalUserPresentation(content: unknown, userMessage: boolean): Rec
 
 function processItems(items: NativeConversationProcessV2Item[], providerTurnByLocalId: ReadonlyMap<string, string>): NativeItemSnapshot[] {
   return items.map((item) => {
-    const detail = parseProjection(item.detail.preview, item.detail.truncated);
-    const type = item.kind === 'reasoning' ? 'reasoning' : item.kind === 'command' ? 'commandExecution' : item.kind === 'context_compaction' ? 'contextCompaction' : item.kind === 'warning' ? 'error' : 'dynamicToolCall';
+    const detail = item.kind === 'waiting' && item.presentation ? item.presentation : parseProjection(item.detail.preview, item.detail.truncated);
+    const type =
+      item.kind === 'reasoning'
+        ? 'reasoning'
+        : item.kind === 'command'
+          ? 'commandExecution'
+          : item.kind === 'context_compaction'
+            ? 'contextCompaction'
+            : item.kind === 'waiting'
+              ? 'requestUserInput'
+              : item.kind === 'warning'
+                ? 'error'
+                : 'dynamicToolCall';
     const text = processProjectionText(item, detail);
     return {
       id: item.id,
@@ -555,7 +566,37 @@ function processPresentationPayload(item: NativeConversationProcessV2Item, detai
   const source = recordValue(detailRecord?.payload) ?? recordValue(detailRecord?.block) ?? detailRecord;
   const presentation: Record<string, unknown> = {};
   if (source) {
-    for (const key of ['type', 'command', 'cwd', 'aggregatedOutput', 'output', 'stdout', 'stderr', 'name', 'toolName', 'arguments', 'args', 'query', 'status', 'error', 'summary', 'content', 'presentation', 'commandActions'] as const) {
+    for (const key of [
+      'type',
+      'command',
+      'cwd',
+      'aggregatedOutput',
+      'output',
+      'stdout',
+      'stderr',
+      'name',
+      'toolName',
+      'arguments',
+      'args',
+      'query',
+      'status',
+      'error',
+      'summary',
+      'content',
+      'presentation',
+      'commandActions',
+      'requestType',
+      'recovery',
+      'submissionAuthority',
+      'providerThreadId',
+      'providerTurnId',
+      'providerItemId',
+      'callId',
+      'questions',
+      'outcome',
+      'answers',
+      'resolutionReason',
+    ] as const) {
       if (source[key] !== undefined) presentation[key] = source[key];
     }
   }

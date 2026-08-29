@@ -641,6 +641,7 @@ export interface NativeConversationProcessV2Item {
   sourceEventId: string | null;
   startedAt: string;
   completedAt: string | null;
+  presentation: Record<string, unknown> | null;
   detail: NativeBoundedContentProjection;
   toolResult: NativeConversationModelHistoryV2Item['toolResult'];
 }

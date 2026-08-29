@@ -2229,6 +2229,39 @@ const userInputRequest: NativePendingRequest = {
   resolvedAt: null,
 };
 
+const recoveredUserInputItem: NativeSessionItemBuffer = {
+  ...motionItem('recovered-user-input', 'requestUserInput', 'in_progress', '等待用户操作', {
+    provider: 'codex',
+    itemType: 'requestUserInput',
+    requestType: 'request_user_input',
+    recovery: 'content_only',
+    submissionAuthority: 'unavailable',
+    providerThreadId: 'thread-recovered-input',
+    providerTurnId: 'turn-recovered-input',
+    providerItemId: 'fc_recovered_input',
+    callId: 'call_recovered_input',
+    outcome: 'pending',
+    questions: [
+      {
+        id: 'test_instance_action',
+        header: '测试占用',
+        question: '如何处理仍占用 dev.hypha.zeus.test 的 ZEUS-0384 实例？',
+        options: [
+          { label: '继续等待（Recommended）', description: '保持最严格隔离，不触碰其他任务实例，释放后自动继续。' },
+          { label: '结束该实例', description: '仅在明确授权后结束其进程，再启动当前任务的独立验收。' },
+        ],
+        isOther: false,
+        isSecret: false,
+        multiple: false,
+      },
+    ],
+  }),
+  conversationId: 'recovered-input',
+  threadId: 'thread-recovered-input',
+  turnId: 'turn-recovered-input',
+  updatedAt: '2026-08-29T04:29:35.580Z',
+};
+
 function ReferencePanel(props: { title: string; src: string; className?: string }) {
   return (
     <section className={`qa-reference-panel ${props.className ?? ''}`}>
@@ -2271,6 +2304,15 @@ function App() {
         <section className="qa-implementation-panel" data-testid="user-input-implementation">
           <h2>真实请求结构：带 isBlocking 元数据</h2>
           <PendingRequestSurface request={userInputRequest} language="zh-CN" permissionMode="auto" onRespond={() => undefined} autoFocus={false} />
+        </section>
+      </section>
+
+      <section className="qa-comparison qa-approval-comparison">
+        <section className="qa-implementation-panel session-codex-parity-v1" data-testid="recovered-user-input-implementation">
+          <h2>断线恢复问题：只读且无提交入口</h2>
+          <div className="ai-workspace">
+            <ThreadItemView item={recoveredUserInputItem} language="zh-CN" />
+          </div>
         </section>
       </section>
 
