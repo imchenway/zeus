@@ -1041,14 +1041,14 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
   }
   if (row.item.type === 'plan') {
     return (
-      <TranscriptV2ContentBoundary item={row.item} language={options.props.language} onLoadContent={options.props.onLoadV2Content}>
+      <TranscriptV2ContentBoundary item={row.item} onLoadContent={options.props.onLoadV2Content}>
         <PlanSummary item={row.item} language={options.props.language} motionActive={row.item.key === options.motionFocus?.itemKey} panelOpen={options.props.openPlanItemKey === row.item.key} onOpenPanel={options.props.onOpenPlan} />
       </TranscriptV2ContentBoundary>
     );
   }
   if (normalizeItemType(row.item.type) === 'reasoning') {
     return (
-      <TranscriptV2ContentBoundary item={row.item} language={options.props.language} onLoadContent={options.props.onLoadV2Content}>
+      <TranscriptV2ContentBoundary item={row.item} onLoadContent={options.props.onLoadV2Content}>
         <SessionReasoningSummary
           item={row.item}
           language={options.props.language}
@@ -1061,7 +1061,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
   }
   const showPendingDeliveryFeedback = row.item.optimistic && shouldShowPendingMessageDeliveryFeedback(row.item, options.showThinking);
   return (
-    <TranscriptV2ContentBoundary item={row.item} language={options.props.language} onLoadContent={options.props.onLoadV2Content}>
+    <TranscriptV2ContentBoundary item={row.item} onLoadContent={options.props.onLoadV2Content}>
       <ThreadItemView
         item={row.item}
         language={options.props.language}
@@ -1094,69 +1094,24 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
   );
 }
 
-function TranscriptV2ContentBoundary(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage; onLoadContent?: (handle: string) => Promise<void>; children: ReactNode }): ReactNode {
+function TranscriptV2ContentBoundary(props: { item: NativeSessionItemBuffer; onLoadContent?: (handle: string) => Promise<void>; children: ReactNode }): ReactNode {
   const handle = typeof props.item.payload.v2ContentHandle === 'string' && props.item.payload.v2ContentHandle ? props.item.payload.v2ContentHandle : null;
   const truncated = props.item.payload.v2ContentKind === 'model_history' && props.item.payload.v2ContentTruncated === true;
   const canLoad = Boolean(handle && props.onLoadContent);
   const attemptedHandleRef = useRef<string | null>(null);
-  const loadingHandleRef = useRef<string | null>(null);
-  const requestEpochRef = useRef(0);
-  const [attempt, setAttempt] = useState<{ handle: string; loading: boolean; error: unknown } | null>(null);
-  const activeAttempt = attempt?.handle === handle ? attempt : null;
-
-  const load = useCallback(async (): Promise<void> => {
-    if (!handle || !props.onLoadContent || loadingHandleRef.current === handle) return;
-    const epoch = ++requestEpochRef.current;
-    loadingHandleRef.current = handle;
-    setAttempt({ handle, loading: true, error: null });
-    try {
-      await props.onLoadContent(handle);
-    } catch (error) {
-      if (epoch === requestEpochRef.current) setAttempt({ handle, loading: false, error });
-    } finally {
-      if (epoch === requestEpochRef.current) {
-        loadingHandleRef.current = null;
-        setAttempt((current) => (current?.handle === handle && current.error === null ? { ...current, loading: false } : current));
-      }
-    }
-  }, [handle, props.onLoadContent]);
 
   useEffect(() => {
-    if (!truncated || !canLoad || !handle || attemptedHandleRef.current === handle) return;
+    if (!truncated) {
+      attemptedHandleRef.current = null;
+      return;
+    }
+    if (!canLoad || !handle || !props.onLoadContent || attemptedHandleRef.current === handle) return;
     attemptedHandleRef.current = handle;
-    void load();
-  }, [canLoad, handle, load, truncated]);
+    // 完整正文恢复由 Controller 持续收敛；消息组件不把本地读取失败转嫁成用户操作。
+    void props.onLoadContent(handle).catch(() => undefined);
+  }, [canLoad, handle, props.onLoadContent, truncated]);
 
-  useEffect(
-    () => () => {
-      requestEpochRef.current += 1;
-    },
-    [],
-  );
-
-  return (
-    <>
-      {props.children}
-      {truncated ? (
-        <div className="session-message-content-state" aria-busy={activeAttempt?.loading || undefined}>
-          {activeAttempt?.error ? (
-            <>
-              <span role="alert" title={activeAttempt.error instanceof Error ? activeAttempt.error.message : undefined}>
-                {props.language === 'zh-CN' ? '消息未完整加载。' : 'The message did not load completely.'}
-              </span>
-              <button type="button" disabled={activeAttempt.loading || !canLoad} onClick={() => void load()}>
-                {props.language === 'zh-CN' ? '重试' : 'Retry'}
-              </button>
-            </>
-          ) : (
-            <span role="status">
-              {canLoad ? (props.language === 'zh-CN' ? '正在读取完整消息…' : 'Loading the complete message…') : props.language === 'zh-CN' ? '完整消息暂时无法读取。' : 'The complete message is temporarily unavailable.'}
-            </span>
-          )}
-        </div>
-      ) : null}
-    </>
-  );
+  return props.children;
 }
 
 function TranscriptActiveStatus(props: { language: SessionUiLanguage; kind: 'starting' | 'thinking' }): ReactNode {
