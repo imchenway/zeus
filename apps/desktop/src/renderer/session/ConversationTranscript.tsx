@@ -62,6 +62,8 @@ export interface ConversationTranscriptProps {
   onRecoverQueue?: () => void | Promise<void>;
   onInterrupt?: (turnId: string) => void | Promise<void>;
   onRetryQueuedSubmission?: (submissionId: string) => void | Promise<void>;
+  onRetryPendingSend?: (clientUserMessageId: string) => void | Promise<void>;
+  onCancelPendingSend?: (clientUserMessageId: string) => void | Promise<void>;
   onCancelQueuedSubmission?: (submissionId: string) => void | Promise<void>;
   onSendQueuedNow?: (submissionId: string) => void | Promise<void>;
   /** 当前会话工作面每次本地提交或编辑重发后递增；不依赖异步 Provider 投影推断用户发送。 */
@@ -1289,6 +1291,9 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
           onRecoverQueue={options.props.onRecoverQueue}
           onRetryQueuedSubmission={options.props.onRetryQueuedSubmission}
           onCancelQueuedSubmission={options.props.onCancelQueuedSubmission}
+          clientUserMessageId={row.item.clientUserMessageId ?? row.item.durableClientUserMessageId}
+          onRetryPendingSend={options.props.onRetryPendingSend}
+          onCancelPendingSend={options.props.onCancelPendingSend}
         />
       ) : null}
     </TranscriptV2ContentBoundary>
@@ -1350,12 +1355,16 @@ function MessageDeliveryOutcomeFeedback(props: {
   onRecoverQueue?: () => void | Promise<void>;
   onRetryQueuedSubmission?: (submissionId: string) => void | Promise<void>;
   onCancelQueuedSubmission?: (submissionId: string) => void | Promise<void>;
+  clientUserMessageId?: string;
+  onRetryPendingSend?: (clientUserMessageId: string) => void | Promise<void>;
+  onCancelPendingSend?: (clientUserMessageId: string) => void | Promise<void>;
 }): ReactNode {
   const [busyAction, setBusyAction] = useState<'recover' | 'retry' | 'cancel' | null>(null);
   const [actionError, setActionError] = useState<unknown>(null);
   useApplicationErrorDialog(actionError, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' });
   const pausedReason = props.item.payload.pausedReason;
   const interactionResponseRecovery = props.item.payload.recoveryKind === 'interaction_response';
+  const localAcceptanceFailure = Boolean(props.item.optimistic && !props.submissionId && props.clientUserMessageId);
   if (interactionResponseRecovery && props.item.status === 'queued') {
     return (
       <section className="session-message-delivery-feedback" data-state="interaction-recovery-pending" role="status" aria-live="polite">
@@ -1403,6 +1412,16 @@ function MessageDeliveryOutcomeFeedback(props: {
               ? '回答已保存，但原会话恢复失败；续接尚未发送。'
               : 'Your answer was saved, but the original conversation could not be restored. The continuation was not sent.'}
         </span>
+      ) : localAcceptanceFailure ? (
+        <span>
+          {failed
+            ? props.language === 'zh-CN'
+              ? '消息尚未被 Zeus 接收；重试会沿用原消息身份，不会创建第二条消息。'
+              : 'Zeus has not accepted this message. Retrying reuses the original message identity.'
+            : props.language === 'zh-CN'
+              ? '暂时无法确认 Zeus 是否已经接收；系统不会盲目重复发送。'
+              : 'Zeus acceptance cannot be confirmed yet. The message will not be replayed blindly.'}
+        </span>
       ) : providerStopRecoveryFailed ? (
         <span>{props.language === 'zh-CN' ? '无法确认上次运行已安全停止。' : 'The previous run could not be confirmed as safely stopped.'}</span>
       ) : recoveredUnsent ? (
@@ -1412,7 +1431,26 @@ function MessageDeliveryOutcomeFeedback(props: {
       ) : (
         <VisibleApplicationError error={deliveryError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
       )}
-      {interactionResponseRecovery ? (
+      {localAcceptanceFailure ? (
+        <div className="session-message-delivery-actions">
+          <button
+            type="button"
+            disabled={busyAction !== null || !props.clientUserMessageId}
+            onClick={() => runAction('retry', props.clientUserMessageId && props.onRetryPendingSend ? () => props.onRetryPendingSend?.(props.clientUserMessageId!) : undefined)}
+          >
+            {unconfirmed ? (props.language === 'zh-CN' ? '重新确认' : 'Check again') : props.language === 'zh-CN' ? '重试' : 'Retry'}
+          </button>
+          {failed ? (
+            <button
+              type="button"
+              disabled={busyAction !== null || !props.clientUserMessageId}
+              onClick={() => runAction('cancel', props.clientUserMessageId && props.onCancelPendingSend ? () => props.onCancelPendingSend?.(props.clientUserMessageId!) : undefined)}
+            >
+              {props.language === 'zh-CN' ? '取消本地消息' : 'Discard local message'}
+            </button>
+          ) : null}
+        </div>
+      ) : interactionResponseRecovery ? (
         <div className="session-message-delivery-actions">
           <button type="button" disabled={busyAction !== null} onClick={() => runAction('recover', props.onRecoverQueue)}>
             {props.language === 'zh-CN' ? '重新恢复' : 'Restore again'}

@@ -158,6 +158,8 @@ export interface SessionWorkspaceActions {
   onRemoveAttachment?: (attachment: NativeConversationAttachment) => void;
   onEditQueuedSubmission?: (submissionId: string, content: string) => void | Promise<void>;
   onRetryQueuedSubmission?: (submissionId: string) => void | Promise<void>;
+  onRetryPendingSend?: (clientUserMessageId: string) => void | Promise<void>;
+  onCancelPendingSend?: (clientUserMessageId: string) => void | Promise<void>;
   onRerouteQueuedSubmission?: (submissionId: string, settings: NativeNextTurnSettings) => void | Promise<void>;
   onDeleteQueuedSubmission?: (submissionId: string) => void | Promise<void>;
   onSendQueuedNow?: (submissionId: string) => void | Promise<void>;
@@ -730,6 +732,13 @@ export function createConnectedSessionActions(input: { controller: SessionContro
       await input.controller.editQueuedSubmission(submissionId, content);
     },
     onRetryQueuedSubmission: (submissionId) => settle(input.controller.retryQueuedSubmission(submissionId)),
+    // 本地未接受消息的重试/取消必须把拒绝原因返回给气泡，不能像全局状态操作一样静默吞掉。
+    onRetryPendingSend: async (clientUserMessageId) => {
+      await input.controller.retryPendingSend(clientUserMessageId);
+    },
+    onCancelPendingSend: async (clientUserMessageId) => {
+      await input.controller.cancelPendingSend(clientUserMessageId);
+    },
     onRerouteQueuedSubmission: (submissionId, settings) => settle(input.controller.rerouteQueuedSubmission(submissionId, settings)),
     // 删除未进入 provider turn 的内容是本地软删除；失败必须回到气泡，不得静默制造“点了没反应”。
     onDeleteQueuedSubmission: async (submissionId) => {
@@ -2465,6 +2474,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     onRecoverQueue={transcriptInteractionsEnabled ? actions.onRecoverQueue : undefined}
                     onInterrupt={!props.historyOnly && actions.onInterrupt ? actions.onInterrupt : undefined}
                     onRetryQueuedSubmission={transcriptInteractionsEnabled ? actions.onRetryQueuedSubmission : undefined}
+                    onRetryPendingSend={transcriptInteractionsEnabled ? actions.onRetryPendingSend : undefined}
+                    onCancelPendingSend={transcriptInteractionsEnabled ? actions.onCancelPendingSend : undefined}
                     onCancelQueuedSubmission={transcriptInteractionsEnabled ? actions.onDeleteQueuedSubmission : undefined}
                     onSendQueuedNow={transcriptInteractionsEnabled ? actions.onSendQueuedNow : undefined}
                     openPlanItemKey={planWorkspaceItemKey}

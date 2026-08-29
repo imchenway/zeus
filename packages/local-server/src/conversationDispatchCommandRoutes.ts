@@ -65,6 +65,7 @@ export interface ConversationDispatchCommandRouteOperations {
   queueResume(input: { params: ConversationParams; operationIdentity: string }): Promise<unknown>;
   queueRecover(input: { params: ConversationParams; operationIdentity: string }): Promise<unknown>;
   queueReorder(input: { params: ConversationParams; orderedSubmissionIds: string[] }): unknown;
+  afterMessageAccepted(input: { params: ConversationParams; message: Record<string, unknown>; result: RouteResponse; replayed: boolean }): void;
   afterCoreAccepted(input: { kind: 'queue_update' | 'queue_retry' | 'queue_reroute' | 'queue_delete' | 'request_snooze' | 'queue_reorder'; params: ConversationParams; result: unknown }): void;
 }
 
@@ -129,6 +130,7 @@ export function registerConversationDispatchCommandRoutes(options: {
           }),
         isExplicitRejection: isExplicitRouteRejection,
       });
+      operations.afterMessageAccepted({ params: request.params, message: parsed.input, result: executed.result, replayed: executed.replayed });
       return reply.code(executed.result.statusCode).send(executed.result.body);
     } catch (error) {
       return sendRouteError(reply, error);

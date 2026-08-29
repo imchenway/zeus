@@ -966,6 +966,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     await input.segmentLifecycle?.prepare(submission);
     await persist();
     await input.providerWriteLifecycle?.markPrepared(submission.id);
+    if (input.deferInitialDispatch) return accepted(submission, 'queued', null, null);
     return dispatchSubmission(conversation, submission, input.providerWriteLifecycle, false, input.segmentLifecycle);
   }
 
@@ -1152,6 +1153,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     await input.segmentLifecycle?.prepare(submission);
     await persist();
     await input.providerWriteLifecycle?.markPrepared(submission.id);
+    if (input.deferDispatch) return accepted(submission, 'queued', conversation.providerThreadId, null);
     if (!requiresNewSegment && providerStopRecovery.hasPendingEvidence(conversation.id)) {
       const recovery = await providerStopRecovery.recoverForNewSubmission(conversation.id);
       if (recovery === 'pending') return accepted(options.submissions.getById(submission.id) ?? submission, 'queued', conversation.providerThreadId, null);
@@ -1222,7 +1224,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   async function dispatchQueuedMessage(input: { conversationId: string; submissionId: string; segmentLifecycle: ConversationSegmentLifecycle }): Promise<NativeAcceptedOperation> {
     assertOpen();
-    const conversation = requireConversation(input.conversationId);
+    const conversation = input.segmentLifecycle.requiresNewSegment ? requireProductConversation(input.conversationId) : requireConversation(input.conversationId);
     const submission = requireOwnedSubmission(input.conversationId, input.submissionId);
     if (submission.status !== 'queued') {
       throw coordinatorError('ZEUS_NATIVE_SUBMISSION_NOT_QUEUED', 'Only a queued native submission can be dispatched.');

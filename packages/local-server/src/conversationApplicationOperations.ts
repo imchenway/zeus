@@ -827,15 +827,12 @@ export function createConversationApplicationOperations(dependencies: Conversati
     const conversationSkill = segmentLifecycle?.requiresNewSegment ? readNativeConversationSkill(conversationSubmissions.listByConversation(conversation.id)) : null;
     const conflictAttempt = taskIntegrationAttempts.getByConversationId(conversation.id);
     const conflictPreparationHeld = conflictAttempt?.state === 'preparing' || conflictAttempt?.state === 'failed';
-    const executionBusy =
-      conversationTurns.listByConversation(conversation.id).some((turn) => turn.status === 'running' || turn.status === 'waiting' || turn.status === 'dispatching') ||
-      conversationSubmissions.listByConversation(conversation.id).some((submission) => submission.status === 'dispatching' || submission.status === 'active');
     if (conflictPreparationHeld && delivery === 'steer_now') {
       throw nativeApiError('ZEUS_CONFLICT_PREPARATION_NOT_ACTIVE', '冲突现场尚未准备完成，补充消息只能进入当前会话队列。');
     }
     const nativeOperation = await (async () => {
       if (selectedAgentKind === 'pi') {
-        if (delivery === 'queue' && executionBusy && !conflictPreparationHeld) {
+        if (delivery === 'queue') {
           return piNativeCoordinator.queueHeldMessage({
             conversation,
             submissionId: `conversation_submission_${createHash('sha256').update(`${stableOperationId}\0pi-queued`).digest('hex').slice(0, 24)}`,
@@ -850,80 +847,19 @@ export function createConversationApplicationOperations(dependencies: Conversati
             ...(browserCommentContent ? { browserCommentContent } : {}),
             ...(conversationContext ? { conversationContext } : {}),
             ...(conversationSkill ? { skill: conversationSkill } : {}),
-            holdDispatch: false,
+            holdDispatch: conflictPreparationHeld,
+            providerWriteLifecycle,
             ...(segmentLifecycle ? { segmentLifecycle } : {}),
           });
         }
-        if (conflictPreparationHeld) {
-          return piNativeCoordinator.queueHeldMessage({
-            conversation,
-            submissionId: `conversation_submission_${createHash('sha256').update(`${stableOperationId}\0pi-held`).digest('hex').slice(0, 24)}`,
-            content,
-            model: { sourceId: effectiveModelSourceId, modelId: effectiveModel, displayName: null },
-            ...(selectedEffort ? { thinkingLevel: selectedEffort } : {}),
-            ...(permissionMode ? { permissionMode } : {}),
-            idempotencyKey,
-            clientUserMessageId,
-            attachments,
-            browserComments,
-            ...(browserCommentContent ? { browserCommentContent } : {}),
-            ...(conversationContext ? { conversationContext } : {}),
-            ...(conversationSkill ? { skill: conversationSkill } : {}),
-          });
-        }
-        if (delivery === 'steer_now') {
-          return piNativeCoordinator.steerMessage({
-            conversation,
-            submissionId: `conversation_submission_${createHash('sha256').update(`${stableOperationId}\0pi-steer`).digest('hex').slice(0, 24)}`,
-            content,
-            expectedTurnId: expectedTurnId!,
-            idempotencyKey,
-            clientUserMessageId,
-            providerWriteLifecycle,
-          });
-        }
-        const submissionId = `conversation_submission_${createHash('sha256').update(`${stableOperationId}\0pi-submission`).digest('hex').slice(0, 24)}`;
-        if (segmentLifecycle?.requiresNewSegment) {
-          return piNativeCoordinator.startConversation({
-            conversationId: conversation.id,
-            submissionId,
-            projectId: conversation.projectId,
-            ...(conversation.taskId ? { taskId: conversation.taskId } : {}),
-            ...(conversation.workspaceId ? { workspaceId: conversation.workspaceId } : {}),
-            ...(conversation.environmentId ? { environmentId: conversation.environmentId } : {}),
-            conversationTitle: conversation.title,
-            cwd: executionRoot,
-            prompt: content,
-            model: { sourceId: effectiveModelSourceId, modelId: effectiveModel, displayName: null },
-            ...(selectedEffort ? { thinkingLevel: selectedEffort } : {}),
-            permissionMode: permissionMode ?? conversation.permissionMode,
-            idempotencyKey,
-            clientUserMessageId,
-            attachments,
-            allowedAttachmentRoots: trustedConversationAttachmentRoots,
-            browserComments,
-            ...(browserCommentContent ? { browserCommentContent } : {}),
-            ...(conversationContext ? { conversationContext } : {}),
-            ...(conversationSkill ? { skill: conversationSkill } : {}),
-            providerWriteLifecycle,
-            segmentLifecycle,
-          });
-        }
-        return piNativeCoordinator.submitMessage({
+        return piNativeCoordinator.steerMessage({
           conversation,
-          submissionId,
+          submissionId: `conversation_submission_${createHash('sha256').update(`${stableOperationId}\0pi-steer`).digest('hex').slice(0, 24)}`,
           content,
-          model: { sourceId: effectiveModelSourceId, modelId: effectiveModel, displayName: null },
-          ...(selectedEffort ? { thinkingLevel: selectedEffort } : {}),
+          expectedTurnId: expectedTurnId!,
           idempotencyKey,
           clientUserMessageId,
-          attachments,
-          allowedAttachmentRoots: trustedConversationAttachmentRoots,
-          browserComments,
-          ...(browserCommentContent ? { browserCommentContent } : {}),
-          ...(conversationContext ? { conversationContext } : {}),
           providerWriteLifecycle,
-          ...(segmentLifecycle ? { segmentLifecycle } : {}),
         });
       }
       if (delivery === 'steer_now') {
@@ -940,30 +876,6 @@ export function createConversationApplicationOperations(dependencies: Conversati
           idempotencyKey,
           clientUserMessageId,
           providerWriteLifecycle,
-        });
-      }
-      if (executionBusy) {
-        return codexNativeCoordinator.submitMessage({
-          conversationId: conversation.id,
-          content,
-          ...(displayText ? { displayText } : {}),
-          ...(typeof composerDraft === 'string' ? { composerDraft } : {}),
-          attachments,
-          browserComments,
-          ...(browserCommentContent ? { browserCommentContent } : {}),
-          ...(conversationContext ? { conversationContext } : {}),
-          ...(conversationSkill ? { skill: conversationSkill } : {}),
-          model: effectiveModel,
-          modelSourceId: effectiveModelSourceId,
-          ...(selectedEffort ? { effort: selectedEffort } : {}),
-          ...(requestedServiceTier.present ? { serviceTier: selectedServiceTier ?? null } : {}),
-          ...(requestedServiceTier.present ? { requestedServiceTier: requestedServiceTier.value } : {}),
-          ...(permissionMode ? { permissionMode } : {}),
-          ...(collaborationMode ? { collaborationMode } : {}),
-          idempotencyKey,
-          clientUserMessageId,
-          providerWriteLifecycle,
-          ...(segmentLifecycle ? { segmentLifecycle } : {}),
         });
       }
       if (segmentLifecycle?.requiresNewSegment) {
@@ -997,6 +909,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             workMode: collaborationMode ?? conversation.collaborationMode,
             ...(conversationSkill ? { skill: conversationSkill } : {}),
             applyLegacyTaskGuards: false,
+            deferInitialDispatch: true,
             providerWriteLifecycle,
             segmentLifecycle,
           });
@@ -1018,6 +931,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           clientUserMessageId,
           attachments,
           ...(conversationSkill ? { skill: conversationSkill } : {}),
+          deferInitialDispatch: true,
           providerWriteLifecycle,
           segmentLifecycle,
         });
@@ -1040,6 +954,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         ...(collaborationMode ? { collaborationMode } : {}),
         idempotencyKey,
         clientUserMessageId,
+        deferDispatch: true,
         providerWriteLifecycle,
         ...(segmentLifecycle ? { segmentLifecycle } : {}),
       });

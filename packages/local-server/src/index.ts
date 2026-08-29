@@ -126,6 +126,7 @@ import { ManagedConversationToolResultStore } from './conversationPortableContex
 import { ConversationQueueCoreMutationApplication, selectAutomaticQueueDispatchCandidate } from './conversationQueueCoreMutationApplication.js';
 import { isObjectLike, quotePosixShellArgument } from './conversationResourcePreview.js';
 import { normalizeConversationResources } from './conversationResources.js';
+import { readNativeSubmissionSkill } from './nativeConversationSubmissionInputs.js';
 import { ConversationSnapshotCompatibilityTracker } from './conversationSnapshotCompatibility.js';
 import { ConversationSyncProtocol } from './conversationSyncProtocol.js';
 import { type ConversationRealtimeSocket } from './conversationSyncRoutes.js';
@@ -1641,7 +1642,14 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     unifiedQueueDispatches.add(conversationId);
     try {
       const persisted = isNativeApiRecord(JSON.parse(head.inputJson)) ? (JSON.parse(head.inputJson) as Record<string, unknown>) : {};
+      const persistedContext = isNativeApiRecord(persisted.context) ? persisted.context : {};
+      if (persistedContext.holdDispatch === true) return;
       const content = typeof persisted.text === 'string' ? persisted.text : '';
+      const attachments = Array.isArray(persisted.attachments) ? persisted.attachments : [];
+      const browserComments = Array.isArray(persisted.browserComments) ? persisted.browserComments.filter(isNativeApiRecord) : [];
+      const browserCommentContent = typeof persisted.browserCommentContent === 'string' ? persisted.browserCommentContent : undefined;
+      const conversationContext = isNativeApiRecord(persisted.conversationContext) ? persisted.conversationContext : undefined;
+      const skill = readNativeSubmissionSkill(head);
       const workspaceIdentity = isNativeApiRecord(JSON.parse(frozen.workspaceIdentityJson)) ? (JSON.parse(frozen.workspaceIdentityJson) as Record<string, unknown>) : {};
       const project = projects.getById(conversation.projectId);
       if (!project) throw nativeApiError('ZEUS_PROJECT_NOT_FOUND', 'Conversation project was not found.');
@@ -1718,6 +1726,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
             permissionMode: frozen.permissionMode as 'read-only' | 'auto' | 'full-access',
             idempotencyKey: head.idempotencyKey,
             clientUserMessageId: head.clientMessageId,
+            attachments,
+            allowedAttachmentRoots: [executionRoot, ...trustedConversationAttachmentRoots],
+            browserComments,
+            ...(browserCommentContent ? { browserCommentContent } : {}),
+            ...(conversationContext ? { conversationContext } : {}),
+            ...(skill ? { skill } : {}),
             segmentLifecycle: lifecycle,
           });
         } else {
@@ -1729,6 +1743,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
             ...(frozen.effort ? { thinkingLevel: frozen.effort } : {}),
             idempotencyKey: head.idempotencyKey,
             clientUserMessageId: head.clientMessageId,
+            attachments,
+            allowedAttachmentRoots: [executionRoot, ...trustedConversationAttachmentRoots],
+            browserComments,
+            ...(browserCommentContent ? { browserCommentContent } : {}),
+            ...(conversationContext ? { conversationContext } : {}),
+            ...(skill ? { skill } : {}),
             segmentLifecycle: lifecycle,
           });
         }
@@ -3486,6 +3506,17 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   }
   if (!readOnlyValidation) conversationExecution.setDispatchEnabled(executionHostDispatchMayResume);
   if (!readOnlyValidation) await db.save();
+  if (!readOnlyValidation && executionHostDispatchMayResume) {
+    const queuedConversationIds = new Set(
+      conversationSubmissions
+        .listRecoverable()
+        .filter((submission) => submission.status === 'queued' && Boolean(submission.executionSnapshotId))
+        .map((submission) => submission.conversationId),
+    );
+    for (const conversationId of queuedConversationIds) {
+      queueMicrotask(() => void dispatchUnifiedConversationQueueHead?.(conversationId).catch(() => undefined));
+    }
+  }
   traceStartup('routes_ready');
   return server;
 }

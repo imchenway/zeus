@@ -289,6 +289,8 @@ export interface SessionController {
   setContextDraft(contextDraft: ConversationContextDraft): void;
 
   send(delivery: 'queue' | 'steer_now', expectedTurnId?: string, settings?: NativeTurnSettingsSelection): Promise<NativeOperationAcceptance | void>;
+  retryPendingSend(clientUserMessageId: string): Promise<NativeOperationAcceptance | void>;
+  cancelPendingSend(clientUserMessageId: string): Promise<void>;
   editQueuedSubmission(submissionId: string, content: string): Promise<NativeQueueSnapshot>;
   retryQueuedSubmission(submissionId: string): Promise<NativeQueueSnapshot>;
   rerouteQueuedSubmission(submissionId: string, settings: NativeNextTurnSettings): Promise<NativeQueueSnapshot>;
@@ -355,6 +357,8 @@ interface PendingSendEnvelope {
   idempotencyKey: string;
   clientUserMessageId: string;
   startedAt?: string;
+  /** 跨 Renderer 生命周期最多自动重放一次；写入后再发，避免连续崩溃形成循环。 */
+  autoReplayCount?: 0 | 1;
   deliveryState?: 'pending' | 'accepted' | 'failed' | 'uncertain';
   deliveryError?: NativeSessionError;
   acceptance?: NativeOperationAcceptance;
@@ -399,6 +403,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
   const storageKey = `zeus.native-session-draft:${options.projectId}:${options.conversationId}`;
   const persisted = readPersistedDraft(storage, storageKey);
   let pendingSend = persisted.pendingSend ?? null;
+  let restoredPendingSendMayReplay = Boolean(persisted.pendingSend);
   let deferredSends: PendingSendEnvelope[] = (persisted.deferredSends ?? []).map((envelope) => ({
     ...envelope,
     startedAt: envelope.startedAt ?? new Date().toISOString(),
@@ -1163,6 +1168,28 @@ export function createSessionController(options: CreateSessionControllerOptions)
     if (!hasNativeOptimisticItem(state, envelope.clientUserMessageId)) projectAcceptedEnvelope(envelope);
   }
 
+  function replayPersistedSendAfterHydration(snapshot: NativeConversationSnapshot): void {
+    const envelope = pendingSend;
+    if (!restoredPendingSendMayReplay || !envelope || envelope.deliveryState === 'accepted') return;
+    if (acceptedEnvelopeIsDurable(snapshot, envelope) || envelopeWasTerminalWithoutProviderFact(snapshot, envelope)) return;
+    restoredPendingSendMayReplay = false;
+    if ((envelope.autoReplayCount ?? 0) >= 1) return;
+    const replay: PendingSendEnvelope = {
+      ...envelope,
+      autoReplayCount: 1,
+      deliveryState: 'pending',
+    };
+    delete replay.acceptance;
+    delete replay.deliveryError;
+    // 先把次数和原始身份落盘，再复用同一个耐久 command；进程再次退出时不得无限自动重放。
+    pendingSend = replay;
+    persistDraft();
+    queueMicrotask(() => {
+      if (disposed || pendingSend !== replay || state.transportState !== 'ready' || !realtimeSubscribed || activeOperation) return;
+      void submitEnvelope(replay).catch(() => undefined);
+    });
+  }
+
   async function reconcileAcceptedSend(): Promise<void> {
     const envelope = pendingSend;
     if (!envelope || envelope.deliveryState !== 'accepted' || !envelope.acceptance || disposed) return;
@@ -1274,7 +1301,12 @@ export function createSessionController(options: CreateSessionControllerOptions)
   function isEventForController(event: NativeConversationEvent): boolean {
     if (event.payload.projectId !== options.projectId || event.payload.conversationId !== options.conversationId) return false;
     if (event.type === 'conversation.transport.changed' || event.type === 'conversation.thread.changed') return true;
-    return !event.payload.threadId || !state.providerThreadId || event.payload.threadId === state.providerThreadId;
+    const currentThread = !event.payload.threadId || !state.providerThreadId || event.payload.threadId === state.providerThreadId;
+    if (event.type === 'conversation.turn.started' || event.type === 'conversation.queue.changed') {
+      const submissionId = typeof event.payload.submissionId === 'string' ? event.payload.submissionId : null;
+      if (submissionId) return true;
+    }
+    return currentThread;
   }
 
   async function refreshPendingRequests(): Promise<void> {
@@ -1704,6 +1736,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       ready = true;
       dispatch({ type: 'transport_changed', transportState: 'ready', error: null });
       void flushPendingBrowserCommentMarks();
+      replayPersistedSendAfterHydration(snapshot);
       void flushDeferredSends();
     } catch (error) {
       hydrating = false;
@@ -1846,6 +1879,51 @@ export function createSessionController(options: CreateSessionControllerOptions)
         return;
       }
     }
+  }
+
+  async function retryPendingSend(clientUserMessageId: string): Promise<NativeOperationAcceptance | void> {
+    const envelope = pendingSend;
+    if (!envelope || envelope.clientUserMessageId !== clientUserMessageId || envelope.deliveryState === 'accepted') {
+      throw new Error('这条本地消息已经不在待发送状态。');
+    }
+    const reconciliation = await reconcileFailedSend(envelope);
+    if (reconciliation.kind === 'durable') {
+      await reconcileAcceptedSend();
+      return reconciliation.acceptance;
+    }
+    if (reconciliation.kind === 'terminal') return;
+    if (reconciliation.kind === 'unknown') throw new Error('暂时无法确认 Zeus 是否已经接收这条消息，已停止重复发送。');
+    await ensureRealtimeConnection();
+    if (pendingSend !== envelope) throw new Error('待发送消息在确认期间已经变化。');
+    const retry: PendingSendEnvelope = { ...envelope, autoReplayCount: 1, deliveryState: 'pending' };
+    delete retry.acceptance;
+    delete retry.deliveryError;
+    pendingSend = retry;
+    persistDraft();
+    return submitEnvelope(retry);
+  }
+
+  async function cancelPendingSend(clientUserMessageId: string): Promise<void> {
+    const envelope = pendingSend;
+    if (!envelope || envelope.clientUserMessageId !== clientUserMessageId || envelope.deliveryState === 'accepted') {
+      throw new Error('这条本地消息已经不在可取消状态。');
+    }
+    const reconciliation = await reconcileFailedSend(envelope);
+    if (reconciliation.kind === 'durable') {
+      await reconcileAcceptedSend();
+      throw new Error('这条消息已经被 Zeus 接收，不能作为本地失败消息取消。');
+    }
+    if (reconciliation.kind === 'unknown') throw new Error('暂时无法确认 Zeus 是否已经接收这条消息，不能安全取消。');
+    if (pendingSend === envelope) pendingSend = null;
+    restoredPendingSendMayReplay = false;
+    dispatch({
+      type: 'queued_submission_deleted',
+      submissionId: envelope.clientUserMessageId,
+      clientUserMessageId: envelope.clientUserMessageId,
+      queue: state.queue ?? emptyQueueWhileHydrating(),
+    });
+    options.client.forgetNativeMessageCommand?.(options.projectId, options.conversationId, envelope.idempotencyKey);
+    persistDraft();
   }
 
   function dispatchV2Snapshot(snapshot: NativeConversationSnapshot): void {
@@ -2290,21 +2368,16 @@ export function createSessionController(options: CreateSessionControllerOptions)
       realtimeBufferWatermarks: Object.fromEntries([...realtimeBufferWatermarks].map(([kind, value]) => [kind, { entries: value.entries, bytes: value.bytes }])),
     }),
     setDraft(draft) {
-      if (pendingSend && pendingSend.deliveryState !== 'accepted' && state.draft !== draft) pendingSend = null;
       dispatch({ type: 'draft_changed', draft });
       persistDraft();
     },
     setAttachments(attachments) {
-      if (pendingSend && pendingSend.deliveryState !== 'accepted' && !sameAttachments(state.attachments, attachments)) pendingSend = null;
       dispatch({ type: 'attachments_changed', attachments: [...attachments] });
       persistDraft();
     },
     setBrowserSubmission(browserSubmission) {
       if (browserSubmission && !sameBrowserSubmission(state.browserSubmission, browserSubmission) && browserSubmissionUsesReservedComments(browserSubmission)) {
         throw new Error('These browser comments already belong to a pending or delivered message.');
-      }
-      if (pendingSend && pendingSend.deliveryState !== 'accepted' && !sameBrowserSubmission(state.browserSubmission, browserSubmission)) {
-        pendingSend = null;
       }
       dispatch({
         type: 'browser_submission_changed',
@@ -2313,7 +2386,6 @@ export function createSessionController(options: CreateSessionControllerOptions)
       persistDraft();
     },
     setContextDraft(contextDraft) {
-      if (pendingSend && pendingSend.deliveryState !== 'accepted' && !sameContextDraft(state.contextDraft, contextDraft)) pendingSend = null;
       dispatch({ type: 'context_draft_changed', contextDraft: structuredClone(contextDraft) });
       persistDraft();
     },
@@ -2423,6 +2495,9 @@ export function createSessionController(options: CreateSessionControllerOptions)
       if (pendingSend?.deliveryState === 'accepted' && !exactPending) {
         return Promise.reject(new Error('The previous accepted message is still waiting for its authoritative conversation snapshot.'));
       }
+      if (pendingSend && pendingSend.deliveryState !== 'accepted' && !exactPending && !reusableIdentity) {
+        return Promise.reject(new Error('上一条消息尚未确认是否被 Zeus 接收，请先重试或取消该消息。'));
+      }
       if (browserSubmissionUsesReservedComments(browserSubmission, exactPending ?? reusableIdentity)) {
         return Promise.reject(new Error('These browser comments already belong to a pending or delivered message.'));
       }
@@ -2449,6 +2524,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
           idempotencyKey: reusableIdentity?.idempotencyKey ?? createId(),
           clientUserMessageId: reusableIdentity?.clientUserMessageId ?? createId(),
           startedAt: reusableIdentity?.startedAt ?? new Date().toISOString(),
+          autoReplayCount: reusableIdentity?.autoReplayCount ?? 0,
         };
       }
       const envelope = pendingSend;
@@ -2481,6 +2557,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
         return acceptance;
       });
     },
+    retryPendingSend,
+    cancelPendingSend,
     editQueuedSubmission(submissionId, content) {
       return runOperation(
         `queue:edit:${submissionId}:${JSON.stringify(content)}`,
@@ -2981,6 +3059,7 @@ function isPendingSendEnvelope(value: unknown): value is PendingSendEnvelope {
     typeof pending.idempotencyKey === 'string' &&
     typeof pending.clientUserMessageId === 'string' &&
     (pending.startedAt === undefined || typeof pending.startedAt === 'string') &&
+    (pending.autoReplayCount === undefined || pending.autoReplayCount === 0 || pending.autoReplayCount === 1) &&
     (pending.deliveryState === undefined || pending.deliveryState === 'pending' || pending.deliveryState === 'accepted' || pending.deliveryState === 'failed' || pending.deliveryState === 'uncertain') &&
     (pending.deliveryError === undefined || isNativeSessionError(pending.deliveryError)) &&
     (pending.acceptance === undefined || isNativeOperationAcceptance(pending.acceptance)) &&

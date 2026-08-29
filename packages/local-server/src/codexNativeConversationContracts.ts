@@ -225,6 +225,8 @@ export interface StartProjectConversationInput {
   idempotencyKey: string;
   clientUserMessageId: string;
   attachments?: NativeConversationAttachmentInput[];
+  /** 会话和首条消息耐久接受后立即返回，Provider 由统一队列后台启动。 */
+  deferInitialDispatch?: boolean;
   providerWriteLifecycle?: NativeProviderWriteLifecycle;
   goalObjective?: string;
   segmentLifecycle?: ConversationSegmentLifecycle;
@@ -254,6 +256,8 @@ export interface SubmitNativeMessageInput {
   collaborationMode?: ConversationCollaborationMode;
   idempotencyKey: string;
   clientUserMessageId: string;
+  /** 只创建并冻结队列提交，不在当前 HTTP 操作中恢复或写入 Provider。 */
+  deferDispatch?: boolean;
   providerWriteLifecycle?: NativeProviderWriteLifecycle;
   segmentLifecycle?: ConversationSegmentLifecycle;
 }

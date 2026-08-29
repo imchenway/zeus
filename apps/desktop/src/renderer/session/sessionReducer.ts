@@ -880,7 +880,9 @@ function mergeDurableItemResources(previous: NativeSessionItemBuffer['resources'
 function reduceNativeEvent(state: NativeSessionState, event: NativeConversationEvent, suppressRequestAuthority = false): NativeSessionState {
   if (state.seenEventIds[event.id]) return state;
   const payload = event.payload;
-  const identityControlEvent = event.type === 'conversation.transport.changed' || event.type === 'conversation.thread.changed';
+  const queuedThreadTransition =
+    (event.type === 'conversation.turn.started' || event.type === 'conversation.queue.changed') && eventNamesKnownQueuedSubmission(state, payload);
+  const identityControlEvent = event.type === 'conversation.transport.changed' || event.type === 'conversation.thread.changed' || queuedThreadTransition;
   if (!isEventForSelectedSession(state, payload, identityControlEvent)) return state;
 
   const generationId = stringValue(payload.generationId);
@@ -931,10 +933,11 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
       };
     }
     case 'conversation.turn.started': {
+      const turnBase = queuedThreadTransition ? applyProviderIdentityChange(base, payload, false) : base;
       const turnId = stringValue(payload.turnId);
-      if (!turnId || state.terminalTurnIds[turnId]) return base;
+      if (!turnId || state.terminalTurnIds[turnId]) return turnBase;
       const submissionId = stringValue(payload.submissionId);
-      const existingTurn = base.turnsByProviderId[turnId];
+      const existingTurn = turnBase.turnsByProviderId[turnId];
       const startedAt = stringValue(payload.startedAt) ?? existingTurn?.startedAt ?? event.createdAt;
       const turn: NativeTurnSnapshot = {
         id: existingTurn?.id ?? turnId,
@@ -948,15 +951,15 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
         createdAt: existingTurn?.createdAt ?? startedAt,
         updatedAt: event.createdAt,
       };
-      const queue = base.queue
+      const queue = turnBase.queue
         ? {
-            ...base.queue,
+            ...turnBase.queue,
             state: { type: 'active' as const, turnId, phase: 'prework' as const },
-            submissions: submissionId ? base.queue.submissions.filter((submission) => submission.id !== submissionId) : base.queue.submissions,
+            submissions: submissionId ? turnBase.queue.submissions.filter((submission) => submission.id !== submissionId) : turnBase.queue.submissions,
           }
         : null;
-      const openingUserEntry = submissionId ? Object.entries(base.items).find(([, item]) => item.optimistic && isUserMessageItem(item) && stringValue(item.payload.submissionId) === submissionId) : undefined;
-      let items = base.items;
+      const openingUserEntry = submissionId ? Object.entries(turnBase.items).find(([, item]) => item.optimistic && isUserMessageItem(item) && stringValue(item.payload.submissionId) === submissionId) : undefined;
+      let items = turnBase.items;
       if (openingUserEntry) {
         const [key, item] = openingUserEntry;
         const nextPayload = { ...item.payload };
@@ -974,14 +977,14 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
         };
       }
       return {
-        ...base,
+        ...turnBase,
         activeTurnId: turnId,
         startedTurnId: turnId,
         queue,
         items,
-        turnsByProviderId: { ...base.turnsByProviderId, [turnId]: turn },
-        feedbackEpoch: base.feedbackEpoch + 1,
-        transcriptRevision: base.transcriptRevision + 1,
+        turnsByProviderId: { ...turnBase.turnsByProviderId, [turnId]: turn },
+        feedbackEpoch: turnBase.feedbackEpoch + 1,
+        transcriptRevision: turnBase.transcriptRevision + 1,
         conversationState: 'active_prework',
       };
     }
@@ -1081,8 +1084,12 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
     case 'conversation.mcpStartup.changed':
       return { ...base, mcpStartup: providerValueFrom(payload) };
     case 'conversation.queue.changed': {
-      const queue = isRecord(payload.queue) ? (payload.queue as unknown as NativeQueueSnapshot) : state.queue;
-      return queue ? projectQueueSubmissionMessages(base, queue) : base;
+      const queueBase = queuedThreadTransition ? applyProviderIdentityChange(base, payload, false) : base;
+      const queue = isRecord(payload.queue) ? (payload.queue as unknown as NativeQueueSnapshot) : queueBase.queue;
+      if (!queue) return queueBase;
+      const projected = projectQueueSubmissionMessages(queueBase, queue);
+      if (!queuedThreadTransition || queue.state.type !== 'active') return projected;
+      return { ...projected, activeTurnId: queue.state.turnId, startedTurnId: queue.state.turnId };
     }
     case 'conversation.submission.steering': {
       const submission = isRecord(payload.submission) ? (payload.submission as unknown as NativeQueuedSubmission) : null;
@@ -1670,6 +1677,18 @@ function isEventForSelectedSession(state: NativeSessionState, payload: Record<st
   if (allowThreadTransition) return true;
   const threadId = stringValue(payload.threadId);
   return !(threadId && state.providerThreadId && threadId !== state.providerThreadId);
+}
+
+function eventNamesKnownQueuedSubmission(state: NativeSessionState, payload: Record<string, unknown>): boolean {
+  const submissionId = stringValue(payload.submissionId);
+  if (!submissionId) return false;
+  if (state.queue?.submissions.some((submission) => submission.id === submissionId)) return true;
+  const queue = isRecord(payload.queue) ? payload.queue : null;
+  const queueState = queue && isRecord(queue.state) ? queue.state : null;
+  const turnId = stringValue(payload.turnId);
+  const providerTurnId = stringValue(payload.providerTurnId);
+  const providerThreadId = stringValue(payload.providerThreadId);
+  return Boolean(queueState?.type === 'active' && turnId && providerTurnId === turnId && providerThreadId && stringValue(queueState.turnId) === turnId);
 }
 
 function applyProviderIdentityChange(state: NativeSessionState, payload: Record<string, unknown>, updateTransport: boolean): NativeSessionState {

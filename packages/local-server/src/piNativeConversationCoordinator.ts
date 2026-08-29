@@ -1030,6 +1030,10 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     conversationContext?: Record<string, unknown>;
     skill?: NativeConversationSkillInput;
     holdDispatch?: boolean;
+    providerWriteLifecycle?: {
+      markPrepared(submissionId: string): Promise<void>;
+      markRpcStarted(submissionId: string): void;
+    };
     segmentLifecycle?: ConversationSegmentLifecycle;
   }) {
     const first = options.submissions.getFirstByConversation(input.conversation.id);
@@ -1077,6 +1081,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       collaborationMode: input.conversation.collaborationMode,
     });
     await options.db.save();
+    await input.providerWriteLifecycle?.markPrepared(submission.id);
     return { conversationId: input.conversation.id, submissionId: submission.id, providerThreadId: null, providerTurnId: null, status: 'queued' as const };
   }
 

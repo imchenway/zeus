@@ -1107,6 +1107,10 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         const conversation = requireNativeQueueConversation(params);
         return conversationQueueCoreMutations.reorder({ conversationId: conversation.id, orderedSubmissionIds });
       },
+      afterMessageAccepted: ({ params, message }) => {
+        if ((message.delivery ?? 'queue') !== 'queue') return;
+        queueMicrotask(() => void dispatchUnifiedConversationQueueHead?.(params.conversationId).catch(() => undefined));
+      },
       afterCoreAccepted: ({ kind, params }) => {
         if (kind === 'request_snooze') {
           if ('requestId' in params) {

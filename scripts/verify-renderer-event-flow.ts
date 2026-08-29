@@ -126,10 +126,12 @@ class VerifierSocket {
 
 type EventPageLoader = SessionControllerClient['loadNativeConversationEvents'];
 
-function createHarness(eventPageLoader?: EventPageLoader, snapshotSequence = 0, live = true, planImplementationRequests: NativePlanImplementationRequest[] = []) {
+function createHarness(eventPageLoader?: EventPageLoader, snapshotSequence = 0, live = true, planImplementationRequests: NativePlanImplementationRequest[] = [], persistedDraft: string | null = null, sendFailure?: Error) {
   let eventSink: ((event: NativeRealtimeEventEnvelope) => void) | null = null;
   let snapshotReads = 0;
   let sendCalls = 0;
+  const sentMessages: Array<Record<string, unknown>> = [];
+  let storedDraft = persistedDraft;
   const sockets: VerifierSocket[] = [];
   const requestedAfterSequences: number[] = [];
   const connectedAfterSequences: number[] = [];
@@ -187,8 +189,10 @@ function createHarness(eventPageLoader?: EventPageLoader, snapshotSequence = 0, 
       sockets.push(socket);
       return socket as unknown as WebSocket;
     },
-    async sendNativeMessage() {
+    async sendNativeMessage(_project: string, _conversation: string, input: Record<string, unknown>) {
       sendCalls += 1;
+      sentMessages.push(input);
+      if (sendFailure) throw sendFailure;
       return { operation: { status: 'accepted' }, conversation: { id: conversationId } };
     },
   } as unknown as SessionControllerClient;
@@ -196,7 +200,15 @@ function createHarness(eventPageLoader?: EventPageLoader, snapshotSequence = 0, 
     client,
     projectId,
     conversationId,
-    storage: { getItem: () => null, setItem: () => undefined, removeItem: () => undefined },
+    storage: {
+      getItem: () => storedDraft,
+      setItem: (_key, value) => {
+        storedDraft = value;
+      },
+      removeItem: () => {
+        storedDraft = null;
+      },
+    },
     reconnectDelay: async () => undefined,
   });
   return {
@@ -210,6 +222,8 @@ function createHarness(eventPageLoader?: EventPageLoader, snapshotSequence = 0, 
     requestedAfterSequences,
     snapshotReads: () => snapshotReads,
     sendCalls: () => sendCalls,
+    sentMessages,
+    persistedDraft: () => storedDraft,
   };
 }
 
@@ -228,6 +242,57 @@ async function verifyIdleHistoryDoesNotSubscribe() {
     sendCalls: harness.sendCalls(),
     transportState: 'ready',
   };
+}
+
+async function verifyRestartedPendingSendReplaysOnce() {
+  const originalIdentity = {
+    idempotencyKey: 'renderer-restart-idempotency',
+    clientUserMessageId: 'renderer-restart-client-message',
+  };
+  const persisted = JSON.stringify({
+    draft: '',
+    attachments: [],
+    contextDraft: { responseAnnotations: [], codeComments: [] },
+    pendingSend: {
+      fingerprint: 'renderer-restart-fingerprint',
+      content: 'restart recovery marker',
+      displayText: 'restart recovery marker',
+      draft: 'restart recovery marker',
+      attachments: [],
+      composerAttachments: [],
+      browserSubmission: null,
+      contextDraft: { responseAnnotations: [], codeComments: [] },
+      delivery: 'queue',
+      collaborationMode: 'default',
+      ...originalIdentity,
+      startedAt: occurredAt,
+      autoReplayCount: 0,
+      deliveryState: 'failed',
+      deliveryError: { message: 'Execution Host restarted before acceptance.', code: 'ZEUS_LOCAL_API_UNAVAILABLE', recoveryRequired: false, retryable: true },
+    },
+  });
+  const failure = Object.assign(new Error('Execution Host is still unavailable.'), { code: 'ZEUS_LOCAL_API_UNAVAILABLE' });
+  const first = createHarness(undefined, 0, true, [], persisted, failure);
+  await first.controller.start();
+  await waitUntil(() => first.sendCalls() === 1, 'restored pending send automatic replay');
+  const firstRequest = first.sentMessages[0]!;
+  assert(firstRequest.idempotencyKey === originalIdentity.idempotencyKey, 'Automatic replay must preserve the original idempotency key.');
+  assert(firstRequest.clientUserMessageId === originalIdentity.clientUserMessageId, 'Automatic replay must preserve the original client message id.');
+  await waitUntil(() => JSON.parse(first.persistedDraft() ?? '{}').pendingSend?.deliveryState === 'failed', 'automatic replay failure persistence');
+  const afterFirstReplay = first.persistedDraft();
+  assert(JSON.parse(afterFirstReplay ?? '{}').pendingSend?.autoReplayCount === 1, 'Automatic replay count must be persisted before the retry can fail.');
+  first.controller.dispose();
+
+  const second = createHarness(undefined, 0, true, [], afterFirstReplay, failure);
+  await second.controller.start();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert(second.sendCalls() === 0, 'A second Renderer restart must not start an automatic replay loop.');
+  await second.controller.retryPendingSend(originalIdentity.clientUserMessageId).catch(() => undefined);
+  assert(second.sendCalls() === 1, 'Explicit retry must remain available after the one automatic replay.');
+  assert(second.sentMessages[0]?.idempotencyKey === originalIdentity.idempotencyKey, 'Explicit retry must preserve the original idempotency key.');
+  assert(second.sentMessages[0]?.clientUserMessageId === originalIdentity.clientUserMessageId, 'Explicit retry must preserve the original client message id.');
+  second.controller.dispose();
+  return { automaticReplayCalls: 1, secondRestartAutomaticCalls: 0, explicitRetryCalls: 1, identitiesPreserved: true };
 }
 
 function verifyInternalPayloadsStayOutOfTranscript() {
@@ -485,6 +550,51 @@ function verifyProcessPageDoesNotDowngradeLiveTerminalState() {
   };
 }
 
+function verifyQueuedSubmissionCanChangeNativeThread() {
+  const submissionId = 'cross-runtime-submission';
+  const nextThreadId = 'cross-runtime-thread';
+  const nextTurnId = 'cross-runtime-turn';
+  const adapted = adaptConversationSnapshotV2({
+    snapshot: snapshotV2,
+    history: historyV2,
+    queue: {
+      state: { type: 'idle' as const },
+      submissions: [],
+    },
+    requests: [],
+    planImplementationRequests: [],
+    choice,
+    goal,
+  });
+  let state = createHydratedSessionState(adapted);
+  const previousThreadId = state.providerThreadId;
+  state = sessionReducer(state, {
+    type: 'event_received',
+    event: conversationEvent(1, 'conversation.queue.changed', {
+      threadId: nextThreadId,
+      providerThreadId: nextThreadId,
+      turnId: nextTurnId,
+      submissionId,
+      queue: { state: { type: 'active', turnId: nextTurnId, phase: 'prework' }, submissions: [], waitReason: 'current_turn' },
+    }),
+  });
+  assert(state.providerThreadId === previousThreadId, 'An incomplete cross-thread queue fact must not replace the selected Provider identity.');
+  state = sessionReducer(state, {
+    type: 'event_received',
+    event: conversationEvent(2, 'conversation.queue.changed', {
+      threadId: nextThreadId,
+      providerThreadId: nextThreadId,
+      turnId: nextTurnId,
+      providerTurnId: nextTurnId,
+      submissionId,
+      queue: { state: { type: 'active', turnId: nextTurnId, phase: 'prework' }, submissions: [], waitReason: 'current_turn' },
+    }),
+  });
+  assert(state.providerThreadId === nextThreadId, 'A new thread may replace the old identity when queue.changed names a known queued submission.');
+  assert(state.activeTurnId === nextTurnId && state.conversationState === 'active_prework', 'The accepted cross-runtime queue head must become active immediately.');
+  return { providerThreadId: state.providerThreadId, activeTurnId: state.activeTurnId };
+}
+
 function verifySnapshotV2SettingsAndPlanRestoration() {
   const plan = {
     explanation: '保留已完成的开发计划',
@@ -713,9 +823,11 @@ const result = {
   budget: sessionRealtimeBufferBudget,
   internalPayloadVisibility: verifyInternalPayloadsStayOutOfTranscript(),
   processPageTerminalPreservation: verifyProcessPageDoesNotDowngradeLiveTerminalState(),
+  queuedSubmissionThreadTransition: verifyQueuedSubmissionCanChangeNativeThread(),
   snapshotV2SettingsAndPlanRestoration: verifySnapshotV2SettingsAndPlanRestoration(),
   pendingPlanConfirmationRestoration: await verifyPendingPlanConfirmationRestoration(),
   idleHistoryWithoutSubscription: await verifyIdleHistoryDoesNotSubscribe(),
+  restartedPendingSendReplay: await verifyRestartedPendingSendReplaysOnce(),
   activeSnapshotWatermarkSubscription: await verifyActiveSnapshotWatermarkSubscription(),
   idleTransitionReleasesSubscription: await verifyIdleTransitionReleasesSubscription(),
   renderDeltaOverflow: await verifyRenderDeltaOverflow(),
