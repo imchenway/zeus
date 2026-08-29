@@ -687,6 +687,19 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     maintainLatestPosition();
   }, [maintainLatestPosition, props.creationStatus?.error, props.creationStatus?.state, props.state.transcriptRevision]);
 
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container || !historyHydrated || typeof MutationObserver !== 'function') return;
+    // 会话切换时，快照行可以先以稳定 key 进入虚拟窗口，Markdown 再在后续
+    // 微任务中补入正文。此时 transcriptRevision、行 key 和初次尺寸都可能不变，
+    // 仅靠 React effect / ResizeObserver 会漏掉这次内容水合。DOM 正文变化只负责
+    // 唤醒统一的按帧调度器；是否贴底仍由 scroll controller 的两态决定。
+    const observer = new MutationObserver(() => maintainLatestPosition());
+    observer.observe(container, { childList: true, characterData: true, subtree: true });
+    maintainLatestPosition();
+    return () => observer.disconnect();
+  }, [historyHydrated, maintainLatestPosition, props.state.conversationId]);
+
   const setTranscriptRowExpanded = useCallback((rowKey: string, open: boolean): void => {
     setRowExpansionOverrides((current) => {
       if (current.get(rowKey) === open) return current;
