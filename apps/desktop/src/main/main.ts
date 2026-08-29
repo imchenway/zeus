@@ -234,6 +234,18 @@ const savedDisplayAvailabilityTimeoutMs = 2_000;
 const testDistributionName = 'Zeus Test';
 const menuBarUsageWindowSize = { width: 360, height: 520 } as const;
 const menuBarUsageWindowGap = 6;
+
+type MenuBarUsageClickAnchor = {
+  bounds: Electron.Rectangle;
+  position: Electron.Point;
+};
+
+type MenuBarUsageWindowPlacement = {
+  anchorSource: 'bounds' | 'position';
+  display: Electron.Display;
+  x: number;
+  y: number;
+};
 const taskGitDeliveryMinimumSize = { width: 920, height: 640 } as const;
 const automaticUpdateIntervalMs = 60 * 60_000;
 const automaticUpdateInitialDelayMs = 15_000;
@@ -2153,21 +2165,40 @@ function hideMenuBarUsageWindow(): void {
   if (menuBarUsageWindow && !menuBarUsageWindow.isDestroyed()) menuBarUsageWindow.hide();
 }
 
-function positionMenuBarUsageWindow(window: BrowserWindow): void {
-  if (!tray || tray.isDestroyed()) return;
-  const trayBounds = tray.getBounds();
-  const display = screen.getDisplayNearestPoint({
-    x: Math.round(trayBounds.x + trayBounds.width / 2),
-    y: Math.round(trayBounds.y + trayBounds.height / 2),
-  });
+function isFiniteScreenPoint(point: Electron.Point): boolean {
+  return Number.isFinite(point.x) && Number.isFinite(point.y);
+}
+
+function isUsableTrayBounds(bounds: Electron.Rectangle): boolean {
+  return Number.isFinite(bounds.x) && Number.isFinite(bounds.y) && Number.isFinite(bounds.width) && Number.isFinite(bounds.height) && bounds.width > 0 && bounds.height > 0;
+}
+
+function resolveMenuBarUsageWindowPlacement(anchor: MenuBarUsageClickAnchor): MenuBarUsageWindowPlacement | undefined {
+  const useBounds = isUsableTrayBounds(anchor.bounds);
+  if (!useBounds && !isFiniteScreenPoint(anchor.position)) return undefined;
+
+  const anchorX = useBounds ? anchor.bounds.x + anchor.bounds.width / 2 : anchor.position.x;
+  const anchorY = useBounds ? anchor.bounds.y + anchor.bounds.height / 2 : anchor.position.y;
+  const display = screen.getDisplayNearestPoint({ x: Math.round(anchorX), y: Math.round(anchorY) });
   const { workArea } = display;
-  const preferredX = Math.round(trayBounds.x + trayBounds.width / 2 - menuBarUsageWindowSize.width / 2);
+  const preferredX = Math.round(anchorX - menuBarUsageWindowSize.width / 2);
   const minX = workArea.x + menuBarUsageWindowGap;
   const maxX = workArea.x + workArea.width - menuBarUsageWindowSize.width - menuBarUsageWindowGap;
-  const belowTrayY = Math.round(trayBounds.y + trayBounds.height + menuBarUsageWindowGap);
+  const minY = workArea.y + menuBarUsageWindowGap;
   const maxY = workArea.y + workArea.height - menuBarUsageWindowSize.height - menuBarUsageWindowGap;
-  const preferredY = belowTrayY <= maxY ? belowTrayY : Math.round(trayBounds.y - menuBarUsageWindowSize.height - menuBarUsageWindowGap);
-  window.setPosition(Math.min(Math.max(preferredX, minX), Math.max(minX, maxX)), Math.min(Math.max(preferredY, workArea.y + menuBarUsageWindowGap), Math.max(workArea.y + menuBarUsageWindowGap, maxY)), false);
+  const belowTrayY = useBounds ? Math.round(anchor.bounds.y + anchor.bounds.height + menuBarUsageWindowGap) : minY;
+  const preferredY = belowTrayY <= maxY ? belowTrayY : useBounds ? Math.round(anchor.bounds.y - menuBarUsageWindowSize.height - menuBarUsageWindowGap) : minY;
+
+  return {
+    anchorSource: useBounds ? 'bounds' : 'position',
+    display,
+    x: Math.min(Math.max(preferredX, minX), Math.max(minX, maxX)),
+    y: Math.min(Math.max(preferredY, minY), Math.max(minY, maxY)),
+  };
+}
+
+function positionMenuBarUsageWindow(window: BrowserWindow, placement: MenuBarUsageWindowPlacement): void {
+  window.setPosition(placement.x, placement.y, false);
 }
 
 async function createMenuBarUsageWindow(): Promise<BrowserWindow> {
@@ -2216,16 +2247,33 @@ async function createMenuBarUsageWindow(): Promise<BrowserWindow> {
   }
 }
 
-async function toggleMenuBarUsageWindow(): Promise<void> {
+async function toggleMenuBarUsageWindow(anchor: MenuBarUsageClickAnchor): Promise<void> {
   if (fatalStartup) return;
   const window = await createMenuBarUsageWindow();
-  if (window.isVisible()) {
+  const placement = resolveMenuBarUsageWindowPlacement(anchor);
+  if (!placement) {
+    console.warn('Zeus 菜单栏用量浮窗无法解析本次点击位置。', { bounds: anchor.bounds, position: anchor.position });
+    return;
+  }
+  const wasVisible = window.isVisible();
+  if (wasVisible && screen.getDisplayMatching(window.getBounds()).id === placement.display.id) {
     window.hide();
     return;
   }
-  positionMenuBarUsageWindow(window);
+  positionMenuBarUsageWindow(window, placement);
   window.show();
   window.focus();
+  console.info(
+    'Zeus menu bar usage window placement',
+    JSON.stringify({
+      action: wasVisible ? 'move' : 'show',
+      targetDisplayId: placement.display.id,
+      anchorSource: placement.anchorSource,
+      clickBounds: anchor.bounds,
+      clickPosition: anchor.position,
+      windowBounds: window.getBounds(),
+    }),
+  );
 }
 
 function setupTray(): void {
@@ -2257,8 +2305,12 @@ function setupTray(): void {
   );
   tray.removeAllListeners('click');
   tray.removeAllListeners('right-click');
-  tray.on('click', () => {
-    void toggleMenuBarUsageWindow().catch((error: unknown) => console.warn('Zeus 菜单栏用量浮窗无法打开。', error));
+  tray.on('click', (_event, bounds, position) => {
+    const clickAnchor: MenuBarUsageClickAnchor = {
+      bounds: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
+      position: { x: position.x, y: position.y },
+    };
+    void toggleMenuBarUsageWindow(clickAnchor).catch((error: unknown) => console.warn('Zeus 菜单栏用量浮窗无法打开。', error));
   });
   tray.on('right-click', () => {
     hideMenuBarUsageWindow();
