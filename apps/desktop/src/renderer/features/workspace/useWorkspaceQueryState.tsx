@@ -823,6 +823,8 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const pendingSourceWorkspaceLeaveCancelRef = useRef<(() => void) | null>(null);
   const pendingTaskTableLayoutLeaveRef = useRef<(() => void) | null>(null);
   const pendingTaskTableLayoutLeaveCancelRef = useRef<(() => void) | null>(null);
+  const pendingWorkspaceLeaveKindRef = useRef<'navigation' | 'close' | null>(null);
+  const requestWorkspaceLeaveRef = useRef<(leave: () => void, cancel?: () => void, kind?: 'navigation' | 'close') => void>((leave) => leave());
   const saveTaskTableLayoutThenLeaveRef = useRef(false);
   useEffect(() => {
     if (!activeProjectId || taskPageViewMode !== 'board' || taskBoardSnapshots[activeProjectId] || taskBoardLoadState[activeProjectId]?.loading) return;
@@ -1421,6 +1423,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     pendingSourceWorkspaceLeaveRef,
     pendingTaskTableLayoutLeaveCancelRef,
     pendingTaskTableLayoutLeaveRef,
+    pendingWorkspaceLeaveKindRef,
     persistedTaskTableColumns,
     projectCodeWorkspaceMode,
     projectConfig,
@@ -1459,6 +1462,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     releaseUpdateCheckState,
     releaseUpdateStatus,
     repeatRealtimeNativeConversationRefreshIdsRef,
+    requestWorkspaceLeaveRef,
     restoringArchivedConversationId,
     runtime,
     runtimeAdapterChecks,

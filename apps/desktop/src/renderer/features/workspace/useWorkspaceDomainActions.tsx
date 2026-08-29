@@ -198,6 +198,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     props,
     reconcileNativeConversationProjectSnapshot,
     reconcileNativeConversationProjectionStates,
+    requestWorkspaceLeaveRef,
     repeatRealtimeNativeConversationRefreshIdsRef,
     restoringArchivedConversationId,
     runtimeAdapters,
@@ -1893,7 +1894,23 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     }
   }
 
-  async function selectNativeConversation(conversation: NativeConversationChoice, navigation: 'page' | 'preserve' = 'page', presentation?: 'history' | 'interactive'): Promise<void> {
+  const runAfterWorkspaceLeave = useCallback(
+    (leave: () => void | Promise<void>): Promise<boolean> =>
+      new Promise<boolean>((resolve, reject) => {
+        requestWorkspaceLeaveRef.current(
+          () => {
+            Promise.resolve(leave()).then(
+              () => resolve(true),
+              (error: unknown) => reject(error),
+            );
+          },
+          () => resolve(false),
+        );
+      }),
+    [requestWorkspaceLeaveRef],
+  );
+
+  async function applyNativeConversationSelection(conversation: NativeConversationChoice, navigation: 'page' | 'preserve', presentation?: 'history' | 'interactive'): Promise<void> {
     const targetProject = snapshot.projects.find((candidate) => candidate.id === conversation.projectId);
     if (targetProject) {
       activeProjectIdRef.current = targetProject.id;
@@ -1949,18 +1966,21 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     }
   }
 
+  async function selectNativeConversation(conversation: NativeConversationChoice, navigation: 'page' | 'preserve' = 'page', presentation?: 'history' | 'interactive'): Promise<boolean> {
+    if (navigation === 'preserve') {
+      await applyNativeConversationSelection(conversation, navigation, presentation);
+      return true;
+    }
+    return runAfterWorkspaceLeave(() => applyNativeConversationSelection(conversation, navigation, presentation));
+  }
+
   async function openTaskConversation(taskId: string, conversationId: string): Promise<void> {
     const conversation = nativeConversationChoicesByTask[taskId]?.choices.find((candidate) => candidate.id === conversationId);
     if (!conversation) return;
-    const targetProject = snapshot.projects.find((project) => project.id === conversation.projectId);
-    if (targetProject) {
-      activeProjectIdRef.current = targetProject.id;
-      setProjectDetail(targetProject);
-    }
+    if (!(await selectNativeConversation(conversation))) return;
     setTaskDetailPaneTaskId(undefined);
     setTaskConversationDrawerTarget(undefined);
     setConversationDrawer(undefined);
-    await selectNativeConversation(conversation);
     if (typeof window !== 'undefined') {
       window.history.replaceState(null, '', '#project-sessions');
     }
@@ -1980,26 +2000,27 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     }
     const task = snapshot.tasks.find((candidate) => candidate.id === taskId);
     const targetProject = snapshot.projects.find((project) => project.id === (conversation?.projectId ?? task?.projectId));
-    if (targetProject) {
-      activeProjectIdRef.current = targetProject.id;
-      setProjectDetail(targetProject);
-    }
+    const navigated = conversation
+      ? await selectNativeConversation(conversation, 'page', 'interactive')
+      : await runAfterWorkspaceLeave(() => {
+          // 暂时未读到新会话时仍进入正确任务的会话页；后续列表刷新命中后会按 id 自动选中。
+          if (targetProject) {
+            activeProjectIdRef.current = targetProject.id;
+            setProjectDetail(targetProject);
+          }
+          if (task) setTaskDetail(task);
+          selectedNativeConversationIdRef.current = conversationId;
+          setSelectedNativeConversationId(conversationId);
+          setSelectedNativeConversationPresentation('interactive');
+          setConversationDraftOpen(false);
+          setActiveNavTarget('conversations');
+          setActiveProjectSection('sessions');
+        });
+    if (!navigated) return;
     setTaskGitMergeTaskId(null);
     setTaskDetailPaneTaskId(undefined);
     setTaskConversationDrawerTarget(undefined);
     setConversationDrawer(undefined);
-    if (conversation) {
-      await selectNativeConversation(conversation, 'page', 'interactive');
-    } else {
-      // 暂时未读到新会话时仍进入正确任务的会话页；后续列表刷新命中后会按 id 自动选中。
-      if (task) setTaskDetail(task);
-      selectedNativeConversationIdRef.current = conversationId;
-      setSelectedNativeConversationId(conversationId);
-      setSelectedNativeConversationPresentation('interactive');
-      setConversationDraftOpen(false);
-      setActiveNavTarget('conversations');
-      setActiveProjectSection('sessions');
-    }
     if (typeof window !== 'undefined') window.history.replaceState(null, '', '#project-sessions');
     workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -2032,8 +2053,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         if (conversation.projectId !== projectId || conversation.id !== conversationId) return;
         const project = snapshot.projects.find((candidate) => candidate.id === projectId);
         if (!project) return;
-        activeProjectIdRef.current = projectId;
-        setProjectDetail(project);
         if (conversation.taskId) {
           setNativeConversationChoicesByTask((current) => ({
             ...current,
@@ -2202,25 +2221,27 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   }
 
   const prepareNewConversationDraft = useCallback((): void => {
-    // 新对话只是本地会话草稿入口，不能复用任务创建接口，否则会误生成 ZEU 编号的正式任务。
-    // 离开任务页时不改状态筛选，返回后继续使用当前项目最后一次显式选择。
-    setActiveNavTarget('conversations');
-    setActiveProjectSection('sessions');
-    setConversationDraftOpen(true);
-    setSelectedNativeConversationPresentation('interactive');
-    setNewConversationFocusRequest((current) => current + 1);
-    setSelectedNativeConversationId(null);
-    setFocusedArchivedConversation(null);
-    setConversationDrawer(undefined);
-    setTaskDetailPaneTaskId(undefined);
-    setTaskSearchQuery('');
-    setTaskTagFilter('');
-    setTaskDetail(undefined);
-    if (typeof window !== 'undefined') {
-      window.history.replaceState(null, '', '#project-sessions');
-    }
-    workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
-  }, []);
+    void runAfterWorkspaceLeave(() => {
+      // 新对话只是本地会话草稿入口，不能复用任务创建接口，否则会误生成 ZEU 编号的正式任务。
+      // 离开任务页时不改状态筛选，返回后继续使用当前项目最后一次显式选择。
+      setActiveNavTarget('conversations');
+      setActiveProjectSection('sessions');
+      setConversationDraftOpen(true);
+      setSelectedNativeConversationPresentation('interactive');
+      setNewConversationFocusRequest((current) => current + 1);
+      setSelectedNativeConversationId(null);
+      setFocusedArchivedConversation(null);
+      setConversationDrawer(undefined);
+      setTaskDetailPaneTaskId(undefined);
+      setTaskSearchQuery('');
+      setTaskTagFilter('');
+      setTaskDetail(undefined);
+      if (typeof window !== 'undefined') {
+        window.history.replaceState(null, '', '#project-sessions');
+      }
+      workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  }, [runAfterWorkspaceLeave]);
 
   const selectNewConversationProject = useCallback(
     (projectId: string): void => {
@@ -2785,7 +2806,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     if (taskModelPushDispatchingTaskIdsRef.current.has(task.id)) return;
     capabilities = normalizeTaskModelPushCapabilities(capabilities);
     const previousPending = taskModelPushPendingByTaskRef.current[task.id];
-    let prepared: { pending: TrackedTaskModelPushState; targetProject: (typeof snapshot.projects)[number] | undefined } | null = null;
+    let prepared: { pending: TrackedTaskModelPushState } | null = null;
     try {
       const selectedModel = resolveTaskModelPushCapability(capabilities, form.model);
       if (!selectedModel) {
@@ -2880,7 +2901,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       setTaskModelPushStatus('submitting');
       setTaskModelPushError(null);
       updateTaskModelPushPendingByTask((current) => ({ ...current, [task.id]: pending }));
-      prepared = { pending, targetProject };
+      prepared = { pending };
     } catch (error) {
       taskModelPushEnvelopeRef.current.delete(task.id);
       taskModelPushDispatchingTaskIdsRef.current.delete(task.id);
@@ -2900,21 +2921,21 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       return;
     }
     if (!prepared) return;
-    const { pending, targetProject } = prepared;
+    const { pending } = prepared;
     setTaskModelPushAnnouncement(appShellSettings.appLanguage === 'zh-CN' ? `${task.title}：正在后台创建会话。` : `${task.title}: Creating conversation in the background.`);
     // 用户确认后立即进入稳定工作面；此后的真实身份接管不得再导航、滚动或夺取焦点。
     taskModelPushCapabilityRequestRef.current += 1;
     setTaskModelPushTaskId(null);
     setTaskModelPushCapabilities(null);
-    if (targetProject) {
-      activeProjectIdRef.current = targetProject.id;
-      setProjectDetail(targetProject);
-    }
-    setTaskDetailPaneTaskId(undefined);
-    setConversationDrawer(undefined);
-    void selectNativeConversation(pending.choice, 'page', 'interactive');
-    if (typeof window !== 'undefined') window.history.replaceState(null, '', '#project-sessions');
-    workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'auto' });
+    void selectNativeConversation(pending.choice, 'page', 'interactive')
+      .then((navigated) => {
+        if (!navigated) return;
+        setTaskDetailPaneTaskId(undefined);
+        setConversationDrawer(undefined);
+        if (typeof window !== 'undefined') window.history.replaceState(null, '', '#project-sessions');
+        workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'auto' });
+      })
+      .catch((error: unknown) => recordLocalError('task-model-push-navigation', error));
     // 先让 pending 工作面和首条消息完成一次绘制，再启动真实会话创建，避免后台请求阻塞首帧。
     if (typeof window === 'undefined') {
       void dispatchTaskModelPush(pending);
