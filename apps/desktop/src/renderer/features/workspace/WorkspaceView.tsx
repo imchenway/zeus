@@ -522,6 +522,60 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
         ]}
         onCancel={cancelSourceWorkspaceLeave}
       />
+      <TaskTableLayoutDecisionDialog
+        open={taskTableLayoutLeaveDialogOpen}
+        title={appShellSettings.appLanguage === 'zh-CN' ? '任务列表布局尚未保存' : 'Task list layout is not saved'}
+        description={appShellSettings.appLanguage === 'zh-CN' ? '离开后，本次列显隐、排序、位置和宽度修改将丢失。' : 'Leaving now will discard your column visibility, sort, order, and width changes.'}
+        actions={[
+          {
+            id: 'continue-editing',
+            label: appShellSettings.appLanguage === 'zh-CN' ? '继续编辑' : 'Continue editing',
+            onClick: cancelTaskTableLayoutLeave,
+          },
+          {
+            id: 'discard-leave',
+            label: appShellSettings.appLanguage === 'zh-CN' ? '放弃更改并离开' : 'Discard changes and leave',
+            variant: 'danger',
+            onClick: discardTaskTableLayoutAndLeave,
+          },
+          {
+            id: 'save-leave',
+            label: appShellSettings.appLanguage === 'zh-CN' ? '保存并离开' : 'Save and leave',
+            variant: 'primary',
+            onClick: beginSaveTaskTableLayoutAndLeave,
+          },
+        ]}
+        onCancel={cancelTaskTableLayoutLeave}
+      />
+      <TaskTableLayoutDecisionDialog
+        open={taskTableLayoutScopeDialogOpen}
+        title={appShellSettings.appLanguage === 'zh-CN' ? '保存任务列表布局' : 'Save task list layout'}
+        description={
+          appShellSettings.appLanguage === 'zh-CN'
+            ? '请选择这次布局修改的作用范围。保存到全部项目会更新全局默认，并清除所有项目的单独覆盖。'
+            : 'Choose where this layout applies. Saving for all projects updates the global default and clears project-specific overrides.'
+        }
+        busy={taskTableLayoutSaveBusy}
+        actions={[
+          {
+            id: 'project',
+            label: appShellSettings.appLanguage === 'zh-CN' ? '仅当前项目' : 'Current project only',
+            onClick: () => void saveTaskTableLayout('project'),
+          },
+          {
+            id: 'global',
+            label: appShellSettings.appLanguage === 'zh-CN' ? '全部项目' : 'All projects',
+            variant: 'primary',
+            onClick: () => void saveTaskTableLayout('global'),
+          },
+          {
+            id: 'cancel',
+            label: appShellSettings.appLanguage === 'zh-CN' ? '取消' : 'Cancel',
+            onClick: cancelTaskTableLayoutScopeDialog,
+          },
+        ]}
+        onCancel={cancelTaskTableLayoutScopeDialog}
+      />
       {activeNavTarget !== 'settings' ? (
         <SidebarNav
           activeNavTarget={activeNavTarget}
@@ -807,60 +861,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     onConfirm={(input) => {
                       if (taskDeleteDialogTaskId) void deleteTaskWithRelationshipStrategy(taskDeleteDialogTaskId, input);
                     }}
-                  />
-                  <TaskTableLayoutDecisionDialog
-                    open={taskTableLayoutLeaveDialogOpen}
-                    title={appShellSettings.appLanguage === 'zh-CN' ? '任务列表布局尚未保存' : 'Task list layout is not saved'}
-                    description={appShellSettings.appLanguage === 'zh-CN' ? '离开后，本次列显隐、排序、位置和宽度修改将丢失。' : 'Leaving now will discard your column visibility, sort, order, and width changes.'}
-                    actions={[
-                      {
-                        id: 'continue-editing',
-                        label: appShellSettings.appLanguage === 'zh-CN' ? '继续编辑' : 'Continue editing',
-                        onClick: cancelTaskTableLayoutLeave,
-                      },
-                      {
-                        id: 'discard-leave',
-                        label: appShellSettings.appLanguage === 'zh-CN' ? '放弃更改并离开' : 'Discard changes and leave',
-                        variant: 'danger',
-                        onClick: discardTaskTableLayoutAndLeave,
-                      },
-                      {
-                        id: 'save-leave',
-                        label: appShellSettings.appLanguage === 'zh-CN' ? '保存并离开' : 'Save and leave',
-                        variant: 'primary',
-                        onClick: beginSaveTaskTableLayoutAndLeave,
-                      },
-                    ]}
-                    onCancel={cancelTaskTableLayoutLeave}
-                  />
-                  <TaskTableLayoutDecisionDialog
-                    open={taskTableLayoutScopeDialogOpen}
-                    title={appShellSettings.appLanguage === 'zh-CN' ? '保存任务列表布局' : 'Save task list layout'}
-                    description={
-                      appShellSettings.appLanguage === 'zh-CN'
-                        ? '请选择这次布局修改的作用范围。保存到全部项目会更新全局默认，并清除所有项目的单独覆盖。'
-                        : 'Choose where this layout applies. Saving for all projects updates the global default and clears project-specific overrides.'
-                    }
-                    busy={taskTableLayoutSaveBusy}
-                    actions={[
-                      {
-                        id: 'project',
-                        label: appShellSettings.appLanguage === 'zh-CN' ? '仅当前项目' : 'Current project only',
-                        onClick: () => void saveTaskTableLayout('project'),
-                      },
-                      {
-                        id: 'global',
-                        label: appShellSettings.appLanguage === 'zh-CN' ? '全部项目' : 'All projects',
-                        variant: 'primary',
-                        onClick: () => void saveTaskTableLayout('global'),
-                      },
-                      {
-                        id: 'cancel',
-                        label: appShellSettings.appLanguage === 'zh-CN' ? '取消' : 'Cancel',
-                        onClick: cancelTaskTableLayoutScopeDialog,
-                      },
-                    ]}
-                    onCancel={cancelTaskTableLayoutScopeDialog}
                   />
                 </>
               ) : (

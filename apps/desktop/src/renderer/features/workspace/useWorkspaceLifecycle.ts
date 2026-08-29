@@ -71,6 +71,7 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
       requestWorkspaceLeave(
         () => resolve(true),
         () => resolve(false),
+        'close',
       );
     });
   }, [sourceWorkspaceDirty, taskTableLayoutDirty]);

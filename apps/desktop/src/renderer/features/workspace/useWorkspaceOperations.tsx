@@ -109,6 +109,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     pendingSourceWorkspaceLeaveRef,
     pendingTaskTableLayoutLeaveCancelRef,
     pendingTaskTableLayoutLeaveRef,
+    pendingWorkspaceLeaveKindRef,
     persistedTaskTableColumns,
     projectCodeWorkspaceMode,
     projectPanel,
@@ -119,6 +120,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     projectSourceWorkspaceRef,
     props,
     recordNativeConversationRuntimeState,
+    requestWorkspaceLeaveRef,
     runtime,
     runtimeConfirmation,
     runtimeConfirmationCommand,
@@ -915,6 +917,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
         const leave = pendingTaskTableLayoutLeaveRef.current;
         pendingTaskTableLayoutLeaveRef.current = null;
         pendingTaskTableLayoutLeaveCancelRef.current = null;
+        pendingWorkspaceLeaveKindRef.current = null;
         leave?.();
       }
       return true;
@@ -928,6 +931,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
 
   function requestTaskTableLayoutLeave(leave: () => void, cancel?: () => void): void {
     if (!taskTableLayoutDirty) {
+      pendingWorkspaceLeaveKindRef.current = null;
       leave();
       return;
     }
@@ -936,7 +940,18 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     setTaskTableLayoutLeaveDialogOpen(true);
   }
 
-  function requestWorkspaceLeave(leave: () => void, cancel?: () => void): void {
+  function requestWorkspaceLeave(leave: () => void, cancel?: () => void, kind: 'navigation' | 'close' = 'navigation'): void {
+    const pendingKind = pendingWorkspaceLeaveKindRef.current;
+    if (pendingKind) {
+      // 只保留第一次离开意图；后到的操作收到取消，重复关闭请求则等待第一次关闭响应，不能向 Main 重复回传。
+      if (kind !== 'close' || pendingKind !== 'close') cancel?.();
+      return;
+    }
+    if (!sourceWorkspaceDirty && !taskTableLayoutDirty) {
+      leave();
+      return;
+    }
+    pendingWorkspaceLeaveKindRef.current = kind;
     if (sourceWorkspaceDirty) {
       pendingSourceWorkspaceLeaveRef.current = () => requestTaskTableLayoutLeave(leave, cancel);
       pendingSourceWorkspaceLeaveCancelRef.current = cancel ?? null;
@@ -945,11 +960,13 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     }
     requestTaskTableLayoutLeave(leave, cancel);
   }
+  requestWorkspaceLeaveRef.current = requestWorkspaceLeave;
 
   function cancelSourceWorkspaceLeave(): void {
     const cancel = pendingSourceWorkspaceLeaveCancelRef.current;
     pendingSourceWorkspaceLeaveRef.current = null;
     pendingSourceWorkspaceLeaveCancelRef.current = null;
+    pendingWorkspaceLeaveKindRef.current = null;
     setSourceWorkspaceLeaveDialogOpen(false);
     cancel?.();
   }
@@ -981,6 +998,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     const cancel = pendingTaskTableLayoutLeaveCancelRef.current;
     pendingTaskTableLayoutLeaveRef.current = null;
     pendingTaskTableLayoutLeaveCancelRef.current = null;
+    pendingWorkspaceLeaveKindRef.current = null;
     saveTaskTableLayoutThenLeaveRef.current = false;
     setTaskTableLayoutLeaveDialogOpen(false);
     setTaskTableLayoutScopeDialogOpen(false);
@@ -993,6 +1011,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     const leave = pendingTaskTableLayoutLeaveRef.current;
     pendingTaskTableLayoutLeaveRef.current = null;
     pendingTaskTableLayoutLeaveCancelRef.current = null;
+    pendingWorkspaceLeaveKindRef.current = null;
     leave?.();
   }
 
