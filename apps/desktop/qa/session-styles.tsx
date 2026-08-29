@@ -1635,6 +1635,7 @@ function CompleteMessagePreview() {
   const [controllerEpoch, setControllerEpoch] = useState(0);
   const [transcriptKey, setTranscriptKey] = useState(0);
   const [requestCount, setRequestCount] = useState(0);
+  const [simulatedFailure, setSimulatedFailure] = useState(false);
   const controller = useMemo(
     () =>
       createSessionController({
@@ -1678,6 +1679,7 @@ function CompleteMessagePreview() {
 
   const reset = (fail: boolean): void => {
     failNextRequestRef.current = fail;
+    setSimulatedFailure(fail);
     setControllerEpoch((epoch) => epoch + 1);
     setTranscriptKey((key) => key + 1);
     setRequestCount(0);
@@ -1688,21 +1690,21 @@ function CompleteMessagePreview() {
     <section className="qa-motion-send-preview session-codex-parity-v1" data-testid="complete-message-preview">
       <div>
         <h3>长消息完整正文</h3>
-        <small>可见预览自动读取完整正文；失败时明确提示并允许重试。</small>
+        <small>可见预览自动读取完整正文；瞬时失败由系统自动恢复，不转嫁给用户。</small>
       </div>
       <div className="qa-motion-fixture-actions">
         <button type="button" data-testid="complete-message-reset" onClick={() => reset(false)}>
           重置自动补全
         </button>
         <button type="button" data-testid="complete-message-failure" onClick={() => reset(true)}>
-          模拟补全失败
+          模拟瞬时读取失败
         </button>
         <button type="button" data-testid="complete-message-reopen" onClick={() => setTranscriptKey((key) => key + 1)}>
           切回已补全会话
         </button>
       </div>
       <output data-testid="complete-message-evidence">
-        正文请求 {requestCount} 次 · 结尾标记 {complete ? '已显示' : '未显示'}
+        正文请求 {requestCount} 次 · 结尾标记 {complete ? '已显示' : '未显示'} · {simulatedFailure ? `系统恢复 ${complete ? '已完成' : '进行中'}` : '正常读取'}
       </output>
       <div className="qa-send-transcript ai-workspace">
         <ConversationTranscript key={transcriptKey} state={state} language="zh-CN" onLoadV2Content={controller.loadV2Content} />
