@@ -789,6 +789,69 @@ function planCustomAnswerProjectionState(): NativeSessionState {
   };
 }
 
+function interactionRecoveryProjectionState(status: 'queued' | 'paused'): NativeSessionState {
+  const conversationId = `interaction-recovery-${status}`;
+  const clientUserMessageId = `interaction-recovery-client-${status}`;
+  const submission: NativeQueuedSubmission = {
+    id: `interaction-recovery-submission-${status}`,
+    conversationId,
+    content: '已完成登录 (Recommended)',
+    status,
+    delivery: 'queue',
+    recoveryKind: 'interaction_response',
+    position: 0,
+    providerTurnId: null,
+    clientUserMessageId,
+    pausedReason: status === 'paused' ? 'recovery_required' : null,
+    error:
+      status === 'paused'
+        ? {
+            code: 'ZEUS_CODEX_RPC_TIMEOUT',
+            message: 'Codex app-server request timed out: thread/resume',
+            recoveryRequired: true,
+          }
+        : null,
+    createdAt: '2026-08-29T03:54:29.662Z',
+    updatedAt: status === 'paused' ? '2026-08-29T03:56:29.662Z' : '2026-08-29T03:54:29.662Z',
+  };
+  const durableItem: NativeSessionItemBuffer = {
+    ...motionItem(`interaction-recovery-answer-${status}`, 'userMessage', 'completed', submission.content, {
+      role: 'user',
+      delivery: 'queue',
+      submissionId: submission.id,
+      clientUserMessageId,
+    }),
+    conversationId,
+    threadId: `interaction-recovery-thread-${status}`,
+    turnId: `message:interaction-recovery-answer-${status}`,
+    localItemId: `conversation-message-${status}`,
+    clientUserMessageId,
+    durableClientUserMessageId: clientUserMessageId,
+    timelineAt: submission.createdAt,
+    updatedAt: submission.createdAt,
+  };
+  const base: NativeSessionState = {
+    ...createInitialSessionState(),
+    transportState: 'ready',
+    conversationState: 'ready',
+    projectId: 'project-zeus',
+    conversationId,
+    providerThreadId: `interaction-recovery-thread-${status}`,
+    snapshot: { id: conversationId } as NonNullable<NativeSessionState['snapshot']>,
+    items: { [durableItem.key]: durableItem },
+    itemOrder: [durableItem.key],
+    transcriptRevision: 1,
+  };
+  return sessionReducer(base, {
+    type: 'queue_hydrated',
+    queue: {
+      state: status === 'paused' ? { type: 'paused', reason: 'recovery_required' } : { type: 'idle' },
+      waitReason: status === 'paused' ? 'recovery_required' : 'dispatch_pending',
+      submissions: [submission],
+    },
+  });
+}
+
 const steeringConversationId = 'steering-conversation';
 const steeringThreadId = 'steering-thread';
 const steeringTurnId = 'steering-turn';
@@ -1898,6 +1961,34 @@ function DeliveryFailurePreview() {
   );
 }
 
+function InteractionRecoveryPreview() {
+  const [lastAction, setLastAction] = useState('尚未操作');
+  return (
+    <section className="qa-motion-send-preview session-codex-parity-v1" data-testid="interaction-recovery-preview">
+      <div>
+        <h3>重启回答与后台续接</h3>
+        <small>回答已经保存；排队与恢复超时分别显示真实状态，暂停续接只提供安全恢复和取消。</small>
+      </div>
+      <div className="qa-creation-status-grid">
+        <div className="qa-send-transcript ai-workspace" aria-label="交互续接正在恢复">
+          <ConversationTranscript state={interactionRecoveryProjectionState('queued')} language="zh-CN" />
+        </div>
+        <div className="qa-send-transcript ai-workspace" aria-label="交互续接恢复超时">
+          <ConversationTranscript
+            state={interactionRecoveryProjectionState('paused')}
+            language="zh-CN"
+            onRecoverQueue={() => setLastAction('已请求重新恢复')}
+            onCancelQueuedSubmission={(submissionId) => setLastAction(`已请求取消 ${submissionId}`)}
+          />
+        </div>
+      </div>
+      <p data-testid="interaction-recovery-action-result" role="status">
+        {lastAction}
+      </p>
+    </section>
+  );
+}
+
 function CreationFailureExclusivityPreview() {
   return (
     <section className="qa-motion-send-preview session-codex-parity-v1" data-testid="creation-failure-exclusivity-preview">
@@ -2092,6 +2183,18 @@ function CompleteMessageQaApp() {
         <h1>长消息完整正文</h1>
       </header>
       <CompleteMessagePreview />
+    </main>
+  );
+}
+
+function InteractionRecoveryQaApp() {
+  return (
+    <main className="macos-ai-app zeus-shell qa-page qa-motion-page" data-testid="interaction-recovery-qa">
+      <header className="qa-heading">
+        <p>ZEUS-0387 · 真实 DOM 会话恢复验收</p>
+        <h1>回答保存与原会话恢复解耦</h1>
+      </header>
+      <InteractionRecoveryPreview />
     </main>
   );
 }
@@ -2946,6 +3049,7 @@ const sourcePreviewQa = new URLSearchParams(window.location.search).has('source-
 const markdownStreamQa = new URLSearchParams(window.location.search).has('markdown-stream');
 const timeoutRetryQa = new URLSearchParams(window.location.search).has('timeout-retry');
 const completeMessageQa = new URLSearchParams(window.location.search).has('complete-message');
+const interactionRecoveryQa = new URLSearchParams(window.location.search).has('interaction-recovery');
 // 开发态热更新复用同一根节点，避免视觉验收页重复挂载并制造无关控制台错误。
 const qaRoot = window.__zeusSessionStylesRoot ?? createRoot(document.getElementById('root')!);
 window.__zeusSessionStylesRoot = qaRoot;
@@ -2962,6 +3066,8 @@ qaRoot.render(
     <TimeoutRetryQaApp />
   ) : completeMessageQa ? (
     <CompleteMessageQaApp />
+  ) : interactionRecoveryQa ? (
+    <InteractionRecoveryQaApp />
   ) : motionQa ? (
     <MotionApp />
   ) : (

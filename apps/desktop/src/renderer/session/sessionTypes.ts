@@ -259,6 +259,7 @@ export interface NativeQueuedSubmission {
   expectedTurnId?: string | null;
   clientUserMessageId?: string;
   controlAction?: 'implement_plan' | 'refine_plan';
+  recoveryKind?: 'interaction_response';
   position: number;
   providerTurnId?: string | null;
   pausedReason: string | null;

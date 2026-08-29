@@ -1581,6 +1581,7 @@ function submissionUserMessagePayload(submission: NativeQueuedSubmission): Recor
     submissionId: submission.id,
     attachments: submission.attachments ?? [],
     ...(submission.conversationContext ? { conversationContext: submission.conversationContext } : {}),
+    ...(submission.recoveryKind ? { recoveryKind: submission.recoveryKind } : {}),
     ...(submission.pausedReason ? { pausedReason: submission.pausedReason } : {}),
     ...(deliveryError ? { error: deliveryError, deliveryError } : {}),
   };

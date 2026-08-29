@@ -2119,7 +2119,8 @@
   padding: 8px 10px 8px 9px;
 }
 
-.session-codex-parity-v1 .session-message-delivery-feedback[data-state='provider-stop-pending'] {
+.session-codex-parity-v1 .session-message-delivery-feedback[data-state='provider-stop-pending'],
+.session-codex-parity-v1 .session-message-delivery-feedback[data-state='interaction-recovery-pending'] {
   background: color-mix(in srgb, var(--session-warning) 3%, var(--session-canvas));
   border: 1px solid color-mix(in srgb, var(--session-warning) 18%, var(--session-line-soft));
   border-inline-start: 3px solid color-mix(in srgb, var(--session-warning) 62%, transparent);

@@ -56,6 +56,8 @@ export interface NativeSubmissionError {
   recoveryRequired: boolean;
 }
 
+export type NativeSubmissionRecoveryKind = 'interaction_response';
+
 export interface NativeQueuedSubmission {
   id: string;
   conversationId: string;
@@ -70,6 +72,7 @@ export interface NativeQueuedSubmission {
   expectedTurnId: string | null;
   clientUserMessageId: string;
   controlAction?: 'implement_plan' | 'refine_plan';
+  recoveryKind?: NativeSubmissionRecoveryKind;
   position: number;
   providerTurnId: null;
   pausedReason: string | null;

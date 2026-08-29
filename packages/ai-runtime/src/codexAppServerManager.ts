@@ -512,6 +512,8 @@ interface CreateCodexAppServerManagerOptions {
   now?: () => string;
   generationId?: () => string;
   requestTimeoutMs?: number;
+  /** 仅覆盖不可自动重试的 thread/resume 单次加载窗口；生产默认 120 秒。 */
+  threadResumeTimeoutMs?: number;
   appServerFlags?: readonly string[];
   onRestartScheduled?: (delayMs: number, attempt: number) => void;
   onDiagnostic?: (entry: { generationId: string; sequence: number; stderrSummary: string }) => void;
@@ -557,6 +559,8 @@ const SAFE_READ_RPC_MAX_RETRIES = 5;
 const SAFE_READ_RPC_ATTEMPT_TIMEOUT_MS = 4_000;
 const SAFE_READ_RPC_DEADLINE_MS = 30_000;
 const SAFE_READ_RPC_INITIAL_DELAY_MS = 200;
+// thread/resume 需要加载完整历史；它不是可自动重试的只读 RPC，只放宽单次后台恢复窗口。
+const THREAD_RESUME_RPC_TIMEOUT_MS = 120_000;
 
 type TimedGenerationSnapshot<T extends { generationId: string }> = {
   value: T;
@@ -584,6 +588,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
   const now = options.now ?? (() => new Date().toISOString());
   const makeGenerationId = options.generationId ?? randomUUID;
   const requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
+  const threadResumeTimeoutMs = Math.max(1, options.threadResumeTimeoutMs ?? THREAD_RESUME_RPC_TIMEOUT_MS);
   const eventReplayLimit = options.eventReplayLimit ?? 1_024;
   const shutdownTimeoutMs = Math.max(0, options.shutdownTimeoutMs ?? 5_000);
   const accountFingerprintSalt = options.accountFingerprintSalt?.trim() || 'zeus-local-account-scope';
@@ -1294,6 +1299,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
             modelProvider: responsesProvider?.id,
             config: responsesProvider ? responsesProviderConfig(responsesProvider) : undefined,
           }),
+          { timeoutMs: threadResumeTimeoutMs },
         ),
       );
       const thread = parseThread(response.thread);

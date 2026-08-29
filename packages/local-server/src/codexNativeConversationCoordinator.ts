@@ -44,6 +44,7 @@ import type {
   NativeQuestionAnswerAttachmentInput,
   NativeQueueSnapshot,
   NativeQueueWaitReason,
+  NativeSubmissionRecoveryKind,
   NativeTurnResult,
   NativeTurnResultWaiter,
   RecoverNativeQueueInput,
@@ -103,7 +104,7 @@ import { createCodexExternalRequestAnswerRecovery } from './codexExternalRequest
 import { createCodexModelRequestTimingTracker } from './codexModelRequestTiming.js';
 import { assertCallerDoesNotOverrideCompiledContext, mergeCodexAdditionalContext, readCodexAdditionalContext } from './codexNativeContextProtocol.js';
 import { createCodexNativeConversationAccess } from './codexNativeConversationAccess.js';
-import { readNativeSubmissionSkill, readNativeSubmissionTaskPushLayout, type PersistedSubmissionInput } from './nativeConversationSubmissionInputs.js';
+import { readNativeSubmissionRecoveryKind, readNativeSubmissionSkill, readNativeSubmissionTaskPushLayout, type PersistedSubmissionInput } from './nativeConversationSubmissionInputs.js';
 import { inferNativeConversationRunState, interruptedQueueSubmissions } from './codexNativeRunStateProjection.js';
 import { chooseNativeUserMessageContent, type ResolvedNativeUserMessageSubmission, resolveNativeUserMessageSubmission } from './codexNativeUserMessageProjection.js';
 import { runCodexPortableContextCompaction } from './codexPortableContextCompaction.js';
@@ -660,6 +661,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       submissions: entries.map((submission, index) => {
         const input = parseJsonRecord(submission.inputJson);
         const error = submissionErrorSnapshot(submission.errorJson);
+        const recoveryKind = readNativeSubmissionRecoveryKind(submission, input);
         return {
           id: submission.id,
           conversationId: submission.conversationId,
@@ -679,6 +681,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           expectedTurnId: typeof input.expectedTurnId === 'string' ? input.expectedTurnId : null,
           clientUserMessageId: submission.clientMessageId,
           ...(input.origin === 'implement_plan' || input.origin === 'refine_plan' ? { controlAction: input.origin } : {}),
+          ...(recoveryKind ? { recoveryKind } : {}),
           position: submission.queuePosition ?? index + 1,
           providerTurnId: null,
           pausedReason: submission.pausedReason,
@@ -726,6 +729,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       planItemId?: string;
       requestAnswerId?: string;
       internalOperation?: boolean;
+      recoveryKind?: NativeSubmissionRecoveryKind;
       goalObjective?: string;
       skill?: NativeConversationSkillInput;
       requestedServiceTier?: string | null;
@@ -748,6 +752,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       ...(input.taskPushLayout ? { taskPushLayout: input.taskPushLayout } : {}),
       ...(input.requestAnswerId ? { requestAnswerId: input.requestAnswerId } : {}),
       ...(input.internalOperation ? { internalOperation: true } : {}),
+      ...(input.recoveryKind ? { recoveryKind: input.recoveryKind } : {}),
       ...(input.goalObjective ? { goalObjective: input.goalObjective } : {}),
       ...(input.skill ? { skill: input.skill } : {}),
     };
@@ -2947,6 +2952,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         idempotencyKey: `interaction-recovery-response:${request.id}`,
         clientUserMessageId: `interaction-recovery-response:${request.id}`,
         displayText,
+        recoveryKind: 'interaction_response',
         ...(inputValue.input.answerAttachments?.length ? { attachments: flattenQuestionAnswerAttachments(inputValue.input.answerAttachments) } : {}),
         ...(inputValue.input.answerAttachments?.length ? { requestAnswerId: request.id } : {}),
       },
@@ -2960,13 +2966,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       requestKind: request.requestKind,
       resumedAfterTransportRecovery: true,
     });
-    try {
-      await ensureGenerationReconciled([conversation.id]);
-    } catch (error) {
-      return pauseQueueAfterDispatchFailure(conversation, submission, error);
-    }
-    const refreshed = requireConversation(conversation.id);
-    return dispatchSubmission(refreshed, submission, inputValue.input.providerWriteLifecycle);
+    // 回答已经耐久接纳后立即结束 HTTP 操作；慢 thread/resume 由统一队列在后台执行，
+    // 不能再把 Provider 加载耗时误报成“回答失败”。后台派发仍只使用原 submission，
+    // 并由既有 Provider command/outbox 保证一次恢复尝试只产生一次写入。
+    requestQueueDrain();
+    return accepted(submission, 'queued', conversation.providerThreadId, null);
   }
 
   async function snoozeRequest(input: SnoozeNativeRequestInput): Promise<void> {
