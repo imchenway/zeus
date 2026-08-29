@@ -72,6 +72,9 @@ export class ConversationQueueCoreMutationApplication {
   delete(input: { conversationId: string; submissionId: string }): unknown {
     const submission = this.requireOwnedSubmission(input.conversationId, input.submissionId);
     if (planControlModeForSubmission(submission)) throw mutationError('ZEUS_PLAN_CONTROL_SUBMISSION_IMMUTABLE', 'Plan control submissions cannot be deleted.');
+    if (submission.providerTurnId) {
+      throw mutationError('ZEUS_NATIVE_SUBMISSION_NOT_EDITABLE', 'Submissions that already entered a Provider turn cannot be deleted.');
+    }
     if (submission.status !== 'queued' && submission.status !== 'paused' && submission.status !== 'failed') {
       throw mutationError('ZEUS_NATIVE_SUBMISSION_NOT_EDITABLE', 'Only queued, paused, or failed submissions can be deleted.');
     }
