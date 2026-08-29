@@ -42,6 +42,7 @@ import type {
   NativeOperationAcceptance,
   NativePendingRequest,
   NativePermissionMode,
+  PluginSkillReference,
   NativePlanImplementationRequest,
   NativeRuntimeDetailsSnapshot,
   NativeRuntimeFact,
@@ -79,6 +80,7 @@ import { presentModelOptions } from '../modelOptionPresentation.js';
 import { NewConversationExecutionContext } from './NewConversationExecutionContext.js';
 import { formatVisibleApplicationError, useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import { projectModelServiceTierSelection, toProjectModelServiceTierPreference, upsertProjectModelServiceTierPreference } from './projectServiceTierPreferences.js';
+import { ExtensionMentionSelector } from './ExtensionMentionSelector.js';
 
 export interface SessionWorkspaceTaskManagementStatus {
   id: string;
@@ -114,6 +116,7 @@ export interface SessionWorkspaceStartInput {
   agentKind?: 'codex' | 'pi';
   goalObjective?: string;
   skillId?: string;
+  pluginReferences?: PluginSkillReference[];
 }
 
 export interface ProjectSessionWorkspaceStartInput {
@@ -126,6 +129,7 @@ export interface ProjectSessionWorkspaceStartInput {
   model?: string;
   effort?: string;
   goalObjective?: string;
+  pluginReferences?: PluginSkillReference[];
 }
 
 export interface SessionWorkspaceActions {
@@ -189,6 +193,7 @@ export interface SessionWorkspaceActions {
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => Promise<ConversationResourceOpenActionResult>;
   onOpenTurnChangeFile?: (changeSet: TurnChangeSet, file: TurnChangeFile, target: ConversationOpenTarget, location?: ConversationFileLocation) => Promise<ConversationResourceOpenActionResult>;
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
+  onCallMcpAppTool?: (input: import('./McpAppFrame.js').McpAppToolCall) => Promise<import('./McpAppFrame.js').McpAppToolResult>;
   onLoadSubagents?: () => Promise<NativeSubagentListSnapshot>;
   onLoadSubagentThread?: (threadId: string) => Promise<NativeSubagentThreadSnapshot>;
   onOperateTurnChangeSet?: (changeSet: TurnChangeSet, action: 'undo' | 'reapply') => Promise<TurnChangeSetOperationResult>;
@@ -237,6 +242,7 @@ type StartNativeConversationPayload =
       agentKind?: 'codex' | 'pi';
       goalObjective?: string;
       skillId?: string;
+      pluginReferences?: PluginSkillReference[];
     }
   | { mode: 'resume'; conversationId: string; content: string; collaborationMode: NativeCollaborationMode }
   | {
@@ -552,6 +558,11 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
           : props.localActions),
       ...(controllerInteractive
         ? {
+            ...(props.client.invokePluginAppTool
+              ? {
+                  onCallMcpAppTool: (input: import('./McpAppFrame.js').McpAppToolCall) => props.client.invokePluginAppTool!(input.conversationId, input.pluginId, input.serverId, input.toolName, input.arguments),
+                }
+              : {}),
             onOperateTurnChangeSet: async (changeSet, action) => {
               if (!props.client.operateTurnChangeSet) throw new Error('turn_change_set_operation_unavailable');
               return props.client.operateTurnChangeSet(projectId, conversationId, changeSet.providerTurnId, action, {
@@ -958,6 +969,7 @@ function buildProjectConversationStartPayload(input: ProjectSessionWorkspaceStar
     ...(input.effort ? { effort: input.effort } : {}),
     ...serviceTierWireOverride(input.serviceTierSelection),
     ...(input.goalObjective ? { goalObjective: input.goalObjective } : {}),
+    ...(input.pluginReferences?.length ? { pluginReferences: input.pluginReferences } : {}),
   };
 }
 
@@ -990,6 +1002,7 @@ function isProjectConversationStartRequest(value: unknown): value is StartProjec
     (value.model === undefined || typeof value.model === 'string') &&
     (value.effort === undefined || typeof value.effort === 'string') &&
     (value.goalObjective === undefined || (typeof value.goalObjective === 'string' && Boolean(value.goalObjective.trim()) && [...value.goalObjective].length <= 4_000)) &&
+    isPluginSkillReferences(value.pluginReferences) &&
     typeof value.idempotencyKey === 'string' &&
     Boolean(value.idempotencyKey) &&
     typeof value.clientUserMessageId === 'string' &&
@@ -1006,6 +1019,15 @@ function projectRequestMatchesPayload(request: StartProjectConversationRequest, 
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isPluginSkillReferences(value: unknown): value is PluginSkillReference[] | undefined {
+  return (
+    value === undefined ||
+    (Array.isArray(value) &&
+      value.length <= 64 &&
+      value.every((reference) => isRecord(reference) && (reference.kind === 'plugin' || reference.kind === 'skill') && typeof reference.id === 'string' && Boolean(reference.id.trim()) && reference.id.length <= 512))
+  );
 }
 
 function stringField(value: unknown): string | null {
@@ -1158,6 +1180,7 @@ function buildStartNativeConversationPayload(input: SessionWorkspaceStartInput):
       ...(input.agentKind ? { agentKind: input.agentKind } : {}),
       ...(input.goalObjective ? { goalObjective: input.goalObjective } : {}),
       ...(input.skillId ? { skillId: input.skillId } : {}),
+      ...(input.pluginReferences?.length ? { pluginReferences: input.pluginReferences } : {}),
     };
   }
   if (!content) throw new Error('Native conversation resume/reference content is required.');
@@ -1224,7 +1247,8 @@ function isStartNativeConversationRequest(value: unknown): value is StartNativeC
       permissionModeField(request.permissionMode) !== undefined &&
       (request.collaborationMode === 'default' || request.collaborationMode === 'plan') &&
       serviceTierOverrideField(request.serviceTier) &&
-      (request.goalObjective === undefined || (typeof request.goalObjective === 'string' && Boolean(request.goalObjective.trim()) && [...request.goalObjective].length <= 4_000))
+      (request.goalObjective === undefined || (typeof request.goalObjective === 'string' && Boolean(request.goalObjective.trim()) && [...request.goalObjective].length <= 4_000)) &&
+      isPluginSkillReferences(request.pluginReferences)
     );
   }
   if (!request.content.trim()) return false;
@@ -2151,6 +2175,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         onRemoveAttachment={actions.onRemoveAttachment}
         onRemoveBrowserSubmission={actions.onRemoveBrowserSubmission}
         onContextDraftChange={actions.onContextDraftChange}
+        projectId={props.conversation?.projectId}
+        onLoadExtensions={actions.onLoadSkills}
         readOnly={interactionReadOnly || interactionAuthorityMissing || props.state.queue?.submissions.some((submission) => submission.pausedReason === 'recovered_unsent')}
         runtimeSettings={composerRuntimeSettings}
         onRuntimeSettingsChange={updateComposerRuntimeSettings}
@@ -2441,6 +2467,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     }
                     onOpenResource={transcriptReadActionsEnabled ? openConversationResource : undefined}
                     onLoadResourcePreview={transcriptReadActionsEnabled ? actions.onLoadResourcePreview : undefined}
+                    onCallMcpAppTool={transcriptInteractionsEnabled ? actions.onCallMcpAppTool : undefined}
                     onLoadEarlierHistory={transcriptReadActionsEnabled ? actions.onLoadEarlierHistory : undefined}
                     onLoadTurnProcess={transcriptReadActionsEnabled ? actions.onLoadTurnProcess : undefined}
                     onLoadTurnArtifacts={transcriptReadActionsEnabled ? actions.onLoadTurnArtifacts : undefined}
@@ -2611,6 +2638,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
           onStartTask={actions.onStartConversation}
           onStartProject={actions.onStartProjectConversation}
           onLoadCapabilities={actions.onLoadCapabilities}
+          onLoadSkills={actions.onLoadSkills}
           onSelectProject={actions.onSelectNewConversationProject}
           onLoadProjectGit={actions.onLoadNewConversationProjectGit}
           onExecuteProjectGit={actions.onExecuteNewConversationProjectGit}
@@ -2723,6 +2751,7 @@ function NewConversationComposer(props: {
   onStartTask?: SessionWorkspaceActions['onStartConversation'];
   onStartProject?: SessionWorkspaceActions['onStartProjectConversation'];
   onLoadCapabilities?: SessionWorkspaceActions['onLoadCapabilities'];
+  onLoadSkills?: SessionWorkspaceActions['onLoadSkills'];
   onSelectProject?: SessionWorkspaceActions['onSelectNewConversationProject'];
   onLoadProjectGit?: SessionWorkspaceActions['onLoadNewConversationProjectGit'];
   onExecuteProjectGit?: SessionWorkspaceActions['onExecuteNewConversationProjectGit'];
@@ -2732,6 +2761,7 @@ function NewConversationComposer(props: {
   const copy = labels[props.language];
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const runtimePreferencesInitializedRef = useRef(false);
+  const extensionReferencesRef = useRef(new Map<string, PluginSkillReference>());
   const [content, setContent] = useState(() => props.initialContent ?? '');
   const [attachments, setAttachments] = useState<NativeConversationAttachment[]>(() => [...(props.initialAttachments ?? [])]);
   const [permissionMode, setPermissionMode] = useState<NativePermissionMode>('auto');
@@ -2862,6 +2892,7 @@ function NewConversationComposer(props: {
     setSubmitting(true);
     setLocalError(null);
     try {
+      const pluginReferences = [...extensionReferencesRef.current].filter(([token]) => submittedContent.includes(token)).map(([, reference]) => reference);
       let accepted: void | boolean | NativeConversationStartPreparation | NativeConversationStartFailure;
       if (props.owner.kind === 'project') {
         if (!props.onStartProject) throw new Error('Project conversation start is unavailable.');
@@ -2875,6 +2906,7 @@ function NewConversationComposer(props: {
           model: selectedModel?.id,
           effort: selectedEffort || undefined,
           ...(submittedGoal ? { goalObjective: submittedGoal } : {}),
+          ...(pluginReferences.length ? { pluginReferences } : {}),
         });
       } else {
         if (!props.task || !props.onStartTask) throw new Error('Task conversation start is unavailable.');
@@ -2890,6 +2922,7 @@ function NewConversationComposer(props: {
           model: selectedModel?.id,
           effort: selectedEffort || undefined,
           ...(submittedGoal ? { goalObjective: submittedGoal } : {}),
+          ...(pluginReferences.length ? { pluginReferences } : {}),
         });
       }
       if (accepted === false) return;
@@ -2898,6 +2931,7 @@ function NewConversationComposer(props: {
         return;
       }
       await props.onAccepted?.();
+      extensionReferencesRef.current.clear();
     } catch (error) {
       setLocalError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -3010,6 +3044,20 @@ function NewConversationComposer(props: {
         />
         <div className="session-composer-command-row">
           <span className="session-composer-leading-actions">
+            {!goalInputActive ? (
+              <ExtensionMentionSelector
+                projectId={props.owner?.projectId}
+                language={props.language}
+                disabled={submitting || !props.owner}
+                loadCatalog={props.onLoadSkills}
+                onInsert={(selection) => {
+                  if (selection.reference) extensionReferencesRef.current.set(selection.token, selection.reference);
+                  const token = selection.token;
+                  setContent((current) => `${current}${current && !/\s$/u.test(current) ? ' ' : ''}${token} `);
+                  requestAnimationFrame(() => textareaRef.current?.focus());
+                }}
+              />
+            ) : null}
             {!goalInputActive && props.onChooseAttachments ? (
               <button
                 type="button"

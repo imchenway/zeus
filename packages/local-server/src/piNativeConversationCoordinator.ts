@@ -43,6 +43,9 @@ import { TurnProcessProjector } from './turnProcessProjector.js';
 import type { ContextDispatchEnvelope } from './contextDispatchService.js';
 import { PiProviderCommandApplicationService, type PiProviderCommandAttempt } from './piProviderCommandDelivery.js';
 import { projectLocallyAcceptedUserMessage } from './localUserSubmissionProjection.js';
+import type { ZeusConversationPluginRuntime, ZeusPluginConversationPreparation } from './zeusConversationPluginRuntime.js';
+import { emitPluginCompactionHook } from './codexConversationDispatchContext.js';
+import type { ZeusPluginDynamicTool } from './zeusPluginMcpBroker.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -52,6 +55,7 @@ interface PiConversationContext {
   taskId: string | null;
   cwd: string;
   permissionMode: 'read-only' | 'auto' | 'full-access';
+  model: string;
   attachmentRoots: string[];
   session: AgentSessionIdentity;
 }
@@ -95,6 +99,7 @@ export interface CreatePiNativeConversationCoordinatorOptions {
   redactSensitiveText: (value: string) => { text: string };
   execution: ConversationExecutionRepository;
   toolResults: ManagedConversationToolResultStore;
+  plugins?: ZeusConversationPluginRuntime;
   compileDispatchContext?: (input: {
     provider: 'pi';
     conversationId: string;
@@ -364,6 +369,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     await input.providerWriteLifecycle?.markPrepared(input.submissionId);
     const providerCommandIssuedAt = submission.createdAt;
     let compiledDispatchContext: ContextDispatchEnvelope | null = null;
+    let pluginPreparation: ZeusPluginConversationPreparation | null = null;
     try {
       attachmentInput = await resolvePiAttachmentInput(orderedAttachments, allowedResourceRoots);
       providerPrompt = appendPiConversationContext(
@@ -372,6 +378,23 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         input.browserComments,
         input.conversationContext,
       );
+      if (options.plugins) {
+        pluginPreparation = await options.plugins.prepare({
+          conversationId: input.conversationId,
+          projectId: input.projectId,
+          cwd: input.cwd,
+          model: piModelIdentity(input.model),
+          source: 'startup',
+          prompt: providerPrompt,
+        });
+        providerPrompt = await applyPiPromptHooks(options.plugins, pluginPreparation, {
+          conversationId: input.conversationId,
+          cwd: input.cwd,
+          model: piModelIdentity(input.model),
+          prompt: providerPrompt,
+          permissionMode: input.permissionMode,
+        });
+      }
       compiledDispatchContext = options.compileDispatchContext
         ? await options.compileDispatchContext({
             provider: 'pi',
@@ -424,7 +447,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         cwd: input.cwd,
         model: input.model,
         traceIdentity: sessionCommand.traceIdentity,
-        ...(input.segmentLifecycle?.portableContext ? { metadata: { portableConversationContext: input.segmentLifecycle.portableContext } } : {}),
+        metadata: piPluginMetadata(pluginPreparation, input.segmentLifecycle?.portableContext),
       });
     } catch (error) {
       sessionCommand.recordFailure(error, { explicitlyRejected: false });
@@ -494,6 +517,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       taskId: input.taskId ?? null,
       cwd: input.cwd,
       permissionMode: input.permissionMode,
+      model: piModelIdentity(input.model),
       attachmentRoots: attachmentInput.allowedRoots,
       session,
     });
@@ -504,6 +528,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     let compactionFinished = false;
     try {
       if (input.segmentLifecycle?.contextCompactionPlan) {
+        await emitPluginCompactionHook({ plugins: options.plugins, event: 'PreCompact', conversationId: input.conversationId, cwd: input.cwd, model: piModelIdentity(input.model) });
         await input.segmentLifecycle.beginContextCompaction(options.now());
         const compacted = await driver.compactSession({
           session,
@@ -516,6 +541,12 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           evidence: { adapter: 'pi_sdk', method: 'AgentSession.compact', tokensBefore: compacted.tokensBefore, estimatedTokensAfter: compacted.estimatedTokensAfter },
           completedAt: options.now(),
         });
+        const pluginCompactContext = await emitPluginCompactionHook({ plugins: options.plugins, event: 'PostCompact', conversationId: input.conversationId, cwd: input.cwd, model: piModelIdentity(input.model) });
+        if (pluginCompactContext) {
+          providerPrompt = `${providerPrompt}\n\n[ZEUS_PLUGIN_COMPACT_HOOK_CONTEXT]\n${Object.values(pluginCompactContext)
+            .map((entry) => entry.value)
+            .join('\n')}\n[/ZEUS_PLUGIN_COMPACT_HOOK_CONTEXT]`;
+        }
         compactionFinished = true;
       }
       runCommand = providerCommands.prepare({
@@ -727,12 +758,37 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     await input.segmentLifecycle?.prepare(submission);
     await options.db.save();
     await input.providerWriteLifecycle?.markPrepared(submission.id);
+    const pluginPreparation = options.plugins
+      ? await options.plugins.prepare({
+          conversationId: input.conversation.id,
+          projectId: input.conversation.projectId,
+          cwd,
+          model: piModelIdentity(input.model),
+          source: 'resume',
+        })
+      : null;
     if (!context) {
       if (!input.conversation.nativeSessionId || !input.conversation.nativeSessionPath) throw piError('ZEUS_PI_SESSION_UNAVAILABLE', 'Pi 会话缺少可恢复的会话文件。');
-      const session = await driver.resumeSession({ nativeSessionId: input.conversation.nativeSessionId, nativeSessionPath: input.conversation.nativeSessionPath, cwd });
-      context = { conversationId: input.conversation.id, projectId: input.conversation.projectId, taskId: input.conversation.taskId, cwd, permissionMode: input.conversation.permissionMode, attachmentRoots: [], session };
+      const session = await driver.resumeSession({
+        nativeSessionId: input.conversation.nativeSessionId,
+        nativeSessionPath: input.conversation.nativeSessionPath,
+        cwd,
+        metadata: piPluginMetadata(pluginPreparation),
+      });
+      context = {
+        conversationId: input.conversation.id,
+        projectId: input.conversation.projectId,
+        taskId: input.conversation.taskId,
+        cwd,
+        permissionMode: input.conversation.permissionMode,
+        model: piModelIdentity(input.model),
+        attachmentRoots: [],
+        session,
+      };
       contexts.set(session.nativeSessionId, context);
     }
+    context.model = piModelIdentity(input.model);
+    context.permissionMode = input.conversation.permissionMode;
     if (submission.status === 'queued' || submission.status === 'paused' || submission.status === 'failed') {
       submission = options.submissions.updateStatus(submission.id, 'dispatching', { dispatchedAt: createdAt, updatedAt: createdAt });
     }
@@ -748,6 +804,15 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       attachmentInput = await resolvePiAttachmentInput(input.attachments ?? [], allowedResourceRoots);
       context.attachmentRoots = attachmentInput.allowedRoots;
       providerContent = appendPiConversationContext(appendPiAttachmentReferences(input.content, attachmentInput.pathReferences), input.browserCommentContent, input.browserComments, input.conversationContext);
+      if (options.plugins && pluginPreparation) {
+        providerContent = await applyPiPromptHooks(options.plugins, pluginPreparation, {
+          conversationId: input.conversation.id,
+          cwd,
+          model: piModelIdentity(input.model),
+          prompt: providerContent,
+          permissionMode: input.conversation.permissionMode,
+        });
+      }
       compiledDispatchContext = options.compileDispatchContext
         ? await options.compileDispatchContext({
             provider: 'pi',
@@ -1504,6 +1569,11 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       });
       return { text: page.text, details: { offset: page.offset, nextOffset: page.nextOffset, totalCharacters: page.totalCharacters, sha256: page.sha256 } };
     }
+    if (options.plugins) {
+      const catalog = await options.plugins.getCatalog(context.conversationId);
+      const pluginTool = catalog.tools.find((candidate) => candidate.name === request.toolName);
+      if (pluginTool) return executePluginTool(context, request, pluginTool);
+    }
     const mutating = request.toolName === 'write' || request.toolName === 'edit' || request.toolName === 'bash';
     if (mutating && context.permissionMode === 'read-only') throw piError('ZEUS_PI_TOOL_READ_ONLY', '当前会话是只读模式，已拒绝 Pi 写入或命令。');
     if (mutating && context.permissionMode === 'auto') {
@@ -1544,6 +1614,52 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     const args = request.toolName === 'grep' ? ['-n', '--hidden', '--glob', '!.git', pattern, path] : ['--files', path, '-g', pattern];
     const result = await execFileAsync('rg', args, { cwd: context.cwd, timeout: 30_000, maxBuffer: 2 * 1024 * 1024 }).catch((error: unknown) => ({ stdout: readExitStdout(error), stderr: '' }));
     return { text: result.stdout.trim() || '没有匹配结果。' };
+  }
+
+  async function executePluginTool(context: PiConversationContext, request: PiZeusToolRequest, tool: ZeusPluginDynamicTool): Promise<PiZeusToolResult> {
+    if (!options.plugins) throw piError('ZEUS_PLUGIN_HOST_UNAVAILABLE', 'Plugin Host 当前不可用。');
+    const pre = await options.plugins.emitHook({
+      event: 'PreToolUse',
+      conversationId: context.conversationId,
+      cwd: context.cwd,
+      model: context.model,
+      permissionMode: context.permissionMode,
+      payload: { tool_name: tool.name, tool_input: request.args },
+    });
+    if (pre.permissionDecision === 'deny') throw piError('ZEUS_PLUGIN_HOOK_TOOL_DENIED', pre.permissionDecisionReason ?? 'Plugin Hook 已阻断工具。');
+    const args = pre.updatedInput ?? request.args;
+    if (tool.approvalMode === 'prompt' && pre.permissionDecision !== 'allow') {
+      const permission = await options.plugins.emitHook({
+        event: 'PermissionRequest',
+        conversationId: context.conversationId,
+        cwd: context.cwd,
+        model: context.model,
+        permissionMode: context.permissionMode,
+        payload: { tool_name: tool.name, tool_input: args },
+      });
+      if (permission.permissionDecision === 'deny') throw piError('ZEUS_PLUGIN_HOOK_PERMISSION_DENIED', permission.permissionDecisionReason ?? 'Plugin Hook 已拒绝工具审批。');
+      if (permission.permissionDecision !== 'allow' && !(await requestApproval(context, { ...request, args }))) throw piError('ZEUS_PLUGIN_MCP_TOOL_DECLINED', '用户已拒绝 Plugin MCP 工具。');
+    }
+    const result = await options.plugins.invokeMcp({ conversationId: context.conversationId, toolName: tool.name, args, ...(request.signal ? { signal: request.signal } : {}) });
+    const post = await options.plugins.emitHook({
+      event: 'PostToolUse',
+      conversationId: context.conversationId,
+      cwd: context.cwd,
+      model: context.model,
+      permissionMode: context.permissionMode,
+      payload: { tool_name: tool.name, tool_input: args, tool_response: result.text },
+    });
+    if (result.app) {
+      publish('conversation.plugin_app.created', context.conversationId, {
+        pluginId: tool.pluginId,
+        pluginRevisionId: tool.pluginRevisionId,
+        serverId: tool.serverId,
+        toolName: tool.originalToolName,
+        app: result.app,
+        toolResult: { text: result.text, structuredContent: result.structuredContent, isError: result.isError },
+      });
+    }
+    return { text: post.replaceToolResult ?? result.text, isError: result.isError, details: { structuredContent: result.structuredContent, ...(result.app ? { mcpApp: result.app } : {}) } };
   }
 
   function repairPersistedAgentMessageProjections(): number {
@@ -1598,7 +1714,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   }
 
   async function requestApproval(context: PiConversationContext, request: PiZeusToolRequest): Promise<boolean> {
-    const kind = request.toolName === 'bash' ? 'command' : 'file';
+    const pluginTool = request.toolName.startsWith('mcp__');
+    const kind = request.toolName === 'bash' || pluginTool ? 'command' : 'file';
     const activeRun = [...runs.values()].reverse().find((candidate) => candidate.conversationId === context.conversationId);
     if (!activeRun) throw piError('ZEUS_PI_RUN_NOT_ACTIVE', 'Pi 工具审批没有对应的活动轮次。');
     const timestamp = options.now();
@@ -1611,7 +1728,14 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       transportGenerationId: request.session.runtimeInstanceId,
       providerRequestId: request.requestId,
       requestKind: kind,
-      payload: { agentKind: 'pi', toolName: request.toolName, args: redactArgs(request.args), reason: 'Pi 工具请求需要 Zeus 审批。' },
+      payload: {
+        agentKind: 'pi',
+        toolName: request.toolName,
+        args: redactArgs(request.args),
+        ...(kind === 'command' ? { command: pluginTool ? `MCP ${request.toolName}` : stringArg(request.args.command, '命令') } : { path: stringArg(request.args.path, '文件路径') }),
+        reason: pluginTool ? 'Zeus Plugin MCP 工具按当前工具级策略需要审批。' : 'Pi 工具请求需要 Zeus 审批。',
+        availableDecisions: ['accept', 'decline', 'cancel'],
+      },
       status: 'pending',
       createdAt: timestamp,
     });
@@ -1671,6 +1795,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     const conversation = requirePiConversation(input.conversationId);
     if (conversation.archived) return;
     assertConversationCanBeArchived(conversation);
+    const runtimeContext = conversation.nativeSessionId ? contexts.get(conversation.nativeSessionId) : undefined;
+    if (runtimeContext) await options.plugins?.closeConversation({ conversationId: conversation.id, cwd: runtimeContext.cwd, model: runtimeContext.model, reason: 'archive' });
     options.conversations.archive(conversation.id);
     if (conversation.nativeSessionId) contexts.delete(conversation.nativeSessionId);
     await options.db.save();
@@ -1832,6 +1958,44 @@ function readPiUsage(value: unknown): TokenUsageBreakdown | null {
     outputTokens: output,
     reasoningOutputTokens: Math.min(reasoning, output),
   };
+}
+
+function piPluginMetadata(preparation: ZeusPluginConversationPreparation | null, portableConversationContext?: unknown): Record<string, unknown> {
+  return {
+    ...(portableConversationContext ? { portableConversationContext } : {}),
+    ...(preparation
+      ? {
+          zeusPluginTools: preparation.piDynamicTools,
+          zeusPluginSkills: preparation.skills,
+          zeusPluginDeveloperInstructions: preparation.developerInstructions,
+          zeusPluginActivationSha256: createHash('sha256')
+            .update(JSON.stringify(preparation.activations.map((activation) => [activation.pluginRevisionId, activation.contentSha256])))
+            .digest('hex'),
+        }
+      : {}),
+  };
+}
+
+async function applyPiPromptHooks(
+  plugins: ZeusConversationPluginRuntime,
+  _preparation: ZeusPluginConversationPreparation,
+  input: { conversationId: string; cwd: string; model: string; prompt: string; permissionMode: string },
+): Promise<string> {
+  const result = await plugins.emitHook({
+    event: 'UserPromptSubmit',
+    conversationId: input.conversationId,
+    cwd: input.cwd,
+    model: input.model,
+    permissionMode: input.permissionMode,
+    payload: { prompt: input.prompt },
+  });
+  if (!result.continue) throw piError('ZEUS_PLUGIN_HOOK_PROMPT_BLOCKED', result.stopReasons.join('\n') || 'Plugin Hook 已阻断本次提示。');
+  const context = [...result.systemMessages, ...result.additionalContext].filter(Boolean);
+  return context.length > 0 ? `${input.prompt}\n\n[ZEUS_PLUGIN_HOOK_CONTEXT]\n${context.join('\n')}\n[/ZEUS_PLUGIN_HOOK_CONTEXT]` : input.prompt;
+}
+
+function piModelIdentity(model: AgentModelIdentity): string {
+  return model.sourceId ? modelRef(model.sourceId, model.modelId) : model.modelId;
 }
 
 function readPiUsageObservation(value: unknown): {

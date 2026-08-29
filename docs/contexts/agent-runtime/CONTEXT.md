@@ -40,6 +40,22 @@ _避免：Codex Skill、Pi Skill、已启用 Skill、已调用 Skill_
 Runtime Adapter 为同一个已安装 Skill 生成的原生调用表达；投影差异不得改变 Skill 的身份、内容或用户选择。
 _避免：Provider Skill、Skill 副本、兼容 Skill_
 
+**Plugin Host**：
+由 Zeus 拥有的 Plugin 安装、不可变修订、会话冻结、Hook 生命周期和工具 Broker 边界；Runtime Adapter 只投影同一冻结能力，不分别安装或执行 Provider Plugin。
+_避免：Codex Plugin、Pi Plugin、Provider 扩展目录_
+
+**Plugin 激活快照**：
+产品会话创建时冻结的 Plugin 身份、修订、内容摘要、组件路径及策略集合；模型切换、恢复和 Runtime Adapter 变化不得改用当前安装版本。
+_避免：当前 Plugin 目录、热更新、Provider 缓存_
+
+**Hook 定义信任**：
+用户对某个不可变 Plugin 修订中规范化 Hook 定义哈希的执行授权；脚本内容摘要不属于信任键，定义变化后必须重新审查。
+_避免：Plugin 全量信任、安装即授权、永久授权_
+
+**工具 Broker**：
+由 Zeus 统一管理 MCP 连接、认证、命名空间、审批和结果的运行边界；Codex dynamic tools 与 Pi custom tools 是同一工具目录的 Adapter 投影。
+_避免：Provider 工具副本、Connector 授权、模型能力猜测_
+
 **接纳证据**：
 足以证明 Provider 已接受某个提交或轮次的原生协议事实。
 _避免：HTTP 成功、请求已写出、界面加载中_

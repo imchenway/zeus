@@ -1,5 +1,5 @@
 import { type CodexAppServerEvent, type CodexAppServerManager, type CodexResponsesRuntime, type CodexServerRequestResponse, type CodexThreadGoal, modelRef, parseModelRef, toCodexWireReasoningEffort } from '@zeus/ai-runtime';
-import { buildTaskPushInputParts, type CodexAdditionalContextEntry, type TaskPushMessageLayout } from '@zeus/shared';
+import { buildTaskPushInputParts, type CodexAdditionalContextEntry, type CodexBootstrapAdditionalContext, type TaskPushMessageLayout } from '@zeus/shared';
 import {
   CommandDeliveryRepository,
   type ConversationCollaborationMode,
@@ -86,7 +86,6 @@ import {
   isSupportedPermissionRequest,
   isValidMcpElicitationResponse,
   parseJsonRecord,
-  permissionModeFromValue,
   providerEventReceipt,
   providerPermissionProfile,
   providerTurnIdFrom,
@@ -102,7 +101,8 @@ import {
 import { parseCanonicalRequestUserInputQuestions, validateCanonicalRequestUserInputAnswers } from './codexNativeRuiValidation.js';
 import { createCodexExternalRequestAnswerRecovery } from './codexExternalRequestAnswerRecovery.js';
 import { createCodexModelRequestTimingTracker } from './codexModelRequestTiming.js';
-import { assertCallerDoesNotOverrideCompiledContext, mergeCodexAdditionalContext, readCodexAdditionalContext } from './codexNativeContextProtocol.js';
+import { assertCallerDoesNotOverrideCompiledContext, mergeCodexAdditionalContext } from './codexNativeContextProtocol.js';
+import { contextFromPersistedConversation, contextFromPersistedSubmission, emitPluginCompactionHook, prepareRecoveredCodexPlugins } from './codexConversationDispatchContext.js';
 import { createCodexNativeConversationAccess } from './codexNativeConversationAccess.js';
 import { readNativeSubmissionSkill, readNativeSubmissionTaskPushLayout, type PersistedSubmissionInput } from './nativeConversationSubmissionInputs.js';
 import { inferNativeConversationRunState, interruptedQueueSubmissions } from './codexNativeRunStateProjection.js';
@@ -130,6 +130,8 @@ import type { ConversationEventFlowControl } from './eventFlowControl.js';
 import type { TurnChangeSetService } from './turnChangeSets.js';
 import { TurnProcessProjector } from './turnProcessProjector.js';
 import { createCodexServiceTierDowngrade, isServiceTierUnavailableError } from './codexServiceTierDowngrade.js';
+import { createCodexPluginToolApprovalApplication } from './codexPluginToolApprovalApplication.js';
+import type { ZeusConversationPluginRuntime } from './zeusConversationPluginRuntime.js';
 
 export { filterCompatibilitySnapshotItemAliases } from './codexProviderHistoryProjection.js';
 
@@ -168,6 +170,7 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
   operationId?: () => string;
   turnResultTimeoutMs?: number;
   browserAutomation?: BrowserAutomationPort;
+  plugins?: ZeusConversationPluginRuntime;
   trustedAttachmentRoots?: string[];
   generatedImageRoot?: string;
   getProjectRoot?: (projectId: string) => string | null;
@@ -255,12 +258,30 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   let finalizationPromise: Promise<void> | null = null;
   const processProjector = new TurnProcessProjector(options.execution);
   const providerCommands = new CodexProviderCommandApplicationService(options.db, options.commandDeliveries, now);
+  const pluginToolApprovals = createCodexPluginToolApprovalApplication({
+    conversations: options.conversations,
+    turns: options.turns,
+    requests: options.requests,
+    now,
+    operationId,
+    persist,
+    broadcast: options.broadcast,
+    setRunState: (conversationId, state) => runStates.set(conversationId, state),
+  });
   const handleDynamicToolRequest = createCodexDynamicToolApplication({
     manager: options.manager,
     providerCommands,
     toolResults: options.toolResults,
     ...(options.browserAutomation ? { browserAutomation: options.browserAutomation } : {}),
+    ...(options.plugins ? { plugins: options.plugins } : {}),
     findConversation: (threadId) => options.conversations.getByProviderThreadId(threadId),
+    pluginContext: (conversationId) => {
+      const conversation = options.conversations.getById(conversationId);
+      if (!conversation) return null;
+      const context = contexts.get(conversationId) ?? contextFromConversation(conversation);
+      return { cwd: context.projectLocalPath, model: context.model, permissionMode: context.permissionMode };
+    },
+    requestPluginApproval: pluginToolApprovals.requestApproval,
     broadcast: options.broadcast,
     now,
   });
@@ -478,35 +499,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     return planActions.listByConversation(conversationId).some((request) => request.status === 'pending');
   }
 
-  function contextFromSubmission(submission: ZeusConversationSubmissionRecord): ConversationDispatchContext {
-    const parsed = parseJsonRecord(submission.inputJson);
-    const context = isRecord(parsed.context) ? parsed.context : {};
-    const additionalContext = readCodexAdditionalContext(context.additionalContext);
-    const conversationProjectId = options.conversations.getById(submission.conversationId)?.projectId;
-    return {
-      // 早期持久 submission 可能缺少 projectId；会话归属是同一事实的权威兼容来源。
-      projectId: requireString(typeof context.projectId === 'string' && context.projectId ? context.projectId : conversationProjectId, 'submission projectId'),
-      projectLocalPath: requireString(context.projectLocalPath, 'submission projectLocalPath'),
-      taskId: typeof context.taskId === 'string' ? context.taskId : null,
-      ...(context.executionWorkspaceMode === 'direct' || context.executionWorkspaceMode === 'worktree' ? { executionWorkspaceMode: context.executionWorkspaceMode } : {}),
-      model: requireString(context.model, 'submission model'),
-      modelSourceId: typeof context.modelSourceId === 'string' ? context.modelSourceId : (options.conversations.getById(submission.conversationId)?.modelSourceId ?? null),
-      ...(typeof context.effort === 'string' ? { effort: context.effort } : {}),
-      ...(Object.prototype.hasOwnProperty.call(context, 'serviceTier') && (context.serviceTier === null || typeof context.serviceTier === 'string') ? { serviceTier: context.serviceTier } : {}),
-      allowCodeChanges: context.allowCodeChanges === true,
-      allowTests: context.allowTests === true,
-      allowGitCommit: context.allowGitCommit === true,
-      permissionMode: permissionModeFromValue(context.permissionMode, context.allowCodeChanges === true ? 'auto' : 'read-only'),
-      ...(Array.isArray(context.allowedAttachmentRoots) && context.allowedAttachmentRoots.every((root) => typeof root === 'string') ? { allowedAttachmentRoots: context.allowedAttachmentRoots } : {}),
-      ...(Array.isArray(context.writableRoots) && context.writableRoots.every((root) => typeof root === 'string') ? { writableRoots: context.writableRoots } : {}),
-      workMode: context.workMode === 'plan' || context.workMode === 'default' ? context.workMode : 'default',
-      ...(context.applyLegacyTaskGuards === false ? { applyLegacyTaskGuards: false } : {}),
-      ...(context.ephemeral === true ? { ephemeral: true } : {}),
-      ...(additionalContext ? { additionalContext } : {}),
-      ...(isRecord(context.operationContext) ? { operationContext: context.operationContext } : {}),
-      ...(context.holdDispatch === true ? { holdDispatch: true } : {}),
-    };
-  }
+  const contextFromSubmission = (submission: ZeusConversationSubmissionRecord): ConversationDispatchContext => contextFromPersistedSubmission(submission, options.conversations.getById(submission.conversationId));
 
   async function ensureConversationExecutionContext(conversationId: string, mode: 'reconcile' | 'submit' | 'dispatch' | 'recover_queue' | 'restore', allowProductConversation = false): Promise<void> {
     if (!options.ensureExecutionContext) return;
@@ -1383,19 +1376,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     return accepted(steering, 'steering', providerThreadId, input.expectedTurnId);
   }
 
-  function contextFromConversation(conversation: ZeusConversationWithMessagesRecord): ConversationDispatchContext {
-    const submissions = options.submissions.listByConversation(conversation.id);
-    const activeTurn = [...options.turns.listByConversation(conversation.id)].reverse().find((turn) => turn.status === 'running' || turn.status === 'waiting' || turn.status === 'dispatching');
-    const submission =
-      (activeTurn ? submissions.find((candidate) => candidate.id === activeTurn.clientSubmissionId) : undefined) ??
-      [...submissions].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)).at(-1);
-    if (!submission) throw coordinatorError('ZEUS_NATIVE_CONTEXT_UNAVAILABLE', 'Native conversation dispatch context is unavailable.');
-    return {
-      ...contextFromSubmission(submission),
-      permissionMode: conversation.permissionMode,
-      workMode: conversation.collaborationMode,
-    };
-  }
+  const contextFromConversation = (conversation: ZeusConversationWithMessagesRecord): ConversationDispatchContext =>
+    contextFromPersistedConversation({ conversation, submissions: options.submissions.listByConversation(conversation.id), turns: options.turns.listByConversation(conversation.id) });
 
   const inferRunState = (conversation: ZeusConversationWithMessagesRecord): NativeConversationRunState =>
     inferNativeConversationRunState(conversation, { submissions: options.submissions, turns: options.turns, requests: options.requests }, isPendingInteractionAuthority);
@@ -1595,8 +1577,16 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       let providerThreadId = segmentLifecycle?.requiresNewSegment ? null : conversation.providerThreadId;
       if (!providerThreadId) {
         const profile = providerPermissionProfile(context);
-        const developerInstructions = developerInstructionsFor(context, options.browserAutomation !== undefined);
-        const dynamicTools = [...conversationToolResultDynamicTools(), ...(options.browserAutomation ? zeusBrowserDynamicTools() : [])];
+        const pluginPreparation = await options.plugins?.prepare({
+          conversationId: conversation.id,
+          projectId: context.projectId,
+          cwd: context.projectLocalPath,
+          model: context.model,
+          source: 'startup',
+          prompt: submissionText(submission),
+        });
+        const developerInstructions = [developerInstructionsFor(context, options.browserAutomation !== undefined), pluginPreparation?.developerInstructions ?? ''].filter(Boolean).join('\n');
+        const dynamicTools = [...conversationToolResultDynamicTools(), ...(options.browserAutomation ? zeusBrowserDynamicTools() : []), ...(pluginPreparation?.codexDynamicTools ?? [])];
         const threadRequest = {
           model: context.model,
           ...(Object.prototype.hasOwnProperty.call(context, 'serviceTier') ? { serviceTier: context.serviceTier } : {}),
@@ -1682,6 +1672,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         segmentLifecycle.bindCommandDelivery({ outboxId: commandOutboxId, providerId: 'codex', providerGenerationId: commandProviderGenerationId });
       }
       const providerInput = submissionProviderInput(submission, context);
+      const pluginPromptContext = await options.plugins?.beforeUserPrompt({ conversationId: conversation.id, prompt: providerInput, permissionMode: context.permissionMode });
       const compiledDispatchContext = options.compileDispatchContext
         ? await options.compileDispatchContext({
             provider: 'codex',
@@ -1736,7 +1727,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         { adapter: 'codex_app_server', method: 'turn/start', protocol: 'openai_responses' },
         serializedAt,
       );
+      let pluginCompactContext: CodexBootstrapAdditionalContext | undefined;
       if (segmentLifecycle?.contextCompactionPlan) {
+        await emitPluginCompactionHook({ plugins: options.plugins, event: 'PreCompact', conversationId: conversation.id, cwd: context.projectLocalPath, model: context.model });
         await segmentLifecycle.beginContextCompaction(now());
         try {
           // portable compaction 会创建临时 thread/turn，同样属于父派发的外部写边界。
@@ -1760,12 +1753,13 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
             evidence: compacted.evidence,
             completedAt: now(),
           });
+          pluginCompactContext = await emitPluginCompactionHook({ plugins: options.plugins, event: 'PostCompact', conversationId: conversation.id, cwd: context.projectLocalPath, model: context.model });
         } catch (error) {
           await segmentLifecycle.failContextCompaction(error, now());
           throw error;
         }
       }
-      const additionalContext = mergeCodexAdditionalContext(segmentLifecycle?.codexBootstrapAdditionalContext, compiledDispatchContext?.codexAdditionalContext, context.additionalContext);
+      const additionalContext = mergeCodexAdditionalContext(segmentLifecycle?.codexBootstrapAdditionalContext, compiledDispatchContext?.codexAdditionalContext, context.additionalContext, pluginPromptContext, pluginCompactContext);
       // turn/start 调用前先耐久记录“可能写出”；宁可保守进入 unknown，也不能在进程崩溃后盲重放。
       if (segmentLifecycle) segmentLifecycle.markProviderWriteStarted();
       else options.commandDeliveries.markProviderWriteStarted({ outboxId: requireString(commandOutboxId, 'command outbox id'), occurredAt: now() });
@@ -2608,6 +2602,13 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const context = contexts.get(conversation.id) ?? contextFromConversation(conversation);
     contexts.set(conversation.id, context);
     try {
+      await options.plugins?.prepare({
+        conversationId: conversation.id,
+        projectId: context.projectId,
+        cwd: context.projectLocalPath,
+        model: context.model,
+        source: 'resume',
+      });
       const responsesRuntime = await responsesRuntimeFor(context);
       if (responsesRuntime) {
         await options.manager.ensureReady({
@@ -2681,8 +2682,10 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const context = contexts.get(conversation.id) ?? contextFromConversation(conversation);
     const providerRequestId = JSON.parse(request.providerRequestIdJson) as string | number;
     const response = input.response;
-    let wireResponse = { ...response, generationId: request.transportGenerationId, requestId: providerRequestId } as CodexServerRequestResponse;
     const payload = parseJsonRecord(request.payloadJson);
+    const pluginToolResponse = await pluginToolApprovals.tryRespond(request, response);
+    if (pluginToolResponse) return pluginToolResponse;
+    let wireResponse = { ...response, generationId: request.transportGenerationId, requestId: providerRequestId } as CodexServerRequestResponse;
     const grantSessionFileEdits = request.requestKind === 'file' && response.type === 'file' && response.decision === 'acceptForSession';
 
     if (request.requestKind === 'command') {
@@ -3181,6 +3184,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     }
     try {
       await ensureGenerationReconciled([...automaticRecoveryConversationIds]);
+      await prepareRecoveredCodexPlugins({ plugins: options.plugins, conversationIds: automaticRecoveryConversationIds, conversations: options.conversations, submissions: options.submissions, turns: options.turns, contexts });
     } catch (error) {
       const recoveryError = { code: 'ZEUS_NATIVE_UNKNOWN_DISPATCH_WINDOW', cause: serializeError(error) };
       const affectedConversationIds = new Set(
@@ -3838,6 +3842,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       if (finalizationPromise) return finalizationPromise;
       finalizationPromise = (async () => {
         const error = coordinatorError('ZEUS_CODEX_COORDINATOR_CLOSED', 'Codex native conversation coordinator is closed.');
+        pluginToolApprovals.close();
         for (const requestId of [...autoResolutionTimers.keys()]) clearAutoResolutionTimer(requestId);
         externalAnswerRecovery.close();
         await beginHandoff(error);

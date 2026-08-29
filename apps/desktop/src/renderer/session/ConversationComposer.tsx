@@ -14,6 +14,7 @@ import type {
   NativeConversationAttachment,
   NativeGoalSnapshot,
   NativePermissionMode,
+  PluginSkillReference,
   NativeServiceTierSelection,
   NativeSessionState,
   NativeTurnSettingsSelection,
@@ -32,6 +33,7 @@ import { normalizeServiceTierSelection, selectionFromEffectiveServiceTier, servi
 import { presentModelOptions } from '../modelOptionPresentation.js';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import { findProjectModelServiceTierPreference, projectModelServiceTierSelection } from './projectServiceTierPreferences.js';
+import { ExtensionMentionSelector } from './ExtensionMentionSelector.js';
 
 export type ComposerKeyIntent = 'submit' | 'newline' | 'escape' | 'ignore';
 export interface ComposerRuntimeSettings {
@@ -58,6 +60,8 @@ export interface ConversationComposerProps {
   onRemoveAttachment?: (attachment: NativeConversationAttachment) => void;
   onRemoveBrowserSubmission?: () => void;
   onContextDraftChange?: (draft: ConversationContextDraft) => void;
+  projectId?: string;
+  onLoadExtensions?: (projectId?: string, forceReload?: boolean) => Promise<import('../features/codex/codexContracts.js').SkillCatalog>;
   runtimeSettings?: ComposerRuntimeSettings | null;
   onRuntimeSettingsChange?: (settings: ComposerRuntimeSettings) => void;
   readOnly?: boolean;
@@ -127,6 +131,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const fallbackRef = useRef<HTMLTextAreaElement | null>(null);
   const textareaRef = props.textareaRef ?? fallbackRef;
   const composingRef = useRef(false);
+  const extensionReferencesRef = useRef(new Map<string, PluginSkillReference>());
   const [isComposing, setIsComposing] = useState(false);
   const [editorValue, setEditorValue] = useState(props.state.draft);
   const [goalInputOpen, setGoalInputOpen] = useState(false);
@@ -223,6 +228,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
 
   function submit(nextDelivery: 'queue' | 'steer_now'): void {
     if (nextDelivery === 'queue' && !selectedCapability) return;
+    const pluginReferences = [...extensionReferencesRef.current].filter(([token]) => editorValue.includes(token)).map(([, reference]) => reference);
     const settings =
       nextDelivery === 'queue' && effectiveModel
         ? {
@@ -232,9 +238,10 @@ export function ConversationComposer(props: ConversationComposerProps) {
             ...serviceTierWireOverride(selectedServiceTier),
             permissionMode: props.permissionMode,
             collaborationMode: props.collaborationMode,
+            ...(pluginReferences.length ? { pluginReferences } : {}),
           }
         : undefined;
-    void props.onSubmit(nextDelivery, settings);
+    void Promise.resolve(props.onSubmit(nextDelivery, settings)).then(() => extensionReferencesRef.current.clear());
   }
 
   function enterGoalInput(initialObjective?: string): void {
@@ -416,6 +423,22 @@ export function ConversationComposer(props: ConversationComposerProps) {
         />
         <div className="session-composer-command-row">
           <span className="session-composer-leading-actions">
+            {!goalInputActive ? (
+              <ExtensionMentionSelector
+                projectId={props.projectId}
+                language={props.language}
+                disabled={!writable || busy}
+                loadCatalog={props.onLoadExtensions}
+                onInsert={(selection) => {
+                  if (selection.reference) extensionReferencesRef.current.set(selection.token, selection.reference);
+                  const token = selection.token;
+                  const next = `${editorValue}${editorValue && !/\s$/u.test(editorValue) ? ' ' : ''}${token} `;
+                  setEditorValue(next);
+                  props.onDraftChange(next);
+                  requestAnimationFrame(() => textareaRef.current?.focus());
+                }}
+              />
+            ) : null}
             {!goalInputActive && props.onChooseAttachments ? (
               <button
                 type="button"

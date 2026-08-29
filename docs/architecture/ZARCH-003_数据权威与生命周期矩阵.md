@@ -59,7 +59,7 @@ Zeus 的恢复边界必须拆成五个互不冒充的事实域：Zeus 业务 SQL
 
 ## SQLite 逐表矩阵
 
-下面列出当前代码创建的 97 张表。`不可`表示不能从其他本地事实无损重建；`条件`表示只有保留了指定 Provider 历史、资产或源仓库才能重建。SQLite 全库快照会物理包含全部表；标为 `B-NONE` 的表在逻辑导出、分层备份和未来拆库中可以排除。
+下面列出当前代码创建的 105 张表。`不可`表示不能从其他本地事实无损重建；`条件`表示只有保留了指定 Provider 历史、资产或源仓库才能重建。SQLite 全库快照会物理包含全部表；标为 `B-NONE` 的表在逻辑导出、分层备份和未来拆库中可以排除。
 
 ### 存储平台、集成与运行适配器
 
@@ -73,6 +73,12 @@ Zeus 的恢复边界必须拆成五个互不冒充的事实域：Zeus 业务 SQL
 | `command_inbox` | 集成与平台 | `Z/E` 命令接纳与幂等身份 | 不可；不能从业务终态反推原 actor、scope 或请求摘要 | `T3`，至少覆盖命令恢复与审计窗口 | `B-DB`，随核心一致性组 | 仅命令保留策略在所有 attempt 终态且过恢复窗口后 | 缺失时停止该命令的自动派发与重放，要求新命令或人工对账 |
 | `command_outbox` | 集成与平台 | `E` Provider 派发水位与 attempt | 不可；不能从 Provider 当前状态猜测是否曾写出 | `T3`，随 Inbox 与回执 | `B-DB`，随核心一致性组 | 仅 Outbox 策略在终态、无活动 lease 且过恢复窗口后 | 写出水位缺失时按 unknown 失败关闭，禁止自动新建 attempt |
 | `command_delivery_receipts` | 集成与平台 | `E` 追加式四态 Provider 证据 | 条件；只有 Provider 仍保留精确原生身份时可追加对账，既有回执不可重建 | `T3`，至少覆盖命令恢复与审计窗口 | `B-DB`，随核心一致性组 | 追加写；普通更新/删除由 trigger 拒绝，过期清理由命令 owner 成组执行 | 缺失或冲突时保持 unknown 并暂停；不得用 HTTP 成功或日志冒充接纳 |
+| `plugin_registrations` | 集成与平台 | `Z` Plugin 稳定身份、来源、作用域与启用状态 | 不可；不得从 Provider 目录或同名文件猜测 | `T4`，软删后仍随活动会话引用保留 | `B-DB` | 用户通过扩展管理启停或卸载；活动修订禁止级联删除 | 停止向新会话投影 Plugin；既有会话仍按已冻结快照报告缺口 |
+| `plugin_revisions` | 集成与平台 | `Z/E` 不可变安装修订、内容摘要与组件清单 | 条件；需摘要匹配的 Plugin bundle | `T2/T4`，活动注册或会话引用期间保留 | `B-BUNDLE` | Plugin Host 仅在无注册、会话及 Connector 引用后做引用感知 GC | 摘要或 bundle 缺失时拒绝运行该修订，不自动漂移到最新版 |
+| `plugin_marketplaces` | 集成与平台 | `Z` Marketplace 来源与不可变目录快照身份 | 条件；Git 来源可重取，本地来源不可保证 | `T2/T4`，配置期间保留 | `B-BUNDLE` | 用户添加、刷新或移除；移除不卸载已安装 Plugin | 目录来源显示不可用；已安装修订不受影响，不代理公共目录补齐 |
+| `plugin_hook_trust` | 集成与平台 | `Z/E` Hook 定义哈希信任与逐 Hook 启停 | 不可；不能从脚本或当前定义猜测用户授权 | `T3/T4`，随 Plugin 修订和安全审计窗口 | `B-DB` | 用户逐定义哈希授权、撤销或禁用 | 一律视为未信任并跳过执行；不得因安装或启用 Plugin 自动信任 |
+| `plugin_connector_bindings` | 集成与平台 | `Z` App 技术 ID 到 Zeus Connector 的绑定与连接状态 | 不可；密钥只在 Keychain，不进入该表 | `T4`，独立于 Plugin 卸载 | `B-DB`；秘密使用 `B-SECRET` | 用户绑定、断开或删除可复用 Connector 授权 | Plugin 显示“需要连接”，Skill/Hook 仍按自身状态工作，不冒充安装失败 |
+| `plugin_mcp_policies` | 集成与平台 | `Z` Plugin/Server/Tool 启停与审批策略 | 不可 | `T4`，随 Plugin 或可复用 Connector 策略 | `B-DB` | 用户在工具权限入口调整 | 默认回到提示审批；未知策略不得自动批准或静默禁用整个 Plugin |
 | `provider_event_receipts` | Agent Runtime | `E` | 条件；Provider 可完整重放时才可 | `T3`，至少覆盖同步/恢复窗口 | `B-DB` | Runtime Adapter 的有界 GC | 重新对账；无法证明重复时保守去重并标记历史缺口 |
 | `conversation_provider_item_states` | Agent Runtime | `D/E` 有界摄取与幂等状态 | 条件；需 Provider 事件与稳定原生身份 | `TM/T3`，旧投影回滚窗口后按 Provider 水位淘汰 | `B-DB`，完整正文不进入此表 | Runtime Adapter 按已确认同步水位清理 | 摄取预览缺失但统一时间线仍可读；不得反向用此表重建 UI 正文 |
 | `agent_capability_snapshots` | Agent Runtime | `D` | 可，由能力探测重建 | `T1` | `B-NONE` | Runtime Adapter 可淘汰 | 能力状态为未知，重新探测前禁用未经证明的功能 |
@@ -133,6 +139,8 @@ Zeus 的恢复边界必须拆成五个互不冒充的事实域：Zeus 业务 SQL
 | `conversation_config_evidence` | 会话编排 | `E` | 不可 | `T3` | `B-DB` | 会话审计策略 | 无法证明该轮配置，恢复前重新探测且不回填旧证据 |
 | `conversation_persistent_warnings` | 会话编排 | `E` | 不可 | `T3` | `B-DB` | 仅状态机解决；历史随会话保留 | 默认保守阻断相关危险操作，直到重新核验 |
 | `conversation_recovery_events` | 会话编排 | `E` | 不可 | `T3` | `B-DB` | 恢复审计策略 | 恢复链标记不完整，不宣称已经安全续接 |
+| `conversation_plugin_activations` | 会话编排 | `Z/E` 会话到 Plugin 不可变修订及完整激活快照 | 不可；不得用当前启用版本重建 | `T3/T4`，随会话及其恢复窗口 | `B-BUNDLE` | 只随会话永久删除；创建后不可改写 | 恢复、模型切换和跨 Runtime 续接均停止该 Plugin 能力并报告快照损坏，不自动升级 |
+| `conversation_plugin_activation_sets` | 会话编排 | `E` 新会话 Plugin 目录冻结完成账本（含空集合） | 不可；不能以零行区分“未冻结”和“没有 Plugin” | `T3/T4`，随会话 | `B-DB` | 只随会话永久删除 | 禁止恢复时临时吸收当前 Plugin；要求修复冻结证据或新建会话 |
 | `conversation_resources` | 会话编排/执行与资产 | `A` 引用与授权投影 | 条件；需来源 item 和目标资产 | `T2/T3` | `B-DB`；仅 Zeus 受管目标进入 `B-BUNDLE`，外部资源只记清单 | 引用 GC；真实目标由其 owner 删除 | 资源显示不可用或需重新授权，不扩大访问范围 |
 | `conversation_sequence_counters` | 会话编排 | `D/E` 协调水位 | 可，由各有序账本最大值校验重建 | `T3` | `B-DB` | 仅仓储事务维护 | 写入前重算并校验；禁止从零继续造成序号复用 |
 | `conversation_server_requests` | 会话编排 | `Z/E` | 不可 | `T3` | `B-DB` | 请求状态机；未决请求禁删 | 未决审批/工具请求保持暂停，不自动批准或拒绝 |
@@ -185,7 +193,7 @@ Zeus 的恢复边界必须拆成五个互不冒充的事实域：Zeus 业务 SQL
 
 ## 独立派生数据库逐表矩阵
 
-下列 11 张表创建在 create-only `*.index.candidate.db` / `*.cache.candidate.db`，通过核验后可由独立 runtime 提升为活动 `index.db/cache.db`。它们不计入上面 97 张 Core 表，也不属于 `B-DB` 核心一致性组。每个库必须携带 source identity、generation、publication state 和 event waterline；校验失败、来源漂移、损坏或丢失时整库丢弃并后台重建，绝不能反向覆盖 Core。
+下列 11 张表创建在 create-only `*.index.candidate.db` / `*.cache.candidate.db`，通过核验后可由独立 runtime 提升为活动 `index.db/cache.db`。它们不计入上面 105 张 Core 表，也不属于 `B-DB` 核心一致性组。每个库必须携带 source identity、generation、publication state 和 event waterline；校验失败、来源漂移、损坏或丢失时整库丢弃并后台重建，绝不能反向覆盖 Core。
 
 | 表 | Owner | 级别 | 可重建性 | 保留期 | 备份 | 删除权限 | 恢复或缺失降级 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -228,6 +236,8 @@ Zeus 的恢复边界必须拆成五个互不冒充的事实域：Zeus 业务 SQL
 | `data/projections/index.db` / `cache.db` 及 active/previous/candidate | 投影索引器/缓存管理器 | `D/R` | 可，由 Core 水位与项目事实重建 | `T0/T1` | `B-NONE` | 投影 runtime 按 generation 切换/回退/清理 | 读取安全返回空/缺口并后台重建，Core 任务和会话继续可用 |
 | `data/logs/local-server/` | 本机执行核心 | `E/R` 诊断日志 | 不可但非业务权威 | `T2`，容量有界 | 默认不进核心恢复包；诊断导出可选 | 日志策略 | 诊断证据缺口，不影响业务表当前态 |
 | `data/conversation-attachment-grant.secret` | 安全平台 | 设备秘密 | 不应跨设备重建原值 | 设备资料生命周期 | `B-SECRET` | 安全重置流程 | 重新生成，既有附件 grant 全部失效并要求重新授权 |
+| `data/plugins/bundles/` | Plugin Host | `A/E` 不可变 Plugin 与 Marketplace 快照 | 条件；Git 来源可重取，本地来源及历史修订不可保证 | `T2/T4`，随注册、会话修订引用与回滚窗口 | `B-BUNDLE`，必须核对内容摘要 | Plugin Host 引用感知 GC；活动会话修订禁止删除 | 对应修订拒绝执行并明确显示 bundle 缺失，不改用当前版本 |
+| `data/plugins/data/` | Plugin Host | `A/Z` Plugin 可写数据 | 不可假定可重建 | `T2/T4`，随 Plugin 与用户保留策略 | 按 Plugin 权限和秘密分类进入 `B-BUNDLE`；秘密不得明文进入 | 用户重置 Plugin 数据或卸载后的独立清理流程 | Plugin 以空数据启动前必须提示；不得从 Hook 输出或日志拼回状态 |
 | `artifacts/task-attachments/` | 工作管理/执行与资产 | `A` | 不可 | `T2/T3` | `B-BUNDLE` | 任务永久删除后引用 GC | 附件标记缺失，任务正文仍可读 |
 | `artifacts/conversation-attachments/` | 会话编排/执行与资产 | `A` | 不可 | `T2/T3` | `B-BUNDLE` | 会话永久删除后引用 GC | 附件不可读；不删除对应提交/消息 |
 | `artifacts/conversation-tool-results/` | 执行与资产 | `A` | 不可假定 Provider 可重放 | `T2/T3` | `B-BUNDLE` | 工具结果引用 GC | 仅投影可读，完整结果明确不可用 |
@@ -267,6 +277,7 @@ Zeus 的恢复边界必须拆成五个互不冒充的事实域：Zeus 业务 SQL
 | `runtime/migrations/` | 迁移器 | `R/E` 在途状态 | 条件 | `T0/TM` | `B-NONE`；完成结论写入 DB/清单 | 迁移器 | 检查 DB 与备份清单后恢复或隔离，禁止猜测完成 |
 | `runtime/quarantine/` | 迁移/恢复管理器 | 隔离证据 | 不可假定可丢 | `TM` | `B-LOCAL` | 用户确认或恢复验收后 | 丢失隔离样本会降低诊断/人工恢复能力 |
 | `runtime/execution-host/` | 本机执行核心 | `R` | 可 | `T0` | `B-NONE` | 当前 owner 核对租约后 | 重新建立 socket/lease；业务写入前做未决操作对账 |
+| `runtime/plugins/` | Plugin Host | `R` 安装 staging、Hook 输出与 MCP 进程现场 | 可或可隔离重建 | `T0/T1`；活动进程按会话租约 | `B-NONE` | Plugin Host 在进程、租约与未决 Hook/MCP 调用对账后清理 | 中止未完成安装；活动调用标记失败或未知，禁止自动重发有副作用工具 |
 | `runtime/updates/` | 发布更新器 | `R` 下载/候选缓存 | 可重新下载 | `T1` | `B-NONE` | 更新器 | 重新下载并重新验签，不影响当前安装 |
 | `profile/browser/state.json` | Browser | 设备浏览状态 | 部分不可 | `T4` | 默认 `B-NONE`；设备迁移需单独授权和加密 | Browser/用户高影响重置 | 标签/状态重建或丢失；不影响 Zeus 业务事实 |
 | `profile/electron/Cache/` | Electron | `R` | 可 | `T1` | `B-NONE` | 系统/用户普通清缓存 | 重新下载网页与接口缓存，不退出登录 |

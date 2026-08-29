@@ -93,6 +93,8 @@ export function SkillSelector(props: {
 }
 
 function scopeLabel(scope: SkillCatalog['skills'][number]['scope'], zh: boolean): string {
+  if (scope === 'plugin-personal') return zh ? 'Plugin · 个人' : 'Plugin · Personal';
+  if (scope === 'plugin-project') return zh ? 'Plugin · 项目' : 'Plugin · Project';
   if (scope === 'user') return zh ? '个人安装' : 'User';
   if (scope === 'repo') return zh ? '当前项目' : 'Repository';
   if (scope === 'system') return zh ? '系统内置' : 'System';

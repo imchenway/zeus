@@ -26,6 +26,7 @@ import {
   type NativePendingInteractionsSnapshot,
   type NativePendingRequest,
   type NativePermissionMode,
+  type PluginSkillReference,
   type NativePlanImplementationResponseAcceptance,
   type NativeQueuedSubmission,
   type NativeQueueSnapshot,
@@ -204,6 +205,7 @@ export interface SessionControllerClient {
   loadNativeSubagents?(projectId: string, conversationId: string): Promise<NativeSubagentListSnapshot>;
   loadNativeSubagentThread?(projectId: string, conversationId: string, threadId: string): Promise<NativeSubagentThreadSnapshot>;
   loadConversationResourcePreview?(projectId: string, conversationId: string, resourceId: string): Promise<ConversationResourcePreview>;
+  invokePluginAppTool?(conversationId: string, pluginId: string, serverId: string, toolName: string, argumentsValue: Record<string, unknown>): Promise<{ text?: string; structuredContent?: unknown; isError?: boolean }>;
   loadTurnChangeFilePreview?(projectId: string, conversationId: string, turnId: string, changeSetId: string, fileId: string): Promise<ConversationResourcePreview>;
   loadTurnChangeSet?(projectId: string, conversationId: string, turnId: string): Promise<TurnChangeSet>;
   operateTurnChangeSet?(
@@ -349,6 +351,7 @@ interface PendingSendEnvelope {
   serviceTier?: string | null;
   permissionMode?: NativePermissionMode;
   collaborationMode: NativeCollaborationMode;
+  pluginReferences?: PluginSkillReference[];
   idempotencyKey: string;
   clientUserMessageId: string;
   startedAt?: string;
@@ -1789,6 +1792,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
             ...(Object.prototype.hasOwnProperty.call(envelope, 'serviceTier') ? { serviceTier: envelope.serviceTier } : {}),
             ...(envelope.permissionMode ? { permissionMode: envelope.permissionMode } : {}),
             collaborationMode: envelope.collaborationMode,
+            ...(envelope.pluginReferences?.length ? { pluginReferences: envelope.pluginReferences } : {}),
             idempotencyKey: envelope.idempotencyKey,
             clientUserMessageId: envelope.clientUserMessageId,
           });
@@ -2361,7 +2365,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
           pendingSend.effort === settings?.effort &&
           pendingSend.serviceTier === settings?.serviceTier &&
           pendingSend.permissionMode === requestedPermissionMode &&
-          pendingSend.collaborationMode === requestedCollaborationMode
+          pendingSend.collaborationMode === requestedCollaborationMode &&
+          samePluginReferences(pendingSend.pluginReferences, settings?.pluginReferences)
         ) {
           return activeOperation.promise as Promise<NativeOperationAcceptance | void>;
         }
@@ -2392,6 +2397,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         ...(appliedSettings && Object.prototype.hasOwnProperty.call(appliedSettings, 'serviceTier') ? { serviceTier: appliedSettings.serviceTier } : {}),
         ...(appliedSettings ? { permissionMode: appliedSettings.permissionMode } : {}),
         collaborationMode: requestedCollaborationMode,
+        ...(appliedSettings?.pluginReferences?.length ? { pluginReferences: appliedSettings.pluginReferences } : {}),
       });
       const reusableIdentity =
         pendingSend &&
@@ -2409,7 +2415,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
         pendingSend.agentKind === appliedSettings?.agentKind &&
         pendingSend.effort === appliedSettings?.effort &&
         pendingSend.permissionMode === (appliedSettings ? appliedSettings.permissionMode : undefined) &&
-        pendingSend.collaborationMode === requestedCollaborationMode
+        pendingSend.collaborationMode === requestedCollaborationMode &&
+        samePluginReferences(pendingSend.pluginReferences, appliedSettings?.pluginReferences)
           ? pendingSend
           : null;
       const exactPending = pendingSend?.fingerprint === fingerprint ? pendingSend : null;
@@ -2437,6 +2444,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
           ...(appliedSettings && Object.prototype.hasOwnProperty.call(appliedSettings, 'serviceTier') ? { serviceTier: appliedSettings.serviceTier } : {}),
           ...(appliedSettings ? { permissionMode: appliedSettings.permissionMode } : {}),
           collaborationMode: requestedCollaborationMode,
+          ...(appliedSettings?.pluginReferences?.length ? { pluginReferences: appliedSettings.pluginReferences } : {}),
           // provider 尚未接受的失败提交只调整服务档位时，沿用原幂等身份重试。
           idempotencyKey: reusableIdentity?.idempotencyKey ?? createId(),
           clientUserMessageId: reusableIdentity?.clientUserMessageId ?? createId(),
@@ -2969,6 +2977,7 @@ function isPendingSendEnvelope(value: unknown): value is PendingSendEnvelope {
     (pending.serviceTier === undefined || pending.serviceTier === null || typeof pending.serviceTier === 'string') &&
     (pending.permissionMode === undefined || pending.permissionMode === 'read-only' || pending.permissionMode === 'auto' || pending.permissionMode === 'full-access') &&
     (pending.collaborationMode === undefined || pending.collaborationMode === 'default' || pending.collaborationMode === 'plan') &&
+    (pending.pluginReferences === undefined || isPluginSkillReferences(pending.pluginReferences)) &&
     typeof pending.idempotencyKey === 'string' &&
     typeof pending.clientUserMessageId === 'string' &&
     (pending.startedAt === undefined || typeof pending.startedAt === 'string') &&
@@ -3047,6 +3056,28 @@ function sameBrowserSubmission(left: ZeusBrowserPreparedSubmission | null, right
 
 function sameContextDraft(left: ConversationContextDraft, right: ConversationContextDraft): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function samePluginReferences(left: PluginSkillReference[] | undefined, right: PluginSkillReference[] | undefined): boolean {
+  return JSON.stringify(left ?? []) === JSON.stringify(right ?? []);
+}
+
+function isPluginSkillReferences(value: unknown): value is PluginSkillReference[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= 64 &&
+    value.every(
+      (reference) =>
+        typeof reference === 'object' &&
+        reference !== null &&
+        'kind' in reference &&
+        (reference.kind === 'plugin' || reference.kind === 'skill') &&
+        'id' in reference &&
+        typeof reference.id === 'string' &&
+        Boolean(reference.id.trim()) &&
+        reference.id.length <= 512,
+    )
+  );
 }
 
 function isConversationContextDraft(value: unknown): value is ConversationContextDraft {
