@@ -15947,6 +15947,8 @@
 .session-codex-parity-v1 .session-transcript {
   /* 自动跟随由滚动控制器逐帧收敛；不能再被全局 smooth 变成延迟滚动。 */
   scroll-behavior: auto;
+  /* 总计约三行正文高度，让最新消息与 composer 之间保留稳定的可滚动安全区。 */
+  padding-block-end: 72px;
 }
 
 .session-codex-parity-v1 .session-activity-group[data-active='true'] .session-activity-group-icon,

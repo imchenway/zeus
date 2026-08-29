@@ -524,6 +524,7 @@ const sendScrollItems = Array.from({ length: 8 }, (_, index) => motionItem(`send
   threadId: 'send-scroll-thread',
   turnId: sendScrollTurnId,
 }));
+const sendScrollDelayedGrowthItem = sendScrollItems.at(-1)!;
 const sendScrollInitialState: NativeSessionState = {
   ...createInitialSessionState(),
   transportState: 'ready',
@@ -547,6 +548,29 @@ const sendScrollInitialState: NativeSessionState = {
     },
   },
   transcriptRevision: 1,
+};
+const sendScrollAlternateConversationId = 'send-scroll-alternate-conversation';
+const sendScrollAlternateTurnId = 'send-scroll-alternate-turn';
+const sendScrollAlternateItems = sendScrollItems.map((item) => ({
+  ...item,
+  conversationId: sendScrollAlternateConversationId,
+  threadId: 'send-scroll-alternate-thread',
+  turnId: sendScrollAlternateTurnId,
+}));
+const sendScrollAlternateState: NativeSessionState = {
+  ...sendScrollInitialState,
+  conversationId: sendScrollAlternateConversationId,
+  providerThreadId: 'send-scroll-alternate-thread',
+  snapshot: { id: sendScrollAlternateConversationId } as NonNullable<NativeSessionState['snapshot']>,
+  items: Object.fromEntries(sendScrollAlternateItems.map((item) => [item.key, item])),
+  itemOrder: sendScrollAlternateItems.map((item) => item.key),
+  turnsByProviderId: {
+    [sendScrollAlternateTurnId]: {
+      ...sendScrollInitialState.turnsByProviderId[sendScrollTurnId]!,
+      id: sendScrollAlternateTurnId,
+      providerTurnId: sendScrollAlternateTurnId,
+    },
+  },
 };
 
 const historyPagingConversationId = 'history-paging-conversation';
@@ -843,6 +867,7 @@ const runtimeDetailsFixture: NativeRuntimeDetailsSnapshot = {
   effort: { state: 'available', value: 'xhigh' },
   serviceTier: { state: 'available', value: null },
   usage: {
+    serviceTier: { state: 'available', value: 'priority' },
     totalTokens: { state: 'available', value: 52_115_419 },
     inputTokens: { state: 'available', value: 51_878_171 },
     outputTokens: { state: 'available', value: 165_996 },
@@ -891,6 +916,7 @@ const unavailableRuntimeDetailsFixture: NativeRuntimeDetailsSnapshot = {
   effort: unavailableRuntimeFact,
   serviceTier: unavailableRuntimeFact,
   usage: {
+    serviceTier: unavailableRuntimeFact,
     totalTokens: unavailableRuntimeFact,
     inputTokens: unavailableRuntimeFact,
     outputTokens: unavailableRuntimeFact,
@@ -1397,19 +1423,74 @@ function MotionPreview(props: { dark?: boolean }) {
   );
 }
 
+function qaVisibleTranscriptAnchor(transcript: HTMLElement): { rowKey: string; topOffset: number } | null {
+  const transcriptRect = transcript.getBoundingClientRect();
+  const row = [...transcript.querySelectorAll<HTMLElement>('.session-transcript-window-row[data-transcript-row-key]')].find((candidate) => {
+    const rect = candidate.getBoundingClientRect();
+    return rect.bottom >= transcriptRect.top && rect.top <= transcriptRect.bottom;
+  });
+  return row ? { rowKey: row.dataset.transcriptRowKey ?? 'unknown', topOffset: row.getBoundingClientRect().top - transcriptRect.top } : null;
+}
+
 function SendScrollPreview() {
+  const previewRef = useRef<HTMLElement | null>(null);
   const [state, setState] = useState(sendScrollInitialState);
   const [sendCount, setSendCount] = useState(0);
+  const [assistantCount, setAssistantCount] = useState(0);
+  const [localSubmissionRevision, setLocalSubmissionRevision] = useState(0);
+  const [alternateConversation, setAlternateConversation] = useState(false);
+  const [delayedGrowth, setDelayedGrowth] = useState(false);
+  const [narrow, setNarrow] = useState(false);
   const [scrollMetrics, setScrollMetrics] = useState('等待测量');
+  const activeState = alternateConversation ? sendScrollAlternateState : state;
 
   useLayoutEffect(() => {
-    const transcript = document.querySelector<HTMLElement>('[data-testid="send-scroll-preview"] .session-transcript');
+    const transcript = previewRef.current?.querySelector<HTMLElement>('.session-transcript');
     if (!transcript) return;
-    const distance = Math.max(0, transcript.scrollHeight - transcript.clientHeight - transcript.scrollTop);
-    setScrollMetrics(`scrollTop ${Math.round(transcript.scrollTop)} / max ${Math.round(transcript.scrollHeight - transcript.clientHeight)}，距底部 ${Math.round(distance)}px`);
-  }, [state]);
+    const measure = (): void => {
+      const maximum = Math.max(0, transcript.scrollHeight - transcript.clientHeight);
+      const distance = Math.max(0, maximum - transcript.scrollTop);
+      const paddingBottom = Number.parseFloat(getComputedStyle(transcript).paddingBottom);
+      const returnLatestVisible = transcript.parentElement?.querySelector<HTMLElement>('.session-return-latest')?.dataset.visible === 'true';
+      const transcriptWindow = transcript.querySelector<HTMLElement>('.session-transcript-window');
+      const visibleAnchor = qaVisibleTranscriptAnchor(transcript);
+      setScrollMetrics(
+        `会话 ${activeState.conversationId} · 视口 ${Math.round(transcript.clientWidth)}×${Math.round(transcript.clientHeight)} · scrollTop ${Math.round(transcript.scrollTop)} / max ${Math.round(maximum)} · 距底部 ${Math.round(distance)}px · 稳定行 ${visibleAnchor ? `${visibleAnchor.rowKey}@${Math.round(visibleAnchor.topOffset)}px` : '无'} · 内容窗 ${Math.round(transcriptWindow?.getBoundingClientRect().height ?? 0)}px · 底部留白 ${Math.round(paddingBottom)}px · 返回按钮${returnLatestVisible ? '显示' : '隐藏'}`,
+      );
+    };
+    transcript.addEventListener('scroll', measure, { passive: true });
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null;
+    observer?.observe(transcript);
+    const returnLatestButton = transcript.parentElement?.querySelector<HTMLElement>('.session-return-latest');
+    const buttonObserver = returnLatestButton && typeof MutationObserver === 'function' ? new MutationObserver(measure) : null;
+    if (returnLatestButton) buttonObserver?.observe(returnLatestButton, { attributes: true, attributeFilter: ['aria-hidden', 'data-visible'] });
+    measure();
+    return () => {
+      transcript.removeEventListener('scroll', measure);
+      observer?.disconnect();
+      buttonObserver?.disconnect();
+    };
+  }, [activeState.conversationId, activeState.transcriptRevision, delayedGrowth, localSubmissionRevision, narrow]);
+
+  function activeTranscript(): HTMLElement | null {
+    return previewRef.current?.querySelector<HTMLElement>('.session-transcript') ?? null;
+  }
+
+  function moveTranscript(mode: 'bottom' | 'up'): void {
+    // 从 React 的 click 分发栈退出后再发出滚轮与滚动，确保验收按钮模拟的是
+    // 两个独立浏览器输入事件，而不是 React 忽略的嵌套合成事件。
+    window.setTimeout(() => {
+      const transcript = activeTranscript();
+      if (!transcript) return;
+      const maximum = Math.max(0, transcript.scrollHeight - transcript.clientHeight);
+      transcript.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: mode === 'up' ? -620 : 620 }));
+      transcript.scrollTop = mode === 'up' ? Math.max(0, maximum - 180) : maximum;
+      transcript.dispatchEvent(new Event('scroll', { bubbles: true }));
+    }, 0);
+  }
 
   function sendImmediately(): void {
+    if (alternateConversation) return;
     const clientUserMessageId = `qa-send-${sendCount + 1}`;
     const startedAt = new Date().toISOString();
     setState((previous) => {
@@ -1435,20 +1516,76 @@ function SendScrollPreview() {
         providerTurnId: sendScrollTurnId,
       });
     });
+    setLocalSubmissionRevision((revision) => revision + 1);
     setSendCount((value) => value + 1);
   }
 
+  function appendAssistantMessage(): void {
+    if (alternateConversation) return;
+    const nextCount = assistantCount + 1;
+    const item = {
+      ...motionItem(`send-assistant-${nextCount}`, 'agentMessage', 'completed', `新增回答 ${nextCount}：底部跟随态应继续显示这一条；历史阅读态不得被它推走。`, { phase: 'final_answer' }, 'final_answer'),
+      conversationId: sendScrollConversationId,
+      threadId: 'send-scroll-thread',
+      turnId: sendScrollTurnId,
+    };
+    setState((previous) => ({
+      ...previous,
+      items: { ...previous.items, [item.key]: item },
+      itemOrder: [...previous.itemOrder, item.key],
+      transcriptRevision: previous.transcriptRevision + 1,
+    }));
+    setAssistantCount(nextCount);
+  }
+
+  function toggleDelayedGrowth(): void {
+    if (alternateConversation) return;
+    const nextExpanded = !delayedGrowth;
+    const delayedText = nextExpanded ? `${sendScrollDelayedGrowthItem.text}\n\n${Array.from({ length: 9 }, (_, index) => `延迟布局新增第 ${index + 1} 行：该变化不增加 transcriptRevision。`).join('\n\n')}` : sendScrollDelayedGrowthItem.text;
+    setState((previous) => ({
+      ...previous,
+      items: {
+        ...previous.items,
+        [sendScrollDelayedGrowthItem.key]: { ...previous.items[sendScrollDelayedGrowthItem.key]!, text: delayedText },
+      },
+    }));
+    setDelayedGrowth(nextExpanded);
+  }
+
   return (
-    <section className="qa-motion-send-preview session-codex-parity-v1" data-testid="send-scroll-preview">
+    <section ref={previewRef} className="qa-motion-send-preview session-codex-parity-v1" data-testid="send-scroll-preview" data-narrow={narrow || undefined}>
       <div>
-        <h3>发送后自动到底</h3>
-        <button type="button" data-testid="send-scroll-button" onClick={sendImmediately}>
-          发送新消息
-        </button>
+        <div>
+          <h3>会话切换、发送与延迟布局贴底</h3>
+          <small>程序滚动不改变模式；QA 上滚按钮先登记真实滚轮意图。</small>
+        </div>
+        <div className="qa-motion-fixture-actions">
+          <button type="button" data-testid="send-scroll-up" onClick={() => moveTranscript('up')}>
+            用户上滚
+          </button>
+          <button type="button" data-testid="send-scroll-bottom" onClick={() => moveTranscript('bottom')}>
+            用户滚到底部
+          </button>
+          <button type="button" data-testid="send-scroll-assistant" onClick={appendAssistantMessage} disabled={alternateConversation}>
+            新增回答
+          </button>
+          <button type="button" data-testid="send-scroll-growth" onClick={toggleDelayedGrowth} disabled={alternateConversation}>
+            {delayedGrowth ? '恢复延迟高度' : '触发延迟增高'}
+          </button>
+          <button type="button" data-testid="send-scroll-button" onClick={sendImmediately} disabled={alternateConversation}>
+            发送新消息
+          </button>
+          <button type="button" data-testid="send-scroll-switch" onClick={() => setAlternateConversation((value) => !value)}>
+            {alternateConversation ? '切回原会话' : '切换会话'}
+          </button>
+          <button type="button" data-testid="send-scroll-narrow" onClick={() => setNarrow((value) => !value)}>
+            {narrow ? '恢复桌面宽度' : '切换窄窗口'}
+          </button>
+        </div>
       </div>
       <small data-testid="send-scroll-metrics">{scrollMetrics}</small>
       <div className="qa-send-transcript ai-workspace">
-        <ConversationTranscript state={state} language="zh-CN" />
+        <ConversationTranscript key={activeState.conversationId} state={activeState} language="zh-CN" localSubmissionRevision={localSubmissionRevision} />
       </div>
     </section>
   );
@@ -2007,14 +2144,40 @@ function InterruptedProcessPreview() {
 function LongScrollPreview() {
   const [expanded, setExpanded] = useState(false);
   const [scrollAction, setScrollAction] = useState('尚未移动');
+  const [anchorEvidence, setAnchorEvidence] = useState('稳定行待采样');
 
   function moveTranscript(mode: 'middle' | 'up'): void {
+    window.setTimeout(() => {
+      const transcript = document.querySelector<HTMLElement>('[data-testid="long-scroll-preview"] .session-transcript');
+      if (!transcript) return;
+      const maximum = Math.max(0, transcript.scrollHeight - transcript.clientHeight);
+      transcript.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -620 }));
+      transcript.scrollTop = mode === 'middle' ? Math.round(maximum * 0.55) : Math.max(0, transcript.scrollTop - 620);
+      transcript.dispatchEvent(new Event('scroll', { bubbles: true }));
+      const anchor = qaVisibleTranscriptAnchor(transcript);
+      setAnchorEvidence(anchor ? `稳定行 ${anchor.rowKey}@${anchor.topOffset.toFixed(1)}px` : '未找到稳定行');
+      setScrollAction(mode === 'middle' ? '已移动到中段' : '已向上移动 620px');
+    }, 0);
+  }
+
+  function toggleHeight(): void {
     const transcript = document.querySelector<HTMLElement>('[data-testid="long-scroll-preview"] .session-transcript');
-    if (!transcript) return;
-    const maximum = Math.max(0, transcript.scrollHeight - transcript.clientHeight);
-    transcript.scrollTop = mode === 'middle' ? Math.round(maximum * 0.55) : Math.max(0, transcript.scrollTop - 620);
-    transcript.dispatchEvent(new Event('scroll', { bubbles: true }));
-    setScrollAction(mode === 'middle' ? '已移动到中段' : '已向上移动 620px');
+    const before = transcript ? qaVisibleTranscriptAnchor(transcript) : null;
+    setExpanded((value) => !value);
+    window.setTimeout(() => {
+      const currentTranscript = document.querySelector<HTMLElement>('[data-testid="long-scroll-preview"] .session-transcript');
+      if (!currentTranscript || !before) {
+        setAnchorEvidence('未取得高度变化前锚点');
+        return;
+      }
+      const row = [...currentTranscript.querySelectorAll<HTMLElement>('.session-transcript-window-row[data-transcript-row-key]')].find((candidate) => candidate.dataset.transcriptRowKey === before.rowKey);
+      if (!row) {
+        setAnchorEvidence(`稳定行 ${before.rowKey} 未继续挂载`);
+        return;
+      }
+      const drift = row.getBoundingClientRect().top - currentTranscript.getBoundingClientRect().top - before.topOffset;
+      setAnchorEvidence(`稳定行 ${before.rowKey} · 漂移 ${drift.toFixed(1)}px`);
+    }, 600);
   }
 
   return (
@@ -2031,13 +2194,13 @@ function LongScrollPreview() {
           <button type="button" data-testid="long-scroll-up" onClick={() => moveTranscript('up')}>
             向上移动 620px
           </button>
-          <button type="button" data-testid="long-scroll-resize" onClick={() => setExpanded((value) => !value)}>
+          <button type="button" data-testid="long-scroll-resize" onClick={toggleHeight}>
             {expanded ? '恢复第 25 条高度' : '延迟增高第 25 条'}
           </button>
         </div>
       </div>
       <output data-testid="long-scroll-height-state">
-        {expanded ? '第 25 条已增高' : '第 25 条为基础高度'} · {scrollAction}
+        {expanded ? '第 25 条已增高' : '第 25 条为基础高度'} · {scrollAction} · {anchorEvidence}
       </output>
       <div className="qa-send-transcript qa-long-scroll-transcript ai-workspace">
         <ConversationTranscript state={longScrollState(expanded)} language="zh-CN" />

@@ -20,11 +20,10 @@ export interface ThreadScrollController {
   onExplicitLatestRequest(): ThreadScrollEffect;
   onDelta(): ThreadScrollEffect;
   onMessageSubmitted(): ThreadScrollEffect;
-  onTurnStarted(metrics: ThreadScrollMetrics, now: number): ThreadScrollEffect;
+  onTurnStarted(): ThreadScrollEffect;
 }
 
 const FOLLOW_DISTANCE_PX = 24;
-const NEW_TURN_DISTANCE_PX = 300;
 
 export function createThreadScrollController(): ThreadScrollController {
   // 进入会话默认定位到最新内容；只有真实用户滚动离开底部后才切换为 static。
@@ -52,12 +51,10 @@ export function createThreadScrollController(): ThreadScrollController {
       state = { mode: 'user_follow', suppressBounceUntil: 0 };
       return { type: 'scroll_to_bottom' };
     },
-    onTurnStarted(metrics) {
-      if (distanceFromBottom(metrics) > NEW_TURN_DISTANCE_PX) {
-        state = { mode: 'static', suppressBounceUntil: 0 };
-        return { type: 'none' };
-      }
-      state = { mode: 'user_follow', suppressBounceUntil: 0 };
+    onTurnStarted() {
+      // 新轮次不能按“离底部不远”抢走历史阅读位置；本地提交会先通过
+      // onMessageSubmitted 明确恢复跟随，其他轮次只沿用当前状态。
+      if (state.mode === 'static') return { type: 'none' };
       return { type: 'scroll_to_bottom' };
     },
   };

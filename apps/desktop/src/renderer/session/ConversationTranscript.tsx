@@ -63,6 +63,8 @@ export interface ConversationTranscriptProps {
   onRetryQueuedSubmission?: (submissionId: string) => void | Promise<void>;
   onCancelQueuedSubmission?: (submissionId: string) => void | Promise<void>;
   onSendQueuedNow?: (submissionId: string) => void | Promise<void>;
+  /** 当前会话工作面每次本地提交或编辑重发后递增；不依赖异步 Provider 投影推断用户发送。 */
+  localSubmissionRevision?: number;
 }
 
 export interface SessionCreationStatus {
@@ -85,6 +87,9 @@ const sessionConnectionSymbol = (
 
 const emptyResponseAnnotations: ConversationResponseAnnotation[] = [];
 const liveTurnLayoutTransition = { duration: 0.22, ease: [0.22, 1, 0.36, 1] as const };
+const userScrollIntentIdleMs = 180;
+const latestPositionFallbackMs = 80;
+const transcriptVerticalScrollKeys = new Set(['ArrowDown', 'ArrowUp', 'End', 'Home', 'PageDown', 'PageUp', ' ', 'Spacebar']);
 
 function containsMarkdownImage(item: NativeSessionItemBuffer): boolean {
   return /!\[[^\]]*\]\([^)]+\)/u.test(transcriptItemText(item));
@@ -157,12 +162,15 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const latestContentMarkerRef = useRef<HTMLSpanElement | null>(null);
   const latestMarkerIntersectingRef = useRef(true);
   const latestPositionFrameRef = useRef<number | null>(null);
-  const latestPositionSettleFrameRef = useRef<number | null>(null);
+  const latestPositionFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestPositionConvergenceRequestedRef = useRef(false);
+  const maintainLatestPositionRef = useRef<() => void>(() => undefined);
   const latestVisibilityFrameRef = useRef<number | null>(null);
   const lastReportedLatestVisibilityRef = useRef<boolean | null>(null);
   const latestVisibilityCallbackRef = useRef(props.onLatestContentVisibilityChange);
   latestVisibilityCallbackRef.current = props.onLatestContentVisibilityChange;
   const historyPrependAnchorRef = useRef<(TranscriptViewportAnchor & { frozenCursor: string }) | null>(null);
+  const staticReadingAnchorRef = useRef<TranscriptViewportAnchor | null>(null);
   const previousTurnIdRef = useRef<string | null>(null);
   const activeTurnTrackingInitializedRef = useRef(false);
   const scrollController = useThreadScrollController();
@@ -176,10 +184,15 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const trackedUserMessageRef = useRef<{ conversationId: string | null; key: string | null; initialized: boolean }>({ conversationId: null, key: null, initialized: false });
   const awaitingReplyMessageIdsRef = useRef<Set<string>>(new Set());
   const awaitingReplyConversationIdRef = useRef<string | null>(null);
+  const trackedLocalSubmissionRef = useRef<{ conversationId: string | null; revision: number }>({ conversationId: null, revision: 0 });
+  const userScrollIntentRef = useRef(false);
+  const userScrollPointerActiveRef = useRef(false);
+  const userScrollIntentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const automaticResourceLoadAttemptRef = useRef<string | null>(null);
   const [rowExpansionOverrides, setRowExpansionOverrides] = useState<ReadonlyMap<string, boolean>>(() => new Map());
   const [focusedRowKey, setFocusedRowKey] = useState<string | null>(null);
   const [historyAnchorRowKey, setHistoryAnchorRowKey] = useState<string | null>(null);
+  const [staticReadingAnchorRowKey, setStaticReadingAnchorRowKey] = useState<string | null>(null);
   const historyPagingArmed = historyPagingGate.conversationId === props.state.conversationId && historyPagingGate.positioned && historyPagingGate.userIntent;
   const historyPagingRequested = historyPagingRequestedConversationId === props.state.conversationId;
   const historySentinelIntersecting = historySentinelIntersection.conversationId === props.state.conversationId && historySentinelIntersection.intersecting;
@@ -190,6 +203,47 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       return { ...current, userIntent: true };
     });
   }, [props.state.conversationId]);
+  const scheduleUserScrollIntentEnd = useCallback(() => {
+    if (userScrollIntentTimerRef.current) clearTimeout(userScrollIntentTimerRef.current);
+    userScrollIntentTimerRef.current = setTimeout(() => {
+      userScrollIntentTimerRef.current = null;
+      if (!userScrollPointerActiveRef.current) userScrollIntentRef.current = false;
+    }, userScrollIntentIdleMs);
+  }, []);
+  const beginUserScrollIntent = useCallback(
+    (pointerActive = false) => {
+      userScrollIntentRef.current = true;
+      if (pointerActive) {
+        userScrollPointerActiveRef.current = true;
+        if (userScrollIntentTimerRef.current) clearTimeout(userScrollIntentTimerRef.current);
+        userScrollIntentTimerRef.current = null;
+        return;
+      }
+      scheduleUserScrollIntentEnd();
+    },
+    [scheduleUserScrollIntentEnd],
+  );
+  const finishUserScrollPointerIntent = useCallback(() => {
+    if (!userScrollPointerActiveRef.current) return;
+    userScrollPointerActiveRef.current = false;
+    scheduleUserScrollIntentEnd();
+  }, [scheduleUserScrollIntentEnd]);
+  const clearUserScrollIntent = useCallback(() => {
+    userScrollIntentRef.current = false;
+    userScrollPointerActiveRef.current = false;
+    if (userScrollIntentTimerRef.current) clearTimeout(userScrollIntentTimerRef.current);
+    userScrollIntentTimerRef.current = null;
+  }, []);
+  const clearStaticReadingAnchor = useCallback(() => {
+    staticReadingAnchorRef.current = null;
+    setStaticReadingAnchorRowKey((current) => (current === null ? current : null));
+  }, []);
+  const rememberStaticReadingAnchor = useCallback((container: HTMLElement) => {
+    const anchor = captureTranscriptViewportAnchor(container);
+    staticReadingAnchorRef.current = anchor;
+    setStaticReadingAnchorRowKey((current) => (current === anchor.rowKey ? current : anchor.rowKey));
+  }, []);
+  const getStaticReadingAnchor = useCallback(() => staticReadingAnchorRef.current, []);
   const updateHistorySentinelIntersection = useCallback((intersecting: boolean) => setHistorySentinelIntersection({ conversationId: props.state.conversationId, intersecting }), [props.state.conversationId]);
   const activeTurnId = props.historyOnly ? null : props.state.activeTurnId;
   const queuedSubmissions = useMemo(() => visibleQueuedSubmissions(props.state.queue), [props.state.queue]);
@@ -282,15 +336,19 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     const pinned = new Set([...activeTurnRowKeys, ...expandedRowKeys]);
     if (focusedRowKey) pinned.add(focusedRowKey);
     if (historyAnchorRowKey) pinned.add(historyAnchorRowKey);
+    if (staticReadingAnchorRowKey) pinned.add(staticReadingAnchorRowKey);
     return pinned;
-  }, [activeTurnRowKeys, expandedRowKeys, focusedRowKey, historyAnchorRowKey]);
+  }, [activeTurnRowKeys, expandedRowKeys, focusedRowKey, historyAnchorRowKey, staticReadingAnchorRowKey]);
   const isFollowingLatest = useCallback(() => scrollController.getState().mode !== 'static', [scrollController]);
+  const requestLatestPositionAfterGeometryChange = useCallback(() => maintainLatestPositionRef.current(), []);
   const viewportVirtualizer = useTranscriptViewportVirtualizer({
     scopeKey: props.state.conversationId,
     rowKeys: turnRowKeys,
     pinnedRowKeys,
     containerRef,
     isFollowingLatest,
+    getReadingAnchor: getStaticReadingAnchor,
+    onFollowingLatestGeometryChange: requestLatestPositionAfterGeometryChange,
     suspendAutomaticAnchor: historyAnchorRowKey !== null,
   });
   const projectedTurnWorkIds = useMemo(() => new Set(turnRows.filter((row): row is TranscriptTurnWorkRow => row.kind === 'turn_work').map((row) => row.turnId)), [turnRows]);
@@ -418,38 +476,64 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   }, [publishLatestContentVisibility]);
 
   const maintainLatestPosition = useCallback(() => {
-    if (latestPositionFrameRef.current !== null) return;
-    latestPositionFrameRef.current = requestAnimationFrame(() => {
-      latestPositionFrameRef.current = null;
-      const container = containerRef.current;
-      if (!container) return;
-      const effect = scrollController.onDelta();
-      if (effect.type === 'scroll_to_bottom') {
-        scrollToLatest(container, latestContentMarkerRef.current);
-        setReturnToLatestVisible(false);
-      }
-      scheduleLatestContentVisibility();
-    });
-  }, [scheduleLatestContentVisibility, scrollController]);
-
-  const settleLatestPosition = useCallback(() => {
-    if (latestPositionSettleFrameRef.current !== null) cancelAnimationFrame(latestPositionSettleFrameRef.current);
-    let remainingFrames = 3;
-    const settle = (): void => {
-      latestPositionSettleFrameRef.current = null;
-      const container = containerRef.current;
-      if (!container) return;
-      const effect = scrollController.onDelta();
-      if (effect.type === 'scroll_to_bottom') {
-        scrollToLatest(container, latestContentMarkerRef.current);
-        setReturnToLatestVisible(false);
-      }
-      scheduleLatestContentVisibility();
-      remainingFrames -= 1;
-      if (remainingFrames > 0) latestPositionSettleFrameRef.current = requestAnimationFrame(settle);
+    latestPositionConvergenceRequestedRef.current = true;
+    if (latestPositionFrameRef.current !== null || latestPositionFallbackTimerRef.current !== null) return;
+    let pass = 0;
+    let stableFrames = 0;
+    let previousGeometry = '';
+    const schedulePass = (): void => {
+      let handled = false;
+      const run = (): void => {
+        if (handled) return;
+        handled = true;
+        if (latestPositionFrameRef.current !== null && latestPositionFrameRef.current >= 0) cancelAnimationFrame(latestPositionFrameRef.current);
+        if (latestPositionFallbackTimerRef.current) clearTimeout(latestPositionFallbackTimerRef.current);
+        latestPositionFallbackTimerRef.current = null;
+        converge();
+      };
+      latestPositionFrameRef.current = requestAnimationFrame(run);
+      // Electron 窗口被系统短暂遮挡时 rAF 可能暂停；恢复前仍以低频后备任务
+      // 收敛 scrollTop，避免再次显示窗口时停留在旧的最大滚动位置。
+      latestPositionFallbackTimerRef.current = setTimeout(run, latestPositionFallbackMs);
     };
-    latestPositionSettleFrameRef.current = requestAnimationFrame(settle);
+    const converge = (): void => {
+      // rAF 已经开始执行，但在本轮决策结束前仍保持“有任务”，让同时到达的
+      // ResizeObserver/投影回调只标记 dirty，而不是并发创建第二条循环。
+      latestPositionFrameRef.current = -1;
+      const container = containerRef.current;
+      if (!container) {
+        latestPositionFrameRef.current = null;
+        latestPositionConvergenceRequestedRef.current = false;
+        return;
+      }
+      const effect = scrollController.onDelta();
+      if (effect.type !== 'scroll_to_bottom') {
+        latestPositionFrameRef.current = null;
+        latestPositionConvergenceRequestedRef.current = false;
+        scheduleLatestContentVisibility();
+        return;
+      }
+      const externallyRequested = latestPositionConvergenceRequestedRef.current;
+      latestPositionConvergenceRequestedRef.current = false;
+      scrollToLatest(container, latestContentMarkerRef.current);
+      setReturnToLatestVisible(false);
+      scheduleLatestContentVisibility();
+      const current = metrics(container);
+      const geometry = `${Math.round(current.scrollHeight)}:${Math.round(current.clientHeight)}:${Math.round(current.scrollTop)}`;
+      const atBottom = current.scrollHeight - current.clientHeight - current.scrollTop <= 1;
+      stableFrames = atBottom && geometry === previousGeometry && !externallyRequested ? stableFrames + 1 : 0;
+      previousGeometry = geometry;
+      pass += 1;
+      if (pass < 12 && (stableFrames < 2 || latestPositionConvergenceRequestedRef.current)) {
+        schedulePass();
+        return;
+      }
+      latestPositionFrameRef.current = null;
+      latestPositionConvergenceRequestedRef.current = false;
+    };
+    schedulePass();
   }, [scheduleLatestContentVisibility, scrollController]);
+  maintainLatestPositionRef.current = maintainLatestPosition;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -462,6 +546,11 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     const observer = new IntersectionObserver(
       (entries) => {
         latestMarkerIntersectingRef.current = entries[0]?.isIntersecting ?? false;
+        // 活动状态收起、Markdown 完成布局等变化可能只移动底部标记，既不改变
+        // 固定高度滚动容器的 border box，也不保证产生可观察的正文 DOM 变更。
+        // 跟随态下标记一旦离开视口，就必须重新唤醒统一贴底调度器；历史阅读态
+        // 仍由 controller 门禁，不会被 IntersectionObserver 接管。
+        if (isFollowingLatest()) maintainLatestPosition();
         scheduleLatestContentVisibility();
       },
       { root: container, threshold: 0 },
@@ -469,13 +558,23 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     observer.observe(marker);
     scheduleLatestContentVisibility();
     return () => observer.disconnect();
-  }, [scheduleLatestContentVisibility]);
+  }, [isFollowingLatest, maintainLatestPosition, scheduleLatestContentVisibility]);
+
+  useEffect(() => {
+    window.addEventListener('pointerup', finishUserScrollPointerIntent);
+    window.addEventListener('pointercancel', finishUserScrollPointerIntent);
+    return () => {
+      window.removeEventListener('pointerup', finishUserScrollPointerIntent);
+      window.removeEventListener('pointercancel', finishUserScrollPointerIntent);
+    };
+  }, [finishUserScrollPointerIntent]);
 
   useEffect(
     () => () => {
-      if (latestPositionFrameRef.current !== null) cancelAnimationFrame(latestPositionFrameRef.current);
-      if (latestPositionSettleFrameRef.current !== null) cancelAnimationFrame(latestPositionSettleFrameRef.current);
+      if (latestPositionFrameRef.current !== null && latestPositionFrameRef.current >= 0) cancelAnimationFrame(latestPositionFrameRef.current);
+      if (latestPositionFallbackTimerRef.current) clearTimeout(latestPositionFallbackTimerRef.current);
       if (latestVisibilityFrameRef.current !== null) cancelAnimationFrame(latestVisibilityFrameRef.current);
+      if (userScrollIntentTimerRef.current) clearTimeout(userScrollIntentTimerRef.current);
       lastReportedLatestVisibilityRef.current = false;
       latestVisibilityCallbackRef.current?.(false);
     },
@@ -487,13 +586,37 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     const conversationId = props.state.conversationId;
     if (!container || !historyHydrated || !conversationId || positionedConversationIdRef.current === conversationId) return;
     positionedConversationIdRef.current = conversationId;
-    scrollToLatest(container, latestContentMarkerRef.current);
-    settleLatestPosition();
+    clearUserScrollIntent();
+    clearStaticReadingAnchor();
+    const effect = scrollController.onExplicitLatestRequest();
+    if (effect.type === 'scroll_to_bottom') scrollToLatest(container, latestContentMarkerRef.current);
+    maintainLatestPosition();
     setReturnToLatestVisible(false);
     setHistoryPagingGate({ conversationId, positioned: true, userIntent: false });
     setHistoryPagingRequestedConversationId(null);
     setHistorySentinelIntersection({ conversationId, intersecting: false });
-  }, [historyHydrated, props.state.conversationId, props.state.transcriptRevision, settleLatestPosition]);
+  }, [clearStaticReadingAnchor, clearUserScrollIntent, historyHydrated, maintainLatestPosition, props.state.conversationId, props.state.transcriptRevision, scrollController]);
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    const conversationId = props.state.conversationId;
+    const revision = props.localSubmissionRevision ?? 0;
+    const tracked = trackedLocalSubmissionRef.current;
+    if (!conversationId || tracked.conversationId !== conversationId) {
+      trackedLocalSubmissionRef.current = { conversationId, revision };
+      return;
+    }
+    if (!container || revision <= tracked.revision) return;
+    tracked.revision = revision;
+    clearUserScrollIntent();
+    clearStaticReadingAnchor();
+    const effect = scrollController.onMessageSubmitted();
+    if (effect.type === 'scroll_to_bottom') {
+      scrollToLatest(container, latestContentMarkerRef.current);
+      setReturnToLatestVisible(false);
+      maintainLatestPosition();
+    }
+  }, [clearStaticReadingAnchor, clearUserScrollIntent, maintainLatestPosition, props.localSubmissionRevision, props.state.conversationId, scrollController]);
 
   useLayoutEffect(() => {
     const container = containerRef.current;
@@ -509,12 +632,15 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     if (!container || !newestSubmittedMessageId) return;
     // 首次水合带回的旧排队消息只按普通历史定位；只有当前工作面明确提交的新消息才建立新轮次锚点。
     if (historyHydrated && !activeTurnTrackingInitializedRef.current) return;
+    clearUserScrollIntent();
+    clearStaticReadingAnchor();
     const effect = scrollController.onMessageSubmitted();
     if (effect.type === 'scroll_to_bottom') {
       scrollToLatest(container, latestContentMarkerRef.current);
       setReturnToLatestVisible(false);
+      maintainLatestPosition();
     }
-  }, [awaitingReplyMessageIds, historyHydrated, props.state.conversationId, scrollController]);
+  }, [awaitingReplyMessageIds, clearStaticReadingAnchor, clearUserScrollIntent, historyHydrated, maintainLatestPosition, props.state.conversationId, scrollController]);
 
   useLayoutEffect(() => {
     const container = containerRef.current;
@@ -530,13 +656,15 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     if (!lastUserKey || lastUserKey === previousKey) return;
 
     // 以可见用户消息身份作为发送锚点，覆盖“发送后很快被 accepted/完成，来不及进入 awaitingReply 列表”的快速路径。
+    clearUserScrollIntent();
+    clearStaticReadingAnchor();
     const effect = scrollController.onMessageSubmitted();
     if (effect.type === 'scroll_to_bottom') {
       scrollToLatest(container, latestContentMarkerRef.current);
       setReturnToLatestVisible(false);
-      settleLatestPosition();
+      maintainLatestPosition();
     }
-  }, [historyHydrated, lastUserKey, props.state.conversationId, scrollController, settleLatestPosition]);
+  }, [clearStaticReadingAnchor, clearUserScrollIntent, historyHydrated, lastUserKey, maintainLatestPosition, props.state.conversationId, scrollController]);
 
   useEffect(() => {
     const resolution = resolveCompletedItemAnnouncement(completedAnnouncementTrackerRef.current, items, props.language);
@@ -554,18 +682,32 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       return;
     }
     if (activeTurnId && previousTurnIdRef.current !== activeTurnId) {
-      const effect = scrollController.onTurnStarted(metrics(container), Date.now());
+      const effect = scrollController.onTurnStarted();
       if (effect.type === 'scroll_to_bottom') {
         scrollToLatest(container, latestContentMarkerRef.current);
         setReturnToLatestVisible(false);
+        maintainLatestPosition();
       }
     }
     previousTurnIdRef.current = activeTurnId;
-  }, [activeTurnId, historyHydrated, latestSubmittedMessageId, scrollController]);
+  }, [activeTurnId, historyHydrated, latestSubmittedMessageId, maintainLatestPosition, scrollController]);
 
   useLayoutEffect(() => {
     maintainLatestPosition();
   }, [maintainLatestPosition, props.creationStatus?.error, props.creationStatus?.state, props.state.transcriptRevision]);
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container || !historyHydrated || typeof MutationObserver !== 'function') return;
+    // 会话切换时，快照行可以先以稳定 key 进入虚拟窗口，Markdown 再在后续
+    // 微任务中补入正文。此时 transcriptRevision、行 key 和初次尺寸都可能不变，
+    // 仅靠 React effect / ResizeObserver 会漏掉这次内容水合。DOM 正文变化只负责
+    // 唤醒统一的按帧调度器；是否贴底仍由 scroll controller 的两态决定。
+    const observer = new MutationObserver(() => maintainLatestPosition());
+    observer.observe(container, { childList: true, characterData: true, subtree: true });
+    maintainLatestPosition();
+    return () => observer.disconnect();
+  }, [historyHydrated, maintainLatestPosition, props.state.conversationId]);
 
   const setTranscriptRowExpanded = useCallback((rowKey: string, open: boolean): void => {
     setRowExpansionOverrides((current) => {
@@ -718,15 +860,42 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           ref={containerRef}
           className="session-transcript"
           role="log"
+          tabIndex={-1}
           aria-live="off"
           aria-label={props.language === 'zh-CN' ? '对话记录' : 'Conversation transcript'}
           onWheel={(event) => {
+            if (event.deltaY !== 0) beginUserScrollIntent();
             if (event.deltaY < 0) armHistoryPaging();
           }}
+          onTouchStart={() => beginUserScrollIntent()}
+          onPointerDown={(event) => {
+            const container = event.currentTarget;
+            const rect = container.getBoundingClientRect();
+            const scrollbarEdgeWidth = Math.max(12, container.offsetWidth - container.clientWidth);
+            const scrollbarPointer = event.pointerType === 'mouse' && event.clientX >= rect.right - scrollbarEdgeWidth;
+            const interactiveTarget = event.target instanceof Element && event.target.closest('button, input, textarea, select, a, [contenteditable="true"]');
+            if (event.pointerType === 'mouse' && !scrollbarPointer && !interactiveTarget) container.focus({ preventScroll: true });
+            if (event.pointerType !== 'mouse' || scrollbarPointer) beginUserScrollIntent(true);
+          }}
+          onKeyDown={(event) => {
+            if (!transcriptVerticalScrollKeys.has(event.key)) return;
+            const target = event.target;
+            if (target instanceof Element && target.closest('button, input, textarea, select, a, [contenteditable="true"]')) return;
+            beginUserScrollIntent();
+          }}
           onScroll={(event) => {
-            const mode = scrollController.onUserScroll(metrics(event.currentTarget));
+            const userDriven = userScrollIntentRef.current;
+            const mode = userDriven ? scrollController.onUserScroll(metrics(event.currentTarget)) : scrollController.getState();
             setReturnToLatestVisible(mode.mode === 'static');
-            if (mode.mode === 'static') armHistoryPaging();
+            if (userDriven && mode.mode === 'static') {
+              armHistoryPaging();
+              rememberStaticReadingAnchor(event.currentTarget);
+            }
+            if (userDriven && mode.mode !== 'static') {
+              clearStaticReadingAnchor();
+              maintainLatestPosition();
+            }
+            if (userDriven && !userScrollPointerActiveRef.current) scheduleUserScrollIntentEnd();
             viewportVirtualizer.synchronizeViewport(event.currentTarget);
             scheduleLatestContentVisibility();
           }}
@@ -739,7 +908,13 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             onLoadEarlier={renderProps.onLoadEarlierHistory ? loadEarlierHistoryWithAnchor : undefined}
           />
           {turnRows.length > 0 ? (
-            <div className="session-transcript-window" data-rendered-row-count={viewportVirtualizer.projection.renderedRowCount} data-total-row-count={turnRows.length} data-measurement-cache-count={viewportVirtualizer.measurementCacheSize}>
+            <div
+              ref={viewportVirtualizer.windowRef}
+              className="session-transcript-window"
+              data-rendered-row-count={viewportVirtualizer.projection.renderedRowCount}
+              data-total-row-count={turnRows.length}
+              data-measurement-cache-count={viewportVirtualizer.measurementCacheSize}
+            >
               {viewportVirtualizer.projection.slots.map((slot) => {
                 if (slot.kind === 'spacer') {
                   return <div key={slot.key} className="session-transcript-window-spacer" style={{ blockSize: slot.height }} aria-hidden="true" />;
@@ -794,8 +969,11 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             if (!container) return;
             const effect = scrollController.onExplicitLatestRequest();
             if (effect.type !== 'scroll_to_bottom') return;
+            clearUserScrollIntent();
+            clearStaticReadingAnchor();
             scrollToLatest(container, latestContentMarkerRef.current);
             setReturnToLatestVisible(false);
+            maintainLatestPosition();
           }}
         >
           {props.language === 'zh-CN' ? '返回最新消息' : 'Return to latest'}
