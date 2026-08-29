@@ -18,11 +18,13 @@ import { DatabasePerformanceCollector, type DatabasePerformanceSnapshot } from '
 import { migrateExecutionHostHandoffSchema } from './executionHostHandoffStore.js';
 import { migrateExecutionHostWorkSchema } from './executionHostWorkStore.js';
 import { migrateDigitalEmployeeSchema } from './digitalEmployeeStore.js';
+import { migrateDigitalEmployeeCapabilitySchema } from './digitalEmployeeCapabilityMigration.js';
 import { migrateDigitalEmployeeStageHandoffSchema } from './digitalEmployeeStageHandoffMigration.js';
 import { migrateLongTermMemorySchema } from './longTermMemoryStore.js';
 import { migratePluginStoreSchema } from './pluginStore.js';
 import { migrateTaskEventFileProjectionSchema } from './taskEventFileProjectionStore.js';
 import { migrateTaskStageSchema } from './taskStageStore.js';
+import { migrateTaskWorkSchema } from './taskWorkStore.js';
 import type { SqlValue, ZeusDatabasePort } from './databasePort.js';
 import { deriveConversationStageProjection, isPlainRecord, ProviderEventReceiptRepository, subtractTokenUsageBreakdown, validateTokenUsageBreakdown, type DbCodexUsageLedgerRow } from './conversationStore.js';
 
@@ -34,6 +36,7 @@ export * from './commandDeliveryStore.js';
 export * from './databasePerformance.js';
 export * from './databasePort.js';
 export * from './digitalEmployeeStore.js';
+export * from './digitalEmployeeCapabilityMigration.js';
 export * from './digitalEmployeeStageHandoffMigration.js';
 export * from './executionHostHandoffStore.js';
 export * from './executionHostWorkStore.js';
@@ -49,6 +52,7 @@ export * from './longTermMemoryStore.js';
 export * from './pluginStore.js';
 export * from './taskEventFileProjectionStore.js';
 export * from './taskStageStore.js';
+export * from './taskWorkStore.js';
 export * from './projectionDatabaseCandidate.js';
 export * from './projectionDatabaseRuntime.js';
 export * from './recoveryBackup.js';
@@ -1110,6 +1114,8 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
     migrateTaskEventFileProjectionSchema(zeusDb);
     migrateTaskStageSchema(zeusDb);
     migrateDigitalEmployeeStageHandoffSchema(zeusDb);
+    migrateDigitalEmployeeCapabilitySchema(zeusDb);
+    migrateTaskWorkSchema(zeusDb);
     migrateProviderEventReceipts(zeusDb);
     migrateUnifiedConversationStoreSchema(zeusDb);
     migrateConversationLegacyCutoverSchema(zeusDb);

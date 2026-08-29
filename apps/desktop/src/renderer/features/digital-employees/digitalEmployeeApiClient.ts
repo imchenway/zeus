@@ -1,5 +1,6 @@
 import { jsonRequest, type LocalApiTransport } from '../../transport/localApiTransport.js';
 import { buildWorkManagementCommandRequest, workManagementClientCommandTypes } from '../work-management/workManagementCommandClient.js';
+import type { CommandRunDetail } from '../runtime/runtimeContracts.js';
 import type {
   DigitalEmployeeAutomationInput,
   DigitalEmployeeAutomationRecord,
@@ -10,6 +11,12 @@ import type {
   DigitalEmployeeStageDecisionInput,
   DigitalEmployeeTemplateInput,
   DigitalEmployeeTemplateRecord,
+  TaskWorkDecisionRecord,
+  TaskWorkDeliverableRecord,
+  TaskWorkItemRecord,
+  TaskWorkManagementProjection,
+  TaskWorkPreview,
+  TaskWorkPreviewSelection,
 } from './digitalEmployeeContracts.js';
 
 export interface DigitalEmployeeApiClient {
@@ -38,6 +45,16 @@ export interface DigitalEmployeeApiClient {
   finalizeDigitalEmployeeExecution(executionId: string, taskId: string, input: DigitalEmployeeStageDecisionInput): Promise<DigitalEmployeeExecutionRecord>;
   adoptLegacyDigitalEmployeeExecution(executionId: string, taskId: string, expectedExecutionRevision: number): Promise<DigitalEmployeeExecutionRecord>;
   loadDigitalEmployeeDeliverableContent(taskId: string, deliverableId: string): Promise<{ content: string }>;
+  loadTaskWorkManagement(taskId: string): Promise<TaskWorkManagementProjection>;
+  loadTaskWorkDeliverableContent(taskId: string, deliverableId: string): Promise<{ deliverableId: string; version: number; contentSha256: string; content: string }>;
+  loadTaskWorkCommandEvidence(runId: string): Promise<CommandRunDetail>;
+  previewTaskWorkItem(taskId: string, input: TaskWorkPreviewSelection & { commandParameters?: Record<string, unknown> }): Promise<TaskWorkPreview>;
+  createTaskWorkItem(taskId: string, preview: TaskWorkPreview, commandParameters?: Record<string, unknown>): Promise<{ item: TaskWorkItemRecord; run: TaskWorkItemRecord['runs'][number] }>;
+  acceptTaskWorkDeliverable(taskId: string, deliverable: TaskWorkDeliverableRecord): Promise<unknown>;
+  requestTaskWorkDeliverableChanges(taskId: string, deliverable: TaskWorkDeliverableRecord, reason: string): Promise<unknown>;
+  retryTaskWorkItem(taskId: string, item: TaskWorkItemRecord): Promise<unknown>;
+  cancelTaskWorkItem(taskId: string, item: TaskWorkItemRecord): Promise<unknown>;
+  resolveTaskWorkDecision(taskId: string, decision: TaskWorkDecisionRecord, response: Record<string, unknown>): Promise<unknown>;
 }
 
 export function createDigitalEmployeeApiClient(transport: LocalApiTransport): DigitalEmployeeApiClient {
@@ -128,6 +145,46 @@ export function createDigitalEmployeeApiClient(transport: LocalApiTransport): Di
       return transport.request(`${taskPath(taskId)}/digital-employee-executions/${encodeURIComponent(executionId)}/adopt-stage-handoff`, jsonRequest('POST', body));
     },
     loadDigitalEmployeeDeliverableContent: (taskId, deliverableId) => transport.request(`${taskPath(taskId)}/workflow/deliverables/${encodeURIComponent(deliverableId)}/content`),
+    loadTaskWorkManagement: (taskId) => transport.request(`${taskPath(taskId)}/work-management`),
+    loadTaskWorkDeliverableContent: (taskId, deliverableId) => transport.request(`${taskPath(taskId)}/work-deliverables/${encodeURIComponent(deliverableId)}/content`),
+    loadTaskWorkCommandEvidence: (runId) => transport.request(`/api/command-runs/${encodeURIComponent(runId)}?tail=true&logLimit=1000`),
+    previewTaskWorkItem: (taskId, input) => transport.request(`${taskPath(taskId)}/work-item-previews`, jsonRequest('POST', input)),
+    createTaskWorkItem: async (taskId, preview, commandParameters = {}) => {
+      const value = {
+        selection: preview.selection,
+        previewSha256: preview.previewSha256,
+        expectedTaskRevision: preview.expectedTaskRevision,
+        expectedEmployeeRevision: preview.expectedEmployeeRevision,
+        commandParameterDigest: preview.command?.parameterDigest ?? null,
+      };
+      const body = await command(workManagementClientCommandTypes.taskWorkItemCreate, 'task', () => taskId, 'task_work_item_', value);
+      return transport.request(`${taskPath(taskId)}/work-items`, jsonRequest('POST', { ...body, runtime: { commandParameters } }));
+    },
+    acceptTaskWorkDeliverable: async (taskId, deliverable) => {
+      const value = { expectedRevision: deliverable.revision };
+      const body = await command(workManagementClientCommandTypes.taskWorkDeliverableAccept, 'task', () => taskId, 'task_work_deliverable_accept_', value, deliverable.revision);
+      return transport.request(`${taskPath(taskId)}/work-deliverables/${encodeURIComponent(deliverable.id)}/accept`, jsonRequest('POST', body));
+    },
+    requestTaskWorkDeliverableChanges: async (taskId, deliverable, reason) => {
+      const value = { expectedRevision: deliverable.revision, reason };
+      const body = await command(workManagementClientCommandTypes.taskWorkDeliverableRequestChanges, 'task', () => taskId, 'task_work_deliverable_changes_', value, deliverable.revision);
+      return transport.request(`${taskPath(taskId)}/work-deliverables/${encodeURIComponent(deliverable.id)}/request-changes`, jsonRequest('POST', body));
+    },
+    retryTaskWorkItem: async (taskId, item) => {
+      const value = { expectedRevision: item.revision };
+      const body = await command(workManagementClientCommandTypes.taskWorkItemRetry, 'task', () => taskId, 'task_work_item_retry_', value, item.revision);
+      return transport.request(`${taskPath(taskId)}/work-items/${encodeURIComponent(item.id)}/retry`, jsonRequest('POST', body));
+    },
+    cancelTaskWorkItem: async (taskId, item) => {
+      const value = { expectedRevision: item.revision };
+      const body = await command(workManagementClientCommandTypes.taskWorkItemCancel, 'task', () => taskId, 'task_work_item_cancel_', value, item.revision);
+      return transport.request(`${taskPath(taskId)}/work-items/${encodeURIComponent(item.id)}/cancel`, jsonRequest('POST', body));
+    },
+    resolveTaskWorkDecision: async (taskId, decision, response) => {
+      const value = { expectedRevision: decision.revision, responseSha256: await sha256(canonicalJson(response)) };
+      const body = await command(workManagementClientCommandTypes.taskWorkDecisionResolve, 'task', () => taskId, 'task_work_decision_resolve_', value, decision.revision);
+      return transport.request(`${taskPath(taskId)}/work-decisions/${encodeURIComponent(decision.id)}/resolve`, jsonRequest('POST', { ...body, runtime: { response } }));
+    },
   };
 }
 
@@ -148,4 +205,21 @@ function projectPath(projectId: string): string {
 
 function taskPath(taskId: string): string {
   return `/api/tasks/${encodeURIComponent(taskId)}`;
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+async function sha256(value: string): Promise<string> {
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }

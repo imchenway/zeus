@@ -24,6 +24,45 @@ export type DigitalEmployeeExecutionSource = (typeof digitalEmployeeExecutionSou
 export type DigitalEmployeeDeliveryStage = (typeof digitalEmployeeDeliveryStages)[number];
 export type DigitalEmployeeExecutionMode = (typeof digitalEmployeeExecutionModes)[number];
 
+export interface ModelPolicyV1 {
+  defaultMode: 'project' | 'explicit';
+  defaultModel: string | null;
+  allowedModels: string[];
+  allowedReasoningEfforts: string[];
+  allowedServiceTiers: string[];
+}
+
+export interface SkillPolicyV1 {
+  allowedSkillIds: string[];
+}
+
+export interface AuthorityPolicyV1 {
+  permissionMode: DigitalEmployeePermissionMode;
+  allowCodeChanges: boolean;
+  allowTests: boolean;
+  allowCommit: boolean;
+  allowPush: boolean;
+  allowMerge: boolean;
+  allowDeploy: boolean;
+  allowComplete: boolean;
+}
+
+export type EmployeeEntrypointV2 =
+  | {
+      kind: 'agent';
+      prompt: string;
+      agentKind: DigitalEmployeeAgentKind;
+      modelPolicy: ModelPolicyV1;
+      skillPolicy: SkillPolicyV1;
+      authorityPolicy: AuthorityPolicyV1;
+    }
+  | {
+      kind: 'command';
+      commandId: string;
+    };
+
+export type DigitalEmployeeEntrypointMigrationState = 'ready' | 'requires_selection' | 'requires_configuration';
+
 export interface DigitalEmployeeDeliveryGrants {
   allowCommit: boolean;
   allowPush: boolean;
@@ -38,7 +77,7 @@ export interface DigitalEmployeeTemplateRecord {
   description: string;
   role: string;
   domain: string;
-  /** 兼容既有 JSON 列的数组形态；首版只允许零或一个默认 Zeus Skill 稳定身份。 */
+  /** 可用 Zeus Skill 的稳定身份集合；每次运行另行冻结内容与资源快照。 */
   skillIds: string[];
   prompt: string;
   agentKind: DigitalEmployeeAgentKind;
@@ -65,6 +104,9 @@ export interface DigitalEmployeeRecord extends Omit<DigitalEmployeeTemplateRecor
   allowTests: boolean;
   deliveryGrants: DigitalEmployeeDeliveryGrants;
   deployCommandId: string | null;
+  /** v2 主入口。null 表示旧配置需选择或 Command 尚未配置，不得指派。 */
+  entrypoint: EmployeeEntrypointV2 | null;
+  entrypointMigrationState: DigitalEmployeeEntrypointMigrationState;
 }
 
 export interface DigitalEmployeeTaskFilter {
@@ -154,6 +196,8 @@ export interface CreateDigitalEmployeeInput extends Omit<CreateDigitalEmployeeTe
   allowTests?: boolean;
   deliveryGrants?: Partial<DigitalEmployeeDeliveryGrants>;
   deployCommandId?: string | null;
+  entrypoint?: EmployeeEntrypointV2 | null;
+  entrypointKind?: EmployeeEntrypointV2['kind'];
 }
 
 export type UpdateDigitalEmployeeInput = Partial<Omit<CreateDigitalEmployeeInput, 'id' | 'projectId'>> & { expectedRevision: number };
@@ -557,8 +601,9 @@ export class DigitalEmployeeRepository {
       `INSERT INTO digital_employees
        (id, project_id, template_id, name, description, role, domain, skill_ids_json, prompt, agent_kind, model, reasoning_effort, service_tier, permission_mode, work_mode,
         enabled, auto_claim, autonomous_exploration, max_concurrency, task_filter_json, allow_code_changes, allow_tests,
-        allow_commit, allow_push, allow_merge, allow_deploy, allow_complete, deploy_command_id, revision, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+        allow_commit, allow_push, allow_merge, allow_deploy, allow_complete, deploy_command_id, revision, created_at, updated_at,
+        entrypoint_kind, entrypoint_migration_state, model_policy_json, skill_policy_json, authority_policy_json, command_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         value.projectId,
@@ -590,6 +635,12 @@ export class DigitalEmployeeRepository {
         value.deployCommandId,
         timestamp,
         timestamp,
+        value.entrypoint?.kind ?? null,
+        value.entrypointMigrationState,
+        JSON.stringify(value.entrypoint?.kind === 'agent' ? value.entrypoint.modelPolicy : defaultModelPolicy(value)),
+        JSON.stringify(value.entrypoint?.kind === 'agent' ? value.entrypoint.skillPolicy : { allowedSkillIds: value.skillIds }),
+        JSON.stringify(value.entrypoint?.kind === 'agent' ? value.entrypoint.authorityPolicy : defaultAuthorityPolicy(value)),
+        value.entrypoint?.kind === 'command' ? value.entrypoint.commandId : null,
       ],
     );
     return this.getById(id)!;
@@ -611,6 +662,7 @@ export class DigitalEmployeeRepository {
       serviceTier: input.template.serviceTier,
       permissionMode: input.template.permissionMode,
       workMode: input.template.workMode,
+      entrypointKind: input.template.id === 'digital_employee_template_deployment' ? 'command' : 'agent',
       ...input.overrides,
     });
   }
@@ -618,12 +670,15 @@ export class DigitalEmployeeRepository {
   update(id: string, input: UpdateDigitalEmployeeInput): DigitalEmployeeRecord {
     const existing = this.require(id);
     assertRevision(existing.revision, input.expectedRevision, '数字员工');
-    const value = normalizeEmployeeInput({ ...existing, ...input, projectId: existing.projectId, deliveryGrants: { ...existing.deliveryGrants, ...input.deliveryGrants }, taskFilter: { ...existing.taskFilter, ...input.taskFilter } });
+    const normalized = normalizeEmployeeInput({ ...existing, ...input, projectId: existing.projectId, deliveryGrants: { ...existing.deliveryGrants, ...input.deliveryGrants }, taskFilter: { ...existing.taskFilter, ...input.taskFilter } });
+    const entrypointExplicit = input.entrypoint !== undefined || input.entrypointKind !== undefined;
+    const value = !entrypointExplicit && existing.entrypointMigrationState !== 'ready' ? { ...normalized, entrypoint: null, entrypointMigrationState: existing.entrypointMigrationState } : normalized;
     const timestamp = nextTimestamp(existing.updatedAt);
     this.db.execute(
       `UPDATE digital_employees SET template_id = ?, name = ?, description = ?, role = ?, domain = ?, skill_ids_json = ?, prompt = ?, agent_kind = ?, model = ?, reasoning_effort = ?, service_tier = ?, permission_mode = ?, work_mode = ?,
        enabled = ?, auto_claim = ?, autonomous_exploration = ?, max_concurrency = ?, task_filter_json = ?, allow_code_changes = ?, allow_tests = ?,
-       allow_commit = ?, allow_push = ?, allow_merge = ?, allow_deploy = ?, allow_complete = ?, deploy_command_id = ?, revision = revision + 1, updated_at = ?
+       allow_commit = ?, allow_push = ?, allow_merge = ?, allow_deploy = ?, allow_complete = ?, deploy_command_id = ?, entrypoint_kind = ?, entrypoint_migration_state = ?,
+       model_policy_json = ?, skill_policy_json = ?, authority_policy_json = ?, command_id = ?, revision = revision + 1, updated_at = ?
        WHERE id = ? AND revision = ? AND deleted_at IS NULL`,
       [
         value.templateId,
@@ -652,6 +707,12 @@ export class DigitalEmployeeRepository {
         bool(value.deliveryGrants.allowDeploy),
         bool(value.deliveryGrants.allowComplete),
         value.deployCommandId,
+        value.entrypoint?.kind ?? null,
+        value.entrypointMigrationState,
+        JSON.stringify(value.entrypoint?.kind === 'agent' ? value.entrypoint.modelPolicy : defaultModelPolicy(value)),
+        JSON.stringify(value.entrypoint?.kind === 'agent' ? value.entrypoint.skillPolicy : { allowedSkillIds: value.skillIds }),
+        JSON.stringify(value.entrypoint?.kind === 'agent' ? value.entrypoint.authorityPolicy : defaultAuthorityPolicy(value)),
+        value.entrypoint?.kind === 'command' ? value.entrypoint.commandId : null,
         timestamp,
         existing.id,
         existing.revision,
@@ -675,7 +736,10 @@ export class DigitalEmployeeRepository {
   }
 
   countActiveExecutions(employeeId: string): number {
-    return this.db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM digital_employee_executions WHERE employee_id = ? AND status IN ('queued', 'dispatching', 'running', 'waiting', 'delivery_pending')`, [employeeId])?.count ?? 0;
+    const legacy =
+      this.db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM digital_employee_executions WHERE employee_id = ? AND status IN ('queued', 'dispatching', 'running', 'waiting', 'delivery_pending')`, [employeeId])?.count ?? 0;
+    const workItems = this.db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM task_work_items WHERE employee_id = ? AND status IN ('queued', 'active', 'waiting_manager', 'blocked')`, [employeeId])?.count ?? 0;
+    return legacy + workItems;
   }
 
   private require(id: string): DigitalEmployeeRecord {
@@ -1193,6 +1257,12 @@ interface DigitalEmployeeRow extends Omit<DigitalEmployeeTemplateRow, 'built_in'
   allow_deploy: number;
   allow_complete: number;
   deploy_command_id: string | null;
+  entrypoint_kind: string | null;
+  entrypoint_migration_state: string;
+  model_policy_json: string;
+  skill_policy_json: string;
+  authority_policy_json: string;
+  command_id: string | null;
 }
 
 interface DigitalEmployeeAutomationRow {
@@ -1268,6 +1338,8 @@ function mapTemplateRow(row: DigitalEmployeeTemplateRow): DigitalEmployeeTemplat
 }
 
 function mapEmployeeRow(row: DigitalEmployeeRow): DigitalEmployeeRecord {
+  const entrypointMigrationState = oneOf(row.entrypoint_migration_state, ['ready', 'requires_selection', 'requires_configuration'] as const, 'employee.entrypointMigrationState');
+  const entrypoint = mapEmployeeEntrypoint(row, entrypointMigrationState);
   return {
     id: row.id,
     projectId: row.project_id,
@@ -1299,6 +1371,8 @@ function mapEmployeeRow(row: DigitalEmployeeRow): DigitalEmployeeRecord {
       allowComplete: row.allow_complete === 1,
     },
     deployCommandId: row.deploy_command_id,
+    entrypoint,
+    entrypointMigrationState,
     revision: nonNegativeInteger(row.revision, 'employee.revision'),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -1383,10 +1457,7 @@ function normalizeEmployeeInput(input: CreateDigitalEmployeeInput): Omit<Digital
   const taskFilter = normalizeTaskFilter(input.taskFilter ?? {});
   const deliveryGrants = normalizeDeliveryGrants(input.deliveryGrants ?? {});
   const deployCommandId = nullableIdentity(input.deployCommandId, 'deployCommandId');
-  if (deliveryGrants.allowDeploy && !deployCommandId) throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_DEPLOY_COMMAND_REQUIRED', '开启自动部署时必须选择项目命令中心里的部署命令。');
-  if (deliveryGrants.allowPush && !deliveryGrants.allowCommit) throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_GRANT_INVALID', '自动推送必须同时授权自动提交。');
-  if (deliveryGrants.allowMerge && !deliveryGrants.allowCommit) throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_GRANT_INVALID', '自动合入必须同时授权自动提交。');
-  return {
+  const base = {
     projectId: requiredIdentity(input.projectId, 'projectId'),
     templateId: nullableIdentity(input.templateId, 'templateId'),
     ...template,
@@ -1399,6 +1470,96 @@ function normalizeEmployeeInput(input: CreateDigitalEmployeeInput): Omit<Digital
     allowTests: input.allowTests === true,
     deliveryGrants,
     deployCommandId,
+  };
+  const requestedKind = input.entrypoint?.kind ?? input.entrypointKind ?? 'agent';
+  let entrypoint: EmployeeEntrypointV2 | null;
+  let entrypointMigrationState: DigitalEmployeeEntrypointMigrationState;
+  if (requestedKind === 'command') {
+    const commandId = input.entrypoint?.kind === 'command' ? nullableIdentity(input.entrypoint.commandId, 'entrypoint.commandId') : deployCommandId;
+    entrypoint = commandId ? { kind: 'command', commandId } : null;
+    entrypointMigrationState = commandId ? 'ready' : 'requires_configuration';
+  } else {
+    const provided = input.entrypoint?.kind === 'agent' ? input.entrypoint : null;
+    entrypoint = {
+      kind: 'agent',
+      prompt: boundedText(provided?.prompt ?? template.prompt, 'entrypoint.prompt', 1, 20_000),
+      agentKind: oneOf(provided?.agentKind ?? template.agentKind, digitalEmployeeAgentKinds, 'entrypoint.agentKind'),
+      modelPolicy: normalizeModelPolicy(provided?.modelPolicy ?? defaultModelPolicy(base)),
+      skillPolicy: normalizeSkillPolicy(provided?.skillPolicy ?? { allowedSkillIds: template.skillIds }),
+      authorityPolicy: normalizeAuthorityPolicy(provided?.authorityPolicy ?? defaultAuthorityPolicy(base)),
+    };
+    entrypointMigrationState = 'ready';
+  }
+  return { ...base, entrypoint, entrypointMigrationState };
+}
+
+function mapEmployeeEntrypoint(row: DigitalEmployeeRow, migrationState: DigitalEmployeeEntrypointMigrationState): EmployeeEntrypointV2 | null {
+  if (migrationState !== 'ready' || !row.entrypoint_kind) return null;
+  if (row.entrypoint_kind === 'command') {
+    return row.command_id ? { kind: 'command', commandId: row.command_id } : null;
+  }
+  if (row.entrypoint_kind !== 'agent') throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_CORRUPT', '数字员工主入口类型无法识别。');
+  return {
+    kind: 'agent',
+    prompt: row.prompt,
+    agentKind: oneOf(row.agent_kind, digitalEmployeeAgentKinds, 'employee.entrypoint.agentKind'),
+    modelPolicy: normalizeModelPolicy(parseRecord(row.model_policy_json, 'employee.modelPolicy')),
+    skillPolicy: normalizeSkillPolicy(parseRecord(row.skill_policy_json, 'employee.skillPolicy')),
+    authorityPolicy: normalizeAuthorityPolicy(parseRecord(row.authority_policy_json, 'employee.authorityPolicy')),
+  };
+}
+
+function defaultModelPolicy(input: Pick<DigitalEmployeeTemplateRecord, 'model' | 'reasoningEffort' | 'serviceTier'>): ModelPolicyV1 {
+  return {
+    defaultMode: input.model ? 'explicit' : 'project',
+    defaultModel: input.model,
+    allowedModels: input.model ? [input.model] : [],
+    allowedReasoningEfforts: input.reasoningEffort ? [input.reasoningEffort] : [],
+    allowedServiceTiers: input.serviceTier ? [input.serviceTier] : [],
+  };
+}
+
+function defaultAuthorityPolicy(input: { permissionMode: DigitalEmployeePermissionMode; allowCodeChanges: boolean; allowTests: boolean; deliveryGrants: DigitalEmployeeDeliveryGrants }): AuthorityPolicyV1 {
+  return {
+    permissionMode: input.permissionMode,
+    allowCodeChanges: input.allowCodeChanges,
+    allowTests: input.allowTests,
+    allowCommit: input.deliveryGrants.allowCommit,
+    allowPush: input.deliveryGrants.allowPush,
+    allowMerge: input.deliveryGrants.allowMerge,
+    allowDeploy: input.deliveryGrants.allowDeploy,
+    allowComplete: input.deliveryGrants.allowComplete,
+  };
+}
+
+function normalizeModelPolicy(value: unknown): ModelPolicyV1 {
+  if (!isPlainRecord(value)) throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_INVALID', 'modelPolicy 必须是对象。');
+  const defaultMode = oneOf(value.defaultMode ?? 'project', ['project', 'explicit'] as const, 'modelPolicy.defaultMode');
+  const defaultModel = nullableText(value.defaultModel, 256);
+  const allowedModels = normalizeStringList(Array.isArray(value.allowedModels) ? value.allowedModels : [], 'modelPolicy.allowedModels', 50, 256);
+  const allowedReasoningEfforts = normalizeStringList(Array.isArray(value.allowedReasoningEfforts) ? value.allowedReasoningEfforts : [], 'modelPolicy.allowedReasoningEfforts', 20, 64);
+  const allowedServiceTiers = normalizeStringList(Array.isArray(value.allowedServiceTiers) ? value.allowedServiceTiers : [], 'modelPolicy.allowedServiceTiers', 20, 64);
+  if (defaultMode === 'explicit' && !defaultModel) throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_MODEL_POLICY_INVALID', '显式默认模型不能为空。');
+  if (defaultModel && allowedModels.length > 0 && !allowedModels.includes(defaultModel)) throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_MODEL_POLICY_INVALID', '默认模型必须在允许范围内。');
+  return { defaultMode, defaultModel, allowedModels, allowedReasoningEfforts, allowedServiceTiers };
+}
+
+function normalizeSkillPolicy(value: unknown): SkillPolicyV1 {
+  if (!isPlainRecord(value)) throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_INVALID', 'skillPolicy 必须是对象。');
+  return { allowedSkillIds: normalizeDigitalEmployeeSkillIds(Array.isArray(value.allowedSkillIds) ? value.allowedSkillIds : []) };
+}
+
+function normalizeAuthorityPolicy(value: unknown): AuthorityPolicyV1 {
+  if (!isPlainRecord(value)) throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_INVALID', 'authorityPolicy 必须是对象。');
+  return {
+    permissionMode: oneOf(value.permissionMode ?? 'read-only', digitalEmployeePermissionModes, 'authorityPolicy.permissionMode'),
+    allowCodeChanges: value.allowCodeChanges === true,
+    allowTests: value.allowTests === true,
+    allowCommit: value.allowCommit === true,
+    allowPush: value.allowPush === true,
+    allowMerge: value.allowMerge === true,
+    allowDeploy: value.allowDeploy === true,
+    allowComplete: value.allowComplete === true,
   };
 }
 
@@ -1543,7 +1704,7 @@ function normalizeStringList(value: unknown[], field: string, maximumItems: numb
 }
 
 function normalizeDigitalEmployeeSkillIds(value: unknown[]): string[] {
-  const skillIds = normalizeStringList(value, 'template.skillIds', 1, 32);
+  const skillIds = normalizeStringList(value, 'template.skillIds', 20, 32);
   if (skillIds.some((skillId) => !/^[a-f0-9]{32}$/u.test(skillId))) {
     throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_SKILL_INVALID', '数字员工必须从 Zeus Skill 目录选择默认 Skill。');
   }
