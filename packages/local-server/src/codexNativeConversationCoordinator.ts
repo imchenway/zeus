@@ -31,6 +31,7 @@ import { zeusBrowserDynamicTools } from './browserDynamicTools.js';
 import { createCodexDynamicToolApplication } from './codexDynamicToolApplication.js';
 import { finalizeCodexPendingInteractionsForShutdown } from './codexFinalShutdownApplication.js';
 import { codexGoalEventKind, createCodexGoalApplication, ensureInitialCodexGoal } from './codexGoalApplication.js';
+import { createCodexInteractionRecoveryApplication } from './codexInteractionRecoveryApplication.js';
 import type {
   ArchiveConversationInput,
   CodexNativeConversationCoordinator,
@@ -115,6 +116,7 @@ import { createCodexProviderThreadAuthorityApplication } from './codexProviderTh
 import { createCodexProviderStopRecoveryApplication, type CodexProviderStopRequestResult } from './codexProviderStopRecoveryApplication.js';
 import { createCodexRemoteControlConversationSyncApplication } from './codexRemoteControlConversationSyncApplication.js';
 import { createCodexRecoveryStateApplication } from './codexRecoveryStateApplication.js';
+import { createCodexTurnResultRecoveryApplication } from './codexTurnResultRecoveryApplication.js';
 import type { CodexUsageService } from './codexUsageService.js';
 import type { ContextDispatchEnvelope } from './contextDispatchService.js';
 import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
@@ -1107,19 +1109,12 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         resolve: resolveResult,
         reject: rejectResult,
         timer: setTimeout(() => {
-          void timeoutTurnResult(input, key).catch((error) => rejectResult(error instanceof Error ? error : new Error(String(error))));
+          void turnResultRecovery.timeoutTurnResult(input, key).catch((error) => rejectResult(error instanceof Error ? error : new Error(String(error))));
         }, timeoutMs),
       };
       waiters.push(waiter);
       turnResultWaiters.set(key, waiters);
     });
-  }
-
-  async function timeoutTurnResult(input: WaitForNativeTurnResultInput, key: string): Promise<void> {
-    if (!turnResultWaiters.has(key)) return;
-    const error = coordinatorError('ZEUS_CODEX_TURN_RESULT_TIMEOUT', 'Codex native turn did not complete before the timeout.');
-    await closeEphemeralConversation(input.conversationId, input.providerTurnId, 'cancelled', serializeError(error), true);
-    rejectTurnResultWaiters(key, error);
   }
 
   function resolveLegacyReference(input: StartTaskConversationInput): CodexAdditionalContextEntry | undefined {
@@ -2057,6 +2052,16 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     }
   }
 
+  function resolveTurnResult(result: NativeTurnResult): void {
+    const key = `${result.conversationId}:${result.providerTurnId}`;
+    completedTurnResults.set(key, result);
+    for (const waiter of turnResultWaiters.get(key) ?? []) {
+      clearTimeout(waiter.timer);
+      waiter.resolve(result);
+    }
+    turnResultWaiters.delete(key);
+  }
+
   interface NativeUserMessageProjection extends ResolvedNativeUserMessageSubmission {
     content: string;
   }
@@ -2381,8 +2386,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     assertOpen();
     const conversation = requireConversation(input.conversationId);
     const state = runStates.get(conversation.id) ?? inferRunState(conversation);
-    if (state.type !== 'active' && state.type !== 'waiting') throw coordinatorError('ZEUS_NATIVE_TURN_NOT_ACTIVE', 'No active Codex native turn to interrupt.');
-    if (state.turnId !== input.providerTurnId) throw coordinatorError('ZEUS_NATIVE_TURN_MISMATCH', 'Interrupt target is not the current active provider turn.');
+    const recoverableMissingInteraction = state.type === 'paused' && state.reason === 'interaction_authority_missing';
+    if (state.type !== 'active' && state.type !== 'waiting' && !recoverableMissingInteraction) throw coordinatorError('ZEUS_NATIVE_TURN_NOT_ACTIVE', 'No active Codex native turn to interrupt.');
+    const stateTurnId =
+      state.type === 'active' || state.type === 'waiting' ? state.turnId : options.turns.listByConversation(conversation.id).find((turn) => turn.providerTurnId === input.providerTurnId && turn.status === 'waiting')?.providerTurnId;
+    if (stateTurnId !== input.providerTurnId) throw coordinatorError('ZEUS_NATIVE_TURN_MISMATCH', 'Interrupt target is not the current active provider turn.');
     const providerThreadId = requireString(conversation.providerThreadId, 'provider thread id');
     await input.providerWriteLifecycle?.markPrepared(input.providerTurnId);
     input.providerWriteLifecycle?.markRpcStarted(input.providerTurnId);
@@ -2396,7 +2404,17 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       requestIdentity: { threadId: providerThreadId, turnId: input.providerTurnId },
       invoke: (traceIdentity) => options.manager.interruptTurn({ threadId: providerThreadId, turnId: input.providerTurnId, traceIdentity }),
     });
-    const terminalResult = await waitForTurnResult({ conversationId: conversation.id, providerTurnId: input.providerTurnId });
+    const terminalResultPromise = waitForTurnResult({ conversationId: conversation.id, providerTurnId: input.providerTurnId });
+    void turnResultRecovery.reconcileInterruptedTurnUntilSettled(conversation.id, input.providerTurnId);
+    let terminalResult: NativeTurnResult;
+    try {
+      terminalResult = await terminalResultPromise;
+    } catch (error) {
+      if ((error as { code?: unknown })?.code === 'ZEUS_CODEX_TURN_RESULT_TIMEOUT') {
+        await turnResultRecovery.markInterruptedTurnProviderStopPending(conversation.id, providerThreadId, input.providerTurnId, error);
+      }
+      throw error;
+    }
     if (terminalResult.status !== 'interrupted') {
       throw coordinatorError('ZEUS_NATIVE_INTERRUPT_OUTCOME_UNKNOWN', 'Codex did not confirm a terminal outcome for the interrupted turn.');
     }
@@ -3420,12 +3438,28 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     providerHistoryReconcileTurnLimit,
     reconcileTerminalTurnSubmissions,
     rejectTurnResultWaiters,
+    resolveTurnResult,
     runStates,
     submissionPresentation,
     syncCheckpoints,
     syncItemResources,
     threadPath,
+    turnResultWaiters,
     upsertRecoveredTurn,
+  });
+
+  const interactionRecovery = createCodexInteractionRecoveryApplication({
+    enqueueProviderTurnReconciliation,
+    executeTurnCommand,
+    isClosed: () => closing || closed,
+    isPendingInteractionAuthority,
+    now,
+    options,
+    persist,
+    projectedProviderThreadSnapshot,
+    readyGenerationId,
+    reconcileConversationSnapshot,
+    runStates,
   });
 
   const providerThreadAuthority = createCodexProviderThreadAuthorityApplication({
@@ -3467,6 +3501,22 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     broadcast: options.broadcast,
     requestQueueDrain,
     now,
+  });
+
+  const turnResultRecovery = createCodexTurnResultRecoveryApplication({
+    closeEphemeralConversation,
+    completedTurnResults,
+    enqueueProviderTurnReconciliation,
+    failedTurnResults,
+    isClosed: () => closing || closed,
+    now,
+    options,
+    persist,
+    providerStopRecovery,
+    rejectTurnResultWaiters,
+    resolveTurnResult,
+    runStates,
+    turnResultWaiters,
   });
 
   const remoteControlConversationSync = createCodexRemoteControlConversationSyncApplication({
@@ -3578,60 +3628,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     });
   }
 
-  async function failInvalidInteractionAuthority(input: {
-    conversation: ZeusConversationWithMessagesRecord;
-    threadId: string;
-    providerTurnId: string | null;
-    turn: ZeusConversationTurnRecord | undefined;
-    request: Pick<ZeusConversationServerRequestRecord, 'id' | 'status' | 'createdAt' | 'transportGenerationId'>;
-    error: Record<string, unknown>;
-    timestamp: string;
-  }): Promise<Record<string, unknown>> {
-    const interactionError: Record<string, unknown> = { ...input.error, recoveryRequired: false };
-    if (input.request.status === 'pending') options.requests.fail(input.request.id, { error: interactionError, resolvedAt: input.timestamp });
-    let interruptFailed = false;
-    if (input.providerTurnId) {
-      try {
-        const providerTurnId = input.providerTurnId;
-        await executeTurnCommand({
-          operation: 'turn_interrupt',
-          conversationId: input.conversation.id,
-          threadId: input.threadId,
-          turnId: providerTurnId,
-          commandKey: `turn-interrupt:${providerTurnId}`,
-          requestIdentity: { threadId: input.threadId, turnId: providerTurnId },
-          issuedAt: input.request.createdAt,
-          providerGenerationId: input.request.transportGenerationId,
-          invoke: (traceIdentity) => options.manager.interruptTurn({ threadId: input.threadId, turnId: providerTurnId, traceIdentity }),
-        });
-      } catch (error) {
-        interruptFailed = true;
-        interactionError.interruptError = serializeError(error);
-      }
-    }
-    if (input.turn) {
-      options.turns.upsert({ ...input.turn, status: 'failed', error: interactionError, completedAt: input.timestamp, updatedAt: input.timestamp });
-      const activeSubmission = input.turn.clientSubmissionId ? options.submissions.getById(input.turn.clientSubmissionId) : undefined;
-      if (activeSubmission && (activeSubmission.status === 'dispatching' || activeSubmission.status === 'active')) {
-        options.submissions.updateStatus(activeSubmission.id, 'failed', {
-          providerTurnId: input.providerTurnId,
-          error: interactionError,
-          resolvedAt: input.timestamp,
-          updatedAt: input.timestamp,
-        });
-      }
-    }
-    options.conversations.bindProvider(input.conversation.id, {
-      providerId: 'codex',
-      providerThreadId: input.threadId,
-      providerModel: input.conversation.providerModel,
-      providerState: interruptFailed ? 'failed' : 'ready',
-    });
-    runStates.set(input.conversation.id, { type: 'idle' });
-    options.broadcast('conversation.queue.changed', { conversationId: input.conversation.id });
-    return interactionError;
-  }
-
   async function handleProviderEvent(event: CodexAppServerEvent, receiptEvents: readonly CodexAppServerEvent[] = [event]): Promise<void> {
     const eventParams = isRecord(event.params) ? event.params : {};
     const eventThreadId = typeof eventParams.threadId === 'string' ? eventParams.threadId : null;
@@ -3644,14 +3640,13 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       {
         clearAutoResolutionTimer,
         closed,
-        completedTurnResults,
         contextFromConversation,
         contextFromSubmission,
         contexts,
         drainQueuedSubmissions,
         ensurePlanImplementationRequest,
         executeTurnCommand,
-        failInvalidInteractionAuthority,
+        failInvalidInteractionAuthority: interactionRecovery.failInvalidInteractionAuthority,
         failedTurnResults,
         flushScheduledPersist,
         goals,
@@ -3675,6 +3670,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         recoverExternalRequestUserInputAnswer: (conversation: ZeusConversationWithMessagesRecord, request: ZeusConversationServerRequestRecord, resolvedAt: string) => externalAnswerRecovery.recover(conversation, request, resolvedAt),
         recoverExternallyResolvedRequestUserInputAnswers: (conversation: ZeusConversationWithMessagesRecord, providerTurnId?: string) => externalAnswerRecovery.recoverAll(conversation, providerTurnId),
         rejectTurnResultWaiters,
+        resolveTurnResult,
         rememberProcessedProviderEvent,
         requiresImmediatePersist,
         respondToRequest,
@@ -3685,11 +3681,15 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         submissionPresentation,
         syncCheckpoints,
         syncItemResources,
-        turnResultWaiters,
       },
       event,
       receiptEvents,
     );
+    if (event.method === 'thread/status/changed' && eventThreadId) {
+      const status = isRecord(eventParams.status) ? eventParams.status : {};
+      const activeFlags = Array.isArray(status.activeFlags) ? status.activeFlags.filter((flag): flag is string => typeof flag === 'string') : [];
+      interactionRecovery.scheduleProviderThreadStatusReconciliation(eventThreadId, event.generationId, status.type === 'active' && activeFlags.includes('waitingOnUserInput'));
+    }
   }
 
   async function safelyHandleProviderEventError(event: CodexAppServerEvent, error: unknown, receiptEvents: readonly CodexAppServerEvent[] = [event]): Promise<void> {
@@ -3783,6 +3783,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     if (handoffPromise) return handoffPromise;
     closing = true;
     providerStopRecovery.close();
+    interactionRecovery.close();
     const providerAuthorityClose = providerThreadAuthority.close();
     for (const requestId of [...autoResolutionTimers.keys()]) clearAutoResolutionTimer(requestId);
     externalAnswerRecovery.close();

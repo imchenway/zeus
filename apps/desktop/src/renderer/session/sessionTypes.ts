@@ -276,7 +276,20 @@ export type NativeConversationRunState =
   | { type: 'dispatching'; submissionId: string }
   | { type: 'active'; turnId: string; phase: 'prework' | 'final_answer' }
   | { type: 'waiting'; turnId: string; requestId: string; reason: 'approval' | 'user_input' }
-  | { type: 'paused'; reason: 'interrupted' | 'transport_unavailable' | 'provider_archived' | 'provider_stop_pending' | 'recovered_unsent' | 'recovery_required' | 'runtime_rejected' | 'conflict_preparing' | 'conflict_preparation_failed' };
+  | {
+      type: 'paused';
+      reason:
+        | 'interrupted'
+        | 'transport_unavailable'
+        | 'provider_archived'
+        | 'provider_stop_pending'
+        | 'interaction_authority_missing'
+        | 'recovered_unsent'
+        | 'recovery_required'
+        | 'runtime_rejected'
+        | 'conflict_preparing'
+        | 'conflict_preparation_failed';
+    };
 
 export type NativeQueueWaitReason =
   | 'current_turn'
@@ -289,6 +302,7 @@ export type NativeQueueWaitReason =
   | 'transport_unavailable'
   | 'provider_archived'
   | 'provider_stop_pending'
+  | 'interaction_authority_missing'
   | 'recovered_unsent'
   | 'recovery_required'
   | 'runtime_rejected'
@@ -538,9 +552,26 @@ export interface NativeConversationSnapshotV2Turn {
   updatedAt: string;
   agentKind: string | null;
   openingUserMessage: NativeConversationModelHistoryV2Item | null;
+  activeItems?: NativeConversationActiveItemV2[];
+  activeItemsTruncated?: boolean;
   process: { available: boolean; latestSequence: number };
   resourcesAvailable: boolean;
   changeSetAvailable: boolean;
+}
+
+export interface NativeConversationActiveItemV2 {
+  id: string;
+  order: number;
+  turnId: string;
+  providerItemId: string;
+  itemType: string;
+  status: 'in_progress';
+  phase: 'prework' | 'final_answer';
+  text: NativeBoundedContentProjection;
+  payload: NativeBoundedContentProjection;
+  startedAt: string | null;
+  completedAt: string | null;
+  updatedAt: string;
 }
 
 export interface NativeConversationSnapshotV2 {

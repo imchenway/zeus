@@ -1,4 +1,5 @@
 import type {
+  NativeConversationActiveItemV2,
   NativeConversationChoice,
   NativeConversationModelHistoryV2Item,
   NativeConversationProcessV2Item,
@@ -43,7 +44,9 @@ export function adaptConversationSnapshotV2(input: ConversationSnapshotV2Bootstr
   const snapshot = input.snapshot;
   const choice = input.choice;
   const turns = snapshotTurns(snapshot);
+  const providerTurnByLocalId = providerTurnIdentityMap(turns);
   const bootstrapHistory = modelHistoryWithOpeningAnchors(snapshot, input.history.items);
+  const bootstrapItems = mergeActiveTurnItems(historyItems(bootstrapHistory, providerTurnByLocalId), activeTurnItems(snapshot.activeTurn?.activeItems ?? [], providerTurnByLocalId));
   const permissionMode = snapshot.conversation.nextTurnSettings?.permissionMode ?? choice.permissionMode ?? 'read-only';
   const collaborationMode = snapshot.conversation.nextTurnSettings?.collaborationMode ?? choice.collaborationMode ?? 'default';
   const nextTurnSettings =
@@ -122,7 +125,7 @@ export function adaptConversationSnapshotV2(input: ConversationSnapshotV2Bootstr
     pendingRequestKind: choice.pendingRequestKind,
     messages: [],
     turns,
-    items: historyItems(bootstrapHistory, providerTurnIdentityMap(turns)),
+    items: bootstrapItems,
     changeSets: [],
     submissions: input.queue.submissions,
     queue: input.queue,
@@ -152,6 +155,42 @@ export function adaptConversationSnapshotV2(input: ConversationSnapshotV2Bootstr
       changeSetsByTurn: {},
     },
   };
+}
+
+function activeTurnItems(items: readonly NativeConversationActiveItemV2[], providerTurnByLocalId: ReadonlyMap<string, string>): NativeItemSnapshot[] {
+  return items.map((item) => {
+    const parsedPayload = parseProjection(item.payload.preview, item.payload.truncated);
+    return {
+      id: item.id,
+      turnId: providerTurnByLocalId.get(item.turnId) ?? item.turnId,
+      providerItemId: item.providerItemId,
+      type: item.itemType,
+      status: item.status,
+      phase: item.phase,
+      text: item.text.preview,
+      payload: {
+        ...(recordValue(parsedPayload) ?? {}),
+        v2ContentKind: 'active_item',
+        // 这是首屏时点上已经完整取得的预览，不应让流式 Markdown 从空白重新播放。
+        // 首个实时 item 事件到达后 reducer 会移除此标记，后续增量继续走流式渲染。
+        v2SnapshotContentComplete: true,
+        v2ActiveOrder: item.order,
+        v2TextTruncated: item.text.truncated,
+        v2PayloadTruncated: item.payload.truncated,
+        v2RefreshRequired: item.text.refreshRequired || item.payload.refreshRequired,
+      },
+      resources: [],
+      startedAt: item.startedAt,
+      completedAt: item.completedAt,
+      updatedAt: item.updatedAt,
+    };
+  });
+}
+
+/** 已确认历史优先；活动投影只补齐当前水位尚未进入历史表的 Provider item。 */
+function mergeActiveTurnItems(history: readonly NativeItemSnapshot[], active: readonly NativeItemSnapshot[]): NativeItemSnapshot[] {
+  const confirmedProviderItems = new Set(history.map((item) => item.providerItemId).filter((providerItemId): providerItemId is string => Boolean(providerItemId)));
+  return [...history, ...active.filter((item) => !item.providerItemId || !confirmedProviderItems.has(item.providerItemId))];
 }
 
 function emptyUnifiedUsageSnapshot(): NativeUnifiedUsageSnapshot {

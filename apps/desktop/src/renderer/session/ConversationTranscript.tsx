@@ -57,6 +57,7 @@ export interface ConversationTranscriptProps {
   onLoadV2Content?: (handle: string) => Promise<void>;
   onLoadV2ToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage>;
   onRecoverQueue?: () => void | Promise<void>;
+  onInterrupt?: (turnId: string) => void | Promise<void>;
   onRetryQueuedSubmission?: (submissionId: string) => void | Promise<void>;
   onCancelQueuedSubmission?: (submissionId: string) => void | Promise<void>;
   onSendQueuedNow?: (submissionId: string) => void | Promise<void>;
@@ -307,6 +308,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   // 创建期只保留一个主进度：真实轮次建立前显示连接，建立后由轮次状态或真实过程内容接管。
   const showCreationStatus = Boolean(props.creationStatus) && !(creatingSession && realTurnStarted);
   const showStandaloneActiveStatus = (showActiveStatus || activeProcessCollapsed) && !creationFailed && !(creatingSession && !realTurnStarted);
+  const interactionAuthorityMissing = props.state.queue?.state.type === 'paused' && props.state.queue.state.reason === 'interaction_authority_missing' && Boolean(props.state.activeTurnId);
   const awaitingReplyMessageIdsKey = items
     .filter(isOptimisticMessageAwaitingReply)
     .map((item) => item.clientUserMessageId)
@@ -775,6 +777,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           ))}
           {showCreationStatus && props.creationStatus ? <SessionCreationNotice status={props.creationStatus} language={props.language} /> : null}
           {showStandaloneActiveStatus ? <TranscriptActiveStatus language={props.language} kind={activeStatusKind} /> : null}
+          {interactionAuthorityMissing && props.state.activeTurnId ? <InteractionAuthorityMissingNotice language={props.language} turnId={props.state.activeTurnId} onInterrupt={props.onInterrupt} /> : null}
           <span ref={latestContentMarkerRef} className="session-latest-content-marker" aria-hidden="true" />
         </section>
         <V2HistoryPageStatus state={props.state} language={props.language} enabled={historyPagingArmed && historyPagingRequested} intersecting={historySentinelIntersecting} />
@@ -1130,6 +1133,25 @@ function TranscriptActiveStatus(props: { language: SessionUiLanguage; kind: 'sta
       <span className="session-thinking-pulse" aria-hidden="true" />
       <span className="session-current-status-text">{props.kind === 'starting' ? (props.language === 'zh-CN' ? '正在启动处理' : 'Starting processing') : props.language === 'zh-CN' ? '正在思考' : 'Thinking'}</span>
     </p>
+  );
+}
+
+function InteractionAuthorityMissingNotice(props: { language: SessionUiLanguage; turnId: string; onInterrupt?: (turnId: string) => void | Promise<void> }): ReactNode {
+  const [stopping, setStopping] = useState(false);
+  const stop = () => {
+    if (!props.onInterrupt || stopping) return;
+    setStopping(true);
+    void Promise.resolve(props.onInterrupt(props.turnId)).finally(() => setStopping(false));
+  };
+  return (
+    <section className="session-message-delivery-feedback" data-state="unconfirmed" role="alert" aria-live="assertive">
+      <span>{props.language === 'zh-CN' ? '当前任务正在等待用户输入，但问题通道未能恢复；这不是仍在思考。' : 'This turn is waiting for user input, but the question channel could not be recovered. It is not still thinking.'}</span>
+      <div className="session-message-delivery-actions">
+        <button type="button" disabled={!props.onInterrupt || stopping} onClick={stop}>
+          {stopping ? (props.language === 'zh-CN' ? '正在停止…' : 'Stopping…') : props.language === 'zh-CN' ? '停止当前任务' : 'Stop current turn'}
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -1879,7 +1901,8 @@ const nonRunningMotionStatuses = new Set(['completed', 'failed', 'interrupted', 
 const userBlockingConversationStates = new Set(['waiting_approval', 'waiting_user_input', 'interrupt_confirm']);
 
 function resolveSessionMotionFocus(state: NativeSessionState, items: readonly NativeSessionItemBuffer[], showThinking: boolean): SessionMotionFocus {
-  if (!state.activeTurnId || userBlockingConversationStates.has(state.conversationState)) return showThinking ? { kind: 'thinking' } : null;
+  const interactionAuthorityMissing = state.queue?.state.type === 'paused' && state.queue.state.reason === 'interaction_authority_missing';
+  if (!state.activeTurnId || interactionAuthorityMissing || userBlockingConversationStates.has(state.conversationState)) return showThinking ? { kind: 'thinking' } : null;
   const activeItems = items.filter((item) => item.turnId === state.activeTurnId && !nonRunningMotionStatuses.has(item.status.toLocaleLowerCase()));
 
   // 最终回答已经开始时，它是离用户结果最近的活动，优先接管仍未终止的过程条目。

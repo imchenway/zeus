@@ -61,7 +61,8 @@ interface ProviderItemRow {
 
 /**
  * Provider item 仅是摄取与幂等状态，不是 UI 读模型。
- * Renderer、项目/任务/归档和远程入口只能读取 Snapshot V2 的时间线、模型历史与过程表。
+ * Renderer、项目/任务/归档和远程入口只能读取 Snapshot V2；Snapshot V2 可在活动轮次内
+ * 把尚未进入确认历史的可见 item 转为有界、脱敏的首屏投影，禁止原样暴露本表。
  */
 export function migrateConversationProviderItemStoreSchema(db: ZeusDatabasePort): void {
   db.execute(`
@@ -88,6 +89,7 @@ export function migrateConversationProviderItemStoreSchema(db: ZeusDatabasePort)
     )
   `);
   db.execute(`CREATE INDEX IF NOT EXISTS idx_provider_item_states_conversation ON conversation_provider_item_states(conversation_id, updated_at, id)`);
+  db.execute(`CREATE INDEX IF NOT EXISTS idx_provider_item_states_active_turn ON conversation_provider_item_states(turn_id, updated_at DESC, id DESC) WHERE status = 'in_progress'`);
   db.execute(`CREATE INDEX IF NOT EXISTS idx_provider_item_states_turn_plan ON conversation_provider_item_states(turn_id, updated_at DESC, id DESC) WHERE item_type = 'plan' AND status = 'completed'`);
   db.execute(`INSERT OR IGNORE INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)`, [
     schemaMigrationId,

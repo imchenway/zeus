@@ -53,7 +53,6 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
   const {
     clearAutoResolutionTimer,
     closed,
-    completedTurnResults,
     contextFromConversation,
     contextFromSubmission,
     contexts,
@@ -82,6 +81,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     recoverExternalRequestUserInputAnswer,
     recoverExternallyResolvedRequestUserInputAnswers,
     rejectTurnResultWaiters,
+    resolveTurnResult,
     rememberProcessedProviderEvent,
     requiresImmediatePersist,
     respondToRequest,
@@ -92,7 +92,6 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     submissionPresentation,
     syncCheckpoints,
     syncItemResources,
-    turnResultWaiters,
   } = dependencies;
   if (closed) return;
   const identity = codexProviderEventIdentity(event);
@@ -473,12 +472,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
         status: interrupted ? 'interrupted' : 'completed',
         answer,
       };
-      completedTurnResults.set(resultKey, result);
-      for (const waiter of turnResultWaiters.get(resultKey) ?? []) {
-        clearTimeout(waiter.timer);
-        waiter.resolve(result);
-      }
-      turnResultWaiters.delete(resultKey);
+      resolveTurnResult(result);
     }
     if (ephemeral) {
       options.conversations.bindProvider(conversation.id, {
@@ -1336,6 +1330,17 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
         }
         if (!automaticallyApproved && providerTurnId && turn) {
           options.turns.upsert({ ...turn, status: 'waiting', updatedAt: event.receivedAt });
+          const pausedSubmission = options.submissions
+            .listByConversation(conversation.id)
+            .find(
+              (candidate) =>
+                candidate.providerTurnId === providerTurnId &&
+                candidate.status === 'paused' &&
+                candidate.pausedReason === 'recovery_required' &&
+                parseJsonRecord(candidate.errorJson ?? '{}').code === 'ZEUS_PROVIDER_INTERACTION_AUTHORITY_MISSING',
+            );
+          if (pausedSubmission) options.submissions.updateStatus(pausedSubmission.id, 'active', { providerTurnId, updatedAt: event.receivedAt });
+          options.execution.resolveWarning(conversation.id, 'provider_interaction_authority_missing', event.receivedAt);
           options.conversations.bindProvider(conversation.id, {
             providerId: 'codex',
             providerThreadId: threadId,

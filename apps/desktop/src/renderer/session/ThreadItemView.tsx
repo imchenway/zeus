@@ -348,7 +348,9 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const itemText = transcriptItemText(props.item);
   const commentary = role === 'commentary';
   const naturalLanguageStream = role === 'assistant' || commentary;
-  const markdownPhase = conversationMarkdownPhaseForStatus(props.item.status);
+  // 重进会话时，Snapshot V2 给出的活动项预览在当前水位已经完整，必须首屏直出；
+  // 实时事件接管后 reducer 会清掉标记，后续文本仍按 streaming 平滑更新。
+  const markdownPhase = props.item.payload.v2SnapshotContentComplete === true ? 'final' : conversationMarkdownPhaseForStatus(props.item.status);
   const streamActive = naturalLanguageStream && markdownPhase === 'streaming';
   const longUserMessage = role === 'user' && itemText.length > 640;
   const contextOnlyPlaceholder = role === 'user' && conversationContext ? isConversationContextPlaceholder(itemText) : false;
