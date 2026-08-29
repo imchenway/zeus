@@ -502,6 +502,7 @@ function historicalUserPresentation(content: unknown, userMessage: boolean): Rec
   const contentRecord = userMessage ? recordValue(content) : null;
   if (!contentRecord) return {};
   return {
+    ...(typeof contentRecord.displayText === 'string' && contentRecord.displayText.trim() ? { displayText: contentRecord.displayText } : {}),
     ...(Array.isArray(contentRecord.attachments) ? { attachments: contentRecord.attachments } : {}),
     ...(recordValue(contentRecord.taskPushLayout) ? { taskPushLayout: contentRecord.taskPushLayout } : {}),
     ...(recordValue(contentRecord.conversationContext) ? { conversationContext: contentRecord.conversationContext } : {}),

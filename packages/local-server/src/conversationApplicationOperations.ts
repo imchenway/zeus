@@ -795,7 +795,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
               readableReasoningSummary: true,
               media: selectedConfiguredModel?.capability.imageInput.state !== 'unsupported',
               contextWindow: selectedConfiguredModel?.contextWindow ?? selectedContextWindow,
-              currentInputCharacters: content.length + JSON.stringify({ attachments, browserComments, conversationContext }).length,
+              currentInputCharacters: content.length + JSON.stringify({ attachments, browserComments }).length,
             },
             userHistoryContent: {
               text: content,
