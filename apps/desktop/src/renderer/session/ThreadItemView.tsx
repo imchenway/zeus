@@ -911,6 +911,8 @@ function visibleThreadItemError(item: NativeSessionItemBuffer): unknown {
 
 export function transcriptItemText(item: NativeSessionItemBuffer): string {
   if (typeof item.payload.displayText === 'string' && item.payload.displayText.trim()) return item.payload.displayText;
+  const historicalContent = isRecord(item.payload.content) ? item.payload.content : null;
+  if (typeof historicalContent?.displayText === 'string' && historicalContent.displayText.trim()) return historicalContent.displayText;
   if (normalizeType(item.type) === 'reasoning') {
     if (item.text.trim()) return item.text;
     return transcriptTextFragments(item.payload.summary).join('\n\n');

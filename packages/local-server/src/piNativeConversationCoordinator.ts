@@ -20,7 +20,18 @@ import {
   type PiZeusToolRequest,
   type PiZeusToolResult,
 } from '@zeus/ai-runtime';
-import { buildTaskPushInputParts, calculateCacheHitRate, type CodexUsageEstimate, emptyTokenUsageBreakdown, estimateDeepSeekUsage, type NativeTokenUsageSnapshot, type TaskPushMessageLayout, type TokenUsageBreakdown } from '@zeus/shared';
+import {
+  buildTaskPushInputParts,
+  calculateCacheHitRate,
+  type CodexUsageEstimate,
+  type ConversationContextDraft,
+  emptyTokenUsageBreakdown,
+  estimateDeepSeekUsage,
+  type NativeTokenUsageSnapshot,
+  serializeConversationContext,
+  type TaskPushMessageLayout,
+  type TokenUsageBreakdown,
+} from '@zeus/shared';
 import type {
   CodexUsageLedgerRepository,
   CommandDeliveryRepository,
@@ -2171,8 +2182,9 @@ function appendPiAttachmentReferences(prompt: string, pathReferences: Array<{ na
 
 function appendPiConversationContext(prompt: string, browserCommentContent: string | undefined, browserComments: Record<string, unknown>[] | undefined, conversationContext: Record<string, unknown> | undefined): string {
   const browserContext = browserCommentContent?.trim() || (browserComments?.length ? JSON.stringify({ browserComments }) : '');
-  const structuredContext = conversationContext ? JSON.stringify({ conversationContext }) : '';
-  return [prompt, browserContext, structuredContext].filter((part) => part.trim()).join('\n\n');
+  const readableContext = conversationContext ? serializeConversationContext(conversationContext as unknown as ConversationContextDraft).trim() : '';
+  const missingReadableContext = readableContext && !prompt.includes(readableContext) ? readableContext : '';
+  return [prompt, browserContext, missingReadableContext].filter((part) => part.trim()).join('\n\n');
 }
 
 function orderPiTaskPushAttachments(layout: TaskPushMessageLayout, attachments: NativeConversationAttachmentInput[]): NativeConversationAttachmentInput[] {
