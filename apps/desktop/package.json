@@ -18,7 +18,8 @@
     "@zeus/security-core": "workspace:*",
     "@zeus/shared": "workspace:*",
     "@zeus/terminal-core": "workspace:*",
-    "markstream-react": "2.0.6"
+    "markstream-react": "2.0.6",
+    "qrcode": "1.5.4"
   },
   "devDependencies": {
     "@codemirror/commands": "^6.10.4",
@@ -46,6 +47,7 @@
     "@lezer/common": "^1.5.2",
     "@lezer/highlight": "^1.2.3",
     "@phosphor-icons/react": "^2.1.10",
+    "@types/qrcode": "1.5.6",
     "@xterm/xterm": "^6.0.0",
     "@xyflow/react": "^12.11.0",
     "codemirror": "^6.0.2",

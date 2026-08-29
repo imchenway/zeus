@@ -15,7 +15,7 @@ import {
 import { type ProjectGraph } from '@zeus/graph-engine';
 import { normalizeProjectConfig, normalizeProjectModelServiceTierPreference, type ProjectConfigSnapshot, type ProjectModelServiceTierPreference, type UpdateProjectConfigBody } from '@zeus/project-core';
 import { getSecretPresenceLabel } from '@zeus/security-core';
-import { cloneTaskManagementStatusConfig, type TaskPushParentAttachmentOption } from '@zeus/shared';
+import { commandEnvelopeSchemaGeneration, cloneTaskManagementStatusConfig, type CommandEnvelope, type TaskAttachmentReference, type TaskPushParentAttachmentOption } from '@zeus/shared';
 import {
   CommandDefinitionRepository,
   ConversationProviderItemRepository,
@@ -28,6 +28,7 @@ import {
   DigitalEmployeeProjectEventRepository,
   DigitalEmployeeRepository,
   DigitalEmployeeTemplateRepository,
+  ImRepository,
   ProjectionDatabaseRuntimeManager,
   ProjectRepository,
   runtimeSessionMayOwnProcess,
@@ -47,8 +48,9 @@ import {
 import { type TaskStatus } from '@zeus/task-core';
 import { createTelegramBotMessageClient, dispatchTelegramUpdate, getTelegramConfigurationState, type TelegramMessageSender, type TelegramPollingService } from '@zeus/telegram-adapter';
 import { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
+import { createHash } from 'node:crypto';
 import { existsSync, realpathSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { clearAllPersistedGraphCaches } from './codeIntelligenceGraphCache.js';
 import { type GraphViewSnapshot, hasDatabaseUriPassword, resolveCodeMapScanRoot } from './codeIntelligenceGraphStore.js';
 import { CodeIntelligenceQueryApplication } from './codeIntelligenceQueryApplication.js';
@@ -67,6 +69,7 @@ import { ConversationChoiceQueryApplication } from './conversationChoiceQueryApp
 import { registerConversationChoiceQueryRoutes } from './conversationChoiceQueryRoutes.js';
 import { registerConversationCommandRoutes } from './conversationCommandRoutes.js';
 import { registerConversationDispatchCommandRoutes } from './conversationDispatchCommandRoutes.js';
+import { ConversationDispatchCommandApplication, conversationDispatchCommandTypes, conversationDispatchInputSha256 } from './conversationDispatchCommandApplication.js';
 import { isPathInsideRoot, readConversationResourcePreview } from './conversationResourcePreview.js';
 import { type ConversationFileOpenGrant, createConversationFileOpenGrant, toConversationResource, toConversationResourceOpenIntent } from './conversationResources.js';
 import { registerConversationSnapshotV2Api } from './conversationSnapshotV2Api.js';
@@ -75,6 +78,7 @@ import { registerExecutionHostControlApi } from './executionHostControlApi.js';
 import { createPollingAdmissionPause, registerExecutionHostHandoffApi } from './executionHostHandoffApi.js';
 import { registerGitCommandRoutes } from './gitCommandRoutes.js';
 import { graphConversationReject, isExplicitGraphConversationRejection, registerGraphConversationCommandRoutes } from './graphConversationCommandRoutes.js';
+import { GraphConversationCommandApplication, graphConversationCommandTypes, graphConversationInputSha256 } from './graphConversationCommandApplication.js';
 import { closeHeavyWorkerJobs, heavyWorkerPoolSnapshot } from './heavyWorkerPool.js';
 import type {
   DashboardSnapshot,
@@ -98,6 +102,8 @@ import type {
   UpdateTelegramSettingsBody,
 } from './index.js';
 import { registerIntegrationCommandRoutes } from './integrationCommandRoutes.js';
+import { registerImConnectionRoutes } from './imConnectionRoutes.js';
+import { ImTelegramService, stableIdentity } from './imTelegramService.js';
 import {
   exportLocalBusinessData,
   findInvalidPortableProjectPaths,
@@ -142,7 +148,7 @@ import { registerTaskStageRoutes } from './taskStageRoutes.js';
 import { telegramChildOperation, TelegramCommandApplication, telegramCommandHttpError, type TelegramCommandRequest, telegramCommandTypes } from './telegramCommandApplication.js';
 import { registerTelegramPollingApi } from './telegramPollingApi.js';
 import { changeSetErrorStatus, errorCode as turnChangeSetErrorCode } from './turnChangeSets.js';
-import { WorkManagementCommandApplication } from './workManagementCommandApplication.js';
+import { WorkManagementCommandApplication, workManagementCommandTypes, workManagementInputSha256 } from './workManagementCommandApplication.js';
 import { registerWorkManagementCoreCommandRoutes } from './workManagementCoreCommandRoutes.js';
 import { WorkManagementCoreOperations } from './workManagementCoreOperations.js';
 import { registerWorkManagementProjectCommandRoutes } from './workManagementProjectCommandRoutes.js';
@@ -156,18 +162,45 @@ import { registerWorkspaceGitCommandRoutes } from './workspaceGitCommandRoutes.j
 
 export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, type ReadOnlyValidationApplicationIdentity } from './readOnlyValidation.js';
 
+function imInternalCommandRequest<TInput extends object>(input: {
+  commandType: string;
+  scopeKind: 'project' | 'task' | 'product_conversation' | 'turn' | 'approval';
+  scopeId: string;
+  operationIdentity: string;
+  input: TInput;
+  inputSha256: string;
+  expectedRevision?: number | null;
+}): { command: CommandEnvelope<{ operationIdentity: string; inputSha256: string }>; input: TInput } {
+  return {
+    command: {
+      schemaGeneration: commandEnvelopeSchemaGeneration,
+      commandId: stableIdentity('command_im_bridge', `${input.commandType}:${input.operationIdentity}`),
+      commandType: input.commandType,
+      actor: { kind: 'system', id: 'telegram-im-bridge' },
+      scope: { kind: input.scopeKind, id: input.scopeId },
+      expectedRevision: input.expectedRevision ?? null,
+      idempotencyKey: `${input.commandType}:${input.operationIdentity}`,
+      issuedAt: '2000-01-01T00:00:00.000Z',
+      payload: { operationIdentity: input.operationIdentity, inputSha256: input.inputSha256 },
+    },
+    input: input.input,
+  };
+}
+
 // 拆分期间保留结构化工厂依赖，后续按领域端口继续收窄。
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type LocalServerPlatformRouteDependencies = Record<string, any> & {
   server: FastifyInstance;
   aiRuntimeManager: ReturnType<typeof createAiRuntimeSessionManager>;
   conversationChoiceQueries: ConversationChoiceQueryApplication;
+  conversationDispatchCommands: ConversationDispatchCommandApplication;
   conversationProviderItems: ConversationProviderItemRepository;
   conversationRequests: ConversationServerRequestRepository;
   conversationResources: ConversationResourceRepository;
   conversationTurns: ConversationTurnRepository;
   conversations: ConversationRepository;
   isNativeApiRecord(value: unknown): value is Record<string, unknown>;
+  graphConversationCommands: GraphConversationCommandApplication;
   mapTaskRepositoriesWithConcurrency<Input, Output>(items: Input[], operation: (item: Input, index: number) => Promise<Output>, concurrency?: number): Promise<Output[]>;
   platformMutableState: {
     appShellSettings: AppShellSettingsSnapshot;
@@ -255,6 +288,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     commandRuns,
     configuredCodexRuntimeCommandPath,
     conversationChoiceQueries,
+    conversationAttachmentRoot,
+    taskAttachmentRoot,
     conversationCommands,
     conversationDispatchCommands,
     conversationEventFlow,
@@ -2112,6 +2147,506 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   const digitalEmployeeExecutions = new DigitalEmployeeExecutionRepository(db);
   const digitalEmployeeProjectEvents = new DigitalEmployeeProjectEventRepository(db);
   const digitalEmployeeCommandDefinitions = new CommandDefinitionRepository(db);
+  const imRepository = new ImRepository(db);
+  const imTelegramService = new ImTelegramService({
+    repository: imRepository,
+    secretStore,
+    telegramCommands,
+    projects,
+    digitalEmployees,
+    conversationAttachmentRoot,
+    taskAttachmentRoot,
+    now,
+    redactSensitiveText,
+    save: () => db.save(),
+    readLegacyToken: readTelegramToken,
+    clearLegacyToken: () => secretStore.deleteSecret('telegram.botToken'),
+    operations: {
+      listConversations: (projectId) => conversations.listRecordsByProject(projectId),
+      createProjectConversation: async ({ project, content, attachments, preset, operationIdentity }) => {
+        const value: Record<string, unknown> = {
+          mode: 'create',
+          content,
+          attachments,
+          agentKind: preset.agentKind,
+          permissionMode: preset.permissionMode,
+          collaborationMode: preset.workMode,
+          clientUserMessageId: stableIdentity('im_client_message', operationIdentity),
+          ...(preset.model ? { model: preset.model } : {}),
+          ...(preset.reasoningEffort ? { effort: preset.reasoningEffort } : {}),
+          ...(preset.skillId ? { skillId: preset.skillId } : {}),
+        };
+        const request = imInternalCommandRequest({
+          commandType: graphConversationCommandTypes.projectConversationCreate,
+          scopeKind: 'project',
+          scopeId: project.id,
+          operationIdentity,
+          input: value,
+          inputSha256: graphConversationInputSha256(value),
+        });
+        const parsed = graphConversationCommands.parse<Record<string, unknown>>({
+          value: request,
+          commandType: graphConversationCommandTypes.projectConversationCreate,
+          scopeKind: 'project',
+          scopeId: project.id,
+        });
+        const executed = await graphConversationCommands.executeExternal<Record<string, unknown>, { statusCode: number; body: unknown }>({
+          parsed,
+          destinationId: 'project-conversation-create',
+          resourceId: project.id,
+          externalOperationId: `conversation.project.create:${project.id}:${parsed.operationIdentity}`,
+          manualExternalWriteStart: true,
+          invoke: (markExternalWriteStarted) => executeProjectConversationIdempotent(project, value, parsed.operationIdentity, markExternalWriteStarted),
+          isExplicitRejection: isExplicitGraphConversationRejection,
+        });
+        const body = executed.result.body as { conversation?: { id?: unknown } };
+        const conversationId = typeof body.conversation?.id === 'string' ? body.conversation.id : '';
+        if (!conversationId) throw nativeApiError('ZEUS_IM_CONVERSATION_ACCEPTANCE_INVALID', 'IM project conversation acceptance omitted its durable conversation identity.');
+        return { conversationId };
+      },
+      sendConversationMessage: async ({ projectId, conversationId, content, attachments, delivery, operationIdentity }) => {
+        const value: Record<string, unknown> = {
+          idempotencyKey: operationIdentity,
+          content,
+          attachments,
+          delivery,
+          clientUserMessageId: stableIdentity('im_client_message', operationIdentity),
+        };
+        const request = imInternalCommandRequest({
+          commandType: conversationDispatchCommandTypes.messageSubmit,
+          scopeKind: 'product_conversation',
+          scopeId: conversationId,
+          operationIdentity,
+          input: value,
+          inputSha256: conversationDispatchInputSha256(value),
+        });
+        const parsed = conversationDispatchCommands.parse<Record<string, unknown>>({
+          value: request,
+          commandType: conversationDispatchCommandTypes.messageSubmit,
+          scopeKind: 'product_conversation',
+          scopeId: conversationId,
+        });
+        await conversationDispatchCommands.executeExternal({
+          parsed,
+          destinationId: 'conversation-message-dispatch',
+          resourceId: conversationId,
+          externalOperationId: `conversation-message:${conversationId}:${operationIdentity}`,
+          manualExternalWriteStart: true,
+          invoke: (markExternalWriteStarted) =>
+            executeConversationDispatchMessage({
+              params: { projectId, conversationId },
+              body: value,
+              operationIdentity,
+              providerWriteLifecycle: { markPrepared: async () => undefined, markRpcStarted: markExternalWriteStarted },
+            }),
+          isExplicitRejection: isExplicitGraphConversationRejection,
+        });
+      },
+      interruptConversation: async ({ projectId, conversationId, operationIdentity }) => {
+        const conversation = conversations.getRecordById(conversationId);
+        if (!conversation || conversation.projectId !== projectId) return false;
+        const turn = conversationTurns.getLatestActiveByConversation(conversationId);
+        if (!turn?.providerTurnId) return false;
+        const value: Record<string, never> = {};
+        const request = imInternalCommandRequest({
+          commandType: conversationDispatchCommandTypes.turnInterrupt,
+          scopeKind: 'turn',
+          scopeId: turn.providerTurnId,
+          operationIdentity,
+          input: value,
+          inputSha256: conversationDispatchInputSha256(value),
+        });
+        const parsed = conversationDispatchCommands.parse<Record<string, never>>({ value: request, commandType: conversationDispatchCommandTypes.turnInterrupt, scopeKind: 'turn', scopeId: turn.providerTurnId });
+        await conversationDispatchCommands.executeExternal({
+          parsed,
+          destinationId: 'conversation-provider-turn-interrupt',
+          resourceId: turn.providerTurnId,
+          externalOperationId: `provider-turn-interrupt:${turn.providerTurnId}`,
+          invoke: async () => {
+            const operation =
+              conversation.agentKind === 'pi'
+                ? await piNativeCoordinator.interruptTurn({ conversation, providerTurnId: turn.providerTurnId! })
+                : await codexNativeCoordinator.interruptTurn({ conversationId, providerTurnId: turn.providerTurnId! });
+            return { operation, acknowledged: true };
+          },
+          isExplicitRejection: isExplicitGraphConversationRejection,
+        });
+        return true;
+      },
+      resumeConversation: async ({ projectId, conversationId, operationIdentity }) => {
+        const conversation = conversations.getRecordById(conversationId);
+        if (!conversation || conversation.projectId !== projectId || conversation.agentKind === 'pi') return false;
+        const value: Record<string, never> = {};
+        const request = imInternalCommandRequest({
+          commandType: conversationDispatchCommandTypes.queueResume,
+          scopeKind: 'product_conversation',
+          scopeId: conversationId,
+          operationIdentity,
+          input: value,
+          inputSha256: conversationDispatchInputSha256(value),
+        });
+        const parsed = conversationDispatchCommands.parse<Record<string, never>>({ value: request, commandType: conversationDispatchCommandTypes.queueResume, scopeKind: 'product_conversation', scopeId: conversationId });
+        await conversationDispatchCommands.executeExternal({
+          parsed,
+          destinationId: 'conversation-provider-queue-resume',
+          resourceId: conversationId,
+          externalOperationId: `provider-queue-resume:${conversationId}`,
+          invoke: () => codexNativeCoordinator.resumeInterruptedQueue({ conversationId }),
+          isExplicitRejection: isExplicitGraphConversationRejection,
+        });
+        return true;
+      },
+      readConversationOutput: async ({ projectId, conversationId, afterSequence }) => {
+        const conversation = conversations.getRecordById(conversationId);
+        if (!conversation || conversation.projectId !== projectId || conversation.archived) return [];
+        const projected: Array<{
+          id: string;
+          sequence: number;
+          turnId: string;
+          providerItemId: string | null;
+          role: string;
+          reasoningSummary: boolean;
+          toolPairId: string | null;
+          content: { preview: string; byteLength: number; truncated: boolean; contentHandle: string | null; refreshRequired: boolean };
+        }> = [];
+        let cursor: string | undefined;
+        do {
+          const page = conversationSnapshotV2.listModelHistoryPage({ conversationId, ...(cursor ? { cursor } : {}), entryLimit: 256, byteLimit: 1024 * 1024 });
+          projected.push(...page.items);
+          cursor = page.hasMore && page.nextCursor ? page.nextCursor : undefined;
+        } while (cursor && projected.length < 4_096);
+
+        const resourceRecords = conversationResources.listByConversation(conversationId);
+        const output = [];
+        for (const item of projected) {
+          if (item.sequence <= afterSequence || item.role !== 'assistant' || item.reasoningSummary || item.toolPairId) continue;
+          let text = item.content.preview;
+          if (item.content.truncated) {
+            if (!item.content.contentHandle || item.content.refreshRequired) throw nativeApiError('ZEUS_IM_CONTENT_INCOMPLETE', 'Snapshot V2 正文句柄不可用于完整 Telegram 回传。');
+            let offset = 0;
+            let complete = '';
+            for (let pageIndex = 0; pageIndex < 16_384; pageIndex += 1) {
+              const page = conversationSnapshotV2.readContentPage({ conversationId, handle: item.content.contentHandle, offset, byteLimit: 64 * 1024 });
+              if (page.kind !== 'model_content' || page.offset !== offset || page.totalBytes !== item.content.byteLength) throw nativeApiError('ZEUS_IM_CONTENT_INTEGRITY_FAILED', 'Snapshot V2 完整正文分页身份或总量不一致。');
+              complete += page.text;
+              if (page.nextOffset === null) {
+                text = complete;
+                break;
+              }
+              if (page.nextOffset <= offset) throw nativeApiError('ZEUS_IM_CONTENT_INTEGRITY_FAILED', 'Snapshot V2 完整正文分页偏移未前进。');
+              offset = page.nextOffset;
+              if (pageIndex === 16_383) throw nativeApiError('ZEUS_IM_CONTENT_INTEGRITY_FAILED', 'Snapshot V2 完整正文分页超过安全上限。');
+            }
+          }
+          const resources = [];
+          let resourceFailures = 0;
+          if (item.providerItemId) {
+            for (const record of resourceRecords) {
+              if (record.itemId !== item.providerItemId || record.turnId !== item.turnId || record.kind === 'website') continue;
+              const resource = toConversationResource(record);
+              if (!resource || resource.kind === 'website') {
+                resourceFailures += 1;
+                continue;
+              }
+              const intent = toConversationResourceOpenIntent(record);
+              const absolutePath = typeof intent.target.absolutePath === 'string' ? resolve(intent.target.absolutePath) : '';
+              const allowedRoot = typeof intent.authority.allowedRoot === 'string' ? resolve(intent.authority.allowedRoot) : '';
+              if (!absolutePath || !allowedRoot || absolutePath === allowedRoot || !isPathInsideRoot(absolutePath, allowedRoot)) {
+                resourceFailures += 1;
+                continue;
+              }
+              try {
+                const realRoot = realpathSync(allowedRoot);
+                const realFile = realpathSync(absolutePath);
+                const stats = statSync(realFile);
+                if (!isPathInsideRoot(realFile, realRoot) || !stats.isFile() || stats.size > 50 * 1024 * 1024) {
+                  resourceFailures += 1;
+                  continue;
+                }
+                const display = intent.display;
+                const mime = typeof display.mimeType === 'string' ? display.mimeType : resource.kind === 'attachment' && resource.mimeType ? resource.mimeType : 'application/octet-stream';
+                resources.push({ id: record.id, displayName: typeof display.displayName === 'string' ? display.displayName : basename(realFile), mime, localPath: realFile });
+              } catch {
+                resourceFailures += 1;
+              }
+            }
+          }
+          output.push({ id: item.id, sequence: item.sequence, text, resources, resourceFailures });
+        }
+        return output;
+      },
+      listPendingRequests: ({ projectId, conversationId }) => {
+        const conversation = conversations.getRecordById(conversationId);
+        return conversation?.projectId === projectId ? conversationRequests.listPendingByConversation(conversationId) : [];
+      },
+      getPendingRequest: ({ projectId, conversationId, requestId }) => {
+        const conversation = conversations.getRecordById(conversationId);
+        const request = conversationRequests.getById(requestId);
+        return conversation?.projectId === projectId && request?.conversationId === conversationId && request.status === 'pending' ? request : undefined;
+      },
+      respondToRequest: async ({ projectId, conversationId, requestId, response, operationIdentity }) => {
+        const request = imInternalCommandRequest({
+          commandType: conversationDispatchCommandTypes.serverRequestRespond,
+          scopeKind: 'approval',
+          scopeId: requestId,
+          operationIdentity,
+          input: response,
+          inputSha256: conversationDispatchInputSha256(response),
+        });
+        const parsed = conversationDispatchCommands.parse<Record<string, unknown>>({ value: request, commandType: conversationDispatchCommandTypes.serverRequestRespond, scopeKind: 'approval', scopeId: requestId });
+        await conversationDispatchCommands.executeExternal({
+          parsed,
+          destinationId: 'conversation-provider-server-request',
+          resourceId: requestId,
+          externalOperationId: `provider-server-request:${requestId}`,
+          invoke: () => executeConversationDispatchRequestResponse({ params: { projectId, conversationId, requestId }, response, operationIdentity }),
+          isExplicitRejection: isExplicitGraphConversationRejection,
+        });
+      },
+      getPendingPlan: ({ projectId, conversationId }) => {
+        const conversation = conversations.getRecordById(conversationId);
+        return conversation?.projectId === projectId ? conversationPlanActions.getLatestPending(conversationId) : undefined;
+      },
+      getPlan: ({ projectId, conversationId, requestId }) => {
+        const conversation = conversations.getRecordById(conversationId);
+        const plan = conversationPlanActions.getById(requestId);
+        return conversation?.projectId === projectId && plan?.conversationId === conversationId ? plan : undefined;
+      },
+      respondToPlan: async ({ projectId, conversationId, requestId, action, feedback, operationIdentity }) => {
+        const conversation = conversations.getRecordById(conversationId);
+        const pending = conversationPlanActions.getById(requestId);
+        if (!conversation || conversation.projectId !== projectId || !pending || pending.conversationId !== conversationId || pending.status !== 'pending')
+          throw nativeApiError('ZEUS_IM_PLAN_REQUEST_NOT_FOUND', 'IM plan request is not pending in the bound project.');
+        const input = { action, ...(feedback !== undefined ? { feedback } : {}) };
+        const request = imInternalCommandRequest({
+          commandType: conversationDispatchCommandTypes.planImplementationRespond,
+          scopeKind: 'approval',
+          scopeId: requestId,
+          operationIdentity,
+          input,
+          inputSha256: conversationDispatchInputSha256(input),
+        });
+        const parsed = conversationDispatchCommands.parse<typeof input>({ value: request, commandType: conversationDispatchCommandTypes.planImplementationRespond, scopeKind: 'approval', scopeId: requestId });
+        await conversationDispatchCommands.executeExternal({
+          parsed,
+          destinationId: 'conversation-plan-implementation',
+          resourceId: requestId,
+          externalOperationId: `plan-implementation-response:${requestId}`,
+          invoke: () => codexNativeCoordinator.respondToPlanImplementationRequest({ conversationId, requestId, action, operationIdentity, ...(feedback !== undefined ? { feedback } : {}) }),
+          isExplicitRejection: isExplicitGraphConversationRejection,
+        });
+        const accepted = conversationPlanActions.getById(requestId);
+        if (!accepted || accepted.conversationId !== conversationId || conversations.getRecordById(conversationId)?.projectId !== projectId)
+          throw nativeApiError('ZEUS_NATIVE_ACCEPTANCE_NOT_DURABLE', 'Plan implementation response was not persisted.');
+      },
+      listTasks: (projectId) => tasks.listByProject(projectId),
+      getTask: (taskId) => tasks.getById(taskId),
+      readTaskNotifications: ({ projectId, taskId, afterSequence }) => {
+        const task = tasks.getById(taskId);
+        if (!task || task.projectId !== projectId) return [];
+        return taskEvents.listByTask(taskId).flatMap((event) => {
+          const cursor = taskEvents.getProjectionCursor(event.id);
+          return cursor && cursor.sequence > afterSequence ? [{ sequence: cursor.sequence, eventType: event.eventType, title: event.title, createdAt: event.createdAt }] : [];
+        });
+      },
+      readTaskAttachments: (task) => {
+        let source: Record<string, unknown> = {};
+        try {
+          const parsed = task.sourceContextJson ? (JSON.parse(task.sourceContextJson) as unknown) : null;
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) source = parsed as Record<string, unknown>;
+        } catch {
+          source = {};
+        }
+        const rawAttachments = Array.isArray(source.attachments) ? source.attachments : [];
+        if (rawAttachments.length === 0) return [];
+        if (!taskAttachmentRoot) throw nativeApiError('ZEUS_IM_TASK_ATTACHMENT_ROOT_UNAVAILABLE', '任务附件授权根不可用，已阻止 Telegram 推送。');
+        return rawAttachments.map((raw) => {
+          if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw nativeApiError('ZEUS_IM_TASK_ATTACHMENT_INVALID', '任务附件记录无效，已阻止 Telegram 推送。');
+          const attachment = raw as Record<string, unknown>;
+          const path = typeof attachment.path === 'string' ? resolve(attachment.path) : '';
+          const root = resolve(taskAttachmentRoot);
+          if (!path || path === root || !isPathInsideRoot(path, root)) throw nativeApiError('ZEUS_IM_TASK_ATTACHMENT_FORBIDDEN', '任务附件不在授权根内，已阻止 Telegram 推送。');
+          try {
+            const realRoot = realpathSync(root);
+            const realFile = realpathSync(path);
+            const stats = statSync(realFile);
+            if (!isPathInsideRoot(realFile, realRoot) || !stats.isFile() || stats.size > 20 * 1024 * 1024) throw nativeApiError('ZEUS_IM_TASK_ATTACHMENT_FORBIDDEN', '任务附件未通过文件身份或大小校验，已阻止 Telegram 推送。');
+            const mime = typeof attachment.mimeType === 'string' ? attachment.mimeType : 'application/octet-stream';
+            const name = typeof attachment.name === 'string' && attachment.name.trim() ? attachment.name.trim() : basename(realFile);
+            return { name, mime, size: stats.size, localPath: realFile };
+          } catch (error) {
+            if (error && typeof error === 'object' && 'code' in error && String((error as { code?: unknown }).code).startsWith('ZEUS_IM_')) throw error;
+            throw nativeApiError('ZEUS_IM_TASK_ATTACHMENT_UNAVAILABLE', '任务附件文件不可用，已阻止 Telegram 推送。');
+          }
+        });
+      },
+      createTask: async ({ projectId, title, attachments, operationIdentity }) => {
+        const taskId = `task_${createHash('sha256').update(operationIdentity).digest('hex').slice(0, 32)}`;
+        const value = {
+          projectId,
+          title,
+          taskType: 'requirement' as const,
+          description: '',
+          sourceContext: {
+            source: 'telegram_im',
+            ...(attachments.length
+              ? {
+                  attachments: attachments.map((attachment) => ({
+                    path: attachment.localPath,
+                    name: attachment.name,
+                    kind: attachment.mime.startsWith('image/') ? ('image' as const) : ('file' as const),
+                    field: 'description' as const,
+                    mimeType: attachment.mime,
+                    size: attachment.size,
+                  })),
+                }
+              : {}),
+          },
+        };
+        const request = imInternalCommandRequest({
+          commandType: workManagementCommandTypes.taskCreate,
+          scopeKind: 'task',
+          scopeId: taskId,
+          operationIdentity: taskId,
+          input: value,
+          inputSha256: workManagementInputSha256(value),
+        });
+        const parsed = workManagementCommands.parse<typeof value>({ value: request, commandType: workManagementCommandTypes.taskCreate, scopeKind: 'task', expectedScopeId: ({ operationIdentity: identity }) => identity });
+        const executed = workManagementCommands.executeCore({
+          parsed,
+          destinationId: 'work-management-task-application',
+          resourceId: taskId,
+          mutateBusinessState: () => workManagementCoreOperations.createUserTask(value, taskId, { commandId: parsed.command.commandId, operationIdentity: parsed.operationIdentity, actor: parsed.command.actor }),
+        });
+        return executed.result;
+      },
+      updateTask: async ({ task, field, value, attachments, operationIdentity }) => {
+        let existingAttachments: TaskAttachmentReference[] = [];
+        try {
+          const source = task.sourceContextJson ? (JSON.parse(task.sourceContextJson) as unknown) : null;
+          if (source && typeof source === 'object' && !Array.isArray(source) && Array.isArray((source as Record<string, unknown>).attachments))
+            existingAttachments = (source as Record<string, unknown>).attachments as TaskAttachmentReference[];
+        } catch {
+          existingAttachments = [];
+        }
+        const additions: TaskAttachmentReference[] = attachments.map((attachment) => ({
+          path: attachment.localPath,
+          name: attachment.name,
+          kind: attachment.mime.startsWith('image/') ? ('image' as const) : ('file' as const),
+          field: 'description',
+          mimeType: attachment.mime,
+          size: attachment.size,
+        }));
+        const input = { expectedUpdatedAt: task.updatedAt, [field]: value, ...(additions.length ? { attachments: [...existingAttachments, ...additions] } : {}) };
+        const request = imInternalCommandRequest({
+          commandType: workManagementCommandTypes.taskUpdate,
+          scopeKind: 'task',
+          scopeId: task.id,
+          operationIdentity,
+          input,
+          inputSha256: workManagementInputSha256(input),
+        });
+        const parsed = workManagementCommands.parse<typeof input>({ value: request, commandType: workManagementCommandTypes.taskUpdate, scopeKind: 'task', expectedScopeId: () => task.id });
+        return workManagementCommands.executeCore({
+          parsed,
+          destinationId: 'work-management-task-application',
+          resourceId: task.id,
+          mutateBusinessState: () => workManagementTaskOperations.updateTask(task.id, input, { commandId: parsed.command.commandId, operationIdentity: parsed.operationIdentity, actor: parsed.command.actor }),
+        }).result;
+      },
+      updateTaskStatus: async ({ task, managementStatus, operationIdentity }) => {
+        const input = { status: managementStatus, expectedUpdatedAt: task.updatedAt };
+        const request = imInternalCommandRequest({
+          commandType: workManagementCommandTypes.taskManagementStatusUpdate,
+          scopeKind: 'task',
+          scopeId: task.id,
+          operationIdentity,
+          input,
+          inputSha256: workManagementInputSha256(input),
+        });
+        const parsed = workManagementCommands.parse<typeof input>({ value: request, commandType: workManagementCommandTypes.taskManagementStatusUpdate, scopeKind: 'task', expectedScopeId: () => task.id });
+        const prepared = await workManagementTaskOperations.prepareManagementStatus(task.id, input);
+        const context = { commandId: parsed.command.commandId, operationIdentity: parsed.operationIdentity, actor: parsed.command.actor };
+        if (!prepared.requiresExternal) {
+          return workManagementCommands.executeCore({
+            parsed,
+            destinationId: 'work-management-task-management-status-application',
+            resourceId: prepared.resourceId,
+            mutateBusinessState: () => workManagementTaskOperations.mutateManagementStatus(prepared.state, null, context),
+          }).result;
+        }
+        return (
+          await workManagementCommands.executeExternal({
+            parsed,
+            destinationId: 'work-management-task-management-status-external',
+            resourceId: prepared.resourceId,
+            externalOperationId: `task-management-status:${parsed.operationIdentity}`,
+            invoke: () => workManagementTaskOperations.invokeManagementStatus(prepared.state),
+            mutateAcceptedBusinessState: (effect) => workManagementTaskOperations.mutateManagementStatus(prepared.state, effect, context),
+          })
+        ).result;
+      },
+      controlTask: async ({ task, action, operationIdentity }) => {
+        const commandType = { run: workManagementCommandTypes.taskRun, pause: workManagementCommandTypes.taskPause, continue: workManagementCommandTypes.taskContinue, cancel: workManagementCommandTypes.taskCancel }[action];
+        const value: Record<string, never> = {};
+        const request = imInternalCommandRequest({ commandType, scopeKind: 'task', scopeId: task.id, operationIdentity, input: value, inputSha256: workManagementInputSha256(value) });
+        const parsed = workManagementCommands.parse<Record<string, never>>({ value: request, commandType, scopeKind: 'task', expectedScopeId: () => task.id });
+        const prepared = await workManagementTaskOperations.prepareRuntimeAction(action, task.id);
+        if (action === 'run' || action === 'continue') {
+          workManagementRuntimePreflights.set(operationIdentity, await prepareWorkManagementRuntimeStart(action, prepared.state.project, tasks.getById(prepared.state.taskId)!));
+        }
+        const context = { commandId: parsed.command.commandId, operationIdentity: parsed.operationIdentity, actor: parsed.command.actor };
+        const executed = await workManagementCommands.executeExternal({
+          parsed,
+          destinationId: `work-management-task-runtime-${action}`,
+          resourceId: prepared.resourceId,
+          externalOperationId: `task-runtime-${action}:${operationIdentity}`,
+          invoke: () => workManagementTaskOperations.invokeRuntimeAction(action, prepared.state, operationIdentity),
+          mutateAcceptedBusinessState: (effect) => workManagementTaskOperations.mutateRuntimeAction(action, prepared.state, effect, context),
+          mutateFailureBusinessState: () => workManagementRuntimePreflights.delete(operationIdentity),
+        });
+        return tasks.getById(task.id) ?? (executed.result as ZeusTaskRecord);
+      },
+      pushTask: async ({ task, content, preset, operationIdentity }) => {
+        const project = projects.getById(task.projectId);
+        if (!project) throw nativeApiError('ZEUS_PROJECT_NOT_FOUND', 'Project not found');
+        const value: Record<string, unknown> = {
+          mode: 'create',
+          content,
+          agentKind: preset.agentKind,
+          permissionMode: preset.permissionMode,
+          collaborationMode: preset.workMode,
+          clientUserMessageId: stableIdentity('im_client_message', operationIdentity),
+          ...(preset.model ? { model: preset.model } : {}),
+          ...(preset.reasoningEffort ? { effort: preset.reasoningEffort } : {}),
+          ...(preset.skillId ? { skillId: preset.skillId } : {}),
+        };
+        const request = imInternalCommandRequest({ commandType: graphConversationCommandTypes.taskConversationCreate, scopeKind: 'task', scopeId: task.id, operationIdentity, input: value, inputSha256: graphConversationInputSha256(value) });
+        const parsed = graphConversationCommands.parse<Record<string, unknown>>({ value: request, commandType: graphConversationCommandTypes.taskConversationCreate, scopeKind: 'task', scopeId: task.id });
+        const executed = await graphConversationCommands.executeExternal<Record<string, unknown>, { statusCode: number; body: unknown }>({
+          parsed,
+          destinationId: 'task-conversation-create',
+          resourceId: task.id,
+          externalOperationId: `conversation.task.create:${task.id}:${operationIdentity}`,
+          manualExternalWriteStart: true,
+          invoke: (markExternalWriteStarted) => executeTaskConversationIdempotent(project, task, value, operationIdentity, markExternalWriteStarted),
+          isExplicitRejection: isExplicitGraphConversationRejection,
+        });
+        const body = executed.result.body as { conversation?: { id?: unknown } };
+        const conversationId = typeof body.conversation?.id === 'string' ? body.conversation.id : '';
+        if (!conversationId) throw nativeApiError('ZEUS_IM_CONVERSATION_ACCEPTANCE_INVALID', 'IM task conversation acceptance omitted its durable conversation identity.');
+        return { conversationId };
+      },
+    },
+  });
+
+  registerImConnectionRoutes({ server, application: telegramCommands, service: imTelegramService, redactSensitiveText });
+  if (!readOnlyValidation)
+    void imTelegramService
+      .restore()
+      .catch((error) =>
+        appendAuditLog({ actorType: 'system', action: 'im.telegram.restore_failed', resourceType: 'telegram', payload: { error: redactSensitiveText(error instanceof Error ? error.message : String(error)).text.slice(0, 2_048) } }),
+      );
 
   registerDigitalEmployeeRoutes({
     server,
@@ -3018,6 +3553,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         offset: 0,
         lastError: null,
         handledUpdates: 0,
+        lastSuccessfulPollAt: null,
       },
       notificationSettings: platformMutableState.telegramNotificationSettings,
       securitySettings: platformMutableState.telegramSecuritySettings,
@@ -3160,6 +3696,11 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     }
     try {
       await workManagementTaskEffects.close();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    try {
+      await imTelegramService.close();
     } catch (error) {
       cleanupErrors.push(error);
     }

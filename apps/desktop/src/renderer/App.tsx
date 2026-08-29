@@ -73,7 +73,7 @@ function initialSettingsCategory(props: AppProps): SettingsCategory {
   const fromHash = typeof window === 'undefined' ? undefined : settingsCategoryFromHash(window.location.hash);
   if (fromHash) return fromHash;
   if (props.initialMainNavTarget === 'settings-data') return 'data';
-  if (props.initialMainNavTarget === 'telegram' || props.initialSecuritySecrets?.telegramBotToken.configured) return 'telegram';
+  if (props.initialMainNavTarget === 'telegram' || props.initialSecuritySecrets?.telegramBotToken.configured) return 'im';
   if (props.initialRuntimeSettings || props.initialRuntimeStatus) return 'runtime';
   if (props.initialSecuritySecrets || props.initialSecurityAuditLogs?.length) return 'security';
   if (props.initialGitConfirmation && props.initialMainNavTarget === 'settings') return 'git';
@@ -93,7 +93,11 @@ function routeFromHash(hash: string | undefined): MainNavTarget {
 
 function settingsCategoryFromHash(hash: string | undefined): SettingsCategory | undefined {
   const target = hash?.replace(/^#settings-/, '');
+  if (target === 'telegram') {
+    if (typeof window !== 'undefined') window.history.replaceState(null, '', '#settings-im');
+    return 'im';
+  }
   return settingsCategories.includes(target as SettingsCategory) ? (target as SettingsCategory) : undefined;
 }
 
-const settingsCategories = ['general', 'usage', 'memory', 'tasks', 'employees', 'runtime', 'models', 'browser', 'telegram', 'zentao', 'security', 'commands', 'git', 'release', 'data'] as const satisfies readonly SettingsCategory[];
+const settingsCategories = ['general', 'usage', 'memory', 'tasks', 'employees', 'runtime', 'models', 'browser', 'im', 'zentao', 'security', 'commands', 'git', 'release', 'data'] as const satisfies readonly SettingsCategory[];

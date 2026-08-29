@@ -1,10 +1,29 @@
 import type { SecuritySecretsSnapshot } from '../integrations/integrationContracts.js';
+export type {
+  CreateTelegramImConnectionInput,
+  ImAgentPresetRef,
+  ImConnectionSnapshot,
+  ImPairingSessionSnapshot,
+  ImSettingsSnapshot,
+  ImTelegramConnectionCreated,
+  ImTelegramConnectionLogEntry,
+  UpdateTelegramImConnectionInput,
+} from '@zeus/shared';
+
+import type { ImAgentPresetRef } from '@zeus/shared';
+
+export interface ImProjectSelectionOption {
+  id: string;
+  name: string;
+  presets: Array<{ ref: ImAgentPresetRef; name: string }>;
+}
 
 export interface TelegramPollingStatus {
   running: boolean;
   offset: number;
   lastError: string | null;
   handledUpdates: number;
+  lastSuccessfulPollAt?: string | null;
 }
 
 export interface TelegramPollingLogEntry {
