@@ -542,6 +542,11 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     const observer = new IntersectionObserver(
       (entries) => {
         latestMarkerIntersectingRef.current = entries[0]?.isIntersecting ?? false;
+        // 活动状态收起、Markdown 完成布局等变化可能只移动底部标记，既不改变
+        // 固定高度滚动容器的 border box，也不保证产生可观察的正文 DOM 变更。
+        // 跟随态下标记一旦离开视口，就必须重新唤醒统一贴底调度器；历史阅读态
+        // 仍由 controller 门禁，不会被 IntersectionObserver 接管。
+        if (isFollowingLatest()) maintainLatestPosition();
         scheduleLatestContentVisibility();
       },
       { root: container, threshold: 0 },
@@ -549,7 +554,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     observer.observe(marker);
     scheduleLatestContentVisibility();
     return () => observer.disconnect();
-  }, [scheduleLatestContentVisibility]);
+  }, [isFollowingLatest, maintainLatestPosition, scheduleLatestContentVisibility]);
 
   useEffect(() => {
     window.addEventListener('pointerup', finishUserScrollPointerIntent);
