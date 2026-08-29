@@ -8,6 +8,7 @@ import type {
   ConversationResourcePreview,
   NativeConversationToolResultPage,
   NativePendingRequest,
+  NativePlanImplementationRequest,
   NativeQueuedSubmission,
   NativeQueueSnapshot,
   NativeSessionError,
@@ -301,25 +302,27 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const answeredRequests = useMemo(() => props.state.pendingRequests.filter(isAnsweredUserInputRequest), [props.state.pendingRequests]);
   const transcriptRows = useMemo(() => projectTranscriptRows(items, answeredRequests, activeTurnId, props.historyOnly, props.state.terminalTurnIds), [activeTurnId, answeredRequests, items, props.historyOnly, props.state.terminalTurnIds]);
   const turnRows = useMemo(() => projectTranscriptTurnRows(transcriptRows, activeTurnId, props.state.terminalTurnIds), [activeTurnId, props.state.terminalTurnIds, transcriptRows]);
-  const defaultExpandedRowKeys = useMemo(() => defaultExpandedTurnProcessKeys(turnRows, props.state.turnsByProviderId, props.state.terminalTurnIds), [props.state.terminalTurnIds, props.state.turnsByProviderId, turnRows]);
-  const activeProcessExpansionKey = useMemo(() => {
-    const activeWork = turnRows.find((row): row is TranscriptTurnWorkRow => row.kind === 'turn_work' && row.live);
-    return activeWork ? turnProcessExpansionKey(activeWork.key) : null;
-  }, [turnRows]);
-  const previousActiveProcessExpansionKeyRef = useRef<string | null>(null);
+  const planContinuationTurnIdentities = useMemo(() => planContinuationSourceTurnIdentities(props.state), [props.state.planImplementationRequests, props.state.queue, props.state.turnsByProviderId]);
+  const planContinuationProcessKeys = useMemo(() => planContinuationProcessExpansionKeys(turnRows, planContinuationTurnIdentities), [planContinuationTurnIdentities, turnRows]);
+  const defaultExpandedRowKeys = useMemo(
+    () => defaultExpandedTurnProcessKeys(turnRows, props.state.turnsByProviderId, props.state.terminalTurnIds, planContinuationProcessKeys),
+    [planContinuationProcessKeys, props.state.terminalTurnIds, props.state.turnsByProviderId, turnRows],
+  );
+  const previousPlanContinuationProcessKeysRef = useRef<ReadonlySet<string>>(new Set());
   useLayoutEffect(() => {
-    const previousKey = previousActiveProcessExpansionKeyRef.current;
-    previousActiveProcessExpansionKeyRef.current = activeProcessExpansionKey;
-    if (!previousKey || previousKey === activeProcessExpansionKey) return;
-    // 正文到达或活动轮次切换时必须回到完成态默认值：处理过程自动收起。
-    // 这同时清除运行中用户手动展开/收起留下的覆盖，避免完成态继续沿用旧交互状态。
+    const previousKeys = previousPlanContinuationProcessKeysRef.current;
+    previousPlanContinuationProcessKeysRef.current = planContinuationProcessKeys;
+    const endedKeys = [...previousKeys].filter((key) => !planContinuationProcessKeys.has(key));
+    if (endedKeys.length === 0) return;
+    // 计划连续链结束时回到该轮历史默认值。只清理由派生默认展开影响过的来源 Plan，
+    // 避免实施期间的临时手动展开/收起覆盖泄漏到正常完成后的历史记录。
     setRowExpansionOverrides((current) => {
-      if (!current.has(previousKey)) return current;
+      if (!endedKeys.some((key) => current.has(key))) return current;
       const next = new Map(current);
-      next.delete(previousKey);
+      endedKeys.forEach((key) => next.delete(key));
       return next;
     });
-  }, [activeProcessExpansionKey]);
+  }, [planContinuationProcessKeys]);
   const expandedRowKeys = useMemo(() => {
     const expanded = new Set(defaultExpandedRowKeys);
     for (const [rowKey, open] of rowExpansionOverrides) {
@@ -328,7 +331,6 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     }
     return expanded;
   }, [defaultExpandedRowKeys, rowExpansionOverrides]);
-  const activeProcessCollapsed = activeProcessExpansionKey !== null && !expandedRowKeys.has(activeProcessExpansionKey);
   const turnRowKeys = useMemo(() => turnRows.map((row) => row.key), [turnRows]);
   const turnRowsByKey = useMemo(() => new Map(turnRows.map((row) => [row.key, row])), [turnRows]);
   const activeTurnRowKeys = useMemo(() => new Set(turnRows.filter((row) => activeTurnId && transcriptTurnRowTurnId(row) === activeTurnId).map((row) => row.key)), [activeTurnId, turnRows]);
@@ -367,7 +369,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const realTurnStarted = Boolean(activeTurnId);
   // 创建期只保留一个主进度：真实轮次建立前显示连接，建立后由轮次状态或真实过程内容接管。
   const showCreationStatus = Boolean(props.creationStatus) && !(creatingSession && realTurnStarted);
-  const showStandaloneActiveStatus = (showActiveStatus || activeProcessCollapsed) && !creationFailed && !(creatingSession && !realTurnStarted);
+  const showStandaloneActiveStatus = showActiveStatus && !creationFailed && !(creatingSession && !realTurnStarted);
   const interactionAuthorityMissing = props.state.queue?.state.type === 'paused' && props.state.queue.state.reason === 'interaction_authority_missing' && Boolean(props.state.activeTurnId);
   const awaitingReplyMessageIdsKey = items
     .filter(isOptimisticMessageAwaitingReply)
@@ -751,6 +753,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           </section>
         ));
       if (!turn) {
+        const processLive = row.live;
         const processPaging = turnDetailPaging(props.state.snapshot, row.turnId);
         const hasProcessDetails = row.segments.length > 0 || (row.loadMore && turnProcessAvailable(props.state.snapshot, row.turnId));
         return (
@@ -758,17 +761,18 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             {hasProcessDetails ? (
               <SessionTurnProcessDisclosure
                 language={props.language}
+                presentation={processLive ? 'inline' : 'disclosure'}
                 loading={Boolean(row.loadMore && processPaging?.loading)}
                 error={row.loadMore ? processPaging?.error : null}
-                open={expandedRowKeys.has(expansionKey)}
-                onOpenChange={(open) => setTranscriptRowExpanded(expansionKey, open)}
+                open={processLive ? undefined : expandedRowKeys.has(expansionKey)}
+                onOpenChange={processLive ? undefined : (open) => setTranscriptRowExpanded(expansionKey, open)}
                 onOpen={async () => {
                   if (!row.loadMore) return;
                   await renderProps.onLoadTurnProcess?.(row.turnId);
                   await renderProps.onLoadTurnArtifacts?.(row.turnId);
                 }}
               >
-                {renderProcessSegments(false)}
+                {renderProcessSegments(processLive)}
                 {row.loadMore && processPaging?.loaded && processPaging.hasMore && renderProps.onLoadTurnProcess ? (
                   <V2AutoPageSentinel loading={processPaging.loading} error={processPaging.error} kind="process" language={props.language} onLoad={() => renderProps.onLoadTurnProcess?.(row.turnId)} />
                 ) : null}
@@ -777,20 +781,22 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           </>
         );
       }
-      const active = isActiveSessionTurn(turn);
+      const turnActive = isActiveSessionTurn(turn);
+      const processLive = row.live && turnActive;
       const v2PagingKey = turn.providerTurnId ?? turn.id;
       const processPaging = turnDetailPaging(props.state.snapshot, v2PagingKey);
       const hasProcessDetails = row.segments.length > 0 || (row.loadMore && turnProcessAvailable(props.state.snapshot, v2PagingKey));
-      const process = renderProcessSegments(active);
+      const process = renderProcessSegments(processLive);
       return (
         <>
           {hasProcessDetails ? (
             <SessionTurnProcessDisclosure
               language={props.language}
+              presentation={processLive ? 'inline' : 'disclosure'}
               loading={Boolean(row.loadMore && processPaging?.loading)}
               error={row.loadMore ? processPaging?.error : null}
-              open={expandedRowKeys.has(expansionKey)}
-              onOpenChange={(open) => setTranscriptRowExpanded(expansionKey, open)}
+              open={processLive ? undefined : expandedRowKeys.has(expansionKey)}
+              onOpenChange={processLive ? undefined : (open) => setTranscriptRowExpanded(expansionKey, open)}
               onOpen={async () => {
                 if (!row.loadMore) return;
                 await renderProps.onLoadTurnProcess?.(row.turnId);
@@ -803,8 +809,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
               ) : null}
             </SessionTurnProcessDisclosure>
           ) : null}
-          {!active && containsCompletionAnchor ? renderTurnArtifacts(row.turnId, renderProps, completionAnchorKeyByTurn[row.turnId]) : null}
-          {!active && containsCompletionAnchor ? <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} /> : null}
+          {!turnActive && containsCompletionAnchor ? renderTurnArtifacts(row.turnId, renderProps, completionAnchorKeyByTurn[row.turnId]) : null}
+          {!turnActive && containsCompletionAnchor ? <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} /> : null}
         </>
       );
     }
@@ -1455,10 +1461,10 @@ function renderTurnArtifacts(turnId: string, props: ConversationTranscriptProps,
 
 export function projectTranscriptTurnRows(rows: readonly TranscriptRow[], activeTurnId: string | null = null, terminalTurnIds: Readonly<Record<string, 'completed' | 'interrupted' | 'failed'>> = {}): TranscriptTurnRow[] {
   const orderedRows = projectDeliverablesAfterFinalAnswer(rows);
-  const finalAnswerTurnIds = new Set(orderedRows.flatMap((row) => (row.kind === 'item' && isFinalAnswerItem(row.item) ? [row.item.turnId] : [])));
-  // 权威活动轮次优先于任何提前或误分类的 final item；阶段摘要只负责切分单轮过程内部的内容，
-  // 不能再生成多个顶层折叠入口。final 正文一旦到达，该轮过程立即按完成态自动收起。
-  const projectedTurnIds = new Set([...finalAnswerTurnIds, ...Object.keys(terminalTurnIds), ...(activeTurnId ? [activeTurnId] : [])]);
+  const completionOutputTurnIds = new Set(orderedRows.flatMap((row) => (row.kind === 'item' && isTurnCompletionOutputItem(row.item) ? [row.item.turnId] : [])));
+  // 权威活动轮次优先于任何提前或误分类的输出；阶段摘要只负责切分单轮过程内部的内容，
+  // 不能再生成多个顶层折叠入口。正式正文或正式 Plan 到达后，该轮过程立即进入完成态 disclosure。
+  const projectedTurnIds = new Set([...completionOutputTurnIds, ...Object.keys(terminalTurnIds), ...(activeTurnId ? [activeTurnId] : [])]);
   const openingUserRowKeyByTurn = new Map<string, string>();
   for (const row of orderedRows) {
     if (row.kind !== 'item' || itemRole(row.item) !== 'user' || openingUserRowKeyByTurn.has(row.item.turnId)) continue;
@@ -1483,7 +1489,7 @@ export function projectTranscriptTurnRows(rows: readonly TranscriptRow[], active
       key: `turn-work:${encodeURIComponent(turnId)}`,
       turnId,
       segments,
-      live: turnId === activeTurnId && !finalAnswerTurnIds.has(turnId),
+      live: turnId === activeTurnId && !completionOutputTurnIds.has(turnId),
       loadMore: true,
     });
     processRows.forEach((row) => processRowKeys.add(row.key));
@@ -1626,8 +1632,51 @@ function turnProcessExpansionKey(identity: string): string {
   return `turn-process:${identity}`;
 }
 
-function defaultExpandedTurnProcessKeys(rows: readonly TranscriptTurnRow[], turnsByProviderId: NativeSessionState['turnsByProviderId'], terminalTurnIds: NativeSessionState['terminalTurnIds']): ReadonlySet<string> {
-  const expanded = new Set(rows.filter((row): row is TranscriptTurnWorkRow => row.kind === 'turn_work' && row.live).map((row) => turnProcessExpansionKey(row.key)));
+function planContinuationSourceTurnIdentities(state: NativeSessionState): ReadonlySet<string> {
+  const orderedRequests = [...state.planImplementationRequests].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id));
+  const continuedRequest = orderedRequests.find((request) => planActionSubmissionIsInFlight(request, state));
+  const sourceRequest = continuedRequest ?? orderedRequests.find((request) => request.status === 'pending');
+  if (!sourceRequest) return new Set();
+
+  const identities = new Set([sourceRequest.turnId]);
+  const sourceTurn = turnByAnyIdentity(state.turnsByProviderId, sourceRequest.turnId);
+  if (sourceTurn) {
+    identities.add(sourceTurn.id);
+    if (sourceTurn.providerTurnId) identities.add(sourceTurn.providerTurnId);
+  }
+  return identities;
+}
+
+function planActionSubmissionIsInFlight(request: NativePlanImplementationRequest, state: NativeSessionState): boolean {
+  if ((request.status !== 'implemented' && request.status !== 'refinement_requested') || !request.submissionId) return false;
+  const submissionId = request.submissionId;
+  const queuedSubmission = state.queue?.submissions.find((submission) => submission.id === submissionId);
+  if (queuedSubmission && (queuedSubmission.status === 'queued' || queuedSubmission.status === 'dispatching' || queuedSubmission.status === 'active')) return true;
+  if (state.queue?.state.type === 'dispatching' && state.queue.state.submissionId === submissionId) return true;
+
+  const implementationTurn = Object.values(state.turnsByProviderId).find((turn) => turn.submissionId === submissionId && isActiveSessionTurn(turn));
+  if (!implementationTurn) return false;
+  const implementationTurnIdentities = new Set([implementationTurn.id, implementationTurn.providerTurnId].filter((turnId): turnId is string => Boolean(turnId)));
+  if (state.activeTurnId && implementationTurnIdentities.has(state.activeTurnId)) return true;
+  const queueState = state.queue?.state;
+  return Boolean((queueState?.type === 'active' || queueState?.type === 'waiting') && implementationTurnIdentities.has(queueState.turnId));
+}
+
+function turnByAnyIdentity(turnsByProviderId: NativeSessionState['turnsByProviderId'], identity: string) {
+  return turnsByProviderId[identity] ?? Object.values(turnsByProviderId).find((turn) => turn.id === identity || turn.providerTurnId === identity);
+}
+
+function planContinuationProcessExpansionKeys(rows: readonly TranscriptTurnRow[], sourceTurnIdentities: ReadonlySet<string>): ReadonlySet<string> {
+  return new Set(rows.filter((row): row is TranscriptTurnWorkRow => row.kind === 'turn_work' && sourceTurnIdentities.has(row.turnId)).map((row) => turnProcessExpansionKey(row.key)));
+}
+
+function defaultExpandedTurnProcessKeys(
+  rows: readonly TranscriptTurnRow[],
+  turnsByProviderId: NativeSessionState['turnsByProviderId'],
+  terminalTurnIds: NativeSessionState['terminalTurnIds'],
+  planContinuationProcessKeys: ReadonlySet<string> = new Set(),
+): ReadonlySet<string> {
+  const expanded = new Set(planContinuationProcessKeys);
   let latestTurnId: string | null = null;
   for (let index = rows.length - 1; index >= 0; index -= 1) {
     latestTurnId = transcriptTurnRowTurnId(rows[index]!);
@@ -1635,7 +1684,7 @@ function defaultExpandedTurnProcessKeys(rows: readonly TranscriptTurnRow[], turn
   }
   if (!latestTurnId) return expanded;
 
-  const turn = turnsByProviderId[latestTurnId] ?? Object.values(turnsByProviderId).find((candidate) => candidate.id === latestTurnId || candidate.providerTurnId === latestTurnId);
+  const turn = turnByAnyIdentity(turnsByProviderId, latestTurnId);
   const providerTurnId = turn?.providerTurnId;
   const interrupted = terminalTurnIds[latestTurnId] === 'interrupted' || (providerTurnId ? terminalTurnIds[providerTurnId] === 'interrupted' : false) || turn?.status === 'interrupted';
   if (!interrupted) return expanded;
@@ -1660,6 +1709,12 @@ function transcriptRowContainsItemKey(row: TranscriptRow, itemKey: string | unde
 export function isFinalAnswerItem(item: NativeSessionItemBuffer): boolean {
   const providerPhase = itemProviderPhase(item);
   return itemRole(item) === 'assistant' && (providerPhase === 'final_answer' || providerPhase === 'finalAnswer');
+}
+
+function isTurnCompletionOutputItem(item: NativeSessionItemBuffer): boolean {
+  // 非正式 plan 已在 isFormalPlanTranscriptItem 中从正式会话投影过滤；能进入这里的 plan
+  // 与普通 final answer 一样，都是本轮明确交付给用户的完成态输出。
+  return isFinalAnswerItem(item) || normalizeItemType(item.type) === 'plan';
 }
 
 function itemProviderPhase(item: NativeSessionItemBuffer): string {

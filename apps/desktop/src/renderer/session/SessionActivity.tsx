@@ -470,6 +470,7 @@ export function SessionTurnDuration(props: { turn: NativeTurnSnapshot; requests:
 export function SessionTurnProcessDisclosure(props: {
   language: SessionUiLanguage;
   children: ReactNode;
+  presentation?: 'disclosure' | 'inline';
   onOpen?: () => void | Promise<void>;
   loading?: boolean;
   error?: string | null;
@@ -478,7 +479,8 @@ export function SessionTurnProcessDisclosure(props: {
   onOpenChange?: (open: boolean) => void;
 }) {
   const [internalOpen, setInternalOpen] = useState(false);
-  const open = props.open ?? internalOpen;
+  const inline = props.presentation === 'inline';
+  const open = inline || (props.open ?? internalOpen);
   const onOpenRef = useRef(props.onOpen);
   onOpenRef.current = props.onOpen;
   const bodyId = useId();
@@ -503,23 +505,25 @@ export function SessionTurnProcessDisclosure(props: {
           ? 'Hide process'
           : 'View process';
   return (
-    <section className="session-turn-process" data-open={open || undefined} aria-busy={props.loading || undefined}>
-      <div className="session-turn-process-control">
-        <button
-          type="button"
-          aria-expanded={open}
-          aria-controls={bodyId}
-          onClick={() => {
-            const nextOpen = !open;
-            if (props.open === undefined) setInternalOpen(nextOpen);
-            props.onOpenChange?.(nextOpen);
-          }}
-        >
-          <span>{label}</span>
-          <CaretDown className="session-turn-process-caret" aria-hidden="true" weight="bold" />
-        </button>
-      </div>
-      <div id={bodyId} className="session-turn-process-body" hidden={!open}>
+    <section className="session-turn-process" data-open={open || undefined} data-presentation={inline ? 'inline' : 'disclosure'} aria-busy={props.loading || undefined}>
+      {!inline ? (
+        <div className="session-turn-process-control">
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-controls={bodyId}
+            onClick={() => {
+              const nextOpen = !open;
+              if (props.open === undefined) setInternalOpen(nextOpen);
+              props.onOpenChange?.(nextOpen);
+            }}
+          >
+            <span>{label}</span>
+            <CaretDown className="session-turn-process-caret" aria-hidden="true" weight="bold" />
+          </button>
+        </div>
+      ) : null}
+      <div id={inline ? undefined : bodyId} className="session-turn-process-body" hidden={inline ? undefined : !open}>
         {open ? (
           <>
             {props.children}
