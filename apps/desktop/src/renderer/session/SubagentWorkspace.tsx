@@ -10,7 +10,7 @@ import type { NativeSessionItemBuffer, NativeSessionState, NativeSubagentListSna
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { ConversationTranscript, isSubagentCoordinationItem } from './ConversationTranscript.js';
 import { RuntimeDetails } from './RuntimeDetails.js';
-import { SafeMarkdown } from './ThreadItemView.js';
+import { ConversationMarkdown } from './ConversationMarkdown.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { createInitialSessionState } from './sessionReducer.js';
 
@@ -242,7 +242,7 @@ function SubagentTaskInstruction(props: { thread: NativeSubagentThreadSnapshot; 
       </header>
       {instruction.state === 'available' && instruction.text ? (
         <div className="session-subagent-instruction-content">
-          <SafeMarkdown text={instruction.text} language={props.language} />
+          <ConversationMarkdown text={instruction.text} streamId={`subagent:${props.thread.agent.id}:instruction`} phase="final" language={props.language} />
         </div>
       ) : (
         <div className="session-subagent-instruction-unavailable" role="status">
@@ -254,7 +254,7 @@ function SubagentTaskInstruction(props: { thread: NativeSubagentThreadSnapshot; 
         <details className="session-subagent-inherited-context">
           <summary>{zh ? '查看上层任务上下文' : 'View inherited task context'}</summary>
           <div>
-            <SafeMarkdown text={inherited.text!} language={props.language} />
+            <ConversationMarkdown text={inherited.text!} streamId={`subagent:${props.thread.agent.id}:inherited-context`} phase="final" language={props.language} />
           </div>
         </details>
       ) : null}

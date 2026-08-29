@@ -539,3 +539,127 @@
     grid-column: auto;
   }
 }
+
+.qa-markdown-stream-page {
+  background: var(--session-canvas);
+  color: var(--session-text);
+  min-block-size: 100vh;
+  padding: 28px;
+}
+
+.qa-markdown-stream-controls {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-block: 18px;
+}
+
+.qa-markdown-stream-controls button,
+.qa-markdown-stream-controls input {
+  background: var(--session-control);
+  border: 1px solid var(--session-line);
+  border-radius: 8px;
+  color: var(--session-text);
+  min-block-size: 34px;
+  padding: 6px 10px;
+}
+
+.qa-markdown-stream-controls label {
+  color: var(--session-text-muted);
+  display: grid;
+  font-size: 11px;
+  gap: 4px;
+  min-inline-size: 220px;
+}
+
+.qa-markdown-stream-controls [role='status'] {
+  color: var(--session-text-muted);
+  font-variant-numeric: tabular-nums;
+  margin-inline-start: auto;
+}
+
+.qa-markdown-stream-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) 260px;
+}
+
+.qa-markdown-stream-stage,
+.qa-markdown-stream-results {
+  background: var(--session-panel);
+  border: 1px solid var(--session-line-soft);
+  border-radius: 10px;
+}
+
+.qa-markdown-stream-stage {
+  block-size: 68vh;
+  overflow: auto;
+  padding: 22px;
+}
+
+.qa-markdown-stream-stage .session-markdown {
+  inline-size: 100%;
+}
+
+.qa-markdown-stream-results {
+  align-self: start;
+  padding: 16px;
+  position: sticky;
+  top: 16px;
+}
+
+.qa-markdown-stream-results[data-pass='true'] {
+  border-color: color-mix(in srgb, var(--session-success) 55%, var(--session-line));
+}
+
+.qa-markdown-stream-results[data-pass='false'] {
+  border-color: color-mix(in srgb, var(--session-danger) 55%, var(--session-line));
+}
+
+.qa-markdown-stream-results h2 {
+  font-size: 14px;
+  margin-block: 0 12px;
+}
+
+.qa-markdown-stream-results dl {
+  display: grid;
+  font-size: 11px;
+  gap: 7px 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin: 0;
+}
+
+.qa-markdown-stream-results :where(dt, dd) {
+  margin: 0;
+}
+
+.qa-markdown-stream-results dt,
+.qa-markdown-stream-results small,
+.qa-markdown-stream-results p {
+  color: var(--session-text-muted);
+}
+
+.qa-markdown-stream-results dd {
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+
+.qa-markdown-stream-results small {
+  display: block;
+  margin-block-start: 14px;
+}
+
+@media (max-width: 760px) {
+  .qa-markdown-stream-page {
+    padding: 14px;
+  }
+
+  .qa-markdown-stream-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .qa-markdown-stream-results {
+    position: static;
+  }
+}

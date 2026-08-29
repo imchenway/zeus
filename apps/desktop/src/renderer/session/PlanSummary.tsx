@@ -8,14 +8,16 @@ import { SidebarSimpleIcon as SidebarSimple } from '@phosphor-icons/react/dist/c
 import { ThumbsDownIcon as ThumbsDown } from '@phosphor-icons/react/dist/csr/ThumbsDown';
 import { ThumbsUpIcon as ThumbsUp } from '@phosphor-icons/react/dist/csr/ThumbsUp';
 import type { NativeSessionItemBuffer } from './sessionTypes.js';
-import { SafeMarkdown, type SessionUiLanguage } from './ThreadItemView.js';
+import type { SessionUiLanguage } from './ThreadItemView.js';
+import { ConversationMarkdown, conversationMarkdownPhaseForStatus } from './ConversationMarkdown.js';
 
 export function PlanSummary(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage; motionActive?: boolean; panelOpen?: boolean; onOpenPanel?: (item: NativeSessionItemBuffer) => void }) {
   const [collapsed, setCollapsed] = useState(false);
   const [copied, setCopied] = useState(false);
   const [feedback, setFeedback] = useState<'good' | 'bad' | null>(null);
   const zh = props.language === 'zh-CN';
-  const streaming = props.item.status !== 'completed';
+  const phase = conversationMarkdownPhaseForStatus(props.item.status);
+  const streaming = phase === 'streaming';
   const title = streaming ? (zh ? '正在编写计划' : 'Writing plan') : zh ? '计划' : 'Plan';
   const iconButton = (label: string, child: ReactNode, onClick: () => void, pressed?: boolean) => (
     <button type="button" aria-label={label} title={label} aria-pressed={pressed} onClick={onClick}>
@@ -59,7 +61,13 @@ export function PlanSummary(props: { item: NativeSessionItemBuffer; language: Se
         ) : null}
       </header>
       {!collapsed ? (
-        <div className="session-plan-summary-content">{streaming && !props.item.text.trim() ? <span className="session-thinking-pulse" aria-hidden="true" /> : <SafeMarkdown text={props.item.text} language={props.language} />}</div>
+        <div className="session-plan-summary-content">
+          {streaming && !props.item.text.trim() ? (
+            <span className="session-thinking-pulse" aria-hidden="true" />
+          ) : (
+            <ConversationMarkdown text={props.item.text} streamId={`plan-summary:${props.item.itemId}`} phase={phase} language={props.language} />
+          )}
+        </div>
       ) : null}
     </article>
   );

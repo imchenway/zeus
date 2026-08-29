@@ -62,7 +62,8 @@ import { normalizeServiceTierSelection, selectionFromEffectiveServiceTier, servi
 import { type SessionController, type SessionControllerClient, useSessionControllerInstance, useSessionControllerSelector } from './useSessionController.js';
 import { createConversationComposerStateSelector, createConversationTranscriptStateSelector, createSessionWorkspaceStateSelector } from './sessionStateSlices.js';
 import { createSessionEscapeController, type SessionEscapeController, type SessionEscapeLayer, type SessionEscapeResult } from './useThreadScrollController.js';
-import { SafeMarkdown, type SessionUiLanguage } from './ThreadItemView.js';
+import type { SessionUiLanguage } from './ThreadItemView.js';
+import { ConversationMarkdown } from './ConversationMarkdown.js';
 import { autosizeTextarea } from './textareaAutosize.js';
 import { conversationAttachmentIdentity, ConversationComposerAttachments } from './ConversationComposerAttachments.js';
 import { ContextUsageIndicator } from './ContextUsageIndicator.js';
@@ -2389,7 +2390,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
               {(props.legacyMessages?.[props.conversation.legacySourceConversationId ?? props.conversation.id] ?? []).map((message) => (
                 <article key={message.id} className={`session-legacy-message session-legacy-message-${message.role}`}>
                   <strong>{message.role}</strong>
-                  <SafeMarkdown text={message.content} language={props.language} />
+                  <ConversationMarkdown text={message.content} streamId={`legacy:${props.conversation!.id}:${message.id}`} phase="final" language={props.language} />
                 </article>
               ))}
             </section>

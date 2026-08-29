@@ -5301,6 +5301,83 @@
   }
 }
 
+/* ZEUS-0367：会话 Markdown 由 markstream-react 增量挂载，外层会话视口继续负责虚拟化。 */
+.session-codex-parity-v1 .session-conversation-markdown > .markstream-react.markdown-renderer {
+  color: inherit;
+  contain: layout;
+  contain-intrinsic-size: auto;
+  content-visibility: visible;
+  font: inherit;
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-conversation-markdown .node-slot,
+.session-codex-parity-v1 .session-conversation-markdown .node-content {
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-conversation-markdown .node-placeholder {
+  background: var(--session-working-soft);
+  border-radius: 6px;
+  min-block-size: 10px;
+  opacity: 0.72;
+}
+
+.session-codex-parity-v1 .session-conversation-markdown .node-placeholder::before {
+  background: linear-gradient(90deg, transparent 0%, var(--session-working-halo) 46%, transparent 74%);
+}
+
+.session-codex-parity-v1 .session-conversation-markdown .paragraph-node:first-child,
+.session-codex-parity-v1 .session-conversation-markdown .heading-node:first-child {
+  margin-block-start: 0;
+}
+
+.session-codex-parity-v1 .session-conversation-markdown .paragraph-node:last-child,
+.session-codex-parity-v1 .session-conversation-markdown .node-slot:last-child > :last-child {
+  margin-block-end: 0;
+}
+
+.session-codex-parity-v1 .session-conversation-markdown .session-code-block {
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-conversation-markdown .session-code-block > pre {
+  margin-block: 0 12px;
+}
+
+.session-codex-parity-v1 .session-conversation-markdown .session-markdown-code-truncated {
+  color: var(--session-text-muted);
+  display: block;
+  margin-block: -6px 12px;
+}
+
+.session-codex-parity-v1 .session-conversation-markdown .session-markdown-math-plain {
+  color: inherit;
+  font: inherit;
+  white-space: pre-wrap;
+}
+
+.session-codex-parity-v1 .session-conversation-markdown .session-markdown-complexity-truncated {
+  color: var(--session-text-muted);
+  font-size: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-codex-parity-v1 .session-conversation-markdown .node-placeholder::before,
+  .session-codex-parity-v1 .session-conversation-markdown .table-node--loading tbody td::after,
+  .session-codex-parity-v1 .session-conversation-markdown .html-block-node__placeholder-bar::before,
+  .session-codex-parity-v1 .session-conversation-markdown .skeleton-line::before {
+    animation: none !important;
+  }
+
+  .session-codex-parity-v1 .session-conversation-markdown :where(.transition, .transition-all, .transition-colors, .text-node-stream-delta) {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
 /* TASK-20260822-004：复刻 Codex 的轮次操作组；摘要保持一行，展开后显示明细和图片缩略图。 */
 .session-codex-parity-v1 .session-activity-group > details > summary {
   justify-content: flex-start;
@@ -7013,15 +7090,15 @@
   flex: 1 1 auto;
   min-block-size: 0;
   overflow: auto;
-    padding: 34px clamp(20px, 2.4vw, 36px) 68px;
+  padding: 34px clamp(20px, 2.4vw, 36px) 68px;
 }
 
 .session-codex-parity-v1 .session-source-markdown-scroll > .session-markdown {
   font-size: 15px;
-    inline-size: 100%;
+  inline-size: 100%;
   line-height: 25px;
   margin-inline: auto;
-    max-inline-size: 64rem;
+  max-inline-size: 64rem;
 }
 
 .session-codex-parity-v1 .session-image-preview {
@@ -13931,11 +14008,11 @@
 }
 
 .session-codex-parity-v1 .session-turn-duration[data-status='interrupted'] > p {
-    color: var(--session-warning);
+  color: var(--session-warning);
 }
 
 .session-codex-parity-v1 .session-turn-duration[data-status='failed'] > p {
-    color: var(--session-danger);
+  color: var(--session-danger);
 }
 
 .session-codex-parity-v1 .session-turn-duration::before,
@@ -14008,19 +14085,19 @@
 
 /* 每条用户可见的中间摘要都是单轮处理过程内部的阶段锚点；顶层始终只有一个折叠入口。 */
 .session-codex-parity-v1 .session-turn-process-stage {
-    display: grid;
-    gap: 6px;
-    min-inline-size: 0;
+  display: grid;
+  gap: 6px;
+  min-inline-size: 0;
 }
 
 .session-codex-parity-v1 .session-turn-process-stage + .session-turn-process-stage {
-    margin-block-start: 10px;
+  margin-block-start: 10px;
 }
 
 .session-codex-parity-v1 .session-turn-stage-summary {
   display: grid;
-    inline-size: 100%;
-    margin-inline: 0;
+  inline-size: 100%;
+  margin-inline: 0;
   min-inline-size: 0;
 }
 
