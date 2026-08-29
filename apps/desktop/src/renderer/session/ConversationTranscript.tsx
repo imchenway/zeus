@@ -53,6 +53,7 @@ export interface ConversationTranscriptProps {
   onOpenSideChat?: (selectedText: string) => void;
   onLoadEarlierHistory?: () => void | Promise<void>;
   onLoadTurnProcess?: (turnId: string) => void | Promise<void>;
+  onLoadConversationResources?: () => void | Promise<void>;
   onLoadTurnArtifacts?: (turnId: string) => void | Promise<void>;
   onLoadV2Content?: (handle: string) => Promise<void>;
   onLoadV2ToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage>;
@@ -337,6 +338,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     onOpenSideChat: useStableOptionalCallback(props.onOpenSideChat),
     onLoadEarlierHistory: useStableOptionalCallback(props.onLoadEarlierHistory),
     onLoadTurnProcess: useStableOptionalCallback(props.onLoadTurnProcess),
+    onLoadConversationResources: useStableOptionalCallback(props.onLoadConversationResources),
     onLoadTurnArtifacts: useStableOptionalCallback(props.onLoadTurnArtifacts),
     onLoadV2Content: useStableOptionalCallback(props.onLoadV2Content),
     onLoadV2ToolResult: useStableOptionalCallback(props.onLoadV2ToolResult),
@@ -344,27 +346,29 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   };
   const itemNeedingImageResources = useMemo(() => items.find(itemNeedsImageResources) ?? null, [items]);
   const resourcePaging = props.state.snapshot?.v2Paging?.resources;
+  const assistantDeliverablesAvailable = Boolean(props.state.snapshot?.snapshotV2?.collections.resources.assistantDeliverablesAvailable);
   useEffect(() => {
-    const loadTurnArtifacts = renderProps.onLoadTurnArtifacts;
+    const loadConversationResources = renderProps.onLoadConversationResources ?? (itemNeedingImageResources && renderProps.onLoadTurnArtifacts ? () => renderProps.onLoadTurnArtifacts?.(itemNeedingImageResources.turnId) : undefined);
+    const assistantDeliverablesNeedLoading = Boolean(assistantDeliverablesAvailable && resourcePaging && (!resourcePaging.loaded || resourcePaging.hasMore));
     // 资源补齐后解除本次尝试锁。若后续权威快照异常丢失展示资源，可再次自愈；
     // 真正失败且状态未变化时仍保留尝试键，避免无界重试。
-    if (!itemNeedingImageResources) {
+    if (!itemNeedingImageResources && !assistantDeliverablesNeedLoading) {
       automaticResourceLoadAttemptRef.current = null;
       return;
     }
     // 渐进水合会先投影可读正文，再发布完整交互快照。若在 hydrating 阶段读取，
     // 连接代次切换会丢弃该页且相同正文不会再触发一次；必须等权威水合完成。
-    if (props.state.transportState !== 'ready' || !loadTurnArtifacts || !resourcePaging || resourcePaging.loading) return;
+    if (props.state.transportState !== 'ready' || !loadConversationResources || !resourcePaging || resourcePaging.loading) return;
     // 首次调用可能先取得资源页、后取得带 providerItemId 的正文。把资源页代次和
     // Provider item 身份都纳入尝试键，允许第二次只执行内存合并，但仍禁止无界重试。
-    const attemptKey = `${props.state.conversationId}:${itemNeedingImageResources.turnId}:${itemNeedingImageResources.providerItemId ?? itemNeedingImageResources.key}:${resourcePaging.loaded}:${resourcePaging.hasMore}:${resourcePaging.nextCursor ?? 'end'}:${resourcePaging.items.length}`;
+    const attemptKey = `${props.state.conversationId}:${assistantDeliverablesAvailable ? 'assistant-deliverables' : 'ordinary-resources'}:${itemNeedingImageResources?.turnId ?? 'conversation'}:${itemNeedingImageResources?.providerItemId ?? itemNeedingImageResources?.key ?? 'none'}:${resourcePaging.loaded}:${resourcePaging.hasMore}:${resourcePaging.nextCursor ?? 'end'}:${resourcePaging.items.length}`;
     if (automaticResourceLoadAttemptRef.current === attemptKey) return;
     automaticResourceLoadAttemptRef.current = attemptKey;
     // Markdown 图片和已持久用户附件都属于正文，不应要求用户先展开“处理过程”
     // 才能取得资源元数据。
     // 失败保留现有占位与手动重试入口，避免 React 重渲染形成无界请求循环。
-    void Promise.resolve(loadTurnArtifacts(itemNeedingImageResources.turnId)).catch(() => undefined);
-  }, [itemNeedingImageResources, props.state.conversationId, props.state.transportState, renderProps.onLoadTurnArtifacts, resourcePaging]);
+    void Promise.resolve(loadConversationResources()).catch(() => undefined);
+  }, [assistantDeliverablesAvailable, itemNeedingImageResources, props.state.conversationId, props.state.transportState, renderProps.onLoadConversationResources, resourcePaging]);
   const loadEarlierHistoryWithAnchor = useCallback(async (): Promise<void> => {
     const loadEarlier = renderProps.onLoadEarlierHistory;
     const container = containerRef.current;

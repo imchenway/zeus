@@ -10,9 +10,13 @@ import { PendingRequestSurface } from '../src/renderer/session/PendingRequestSur
 import { type ConversationTreeRuntimeState, type ProjectConversationGroup, ProjectConversationTree } from '../src/renderer/session/ProjectConversationTree.js';
 import type {
   CodexTaskPushCapabilities,
+  CodexConversationCapabilities,
   NativeConversationAttachment,
   NativeConversationChoice,
+  NativeConversationResourceV2Item,
   NativeConversationSnapshot,
+  NativeConversationSnapshotV2,
+  NativeConversationSnapshotV2Page,
   NativePendingRequest,
   NativeQueuedSubmission,
   NativeRuntimeDetailsSnapshot,
@@ -26,14 +30,15 @@ import { ConversationMarkdown } from '../src/renderer/session/ConversationMarkdo
 import { ConversationTranscript } from '../src/renderer/session/ConversationTranscript.js';
 import { BrowserWorkspace } from '../src/renderer/session/BrowserWorkspace.js';
 import { ConversationComposer } from '../src/renderer/session/ConversationComposer.js';
+import { SessionWorkspace } from '../src/renderer/session/SessionWorkspace.js';
 import { PlanSummary } from '../src/renderer/session/PlanSummary.js';
 import { RuntimeDetails } from '../src/renderer/session/RuntimeDetails.js';
 import { SubagentWorkspace } from '../src/renderer/session/SubagentWorkspace.js';
 import { defaultSourceWorkspaceViewMode, SourceWorkspace } from '../src/renderer/session/SourceWorkspace.js';
 import { SessionPlanProgress } from '../src/renderer/session/SessionActivity.js';
-import { createInitialSessionState, sessionReducer } from '../src/renderer/session/sessionReducer.js';
+import { createHydratedSessionState, createInitialSessionState, sessionReducer } from '../src/renderer/session/sessionReducer.js';
 import { createSessionController, type SessionControllerClient } from '../src/renderer/session/useSessionController.js';
-import { reconcileConversationHistoryCache } from '../src/renderer/session/conversationSnapshotV2Adapter.js';
+import { adaptConversationSnapshotV2, reconcileConversationHistoryCache } from '../src/renderer/session/conversationSnapshotV2Adapter.js';
 import { resolveNativeConversationSelectionPresentation } from '../src/renderer/features/workspace/workspaceSupport.js';
 import { ApplicationErrorDialogHost, reportApplicationError, VisibleApplicationError } from '../src/renderer/ui/ApplicationErrorDialog.js';
 import type { TaskRecord } from '../src/renderer/apiClient.js';
@@ -2096,6 +2101,363 @@ function CompleteMessageQaApp() {
   );
 }
 
+const zeus0388ConversationId = 'zeus-0388-history-conversation';
+const zeus0388LocalTurnId = 'zeus-0388-local-turn';
+const zeus0388ProviderTurnId = 'zeus-0388-provider-turn';
+const zeus0388Choice: NativeConversationChoice = {
+  ...conversation(zeus0388ConversationId, 'task-zeus-0388', '2026-08-29T04:00:00.000Z'),
+  title: '会话附件与历史续聊',
+};
+const zeus0388SnapshotV2: NativeConversationSnapshotV2 = {
+  schemaVersion: 2,
+  structureGeneration: '2026-08-21-conversation-snapshot-v2',
+  conversationSchemaGeneration: '2026-08-16-unified-conversation-segments',
+  throughEventSeq: 8,
+  eventStreamGeneration: 'zeus-conversation-sync-v2',
+  conversation: {
+    id: zeus0388ConversationId,
+    projectId: 'project-zeus',
+    taskId: 'task-zeus-0388',
+    title: '会话附件与历史续聊',
+    titleRedacted: false,
+    status: 'starting',
+    stage: 'completed',
+    stageUpdatedAt: '2026-08-29T04:00:00.000Z',
+    archived: false,
+    transportKind: 'codex_native',
+    providerState: 'ready',
+    providerModel: 'gpt-5.6-sol',
+    providerSettings: { model: 'gpt-5.6-sol', effort: 'xhigh' },
+    nextTurnSettings: { model: 'gpt-5.6-sol', effort: 'xhigh', permissionMode: 'auto', collaborationMode: 'default' },
+    agentKind: 'codex',
+    createdAt: '2026-08-29T03:30:00.000Z',
+    updatedAt: '2026-08-29T04:00:00.000Z',
+  },
+  openSegment: null,
+  activeTurn: null,
+  recentClosedTurns: [
+    {
+      id: zeus0388LocalTurnId,
+      providerTurnId: zeus0388ProviderTurnId,
+      submissionId: null,
+      status: 'completed',
+      hasError: false,
+      hasPlan: false,
+      plan: null,
+      startedAt: '2026-08-29T03:45:00.000Z',
+      completedAt: '2026-08-29T03:59:00.000Z',
+      createdAt: '2026-08-29T03:45:00.000Z',
+      updatedAt: '2026-08-29T03:59:00.000Z',
+      agentKind: 'codex',
+      openingUserMessage: null,
+      process: { available: true, latestSequence: 4 },
+      resourcesAvailable: true,
+      changeSetAvailable: false,
+    },
+  ],
+  sessionMetrics: null,
+  collections: {
+    timeline: { throughSequence: 8 },
+    modelHistory: { throughSequence: 2 },
+    process: { throughSequence: 4 },
+    resources: { available: true, assistantDeliverablesAvailable: true },
+  },
+  limits: { closedTurnLimit: 8, byteLimit: 96 * 1024, returnedTurnCount: 1, responseBytes: 2_048 },
+};
+const zeus0388HistoryPage: NativeConversationSnapshotV2Page<import('../src/renderer/session/sessionTypes.js').NativeConversationModelHistoryV2Item> = {
+  schemaVersion: 2,
+  structureGeneration: '2026-08-21-conversation-snapshot-v2',
+  conversationId: zeus0388ConversationId,
+  kind: 'model_history',
+  throughEventSeq: 8,
+  throughSequence: 2,
+  items: [
+    {
+      id: 'zeus-0388-final-answer',
+      sequence: 2,
+      turnId: zeus0388LocalTurnId,
+      submissionId: null,
+      clientUserMessageId: null,
+      providerItemId: 'zeus-0388-final-answer-provider-item',
+      reasoningSummary: false,
+      phase: 'final_answer',
+      segmentId: 'zeus-0388-segment',
+      role: 'assistant',
+      toolPairId: null,
+      confirmedAt: '2026-08-29T03:59:00.000Z',
+      content: {
+        preview: '已完成三张原型图。请选择 1、2、3，或告诉我希望组合哪些部分。',
+        byteLength: 96,
+        truncated: false,
+        redacted: false,
+        contentHandle: null,
+        refreshRequired: false,
+      },
+      toolResult: null,
+    },
+  ],
+  hasMore: false,
+  nextCursor: null,
+  limits: { entryLimit: 48, byteLimit: 96 * 1024, returnedItems: 1, responseBytes: 512 },
+};
+const zeus0388ResourcePage: NativeConversationSnapshotV2Page<NativeConversationResourceV2Item> = {
+  schemaVersion: 2,
+  structureGeneration: '2026-08-21-conversation-snapshot-v2',
+  conversationId: zeus0388ConversationId,
+  kind: 'resources',
+  throughEventSeq: 8,
+  throughSequence: 0,
+  items: [
+    ...Array.from(
+      { length: 3 },
+      (_, index): NativeConversationResourceV2Item => ({
+        id: `zeus-0388-deliverable-${index + 1}`,
+        turnId: zeus0388LocalTurnId,
+        itemId: `zeus-0388-image-generation-${index + 1}`,
+        sourceIndex: 0,
+        kind: 'attachment',
+        presentation: 'card',
+        displayName: `原型图 ${index + 1}`,
+        mimeType: 'image/png',
+        previewKind: 'image',
+        iconKind: 'image',
+        attachmentRef: `zeus-0388-prototype-${index + 1}`,
+        taskPushAttachmentKey: null,
+        origin: 'provider_generated_image',
+        delivery: 'assistant',
+        createdAt: `2026-08-29T03:5${index}:00.000Z`,
+        updatedAt: `2026-08-29T03:5${index}:00.000Z`,
+        accessPolicy: 'authorized_open_intent_or_preview',
+      }),
+    ),
+    {
+      id: 'zeus-0388-ordinary-image-view',
+      turnId: zeus0388LocalTurnId,
+      itemId: 'zeus-0388-image-view-item',
+      sourceIndex: 0,
+      kind: 'attachment',
+      presentation: 'card',
+      displayName: '普通处理过程截图',
+      mimeType: 'image/png',
+      previewKind: 'image',
+      iconKind: 'image',
+      attachmentRef: 'zeus-0388-image-view',
+      taskPushAttachmentKey: null,
+      origin: 'provider_image_view',
+      delivery: null,
+      createdAt: '2026-08-29T03:58:30.000Z',
+      updatedAt: '2026-08-29T03:58:30.000Z',
+      accessPolicy: 'authorized_open_intent_or_preview',
+    },
+  ],
+  hasMore: false,
+  nextCursor: null,
+  limits: { entryLimit: 32, byteLimit: 64 * 1024, returnedItems: 4, responseBytes: 2_048 },
+};
+const zeus0388InitialSnapshot = adaptConversationSnapshotV2({
+  snapshot: zeus0388SnapshotV2,
+  history: zeus0388HistoryPage,
+  queue: { state: { type: 'idle' }, submissions: [] },
+  requests: [],
+  planImplementationRequests: [],
+  choice: zeus0388Choice,
+  goal: { goal: null, timeline: [], capability: { supported: false, enabled: false, stage: null, reason: 'unverified' } },
+});
+const zeus0388InitialSessionState = createHydratedSessionState(zeus0388InitialSnapshot);
+const zeus0388Attachment: NativeConversationAttachment = {
+  name: '续聊附件.png',
+  mime: 'image/png',
+  size: 68,
+  kind: 'image',
+  source: 'picker',
+  uploadRef: 'zeus-0388-qa-attachment',
+};
+const zeus0388RecoveredSubmission: NativeQueuedSubmission = {
+  id: 'zeus-0388-recovered-submission',
+  conversationId: zeus0388ConversationId,
+  content: '重启前尚未确认的消息',
+  status: 'paused',
+  delivery: 'queue',
+  position: 0,
+  providerTurnId: null,
+  pausedReason: 'recovered_unsent',
+  createdAt: '2026-08-29T04:01:00.000Z',
+  updatedAt: '2026-08-29T04:01:00.000Z',
+};
+const zeus0388Capabilities: CodexConversationCapabilities = {
+  generationId: 'zeus-0388-qa-capabilities',
+  initializedAt: '2026-08-29T04:00:00.000Z',
+  projectId: 'project-zeus',
+  preferredModel: 'gpt-5.6-sol',
+  models: [
+    {
+      id: 'gpt-5.6-sol',
+      model: 'gpt-5.6-sol',
+      displayName: 'GPT-5.6 Sol',
+      agentKind: 'codex',
+      available: true,
+      supportedReasoningEfforts: ['high', 'xhigh'],
+      defaultReasoningEffort: 'xhigh',
+      serviceTiers: [],
+    },
+    {
+      id: 'gpt-5.6-luna',
+      model: 'gpt-5.6-luna',
+      displayName: 'GPT-5.6 Luna',
+      agentKind: 'codex',
+      available: true,
+      supportedReasoningEfforts: ['medium', 'high'],
+      defaultReasoningEffort: 'medium',
+      serviceTiers: [],
+    },
+  ],
+  codexAccount: {
+    generationId: 'zeus-0388-qa-account',
+    requiresOpenaiAuth: false,
+    signedIn: true,
+    accountType: 'chatgpt',
+    planType: 'qa',
+  },
+};
+
+function Zeus0388QaApp() {
+  const [resourceRequests, setResourceRequests] = useState(0);
+  const [submitCount, setSubmitCount] = useState(0);
+  const [historyTransitions, setHistoryTransitions] = useState(0);
+  const [settingsChanges, setSettingsChanges] = useState(0);
+  const [historyOnly, setHistoryOnly] = useState(true);
+  const [guard, setGuard] = useState<'writable' | 'archived' | 'explicit-readonly' | 'nonresumable' | 'processing' | 'task-ended' | 'recovered'>('writable');
+  const controller = useMemo(
+    () =>
+      createSessionController({
+        client: {
+          async loadNativeConversationResourcesV2() {
+            setResourceRequests((count) => count + 1);
+            return zeus0388ResourcePage;
+          },
+        } as unknown as SessionControllerClient,
+        projectId: 'project-zeus',
+        conversationId: zeus0388ConversationId,
+        initialCachedState: zeus0388InitialSessionState,
+        storage: { getItem: () => null, setItem: () => undefined, removeItem: () => undefined },
+      }),
+    [],
+  );
+  const state = useSyncExternalStore(controller.subscribe, controller.getState, controller.getState);
+  useEffect(() => () => controller.dispose(), [controller]);
+
+  const visibleConversation = {
+    ...zeus0388Choice,
+    archived: guard === 'archived',
+    readOnly: guard === 'explicit-readonly',
+    resumable: guard !== 'nonresumable',
+  };
+  // QA 直接注入已经水合的历史快照，不建立真实 socket；用 ready 表达本地快照可读，
+  // 使资源自动加载 effect 与正式历史工作面保持同一前置条件。
+  const hydratedHistoryState = { ...state, transportState: 'ready' as const };
+  const visibleState =
+    guard === 'recovered'
+      ? {
+          ...hydratedHistoryState,
+          queue: { state: { type: 'paused' as const, reason: 'recovered_unsent' as const }, waitReason: 'recovered_unsent' as const, submissions: [zeus0388RecoveredSubmission] },
+        }
+      : guard === 'processing'
+        ? { ...hydratedHistoryState, conversationState: 'waiting_user_input' as const }
+        : hydratedHistoryState;
+  const taskEndedGate =
+    guard === 'task-ended'
+      ? {
+          title: '此任务已结束，会话当前为只读',
+          description: '重新打开任务后才能继续对话。',
+          actionLabel: '重新打开任务并继续',
+          onAction: () => undefined,
+        }
+      : undefined;
+  const deliverableItems = Object.values(state.items).filter((item) => item.resources.some((resource) => resource.delivery === 'assistant'));
+  const ordinaryImageViewProjected = Object.values(state.items).some((item) => item.resources.some((resource) => resource.id === 'zeus-0388-ordinary-image-view'));
+
+  const selectGuard = (next: typeof guard): void => {
+    setGuard(next);
+    setHistoryOnly(true);
+  };
+
+  return (
+    <main className="macos-ai-app zeus-shell qa-page qa-motion-page" data-testid="zeus-0388-qa">
+      <header className="qa-heading">
+        <p>ZEUS-0388 · Snapshot V2 交付附件与历史续聊</p>
+        <h1>冷历史恢复正式附件，输入区按真实写权限启用</h1>
+      </header>
+      <section className="qa-motion-theme session-codex-parity-v1 theme-light" data-testid="zeus-0388-evidence">
+        <div className="qa-motion-fixture-actions">
+          <button type="button" onClick={() => selectGuard('writable')}>
+            可续接历史
+          </button>
+          <button type="button" onClick={() => selectGuard('archived')}>
+            归档会话
+          </button>
+          <button type="button" onClick={() => selectGuard('explicit-readonly')}>
+            显式只读
+          </button>
+          <button type="button" onClick={() => selectGuard('nonresumable')}>
+            不可续接
+          </button>
+          <button type="button" onClick={() => selectGuard('processing')}>
+            请求处理中
+          </button>
+          <button type="button" onClick={() => selectGuard('task-ended')}>
+            任务结束
+          </button>
+          <button type="button" onClick={() => selectGuard('recovered')}>
+            待恢复消息
+          </button>
+        </div>
+        <output data-testid="zeus-0388-resource-evidence">
+          资源请求 {resourceRequests} 次 · 助手交付项 {deliverableItems.length} 个 · 普通过程图片未提升 {ordinaryImageViewProjected ? '失败' : '通过'}
+        </output>
+        <output data-testid="zeus-0388-compose-evidence">
+          {historyOnly ? '历史快照' : '交互模式'} · 首次切换 {historyTransitions} 次 · 发送 {submitCount} 次 · 配置变更 {settingsChanges} 次 · 输入附件 {visibleState.attachments.length} 个 · 门禁 {guard}
+        </output>
+      </section>
+      <section className="qa-implementation-panel" style={{ blockSize: 920 }} data-testid="zeus-0388-workspace">
+        <SessionWorkspace
+          language="zh-CN"
+          state={visibleState}
+          conversation={visibleConversation}
+          task={null}
+          owner={{ kind: 'project', projectId: 'project-zeus', projectName: 'Zeus' }}
+          capabilities={zeus0388Capabilities}
+          historyOnly={historyOnly}
+          suppressComposer={guard === 'task-ended'}
+          readOnlyGate={taskEndedGate}
+          quickActionsSuppressed
+          actions={{
+            onDraftChange: (draft) => controller.setDraft(draft),
+            onSubmit: () => {
+              setSubmitCount((count) => count + 1);
+              setHistoryOnly((current) => {
+                if (current) setHistoryTransitions((count) => count + 1);
+                return false;
+              });
+              controller.setDraft('');
+            },
+            onChooseAttachments: () => controller.setAttachments([...state.attachments, zeus0388Attachment]),
+            onRemoveAttachment: (attachment) => controller.setAttachments(state.attachments.filter((candidate) => candidate !== attachment)),
+            onNextTurnSettingsChange: () => setSettingsChanges((count) => count + 1),
+            onLoadConversationResources: () => controller.loadConversationResources(),
+            onLoadResourcePreview: async (resource) => ({
+              kind: 'image',
+              resource: resource as Extract<ConversationResource, { kind: 'attachment' }>,
+              mimeType: 'image/png',
+              dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+              byteLength: 68,
+            }),
+          }}
+        />
+      </section>
+    </main>
+  );
+}
+
 function SubagentTranscriptPreview() {
   const [fullWidth, setFullWidth] = useState(false);
   return (
@@ -2946,6 +3308,7 @@ const sourcePreviewQa = new URLSearchParams(window.location.search).has('source-
 const markdownStreamQa = new URLSearchParams(window.location.search).has('markdown-stream');
 const timeoutRetryQa = new URLSearchParams(window.location.search).has('timeout-retry');
 const completeMessageQa = new URLSearchParams(window.location.search).has('complete-message');
+const zeus0388Qa = new URLSearchParams(window.location.search).has('zeus0388');
 // 开发态热更新复用同一根节点，避免视觉验收页重复挂载并制造无关控制台错误。
 const qaRoot = window.__zeusSessionStylesRoot ?? createRoot(document.getElementById('root')!);
 window.__zeusSessionStylesRoot = qaRoot;
@@ -2962,6 +3325,8 @@ qaRoot.render(
     <TimeoutRetryQaApp />
   ) : completeMessageQa ? (
     <CompleteMessageQaApp />
+  ) : zeus0388Qa ? (
+    <Zeus0388QaApp />
   ) : motionQa ? (
     <MotionApp />
   ) : (

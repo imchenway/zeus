@@ -19,6 +19,7 @@ import {
   type NativeConversationSnapshot,
   type NativeConversationSnapshotV2,
   type NativeConversationSnapshotV2Page,
+  type NativeItemSnapshot,
   type NativeConversationToolResultPage,
   type NativeGoalResponse,
   type NativeNextTurnSettings,
@@ -315,6 +316,7 @@ export interface SessionController {
   setNextTurnSettings(settings: NativeNextTurnSettings): Promise<NativeNextTurnSettings>;
   loadEarlierHistory(): Promise<void>;
   loadTurnProcess(turnId: string): Promise<void>;
+  loadConversationResources(): Promise<void>;
   loadTurnArtifacts(turnId: string): Promise<void>;
   loadV2Content(handle: string): Promise<void>;
   loadV2ToolResult(handle: string, offset?: number): Promise<NativeConversationToolResultPage>;
@@ -2223,6 +2225,12 @@ export function createSessionController(options: CreateSessionControllerOptions)
     }
   }
 
+  async function loadConversationResourcesV2(): Promise<void> {
+    // 资源页属于整个会话。传入不存在的轮次身份可复用同一套分页、并发保护和
+    // 资源挂接逻辑，同时不会触发任何轮次 change set 读取。
+    await loadTurnArtifactsV2('__conversation_resources__');
+  }
+
   const controller: SessionController = {
     start() {
       if (state.transportState === 'ready') return Promise.resolve();
@@ -2682,6 +2690,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     },
     loadEarlierHistory: loadEarlierHistoryV2,
     loadTurnProcess: loadTurnProcessV2,
+    loadConversationResources: loadConversationResourcesV2,
     loadTurnArtifacts: loadTurnArtifactsV2,
     loadV2Content: loadCompleteModelContentV2,
     loadV2ToolResult(handle, offset) {
@@ -2746,7 +2755,7 @@ const conversationFileIconKinds = new Set<ConversationFileIconKind>(['code', 'ja
 
 async function attachV2ResourcesToSnapshot(snapshot: NativeConversationSnapshot, metadata: NativeConversationResourceV2Item[]): Promise<NativeConversationSnapshot> {
   const providerThreadId = snapshot.providerThreadId;
-  if (!providerThreadId || metadata.length === 0 || !globalThis.crypto?.subtle) return snapshot;
+  if (metadata.length === 0) return snapshot;
   const resourcesByItemId = new Map<string, ConversationResource[]>();
   const projectedResources: ConversationResource[] = [];
   for (const item of metadata) {
@@ -2757,27 +2766,80 @@ async function attachV2ResourcesToSnapshot(snapshot: NativeConversationSnapshot,
     resources.push(resource);
     resourcesByItemId.set(item.itemId, resources);
   }
+  const canResolveProviderStateId = Boolean(providerThreadId && globalThis.crypto?.subtle);
   const projectedItemIds = await Promise.all(
     snapshot.items.map(async (item) => ({
       item,
-      providerStateId: item.providerItemId ? await conversationProviderItemStateId(providerThreadId, item.providerItemId) : null,
+      providerStateId: canResolveProviderStateId && item.providerItemId ? await conversationProviderItemStateId(providerThreadId!, item.providerItemId) : null,
     })),
   );
+  const actualDeliveryItemIds = new Set<string>();
+  for (const { item, providerStateId } of projectedItemIds) {
+    if (syntheticAssistantDeliverableItemId(item)) continue;
+    const resourceItemId = providerStateId ?? (resourcesByItemId.has(item.id) ? item.id : null);
+    if (resourceItemId && resourcesByItemId.get(resourceItemId)?.some((resource) => resource.delivery === 'assistant')) actualDeliveryItemIds.add(resourceItemId);
+  }
   let changed = false;
-  const items = projectedItemIds.map(({ item, providerStateId }) => {
-    const exactResources = providerStateId ? resourcesByItemId.get(providerStateId) : undefined;
+  const syntheticDeliveryItemIds = new Set<string>();
+  const items = projectedItemIds.flatMap(({ item, providerStateId }) => {
+    const syntheticItemId = syntheticAssistantDeliverableItemId(item);
+    if (syntheticItemId && actualDeliveryItemIds.has(syntheticItemId)) {
+      changed = true;
+      return [];
+    }
+    if (syntheticItemId) syntheticDeliveryItemIds.add(syntheticItemId);
+    const exactItemId = providerStateId ?? syntheticItemId ?? (resourcesByItemId.has(item.id) ? item.id : null);
+    const exactResources = exactItemId ? resourcesByItemId.get(exactItemId) : undefined;
     // 本地持久用户消息可能没有 providerItemId，而 Provider 会为同一附件生成一个或
     // 多个别名 item。此时按同轮次的耐久附件身份回接，不能退回 payload.localPath；
     // 后者在 Test 数据根、迁移或历史 Worktree 清理后不再是可授权读取入口。
     const attachmentResources = conversationResourcesMatchingItemAttachments(item, projectedResources);
     const resources = dedupeById([...(exactResources ?? []), ...attachmentResources]);
-    if (!resources?.length) return item;
+    if (!resources?.length) return [item];
     const merged = dedupeById([...(item.resources ?? []), ...resources]);
-    if (merged.length === (item.resources?.length ?? 0)) return item;
+    const currentResources = new Map((item.resources ?? []).map((resource) => [resource.id, resource]));
+    const resourcesChanged = merged.length !== currentResources.size || merged.some((resource) => currentResources.get(resource.id)?.delivery !== resource.delivery);
+    if (!resourcesChanged) return [item];
     changed = true;
-    return { ...item, resources: merged };
+    return [{ ...item, resources: merged }];
   });
-  return changed ? { ...snapshot, items } : snapshot;
+  for (const [itemId, resources] of resourcesByItemId) {
+    const deliverables = resources.filter((resource) => resource.delivery === 'assistant');
+    if (deliverables.length === 0 || actualDeliveryItemIds.has(itemId) || syntheticDeliveryItemIds.has(itemId)) continue;
+    items.push(syntheticAssistantDeliverableItem(snapshot, itemId, deliverables));
+    changed = true;
+  }
+  return changed ? { ...snapshot, items: items.sort(compareV2ResourceItems) } : snapshot;
+}
+
+function syntheticAssistantDeliverableItemId(item: NativeItemSnapshot): string | null {
+  return typeof item.payload.v2SyntheticAssistantDeliverableItemId === 'string' ? item.payload.v2SyntheticAssistantDeliverableItemId : null;
+}
+
+function syntheticAssistantDeliverableItem(snapshot: NativeConversationSnapshot, itemId: string, resources: ConversationResource[]): NativeItemSnapshot {
+  const orderedResources = [...resources].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+  const first = orderedResources[0]!;
+  const last = orderedResources[orderedResources.length - 1]!;
+  const turnId = snapshot.turns.find((turn) => turn.id === first.turnId)?.providerTurnId ?? first.turnId;
+  const imageOnly = orderedResources.every((resource) => (resource.kind === 'attachment' && resource.previewKind === 'image') || ('mimeType' in resource && resource.mimeType?.startsWith('image/')));
+  return {
+    id: itemId,
+    turnId,
+    providerItemId: null,
+    type: imageOnly ? 'imageGeneration' : 'assistantDeliverable',
+    status: 'completed',
+    phase: 'prework',
+    text: '',
+    payload: { v2SyntheticAssistantDeliverableItemId: itemId },
+    resources: orderedResources,
+    startedAt: first.createdAt,
+    completedAt: last.updatedAt,
+    updatedAt: last.updatedAt,
+  };
+}
+
+function compareV2ResourceItems(left: NativeItemSnapshot, right: NativeItemSnapshot): number {
+  return (left.startedAt ?? left.updatedAt).localeCompare(right.startedAt ?? right.updatedAt) || left.id.localeCompare(right.id);
 }
 
 async function conversationProviderItemStateId(providerThreadId: string, providerItemId: string): Promise<string> {
@@ -2796,6 +2858,7 @@ function conversationResourceFromV2Metadata(snapshot: NativeConversationSnapshot
     turnId: item.turnId,
     itemId: item.itemId,
     presentation,
+    ...(item.delivery === 'assistant' ? { delivery: 'assistant' as const } : {}),
     displayName: item.displayName,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,

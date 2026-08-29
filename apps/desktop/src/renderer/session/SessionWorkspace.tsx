@@ -194,6 +194,7 @@ export interface SessionWorkspaceActions {
   onOperateTurnChangeSet?: (changeSet: TurnChangeSet, action: 'undo' | 'reapply') => Promise<TurnChangeSetOperationResult>;
   onLoadEarlierHistory?: () => void | Promise<void>;
   onLoadTurnProcess?: (turnId: string) => void | Promise<void>;
+  onLoadConversationResources?: () => void | Promise<void>;
   onLoadTurnArtifacts?: (turnId: string) => void | Promise<void>;
   onLoadV2Content?: (handle: string) => Promise<void>;
   onLoadV2ToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage>;
@@ -288,7 +289,7 @@ export interface ConnectedSessionWorkspaceProps {
   localActions?: SessionWorkspaceActions;
   creationStatus?: SessionWorkspaceProps['creationStatus'];
   suppressComposer?: boolean;
-  /** 侧边栏既有会话只展示持久记录，不恢复操作面或实时订阅。 */
+  /** 侧边栏既有会话先读取持久记录；可续接会话首次发送时再恢复实时订阅。 */
   historyOnly?: boolean;
   stableConversationId?: string;
   onStartConversation?: SessionWorkspaceActions['onStartConversation'];
@@ -485,6 +486,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     const controllerReadActions: SessionWorkspaceActions = {
       onLoadEarlierHistory: connectedActions.onLoadEarlierHistory,
       onLoadTurnProcess: connectedActions.onLoadTurnProcess,
+      onLoadConversationResources: connectedActions.onLoadConversationResources,
       onLoadTurnArtifacts: connectedActions.onLoadTurnArtifacts,
       onLoadV2Content: connectedActions.onLoadV2Content,
       onLoadV2ToolResult: connectedActions.onLoadV2ToolResult,
@@ -639,12 +641,12 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       owner={props.owner}
       choices={props.choices}
       capabilities={capabilities}
-      suppressComposer={props.suppressComposer || (!props.historyOnly && Boolean(props.readOnlyGate))}
+      suppressComposer={props.suppressComposer || Boolean(props.readOnlyGate)}
       historyOnly={historySnapshotOnly}
       projectPersistedPlans
       quickActionsSuppressed={props.quickActionsSuppressed}
       taskManagementStatusChangeBusy={props.taskManagementStatusChangeBusy}
-      readOnlyGate={props.historyOnly ? undefined : props.readOnlyGate}
+      readOnlyGate={props.readOnlyGate}
       subagentListSnapshot={subagentListSnapshot}
       transcriptLoading={transcriptLoading}
       creationStatus={displayedCreationStatus}
@@ -740,6 +742,7 @@ export function createConnectedSessionActions(input: { controller: SessionContro
     onCollaborationModeChange: (collaborationMode) => settle(input.controller.setCollaborationMode(collaborationMode)),
     onLoadEarlierHistory: () => settle(input.controller.loadEarlierHistory()),
     onLoadTurnProcess: (turnId) => settle(input.controller.loadTurnProcess(turnId)),
+    onLoadConversationResources: () => settle(input.controller.loadConversationResources()),
     onLoadTurnArtifacts: (turnId) => settle(input.controller.loadTurnArtifacts(turnId)),
     onLoadV2Content: (handle) => input.controller.loadV2Content(handle),
     onLoadV2ToolResult: (handle, offset) => input.controller.loadV2ToolResult(handle, offset),
@@ -1536,11 +1539,21 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const previousBlockingInteractionCountRef = useRef(0);
   const composerFocusRestorationPendingRef = useRef(false);
   const legacy = props.conversation && props.conversation.transportKind !== 'codex_native';
-  const interactionReadOnly = Boolean(props.historyOnly) || Boolean(props.readOnlyGate) || Boolean(props.conversation?.readOnly && props.conversation.transportKind === 'codex_native');
+  const effectiveProviderState = props.state?.snapshot?.providerState ?? props.conversation?.providerState ?? null;
+  const effectiveResumable =
+    props.conversation?.resumable !== false && (props.state?.snapshot ? !['closed', 'failed'].includes(effectiveProviderState ?? '') : effectiveProviderState === 'archived' || props.conversation?.resumable === true);
+  // 列表和已水合快照可能跨一个归档操作短暂错代；任一权威来源声明归档都必须 fail-closed。
+  const effectiveArchived = Boolean(props.state?.snapshot?.archived || props.conversation?.archived);
+  const nonResumableNative = Boolean(props.conversation && !legacy && !effectiveResumable);
+  const nativeConversationReadOnly = Boolean(props.conversation?.readOnly && props.conversation.transportKind === 'codex_native');
+  const historyHasActiveWork = Boolean(props.historyOnly && sessionStateNeedsRealtime(props.state));
+  const historyComposerWritable = Boolean(props.historyOnly && props.conversation && !legacy && !effectiveArchived && effectiveResumable && !nativeConversationReadOnly && !props.readOnlyGate && !historyHasActiveWork);
+  const hardInteractionReadOnly = Boolean(props.readOnlyGate) || effectiveArchived || nativeConversationReadOnly || nonResumableNative;
+  const interactionReadOnly = Boolean(props.historyOnly) || hardInteractionReadOnly;
+  const composerReadOnly = hardInteractionReadOnly || Boolean(props.historyOnly && !historyComposerWritable);
   const transcriptInteractionsEnabled = !interactionReadOnly;
   // 历史分页、过程与截断正文都是本地只读查询。会话只读时仍必须允许查看。
   const transcriptReadActionsEnabled = true;
-  const effectiveProviderState = props.state?.snapshot?.providerState ?? props.conversation?.providerState ?? null;
   const realtimeExpected = sessionStateNeedsRealtime(props.state);
   // 空闲历史会话只读本地快照，不存在“连接失败”；只有真实轮次、排队或待处理请求需要实时连接时才报告连接错误。
   const transportError = realtimeExpected && props.state?.transportState === 'failed' && props.state.error?.retryable === false ? (props.state.error ?? props.loadError ?? copy.failed) : null;
@@ -1595,8 +1608,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       }
     }
   }
-  const effectiveResumable = props.state?.snapshot ? !['closed', 'failed'].includes(effectiveProviderState ?? '') : effectiveProviderState === 'archived' ? true : props.conversation?.resumable;
-  const nonResumableNative = Boolean(props.conversation && !legacy && !effectiveResumable);
   const pendingRequests = props.historyOnly ? [] : (props.state?.pendingRequests.filter((request) => request.status === 'pending' && hasPendingRequestDetails(request)) ?? []);
   const pendingPlanImplementationRequests = props.historyOnly ? [] : (props.state?.planImplementationRequests.filter((request) => request.status === 'pending').slice(-1) ?? []);
   const blockingPendingRequest = pendingRequests[0] ?? null;
@@ -1669,7 +1680,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   }, [composerRuntimeSettings, legacy, props.capabilities, props.conversation?.collaborationMode, props.conversation?.permissionMode, props.state]);
 
   useEffect(() => {
-    if (!props.state || legacy || interactionReadOnly || !composerRuntimeSettings || !composerRuntimeSettingsDirtyRef.current || !actions.onNextTurnSettingsChange) return;
+    if (!props.state || legacy || composerReadOnly || !composerRuntimeSettings || !composerRuntimeSettingsDirtyRef.current || !actions.onNextTurnSettingsChange) return;
     const conversationId = props.conversation?.id ?? null;
     const signature = JSON.stringify(composerRuntimeSettings);
     if (lastNextTurnSettingsSyncRef.current === signature) return;
@@ -1686,12 +1697,12 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         if (workspaceIdentityRef.current !== conversationId) return;
         if (lastNextTurnSettingsSyncRef.current === signature) lastNextTurnSettingsSyncRef.current = null;
       });
-  }, [actions, composerRuntimeSettings, interactionReadOnly, legacy, props.conversation?.id, props.state?.transportState]);
+  }, [actions, composerReadOnly, composerRuntimeSettings, legacy, props.conversation?.id, props.state?.transportState]);
 
   function updateComposerRuntimeSettings(settings: ComposerRuntimeSettings): void {
     const projectId = props.state?.projectId ?? props.conversation?.projectId;
     const conversationId = props.state?.conversationId ?? props.conversation?.id;
-    if (!props.state || !projectId || !conversationId || legacy || interactionReadOnly) return;
+    if (!props.state || !projectId || !conversationId || legacy || composerReadOnly) return;
     composerRuntimeSettingsDirtyRef.current = true;
     writeConversationNextTurnSettings(browserConversationStorage(), projectId, conversationId, settings);
     const preferenceKind = conversationRuntimePreferenceKind(owner, props.conversation?.title);
@@ -2150,7 +2161,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         onRemoveAttachment={actions.onRemoveAttachment}
         onRemoveBrowserSubmission={actions.onRemoveBrowserSubmission}
         onContextDraftChange={actions.onContextDraftChange}
-        readOnly={interactionReadOnly || props.state.queue?.submissions.some((submission) => submission.pausedReason === 'recovered_unsent')}
+        readOnly={composerReadOnly || props.state.queue?.submissions.some((submission) => submission.pausedReason === 'recovered_unsent')}
         runtimeSettings={composerRuntimeSettings}
         onRuntimeSettingsChange={updateComposerRuntimeSettings}
         permissionMode={composerRuntimeSettings?.permissionMode ?? props.state.snapshot?.nextTurnSettings?.permissionMode ?? props.state.snapshot?.permissionMode ?? props.conversation?.permissionMode ?? 'read-only'}
@@ -2361,7 +2372,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         </header>
       ) : null}
 
-      {!props.historyOnly && props.readOnlyGate ? (
+      {props.readOnlyGate ? (
         <section className="session-task-readonly-gate" role="note" aria-label={props.readOnlyGate.title}>
           <span>
             <strong>{props.readOnlyGate.title}</strong>
@@ -2441,6 +2452,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     onLoadResourcePreview={transcriptReadActionsEnabled ? actions.onLoadResourcePreview : undefined}
                     onLoadEarlierHistory={transcriptReadActionsEnabled ? actions.onLoadEarlierHistory : undefined}
                     onLoadTurnProcess={transcriptReadActionsEnabled ? actions.onLoadTurnProcess : undefined}
+                    onLoadConversationResources={transcriptReadActionsEnabled ? actions.onLoadConversationResources : undefined}
                     onLoadTurnArtifacts={transcriptReadActionsEnabled ? actions.onLoadTurnArtifacts : undefined}
                     onLoadV2Content={transcriptReadActionsEnabled ? actions.onLoadV2Content : undefined}
                     onLoadV2ToolResult={transcriptReadActionsEnabled ? actions.onLoadV2ToolResult : undefined}
