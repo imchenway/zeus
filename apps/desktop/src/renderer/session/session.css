@@ -16235,3 +16235,64 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+.session-codex-parity-v1 .session-extension-mention-selector {
+  flex: 0 0 auto;
+}
+
+.session-codex-parity-v1 .session-extension-mention-selector > button {
+  inline-size: 30px;
+  min-block-size: 30px;
+  padding-inline: 0;
+}
+
+.session-codex-parity-v1 .session-extension-mention-selector .zeus-select-value {
+  display: none;
+}
+
+.session-codex-parity-v1 .session-mcp-app {
+  background: var(--zeus-product-panel-muted);
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 14px;
+  display: grid;
+  inline-size: 100%;
+  overflow: hidden;
+}
+
+.session-codex-parity-v1 .session-mcp-app > header {
+  align-items: center;
+  border-block-end: 1px solid var(--zeus-product-line-soft);
+  display: grid;
+  gap: 8px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  min-block-size: 38px;
+  padding-inline: 12px;
+}
+
+.session-codex-parity-v1 .session-mcp-app > header span {
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-mcp-app > header em {
+  color: var(--zeus-product-muted);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.session-codex-parity-v1 .session-mcp-app > header em[data-state='rejected'] {
+  color: var(--zeus-control-danger-text);
+}
+
+.session-codex-parity-v1 .session-mcp-app iframe {
+  background: #fff;
+  border: 0;
+  block-size: min(520px, 58vh);
+  inline-size: 100%;
+}
+
+.session-codex-parity-v1 .session-mcp-app-error {
+  color: var(--zeus-control-danger-text);
+}

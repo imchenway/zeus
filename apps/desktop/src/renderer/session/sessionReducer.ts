@@ -900,6 +900,35 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
       return applyProviderIdentityChange(base, payload, true);
     case 'conversation.thread.changed':
       return applyProviderIdentityChange(base, payload, false);
+    case 'conversation.plugin_app.created': {
+      const callId = stringValue(payload.callId);
+      const turnId = stringValue(payload.providerTurnId) ?? stringValue(payload.turnId) ?? base.activeTurnId;
+      if (!callId || !turnId || !isRecord(payload.app)) return base;
+      const key = `${turnId}:plugin-app:${callId}`;
+      return {
+        ...base,
+        items: {
+          ...base.items,
+          [key]: {
+            key,
+            conversationId: stringValue(payload.conversationId) ?? base.conversationId ?? '',
+            threadId: stringValue(payload.threadId) ?? stringValue(payload.providerThreadId) ?? base.providerThreadId ?? '',
+            turnId,
+            itemId: `plugin-app:${callId}`,
+            type: 'plugin_mcp_app',
+            status: 'completed',
+            phase: 'final',
+            text: '',
+            payload: { ...payload },
+            resources: [],
+            timelineAt: event.createdAt,
+            updatedAt: event.createdAt,
+          },
+        },
+        itemOrder: base.itemOrder.includes(key) ? base.itemOrder : [...base.itemOrder, key],
+        transcriptRevision: base.transcriptRevision + 1,
+      };
+    }
     case 'conversation.turn.started': {
       const turnId = stringValue(payload.turnId);
       if (!turnId || state.terminalTurnIds[turnId]) return base;

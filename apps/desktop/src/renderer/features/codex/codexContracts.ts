@@ -64,7 +64,7 @@ export interface CodexConfigActivationResult {
   restartRequired: false;
 }
 
-export type SkillScope = 'user' | 'repo' | 'system' | 'admin';
+export type SkillScope = 'user' | 'repo' | 'system' | 'admin' | 'plugin-personal' | 'plugin-project';
 
 export interface SkillDescriptor {
   id: string;
@@ -75,6 +75,10 @@ export interface SkillDescriptor {
   path: string;
   scope: SkillScope;
   removable: boolean;
+  source?: 'skill' | 'plugin';
+  pluginId?: string;
+  pluginName?: string;
+  pluginRevisionId?: string;
   interface?: Record<string, unknown>;
   dependencies?: Record<string, unknown>;
 }
@@ -82,6 +86,17 @@ export interface SkillDescriptor {
 export interface SkillCatalog {
   cwd: string;
   skills: SkillDescriptor[];
+  plugins?: Array<{
+    id: string;
+    name: string;
+    displayName: string;
+    description: string;
+    scope: PluginScope;
+    pluginRevisionId: string;
+    sourceKind: 'local' | 'git' | 'marketplace';
+    sourceLocator: string;
+    sourceRef?: string | null;
+  }>;
   errors: Array<Record<string, unknown>>;
   refreshedAt: string;
 }
@@ -91,4 +106,104 @@ export type SkillInstallSource = { kind: 'local'; path: string } | { kind: 'git'
 export interface SkillInstallResult {
   skill: SkillDescriptor;
   installedAt: string;
+}
+
+export type PluginScope = 'personal' | 'project';
+export type PluginApprovalMode = 'prompt' | 'approve' | 'deny';
+export type PluginDirectSource = { kind: 'local'; path: string } | { kind: 'git'; repositoryUrl: string; ref?: string; subdirectory?: string };
+export type PluginInstallSource = PluginDirectSource | { kind: 'marketplace'; marketplaceId: string; pluginName: string };
+
+export interface PluginHookTrust {
+  pluginRevisionId: string;
+  hookId: string;
+  definitionSha256: string;
+  trustedDefinitionSha256: string | null;
+  enabled: boolean;
+  trustedAt: string | null;
+  updatedAt: string;
+}
+
+export interface PluginConnectorBinding {
+  pluginId: string;
+  connectorId: string;
+  appTechnicalId: string;
+  serverConfig: Record<string, unknown>;
+  secretAccount: string | null;
+  connected: boolean;
+  updatedAt: string;
+}
+
+export interface PluginMcpPolicy {
+  pluginId: string;
+  serverId: string;
+  toolName: string;
+  enabled: boolean;
+  approvalMode: PluginApprovalMode;
+  updatedAt: string;
+}
+
+export interface PluginDescriptor {
+  plugin: {
+    id: string;
+    name: string;
+    displayName: string;
+    description: string;
+    scope: PluginScope;
+    projectId: string | null;
+    sourceKind: 'local' | 'git' | 'marketplace';
+    sourceLocator: string;
+    sourceRef: string | null;
+    sourceSubdirectory: string | null;
+    marketplaceId: string | null;
+    activeRevisionId: string;
+    enabled: boolean;
+    connectionState: 'ready' | 'needs_connection' | 'incompatible';
+    connectionReason: string | null;
+    revision: number;
+    createdAt: string;
+    updatedAt: string;
+  };
+  revision: {
+    id: string;
+    pluginId: string;
+    version: string;
+    contentSha256: string;
+    installPath: string;
+    manifest: Record<string, unknown>;
+    components: {
+      skills: Array<{ id: string; name: string; description: string; path: string }>;
+      hooks: Array<{ id: string; event: string; matcher: string | null; definitionSha256: string; definition: Record<string, unknown> }>;
+      mcpServers: Array<{ id: string; name: string; transport: 'stdio' | 'http'; config: Record<string, unknown> }>;
+      apps: Array<{ id: string; technicalId: string; name: string }>;
+      assets: Array<{ kind: string; path: string }>;
+      hasMcpAppUi: boolean;
+    };
+    createdAt: string;
+    retiredAt: string | null;
+  };
+  hooks: PluginHookTrust[];
+  connectors: PluginConnectorBinding[];
+  mcpPolicies: PluginMcpPolicy[];
+  providerLegacyConflict: boolean;
+  updateAvailable: boolean;
+}
+
+export interface PluginMarketplaceCatalog {
+  marketplace: {
+    id: string;
+    name: string;
+    scope: PluginScope;
+    projectId: string | null;
+    sourceKind: 'local' | 'git';
+    sourceLocator: string;
+    sourceRef: string | null;
+    sourceSubdirectory: string | null;
+    snapshotPath: string;
+    enabled: boolean;
+    revision: number;
+    createdAt: string;
+    updatedAt: string;
+  };
+  displayName: string;
+  entries: Array<{ name: string; description: string; version: string | null; source: PluginDirectSource }>;
 }

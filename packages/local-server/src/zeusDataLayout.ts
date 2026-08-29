@@ -28,6 +28,9 @@ export type ZeusDataPathKey =
   | 'runtimeSessions'
   | 'commandScripts'
   | 'commandRuns'
+  | 'pluginBundles'
+  | 'pluginData'
+  | 'pluginRuntime'
   | 'codexHome'
   | 'codexToolRuntimeHome'
   | 'piConfig'
@@ -67,6 +70,9 @@ export interface ZeusDataLayout {
   runtimeSessions: string;
   commandScripts: string;
   commandRuns: string;
+  pluginBundles: string;
+  pluginData: string;
+  pluginRuntime: string;
   codexHome: string;
   codexToolRuntimeHome: string;
   piConfig: string;
@@ -123,6 +129,9 @@ export function createZeusDataLayout(rootPath: string): ZeusDataLayout {
     runtimeSessions: join(artifactsDirectory, 'runtime-sessions'),
     commandScripts: join(artifactsDirectory, 'command-scripts'),
     commandRuns: join(artifactsDirectory, 'command-runs'),
+    pluginBundles: join(dataDirectory, 'plugins', 'bundles'),
+    pluginData: join(dataDirectory, 'plugins', 'data'),
+    pluginRuntime: join(runtimeDirectory, 'plugins'),
     codexHome: join(providersDirectory, 'codex'),
     codexToolRuntimeHome: join(root, 'tool-runtimes', 'codex'),
     piConfig: join(providersDirectory, 'pi', 'config'),
@@ -171,6 +180,9 @@ export function createLegacyFlatZeusDataLayout(rootPath: string): ZeusDataLayout
     runtimeSessions: join(root, 'sessions'),
     commandScripts: join(root, 'command-scripts'),
     commandRuns: join(root, 'command-runs'),
+    pluginBundles: join(root, 'plugins', 'bundles'),
+    pluginData: join(root, 'plugins', 'data'),
+    pluginRuntime: join(root, 'runtime', 'plugins'),
     codexHome: join(root, 'agent-runtimes', 'codex'),
     codexToolRuntimeHome: join(root, 'tool-runtimes', 'codex'),
     piConfig: join(root, 'agent-runtimes', 'pi', 'config'),
@@ -224,6 +236,9 @@ function finalizeLayout(layout: Omit<ZeusDataLayout, 'entries'>): ZeusDataLayout
       entry('runtimeSessions', 'zeus', 'managed', false, false, null),
       entry('commandScripts', 'zeus', 'managed', false, false, null),
       entry('commandRuns', 'zeus', 'runtime', true, false, null),
+      entry('pluginBundles', 'zeus', 'managed', false, false, null),
+      entry('pluginData', 'zeus', 'managed', false, false, null),
+      entry('pluginRuntime', 'zeus', 'runtime', true, false, null),
       entry('codexHome', 'provider', 'managed', false, false, null),
       entry('codexToolRuntimeHome', 'provider', 'runtime', true, false, null),
       entry('piConfig', 'provider', 'managed', false, false, null),

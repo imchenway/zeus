@@ -4,6 +4,7 @@ import type { ZeusCodexLegacyImportRecord } from '@zeus/storage';
 import type { CodexConfigImportResult, CodexConfigImportService } from './codexConfigImportService.js';
 import type { CodexLegacyImportService } from './codexLegacyImportService.js';
 import { ZeusSkillServiceError, type ZeusSkillInstallSource, type ZeusSkillService } from './zeusSkillService.js';
+import type { ZeusPluginService } from './zeusPluginService.js';
 import { CodexPublicCommandApplicationService, codexPublicCommandHttpError, codexPublicCommandScopeIds, codexPublicCommandTypes, type CodexPublicMutationRequest } from './codexPublicCommandApplication.js';
 
 export interface CodexRemoteControlSnapshot {
@@ -60,6 +61,7 @@ export function registerCodexPublicCommandRoutes(options: {
   configImport?: CodexConfigImportService;
   legacyImport?: CodexLegacyImportService;
   skills?: ZeusSkillService;
+  plugins?: ZeusPluginService;
   resolveSkillCwd(projectId: string | null): string;
   account: {
     ensureReady(): Promise<void>;
@@ -95,7 +97,42 @@ export function registerCodexPublicCommandRoutes(options: {
       if (request.query.forceReload !== undefined && request.query.forceReload !== 'true' && request.query.forceReload !== 'false') {
         return reply.code(400).send({ error: 'ZEUS_SKILL_INPUT_INVALID', message: 'forceReload 必须为 true 或 false。' });
       }
-      return await options.skills.list({ cwd: options.resolveSkillCwd(projectId), forceReload });
+      const catalog = await options.skills.list({ cwd: options.resolveSkillCwd(projectId), forceReload });
+      const pluginSkills = options.plugins ? await options.plugins.listSkills({ projectId }) : [];
+      const plugins = options.plugins ? await options.plugins.list({ projectId }) : [];
+      return {
+        ...catalog,
+        plugins: plugins
+          .filter((descriptor) => descriptor.plugin.enabled && !descriptor.providerLegacyConflict)
+          .map((descriptor) => ({
+            id: descriptor.plugin.id,
+            name: descriptor.plugin.name,
+            displayName: descriptor.plugin.displayName,
+            description: descriptor.plugin.description,
+            scope: descriptor.plugin.scope,
+            pluginRevisionId: descriptor.revision.id,
+            sourceKind: descriptor.plugin.sourceKind,
+            sourceLocator: descriptor.plugin.sourceLocator,
+            sourceRef: descriptor.plugin.sourceRef,
+          })),
+        skills: [
+          ...catalog.skills.map((skill) => ({ ...skill, source: 'skill' as const })),
+          ...pluginSkills.map((skill) => ({
+            id: skill.id,
+            name: skill.namespace,
+            description: skill.description,
+            shortDescription: skill.description,
+            invocation: `@${skill.namespace}`,
+            path: skill.path,
+            scope: skill.scope === 'personal' ? ('plugin-personal' as const) : ('plugin-project' as const),
+            removable: false,
+            source: 'plugin' as const,
+            pluginId: skill.pluginId,
+            pluginName: skill.pluginName,
+            pluginRevisionId: skill.pluginRevisionId,
+          })),
+        ],
+      };
     } catch (error) {
       return sendSkillError(reply, error);
     }

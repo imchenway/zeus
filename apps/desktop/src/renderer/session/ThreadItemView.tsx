@@ -12,6 +12,7 @@ import { ConversationGeneratedImage, ConversationInlineResource, ConversationMar
 import { ResponseSelectionActions } from './ResponseSelectionActions.js';
 import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ConversationMarkdown, conversationMarkdownPhaseForStatus } from './ConversationMarkdown.js';
+import { McpAppFrame, type McpAppToolCall, type McpAppToolResult } from './McpAppFrame.js';
 
 export type SessionUiLanguage = 'zh-CN' | 'en-US';
 export type ThreadItemRole = 'user' | 'assistant' | 'commentary' | 'notice' | 'tool' | 'file' | 'image' | 'request' | 'error' | 'unknown';
@@ -135,6 +136,7 @@ export interface ThreadItemViewProps {
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
   onLoadResources?: (turnId: string) => void | Promise<void>;
+  onCallMcpAppTool?: (input: McpAppToolCall) => Promise<McpAppToolResult>;
   onVisibleContentChange?: () => void;
   responseAnnotations?: ConversationResponseAnnotation[];
   onAddResponseAnnotation?: (anchor: ConversationResponseTextAnchor) => string;
@@ -355,6 +357,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const visibleText = contextOnlyPlaceholder ? '' : longUserMessage && !expanded ? `${itemText.slice(0, 620).trimEnd()}…` : itemText;
   const label = roleLabel(role, labels);
   const command = normalizeType(props.item.type) === 'commandexecution' || normalizeType(props.item.type) === 'command';
+  const mcpApp = normalizeType(props.item.type) === 'pluginmcpapp';
   const accessibleLabel = command ? (props.language === 'zh-CN' ? '命令执行' : 'Command execution') : label;
   const showVisibleRoleLabel = role !== 'user' && role !== 'assistant' && role !== 'commentary' && role !== 'error';
   // 任务首发消息已经是工作面的稳定内容，内部创建进度只在底部统一呈现。
@@ -494,6 +497,8 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
         <VisibleApplicationError error={visibleThreadItemError(props.item)} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
       ) : role === 'image' ? (
         <GeneratedImageItem item={props.item} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} onVisibleContentChange={props.onVisibleContentChange} />
+      ) : mcpApp ? (
+        <McpAppFrame value={props.item.payload.app} context={props.item.payload} language={props.language} onCallTool={props.onCallMcpAppTool} />
       ) : command ? (
         <CommandExecutionItem item={props.item} language={props.language} />
       ) : commentary && (visibleText || (streamActive && itemText)) ? (
@@ -560,7 +565,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
       ) : role === 'assistant' && props.item.status !== 'completed' ? (
         <span className="session-thinking-indicator">{labels.thinking}</span>
       ) : null}
-      {!command ? <TypedItemFacts item={props.item} role={role} language={props.language} /> : null}
+      {!command && !mcpApp ? <TypedItemFacts item={props.item} role={role} language={props.language} /> : null}
       {role !== 'error' && conversationContext ? <UserConversationContextSummary draft={conversationContext} language={props.language} /> : null}
       {role !== 'error' && !showUserMessageAttachmentGroup && !taskPushLayout ? <ItemAttachments item={props.item} label={labels.attachments} hideImages={pendingImageAttachments.length > 0} /> : null}
       {role !== 'error' && !showUserMessageAttachmentGroup ? <ConversationPendingAttachmentImages attachments={pendingImageAttachments} language={props.language} onVisibleContentChange={props.onVisibleContentChange} /> : null}

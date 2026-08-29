@@ -17,7 +17,7 @@ import { CodexUsageSettingsPane } from '../../settings/CodexUsageSettingsPane.js
 import { MemorySettingsPane } from '../memory/MemorySettingsPane.js';
 import { DigitalEmployeeTemplatesSettings } from '../digital-employees/DigitalEmployeeTemplatesSettings.js';
 import { ProjectDigitalEmployeesPanel } from '../digital-employees/ProjectDigitalEmployeesPanel.js';
-import { SkillsWorkspace } from '../skills/SkillsWorkspace.js';
+import { ExtensionsWorkspace } from '../skills/ExtensionsWorkspace.js';
 import { defaultTaskTableEnumSortOrders, normalizeTaskTableEnumSortOrders } from '../../task/taskWorkspaceModel.js';
 import { ZeusSelect } from '../../ZeusSelect.js';
 import { Button } from '../../ui/Button.js';
@@ -574,7 +574,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
         />
       ) : null}
       <section className="workspace ai-workspace" ref={workspaceScrollRef}>
-        {activeNavTarget === 'skills' ? <SkillsWorkspace client={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} onChooseDirectory={props.onChooseProjectDirectory} /> : null}
+        {activeNavTarget === 'skills' ? <ExtensionsWorkspace client={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} projectId={activeProjectId} onChooseDirectory={props.onChooseProjectDirectory} /> : null}
         {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && selectedProject ? (
           <ProjectWorkspaceModeToolbar
             project={selectedProject}

@@ -28,6 +28,7 @@ import { captureTranscriptViewportAnchor, compensateTranscriptViewportAnchor, ty
 import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { isImageResource } from './ConversationResources.js';
 import { canSteerActiveTurn } from './ConversationComposer.js';
+import type { McpAppToolCall, McpAppToolResult } from './McpAppFrame.js';
 
 export interface ConversationTranscriptProps {
   state: NativeSessionState;
@@ -42,6 +43,7 @@ export interface ConversationTranscriptProps {
   onOpenPlan?: (item: NativeSessionItemBuffer) => void;
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
+  onCallMcpAppTool?: (input: McpAppToolCall) => Promise<McpAppToolResult>;
   onReviewTurnChanges?: (changeSet: TurnChangeSet, fileId?: string) => void;
   onOperateTurnChangeSet?: (changeSet: TurnChangeSet, action: 'undo' | 'reapply') => Promise<TurnChangeSetOperationResult>;
   onLatestContentVisibilityChange?: (visible: boolean) => void;
@@ -1080,6 +1082,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         onOpenResource={options.props.onOpenResource}
         onLoadResourcePreview={options.props.onLoadResourcePreview}
         onLoadResources={options.props.onLoadTurnArtifacts}
+        onCallMcpAppTool={options.props.onCallMcpAppTool}
         onVisibleContentChange={options.onVisibleContentChange}
         responseAnnotations={options.responseAnnotationsByItemId.get(row.item.itemId) ?? emptyResponseAnnotations}
         onAddResponseAnnotation={options.props.onAddResponseAnnotation}

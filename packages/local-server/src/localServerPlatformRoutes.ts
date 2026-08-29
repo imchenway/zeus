@@ -153,6 +153,7 @@ import { registerWorkManagementTaskCommandRoutes } from './workManagementTaskCom
 import { WorkManagementTaskEffectService } from './workManagementTaskEffectService.js';
 import { WorkManagementTaskOperations } from './workManagementTaskOperations.js';
 import { registerWorkspaceGitCommandRoutes } from './workspaceGitCommandRoutes.js';
+import { registerZeusPluginRoutes } from './zeusPluginRoutes.js';
 
 export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, type ReadOnlyValidationApplicationIdentity } from './readOnlyValidation.js';
 
@@ -246,6 +247,9 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     codexConfigImportService,
     zeusSkillDefaultCwd,
     zeusSkillService,
+    zeusPluginService,
+    zeusConversationPluginRuntime,
+    dangerouslyBypassPluginHookTrust,
     codexExternalAgentHome,
     codexLegacyImportService,
     codexNativeCoordinator,
@@ -876,6 +880,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     configImport: codexConfigImportService,
     legacyImport: codexLegacyImportService,
     skills: zeusSkillService,
+    plugins: zeusPluginService,
     resolveSkillCwd: (projectId) => {
       if (!projectId) return zeusSkillDefaultCwd;
       const project = projects.getById(projectId);
@@ -938,6 +943,13 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     },
     now,
     sendNativeError: sendNativeConversationApiError,
+  });
+  registerZeusPluginRoutes({
+    server,
+    plugins: zeusPluginService,
+    runtime: zeusConversationPluginRuntime,
+    dangerouslyBypassHookTrust: dangerouslyBypassPluginHookTrust === true,
+    hasProject: (projectId) => Boolean(projects.getById(projectId)),
   });
 
   server.get(

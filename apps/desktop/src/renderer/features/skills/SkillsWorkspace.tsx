@@ -13,7 +13,7 @@ import { readSkillWorkflowPreferences, skillWorkflowDefinitions, writeSkillWorkf
 
 type SkillsClient = Pick<NativeConversationAppClient, 'loadSkills' | 'installSkill' | 'removeSkill'>;
 
-export function SkillsWorkspace(props: { client: SkillsClient | null; language: 'zh-CN' | 'en-US'; onChooseDirectory?: () => Promise<string | null> }) {
+export function SkillsWorkspace(props: { client: SkillsClient | null; language: 'zh-CN' | 'en-US'; onChooseDirectory?: () => Promise<string | null>; embedded?: boolean }) {
   const zh = props.language === 'zh-CN';
   const [catalog, setCatalog] = useState<SkillCatalog | null>(null);
   const [loading, setLoading] = useState(true);
@@ -130,25 +130,27 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
 
   return (
     <section className="workspace-view skills-workspace" aria-label={zh ? 'Skill 管理' : 'Skill management'}>
-      <header className="skills-workspace-header">
-        <span className="skills-workspace-kicker">ZEUS SKILLS</span>
-        <div className="skills-workspace-title-row">
-          <div>
-            <h1>{zh ? 'Skill 管理' : 'Skill management'}</h1>
-            <p>{zh ? '安装一次，在推送任务、代码审查和冲突处理时直接选择。' : 'Install once, then choose a skill in task push, code review, or conflict resolution.'}</p>
+      {!props.embedded ? (
+        <header className="skills-workspace-header">
+          <span className="skills-workspace-kicker">ZEUS SKILLS</span>
+          <div className="skills-workspace-title-row">
+            <div>
+              <h1>{zh ? 'Skill 管理' : 'Skill management'}</h1>
+              <p>{zh ? '安装一次，在推送任务、代码审查和冲突处理时直接选择。' : 'Install once, then choose a skill in task push, code review, or conflict resolution.'}</p>
+            </div>
+            <span className="skills-workspace-actions">
+              <Button variant="secondary" size="regular" busy={loading} onClick={() => void load(true)} disabled={!props.client || loading}>
+                <ArrowClockwise aria-hidden="true" weight="regular" />
+                {zh ? '刷新' : 'Refresh'}
+              </Button>
+              <Button variant="primary" size="regular" onClick={() => setInstallOpen(true)} disabled={!props.client}>
+                <Plus aria-hidden="true" weight="bold" />
+                {zh ? '安装 Skill' : 'Install skill'}
+              </Button>
+            </span>
           </div>
-          <span className="skills-workspace-actions">
-            <Button variant="secondary" size="regular" busy={loading} onClick={() => void load(true)} disabled={!props.client || loading}>
-              <ArrowClockwise aria-hidden="true" weight="regular" />
-              {zh ? '刷新' : 'Refresh'}
-            </Button>
-            <Button variant="primary" size="regular" onClick={() => setInstallOpen(true)} disabled={!props.client}>
-              <Plus aria-hidden="true" weight="bold" />
-              {zh ? '安装 Skill' : 'Install skill'}
-            </Button>
-          </span>
-        </div>
-      </header>
+        </header>
+      ) : null}
 
       <section className="skills-workflow-defaults" aria-labelledby="skills-workflow-defaults-title">
         <div className="skills-section-heading">
@@ -326,6 +328,8 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
 }
 
 function scopeName(scope: SkillDescriptor['scope'], zh: boolean): string {
+  if (scope === 'plugin-personal') return zh ? 'Plugin 内 Skill · 个人' : 'Plugin skills · Personal';
+  if (scope === 'plugin-project') return zh ? 'Plugin 内 Skill · 项目' : 'Plugin skills · Project';
   if (scope === 'user') return zh ? '个人安装' : 'User skills';
   if (scope === 'repo') return zh ? '项目 Skill' : 'Repository skills';
   if (scope === 'system') return zh ? '系统内置' : 'System skills';
