@@ -784,7 +784,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const [taskConversationDrawerTarget, setTaskConversationDrawerTarget] = useState<TaskConversationDrawerTarget>();
   const [taskConversationReopenState, setTaskConversationReopenState] = useState<TaskConversationReopenState>();
   useEffect(() => {
-    if (activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeProjectSection === 'tasks') return;
+    if (activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && activeProjectSection === 'tasks') return;
     setTaskConversationDrawerTarget(undefined);
   }, [activeNavTarget, activeProjectSection]);
   const [localSettingsCategory, setLocalSettingsCategory] = useState<SettingsCategory>(() => {

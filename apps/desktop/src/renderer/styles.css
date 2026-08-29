@@ -6,6 +6,383 @@
   text-rendering: optimizeLegibility;
 }
 
+/* 顶级自动化工作台：密度接近 macOS source list，终态不仅依赖颜色表意。 */
+.macos-ai-app .automations-workspace {
+  width: min(1180px, calc(100% - 40px));
+  min-height: 100%;
+  margin: 0 auto;
+  padding: 52px 0 40px;
+  color: var(--text-primary, #202124);
+}
+
+.macos-ai-app .runtime-timeout-unit-select {
+  min-width: 76px;
+  min-height: 30px;
+  border: 1px solid var(--border-subtle, #d8dadd);
+  border-radius: 7px;
+  background: var(--surface-primary, #fff);
+  color: inherit;
+}
+
+.macos-ai-app .automations-header,
+.macos-ai-app .automations-header-actions,
+.macos-ai-app .automations-tabs,
+.macos-ai-app .automation-row,
+.macos-ai-app .automation-row-main,
+.macos-ai-app .automation-row-actions,
+.macos-ai-app .automation-inbox-row,
+.macos-ai-app .automation-inbox-actions,
+.macos-ai-app .automation-editor > header,
+.macos-ai-app .automation-editor > footer {
+  display: flex;
+  align-items: center;
+}
+
+.macos-ai-app .automations-header {
+  justify-content: space-between;
+  gap: 28px;
+  margin-bottom: 24px;
+}
+
+.macos-ai-app .automations-kicker {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--text-tertiary, #777b82);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+}
+
+.macos-ai-app .automations-header h1 {
+  margin: 0;
+  font-size: clamp(30px, 4vw, 44px);
+  line-height: 1.04;
+  letter-spacing: -0.035em;
+}
+
+.macos-ai-app .automations-header p {
+  max-width: 650px;
+  margin: 9px 0 0;
+  color: var(--text-secondary, #62666d);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.macos-ai-app .automations-header-actions {
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.macos-ai-app .automations-icon-button,
+.macos-ai-app .automation-row-actions button {
+  display: inline-grid;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid var(--border-subtle, #d8dadd);
+  border-radius: 9px;
+  background: var(--surface-primary, #fff);
+  color: inherit;
+}
+
+.macos-ai-app .automations-icon-button svg,
+.macos-ai-app .automation-row-actions svg,
+.macos-ai-app .automations-tabs svg {
+  width: 17px;
+  height: 17px;
+}
+
+.macos-ai-app .automations-tabs {
+  width: fit-content;
+  gap: 3px;
+  padding: 3px;
+  margin-bottom: 18px;
+  border: 1px solid var(--border-subtle, #d8dadd);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--surface-secondary, #f3f4f5) 82%, transparent);
+}
+
+.macos-ai-app .automations-tabs button {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary, #62666d);
+  font-weight: 600;
+}
+
+.macos-ai-app .automations-tabs button[aria-current='page'] {
+  background: var(--surface-primary, #fff);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 9%);
+  color: var(--text-primary, #202124);
+}
+
+.macos-ai-app .automations-tabs button > span,
+.macos-ai-app .automations-unread-count {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface-tertiary, #e5e7ea);
+  font-size: 11px;
+  text-align: center;
+}
+
+.macos-ai-app .automations-unread-count {
+  background: #2458d3 !important;
+  color: #fff;
+}
+
+.macos-ai-app .automations-layout {
+  display: grid;
+  min-height: 500px;
+  grid-template-columns: minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--border-subtle, #d8dadd);
+  border-radius: 16px;
+  background: var(--surface-primary, #fff);
+  box-shadow: 0 12px 38px rgb(0 0 0 / 5%);
+}
+
+.macos-ai-app .automations-layout.has-editor {
+  grid-template-columns: minmax(360px, 0.9fr) minmax(420px, 1.1fr);
+}
+
+.macos-ai-app .automations-list {
+  min-width: 0;
+}
+
+.macos-ai-app .automation-row,
+.macos-ai-app .automation-inbox-row {
+  min-height: 76px;
+  border-bottom: 1px solid var(--border-subtle, #e5e6e8);
+}
+
+.macos-ai-app .automation-row:last-child,
+.macos-ai-app .automation-inbox-row:last-child {
+  border-bottom: 0;
+}
+
+.macos-ai-app .automation-row-main {
+  min-width: 0;
+  flex: 1;
+  gap: 12px;
+  align-self: stretch;
+  padding: 13px 10px 13px 16px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.macos-ai-app .automation-row-main:hover,
+.macos-ai-app .automation-row-main:focus-visible {
+  background: color-mix(in srgb, var(--accent, #2f67d8) 7%, transparent);
+}
+
+.macos-ai-app .automation-status-dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #2b9f63;
+  box-shadow: 0 0 0 3px rgb(43 159 99 / 12%);
+}
+
+.macos-ai-app .automation-row[data-status='paused'] .automation-status-dot {
+  background: #92969d;
+  box-shadow: 0 0 0 3px rgb(146 150 157 / 12%);
+}
+
+.macos-ai-app .automation-row-main > span:nth-child(2),
+.macos-ai-app .automation-inbox-row > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.macos-ai-app .automation-row-main strong,
+.macos-ai-app .automation-inbox-row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macos-ai-app .automation-row-main small,
+.macos-ai-app .automation-inbox-row small,
+.macos-ai-app .automation-row-schedule {
+  color: var(--text-tertiary, #777b82);
+  font-size: 12px;
+}
+
+.macos-ai-app .automation-row-schedule {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.macos-ai-app .automation-row-actions {
+  gap: 5px;
+  padding-right: 13px;
+}
+
+.macos-ai-app .automation-row-actions .danger:hover {
+  color: #bb2f35;
+  border-color: color-mix(in srgb, #bb2f35 35%, transparent);
+}
+
+.macos-ai-app .automation-inbox-row {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 14px;
+  padding: 16px;
+}
+
+.macos-ai-app .automation-inbox-row[data-unread='true'] {
+  box-shadow: inset 3px 0 #2458d3;
+  background: color-mix(in srgb, #2458d3 4%, transparent);
+}
+
+.macos-ai-app .automation-run-status {
+  width: fit-content;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #eef0f2;
+  color: #555b63;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.macos-ai-app .automation-run-status.status-succeeded { background: #e3f5ea; color: #167242; }
+.macos-ai-app .automation-run-status.status-failed,
+.macos-ai-app .automation-run-status.status-outcome_unknown { background: #fbe8e9; color: #a62c32; }
+.macos-ai-app .automation-run-status.status-blocked { background: #fff0d8; color: #8a5700; }
+
+.macos-ai-app .automation-inbox-row p {
+  margin: 3px 0 0;
+  color: var(--text-secondary, #62666d);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.macos-ai-app .automation-inbox-row .automation-warning {
+  color: #8a5700;
+  font-weight: 600;
+}
+
+.macos-ai-app .automation-inbox-actions {
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.macos-ai-app .automation-inbox-actions button,
+.macos-ai-app .automation-editor > header button {
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--border-subtle, #d8dadd);
+  border-radius: 8px;
+  background: var(--surface-primary, #fff);
+  color: inherit;
+  font-size: 12px;
+}
+
+.macos-ai-app .automation-editor {
+  display: grid;
+  min-width: 0;
+  max-height: calc(100vh - 235px);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  border-left: 1px solid var(--border-subtle, #d8dadd);
+  background: color-mix(in srgb, var(--surface-secondary, #f6f7f8) 70%, var(--surface-primary, #fff));
+}
+
+.macos-ai-app .automation-editor > header,
+.macos-ai-app .automation-editor > footer {
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  background: var(--surface-primary, #fff);
+}
+
+.macos-ai-app .automation-editor > header { border-bottom: 1px solid var(--border-subtle, #d8dadd); }
+.macos-ai-app .automation-editor > footer { justify-content: flex-end; border-top: 1px solid var(--border-subtle, #d8dadd); }
+.macos-ai-app .automation-editor > header span { color: var(--text-tertiary, #777b82); font-size: 11px; font-weight: 700; text-transform: uppercase; }
+.macos-ai-app .automation-editor > header h2 { margin: 2px 0 0; font-size: 18px; }
+.macos-ai-app .automation-editor-scroll { display: grid; align-content: start; gap: 15px; overflow: auto; padding: 18px; }
+
+.macos-ai-app .automation-editor label,
+.macos-ai-app .automation-editor fieldset,
+.macos-ai-app .automation-editor details > div {
+  display: grid;
+  gap: 7px;
+}
+
+.macos-ai-app .automation-editor label > span,
+.macos-ai-app .automation-editor legend {
+  color: var(--text-secondary, #62666d);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.macos-ai-app .automation-editor input:not([type='checkbox']),
+.macos-ai-app .automation-editor select,
+.macos-ai-app .automation-editor textarea {
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-subtle, #cfd2d6);
+  border-radius: 8px;
+  background: var(--surface-primary, #fff);
+  color: inherit;
+  font: inherit;
+}
+
+.macos-ai-app .automation-editor textarea { min-height: 124px; resize: vertical; line-height: 1.5; }
+.macos-ai-app .automation-editor fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.macos-ai-app .automation-project-options { display: flex; flex-wrap: wrap; gap: 7px; }
+.macos-ai-app .automation-project-options label,
+.macos-ai-app .automation-risk-ack,
+.macos-ai-app .automation-check { display: flex !important; min-height: 34px; align-items: flex-start; gap: 8px; padding: 8px 10px; border: 1px solid var(--border-subtle, #d8dadd); border-radius: 8px; background: var(--surface-primary, #fff); }
+.macos-ai-app .automation-project-options label { align-items: center; }
+.macos-ai-app .automation-risk-ack { border-color: #e5b35c; background: #fff8e9; }
+.macos-ai-app .automation-project-options input,
+.macos-ai-app .automation-risk-ack input,
+.macos-ai-app .automation-check input { width: 16px; height: 16px; margin: 1px 0 0; }
+.macos-ai-app .automation-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.macos-ai-app .automation-editor details { padding: 11px; border: 1px solid var(--border-subtle, #d8dadd); border-radius: 10px; background: var(--surface-primary, #fff); }
+.macos-ai-app .automation-editor details summary { min-height: 28px; cursor: pointer; font-weight: 650; }
+.macos-ai-app .automation-editor details[open] summary { margin-bottom: 12px; }
+.macos-ai-app .automations-error { margin: 0 0 12px; padding: 10px 12px; border: 1px solid #e6a7ab; border-radius: 9px; background: #fff0f1; color: #8d252b; }
+.macos-ai-app .automations-empty { display: grid; min-height: 350px; place-content: center; justify-items: center; gap: 8px; padding: 30px; color: var(--text-secondary, #62666d); text-align: center; }
+.macos-ai-app .automations-empty svg { width: 32px; height: 32px; color: var(--text-tertiary, #777b82); }
+.macos-ai-app .automations-empty p { max-width: 360px; margin: 0; font-size: 13px; line-height: 1.5; }
+
+.macos-ai-app .automations-workspace button:focus-visible,
+.macos-ai-app .automation-editor input:focus-visible,
+.macos-ai-app .automation-editor select:focus-visible,
+.macos-ai-app .automation-editor textarea:focus-visible,
+.macos-ai-app .automation-editor summary:focus-visible {
+  outline: 2px solid var(--accent, #2458d3);
+  outline-offset: 2px;
+}
+
+@media (max-width: 980px) {
+  .macos-ai-app .automations-layout.has-editor { grid-template-columns: 1fr; }
+  .macos-ai-app .automation-editor { max-height: none; border-top: 1px solid var(--border-subtle, #d8dadd); border-left: 0; }
+  .macos-ai-app .automation-inbox-row { grid-template-columns: 1fr; }
+  .macos-ai-app .automation-inbox-actions { justify-content: flex-start; }
+}
+
+@media (max-width: 620px) {
+  .macos-ai-app .automations-workspace { width: calc(100% - 24px); padding-top: 34px; }
+  .macos-ai-app .automations-header { align-items: flex-start; flex-direction: column; }
+  .macos-ai-app .automation-form-grid { grid-template-columns: 1fr; }
+  .macos-ai-app .automation-row-schedule { display: none; }
+}
+
 /* 任务阶段工作流：以一条连续轨道呈现阶段、尝试和版本化交付物。 */
 .task-workflow-section {
   container-type: inline-size;

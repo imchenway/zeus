@@ -18,6 +18,8 @@ import { getSecretPresenceLabel } from '@zeus/security-core';
 import { cloneTaskManagementStatusConfig, type TaskPushParentAttachmentOption } from '@zeus/shared';
 import {
   CommandDefinitionRepository,
+  AutomationRunRepository,
+  AutomationTaskRepository,
   ConversationProviderItemRepository,
   ConversationRepository,
   ConversationResourceRepository,
@@ -48,6 +50,7 @@ import { type TaskStatus } from '@zeus/task-core';
 import { createTelegramBotMessageClient, dispatchTelegramUpdate, getTelegramConfigurationState, type TelegramMessageSender, type TelegramPollingService } from '@zeus/telegram-adapter';
 import { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { existsSync, realpathSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { clearAllPersistedGraphCaches } from './codeIntelligenceGraphCache.js';
 import { type GraphViewSnapshot, hasDatabaseUriPassword, resolveCodeMapScanRoot } from './codeIntelligenceGraphStore.js';
@@ -61,6 +64,8 @@ import { createCodexSubagentRuntimeReader } from './codexSubagentRuntimeProjecti
 import { createCommandCenter } from './commandCenter.js';
 import { ConversationCapabilityQueryApplication } from './conversationCapabilityQueryApplication.js';
 import { createDigitalEmployeeOrchestrator, type DigitalEmployeeOrchestrator } from './digitalEmployeeOrchestrator.js';
+import { createAutomationScheduler, type AutomationScheduler } from './automationScheduler.js';
+import { registerAutomationRoutes } from './automationRoutes.js';
 import { registerDigitalEmployeeRoutes } from './digitalEmployeeRoutes.js';
 import { registerConversationCapabilityQueryRoutes } from './conversationCapabilityQueryRoutes.js';
 import { ConversationChoiceQueryApplication } from './conversationChoiceQueryApplication.js';
@@ -428,6 +433,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   } = dependencies;
   let closeLocalServerResources: () => Promise<void>;
   let digitalEmployeeOrchestrator: DigitalEmployeeOrchestrator | null = null;
+  let automationScheduler: AutomationScheduler | null = null;
   server.get('/health', async () => {
     const storage = db.storageHealthSnapshot();
     const boundPort = getBoundPort();
@@ -2112,6 +2118,17 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   const digitalEmployeeExecutions = new DigitalEmployeeExecutionRepository(db);
   const digitalEmployeeProjectEvents = new DigitalEmployeeProjectEventRepository(db);
   const digitalEmployeeCommandDefinitions = new CommandDefinitionRepository(db);
+  const automationTasks = new AutomationTaskRepository(db);
+  const automationRuns = new AutomationRunRepository(db);
+
+  registerAutomationRoutes({
+    server,
+    tasks: automationTasks,
+    runs: automationRuns,
+    save: () => db.save(),
+    kick: () => automationScheduler?.kick(),
+    now,
+  });
 
   registerDigitalEmployeeRoutes({
     server,
@@ -2136,6 +2153,79 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   });
 
   if (!readOnlyValidation) {
+    automationScheduler = createAutomationScheduler({
+      tasks: automationTasks,
+      runs: automationRuns,
+      conversations,
+      getProject: (projectId) => projects.getById(projectId),
+      save: () => db.save(),
+      now,
+      publish: publishRealtimeEvent,
+      dispatch: async ({ run, snapshot, project }) => {
+        const digest = createHash('sha256').update(run.id).digest('hex').slice(0, 24);
+        if (snapshot.conversationMode === 'original') {
+          const originalConversation = snapshot.originalConversationId ? conversations.getById(snapshot.originalConversationId) : undefined;
+          if (!originalConversation || originalConversation.projectId !== project.id) throw nativeApiError('ZEUS_AUTOMATION_CONFIG_ORIGINAL_CONVERSATION_UNAVAILABLE', '原会话已不存在或不属于目标项目。');
+          if (originalConversation.archived) throw nativeApiError('ZEUS_AUTOMATION_DISPATCH_ORIGINAL_CONVERSATION_ARCHIVED', '原会话已归档，自动化不会自行恢复。');
+          const response = await executeConversationDispatchMessage({
+            params: { projectId: project.id, conversationId: originalConversation.id },
+            body: {
+              content: snapshot.prompt,
+              delivery: 'queue',
+              idempotencyKey: `automation:${run.id}`,
+              model: snapshot.modelId,
+              ...(snapshot.reasoningEffort ? { effort: snapshot.reasoningEffort } : {}),
+              ...(snapshot.serviceTier ? { serviceTier: snapshot.serviceTier } : {}),
+              permissionMode: snapshot.permissionMode,
+            },
+            operationIdentity: `automation:${run.id}`,
+            providerWriteLifecycle: { markPrepared: async () => undefined, markRpcStarted: () => undefined },
+          });
+          const accepted = response.body as { conversationId: string; submissionId: string };
+          return { conversationId: accepted.conversationId, submissionId: accepted.submissionId };
+        }
+        const conversationId = `conversation_${digest}`;
+        const submissionId = `conversation_submission_${digest}`;
+        const clientUserMessageId = `automation-client-${digest}`;
+        const idempotencyKey = `automation:${run.id}`;
+        const connection = snapshot.modelSourceId === 'codex' ? undefined : modelConnections.listMetadata().find((candidate: { id: string }) => candidate.id === snapshot.modelSourceId);
+        const configuredModel = connection?.models.find((candidate: { id: string; runtimeAdapter?: string }) => candidate.id === snapshot.modelId);
+        const runtimeKind = configuredModel?.runtimeAdapter === 'pi_sdk' ? 'pi' : 'codex';
+        if (runtimeKind === 'pi') {
+          const accepted = await piNativeCoordinator.startConversation({
+            conversationId,
+            submissionId,
+            projectId: project.id,
+            conversationTitle: snapshot.name,
+            cwd: project.localPath,
+            prompt: snapshot.prompt,
+            model: { sourceId: snapshot.modelSourceId, modelId: snapshot.modelId, displayName: snapshot.modelId },
+            ...(snapshot.reasoningEffort ? { thinkingLevel: snapshot.reasoningEffort } : {}),
+            permissionMode: snapshot.permissionMode,
+            idempotencyKey,
+            clientUserMessageId,
+            internalOperation: true,
+          });
+          return { conversationId: accepted.conversationId, submissionId: accepted.submissionId };
+        }
+        const accepted = await codexNativeCoordinator.startProjectConversation({
+          conversationId,
+          submissionId,
+          projectId: project.id,
+          projectLocalPath: project.localPath,
+          prompt: snapshot.prompt,
+          model: snapshot.modelId,
+          modelSourceId: snapshot.modelSourceId,
+          ...(snapshot.reasoningEffort ? { effort: snapshot.reasoningEffort } : {}),
+          ...(snapshot.serviceTier ? { serviceTier: snapshot.serviceTier } : {}),
+          permissionMode: snapshot.permissionMode,
+          collaborationMode: 'default',
+          idempotencyKey,
+          clientUserMessageId,
+        });
+        return { conversationId: accepted.conversationId, submissionId: accepted.submissionId };
+      },
+    });
     digitalEmployeeOrchestrator = createDigitalEmployeeOrchestrator({
       server,
       apiToken: options.apiToken,
@@ -3090,6 +3180,12 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     } catch (error) {
       cleanupErrors.push(error);
     }
+    try {
+      await automationScheduler?.close();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    automationScheduler = null;
     try {
       await digitalEmployeeOrchestrator?.close();
     } catch (error) {

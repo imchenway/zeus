@@ -18,6 +18,7 @@ import { DatabasePerformanceCollector, type DatabasePerformanceSnapshot } from '
 import { migrateExecutionHostHandoffSchema } from './executionHostHandoffStore.js';
 import { migrateExecutionHostWorkSchema } from './executionHostWorkStore.js';
 import { migrateDigitalEmployeeSchema } from './digitalEmployeeStore.js';
+import { migrateAutomationSchema } from './automationStore.js';
 import { migrateDigitalEmployeeStageHandoffSchema } from './digitalEmployeeStageHandoffMigration.js';
 import { migrateLongTermMemorySchema } from './longTermMemoryStore.js';
 import { migrateTaskEventFileProjectionSchema } from './taskEventFileProjectionStore.js';
@@ -33,6 +34,7 @@ export * from './commandDeliveryStore.js';
 export * from './databasePerformance.js';
 export * from './databasePort.js';
 export * from './digitalEmployeeStore.js';
+export * from './automationStore.js';
 export * from './digitalEmployeeStageHandoffMigration.js';
 export * from './executionHostHandoffStore.js';
 export * from './executionHostWorkStore.js';
@@ -1090,6 +1092,7 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
     migrateTaskManagementStatus(zeusDb);
     migrateTaskTypesAndContents(zeusDb);
     migrateDigitalEmployeeSchema(zeusDb);
+    migrateAutomationSchema(zeusDb);
     migrateCodexNativeConversationSchema(zeusDb);
     migrateConversationGoalSchema(zeusDb);
     // 用量身份迁移会读取模型来源字段，新库必须先建立 Agent 会话身份列。

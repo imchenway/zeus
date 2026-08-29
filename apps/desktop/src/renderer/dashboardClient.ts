@@ -1,4 +1,5 @@
 import { createCodexApiClient, type CodexApiClient } from './features/codex/codexApiClient.js';
+import { createAutomationApiClient, type AutomationApiClient } from './features/automations/automationApiClient.js';
 import { createCommandCenterApiClient, type CommandCenterApiClient } from './features/command-center/commandCenterApiClient.js';
 import { createConversationApiClient, type ConversationApiClient } from './features/conversations/conversationApiClient.js';
 import { createDashboardApiClient, type DashboardApiClient } from './features/dashboard/dashboardApiClient.js';
@@ -20,6 +21,7 @@ import { createLocalApiTransport } from './transport/localApiTransport.js';
 export interface DashboardClient
   extends
     DashboardApiClient,
+    AutomationApiClient,
     DigitalEmployeeApiClient,
     CodexApiClient,
     CommandCenterApiClient,
@@ -66,6 +68,7 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
     onPerformanceSpan: (span) => currentOptions.onPerformanceSpan?.(span),
   });
   const memory = createMemoryApiClient(transport);
+  const automations = createAutomationApiClient(transport);
   const conversations = createConversationApiClient(transport);
   const digitalEmployees = createDigitalEmployeeApiClient(transport);
   const projects = createProjectApiClient(transport);
@@ -76,6 +79,7 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
 
   return {
     memory,
+    ...automations,
     conversations,
     projects,
     tasks,
