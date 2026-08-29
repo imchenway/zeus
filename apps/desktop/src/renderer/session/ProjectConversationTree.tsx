@@ -502,6 +502,7 @@ export function conversationTreeRuntimeStateFromSession(state: NativeSessionStat
     return (state.queue?.submissions.length ?? 0) > 0 ? 'queued' : 'ready';
   }
   if (state.queue?.state.type === 'paused' && state.queue.state.reason === 'recovery_required') return 'paused';
+  if (state.planImplementationRequests.some((request) => request.status === 'pending')) return 'pending_user_input';
   const pendingRequest = state.pendingRequests.find((request) => request.status === 'pending');
   if (pendingRequest?.type === 'request_user_input' || pendingRequest?.type === 'userInput' || state.conversationState === 'waiting_user_input') return 'pending_user_input';
   if (pendingRequest || state.conversationState === 'waiting_approval') return 'pending_approval';
@@ -524,8 +525,9 @@ export function conversationTreeRuntimeStateFromSnapshot(snapshot: NativeConvers
   if (snapshot.queue.state.type === 'paused') {
     if (snapshot.queue.state.reason === 'provider_archived') return snapshot.queue.submissions.length > 0 ? 'queued' : 'ready';
     if (snapshot.queue.state.reason === 'recovery_required') return 'error';
-    return 'paused';
   }
+  if (snapshot.planImplementationRequests.some((request) => request.status === 'pending')) return 'pending_user_input';
+  if (snapshot.queue.state.type === 'paused') return 'paused';
   const pendingRequest = snapshot.requests.find((request) => request.status === 'pending');
   if (pendingRequest?.type === 'request_user_input' || pendingRequest?.type === 'userInput' || snapshot.pendingRequestKind === 'user_input') return 'pending_user_input';
   if (pendingRequest || snapshot.pendingRequestKind === 'approval') return 'pending_approval';
@@ -537,13 +539,15 @@ export function conversationTreeRuntimeStateFromSnapshot(snapshot: NativeConvers
 }
 
 export function conversationTreeRuntimeStateFromConversation(
-  conversation: Pick<NativeConversationChoice, 'status' | 'transportKind' | 'providerState' | 'pendingRequestKind' | 'listRuntimeState'> & { readOnly?: boolean },
+  conversation: Pick<NativeConversationChoice, 'status' | 'stage' | 'transportKind' | 'providerState' | 'pendingRequestKind' | 'listRuntimeState'> & { readOnly?: boolean },
 ): ConversationTreeRuntimeState {
   if (conversation.listRuntimeState) return conversation.listRuntimeState;
   if (conversation.transportKind !== 'codex_native') return 'legacy_readonly';
   const providerState = `${conversation.providerState ?? ''}`.toLocaleLowerCase();
   const recordState = conversation.status.toLocaleLowerCase();
   if (providerState.includes('failed') || providerState.includes('error') || recordState.includes('failed') || recordState.includes('error')) return 'error';
+  if (conversation.stage === 'waiting_user') return 'pending_user_input';
+  if (conversation.stage === 'waiting_approval') return 'pending_approval';
   if (providerState.includes('paused') || recordState.includes('paused')) return 'paused';
   if (conversation.pendingRequestKind === 'user_input') return 'pending_user_input';
   if (conversation.pendingRequestKind === 'approval') return 'pending_approval';

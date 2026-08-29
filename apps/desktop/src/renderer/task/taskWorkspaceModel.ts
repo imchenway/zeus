@@ -797,6 +797,7 @@ function parseTaskDateSortValue(value: string | undefined): number | null {
 export function taskAgentRunStatusFromSession(state: NativeSessionState): TaskAgentRunStatus {
   if (state.conversationState === 'turn_failed') return 'failed';
   if (state.queue?.state.type === 'paused' && state.queue.state.reason === 'recovery_required') return 'paused';
+  if (state.planImplementationRequests.some((request) => request.status === 'pending')) return 'waiting_user';
   if (state.queue?.state.type === 'paused') return 'paused';
   if (state.conversationState === 'waiting_user_input') return 'waiting_user';
   if (state.conversationState === 'waiting_approval') return 'waiting_approval';
@@ -805,12 +806,14 @@ export function taskAgentRunStatusFromSession(state: NativeSessionState): TaskAg
   return 'running';
 }
 
-export function taskAgentRunStatusFromConversation(conversation: Pick<NativeConversationChoice, 'status' | 'transportKind' | 'providerState' | 'pendingRequestKind' | 'taskRunStatus'> & { readOnly?: boolean }): TaskAgentRunStatus {
+export function taskAgentRunStatusFromConversation(conversation: Pick<NativeConversationChoice, 'status' | 'stage' | 'transportKind' | 'providerState' | 'pendingRequestKind' | 'taskRunStatus'> & { readOnly?: boolean }): TaskAgentRunStatus {
   if (conversation.taskRunStatus) return conversation.taskRunStatus;
   if (conversation.transportKind !== 'codex_native') return 'legacy_readonly';
   const providerState = `${conversation.providerState ?? ''}`.toLowerCase();
   const recordState = conversation.status.toLowerCase();
   if (providerState.includes('failed') || providerState.includes('error') || recordState.includes('failed') || recordState.includes('error')) return 'failed';
+  if (conversation.stage === 'waiting_user') return 'waiting_user';
+  if (conversation.stage === 'waiting_approval') return 'waiting_approval';
   if (providerState.includes('paused') || recordState.includes('paused')) return 'paused';
   if (conversation.pendingRequestKind === 'user_input' || providerState.includes('user_input') || providerState.includes('user input')) return 'waiting_user';
   if (conversation.pendingRequestKind === 'approval' || providerState.includes('approval') || providerState.includes('waiting')) return 'waiting_approval';

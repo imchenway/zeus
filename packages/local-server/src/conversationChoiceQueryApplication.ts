@@ -273,6 +273,10 @@ export class ConversationChoiceQueryApplication {
       const queued = submissions.some((submission) => (submission.status === 'queued' || submission.status === 'paused') && !submission.providerTurnId);
       return queued ? { runtimeState: 'queued' as const, taskRunStatus: 'running' as const } : { runtimeState: 'ready' as const, taskRunStatus: 'idle' as const };
     }
+    // `conversation_plan_actions` 与普通 server request 使用不同的持久表，但都会同步
+    // 到同一个权威会话阶段。列表只消费该持久投影，避免为计划确认再增加一套接口字段。
+    if (conversation.stage === 'waiting_user') return { runtimeState: 'pending_user_input' as const, taskRunStatus: 'waiting_user' as const };
+    if (conversation.stage === 'waiting_approval') return { runtimeState: 'pending_approval' as const, taskRunStatus: 'waiting_approval' as const };
     const activeTurn = [...(context.inProgressTurnsByConversationId.get(conversation.id) ?? [])].reverse().find((turn) => (turn.status === 'running' || turn.status === 'dispatching' || turn.status === 'waiting') && turn.providerTurnId);
     if (activeTurn) {
       if (activeTurn.status === 'waiting' && pendingRequestKind === 'user_input') return { runtimeState: 'pending_user_input' as const, taskRunStatus: 'waiting_user' as const };
