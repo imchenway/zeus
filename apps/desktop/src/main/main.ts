@@ -87,6 +87,7 @@ let mainWindow: BrowserWindow | undefined;
 const windows = new Set<BrowserWindow>();
 let tray: Tray | undefined;
 let menuBarUsageWindow: BrowserWindow | undefined;
+let menuBarUsageWindowBlurTimer: ReturnType<typeof setTimeout> | undefined;
 const taskGitDeliveryWindows = new Map<string, BrowserWindow>();
 const projectGitDiffWindows = new Set<BrowserWindow>();
 const taskGitDeliveryTaskByWindowId = new Map<number, string>();
@@ -234,6 +235,7 @@ const savedDisplayAvailabilityTimeoutMs = 2_000;
 const testDistributionName = 'Zeus Test';
 const menuBarUsageWindowSize = { width: 360, height: 520 } as const;
 const menuBarUsageWindowGap = 6;
+const menuBarUsageWindowBlurDelayMs = 150;
 
 type MenuBarUsageClickAnchor = {
   bounds: Electron.Rectangle;
@@ -2161,8 +2163,23 @@ function requireMenuBarUsageWindow(event: Electron.IpcMainInvokeEvent): BrowserW
   return requestingWindow;
 }
 
+function cancelMenuBarUsageWindowBlurHide(): void {
+  if (!menuBarUsageWindowBlurTimer) return;
+  clearTimeout(menuBarUsageWindowBlurTimer);
+  menuBarUsageWindowBlurTimer = undefined;
+}
+
 function hideMenuBarUsageWindow(): void {
+  cancelMenuBarUsageWindowBlurHide();
   if (menuBarUsageWindow && !menuBarUsageWindow.isDestroyed()) menuBarUsageWindow.hide();
+}
+
+function scheduleMenuBarUsageWindowBlurHide(window: BrowserWindow): void {
+  cancelMenuBarUsageWindowBlurHide();
+  menuBarUsageWindowBlurTimer = setTimeout(() => {
+    menuBarUsageWindowBlurTimer = undefined;
+    if (menuBarUsageWindow === window && !window.isDestroyed()) window.hide();
+  }, menuBarUsageWindowBlurDelayMs);
 }
 
 function isFiniteScreenPoint(point: Electron.Point): boolean {
@@ -2228,8 +2245,10 @@ async function createMenuBarUsageWindow(): Promise<BrowserWindow> {
   menuBarUsageWindow = window;
   window.setAlwaysOnTop(true, 'pop-up-menu');
   window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  window.on('blur', () => hideMenuBarUsageWindow());
+  window.on('blur', () => scheduleMenuBarUsageWindowBlurHide(window));
+  window.on('focus', () => cancelMenuBarUsageWindowBlurHide());
   window.on('closed', () => {
+    cancelMenuBarUsageWindowBlurHide();
     appCloseLayerActivityByWindow.delete(window.id);
     if (menuBarUsageWindow === window) menuBarUsageWindow = undefined;
   });
@@ -2306,6 +2325,7 @@ function setupTray(): void {
   tray.removeAllListeners('click');
   tray.removeAllListeners('right-click');
   tray.on('click', (_event, bounds, position) => {
+    cancelMenuBarUsageWindowBlurHide();
     const clickAnchor: MenuBarUsageClickAnchor = {
       bounds: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
       position: { x: position.x, y: position.y },
