@@ -1208,16 +1208,21 @@ function compactRuntimeLogForMemory(entry: AiRuntimeLogEntry): AiRuntimeLogEntry
 }
 
 async function waitForRuntimeCompletions(completions: readonly Promise<void>[], timeoutMs: number): Promise<boolean> {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
+  const deadlineAt = Date.now() + timeoutMs;
+  const maximumTimerSegmentMs = 24 * 60 * 60 * 1_000;
+  while (true) {
+    const remainingMs = deadlineAt - Date.now();
+    if (remainingMs <= 0) return false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const completed = await Promise.race([
       Promise.all(completions).then(() => true),
       new Promise<boolean>((resolveTimeout) => {
-        timeout = setTimeout(() => resolveTimeout(false), timeoutMs);
+        timeout = setTimeout(() => resolveTimeout(false), Math.min(remainingMs, maximumTimerSegmentMs));
       }),
-    ]);
-  } finally {
-    if (timeout) clearTimeout(timeout);
+    ]).finally(() => {
+      if (timeout) clearTimeout(timeout);
+    });
+    if (completed) return true;
   }
 }
 

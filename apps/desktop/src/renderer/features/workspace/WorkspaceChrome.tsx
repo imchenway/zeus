@@ -603,6 +603,20 @@ export function SidebarNav(props: {
           </span>
           <span className="project-quick-action-label">{copy.search}</span>
         </button>
+        <button
+          type="button"
+          className={`project-quick-action${props.activeNavTarget === 'automations' ? ' is-active' : ''}`}
+          aria-current={props.activeNavTarget === 'automations' ? 'page' : undefined}
+          onClick={() => props.onNavigate('automations')}
+        >
+          <span className="project-quick-action-icon" aria-hidden="true">
+            <svg viewBox="0 0 20 20" focusable="false">
+              <circle cx="10" cy="10" r="6.5" />
+              <path d="M10 6.2V10l2.7 1.8M4.2 3.8l1.5 1.5M15.8 3.8l-1.5 1.5" />
+            </svg>
+          </span>
+          <span className="project-quick-action-label">{props.appLanguage === 'zh-CN' ? '自动化' : 'Automations'}</span>
+        </button>
         <button type="button" className={`project-quick-action${props.activeNavTarget === 'skills' ? ' is-active' : ''}`} aria-current={props.activeNavTarget === 'skills' ? 'page' : undefined} onClick={() => props.onNavigate('skills')}>
           <span className="project-quick-action-icon" aria-hidden="true">
             <svg viewBox="0 0 20 20" focusable="false">
@@ -658,7 +672,7 @@ export function SidebarNav(props: {
           </section>
         ) : (
           visibleProjects.map((project) => {
-            const isActiveProject = project.id === props.activeProjectId && props.activeNavTarget !== 'settings' && props.activeNavTarget !== 'skills';
+            const isActiveProject = project.id === props.activeProjectId && props.activeNavTarget !== 'settings' && props.activeNavTarget !== 'skills' && props.activeNavTarget !== 'automations';
             const pinned = props.pinnedProjectIds.includes(project.id);
             const expanded = !props.collapsedProjectIds.includes(project.id);
             const menuOpen = openProjectMenuIds.has(project.id);

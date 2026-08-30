@@ -1106,12 +1106,23 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return Promise.reject(coordinatorError('ZEUS_CODEX_TURN_RESULT_TIMEOUT_INVALID', 'Native turn result timeout must be a positive number.'));
     return new Promise((resolveResult, rejectResult) => {
       const waiters = turnResultWaiters.get(key) ?? [];
+      const deadlineAt = Date.now() + timeoutMs;
+      const scheduleSegment = (): ReturnType<typeof setTimeout> =>
+        setTimeout(
+          () => {
+            const remainingMs = deadlineAt - Date.now();
+            if (remainingMs > 0) {
+              waiter.timer = scheduleSegment();
+              return;
+            }
+            void turnResultRecovery.timeoutTurnResult(input, key).catch((error) => rejectResult(error instanceof Error ? error : new Error(String(error))));
+          },
+          Math.min(Math.max(1, deadlineAt - Date.now()), 24 * 60 * 60 * 1_000),
+        );
       const waiter: NativeTurnResultWaiter = {
         resolve: resolveResult,
         reject: rejectResult,
-        timer: setTimeout(() => {
-          void turnResultRecovery.timeoutTurnResult(input, key).catch((error) => rejectResult(error instanceof Error ? error : new Error(String(error))));
-        }, timeoutMs),
+        timer: scheduleSegment(),
       };
       waiters.push(waiter);
       turnResultWaiters.set(key, waiters);

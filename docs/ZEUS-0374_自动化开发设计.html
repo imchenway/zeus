@@ -1,0 +1,1089 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ZEUS-0374 自动化开发设计</title>
+    <style data-vd-shell="1">
+      :root {
+        color-scheme: light;
+        --vd-ink: #10243a;
+        --vd-muted: #5d7187;
+        --vd-blue: #176aa6;
+        --vd-blue-soft: #e8f3fb;
+        --vd-green: #237a5b;
+        --vd-green-soft: #e8f7f0;
+        --vd-amber: #9a6709;
+        --vd-amber-soft: #fff5d8;
+        --vd-red: #aa3f45;
+        --vd-red-soft: #fff0f1;
+        --vd-violet: #6958ad;
+        --vd-violet-soft: #f1effd;
+        --vd-line: #b7cce0;
+        --vd-paper: #fbfdff;
+        --vd-panel: rgba(255, 255, 255, 0.9);
+        --vd-shadow: 0 14px 38px rgba(31, 72, 108, 0.09);
+        --vd-radius: 18px;
+        --vd-grid: 24px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        min-inline-size: 0;
+        background: var(--vd-paper);
+      }
+
+      body {
+        margin: 0;
+        min-inline-size: 0;
+        overflow-x: clip;
+        color: var(--vd-ink);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
+        background:
+          radial-gradient(circle at 12% 0%, rgba(207, 230, 249, 0.62), transparent 29rem), radial-gradient(circle at 88% 4%, rgba(221, 243, 234, 0.58), transparent 26rem), linear-gradient(rgba(78, 118, 154, 0.045) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(78, 118, 154, 0.045) 1px, transparent 1px), linear-gradient(180deg, #fff 0%, #f7fbff 55%, #fbfdff 100%);
+        background-size:
+          auto,
+          auto,
+          var(--vd-grid) var(--vd-grid),
+          var(--vd-grid) var(--vd-grid),
+          auto;
+      }
+
+      [data-vd-artifact='1'] {
+        width: min(1440px, calc(100vw - 32px));
+        margin-inline: auto;
+        padding: 24px 0 64px;
+      }
+
+      [data-vd-title-region] {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: start;
+        gap: 16px 24px;
+        margin-bottom: 20px;
+      }
+
+      [data-vd-title-copy] {
+        min-inline-size: 0;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(1.65rem, 3vw, 2.5rem);
+        line-height: 1.12;
+        letter-spacing: -0.025em;
+        overflow-wrap: anywhere;
+      }
+
+      [data-vd-summary] {
+        max-inline-size: 76rem;
+        margin: 10px 0 0;
+        color: #314d67;
+        font-size: 1.04rem;
+        font-weight: 650;
+        line-height: 1.65;
+      }
+
+      .vd-tech-label {
+        display: block;
+        margin-top: 4px;
+        color: var(--vd-muted);
+        font:
+          600 0.72rem/1.4 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          Consolas,
+          monospace;
+        overflow-wrap: anywhere;
+      }
+
+      .vd-product-callout,
+      .vd-decision-callout {
+        padding: 14px 16px;
+        border-inline-start: 4px solid var(--vd-blue);
+        border-radius: 0 12px 12px 0;
+        background: rgba(232, 243, 251, 0.72);
+      }
+
+      .vd-decision-callout {
+        border-inline-start-color: var(--vd-amber);
+        background: rgba(255, 245, 216, 0.72);
+      }
+
+      [data-vd-evidence-state] {
+        display: inline-flex;
+        align-items: center;
+        min-block-size: 24px;
+        padding: 3px 8px;
+        border: 1px solid currentColor;
+        border-radius: 999px;
+        color: var(--vd-muted);
+        background: #fff;
+        font-size: 0.72rem;
+        font-weight: 800;
+      }
+
+      [data-vd-controls] {
+        display: inline-flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 4px;
+        padding: 4px;
+        border: 1px solid rgba(108, 148, 184, 0.46);
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.9);
+        box-shadow: 0 6px 18px rgba(31, 72, 108, 0.06);
+      }
+
+      [data-vd-zoom] {
+        min-inline-size: 44px;
+        min-block-size: 38px;
+        padding: 6px 10px;
+        border: 0;
+        border-radius: 8px;
+        color: var(--vd-muted);
+        background: transparent;
+        font: 800 0.75rem/1 inherit;
+        cursor: pointer;
+      }
+
+      [data-vd-zoom]:hover {
+        color: var(--vd-blue);
+        background: var(--vd-blue-soft);
+      }
+      [data-vd-zoom][aria-pressed='true'] {
+        color: #fff;
+        background: var(--vd-blue);
+      }
+      [data-vd-zoom]:focus-visible {
+        outline: 3px solid rgba(23, 106, 166, 0.3);
+        outline-offset: 2px;
+      }
+
+      [data-vd-content] {
+        display: grid;
+        gap: 24px;
+        min-inline-size: 0;
+      }
+
+      [data-vd-view] {
+        position: relative;
+        min-inline-size: 0;
+      }
+
+      [data-vd-view] > :first-child {
+        margin-top: 0;
+      }
+      [data-vd-view] > :last-child {
+        margin-bottom: 0;
+      }
+
+      [data-vd-viewport] {
+        min-inline-size: 0;
+        overflow-x: auto;
+        overflow-y: visible;
+        overscroll-behavior-inline: contain;
+        scrollbar-gutter: stable;
+      }
+
+      [data-vd-zoom-target] {
+        --vd-applied-zoom: 1;
+        min-inline-size: 0;
+        transform-origin: top left;
+      }
+
+      [data-vd-detail-trigger] {
+        cursor: pointer;
+      }
+
+      dialog[data-vd-detail-for] {
+        width: min(34rem, calc(100vw - 32px));
+        max-height: min(74vh, 44rem);
+        padding: 0;
+        border: 1px solid rgba(108, 148, 184, 0.6);
+        border-radius: 16px;
+        color: var(--vd-ink);
+        background: #fff;
+        box-shadow: 0 24px 68px rgba(20, 52, 82, 0.22);
+      }
+
+      dialog[data-vd-detail-for]::backdrop {
+        background: rgba(14, 31, 48, 0.28);
+        backdrop-filter: blur(2px);
+      }
+
+      .vd-detail-body {
+        padding: 20px;
+        overflow: auto;
+      }
+      .vd-detail-body h2 {
+        margin: 0 0 8px;
+        font-size: 1.2rem;
+      }
+      .vd-detail-body p,
+      .vd-detail-body li {
+        line-height: 1.55;
+      }
+      .vd-detail-close {
+        float: right;
+        margin: 12px 12px 0;
+      }
+
+      .vd-visually-hidden,
+      [data-vd-audit-output] {
+        position: absolute !important;
+        inline-size: 1px !important;
+        block-size: 1px !important;
+        overflow: hidden !important;
+        clip-path: inset(50%) !important;
+        white-space: nowrap !important;
+      }
+
+      [data-vd-static-fallback] {
+        margin-top: 16px;
+      }
+
+      @media (max-width: 48rem) {
+        [data-vd-artifact='1'] {
+          width: min(100vw - 20px, 48rem);
+          padding-top: 14px;
+        }
+        [data-vd-title-region] {
+          grid-template-columns: 1fr;
+          gap: 12px;
+        }
+        [data-vd-controls] {
+          justify-self: start;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          transition-duration: 0.001ms !important;
+        }
+      }
+
+      @media print {
+        body {
+          background: #fff;
+        }
+        [data-vd-artifact='1'] {
+          width: 100%;
+          padding: 0;
+        }
+        [data-vd-controls],
+        [data-vd-audit-output] {
+          display: none !important;
+        }
+        [data-vd-viewport] {
+          overflow: visible !important;
+        }
+        [data-vd-zoom-target] {
+          zoom: 1 !important;
+          transform: none !important;
+        }
+        dialog[data-vd-detail-for] {
+          display: block;
+          position: static;
+          width: auto;
+          max-height: none;
+          margin: 1rem 0;
+          box-shadow: none;
+        }
+      }
+    </style>
+    <style data-vd-author-style="1">
+      .vd-view-card {
+        padding: 20px;
+        border: 1px solid rgba(108, 148, 184, 0.42);
+        border-radius: var(--vd-radius);
+        background: var(--vd-panel);
+        box-shadow: var(--vd-shadow);
+      }
+
+      .vd-view-heading {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px 20px;
+        margin-bottom: 14px;
+      }
+
+      .vd-view-heading h2 {
+        margin: 0;
+        font-size: clamp(1.16rem, 2vw, 1.42rem);
+        line-height: 1.25;
+      }
+
+      .vd-view-heading p {
+        max-inline-size: 54rem;
+        margin: 6px 0 0;
+        color: var(--vd-muted);
+        line-height: 1.55;
+      }
+
+      .vd-detail-chip {
+        min-block-size: 38px;
+        padding: 7px 12px;
+        border: 1px solid rgba(154, 103, 9, 0.42);
+        border-radius: 999px;
+        color: #714c08;
+        background: var(--vd-amber-soft);
+        font: 800 0.78rem/1 inherit;
+      }
+
+      .vd-detail-chip:focus-visible,
+      .vd-detail-close:focus-visible {
+        outline: 3px solid rgba(23, 106, 166, 0.28);
+        outline-offset: 2px;
+      }
+
+      .vd-canvas {
+        display: block;
+        width: 1180px;
+        max-width: none;
+        overflow: visible;
+      }
+
+      .vd-canvas .edge {
+        fill: none;
+        stroke: #7b9ab6;
+        stroke-width: 2.5;
+        marker-end: url(#arrow-primary);
+      }
+
+      .vd-canvas.state .edge {
+        marker-end: url(#arrow-state);
+      }
+      .vd-canvas .edge.risk {
+        stroke: var(--vd-red);
+        stroke-dasharray: 7 5;
+      }
+      .vd-canvas .edge.optional {
+        stroke: var(--vd-violet);
+        stroke-dasharray: 5 5;
+      }
+
+      .vd-canvas .node-box {
+        stroke-width: 1.5;
+        rx: 15;
+        ry: 15;
+      }
+
+      .vd-canvas .node-source .node-box {
+        fill: #f7fbff;
+        stroke: #9bbbd5;
+      }
+      .vd-canvas .node-core .node-box {
+        fill: var(--vd-blue-soft);
+        stroke: var(--vd-blue);
+      }
+      .vd-canvas .node-product .node-box {
+        fill: var(--vd-green-soft);
+        stroke: var(--vd-green);
+      }
+      .vd-canvas .node-employee .node-box {
+        fill: var(--vd-violet-soft);
+        stroke: var(--vd-violet);
+      }
+      .vd-canvas .node-result .node-box {
+        fill: var(--vd-amber-soft);
+        stroke: var(--vd-amber);
+      }
+      .vd-canvas .node-danger .node-box {
+        fill: var(--vd-red-soft);
+        stroke: var(--vd-red);
+      }
+      .vd-canvas .node-neutral .node-box {
+        fill: #f3f6f9;
+        stroke: #8799aa;
+      }
+
+      .vd-canvas .node-title {
+        fill: var(--vd-ink);
+        font-size: 17px;
+        font-weight: 800;
+      }
+
+      .vd-canvas .node-copy {
+        fill: #466178;
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      .vd-canvas .node-tag {
+        fill: #6c8297;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+      }
+
+      .vd-canvas .edge-copy {
+        fill: #607b92;
+        font-size: 11px;
+        font-weight: 800;
+      }
+
+      .vd-critical-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 16px;
+      }
+
+      .vd-critical-grid article {
+        min-inline-size: 0;
+        padding: 13px 14px;
+        border: 1px solid rgba(108, 148, 184, 0.32);
+        border-radius: 13px;
+        background: #fff;
+      }
+
+      .vd-critical-grid strong {
+        display: block;
+        margin-bottom: 5px;
+      }
+      .vd-critical-grid p {
+        margin: 0;
+        color: var(--vd-muted);
+        line-height: 1.5;
+      }
+
+      .vd-state-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+        color: var(--vd-muted);
+        font-size: 0.8rem;
+        font-weight: 700;
+      }
+
+      .vd-state-legend span {
+        padding: 5px 8px;
+        border-radius: 999px;
+        background: #f1f5f8;
+      }
+
+      .vd-detail-close {
+        min-block-size: 36px;
+        padding: 6px 10px;
+        border: 1px solid var(--vd-line);
+        border-radius: 9px;
+        background: #fff;
+        color: var(--vd-ink);
+        font-weight: 800;
+      }
+
+      @media (max-width: 48rem) {
+        .vd-view-card {
+          padding: 14px;
+        }
+        .vd-critical-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div data-vd-artifact="1">
+      <header data-vd-title-region>
+        <div data-vd-title-copy>
+          <h1>ZEUS-0374 自动化开发设计</h1>
+          <p data-vd-summary>Zeus 统一接纳人工、时间和领域事件触发；每个项目独立生成可审计结果。独立自动化与员工规则共享调度能力，但分别落到自动化运行和工作执行，独立会话始终归属自动化收件箱。</p>
+        </div>
+        <div data-vd-controls role="group" aria-label="图形缩放" data-vd-zoom-request="fit">
+          <button type="button" data-vd-zoom="0.75" aria-pressed="false">75%</button>
+          <button type="button" data-vd-zoom="0.9" aria-pressed="false">90%</button>
+          <button type="button" data-vd-zoom="1" aria-pressed="false">100%</button>
+          <button type="button" data-vd-zoom="fit" aria-pressed="true">适配</button>
+        </div>
+      </header>
+      <main data-vd-content>
+        <section id="architecture-view" class="vd-view-card" data-vd-view="architecture" data-vd-family="system-architecture" data-vd-view-role="primary">
+          <div class="vd-view-heading">
+            <div>
+              <h2 data-vd-view-title>系统架构｜一次触发如何成为可追踪结果</h2>
+              <p>主链路只回答三个产品问题：谁有权接纳触发、接纳后创建什么对象、用户最后到哪里阅读和继续对话。</p>
+            </div>
+            <button type="button" class="vd-detail-chip" data-vd-detail-trigger="cover-risk-detail">查看覆盖旧运行的风险</button>
+          </div>
+          <div data-vd-viewport aria-label="自动化系统架构横向画布">
+            <svg class="vd-canvas" data-vd-zoom-target viewBox="0 0 1180 710" role="img" aria-label="Zeus 自动化系统架构" aria-describedby="architecture-svg-desc">
+              <desc id="architecture-svg-desc">人工、确定性计划和 Zeus 领域事件由共享调度内核接纳，分别创建自动化运行或员工工作执行，结果进入自动化收件箱。</desc>
+              <defs>
+                <marker id="arrow-primary" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#7b9ab6"></path>
+                </marker>
+              </defs>
+
+              <path id="edge-user-scheduler" class="edge" data-vd-edge="admission" data-from="node-user" data-to="node-scheduler" d="M130 150 C130 184 330 176 330 210"></path>
+              <path id="edge-time-scheduler" class="edge" data-vd-edge="admission" data-from="node-time" data-to="node-scheduler" d="M370 150 C370 178 445 182 445 210"></path>
+              <path id="edge-event-scheduler" class="edge" data-vd-edge="admission" data-from="node-event" data-to="node-scheduler" d="M610 150 L610 210"></path>
+              <path id="edge-agent-scheduler" class="edge" data-vd-edge="proposal" data-from="node-agent" data-to="node-scheduler" d="M850 150 C850 178 815 182 815 210"></path>
+              <path id="edge-scheduler-run" class="edge" data-vd-edge="creates" data-from="node-scheduler" data-to="node-run" d="M420 320 C420 365 225 365 225 420"></path>
+              <path id="edge-scheduler-execution" class="edge" data-vd-edge="creates" data-from="node-scheduler" data-to="node-execution" d="M655 320 C655 365 590 365 590 420"></path>
+              <path id="edge-run-execution" class="edge optional" data-vd-edge="may-link" data-from="node-run" data-to="node-execution" d="M370 472 L445 472"></path>
+              <path id="edge-run-conversation" class="edge" data-vd-edge="dispatches" data-from="node-run" data-to="node-conversation" d="M225 525 L225 570"></path>
+              <path id="edge-execution-work" class="edge" data-vd-edge="dispatches" data-from="node-execution" data-to="node-work" d="M590 525 L590 570"></path>
+              <path id="edge-conversation-inbox" class="edge" data-vd-edge="projects" data-from="node-conversation" data-to="node-inbox" d="M370 622 C540 622 655 515 820 515"></path>
+              <path id="edge-work-inbox" class="edge" data-vd-edge="projects" data-from="node-work" data-to="node-inbox" d="M735 622 C770 622 785 585 820 585"></path>
+
+              <g id="node-user" class="node-source" data-vd-node="external">
+                <rect class="node-box" x="30" y="50" width="200" height="100"></rect>
+                <text class="node-tag" x="50" y="77">MANUAL</text>
+                <text class="node-title" x="50" y="105">用户操作</text>
+                <text class="node-copy" x="50" y="130">确认创建、立即运行</text>
+              </g>
+              <g id="node-time" class="node-source" data-vd-node="external">
+                <rect class="node-box" x="270" y="50" width="200" height="100"></rect>
+                <text class="node-tag" x="290" y="77">RRULE + IANA TZ</text>
+                <text class="node-title" x="290" y="105">确定性计划</text>
+                <text class="node-copy" x="290" y="130">离线仅合并补跑一次</text>
+              </g>
+              <g id="node-event" class="node-source" data-vd-node="external">
+                <rect class="node-box" x="510" y="50" width="200" height="100"></rect>
+                <text class="node-tag" x="530" y="77">ZEUS EVENT</text>
+                <text class="node-title" x="530" y="105">领域事件</text>
+                <text class="node-copy" x="530" y="130">未来事件 + 稳定状态 ID</text>
+              </g>
+              <g id="node-agent" class="node-source" data-vd-node="external">
+                <rect class="node-box" x="750" y="50" width="200" height="100"></rect>
+                <text class="node-tag" x="770" y="77">AGENT</text>
+                <text class="node-title" x="770" y="105">草稿或执行主体</text>
+                <text class="node-copy" x="770" y="130">不能绕过 Zeus 直接触发</text>
+              </g>
+
+              <g id="node-scheduler" class="node-core" data-vd-node="service" data-vd-critical>
+                <rect class="node-box" x="250" y="210" width="680" height="110"></rect>
+                <text class="node-tag" x="280" y="240">SOLE TRIGGER AUTHORITY</text>
+                <text class="node-title" x="280" y="271">Zeus 触发接纳与共享调度内核</text>
+                <text class="node-copy" x="280" y="297">幂等回执 · 每项目队列 · 串行/丢弃/覆盖 · 预算 · 因果循环门禁 · 耐久恢复</text>
+              </g>
+
+              <g id="node-run" class="node-product" data-vd-node="store" data-vd-critical>
+                <rect class="node-box" x="80" y="420" width="290" height="105"></rect>
+                <text class="node-tag" x="102" y="448">PLATFORM AUTOMATION</text>
+                <text class="node-title" x="102" y="477">自动化运行</text>
+                <text class="node-copy" x="102" y="502">每次触发 × 项目，冻结修订与权限</text>
+              </g>
+              <g id="node-execution" class="node-employee" data-vd-node="component" data-vd-critical>
+                <rect class="node-box" x="445" y="420" width="290" height="105"></rect>
+                <text class="node-tag" x="467" y="448">EMPLOYEE RULE ADAPTER</text>
+                <text class="node-title" x="467" y="477">员工工作执行</text>
+                <text class="node-copy" x="467" y="502">继续绑定员工、任务与工作流</text>
+              </g>
+              <text class="edge-copy" x="378" y="458">可选关联</text>
+              <g id="node-conversation" class="node-product" data-vd-node="component">
+                <rect class="node-box" x="80" y="570" width="290" height="105"></rect>
+                <text class="node-tag" x="102" y="598">PRODUCT CONVERSATION</text>
+                <text class="node-title" x="102" y="627">独立会话或原会话提交</text>
+                <text class="node-copy" x="102" y="651">自动化来源归属永久不变</text>
+              </g>
+              <g id="node-work" class="node-employee" data-vd-node="component">
+                <rect class="node-box" x="445" y="570" width="290" height="105"></rect>
+                <text class="node-tag" x="467" y="598">TASK WORKFLOW</text>
+                <text class="node-title" x="467" y="627">任务与交付链路</text>
+                <text class="node-copy" x="467" y="651">保留现有员工规则语义</text>
+              </g>
+              <g id="node-inbox" class="node-result" data-vd-node="interface" data-vd-critical>
+                <rect class="node-box" x="820" y="455" width="300" height="165"></rect>
+                <text class="node-tag" x="844" y="486">TOP-LEVEL AUTOMATION</text>
+                <text class="node-title" x="844" y="516">自动化收件箱</text>
+                <text class="node-copy" x="844" y="544">每条终态运行独立未读</text>
+                <text class="node-copy" x="844" y="568">打开后可继续正常追问</text>
+                <text class="node-copy" x="844" y="592">仍不进入普通会话列表</text>
+              </g>
+            </svg>
+          </div>
+          <div class="vd-critical-grid" aria-label="核心边界摘要">
+            <article id="critical-object-boundary" data-vd-critical>
+              <strong>对象不合并</strong>
+              <p>独立自动化生成自动化运行；员工规则继续生成工作执行。共享调度不等于共享领域记录。</p>
+            </article>
+            <article id="critical-inbox-boundary" data-vd-critical>
+              <strong>会话来源不迁移</strong>
+              <p>用户手动追问不会把独立运行会话移动到普通会话列表，也不会改变后续调度配置。</p>
+            </article>
+            <article id="critical-cover-risk" data-vd-critical>
+              <strong>覆盖允许真实重叠</strong>
+              <p>旧 Provider 或外部命令停止结果未知时，旧运行记为未知，最新运行仍立即启动并显式标记可能重叠。</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="run-state-view" class="vd-view-card" data-vd-view="run-state" data-vd-family="state-machine" data-vd-view-role="supporting">
+          <div class="vd-view-heading">
+            <div>
+              <h2 data-vd-view-title>状态机｜一条自动化运行如何结算</h2>
+              <p>阻塞、取消和未知都是不可逆终态。用户解决问题后创建引用旧运行的新运行，系统绝不复活旧记录。</p>
+            </div>
+          </div>
+          <div data-vd-viewport aria-label="自动化运行状态机横向画布">
+            <svg class="vd-canvas state" data-vd-zoom-target viewBox="0 0 1180 500" role="img" aria-label="自动化运行状态机" aria-describedby="state-svg-desc">
+              <desc id="state-svg-desc">运行从排队、派发和执行进入成功、失败、阻塞、结果未知或取消等不可逆终态。</desc>
+              <defs>
+                <marker id="arrow-state" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#7b9ab6"></path>
+                </marker>
+              </defs>
+
+              <path id="transition-queue-dispatch" class="edge" data-vd-edge="transition" data-from="state-queued" data-to="state-dispatching" d="M180 160 L230 160"></path>
+              <path id="transition-dispatch-running" class="edge" data-vd-edge="transition" data-from="state-dispatching" data-to="state-running" d="M380 160 L430 160"></path>
+              <path id="transition-queue-unstarted" class="edge" data-vd-edge="transition" data-from="state-queued" data-to="state-unstarted" d="M105 200 L105 330"></path>
+              <path id="transition-running-success" class="edge" data-vd-edge="transition" data-from="state-running" data-to="state-succeeded" d="M580 145 C630 145 650 55 720 55"></path>
+              <path id="transition-running-failed" class="edge" data-vd-edge="transition" data-from="state-running" data-to="state-failed" d="M580 155 C630 155 660 145 720 145"></path>
+              <path id="transition-running-blocked" class="edge" data-vd-edge="transition" data-from="state-running" data-to="state-blocked" d="M580 170 C630 170 660 235 720 235"></path>
+              <path id="transition-running-unknown" class="edge risk" data-vd-edge="transition" data-from="state-running" data-to="state-unknown" d="M580 185 C630 185 650 325 720 325"></path>
+              <path id="transition-running-cancelling" class="edge" data-vd-edge="transition" data-from="state-running" data-to="state-cancelling" d="M505 200 L505 330"></path>
+              <path id="transition-cancelling-cancelled" class="edge" data-vd-edge="transition" data-from="state-cancelling" data-to="state-cancelled" d="M580 370 C665 430 850 430 930 370"></path>
+              <path id="transition-cancelling-unknown" class="edge risk" data-vd-edge="transition" data-from="state-cancelling" data-to="state-unknown" d="M580 355 C630 355 655 335 720 335"></path>
+
+              <g id="state-queued" class="node-core" data-vd-node="initial">
+                <rect class="node-box" x="30" y="120" width="150" height="80"></rect>
+                <text class="node-title" x="55" y="156">排队</text>
+                <text class="node-copy" x="55" y="180">queued</text>
+              </g>
+              <g id="state-dispatching" class="node-core" data-vd-node="state">
+                <rect class="node-box" x="230" y="120" width="150" height="80"></rect>
+                <text class="node-title" x="255" y="156">派发中</text>
+                <text class="node-copy" x="255" y="180">dispatching</text>
+              </g>
+              <g id="state-running" class="node-product" data-vd-node="state">
+                <rect class="node-box" x="430" y="120" width="150" height="80"></rect>
+                <text class="node-title" x="455" y="156">执行中</text>
+                <text class="node-copy" x="455" y="180">running</text>
+              </g>
+              <g id="state-succeeded" class="node-product" data-vd-node="terminal">
+                <rect class="node-box" x="720" y="20" width="180" height="70"></rect>
+                <text class="node-title" x="744" y="54">成功</text>
+                <text class="node-copy" x="744" y="76">succeeded</text>
+              </g>
+              <g id="state-failed" class="node-danger" data-vd-node="terminal">
+                <rect class="node-box" x="720" y="110" width="180" height="70"></rect>
+                <text class="node-title" x="744" y="144">失败</text>
+                <text class="node-copy" x="744" y="166">failed</text>
+              </g>
+              <g id="state-blocked" class="node-result" data-vd-node="terminal">
+                <rect class="node-box" x="720" y="200" width="180" height="70"></rect>
+                <text class="node-title" x="744" y="234">阻塞</text>
+                <text class="node-copy" x="744" y="256">blocked + reason</text>
+              </g>
+              <g id="state-unknown" class="node-danger" data-vd-node="terminal">
+                <rect class="node-box" x="720" y="290" width="180" height="70"></rect>
+                <text class="node-title" x="744" y="324">结果未知</text>
+                <text class="node-copy" x="744" y="346">outcome_unknown</text>
+              </g>
+              <g id="state-unstarted" class="node-neutral" data-vd-node="terminal">
+                <rect class="node-box" x="30" y="330" width="220" height="90"></rect>
+                <text class="node-title" x="54" y="366">未执行终态</text>
+                <text class="node-copy" x="54" y="390">丢弃 / 容量淘汰 / 覆盖</text>
+              </g>
+              <g id="state-cancelling" class="node-result" data-vd-node="state">
+                <rect class="node-box" x="430" y="330" width="150" height="80"></rect>
+                <text class="node-title" x="455" y="366">取消中</text>
+                <text class="node-copy" x="455" y="390">cancelling</text>
+              </g>
+              <g id="state-cancelled" class="node-neutral" data-vd-node="terminal">
+                <rect class="node-box" x="930" y="330" width="180" height="80"></rect>
+                <text class="node-title" x="954" y="366">已取消</text>
+                <text class="node-copy" x="954" y="390">需取得停止证据</text>
+              </g>
+            </svg>
+          </div>
+          <div class="vd-state-legend" aria-label="状态机补充说明">
+            <span>安全重试：同一 run 下新增 attempt</span>
+            <span>预算阻塞：blocked + blocked_budget</span>
+            <span>所有终态：不可逆</span>
+          </div>
+        </section>
+      </main>
+      <dialog id="cover-risk-detail" data-vd-detail-for="critical-cover-risk" aria-labelledby="cover-risk-title">
+        <button type="button" class="vd-detail-close" data-vd-detail-close>关闭</button>
+        <div class="vd-detail-body">
+          <h2 id="cover-risk-title">覆盖旧运行不是撤销</h2>
+          <p>Zeus 会先记录终止请求并清理未开始队列；如果 Provider 或外部命令是否停止仍未知，旧运行进入“结果未知”，最新运行立即启动。</p>
+          <ul>
+            <li>新运行保存被覆盖运行和终止请求身份。</li>
+            <li>界面持续显示“可能重叠”，不投影成旧运行已停止。</li>
+            <li>旧运行已经发生的文件、Git、网络或完全访问副作用不会被回滚。</li>
+          </ul>
+        </div>
+      </dialog>
+      <output data-vd-audit-output aria-live="polite"></output>
+    </div>
+    <script id="vibe-diagram-manifest" type="application/json">
+      {
+        "$schema": "vibe-diagram/artifact-manifest@1",
+        "artifactId": "zeus-0374-automation-design",
+        "language": "zh-CN",
+        "title": "ZEUS-0374 自动化开发设计",
+        "audience": ["product-manager"],
+        "questions": [
+          {
+            "id": "trigger-authority-and-result",
+            "text": "一次自动化触发由谁接纳，并分别创建什么结果对象？",
+            "priority": "critical",
+            "answeredBy": ["node-scheduler", "node-run", "node-execution"]
+          },
+          {
+            "id": "conversation-destination",
+            "text": "独立自动化会话及人工追问最终在哪里出现？",
+            "priority": "critical",
+            "answeredBy": ["node-inbox", "critical-inbox-boundary"]
+          },
+          {
+            "id": "cover-unknown",
+            "text": "覆盖旧运行无法确认停止时，产品如何表达并发风险？",
+            "priority": "critical",
+            "answeredBy": ["critical-cover-risk"]
+          }
+        ],
+        "criticalFacts": [
+          {
+            "id": "zeus-is-authority",
+            "statement": "Zeus 是唯一触发接纳权威，Agent 只能提出草稿或作为执行主体。",
+            "status": "verified",
+            "visibleIn": ["node-scheduler"],
+            "evidenceIds": ["requirements-doc", "scheduler-code"]
+          },
+          {
+            "id": "objects-stay-separate",
+            "statement": "独立自动化运行与员工工作执行是两个领域对象，只共享调度基础设施。",
+            "status": "verified",
+            "visibleIn": ["node-run", "node-execution", "critical-object-boundary"],
+            "evidenceIds": ["requirements-doc", "employee-store-code"]
+          },
+          {
+            "id": "inbox-ownership-persists",
+            "statement": "独立运行会话允许人工追问，但始终留在自动化收件箱。",
+            "status": "verified",
+            "visibleIn": ["node-inbox", "critical-inbox-boundary"],
+            "evidenceIds": ["requirements-doc", "conversation-store-code"]
+          },
+          {
+            "id": "cover-can-overlap",
+            "statement": "覆盖旧运行无法确认停止时立即启动最新运行，并保留可能重叠事实。",
+            "status": "verified",
+            "visibleIn": ["critical-cover-risk"],
+            "evidenceIds": ["requirements-doc"]
+          }
+        ],
+        "views": [
+          { "id": "architecture", "family": "system-architecture", "role": "primary", "elementId": "architecture-view" },
+          { "id": "run-state", "family": "state-machine", "role": "supporting", "elementId": "run-state-view" }
+        ],
+        "evidence": [
+          {
+            "id": "requirements-doc",
+            "status": "verified",
+            "sourceKind": "local-task-document",
+            "source": "docs/ZEUS-0374_自动化需求.md",
+            "supports": ["zeus-is-authority", "objects-stay-separate", "inbox-ownership-persists", "cover-can-overlap"]
+          },
+          {
+            "id": "employee-store-code",
+            "status": "observed",
+            "sourceKind": "repository-code",
+            "source": "packages/storage/src/digitalEmployeeStore.ts",
+            "supports": ["objects-stay-separate"]
+          },
+          {
+            "id": "conversation-store-code",
+            "status": "observed",
+            "sourceKind": "repository-code",
+            "source": "packages/storage/src/conversationStore.ts",
+            "supports": ["inbox-ownership-persists"]
+          },
+          {
+            "id": "scheduler-code",
+            "status": "observed",
+            "sourceKind": "repository-code",
+            "source": "packages/local-server/src/digitalEmployeeOrchestrator.ts",
+            "supports": ["zeus-is-authority"]
+          }
+        ],
+        "extensions": { "taskId": "ZEUS-0374", "designStatus": "requirements-and-development-design-closed" }
+      }
+    </script>
+    <script data-vd-shell="1">
+      (() => {
+        'use strict';
+
+        const $ = (selector, root = document) => root.querySelector(selector);
+        const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+        const auditOutput = () => $('[data-vd-audit-output]');
+
+        function zoomTargets() {
+          const explicit = $$('[data-vd-zoom-target]');
+          return explicit.length ? explicit : $$('[data-vd-view]');
+        }
+
+        function viewportFor(target) {
+          return target.closest('[data-vd-viewport]') || target.parentElement;
+        }
+
+        function naturalWidth(target) {
+          const previous = target.style.zoom;
+          target.style.zoom = '1';
+          const width = Math.max(target.scrollWidth, target.getBoundingClientRect().width, 1);
+          target.style.zoom = previous;
+          return width;
+        }
+
+        function applyZoom(request) {
+          let allApplied = true;
+          zoomTargets().forEach((target) => {
+            const viewport = viewportFor(target);
+            if (!viewport) return;
+            const width = naturalWidth(target);
+            const available = Math.max(viewport.clientWidth, 1);
+            const requested = request === 'fit' ? Math.min(1, available / width) : Number(request);
+            const applied = Math.max(0.75, Math.min(1, requested || 1));
+            const overflow = request === 'fit' && available / width < 0.75;
+            target.style.zoom = String(applied);
+            target.dataset.vdAppliedZoom = String(applied);
+            viewport.style.overflowX = overflow ? 'auto' : 'visible';
+            viewport.dataset.vdHorizontalOverflow = String(overflow);
+            if (request === 'fit' && requested < 0.75) allApplied = false;
+          });
+
+          $$('[data-vd-zoom]').forEach((button) => {
+            button.setAttribute('aria-pressed', String(button.dataset.vdZoom === request));
+          });
+          const controls = $('[data-vd-controls]');
+          if (controls) {
+            controls.dataset.vdZoomRequest = request;
+            controls.dataset.vdZoomFullyApplied = String(allApplied);
+          }
+          return allApplied;
+        }
+
+        function bindZoom() {
+          $$('[data-vd-zoom]').forEach((button) => {
+            button.addEventListener('click', () => applyZoom(button.dataset.vdZoom || 'fit'));
+          });
+          let frame = 0;
+          window.addEventListener('resize', () => {
+            cancelAnimationFrame(frame);
+            frame = requestAnimationFrame(() => {
+              const request = $('[data-vd-controls]')?.dataset.vdZoomRequest || 'fit';
+              applyZoom(request);
+            });
+          });
+          applyZoom('fit');
+        }
+
+        function bindDetails() {
+          let returnFocus = null;
+          $$('[data-vd-detail-trigger]').forEach((trigger) => {
+            trigger.addEventListener('click', (event) => {
+              const targetId = trigger.getAttribute('data-vd-detail-trigger');
+              const dialog = targetId ? document.getElementById(targetId) : null;
+              if (!(dialog instanceof HTMLDialogElement)) return;
+              event.preventDefault();
+              returnFocus = trigger;
+              dialog.showModal();
+              $('[data-vd-detail-close]', dialog)?.focus();
+            });
+          });
+          $$('dialog[data-vd-detail-for]').forEach((dialog) => {
+            $$('[data-vd-detail-close]', dialog).forEach((button) => button.addEventListener('click', () => dialog.close()));
+            dialog.addEventListener('click', (event) => {
+              if (event.target === dialog) dialog.close();
+            });
+            dialog.addEventListener('close', () => {
+              if (returnFocus instanceof HTMLElement && returnFocus.isConnected) returnFocus.focus();
+              returnFocus = null;
+            });
+          });
+        }
+
+        const rect = (element) => element.getBoundingClientRect();
+        const visible = (element) => {
+          const style = getComputedStyle(element);
+          const box = rect(element);
+          if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
+          if (box.width < 1 || box.height < 1) return false;
+          if (element.closest('details:not([open]), dialog:not([open]), [hidden], [aria-hidden="true"]')) return false;
+          return true;
+        };
+        const intersects = (a, b, pad = 1) => a.left + pad < b.right && a.right - pad > b.left && a.top + pad < b.bottom && a.bottom - pad > b.top;
+        const contains = (outer, inner, tolerance = 1) => inner.left >= outer.left - tolerance && inner.right <= outer.right + tolerance && inner.top >= outer.top - tolerance && inner.bottom <= outer.bottom + tolerance;
+
+        function screenPoint(path, length) {
+          if (!(path instanceof SVGGeometryElement) || typeof path.getPointAtLength !== 'function') return null;
+          const point = path.getPointAtLength(length);
+          const matrix = path.getScreenCTM();
+          if (!matrix) return null;
+          return new DOMPoint(point.x, point.y).matrixTransform(matrix);
+        }
+
+        function nearBoundary(point, box, tolerance = 18) {
+          if (!point) return false;
+          const insideExpanded = point.x >= box.left - tolerance && point.x <= box.right + tolerance && point.y >= box.top - tolerance && point.y <= box.bottom + tolerance;
+          const distance = Math.min(Math.abs(point.x - box.left), Math.abs(point.x - box.right), Math.abs(point.y - box.top), Math.abs(point.y - box.bottom));
+          return insideExpanded && distance <= tolerance;
+        }
+
+        function issue(code, element, detail = '') {
+          return {
+            code,
+            id: element?.id || element?.getAttribute?.('data-vd-view') || '',
+            detail,
+          };
+        }
+
+        function authoredBounds(element, fallback) {
+          const svg = element.closest('svg');
+          if (svg) return rect(svg);
+          const target = element.closest('[data-vd-zoom-target]');
+          if (!target) return fallback;
+          const box = rect(target);
+          const zoom = Number.parseFloat(getComputedStyle(target).zoom) || 1;
+          return {
+            left: box.left,
+            top: box.top,
+            right: box.left + Math.max(box.width, target.scrollWidth * zoom),
+            bottom: box.top + Math.max(box.height, target.scrollHeight * zoom),
+          };
+        }
+
+        function auditView(view) {
+          const issues = [];
+          const viewRect = rect(view);
+          const nodes = $$('[data-vd-node]', view).filter(visible);
+          const groups = $$('[data-vd-group]', view).filter(visible);
+          const labels = $$('[data-vd-edge-label]', view).filter(visible);
+          const edges = $$('[data-vd-edge]', view).filter(visible);
+
+          nodes.forEach((node) => {
+            const box = rect(node);
+            if (!contains(authoredBounds(node, viewRect), box, 2)) issues.push(issue('node-outside-view', node));
+            if (node.scrollWidth > node.clientWidth + 2 || node.scrollHeight > node.clientHeight + 2) {
+              issues.push(issue('node-content-overflow', node));
+            }
+          });
+
+          for (let i = 0; i < nodes.length; i += 1) {
+            for (let j = i + 1; j < nodes.length; j += 1) {
+              const a = rect(nodes[i]);
+              const b = rect(nodes[j]);
+              if (intersects(a, b, 2)) issues.push(issue('node-overlap', nodes[i], nodes[j].id || 'anonymous'));
+            }
+          }
+
+          groups.forEach((group) => {
+            const box = rect(group);
+            $$('[data-vd-node]', group)
+              .filter(visible)
+              .forEach((node) => {
+                if (!contains(box, rect(node), 2)) issues.push(issue('group-clips-node', group, node.id || 'anonymous'));
+              });
+          });
+
+          labels.forEach((label, index) => {
+            const box = rect(label);
+            if (label.scrollWidth > label.clientWidth + 2 || label.scrollHeight > label.clientHeight + 2) {
+              issues.push(issue('edge-label-overflow', label));
+            }
+            nodes.forEach((node) => {
+              if (intersects(box, rect(node), 1)) issues.push(issue('edge-label-node-collision', label, node.id || 'anonymous'));
+            });
+            labels.slice(index + 1).forEach((other) => {
+              if (intersects(box, rect(other), 1)) issues.push(issue('edge-label-collision', label, other.id || 'anonymous'));
+            });
+          });
+
+          edges.forEach((edge) => {
+            const from = document.getElementById(edge.getAttribute('data-from') || '');
+            const to = document.getElementById(edge.getAttribute('data-to') || '');
+            if (!from || !to) return;
+            if (edge instanceof SVGGeometryElement && typeof edge.getTotalLength === 'function') {
+              const length = edge.getTotalLength();
+              const start = screenPoint(edge, 0);
+              const end = screenPoint(edge, length);
+              if (!nearBoundary(start, rect(from))) issues.push(issue('edge-start-not-anchored', edge, from.id));
+              if (!nearBoundary(end, rect(to))) issues.push(issue('edge-end-not-anchored', edge, to.id));
+              const excluded = new Set([from, to]);
+              for (let sample = 10; sample < length - 10; sample += 8) {
+                const point = screenPoint(edge, sample);
+                if (!point) break;
+                const hit = nodes.find(
+                  (node) =>
+                    !excluded.has(node) &&
+                    contains(
+                      rect(node),
+                      {
+                        left: point.x,
+                        right: point.x,
+                        top: point.y,
+                        bottom: point.y,
+                      },
+                      -2,
+                    ),
+                );
+                if (hit) {
+                  issues.push(issue('edge-through-node', edge, hit.id || 'anonymous'));
+                  break;
+                }
+              }
+            }
+          });
+
+          return issues;
+        }
+
+        function auditAll() {
+          const issues = [];
+          $$('[data-vd-view]')
+            .filter(visible)
+            .forEach((view) => issues.push(...auditView(view)));
+          const summary = $('[data-vd-summary]');
+          if (!summary || !visible(summary)) issues.push(issue('product-summary-not-visible', summary));
+          $$('[data-vd-critical]').forEach((element) => {
+            if (!visible(element) || !element.closest('[data-vd-view-role="primary"]')) {
+              issues.push(issue('critical-target-not-primary-visible', element));
+            }
+          });
+          if (document.documentElement.scrollWidth > document.documentElement.clientWidth + 2) {
+            issues.push(issue('page-horizontal-overflow', document.documentElement));
+          }
+          const controls = $('[data-vd-controls]');
+          if (!controls || $$('[data-vd-zoom]', controls).length !== 4) issues.push(issue('zoom-controls-incomplete', controls));
+
+          const report = {
+            status: issues.length ? 'failed' : 'passed',
+            viewport: { width: window.innerWidth, height: window.innerHeight },
+            issues,
+          };
+          const output = auditOutput();
+          if (output) {
+            output.setAttribute('data-vd-audit-status', report.status);
+            output.textContent = JSON.stringify(report);
+          }
+          document.documentElement.setAttribute('data-vd-audit-status', report.status);
+          return report;
+        }
+
+        globalThis.VibeDiagramQuality = { auditAll, applyZoom };
+
+        const ready = document.fonts?.ready || Promise.resolve();
+        ready.then(() => {
+          bindZoom();
+          bindDetails();
+          requestAnimationFrame(() => requestAnimationFrame(auditAll));
+        });
+      })();
+    </script>
+  </body>
+</html>
