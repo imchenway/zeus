@@ -30,6 +30,7 @@ files:
   - '!node_modules/sql.js/dist/sql-wasm-browser*'
   - '!node_modules/sql.js/dist/sql-wasm-debug*'
   - '!node_modules/sql.js/dist/worker*'
+  - '!dist/native/Zeus Computer Service.app/**'
   - '!node_modules/node-pty/binding.gyp'
   - '!node_modules/node-pty/{deps,scripts,src,typings}/**'
   - '!node_modules/node-pty/prebuilds/!(darwin-${arch})/**'
@@ -37,6 +38,9 @@ files:
   - '!node_modules/node-pty/lib/testUtils.test.js'
 asarUnpack:
   - dist/native/**
+extraFiles:
+  - from: dist/native/Zeus Computer Service.app
+    to: Helpers/Zeus Computer Service.app
 mac:
   category: public.app-category.developer-tools
   icon: assets/icon.icns

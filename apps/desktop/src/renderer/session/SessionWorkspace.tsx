@@ -1548,6 +1548,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const [localSubmissionRevision, setLocalSubmissionRevision] = useState(0);
   const [serviceTierPreferences, setServiceTierPreferences] = useState<ProjectModelServiceTierPreference[]>([]);
   const [serviceTierPreferenceError, setServiceTierPreferenceError] = useState<string | null>(null);
+  const [computerStopBusy, setComputerStopBusy] = useState(false);
+  const [computerStopError, setComputerStopError] = useState<unknown>(null);
   const browserSplitRef = useRef<HTMLDivElement | null>(null);
   const browserResizeActiveRef = useRef(false);
   const browserMotionStopRef = useRef<(() => void) | null>(null);
@@ -1588,6 +1590,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
   });
   useApplicationErrorDialog(serviceTierPreferenceError, {
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+  });
+  useApplicationErrorDialog(computerStopError, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
   });
   const serviceTierPreferenceProjectId = props.conversation?.projectId ?? owner?.projectId ?? null;
@@ -2320,6 +2325,25 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
             {displayedHeader.contextLabel ? <small>{displayedHeader.contextLabel}</small> : null}
           </span>
           <div className="session-thread-header-actions">
+            {!legacy && props.conversation && window.zeus?.stopComputerUse ? (
+              <button
+                type="button"
+                className="session-browser-toggle session-computer-stop"
+                disabled={computerStopBusy}
+                aria-busy={computerStopBusy || undefined}
+                title={props.language === 'zh-CN' ? '立即停止 Computer Use' : 'Stop Computer Use now'}
+                onClick={() => {
+                  setComputerStopBusy(true);
+                  setComputerStopError(null);
+                  void window.zeus!.stopComputerUse!()
+                    .catch((error) => setComputerStopError(error))
+                    .finally(() => setComputerStopBusy(false));
+                }}
+              >
+                <X aria-hidden="true" weight="bold" />
+                <span>{props.language === 'zh-CN' ? '停止控制' : 'Stop control'}</span>
+              </button>
+            ) : null}
             {!legacy && props.conversation ? (
               <button
                 type="button"

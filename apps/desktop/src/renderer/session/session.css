@@ -5896,6 +5896,16 @@
   inline-size: 15px;
 }
 
+.session-codex-parity-v1 .session-computer-stop {
+  color: var(--session-danger);
+}
+
+.session-codex-parity-v1 .session-computer-stop:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--session-danger) 8%, transparent);
+  border-color: color-mix(in srgb, var(--session-danger) 28%, var(--session-line));
+  color: var(--session-danger);
+}
+
 .session-codex-parity-v1 .browser-workspace {
   background: var(--session-canvas);
   color: var(--session-text);

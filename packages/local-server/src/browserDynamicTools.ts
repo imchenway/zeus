@@ -5,7 +5,14 @@ type JsonSchemaObject = { [key: string]: JsonSchemaValue };
 
 const objectSchema = (properties: JsonSchemaObject, required: string[] = []): JsonSchemaObject => ({
   type: 'object',
-  properties,
+  properties: {
+    surface: {
+      type: 'string',
+      enum: ['built_in', 'chrome', 'edge'],
+      description: 'Browser surface. Defaults to the Zeus built-in browser; explicit Chrome or Edge requests must preserve that choice.',
+    },
+    ...properties,
+  },
   required,
   additionalProperties: false,
 });
@@ -190,6 +197,39 @@ export function zeusBrowserDynamicTools(): CodexDynamicToolSpec[] {
             },
             ['method'],
           ),
+        },
+        {
+          type: 'function',
+          name: 'catalog',
+          description: 'Discover the allowlisted advanced Browser 26.825.32147 contract without loading the entire surface into context.',
+          deferLoading: true,
+          inputSchema: objectSchema({
+            group: stringProperty('Optional contract group such as playwright, ax, content, dialog, or browser-user.'),
+            query: stringProperty('Optional case-insensitive method-path search.'),
+          }),
+        },
+        {
+          type: 'function',
+          name: 'invoke',
+          description: 'Invoke one allowlisted method from the frozen Browser contract. Arbitrary method paths are rejected; developer operations require approval.',
+          deferLoading: true,
+          inputSchema: objectSchema(
+            {
+              path: stringProperty('Exact method path returned by catalog, such as PlaywrightLocator.click.'),
+              handle: stringProperty('Optional remote object handle returned by an earlier advanced call.'),
+              arguments: { type: 'object', description: 'JSON-compatible method arguments.', additionalProperties: true },
+            },
+            ['path'],
+          ),
+        },
+        {
+          type: 'function',
+          name: 'release_handles',
+          description: 'Release advanced Browser remote handles before their automatic turn or navigation expiry.',
+          deferLoading: true,
+          inputSchema: objectSchema({
+            handles: { type: 'array', items: { type: 'string' }, maxItems: 200, description: 'Remote handle ids to release; omit to release all handles owned by this turn.' },
+          }),
         },
       ],
     },

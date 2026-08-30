@@ -47,6 +47,10 @@ import {
   type TaskClipboardAttachmentPayload,
 } from './taskClipboard.js';
 import { type BrowserHost, createBrowserHost } from './browserHost.js';
+import { type ComputerHost, createComputerHost } from './computerHost.js';
+import { createNativeAutomationHost } from './nativeAutomationHost.js';
+import { type ExternalBrowserHost, createExternalBrowserHost } from './externalBrowserHost.js';
+import { RetiredNativeRuntimeCleanup } from './retiredNativeRuntimeCleanup.js';
 import { type ConversationResourceRequest, listConversationResourceOpenTargets, openConversationResource, type OpenConversationResourceRequest, openTurnChangeFile, type OpenTurnChangeFileRequest } from './conversationResourceOpen.js';
 import {
   type ConversationInputResourceBroker,
@@ -120,6 +124,8 @@ let homebrewUpdateController: HomebrewUpdateController | undefined;
 let automaticUpdateScheduler: AutomaticUpdateScheduler | undefined;
 let automaticUpdateIndicatorState: HomebrewUpdateIndicatorState | undefined;
 let browserHost: BrowserHost | undefined;
+let computerHost: ComputerHost | undefined;
+let externalBrowserHost: ExternalBrowserHost | undefined;
 let conversationInputResources: ConversationInputResourceBroker | undefined;
 let systemNotificationBridge: SystemNotificationBridge | undefined;
 let zeusDataRootPath: string | undefined;
@@ -420,6 +426,19 @@ function nativeUpdateProgressHelperPath(): string {
   const root = desktopRoot();
   if (app.isPackaged && basename(root) === 'app.asar') return join(dirname(root), 'app.asar.unpacked', 'dist', 'native', 'ZeusUpdateProgress');
   return join(root, 'dist', 'native', 'ZeusUpdateProgress');
+}
+
+function computerServiceExecutablePath(): string {
+  if (app.isPackaged) {
+    return join(process.resourcesPath, '..', 'Helpers', 'Zeus Computer Service.app', 'Contents', 'MacOS', 'Zeus Computer Service');
+  }
+  return join(desktopRoot(), 'dist', 'native', 'Zeus Computer Service.app', 'Contents', 'MacOS', 'Zeus Computer Service');
+}
+
+function browserNativeMessagingHelperPath(): string {
+  const root = desktopRoot();
+  if (app.isPackaged && basename(root) === 'app.asar') return join(dirname(root), 'app.asar.unpacked', 'dist', 'native', 'ZeusBrowserNativeHost');
+  return join(root, 'dist', 'native', 'ZeusBrowserNativeHost');
 }
 
 function currentAppBundlePath(): string {
@@ -2703,6 +2722,15 @@ async function initializeApplication(): Promise<void> {
         clipboardReadOptions: { readSystemFileReferences: readMacOSClipboardFileReferences },
       });
     }
+    externalBrowserHost = createExternalBrowserHost({
+      runtimeRoot: dataLayout.browserExtensionRuntime,
+      artifactRoot: browserAttachmentRoot,
+      helperExecutable: browserNativeMessagingHelperPath(),
+      testDistribution: isTestDistribution(),
+      readOnlyValidation: Boolean(readOnlyValidationDescriptor),
+      productionChromeExtensionId: process.env.ZEUS_CHROME_EXTENSION_ID,
+      productionEdgeExtensionId: process.env.ZEUS_EDGE_EXTENSION_ID,
+    });
     browserHost = createBrowserHost({
       statePath: dataLayout.browserState,
       preloadPath: join(desktopRoot(), 'dist/preload/browser-page.cjs'),
@@ -2712,9 +2740,23 @@ async function initializeApplication(): Promise<void> {
       mainCommandLedger: activeMainCommandLedger,
       legacySystemDownloadDirectory: app.getPath('downloads'),
       readOnlyValidation: Boolean(readOnlyValidationDescriptor),
+      configureExternalBrowsers: (settings) => externalBrowserHost!.configure(settings),
+      retiredNativeRuntimeCleanup: new RetiredNativeRuntimeCleanup(join(homedir(), '.codex'), dataLayout.retiredNativeRuntimeBackups),
     });
     for (const window of windows) browserHost.registerWindow(window);
     browserHost.registerIpc();
+    await browserHost.initializeExternalBrowsers();
+    computerHost = createComputerHost({
+      statePath: dataLayout.computerState,
+      artifactRoot: dataLayout.computerArtifacts,
+      helperExecutable: computerServiceExecutablePath(),
+      parentPid: process.pid,
+      mainCommandLedger: activeMainCommandLedger,
+      readOnlyValidation: Boolean(readOnlyValidationDescriptor),
+      qaMode: isTestDistribution() && process.env.ZEUS_COMPUTER_QA_MODE === '1',
+    });
+    computerHost.registerIpc();
+    const nativeAutomationHost = createNativeAutomationHost({ browser: browserHost, computer: computerHost, externalBrowser: externalBrowserHost });
     traceApplicationStartup('local_resources_ready');
     const mainProjectRoot = readOnlyValidationDescriptor?.validationRoot ?? resolveMainProjectRoot();
     const codexNativeEnabled = !readOnlyValidationDescriptor && process.env.ZEUS_CODEX_NATIVE_ENABLED !== '0';
@@ -2743,7 +2785,7 @@ async function initializeApplication(): Promise<void> {
       conversationAttachmentRoot,
       conversationAttachmentGrantSecret,
       conversationAttachmentGrantSecretPath,
-      browserAutomation: browserHost,
+      browserAutomation: nativeAutomationHost,
       readOnlyValidation: readOnlyValidationDescriptor,
       onRestarted: () => {
         // 本地服务异常重启后，依赖旧 WebSocket 的系统通知桥必须重建，避免继续挂在旧端口。
@@ -3114,6 +3156,14 @@ app.on(
       await attemptCleanup('内置浏览器宿主', async () => {
         await browserHost?.close();
         browserHost = undefined;
+      });
+      await attemptCleanup('Computer Use 宿主', async () => {
+        await computerHost?.close();
+        computerHost = undefined;
+      });
+      await attemptCleanup('Chrome 与 Edge 原生浏览器宿主', async () => {
+        await externalBrowserHost?.close();
+        externalBrowserHost = undefined;
       });
       conversationInputResources = undefined;
       // 即使任一前序 UI/平台资源清理失败，Detached Core 关闭也必须独立尝试。

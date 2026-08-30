@@ -265,6 +265,8 @@ function migrateFlatRoot(input: { flat: ZeusDataLayout; layered: ZeusDataLayout;
     moveIfPresent(flat.browserComments, layered.browserComments, moves);
     moveIfPresent(flat.browserDownloads, layered.browserDownloads, moves);
     moveIfPresent(flat.browserState, layered.browserState, moves);
+    moveIfPresent(flat.computerArtifacts, layered.computerArtifacts, moves);
+    moveIfPresent(flat.computerState, layered.computerState, moves);
     moveIfPresent(flat.turnChangeSets, layered.turnChangeSets, moves);
     moveIfPresent(flat.runtimeSessions, layered.runtimeSessions, moves);
     moveIfPresent(flat.commandScripts, layered.commandScripts, moves);
@@ -275,6 +277,7 @@ function migrateFlatRoot(input: { flat: ZeusDataLayout; layered: ZeusDataLayout;
     moveIfPresent(join(flat.root, 'imports'), join(layered.backupsDirectory, 'imports'), moves);
     moveIfPresent(flat.codexLegacyImports, layered.codexLegacyImports, moves);
     moveIfPresent(flat.executionHost, layered.executionHost, moves);
+    moveIfPresent(flat.browserExtensionRuntime, layered.browserExtensionRuntime, moves);
     moveIfPresent(flat.releaseUpdates, layered.releaseUpdates, moves);
     for (const name of readdirSync(flat.root).filter((item) => /^zeus\.db\..*\.bak$/u.test(item))) {
       moveIfPresent(join(flat.root, name), join(layered.databaseBackups, name), moves);
@@ -327,6 +330,9 @@ function ensureLayeredDirectories(layout: ZeusDataLayout): void {
     layout.electronUserData,
     dirname(layout.browserState),
     layout.browserDownloads,
+    dirname(layout.computerState),
+    layout.computerArtifacts,
+    layout.browserExtensionRuntime,
   ];
   for (const directory of directories) mkdirSecure(directory);
 }
@@ -337,6 +343,7 @@ function buildPathMappings(flat: ZeusDataLayout, layered: ZeusDataLayout, legacy
     [flat.conversationAttachments, layered.conversationAttachments],
     [flat.browserComments, layered.browserComments],
     [flat.browserDownloads, layered.browserDownloads],
+    [flat.computerArtifacts, layered.computerArtifacts],
     [flat.turnChangeSets, layered.turnChangeSets],
     [flat.runtimeSessions, layered.runtimeSessions],
     [flat.commandScripts, layered.commandScripts],

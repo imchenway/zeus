@@ -1,16 +1,16 @@
 import type { CodexAppServerEvent, CodexAppServerManager, CodexServerRequestResponse } from '@zeus/ai-runtime';
-import type { BrowserAutomationPort } from './browserAutomation.js';
 import type { ManagedConversationToolResultStore } from './conversationPortableContext.js';
 import type { CodexProviderCommandApplicationService } from './codexProviderCommandApplication.js';
 import type { ZeusConversationPluginRuntime } from './zeusConversationPluginRuntime.js';
+import { isZeusNativeToolMutation, type ZeusToolBroker } from './zeusToolRegistry.js';
 
 interface CodexDynamicToolApplicationOptions {
   manager: Pick<CodexAppServerManager, 'respondToServerRequest'>;
   providerCommands: CodexProviderCommandApplicationService;
   toolResults: ManagedConversationToolResultStore;
-  browserAutomation?: BrowserAutomationPort;
+  toolBroker?: ZeusToolBroker;
   plugins?: ZeusConversationPluginRuntime;
-  findConversation(threadId: string): { id: string } | undefined;
+  findConversation(threadId: string): { id: string; permissionMode?: string } | undefined;
   pluginContext(conversationId: string): { cwd: string; model: string; permissionMode: string } | null;
   requestPluginApproval(input: { conversationId: string; threadId: string; turnId: string; callId: string; generationId: string; namespace: string; tool: string; argumentKeys: string[] }): Promise<boolean>;
   broadcast(event: string, payload: Record<string, unknown>): void;
@@ -80,7 +80,7 @@ export function createCodexDynamicToolApplication(options: CodexDynamicToolAppli
 
 async function resolveResponse(input: {
   options: CodexDynamicToolApplicationOptions;
-  conversation: { id: string } | undefined;
+  conversation: { id: string; permissionMode?: string } | undefined;
   threadId: string;
   turnId: string;
   callId: string;
@@ -171,13 +171,19 @@ async function resolveResponse(input: {
       }
       return dynamicToolResponse(input.event, [{ type: 'inputText', text }], !result.isError);
     }
-    if (!input.options.browserAutomation) throw dynamicToolError('ZEUS_BROWSER_AUTOMATION_UNAVAILABLE', 'The built-in browser automation host is unavailable.');
-    if (input.namespace !== 'zeus_browser' || !input.tool) throw dynamicToolError('ZEUS_BROWSER_TOOL_UNSUPPORTED', 'The requested dynamic tool is not owned by the Zeus browser namespace.');
-    const result = await input.options.browserAutomation.invoke({
+    if (!input.options.toolBroker) throw dynamicToolError('ZEUS_NATIVE_AUTOMATION_UNAVAILABLE', 'The Zeus native automation host is unavailable.');
+    if (!input.tool || (input.namespace !== 'zeus_browser' && input.namespace !== 'zeus_computer')) {
+      throw dynamicToolError('ZEUS_NATIVE_TOOL_UNSUPPORTED', 'The requested dynamic tool is not owned by a Zeus native automation namespace.');
+    }
+    if (input.conversation.permissionMode === 'read-only' && isZeusNativeToolMutation(input.namespace, input.tool, input.argumentsValue)) {
+      throw dynamicToolError('ZEUS_NATIVE_TOOL_READ_ONLY', '当前会话是只读模式，已拒绝 Browser 或 Computer 交互。');
+    }
+    const result = await input.options.toolBroker.invoke({
       conversationId: input.conversation.id,
       threadId: input.threadId,
       turnId: input.turnId,
       callId: input.callId,
+      namespace: input.namespace,
       tool: input.tool,
       arguments: input.argumentsValue,
     });

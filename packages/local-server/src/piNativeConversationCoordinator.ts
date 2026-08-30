@@ -17,6 +17,7 @@ import {
   parseModelRef,
   piRuntimeWorkerProtocolVersion,
   type PiZeusToolBroker,
+  type PiZeusToolContentItem,
   type PiZeusToolRequest,
   type PiZeusToolResult,
 } from '@zeus/ai-runtime';
@@ -46,6 +47,7 @@ import type {
   ZeusDatabase,
 } from '@zeus/storage';
 import type { ModelConnectionService } from './modelConnectionService.js';
+import type { BrowserAutomationPort } from './browserAutomation.js';
 import type { NativeConversationAttachmentInput, NativeConversationSkillInput } from './codexNativeConversationContracts.js';
 import { readNativeSubmissionSkill } from './nativeConversationSubmissionInputs.js';
 import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
@@ -57,6 +59,7 @@ import { projectLocallyAcceptedUserMessage } from './localUserSubmissionProjecti
 import type { ZeusConversationPluginRuntime, ZeusPluginConversationPreparation } from './zeusConversationPluginRuntime.js';
 import { emitPluginCompactionHook } from './codexConversationDispatchContext.js';
 import type { ZeusPluginDynamicTool } from './zeusPluginMcpBroker.js';
+import { createZeusToolBroker, isZeusNativeToolMutation, type ZeusToolAuditEvent } from './zeusToolRegistry.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -111,6 +114,8 @@ export interface CreatePiNativeConversationCoordinatorOptions {
   execution: ConversationExecutionRepository;
   toolResults: ManagedConversationToolResultStore;
   plugins?: ZeusConversationPluginRuntime;
+  browserAutomation?: BrowserAutomationPort;
+  auditNativeTool?: (event: ZeusToolAuditEvent) => void | Promise<void>;
   compileDispatchContext?: (input: {
     provider: 'pi';
     conversationId: string;
@@ -175,6 +180,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   const providerCommands = new PiProviderCommandApplicationService(options.commandDeliveries, options.now, options.redactSensitiveText);
   const pendingApprovals = new Map<string, { resolve: (allowed: boolean) => void; session: AgentSessionIdentity; conversationId: string }>();
   let eventSequence = 0;
+  const zeusToolBroker = options.browserAutomation ? createZeusToolBroker(options.browserAutomation, { audit: options.auditNativeTool }) : undefined;
 
   const broker: PiZeusToolBroker = {
     execute: async (request) => executeTool(request),
@@ -191,6 +197,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     sessionDirectory: options.sessionDirectory,
     loadConnections: () => options.modelConnections.loadRuntimeConnections(),
     toolBroker: broker,
+    ...(zeusToolBroker ? { nativeTools: zeusToolBroker.registry.piTools } : {}),
     now: options.now,
   });
   const unsubscribe = driver.subscribe((event) => void handleRuntimeEvent(event));
@@ -1590,6 +1597,38 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       const pluginTool = catalog.tools.find((candidate) => candidate.name === request.toolName);
       if (pluginTool) return executePluginTool(context, request, pluginTool);
     }
+    const nativeTool = zeusToolBroker?.registry.resolvePiTool(request.toolName) ?? null;
+    if (nativeTool) {
+      const activeRun = [...runs.values()].reverse().find((candidate) => candidate.providerThreadId === request.session.nativeSessionId);
+      if (!activeRun) throw piError('ZEUS_PI_RUN_NOT_ACTIVE', 'Pi 原生工具没有对应的活动轮次。');
+      if (context.permissionMode === 'read-only' && isZeusNativeToolMutation(nativeTool.namespace, nativeTool.tool, request.args)) {
+        throw piError('ZEUS_PI_TOOL_READ_ONLY', '当前会话是只读模式，已拒绝 Browser 或 Computer 交互。');
+      }
+      const result = await zeusToolBroker!.invokePi({
+        conversationId: context.conversationId,
+        threadId: request.session.nativeSessionId,
+        turnId: activeRun.providerTurnId,
+        callId: request.toolCallId,
+        toolName: request.toolName,
+        arguments: request.args,
+      });
+      const contentItems = result.contentItems.flatMap<PiZeusToolContentItem>((item) => {
+        if (item.type === 'inputText') return [{ type: 'text', text: item.text }];
+        const parsed = parseImageDataUrl(item.imageUrl);
+        return parsed ? [{ type: 'image', data: parsed.data, mimeType: parsed.mimeType }] : [{ type: 'text', text: 'Zeus 工具返回了 Provider 无法序列化的图片引用。' }];
+      });
+      const text =
+        result.contentItems
+          .filter((item): item is Extract<(typeof result.contentItems)[number], { type: 'inputText' }> => item.type === 'inputText')
+          .map((item) => item.text)
+          .join('\n') || 'Zeus 原生工具返回了图片结果。';
+      return {
+        text,
+        contentItems,
+        details: { namespace: nativeTool.namespace, tool: nativeTool.tool },
+        isError: !result.success,
+      };
+    }
     const mutating = request.toolName === 'write' || request.toolName === 'edit' || request.toolName === 'bash';
     if (mutating && context.permissionMode === 'read-only') throw piError('ZEUS_PI_TOOL_READ_ONLY', '当前会话是只读模式，已拒绝 Pi 写入或命令。');
     if (mutating && context.permissionMode === 'auto') {
@@ -1676,6 +1715,11 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       });
     }
     return { text: post.replaceToolResult ?? result.text, isError: result.isError, details: { structuredContent: result.structuredContent, ...(result.app ? { mcpApp: result.app } : {}) } };
+  }
+
+  function parseImageDataUrl(value: string): { mimeType: string; data: string } | null {
+    const match = /^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=]+)$/iu.exec(value);
+    return match ? { mimeType: match[1]!, data: match[2]! } : null;
   }
 
   function repairPersistedAgentMessageProjections(): number {

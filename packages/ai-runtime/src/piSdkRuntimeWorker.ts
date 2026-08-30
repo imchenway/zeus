@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { AcceptedAgentRun, AgentProviderPayloadDiagnostic, AgentRuntimeEvent, FollowUpAgentRunInput, StartAgentRunInput, SteerAgentRunInput } from './agentRuntimeContracts.js';
-import { createPiSdkRuntimeDriver, type PiRuntimeConnection, type PiSdkRuntimeDriver, type PiZeusToolRequest, type PiZeusToolResult } from './piSdkRuntimeDriver.js';
+import { createPiSdkRuntimeDriver, type PiRuntimeConnection, type PiSdkRuntimeDriver, type PiZeusToolDefinitionSpec, type PiZeusToolRequest, type PiZeusToolResult } from './piSdkRuntimeDriver.js';
 import {
   isPiRuntimeCoreToWorkerMessage,
   piRuntimeWorkerError,
@@ -17,6 +17,7 @@ interface WorkerInitialization {
   adapterVersion: string;
   agentDirectory: string;
   sessionDirectory: string;
+  nativeTools: PiZeusToolDefinitionSpec[];
 }
 
 interface SerializedStartInput extends Omit<StartAgentRunInput, 'preflightResult' | 'durableTransactionSync' | 'providerWriteMayStart' | 'providerPayloadObserved'> {
@@ -262,7 +263,21 @@ function readInitialization(value: unknown): WorkerInitialization {
   const adapterVersion = requiredString(record.adapterVersion, 'adapterVersion');
   const agentDirectory = requiredString(record.agentDirectory, 'agentDirectory');
   const sessionDirectory = requiredString(record.sessionDirectory, 'sessionDirectory');
-  return { adapterVersion, agentDirectory, sessionDirectory };
+  const nativeTools = Array.isArray(record.nativeTools) ? record.nativeTools.map(readNativeToolDefinition) : [];
+  return { adapterVersion, agentDirectory, sessionDirectory, nativeTools };
+}
+
+function readNativeToolDefinition(value: unknown): PiZeusToolDefinitionSpec {
+  const record = asRecord(value);
+  const parameters = asRecord(record.parameters);
+  if (parameters.type !== 'object') throw workerError('ZEUS_PI_WORKER_INITIALIZATION_INVALID', 'Pi 原生工具参数必须是 JSON object schema。');
+  return {
+    name: requiredString(record.name, 'nativeTools.name'),
+    label: requiredString(record.label, 'nativeTools.label'),
+    description: requiredString(record.description, 'nativeTools.description'),
+    parameters,
+    ...(record.executionMode === 'sequential' ? { executionMode: 'sequential' as const } : record.executionMode === 'parallel' ? { executionMode: 'parallel' as const } : {}),
+  };
 }
 
 function requireDriver(): PiSdkRuntimeDriver {

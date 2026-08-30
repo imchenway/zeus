@@ -3,19 +3,22 @@ export interface BrowserAutomationToolCall {
   threadId: string;
   turnId: string;
   callId: string;
+  namespace?: 'zeus_browser' | 'zeus_computer';
   tool: string;
   arguments: Record<string, unknown>;
 }
 
 export type BrowserAutomationContentItem = { type: 'inputText'; text: string } | { type: 'inputImage'; imageUrl: string };
 
+export interface BrowserAutomationToolResult {
+  contentItems: BrowserAutomationContentItem[];
+  success: boolean;
+}
+
 /**
  * Electron Main 实现此端口；local-server 只负责编排 app-server 动态工具，
  * 不直接依赖 Electron、Chromium session 或窗口对象。
  */
 export interface BrowserAutomationPort {
-  invoke(input: BrowserAutomationToolCall): Promise<{
-    contentItems: BrowserAutomationContentItem[];
-    success: boolean;
-  }>;
+  invoke(input: BrowserAutomationToolCall): Promise<BrowserAutomationToolResult>;
 }
