@@ -1,4 +1,11 @@
 import type {
+  CreateTelegramImConnectionInput,
+  ImConnectionSnapshot,
+  ImPairingSessionSnapshot,
+  ImProjectSelectionOption,
+  ImSettingsSnapshot,
+  ImTelegramConnectionCreated,
+  ImTelegramConnectionLogEntry,
   SecurityResetResult,
   TelegramDispatchPreviewInput,
   TelegramDispatchPreviewResult,
@@ -10,11 +17,21 @@ import type {
   TelegramStatusSnapshot,
   TelegramTestConnectionResult,
   UpdateTelegramSettingsRequest,
+  UpdateTelegramImConnectionInput,
 } from './telegramContracts.js';
 import { jsonRequest, type LocalApiTransport } from '../../transport/localApiTransport.js';
 import { buildTelegramCommandRequest, telegramClientCommandTypes } from './telegramCommandClient.js';
 
 export interface TelegramApiClient {
+  loadImSettings: () => Promise<ImSettingsSnapshot>;
+  loadImOptions: () => Promise<ImProjectSelectionOption[]>;
+  createTelegramImConnection: (input: CreateTelegramImConnectionInput) => Promise<ImTelegramConnectionCreated>;
+  recreateTelegramImPairing: (connectionId: string) => Promise<ImTelegramConnectionCreated>;
+  loadTelegramImPairing: (connectionId: string) => Promise<{ connection: ImConnectionSnapshot; pairing: ImPairingSessionSnapshot | null }>;
+  checkTelegramImConnection: (connectionId: string) => Promise<ImConnectionSnapshot>;
+  updateTelegramImConnection: (connectionId: string, input: UpdateTelegramImConnectionInput) => Promise<ImConnectionSnapshot>;
+  removeTelegramImConnection: (connectionId: string) => Promise<{ removed: boolean; connectionId: string }>;
+  loadTelegramImConnectionLogs: (connectionId: string) => Promise<ImTelegramConnectionLogEntry[]>;
   resetSecurity: () => Promise<SecurityResetResult>;
   loadTelegramStatus: () => Promise<TelegramStatusSnapshot>;
   saveTelegramSettings: (input: UpdateTelegramSettingsRequest) => Promise<TelegramSettingsSnapshot>;
@@ -40,7 +57,7 @@ export function createTelegramApiClient(transport: LocalApiTransport): TelegramA
     scopeId: string;
     operationPrefix: string;
     value: TInput;
-    method: 'POST' | 'PUT' | 'PATCH';
+    method: 'POST' | 'PUT' | 'PATCH' | 'DELETE';
     path: string;
   }): Promise<TResult> => {
     const body = await buildTelegramCommandRequest(input);
@@ -51,6 +68,48 @@ export function createTelegramApiClient(transport: LocalApiTransport): TelegramA
     command<Record<string, never>, TResult>({ commandType, scopeId: 'telegram.polling', operationPrefix, value: {}, method: 'POST', path });
 
   return {
+    loadImSettings: () => transport.request('/api/im/settings'),
+    loadImOptions: () => transport.request('/api/im/options'),
+    createTelegramImConnection: (value) =>
+      command({ commandType: telegramClientCommandTypes.imConnectionCreate, scopeId: 'im.telegram.connections', operationPrefix: 'im_telegram_connection_create', value, method: 'POST', path: '/api/im/telegram/connections' }),
+    recreateTelegramImPairing: (connectionId) =>
+      command({
+        commandType: telegramClientCommandTypes.imConnectionRepair,
+        scopeId: `im.connection.${connectionId}`,
+        operationPrefix: 'im_telegram_pairing_create',
+        value: {},
+        method: 'POST',
+        path: `/api/im/telegram/connections/${encodeURIComponent(connectionId)}/pairing`,
+      }),
+    loadTelegramImPairing: (connectionId) => transport.request(`/api/im/telegram/connections/${encodeURIComponent(connectionId)}/pairing`),
+    checkTelegramImConnection: (connectionId) =>
+      command({
+        commandType: telegramClientCommandTypes.imConnectionCheck,
+        scopeId: `im.connection.${connectionId}`,
+        operationPrefix: 'im_telegram_connection_check',
+        value: {},
+        method: 'POST',
+        path: `/api/im/telegram/connections/${encodeURIComponent(connectionId)}/check`,
+      }),
+    updateTelegramImConnection: (connectionId, value) =>
+      command({
+        commandType: telegramClientCommandTypes.imConnectionUpdate,
+        scopeId: `im.connection.${connectionId}`,
+        operationPrefix: 'im_telegram_connection_update',
+        value,
+        method: 'PATCH',
+        path: `/api/im/telegram/connections/${encodeURIComponent(connectionId)}`,
+      }),
+    removeTelegramImConnection: (connectionId) =>
+      command({
+        commandType: telegramClientCommandTypes.imConnectionRemove,
+        scopeId: `im.connection.${connectionId}`,
+        operationPrefix: 'im_telegram_connection_remove',
+        value: {},
+        method: 'DELETE',
+        path: `/api/im/telegram/connections/${encodeURIComponent(connectionId)}`,
+      }),
+    loadTelegramImConnectionLogs: (connectionId) => transport.request(`/api/im/telegram/connections/${encodeURIComponent(connectionId)}/logs`),
     resetSecurity: () => command({ commandType: telegramClientCommandTypes.securityReset, scopeId: 'security.reset', operationPrefix: 'security_reset', value: {}, method: 'POST', path: '/api/security/reset' }),
     loadTelegramStatus: () => transport.request('/api/telegram/status'),
     saveTelegramSettings: (value) => command({ commandType: telegramClientCommandTypes.settingsUpdate, scopeId: 'telegram.settings', operationPrefix: 'telegram_settings_update', value, method: 'PATCH', path: '/api/telegram/settings' }),

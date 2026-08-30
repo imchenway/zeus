@@ -16,6 +16,7 @@ import { TaskManagementStatusEditor } from '../../settings/TaskManagementStatusE
 import { CodexUsageSettingsPane } from '../../settings/CodexUsageSettingsPane.js';
 import { MemorySettingsPane } from '../memory/MemorySettingsPane.js';
 import { DigitalEmployeeTemplatesSettings } from '../digital-employees/DigitalEmployeeTemplatesSettings.js';
+import { ImRobotSettingsPane } from '../telegram/ImRobotSettingsPane.js';
 import { ProjectDigitalEmployeesPanel } from '../digital-employees/ProjectDigitalEmployeesPanel.js';
 import { ExtensionsWorkspace } from '../skills/ExtensionsWorkspace.js';
 import { defaultTaskTableEnumSortOrders, normalizeTaskTableEnumSortOrders } from '../../task/taskWorkspaceModel.js';
@@ -210,8 +211,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     setTaskTableLayoutScopeDialogOpen,
     setTaskTagFilter,
     setTelegramAllowedUserIdsInput,
-    setTelegramNotificationChatIdsInput,
-    setTelegramTokenInput,
     settingsCategory,
     settingsWorkspaceCopy,
     snapshot,
@@ -258,11 +257,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     taskViewMode,
     taskWorkspaceCopy,
     telegramAllowedUserIdsInput,
-    telegramNotificationChatIdsInput,
-    telegramPollingLogs,
-    telegramPollingStatus,
-    telegramTestStatus,
-    telegramTokenInput,
     uiCopy,
     updatingTaskBusy,
     visibleTasks,
@@ -339,7 +333,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     clearLocalCaches,
     clearNetworkCache,
     clearTaskSelection,
-    clearTelegramBotToken,
     closeTaskDetail,
     confirmAndStartGenericRuntime,
     copyRuntimeLogs,
@@ -394,15 +387,12 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     saveTaskStatusFilter,
     saveTaskTableLayout,
     saveTaskViewPreferences,
-    saveTelegramBotToken,
-    saveTelegramNotificationSettings,
     saveTelegramSecuritySettings,
     sendRuntimeInput,
     setRuntimeSessionFavorite,
     startCodexLegacyImport,
     startRuntimeSession,
     stopRuntimeSession,
-    testTelegramConnection,
     toggleAllVisibleTaskSelection,
     toggleCollapsedProject,
     togglePinnedProject,
@@ -1482,7 +1472,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                         ['runtime', settingsWorkspaceCopy.categories.runtime, runtime.aiCli.available ? settingsWorkspaceCopy.protectedStatus : settingsWorkspaceCopy.waitingStatus],
                         ['models', settingsWorkspaceCopy.categories.models, settingsWorkspaceCopy.localStatus],
                         ['browser', settingsWorkspaceCopy.categories.browser, settingsWorkspaceCopy.localStatus],
-                        ['telegram', settingsWorkspaceCopy.categories.telegram, runtime.telegram.enabled ? settingsWorkspaceCopy.protectedStatus : settingsWorkspaceCopy.waitingStatus],
+                        ['im', appShellSettings.appLanguage === 'zh-CN' ? 'IM 机器人' : 'IM Bots', runtime.telegram.enabled ? settingsWorkspaceCopy.protectedStatus : settingsWorkspaceCopy.waitingStatus],
                         ['zentao', settingsWorkspaceCopy.categories.zentao, settingsWorkspaceCopy.localStatus],
                       ],
                     },
@@ -1991,64 +1981,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                 {settingsCategory === 'browser' ? <BrowserSettingsPane language={appShellSettings.appLanguage} /> : null}
                 {settingsCategory === 'models' ? <ModelConnectionsSettingsPane language={appShellSettings.appLanguage} client={props.nativeConversationClient ?? null} /> : null}
                 {settingsCategory === 'zentao' ? <ZentaoSettingsPane language={appShellSettings.appLanguage} client={props.nativeConversationClient ?? null} /> : null}
-                {settingsCategory === 'telegram' ? (
-                  <section className="settings-product-pane" aria-label={settingsWorkspaceCopy.categories.telegram}>
-                    <NativeSettingsPane label={settingsWorkspaceCopy.telegram.paneTitle} className="deep-settings-pane telegram-settings-pane">
-                      <section className="settings-secret-row telegram-secret-row" aria-label={settingsWorkspaceCopy.telegram.botTokenAria}>
-                        <span className="settings-row-copy">
-                          <strong>{settingsWorkspaceCopy.telegram.botTokenTitle}</strong>
-                          <small>{settingsWorkspaceCopy.telegram.botTokenHelp(securitySecrets.telegramBotToken.configured ? settingsWorkspaceCopy.telegram.botTokenConfigured : settingsWorkspaceCopy.telegram.botTokenNotConfigured)}</small>
-                        </span>
-                        <span className="settings-row-field settings-sensitive-field">
-                          <span>{settingsWorkspaceCopy.telegram.tokenFieldLabel}</span>
-                          <input aria-label={settingsWorkspaceCopy.telegram.botTokenAria} type="password" value={telegramTokenInput} onChange={(event) => setTelegramTokenInput(event.currentTarget.value)} />
-                        </span>
-                        <span className="settings-row-action-rail">
-                          <button type="button" onClick={saveTelegramBotToken} disabled={!telegramTokenInput.trim() || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
-                            {settingsWorkspaceCopy.telegram.saveToKeychain}
-                          </button>
-                          <button type="button" onClick={clearTelegramBotToken} disabled={!props.onClearTelegramBotToken || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
-                            {settingsWorkspaceCopy.telegram.clearToken}
-                          </button>
-                        </span>
-                      </section>
-                      <section className="settings-secret-row telegram-chat-row" aria-label={settingsWorkspaceCopy.telegram.chatIdAria}>
-                        <span className="settings-row-copy">
-                          <strong>{settingsWorkspaceCopy.telegram.chatIdTitle}</strong>
-                          <small>{telegramTestStatus}</small>
-                        </span>
-                        <span className="settings-row-field settings-sensitive-field">
-                          <span>{settingsWorkspaceCopy.telegram.chatIdFieldLabel}</span>
-                          <input aria-label={settingsWorkspaceCopy.telegram.chatIdAria} value={telegramNotificationChatIdsInput} onChange={(event) => setTelegramNotificationChatIdsInput(event.currentTarget.value)} />
-                        </span>
-                        <span className="settings-row-action-rail">
-                          <button type="button" onClick={saveTelegramNotificationSettings} disabled={!props.onSaveTelegramNotificationSettings || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
-                            {settingsWorkspaceCopy.telegram.saveNotifications}
-                          </button>
-                          <button type="button" onClick={testTelegramConnection} disabled={!props.onTestTelegramConnection || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
-                            {settingsWorkspaceCopy.telegram.testConnection}
-                          </button>
-                        </span>
-                      </section>
-                      <section className="settings-log-row telegram-polling-row" aria-label={settingsWorkspaceCopy.telegram.pollingAria}>
-                        <span className="settings-row-copy">
-                          <strong>{settingsWorkspaceCopy.telegram.pollingTitle}</strong>
-                          <small>{settingsWorkspaceCopy.telegram.pollingDescription}</small>
-                        </span>
-                        <span className="settings-row-field settings-evidence-list">
-                          <span>{settingsWorkspaceCopy.telegram.pollingState(telegramPollingStatus.running, telegramPollingStatus.offset)}</span>
-                          {telegramPollingLogs.length === 0 ? <small>{settingsWorkspaceCopy.telegram.emptyPollingLogs}</small> : null}
-                          {telegramPollingLogs.slice(-5).map((entry, index) => (
-                            <code key={`${entry.updateId ?? 'poll'}-${index}`}>{entry.command}</code>
-                          ))}
-                        </span>
-                        <span className="settings-row-action-rail">
-                          <span className="settings-action-meta">{settingsWorkspaceCopy.telegram.latestLogs}</span>
-                        </span>
-                      </section>
-                    </NativeSettingsPane>
-                  </section>
-                ) : null}
+                {settingsCategory === 'im' ? <ImRobotSettingsPane client={props.commandClient ?? null} language={appShellSettings.appLanguage} /> : null}
                 {settingsCategory === 'security' ? (
                   <section className="settings-product-pane" aria-label={settingsWorkspaceCopy.categories.security}>
                     <NativeSettingsPane label={settingsWorkspaceCopy.security.paneTitle} className="deep-settings-pane security-settings-pane">

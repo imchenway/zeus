@@ -59,7 +59,7 @@ Zeus 的恢复边界必须拆成五个互不冒充的事实域：Zeus 业务 SQL
 
 ## SQLite 逐表矩阵
 
-下面列出当前代码创建的 109 张表。`不可`表示不能从其他本地事实无损重建；`条件`表示只有保留了指定 Provider 历史、资产或源仓库才能重建。SQLite 全库快照会物理包含全部表；标为 `B-NONE` 的表在逻辑导出、分层备份和未来拆库中可以排除。
+下面列出当前代码创建的 117 张表。`不可`表示不能从其他本地事实无损重建；`条件`表示只有保留了指定 Provider 历史、资产或源仓库才能重建。SQLite 全库快照会物理包含全部表；标为 `B-NONE` 的表在逻辑导出、分层备份和未来拆库中可以排除。
 
 ### 存储平台、集成与运行适配器
 
@@ -79,6 +79,14 @@ Zeus 的恢复边界必须拆成五个互不冒充的事实域：Zeus 业务 SQL
 | `plugin_hook_trust` | 集成与平台 | `Z/E` Hook 定义哈希信任与逐 Hook 启停 | 不可；不能从脚本或当前定义猜测用户授权 | `T3/T4`，随 Plugin 修订和安全审计窗口 | `B-DB` | 用户逐定义哈希授权、撤销或禁用 | 一律视为未信任并跳过执行；不得因安装或启用 Plugin 自动信任 |
 | `plugin_connector_bindings` | 集成与平台 | `Z` App 技术 ID 到 Zeus Connector 的绑定与连接状态 | 不可；密钥只在 Keychain，不进入该表 | `T4`，独立于 Plugin 卸载 | `B-DB`；秘密使用 `B-SECRET` | 用户绑定、断开或删除可复用 Connector 授权 | Plugin 显示“需要连接”，Skill/Hook 仍按自身状态工作，不冒充安装失败 |
 | `plugin_mcp_policies` | 集成与平台 | `Z` Plugin/Server/Tool 启停与审批策略 | 不可 | `T4`，随 Plugin 或可复用 Connector 策略 | `B-DB` | 用户在工具权限入口调整 | 默认回到提示审批；未知策略不得自动批准或静默禁用整个 Plugin |
+| `im_connections` | 集成与平台 | `Z/E` IM 连接配置、冻结项目边界与轮询水位 | 不可；Token 不入库且不能从 Telegram 反推 Zeus 项目或 Preset | `T4`，连接移除后保留软删除审计 | `B-DB`；Token 必须排除并留在连接专属 Keychain 槽位 | 用户移除连接；不得因网络错误自动删除 | 连接停止派发并要求重新接入；任务与会话历史不删除 |
+| `im_trusted_endpoints` | 集成与平台 | `Z/E` 单一私聊用户与 chat 身份绑定 | 不可；旧 allowlist/chat ID 不可升格为可信身份 | `T4`，随连接审计 | `B-DB`，仅保存 Provider 数字身份 | 重新配对或移除连接时撤销 | 缺失即拒绝所有普通消息，要求重新生成单次配对码 |
+| `im_pairing_sessions` | 集成与平台 | `E` 十分钟单次配对能力的哈希与消费证据 | 不可；配对明文从不持久化 | `T1/T3`，过期载荷可淘汰但消费证据覆盖审计窗口 | `B-DB`，仅哈希；明文禁止入库 | 配对状态机撤销、消费或过期清理 | 应用重启后重新生成；不得恢复、猜测或展示旧明文 |
+| `im_chat_bindings` | 集成与平台 | `Z/E` 可信端点到 Zeus 会话的当前绑定 | 条件；会话仍在但用户的选择边界不可从历史猜测 | `T3`，随连接或会话 | `B-DB` | `/new`、会话切换或移除连接 | 缺失时要求新建/重新选择会话，禁止按最近标题自动跨项目绑定 |
+| `im_inbound_receipts` | 集成与平台 | `E` Telegram update 接纳、幂等与拒绝证据 | 不可；Bot API offset 不能替代逐 update 副作用证据 | `T3`，至少覆盖 Telegram 重投与恢复窗口 | `B-DB` | 入站幂等保留策略仅在终态且过窗口后 | 身份缺失或结果未知时拒绝重复副作用，不自动重放审批或消息 |
+| `im_delivery_cursors` | 集成与平台 | `E/D` 会话到 IM 的已确认同步 cursor | 条件；需完整 Conversation Snapshot V2 与已确认发送证据 | `T3`，随会话绑定 | `B-DB` | 同步器仅在 External Outbox 确认 accepted 后推进 | 缺失时停止自动追发并先对账，禁止把历史消息重新批量发出 |
+| `im_action_capabilities` | 集成与平台 | `Z/E` 单次 Telegram 交互能力令牌及预期 revision | 不可；请求、用户、聊天和 revision 绑定不能事后猜测 | `T1/T3`，过期能力载荷可淘汰但消费证据覆盖请求审计 | `B-DB`，只保存令牌哈希与受限动作，不保存审批正文 | 请求状态机消费、过期或撤销；禁止复用 | 缺失、过期、错用户、错聊天或 revision 漂移一律拒绝并回桌面处理 |
+| `im_connection_logs` | 集成与平台 | `E/R` 有界脱敏连接诊断日志 | 不可但非业务权威 | `T2`，按连接容量有界 | 默认 `B-NONE`，可进入显式诊断导出 | IM 诊断日志保留策略 | 诊断证据出现缺口；不得据此宣称 Token、配对或消息已成功 |
 | `provider_event_receipts` | Agent Runtime | `E` | 条件；Provider 可完整重放时才可 | `T3`，至少覆盖同步/恢复窗口 | `B-DB` | Runtime Adapter 的有界 GC | 重新对账；无法证明重复时保守去重并标记历史缺口 |
 | `conversation_provider_item_states` | Agent Runtime | `D/E` 有界摄取与幂等状态 | 条件；需 Provider 事件与稳定原生身份 | `TM/T3`，旧投影回滚窗口后按 Provider 水位淘汰 | `B-DB`，完整正文不进入此表 | Runtime Adapter 按已确认同步水位清理 | 摄取预览缺失但统一时间线仍可读；不得反向用此表重建 UI 正文 |
 | `agent_capability_snapshots` | Agent Runtime | `D` | 可，由能力探测重建 | `T1` | `B-NONE` | Runtime Adapter 可淘汰 | 能力状态为未知，重新探测前禁用未经证明的功能 |
@@ -197,7 +205,7 @@ Zeus 的恢复边界必须拆成五个互不冒充的事实域：Zeus 业务 SQL
 
 ## 独立派生数据库逐表矩阵
 
-下列 11 张表创建在 create-only `*.index.candidate.db` / `*.cache.candidate.db`，通过核验后可由独立 runtime 提升为活动 `index.db/cache.db`。它们不计入上面 105 张 Core 表，也不属于 `B-DB` 核心一致性组。每个库必须携带 source identity、generation、publication state 和 event waterline；校验失败、来源漂移、损坏或丢失时整库丢弃并后台重建，绝不能反向覆盖 Core。
+下列 11 张表创建在 create-only `*.index.candidate.db` / `*.cache.candidate.db`，通过核验后可由独立 runtime 提升为活动 `index.db/cache.db`。它们不计入上面 117 张 Core 表，也不属于 `B-DB` 核心一致性组。每个库必须携带 source identity、generation、publication state 和 event waterline；校验失败、来源漂移、损坏或丢失时整库丢弃并后台重建，绝不能反向覆盖 Core。
 
 | 表 | Owner | 级别 | 可重建性 | 保留期 | 备份 | 删除权限 | 恢复或缺失降级 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
