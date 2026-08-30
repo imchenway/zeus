@@ -6,7 +6,7 @@ import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messag
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
 import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy';
 import { type AgentSession, type AgentSessionEvent, createAgentSession, defineTool, ModelRuntime, SessionManager, SettingsManager, type ToolDefinition } from '@earendil-works/pi-coding-agent/headless';
-import { Type } from 'typebox';
+import { Type, type TSchema } from 'typebox';
 import type {
   AcceptedAgentRun,
   AgentDescriptor,
@@ -41,15 +41,28 @@ export interface PiZeusToolRequest {
   requestId: string;
   session: AgentSessionIdentity;
   toolCallId: string;
-  toolName: 'read' | 'grep' | 'find' | 'ls' | 'write' | 'edit' | 'bash' | 'read_conversation_tool_result';
+  toolName: string;
   args: Record<string, unknown>;
   signal?: AbortSignal;
 }
 
+export type PiZeusToolContentItem = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string };
+
 export interface PiZeusToolResult {
   text: string;
+  /** 当前 Provider 不支持图片工具结果时由 Pi SDK 返回真实能力错误，Zeus 不预先删图。 */
+  contentItems?: PiZeusToolContentItem[];
   details?: unknown;
   isError?: boolean;
+}
+
+/** Core 提供的 Provider 无关工具定义；该结构必须可通过 Worker JSON IPC。 */
+export interface PiZeusToolDefinitionSpec {
+  name: string;
+  label: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  executionMode?: 'parallel' | 'sequential';
 }
 
 export interface PiZeusToolBroker {
@@ -63,6 +76,7 @@ export interface CreatePiSdkRuntimeDriverOptions {
   sessionDirectory: string;
   loadConnections: () => Promise<PiRuntimeConnection[]>;
   toolBroker: PiZeusToolBroker;
+  nativeTools?: PiZeusToolDefinitionSpec[];
   /** Worker 隔离时在最终请求体生成后、Provider 网络写入前等待 Core 的持久接纳回执。 */
   beforeProviderWrite?: (input: { sessionId: string; model: AgentModelIdentity; diagnostic: AgentProviderPayloadDiagnostic }) => Promise<void>;
   now?: () => string;
@@ -181,6 +195,7 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
       agentDir: options.agentDirectory,
     });
     await resourceLoader.reload();
+    installTransientToolImagePersistence(sessionManager);
     if ('metadata' in input) seedPortableContext(sessionManager, input.metadata);
     let entryRef: PiSessionEntry | null = null;
     const { session } = await createAgentSession({
@@ -189,7 +204,7 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
       modelRuntime: runtime,
       ...(model ? { model } : {}),
       noTools: 'builtin',
-      customTools: createZeusTools(() => entryRef, options.toolBroker),
+      customTools: createZeusTools(() => entryRef, options.toolBroker, options.nativeTools ?? []),
       resourceLoader,
       sessionManager,
       settingsManager,
@@ -534,15 +549,37 @@ async function createDurableSessionManager(cwd: string, sessionDirectory: string
   return SessionManager.open(sessionPath, sessionDirectory, cwd);
 }
 
-function createZeusTools(getEntry: () => PiSessionEntry | null, broker: PiZeusToolBroker): ToolDefinition[] {
+/**
+ * Pi 必须把真实图片交给当前 Provider，但恢复 JSONL 只保留受控制品引用。
+ * SessionManager 接收消息时 Provider 已消费本轮工具结果，因此这里只改变持久副本，不预先删图。
+ */
+function installTransientToolImagePersistence(sessionManager: SessionManager): void {
+  const original = sessionManager.appendMessage.bind(sessionManager) as SessionManager['appendMessage'];
+  sessionManager.appendMessage = ((message: Parameters<SessionManager['appendMessage']>[0]) => {
+    const record = message && typeof message === 'object' ? (message as unknown as Record<string, unknown>) : null;
+    if (!record || record.role !== 'toolResult' || !Array.isArray(record.content)) return original(message);
+    let replaced = false;
+    const content = record.content.flatMap((item) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item) || (item as Record<string, unknown>).type !== 'image') return [item];
+      replaced = true;
+      return [{ type: 'text', text: '[Zeus 临时工具图片已在当前调用链传输；持久历史仅保留同一工具结果文本中的受控制品引用。]' }];
+    });
+    return original((replaced ? { ...record, content } : message) as Parameters<SessionManager['appendMessage']>[0]);
+  }) as SessionManager['appendMessage'];
+}
+
+function createZeusTools(getEntry: () => PiSessionEntry | null, broker: PiZeusToolBroker, nativeTools: readonly PiZeusToolDefinitionSpec[]): ToolDefinition[] {
   const execute = async (toolCallId: string, toolName: PiZeusToolRequest['toolName'], args: Record<string, unknown>, signal?: AbortSignal) => {
     const entry = getEntry();
     if (!entry) throw runtimeError('ZEUS_PI_TOOL_SESSION_UNBOUND', 'Pi 工具尚未绑定 Zeus 会话。');
     const result = await broker.execute({ requestId: `pi_tool_${randomUUID()}`, session: entry.identity, toolCallId, toolName, args, ...(signal ? { signal } : {}) });
     if (result.isError) throw runtimeError('ZEUS_PI_TOOL_EXECUTION_FAILED', result.text);
-    return { content: [{ type: 'text' as const, text: result.text }], details: result.details ?? null };
+    return {
+      content: result.contentItems?.length ? result.contentItems : [{ type: 'text' as const, text: result.text }],
+      details: result.details ?? null,
+    };
   };
-  return [
+  const builtInTools: ToolDefinition[] = [
     defineTool({
       name: 'read',
       label: '读取文件',
@@ -597,6 +634,17 @@ function createZeusTools(getEntry: () => PiSessionEntry | null, broker: PiZeusTo
       execute: (id, args, signal) => execute(id, 'bash', args, signal),
     }),
   ];
+  const projectedNativeTools = nativeTools.map((spec) =>
+    defineTool({
+      name: spec.name,
+      label: spec.label,
+      description: spec.description,
+      parameters: spec.parameters as TSchema,
+      ...(spec.executionMode ? { executionMode: spec.executionMode } : {}),
+      execute: (id, args, signal) => execute(id, spec.name, args as Record<string, unknown>, signal),
+    }),
+  );
+  return [...builtInTools, ...projectedNativeTools];
 }
 
 function toPiModel(model: ConfiguredModelDefinition, providerId: string, connectionBaseUrl: string): Model<Api> {

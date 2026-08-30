@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="440" height="280" viewBox="0 0 440 280">
+  <rect width="440" height="280" rx="24" fill="#10131a"/>
+  <circle cx="78" cy="74" r="34" fill="#76e5c5"/>
+  <path d="M61 80 76 60l11 14 13-19 17 42H51Z" fill="#10131a"/>
+  <text x="48" y="155" fill="#f7faf9" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="30" font-weight="650">Zeus Browser</text>
+  <text x="48" y="193" fill="#a9b5b1" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="16">Claim exact tabs. Keep every action visible.</text>
+  <rect x="48" y="218" width="207" height="30" rx="15" fill="#1f2a2a"/>
+  <text x="64" y="238" fill="#76e5c5" font-family="ui-monospace,monospace" font-size="12">Native Messaging · MV3</text>
+</svg>

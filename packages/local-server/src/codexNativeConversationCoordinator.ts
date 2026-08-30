@@ -27,8 +27,8 @@ import { randomUUID } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import type { BrowserAutomationPort } from './browserAutomation.js';
-import { zeusBrowserDynamicTools } from './browserDynamicTools.js';
 import { createCodexDynamicToolApplication } from './codexDynamicToolApplication.js';
+import { createZeusToolBroker, type ZeusToolAuditEvent } from './zeusToolRegistry.js';
 import { finalizeCodexPendingInteractionsForShutdown } from './codexFinalShutdownApplication.js';
 import { codexGoalEventKind, createCodexGoalApplication, ensureInitialCodexGoal } from './codexGoalApplication.js';
 import { createCodexInteractionRecoveryApplication } from './codexInteractionRecoveryApplication.js';
@@ -168,6 +168,7 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
   operationId?: () => string;
   turnResultTimeoutMs?: number;
   browserAutomation?: BrowserAutomationPort;
+  auditNativeTool?: (event: ZeusToolAuditEvent) => void | Promise<void>;
   trustedAttachmentRoots?: string[];
   generatedImageRoot?: string;
   getProjectRoot?: (projectId: string) => string | null;
@@ -255,11 +256,12 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   let finalizationPromise: Promise<void> | null = null;
   const processProjector = new TurnProcessProjector(options.execution);
   const providerCommands = new CodexProviderCommandApplicationService(options.db, options.commandDeliveries, now);
+  const zeusToolBroker = options.browserAutomation ? createZeusToolBroker(options.browserAutomation, { audit: options.auditNativeTool }) : undefined;
   const handleDynamicToolRequest = createCodexDynamicToolApplication({
     manager: options.manager,
     providerCommands,
     toolResults: options.toolResults,
-    ...(options.browserAutomation ? { browserAutomation: options.browserAutomation } : {}),
+    ...(zeusToolBroker ? { toolBroker: zeusToolBroker } : {}),
     findConversation: (threadId) => options.conversations.getByProviderThreadId(threadId),
     broadcast: options.broadcast,
     now,
@@ -1596,7 +1598,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       if (!providerThreadId) {
         const profile = providerPermissionProfile(context);
         const developerInstructions = developerInstructionsFor(context, options.browserAutomation !== undefined);
-        const dynamicTools = [...conversationToolResultDynamicTools(), ...(options.browserAutomation ? zeusBrowserDynamicTools() : [])];
+        const dynamicTools = [...conversationToolResultDynamicTools(), ...(zeusToolBroker ? zeusToolBroker.registry.codexTools : [])];
         const threadRequest = {
           model: context.model,
           ...(Object.prototype.hasOwnProperty.call(context, 'serviceTier') ? { serviceTier: context.serviceTier } : {}),

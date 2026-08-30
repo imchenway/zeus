@@ -178,7 +178,19 @@ export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, 
 export type { GraphEdgeDetail, GraphNeighborhood, GraphSearchResult, GraphViewSnapshot } from './codeIntelligenceGraphStore.js';
 export { prepareUnifiedConversationStoreMigration, readUnifiedConversationStoreMigrationStatus, type ConversationStoreMigrationStatus } from './conversationStoreMigration.js';
 
-export type { BrowserAutomationContentItem, BrowserAutomationPort, BrowserAutomationToolCall } from './browserAutomation.js';
+export type { BrowserAutomationContentItem, BrowserAutomationPort, BrowserAutomationToolCall, BrowserAutomationToolResult } from './browserAutomation.js';
+export {
+  browserFrozenArgumentSchema,
+  browserFrozenContractEntries,
+  browserFrozenContractEntry,
+  browserFrozenContractVersion,
+  browserFrozenMethodSupportsSurface,
+  browserFrozenUnsupportedSurfaceKinds,
+  validateBrowserFrozenArguments,
+} from './browserFrozenContract.js';
+export type { BrowserFrozenArgumentSchema, BrowserFrozenContractEntry, BrowserFrozenContractRisk } from './browserFrozenContract.js';
+export { createZeusToolBroker, createZeusToolRegistry, isZeusNativeToolMutation, zeusNativeToolNamespaces } from './zeusToolRegistry.js';
+export type { CreateZeusToolBrokerOptions, ZeusNativeToolNamespace, ZeusToolAuditEvent, ZeusToolBroker, ZeusToolRegistry } from './zeusToolRegistry.js';
 export { createConversationAttachmentGrant, resolveConversationAttachmentGrant } from './conversationAttachmentGrant.js';
 export { createLegacyFlatZeusDataLayout, createZeusDataLayout, createZeusDataLayoutForDatabase } from './zeusDataLayout.js';
 export type { ZeusDataLayout, ZeusDataLayoutKind, ZeusDataLifecycle, ZeusDataOwner, ZeusDataPathDescriptor, ZeusDataPathKey } from './zeusDataLayout.js';
@@ -1093,6 +1105,19 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         redactSensitiveText,
         execution: conversationExecution,
         toolResults: conversationToolResults,
+        browserAutomation: options.browserAutomation,
+        auditNativeTool: async (event) => {
+          auditLogs.append({
+            actorType: 'zeus_native_tool',
+            actorRef: event.threadId,
+            action: `native_tool.${event.phase}`,
+            resourceType: 'conversation',
+            resourceId: event.conversationId,
+            payload: { ...event },
+            createdAt: now().toISOString(),
+          });
+          await db.save();
+        },
         compileDispatchContext: compileProviderDispatchContext,
       });
   const repairedPiConversationIdentityCount = piNativeCoordinator.repairPersistedConversationIdentities();
@@ -1544,6 +1569,18 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       eventFlow: conversationEventFlow,
       resolveResponsesRuntime,
       browserAutomation: options.browserAutomation,
+      auditNativeTool: async (event) => {
+        auditLogs.append({
+          actorType: 'zeus_native_tool',
+          actorRef: event.threadId,
+          action: `native_tool.${event.phase}`,
+          resourceType: 'conversation',
+          resourceId: event.conversationId,
+          payload: { ...event },
+          createdAt: now().toISOString(),
+        });
+        await db.save();
+      },
       trustedAttachmentRoots: trustedConversationAttachmentRoots,
       generatedImageRoot,
       getProjectRoot: (projectId) => projects.getById(projectId)?.localPath ?? null,

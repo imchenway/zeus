@@ -19,6 +19,8 @@ import type {
   ZeusBrowserEvent,
   ZeusBrowserPreparedSubmission,
   ZeusBrowserSettings,
+  ZeusComputerSettings,
+  ZeusRetiredNativeRuntimeState,
 } from '@zeus/shared';
 
 type ConversationInputResourceBridge = {
@@ -312,6 +314,12 @@ declare global {
       getBrowserSettings: () => Promise<ZeusBrowserSettings>;
       updateBrowserSettings: (input: Partial<ZeusBrowserSettings>) => Promise<ZeusBrowserSettings>;
       clearBrowserData: () => Promise<{ cleared: boolean }>;
+      getRetiredNativeRuntimeState: () => Promise<ZeusRetiredNativeRuntimeState>;
+      archiveRetiredNativeRuntimes: () => Promise<ZeusRetiredNativeRuntimeState>;
+      restoreRetiredNativeRuntimes: () => Promise<ZeusRetiredNativeRuntimeState>;
+      getComputerSettings: () => Promise<ZeusComputerSettings>;
+      updateComputerSettings: (input: Pick<ZeusComputerSettings, 'enabled'>) => Promise<ZeusComputerSettings>;
+      stopComputerUse: () => Promise<ZeusComputerSettings>;
       onBrowserEvent: (listener: (event: ZeusBrowserEvent) => void) => () => void;
     };
   }

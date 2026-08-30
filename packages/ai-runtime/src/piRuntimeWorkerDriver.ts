@@ -24,7 +24,7 @@ import type {
   SteerAgentRunInput,
   SupervisedAgentRuntimeDriver,
 } from './agentRuntimeContracts.js';
-import type { PiRuntimeConnection, PiZeusToolBroker, PiZeusToolRequest } from './piSdkRuntimeDriver.js';
+import type { PiRuntimeConnection, PiZeusToolBroker, PiZeusToolDefinitionSpec, PiZeusToolRequest } from './piSdkRuntimeDriver.js';
 import {
   isPiRuntimeWorkerToCoreMessage,
   piRuntimeWorkerError,
@@ -42,6 +42,7 @@ export interface CreatePiRuntimeWorkerDriverOptions {
   sessionDirectory: string;
   loadConnections: () => Promise<PiRuntimeConnection[]>;
   toolBroker: PiZeusToolBroker;
+  nativeTools?: PiZeusToolDefinitionSpec[];
   now?: () => string;
   startupTimeoutMs?: number;
   shutdownTimeoutMs?: number;
@@ -177,7 +178,11 @@ export function createPiRuntimeWorkerDriver(options: CreatePiRuntimeWorkerDriver
       handleWorkerExit(spawned, nextGeneration, failure('process_exit', 'ZEUS_PI_WORKER_EXITED', `Pi Worker 已退出（${String(code ?? signal ?? 'unknown')}）。`, activeRuns.size > 0));
     });
     await waitForHello(nextGeneration);
-    await requestCurrentGeneration('initialize', { adapterVersion: options.adapterVersion, agentDirectory: options.agentDirectory, sessionDirectory: options.sessionDirectory }, { timeoutMs: startupTimeoutMs, effectful: false });
+    await requestCurrentGeneration(
+      'initialize',
+      { adapterVersion: options.adapterVersion, agentDirectory: options.agentDirectory, sessionDirectory: options.sessionDirectory, nativeTools: options.nativeTools ?? [] },
+      { timeoutMs: startupTimeoutMs, effectful: false },
+    );
     if (child !== spawned || generationId !== nextGeneration) throw driverError('ZEUS_PI_WORKER_STALE_GENERATION', 'Pi Worker 在初始化期间更换了运行代次。');
     lifecycle = 'healthy';
     circuitState = 'closed';

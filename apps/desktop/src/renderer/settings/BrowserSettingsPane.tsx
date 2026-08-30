@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import type { ZeusBrowserSettings } from '@zeus/shared';
+import type { ZeusBrowserSettings, ZeusComputerSettings, ZeusRetiredNativeRuntimeState } from '@zeus/shared';
 import { Button } from '../ui/Button.js';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
@@ -44,6 +44,23 @@ const copy = {
     clearConfirm: '将清除独立浏览器 Profile 中的登录态、站点数据、授权和批注。此操作不可撤销，确定继续吗？',
     allSitesConfirm: '允许所有站点后，Agent 不再逐站点询问即可读取和操作页面；敏感动作仍会单独确认。确定继续吗？',
     cdpConfirm: '完整 CDP 可绕过常规浏览器工具的能力边界并读取或修改页面。每次调用仍会确认。确定启用吗？',
+    computerTitle: 'Computer Use',
+    computerHelp: '全局启用后，Agent 可按需控制其他应用；macOS 辅助功能与录屏权限仍由系统管理，敏感动作仍逐次确认。',
+    computerEnable: '启用 Computer Use',
+    computerStop: '立即停止控制',
+    chromeEnable: '连接 Chrome 测试扩展',
+    chromeHelp: '通过 Zeus 自有 Native Messaging Host 精确声明并控制 Chrome 标签。',
+    edgeEnable: '连接 Edge 预览扩展',
+    edgeHelp: '使用与 Chrome 隔离的扩展身份、Host manifest 和连接。',
+    retiredTitle: '旧插件运行时',
+    retiredHelp: 'Zeus 已不再依赖 Codex Browser、Chrome、Computer Use 缓存或 Codex Computer Use.app。清理会把现有目录移入 Zeus 备份，不卸载插件，可随时恢复。',
+    retiredArchive: '归档旧运行时',
+    retiredRestore: '恢复最近归档',
+    retiredArchiveConfirm: '将把检测到的旧 Browser/Computer 插件缓存与 Codex Computer Use.app 移入 Zeus 可恢复备份。不会卸载插件。确定继续吗？',
+    retiredRestoreConfirm: '将恢复最近一次由 Zeus 归档的旧运行时；若原位置已有新内容会安全拒绝。确定继续吗？',
+    retiredNone: '未检测到待归档旧运行时。',
+    retiredArchived: '旧运行时已归档，可从最近备份恢复。',
+    retiredRestored: '旧运行时已恢复。',
     saveFailed: '保存浏览器设置失败。',
     clearFailed: '清除浏览器数据失败。',
   },
@@ -84,6 +101,23 @@ const copy = {
     clearConfirm: 'This clears sign-in state, site data, grants, and comments from the independent browser profile. It cannot be undone. Continue?',
     allSitesConfirm: 'Allowing all sites lets the Agent read and operate pages without per-site prompts. Sensitive actions still ask. Continue?',
     cdpConfirm: 'Full CDP can bypass the normal browser-tool boundary to inspect or modify a page. Every call still asks. Enable it?',
+    computerTitle: 'Computer Use',
+    computerHelp: 'When globally enabled, agents may control other apps on demand. macOS permissions and per-action sensitive confirmations still apply.',
+    computerEnable: 'Enable Computer Use',
+    computerStop: 'Stop control now',
+    chromeEnable: 'Connect Chrome test extension',
+    chromeHelp: 'Uses the Zeus-owned Native Messaging Host to claim and control exact Chrome tabs.',
+    edgeEnable: 'Connect Edge preview extension',
+    edgeHelp: 'Uses an extension identity, host manifest, and connection isolated from Chrome.',
+    retiredTitle: 'Retired plugin runtimes',
+    retiredHelp: 'Zeus no longer depends on Codex Browser, Chrome, Computer Use caches, or Codex Computer Use.app. Cleanup moves existing directories into a Zeus backup without uninstalling plugins, and can be reversed.',
+    retiredArchive: 'Archive old runtimes',
+    retiredRestore: 'Restore latest archive',
+    retiredArchiveConfirm: 'Move detected Browser/Computer plugin caches and Codex Computer Use.app into a recoverable Zeus backup? Plugins will not be uninstalled.',
+    retiredRestoreConfirm: 'Restore the latest Zeus archive? Restore safely fails if new content already exists at the original location.',
+    retiredNone: 'No retired runtime is waiting to be archived.',
+    retiredArchived: 'Retired runtimes were archived and remain recoverable.',
+    retiredRestored: 'Retired runtimes were restored.',
     saveFailed: 'Browser settings could not be saved.',
     clearFailed: 'Browser data could not be cleared.',
   },
@@ -92,6 +126,8 @@ const copy = {
 export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
   const labels = copy[props.language];
   const [settings, setSettings] = useState<ZeusBrowserSettings | null>(null);
+  const [computerSettings, setComputerSettings] = useState<ZeusComputerSettings | null>(null);
+  const [retiredRuntimeState, setRetiredRuntimeState] = useState<ZeusRetiredNativeRuntimeState | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -114,18 +150,92 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
       .catch((loadError) => {
         if (active) setError(loadError instanceof Error ? loadError : labels.unavailable);
       });
+    if (bridge.getComputerSettings) {
+      void bridge
+        .getComputerSettings()
+        .then((value) => {
+          if (active) setComputerSettings(value);
+        })
+        .catch((loadError) => {
+          if (active) setError(loadError instanceof Error ? loadError : labels.unavailable);
+        });
+    }
+    if (bridge.getRetiredNativeRuntimeState) {
+      void bridge
+        .getRetiredNativeRuntimeState()
+        .then((value) => {
+          if (active) setRetiredRuntimeState(value);
+        })
+        .catch((loadError) => {
+          if (active) setError(loadError instanceof Error ? loadError : labels.unavailable);
+        });
+    }
     return () => {
       active = false;
     };
   }, [labels.unavailable]);
 
-  function setBoolean(key: 'enabled' | 'askWhereToSave' | 'allowAgentAllSites' | 'fullCdpEnabled', value: boolean): void {
+  function setBoolean(key: 'enabled' | 'askWhereToSave' | 'allowAgentAllSites' | 'fullCdpEnabled' | 'externalChromeEnabled' | 'externalEdgeEnabled', value: boolean): void {
     if (!settings) return;
     if (value && key === 'allowAgentAllSites' && !window.confirm(labels.allSitesConfirm)) return;
     if (value && key === 'fullCdpEnabled' && !window.confirm(labels.cdpConfirm)) return;
     setSettings({ ...settings, [key]: value });
     setStatus(null);
     setError(null);
+  }
+
+  async function setComputerEnabled(enabled: boolean): Promise<void> {
+    if (!window.zeus?.updateComputerSettings) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setComputerSettings(await window.zeus.updateComputerSettings({ enabled }));
+    } catch (computerError) {
+      setError(computerError);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function stopComputer(): Promise<void> {
+    if (!window.zeus?.stopComputerUse) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setComputerSettings(await window.zeus.stopComputerUse());
+    } catch (computerError) {
+      setError(computerError);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function archiveRetiredRuntimes(): Promise<void> {
+    if (!window.zeus?.archiveRetiredNativeRuntimes || !window.confirm(labels.retiredArchiveConfirm)) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setRetiredRuntimeState(await window.zeus.archiveRetiredNativeRuntimes());
+      setStatus(labels.retiredArchived);
+    } catch (archiveError) {
+      setError(archiveError);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function restoreRetiredRuntimes(): Promise<void> {
+    if (!window.zeus?.restoreRetiredNativeRuntimes || !window.confirm(labels.retiredRestoreConfirm)) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setRetiredRuntimeState(await window.zeus.restoreRetiredNativeRuntimes());
+      setStatus(labels.retiredRestored);
+    } catch (restoreError) {
+      setError(restoreError);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function save(): Promise<void> {
@@ -248,6 +358,37 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
         <BrowserSettingRow title={labels.fullCdp} description={labels.fullCdpHelp} danger>
           <BrowserSwitch label={labels.fullCdp} checked={settings.fullCdpEnabled} disabled={busy} onChange={(checked) => setBoolean('fullCdpEnabled', checked)} />
         </BrowserSettingRow>
+        <BrowserSettingRow title={labels.chromeEnable} description={labels.chromeHelp}>
+          <BrowserSwitch label={labels.chromeEnable} checked={settings.externalChromeEnabled} disabled={busy} onChange={(checked) => setBoolean('externalChromeEnabled', checked)} />
+        </BrowserSettingRow>
+        <BrowserSettingRow title={labels.edgeEnable} description={labels.edgeHelp}>
+          <BrowserSwitch label={labels.edgeEnable} checked={settings.externalEdgeEnabled} disabled={busy} onChange={(checked) => setBoolean('externalEdgeEnabled', checked)} />
+        </BrowserSettingRow>
+        {computerSettings ? (
+          <BrowserSettingRow title={labels.computerTitle} description={`${labels.computerHelp}${computerSettings.detail ? ` ${computerSettings.detail}` : ''}`} danger>
+            <span className="browser-settings-actions">
+              <BrowserSwitch label={labels.computerEnable} checked={computerSettings.enabled} disabled={busy} onChange={(checked) => void setComputerEnabled(checked)} />
+              <Button variant="danger" size="compact" onClick={() => void stopComputer()} busy={busy} disabled={!computerSettings.enabled && computerSettings.serviceState === 'disabled'}>
+                {labels.computerStop}
+              </Button>
+            </span>
+          </BrowserSettingRow>
+        ) : null}
+        {retiredRuntimeState ? (
+          <BrowserSettingRow
+            title={labels.retiredTitle}
+            description={`${labels.retiredHelp} ${retiredRuntimeState.entries.length > 0 ? retiredRuntimeState.entries.join('、') : labels.retiredNone}${retiredRuntimeState.latestBackupRoot ? ` ${retiredRuntimeState.latestBackupRoot}` : ''}`}
+          >
+            <span className="browser-settings-actions">
+              <Button variant="secondary" size="compact" onClick={() => void archiveRetiredRuntimes()} busy={busy} disabled={retiredRuntimeState.entries.length === 0}>
+                {labels.retiredArchive}
+              </Button>
+              <Button variant="secondary" size="compact" onClick={() => void restoreRetiredRuntimes()} busy={busy} disabled={!retiredRuntimeState.latestBackupRoot || Boolean(retiredRuntimeState.restoredAt)}>
+                {labels.retiredRestore}
+              </Button>
+            </span>
+          </BrowserSettingRow>
+        ) : null}
         <div className="browser-settings-actions">
           <Button variant="secondary" size="compact" onClick={() => void save()} busy={busy}>
             {labels.save}

@@ -3,9 +3,10 @@ import { cp, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeF
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 const directImportEntries = ['config.toml', 'AGENTS.md', 'rules', 'prompts', 'skills'] as const;
-const managedToolRuntimeEntries = ['computer-use/Codex Computer Use.app', 'plugins/cache/openai-bundled/browser', 'plugins/cache/openai-bundled/chrome', 'plugins/cache/openai-bundled/computer-use'] as const;
+const retiredNativeRuntimeEntries = ['computer-use/Codex Computer Use.app', 'plugins/cache/openai-bundled/browser', 'plugins/cache/openai-bundled/chrome', 'plugins/cache/openai-bundled/computer-use'] as const;
 const generatedPluginEntries = new Set(['.plugin-appserver', '.remote-plugin-install-staging', '.tmp', 'cache']);
-const isolatedRuntimePathAssignments = new Set(['notify', 'CODEX_HOME', 'NODE_REPL_TRUSTED_CODE_PATHS', 'NODE_REPL_TRUSTED_SERVICES', 'SKY_CUA_SERVICE_PATH']);
+const isolatedRuntimePathAssignments = new Set(['notify', 'CODEX_HOME']);
+const retiredRuntimeAssignmentPattern = /(?:Codex Computer Use|computer-use|openai-bundled[\\/](?:browser|chrome))/iu;
 const sensitiveAssignment = /\b[A-Za-z0-9_.-]*(?:api[_-]?key|token|secret|password|credential)[A-Za-z0-9_.-]*\s*=\s*/iu;
 const maximumImportedNodes = 20_000;
 
@@ -17,7 +18,7 @@ export interface CodexConfigImportEntry {
 
 export interface CodexConfigImportSkippedEntry {
   path: string;
-  reason: 'missing' | 'symbolic_link' | 'unsupported_type' | 'contains_sensitive_assignment' | 'too_large' | 'generated_runtime';
+  reason: 'missing' | 'symbolic_link' | 'unsupported_type' | 'contains_sensitive_assignment' | 'too_large' | 'generated_runtime' | 'retired_native_runtime';
 }
 
 export interface CodexConfigImportPreview {
@@ -72,7 +73,7 @@ export function createCodexConfigImportService(options: { sourceRoot: string; ta
     }
     if (!sourceAvailable) return { available: false, sourceRoot, targetRoot, entries, skipped };
 
-    for (const entryName of [...directImportEntries, ...managedToolRuntimeEntries]) {
+    for (const entryName of directImportEntries) {
       const source = join(sourceRoot, entryName);
       try {
         const stat = await lstat(source);
@@ -98,6 +99,14 @@ export function createCodexConfigImportService(options: { sourceRoot: string; ta
         if (isNodeError(error, 'ENOENT')) skipped.push({ path: entryName, reason: 'missing' });
         else if (error instanceof UnsafeSymbolicLinkError) skipped.push({ path: entryName, reason: 'symbolic_link' });
         else throw error;
+      }
+    }
+    for (const entryName of retiredNativeRuntimeEntries) {
+      try {
+        await lstat(join(sourceRoot, entryName));
+        skipped.push({ path: entryName, reason: 'retired_native_runtime' });
+      } catch (error) {
+        if (!isNodeError(error, 'ENOENT')) throw error;
       }
     }
     await inspectPluginEntries(entries, skipped);
@@ -259,7 +268,12 @@ function rewriteIsolatedRuntimePaths(config: string, sourceRoot: string, targetR
         return line;
       }
       const assignment = /^(\s*([A-Za-z0-9_-]+)\s*=\s*)(.*)$/u.exec(line);
-      if (!assignment || !isolatedRuntimePathAssignments.has(assignment[2]!)) return line;
+      if (!assignment) return line;
+      if (assignment[2] === 'SKY_CUA_SERVICE_PATH') return '# Zeus 原生 Computer Use 已停用旧 SKY_CUA_SERVICE_PATH 导入。';
+      if (assignment[2] === 'NODE_REPL_TRUSTED_CODE_PATHS' || assignment[2] === 'NODE_REPL_TRUSTED_SERVICES') {
+        return filterRetiredRuntimeAssignment(assignment[1]!, assignment[3]!, line);
+      }
+      if (!isolatedRuntimePathAssignments.has(assignment[2]!)) return line;
       // MCP 子进程里的 Codex 不能与主 app-server 共用 Provider Home；否则其旧版
       // models_cache、线程与锁文件会反向污染当前 Core 的能力和写入所有权。
       if (assignment[2] === 'CODEX_HOME' && /^mcp_servers\.(?:node_repl|"node_repl")\.env$/u.test(currentTable)) {
@@ -269,6 +283,21 @@ function rewriteIsolatedRuntimePaths(config: string, sourceRoot: string, targetR
       return line.split(sourceRoot).join(replacementRoot).split('~/.codex').join(replacementRoot);
     })
     .join('\n');
+}
+
+function filterRetiredRuntimeAssignment(prefix: string, rawValue: string, originalLine: string): string {
+  if (!retiredRuntimeAssignmentPattern.test(rawValue)) return originalLine;
+  try {
+    const parsed = JSON.parse(rawValue) as unknown;
+    if (Array.isArray(parsed)) {
+      const filtered = parsed.filter((entry) => !retiredRuntimeAssignmentPattern.test(JSON.stringify(entry)));
+      return filtered.length > 0 ? `${prefix}${JSON.stringify(filtered)}` : `# Zeus 原生 Browser/Computer 已移除空的旧 trusted runtime 列表。`;
+    }
+    if (typeof parsed === 'string') return '# Zeus 原生 Browser/Computer 已移除旧 trusted runtime 路径。';
+  } catch {
+    // 无法可靠解析时 fail closed：不把旧 Browser/Computer trusted runtime 带入隔离 Provider Home。
+  }
+  return '# Zeus 原生 Browser/Computer 已移除无法安全拆分的旧 trusted runtime 配置。';
 }
 
 async function countSafeNodes(path: string, sourceRoot: string, visited: Set<string>): Promise<number> {
