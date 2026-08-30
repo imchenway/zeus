@@ -691,18 +691,21 @@ export class ImTelegramService {
       this.options.repository.completeInbound({ connectionId, updateId: updateIdentity, now: this.nowIso(), errorCode: code });
       this.options.repository.appendLog({ connectionId, level: 'warning', event: 'update.rejected', message: `${code}: ${message}`, now: this.nowIso() });
       await this.options.save();
-      try {
-        await this.sendTracked(connection, update.chatId, userVisibleError(error), `${operationIdentity}:error`);
-      } catch (deliveryError) {
-        this.options.repository.appendLog({ connectionId, level: 'error', event: 'update.error_delivery_failed', message: boundedError(deliveryError, this.options.redactSensitiveText), now: this.nowIso() });
-      }
+      const deliverErrorMessage = async (): Promise<void> => {
+        try {
+          await this.sendTracked(connection, update.chatId, userVisibleError(error), `${operationIdentity}:error`);
+        } catch (deliveryError) {
+          this.options.repository.appendLog({ connectionId, level: 'error', event: 'update.error_delivery_failed', message: boundedError(deliveryError, this.options.redactSensitiveText), now: this.nowIso() });
+        }
+      };
       if (update.callbackQueryId) {
         try {
           await this.sender?.answerCallbackQuery?.(update.callbackQueryId, { text: userVisibleError(error), showAlert: true });
         } catch (callbackError) {
           this.options.repository.appendLog({ connectionId, level: 'error', event: 'callback.answer_failed', message: boundedError(callbackError, this.options.redactSensitiveText), now: this.nowIso() });
+          await deliverErrorMessage();
         }
-      }
+      } else await deliverErrorMessage();
       await this.options.save();
       return undefined;
     }

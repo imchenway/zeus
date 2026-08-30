@@ -193,3 +193,9 @@ Telegram 只作为受认证的远程入口。入站消息、任务操作和交�
 - 详情页把两个立即推送按钮收口为“处理此任务”。下一步先选择“新建任务会话”或该任务自己的、未归档的精确历史会话；任意项目会话和其他任务会话不再作为候选，旧 `/task push-current` 也增加相同身份校验。优点是任务、会话和 Telegram binding 三者身份一致，不会静默污染其他上下文；代价是推送多一步目标选择，且最多展示最近 8 个可用任务会话。
 - 本轮以用户提供的真实 Telegram 截图和 Vibego 源码完成交互审计；截图能确认入口层级、操作不可发现和长消息问题，不能单独证明 Telegram 客户端的读屏顺序、焦点或动态字号表现。真实按钮渲染、进程恢复和任务/会话往返仍必须由独立 `Zeus Test.app` 与测试 Bot 验收。
 - 验证通过相关文件 Prettier、`git diff --check`、`pnpm lint`、`pnpm typecheck`、`pnpm --filter @zeus/telegram-adapter build`、`pnpm build` 和 `pnpm package:mac`；architecture governance 同时通过 126 张 Core 表和 11 张辅助表检查。打包仅生成 `dist/test/mac-arm64/Zeus Test.app`，`CFBundleIdentifier=dev.hypha.zeus.test`、显示名为 `Zeus Test`，deep/strict codesign 通过，`dist` 中没有生产身份 `Zeus.app`。构建仍只有既有 `markstream-react` Rolldown 注解与大 chunk 警告；本轮没有启动应用、替换正式应用或操作正式 Telegram 数据，运行验收缺口继续保留。
+
+## 正式版本首页按钮故障复盘（2026-08-31）
+
+- 用户在真实 Telegram 中发送 `/start` 后能看到“任务列表 / 新建任务 / 会话列表 / 新建会话”四个首页按钮，但点击“任务列表”立即同时出现系统弹窗和聊天消息“该交互已不再受支持”。只读现场确认正式进程运行 `/Applications/Zeus.app` 0.3.84；其 `app.asar` 已包含 `home.tasks`、`home.new_conversation` 等首页 capability token，却不包含当前实现的“已打开任务列表”处理分支文本。因此这不是用户误操作或单纯按钮过期，而是正式包只带入口、没有带齐 callback 处理器的版本撕裂。
+- 当前任务分支 `e6f76ecb` 已包含首页 callback、任务创建和任务精确会话选择的完整处理器，但该提交没有安装到正在运行的正式应用；代码存在不等于线上已修复，仍需进入正式发布、安装与真实 Telegram 复验链路。
+- 同一句错误出现两次来自异常路径自身：callback 失败时先发送普通聊天错误，再调用 `answerCallbackQuery(showAlert=true)` 弹窗。现改为 callback 优先只弹一次；只有 callback 回答自身失败时才降级发送普通聊天消息。优点是避免重复噪声，同时保留 Telegram 无法显示 callback 弹窗时的可见兜底；代价是 callback 错误不再永久留在聊天历史中，需要依赖脱敏连接日志排障。
