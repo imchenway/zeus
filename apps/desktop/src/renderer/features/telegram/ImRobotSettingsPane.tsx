@@ -456,7 +456,7 @@ function PairingPanel(props: { zh: boolean; pairing: ImPairingSessionSnapshot | 
           <div className="im-qr-frame">{props.qrCodeDataUrl ? <img src={props.qrCodeDataUrl} alt={props.zh ? 'Telegram 私聊配对二维码' : 'Telegram private-chat pairing QR code'} /> : <QrCode aria-hidden="true" />}</div>
           <div className="im-pairing-copy">
             <strong>{expired ? (props.zh ? '配对码已过期' : 'Pairing code expired') : `${props.zh ? '剩余' : 'Expires in'} ${formatCountdown(props.remainingSeconds)}`}</strong>
-            <span>{props.zh ? '使用手机 Telegram 扫码，确认进入正确的 Bot 私聊后点击 Start。' : 'Scan with Telegram, confirm the bot private chat, and tap Start.'}</span>
+            <span>{props.zh ? '使用手机相机扫码，在 Telegram 中确认进入正确的 Bot 私聊后点击 Start。' : 'Scan with your phone camera, confirm the bot private chat in Telegram, and tap Start.'}</span>
             <a className="im-primary-action" href={props.pairing.deepLink} target="_blank" rel="noreferrer">
               {props.zh ? '在 Telegram 中打开' : 'Open in Telegram'}
             </a>

@@ -111,9 +111,41 @@ Telegram 只作为受认证的远程入口。入站消息、任务操作和交�
 - 合并态验证通过：`pnpm lint`、`pnpm typecheck`（含 117/11 architecture governance）、`pnpm --filter @zeus/telegram-adapter build`、`pnpm build`、相关文件 Prettier、`git diff --check` 与 `git diff --cached --check`。
 - `pnpm package:mac` 通过；仅生成 `dist/test/mac-arm64/Zeus Test.app`，`CFBundleIdentifier=dev.hypha.zeus.test`、显示名 `Zeus Test`，deep/strict codesign 通过，`dist` 内没有生产身份 `Zeus.app`。本轮未启动 GUI，也未重新执行真实 Telegram / Provider 验收，原缺口继续保留。
 
+## v0.3.80 发布门禁恢复（2026-08-30）
+
+- `pnpm release` 已实际执行，并生成本地发布提交 `a801a046`；命令随后停在“本地阻塞级 TypeScript 检查”，没有推送 `main`、创建标签或完成公开发布。
+- 原始错误为 `ImRobotSettingsPane.tsx` 无法解析 `qrcode`，并连带报告 `toDataURL()` 回调参数为隐式 `any`。`qrcode@1.5.4` 与 `@types/qrcode@1.5.6` 已同时存在于桌面包依赖声明和冻结 lockfile，源码与依赖声明不缺失。
+- 现场检查确认主工作区的 `apps/desktop/node_modules` 没有链接上述两个包；根因是 IM 改动合入后，本地主工作区依赖目录没有同步到新的 lockfile，而不是 React 实现或发布编排拒绝执行。
+- 使用 `CI=true pnpm install --frozen-lockfile` 按现有 lockfile 重建依赖目录；没有改动 lockfile，也没有升级依赖范围。随后重新执行 `pnpm typecheck` 通过，architecture governance 同时通过 126 张 Core 表和 11 张辅助表检查。
+- 当前只恢复了本地发布门禁条件；本轮诊断没有继续执行发布命令，因此仍不得声称 `v0.3.80` 已推送、已打标签或已公开发布。
+
+## v0.3.80 公开发布完成（2026-08-30）
+
+- 远端 `main` 已精确推进到发布提交 `a801a046c5c2c97da2c21d10698b01a271a25c95`；既有 Release Workflow `33294008276` 随后完成，preflight、typecheck、正式 macOS 打包、致命产物校验、产物上传、不可变标签、GitHub Release 与 Homebrew Cask 同步全部成功。
+- 独立 CI Workflow `33293999451` 对同一提交完成且结论为 `success`。`v0.3.80` 是 annotated tag，peeled commit 精确为 `a801a046c5c2c97da2c21d10698b01a271a25c95`；GitHub Release 已于 2026-08-30 13:10:54（Asia/Shanghai）公开，非草稿、非预发布。
+- Release 包含 `Zeus-0.3.80-arm64.dmg` 与 `zeus-release-manifest.json`。DMG 大小为 `115058663` 字节，GitHub 服务端摘要、manifest 和 Homebrew Cask 的 SHA-256 均为 `95445140f76becab54e811130577eeee61789ccb53d472587231d30e50fd87fb`，Cask 版本已更新为 `0.3.80`。
+- 重新下载公开 DMG 后，实体文件大小仍为 `115058663` 字节，`shasum -a 256` 得到同一摘要，`hdiutil verify` 返回磁盘映像 checksum valid；本轮没有挂载、安装或启动生产身份应用。
+- 当前 checkout 的本地发布恢复状态最初仍停在失败时的 `release_committed`；已根据上述公开 Workflow、CI、标签、资产与 Cask 证据补齐 gate/publish 结果并收口为 `completed`，避免下一次发布误恢复旧版本。该收口只写 `.git/zeus-release/v0.3.80`，没有修改提交、分支、标签或远端。
+- 发布 manifest 明确记录 `signed=false`、`notarized=false`，因此本次发布不得描述为 Apple 签名或公证版本。公开发布完成不改变前述验收边界：真实 Telegram Bot API、独立 Test app GUI 与多 Provider 交互仍未在本任务中完成。
+
 ## 验收边界
 
 - 不新增、恢复或依赖 Vitest、组件测试、DOM/CSS 契约测试。
 - 静态与构建门禁为 `pnpm lint`、`pnpm typecheck`、`pnpm build`、`pnpm package:mac`。
 - 真实运行只允许独立身份 `Zeus Test.app`（`dev.hypha.zeus.test`）和本任务独立 `ZEUS_USER_DATA_DIR`；构建、打包、SQLite 探针或 fake Telegram 不能替代真实 GUI / Provider / Telegram 结果。
 - 如果没有可用于验收的测试 Bot Token 或测试身份被其他任务占用，必须保留真实 Telegram / GUI 未验缺口，不得冒充完成。
+
+## 真实 Telegram 配对回执修复（2026-08-30）
+
+- 用户首次通过手机相机扫描二维码并在 `@HyphaZeusBot` 私聊点击 Start 后，Telegram 收到“这条 Telegram 请求未能完成”与“未知 IM 命令”两条提示。对正式库只读核对确认：配对已于 14:16:33 成功消费并建立可信端点，连接状态已经是 `active`；失败的是配对成功回执的 `sendMessage`，其网络结果为 `ZEUS_TELEGRAM_COMMAND_OUTCOME_UNKNOWN`。随后 Telegram 发送的不带参数 `/start` 被普通命令解析器拒绝，重复打开原深链则命中“端点已绑定”。本轮未修改正式数据，也未关闭或替换正在运行的正式应用。
+- 根因是配对状态变更与成功回执投递处于同一异常边界：可信端点已经耐久建立后，回执网络结果未知仍向上抛出，导致入站 receipt 被误记为失败并尝试发送通用失败提示。该提示不代表配对失败，但会让用户得到相反结论。
+- 修复后，配对成功状态不再被欢迎回执的投递失败反向覆盖；回执失败只写入脱敏连接日志 `pairing.welcome_delivery_unconfirmed`，继续保留外发结果未知时不自动重试的边界。同一可信私聊重复打开含参数深链按已完成配对幂等处理，其他用户仍失败关闭；可信私聊中的无参数 `/start` 返回绑定状态与帮助，不再进入未知命令。
+- 配对页提示从“使用手机 Telegram 扫码”改为“使用手机相机扫码，在 Telegram 中打开”，避免误导用户寻找 Telegram 内部扫码入口。
+- 验证通过：相关文件 Prettier、`git diff --check`、`pnpm lint`、`pnpm typecheck`（126 张 Core 表、11 张辅助表架构治理通过）、`pnpm build` 和 `pnpm package:mac`。打包仅生成测试身份 `Zeus Test.app`，bundle ID 为 `dev.hypha.zeus.test`，deep/strict codesign 通过；构建仍只有既有 `markstream-react` Rolldown 注解与大 chunk 警告。本轮没有启动测试包、没有把修复安装进正式应用，也没有重新执行修复后的真实 Telegram / GUI 往返，因此运行复验缺口继续保留。
+
+## 配对回执修复本地合入 main（2026-08-30）
+
+- 合入前本地 `main=1551239e`，其中保留 ZEUS-0387 冷会话恢复修复；任务来源为 `zeus/ZEUS-0392-im-03@e904207e`。两侧均从已公开发布的 `a801a046` 分叉，提交级共同修改文件为空，`git merge-tree --write-tree` 预演无冲突。
+- `main` 工作区原有本任务文档的未提交 v0.3.80 发布记录。合入时只对该文件建立可恢复的命名 stash，完成 `--no-commit` 合并后恢复并逐段核对；最终文档同时保留发布门禁、公开发布、真实 Telegram 配对回执修复和本次合入记录，没有按 ours/theirs 整侧覆盖。
+- 实际 `main` 合并态验证通过：`pnpm lint`、`pnpm typecheck`（126 张 Core 表、11 张辅助表）、`pnpm build`、`pnpm package:mac`、`git diff --check` 与 `git diff --cached --check`。产物仅为 `dist/test/mac-arm64/Zeus Test.app`，bundle ID 为 `dev.hypha.zeus.test`，deep/strict codesign 通过，未生成生产身份 `Zeus.app`。
+- 本次授权只执行本地合入，不 push；没有启动测试包、替换正式应用或重新执行修复后的真实 Telegram / GUI 往返，运行复验缺口继续保留。
