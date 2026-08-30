@@ -24,6 +24,21 @@ const copyByLanguage = {
   },
 } as const;
 
+const visibleCopyByCode: Readonly<Record<string, Readonly<Record<ApplicationErrorLanguage, string>>>> = {
+  ZEUS_CODEX_LOGIN_REQUIRED: {
+    'zh-CN': 'Zeus 专属 Codex 尚未登录。请先前往“设置 > AI CLI / Runtime”完成登录，再重试。',
+    en: 'The dedicated Codex runtime for Zeus is not signed in. Sign in under Settings > AI CLI / Runtime, then try again.',
+  },
+  ZEUS_UNIFIED_QUEUE_HEAD_FAILED: {
+    'zh-CN': '消息已保存，但后台派发未完成。请点击“重新恢复”进行权威核对；不要重复发送同一消息。',
+    en: 'Your message was saved, but background dispatch did not complete. Select Restore again to reconcile the authoritative state; do not send the same message again.',
+  },
+  ZEUS_UNIFIED_QUEUE_SCHEDULER_FAILED: {
+    'zh-CN': '消息已保存，但队列调度未完成。请点击“重新恢复”进行权威核对；不要重复发送同一消息。',
+    en: 'Your message was saved, but queue scheduling did not complete. Select Restore again to reconcile the authoritative state; do not send the same message again.',
+  },
+};
+
 function redactDetails(value: string): string {
   return secretPatterns.reduce((result, [pattern, replacement]) => result.replace(pattern, replacement), value).trim();
 }
@@ -48,7 +63,8 @@ function errorCode(error: unknown): string | null {
  * 真实诊断信息由 reportApplicationError 写入本机运行日志。
  */
 export function formatVisibleApplicationError(error: unknown, language: ApplicationErrorLanguage = 'zh-CN'): string {
-  void error;
+  const code = errorCode(error);
+  if (code && visibleCopyByCode[code]) return visibleCopyByCode[code][language];
   return copyByLanguage[language].unavailable;
 }
 

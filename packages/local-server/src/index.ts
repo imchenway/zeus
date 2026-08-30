@@ -124,6 +124,7 @@ import { createConversationExecutionContextOperations } from './conversationExec
 import { ConversationExecutionCoordinator, type ConversationExecutionRoute } from './conversationExecutionCoordinator.js';
 import { ManagedConversationToolResultStore } from './conversationPortableContext.js';
 import { ConversationQueueCoreMutationApplication, selectAutomaticQueueDispatchCandidate } from './conversationQueueCoreMutationApplication.js';
+import { ConversationQueueDispatchScheduler, mustWaitForInProcessRuntimeTurn } from './conversationQueueDispatchScheduler.js';
 import { isObjectLike, quotePosixShellArgument } from './conversationResourcePreview.js';
 import { normalizeConversationResources } from './conversationResources.js';
 import { readNativeSubmissionSkill } from './nativeConversationSubmissionInputs.js';
@@ -1662,12 +1663,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (cleanupErrors.length > 0) throw new AggregateError([factoryError, ...cleanupErrors], 'Zeus native coordinator creation and cleanup failed.');
     throw factoryError;
   }
-  const unifiedQueueDispatches = new Set<string>();
-  dispatchUnifiedConversationQueueHead = async (conversationId) => {
-    if (unifiedQueueDispatches.has(conversationId) || !conversationExecution.isDispatchEnabled()) return;
+  const dispatchUnifiedConversationQueueHeadOnce = async (conversationId: string) => {
+    if (!conversationExecution.isDispatchEnabled()) return;
     const conversation = conversations.getById(conversationId);
     if (!conversation || conversation.archived) return;
-    if (conversationTurns.listByConversation(conversationId).some((turn) => turn.status === 'running' || turn.status === 'waiting' || turn.status === 'dispatching')) return;
     const head = selectAutomaticQueueDispatchCandidate(conversationSubmissions.listQueueByConversation(conversationId));
     if (!head || head.status !== 'queued' || !head.executionSnapshotId) return;
     const frozen = conversationExecution.getExecutionSnapshot(head.executionSnapshotId);
@@ -1676,7 +1675,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       await db.save();
       return;
     }
-    unifiedQueueDispatches.add(conversationId);
+    const inProgressTurns = conversationTurns.listByConversation(conversationId).filter((turn) => turn.status === 'running' || turn.status === 'waiting' || turn.status === 'dispatching');
+    // Pi 没有可跨进程读取的活动轮次权威，必须等待 Worker 终态事件。Codex 则必须进入
+    // coordinator，让 Provider thread authority 观察并收口“本地仍 active、Provider 已 idle”
+    // 的升级/断线窗口；在这里用任意历史非终态 turn 提前返回会永久丢失该恢复 owner。
+    if (mustWaitForInProcessRuntimeTurn(frozen.runtimeKind, inProgressTurns)) return;
     try {
       const persisted = isNativeApiRecord(JSON.parse(head.inputJson)) ? (JSON.parse(head.inputJson) as Record<string, unknown>) : {};
       const persistedContext = isNativeApiRecord(persisted.context) ? persisted.context : {};
@@ -1816,10 +1819,30 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       });
       await db.save();
       publishNativeConversationEvent('conversation.queue.changed', { conversationId, submissionId: head.id });
-    } finally {
-      unifiedQueueDispatches.delete(conversationId);
     }
   };
+  const unifiedQueueDispatchScheduler = new ConversationQueueDispatchScheduler({
+    dispatch: dispatchUnifiedConversationQueueHeadOnce,
+    onError: async (conversationId, error) => {
+      const occurredAt = now().toISOString();
+      conversationExecution.persistWarning({
+        conversationId,
+        warningKind: 'queue_dispatch_scheduler_failed',
+        payload: { message: error instanceof Error ? error.message : String(error) },
+        occurredAt,
+      });
+      await db.save();
+      publishNativeConversationEvent('conversation.native.queue_dispatch_failed', {
+        conversationId,
+        error: {
+          code: 'ZEUS_UNIFIED_QUEUE_SCHEDULER_FAILED',
+          message: error instanceof Error ? error.message : String(error),
+          recoveryRequired: true,
+        },
+      });
+    },
+  });
+  dispatchUnifiedConversationQueueHead = (conversationId) => unifiedQueueDispatchScheduler.request(conversationId);
   const recoverUnifiedOutcomeUnknownSwitches = async () => {
     const operations = conversationExecution.listOpenSwitchOperations().filter((operation) => operation.state === 'outcome_unknown');
     for (const operation of operations) {
@@ -2460,10 +2483,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           scheduleTaskIntegrationAiFinalization(attemptId, operation.conversationId);
         }
       }
-      if (mappedType === 'conversation.turn.completed' && dispatchUnifiedConversationQueueHead) {
-        const conversationId = payload.conversationId;
-        queueMicrotask(() => void dispatchUnifiedConversationQueueHead?.(conversationId).catch(() => undefined));
-      }
+    }
+    if ((mappedType === 'conversation.turn.completed' || mappedType === 'conversation.queue.changed') && typeof payload.conversationId === 'string' && dispatchUnifiedConversationQueueHead) {
+      const conversationId = payload.conversationId;
+      queueMicrotask(() => void dispatchUnifiedConversationQueueHead?.(conversationId).catch(() => undefined));
     }
     const durability = classifyConversationEventDurability(mappedType);
     if (durability !== 'coalescible_process') flushPendingNativeDeltaEvents();
