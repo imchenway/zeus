@@ -2691,60 +2691,107 @@ const zeus0388HistoryPage: NativeConversationSnapshotV2Page<import('../src/rende
   nextCursor: null,
   limits: { entryLimit: 48, byteLimit: 96 * 1024, returnedItems: 1, responseBytes: 512 },
 };
-const zeus0388ResourcePage: NativeConversationSnapshotV2Page<NativeConversationResourceV2Item> = {
-  schemaVersion: 2,
-  structureGeneration: '2026-08-29-conversation-snapshot-v2-recovered-request-input',
-  conversationId: zeus0388ConversationId,
-  kind: 'resources',
-  throughEventSeq: 8,
-  throughSequence: 0,
-  items: [
-    ...Array.from(
-      { length: 3 },
-      (_, index): NativeConversationResourceV2Item => ({
-        id: `zeus-0388-deliverable-${index + 1}`,
-        turnId: zeus0388LocalTurnId,
-        itemId: `zeus-0388-image-generation-${index + 1}`,
-        sourceIndex: 0,
-        kind: 'attachment',
-        presentation: 'card',
-        displayName: `原型图 ${index + 1}`,
-        mimeType: 'image/png',
-        previewKind: 'image',
-        iconKind: 'image',
-        attachmentRef: `zeus-0388-prototype-${index + 1}`,
-        taskPushAttachmentKey: null,
-        origin: 'provider_generated_image',
-        delivery: 'assistant',
-        createdAt: `2026-08-29T03:5${index}:00.000Z`,
-        updatedAt: `2026-08-29T03:5${index}:00.000Z`,
-        accessPolicy: 'authorized_open_intent_or_preview',
-      }),
-    ),
-    {
-      id: 'zeus-0388-ordinary-image-view',
+const zeus0388AssistantResources: NativeConversationResourceV2Item[] = [
+  ...Array.from(
+    { length: 3 },
+    (_, index): NativeConversationResourceV2Item => ({
+      id: `zeus-0388-deliverable-${index + 1}`,
       turnId: zeus0388LocalTurnId,
-      itemId: 'zeus-0388-image-view-item',
+      itemId: `zeus-0388-image-generation-${index + 1}`,
       sourceIndex: 0,
       kind: 'attachment',
       presentation: 'card',
-      displayName: '普通处理过程截图',
+      displayName: `原型图 ${index + 1}`,
       mimeType: 'image/png',
       previewKind: 'image',
       iconKind: 'image',
-      attachmentRef: 'zeus-0388-image-view',
+      attachmentRef: `zeus-0388-prototype-${index + 1}`,
       taskPushAttachmentKey: null,
-      origin: 'provider_image_view',
-      delivery: null,
-      createdAt: '2026-08-29T03:58:30.000Z',
-      updatedAt: '2026-08-29T03:58:30.000Z',
+      origin: 'provider_generated_image',
+      delivery: 'assistant',
+      createdAt: `2026-08-29T03:5${index}:00.000Z`,
+      updatedAt: `2026-08-29T03:5${index}:00.000Z`,
       accessPolicy: 'authorized_open_intent_or_preview',
-    },
-  ],
-  hasMore: false,
-  nextCursor: null,
-  limits: { entryLimit: 32, byteLimit: 64 * 1024, returnedItems: 4, responseBytes: 2_048 },
+    }),
+  ),
+  {
+    id: 'zeus-0388-report-deliverable',
+    turnId: zeus0388LocalTurnId,
+    itemId: 'zeus-0388-report-file',
+    sourceIndex: 0,
+    kind: 'file',
+    presentation: 'card',
+    displayName: 'ZEUS-0389 调研报告.md',
+    mimeType: 'text/markdown',
+    previewKind: 'document',
+    iconKind: 'file',
+    origin: 'provider_generated_file',
+    delivery: 'assistant',
+    createdAt: '2026-08-29T03:57:30.000Z',
+    updatedAt: '2026-08-29T03:57:30.000Z',
+    accessPolicy: 'authorized_open_intent_or_preview',
+  },
+];
+const zeus0388OrdinaryImageResource: NativeConversationResourceV2Item = {
+  id: 'zeus-0388-ordinary-image-view',
+  turnId: zeus0388LocalTurnId,
+  itemId: 'zeus-0388-image-view-item',
+  sourceIndex: 0,
+  kind: 'attachment',
+  presentation: 'card',
+  displayName: '普通处理过程截图',
+  mimeType: 'image/png',
+  previewKind: 'image',
+  iconKind: 'image',
+  attachmentRef: 'zeus-0388-image-view',
+  taskPushAttachmentKey: null,
+  origin: 'provider_image_view',
+  delivery: null,
+  createdAt: '2026-08-29T03:58:30.000Z',
+  updatedAt: '2026-08-29T03:58:30.000Z',
+  accessPolicy: 'authorized_open_intent_or_preview',
 };
+const zeus0388ResourceItems: NativeConversationResourceV2Item[] = [
+  ...zeus0388AssistantResources,
+  zeus0388OrdinaryImageResource,
+  ...Array.from(
+    { length: 141 },
+    (_, index): NativeConversationResourceV2Item => ({
+      id: `zeus-0388-ordinary-resource-${index + 1}`,
+      turnId: zeus0388LocalTurnId,
+      itemId: `zeus-0388-tool-file-${index + 1}`,
+      sourceIndex: 0,
+      kind: 'file',
+      presentation: 'inline',
+      displayName: `过程资源 ${index + 1}.txt`,
+      mimeType: 'text/plain',
+      previewKind: 'document',
+      iconKind: 'file',
+      origin: 'provider_tool_output',
+      delivery: null,
+      createdAt: '2026-08-29T03:58:45.000Z',
+      updatedAt: '2026-08-29T03:58:45.000Z',
+      accessPolicy: 'authorized_open_intent_or_preview',
+    }),
+  ),
+];
+const zeus0388ResourceCursors = ['zeus-0388-resource-page-2', 'zeus-0388-resource-page-3', 'zeus-0388-resource-page-4', 'zeus-0388-resource-page-5'] as const;
+const zeus0388ResourcePages: NativeConversationSnapshotV2Page<NativeConversationResourceV2Item>[] = Array.from({ length: 5 }, (_, index) => {
+  const items = zeus0388ResourceItems.slice(index * 32, (index + 1) * 32);
+  return {
+    schemaVersion: 2,
+    structureGeneration: '2026-08-29-conversation-snapshot-v2-recovered-request-input',
+    conversationId: zeus0388ConversationId,
+    kind: 'resources',
+    throughEventSeq: 8,
+    throughSequence: 0,
+    items,
+    hasMore: index < 4,
+    nextCursor: zeus0388ResourceCursors[index] ?? null,
+    limits: { entryLimit: 32, byteLimit: 64 * 1024, returnedItems: items.length, responseBytes: items.length * 512 },
+  };
+});
+const zeus0388ResourcePageIndexByCursor = new Map(zeus0388ResourceCursors.map((cursor, index) => [cursor, index + 1]));
 const zeus0388InitialSnapshot = adaptConversationSnapshotV2({
   snapshot: zeus0388SnapshotV2,
   history: zeus0388HistoryPage,
@@ -2822,9 +2869,9 @@ function Zeus0388QaApp() {
     () =>
       createSessionController({
         client: {
-          async loadNativeConversationResourcesV2() {
+          async loadNativeConversationResourcesV2(_projectId, _conversationId, options) {
             setResourceRequests((count) => count + 1);
-            return zeus0388ResourcePage;
+            return zeus0388ResourcePages[options?.cursor ? (zeus0388ResourcePageIndexByCursor.get(options.cursor) ?? 0) : 0]!;
           },
         } as unknown as SessionControllerClient,
         projectId: 'project-zeus',
@@ -2845,7 +2892,7 @@ function Zeus0388QaApp() {
   };
   // QA 直接注入已经水合的历史快照，不建立真实 socket；用 ready 表达本地快照可读，
   // 使资源自动加载 effect 与正式历史工作面保持同一前置条件。
-  const hydratedHistoryState = { ...state, transportState: 'ready' as const };
+  const hydratedHistoryState = { ...state, transportState: 'ready' as const, conversationState: 'starting_turn' as const };
   const visibleState =
     guard === 'recovered'
       ? {
@@ -2853,7 +2900,17 @@ function Zeus0388QaApp() {
           queue: { state: { type: 'paused' as const, reason: 'recovered_unsent' as const }, waitReason: 'recovered_unsent' as const, submissions: [zeus0388RecoveredSubmission] },
         }
       : guard === 'processing'
-        ? { ...hydratedHistoryState, conversationState: 'waiting_user_input' as const }
+        ? {
+            ...hydratedHistoryState,
+            activeTurnId: zeus0388ProviderTurnId,
+            startedTurnId: zeus0388ProviderTurnId,
+            conversationState: 'waiting_user_input' as const,
+            queue: {
+              state: { type: 'waiting' as const, turnId: zeus0388ProviderTurnId, requestId: 'zeus-0388-request-input', reason: 'user_input' as const },
+              waitReason: 'user_input' as const,
+              submissions: [],
+            },
+          }
         : hydratedHistoryState;
   const taskEndedGate =
     guard === 'task-ended'
@@ -2865,6 +2922,9 @@ function Zeus0388QaApp() {
         }
       : undefined;
   const deliverableItems = Object.values(state.items).filter((item) => item.resources.some((resource) => resource.delivery === 'assistant'));
+  const authoritativeRefreshState = useMemo(() => sessionReducer(state, { type: 'snapshot_hydrated', snapshot: zeus0388InitialSnapshot }), [state]);
+  const refreshedDeliverableItems = Object.values(authoritativeRefreshState.items).filter((item) => item.resources.some((resource) => resource.delivery === 'assistant'));
+  const reportFileProjected = deliverableItems.some((item) => item.resources.some((resource) => resource.displayName === 'ZEUS-0389 调研报告.md'));
   const ordinaryImageViewProjected = Object.values(state.items).some((item) => item.resources.some((resource) => resource.id === 'zeus-0388-ordinary-image-view'));
 
   const selectGuard = (next: typeof guard): void => {
@@ -2903,7 +2963,7 @@ function Zeus0388QaApp() {
           </button>
         </div>
         <output data-testid="zeus-0388-resource-evidence">
-          资源请求 {resourceRequests} 次 · 助手交付项 {deliverableItems.length} 个 · 普通过程图片未提升 {ordinaryImageViewProjected ? '失败' : '通过'}
+          资源请求 {resourceRequests} 次 · 助手交付项 {deliverableItems.length} 个 · 权威对账后 {refreshedDeliverableItems.length} 个 · 调研报告 {reportFileProjected ? '可见' : '缺失'} · 普通过程图片未提升 {ordinaryImageViewProjected ? '失败' : '通过'}
         </output>
         <output data-testid="zeus-0388-compose-evidence">
           {historyOnly ? '历史快照' : '交互模式'} · 首次切换 {historyTransitions} 次 · 发送 {submitCount} 次 · 配置变更 {settingsChanges} 次 · 输入附件 {visibleState.attachments.length} 个 · 门禁 {guard}

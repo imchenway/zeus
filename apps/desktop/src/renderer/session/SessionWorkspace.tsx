@@ -1582,7 +1582,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const effectiveArchived = Boolean(props.state?.snapshot?.archived || props.conversation?.archived);
   const nonResumableNative = Boolean(props.conversation && !legacy && !effectiveResumable);
   const nativeConversationReadOnly = Boolean(props.conversation?.readOnly && props.conversation.transportKind === 'codex_native');
-  const historyHasActiveWork = Boolean(props.historyOnly && sessionStateNeedsRealtime(props.state));
+  const historyHasActiveWork = Boolean(props.historyOnly && historySessionHasActiveWork(props.state));
   const historyComposerWritable = Boolean(props.historyOnly && props.conversation && !legacy && !effectiveArchived && effectiveResumable && !nativeConversationReadOnly && !props.readOnlyGate && !historyHasActiveWork);
   const hardInteractionReadOnly = Boolean(props.readOnlyGate) || effectiveArchived || nativeConversationReadOnly || nonResumableNative;
   const interactionReadOnly = Boolean(props.historyOnly) || hardInteractionReadOnly;
@@ -3424,6 +3424,20 @@ function sessionStateNeedsRealtime(state: NativeSessionState | null | undefined)
     state.conversationState === 'active_final_answer' ||
     state.conversationState === 'waiting_approval' ||
     state.conversationState === 'waiting_user_input'
+  );
+}
+
+function historySessionHasActiveWork(state: NativeSessionState | null | undefined): boolean {
+  if (!state) return false;
+  if (state.pendingRequests.some((request) => request.status === 'pending')) return true;
+  if (state.planImplementationRequests.some((request) => request.status === 'pending')) return true;
+  if (state.queue?.state.type === 'dispatching' || state.queue?.state.type === 'active' || state.queue?.state.type === 'waiting') return true;
+  if (state.queue?.submissions.some((submission) => submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active')) return true;
+  if (state.activeTurnId) return true;
+  // conversationState 是 Renderer 派生展示态，冷历史恢复时可能短暂保留 starting_turn。
+  // 输入门禁只接受队列、请求或轮次这些耐久权威，避免空闲会话被陈旧展示态永久锁住。
+  return [...(state.snapshot?.turns ?? []), ...Object.values(state.turnsByProviderId)].some(
+    (turn) => turn.status === 'running' || turn.status === 'dispatching' || turn.status === 'waiting',
   );
 }
 
