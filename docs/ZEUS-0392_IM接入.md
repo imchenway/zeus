@@ -169,3 +169,17 @@ Telegram 只作为受认证的远程入口。入站消息、任务操作和交�
 - Codex 任务已有历史会话时，通用 Runtime `run/continue` 不能替用户猜测要恢复哪一条会话；详情卡不展示一个必然失败的“继续”按钮，而是明确要求回桌面端选择精确会话，同时仍提供“推送到新会话”。优点是不会把新建上下文冒充为恢复旧上下文；代价是“选择历史会话并原地继续”的 Telegram 子流程尚未覆盖。
 - callback 后优先使用 Telegram `editMessageText` 更新原消息，新增 `im.telegram.message.edit` External Outbox 命令类型；消息正文、chat 和 message 身份只以摘要进入命令账本，随机 capability token 不进入命令输入。编辑写出后结果未知时继续禁止盲目重放；不具备编辑能力或缺失原消息身份时才降级为发送新卡片。
 - 验证通过相关文件 Prettier、`git diff --check`、Local Server 局部 TypeScript 检查、`pnpm lint`、`pnpm typecheck`、`pnpm --filter @zeus/telegram-adapter build`、`pnpm build` 和 `pnpm package:mac`；architecture governance 同时通过 126 张 Core 表和 11 张辅助表检查。构建仍只有既有 `markstream-react` Rolldown 注解与大 chunk 警告。打包仅生成 `dist/test/mac-arm64/Zeus Test.app`，`CFBundleIdentifier=dev.hypha.zeus.test`、显示名为 `Zeus Test`，deep/strict codesign 通过，`dist` 中没有生产身份 `Zeus.app`。本轮没有启动测试包、替换正式应用或操作正式 Telegram 数据，按钮布局、原消息编辑和真实 mutation 往返仍需在独立测试身份中验收，不能以静态或打包结果冒充完成。
+
+## v0.3.83 发布候选任务创建交互修复（2026-08-30）
+
+- `pnpm release` 已在本地创建格式修复提交 `04e9eadd` 和发布提交 `d860bb34`，随后停在本地阻塞级 TypeScript 检查；没有证据表明
+  `main`、`v0.3.83` 或公开资产已推送。
+- 直接编译错误是任务 capability 解析类型中没有 `await_create`，但恢复逻辑已按该 action 收窄；进一步链路审计发现同一解析器也没有接受首页按钮已生成的
+  `task.create.<page>`，因此只增加 TypeScript 联合成员会留下“新建任务”按钮必然失败的运行问题。
+- 修复后 `create` 与 `await_create` 使用同一受限解析契约；点击新建后先撤销旧列表 capability，再创建 10 分钟有效的等待输入
+  capability，并显示可取消的标题输入提示；进程恢复后可从 Core 表重建该等待状态，返回任务列表会同步清理内存态。
+- 优点是同时恢复发布类型门禁和真实新建任务交互；代价是 v0.3.83 必须包含这笔新修复后重新建立候选，不能把已失败的 `d860bb34`
+  原样作为最终发布候选。
+- 本地验证已通过相关文件 Prettier、`git diff --check`、`pnpm lint`、`pnpm typecheck`、`pnpm build` 和 `pnpm package:mac`
+  ；architecture governance 通过 126 张 Core 表和 11 张辅助表检查。打包仅生成 `dist/test/mac-arm64/Zeus Test.app`，bundle
+  ID 为 `dev.hypha.zeus.test`，deep/strict codesign 通过；本轮未启动 GUI、未使用真实 Telegram 按钮往返、未提交修复，也未重新执行发布。

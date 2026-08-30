@@ -1,48 +1,52 @@
-import { createHash, randomBytes } from 'node:crypto';
-import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
-import { basename, extname, isAbsolute, relative, resolve } from 'node:path';
+import {createHash, randomBytes} from 'node:crypto';
+import {mkdir, readFile, realpath, stat, writeFile} from 'node:fs/promises';
+import {basename, extname, isAbsolute, relative, resolve} from 'node:path';
 import {
-  canonicalCommandInputJson,
-  commandEnvelopeSchemaGeneration,
-  imAttachmentLimits,
-  parseCanonicalRequestUserInputQuestions,
-  type CanonicalRequestUserInputQuestion,
-  type ImAgentPresetRef,
-  type ImConnectionHealth,
-  type ImConnectionSnapshot,
-  type ImPairingSessionSnapshot,
-  type ImSettingsSnapshot,
-  type ImTelegramConnectionCreated,
-  type ImTelegramConnectionLogEntry,
+    canonicalCommandInputJson,
+    type CanonicalRequestUserInputQuestion,
+    commandEnvelopeSchemaGeneration,
+    type ImAgentPresetRef,
+    imAttachmentLimits,
+    type ImConnectionHealth,
+    type ImConnectionSnapshot,
+    type ImPairingSessionSnapshot,
+    type ImSettingsSnapshot,
+    type ImTelegramConnectionCreated,
+    type ImTelegramConnectionLogEntry,
+    parseCanonicalRequestUserInputQuestions,
 } from '@zeus/shared';
 import {
-  ImRepository,
-  type ImActionCapabilityRecord,
-  type DigitalEmployeeRecord,
-  type ImConnectionRecord,
-  type ImTrustedEndpointRecord,
-  type ZeusConversationPlanActionRecord,
-  type ZeusConversationRecord,
-  type ZeusConversationServerRequestRecord,
-  type ZeusProjectRecord,
-  type ZeusTaskRecord,
+    type DigitalEmployeeRecord,
+    type ImActionCapabilityRecord,
+    type ImConnectionRecord,
+    ImRepository,
+    type ImTrustedEndpointRecord,
+    type ZeusConversationPlanActionRecord,
+    type ZeusConversationRecord,
+    type ZeusConversationServerRequestRecord,
+    type ZeusProjectRecord,
+    type ZeusTaskRecord,
 } from '@zeus/storage';
-import type { SecretStore } from '@zeus/security-core';
+import type {SecretStore} from '@zeus/security-core';
 import {
-  createTelegramBotMessageClient,
-  createTelegramLongPollingClient,
-  createTelegramPollingService,
-  downloadTelegramRemoteFile,
-  getTelegramBotProfile,
-  getTelegramRemoteFile,
-  TelegramApiRejectedError,
-  type TelegramCommandResponse,
-  type TelegramInboundAttachment,
-  type TelegramMessageSender,
-  type TelegramPollingService,
-  type TelegramUpdate,
+    createTelegramBotMessageClient,
+    createTelegramLongPollingClient,
+    createTelegramPollingService,
+    downloadTelegramRemoteFile,
+    getTelegramBotProfile,
+    getTelegramRemoteFile,
+    TelegramApiRejectedError,
+    type TelegramCommandResponse,
+    type TelegramInboundAttachment,
+    type TelegramMessageSender,
+    type TelegramPollingService,
+    type TelegramUpdate,
 } from '@zeus/telegram-adapter';
-import { telegramChildOperation, TelegramCommandApplication, telegramCommandTypes } from './telegramCommandApplication.js';
+import {
+    telegramChildOperation,
+    TelegramCommandApplication,
+    telegramCommandTypes
+} from './telegramCommandApplication.js';
 
 const pairingLifetimeMs = 10 * 60 * 1_000;
 const interactionLifetimeMs = 10 * 60 * 1_000;
@@ -1113,6 +1117,22 @@ export class ImTelegramService {
   }
 
   private async handleTaskCallback(connection: ImConnectionRecord, endpoint: ImTrustedEndpointRecord, update: TelegramUpdate, operationIdentity: string, capability: ImActionCapabilityRecord, action: ImTaskCapabilityAction): Promise<void> {
+      if (action.kind === 'create') {
+          if (capability.targetKind !== 'task_list' || capability.targetId !== connection.projectId) throw imError('ZEUS_IM_CALLBACK_UNSUPPORTED', '新建任务按钮与当前项目不匹配。', 409);
+          this.options.repository.consumeCapabilitiesForTarget({
+              connectionId: connection.id,
+              endpointId: endpoint.id,
+              targetKind: 'task_list',
+              targetId: connection.projectId,
+              now: this.nowIso()
+          });
+          this.createCapability(connection, endpoint, `task.await_create.${action.page}`, 'task_list', connection.projectId, null);
+          this.pendingTextActions.set(endpoint.id, {kind: 'task_create', page: action.page});
+          const view = this.taskCreatePromptView(connection, endpoint, action.page);
+          await this.answerCallback(update, '请发送任务标题');
+          await this.replaceTaskMessage(connection, update, view, `${operationIdentity}:task-create-prompt`);
+          return;
+      }
     if (action.kind === 'list') {
       if (capability.targetKind !== 'task_list' || capability.targetId !== connection.projectId) throw imError('ZEUS_IM_CALLBACK_UNSUPPORTED', '任务列表按钮与当前项目不匹配。', 409);
       this.options.repository.consumeCapabilitiesForTarget({ connectionId: connection.id, endpointId: endpoint.id, targetKind: 'task_list', targetId: connection.projectId, now: this.nowIso() });
@@ -1120,6 +1140,8 @@ export class ImTelegramService {
       if (pending?.kind === 'task_edit') {
         this.options.repository.consumeCapabilitiesForTarget({ connectionId: connection.id, endpointId: endpoint.id, targetKind: 'task', targetId: pending.taskId, now: this.nowIso() });
         this.pendingTextActions.delete(endpoint.id);
+      } else if (pending?.kind === 'task_create') {
+          this.pendingTextActions.delete(endpoint.id);
       }
       const view = this.taskListView(connection, endpoint, action.page);
       await this.answerCallback(update, '任务列表已刷新');
@@ -1282,6 +1304,16 @@ export class ImTelegramService {
       inlineKeyboard: [[{ text: '取消编辑', callbackData: this.createCapability(connection, endpoint, `task.view.${page}`, 'task', task.id, interactionRevision(task.updatedAt)) }]],
     };
   }
+
+    private taskCreatePromptView(connection: ImConnectionRecord, endpoint: ImTrustedEndpointRecord, page: number): ImTaskMessageView {
+        return {
+            text: ['新建任务', '', '请直接发送任务标题。', '发送其他命令会取消本次创建；按钮和输入 10 分钟内有效。'].join('\n'),
+            inlineKeyboard: [[{
+                text: '取消创建',
+                callbackData: this.createCapability(connection, endpoint, `task.list.${page}`, 'task_list', connection.projectId, null)
+            }]],
+        };
+    }
 
   private taskCancelConfirmationView(connection: ImConnectionRecord, endpoint: ImTrustedEndpointRecord, task: ZeusTaskRecord, page: number): ImTaskMessageView {
     const expectedRevision = interactionRevision(task.updatedAt);
@@ -1828,7 +1860,10 @@ function decodeTaskStatusId(value: string): string | null {
 }
 
 type ImTaskCapabilityAction =
-  | { kind: 'list' | 'view' | 'status_menu' | 'push_new' | 'push_current' | 'confirm_cancel'; page: number }
+    | {
+    kind: 'create' | 'await_create' | 'list' | 'view' | 'status_menu' | 'push_new' | 'push_current' | 'confirm_cancel';
+    page: number
+}
   | { kind: 'edit' | 'await_edit'; field: 'title' | 'description'; page: number }
   | { kind: 'status'; statusId: string; page: number }
   | { kind: 'control'; action: 'run' | 'pause' | 'continue' | 'cancel'; page: number };
@@ -1836,7 +1871,7 @@ type ImTaskCapabilityAction =
 function parseTaskCapabilityAction(value: string): ImTaskCapabilityAction | null {
   const parts = value.split('.');
   if (parts[0] !== 'task') return null;
-  if (parts[1] === 'list' || parts[1] === 'view' || parts[1] === 'status_menu' || parts[1] === 'push_new' || parts[1] === 'push_current' || parts[1] === 'confirm_cancel') {
+    if (parts[1] === 'create' || parts[1] === 'await_create' || parts[1] === 'list' || parts[1] === 'view' || parts[1] === 'status_menu' || parts[1] === 'push_new' || parts[1] === 'push_current' || parts[1] === 'confirm_cancel') {
     const page = positiveSafeInteger(parts[2]);
     return page ? { kind: parts[1], page } : null;
   }
