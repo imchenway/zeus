@@ -107,13 +107,7 @@ export interface ZeusBrowserApprovalRequest {
 
 export type ZeusBrowserScreenshotMode = 'always' | 'necessary';
 export type ZeusWebLinkOpenTarget = 'zeus_browser' | 'system_default';
-export type ZeusFileOpenTarget =
-  | 'zeus_source'
-  | 'system_default'
-  | 'editor:vscode'
-  | 'editor:vscode-insiders'
-  | 'editor:cursor'
-  | 'editor:windsurf';
+export type ZeusFileOpenTarget = 'zeus_source' | 'system_default' | 'editor:vscode' | 'editor:vscode-insiders' | 'editor:cursor' | 'editor:windsurf';
 
 export interface ZeusBrowserSettings {
   enabled: boolean;
@@ -125,6 +119,26 @@ export interface ZeusBrowserSettings {
   webLinkOpenTarget: ZeusWebLinkOpenTarget;
   localWebOpenTarget: ZeusWebLinkOpenTarget;
   fileOpenTarget: ZeusFileOpenTarget;
+  externalChromeEnabled: boolean;
+  externalEdgeEnabled: boolean;
+  externalConnectionState?: 'disabled' | 'waiting' | 'connected' | 'store_id_pending' | 'error';
+  externalConnectionDetail?: string;
+}
+
+export interface ZeusComputerSettings {
+  enabled: boolean;
+  serviceState: 'disabled' | 'idle' | 'starting' | 'ready' | 'stopping' | 'error';
+  accessibilityTrusted: boolean;
+  screenCaptureAvailable: boolean;
+  detail?: string;
+}
+
+export interface ZeusRetiredNativeRuntimeState {
+  sourceRoot: string;
+  entries: string[];
+  latestBackupRoot: string | null;
+  archivedAt?: string;
+  restoredAt?: string;
 }
 
 export interface ZeusBrowserConversationSnapshot {

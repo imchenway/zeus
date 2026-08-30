@@ -307,6 +307,12 @@ contextBridge.exposeInMainWorld('zeus', {
   getBrowserSettings: () => ipcRenderer.invoke('zeus:browser:get-settings'),
   updateBrowserSettings: (input: unknown) => invokeMainCommand('zeus:browser:update-settings', 'desktop.browser.update_settings', 'settings', 'browser-settings', input),
   clearBrowserData: () => invokeMainCommand('zeus:browser:clear-data', 'desktop.browser.clear_data', 'settings', 'browser-settings'),
+  getRetiredNativeRuntimeState: () => ipcRenderer.invoke('zeus:browser:get-retired-runtime-state'),
+  archiveRetiredNativeRuntimes: () => invokeMainCommand('zeus:browser:archive-retired-runtimes', 'desktop.browser.archive_retired_runtimes', 'settings', 'retired-native-runtimes'),
+  restoreRetiredNativeRuntimes: () => invokeMainCommand('zeus:browser:restore-retired-runtimes', 'desktop.browser.restore_retired_runtimes', 'settings', 'retired-native-runtimes'),
+  getComputerSettings: () => ipcRenderer.invoke('zeus:computer:get-settings'),
+  updateComputerSettings: (input: unknown) => invokeMainCommand('zeus:computer:update-settings', 'desktop.computer.update_settings', 'settings', 'computer-use-settings', input),
+  stopComputerUse: () => invokeMainCommand('zeus:computer:stop', 'desktop.computer.stop', 'settings', 'computer-use-settings'),
   onBrowserEvent: (listener: (event: unknown) => void) => {
     const handler = (_event: unknown, value: unknown) => listener(value);
     ipcRenderer.on('zeus:browser-event', handler);

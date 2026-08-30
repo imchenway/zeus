@@ -24,6 +24,8 @@ export type ZeusDataPathKey =
   | 'conversationToolResults'
   | 'browserComments'
   | 'browserDownloads'
+  | 'computerArtifacts'
+  | 'computerState'
   | 'turnChangeSets'
   | 'runtimeSessions'
   | 'commandScripts'
@@ -37,8 +39,10 @@ export type ZeusDataPathKey =
   | 'piSessions'
   | 'codexLegacyImports'
   | 'codexConfigImportBackups'
+  | 'retiredNativeRuntimeBackups'
   | 'databaseMigrationBackup'
   | 'executionHost'
+  | 'browserExtensionRuntime'
   | 'releaseUpdates'
   | 'electronNetworkCache'
   | 'browserProfile';
@@ -66,6 +70,8 @@ export interface ZeusDataLayout {
   browserComments: string;
   browserDownloads: string;
   browserState: string;
+  computerArtifacts: string;
+  computerState: string;
   turnChangeSets: string;
   runtimeSessions: string;
   commandScripts: string;
@@ -79,9 +85,11 @@ export interface ZeusDataLayout {
   piSessions: string;
   codexLegacyImports: string;
   codexConfigImportBackups: string;
+  retiredNativeRuntimeBackups: string;
   databaseBackups: string;
   databaseMigrationBackup: string;
   executionHost: string;
+  browserExtensionRuntime: string;
   releaseUpdates: string;
   electronNetworkCache: string;
   browserProfile: string;
@@ -125,6 +133,8 @@ export function createZeusDataLayout(rootPath: string): ZeusDataLayout {
     browserComments: join(artifactsDirectory, 'browser-comments'),
     browserDownloads: join(artifactsDirectory, 'browser-downloads'),
     browserState: join(profileDirectory, 'browser', 'state.json'),
+    computerArtifacts: join(artifactsDirectory, 'computer-use'),
+    computerState: join(profileDirectory, 'computer-use', 'state.json'),
     turnChangeSets: join(artifactsDirectory, 'turn-change-sets'),
     runtimeSessions: join(artifactsDirectory, 'runtime-sessions'),
     commandScripts: join(artifactsDirectory, 'command-scripts'),
@@ -138,9 +148,11 @@ export function createZeusDataLayout(rootPath: string): ZeusDataLayout {
     piSessions: join(providersDirectory, 'pi', 'sessions'),
     codexLegacyImports: join(backupsDirectory, 'imports', 'codex-legacy'),
     codexConfigImportBackups: join(backupsDirectory, 'imports', 'codex'),
+    retiredNativeRuntimeBackups: join(backupsDirectory, 'retired-native-runtimes'),
     databaseBackups: join(backupsDirectory, 'database'),
     databaseMigrationBackup: join(backupsDirectory, 'database', 'zeus.db.pre-native-sqlite.bak'),
     executionHost: join(runtimeDirectory, 'execution-host'),
+    browserExtensionRuntime: join(runtimeDirectory, 'browser-extension'),
     releaseUpdates: join(runtimeDirectory, 'updates'),
     electronNetworkCache: join(electronUserData, 'Cache'),
     browserProfile: join(electronUserData, 'Partitions'),
@@ -176,6 +188,8 @@ export function createLegacyFlatZeusDataLayout(rootPath: string): ZeusDataLayout
     browserComments: join(root, 'browser-comments'),
     browserDownloads: join(root, 'browser-downloads'),
     browserState: join(root, 'browser-state.json'),
+    computerArtifacts: join(root, 'computer-use-artifacts'),
+    computerState: join(root, 'computer-use-state.json'),
     turnChangeSets: join(root, 'turn-change-sets'),
     runtimeSessions: join(root, 'sessions'),
     commandScripts: join(root, 'command-scripts'),
@@ -189,9 +203,11 @@ export function createLegacyFlatZeusDataLayout(rootPath: string): ZeusDataLayout
     piSessions: join(root, 'agent-runtimes', 'pi', 'sessions'),
     codexLegacyImports: join(root, 'codex-legacy-import'),
     codexConfigImportBackups: join(root, 'imports', 'codex'),
+    retiredNativeRuntimeBackups: join(root, 'retired-native-runtimes'),
     databaseBackups: root,
     databaseMigrationBackup: join(root, 'zeus.db.pre-native-sqlite.bak'),
     executionHost: join(root, 'execution-host'),
+    browserExtensionRuntime: join(root, 'browser-extension-runtime'),
     releaseUpdates: join(root, 'updates'),
     electronNetworkCache: join(root, 'Cache'),
     browserProfile: join(root, 'Partitions'),
@@ -232,6 +248,8 @@ function finalizeLayout(layout: Omit<ZeusDataLayout, 'entries'>): ZeusDataLayout
       entry('conversationToolResults', 'zeus', 'managed', false, false, null),
       entry('browserComments', 'browser', 'managed', false, false, null),
       entry('browserDownloads', 'browser', 'managed', false, false, null),
+      entry('computerArtifacts', 'zeus', 'managed', false, true, '清除 Computer Use 的临时窗口截图，不改变系统辅助功能授权。'),
+      entry('computerState', 'zeus', 'managed', false, false, null),
       entry('turnChangeSets', 'zeus', 'managed', false, false, null),
       entry('runtimeSessions', 'zeus', 'managed', false, false, null),
       entry('commandScripts', 'zeus', 'managed', false, false, null),
@@ -245,8 +263,10 @@ function finalizeLayout(layout: Omit<ZeusDataLayout, 'entries'>): ZeusDataLayout
       entry('piSessions', 'provider', 'managed', false, false, null),
       entry('codexLegacyImports', 'provider', 'backup', false, false, null),
       entry('codexConfigImportBackups', 'zeus', 'backup', false, false, null),
+      entry('retiredNativeRuntimeBackups', 'zeus', 'backup', false, false, null),
       entry('databaseMigrationBackup', 'zeus', 'backup', false, false, null),
       entry('executionHost', 'zeus', 'runtime', true, false, null),
+      entry('browserExtensionRuntime', 'browser', 'runtime', true, false, null),
       entry('releaseUpdates', 'zeus', 'runtime', true, false, null),
       entry('electronNetworkCache', 'electron', 'cache', true, true, '会重新下载网页与接口缓存，但不会退出登录或清除站点授权。'),
       entry('browserProfile', 'browser', 'managed', false, false, '清除会退出网站登录并移除站点授权，必须使用独立的高影响操作。'),

@@ -7,6 +7,7 @@ const allowedChannels = new Set([
   'zeus:conversation-store-migration:get-status',
   'zeus:browser:get-snapshot',
   'zeus:browser:get-settings',
+  'zeus:computer:get-settings',
   'zeus:task-git-delivery:get-current-context',
   'zeus:automatic-update-indicator:get',
   'zeus:requesting-window-foreground',
