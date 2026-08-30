@@ -1373,20 +1373,6 @@ export class ImTelegramService {
     };
   }
 
-  private taskCreatePromptView(connection: ImConnectionRecord, endpoint: ImTrustedEndpointRecord, page: number): ImTaskMessageView {
-    return {
-      text: ['新建任务', '', '请直接发送任务标题。', '发送其他命令会取消本次创建；按钮和输入 10 分钟内有效。'].join('\n'),
-      inlineKeyboard: [
-        [
-          {
-            text: '取消创建',
-            callbackData: this.createCapability(connection, endpoint, `task.list.${page}`, 'task_list', connection.projectId, null),
-          },
-        ],
-      ],
-    };
-  }
-
   private taskCancelConfirmationView(connection: ImConnectionRecord, endpoint: ImTrustedEndpointRecord, task: ZeusTaskRecord, page: number): ImTaskMessageView {
     const expectedRevision = interactionRevision(task.updatedAt);
     return {
