@@ -438,7 +438,7 @@ export function updateConversationV2Paging(snapshot: NativeConversationSnapshot,
 function assertSnapshotV2Identity(snapshot: NativeConversationSnapshotV2, history: NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>, choice: NativeConversationChoice): void {
   if (
     snapshot.schemaVersion !== 2 ||
-    snapshot.structureGeneration !== '2026-08-21-conversation-snapshot-v2' ||
+    snapshot.structureGeneration !== '2026-08-29-conversation-snapshot-v2-recovered-request-input' ||
     snapshot.conversationSchemaGeneration !== '2026-08-16-unified-conversation-segments' ||
     history.schemaVersion !== 2 ||
     history.structureGeneration !== snapshot.structureGeneration ||
@@ -550,8 +550,19 @@ function historicalUserPresentation(content: unknown, userMessage: boolean): Rec
 
 function processItems(items: NativeConversationProcessV2Item[], providerTurnByLocalId: ReadonlyMap<string, string>): NativeItemSnapshot[] {
   return items.map((item) => {
-    const detail = parseProjection(item.detail.preview, item.detail.truncated);
-    const type = item.kind === 'reasoning' ? 'reasoning' : item.kind === 'command' ? 'commandExecution' : item.kind === 'context_compaction' ? 'contextCompaction' : item.kind === 'warning' ? 'error' : 'dynamicToolCall';
+    const detail = item.kind === 'waiting' && item.presentation ? item.presentation : parseProjection(item.detail.preview, item.detail.truncated);
+    const type =
+      item.kind === 'reasoning'
+        ? 'reasoning'
+        : item.kind === 'command'
+          ? 'commandExecution'
+          : item.kind === 'context_compaction'
+            ? 'contextCompaction'
+            : item.kind === 'waiting'
+              ? 'requestUserInput'
+              : item.kind === 'warning'
+                ? 'error'
+                : 'dynamicToolCall';
     const text = processProjectionText(item, detail);
     return {
       id: item.id,
@@ -595,7 +606,37 @@ function processPresentationPayload(item: NativeConversationProcessV2Item, detai
   const source = recordValue(detailRecord?.payload) ?? recordValue(detailRecord?.block) ?? detailRecord;
   const presentation: Record<string, unknown> = {};
   if (source) {
-    for (const key of ['type', 'command', 'cwd', 'aggregatedOutput', 'output', 'stdout', 'stderr', 'name', 'toolName', 'arguments', 'args', 'query', 'status', 'error', 'summary', 'content', 'presentation', 'commandActions'] as const) {
+    for (const key of [
+      'type',
+      'command',
+      'cwd',
+      'aggregatedOutput',
+      'output',
+      'stdout',
+      'stderr',
+      'name',
+      'toolName',
+      'arguments',
+      'args',
+      'query',
+      'status',
+      'error',
+      'summary',
+      'content',
+      'presentation',
+      'commandActions',
+      'requestType',
+      'recovery',
+      'submissionAuthority',
+      'providerThreadId',
+      'providerTurnId',
+      'providerItemId',
+      'callId',
+      'questions',
+      'outcome',
+      'answers',
+      'resolutionReason',
+    ] as const) {
       if (source[key] !== undefined) presentation[key] = source[key];
     }
   }

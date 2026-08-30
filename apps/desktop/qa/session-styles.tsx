@@ -644,7 +644,7 @@ const completeMessageSessionState: NativeSessionState = {
         updatedAt: completeMessageItem.updatedAt ?? '2026-08-28T00:00:00.000Z',
       },
     ],
-    snapshotV2: { structureGeneration: '2026-08-21-conversation-snapshot-v2', activeTurn: null, recentClosedTurns: [] },
+    snapshotV2: { structureGeneration: '2026-08-29-conversation-snapshot-v2-recovered-request-input', activeTurn: null, recentClosedTurns: [] },
   } as NonNullable<NativeSessionState['snapshot']>,
   items: { [completeMessageItem.key]: completeMessageItem },
   itemOrder: [completeMessageItem.key],
@@ -656,7 +656,7 @@ function historyPagingRangeSnapshot(input: { through: number; oldest: number; cu
     id: historyPagingConversationId,
     items: [],
     snapshotV2: {
-      structureGeneration: '2026-08-21-conversation-snapshot-v2',
+      structureGeneration: '2026-08-29-conversation-snapshot-v2-recovered-request-input',
     },
     v2Paging: {
       history: {
@@ -1855,7 +1855,7 @@ function CompleteMessagePreview() {
             const nextOffset = offset === 0 ? completeMessagePageBoundary : null;
             return {
               schemaVersion: 2 as const,
-              structureGeneration: '2026-08-21-conversation-snapshot-v2' as const,
+              structureGeneration: '2026-08-29-conversation-snapshot-v2-recovered-request-input' as const,
               conversationId: completeMessageItem.conversationId,
               kind: 'model_content' as const,
               mimeType: 'text/plain; charset=utf-8',
@@ -1969,7 +1969,7 @@ function activeReentryProjection(preview: string) {
 
 const activeReentrySnapshot: NativeConversationSnapshotV2 = {
   schemaVersion: 2,
-  structureGeneration: '2026-08-21-conversation-snapshot-v2',
+  structureGeneration: '2026-08-29-conversation-snapshot-v2-recovered-request-input',
   conversationSchemaGeneration: '2026-08-16-unified-conversation-segments',
   throughEventSeq: 2_948,
   eventStreamGeneration: 'zeus-conversation-sync-v2',
@@ -2064,7 +2064,7 @@ const activeReentrySnapshot: NativeConversationSnapshotV2 = {
 
 const activeReentryHistory: NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item> = {
   schemaVersion: 2,
-  structureGeneration: '2026-08-21-conversation-snapshot-v2',
+  structureGeneration: '2026-08-29-conversation-snapshot-v2-recovered-request-input',
   conversationId: activeReentryConversationId,
   kind: 'model_history',
   throughEventSeq: activeReentrySnapshot.throughEventSeq,
@@ -2722,6 +2722,39 @@ const userInputRequest: NativePendingRequest = {
   resolvedAt: null,
 };
 
+const recoveredUserInputItem: NativeSessionItemBuffer = {
+  ...motionItem('recovered-user-input', 'requestUserInput', 'in_progress', '等待用户操作', {
+    provider: 'codex',
+    itemType: 'requestUserInput',
+    requestType: 'request_user_input',
+    recovery: 'content_only',
+    submissionAuthority: 'unavailable',
+    providerThreadId: 'thread-recovered-input',
+    providerTurnId: 'turn-recovered-input',
+    providerItemId: 'fc_recovered_input',
+    callId: 'call_recovered_input',
+    outcome: 'pending',
+    questions: [
+      {
+        id: 'test_instance_action',
+        header: '测试占用',
+        question: '如何处理仍占用 dev.hypha.zeus.test 的 ZEUS-0384 实例？',
+        options: [
+          { label: '继续等待（Recommended）', description: '保持最严格隔离，不触碰其他任务实例，释放后自动继续。' },
+          { label: '结束该实例', description: '仅在明确授权后结束其进程，再启动当前任务的独立验收。' },
+        ],
+        isOther: false,
+        isSecret: false,
+        multiple: false,
+      },
+    ],
+  }),
+  conversationId: 'recovered-input',
+  threadId: 'thread-recovered-input',
+  turnId: 'turn-recovered-input',
+  updatedAt: '2026-08-29T04:29:35.580Z',
+};
+
 function ReferencePanel(props: { title: string; src: string; className?: string }) {
   return (
     <section className={`qa-reference-panel ${props.className ?? ''}`}>
@@ -2764,6 +2797,15 @@ function App() {
         <section className="qa-implementation-panel" data-testid="user-input-implementation">
           <h2>真实请求结构：带 isBlocking 元数据</h2>
           <PendingRequestSurface request={userInputRequest} language="zh-CN" permissionMode="auto" onRespond={() => undefined} autoFocus={false} />
+        </section>
+      </section>
+
+      <section className="qa-comparison qa-approval-comparison">
+        <section className="qa-implementation-panel session-codex-parity-v1" data-testid="recovered-user-input-implementation">
+          <h2>断线恢复问题：只读且无提交入口</h2>
+          <div className="ai-workspace">
+            <ThreadItemView item={recoveredUserInputItem} language="zh-CN" />
+          </div>
         </section>
       </section>
 

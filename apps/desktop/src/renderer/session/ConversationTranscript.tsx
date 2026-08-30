@@ -19,7 +19,7 @@ import type {
   TurnChangeSetOperationResult,
 } from './sessionTypes.js';
 import { isAssistantDeliverableItem } from './sessionTypes.js';
-import type { ConversationFileLocation, ConversationOpenTarget, ConversationResponseAnnotation, ConversationResponseTextAnchor } from '@zeus/shared';
+import { parseCanonicalRequestUserInputQuestions, type ConversationFileLocation, type ConversationOpenTarget, type ConversationResponseAnnotation, type ConversationResponseTextAnchor } from '@zeus/shared';
 import { useThreadScrollController } from './useThreadScrollController.js';
 import { TurnChangeCard } from './TurnChanges.js';
 import { reasoningSummaryStatus, SessionReasoningSummary } from './SessionReasoningSummary.js';
@@ -128,6 +128,44 @@ function itemNeedsImageResources(item: NativeSessionItemBuffer): boolean {
       !item.resources.some(
         (resource) => resource.kind === 'attachment' && isImageResource(resource) && ((attachment.taskPushAttachmentKey && resource.taskPushAttachmentKey === attachment.taskPushAttachmentKey) || resource.displayName === attachment.name),
       ),
+  );
+}
+
+function isRecoveredRequestUserInputItem(item: NativeSessionItemBuffer): boolean {
+  return normalizeItemType(item.type) === 'requestuserinput' && item.payload.recovery === 'content_only';
+}
+
+function requestUserInputQuestionIdentity(payload: unknown): string | null {
+  const parsed = parseCanonicalRequestUserInputQuestions(payload);
+  if (!parsed.ok) return null;
+  return JSON.stringify(
+    parsed.questions.map((question) => ({
+      id: question.id,
+      header: question.header,
+      question: question.question,
+      options: question.options,
+    })),
+  );
+}
+
+function authoritativeRequestMatchesRecoveredItem(request: NativePendingRequest, item: NativeSessionItemBuffer): boolean {
+  if (normalizeItemType(request.type) !== 'requestuserinput') return false;
+  const recoveredProviderItemId = typeof item.payload.providerItemId === 'string' ? item.payload.providerItemId : null;
+  if (recoveredProviderItemId && request.itemId === recoveredProviderItemId) return true;
+  const recoveredProviderTurnId = typeof item.payload.providerTurnId === 'string' ? item.payload.providerTurnId : null;
+  const requestProviderTurnId = typeof request.payload.turnId === 'string' ? request.payload.turnId : null;
+  if (recoveredProviderTurnId && requestProviderTurnId && recoveredProviderTurnId !== requestProviderTurnId) return false;
+  const recoveredIdentity = requestUserInputQuestionIdentity(item.payload);
+  return recoveredIdentity !== null && recoveredIdentity === requestUserInputQuestionIdentity(request.payload);
+}
+
+export function hasUnclaimedRecoveredRequestUserInput(state: NativeSessionState): boolean {
+  return Object.values(state.items).some(
+    (item) =>
+      isRecoveredRequestUserInputItem(item) &&
+      item.payload.outcome === 'pending' &&
+      (!state.activeTurnId || item.turnId === state.activeTurnId) &&
+      !state.pendingRequests.some((request) => authoritativeRequestMatchesRecoveredItem(request, item)),
   );
 }
 
@@ -288,9 +326,13 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       collapsedErrorItems.filter((item) => {
         const turn = props.state.turnsByProviderId[item.turnId];
         // 轮次失败卡片已经承载底层原因时，不再把同一诊断事件单独画成第二张红卡。
-        return !(itemRole(item) === 'error' && turn?.status === 'failed' && turn.error);
+        if (itemRole(item) === 'error' && turn?.status === 'failed' && turn.error) return false;
+        // rollout 恢复项只承担缺失 server request 时的内容展示。真实请求一旦到达，
+        // 无论仍在等待还是已经回答，都由带当前世代权限的请求投影接管。
+        if (isRecoveredRequestUserInputItem(item) && props.state.pendingRequests.some((request) => authoritativeRequestMatchesRecoveredItem(request, item))) return false;
+        return true;
       }),
-    [collapsedErrorItems, props.state.turnsByProviderId],
+    [collapsedErrorItems, props.state.pendingRequests, props.state.turnsByProviderId],
   );
   // 原始思考摘要完整保留在会话状态中；会话记录的当前态选择统一交给行投影处理。
   const items = transcriptItems;
@@ -1685,6 +1727,8 @@ function projectDeliverablesAfterFinalAnswer(rows: readonly TranscriptRow[]): re
 function isTurnProcessRow(row: TranscriptRow): boolean {
   if (row.kind === 'answered_request') return true;
   if (row.kind === 'activity') return true;
+  // 缺少实时回答权限的恢复问题必须直接出现在时间线，不能折叠进普通工具过程。
+  if (isRecoveredRequestUserInputItem(row.item)) return false;
   // 计划和明确交付资源属于最终产物，必须独立展示，不能折叠进“已处理”过程。
   if (row.item.type === 'plan' || isAssistantDeliverableItem(row.item)) return false;
   // 只有缺少 phase 的旧 assistant 正文才走兼容兜底；明确 prework 必须留在处理过程。
@@ -2235,6 +2279,7 @@ function sessionMotionKind(item: NativeSessionItemBuffer): Exclude<SessionMotion
 
 export function shouldShowTranscriptThinking(state: NativeSessionState, items: readonly NativeSessionItemBuffer[] = Object.values(state.items)): boolean {
   if (state.conversationState !== 'starting_turn' && state.conversationState !== 'active_prework' && state.conversationState !== 'active_final_answer') return false;
+  if (hasUnclaimedRecoveredRequestUserInput(state)) return false;
   if (state.conversationState === 'starting_turn') return true;
   const effectiveActiveTurnId = state.activeTurnId && items.some((item) => item.turnId === state.activeTurnId) ? state.activeTurnId : latestLiveTurnId(items);
   if (!effectiveActiveTurnId) return true;

@@ -10,7 +10,7 @@ import type { ProjectConfig, ProjectGitAction, ProjectGitActionResponse, Project
 import { openConversationResourceInMain, openTurnChangeFileInMain } from '../appShellBridge.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { canSteerActiveTurn, type ComposerRuntimeSettings, ConversationComposer, type ConversationComposerProps, resolveComposerKeyIntent } from './ConversationComposer.js';
-import { ConversationTranscript, type ConversationTranscriptProps, type SessionCreationStatus } from './ConversationTranscript.js';
+import { ConversationTranscript, hasUnclaimedRecoveredRequestUserInput, type ConversationTranscriptProps, type SessionCreationStatus } from './ConversationTranscript.js';
 import { SessionPlanProgress } from './SessionActivity.js';
 import { LegacyConversationBanner } from './LegacyConversationBanner.js';
 import { hasPendingRequestDetails, PendingRequestSurface, requestKind } from './PendingRequestSurface.js';
@@ -2173,6 +2173,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   function renderConversationComposer(): ReactNode {
     if (!props.state) return null;
     const interactionAuthorityMissing = props.state.queue?.state.type === 'paused' && props.state.queue.state.reason === 'interaction_authority_missing';
+    const recoveredInputBlocked = hasUnclaimedRecoveredRequestUserInput(props.state);
     return (
       <SessionComposerProjection
         textareaRef={composerRef}
@@ -2196,6 +2197,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         projectId={props.conversation?.projectId}
         onLoadExtensions={actions.onLoadSkills}
         readOnly={interactionReadOnly || interactionAuthorityMissing || props.state.queue?.submissions.some((submission) => submission.pausedReason === 'recovered_unsent')}
+        inputBlocked={recoveredInputBlocked}
         runtimeSettings={composerRuntimeSettings}
         onRuntimeSettingsChange={updateComposerRuntimeSettings}
         permissionMode={composerRuntimeSettings?.permissionMode ?? props.state.snapshot?.nextTurnSettings?.permissionMode ?? props.state.snapshot?.permissionMode ?? props.conversation?.permissionMode ?? 'read-only'}

@@ -6,8 +6,17 @@ import remarkGfm from 'remark-gfm';
 import { MessageCheckIcon, MessageEditIcon, MessageExpandIcon, MessageRemoteDeviceIcon, MessageThumbIcon } from './SessionMessageIcons.js';
 import { isAssistantDeliverableItem, type NativeConversationAttachment, type NativeSessionItemBuffer } from './sessionTypes.js';
 import { autosizeTextarea } from './textareaAutosize.js';
-import type { ConversationContextDraft, ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourcePreview, TaskPushMessageLayout } from '@zeus/shared';
-import type { ConversationResponseAnnotation, ConversationResponseTextAnchor } from '@zeus/shared';
+import {
+  parseCanonicalRequestUserInputQuestions,
+  type ConversationContextDraft,
+  type ConversationFileLocation,
+  type ConversationOpenTarget,
+  type ConversationResource,
+  type ConversationResourcePreview,
+  type ConversationResponseAnnotation,
+  type ConversationResponseTextAnchor,
+  type TaskPushMessageLayout,
+} from '@zeus/shared';
 import { ConversationGeneratedImage, ConversationInlineResource, ConversationMarkdownImage, ConversationPendingAttachmentImages, ConversationResourceCards, isImageResource, isPendingImageAttachment } from './ConversationResources.js';
 import { ResponseSelectionActions } from './ResponseSelectionActions.js';
 import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
@@ -302,6 +311,90 @@ function optimisticDeliveryStatus(item: NativeSessionItemBuffer, labels: (typeof
   return item.status === 'queued' ? labels.queued : null;
 }
 
+function recoveredRequestAnswers(value: unknown): Record<string, string[]> {
+  if (!isRecord(value)) return {};
+  const entries = Object.entries(value).flatMap(([questionId, rawAnswer]) => {
+    if (!isRecord(rawAnswer) || !Array.isArray(rawAnswer.answers) || !rawAnswer.answers.every((answer) => typeof answer === 'string')) return [];
+    return [[questionId, rawAnswer.answers as string[]] as const];
+  });
+  return Object.fromEntries(entries);
+}
+
+const RecoveredRequestUserInputItem = memo(function RecoveredRequestUserInputItem(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage }) {
+  const parsed = parseCanonicalRequestUserInputQuestions(props.item.payload);
+  if (!parsed.ok) return null;
+  const zh = props.language === 'zh-CN';
+  const outcome = primitiveText(props.item.payload.outcome) ?? 'pending';
+  const answers = recoveredRequestAnswers(props.item.payload.answers);
+  const identity = `recovered-request-${props.item.itemId.replace(/[^A-Za-z0-9_-]/gu, '-')}`;
+  const statusCopy =
+    outcome === 'answered'
+      ? zh
+        ? '断线期间的询问与回答结果已恢复；此卡片只读。'
+        : 'The question and answer were recovered from the disconnected session. This card is read-only.'
+      : outcome === 'aborted'
+        ? zh
+          ? '该询问已在断线期间中止；此卡片只读。'
+          : 'This question was aborted while disconnected. This card is read-only.'
+        : outcome === 'resolved'
+          ? zh
+            ? '该询问已随轮次结束；此卡片只读。'
+            : 'This question ended with the turn. This card is read-only.'
+          : zh
+            ? '断线恢复内容，当前没有可提交的实时请求通道。'
+            : 'Recovered after disconnection. No live request channel is available for submission.';
+  return (
+    <section className="session-recovered-request" aria-labelledby={`${identity}-title`} aria-describedby={`${identity}-status`}>
+      <header>
+        <strong id={`${identity}-title`}>{zh ? '等待用户操作' : 'User input requested'}</strong>
+        <span>{zh ? '断线恢复 · 只读' : 'Recovered · Read-only'}</span>
+      </header>
+      <p id={`${identity}-status`} className="session-recovered-request-status">
+        {statusCopy}
+      </p>
+      <ol className="session-recovered-request-questions">
+        {parsed.questions.map((question) => {
+          const selectedAnswers = answers[question.id] ?? [];
+          const optionLabels = new Set(question.options?.map((option) => option.label) ?? []);
+          const customAnswers = selectedAnswers.filter((answer) => !optionLabels.has(answer));
+          return (
+            <li key={question.id}>
+              <section aria-labelledby={`${identity}-${question.id}-header`}>
+                <h3 id={`${identity}-${question.id}-header`}>{question.header}</h3>
+                <p>{question.question}</p>
+                {question.options ? (
+                  <ul className="session-recovered-request-options" aria-label={zh ? '只读选项' : 'Read-only options'}>
+                    {question.options.map((option) => {
+                      const selected = selectedAnswers.includes(option.label);
+                      return (
+                        <li key={option.label} data-selected={selected || undefined}>
+                          <span aria-hidden="true" />
+                          <span>
+                            <strong>{option.label}</strong>
+                            {option.description ? <small>{option.description}</small> : null}
+                          </span>
+                          {selected ? <em>{zh ? '已选择' : 'Selected'}</em> : null}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : null}
+                {outcome === 'answered' && question.isSecret ? <p className="session-recovered-request-answer">{zh ? '已回答；敏感内容未写入会话历史。' : 'Answered; secret content was not persisted to conversation history.'}</p> : null}
+                {outcome === 'answered' && !question.isSecret && (question.options === null || customAnswers.length > 0) ? (
+                  <p className="session-recovered-request-answer">
+                    <strong>{zh ? '恢复的回答：' : 'Recovered answer: '}</strong>
+                    {(question.options === null ? selectedAnswers : customAnswers).join(zh ? '、' : ', ')}
+                  </p>
+                ) : null}
+              </section>
+            </li>
+          );
+        })}
+      </ol>
+    </section>
+  );
+});
+
 export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemViewProps) {
   const labels = copy[props.language];
   const [expanded, setExpanded] = useState(false);
@@ -323,6 +416,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const editTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const articleRef = useRef<HTMLElement | null>(null);
   const role = itemRole(props.item);
+  const recoveredRequestUserInput = role === 'request' && normalizeType(props.item.type) === 'requestuserinput' && props.item.payload.recovery === 'content_only';
   const taskPushLayout = role === 'user' ? taskPushMessageLayout(props.item.payload.taskPushLayout) : null;
   const pendingAttachments = role === 'user' ? nativeConversationAttachments(props.item.payload.attachments) : [];
   const conversationContext = role === 'user' ? conversationContextDraft(props.item.payload.conversationContext) : null;
@@ -364,7 +458,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const showVisibleRoleLabel = role !== 'user' && role !== 'assistant' && role !== 'commentary' && role !== 'error';
   // 任务首发消息已经是工作面的稳定内容，内部创建进度只在底部统一呈现。
   const optimisticStatus = props.item.optimistic && !taskPushLayout ? optimisticDeliveryStatus(props.item, labels) : null;
-  const showMeta = !command && (showVisibleRoleLabel || Boolean(optimisticStatus));
+  const showMeta = !command && !recoveredRequestUserInput && (showVisibleRoleLabel || Boolean(optimisticStatus));
   const messageTimestamp = formatMessageTimestamp(props.item, props.language);
   const timestampSource = props.item.updatedAt ?? primitiveText(props.item.payload.createdAt);
   const canEdit = role === 'user' && props.isLatestUser && Boolean(props.onEdit) && !props.item.optimistic;
@@ -495,6 +589,8 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
             </button>
           </footer>
         </form>
+      ) : recoveredRequestUserInput ? (
+        <RecoveredRequestUserInputItem item={props.item} language={props.language} />
       ) : role === 'error' ? (
         <VisibleApplicationError error={visibleThreadItemError(props.item)} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
       ) : role === 'image' ? (
@@ -567,7 +663,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
       ) : role === 'assistant' && props.item.status !== 'completed' ? (
         <span className="session-thinking-indicator">{labels.thinking}</span>
       ) : null}
-      {!command && !mcpApp ? <TypedItemFacts item={props.item} role={role} language={props.language} /> : null}
+      {!command && !mcpApp && !recoveredRequestUserInput ? <TypedItemFacts item={props.item} role={role} language={props.language} /> : null}
       {role !== 'error' && conversationContext ? <UserConversationContextSummary draft={conversationContext} language={props.language} /> : null}
       {role !== 'error' && !showUserMessageAttachmentGroup && !taskPushLayout ? <ItemAttachments item={props.item} label={labels.attachments} hideImages={pendingImageAttachments.length > 0} /> : null}
       {role !== 'error' && !showUserMessageAttachmentGroup ? <ConversationPendingAttachmentImages attachments={pendingImageAttachments} language={props.language} onVisibleContentChange={props.onVisibleContentChange} /> : null}

@@ -14,9 +14,52 @@ export function isRetiredGenerationFailure(request: ZeusConversationServerReques
   }
 }
 
+export function isInteractionRecoveryCheckpointRequest(request: ZeusConversationServerRequestRecord): boolean {
+  if (!request.responseJson) return false;
+  try {
+    const response = parseJsonRecord(request.responseJson);
+    return response.interactionRecoveryCheckpoint === true || response.handoffCheckpoint === true;
+  } catch {
+    return false;
+  }
+}
+
 export function createCodexInteractionRecoveryApplication(dependencies: CodexInteractionRecoveryDependencies) {
   const { enqueueProviderTurnReconciliation, executeTurnCommand, isClosed, isPendingInteractionAuthority, now, options, persist, projectedProviderThreadSnapshot, readyGenerationId, reconcileConversationSnapshot, runStates } = dependencies;
   const reconciliationTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  function recoverStaleInteractionRequests(conversationId: string, currentGenerationId: string): void {
+    const timestamp = now();
+    const requests = options.requests.listByConversation(conversationId) as ZeusConversationServerRequestRecord[];
+    const latestRequest = requests.at(-1);
+    for (const request of requests) {
+      if (options.manager.hasGeneration(request.transportGenerationId)) continue;
+      // request_user_input 的提交权限严格绑定产生它的 app-server 世代。旧世代请求即使曾被
+      // 标成恢复检查点，也只能由 rollout 补成只读历史；只有当前世代重放出的真实请求
+      // 才能重新提供提交入口，避免中止或完成后的会话仍显示可交互问题通道。
+      if (request.requestKind === 'request_user_input' && (request.status === 'pending' || isInteractionRecoveryCheckpointRequest(request) || isRetiredGenerationFailure(request))) {
+        options.requests.fail(request.id, {
+          error: {
+            error: 'ZEUS_CODEX_REQUEST_GENERATION_STALE',
+            recoveryRequired: false,
+            sourceGenerationId: request.transportGenerationId,
+            currentGenerationId,
+          },
+          resolvedAt: timestamp,
+        });
+        continue;
+      }
+      if (isInteractionRecoveryCheckpointRequest(request)) continue;
+      const recoverableFailure = request.id === latestRequest?.id && isRetiredGenerationFailure(request);
+      if (request.status !== 'pending' && !recoverableFailure) continue;
+      options.requests.restorePendingAfterTransportRecovery(request.id, {
+        recoveryReason: 'app_server_generation_changed',
+        sourceGenerationId: request.transportGenerationId,
+        currentGenerationId,
+        restoredAt: timestamp,
+      });
+    }
+  }
 
   async function failInvalidInteractionAuthority(input: {
     conversation: ZeusConversationWithMessagesRecord;
@@ -204,5 +247,5 @@ export function createCodexInteractionRecoveryApplication(dependencies: CodexInt
     reconciliationTimers.clear();
   }
 
-  return { close, failInvalidInteractionAuthority, scheduleProviderThreadStatusReconciliation };
+  return { close, failInvalidInteractionAuthority, recoverStaleInteractionRequests, scheduleProviderThreadStatusReconciliation };
 }

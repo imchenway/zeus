@@ -215,9 +215,9 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
   async function inspectUnserialized(conversation: ZeusConversationWithMessagesRecord, context: ConversationDispatchContext): Promise<ProviderThreadAuthority> {
     const providerThreadId = requireString(conversation.providerThreadId, 'provider thread id');
     const first = await readAndProject(conversation);
-    if (first.type === 'active') return first;
-    const confirmed = await readAndProject(options.requireConversation(conversation.id));
-    if (confirmed.type === 'active') return confirmed;
+    if (first.type === 'active' && subscribedThreads.has(providerThreadId)) return first;
+    const confirmed = first.type === 'active' ? first : await readAndProject(options.requireConversation(conversation.id));
+    if (confirmed.type === 'active' && subscribedThreads.has(providerThreadId)) return confirmed;
     if (confirmed.status.type === 'idle' && subscribedThreads.has(providerThreadId)) return confirmed;
 
     const responsesRuntime = await options.responsesRuntimeFor(context);
@@ -229,9 +229,10 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
         ...(responsesRuntime ? { responsesRuntime } : {}),
       });
     } catch (resumeError) {
-      // Goal 可能在两次只读确认后恰好开始；此时 resume 的失败不能升级成消息发送失败。
+      // 只读确认后可能恰好开始新轮次；仅当本连接已从实时事件确认订阅时才能
+      // 接受该竞争结果。活动态本身不代表新宿主拥有后续事件订阅。
       const raced = await readAndProject(options.requireConversation(conversation.id)).catch(() => null);
-      if (raced?.type === 'active') return raced;
+      if (raced?.type === 'active' && subscribedThreads.has(providerThreadId)) return raced;
       throw resumeError;
     }
     if (resumed.id !== providerThreadId) {

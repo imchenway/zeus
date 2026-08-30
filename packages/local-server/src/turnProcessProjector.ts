@@ -1,5 +1,6 @@
 import type { AgentRuntimeEvent } from '@zeus/ai-runtime';
 import type { ConversationExecutionRepository, ConversationProcessItemRecord, ConversationProcessKind, ConversationRuntimeSegmentRecord } from '@zeus/storage';
+import type { CodexRolloutRequestUserInputEvidence } from './codexRolloutRequestUserInput.js';
 
 interface TurnIdentity {
   conversationId: string;
@@ -19,6 +20,41 @@ interface NativeItemProjection extends TurnIdentity {
 /** 将 Provider 事件收敛为稳定、可持久化且不宣称隐藏思维链的处理过程。 */
 export class TurnProcessProjector {
   constructor(private readonly execution: ConversationExecutionRepository) {}
+
+  projectRecoveredRequestUserInput(
+    input: TurnIdentity & { evidence: CodexRolloutRequestUserInputEvidence; providerThreadId: string; turnTerminal: boolean; turnCompletedAt: string | null; observedAt: string },
+  ): ConversationProcessItemRecord {
+    const terminalWithoutOutput = input.turnTerminal && input.evidence.outcome === 'pending';
+    const outcome = terminalWithoutOutput ? 'resolved' : input.evidence.outcome;
+    const completedAt = input.evidence.resolvedAt ?? (input.turnTerminal ? (input.turnCompletedAt ?? input.observedAt) : null);
+    const containsSecret = input.evidence.questions.some((question) => question.isSecret);
+    return this.execution.appendProcessItem({
+      conversationId: input.conversationId,
+      turnId: input.turnId,
+      segmentId: input.segment.id,
+      kind: 'waiting',
+      status: outcome === 'pending' ? 'in_progress' : 'completed',
+      title: '等待用户操作',
+      detail: {
+        provider: 'codex',
+        itemType: 'requestUserInput',
+        requestType: 'request_user_input',
+        recovery: 'content_only',
+        submissionAuthority: 'unavailable',
+        providerThreadId: input.providerThreadId,
+        providerTurnId: input.evidence.providerTurnId,
+        providerItemId: input.evidence.providerItemId,
+        callId: input.evidence.callId,
+        questions: input.evidence.questions,
+        outcome,
+        ...(input.evidence.answers && !containsSecret ? { answers: input.evidence.answers } : {}),
+        ...(terminalWithoutOutput ? { resolutionReason: 'turn_terminal' } : {}),
+      },
+      sourceEventId: `codex:rollout-request-user-input:${input.evidence.providerItemId}`,
+      startedAt: input.evidence.occurredAt ?? input.observedAt,
+      completedAt,
+    });
+  }
 
   projectNativeItem(input: NativeItemProjection): ConversationProcessItemRecord | null {
     const kind = nativeProcessKind(input.itemType);

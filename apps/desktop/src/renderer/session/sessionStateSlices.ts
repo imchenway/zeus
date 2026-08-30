@@ -148,5 +148,6 @@ function projectResourceItems(items: NativeSessionState['items'], previous: Nati
 function itemNeededByWorkspaceResourcePanels(item: NativeSessionItemBuffer): boolean {
   const payloadType = typeof item.payload.type === 'string' ? item.payload.type : item.type;
   const normalizedType = payloadType.toLocaleLowerCase().replaceAll(/[^a-z]/gu, '');
-  return item.type === 'plan' || normalizedType === 'subagentactivity' || normalizedType === 'collabagenttoolcall' || normalizedType === 'filechange';
+  const recoveredUserInput = normalizedType === 'requestuserinput' && item.payload.recovery === 'content_only' && item.payload.outcome === 'pending';
+  return recoveredUserInput || item.type === 'plan' || normalizedType === 'subagentactivity' || normalizedType === 'collabagenttoolcall' || normalizedType === 'filechange';
 }
