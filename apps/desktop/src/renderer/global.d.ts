@@ -319,6 +319,8 @@ declare global {
       restoreRetiredNativeRuntimes: () => Promise<ZeusRetiredNativeRuntimeState>;
       getComputerSettings: () => Promise<ZeusComputerSettings>;
       updateComputerSettings: (input: Pick<ZeusComputerSettings, 'enabled'>) => Promise<ZeusComputerSettings>;
+      requestComputerPermissions: () => Promise<ZeusComputerSettings>;
+      openComputerPermissionSettings: (input: { permission: 'accessibility' | 'screen_capture' }) => Promise<{ opened: true; permission: 'accessibility' | 'screen_capture' }>;
       stopComputerUse: () => Promise<ZeusComputerSettings>;
       onBrowserEvent: (listener: (event: ZeusBrowserEvent) => void) => () => void;
     };

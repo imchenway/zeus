@@ -79,6 +79,8 @@ private final class ComputerService {
         switch method {
         case "status":
             return status()
+        case "request_permissions":
+            return requestPermissions(params)
         case "list_apps":
             return listApps()
         case "get_app_state":
@@ -113,6 +115,19 @@ private final class ComputerService {
             "servicePid": ProcessInfo.processInfo.processIdentifier,
             "protocolVersion": "zeus.computer.v1",
         ]
+    }
+
+    private func requestPermissions(_ params: [String: Any]) -> [String: Any] {
+        let requestAccessibility = params["accessibility"] as? Bool ?? true
+        let requestScreenCapture = params["screenCapture"] as? Bool ?? true
+        if requestAccessibility && !AXIsProcessTrusted() {
+            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+            _ = AXIsProcessTrustedWithOptions(options)
+        }
+        if requestScreenCapture && !CGPreflightScreenCaptureAccess() {
+            _ = CGRequestScreenCaptureAccess()
+        }
+        return status()
     }
 
     private func listApps() -> [[String: Any]] {
@@ -162,7 +177,9 @@ private final class ComputerService {
             "truncated": elements.count >= maxElements,
             "status": status(),
         ]
-        if params["include_screenshot"] as? Bool != false, let screenshot = try await captureWindow(app) {
+        if params["include_screenshot"] as? Bool != false,
+           CGPreflightScreenCaptureAccess(),
+           let screenshot = try await captureWindow(app) {
             result["screenshot"] = screenshot
         }
         if let previous = intValue(params["previous_snapshot_generation"]) {

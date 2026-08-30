@@ -11984,6 +11984,28 @@ body[data-surface='project-git-diff'] #root {
   color: var(--zeus-danger-text, oklch(42% 0.095 28));
 }
 
+.macos-ai-app .computer-permission-panel,
+.macos-ai-app .computer-permission-details {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.macos-ai-app .computer-permission-details > :where(.granted, .missing) {
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.macos-ai-app .computer-permission-details > .granted {
+  color: var(--zeus-success-text, oklch(43% 0.085 152));
+}
+
+.macos-ai-app .computer-permission-details > .missing {
+  color: var(--zeus-danger-text, oklch(42% 0.095 28));
+}
+
 .macos-ai-app .browser-settings-status {
   min-block-size: 18px;
 }
@@ -12000,6 +12022,11 @@ body[data-surface='project-git-diff'] #root {
 
   .macos-ai-app .browser-settings-row .native-control-slot {
     justify-content: flex-start;
+  }
+
+  .macos-ai-app .computer-permission-panel,
+  .macos-ai-app .computer-permission-details {
+    align-items: stretch;
   }
 }
 

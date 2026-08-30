@@ -1,4 +1,4 @@
-import { BrowserWindow, dialog, ipcMain } from 'electron';
+import { BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -34,6 +34,8 @@ interface ComputerElementSummary {
   frame?: { x?: number; y?: number; width?: number; height?: number };
 }
 
+type ComputerPermissionKind = 'accessibility' | 'screen_capture';
+
 interface CreateComputerHostOptions {
   statePath: string;
   artifactRoot: string;
@@ -64,6 +66,7 @@ export class ComputerHost implements BrowserAutomationPort {
   private settings: ZeusComputerSettings;
   private ipcRegistered = false;
   private closed = false;
+  private permissionPromptAttemptedForChild = false;
 
   constructor(private readonly options: CreateComputerHostOptions) {
     this.now = options.now ?? (() => new Date().toISOString());
@@ -94,9 +97,32 @@ export class ComputerHost implements BrowserAutomationPort {
           serviceState: record.enabled === true ? (this.child ? 'ready' : 'idle') : 'disabled',
           detail: record.enabled === true ? 'Computer Use 已由用户全局启用；系统权限仍由 macOS 管理。' : 'Computer Use 已关闭。',
         };
-        if (!this.settings.enabled) await this.stop('disabled');
+        if (!this.settings.enabled) {
+          await this.stop('disabled');
+          await this.persistSettings();
+          return this.getSettings();
+        }
         await this.persistSettings();
-        return this.getSettings();
+        await this.ensureService();
+        return this.requestPermissions({ accessibility: true, screenCapture: true });
+      });
+    });
+    ipcMain.handle('zeus:computer:request-permissions', async (_event, request: MainCommandRequest) => {
+      return this.options.mainCommandLedger().execute(request, 'desktop.computer.request_permissions', async (_input, command) => {
+        this.assertWritable();
+        if (!this.settings.enabled) throw Object.assign(new Error('请先启用 Computer Use。'), { code: 'ZEUS_COMPUTER_DISABLED' });
+        await command.markWriteStarted();
+        await this.ensureService();
+        return this.requestPermissions({ accessibility: true, screenCapture: true });
+      });
+    });
+    ipcMain.handle('zeus:computer:open-permission-settings', async (_event, request: MainCommandRequest) => {
+      return this.options.mainCommandLedger().execute(request, 'desktop.computer.open_permission_settings', async (input, command) => {
+        this.assertWritable();
+        const permission = computerPermissionKind(input);
+        await command.markWriteStarted();
+        await shell.openExternal(computerPermissionSettingsUrl(permission));
+        return { opened: true as const, permission };
       });
     });
     ipcMain.handle('zeus:computer:stop', async (_event, request: MainCommandRequest) => {
@@ -120,6 +146,8 @@ export class ComputerHost implements BrowserAutomationPort {
     if (!isComputerMethod(input.tool)) return computerText(`Computer Use 方法不受支持：${input.tool}`, false);
     try {
       await this.ensureService();
+      await this.refreshServiceStatus();
+      await this.requestMissingPermissionsForTool(input);
       await this.ensureSensitiveActionApproval(input);
       const serviceArguments = this.prepareServiceArguments(input);
       const result = await this.callService(input.tool, serviceArguments);
@@ -166,6 +194,7 @@ export class ComputerHost implements BrowserAutomationPort {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     this.child = child;
+    this.permissionPromptAttemptedForChild = false;
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => this.consumeStdout(chunk));
     child.stderr.setEncoding('utf8');
@@ -175,14 +204,40 @@ export class ComputerHost implements BrowserAutomationPort {
     });
     child.once('error', (error) => this.handleServiceExit(error));
     child.once('exit', (code, signal) => this.handleServiceExit(new Error(`Zeus Computer Service 已退出（${String(code ?? signal ?? 'unknown')}）。`)));
+    await this.refreshServiceStatus();
+  }
+
+  private async refreshServiceStatus(): Promise<ZeusComputerSettings> {
     const status = asRecord(await this.callService('status', {}));
     this.settings = {
       ...this.settings,
       serviceState: 'ready',
       accessibilityTrusted: status.accessibilityTrusted === true,
       screenCaptureAvailable: status.screenCaptureAvailable === true,
-      detail: status.accessibilityTrusted === true ? 'Zeus Computer Service 已就绪。' : '请在 macOS 系统设置中授予 Zeus Computer Service 辅助功能权限。',
+      detail: computerPermissionDetail(status.accessibilityTrusted === true, status.screenCaptureAvailable === true),
     };
+    return this.getSettings();
+  }
+
+  private async requestPermissions(input: { accessibility: boolean; screenCapture: boolean }): Promise<ZeusComputerSettings> {
+    if (input.accessibility || input.screenCapture) this.permissionPromptAttemptedForChild = true;
+    const status = asRecord(await this.callService('request_permissions', input));
+    this.settings = {
+      ...this.settings,
+      serviceState: 'ready',
+      accessibilityTrusted: status.accessibilityTrusted === true,
+      screenCaptureAvailable: status.screenCaptureAvailable === true,
+      detail: computerPermissionDetail(status.accessibilityTrusted === true, status.screenCaptureAvailable === true),
+    };
+    return this.getSettings();
+  }
+
+  private async requestMissingPermissionsForTool(input: BrowserAutomationToolCall): Promise<void> {
+    if (input.tool === 'list_apps' || this.permissionPromptAttemptedForChild) return;
+    const needsAccessibility = !this.settings.accessibilityTrusted;
+    const needsScreenCapture = input.tool === 'get_app_state' && input.arguments.include_screenshot !== false && !this.settings.screenCaptureAvailable;
+    if (!needsAccessibility && !needsScreenCapture) return;
+    await this.requestPermissions({ accessibility: needsAccessibility, screenCapture: needsScreenCapture });
   }
 
   private callService(method: string, params: Record<string, unknown>): Promise<unknown> {
@@ -253,6 +308,7 @@ export class ComputerHost implements BrowserAutomationPort {
       child.stderr.removeAllListeners();
     }
     this.child = null;
+    this.permissionPromptAttemptedForChild = false;
     this.stdoutBuffer = '';
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
@@ -272,6 +328,7 @@ export class ComputerHost implements BrowserAutomationPort {
     }
     this.settings = { ...this.settings, serviceState: 'stopping', detail: `正在停止 Computer Use（${reason}）…` };
     this.child = null;
+    this.permissionPromptAttemptedForChild = false;
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
       pending.reject(Object.assign(new Error('Computer Use 已停止。'), { code: 'ZEUS_COMPUTER_STOPPED' }));
@@ -468,6 +525,23 @@ function isComputerMethod(value: string): boolean {
 
 function computerText(text: string, success: boolean): { contentItems: BrowserAutomationContentItem[]; success: boolean } {
   return { contentItems: [{ type: 'inputText', text }], success };
+}
+
+function computerPermissionKind(value: unknown): ComputerPermissionKind {
+  const record = isRecord(value) ? value : {};
+  if (record.permission === 'accessibility' || record.permission === 'screen_capture') return record.permission;
+  throw Object.assign(new Error('Computer Use 权限设置类型无效。'), { code: 'ZEUS_COMPUTER_PERMISSION_KIND_INVALID' });
+}
+
+function computerPermissionSettingsUrl(permission: ComputerPermissionKind): string {
+  return permission === 'accessibility' ? 'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility' : 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture';
+}
+
+function computerPermissionDetail(accessibilityTrusted: boolean, screenCaptureAvailable: boolean): string {
+  if (accessibilityTrusted && screenCaptureAvailable) return 'Zeus Computer Service 已获得辅助功能与屏幕录制权限。';
+  if (!accessibilityTrusted && !screenCaptureAvailable) return '请授予 Zeus Computer Service 辅助功能与屏幕录制权限。';
+  if (!accessibilityTrusted) return '请授予 Zeus Computer Service 辅助功能权限。';
+  return '请授予 Zeus Computer Service 屏幕录制权限；辅助功能已就绪。';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

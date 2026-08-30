@@ -48,6 +48,14 @@ const copy = {
     computerHelp: '全局启用后，Agent 可按需控制其他应用；macOS 辅助功能与录屏权限仍由系统管理，敏感动作仍逐次确认。',
     computerEnable: '启用 Computer Use',
     computerStop: '立即停止控制',
+    computerAccessibility: '辅助功能',
+    computerScreenCapture: '屏幕与系统音频录制',
+    computerGranted: '已授权',
+    computerMissing: '待授权',
+    computerRequestPermissions: '申请或重新检查权限',
+    computerOpenAccessibility: '打开辅助功能设置',
+    computerOpenScreenCapture: '打开录屏设置',
+    computerSettingsOpened: '已打开对应的 macOS 隐私设置；授权后请重新检查权限。',
     chromeEnable: '连接 Chrome 测试扩展',
     chromeHelp: '通过 Zeus 自有 Native Messaging Host 精确声明并控制 Chrome 标签。',
     edgeEnable: '连接 Edge 预览扩展',
@@ -105,6 +113,14 @@ const copy = {
     computerHelp: 'When globally enabled, agents may control other apps on demand. macOS permissions and per-action sensitive confirmations still apply.',
     computerEnable: 'Enable Computer Use',
     computerStop: 'Stop control now',
+    computerAccessibility: 'Accessibility',
+    computerScreenCapture: 'Screen & System Audio Recording',
+    computerGranted: 'Granted',
+    computerMissing: 'Required',
+    computerRequestPermissions: 'Request or recheck permissions',
+    computerOpenAccessibility: 'Open Accessibility settings',
+    computerOpenScreenCapture: 'Open Screen Recording settings',
+    computerSettingsOpened: 'The matching macOS privacy settings are open. Recheck permissions after granting access.',
     chromeEnable: 'Connect Chrome test extension',
     chromeHelp: 'Uses the Zeus-owned Native Messaging Host to claim and control exact Chrome tabs.',
     edgeEnable: 'Connect Edge preview extension',
@@ -203,6 +219,35 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
     setError(null);
     try {
       setComputerSettings(await window.zeus.stopComputerUse());
+    } catch (computerError) {
+      setError(computerError);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function requestComputerPermissions(): Promise<void> {
+    if (!window.zeus?.requestComputerPermissions) return;
+    setBusy(true);
+    setStatus(null);
+    setError(null);
+    try {
+      setComputerSettings(await window.zeus.requestComputerPermissions());
+    } catch (computerError) {
+      setError(computerError);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function openComputerPermissionSettings(permission: 'accessibility' | 'screen_capture'): Promise<void> {
+    if (!window.zeus?.openComputerPermissionSettings) return;
+    setBusy(true);
+    setStatus(null);
+    setError(null);
+    try {
+      await window.zeus.openComputerPermissionSettings({ permission });
+      setStatus(labels.computerSettingsOpened);
     } catch (computerError) {
       setError(computerError);
     } finally {
@@ -366,11 +411,38 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
         </BrowserSettingRow>
         {computerSettings ? (
           <BrowserSettingRow title={labels.computerTitle} description={`${labels.computerHelp}${computerSettings.detail ? ` ${computerSettings.detail}` : ''}`} danger>
-            <span className="browser-settings-actions">
-              <BrowserSwitch label={labels.computerEnable} checked={computerSettings.enabled} disabled={busy} onChange={(checked) => void setComputerEnabled(checked)} />
-              <Button variant="danger" size="compact" onClick={() => void stopComputer()} busy={busy} disabled={!computerSettings.enabled && computerSettings.serviceState === 'disabled'}>
-                {labels.computerStop}
-              </Button>
+            <span className="computer-permission-panel">
+              <span className="browser-settings-actions">
+                <BrowserSwitch label={labels.computerEnable} checked={computerSettings.enabled} disabled={busy} onChange={(checked) => void setComputerEnabled(checked)} />
+                <Button variant="danger" size="compact" onClick={() => void stopComputer()} busy={busy} disabled={!computerSettings.enabled && computerSettings.serviceState === 'disabled'}>
+                  {labels.computerStop}
+                </Button>
+              </span>
+              {computerSettings.enabled ? (
+                <span className="computer-permission-details" role="status" aria-live="polite">
+                  <span className={computerSettings.accessibilityTrusted ? 'granted' : 'missing'}>
+                    {labels.computerAccessibility}：{computerSettings.accessibilityTrusted ? labels.computerGranted : labels.computerMissing}
+                  </span>
+                  <span className={computerSettings.screenCaptureAvailable ? 'granted' : 'missing'}>
+                    {labels.computerScreenCapture}：{computerSettings.screenCaptureAvailable ? labels.computerGranted : labels.computerMissing}
+                  </span>
+                  <span className="browser-settings-actions">
+                    <Button variant="secondary" size="compact" onClick={() => void requestComputerPermissions()} busy={busy}>
+                      {labels.computerRequestPermissions}
+                    </Button>
+                    {!computerSettings.accessibilityTrusted ? (
+                      <Button variant="secondary" size="compact" onClick={() => void openComputerPermissionSettings('accessibility')} busy={busy}>
+                        {labels.computerOpenAccessibility}
+                      </Button>
+                    ) : null}
+                    {!computerSettings.screenCaptureAvailable ? (
+                      <Button variant="secondary" size="compact" onClick={() => void openComputerPermissionSettings('screen_capture')} busy={busy}>
+                        {labels.computerOpenScreenCapture}
+                      </Button>
+                    ) : null}
+                  </span>
+                </span>
+              ) : null}
             </span>
           </BrowserSettingRow>
         ) : null}

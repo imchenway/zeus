@@ -312,6 +312,8 @@ contextBridge.exposeInMainWorld('zeus', {
   restoreRetiredNativeRuntimes: () => invokeMainCommand('zeus:browser:restore-retired-runtimes', 'desktop.browser.restore_retired_runtimes', 'settings', 'retired-native-runtimes'),
   getComputerSettings: () => ipcRenderer.invoke('zeus:computer:get-settings'),
   updateComputerSettings: (input: unknown) => invokeMainCommand('zeus:computer:update-settings', 'desktop.computer.update_settings', 'settings', 'computer-use-settings', input),
+  requestComputerPermissions: () => invokeMainCommand('zeus:computer:request-permissions', 'desktop.computer.request_permissions', 'settings', 'computer-use-permissions'),
+  openComputerPermissionSettings: (input: unknown) => invokeMainCommand('zeus:computer:open-permission-settings', 'desktop.computer.open_permission_settings', 'settings', 'computer-use-permissions', input),
   stopComputerUse: () => invokeMainCommand('zeus:computer:stop', 'desktop.computer.stop', 'settings', 'computer-use-settings'),
   onBrowserEvent: (listener: (event: unknown) => void) => {
     const handler = (_event: unknown, value: unknown) => listener(value);
