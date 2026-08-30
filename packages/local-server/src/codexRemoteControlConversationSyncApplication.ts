@@ -51,15 +51,14 @@ export function createCodexRemoteControlConversationSyncApplication(ports: Codex
       ) {
         return;
       }
-      // 当前发送/运行轮次由 Provider 实时事件推进。此时再用轮询读取历史水位，
-      // 会让后台 thread/turns/list 与前台 turn/start 竞争同一条 app-server 通道。
-      if (input.skipDuringLocalWork && hasLocalProviderWork(conversation.id)) return;
       lastCheckStartedAt.set(input.conversationId, startedAt);
+      // 新执行宿主必须先完成当前世代对账和活动线程订阅恢复；本地仍标记为活动
+      // 恰好是断线现场，不能在世代恢复之前用普通轮询门禁把它短路。
       await ports.ensureGenerationReconciled([conversation.id]);
       const current = ports.getConversation(conversation.id);
       if (!current || current.archived || !current.providerThreadId) return;
-      // 世代恢复本身可能需要等待 Provider 事件栅栏；等待期间用户可以开始新一轮。
-      // 必须在真正发出历史水位 RPC 前再次判定，不能只依赖进入 synchronize 时的旧快照。
+      // 同一世代已经完成权威对账后，当前发送/运行轮次继续只由实时事件推进。
+      // 这时才允许跳过普通历史水位轮询，避免与 turn/start 竞争 app-server 通道。
       if (input.skipDuringLocalWork && hasLocalProviderWork(current.id)) return;
       if (!(await providerWaterlineAdvanced(ports, current))) return;
       await ports.reconcile(current);

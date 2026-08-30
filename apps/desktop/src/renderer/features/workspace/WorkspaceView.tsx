@@ -1820,15 +1820,16 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                           <input
                             aria-label={settingsWorkspaceCopy.runtime.adapterModelAria}
                             value={runtimeSettings.adapterModels[runtimeSettings.defaultAdapterId] ?? ''}
-                            onChange={(event) =>
+                            onChange={(event) => {
+                              const value = event.currentTarget.value;
                               setRuntimeSettings((current) => ({
                                 ...current,
                                 adapterModels: {
                                   ...current.adapterModels,
-                                  [current.defaultAdapterId]: event.currentTarget.value,
+                                  [current.defaultAdapterId]: value,
                                 },
-                              }))
-                            }
+                              }));
+                            }}
                           />
                         </span>
                         <span className="settings-row-action-rail">
@@ -1844,15 +1845,16 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                           <input
                             aria-label={settingsWorkspaceCopy.runtime.defaultArgsAria}
                             value={formatRuntimeDefaultArgs(runtimeSettings.adapterDefaultArgs[runtimeSettings.defaultAdapterId] ?? ['--ask-for-approval', 'never'])}
-                            onChange={(event) =>
+                            onChange={(event) => {
+                              const value = event.currentTarget.value;
                               setRuntimeSettings((current) => ({
                                 ...current,
                                 adapterDefaultArgs: {
                                   ...current.adapterDefaultArgs,
-                                  [current.defaultAdapterId]: parseRuntimeDefaultArgsText(event.currentTarget.value),
+                                  [current.defaultAdapterId]: parseRuntimeDefaultArgsText(value),
                                 },
-                              }))
-                            }
+                              }));
+                            }}
                           />
                         </span>
                         <span className="settings-row-action-rail">
@@ -1868,15 +1870,16 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                           <input
                             aria-label={settingsWorkspaceCopy.runtime.cliPathAria}
                             value={runtimeSettings.adapterCliPaths[runtimeSettings.defaultAdapterId] ?? ''}
-                            onChange={(event) =>
+                            onChange={(event) => {
+                              const value = event.currentTarget.value;
                               setRuntimeSettings((current) => ({
                                 ...current,
                                 adapterCliPaths: {
                                   ...current.adapterCliPaths,
-                                  [current.defaultAdapterId]: event.currentTarget.value,
+                                  [current.defaultAdapterId]: value,
                                 },
-                              }))
-                            }
+                              }));
+                            }}
                           />
                         </span>
                         <span className="settings-row-action-rail">
@@ -1902,12 +1905,13 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                           <input
                             aria-label={settingsWorkspaceCopy.runtime.timeoutSecondsAria}
                             value={String(runtimeSettings.executionTimeoutSeconds)}
-                            onChange={(event) =>
+                            onChange={(event) => {
+                              const value = event.currentTarget.value;
                               setRuntimeSettings((current) => ({
                                 ...current,
-                                executionTimeoutSeconds: normalizeRuntimeSettingNumber(event.currentTarget.value, current.executionTimeoutSeconds, 24 * 3600),
-                              }))
-                            }
+                                executionTimeoutSeconds: normalizeRuntimeSettingNumber(value, current.executionTimeoutSeconds, 24 * 3600),
+                              }));
+                            }}
                           />
                         </span>
                         <span className="settings-row-action-rail">
@@ -1926,15 +1930,16 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                             <input
                               aria-label={settingsWorkspaceCopy.runtime.shellPathAria}
                               value={runtimeSettings.shell.path ?? ''}
-                              onChange={(event) =>
+                              onChange={(event) => {
+                                const value = event.currentTarget.value;
                                 setRuntimeSettings((current) => ({
                                   ...current,
                                   shell: {
                                     ...current.shell,
-                                    path: event.currentTarget.value || null,
+                                    path: value || null,
                                   },
-                                }))
-                              }
+                                }));
+                              }}
                             />
                           </span>
                           <span className="settings-inline-field settings-runtime-advanced-field settings-runtime-env-field">
@@ -1942,12 +1947,13 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                             <textarea
                               aria-label={settingsWorkspaceCopy.runtime.terminalEnvAria}
                               value={formatRuntimeTerminalEnv(runtimeSettings.terminalEnv)}
-                              onChange={(event) =>
+                              onChange={(event) => {
+                                const value = event.currentTarget.value;
                                 setRuntimeSettings((current) => ({
                                   ...current,
-                                  terminalEnv: parseRuntimeTerminalEnvText(event.currentTarget.value),
-                                }))
-                              }
+                                  terminalEnv: parseRuntimeTerminalEnvText(value),
+                                }));
+                              }}
                             />
                           </span>
                           <small>{settingsWorkspaceCopy.runtime.advancedHelp}</small>

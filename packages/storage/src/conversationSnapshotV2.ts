@@ -2,7 +2,7 @@ import type { ZeusDatabasePort } from './databasePort.js';
 import { type ArtifactRef, type ArtifactStore, artifactStoreGeneration } from './artifactStore.js';
 import { conversationSchemaGeneration, type ConversationSessionMetricsSnapshot, readConversationSessionMetrics } from './conversationExecutionStore.js';
 
-export const conversationSnapshotV2StructureGeneration = '2026-08-21-conversation-snapshot-v2';
+export const conversationSnapshotV2StructureGeneration = '2026-08-29-conversation-snapshot-v2-recovered-request-input';
 
 export const conversationSnapshotV2Limits = {
   snapshot: {
@@ -297,6 +297,7 @@ export interface ConversationProcessPageItem {
   sourceEventId: string | null;
   startedAt: string;
   completedAt: string | null;
+  presentation: Record<string, unknown> | null;
   detail: BoundedContentProjection;
   toolResult: ConversationToolResultDescriptor | null;
 }
@@ -869,12 +870,14 @@ export class ConversationSnapshotV2Repository {
       detail_preview: string;
       detail_bytes: number;
       detail_characters: number;
+      presentation_json: string | null;
     }>(
       `SELECT id, process_sequence, turn_id, segment_id, kind, status, substr(title, 1, 512) AS title,
               source_event_id, started_at, completed_at,
               substr(detail_json, 1, ?) AS detail_preview,
               length(CAST(detail_json AS BLOB)) AS detail_bytes,
-              length(detail_json) AS detail_characters
+              length(detail_json) AS detail_characters,
+              CASE WHEN kind = 'waiting' THEN detail_json ELSE NULL END AS presentation_json
          FROM conversation_process_items
         WHERE conversation_id = ? AND turn_id = ?${kind ? ' AND kind = ?' : ''}
           AND process_sequence > ? AND process_sequence <= ?
@@ -899,6 +902,7 @@ export class ConversationSnapshotV2Repository {
         sourceEventId: row.source_event_id,
         startedAt: row.started_at,
         completedAt: row.completed_at,
+        presentation: recoveredRequestUserInputPresentation(row.presentation_json),
         detail: boundedProjection(
           row.detail_preview,
           row.detail_bytes,
@@ -2029,6 +2033,85 @@ function boundedSettingString(value: unknown, maximumLength: number): string | n
   if (typeof value !== 'string') return null;
   const normalized = value.trim();
   return normalized && normalized.length <= maximumLength ? normalized : null;
+}
+
+function recoveredRequestUserInputPresentation(detailJson: string | null): Record<string, unknown> | null {
+  if (!detailJson) return null;
+  let detail: unknown;
+  try {
+    detail = JSON.parse(detailJson) as unknown;
+  } catch {
+    return null;
+  }
+  if (!isRecord(detail) || detail.recovery !== 'content_only' || detail.requestType !== 'request_user_input' || !Array.isArray(detail.questions) || detail.questions.length === 0 || detail.questions.length > 3) return null;
+  const questionIds = new Set<string>();
+  const questions = detail.questions.flatMap((candidate) => {
+    if (!isRecord(candidate)) return [];
+    const id = boundedPresentationString(candidate.id, 256);
+    const header = boundedPresentationString(candidate.header, 512);
+    const question = boundedPresentationString(candidate.question, 8_000);
+    if (!id || !header || !question || questionIds.has(id)) return [];
+    const rawOptions = candidate.options;
+    let options: Array<{ label: string; description: string }> | null = null;
+    if (rawOptions !== null) {
+      if (!Array.isArray(rawOptions) || rawOptions.length === 0 || rawOptions.length > 10) return [];
+      const labels = new Set<string>();
+      options = rawOptions.flatMap((rawOption) => {
+        if (!isRecord(rawOption)) return [];
+        const label = boundedPresentationString(rawOption.label, 2_000);
+        const description = typeof rawOption.description === 'string' && rawOption.description.length <= 8_000 ? rawOption.description : null;
+        if (!label || description === null || labels.has(label)) return [];
+        labels.add(label);
+        return [{ label, description }];
+      });
+      if (options.length !== rawOptions.length) return [];
+    }
+    questionIds.add(id);
+    return [
+      {
+        id,
+        header,
+        question,
+        options,
+        isOther: options !== null && candidate.isOther === true,
+        isSecret: candidate.isSecret === true,
+        multiple: options !== null && candidate.multiple === true,
+      },
+    ];
+  });
+  if (questions.length !== detail.questions.length) return null;
+  const outcome = ['pending', 'answered', 'aborted', 'resolved'].includes(String(detail.outcome)) ? String(detail.outcome) : 'pending';
+  const answers = recoveredRequestUserInputAnswers(detail.answers, questionIds);
+  return {
+    requestType: 'request_user_input',
+    recovery: 'content_only',
+    submissionAuthority: 'unavailable',
+    providerThreadId: boundedPresentationString(detail.providerThreadId, 1_024),
+    providerTurnId: boundedPresentationString(detail.providerTurnId, 1_024),
+    providerItemId: boundedPresentationString(detail.providerItemId, 1_024),
+    callId: boundedPresentationString(detail.callId, 1_024),
+    questions,
+    outcome,
+    ...(answers ? { answers } : {}),
+    ...(detail.resolutionReason === 'turn_terminal' ? { resolutionReason: 'turn_terminal' } : {}),
+  };
+}
+
+function recoveredRequestUserInputAnswers(value: unknown, questionIds: ReadonlySet<string>): Record<string, { answers: string[] }> | null {
+  if (!isRecord(value)) return null;
+  const entries = Object.entries(value).flatMap(([questionId, rawAnswer]) => {
+    if (!questionIds.has(questionId) || !isRecord(rawAnswer) || !Array.isArray(rawAnswer.answers) || rawAnswer.answers.length === 0 || rawAnswer.answers.length > 10) return [];
+    const answers = rawAnswer.answers.flatMap((answer) => {
+      const text = boundedPresentationString(answer, 8_000);
+      return text ? [text] : [];
+    });
+    return answers.length === rawAnswer.answers.length ? [[questionId, { answers }] as const] : [];
+  });
+  return entries.length === Object.keys(value).length ? Object.fromEntries(entries) : null;
+}
+
+function boundedPresentationString(value: unknown, maximumLength: number): string | null {
+  return typeof value === 'string' && value.trim() && value.length <= maximumLength ? value : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -31,7 +31,7 @@ import { createCodexDynamicToolApplication } from './codexDynamicToolApplication
 import { createZeusToolBroker, type ZeusToolAuditEvent } from './zeusToolRegistry.js';
 import { finalizeCodexPendingInteractionsForShutdown } from './codexFinalShutdownApplication.js';
 import { codexGoalEventKind, createCodexGoalApplication, ensureInitialCodexGoal } from './codexGoalApplication.js';
-import { createCodexInteractionRecoveryApplication, isRetiredGenerationFailure } from './codexInteractionRecoveryApplication.js';
+import { createCodexInteractionRecoveryApplication, isInteractionRecoveryCheckpointRequest } from './codexInteractionRecoveryApplication.js';
 import type {
   ArchiveConversationInput,
   CodexNativeConversationCoordinator,
@@ -1443,23 +1443,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   function readyGenerationId(): string | null {
     const state = options.manager.getState();
     return state.type === 'ready' ? state.generationId : null;
-  }
-
-  function recoverStaleInteractionRequests(conversationId: string, currentGenerationId: string): void {
-    const timestamp = now();
-    const requests = options.requests.listByConversation(conversationId);
-    const latestRequest = requests.at(-1);
-    for (const request of requests) {
-      if (options.manager.hasGeneration(request.transportGenerationId) || isInteractionRecoveryCheckpointRequest(request)) continue;
-      const recoverableFailure = request.id === latestRequest?.id && isRetiredGenerationFailure(request);
-      if (request.status !== 'pending' && !recoverableFailure) continue;
-      options.requests.restorePendingAfterTransportRecovery(request.id, {
-        recoveryReason: 'app_server_generation_changed',
-        sourceGenerationId: request.transportGenerationId,
-        currentGenerationId,
-        restoredAt: timestamp,
-      });
-    }
   }
 
   function dispatchSubmission(
@@ -2902,16 +2885,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     return presentation && Object.keys(presentation).length > 0 ? { ...response, answerAttachments: presentation } : response;
   }
 
-  function isInteractionRecoveryCheckpointRequest(request: ZeusConversationServerRequestRecord): boolean {
-    if (!request.responseJson) return false;
-    try {
-      const response = parseJsonRecord(request.responseJson);
-      return response.interactionRecoveryCheckpoint === true || response.handoffCheckpoint === true;
-    } catch {
-      return false;
-    }
-  }
-
   function isPendingInteractionAuthority(request: ZeusConversationServerRequestRecord): boolean {
     return request.status === 'pending' && (options.manager.hasGeneration(request.transportGenerationId) || isInteractionRecoveryCheckpointRequest(request));
   }
@@ -3374,7 +3347,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       // 已归档 Provider 会话只能由用户显式恢复，启动恢复不得触碰其线程。
       if (conversation.archived || conversation.providerState === 'archived') continue;
       try {
-        recoverStaleInteractionRequests(conversation.id, generationId);
+        interactionRecovery.recoverStaleInteractionRequests(conversation.id, generationId);
         await ensureConversationExecutionContext(conversation.id, 'reconcile');
         const contextual = options.submissions.listByConversation(conversation.id).find((submission) => isRecord(parseJsonRecord(submission.inputJson).context));
         if (contextual && !contexts.has(conversation.id)) contexts.set(conversation.id, contextFromSubmission(contextual));
@@ -3437,6 +3410,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     failUnsentSubmissionsBeforeProviderDispatch,
     persistProviderUserMessage,
     projectProviderUserMessage,
+    processProjector,
     providerHistoryReconcilePageLimit,
     providerHistoryReconcileTurnLimit,
     reconcileTerminalTurnSubmissions,
