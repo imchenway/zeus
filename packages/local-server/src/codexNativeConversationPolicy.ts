@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import { dirname, extname, isAbsolute, relative, resolve } from 'node:path';
 import { type CodexAppServerEvent, type CodexCommandApprovalDecision, type CodexSandboxPolicy, type CodexServerRequestResponse, type CodexThreadSnapshot } from '@zeus/ai-runtime';
-import { commandEnvelopeSchemaGeneration, type CommandEnvelope, type TokenUsageBreakdown } from '@zeus/shared';
+import { commandEnvelopeSchemaGeneration, parseCommandEnvelope, type CommandEnvelope, type TokenUsageBreakdown } from '@zeus/shared';
 import { currentDatabasePerformanceTraceId } from '@zeus/storage';
 import type {
   CodexMcpServerStartupState,
@@ -1104,6 +1104,34 @@ export function conversationSubmissionDispatchEnvelope(submission: ZeusConversat
       kind: submission.kind,
     },
   };
+}
+
+/**
+ * failed-before-write 的 Submission 重试必须复用首次接纳的完整信封。traceIdentity
+ * 只是进程内性能关联身份；若冷启动时重新生成，它会让同一业务命令误判为幂等冲突。
+ */
+export function parseStoredConversationSubmissionDispatchEnvelope(serialized: string, expected: CommandEnvelope): CommandEnvelope {
+  const parsed = parseCommandEnvelope(JSON.parse(serialized) as unknown);
+  if (
+    parsed.commandId !== expected.commandId ||
+    parsed.commandType !== expected.commandType ||
+    parsed.actor.kind !== expected.actor.kind ||
+    parsed.actor.id !== expected.actor.id ||
+    parsed.scope.kind !== expected.scope.kind ||
+    parsed.scope.id !== expected.scope.id ||
+    parsed.expectedRevision !== expected.expectedRevision ||
+    parsed.idempotencyKey !== expected.idempotencyKey ||
+    parsed.issuedAt !== expected.issuedAt ||
+    parsed.payload.conversationId !== expected.payload.conversationId ||
+    parsed.payload.submissionId !== expected.payload.submissionId ||
+    parsed.payload.clientMessageId !== expected.payload.clientMessageId ||
+    parsed.payload.requestHash !== expected.payload.requestHash ||
+    parsed.payload.requestedDelivery !== expected.payload.requestedDelivery ||
+    parsed.payload.kind !== expected.payload.kind
+  ) {
+    throw coordinatorError('ZEUS_NATIVE_SUBMISSION_COMMAND_IDENTITY_CONFLICT', '既有会话 Submission 命令与当前持久化请求身份不一致，拒绝重放。');
+  }
+  return parsed;
 }
 
 export function parseJsonRecord(value: string): Record<string, unknown> {

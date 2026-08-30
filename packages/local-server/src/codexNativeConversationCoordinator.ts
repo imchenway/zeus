@@ -87,6 +87,7 @@ import {
   isSupportedPermissionRequest,
   isValidMcpElicitationResponse,
   parseJsonRecord,
+  parseStoredConversationSubmissionDispatchEnvelope,
   providerEventReceipt,
   providerPermissionProfile,
   providerTurnIdFrom,
@@ -1553,7 +1554,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       if (hasPendingPlanImplementationRequest(conversation.id) && !planControlModeForSubmission(submission)) {
         return accepted(submission, 'queued', conversation.providerThreadId, null);
       }
-      const dispatchEnvelope = conversationSubmissionDispatchEnvelope(submission);
+      const freshDispatchEnvelope = conversationSubmissionDispatchEnvelope(submission);
+      const existingDelivery = options.commandDeliveries.get(freshDispatchEnvelope.commandId);
+      const dispatchEnvelope = existingDelivery ? parseStoredConversationSubmissionDispatchEnvelope(existingDelivery.inbox.envelopeJson, freshDispatchEnvelope) : freshDispatchEnvelope;
       const preparedDelivery = options.commandDeliveries.acceptAndPrepare({
         envelope: dispatchEnvelope,
         requestSha256: submission.requestHash,
@@ -1578,16 +1581,19 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         });
       }
       let providerThreadId = segmentLifecycle?.requiresNewSegment ? null : conversation.providerThreadId;
+      // Plugin Runtime 的会话上下文只存在于当前 Execution Host 进程。冷重启后的已有
+      // Provider thread 不会再经过 thread/start，仍必须先按持久化身份恢复冻结的 Plugin
+      // 激活集，否则 UserPromptSubmit 会在任何 Provider 写入前拒绝本次续聊。
+      const pluginPreparation = await options.plugins?.prepare({
+        conversationId: conversation.id,
+        projectId: context.projectId,
+        cwd: context.projectLocalPath,
+        model: context.model,
+        source: providerThreadId ? 'resume' : 'startup',
+        ...(providerThreadId ? {} : { prompt: submissionText(submission) }),
+      });
       if (!providerThreadId) {
         const profile = providerPermissionProfile(context);
-        const pluginPreparation = await options.plugins?.prepare({
-          conversationId: conversation.id,
-          projectId: context.projectId,
-          cwd: context.projectLocalPath,
-          model: context.model,
-          source: 'startup',
-          prompt: submissionText(submission),
-        });
         const developerInstructions = [developerInstructionsFor(context, options.browserAutomation !== undefined), pluginPreparation?.developerInstructions ?? ''].filter(Boolean).join('\n');
         const dynamicTools = [...conversationToolResultDynamicTools(), ...(zeusToolBroker ? zeusToolBroker.registry.codexTools : []), ...(pluginPreparation?.codexDynamicTools ?? [])];
         const threadRequest = {
