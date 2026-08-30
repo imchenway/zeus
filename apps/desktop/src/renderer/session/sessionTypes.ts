@@ -617,7 +617,7 @@ export interface NativeConversationSnapshotV2 {
     timeline: { throughSequence: number };
     modelHistory: { throughSequence: number };
     process: { throughSequence: number };
-    resources: { available: boolean };
+    resources: { available: boolean; assistantDeliverablesAvailable?: boolean };
   };
   limits: { closedTurnLimit: number; byteLimit: number; returnedTurnCount: number; responseBytes: number };
 }
@@ -692,6 +692,8 @@ export interface NativeConversationResourceV2Item {
   attachmentRef?: string | null;
   taskPushAttachmentKey?: string | null;
   origin?: string | null;
+  /** 旧 Snapshot V2 缓存可能没有该字段；缺失必须按普通过程资源处理。 */
+  delivery?: 'assistant' | null;
   createdAt: string;
   updatedAt: string;
   accessPolicy: 'authorized_open_intent_or_preview';

@@ -212,7 +212,7 @@ export interface ConversationSnapshotV2 {
     timeline: { throughSequence: number };
     modelHistory: { throughSequence: number };
     process: { throughSequence: number };
-    resources: { available: boolean };
+    resources: { available: boolean; assistantDeliverablesAvailable: boolean };
   };
   limits: {
     closedTurnLimit: number;
@@ -316,6 +316,7 @@ export interface ConversationResourcePageItem {
   attachmentRef: string | null;
   taskPushAttachmentKey: string | null;
   origin: string | null;
+  delivery: 'assistant' | null;
   createdAt: string;
   updatedAt: string;
   accessPolicy: 'authorized_open_intent_or_preview';
@@ -639,6 +640,17 @@ export class ConversationSnapshotV2Repository {
         process: { throughSequence: this.maximumSequence('conversation_process_items', 'process_sequence', conversationId) },
         resources: {
           available: Boolean(this.db.get<{ present: number }>(`SELECT 1 AS present FROM conversation_resources WHERE conversation_id = ? LIMIT 1`, [conversationId])),
+          assistantDeliverablesAvailable: Boolean(
+            this.db.get<{ present: number }>(
+              `SELECT 1 AS present
+                 FROM conversation_resources
+                WHERE conversation_id = ?
+                  AND json_valid(display_json)
+                  AND json_extract(display_json, '$.delivery') = 'assistant'
+                LIMIT 1`,
+              [conversationId],
+            ),
+          ),
         },
       },
       limits: {
@@ -959,6 +971,7 @@ export class ConversationSnapshotV2Repository {
       attachment_ref: string | null;
       task_push_attachment_key: string | null;
       origin: string | null;
+      delivery: string | null;
       created_at: string;
       updated_at: string;
     }>(
@@ -970,6 +983,7 @@ export class ConversationSnapshotV2Repository {
               CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.attachmentRef') AS TEXT), 1, 512) ELSE NULL END AS attachment_ref,
               CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.taskPushAttachmentKey') AS TEXT), 1, 512) ELSE NULL END AS task_push_attachment_key,
               CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.origin') AS TEXT), 1, 128) ELSE NULL END AS origin,
+              CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.delivery') AS TEXT), 1, 32) ELSE NULL END AS delivery,
               created_at, updated_at
          FROM conversation_resources
         WHERE conversation_id = ?
@@ -993,6 +1007,7 @@ export class ConversationSnapshotV2Repository {
       attachmentRef: row.attachment_ref,
       taskPushAttachmentKey: row.task_push_attachment_key,
       origin: row.origin,
+      delivery: row.delivery === 'assistant' ? ('assistant' as const) : null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       accessPolicy: 'authorized_open_intent_or_preview' as const,
