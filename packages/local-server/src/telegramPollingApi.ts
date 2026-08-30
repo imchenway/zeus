@@ -14,7 +14,7 @@ interface TelegramPollingApiOptions {
 
 type EmptyInput = Record<string, never>;
 
-const stoppedStatus = { running: false, offset: 0, lastError: null, handledUpdates: 0 } as const;
+const stoppedStatus = { running: false, offset: 0, lastError: null, handledUpdates: 0, lastSuccessfulPollAt: null } as const;
 const pollingScopeId = 'telegram.polling';
 
 /** Telegram 轮询控制面；两个兼容 alias 共享同一稳定 command type 和 settings scope。 */

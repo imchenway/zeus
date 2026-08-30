@@ -1,0 +1,688 @@
+.macos-ai-app .settings-reference-shell .settings-content-column:has(.im-robot-settings) {
+  inline-size: min(1040px, calc(100% - 56px));
+  max-inline-size: 1040px;
+}
+
+.macos-ai-app .im-robot-settings {
+  --im-accent: oklch(66% 0.19 42);
+  --im-accent-strong: oklch(58% 0.22 40);
+  --im-green: oklch(56% 0.15 150);
+  gap: 18px;
+}
+
+.macos-ai-app .im-page-heading {
+  display: grid;
+  gap: 3px;
+}
+
+.macos-ai-app .im-page-heading .settings-page-title {
+  font-size: 24px;
+  line-height: 30px;
+  margin: 0;
+}
+
+.macos-ai-app .im-page-kicker {
+  color: var(--im-accent-strong);
+  font-size: 12px;
+  font-weight: 720;
+  letter-spacing: 0.06em;
+}
+
+.macos-ai-app .im-page-heading p {
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+  line-height: 18px;
+  margin: 2px 0 0;
+}
+
+.macos-ai-app .im-safety-bar {
+  align-items: center;
+  background: var(--zeus-product-panel-muted, oklch(97% 0.002 255));
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 11px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 24px;
+  min-block-size: 42px;
+  padding: 8px 14px;
+}
+
+.macos-ai-app .im-safety-bar > span {
+  align-items: center;
+  color: var(--zeus-product-muted);
+  display: inline-flex;
+  font-size: 12px;
+  gap: 8px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .im-safety-bar i,
+.macos-ai-app .im-health-pill i {
+  background: var(--im-green);
+  border-radius: 999px;
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--im-green), transparent 86%);
+  block-size: 7px;
+  flex: 0 0 auto;
+  inline-size: 7px;
+}
+
+.macos-ai-app .im-state-message {
+  align-items: flex-start;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 9px;
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+  line-height: 17px;
+  padding: 9px 11px;
+}
+
+.macos-ai-app .im-state-message > svg {
+  block-size: 17px;
+  flex: 0 0 auto;
+  inline-size: 17px;
+}
+
+.macos-ai-app .im-state-message.danger {
+  background: var(--zeus-danger-bg, oklch(96.5% 0.024 28));
+  border-color: var(--zeus-product-danger-line, oklch(83% 0.055 24));
+  color: var(--zeus-danger-text, oklch(42% 0.095 28));
+}
+
+.macos-ai-app .im-state-message.success {
+  background: color-mix(in oklab, var(--im-green), transparent 92%);
+  border-color: color-mix(in oklab, var(--im-green), transparent 67%);
+  color: color-mix(in oklab, var(--im-green), black 24%);
+}
+
+.macos-ai-app .im-settings-layout {
+  align-items: start;
+  background: color-mix(in oklab, var(--zeus-source-list-bg), transparent 46%);
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 13px;
+  display: grid;
+  grid-template-columns: 188px minmax(0, 1fr);
+  min-block-size: 520px;
+  overflow: hidden;
+}
+
+.macos-ai-app .im-channel-list {
+  align-self: stretch;
+  border-inline-end: 1px solid var(--zeus-product-line);
+  display: grid;
+  gap: 5px;
+  padding: 14px 11px;
+}
+
+.macos-ai-app .im-channel-list > button {
+  align-items: center;
+  background: var(--zeus-solid-surface-bg);
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 10px;
+  color: var(--zeus-product-text);
+  display: grid;
+  font-size: 12px;
+  font-weight: 610;
+  gap: 8px;
+  grid-template-columns: 28px minmax(0, 1fr);
+  min-block-size: 43px;
+  padding: 6px 9px;
+  text-align: start;
+}
+
+.macos-ai-app .im-channel-list > button:hover,
+.macos-ai-app .im-channel-list > button:focus-visible {
+  background: var(--zeus-control-bg-hover);
+  border-color: var(--zeus-control-border-hover);
+}
+
+.macos-ai-app .im-channel-list > button.selected {
+  background: color-mix(in oklab, var(--im-accent), transparent 91%);
+  border-color: color-mix(in oklab, var(--im-accent), white 32%);
+  color: var(--im-accent-strong);
+}
+
+.macos-ai-app .im-channel-list > button small {
+  color: var(--zeus-product-muted);
+  font-size: 9px;
+  font-weight: 500;
+  grid-column: 2;
+  line-height: 10px;
+  margin-block-start: -6px;
+}
+
+.macos-ai-app .im-channel-icon {
+  align-items: center;
+  background: oklch(61% 0.19 242);
+  border-radius: 8px;
+  color: white;
+  display: inline-flex;
+  justify-content: center;
+  block-size: 28px;
+  inline-size: 28px;
+}
+
+.macos-ai-app .im-channel-icon > svg {
+  block-size: 18px;
+  inline-size: 18px;
+}
+
+.macos-ai-app .im-channel-icon.large {
+  block-size: 50px;
+  border-radius: 14px;
+  inline-size: 50px;
+}
+
+.macos-ai-app .im-channel-icon.large > svg {
+  block-size: 30px;
+  inline-size: 30px;
+}
+
+.macos-ai-app .channel-wechat,
+.macos-ai-app .channel-whatsapp {
+  background: oklch(68% 0.19 148);
+}
+.macos-ai-app .channel-feishu {
+  background: oklch(63% 0.22 255);
+}
+.macos-ai-app .channel-dingtalk {
+  background: oklch(60% 0.23 256);
+}
+.macos-ai-app .channel-wecom {
+  background: oklch(64% 0.16 220);
+}
+.macos-ai-app .channel-qq {
+  background: oklch(54% 0.22 259);
+}
+.macos-ai-app .channel-slack {
+  background: oklch(34% 0.12 326);
+}
+.macos-ai-app .channel-telegram {
+  background: oklch(65% 0.16 235);
+}
+.macos-ai-app .channel-discord {
+  background: oklch(58% 0.19 279);
+}
+.macos-ai-app .channel-ai_office {
+  background: oklch(47% 0.16 265);
+}
+
+.macos-ai-app .im-channel-detail {
+  display: grid;
+  gap: 16px;
+  min-inline-size: 0;
+  padding: 18px;
+}
+
+.macos-ai-app .im-empty-state {
+  align-items: center;
+  align-self: center;
+  color: var(--zeus-product-muted);
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  gap: 10px;
+  justify-self: center;
+  line-height: 18px;
+  max-inline-size: 360px;
+  padding: 70px 20px;
+  text-align: center;
+}
+
+.macos-ai-app .im-empty-state strong {
+  color: var(--zeus-product-text);
+  font-size: 15px;
+}
+
+.macos-ai-app .im-connect-wizard,
+.macos-ai-app .im-pairing-panel,
+.macos-ai-app .im-connection-section {
+  display: grid;
+  gap: 14px;
+}
+
+.macos-ai-app .im-section-title {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.macos-ai-app .im-section-icon,
+.macos-ai-app .im-bot-avatar {
+  align-items: center;
+  background: var(--im-accent);
+  border-radius: 9px;
+  color: white;
+  display: inline-flex;
+  flex: 0 0 auto;
+  justify-content: center;
+  block-size: 34px;
+  inline-size: 34px;
+}
+
+.macos-ai-app .im-section-icon > svg,
+.macos-ai-app .im-bot-avatar > svg {
+  block-size: 20px;
+  inline-size: 20px;
+}
+
+.macos-ai-app .im-section-title > span:last-child,
+.macos-ai-app .im-bot-identity,
+.macos-ai-app .im-health-copy {
+  display: grid;
+  gap: 1px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .im-section-title strong,
+.macos-ai-app .im-connection-heading strong,
+.macos-ai-app .im-bot-identity strong {
+  color: var(--zeus-product-text);
+  font-size: 13px;
+  font-weight: 670;
+}
+
+.macos-ai-app .im-section-title small,
+.macos-ai-app .im-connection-heading small,
+.macos-ai-app .im-bot-identity code,
+.macos-ai-app .im-health-copy small {
+  color: var(--zeus-product-muted);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.macos-ai-app .im-step-list {
+  display: grid;
+  gap: 12px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.macos-ai-app .im-step-list > li {
+  align-items: end;
+  background: var(--zeus-solid-surface-bg);
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 11px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 22px repeat(2, minmax(0, 1fr));
+  padding: 12px;
+}
+
+.macos-ai-app .im-step-number {
+  align-items: center;
+  align-self: center;
+  background: color-mix(in oklab, var(--im-accent), transparent 88%);
+  border-radius: 999px;
+  color: var(--im-accent-strong);
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 700;
+  justify-content: center;
+  block-size: 22px;
+  inline-size: 22px;
+}
+
+.macos-ai-app .im-form-field,
+.macos-ai-app .im-card-field {
+  display: grid;
+  gap: 5px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .im-form-field > span,
+.macos-ai-app .im-card-field > span > strong,
+.macos-ai-app .im-approval-toggle strong {
+  color: var(--zeus-product-text);
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.macos-ai-app .im-form-field input,
+.macos-ai-app .im-form-field select,
+.macos-ai-app .im-card-field select {
+  background: var(--zeus-control-bg);
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 8px;
+  color: var(--zeus-product-text);
+  inline-size: 100%;
+  min-block-size: 32px;
+  padding-inline: 9px;
+}
+
+.macos-ai-app .im-token-field,
+.macos-ai-app .im-legacy-token-choice {
+  grid-column: 2;
+}
+
+.macos-ai-app .im-legacy-token-choice,
+.macos-ai-app .im-approval-toggle {
+  align-items: center;
+  display: flex;
+  gap: 9px;
+}
+
+.macos-ai-app .im-legacy-token-choice > span,
+.macos-ai-app .im-approval-toggle > span,
+.macos-ai-app .im-card-field > span {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+}
+
+.macos-ai-app .im-legacy-token-choice small,
+.macos-ai-app .im-approval-toggle small,
+.macos-ai-app .im-card-field small {
+  color: var(--zeus-product-muted);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.macos-ai-app :where(.im-primary-action, .im-secondary-action, .im-danger-action) {
+  align-items: center;
+  border-radius: 8px;
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 640;
+  gap: 6px;
+  justify-content: center;
+  min-block-size: 32px;
+  padding: 0 11px;
+  text-decoration: none;
+}
+
+.macos-ai-app .im-primary-action {
+  background: var(--im-accent);
+  border: 1px solid var(--im-accent);
+  color: white;
+}
+
+.macos-ai-app .im-primary-action:hover:not(:disabled),
+.macos-ai-app .im-primary-action:focus-visible {
+  background: var(--im-accent-strong);
+  border-color: var(--im-accent-strong);
+}
+
+.macos-ai-app .im-primary-action > svg {
+  block-size: 16px;
+  inline-size: 16px;
+}
+
+.macos-ai-app .im-secondary-action,
+.macos-ai-app .im-danger-action {
+  background: var(--zeus-control-bg);
+  border: 1px solid var(--zeus-control-border);
+  color: var(--zeus-product-text);
+}
+
+.macos-ai-app .im-danger-action {
+  border-color: var(--zeus-product-danger-line);
+  color: var(--zeus-danger-text);
+}
+
+.macos-ai-app .im-pairing-panel {
+  background: var(--zeus-solid-surface-bg);
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 11px;
+  padding: 14px;
+}
+
+.macos-ai-app .im-pairing-content {
+  align-items: center;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: 154px minmax(0, 1fr);
+}
+
+.macos-ai-app .im-qr-frame {
+  align-items: center;
+  background: white;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 10px;
+  display: flex;
+  justify-content: center;
+  padding: 7px;
+}
+
+.macos-ai-app .im-qr-frame img {
+  block-size: auto;
+  display: block;
+  inline-size: 100%;
+}
+
+.macos-ai-app .im-qr-frame > svg {
+  block-size: 72px;
+  color: var(--zeus-product-muted);
+  inline-size: 72px;
+}
+
+.macos-ai-app .im-pairing-copy {
+  align-items: start;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.macos-ai-app .im-pairing-copy > strong {
+  color: var(--zeus-product-text);
+  font-size: 14px;
+}
+
+.macos-ai-app .im-pairing-copy > span {
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.macos-ai-app .im-connection-heading {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.macos-ai-app .im-connection-heading > span:first-child {
+  align-items: baseline;
+  display: flex;
+  gap: 8px;
+}
+
+.macos-ai-app .im-health-pill {
+  align-items: center;
+  color: var(--zeus-product-muted);
+  display: inline-flex;
+  font-size: 11px;
+  gap: 7px;
+}
+
+.macos-ai-app .im-health-pill.offline i {
+  background: var(--zeus-product-muted);
+  box-shadow: none;
+}
+
+.macos-ai-app .im-connection-card {
+  background: var(--zeus-solid-surface-bg);
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 12px;
+  display: grid;
+  overflow: hidden;
+}
+
+.macos-ai-app .im-connection-card > header {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 38px minmax(0, 1fr) minmax(190px, auto);
+  padding: 13px 14px;
+}
+
+.macos-ai-app .im-bot-avatar {
+  background: oklch(65% 0.16 235);
+  block-size: 38px;
+  inline-size: 38px;
+}
+
+.macos-ai-app .im-health-copy {
+  justify-items: end;
+  text-align: end;
+}
+
+.macos-ai-app .im-health-copy strong {
+  color: var(--zeus-product-muted);
+  font-size: 10px;
+  font-weight: 560;
+}
+
+.macos-ai-app .im-binding-facts {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0 14px 12px;
+}
+
+.macos-ai-app .im-binding-facts > div {
+  background: var(--zeus-product-panel-muted);
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 8px;
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+}
+
+.macos-ai-app .im-binding-facts dt {
+  color: var(--zeus-product-muted);
+  font-size: 10px;
+}
+
+.macos-ai-app .im-binding-facts dd {
+  color: var(--zeus-product-text);
+  font-size: 11px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.macos-ai-app .im-card-field,
+.macos-ai-app .im-approval-toggle {
+  align-items: center;
+  border-block-start: 1px solid var(--zeus-product-line);
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) minmax(190px, 42%);
+  padding: 11px 14px;
+}
+
+.macos-ai-app .im-approval-toggle {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.macos-ai-app .im-approval-toggle input[role='switch'] {
+  accent-color: var(--im-accent);
+  block-size: 18px;
+  inline-size: 34px;
+}
+
+.macos-ai-app .im-connection-card > footer {
+  align-items: center;
+  border-block-start: 1px solid var(--zeus-product-line);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  justify-content: flex-end;
+  padding: 10px 14px;
+}
+
+.macos-ai-app .im-log-list {
+  border-block-start: 1px solid var(--zeus-product-line);
+  display: grid;
+  gap: 7px;
+  max-block-size: 220px;
+  overflow: auto;
+  padding: 11px 14px;
+}
+
+.macos-ai-app .im-log-list > div {
+  align-items: baseline;
+  display: grid;
+  font-size: 10px;
+  gap: 7px;
+  grid-template-columns: 108px 135px minmax(0, 1fr);
+}
+
+.macos-ai-app .im-log-list :where(time, code) {
+  color: var(--zeus-product-muted);
+  font-size: inherit;
+}
+
+.macos-ai-app .im-log-list .error > span {
+  color: var(--zeus-danger-text);
+}
+
+@media (max-width: 860px) {
+  .macos-ai-app .settings-reference-shell .settings-content-column:has(.im-robot-settings) {
+    inline-size: min(680px, calc(100% - 28px));
+  }
+
+  .macos-ai-app .im-settings-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .macos-ai-app .im-channel-list {
+    border-block-end: 1px solid var(--zeus-product-line);
+    border-inline-end: 0;
+    display: flex;
+    overflow-x: auto;
+  }
+
+  .macos-ai-app .im-channel-list > button {
+    flex: 0 0 142px;
+  }
+}
+
+@media (max-width: 580px) {
+  .macos-ai-app .im-safety-bar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .macos-ai-app .im-channel-detail {
+    padding: 12px;
+  }
+
+  .macos-ai-app .im-step-list > li,
+  .macos-ai-app .im-pairing-content,
+  .macos-ai-app .im-card-field,
+  .macos-ai-app .im-connection-card > header {
+    align-items: stretch;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .macos-ai-app .im-step-number {
+    display: none;
+  }
+
+  .macos-ai-app .im-token-field,
+  .macos-ai-app .im-legacy-token-choice {
+    grid-column: auto;
+  }
+
+  .macos-ai-app .im-qr-frame {
+    justify-self: center;
+    inline-size: 154px;
+  }
+
+  .macos-ai-app .im-health-copy {
+    justify-items: start;
+    text-align: start;
+  }
+
+  .macos-ai-app .im-log-list > div {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .macos-ai-app .im-robot-settings * {
+    scroll-behavior: auto;
+  }
+}

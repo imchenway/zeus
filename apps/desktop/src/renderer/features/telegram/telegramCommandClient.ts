@@ -10,6 +10,11 @@ export const telegramClientCommandTypes = {
   pollingStart: 'telegram.polling.start',
   pollingStop: 'telegram.polling.stop',
   pollingOnce: 'telegram.polling.poll_once',
+  imConnectionCreate: 'im.telegram.connection.create',
+  imConnectionRepair: 'im.telegram.connection.repair',
+  imConnectionCheck: 'im.telegram.connection.check',
+  imConnectionUpdate: 'im.telegram.connection.update',
+  imConnectionRemove: 'im.telegram.connection.remove',
 } as const;
 
 type TelegramClientCommandType = (typeof telegramClientCommandTypes)[keyof typeof telegramClientCommandTypes];
