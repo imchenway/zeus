@@ -18,6 +18,7 @@ export const telegramCommandTypes = {
   imConnectionUpdate: 'im.telegram.connection.update',
   imConnectionRemove: 'im.telegram.connection.remove',
   imMessageSend: 'im.telegram.message.send',
+  imMessageEdit: 'im.telegram.message.edit',
 } as const;
 
 export type TelegramCommandType = (typeof telegramCommandTypes)[keyof typeof telegramCommandTypes];
