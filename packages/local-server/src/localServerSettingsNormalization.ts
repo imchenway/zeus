@@ -902,7 +902,8 @@ export function normalizeRuntimeShellSettings(value: unknown): RuntimeSettingsSn
 
 export function normalizeRuntimeExecutionTimeoutSeconds(value: unknown): number | null {
   if (value === undefined) return defaultRuntimeSettings.executionTimeoutSeconds;
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < 60 || value > 86_400) return null;
+  // 长时任务使用绝对截止时间和分段 timer，产品不再以 24 小时为上限。
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 60 || value > 315_360_000) return null;
   return value;
 }
 

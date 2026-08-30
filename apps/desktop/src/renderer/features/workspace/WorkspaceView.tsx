@@ -19,6 +19,7 @@ import { DigitalEmployeeTemplatesSettings } from '../digital-employees/DigitalEm
 import { ImRobotSettingsPane } from '../telegram/ImRobotSettingsPane.js';
 import { ProjectDigitalEmployeesPanel } from '../digital-employees/ProjectDigitalEmployeesPanel.js';
 import { ExtensionsWorkspace } from '../skills/ExtensionsWorkspace.js';
+import { AutomationsWorkspace } from '../automations/AutomationsWorkspace.js';
 import { defaultTaskTableEnumSortOrders, normalizeTaskTableEnumSortOrders } from '../../task/taskWorkspaceModel.js';
 import { ZeusSelect } from '../../ZeusSelect.js';
 import { Button } from '../../ui/Button.js';
@@ -32,7 +33,6 @@ import {
   formatRuntimeDefaultArgs,
   formatRuntimeTerminalEnv,
   InlineRecoveryPrompt,
-  normalizeRuntimeSettingNumber,
   parseRuntimeDefaultArgsText,
   parseRuntimeTerminalEnvText,
   ProjectCreateDialog,
@@ -403,9 +403,11 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     updateTaskManagementStatusConfigDraft,
     workspaceDrawerPortalStyle,
   } = operations;
+  const runtimeTimeoutUnit = durationUnitForSeconds(runtimeSettings.executionTimeoutSeconds);
+  const runtimeTimeoutValue = runtimeSettings.executionTimeoutSeconds / durationUnitSeconds(runtimeTimeoutUnit);
   return (
     <main
-      className={`zeus-shell ai-native-shell macos-ai-app codex-thread-workbench code-map-product-shell theme-${appShellSettings.appearance}${activeNavTarget === 'settings' ? ' settings-dedicated-shell' : ''}${activeNavTarget === 'skills' ? ' skills-dedicated-shell' : ''}${activeProjectSection === 'sessions' && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' ? ' session-codex-parity-v1' : ''}`}
+      className={`zeus-shell ai-native-shell macos-ai-app codex-thread-workbench code-map-product-shell theme-${appShellSettings.appearance}${activeNavTarget === 'settings' ? ' settings-dedicated-shell' : ''}${activeNavTarget === 'skills' ? ' skills-dedicated-shell' : ''}${activeNavTarget === 'automations' ? ' automations-dedicated-shell' : ''}${activeProjectSection === 'sessions' && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' ? ' session-codex-parity-v1' : ''}`}
       data-theme={appShellSettings.appearance}
       data-language={appShellSettings.appLanguage}
       data-project-sidebar-resizing={projectSidebarResizing ? 'true' : 'false'}
@@ -619,7 +621,19 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       ) : null}
       <section className="workspace ai-workspace" ref={workspaceScrollRef}>
         {activeNavTarget === 'skills' ? <ExtensionsWorkspace client={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} projectId={activeProjectId} onChooseDirectory={props.onChooseProjectDirectory} /> : null}
-        {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && selectedProject ? (
+        {activeNavTarget === 'automations' ? (
+          <AutomationsWorkspace
+            client={props.commandClient ?? null}
+            projects={snapshot.projects}
+            language={appShellSettings.appLanguage}
+            onOpenConversation={async (run) => {
+              if (!run.conversationId || !props.nativeConversationClient) return;
+              const choice = await props.nativeConversationClient.loadNativeConversationChoice(run.projectId, run.conversationId);
+              await selectNativeConversation(choice);
+            }}
+          />
+        ) : null}
+        {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && selectedProject ? (
           <ProjectWorkspaceModeToolbar
             project={selectedProject}
             section={activeProjectSection}
@@ -628,7 +642,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             onOpen={(section, codeMode) => openProjectSection(selectedProject, section, codeMode)}
           />
         ) : null}
-        {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeProjectSection === 'code' && selectedProject ? (
+        {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && activeProjectSection === 'code' && selectedProject ? (
           <section className="workspace-view workspace-view-project-code project-code-workspace" aria-label={codeWorkspaceCopy.projectCodeAria}>
             <div className="project-code-mode-host">
               <div className="project-code-mode-pane" hidden={projectCodeWorkspaceMode !== 'source'}>
@@ -667,13 +681,13 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           </section>
         ) : null}
 
-        {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeProjectSection === 'git' && selectedProject && props.nativeConversationClient ? (
+        {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && activeProjectSection === 'git' && selectedProject && props.nativeConversationClient ? (
           <section className="workspace-view workspace-view-project-git">
             <ProjectGitWorkbench project={selectedProject} client={props.nativeConversationClient} language={appShellSettings.appLanguage} />
           </section>
         ) : null}
 
-        {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeProjectSection === 'project-settings' ? (
+        {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && activeProjectSection === 'project-settings' ? (
           <section className="workspace-view workspace-view-project-settings" aria-label={codeWorkspaceCopy.projectSettingsAria}>
             <section className="workspace-detail-pane project-detail-pane" aria-label={codeWorkspaceCopy.detailAria}>
               {selectedProject ? (
@@ -723,7 +737,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             </section>
           </section>
         ) : null}
-        {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && (activeProjectSection === 'tasks' || activeProjectSection === 'sessions') ? (
+        {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && (activeProjectSection === 'tasks' || activeProjectSection === 'sessions') ? (
           <section
             className={`workspace-view ${activeProjectSection === 'tasks' ? 'workspace-view-project-tasks' : 'workspace-view-project-sessions'}`}
             aria-label={activeProjectSection === 'tasks' ? taskWorkspaceCopy.viewAria : sessionWorkspaceCopy.viewAria}
@@ -1894,18 +1908,32 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                         <span className="settings-row-field">
                           <input
                             aria-label={settingsWorkspaceCopy.runtime.timeoutSecondsAria}
-                            value={String(runtimeSettings.executionTimeoutSeconds)}
+                            type="number"
+                            min={1}
+                            max={315_360_000 / durationUnitSeconds(runtimeTimeoutUnit)}
+                            value={String(runtimeTimeoutValue)}
                             onChange={(event) => {
-                              const value = event.currentTarget.value;
-                              setRuntimeSettings((current) => ({
-                                ...current,
-                                executionTimeoutSeconds: normalizeRuntimeSettingNumber(value, current.executionTimeoutSeconds, 24 * 3600),
-                              }));
+                              const value = event.currentTarget.valueAsNumber;
+                              if (!Number.isInteger(value) || value < 1) return;
+                              setRuntimeSettings((current) => ({ ...current, executionTimeoutSeconds: Math.min(315_360_000, value * durationUnitSeconds(runtimeTimeoutUnit)) }));
                             }}
                           />
                         </span>
                         <span className="settings-row-action-rail">
-                          <span className="settings-action-meta">{settingsWorkspaceCopy.runtime.secondsUnit}</span>
+                          <select
+                            className="settings-action-meta runtime-timeout-unit-select"
+                            aria-label={appShellSettings.appLanguage === 'zh-CN' ? '执行超时单位' : 'Execution timeout unit'}
+                            value={runtimeTimeoutUnit}
+                            onChange={(event) => {
+                              const unit = event.currentTarget.value as RuntimeDurationUnit;
+                              setRuntimeSettings((current) => ({ ...current, executionTimeoutSeconds: Math.min(315_360_000, runtimeTimeoutValue * durationUnitSeconds(unit)) }));
+                            }}
+                          >
+                            <option value="seconds">{appShellSettings.appLanguage === 'zh-CN' ? '秒' : 'Seconds'}</option>
+                            <option value="minutes">{appShellSettings.appLanguage === 'zh-CN' ? '分钟' : 'Minutes'}</option>
+                            <option value="hours">{appShellSettings.appLanguage === 'zh-CN' ? '小时' : 'Hours'}</option>
+                            <option value="days">{appShellSettings.appLanguage === 'zh-CN' ? '天' : 'Days'}</option>
+                          </select>
                         </span>
                       </section>
                       <section className="settings-matrix-row runtime-advanced-row" aria-label={settingsWorkspaceCopy.runtime.advancedAria}>
@@ -2261,4 +2289,20 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       </section>
     </main>
   );
+}
+
+type RuntimeDurationUnit = 'seconds' | 'minutes' | 'hours' | 'days';
+
+function durationUnitSeconds(unit: RuntimeDurationUnit): number {
+  if (unit === 'days') return 86_400;
+  if (unit === 'hours') return 3_600;
+  if (unit === 'minutes') return 60;
+  return 1;
+}
+
+function durationUnitForSeconds(seconds: number): RuntimeDurationUnit {
+  if (seconds % 86_400 === 0) return 'days';
+  if (seconds % 3_600 === 0) return 'hours';
+  if (seconds % 60 === 0) return 'minutes';
+  return 'seconds';
 }

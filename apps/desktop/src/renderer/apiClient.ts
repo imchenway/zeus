@@ -32,6 +32,7 @@ export type {
 } from '@zeus/shared';
 
 export type * from './features/codex/codexContracts.js';
+export type * from './features/automations/automationContracts.js';
 export type * from './features/conversations/conversationContracts.js';
 export type * from './features/dashboard/dashboardContracts.js';
 export type * from './features/git/gitContracts.js';

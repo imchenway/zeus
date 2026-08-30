@@ -50,6 +50,9 @@ export interface ZeusConversationRecord {
   nativeSessionId: string | null;
   nativeSessionPath: string | null;
   capabilitySnapshotId: string | null;
+  originKind: ConversationOriginKind;
+  listingScope: ConversationListingScope;
+  automationRunId: string | null;
 }
 
 export type ConversationTransportKind = 'legacy_cli' | 'codex_native';
@@ -59,6 +62,8 @@ export type ConversationProviderState = 'unbound' | 'binding' | 'ready' | 'activ
 export type ConversationPermissionMode = 'read-only' | 'auto' | 'full-access';
 export type ConversationCollaborationMode = 'default' | 'plan';
 export type ConversationAttentionKind = 'none' | 'unread' | 'completed' | 'failed' | 'interrupted';
+export type ConversationOriginKind = 'ordinary' | 'automation';
+export type ConversationListingScope = 'ordinary' | 'automation_inbox';
 export type ConversationGoalStatus = 'active' | 'paused' | 'blocked' | 'usageLimited' | 'budgetLimited' | 'complete';
 export type ConversationGoalEventKind = 'created' | 'edited' | 'paused' | 'resumed' | 'blocked' | 'usage_limited' | 'budget_limited' | 'completed' | 'cleared';
 
@@ -190,6 +195,9 @@ export interface CreateConversationInput {
   nativeSessionId?: string;
   nativeSessionPath?: string;
   capabilitySnapshotId?: string;
+  originKind?: ConversationOriginKind;
+  listingScope?: ConversationListingScope;
+  automationRunId?: string;
 }
 
 export interface AppendConversationMessageInput {
@@ -523,7 +531,8 @@ export class ProviderEventReceiptRepository {
 const selectConversationFields = `id, project_id, task_id, session_id, title, summary, status, stage, stage_updated_at, created_at, updated_at, archived,
   transport_kind, provider_id, provider_thread_id, provider_thread_path, provider_model, provider_state,
   provider_protocol_version, provider_binary_version, legacy_source_conversation_id, provider_settings_json, provider_token_usage_json, permission_mode, collaboration_mode, next_turn_settings_json, completion_unread, attention_kind, attention_revision, attention_turn_id, attention_updated_at, workspace_id, environment_id,
-  agent_kind, agent_transport, model_source_id, model_id, native_session_id, native_session_path, capability_snapshot_id`;
+  agent_kind, agent_transport, model_source_id, model_id, native_session_id, native_session_path, capability_snapshot_id,
+  origin_kind, listing_scope, automation_run_id`;
 const selectConversationMessageFields = `id, conversation_id, role, content, source, metadata_json, created_at,
   provider_thread_id, provider_turn_id, provider_item_id, client_message_id`;
 const selectAliasedConversationMessageFields = `message.id, message.conversation_id, message.role, message.content, message.source, message.metadata_json, message.created_at,
@@ -750,13 +759,17 @@ export class ConversationRepository {
       nativeSessionId: input.nativeSessionId ?? input.providerThreadId ?? null,
       nativeSessionPath: input.nativeSessionPath ?? input.providerThreadPath ?? null,
       capabilitySnapshotId: input.capabilitySnapshotId ?? null,
+      originKind: input.originKind ?? 'ordinary',
+      listingScope: input.listingScope ?? 'ordinary',
+      automationRunId: input.automationRunId ?? null,
     };
     this.db.execute(
       `INSERT INTO conversations (id, project_id, task_id, workspace_id, environment_id, session_id, title, summary, status, stage, stage_updated_at, created_at, updated_at, archived,
         transport_kind, provider_id, provider_thread_id, provider_thread_path, provider_model, provider_state,
         provider_protocol_version, provider_binary_version, legacy_source_conversation_id, provider_settings_json, provider_token_usage_json, permission_mode, collaboration_mode, next_turn_settings_json, completion_unread,
-        agent_kind, agent_transport, model_source_id, model_id, native_session_id, native_session_path, capability_snapshot_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
+        agent_kind, agent_transport, model_source_id, model_id, native_session_id, native_session_path, capability_snapshot_id,
+        origin_kind, listing_scope, automation_run_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         record.id,
         record.projectId,
@@ -792,6 +805,9 @@ export class ConversationRepository {
         record.nativeSessionId,
         record.nativeSessionPath,
         record.capabilitySnapshotId,
+        record.originKind,
+        record.listingScope,
+        record.automationRunId,
       ],
     );
     syncConversationStage(this.db, record.id, timestamp);
@@ -1315,13 +1331,16 @@ export class ConversationRepository {
 
   /** 侧边栏状态聚合只读取会话主记录，不加载消息正文。 */
   listUnarchivedRecords(): ZeusConversationRecord[] {
-    return this.db.select<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE archived = 0 ORDER BY updated_at DESC, id DESC`).map(mapConversationRow);
+    return this.db.select<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE archived = 0 AND listing_scope = 'ordinary' ORDER BY updated_at DESC, id DESC`).map(mapConversationRow);
   }
 
   /** 会话选择列表只读取主记录，避免为每条会话加载完整消息正文。 */
   listRecordsByProject(projectId: string, options: ConversationRecordListOptions = {}): ZeusConversationRecord[] {
     return this.db
-      .select<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE project_id = ? AND archived = ? ORDER BY stage_updated_at DESC, created_at DESC, id DESC`, [projectId, options.archived === true ? 1 : 0])
+      .select<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE project_id = ? AND archived = ? AND listing_scope = 'ordinary' ORDER BY stage_updated_at DESC, created_at DESC, id DESC`, [
+        projectId,
+        options.archived === true ? 1 : 0,
+      ])
       .map(mapConversationRow);
   }
 
@@ -1385,7 +1404,7 @@ export class ConversationRepository {
     const archived = options.archived === true;
     const allRows = this.db.select<DbConversationRow>(
       `SELECT ${selectConversationFields}
-       FROM conversations WHERE project_id = ${toSqlStringLiteral(projectId)} AND archived = ${archived ? 1 : 0} ORDER BY updated_at DESC, id DESC`,
+       FROM conversations WHERE project_id = ${toSqlStringLiteral(projectId)} AND archived = ${archived ? 1 : 0} AND listing_scope = 'ordinary' ORDER BY updated_at DESC, id DESC`,
     );
     const matchedRows = allRows.filter((row) => {
       if (!query) return true;
@@ -2964,6 +2983,9 @@ interface DbConversationRow {
   native_session_id: string | null;
   native_session_path: string | null;
   capability_snapshot_id: string | null;
+  origin_kind: ConversationOriginKind;
+  listing_scope: ConversationListingScope;
+  automation_run_id: string | null;
 }
 
 interface DbConversationMessageRow {
@@ -3192,6 +3214,9 @@ function mapConversationRow(row: DbConversationRow): ZeusConversationRecord {
     nativeSessionId: row.native_session_id,
     nativeSessionPath: row.native_session_path,
     capabilitySnapshotId: row.capability_snapshot_id,
+    originKind: assertEnum(row.origin_kind, ['ordinary', 'automation'] as const, 'conversation origin kind'),
+    listingScope: assertEnum(row.listing_scope, ['ordinary', 'automation_inbox'] as const, 'conversation listing scope'),
+    automationRunId: row.automation_run_id,
   };
 }
 

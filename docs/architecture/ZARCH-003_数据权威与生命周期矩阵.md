@@ -59,7 +59,7 @@ Zeus 的恢复边界必须拆成五个互不冒充的事实域：Zeus 业务 SQL
 
 ## SQLite 逐表矩阵
 
-下面列出当前代码创建的 117 张表。`不可`表示不能从其他本地事实无损重建；`条件`表示只有保留了指定 Provider 历史、资产或源仓库才能重建。SQLite 全库快照会物理包含全部表；标为 `B-NONE` 的表在逻辑导出、分层备份和未来拆库中可以排除。
+下面列出当前代码创建的 126 张表。`不可`表示不能从其他本地事实无损重建；`条件`表示只有保留了指定 Provider 历史、资产或源仓库才能重建。SQLite 全库快照会物理包含全部表；标为 `B-NONE` 的表在逻辑导出、分层备份和未来拆库中可以排除。
 
 ### 存储平台、集成与运行适配器
 
@@ -125,6 +125,15 @@ Zeus 的恢复边界必须拆成五个互不冒充的事实域：Zeus 业务 SQL
 | `digital_employee_automations` | 工作管理 | `Z/E` 触发规则与耐久游标 | 不可 | `T3/T4` | `B-DB` | 用户配置；删除先停用，保留历史引用 | 所有规则默认停用；不得按当前任务或时间猜测补跑 |
 | `digital_employee_executions` | 工作管理 | `Z/E` 指派、配置快照、租约与交付状态 | 不可；会话或 Git 终态不能反推出当时授权 | `T3` | `B-DB`，随命令回执和任务历史 | 执行状态机；活动、待交付或结果未知时禁删 | 缺失时不自动续派发、提交、推送、合入、部署或完结任务，要求人工对账 |
 | `digital_employee_event_receipts` | 工作管理 | `E` 项目事件消费去重 | 不可 | `T3`，至少覆盖事件与自动化恢复窗口 | `B-DB` | 仅自动化消费者按终态和水位成组清理 | 回执缺失时停止对应规则自动消费，禁止把重复风险当作新事件继续执行 |
+| `automation_tasks` | 工作管理 | `Z` 顶级自动化当前定义 | 不可 | `T4` | `B-DB` | 用户配置；删除先停用并保留运行引用 | 所有自动触发停止；不得从会话或调度点反推配置 |
+| `automation_task_revisions` | 工作管理 | `Z/E` 冻结配置与目标快照 | 不可 | `T3/T4` | `B-DB` | 追加写；被运行引用时禁删 | 无法证明历史运行的模型、权限、提示词和能力绑定 |
+| `automation_task_targets` | 工作管理 | `Z` 自动化与项目目标关系 | 不可 | `T4` | `B-DB` | 随定义修订原子替换 | 停止派发，不按项目名或路径猜测目标 |
+| `automation_runs` | 工作管理 | `Z/E` 运行、队列、终态与收件箱事实 | 不可 | `T3`，未读、未知和变更保留可延长 | `B-DB` | 只能由保留策略在无 hold 时成组清理 | 禁止从 Provider 终态猜测队列或重发；要求人工对账 |
+| `automation_run_attempts` | 工作管理 | `E` 派发尝试与外部写水位 | 不可 | `T3` | `B-DB` | 随运行审计成组清理 | 写出结果无法证明时进入 `outcome_unknown`，禁止自动重试 |
+| `automation_trigger_receipts` | 工作管理 | `E` 调度点和事件触发去重 | 不可 | `T3`，至少覆盖补跑与恢复窗口 | `B-DB` | 调度 owner 按运行终态与水位清理 | 回执缺失时停止自动消费，不把重复风险当新触发 |
+| `automation_causal_chain_members` | 工作管理 | `E` 事件因果链循环门禁 | 不可 | `T3` | `B-DB` | 随链内运行审计成组清理 | 事件链触发暂停，禁止在缺少因果证据时继续级联 |
+| `automation_full_access_grants` | 工作管理 | `Z` 与配置修订绑定的持续授权 | 不可 | `T3/T4` | `B-DB`，跨设备恢复按安全策略失效 | 用户显式授权、撤销或配置变更 | 缺失、修订不匹配或跨设备均按未授权阻塞 |
+| `automation_notification_outbox` | 工作管理 | `E` 终态系统通知派发证据 | 不可 | `T3` | `B-DB` | 通知 owner 在已送达且过审计窗口后清理 | 收件箱仍是终态事实；通知标记缺口但不重运行任务 |
 
 ### 会话编排
 
@@ -205,7 +214,7 @@ Zeus 的恢复边界必须拆成五个互不冒充的事实域：Zeus 业务 SQL
 
 ## 独立派生数据库逐表矩阵
 
-下列 11 张表创建在 create-only `*.index.candidate.db` / `*.cache.candidate.db`，通过核验后可由独立 runtime 提升为活动 `index.db/cache.db`。它们不计入上面 117 张 Core 表，也不属于 `B-DB` 核心一致性组。每个库必须携带 source identity、generation、publication state 和 event waterline；校验失败、来源漂移、损坏或丢失时整库丢弃并后台重建，绝不能反向覆盖 Core。
+下列 11 张表创建在 create-only `*.index.candidate.db` / `*.cache.candidate.db`，通过核验后可由独立 runtime 提升为活动 `index.db/cache.db`。它们不计入上面 126 张 Core 表，也不属于 `B-DB` 核心一致性组。每个库必须携带 source identity、generation、publication state 和 event waterline；校验失败、来源漂移、损坏或丢失时整库丢弃并后台重建，绝不能反向覆盖 Core。
 
 | 表 | Owner | 级别 | 可重建性 | 保留期 | 备份 | 删除权限 | 恢复或缺失降级 |
 | --- | --- | --- | --- | --- | --- | --- | --- |

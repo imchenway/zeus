@@ -278,7 +278,14 @@ export function migrateImSchema(db: ZeusDatabasePort): void {
       )
     `);
     db.execute(`CREATE INDEX IF NOT EXISTS idx_im_connection_logs_recent ON im_connection_logs(connection_id, occurred_at DESC)`);
-    if (!existing) db.execute(`INSERT INTO schema_migrations (migration_id, checksum, applied_at) VALUES (?, ?, ?)`, [imSchemaMigrationId, checksum, new Date().toISOString()]);
+    if (!existing) {
+      db.execute(`INSERT INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)`, [
+        imSchemaMigrationId,
+        '新增 IM 连接、可信端点、配对、会话绑定、入站回执、同步游标、动作能力与诊断日志',
+        checksum,
+        new Date().toISOString(),
+      ]);
+    }
   });
 }
 
