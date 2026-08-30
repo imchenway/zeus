@@ -666,7 +666,14 @@ export class ImTelegramService {
 
   private async handlePairingStart(connection: ImConnectionRecord, update: TelegramUpdate, token: string, operationIdentity: string): Promise<void> {
     if (update.chatType !== 'private' || update.chatId !== update.userId) throw imError('ZEUS_IM_PRIVATE_CHAT_REQUIRED', '请只在该 Bot 的一对一私聊中完成配对。', 403);
-    if (this.options.repository.getTrustedEndpoint(connection.id)) throw imError('ZEUS_IM_ENDPOINT_ALREADY_PAIRED', '该 Bot 已绑定其他私聊用户；请回到 Zeus 桌面端重新配对。', 403);
+    const existingEndpoint = this.options.repository.getTrustedEndpoint(connection.id);
+    if (existingEndpoint) {
+      if (existingEndpoint.providerUserId !== String(update.userId) || existingEndpoint.providerChatId !== String(update.chatId)) {
+        throw imError('ZEUS_IM_ENDPOINT_ALREADY_PAIRED', '该 Bot 已绑定其他私聊用户；请回到 Zeus 桌面端重新配对。', 403);
+      }
+      await this.sendPairingWelcome(connection, update.chatId, `${operationIdentity}:already-paired`);
+      return;
+    }
     const consumed = this.options.repository.consumePairing({
       tokenHash: hashSecret(token),
       providerUserId: String(update.userId),
@@ -677,12 +684,21 @@ export class ImTelegramService {
     if (!consumed || consumed.connection.id !== connection.id) throw imError('ZEUS_IM_PAIRING_INVALID', '配对码无效、已过期或已使用；请在 Zeus 桌面端重新生成。', 403);
     this.pairingPlaintext.delete(this.options.repository.getLatestPairing(connection.id)?.id ?? '');
     this.options.repository.appendLog({ connectionId: connection.id, level: 'info', event: 'pairing.completed', message: '已绑定一个 Telegram 私聊可信端点。', now: this.nowIso() });
-    await this.sendTracked(
-      connection,
-      update.chatId,
-      `已安全绑定到 Zeus 项目「${this.options.projects.getById(connection.projectId)?.name ?? connection.projectId}」。\n\n发送消息开始对话，或发送 /help 查看可用命令。`,
-      `${operationIdentity}:paired`,
-    );
+    await this.sendPairingWelcome(connection, update.chatId, `${operationIdentity}:paired`);
+  }
+
+  private async sendPairingWelcome(connection: ImConnectionRecord, chatId: number, operationIdentity: string): Promise<void> {
+    try {
+      await this.sendTracked(connection, chatId, `已安全绑定到 Zeus 项目「${this.options.projects.getById(connection.projectId)?.name ?? connection.projectId}」。\n\n发送消息开始对话，或发送 /help 查看可用命令。`, operationIdentity);
+    } catch (error) {
+      this.options.repository.appendLog({
+        connectionId: connection.id,
+        level: 'warning',
+        event: 'pairing.welcome_delivery_unconfirmed',
+        message: `${errorCode(error)}: ${boundedError(error, this.options.redactSensitiveText)}`,
+        now: this.nowIso(),
+      });
+    }
   }
 
   private requireTrustedUpdate(connection: ImConnectionRecord, update: TelegramUpdate): ImTrustedEndpointRecord {
@@ -702,11 +718,11 @@ export class ImTelegramService {
       await this.handlePendingTextAction(connection, endpoint, update, pendingText, operationIdentity);
       return;
     }
-    const preset = this.resolvePreset(connection.projectId, connection.agentPreset, connection.id);
-    if (command?.name === 'help') {
-      await this.sendTracked(connection, update.chatId, helpText(), `${operationIdentity}:help`);
+    if (command?.name === 'start' || command?.name === 'help') {
+      await this.sendTracked(connection, update.chatId, command.name === 'start' ? `当前私聊已安全绑定。\n\n${helpText()}` : helpText(), `${operationIdentity}:${command.name}`);
       return;
     }
+    const preset = this.resolvePreset(connection.projectId, connection.agentPreset, connection.id);
     if (command?.name === 'new') {
       this.options.repository.clearBinding(connection.id, endpoint.id);
       if (!command.rest) {
@@ -1297,7 +1313,7 @@ function parsePairingStart(text: string): string | null {
 }
 
 interface ImParsedCommand {
-  name: 'help' | 'new' | 'conversations' | 'steer' | 'stop' | 'continue' | 'tasks' | 'task';
+  name: 'start' | 'help' | 'new' | 'conversations' | 'steer' | 'stop' | 'continue' | 'tasks' | 'task';
   rest: string;
 }
 
@@ -1306,7 +1322,7 @@ function parseImCommand(text: string): ImParsedCommand | null {
   if (!trimmed.startsWith('/')) return null;
   const [raw = '', ...parts] = trimmed.split(/\s+/u);
   const name = raw.slice(1).split('@')[0]?.toLowerCase();
-  if (!name || !['help', 'new', 'conversations', 'steer', 'stop', 'continue', 'tasks', 'task'].includes(name)) throw imError('ZEUS_IM_COMMAND_UNSUPPORTED', '未知 IM 命令。发送 /help 查看可用命令。', 400);
+  if (!name || !['start', 'help', 'new', 'conversations', 'steer', 'stop', 'continue', 'tasks', 'task'].includes(name)) throw imError('ZEUS_IM_COMMAND_UNSUPPORTED', '未知 IM 命令。发送 /help 查看可用命令。', 400);
   return { name: name as ImParsedCommand['name'], rest: parts.join(' ').trim() };
 }
 
@@ -1318,6 +1334,7 @@ function applyPresetPrompt(preset: ImTelegramPresetSnapshot, content: string): s
 function helpText(): string {
   return [
     'Zeus IM 命令',
+    '/start — 查看当前绑定状态及帮助',
     '/new [消息] — 新建会话',
     '/conversations — 切换项目历史会话',
     '/steer <消息> — 追加当前轮次',

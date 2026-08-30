@@ -117,3 +117,11 @@ Telegram 只作为受认证的远程入口。入站消息、任务操作和交�
 - 静态与构建门禁为 `pnpm lint`、`pnpm typecheck`、`pnpm build`、`pnpm package:mac`。
 - 真实运行只允许独立身份 `Zeus Test.app`（`dev.hypha.zeus.test`）和本任务独立 `ZEUS_USER_DATA_DIR`；构建、打包、SQLite 探针或 fake Telegram 不能替代真实 GUI / Provider / Telegram 结果。
 - 如果没有可用于验收的测试 Bot Token 或测试身份被其他任务占用，必须保留真实 Telegram / GUI 未验缺口，不得冒充完成。
+
+## 真实 Telegram 配对回执修复（2026-08-30）
+
+- 用户首次通过手机相机扫描二维码并在 `@HyphaZeusBot` 私聊点击 Start 后，Telegram 收到“这条 Telegram 请求未能完成”与“未知 IM 命令”两条提示。对正式库只读核对确认：配对已于 14:16:33 成功消费并建立可信端点，连接状态已经是 `active`；失败的是配对成功回执的 `sendMessage`，其网络结果为 `ZEUS_TELEGRAM_COMMAND_OUTCOME_UNKNOWN`。随后 Telegram 发送的不带参数 `/start` 被普通命令解析器拒绝，重复打开原深链则命中“端点已绑定”。本轮未修改正式数据，也未关闭或替换正在运行的正式应用。
+- 根因是配对状态变更与成功回执投递处于同一异常边界：可信端点已经耐久建立后，回执网络结果未知仍向上抛出，导致入站 receipt 被误记为失败并尝试发送通用失败提示。该提示不代表配对失败，但会让用户得到相反结论。
+- 修复后，配对成功状态不再被欢迎回执的投递失败反向覆盖；回执失败只写入脱敏连接日志 `pairing.welcome_delivery_unconfirmed`，继续保留外发结果未知时不自动重试的边界。同一可信私聊重复打开含参数深链按已完成配对幂等处理，其他用户仍失败关闭；可信私聊中的无参数 `/start` 返回绑定状态与帮助，不再进入未知命令。
+- 配对页提示从“使用手机 Telegram 扫码”改为“使用手机相机扫码，在 Telegram 中打开”，避免误导用户寻找 Telegram 内部扫码入口。
+- 验证通过：相关文件 Prettier、`git diff --check`、`pnpm lint`、`pnpm typecheck`（126 张 Core 表、11 张辅助表架构治理通过）、`pnpm build` 和 `pnpm package:mac`。打包仅生成测试身份 `Zeus Test.app`，bundle ID 为 `dev.hypha.zeus.test`，deep/strict codesign 通过；构建仍只有既有 `markstream-react` Rolldown 注解与大 chunk 警告。本轮没有启动测试包、没有把修复安装进正式应用，也没有重新执行修复后的真实 Telegram / GUI 往返，因此运行复验缺口继续保留。
