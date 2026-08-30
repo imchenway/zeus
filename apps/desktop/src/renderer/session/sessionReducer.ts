@@ -22,6 +22,7 @@ import type {
   NativeUnifiedUsageSnapshot,
   TransportState,
 } from './sessionTypes.js';
+import { isAssistantDeliverableItem } from './sessionTypes.js';
 import type { ZeusBrowserComment, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { type ConversationContextDraft, emptyConversationContextDraft, type TaskPushMessageLayout } from '@zeus/shared';
 import { mergeConversationModelContentV2, reconcileConversationHistoryCache } from './conversationSnapshotV2Adapter.js';
@@ -645,6 +646,9 @@ const boundedProcessItemTypes = new Set(['commandexecution', 'command', 'mcptool
 
 function shouldPreserveBoundedTranscriptItem(item: NativeSessionItemBuffer, activeTurnIdentities: ReadonlySet<string>, preserveCachedHistory: boolean): boolean {
   if (item.optimistic) return false;
+  // resources 分页会为没有 Provider 正文 item 的交付物合成稳定条目。后续首屏权威
+  // 快照不重复携带 resources，不能因此把已取回的图片或文件从正文时间线删除。
+  if (typeof item.payload.v2SyntheticAssistantDeliverableItemId === 'string' && isAssistantDeliverableItem(item)) return true;
   const contentKind = stringValue(item.payload.v2ContentKind);
   if (contentKind === 'model_history') return preserveCachedHistory && isTerminalItemStatus(item.status);
   if (contentKind === 'active_item') return activeTurnIdentities.has(item.turnId);
