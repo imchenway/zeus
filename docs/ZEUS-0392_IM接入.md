@@ -199,3 +199,10 @@ Telegram 只作为受认证的远程入口。入站消息、任务操作和交�
 - 用户在真实 Telegram 中发送 `/start` 后能看到“任务列表 / 新建任务 / 会话列表 / 新建会话”四个首页按钮，但点击“任务列表”立即同时出现系统弹窗和聊天消息“该交互已不再受支持”。只读现场确认正式进程运行 `/Applications/Zeus.app` 0.3.84；其 `app.asar` 已包含 `home.tasks`、`home.new_conversation` 等首页 capability token，却不包含当前实现的“已打开任务列表”处理分支文本。因此这不是用户误操作或单纯按钮过期，而是正式包只带入口、没有带齐 callback 处理器的版本撕裂。
 - 当前任务分支 `e6f76ecb` 已包含首页 callback、任务创建和任务精确会话选择的完整处理器，但该提交没有安装到正在运行的正式应用；代码存在不等于线上已修复，仍需进入正式发布、安装与真实 Telegram 复验链路。
 - 同一句错误出现两次来自异常路径自身：callback 失败时先发送普通聊天错误，再调用 `answerCallbackQuery(showAlert=true)` 弹窗。现改为 callback 优先只弹一次；只有 callback 回答自身失败时才降级发送普通聊天消息。优点是避免重复噪声，同时保留 Telegram 无法显示 callback 弹窗时的可见兜底；代价是 callback 错误不再永久留在聊天历史中，需要依赖脱敏连接日志排障。
+
+## 正式发布集成（2026-08-31）
+
+- 用户明确授权“提交并发布”。发布集成以最新 `origin/main=4c83e3c9`（v0.3.84 发布记录）为基线，没有直接发布落后于主线的任务分支，也没有把共享测试分支的其他任务带入候选。
+- 主线已包含半成品入口提交 `5a3fa813`，并在 v0.3.83 阶段补过 `create/await_create` 解析与恢复；任务分支新增完整首页 callback、任务会话精确选择和单次错误反馈。`git merge-tree --write-tree` 预演准确报告服务文件与本文档冲突，集成时保留主线任务创建恢复和格式治理，并联合加入 `home.*`、`task.push_menu`、`task.push_existing` 与任务/会话身份校验，没有按任一侧整文件覆盖。
+- 首轮集成 `verify:publish` 发现两侧各自定义 `taskCreatePromptView`，TypeScript 以 `TS2393` 阻断候选。语义审计后保留支持附件、与“新建任务”交互文案一致的实现，移除被替代的旧实现；重新执行完整 `pnpm verify:publish` 通过，包括冲突残留、Git 空白、只读网络重试探针、Prettier、ESLint、126/11 架构治理、TypeScript 和生产构建。构建仍仅有既有 `markstream-react` Rolldown 注解与大 chunk 警告。
+- 上述门禁是集成候选的静态与构建证据，不等于真实 Telegram 已恢复；只有公开发布、安装新版本并重新发送 `/start` 生成新按钮后，才能复验首页、任务创建、精确会话选择与异常单次反馈。
