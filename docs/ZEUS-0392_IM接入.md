@@ -146,6 +146,7 @@ Telegram 只作为受认证的远程入口。入站消息、任务操作和交�
 ## 配对回执修复本地合入 main（2026-08-30）
 
 - 合入前本地 `main=1551239e`，其中保留 ZEUS-0387 冷会话恢复修复；任务来源为 `zeus/ZEUS-0392-im-03@e904207e`。两侧均从已公开发布的 `a801a046` 分叉，提交级共同修改文件为空，`git merge-tree --write-tree` 预演无冲突。
+- 任务合并提交 `da005f13` 创建后的最终审计中，`origin/main` 被外部流程推进为 `d446f215`（`chore(release): v0.3.81`，父提交同为 `1551239e`）。该提交只修改桌面包/根版本并新增 v0.3.81 发布说明，与 IM 修复共同修改文件为空；再次通过 `git merge-tree --write-tree` 预演后已本地合入，避免留下 ahead/behind 分叉。
 - `main` 工作区原有本任务文档的未提交 v0.3.80 发布记录。合入时只对该文件建立可恢复的命名 stash，完成 `--no-commit` 合并后恢复并逐段核对；最终文档同时保留发布门禁、公开发布、真实 Telegram 配对回执修复和本次合入记录，没有按 ours/theirs 整侧覆盖。
 - 实际 `main` 合并态验证通过：`pnpm lint`、`pnpm typecheck`（126 张 Core 表、11 张辅助表）、`pnpm build`、`pnpm package:mac`、`git diff --check` 与 `git diff --cached --check`。产物仅为 `dist/test/mac-arm64/Zeus Test.app`，bundle ID 为 `dev.hypha.zeus.test`，deep/strict codesign 通过，未生成生产身份 `Zeus.app`。
 - 本次授权只执行本地合入，不 push；没有启动测试包、替换正式应用或重新执行修复后的真实 Telegram / GUI 往返，运行复验缺口继续保留。
