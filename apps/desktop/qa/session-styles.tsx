@@ -2963,7 +2963,8 @@ function Zeus0388QaApp() {
           </button>
         </div>
         <output data-testid="zeus-0388-resource-evidence">
-          资源请求 {resourceRequests} 次 · 助手交付项 {deliverableItems.length} 个 · 权威对账后 {refreshedDeliverableItems.length} 个 · 调研报告 {reportFileProjected ? '可见' : '缺失'} · 普通过程图片未提升 {ordinaryImageViewProjected ? '失败' : '通过'}
+          资源请求 {resourceRequests} 次 · 助手交付项 {deliverableItems.length} 个 · 权威对账后 {refreshedDeliverableItems.length} 个 · 调研报告 {reportFileProjected ? '可见' : '缺失'} · 普通过程图片未提升{' '}
+          {ordinaryImageViewProjected ? '失败' : '通过'}
         </output>
         <output data-testid="zeus-0388-compose-evidence">
           {historyOnly ? '历史快照' : '交互模式'} · 首次切换 {historyTransitions} 次 · 发送 {submitCount} 次 · 配置变更 {settingsChanges} 次 · 输入附件 {visibleState.attachments.length} 个 · 门禁 {guard}

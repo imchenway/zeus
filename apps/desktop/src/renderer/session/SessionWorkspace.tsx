@@ -3441,9 +3441,7 @@ function historySessionHasActiveWork(state: NativeSessionState | null | undefine
   if (state.activeTurnId) return true;
   // conversationState 是 Renderer 派生展示态，冷历史恢复时可能短暂保留 starting_turn。
   // 输入门禁只接受队列、请求或轮次这些耐久权威，避免空闲会话被陈旧展示态永久锁住。
-  return [...(state.snapshot?.turns ?? []), ...Object.values(state.turnsByProviderId)].some(
-    (turn) => turn.status === 'running' || turn.status === 'dispatching' || turn.status === 'waiting',
-  );
+  return [...(state.snapshot?.turns ?? []), ...Object.values(state.turnsByProviderId)].some((turn) => turn.status === 'running' || turn.status === 'dispatching' || turn.status === 'waiting');
 }
 
 function resolveBrowserTargetWidth(layoutWidth: number, paneShare: number, expanded: boolean): number {
