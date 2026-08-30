@@ -169,3 +169,13 @@ Telegram 只作为受认证的远程入口。入站消息、任务操作和交�
 - Codex 任务已有历史会话时，通用 Runtime `run/continue` 不能替用户猜测要恢复哪一条会话；详情卡不展示一个必然失败的“继续”按钮，而是明确要求回桌面端选择精确会话，同时仍提供“推送到新会话”。优点是不会把新建上下文冒充为恢复旧上下文；代价是“选择历史会话并原地继续”的 Telegram 子流程尚未覆盖。
 - callback 后优先使用 Telegram `editMessageText` 更新原消息，新增 `im.telegram.message.edit` External Outbox 命令类型；消息正文、chat 和 message 身份只以摘要进入命令账本，随机 capability token 不进入命令输入。编辑写出后结果未知时继续禁止盲目重放；不具备编辑能力或缺失原消息身份时才降级为发送新卡片。
 - 验证通过相关文件 Prettier、`git diff --check`、Local Server 局部 TypeScript 检查、`pnpm lint`、`pnpm typecheck`、`pnpm --filter @zeus/telegram-adapter build`、`pnpm build` 和 `pnpm package:mac`；architecture governance 同时通过 126 张 Core 表和 11 张辅助表检查。构建仍只有既有 `markstream-react` Rolldown 注解与大 chunk 警告。打包仅生成 `dist/test/mac-arm64/Zeus Test.app`，`CFBundleIdentifier=dev.hypha.zeus.test`、显示名为 `Zeus Test`，deep/strict codesign 通过，`dist` 中没有生产身份 `Zeus.app`。本轮没有启动测试包、替换正式应用或操作正式 Telegram 数据，按钮布局、原消息编辑和真实 mutation 往返仍需在独立测试身份中验收，不能以静态或打包结果冒充完成。
+
+## Vibego 源码对照后的任务会话闭环（2026-08-30）
+
+- 用户要求回到 `/Users/david/hypha/tools/vibego` 的真实源码核对交互，而不是继续按命令机器人思路补按钮。Vibego 的有效链路是：任务列表消息直接承载筛选、分页、任务入口和创建入口（`bot.py:19243-19325`）；点击“推送到模型”后先选择现有会话或新建并行会话（`bot.py:24807-24889`）；任务详情通过视图栈恢复原列表/搜索位置（`bot.py:26891-27045`）。它的 `/start` 命令描述写成“打开任务概览”，实际处理器却只发送欢迎语（`bot.py:27442-27454`），因此只采用有源码闭环支撑的任务与会话语义，不照搬这处漂移。
+- 对照截图和 Zeus 代码后确认三个结构问题：第一，入口虽已缩短正文，但仍没有可见主动作；第二，任务列表虽可点进详情，却仍要求通过命令创建任务；第三，详情卡的“推送到当前会话”允许任意当前项目会话，随后只改 Telegram binding 的 `taskId`，没有证明目标会话本身属于该任务，存在把 A 任务投递到 B 任务会话并制造错误上下文标识的风险。
+- `/start` 和配对成功欢迎页改为同一操作首页：展示绑定项目、当前会话和可识别的任务上下文，并提供“任务列表 / 新建任务 / 会话列表 / 新建会话”四个按钮。优点是用户完成配对后立即知道下一步，不需要先阅读整本命令手册；代价是普通导航也使用 10 分钟一次性 capability，过期后需重新发送 `/start`。
+- 任务列表增加“新建任务”。点击后在同一条消息进入标题输入态，可附带任务附件；等待输入 capability 支持进程恢复，发送其他命令或点击取消会清除待办。优点是列表到创建到详情形成手机端连续闭环；代价是首期仍只用标题创建，复杂类型、关系和阶段继续由桌面端治理。
+- 详情页把两个立即推送按钮收口为“处理此任务”。下一步先选择“新建任务会话”或该任务自己的、未归档的精确历史会话；任意项目会话和其他任务会话不再作为候选，旧 `/task push-current` 也增加相同身份校验。优点是任务、会话和 Telegram binding 三者身份一致，不会静默污染其他上下文；代价是推送多一步目标选择，且最多展示最近 8 个可用任务会话。
+- 本轮以用户提供的真实 Telegram 截图和 Vibego 源码完成交互审计；截图能确认入口层级、操作不可发现和长消息问题，不能单独证明 Telegram 客户端的读屏顺序、焦点或动态字号表现。真实按钮渲染、进程恢复和任务/会话往返仍必须由独立 `Zeus Test.app` 与测试 Bot 验收。
+- 验证通过相关文件 Prettier、`git diff --check`、`pnpm lint`、`pnpm typecheck`、`pnpm --filter @zeus/telegram-adapter build`、`pnpm build` 和 `pnpm package:mac`；architecture governance 同时通过 126 张 Core 表和 11 张辅助表检查。打包仅生成 `dist/test/mac-arm64/Zeus Test.app`，`CFBundleIdentifier=dev.hypha.zeus.test`、显示名为 `Zeus Test`，deep/strict codesign 通过，`dist` 中没有生产身份 `Zeus.app`。构建仍只有既有 `markstream-react` Rolldown 注解与大 chunk 警告；本轮没有启动应用、替换正式应用或操作正式 Telegram 数据，运行验收缺口继续保留。
