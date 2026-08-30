@@ -1435,6 +1435,7 @@ function MessageDeliveryOutcomeFeedback(props: {
   const recoveredUnsent = pausedReason === 'recovered_unsent' && deliveryError.code === 'ZEUS_RECOVERED_UNSENT_CONFIRMATION_REQUIRED';
   const modelWindowUnavailable = deliveryError.code === 'ZEUS_CONTEXT_MODEL_WINDOW_UNAVAILABLE';
   const interactionResumeTimedOut = interactionResponseRecovery && deliveryError.code === 'ZEUS_CODEX_RPC_TIMEOUT' && deliveryError.message.includes('thread/resume');
+  const genericQueueRecoveryRequired = pausedReason === 'recovery_required' && !interactionResponseRecovery && !providerStopRecoveryFailed;
   const submissionId = props.submissionId ?? (typeof props.item.payload.submissionId === 'string' ? props.item.payload.submissionId : props.item.localItemId);
   const runAction = (action: 'recover' | 'retry' | 'cancel', operation: (() => void | Promise<void>) | undefined) => {
     if (!operation || busyAction) return;
@@ -1512,6 +1513,12 @@ function MessageDeliveryOutcomeFeedback(props: {
           </button>
           <button type="button" disabled={busyAction !== null || !submissionId} onClick={() => runAction('cancel', submissionId && props.onCancelQueuedSubmission ? () => props.onCancelQueuedSubmission?.(submissionId) : undefined)}>
             {props.language === 'zh-CN' ? '取消消息' : 'Cancel message'}
+          </button>
+        </div>
+      ) : genericQueueRecoveryRequired ? (
+        <div className="session-message-delivery-actions">
+          <button type="button" disabled={busyAction !== null || !props.onRecoverQueue} onClick={() => runAction('recover', props.onRecoverQueue)}>
+            {props.language === 'zh-CN' ? '重新恢复' : 'Restore again'}
           </button>
         </div>
       ) : recoveredUnsent || modelWindowUnavailable ? (

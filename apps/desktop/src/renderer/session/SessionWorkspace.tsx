@@ -3021,6 +3021,11 @@ function NewConversationComposer(props: {
           onRestorePastedText={inputResources.restorePastedText}
         />
       )}
+      {localError ? (
+        <p className="session-new-conversation-error" role="status">
+          {localError}
+        </p>
+      ) : null}
       <div className="session-composer-input-frame" data-goal-input={goalInputActive ? 'true' : 'false'}>
         {props.owner?.kind === 'project' && props.projects?.length ? (
           <NewConversationExecutionContext

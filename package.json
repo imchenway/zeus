@@ -32,6 +32,8 @@
     "verify:subagent-detail": "tsx scripts/verify-subagent-detail-behavior.ts",
     "verify:conversation-command": "tsx scripts/verify-conversation-command-behavior.ts",
     "verify:conversation-dispatch-command": "tsx scripts/verify-conversation-dispatch-command-behavior.ts",
+    "verify:conversation-queue-dispatch": "tsx scripts/verify-conversation-queue-dispatch-scheduler.ts",
+    "verify:conversation-queue-restart": "tsx scripts/verify-conversation-queue-restart-recovery.ts",
     "verify:integration-command": "tsx scripts/verify-integration-command-behavior.ts",
     "verify:workspace-git-command": "tsx scripts/verify-workspace-git-command-behavior.ts",
     "verify:memory-command": "tsx scripts/verify-memory-command-behavior.ts",
