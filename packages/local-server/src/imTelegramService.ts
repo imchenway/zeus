@@ -954,9 +954,11 @@ export class ImTelegramService {
   }
 
   private async sendConversationList(connection: ImConnectionRecord, endpoint: ImTrustedEndpointRecord, chatId: number, operationIdentity: string): Promise<void> {
+    const currentConversationId = this.options.repository.getBinding(connection.id, endpoint.id)?.conversationId;
     const conversations = this.options.operations
       .listConversations(connection.projectId)
       .filter((conversation) => !conversation.archived)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
       .slice(0, 8);
     if (conversations.length === 0) {
       await this.sendTracked(connection, chatId, '当前项目还没有会话。发送普通消息即可创建。', `${operationIdentity}:empty`);
@@ -964,7 +966,7 @@ export class ImTelegramService {
     }
     const keyboard = conversations.map((conversation) => [
       {
-        text: conversation.title.slice(0, 48),
+        text: `${conversation.id === currentConversationId ? '当前 · ' : ''}${compactConversationTitle(conversation.title)}${conversation.taskId ? ' · 任务' : ' · 项目'}`.slice(0, 64),
         callbackData: this.createCapability(connection, endpoint, 'conversation.switch', 'conversation', conversation.id, null),
       },
     ]);
@@ -1007,6 +1009,25 @@ export class ImTelegramService {
     if (!token) throw imError('ZEUS_IM_CALLBACK_INVALID', '交互按钮无效。', 400);
     const capability = this.options.repository.consumeActionCapability(hashSecret(token), { connectionId: connection.id, endpointId: endpoint.id, now: this.nowIso() });
     if (!capability) throw imError('ZEUS_IM_CALLBACK_EXPIRED', '该按钮已过期、已使用或不属于当前用户。', 409);
+    if (capability.targetKind === 'project' && capability.targetId === connection.projectId) {
+      if (capability.actionKind === 'home.tasks') {
+        const view = this.taskListView(connection, endpoint, 1);
+        await this.answerCallback(update, '已打开任务列表');
+        await this.replaceTaskMessage(connection, update, view, `${operationIdentity}:home-tasks`);
+        return;
+      }
+      if (capability.actionKind === 'home.conversations') {
+        await this.answerCallback(update, '已打开会话列表');
+        await this.sendConversationList(connection, endpoint, update.chatId, `${operationIdentity}:home-conversations`);
+        return;
+      }
+      if (capability.actionKind === 'home.new_conversation') {
+        this.options.repository.clearBinding(connection.id, endpoint.id);
+        await this.answerCallback(update, '已切换到新会话');
+        await this.sendTracked(connection, update.chatId, '已切换到新会话。请发送第一条消息。', `${operationIdentity}:home-new-conversation`);
+        return;
+      }
+    }
     const taskAction = parseTaskCapabilityAction(capability.actionKind);
     if (taskAction) {
       await this.handleTaskCallback(connection, endpoint, update, operationIdentity, capability, taskAction);
@@ -1192,6 +1213,12 @@ export class ImTelegramService {
       await this.replaceTaskMessage(connection, update, view, `${operationIdentity}:task-cancel-confirm`);
       return;
     }
+    if (action.kind === 'push_menu') {
+      const view = this.taskPushTargetView(connection, endpoint, task, action.page);
+      await this.answerCallback(update, '请选择任务会话');
+      await this.replaceTaskMessage(connection, update, view, `${operationIdentity}:task-push-menu`);
+      return;
+    }
     if (action.kind === 'push_new') {
       await this.answerCallback(update, '正在推送到新会话…');
       const preset = this.resolvePreset(connection.projectId, connection.agentPreset, connection.id);
@@ -1205,6 +1232,13 @@ export class ImTelegramService {
       const updated = await this.pushTaskToCurrentConversation(connection, endpoint, task, operationIdentity);
       const view = this.taskDetailView(connection, endpoint, updated, action.page, '已推送到当前会话。');
       await this.replaceTaskMessage(connection, update, view, `${operationIdentity}:task-pushed-current`);
+      return;
+    }
+    if (action.kind === 'push_existing') {
+      await this.answerCallback(update, '正在推送到所选任务会话…');
+      const updated = await this.pushTaskToExistingConversation(connection, endpoint, task, action.conversationId, operationIdentity);
+      const view = this.taskDetailView(connection, endpoint, updated, action.page, '已推送到所选任务会话，并已切换当前聊天绑定。');
+      await this.replaceTaskMessage(connection, update, view, `${operationIdentity}:task-pushed-existing`);
       return;
     }
     if (action.kind === 'control') {
@@ -1233,8 +1267,9 @@ export class ImTelegramService {
     navigation.push({ text: `${page}/${totalPages}`, callbackData: this.createCapability(connection, endpoint, `task.list.${page}`, 'task_list', connection.projectId, null) });
     if (page < totalPages) navigation.push({ text: '下一页 ›', callbackData: this.createCapability(connection, endpoint, `task.list.${page + 1}`, 'task_list', connection.projectId, null) });
     inlineKeyboard.push(navigation);
+    inlineKeyboard.push([{ text: '新建任务', callbackData: this.createCapability(connection, endpoint, `task.create.${page}`, 'task_list', connection.projectId, null) }]);
     return {
-      text: pageTasks.length === 0 ? '当前项目没有任务。\n\n创建任务：/task create <标题>' : `当前项目任务 · 共 ${tasks.length} 项\n点击下方任务查看详情和可用操作。`,
+      text: pageTasks.length === 0 ? '当前项目没有任务。\n点击下方按钮新建第一个任务。' : `当前项目任务 · 共 ${tasks.length} 项\n点击任务查看详情，或直接新建任务。`,
       inlineKeyboard,
     };
   }
@@ -1243,11 +1278,7 @@ export class ImTelegramService {
     const expectedRevision = interactionRevision(task.updatedAt);
     const conversationChoiceRequired = this.options.operations.taskRuntimeConversationChoiceRequired(task);
     const inlineKeyboard: ImTaskMessageView['inlineKeyboard'] = [];
-    const pushRow = [{ text: '推送到新会话', callbackData: this.createCapability(connection, endpoint, `task.push_new.${page}`, 'task', task.id, expectedRevision) }];
-    if (this.currentConversation(connection, endpoint)) {
-      pushRow.push({ text: '推送到当前会话', callbackData: this.createCapability(connection, endpoint, `task.push_current.${page}`, 'task', task.id, expectedRevision) });
-    }
-    inlineKeyboard.push(pushRow);
+    inlineKeyboard.push([{ text: '处理此任务', callbackData: this.createCapability(connection, endpoint, `task.push_menu.${page}`, 'task', task.id, expectedRevision) }]);
     const runtimeRow: Array<{ text: string; callbackData: string }> = [];
     if ((task.status === 'draft' || task.status === 'ready' || task.status === 'failed') && !conversationChoiceRequired) {
       runtimeRow.push({ text: '启动任务', callbackData: this.createCapability(connection, endpoint, `task.control.run.${page}`, 'task', task.id, expectedRevision) });
@@ -1269,9 +1300,47 @@ export class ImTelegramService {
     return {
       text: [
         taskDetail(task, this.taskStatusLabel(connection.projectId, task.managementStatus), notice),
-        ...(conversationChoiceRequired ? ['', '该任务已有 Codex 会话；继续已有上下文需要回桌面端选择精确会话，也可以在此推送到新会话。'] : []),
+        ...(conversationChoiceRequired ? ['', '该任务已有 Codex 会话。点击“处理此任务”可选择新建上下文或继续精确的历史任务会话；启动/继续 Runtime 仍需回桌面端完成会话选择。'] : []),
         '',
         '使用下方按钮操作；按钮 10 分钟内有效。',
+      ].join('\n'),
+      inlineKeyboard,
+    };
+  }
+
+  private taskCreatePromptView(connection: ImConnectionRecord, endpoint: ImTrustedEndpointRecord, page: number): ImTaskMessageView {
+    return {
+      text: ['新建任务', '', '请直接发送任务标题，也可以随消息附带文件。', '发送其他命令会取消本次新建；按钮和输入 10 分钟内有效。'].join('\n'),
+      inlineKeyboard: [[{ text: '取消新建', callbackData: this.createCapability(connection, endpoint, `task.list.${page}`, 'task_list', connection.projectId, null) }]],
+    };
+  }
+
+  private taskPushTargetView(connection: ImConnectionRecord, endpoint: ImTrustedEndpointRecord, task: ZeusTaskRecord, page: number): ImTaskMessageView {
+    const expectedRevision = interactionRevision(task.updatedAt);
+    const current = this.currentConversation(connection, endpoint);
+    const conversations = this.options.operations
+      .listConversations(connection.projectId)
+      .filter((conversation) => !conversation.archived && conversation.projectId === connection.projectId && conversation.taskId === task.id)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .slice(0, 8);
+    const inlineKeyboard: ImTaskMessageView['inlineKeyboard'] = [
+      [{ text: '新建任务会话', callbackData: this.createCapability(connection, endpoint, `task.push_new.${page}`, 'task', task.id, expectedRevision) }],
+      ...conversations.map((conversation) => [
+        {
+          text: `${current?.id === conversation.id ? '当前 · ' : '继续 · '}${compactConversationTitle(conversation.title)}`.slice(0, 64),
+          callbackData: this.createCapability(connection, endpoint, `task.push_existing.${page}.${encodeCapabilityValue(conversation.id)}`, 'task', task.id, expectedRevision),
+        },
+      ]),
+      [{ text: '‹ 返回任务详情', callbackData: this.createCapability(connection, endpoint, `task.view.${page}`, 'task', task.id, expectedRevision) }],
+    ];
+    return {
+      text: [
+        `${task.taskCode} · 处理此任务`,
+        '',
+        '请选择把任务发送到哪里：',
+        '- 新建任务会话：使用当前 Agent Preset 建立独立上下文。',
+        '- 继续历史任务会话：只展示属于该任务的可用会话。',
+        ...(conversations.length === 0 ? ['', '当前没有可继续的历史任务会话。'] : []),
       ].join('\n'),
       inlineKeyboard,
     };
@@ -1433,6 +1502,24 @@ export class ImTelegramService {
   ): Promise<ZeusTaskRecord> {
     const conversation = this.currentConversation(connection, endpoint);
     if (!conversation) throw imError('ZEUS_IM_CONVERSATION_UNAVAILABLE', '当前没有可用的绑定会话。请先推送到新会话，或用 /conversations 选择历史会话。', 409);
+    if (conversation.taskId !== task.id) {
+      throw imError('ZEUS_IM_TASK_CONVERSATION_MISMATCH', '当前会话不属于该任务。请从任务详情选择“处理此任务”，再选择新建或该任务自己的历史会话。', 409);
+    }
+    return this.pushTaskToExistingConversation(connection, endpoint, task, conversation.id, operationIdentity, content);
+  }
+
+  private async pushTaskToExistingConversation(
+    connection: ImConnectionRecord,
+    endpoint: ImTrustedEndpointRecord,
+    task: ZeusTaskRecord,
+    conversationId: string,
+    operationIdentity: string,
+    content = `请处理任务 ${task.taskCode}：${task.title}`,
+  ): Promise<ZeusTaskRecord> {
+    const conversation = this.options.operations
+      .listConversations(connection.projectId)
+      .find((candidate) => candidate.id === conversationId && candidate.projectId === connection.projectId && candidate.taskId === task.id && !candidate.archived);
+    if (!conversation) throw imError('ZEUS_IM_TASK_CONVERSATION_UNAVAILABLE', '所选会话已不可用或不属于该任务，请重新打开任务后选择。', 409);
     await this.options.operations.sendConversationMessage({
       projectId: connection.projectId,
       conversationId: conversation.id,
@@ -1443,7 +1530,7 @@ export class ImTelegramService {
     });
     const latestTaskEvent = this.options.operations.readTaskNotifications({ projectId: connection.projectId, taskId: task.id, afterSequence: 0 }).at(-1);
     this.options.repository.setDeliveryCursor(connection.id, `task:${task.id}`, latestTaskEvent?.sequence ?? 0, this.nowIso());
-    this.options.repository.setBinding({ connectionId: connection.id, endpointId: endpoint.id, conversationId: conversation.id, taskId: task.id, now: this.nowIso() });
+    this.options.repository.setBinding({ connectionId: connection.id, endpointId: endpoint.id, conversationId: conversation.id, taskId: conversation.taskId, now: this.nowIso() });
     return this.options.operations.getTask(task.id) ?? task;
   }
 
@@ -1805,7 +1892,7 @@ function taskHelpText(): string {
     '/task edit <任务> title|description <内容>',
     '/task status <任务> <项目状态>',
     '/task push <任务> [说明] — 推送到新会话',
-    '/task push-current <任务> [说明] — 推送到当前会话',
+    '/task push-current <任务> [说明] — 继续当前任务自己的会话',
     '/task run|pause|continue|cancel <任务>',
   ].join('\n');
 }
@@ -1834,6 +1921,11 @@ function compactTaskTitle(value: string): string {
   return normalized.length > 36 ? `${normalized.slice(0, 35)}…` : normalized;
 }
 
+function compactConversationTitle(value: string): string {
+  const normalized = value.replace(/\s+/gu, ' ').trim() || '未命名会话';
+  return normalized.length > 48 ? `${normalized.slice(0, 47)}…` : normalized;
+}
+
 function taskButtonLabel(task: ZeusTaskRecord, managementStatusLabel: string): string {
   return `${task.taskCode} · ${compactTaskTitle(task.title)} · ${managementStatusLabel}`.slice(0, 64);
 }
@@ -1846,24 +1938,28 @@ function taskControlProgressText(action: Extract<ImTaskCapabilityAction, { kind:
   return { run: '正在启动任务…', pause: '正在暂停任务…', continue: '正在继续任务…', cancel: '正在取消任务…' }[action];
 }
 
-function encodeTaskStatusId(statusId: string): string {
-  return Buffer.from(statusId, 'utf8').toString('base64url');
+function encodeCapabilityValue(value: string): string {
+  return Buffer.from(value, 'utf8').toString('base64url');
 }
 
-function decodeTaskStatusId(value: string): string | null {
+function decodeCapabilityValue(value: string): string | null {
   try {
     const decoded = Buffer.from(value, 'base64url').toString('utf8');
-    return decoded && encodeTaskStatusId(decoded) === value ? decoded : null;
+    return decoded && encodeCapabilityValue(decoded) === value ? decoded : null;
   } catch {
     return null;
   }
 }
 
+const encodeTaskStatusId = encodeCapabilityValue;
+const decodeTaskStatusId = decodeCapabilityValue;
+
 type ImTaskCapabilityAction =
   | {
-      kind: 'create' | 'await_create' | 'list' | 'view' | 'status_menu' | 'push_new' | 'push_current' | 'confirm_cancel';
+      kind: 'list' | 'create' | 'await_create' | 'view' | 'status_menu' | 'push_menu' | 'push_new' | 'push_current' | 'confirm_cancel';
       page: number;
     }
+  | { kind: 'push_existing'; conversationId: string; page: number }
   | { kind: 'edit' | 'await_edit'; field: 'title' | 'description'; page: number }
   | { kind: 'status'; statusId: string; page: number }
   | { kind: 'control'; action: 'run' | 'pause' | 'continue' | 'cancel'; page: number };
@@ -1871,9 +1967,24 @@ type ImTaskCapabilityAction =
 function parseTaskCapabilityAction(value: string): ImTaskCapabilityAction | null {
   const parts = value.split('.');
   if (parts[0] !== 'task') return null;
-  if (parts[1] === 'create' || parts[1] === 'await_create' || parts[1] === 'list' || parts[1] === 'view' || parts[1] === 'status_menu' || parts[1] === 'push_new' || parts[1] === 'push_current' || parts[1] === 'confirm_cancel') {
+  if (
+    parts[1] === 'list' ||
+    parts[1] === 'create' ||
+    parts[1] === 'await_create' ||
+    parts[1] === 'view' ||
+    parts[1] === 'status_menu' ||
+    parts[1] === 'push_menu' ||
+    parts[1] === 'push_new' ||
+    parts[1] === 'push_current' ||
+    parts[1] === 'confirm_cancel'
+  ) {
     const page = positiveSafeInteger(parts[2]);
     return page ? { kind: parts[1], page } : null;
+  }
+  if (parts[1] === 'push_existing') {
+    const page = positiveSafeInteger(parts[2]);
+    const conversationId = parts[3] ? decodeCapabilityValue(parts[3]) : null;
+    return page && conversationId ? { kind: 'push_existing', conversationId, page } : null;
   }
   if (parts[1] === 'edit' || parts[1] === 'await_edit') {
     const field = parts[2];
