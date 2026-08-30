@@ -17,6 +17,7 @@ import {
 } from '@zeus/shared';
 import {
   ImRepository,
+  type ImActionCapabilityRecord,
   type DigitalEmployeeRecord,
   type ImConnectionRecord,
   type ImTrustedEndpointRecord,
@@ -48,6 +49,10 @@ const interactionLifetimeMs = 10 * 60 * 1_000;
 const onlinePollWindowMs = 90 * 1_000;
 const synchronizationIntervalMs = 2_000;
 const telegramLongMessageLimit = 3_900;
+const telegramPollSuccessDelayMs = 50;
+const telegramPollFailureBaseDelayMs = 2_000;
+const telegramPollFailureMaximumDelayMs = 30_000;
+const telegramTaskPageSize = 8;
 const imChannels: ImSettingsSnapshot['channels'] = [
   { id: 'wechat', name: '微信', availability: 'unsupported' },
   { id: 'feishu', name: '飞书', availability: 'unsupported' },
@@ -66,7 +71,22 @@ interface ImInteractionDraft {
   answers: Record<string, string[]>;
 }
 
-type ImPendingTextAction = { kind: 'request_user_input'; conversationId: string; requestId: string; questionId: string; customOther: boolean } | { kind: 'plan_refinement'; conversationId: string; requestId: string };
+type ImPendingTextAction =
+  | { kind: 'request_user_input'; conversationId: string; requestId: string; questionId: string; customOther: boolean }
+  | { kind: 'plan_refinement'; conversationId: string; requestId: string }
+  | { kind: 'task_create'; page: number }
+  | { kind: 'task_edit'; taskId: string; field: 'title' | 'description'; page: number; expectedRevision: number };
+
+interface ImTaskManagementStatusOption {
+  id: string;
+  label: string | null;
+  terminal: boolean;
+}
+
+interface ImTaskMessageView {
+  text: string;
+  inlineKeyboard: Array<Array<{ text: string; callbackData: string }>>;
+}
 
 export interface ImTelegramPresetSnapshot {
   ref: ImAgentPresetRef;
@@ -125,6 +145,8 @@ export interface ImTelegramBridgeOperations {
   readTaskNotifications(input: { projectId: string; taskId: string; afterSequence: number }): ImTaskNotification[];
   readTaskAttachments(task: ZeusTaskRecord): ImDownloadedAttachment[];
   listTasks(projectId: string): ZeusTaskRecord[];
+  listTaskManagementStatuses(projectId: string): ImTaskManagementStatusOption[];
+  taskRuntimeConversationChoiceRequired(task: ZeusTaskRecord): boolean;
   getTask(taskId: string): ZeusTaskRecord | undefined;
   createTask(input: { projectId: string; title: string; attachments: ImDownloadedAttachment[]; operationIdentity: string }): Promise<ZeusTaskRecord>;
   updateTask(input: { task: ZeusTaskRecord; field: 'title' | 'description'; value: string; attachments: ImDownloadedAttachment[]; operationIdentity: string }): Promise<ZeusTaskRecord>;
@@ -135,10 +157,10 @@ export interface ImTelegramBridgeOperations {
 
 export class ImTelegramService {
   private pollingService: TelegramPollingService | undefined;
-  private pollingTimer: ReturnType<typeof setInterval> | undefined;
+  private pollingTimer: ReturnType<typeof setTimeout> | undefined;
   private synchronizationTimer: ReturnType<typeof setInterval> | undefined;
   private sender: TelegramMessageSender | undefined;
-  private pollInFlight = false;
+  private pollingGeneration = 0;
   private synchronizationInFlight = false;
   private readonly pairingPlaintext = new Map<string, string>();
   private readonly interactionDrafts = new Map<string, ImInteractionDraft>();
@@ -176,12 +198,14 @@ export class ImTelegramService {
   }
 
   async close(): Promise<void> {
-    if (this.pollingTimer) clearInterval(this.pollingTimer);
+    this.pollingGeneration += 1;
+    if (this.pollingTimer) clearTimeout(this.pollingTimer);
     if (this.synchronizationTimer) clearInterval(this.synchronizationTimer);
     this.pollingTimer = undefined;
     this.synchronizationTimer = undefined;
-    await this.pollingService?.stop();
+    const pollingService = this.pollingService;
     this.pollingService = undefined;
+    await pollingService?.stop();
     this.sender = undefined;
     this.pairingPlaintext.clear();
     this.interactionDrafts.clear();
@@ -319,38 +343,56 @@ export class ImTelegramService {
   }
 
   private async startPolling(connection: ImConnectionRecord, token: string): Promise<void> {
-    if (this.pollingTimer) clearInterval(this.pollingTimer);
+    const generation = ++this.pollingGeneration;
+    if (this.pollingTimer) clearTimeout(this.pollingTimer);
     if (this.synchronizationTimer) clearInterval(this.synchronizationTimer);
-    await this.pollingService?.stop();
+    this.pollingTimer = undefined;
+    const previousPollingService = this.pollingService;
+    this.pollingService = undefined;
+    await previousPollingService?.stop();
     this.sender = createTelegramBotMessageClient({ token });
-    this.pollingService = createTelegramPollingService({
+    const pollingService = createTelegramPollingService({
       client: createTelegramLongPollingClient({ token }),
       allowedUserIds: [],
       initialOffset: connection.pollingOffset,
-      handleUpdate: (update) => this.handleUpdate(connection.id, update),
+      handleUpdate: (update) => {
+        if (this.pollingGeneration !== generation || this.pollingService !== pollingService || !pollingService.status().running) return Promise.resolve(undefined);
+        return this.handleUpdate(connection.id, update);
+      },
       onPollComplete: async (status) => {
+        if (this.pollingGeneration !== generation || this.pollingService !== pollingService) return;
         this.options.repository.recordPoll(connection.id, { offset: status.offset, now: this.nowIso(), error: status.lastError });
         await this.options.save();
       },
     });
-    await this.pollingService.start();
-    const run = (): void => {
-      if (this.pollInFlight) return;
-      this.pollInFlight = true;
-      void this.pollingService!.pollOnce()
-        .then(async (status) => {
-          if (status.lastError) {
-            const message = boundedError(status.lastError, this.options.redactSensitiveText);
-            this.options.repository.recordPoll(connection.id, { offset: status.offset, now: this.nowIso(), error: message });
-            this.options.repository.appendLog({ connectionId: connection.id, level: 'error', event: 'poll.failed', message, now: this.nowIso() });
-            await this.options.save();
-          }
-        })
-        .finally(() => (this.pollInFlight = false));
+    this.pollingService = pollingService;
+    await pollingService.start();
+    let consecutiveFailures = 0;
+    const run = async (): Promise<void> => {
+      if (this.pollingGeneration !== generation || this.pollingService !== pollingService || !pollingService.status().running) return;
+      const status = await pollingService.pollOnce();
+      if (this.pollingGeneration !== generation || this.pollingService !== pollingService || !pollingService.status().running) return;
+      if (status.lastError) {
+        consecutiveFailures += 1;
+        const message = boundedError(status.lastError, this.options.redactSensitiveText);
+        this.options.repository.recordPoll(connection.id, { offset: status.offset, now: this.nowIso(), error: message });
+        this.options.repository.appendLog({ connectionId: connection.id, level: 'error', event: 'poll.failed', message, now: this.nowIso() });
+        await this.options.save();
+      } else {
+        consecutiveFailures = 0;
+      }
+      scheduleNext(status.lastError ? telegramPollFailureDelay(consecutiveFailures) : telegramPollSuccessDelayMs);
     };
-    run();
-    this.pollingTimer = setInterval(run, 30_000);
-    this.pollingTimer.unref?.();
+    const scheduleNext = (delayMs: number): void => {
+      if (this.pollingGeneration !== generation || this.pollingService !== pollingService || !pollingService.status().running) return;
+      const timer = setTimeout(() => {
+        if (this.pollingTimer === timer) this.pollingTimer = undefined;
+        void run();
+      }, delayMs);
+      timer.unref?.();
+      this.pollingTimer = timer;
+    };
+    scheduleNext(0);
     const synchronize = (): void => {
       if (this.synchronizationInFlight) return;
       this.synchronizationInFlight = true;
@@ -451,7 +493,8 @@ export class ImTelegramService {
   private async synchronizeServerRequest(connection: ImConnectionRecord, endpoint: ImTrustedEndpointRecord, request: ZeusConversationServerRequestRecord): Promise<void> {
     const expectedRevision = interactionRevision(request.createdAt);
     const draftKey = interactionDraftKey(connection.id, endpoint.id, request.id);
-    if (this.pendingTextActions.get(endpoint.id)?.requestId === request.id) return;
+    const pending = this.pendingTextActions.get(endpoint.id);
+    if (pending?.kind === 'request_user_input' && pending.requestId === request.id) return;
     if (request.requestKind === 'request_user_input') {
       const payload = parseJsonRecord(request.payloadJson);
       const parsed = parseCanonicalRequestUserInputQuestions(payload);
@@ -537,7 +580,8 @@ export class ImTelegramService {
   }
 
   private async synchronizePlanRequest(connection: ImConnectionRecord, endpoint: ImTrustedEndpointRecord, plan: ZeusConversationPlanActionRecord): Promise<void> {
-    if (this.pendingTextActions.get(endpoint.id)?.requestId === plan.id) return;
+    const pending = this.pendingTextActions.get(endpoint.id);
+    if (pending?.kind === 'plan_refinement' && pending.requestId === plan.id) return;
     if (this.options.repository.hasLiveActionCapability({ connectionId: connection.id, endpointId: endpoint.id, targetKind: 'plan_action', targetId: plan.id, now: this.nowIso() })) return;
     const expectedRevision = interactionRevision(plan.updatedAt);
     const keyboard = [
@@ -689,7 +733,10 @@ export class ImTelegramService {
 
   private async sendPairingWelcome(connection: ImConnectionRecord, chatId: number, operationIdentity: string): Promise<void> {
     try {
-      await this.sendTracked(connection, chatId, `已安全绑定到 Zeus 项目「${this.options.projects.getById(connection.projectId)?.name ?? connection.projectId}」。\n\n发送消息开始对话，或发送 /help 查看可用命令。`, operationIdentity);
+      const endpoint = this.options.repository.getTrustedEndpoint(connection.id);
+      if (!endpoint) throw imError('ZEUS_IM_TRUSTED_ENDPOINT_MISSING', '配对完成后未找到可信 Telegram 端点。', 409);
+      const view = this.startView(connection, endpoint, '已安全绑定，可以开始使用。');
+      await this.sendTracked(connection, chatId, view.text, operationIdentity, { inlineKeyboard: view.inlineKeyboard });
     } catch (error) {
       this.options.repository.appendLog({
         connectionId: connection.id,
@@ -714,12 +761,25 @@ export class ImTelegramService {
   private async handleTrustedMessage(connection: ImConnectionRecord, endpoint: ImTrustedEndpointRecord, update: TelegramUpdate, operationIdentity: string): Promise<void> {
     const command = parseImCommand(update.text);
     const pendingText = this.pendingTextActions.get(endpoint.id) ?? this.recoverPendingTextAction(connection, endpoint);
+    if (command && (pendingText?.kind === 'task_edit' || pendingText?.kind === 'task_create')) {
+      if (pendingText.kind === 'task_edit') {
+        this.options.repository.consumeCapabilitiesForTarget({ connectionId: connection.id, endpointId: endpoint.id, targetKind: 'task', targetId: pendingText.taskId, now: this.nowIso() });
+      } else {
+        this.options.repository.consumeCapabilitiesForTarget({ connectionId: connection.id, endpointId: endpoint.id, targetKind: 'task_list', targetId: connection.projectId, now: this.nowIso() });
+      }
+      this.pendingTextActions.delete(endpoint.id);
+    }
     if (!command && pendingText) {
       await this.handlePendingTextAction(connection, endpoint, update, pendingText, operationIdentity);
       return;
     }
-    if (command?.name === 'start' || command?.name === 'help') {
-      await this.sendTracked(connection, update.chatId, command.name === 'start' ? `当前私聊已安全绑定。\n\n${helpText()}` : helpText(), `${operationIdentity}:${command.name}`);
+    if (command?.name === 'start') {
+      const view = this.startView(connection, endpoint);
+      await this.sendTracked(connection, update.chatId, view.text, `${operationIdentity}:start`, { inlineKeyboard: view.inlineKeyboard });
+      return;
+    }
+    if (command?.name === 'help') {
+      await this.sendTracked(connection, update.chatId, helpText(), `${operationIdentity}:help`);
       return;
     }
     const preset = this.resolvePreset(connection.projectId, connection.agentPreset, connection.id);
@@ -765,6 +825,29 @@ export class ImTelegramService {
   }
 
   private recoverPendingTextAction(connection: ImConnectionRecord, endpoint: ImTrustedEndpointRecord): ImPendingTextAction | undefined {
+    const taskCapability = this.options.repository.findLiveActionCapability({ connectionId: connection.id, endpointId: endpoint.id, now: this.nowIso(), actionPrefix: 'task.await_edit.' });
+    const taskAction = taskCapability ? parseTaskCapabilityAction(taskCapability.actionKind) : null;
+    if (taskCapability?.targetKind === 'task' && taskAction?.kind === 'await_edit' && taskCapability.expectedRevision !== null) {
+      const task = this.options.operations.getTask(taskCapability.targetId);
+      if (task?.projectId === connection.projectId && interactionRevision(task.updatedAt) === taskCapability.expectedRevision) {
+        const recovered: ImPendingTextAction = {
+          kind: 'task_edit',
+          taskId: task.id,
+          field: taskAction.field,
+          page: taskAction.page,
+          expectedRevision: taskCapability.expectedRevision,
+        };
+        this.pendingTextActions.set(endpoint.id, recovered);
+        return recovered;
+      }
+    }
+    const taskCreateCapability = this.options.repository.findLiveActionCapability({ connectionId: connection.id, endpointId: endpoint.id, now: this.nowIso(), actionPrefix: 'task.await_create.' });
+    const taskCreateAction = taskCreateCapability ? parseTaskCapabilityAction(taskCreateCapability.actionKind) : null;
+    if (taskCreateCapability?.targetKind === 'task_list' && taskCreateCapability.targetId === connection.projectId && taskCreateAction?.kind === 'await_create') {
+      const recovered: ImPendingTextAction = { kind: 'task_create', page: taskCreateAction.page };
+      this.pendingTextActions.set(endpoint.id, recovered);
+      return recovered;
+    }
     const binding = this.options.repository.getBinding(connection.id, endpoint.id);
     if (!binding) return undefined;
     const ruiCapability = this.options.repository.findLiveActionCapability({ connectionId: connection.id, endpointId: endpoint.id, now: this.nowIso(), actionPrefix: 'rui.await_text.' });
@@ -799,6 +882,30 @@ export class ImTelegramService {
   private async handlePendingTextAction(connection: ImConnectionRecord, endpoint: ImTrustedEndpointRecord, update: TelegramUpdate, pending: ImPendingTextAction, operationIdentity: string): Promise<void> {
     const text = update.text.trim();
     if (!text) throw imError('ZEUS_IM_INTERACTION_TEXT_REQUIRED', '该交互需要非空文本输入。', 400);
+    if (pending.kind === 'task_create') {
+      const attachments = await this.downloadAttachments(connection, update, operationIdentity, 'task');
+      const task = await this.options.operations.createTask({ projectId: connection.projectId, title: text, attachments, operationIdentity });
+      this.options.repository.consumeCapabilitiesForTarget({ connectionId: connection.id, endpointId: endpoint.id, targetKind: 'task_list', targetId: connection.projectId, now: this.nowIso() });
+      this.pendingTextActions.delete(endpoint.id);
+      const view = this.taskDetailView(connection, endpoint, task, pending.page, '任务已创建。');
+      await this.sendTracked(connection, update.chatId, view.text, `${operationIdentity}:task-created`, { inlineKeyboard: view.inlineKeyboard });
+      return;
+    }
+    if (pending.kind === 'task_edit') {
+      const task = this.options.operations.getTask(pending.taskId);
+      if (!task || task.projectId !== connection.projectId || interactionRevision(task.updatedAt) !== pending.expectedRevision) {
+        this.options.repository.consumeCapabilitiesForTarget({ connectionId: connection.id, endpointId: endpoint.id, targetKind: 'task', targetId: pending.taskId, now: this.nowIso() });
+        this.pendingTextActions.delete(endpoint.id);
+        throw imError('ZEUS_IM_TASK_STALE', '任务已发生变化，本次编辑未提交。请重新打开任务后再试。', 409);
+      }
+      const attachments = await this.downloadAttachments(connection, update, operationIdentity, 'task');
+      const updated = await this.options.operations.updateTask({ task, field: pending.field, value: text, attachments, operationIdentity });
+      this.options.repository.consumeCapabilitiesForTarget({ connectionId: connection.id, endpointId: endpoint.id, targetKind: 'task', targetId: task.id, now: this.nowIso() });
+      this.pendingTextActions.delete(endpoint.id);
+      const view = this.taskDetailView(connection, endpoint, updated, pending.page, `${pending.field === 'title' ? '标题' : '描述'}已更新。`);
+      await this.sendTracked(connection, update.chatId, view.text, `${operationIdentity}:task-updated`, { inlineKeyboard: view.inlineKeyboard });
+      return;
+    }
     if (pending.kind === 'plan_refinement') {
       const plan = this.options.operations.getPlan({ projectId: connection.projectId, conversationId: pending.conversationId, requestId: pending.requestId });
       if (!plan || plan.status !== 'pending') throw imError('ZEUS_IM_PLAN_STALE', '计划实施请求已过期或已处理。', 409);
@@ -864,12 +971,47 @@ export class ImTelegramService {
     await this.sendTracked(connection, chatId, '选择要继续的项目会话：', `${operationIdentity}:list`, { inlineKeyboard: keyboard });
   }
 
+  private startView(connection: ImConnectionRecord, endpoint: ImTrustedEndpointRecord, notice?: string): ImTaskMessageView {
+    const projectName = this.options.projects.getById(connection.projectId)?.name ?? connection.projectId;
+    const binding = this.options.repository.getBinding(connection.id, endpoint.id);
+    const conversation = binding ? this.options.operations.listConversations(connection.projectId).find((candidate) => candidate.id === binding.conversationId && !candidate.archived) : undefined;
+    const currentTask = conversation?.taskId ? this.options.operations.getTask(conversation.taskId) : undefined;
+    return {
+      text: [
+        ...(notice ? [`✓ ${notice}`, ''] : []),
+        'Zeus 已连接',
+        `项目：${projectName}`,
+        `当前会话：${conversation?.title ?? '尚未开始'}`,
+        ...(currentTask ? [`任务上下文：${currentTask.taskCode} · ${currentTask.title}`] : []),
+        '',
+        conversation ? '直接发送消息即可继续当前会话。' : '直接发送消息即可新建会话。',
+        '也可以使用下方按钮进入任务或会话。',
+        '按钮 10 分钟内有效。',
+      ].join('\n'),
+      inlineKeyboard: [
+        [
+          { text: '任务列表', callbackData: this.createCapability(connection, endpoint, 'home.tasks', 'project', connection.projectId, null) },
+          { text: '新建任务', callbackData: this.createCapability(connection, endpoint, 'task.create.1', 'task_list', connection.projectId, null) },
+        ],
+        [
+          { text: '会话列表', callbackData: this.createCapability(connection, endpoint, 'home.conversations', 'project', connection.projectId, null) },
+          { text: '新建会话', callbackData: this.createCapability(connection, endpoint, 'home.new_conversation', 'project', connection.projectId, null) },
+        ],
+      ],
+    };
+  }
+
   private async handleCallback(connection: ImConnectionRecord, endpoint: ImTrustedEndpointRecord, update: TelegramUpdate, operationIdentity: string): Promise<void> {
     const raw = update.callbackData ?? '';
     const token = raw.startsWith('zi|') ? raw.slice(3) : '';
     if (!token) throw imError('ZEUS_IM_CALLBACK_INVALID', '交互按钮无效。', 400);
     const capability = this.options.repository.consumeActionCapability(hashSecret(token), { connectionId: connection.id, endpointId: endpoint.id, now: this.nowIso() });
     if (!capability) throw imError('ZEUS_IM_CALLBACK_EXPIRED', '该按钮已过期、已使用或不属于当前用户。', 409);
+    const taskAction = parseTaskCapabilityAction(capability.actionKind);
+    if (taskAction) {
+      await this.handleTaskCallback(connection, endpoint, update, operationIdentity, capability, taskAction);
+      return;
+    }
     if (capability.actionKind === 'conversation.switch' && capability.targetKind === 'conversation') {
       const conversation = this.options.operations.listConversations(connection.projectId).find((item) => item.id === capability.targetId);
       if (!conversation || conversation.projectId !== connection.projectId || conversation.archived) throw imError('ZEUS_IM_CONVERSATION_UNAVAILABLE', '目标会话已不可用。', 409);
@@ -970,17 +1112,228 @@ export class ImTelegramService {
     throw imError('ZEUS_IM_CALLBACK_UNSUPPORTED', '该交互已不再受支持。', 409);
   }
 
+  private async handleTaskCallback(connection: ImConnectionRecord, endpoint: ImTrustedEndpointRecord, update: TelegramUpdate, operationIdentity: string, capability: ImActionCapabilityRecord, action: ImTaskCapabilityAction): Promise<void> {
+    if (action.kind === 'list') {
+      if (capability.targetKind !== 'task_list' || capability.targetId !== connection.projectId) throw imError('ZEUS_IM_CALLBACK_UNSUPPORTED', '任务列表按钮与当前项目不匹配。', 409);
+      this.options.repository.consumeCapabilitiesForTarget({ connectionId: connection.id, endpointId: endpoint.id, targetKind: 'task_list', targetId: connection.projectId, now: this.nowIso() });
+      const pending = this.pendingTextActions.get(endpoint.id);
+      if (pending?.kind === 'task_edit') {
+        this.options.repository.consumeCapabilitiesForTarget({ connectionId: connection.id, endpointId: endpoint.id, targetKind: 'task', targetId: pending.taskId, now: this.nowIso() });
+        this.pendingTextActions.delete(endpoint.id);
+      }
+      const view = this.taskListView(connection, endpoint, action.page);
+      await this.answerCallback(update, '任务列表已刷新');
+      await this.replaceTaskMessage(connection, update, view, `${operationIdentity}:task-list`);
+      return;
+    }
+    if (capability.targetKind !== 'task') throw imError('ZEUS_IM_CALLBACK_UNSUPPORTED', '任务按钮目标无效。', 409);
+    const task = this.options.operations.getTask(capability.targetId);
+    if (!task || task.projectId !== connection.projectId) throw imError('ZEUS_IM_TASK_NOT_FOUND', '该任务已不存在或不属于绑定项目。', 404);
+    this.options.repository.consumeCapabilitiesForTarget({ connectionId: connection.id, endpointId: endpoint.id, targetKind: 'task', targetId: task.id, now: this.nowIso() });
+    const pending = this.pendingTextActions.get(endpoint.id);
+    if (pending?.kind === 'task_edit' && pending.taskId === task.id) this.pendingTextActions.delete(endpoint.id);
+    if (capability.expectedRevision === null || interactionRevision(task.updatedAt) !== capability.expectedRevision) {
+      const view = this.taskDetailView(connection, endpoint, task, action.page, '任务内容或状态已变化，本次操作未执行，已刷新为最新信息。');
+      await this.answerCallback(update, '任务已变化，未执行操作');
+      await this.replaceTaskMessage(connection, update, view, `${operationIdentity}:task-stale`);
+      return;
+    }
+    if (action.kind === 'view') {
+      const view = this.taskDetailView(connection, endpoint, task, action.page);
+      await this.answerCallback(update, '已打开任务');
+      await this.replaceTaskMessage(connection, update, view, `${operationIdentity}:task-detail`);
+      return;
+    }
+    if (action.kind === 'status_menu') {
+      const view = this.taskStatusMenuView(connection, endpoint, task, action.page);
+      await this.answerCallback(update, '请选择项目状态');
+      await this.replaceTaskMessage(connection, update, view, `${operationIdentity}:task-status-menu`);
+      return;
+    }
+    if (action.kind === 'edit') {
+      const expectedRevision = interactionRevision(task.updatedAt);
+      this.createCapability(connection, endpoint, `task.await_edit.${action.field}.${action.page}`, 'task', task.id, expectedRevision);
+      this.pendingTextActions.set(endpoint.id, { kind: 'task_edit', taskId: task.id, field: action.field, page: action.page, expectedRevision });
+      const view = this.taskEditPromptView(connection, endpoint, task, action.field, action.page);
+      await this.answerCallback(update, action.field === 'title' ? '请发送新标题' : '请发送新描述');
+      await this.replaceTaskMessage(connection, update, view, `${operationIdentity}:task-edit-prompt`);
+      return;
+    }
+    if (action.kind === 'status') {
+      const status = this.options.operations.listTaskManagementStatuses(connection.projectId).find((candidate) => candidate.id === action.statusId);
+      if (!status || status.terminal) throw imError('ZEUS_IM_TASK_TERMINAL_STATUS_DESKTOP_REQUIRED', '完成或取消任务可能清理会话与工作区，请回到 Zeus 桌面端处理。', 409);
+      await this.answerCallback(update, '正在更新项目状态…');
+      const updated = await this.options.operations.updateTaskStatus({ task, managementStatus: status.id, operationIdentity });
+      const view = this.taskDetailView(connection, endpoint, updated, action.page, `项目状态已更新为${taskManagementStatusLabel(status)}。`);
+      await this.replaceTaskMessage(connection, update, view, `${operationIdentity}:task-status`);
+      return;
+    }
+    if (action.kind === 'confirm_cancel') {
+      const view = this.taskCancelConfirmationView(connection, endpoint, task, action.page);
+      await this.answerCallback(update, '请确认取消任务');
+      await this.replaceTaskMessage(connection, update, view, `${operationIdentity}:task-cancel-confirm`);
+      return;
+    }
+    if (action.kind === 'push_new') {
+      await this.answerCallback(update, '正在推送到新会话…');
+      const preset = this.resolvePreset(connection.projectId, connection.agentPreset, connection.id);
+      const updated = await this.pushTaskToNewConversation(connection, endpoint, task, preset, operationIdentity);
+      const view = this.taskDetailView(connection, endpoint, updated, action.page, '已推送到新会话，并已切换当前聊天绑定。');
+      await this.replaceTaskMessage(connection, update, view, `${operationIdentity}:task-pushed`);
+      return;
+    }
+    if (action.kind === 'push_current') {
+      await this.answerCallback(update, '正在推送到当前会话…');
+      const updated = await this.pushTaskToCurrentConversation(connection, endpoint, task, operationIdentity);
+      const view = this.taskDetailView(connection, endpoint, updated, action.page, '已推送到当前会话。');
+      await this.replaceTaskMessage(connection, update, view, `${operationIdentity}:task-pushed-current`);
+      return;
+    }
+    if (action.kind === 'control') {
+      await this.answerCallback(update, taskControlProgressText(action.action));
+      const updated = await this.options.operations.controlTask({ task, action: action.action, operationIdentity });
+      const view = this.taskDetailView(connection, endpoint, updated, action.page, `运行状态已更新为${formatTaskRuntimeStatus(updated.status)}。`);
+      await this.replaceTaskMessage(connection, update, view, `${operationIdentity}:task-control`);
+      return;
+    }
+    throw imError('ZEUS_IM_CALLBACK_UNSUPPORTED', '该任务交互已不再受支持。', 409);
+  }
+
+  private taskListView(connection: ImConnectionRecord, endpoint: ImTrustedEndpointRecord, requestedPage: number): ImTaskMessageView {
+    const tasks = this.options.operations.listTasks(connection.projectId);
+    const totalPages = Math.max(1, Math.ceil(tasks.length / telegramTaskPageSize));
+    const page = Math.min(Math.max(1, requestedPage), totalPages);
+    const pageTasks = tasks.slice((page - 1) * telegramTaskPageSize, page * telegramTaskPageSize);
+    const inlineKeyboard = pageTasks.map((task) => [
+      {
+        text: taskButtonLabel(task, this.taskStatusLabel(connection.projectId, task.managementStatus)),
+        callbackData: this.createCapability(connection, endpoint, `task.view.${page}`, 'task', task.id, interactionRevision(task.updatedAt)),
+      },
+    ]);
+    const navigation: Array<{ text: string; callbackData: string }> = [];
+    if (page > 1) navigation.push({ text: '‹ 上一页', callbackData: this.createCapability(connection, endpoint, `task.list.${page - 1}`, 'task_list', connection.projectId, null) });
+    navigation.push({ text: `${page}/${totalPages}`, callbackData: this.createCapability(connection, endpoint, `task.list.${page}`, 'task_list', connection.projectId, null) });
+    if (page < totalPages) navigation.push({ text: '下一页 ›', callbackData: this.createCapability(connection, endpoint, `task.list.${page + 1}`, 'task_list', connection.projectId, null) });
+    inlineKeyboard.push(navigation);
+    return {
+      text: pageTasks.length === 0 ? '当前项目没有任务。\n\n创建任务：/task create <标题>' : `当前项目任务 · 共 ${tasks.length} 项\n点击下方任务查看详情和可用操作。`,
+      inlineKeyboard,
+    };
+  }
+
+  private taskDetailView(connection: ImConnectionRecord, endpoint: ImTrustedEndpointRecord, task: ZeusTaskRecord, page: number, notice?: string): ImTaskMessageView {
+    const expectedRevision = interactionRevision(task.updatedAt);
+    const conversationChoiceRequired = this.options.operations.taskRuntimeConversationChoiceRequired(task);
+    const inlineKeyboard: ImTaskMessageView['inlineKeyboard'] = [];
+    const pushRow = [{ text: '推送到新会话', callbackData: this.createCapability(connection, endpoint, `task.push_new.${page}`, 'task', task.id, expectedRevision) }];
+    if (this.currentConversation(connection, endpoint)) {
+      pushRow.push({ text: '推送到当前会话', callbackData: this.createCapability(connection, endpoint, `task.push_current.${page}`, 'task', task.id, expectedRevision) });
+    }
+    inlineKeyboard.push(pushRow);
+    const runtimeRow: Array<{ text: string; callbackData: string }> = [];
+    if ((task.status === 'draft' || task.status === 'ready' || task.status === 'failed') && !conversationChoiceRequired) {
+      runtimeRow.push({ text: '启动任务', callbackData: this.createCapability(connection, endpoint, `task.control.run.${page}`, 'task', task.id, expectedRevision) });
+    } else if (task.status === 'running') {
+      runtimeRow.push({ text: '暂停任务', callbackData: this.createCapability(connection, endpoint, `task.control.pause.${page}`, 'task', task.id, expectedRevision) });
+    } else if (task.status === 'paused' && !conversationChoiceRequired) {
+      runtimeRow.push({ text: '继续任务', callbackData: this.createCapability(connection, endpoint, `task.control.continue.${page}`, 'task', task.id, expectedRevision) });
+    }
+    if (task.status !== 'completed' && task.status !== 'cancelled') {
+      runtimeRow.push({ text: '取消任务', callbackData: this.createCapability(connection, endpoint, `task.confirm_cancel.${page}`, 'task', task.id, expectedRevision) });
+    }
+    if (runtimeRow.length) inlineKeyboard.push(runtimeRow);
+    inlineKeyboard.push([
+      { text: '编辑标题', callbackData: this.createCapability(connection, endpoint, `task.edit.title.${page}`, 'task', task.id, expectedRevision) },
+      { text: '编辑描述', callbackData: this.createCapability(connection, endpoint, `task.edit.description.${page}`, 'task', task.id, expectedRevision) },
+    ]);
+    inlineKeyboard.push([{ text: '修改项目状态', callbackData: this.createCapability(connection, endpoint, `task.status_menu.${page}`, 'task', task.id, expectedRevision) }]);
+    inlineKeyboard.push([{ text: '‹ 返回任务列表', callbackData: this.createCapability(connection, endpoint, `task.list.${page}`, 'task_list', connection.projectId, null) }]);
+    return {
+      text: [
+        taskDetail(task, this.taskStatusLabel(connection.projectId, task.managementStatus), notice),
+        ...(conversationChoiceRequired ? ['', '该任务已有 Codex 会话；继续已有上下文需要回桌面端选择精确会话，也可以在此推送到新会话。'] : []),
+        '',
+        '使用下方按钮操作；按钮 10 分钟内有效。',
+      ].join('\n'),
+      inlineKeyboard,
+    };
+  }
+
+  private taskStatusMenuView(connection: ImConnectionRecord, endpoint: ImTrustedEndpointRecord, task: ZeusTaskRecord, page: number): ImTaskMessageView {
+    const expectedRevision = interactionRevision(task.updatedAt);
+    const statuses = this.options.operations.listTaskManagementStatuses(connection.projectId);
+    const selectable = statuses.filter((status) => !status.terminal);
+    const buttons = selectable.map((status) => ({
+      text: `${status.id === task.managementStatus ? '✓ ' : ''}${taskManagementStatusLabel(status)}`.slice(0, 64),
+      callbackData: this.createCapability(connection, endpoint, status.id === task.managementStatus ? `task.view.${page}` : `task.status.${page}.${encodeTaskStatusId(status.id)}`, 'task', task.id, expectedRevision),
+    }));
+    const inlineKeyboard: ImTaskMessageView['inlineKeyboard'] = [];
+    for (let index = 0; index < buttons.length; index += 2) inlineKeyboard.push(buttons.slice(index, index + 2));
+    inlineKeyboard.push([{ text: '‹ 返回任务详情', callbackData: this.createCapability(connection, endpoint, `task.view.${page}`, 'task', task.id, expectedRevision) }]);
+    return {
+      text: [`${task.taskCode} · 修改项目状态`, `当前：${this.taskStatusLabel(connection.projectId, task.managementStatus)}`, '', '完成或取消类终态可能清理会话与工作区，请在 Zeus 桌面端处理。'].join('\n'),
+      inlineKeyboard,
+    };
+  }
+
+  private taskEditPromptView(connection: ImConnectionRecord, endpoint: ImTrustedEndpointRecord, task: ZeusTaskRecord, field: 'title' | 'description', page: number): ImTaskMessageView {
+    return {
+      text: [taskDetail(task, this.taskStatusLabel(connection.projectId, task.managementStatus)), '', `请直接发送新的${field === 'title' ? '标题' : '描述'}。`, '发送其他命令会取消本次编辑；按钮和输入 10 分钟内有效。'].join('\n'),
+      inlineKeyboard: [[{ text: '取消编辑', callbackData: this.createCapability(connection, endpoint, `task.view.${page}`, 'task', task.id, interactionRevision(task.updatedAt)) }]],
+    };
+  }
+
+  private taskCancelConfirmationView(connection: ImConnectionRecord, endpoint: ImTrustedEndpointRecord, task: ZeusTaskRecord, page: number): ImTaskMessageView {
+    const expectedRevision = interactionRevision(task.updatedAt);
+    return {
+      text: [taskDetail(task, this.taskStatusLabel(connection.projectId, task.managementStatus)), '', '确认取消该任务？运行中的会话会被停止，此操作不会自动恢复。'].join('\n'),
+      inlineKeyboard: [
+        [{ text: '确认取消任务', callbackData: this.createCapability(connection, endpoint, `task.control.cancel.${page}`, 'task', task.id, expectedRevision) }],
+        [{ text: '返回任务详情', callbackData: this.createCapability(connection, endpoint, `task.view.${page}`, 'task', task.id, expectedRevision) }],
+      ],
+    };
+  }
+
+  private currentConversation(connection: ImConnectionRecord, endpoint: ImTrustedEndpointRecord): ZeusConversationRecord | undefined {
+    const binding = this.options.repository.getBinding(connection.id, endpoint.id);
+    return binding
+      ? this.options.operations.listConversations(connection.projectId).find((conversation) => conversation.id === binding.conversationId && conversation.projectId === connection.projectId && !conversation.archived)
+      : undefined;
+  }
+
+  private taskStatusLabel(projectId: string, statusId: string): string {
+    const status = this.options.operations.listTaskManagementStatuses(projectId).find((candidate) => candidate.id === statusId);
+    return status ? taskManagementStatusLabel(status) : formatTaskManagementStatus(statusId);
+  }
+
+  private async replaceTaskMessage(connection: ImConnectionRecord, update: TelegramUpdate, view: ImTaskMessageView, operationIdentity: string): Promise<void> {
+    if (update.messageId && this.sender?.editMessage) {
+      await this.editTracked(connection, update.chatId, update.messageId, view.text, operationIdentity, { inlineKeyboard: view.inlineKeyboard });
+      return;
+    }
+    await this.sendTracked(connection, update.chatId, view.text, `${operationIdentity}:fallback`, { inlineKeyboard: view.inlineKeyboard });
+  }
+
   private async answerCallback(update: TelegramUpdate, text: string): Promise<void> {
     if (update.callbackQueryId) await this.sender?.answerCallbackQuery?.(update.callbackQueryId, { text });
   }
 
   private async handleTaskCommand(connection: ImConnectionRecord, endpoint: ImTrustedEndpointRecord, update: TelegramUpdate, command: ImParsedCommand, preset: ImTelegramPresetSnapshot, operationIdentity: string): Promise<void> {
     const args = command.rest.split(/\s+/u).filter(Boolean);
-    const action = command.name === 'tasks' ? 'list' : (args.shift() ?? 'list').toLowerCase();
+    const action = command.name === 'tasks' ? 'list' : (args.shift() ?? '').toLowerCase();
+    if (!action) {
+      await this.sendTracked(connection, update.chatId, taskHelpText(), `${operationIdentity}:task-help`);
+      return;
+    }
     const tasks = this.options.operations.listTasks(connection.projectId);
     if (action === 'list') {
-      const text = tasks.length ? ['当前项目任务：', ...tasks.slice(0, 20).map((task) => `- ${task.taskCode} · ${task.title} · ${task.managementStatus} / ${task.status}`)].join('\n') : '当前项目没有任务。';
-      await this.sendTracked(connection, update.chatId, text, `${operationIdentity}:tasks`);
+      const rawPage = args.shift();
+      if (args.length > 0) throw imError('ZEUS_IM_TASK_PAGE_INVALID', '用法：/tasks [页码]', 400);
+      const page = parseTaskPage(rawPage);
+      const totalPages = Math.max(1, Math.ceil(tasks.length / telegramTaskPageSize));
+      if (page > totalPages) throw imError('ZEUS_IM_TASK_PAGE_OUT_OF_RANGE', `任务列表只有 ${totalPages} 页。`, 400);
+      const view = this.taskListView(connection, endpoint, page);
+      await this.sendTracked(connection, update.chatId, view.text, `${operationIdentity}:tasks`, { inlineKeyboard: view.inlineKeyboard });
       return;
     }
     if (action === 'create') {
@@ -988,14 +1341,19 @@ export class ImTelegramService {
       if (!title) throw imError('ZEUS_IM_TASK_TITLE_REQUIRED', '用法：/task create <标题>', 400);
       const attachments = await this.downloadAttachments(connection, update, operationIdentity, 'task');
       const task = await this.options.operations.createTask({ projectId: connection.projectId, title, attachments, operationIdentity });
-      await this.sendTracked(connection, update.chatId, `已创建 ${task.taskCode} · ${task.title}`, `${operationIdentity}:task-created`);
+      const view = this.taskDetailView(connection, endpoint, task, 1, '任务已创建。');
+      await this.sendTracked(connection, update.chatId, view.text, `${operationIdentity}:task-created`, { inlineKeyboard: view.inlineKeyboard });
       return;
+    }
+    if (!['show', 'detail', 'edit', 'status', 'push-current', 'push', 'run', 'pause', 'continue', 'cancel'].includes(action)) {
+      throw imError('ZEUS_IM_TASK_COMMAND_UNSUPPORTED', '不支持该任务命令。发送 /task 查看用法。', 400);
     }
     const taskRef = args.shift();
     const task = tasks.find((candidate) => candidate.id === taskRef || candidate.taskCode.toLowerCase() === taskRef?.toLowerCase());
     if (!task) throw imError('ZEUS_IM_TASK_NOT_FOUND', '未在绑定项目中找到该任务。', 404);
     if (action === 'show' || action === 'detail') {
-      await this.sendTracked(connection, update.chatId, taskDetail(task), `${operationIdentity}:task-detail`);
+      const view = this.taskDetailView(connection, endpoint, task, 1);
+      await this.sendTracked(connection, update.chatId, view.text, `${operationIdentity}:task-detail`, { inlineKeyboard: view.inlineKeyboard });
       return;
     }
     if (action === 'edit') {
@@ -1012,43 +1370,64 @@ export class ImTelegramService {
       const managementStatus = args.shift();
       if (!managementStatus) throw imError('ZEUS_IM_TASK_STATUS_REQUIRED', '用法：/task status <任务> <项目状态>', 400);
       const updated = await this.options.operations.updateTaskStatus({ task, managementStatus, operationIdentity });
-      await this.sendTracked(connection, update.chatId, `${updated.taskCode} 已更新为 ${updated.managementStatus}。`, `${operationIdentity}:task-status`);
+      await this.sendTracked(connection, update.chatId, `${updated.taskCode} 已更新为${this.taskStatusLabel(connection.projectId, updated.managementStatus)}。`, `${operationIdentity}:task-status`);
       return;
     }
     if (action === 'push-current') {
-      const binding = this.requireBinding(connection, endpoint);
-      const conversation = this.options.operations.listConversations(connection.projectId).find((candidate) => candidate.id === binding.conversationId);
-      if (!conversation || conversation.projectId !== connection.projectId || conversation.archived) throw imError('ZEUS_IM_CONVERSATION_UNAVAILABLE', '当前绑定会话已不可用。', 409);
       const content = args.join(' ').trim() || `请处理任务 ${task.taskCode}：${task.title}`;
-      await this.options.operations.sendConversationMessage({
-        projectId: connection.projectId,
-        conversationId: conversation.id,
-        content,
-        attachments: this.options.operations.readTaskAttachments(task),
-        delivery: 'queue',
-        operationIdentity,
-      });
-      const latestTaskEvent = this.options.operations.readTaskNotifications({ projectId: connection.projectId, taskId: task.id, afterSequence: 0 }).at(-1);
-      this.options.repository.setDeliveryCursor(connection.id, `task:${task.id}`, latestTaskEvent?.sequence ?? 0, this.nowIso());
-      this.options.repository.setBinding({ connectionId: connection.id, endpointId: endpoint.id, conversationId: conversation.id, taskId: task.id, now: this.nowIso() });
+      await this.pushTaskToCurrentConversation(connection, endpoint, task, operationIdentity, content);
       await this.sendTracked(connection, update.chatId, `已把 ${task.taskCode} 推送到当前会话。`, `${operationIdentity}:task-pushed-current`);
       return;
     }
     if (action === 'push') {
       const content = args.join(' ').trim() || `请处理任务 ${task.taskCode}：${task.title}`;
-      const pushed = await this.options.operations.pushTask({ task, content: applyPresetPrompt(preset, content), preset, operationIdentity });
-      const latestTaskEvent = this.options.operations.readTaskNotifications({ projectId: connection.projectId, taskId: task.id, afterSequence: 0 }).at(-1);
-      this.options.repository.setDeliveryCursor(connection.id, `task:${task.id}`, latestTaskEvent?.sequence ?? 0, this.nowIso());
-      this.options.repository.setBinding({ connectionId: connection.id, endpointId: endpoint.id, conversationId: pushed.conversationId, taskId: task.id, now: this.nowIso() });
+      await this.pushTaskToNewConversation(connection, endpoint, task, preset, operationIdentity, content);
       await this.sendTracked(connection, update.chatId, `已把 ${task.taskCode} 推送到新会话，并切换当前聊天绑定。`, `${operationIdentity}:task-pushed`);
       return;
     }
     if (action === 'run' || action === 'pause' || action === 'continue' || action === 'cancel') {
       const updated = await this.options.operations.controlTask({ task, action, operationIdentity });
-      await this.sendTracked(connection, update.chatId, `${updated.taskCode} 运行状态：${updated.status}`, `${operationIdentity}:task-control`);
+      await this.sendTracked(connection, update.chatId, `${updated.taskCode} 运行状态：${formatTaskRuntimeStatus(updated.status)}`, `${operationIdentity}:task-control`);
       return;
     }
-    throw imError('ZEUS_IM_TASK_COMMAND_UNSUPPORTED', '不支持该任务命令。发送 /help 查看用法。', 400);
+  }
+
+  private async pushTaskToCurrentConversation(
+    connection: ImConnectionRecord,
+    endpoint: ImTrustedEndpointRecord,
+    task: ZeusTaskRecord,
+    operationIdentity: string,
+    content = `请处理任务 ${task.taskCode}：${task.title}`,
+  ): Promise<ZeusTaskRecord> {
+    const conversation = this.currentConversation(connection, endpoint);
+    if (!conversation) throw imError('ZEUS_IM_CONVERSATION_UNAVAILABLE', '当前没有可用的绑定会话。请先推送到新会话，或用 /conversations 选择历史会话。', 409);
+    await this.options.operations.sendConversationMessage({
+      projectId: connection.projectId,
+      conversationId: conversation.id,
+      content,
+      attachments: this.options.operations.readTaskAttachments(task),
+      delivery: 'queue',
+      operationIdentity,
+    });
+    const latestTaskEvent = this.options.operations.readTaskNotifications({ projectId: connection.projectId, taskId: task.id, afterSequence: 0 }).at(-1);
+    this.options.repository.setDeliveryCursor(connection.id, `task:${task.id}`, latestTaskEvent?.sequence ?? 0, this.nowIso());
+    this.options.repository.setBinding({ connectionId: connection.id, endpointId: endpoint.id, conversationId: conversation.id, taskId: task.id, now: this.nowIso() });
+    return this.options.operations.getTask(task.id) ?? task;
+  }
+
+  private async pushTaskToNewConversation(
+    connection: ImConnectionRecord,
+    endpoint: ImTrustedEndpointRecord,
+    task: ZeusTaskRecord,
+    preset: ImTelegramPresetSnapshot,
+    operationIdentity: string,
+    content = `请处理任务 ${task.taskCode}：${task.title}`,
+  ): Promise<ZeusTaskRecord> {
+    const pushed = await this.options.operations.pushTask({ task, content: applyPresetPrompt(preset, content), preset, operationIdentity });
+    const latestTaskEvent = this.options.operations.readTaskNotifications({ projectId: connection.projectId, taskId: task.id, afterSequence: 0 }).at(-1);
+    this.options.repository.setDeliveryCursor(connection.id, `task:${task.id}`, latestTaskEvent?.sequence ?? 0, this.nowIso());
+    this.options.repository.setBinding({ connectionId: connection.id, endpointId: endpoint.id, conversationId: pushed.conversationId, taskId: task.id, now: this.nowIso() });
+    return this.options.operations.getTask(task.id) ?? task;
   }
 
   private async downloadAttachments(connection: ImConnectionRecord, update: TelegramUpdate, operationIdentity: string, purpose: 'conversation' | 'task' = 'conversation'): Promise<ImDownloadedAttachment[]> {
@@ -1234,6 +1613,40 @@ export class ImTelegramService {
     });
   }
 
+  private async editTracked(
+    connection: ImConnectionRecord,
+    chatId: number,
+    messageId: number,
+    text: string,
+    operationIdentity: string,
+    messageOptions?: { inlineKeyboard?: Array<Array<{ text: string; callbackData: string }>>; parseMode?: 'HTML' },
+  ): Promise<void> {
+    await this.withChatDelivery(chatId, async () => {
+      const sender = this.sender;
+      if (!sender?.editMessage) throw imError('ZEUS_IM_MESSAGE_EDITOR_UNAVAILABLE', 'Telegram 消息编辑器当前不可用。', 503);
+      if (!Number.isSafeInteger(messageId) || messageId <= 0) throw imError('ZEUS_IM_MESSAGE_ID_INVALID', 'Telegram 消息身份无效。', 400);
+      const input = {
+        chatIdentitySha256: createHash('sha256').update(String(chatId)).digest('hex'),
+        messageIdentitySha256: createHash('sha256').update(String(messageId)).digest('hex'),
+        messageSha256: createHash('sha256').update(text).digest('hex'),
+        hasKeyboard: Boolean(messageOptions?.inlineKeyboard?.length),
+        parseMode: messageOptions?.parseMode ?? null,
+      };
+      const request = internalTelegramCommandRequest({ commandType: telegramCommandTypes.imMessageEdit, scopeId: `im.connection.${connection.id}`, operationIdentity, input });
+      const parsed = this.options.telegramCommands.parse<typeof input>({ value: request, commandType: telegramCommandTypes.imMessageEdit, scopeId: `im.connection.${connection.id}` });
+      await this.options.telegramCommands.executeExternal({
+        parsed,
+        destinationId: 'telegram-edit-message',
+        resourceId: connection.id,
+        children: [telegramChildOperation(parsed.operationIdentity, 'edit_message')],
+        invoke: async () => {
+          await sender.editMessage!(chatId, messageId, text, { inlineKeyboard: messageOptions?.inlineKeyboard, ...(messageOptions?.parseMode ? { parseMode: messageOptions.parseMode } : {}) });
+          return { messageId };
+        },
+      });
+    });
+  }
+
   private withChatDelivery<T>(chatId: number, deliver: () => Promise<T>): Promise<T> {
     const key = String(chatId);
     const previous = this.chatDeliveryTails.get(key) ?? Promise.resolve();
@@ -1333,14 +1746,28 @@ function applyPresetPrompt(preset: ImTelegramPresetSnapshot, content: string): s
 
 function helpText(): string {
   return [
-    'Zeus IM 命令',
-    '/start — 查看当前绑定状态及帮助',
+    'Zeus IM 帮助',
+    '',
+    '对话',
+    '/start — 查看当前绑定和会话',
     '/new [消息] — 新建会话',
     '/conversations — 切换项目历史会话',
     '/steer <消息> — 追加当前轮次',
     '/stop — 中断当前轮次',
     '/continue — 恢复当前会话',
-    '/tasks — 查看绑定项目任务',
+    '',
+    '任务',
+    '/tasks [页码] — 浏览绑定项目任务',
+    '/task — 查看任务操作命令',
+    '',
+    '归档删除、批量任务、关系/阶段、数字员工接力、Git 工作区和外部集成治理请回到桌面端完成。',
+  ].join('\n');
+}
+
+function taskHelpText(): string {
+  return [
+    '任务命令',
+    '/tasks [页码] — 浏览任务',
     '/task show <任务>',
     '/task create <标题>',
     '/task edit <任务> title|description <内容>',
@@ -1348,15 +1775,124 @@ function helpText(): string {
     '/task push <任务> [说明] — 推送到新会话',
     '/task push-current <任务> [说明] — 推送到当前会话',
     '/task run|pause|continue|cancel <任务>',
-    '',
-    '归档删除、批量任务、关系/阶段、数字员工接力、Git 工作区和外部集成治理请回到桌面端完成。',
   ].join('\n');
 }
 
-function taskDetail(task: ZeusTaskRecord): string {
-  return [`${task.taskCode} · ${task.title}`, `项目状态：${task.managementStatus}`, `运行状态：${task.status}`, `类型 / 优先级：${task.taskType} / ${task.priority}`, task.description ? `描述：${task.description}` : '描述：未填写'].join(
-    '\n',
-  );
+function taskDetail(task: ZeusTaskRecord, managementStatusLabel: string, notice?: string): string {
+  return [
+    ...(notice ? [`✓ ${notice}`, ''] : []),
+    `${task.taskCode} · ${task.title}`,
+    `项目状态：${managementStatusLabel}`,
+    `运行状态：${formatTaskRuntimeStatus(task.status)}`,
+    `类型 / 优先级：${task.taskType} / ${task.priority}`,
+    task.description ? `描述：${task.description}` : '描述：未填写',
+  ].join('\n');
+}
+
+function parseTaskPage(value: string | undefined): number {
+  if (value === undefined) return 1;
+  if (!/^[1-9]\d*$/u.test(value)) throw imError('ZEUS_IM_TASK_PAGE_INVALID', '页码必须是从 1 开始的整数。用法：/tasks [页码]', 400);
+  const page = Number(value);
+  if (!Number.isSafeInteger(page)) throw imError('ZEUS_IM_TASK_PAGE_INVALID', '任务页码过大。', 400);
+  return page;
+}
+
+function compactTaskTitle(value: string): string {
+  const normalized = value.replace(/\s+/gu, ' ').trim();
+  return normalized.length > 36 ? `${normalized.slice(0, 35)}…` : normalized;
+}
+
+function taskButtonLabel(task: ZeusTaskRecord, managementStatusLabel: string): string {
+  return `${task.taskCode} · ${compactTaskTitle(task.title)} · ${managementStatusLabel}`.slice(0, 64);
+}
+
+function taskManagementStatusLabel(status: ImTaskManagementStatusOption): string {
+  return status.label?.trim() || formatTaskManagementStatus(status.id);
+}
+
+function taskControlProgressText(action: Extract<ImTaskCapabilityAction, { kind: 'control' }>['action']): string {
+  return { run: '正在启动任务…', pause: '正在暂停任务…', continue: '正在继续任务…', cancel: '正在取消任务…' }[action];
+}
+
+function encodeTaskStatusId(statusId: string): string {
+  return Buffer.from(statusId, 'utf8').toString('base64url');
+}
+
+function decodeTaskStatusId(value: string): string | null {
+  try {
+    const decoded = Buffer.from(value, 'base64url').toString('utf8');
+    return decoded && encodeTaskStatusId(decoded) === value ? decoded : null;
+  } catch {
+    return null;
+  }
+}
+
+type ImTaskCapabilityAction =
+  | { kind: 'list' | 'view' | 'status_menu' | 'push_new' | 'push_current' | 'confirm_cancel'; page: number }
+  | { kind: 'edit' | 'await_edit'; field: 'title' | 'description'; page: number }
+  | { kind: 'status'; statusId: string; page: number }
+  | { kind: 'control'; action: 'run' | 'pause' | 'continue' | 'cancel'; page: number };
+
+function parseTaskCapabilityAction(value: string): ImTaskCapabilityAction | null {
+  const parts = value.split('.');
+  if (parts[0] !== 'task') return null;
+  if (parts[1] === 'list' || parts[1] === 'view' || parts[1] === 'status_menu' || parts[1] === 'push_new' || parts[1] === 'push_current' || parts[1] === 'confirm_cancel') {
+    const page = positiveSafeInteger(parts[2]);
+    return page ? { kind: parts[1], page } : null;
+  }
+  if (parts[1] === 'edit' || parts[1] === 'await_edit') {
+    const field = parts[2];
+    const page = positiveSafeInteger(parts[3]);
+    return (field === 'title' || field === 'description') && page ? { kind: parts[1], field, page } : null;
+  }
+  if (parts[1] === 'status') {
+    const page = positiveSafeInteger(parts[2]);
+    const statusId = parts[3] ? decodeTaskStatusId(parts[3]) : null;
+    return page && statusId ? { kind: 'status', statusId, page } : null;
+  }
+  if (parts[1] === 'control') {
+    const action = parts[2];
+    const page = positiveSafeInteger(parts[3]);
+    return (action === 'run' || action === 'pause' || action === 'continue' || action === 'cancel') && page ? { kind: 'control', action, page } : null;
+  }
+  return null;
+}
+
+function positiveSafeInteger(value: string | undefined): number | null {
+  if (!value || !/^[1-9]\d*$/u.test(value)) return null;
+  const number = Number(value);
+  return Number.isSafeInteger(number) ? number : null;
+}
+
+function formatTaskManagementStatus(status: string): string {
+  const labels: Record<string, string> = {
+    todo: '待开始',
+    in_development: '开发中',
+    in_testing: '测试中',
+    awaiting_acceptance: '待验收',
+    blocked: '已阻塞',
+    completed: '已完成',
+    cancelled: '已取消',
+  };
+  return labels[status] ?? status;
+}
+
+function formatTaskRuntimeStatus(status: ZeusTaskRecord['status']): string {
+  const labels: Record<ZeusTaskRecord['status'], string> = {
+    draft: '草稿',
+    ready: '可启动',
+    running: '运行中',
+    paused: '已暂停',
+    waiting_confirmation: '等待确认',
+    completed: '已完成',
+    failed: '失败',
+    cancelled: '已取消',
+  };
+  return labels[status];
+}
+
+function telegramPollFailureDelay(consecutiveFailures: number): number {
+  return Math.min(telegramPollFailureMaximumDelayMs, telegramPollFailureBaseDelayMs * 2 ** Math.max(0, Math.min(consecutiveFailures - 1, 4)));
 }
 
 function maskProviderId(value: string): string {

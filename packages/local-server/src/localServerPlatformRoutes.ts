@@ -2476,6 +2476,15 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           throw nativeApiError('ZEUS_NATIVE_ACCEPTANCE_NOT_DURABLE', 'Plan implementation response was not persisted.');
       },
       listTasks: (projectId) => tasks.listByProject(projectId),
+      listTaskManagementStatuses: (projectId) => {
+        const config = resolveTaskManagementStatusConfigForProject(projectId);
+        return config.statuses.map((status: { id: string; label: string | null }) => ({
+          id: status.id,
+          label: status.label,
+          terminal: status.id === config.roles.completedStatusId || status.id === config.roles.cancelledStatusId,
+        }));
+      },
+      taskRuntimeConversationChoiceRequired: (task) => platformMutableState.runtimeSettings.defaultAdapterId === 'codex' && conversationChoiceQueries.listTaskHistory(task.id, task.projectId).length > 0,
       getTask: (taskId) => tasks.getById(taskId),
       readTaskNotifications: ({ projectId, taskId, afterSequence }) => {
         const task = tasks.getById(taskId);

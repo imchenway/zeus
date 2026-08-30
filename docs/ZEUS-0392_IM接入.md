@@ -150,3 +150,22 @@ Telegram 只作为受认证的远程入口。入站消息、任务操作和交�
 - `main` 工作区原有本任务文档的未提交 v0.3.80 发布记录。合入时只对该文件建立可恢复的命名 stash，完成 `--no-commit` 合并后恢复并逐段核对；最终文档同时保留发布门禁、公开发布、真实 Telegram 配对回执修复和本次合入记录，没有按 ours/theirs 整侧覆盖。
 - 实际 `main` 合并态验证通过：`pnpm lint`、`pnpm typecheck`（126 张 Core 表、11 张辅助表）、`pnpm build`、`pnpm package:mac`、`git diff --check` 与 `git diff --cached --check`。产物仅为 `dist/test/mac-arm64/Zeus Test.app`，bundle ID 为 `dev.hypha.zeus.test`，deep/strict codesign 通过，未生成生产身份 `Zeus.app`。
 - 本次授权只执行本地合入，不 push；没有启动测试包、替换正式应用或重新执行修复后的真实 Telegram / GUI 往返，运行复验缺口继续保留。
+
+## 真实 Telegram 命令交互审计与修复（2026-08-30）
+
+- 用户在真实 Telegram 私聊中依次发送 `/task`、`/tasks`、`/start`，结果在约 30 秒后集中返回两份 20 条任务长列表，最后再返回整本帮助。截图上的两份列表不是同一 update 被重复发送：正式库只读证据显示 update `943614963`、`943614964`、`943614965` 均只有一条 processed receipt 和一次 accepted `telegram-send-message`；两份列表分别是裸 `/task` 与 `/tasks` 的回复。本轮只读核对正式库，未修改正式数据或运行中应用。
+- 根因一是命令语义重叠：`/task` 缺省 action 被实现为 `list`，与 `/tasks` 完全同义；根因二是 long polling 被外层 `setInterval(30s)` 错误调度，一次 `getUpdates` 因收到消息立即返回后，下一次仍要等待固定时钟，因此会把后续命令积压成一批。
+- 截图审计还确认了信息层级问题：`/start` 同时承担状态页和完整手册，首屏没有“当前项目 / 当前会话 / 下一步”；任务列表一次展开 20 条长标题并暴露英文内部状态，用户无法快速区分是响应重复还是两个命令各自生效。截图可以证明可读性与反馈时序问题，但不能单独证明读屏、动态字号或焦点的完整可访问性。
+- 修复后，IM 连接改为自调度的连续 long polling：成功轮询在 50 ms 后续接，网络失败才按 2/4/8/16/30 秒上限指数退避；每一代 poller 与自身 timer 绑定，关闭或重建后的旧轮询不会继续排队。优点是收到 update 后可立即续接下一次 long poll；代价是必须显式维护退避与 poller generation，避免网络故障时热循环或旧实例复活。
+- 命令层改为单一责任：`/start` 只返回绑定项目、当前会话和下一步；`/help` 按对话/任务分组；裸 `/task` 只显示任务命令用法；只有 `/tasks [页码]` 列任务。任务列表改为每页 8 条，显示总数、页码、中文项目/运行状态、详情与下一页命令。优点是回复可预期且单屏可读；代价是长任务集需要显式翻页。本轮不把普通导航改成一组一次性 capability 按钮，避免与审批、`request_user_input` 和计划确认的安全按钮语义混淆。
+- 验证通过相关文件 Prettier、`git diff --check`、`pnpm lint`、`pnpm typecheck`、`pnpm --filter @zeus/telegram-adapter build`、`pnpm build` 和 `pnpm package:mac`；architecture governance 同时通过 126 张 Core 表和 11 张辅助表检查。打包仅生成 `dist/test/mac-arm64/Zeus Test.app`，`CFBundleIdentifier=dev.hypha.zeus.test`、显示名为 `Zeus Test`，deep/strict codesign 通过，`dist` 中没有生产身份 `Zeus.app`；构建仍只有既有 `markstream-react` Rolldown 注解与大 chunk 警告。静态检查、构建和打包不等于真实 Telegram 时序验收；本轮没有替换或关闭正在运行的正式应用，也没有把正式 Bot Token/配对数据复制到独立测试根，因此修复后的真实 `/task` → `/tasks` → `/start` 往返仍待安全安装后复验。
+
+## Telegram 任务原生交互闭环（2026-08-30）
+
+- 用户进一步指出“看到了任务，然后呢”：上一阶段虽然消除了重复语义、延迟批量返回和长列表，但仍把任务当作只读文本打印，要求用户记住任务编号和二级命令，没有形成手机端可发现的操作闭环。上一节“不把普通导航改成 capability 按钮”的取舍因此被本节替代；安全按钮机制本身不是审批专属，关键是 action kind、目标、revision 和副作用确认必须严格区分。
+- `/tasks [页码]` 现改为每页 8 个任务按钮与上一页/下一页导航。点击任务后在同一条 Bot 消息中切换为详情卡，提供推送到新会话、存在有效绑定时推送到当前会话、启动/暂停/继续、取消、编辑标题、编辑描述、修改非终态项目状态和返回列表；任务创建与 `/task show` 也直接返回同一详情卡。优点是无需抄任务编号、不会连续刷出多屏正文；代价是按钮 10 分钟有效，过期后需重新发送 `/tasks`。
+- 标题或描述编辑采用“点按钮后直接回复文本”，等待输入 capability 可在进程恢复后从 Core 表重建；发送任意命令或点击取消会撤销本次编辑。任务 `updatedAt` 会转换为 expected revision，列表到详情、详情到 mutation 的每一步都重新校验绑定项目和最新 revision；任务已变化时不执行旧操作，只刷新最新详情。
+- 取消任务增加二次确认。项目管理状态只允许在 Telegram 选择非终态状态；完成/取消类项目终态可能停止会话、归档资源或清理脏工作区，仍要求回到桌面端完成。优点是保留移动端高频闭环且避免误触清理；代价是终态治理不能完全脱离桌面端。
+- Codex 任务已有历史会话时，通用 Runtime `run/continue` 不能替用户猜测要恢复哪一条会话；详情卡不展示一个必然失败的“继续”按钮，而是明确要求回桌面端选择精确会话，同时仍提供“推送到新会话”。优点是不会把新建上下文冒充为恢复旧上下文；代价是“选择历史会话并原地继续”的 Telegram 子流程尚未覆盖。
+- callback 后优先使用 Telegram `editMessageText` 更新原消息，新增 `im.telegram.message.edit` External Outbox 命令类型；消息正文、chat 和 message 身份只以摘要进入命令账本，随机 capability token 不进入命令输入。编辑写出后结果未知时继续禁止盲目重放；不具备编辑能力或缺失原消息身份时才降级为发送新卡片。
+- 验证通过相关文件 Prettier、`git diff --check`、Local Server 局部 TypeScript 检查、`pnpm lint`、`pnpm typecheck`、`pnpm --filter @zeus/telegram-adapter build`、`pnpm build` 和 `pnpm package:mac`；architecture governance 同时通过 126 张 Core 表和 11 张辅助表检查。构建仍只有既有 `markstream-react` Rolldown 注解与大 chunk 警告。打包仅生成 `dist/test/mac-arm64/Zeus Test.app`，`CFBundleIdentifier=dev.hypha.zeus.test`、显示名为 `Zeus Test`，deep/strict codesign 通过，`dist` 中没有生产身份 `Zeus.app`。本轮没有启动测试包、替换正式应用或操作正式 Telegram 数据，按钮布局、原消息编辑和真实 mutation 往返仍需在独立测试身份中验收，不能以静态或打包结果冒充完成。
