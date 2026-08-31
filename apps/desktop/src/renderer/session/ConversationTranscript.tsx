@@ -398,6 +398,16 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     onFollowingLatestGeometryChange: requestLatestPositionAfterGeometryChange,
     suspendAutomaticAnchor: historyAnchorRowKey !== null,
   });
+  const synchronizeTranscriptViewport = viewportVirtualizer.synchronizeViewport;
+  const positionLatest = useCallback(
+    (container: HTMLElement): void => {
+      scrollToLatest(container, latestContentMarkerRef.current);
+      // scrollTop 可能已被浏览器随高度变化钳制到同一数值，此时不会再产生 scroll 事件。
+      // 程序化贴底必须同时刷新虚拟窗口，不能等用户滚轮来补这次投影。
+      synchronizeTranscriptViewport(container);
+    },
+    [synchronizeTranscriptViewport],
+  );
   const projectedTurnWorkIds = useMemo(() => new Set(turnRows.filter((row): row is TranscriptTurnWorkRow => row.kind === 'turn_work').map((row) => row.turnId)), [turnRows]);
   const completionAnchorKeyByTurn = useMemo(() => turnArtifactAnchorKeyByTurn(transcriptRows), [transcriptRows]);
   const orphanFailedTurns = useMemo(() => {
@@ -565,7 +575,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       }
       const externallyRequested = latestPositionConvergenceRequestedRef.current;
       latestPositionConvergenceRequestedRef.current = false;
-      scrollToLatest(container, latestContentMarkerRef.current);
+      positionLatest(container);
       setReturnToLatestVisible(false);
       scheduleLatestContentVisibility();
       const current = metrics(container);
@@ -582,7 +592,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       latestPositionConvergenceRequestedRef.current = false;
     };
     schedulePass();
-  }, [scheduleLatestContentVisibility, scrollController]);
+  }, [positionLatest, scheduleLatestContentVisibility, scrollController]);
   maintainLatestPositionRef.current = maintainLatestPosition;
 
   useEffect(() => {
@@ -639,13 +649,13 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     clearUserScrollIntent();
     clearStaticReadingAnchor();
     const effect = scrollController.onExplicitLatestRequest();
-    if (effect.type === 'scroll_to_bottom') scrollToLatest(container, latestContentMarkerRef.current);
+    if (effect.type === 'scroll_to_bottom') positionLatest(container);
     maintainLatestPosition();
     setReturnToLatestVisible(false);
     setHistoryPagingGate({ conversationId, positioned: true, userIntent: false });
     setHistoryPagingRequestedConversationId(null);
     setHistorySentinelIntersection({ conversationId, intersecting: false });
-  }, [clearStaticReadingAnchor, clearUserScrollIntent, historyHydrated, maintainLatestPosition, props.state.conversationId, props.state.transcriptRevision, scrollController]);
+  }, [clearStaticReadingAnchor, clearUserScrollIntent, historyHydrated, maintainLatestPosition, positionLatest, props.state.conversationId, props.state.transcriptRevision, scrollController]);
 
   useLayoutEffect(() => {
     const container = containerRef.current;
@@ -662,11 +672,11 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     clearStaticReadingAnchor();
     const effect = scrollController.onMessageSubmitted();
     if (effect.type === 'scroll_to_bottom') {
-      scrollToLatest(container, latestContentMarkerRef.current);
+      positionLatest(container);
       setReturnToLatestVisible(false);
       maintainLatestPosition();
     }
-  }, [clearStaticReadingAnchor, clearUserScrollIntent, maintainLatestPosition, props.localSubmissionRevision, props.state.conversationId, scrollController]);
+  }, [clearStaticReadingAnchor, clearUserScrollIntent, maintainLatestPosition, positionLatest, props.localSubmissionRevision, props.state.conversationId, scrollController]);
 
   useLayoutEffect(() => {
     const container = containerRef.current;
@@ -686,11 +696,11 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     clearStaticReadingAnchor();
     const effect = scrollController.onMessageSubmitted();
     if (effect.type === 'scroll_to_bottom') {
-      scrollToLatest(container, latestContentMarkerRef.current);
+      positionLatest(container);
       setReturnToLatestVisible(false);
       maintainLatestPosition();
     }
-  }, [awaitingReplyMessageIds, clearStaticReadingAnchor, clearUserScrollIntent, historyHydrated, maintainLatestPosition, props.state.conversationId, scrollController]);
+  }, [awaitingReplyMessageIds, clearStaticReadingAnchor, clearUserScrollIntent, historyHydrated, maintainLatestPosition, positionLatest, props.state.conversationId, scrollController]);
 
   useLayoutEffect(() => {
     const container = containerRef.current;
@@ -710,11 +720,11 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     clearStaticReadingAnchor();
     const effect = scrollController.onMessageSubmitted();
     if (effect.type === 'scroll_to_bottom') {
-      scrollToLatest(container, latestContentMarkerRef.current);
+      positionLatest(container);
       setReturnToLatestVisible(false);
       maintainLatestPosition();
     }
-  }, [clearStaticReadingAnchor, clearUserScrollIntent, historyHydrated, lastUserKey, maintainLatestPosition, props.state.conversationId, scrollController]);
+  }, [clearStaticReadingAnchor, clearUserScrollIntent, historyHydrated, lastUserKey, maintainLatestPosition, positionLatest, props.state.conversationId, scrollController]);
 
   useEffect(() => {
     const resolution = resolveCompletedItemAnnouncement(completedAnnouncementTrackerRef.current, items, props.language);
@@ -734,13 +744,13 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     if (activeTurnId && previousTurnIdRef.current !== activeTurnId) {
       const effect = scrollController.onTurnStarted();
       if (effect.type === 'scroll_to_bottom') {
-        scrollToLatest(container, latestContentMarkerRef.current);
+        positionLatest(container);
         setReturnToLatestVisible(false);
         maintainLatestPosition();
       }
     }
     previousTurnIdRef.current = activeTurnId;
-  }, [activeTurnId, historyHydrated, latestSubmittedMessageId, maintainLatestPosition, scrollController]);
+  }, [activeTurnId, historyHydrated, latestSubmittedMessageId, maintainLatestPosition, positionLatest, scrollController]);
 
   useLayoutEffect(() => {
     maintainLatestPosition();
@@ -1025,7 +1035,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             if (effect.type !== 'scroll_to_bottom') return;
             clearUserScrollIntent();
             clearStaticReadingAnchor();
-            scrollToLatest(container, latestContentMarkerRef.current);
+            positionLatest(container);
             setReturnToLatestVisible(false);
             maintainLatestPosition();
           }}
