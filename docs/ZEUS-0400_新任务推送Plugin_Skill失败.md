@@ -41,3 +41,12 @@
 - 已修复新任务推送选择 Plugin Skill 时的请求编码、命令白名单、服务端校验与会话 Runtime 绑定。
 - 未修改失败命令、任务状态或正式用户数据；原命令发生在 Provider 写入前，升级到修复版本后应从任务详情重新发起推送。
 - 未顺带扩展代码审查和冲突处理入口，避免在没有覆盖阶段继承与延迟派发恢复语义的情况下扩大改动。
+
+## 本地合入记录
+
+- 2026-08-31 将任务提交 `8922178f5140785789102c3fd481150dead4dffe` 定向合入本地 `main`，合并提交为 `8a0b4c7011809869b9db0da0976e2b8e9e637345`。
+- 合入前已刷新 `origin/main`；`main` 当时领先 7 个提交，任务分支只领先 `main` 1 个提交。
+- `git merge-tree --write-tree` 无冲突；合入后任务提交为 `main` 祖先、合并树与任务提交完全一致，未合并路径和 `MERGE_HEAD` 均为空。
+- 当前 `main` 集成态的 `pnpm lint`、`pnpm typecheck`、`pnpm build` 均通过；构建仅有既有第三方 Rolldown 注解与分包体积警告。
+- 合入过程保留了 `docs/ZEUS-0392_IM接入.md` 与 `packages/local-server/src/imTelegramService.ts` 的并发未提交改动；它们不属于 ZEUS-0400。
+- 未执行 push、发布、打包或 GUI/Provider 验收。
