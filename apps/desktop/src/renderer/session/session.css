@@ -1689,6 +1689,35 @@
   inline-size: 100%;
 }
 
+.session-codex-parity-v1 .session-user-message-content {
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-user-message-disclosure {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: var(--session-accent);
+  display: inline-flex;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  justify-content: center;
+  margin-block-start: 6px;
+  min-block-size: 24px;
+  padding: 2px 4px;
+}
+
+.session-codex-parity-v1 .session-user-message-disclosure:hover {
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .session-user-message-disclosure:focus-visible {
+  box-shadow: 0 0 0 2px var(--session-focus);
+  outline: 1px solid var(--session-focus-outline);
+}
+
 .session-codex-parity-v1 .session-user-message-editor {
   display: grid;
   gap: 8px;
