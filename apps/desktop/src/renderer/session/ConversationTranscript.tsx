@@ -89,6 +89,16 @@ const sessionConnectionSymbol = (
   </span>
 );
 
+const turnFailureSymbol = (
+  <span className="session-turn-failure-icon" aria-hidden="true">
+    <svg viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7.5v5" />
+      <circle cx="12" cy="16.5" r="0.8" fill="currentColor" stroke="none" />
+    </svg>
+  </span>
+);
+
 const emptyResponseAnnotations: ConversationResponseAnnotation[] = [];
 const liveTurnLayoutTransition = { duration: 0.22, ease: [0.22, 1, 0.36, 1] as const };
 const userScrollIntentIdleMs = 180;
@@ -1173,15 +1183,10 @@ function SessionCreationNotice(props: { status: SessionCreationStatus; language:
 
 function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: SessionUiLanguage }) {
   const zh = props.language === 'zh-CN';
-  const warning = props.failure.code === 'ZEUS_PI_MODEL_REQUEST_FAILED';
   return (
-    <article
-      className="session-turn-failure"
-      data-severity={warning ? 'warning' : 'error'}
-      role={warning ? 'status' : 'alert'}
-      aria-label={warning ? (zh ? '模型请求警告' : 'Model request warning') : zh ? '会话失败原因' : 'Conversation failure reason'}
-    >
-      <VisibleApplicationError error={props.failure} language={zh ? 'zh-CN' : 'en'} />
+    <article className="session-turn-failure" role="alert" aria-label={zh ? '模型返回错误' : 'Model error'}>
+      {turnFailureSymbol}
+      <span className="session-turn-failure-message">{props.failure.message}</span>
     </article>
   );
 }

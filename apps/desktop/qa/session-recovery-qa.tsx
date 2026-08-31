@@ -287,7 +287,7 @@ export function Zeus0388QaApp() {
   const [historyTransitions, setHistoryTransitions] = useState(0);
   const [settingsChanges, setSettingsChanges] = useState(0);
   const [historyOnly, setHistoryOnly] = useState(true);
-  const [guard, setGuard] = useState<'writable' | 'failed' | 'archived' | 'explicit-readonly' | 'nonresumable' | 'processing' | 'task-ended' | 'recovered'>('writable');
+  const [guard, setGuard] = useState<'writable' | 'failed' | 'other-failed' | 'archived' | 'explicit-readonly' | 'nonresumable' | 'processing' | 'task-ended' | 'recovered'>('writable');
   const controller = useMemo(
     () =>
       createSessionController({
@@ -307,9 +307,10 @@ export function Zeus0388QaApp() {
   const state = useSyncExternalStore(controller.subscribe, controller.getState, controller.getState);
   useEffect(() => () => controller.dispose(), [controller]);
 
+  const failedGuard = guard === 'failed' || guard === 'other-failed';
   const visibleConversation = {
     ...zeus0388Choice,
-    providerState: guard === 'failed' ? 'failed' : zeus0388Choice.providerState,
+    providerState: failedGuard ? 'failed' : zeus0388Choice.providerState,
     archived: guard === 'archived',
     readOnly: guard === 'explicit-readonly',
     resumable: guard !== 'nonresumable',
@@ -321,40 +322,56 @@ export function Zeus0388QaApp() {
     transportState: 'ready' as const,
     conversationState: 'starting_turn' as const,
   };
-  const visibleState =
-    guard === 'failed'
+  const failedTurn = {
+    ...hydratedHistoryState.turnsByProviderId[zeus0388ProviderTurnId]!,
+    status: 'failed',
+    error: {
+      category: guard === 'other-failed' ? ('configuration' as const) : ('rate_limit' as const),
+      code: guard === 'other-failed' ? 'MODEL_NOT_AVAILABLE' : 'ZEUS_CODEX_MODEL_AT_CAPACITY',
+      message: guard === 'other-failed' ? 'The requested model is not available for this account.' : 'Selected model is at capacity. Please try a different model.',
+      providerStatus: 'failed',
+      additionalDetails: [],
+    },
+  };
+  const visibleState = failedGuard
+    ? {
+        ...hydratedHistoryState,
+        conversationState: 'turn_failed' as const,
+        turnsByProviderId: { ...hydratedHistoryState.turnsByProviderId, [zeus0388ProviderTurnId]: failedTurn },
+        terminalTurnIds: { ...hydratedHistoryState.terminalTurnIds, [zeus0388ProviderTurnId]: 'failed' as const },
+        snapshot: {
+          ...hydratedHistoryState.snapshot!,
+          providerState: 'failed',
+          turns: hydratedHistoryState.snapshot!.turns.map((turn) => (turn.providerTurnId === zeus0388ProviderTurnId ? failedTurn : turn)),
+        },
+      }
+    : guard === 'recovered'
       ? {
           ...hydratedHistoryState,
-          conversationState: 'turn_failed' as const,
-          snapshot: { ...hydratedHistoryState.snapshot!, providerState: 'failed' },
+          queue: {
+            state: { type: 'paused' as const, reason: 'recovered_unsent' as const },
+            waitReason: 'recovered_unsent' as const,
+            submissions: [zeus0388RecoveredSubmission],
+          },
         }
-      : guard === 'recovered'
+      : guard === 'processing'
         ? {
             ...hydratedHistoryState,
+            activeTurnId: zeus0388ProviderTurnId,
+            startedTurnId: zeus0388ProviderTurnId,
+            conversationState: 'waiting_user_input' as const,
             queue: {
-              state: { type: 'paused' as const, reason: 'recovered_unsent' as const },
-              waitReason: 'recovered_unsent' as const,
-              submissions: [zeus0388RecoveredSubmission],
+              state: {
+                type: 'waiting' as const,
+                turnId: zeus0388ProviderTurnId,
+                requestId: 'zeus-0388-request-input',
+                reason: 'user_input' as const,
+              },
+              waitReason: 'user_input' as const,
+              submissions: [],
             },
           }
-        : guard === 'processing'
-          ? {
-              ...hydratedHistoryState,
-              activeTurnId: zeus0388ProviderTurnId,
-              startedTurnId: zeus0388ProviderTurnId,
-              conversationState: 'waiting_user_input' as const,
-              queue: {
-                state: {
-                  type: 'waiting' as const,
-                  turnId: zeus0388ProviderTurnId,
-                  requestId: 'zeus-0388-request-input',
-                  reason: 'user_input' as const,
-                },
-                waitReason: 'user_input' as const,
-                submissions: [],
-              },
-            }
-          : hydratedHistoryState;
+        : hydratedHistoryState;
   const taskEndedGate =
     guard === 'task-ended'
       ? {
@@ -394,7 +411,10 @@ export function Zeus0388QaApp() {
             可续接历史
           </button>
           <button type="button" onClick={() => selectGuard('failed')}>
-            失败轮次
+            Codex 失败
+          </button>
+          <button type="button" onClick={() => selectGuard('other-failed')}>
+            其他模型失败
           </button>
           <button type="button" onClick={() => selectGuard('archived')}>
             归档会话
@@ -423,7 +443,7 @@ export function Zeus0388QaApp() {
           {historyOnly ? '历史快照' : '交互模式'} · 首次切换 {historyTransitions} 次 · 发送 {submitCount} 次 · 配置变更 {settingsChanges} 次 · 输入附件 {visibleState.attachments.length} 个 · 门禁 {guard}
         </output>
       </section>
-      <section className="qa-implementation-panel" style={{ blockSize: 920 }} data-testid="zeus-0388-workspace">
+      <section className="qa-implementation-panel session-codex-parity-v1 theme-light" style={{ blockSize: 920 }} data-testid="zeus-0388-workspace">
         <SessionWorkspace
           language="zh-CN"
           state={visibleState}

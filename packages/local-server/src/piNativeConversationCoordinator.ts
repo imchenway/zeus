@@ -33,6 +33,7 @@ import {
   type TaskPushMessageLayout,
   type TokenUsageBreakdown,
 } from '@zeus/shared';
+import { projectConversationTurnFailure } from '@zeus/storage';
 import type {
   CodexUsageLedgerRepository,
   CommandDeliveryRepository,
@@ -1480,6 +1481,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         turnId: run.providerTurnId,
         submissionId: run.submissionId,
         status,
+        ...(failed ? { error: projectConversationTurnFailure(payload) } : {}),
         ...(warning ? { severity: 'warning' } : {}),
         completedAt: event.createdAt,
         notificationEligible: true,

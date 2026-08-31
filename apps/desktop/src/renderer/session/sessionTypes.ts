@@ -545,6 +545,7 @@ export interface NativeConversationSnapshotV2Turn {
   submissionId: string | null;
   status: string;
   hasError: boolean;
+  error?: NativeTurnFailureSnapshot | null;
   hasPlan: boolean;
   plan: NativeTurnPlanSnapshot | null;
   startedAt: string | null;
@@ -1469,6 +1470,7 @@ export type NativeConversationAttentionKind = 'none' | 'unread' | 'completed' | 
 type NativeTurnEventPayload = NativeEventIdentity & {
   turnId: string;
   status?: string;
+  error?: NativeTurnFailureSnapshot | null;
   severity?: 'warning' | 'error';
   submissionId?: string;
   startedAt?: string;

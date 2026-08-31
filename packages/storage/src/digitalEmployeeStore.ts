@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isZeusSkillId } from '@zeus/shared';
 import { nanoid } from 'nanoid';
 import type { ZeusDatabasePort } from './databasePort.js';
 
@@ -1687,8 +1688,8 @@ function normalizeStringList(value: unknown[], field: string, maximumItems: numb
 }
 
 function normalizeDigitalEmployeeSkillIds(value: unknown[]): string[] {
-  const skillIds = normalizeStringList(value, 'template.skillIds', 20, 32);
-  if (skillIds.some((skillId) => !/^[a-f0-9]{32}$/u.test(skillId))) {
+  const skillIds = normalizeStringList(value, 'template.skillIds', 20, 512);
+  if (skillIds.some((skillId) => !isZeusSkillId(skillId))) {
     throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_SKILL_INVALID', '数字员工必须从 Zeus Skill 目录选择默认 Skill。');
   }
   return skillIds;

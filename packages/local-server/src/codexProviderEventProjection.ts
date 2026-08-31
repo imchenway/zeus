@@ -1,6 +1,6 @@
 import type { CodexAppServerEvent } from '@zeus/ai-runtime';
 import { calculateCacheHitRate, type NativeTokenUsageSnapshot } from '@zeus/shared';
-import { ConversationPlanActionRepository, type ZeusConversationSubmissionRecord } from '@zeus/storage';
+import { ConversationPlanActionRepository, projectConversationTurnFailure, type ZeusConversationSubmissionRecord } from '@zeus/storage';
 import { parseCanonicalRequestUserInputQuestions } from './codexNativeRuiValidation.js';
 import { sanitizeConversationItemPayload } from './conversationResources.js';
 import { codexProviderEventIdentity, isCodexReadableItemTextDeltaEvent } from './codexProviderEventFlow.js';
@@ -493,6 +493,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
         providerTurnId,
         status: terminalStatus,
         completedAt: timestamp,
+        ...(failure ? { error: projectConversationTurnFailure(providerTurnFailureRecord(params, failure)) } : {}),
         hasUnreadAttention: options.conversations.getById(conversation.id)?.attentionUnread === true,
         notificationEligible: !conversationGoal,
       },
