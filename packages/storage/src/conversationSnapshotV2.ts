@@ -122,12 +122,21 @@ export class ConversationSnapshotV2Error extends Error {
   }
 }
 
+export interface ConversationSnapshotV2TurnFailure {
+  category: 'authentication' | 'rate_limit' | 'network' | 'configuration' | 'permission' | 'unknown';
+  code: string | null;
+  message: string;
+  providerStatus: string | null;
+  additionalDetails: string[];
+}
+
 export interface ConversationSnapshotV2TurnSummary {
   id: string;
   providerTurnId: string | null;
   submissionId: string | null;
   status: string;
   hasError: boolean;
+  error: ConversationSnapshotV2TurnFailure | null;
   hasPlan: boolean;
   plan: ConversationSnapshotV2TurnPlan | null;
   startedAt: string | null;
@@ -425,6 +434,11 @@ interface TurnRow {
   client_submission_id: string | null;
   status: string;
   has_error: number;
+  error_code: string | null;
+  error_message: string | null;
+  error_provider_status: string | null;
+  error_provider_info: string | null;
+  error_additional_details: string | null;
   has_plan: number;
   plan_json: string | null;
   legacy_plan_text: string | null;
@@ -1314,6 +1328,7 @@ export class ConversationSnapshotV2Repository {
       submissionId: row.client_submission_id,
       status: row.status,
       hasError: row.has_error === 1,
+      error: turnFailure(row),
       hasPlan: row.has_plan === 1,
       plan,
       startedAt: row.started_at,
@@ -1592,6 +1607,56 @@ interface SequencePageContext {
 function turnSummarySelectSql(): string {
   return `SELECT id, provider_turn_id, client_submission_id, status,
                  CASE WHEN error_json IS NULL THEN 0 ELSE 1 END AS has_error,
+                 CASE
+                   WHEN json_valid(error_json) THEN
+                     CASE
+                       WHEN json_type(error_json, '$.code') = 'text'
+                         THEN substr(json_extract(error_json, '$.code'), 1, 120)
+                       ELSE NULL
+                     END
+                   ELSE NULL
+                 END AS error_code,
+                 CASE
+                   WHEN json_valid(error_json) THEN
+                     CASE
+                       WHEN json_type(error_json, '$.message') = 'text'
+                         THEN substr(json_extract(error_json, '$.message'), 1, 1000)
+                       WHEN json_type(error_json, '$.providerError.message') = 'text'
+                         THEN substr(json_extract(error_json, '$.providerError.message'), 1, 1000)
+                       WHEN json_type(error_json, '$') = 'text'
+                         THEN substr(json_extract(error_json, '$'), 1, 1000)
+                       ELSE NULL
+                     END
+                   WHEN error_json IS NOT NULL THEN substr(error_json, 1, 1000)
+                   ELSE NULL
+                 END AS error_message,
+                 CASE
+                   WHEN json_valid(error_json) THEN
+                     CASE
+                       WHEN json_type(error_json, '$.providerStatus') = 'text'
+                         THEN substr(json_extract(error_json, '$.providerStatus'), 1, 120)
+                       ELSE NULL
+                     END
+                   ELSE NULL
+                 END AS error_provider_status,
+                 CASE
+                   WHEN json_valid(error_json) THEN
+                     CASE
+                       WHEN json_type(error_json, '$.providerError.codexErrorInfo') = 'text'
+                         THEN substr(json_extract(error_json, '$.providerError.codexErrorInfo'), 1, 120)
+                       ELSE NULL
+                     END
+                   ELSE NULL
+                 END AS error_provider_info,
+                 CASE
+                   WHEN json_valid(error_json) THEN
+                     CASE
+                       WHEN json_type(error_json, '$.providerError.additionalDetails') = 'text'
+                         THEN substr(json_extract(error_json, '$.providerError.additionalDetails'), 1, 1000)
+                       ELSE NULL
+                     END
+                   ELSE NULL
+                 END AS error_additional_details,
                  CASE WHEN EXISTS (
                    SELECT 1
                      FROM conversation_provider_item_states AS projected_plan
@@ -1616,6 +1681,69 @@ function turnSummarySelectSql(): string {
                    ORDER BY projected_plan.updated_at DESC, projected_plan.id DESC
                    LIMIT 1) AS legacy_plan_text,
                  started_at, completed_at, created_at, updated_at, agent_kind`;
+}
+
+function turnFailure(row: TurnRow): ConversationSnapshotV2TurnFailure | null {
+  if (row.has_error !== 1) return null;
+  return projectConversationTurnFailure({
+    code: row.error_code,
+    message: row.error_message,
+    providerStatus: row.error_provider_status,
+    providerError: {
+      codexErrorInfo: row.error_provider_info,
+      additionalDetails: row.error_additional_details,
+    },
+  });
+}
+
+/** 实时事件与 Snapshot V2 共用同一个有界脱敏投影，未经脱敏的 Provider 错误不进入客户端协议。 */
+export function projectConversationTurnFailure(value: unknown): ConversationSnapshotV2TurnFailure {
+  const failure = isRecord(value) ? value : {};
+  const providerError = isRecord(failure.providerError) ? failure.providerError : {};
+  const rawMessage =
+    (typeof failure.message === 'string' && failure.message.trim() ? failure.message : null) ??
+    (typeof providerError.message === 'string' && providerError.message.trim() ? providerError.message : null) ??
+    '智能体运行内核没有提供更具体的失败原因。';
+  const message = sanitizeTurnFailureText(rawMessage);
+  const providerInfo = boundedFailureIdentity(typeof providerError.codexErrorInfo === 'string' ? providerError.codexErrorInfo : null);
+  const capacity = providerInfo === 'serverOverloaded' || /selected model is at capacity/iu.test(message);
+  const detail = typeof providerError.additionalDetails === 'string' ? sanitizeTurnFailureText(providerError.additionalDetails) : '';
+  return {
+    category: capacity ? 'rate_limit' : classifyTurnFailure(message),
+    code: capacity ? 'ZEUS_CODEX_MODEL_AT_CAPACITY' : boundedFailureIdentity(typeof failure.code === 'string' ? failure.code : null),
+    message,
+    providerStatus: boundedFailureIdentity(typeof failure.providerStatus === 'string' ? failure.providerStatus : null),
+    additionalDetails: detail && detail !== message ? [detail] : [],
+  };
+}
+
+/** Snapshot V2 只返回有界脱敏文本；原始 Provider 错误继续留在本机 SQLite 用于诊断。 */
+function sanitizeTurnFailureText(value: string): string {
+  const withoutStack = value
+    .split(/\r?\n/u)
+    .filter((line) => !/^\s*at\s+/u.test(line))
+    .join(' ');
+  return redactSensitivePreview(withoutStack)
+    .text.replace(/file:\/\/\/Users\/[^\s,;:'"<>]+/giu, '[本机路径]')
+    .replace(/\/Users\/[^\s,;:'"<>]+/gu, '[本机路径]')
+    .replace(/[A-Za-z]:\\[^\s,;:'"<>]+/gu, '[本机路径]')
+    .replace(/\s+/gu, ' ')
+    .trim()
+    .slice(0, 1000);
+}
+
+function boundedFailureIdentity(value: string | null): string | null {
+  const candidate = value?.trim();
+  return candidate && /^[A-Za-z0-9_.:-]{1,120}$/u.test(candidate) ? candidate : null;
+}
+
+function classifyTurnFailure(message: string): ConversationSnapshotV2TurnFailure['category'] {
+  if (/\b(?:401|403)\b|auth(?:entication|orization)?|unauthori[sz]ed|api[-_ ]?key|登录|鉴权/iu.test(message)) return 'authentication';
+  if (/\b429\b|rate[-_ ]?limit|too many requests|quota|capacity|overloaded|限流|配额|容量/iu.test(message)) return 'rate_limit';
+  if (/network|failed to fetch|connection|socket|timed?\s*out|timeout|dns|网络|连接|超时/iu.test(message)) return 'network';
+  if (/permission denied|sandbox|not allowed|forbidden|权限|沙箱/iu.test(message)) return 'permission';
+  if (/\b400\b|invalid|unsupported|unknown model|model not found|reasoning_effort|参数|模型.*(?:不存在|不支持)/iu.test(message)) return 'configuration';
+  return 'unknown';
 }
 
 /**
@@ -2156,7 +2284,7 @@ function redactSensitivePreview(value: string): { text: string; redacted: boolea
       return replacement;
     });
   }
-  text = text.replace(/(?:"?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret)"?\s*[:=]\s*"?)[^"'\s,}]{8,}/giu, (match) => {
+  text = text.replace(/(?:"?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret)"?\s*[:=]\s*"?)[^"'\s,}]{8,}/giu, (match) => {
     redacted = true;
     const separator = Math.max(match.lastIndexOf(':'), match.lastIndexOf('='));
     return `${match.slice(0, separator + 1)}[REDACTED_SECRET]`;

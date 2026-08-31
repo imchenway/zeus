@@ -463,7 +463,7 @@ function snapshotTurns(snapshot: NativeConversationSnapshotV2): NativeTurnSnapsh
       providerTurnId: turn.providerTurnId,
       submissionId: turn.submissionId,
       status: turn.status,
-      error: null,
+      error: turn.error ?? null,
       plan: turn.plan,
       startedAt: turn.startedAt,
       completedAt: turn.completedAt,

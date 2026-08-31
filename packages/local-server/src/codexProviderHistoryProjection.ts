@@ -1,5 +1,5 @@
 import type { CodexThreadSnapshot, CodexTurnSnapshot } from '@zeus/ai-runtime';
-import { resolveSnapshotProviderItemId, type ZeusConversationItemRecord, type ZeusConversationSubmissionRecord, type ZeusConversationTurnRecord, type ZeusConversationWithMessagesRecord } from '@zeus/storage';
+import { projectConversationTurnFailure, resolveSnapshotProviderItemId, type ZeusConversationItemRecord, type ZeusConversationSubmissionRecord, type ZeusConversationTurnRecord, type ZeusConversationWithMessagesRecord } from '@zeus/storage';
 import type { CreateCodexNativeConversationCoordinatorOptions } from './codexNativeConversationCoordinator.js';
 import {
   classifySnapshotTurn,
@@ -452,6 +452,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
           providerTurnId: providerTurn.id,
           status: classification,
           completedAt: completedAt ?? timestamp,
+          ...(classification === 'failed' ? { error: projectConversationTurnFailure(providerTurnFailureRecord({ turn: providerTurn }, providerTurnFailure({ turn: providerTurn }, providerTurn.id))) } : {}),
         });
       }
       const resultKey = `${conversation.id}:${providerTurn.id}`;
