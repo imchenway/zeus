@@ -63,7 +63,7 @@ import { type TaskResourceAuthorizationResult, type TaskResourcePayload } from '
 import { normalizeTaskTableEnumSortOrders, resolveTaskManagementStatus } from '../../task/taskWorkspaceModel.js';
 import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { reportStorageReadOnlyFault } from '../../storageRecoveryError.js';
-import { readSkillWorkflowDefault } from '../skills/skillWorkflowPreferences.js';
+import { readSkillWorkflowDefault, workflowSkillSelectionRequest } from '../skills/skillWorkflowPreferences.js';
 import { createSessionOperationId } from '../../sessionOperationIdentity.js';
 import {
   type DashboardSnapshot,
@@ -2842,7 +2842,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
               ...serviceTierWireOverride(normalizedForm.serviceTier),
               workMode: normalizedForm.workMode,
               permissionMode: normalizedForm.permissionMode,
-              ...(normalizedForm.skillId ? { skillId: normalizedForm.skillId } : {}),
+              ...workflowSkillSelectionRequest(normalizedForm.skillId),
               workspace:
                 form.workspaceMode === 'direct'
                   ? { mode: 'direct', confirmConcurrentWrites: form.directConcurrencyConfirmed }
