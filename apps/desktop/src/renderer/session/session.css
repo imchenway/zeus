@@ -1257,6 +1257,7 @@
   min-block-size: 0;
   overflow-x: hidden;
   overflow-y: auto;
+  outline: none;
   overscroll-behavior: contain;
   padding: 28px var(--session-gutter) 24px;
   position: relative;
