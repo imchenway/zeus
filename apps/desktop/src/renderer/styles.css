@@ -24100,13 +24100,9 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 
 .macos-ai-app.zeus-shell .project-first-sidebar :where(.project-conversation-organization-button, .project-add-button) svg {
   block-size: 18px;
-  fill: none;
+  display: block;
+  flex: none;
   inline-size: 18px;
-  stroke: currentcolor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.45;
-  vector-effect: non-scaling-stroke;
 }
 
 .macos-ai-app.zeus-shell .project-first-sidebar :where(.project-conversation-organization-button, .project-add-button):hover:not(:disabled) {
