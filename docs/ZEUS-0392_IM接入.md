@@ -201,3 +201,33 @@ Telegram 只作为受认证的远程入口。入站消息、任务操作和交�
 - 审计覆盖任务提交相对 merge-base 的完整改动集、`main` 同期共同修改和 IM bridge 调用合同；任务提交实际只修改主任务文档与 `imTelegramService.ts`，`main` 后续的会话队列调度没有改变 IM 使用的项目会话、任务身份或 binding 接口。
 - 验证通过全部暂存文件 Prettier、`git diff --check`、`git diff --cached --check`、`pnpm lint`、`pnpm typecheck`、`pnpm build` 和 `pnpm package:mac`；architecture governance 通过 126 张 Core 表和 11 张辅助表。打包产物为 `dist/test/mac-arm64/Zeus Test.app`，`CFBundleIdentifier=dev.hypha.zeus.test`、显示名为 `Zeus Test`，deep/strict codesign 通过，`dist` 中没有生产身份 `Zeus.app`。构建仍只有既有 `markstream-react` Rolldown 注解与大 chunk 警告。
 - 本轮没有启动应用、接入测试 Bot 或操作真实 Telegram 数据；首页按钮、任务创建附件、进程恢复和精确任务会话往返仍属于 GUI/Provider 运行验收缺口，不能由静态检查、构建或打包替代。
+
+## Vibego 源码对照后的任务会话闭环（2026-08-30）
+
+- 用户要求回到 `/Users/david/hypha/tools/vibego` 的真实源码核对交互，而不是继续按命令机器人思路补按钮。Vibego 的有效链路是：任务列表消息直接承载筛选、分页、任务入口和创建入口（`bot.py:19243-19325`）；点击“推送到模型”后先选择现有会话或新建并行会话（`bot.py:24807-24889`）；任务详情通过视图栈恢复原列表/搜索位置（`bot.py:26891-27045`）。它的 `/start` 命令描述写成“打开任务概览”，实际处理器却只发送欢迎语（`bot.py:27442-27454`），因此只采用有源码闭环支撑的任务与会话语义，不照搬这处漂移。
+- 对照截图和 Zeus 代码后确认三个结构问题：第一，入口虽已缩短正文，但仍没有可见主动作；第二，任务列表虽可点进详情，却仍要求通过命令创建任务；第三，详情卡的“推送到当前会话”允许任意当前项目会话，随后只改 Telegram binding 的 `taskId`，没有证明目标会话本身属于该任务，存在把 A 任务投递到 B 任务会话并制造错误上下文标识的风险。
+- `/start` 和配对成功欢迎页改为同一操作首页：展示绑定项目、当前会话和可识别的任务上下文，并提供“任务列表 / 新建任务 / 会话列表 / 新建会话”四个按钮。优点是用户完成配对后立即知道下一步，不需要先阅读整本命令手册；代价是普通导航也使用 10 分钟一次性 capability，过期后需重新发送 `/start`。
+- 任务列表增加“新建任务”。点击后在同一条消息进入标题输入态，可附带任务附件；等待输入 capability 支持进程恢复，发送其他命令或点击取消会清除待办。优点是列表到创建到详情形成手机端连续闭环；代价是首期仍只用标题创建，复杂类型、关系和阶段继续由桌面端治理。
+- 详情页把两个立即推送按钮收口为“处理此任务”。下一步先选择“新建任务会话”或该任务自己的、未归档的精确历史会话；任意项目会话和其他任务会话不再作为候选，旧 `/task push-current` 也增加相同身份校验。优点是任务、会话和 Telegram binding 三者身份一致，不会静默污染其他上下文；代价是推送多一步目标选择，且最多展示最近 8 个可用任务会话。
+- 本轮以用户提供的真实 Telegram 截图和 Vibego 源码完成交互审计；截图能确认入口层级、操作不可发现和长消息问题，不能单独证明 Telegram 客户端的读屏顺序、焦点或动态字号表现。真实按钮渲染、进程恢复和任务/会话往返仍必须由独立 `Zeus Test.app` 与测试 Bot 验收。
+- 验证通过相关文件 Prettier、`git diff --check`、`pnpm lint`、`pnpm typecheck`、`pnpm --filter @zeus/telegram-adapter build`、`pnpm build` 和 `pnpm package:mac`；architecture governance 同时通过 126 张 Core 表和 11 张辅助表检查。打包仅生成 `dist/test/mac-arm64/Zeus Test.app`，`CFBundleIdentifier=dev.hypha.zeus.test`、显示名为 `Zeus Test`，deep/strict codesign 通过，`dist` 中没有生产身份 `Zeus.app`。构建仍只有既有 `markstream-react` Rolldown 注解与大 chunk 警告；本轮没有启动应用、替换正式应用或操作正式 Telegram 数据，运行验收缺口继续保留。
+
+## 正式版本首页按钮故障复盘（2026-08-31）
+
+- 用户在真实 Telegram 中发送 `/start` 后能看到“任务列表 / 新建任务 / 会话列表 / 新建会话”四个首页按钮，但点击“任务列表”立即同时出现系统弹窗和聊天消息“该交互已不再受支持”。只读现场确认正式进程运行 `/Applications/Zeus.app` 0.3.84；其 `app.asar` 已包含 `home.tasks`、`home.new_conversation` 等首页 capability token，却不包含当前实现的“已打开任务列表”处理分支文本。因此这不是用户误操作或单纯按钮过期，而是正式包只带入口、没有带齐 callback 处理器的版本撕裂。
+- 当前任务分支 `e6f76ecb` 已包含首页 callback、任务创建和任务精确会话选择的完整处理器，但该提交没有安装到正在运行的正式应用；代码存在不等于线上已修复，仍需进入正式发布、安装与真实 Telegram 复验链路。
+- 同一句错误出现两次来自异常路径自身：callback 失败时先发送普通聊天错误，再调用 `answerCallbackQuery(showAlert=true)` 弹窗。现改为 callback 优先只弹一次；只有 callback 回答自身失败时才降级发送普通聊天消息。优点是避免重复噪声，同时保留 Telegram 无法显示 callback 弹窗时的可见兜底；代价是 callback 错误不再永久留在聊天历史中，需要依赖脱敏连接日志排障。
+
+## 正式发布集成（2026-08-31）
+
+- 用户明确授权“提交并发布”。发布集成以最新 `origin/main=4c83e3c9`（v0.3.84 发布记录）为基线，没有直接发布落后于主线的任务分支，也没有把共享测试分支的其他任务带入候选。
+- 主线已包含半成品入口提交 `5a3fa813`，并在 v0.3.83 阶段补过 `create/await_create` 解析与恢复；任务分支新增完整首页 callback、任务会话精确选择和单次错误反馈。`git merge-tree --write-tree` 预演准确报告服务文件与本文档冲突，集成时保留主线任务创建恢复和格式治理，并联合加入 `home.*`、`task.push_menu`、`task.push_existing` 与任务/会话身份校验，没有按任一侧整文件覆盖。
+- 首轮集成 `verify:publish` 发现两侧各自定义 `taskCreatePromptView`，TypeScript 以 `TS2393` 阻断候选。语义审计后保留支持附件、与“新建任务”交互文案一致的实现，移除被替代的旧实现；重新执行完整 `pnpm verify:publish` 通过，包括冲突残留、Git 空白、只读网络重试探针、Prettier、ESLint、126/11 架构治理、TypeScript 和生产构建。构建仍仅有既有 `markstream-react` Rolldown 注解与大 chunk 警告。
+- 上述门禁是集成候选的静态与构建证据，不等于真实 Telegram 已恢复；只有公开发布、安装新版本并重新发送 `/start` 生成新按钮后，才能复验首页、任务创建、精确会话选择与异常单次反馈。
+
+## v0.3.85 公开发布完成（2026-08-31）
+
+- `pnpm release` 从干净隔离 `main@a05a3d9a` 完成端到端发布，生成发布提交 `fe6b1c4c7701824be332ccd45d2bafad25429933`。`origin/main`、annotated tag `v0.3.85` 和 Release Workflow `33343277201` 的固定候选 SHA 完全一致；Workflow 的 preflight、typecheck、package-mac 与 publish 作业全部为 `success`。
+- GitHub Release `v0.3.85` 已公开，非草稿、非预发布。公开资产为 `Zeus-0.3.85-arm64.dmg`（115166670 字节，SHA-256 `76095c862e4cd9380fefc6a3cc728ffb18a08841971a210223723b8ee8a5f92f`）和 `zeus-release-manifest.json`（1047 字节，SHA-256 `9d62bc3623d3eb83da370869164276767d9152dcf46993ad79fa0b7940436d18`）；GitHub 服务端摘要、manifest 和 Homebrew Cask 已完成一致性对账。
+- manifest 明确记录 `signed=false`、`notarized=false`，因此本版本仍不能描述为 Developer ID 签名或 Apple 公证版本。快速发布模式未重新下载完整公开 DMG，但正式 DMG 在上传前已通过 `hdiutil verify`。
+- 本轮没有替换或重启正在运行的 `/Applications/Zeus.app` 0.3.84，也没有操作正式 Telegram 数据。真实 Bot 仍需安装 v0.3.85、重启 Zeus，并重新发送 `/start` 生成新 capability 后复验；旧消息中的一次性按钮不会因发布自动变成新版处理器的有效按钮。
