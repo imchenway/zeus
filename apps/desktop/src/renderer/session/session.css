@@ -5378,6 +5378,19 @@
   white-space: pre-wrap;
 }
 
+/* Markstream 的表头分隔线是透明拖动手柄，不应继承工作区通用按钮外观。 */
+.session-codex-parity-v1 .session-conversation-markdown .markstream-react .table-node__resize-handle {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  cursor: col-resize;
+  min-block-size: 0;
+  outline: none;
+  outline-offset: 0;
+  padding: 0;
+}
+
 .session-codex-parity-v1 .session-conversation-markdown .session-markdown-complexity-truncated {
   color: var(--session-text-muted);
   font-size: 12px;
