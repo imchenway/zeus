@@ -1036,7 +1036,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     modelId: string;
     modelSourceId: string | null;
     operationRisk: 'read_only' | 'local_write';
-    currentInputCharacters: number;
+    fixedRequestUtf8Bytes: number;
+    providerBootstrapUtf8Bytes: number;
+    providerHistoryMode: 'latest' | 'bootstrap';
     providerGenerationId: string | null;
   };
   type DispatchModelBudget = {
@@ -1083,12 +1085,22 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
             }
           : null;
     if (!budget) throw nativeApiError('ZEUS_CONTEXT_MODEL_WINDOW_UNAVAILABLE', 'Provider 没有可核验的上下文窗口，已拒绝注入未受预算约束的上下文。');
-    if (!Number.isSafeInteger(input.currentInputCharacters) || input.currentInputCharacters < 0) {
-      throw nativeApiError('ZEUS_CONTEXT_INPUT_SIZE_INVALID', 'Provider 当前输入规模无效，已拒绝上下文编译。');
+    if (!Number.isSafeInteger(input.fixedRequestUtf8Bytes) || input.fixedRequestUtf8Bytes < 0 || !Number.isSafeInteger(input.providerBootstrapUtf8Bytes) || input.providerBootstrapUtf8Bytes < 0) {
+      throw nativeApiError('ZEUS_CONTEXT_INPUT_SIZE_INVALID', 'Provider 待发请求或启动前缀规模无效，已拒绝上下文编译。');
     }
-    // 上游目前只提供字符数；按一字符一 token 做保守上界，不把估算伪装成真实 tokenizer。
-    const currentInputTokens = input.currentInputCharacters;
-    if (currentInputTokens > budget.contextWindowTokens) throw nativeApiError('ZEUS_CONTEXT_INPUT_BUDGET_EXCEEDED', '当前输入的保守 token 上界已超过模型窗口，已拒绝 Provider 派发。');
+    const latestRequest = input.providerHistoryMode === 'latest' ? conversationExecution.usageSnapshot(input.conversationId).latestModelRequest : null;
+    const latestTotalTokens = latestRequest?.totalTokens;
+    const historyBaselineTokens = typeof latestTotalTokens === 'number' && Number.isSafeInteger(latestTotalTokens) && latestTotalTokens >= 0 ? latestTotalTokens : Math.ceil(input.providerBootstrapUtf8Bytes / 4);
+    const historyBaselineSource =
+      typeof latestTotalTokens === 'number' && Number.isSafeInteger(latestTotalTokens) && latestTotalTokens >= 0 ? `latest_model_request:${latestRequest!.id}:${latestRequest!.requestSequence}` : 'provider_bootstrap_known_prefix';
+    const fixedInputTokens = Math.ceil(input.fixedRequestUtf8Bytes / 4);
+    if (fixedInputTokens + budget.reservedOutputTokens > budget.contextWindowTokens) {
+      throw nativeApiError('ZEUS_CONTEXT_INPUT_BUDGET_EXCEEDED', '本轮固定输入与输出预留已经超过模型窗口，已拒绝 Provider 派发。');
+    }
+    const estimateSafetyMarginTokens = Math.min(8_192, Math.max(2_048, Math.ceil(budget.contextWindowTokens * 0.02)));
+    const requestBudgetTokens = budget.contextWindowTokens - budget.reservedOutputTokens;
+    // Provider 历史可能在本轮由原生机制压缩；估算超窗时只把可选编译预算压到零，不抢先阻断 Provider 核心请求。
+    const currentInputTokens = Math.min(requestBudgetTokens, historyBaselineTokens + fixedInputTokens + estimateSafetyMarginTokens);
     const preflightTokenCount: ContextDispatchEnvelope['provider']['preflightTokenCount'] = {
       state: 'unavailable',
       exact: false,
@@ -1105,6 +1117,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         contextWindowTokens: budget.contextWindowTokens,
         reservedOutputTokens: budget.reservedOutputTokens,
         currentInputTokens,
+        requestAccounting: {
+          historyBaselineTokens,
+          historyBaselineSource,
+          fixedInputTokens,
+          estimateSafetyMarginTokens,
+        },
         capabilities: { applicationContext: true, untrustedContext: true, portableContext: true },
         preflightTokenCount,
       },
@@ -1115,8 +1133,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         'provider.runtime_generation': input.providerGenerationId ?? 'unavailable',
         'provider.model_window_source': budget.contextWindowSource,
         'provider.reserved_output_source': budget.reservedOutputSource,
+        'provider.history_baseline_tokens': historyBaselineTokens,
+        'provider.history_baseline_source': historyBaselineSource,
+        'provider.fixed_input_tokens': fixedInputTokens,
+        'provider.estimate_safety_margin_tokens': estimateSafetyMarginTokens,
         'provider.current_input_count': currentInputTokens,
-        'provider.current_input_counter': 'utf16_character_upper_bound_v1',
+        'provider.current_input_counter': 'zeus-utf8-quarter-estimate-v1',
       },
       auditIdentity: {
         actorType: 'zeus_dispatch',

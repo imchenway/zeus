@@ -30,6 +30,7 @@ export function createContextDispatchAuditPort(options: CreateContextDispatchAud
           fingerprint: record.fingerprint,
           usedTokens: record.usedTokens,
           availableTokens: record.availableTokens,
+          requestAccounting: record.requestAccounting,
           tokenAccounting: record.tokenAccounting,
           preflightTokenCount: record.preflightTokenCount,
           watermarks: record.watermarks,
