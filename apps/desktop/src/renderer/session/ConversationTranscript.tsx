@@ -22,7 +22,7 @@ import { isAssistantDeliverableItem } from './sessionTypes.js';
 import { parseCanonicalRequestUserInputQuestions, type ConversationFileLocation, type ConversationOpenTarget, type ConversationResponseAnnotation, type ConversationResponseTextAnchor } from '@zeus/shared';
 import { useThreadScrollController } from './useThreadScrollController.js';
 import { TurnChangeCard } from './TurnChanges.js';
-import { reasoningSummaryStatus, SessionReasoningSummary } from './SessionReasoningSummary.js';
+import { latestReasoningSummaryText, reasoningSummaryStatus, SessionReasoningSummary } from './SessionReasoningSummary.js';
 import { AnsweredRequestHistory, isAnsweredUserInputRequest } from './AnsweredRequestHistory.js';
 import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
 import { captureTranscriptViewportAnchor, compensateTranscriptViewportAnchor, type TranscriptViewportAnchor, useTranscriptViewportVirtualizer } from './transcriptViewportVirtualizer.js';
@@ -1922,7 +1922,7 @@ export function projectTranscriptRows(
   const emittedActivityStages = new Set<string>();
   const activeReasoningItem =
     effectiveActiveTurnId && !items.some((item) => item.turnId === effectiveActiveTurnId && isFinalAnswerItem(item))
-      ? [...items].reverse().find((item) => item.turnId === effectiveActiveTurnId && normalizeItemType(item.type) === 'reasoning')
+      ? [...items].reverse().find((item) => item.turnId === effectiveActiveTurnId && normalizeItemType(item.type) === 'reasoning' && latestReasoningSummaryText(item).length > 0)
       : undefined;
 
   for (let index = 0; index < timeline.length; index += 1) {
@@ -2328,7 +2328,7 @@ export function shouldShowTranscriptThinking(state: NativeSessionState, items: r
 function itemProvidesCurrentModelStatus(item: NativeSessionItemBuffer, state: NativeSessionState): boolean {
   // 只有“模型当前在做什么”的思考摘要或已经开始的最终回答可以替代底部状态行；
   // 命令、文件、网页和技能只是过程明细，不能让进行中状态消失。
-  if (normalizeItemType(item.type) === 'reasoning' && reasoningSummaryStatus(item, state) === 'active' && transcriptItemText(item).trim().length > 0) return true;
+  if (normalizeItemType(item.type) === 'reasoning' && reasoningSummaryStatus(item, state) === 'active' && latestReasoningSummaryText(item).length > 0) return true;
   if (item.status === 'completed' || item.status === 'failed' || item.status === 'interrupted') return false;
   return isFinalAnswerItem(item);
 }
