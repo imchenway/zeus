@@ -183,7 +183,7 @@ export function registerDigitalEmployeeRoutes(options: DigitalEmployeeRouteOptio
         mutateBusinessState: () => {
           const record = createEmployee(options, project.id, parsed.operationIdentity, parsed.input);
           validateDeployCommand(options, record.projectId, record.deliveryGrants.allowDeploy, record.deployCommandId);
-          validateEmployeeEntrypoint(options, record);
+          validateEmployeeEntrypoint(record);
           audit(options, parsed, 'digital_employee.created', 'digital_employee', record.id, { projectId: project.id, templateId: record.templateId });
           return record;
         },
@@ -215,7 +215,7 @@ export function registerDigitalEmployeeRoutes(options: DigitalEmployeeRouteOptio
           resourceId: `digital_employee:${current.id}`,
           mutateBusinessState: () => {
             const record = options.employees.update(current.id, parsed.input);
-            validateEmployeeEntrypoint(options, record);
+            validateEmployeeEntrypoint(record);
             audit(options, parsed, 'digital_employee.updated', 'digital_employee', record.id, { projectId: record.projectId, revision: record.revision });
             return record;
           },
@@ -559,12 +559,8 @@ function createEmployee(options: DigitalEmployeeRouteOptions, projectId: string,
   return options.employees.create({ ...(value as Omit<CreateDigitalEmployeeInput, 'projectId'>), id, projectId });
 }
 
-function validateEmployeeEntrypoint(options: DigitalEmployeeRouteOptions, employee: DigitalEmployeeRecord): void {
-  if (!employee.entrypoint || employee.entrypoint.kind !== 'command') return;
-  const command = options.commandDefinitions.getById(employee.entrypoint.commandId);
-  if (!command || !command.enabled || (command.scope === 'project' && command.projectId !== employee.projectId)) {
-    throw new DigitalEmployeeStoreError('ZEUS_DIGITAL_EMPLOYEE_COMMAND_ENTRYPOINT_INVALID', 'Command 主入口必须引用当前项目可用的命令中心定义。');
-  }
+function validateEmployeeEntrypoint(employee: DigitalEmployeeRecord): void {
+  if (employee.entrypoint?.kind !== 'agent') throw new DigitalEmployeeStoreError('ZEUS_DIGITAL_EMPLOYEE_AGENT_ENTRYPOINT_REQUIRED', '数字员工必须通过 Agent 会话执行；命令只是受权限约束的一项运行能力。');
 }
 
 function ensureDigitalEmployeeWorkflow(options: DigitalEmployeeRouteOptions, taskId: string) {

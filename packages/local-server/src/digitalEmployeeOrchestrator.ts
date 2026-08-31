@@ -338,8 +338,8 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
     sourceRef: string;
     eventIdentity?: string;
   }): Promise<void> {
-    if (!input.employee.entrypoint || input.employee.entrypointMigrationState !== 'ready') {
-      throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_ENTRYPOINT_REQUIRED', '数字员工尚未完成主执行入口配置，自动化不会创建旧版执行。', false);
+    if (input.employee.entrypoint?.kind !== 'agent' || input.employee.entrypointMigrationState !== 'ready') {
+      throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_AGENT_ENTRYPOINT_REQUIRED', '数字员工必须通过 Agent 会话执行；自动化不会运行旧版入口配置。', false);
     }
     const sourceRef = input.source === 'task_pool' ? input.sourceRef : `${input.employee.id}:${input.sourceRef}`;
     const created = await options.taskWorkManagement.createAutomatedWorkItem({ taskId: input.task.id, employeeId: input.employee.id, sourceRef });
@@ -347,8 +347,8 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
     options.taskEvents.create({
       taskId: input.task.id,
       eventType: 'task.work_item.automation_created',
-      title: input.employee.entrypoint.kind === 'command' ? '自动化已创建命令确认待办' : '自动化已创建 Agent 工作项',
-      payload: { workItemId: created.item.id, runId: created.run.id, employeeId: input.employee.id, source: input.source, automationId: input.automation?.id ?? null, entrypointKind: input.employee.entrypoint.kind },
+      title: '自动化已创建数字员工工作项',
+      payload: { workItemId: created.item.id, runId: created.run.id, employeeId: input.employee.id, source: input.source, automationId: input.automation?.id ?? null, entrypointKind: 'agent' },
     });
     await options.save();
   }

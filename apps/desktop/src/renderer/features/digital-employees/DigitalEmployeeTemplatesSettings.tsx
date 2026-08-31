@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '../../ui/Button.js';
-import { ZeusSelect } from '../../ZeusSelect.js';
-import { SkillSelector } from '../skills/SkillSelector.js';
 import type { NativeConversationAppClient } from '../workspace/workspaceSupport.js';
+import { AgentExecutionConfigFields } from './AgentExecutionConfigFields.js';
 import type { DigitalEmployeeApiClient } from './digitalEmployeeApiClient.js';
-import type { DigitalEmployeeTemplateRecord } from './digitalEmployeeContracts.js';
+import type { DigitalEmployeeCapabilitiesSnapshot, DigitalEmployeeTemplateRecord } from './digitalEmployeeContracts.js';
 import { emptyTemplateDraft, errorMessage, templateDraft, templateInput, type DigitalEmployeeLanguage, type DigitalEmployeeTemplateDraft } from './digitalEmployeeUiSupport.js';
 import './digitalEmployees.css';
 
@@ -19,6 +18,7 @@ type EditorTarget = { kind: 'new' } | { kind: 'template'; record: DigitalEmploye
 export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplatesSettingsProps) {
   const zh = props.language === 'zh-CN';
   const [templates, setTemplates] = useState<DigitalEmployeeTemplateRecord[]>([]);
+  const [capabilities, setCapabilities] = useState<DigitalEmployeeCapabilitiesSnapshot | null>(null);
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -30,7 +30,9 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
     setLoadState('loading');
     setError(null);
     try {
-      setTemplates(await props.client.loadDigitalEmployeeTemplates());
+      const [nextTemplates, nextCapabilities] = await Promise.all([props.client.loadDigitalEmployeeTemplates(), props.client.loadDigitalEmployeeCapabilities()]);
+      setTemplates(nextTemplates);
+      setCapabilities(nextCapabilities);
       setLoadState('ready');
     } catch (cause) {
       setLoadState('failed');
@@ -170,7 +172,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
               <span>{zh ? '也可以创建自己的岗位、业务领域、Skill 和提示词组合。' : 'Or create a custom combination of role, domain, skills, and prompt.'}</span>
             </div>
           ) : (
-            <TemplateEditor draft={draft} skillClient={props.skillClient} language={props.language} readOnly={readOnly} onChange={setDraft} />
+            <TemplateEditor draft={draft} models={capabilities?.models ?? []} skillClient={props.skillClient} language={props.language} readOnly={readOnly} onChange={setDraft} />
           )}
           {editorTarget ? (
             <footer className="digital-employee-editor-actions">
@@ -205,6 +207,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
 
 function TemplateEditor(props: {
   draft: DigitalEmployeeTemplateDraft;
+  models: DigitalEmployeeCapabilitiesSnapshot['models'];
   skillClient: Pick<NativeConversationAppClient, 'loadSkills'> | null;
   language: DigitalEmployeeLanguage;
   readOnly: boolean;
@@ -227,85 +230,18 @@ function TemplateEditor(props: {
           <span>{zh ? '业务领域' : 'Business domain'}</span>
           <input value={props.draft.domain} onChange={(event) => patch({ domain: event.currentTarget.value })} disabled={props.readOnly} maxLength={120} placeholder={zh ? '例如 CSS、PIM' : 'For example CSS or PIM'} />
         </label>
-        <label>
-          <span>{zh ? '运行时' : 'Runtime'}</span>
-          <ZeusSelect
-            size="regular"
-            ariaLabel={zh ? '选择运行时' : 'Choose runtime'}
-            value={props.draft.agentKind}
-            onChange={(agentKind) => patch({ agentKind })}
-            disabled={props.readOnly}
-            searchable={false}
-            options={[
-              { value: 'codex', label: 'Codex' },
-              { value: 'pi', label: 'Pi' },
-            ]}
-          />
-        </label>
-        <label>
-          <span>{zh ? '权限模式' : 'Permission mode'}</span>
-          <ZeusSelect
-            size="regular"
-            ariaLabel={zh ? '选择权限模式' : 'Choose permission mode'}
-            value={props.draft.permissionMode}
-            onChange={(permissionMode) => patch({ permissionMode })}
-            disabled={props.readOnly}
-            searchable={false}
-            options={[
-              { value: 'read-only', label: zh ? '只读' : 'Read-only' },
-              { value: 'auto', label: zh ? '自动' : 'Auto' },
-              { value: 'full-access', label: zh ? '完全访问' : 'Full access' },
-            ]}
-          />
-        </label>
-        <label>
-          <span>{zh ? '工作模式' : 'Work mode'}</span>
-          <ZeusSelect
-            size="regular"
-            ariaLabel={zh ? '选择工作模式' : 'Choose work mode'}
-            value={props.draft.workMode}
-            onChange={(workMode) => patch({ workMode })}
-            disabled={props.readOnly}
-            searchable={false}
-            options={[
-              { value: 'default', label: zh ? '默认' : 'Default' },
-              { value: 'plan', label: zh ? '规划' : 'Plan' },
-            ]}
-          />
-        </label>
-        <label>
-          <span>{zh ? '模型（可选）' : 'Model (optional)'}</span>
-          <input value={props.draft.model} onChange={(event) => patch({ model: event.currentTarget.value })} disabled={props.readOnly} maxLength={256} />
-        </label>
-        <label>
-          <span>{zh ? '推理强度（可选）' : 'Reasoning effort (optional)'}</span>
-          <input value={props.draft.reasoningEffort} onChange={(event) => patch({ reasoningEffort: event.currentTarget.value })} disabled={props.readOnly} maxLength={64} />
-        </label>
-        <label>
-          <span>{zh ? '服务层级（可选）' : 'Service tier (optional)'}</span>
-          <input value={props.draft.serviceTier} onChange={(event) => patch({ serviceTier: event.currentTarget.value })} disabled={props.readOnly} maxLength={64} />
-        </label>
       </div>
       <label>
         <span>{zh ? '说明' : 'Description'}</span>
         <textarea value={props.draft.description} onChange={(event) => patch({ description: event.currentTarget.value })} disabled={props.readOnly} rows={2} maxLength={1000} />
       </label>
-      <label>
-        <span>{zh ? '默认 Skill（可选）' : 'Default skill (optional)'}</span>
-        <SkillSelector
-          client={props.skillClient}
-          value={props.draft.skillId}
-          onChange={(skillId) => patch({ skillId })}
-          language={props.language}
-          disabled={props.readOnly}
-          ariaLabel={zh ? '选择模板默认 Skill' : 'Choose template default skill'}
-        />
-        <small>{zh ? '只绑定 Zeus Skill 目录中的稳定身份；不会授予工具、凭据或交付权限。' : 'Binds a stable Zeus Skill identity without granting tools, credentials, or delivery permissions.'}</small>
-      </label>
-      <label>
-        <span>{zh ? '员工提示词' : 'Employee prompt'}</span>
-        <textarea value={props.draft.prompt} onChange={(event) => patch({ prompt: event.currentTarget.value })} disabled={props.readOnly} rows={7} maxLength={20000} />
-      </label>
+      <section className="digital-employee-form-section">
+        <header>
+          <strong>{zh ? 'Agent 基础配置' : 'Agent configuration'}</strong>
+          <small>{zh ? '与项目数字员工和单次执行使用相同的模型、联动选项、Skill 与提示词字段。' : 'Uses the same model, linked options, skills, and prompt fields as project employees and individual runs.'}</small>
+        </header>
+        <AgentExecutionConfigFields value={props.draft} models={props.models} skillClient={props.skillClient} language={props.language} readOnly={props.readOnly} onChange={patch} />
+      </section>
     </div>
   );
 }

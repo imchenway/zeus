@@ -1,50 +1,59 @@
 import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
-import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { areRequiredRequestAnswersComplete, buildPendingRequestResponse, normalizeRequestQuestions, supportedRequestDecisions, type RequestQuestion, type SupportedRequestDecision } from '../../session/PendingRequestSurface.js';
-import type { NativePendingRequest } from '../../session/sessionTypes.js';
+import type { CodexTaskPushCapabilities, NativePendingRequest } from '../../session/sessionTypes.js';
+import { TaskPushLayoutPreview } from '../../task/TaskModelPushModal.js';
 import { Button } from '../../ui/Button.js';
 import { ModalPortal } from '../../ui/ModalPortal.js';
 import { ZeusSelect } from '../../ZeusSelect.js';
+import { AgentExecutionConfigFields, type AgentExecutionConfigValue } from './AgentExecutionConfigFields.js';
 import type { DigitalEmployeeApiClient } from './digitalEmployeeApiClient.js';
 import type { CommandRunDetail } from '../runtime/runtimeContracts.js';
 import type { DigitalEmployeeRecord, TaskWorkDecisionRecord, TaskWorkDeliverableRecord, TaskWorkItemRecord, TaskWorkManagementProjection, TaskWorkPreview } from './digitalEmployeeContracts.js';
 import { errorMessage, formatDateTime, type DigitalEmployeeLanguage } from './digitalEmployeeUiSupport.js';
+import type { NativeConversationAppClient } from '../workspace/workspaceSupport.js';
 import './digitalEmployees.css';
+
+export type TaskDigitalEmployeeSkillClient = Pick<NativeConversationAppClient, 'loadSkills'>;
 
 export interface TaskDigitalEmployeePanelProps {
   taskId: string;
   projectId: string;
   terminalReadOnly: boolean;
   client: DigitalEmployeeApiClient | null;
+  management: TaskDigitalEmployeeManagement;
   language: DigitalEmployeeLanguage;
   onOpenConversation?: (conversationId: string) => void;
 }
 
-type ManagementTab = 'overview' | 'collaboration' | 'deliverables' | 'evidence';
+export interface TaskDigitalEmployeeManagement {
+  employees: DigitalEmployeeRecord[];
+  projection: TaskWorkManagementProjection | null;
+  loadState: 'loading' | 'ready' | 'failed';
+  busy: string | null;
+  error: string | null;
+  load(): Promise<void>;
+  act(identity: string, operation: () => Promise<unknown>): Promise<boolean>;
+}
 
-export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
+export function useTaskDigitalEmployeeManagement(props: Pick<TaskDigitalEmployeePanelProps, 'taskId' | 'projectId' | 'client' | 'language'>): TaskDigitalEmployeeManagement {
   const zh = props.language === 'zh-CN';
-  const [tab, setTab] = useState<ManagementTab>('collaboration');
   const [employees, setEmployees] = useState<DigitalEmployeeRecord[]>([]);
   const [projection, setProjection] = useState<TaskWorkManagementProjection | null>(null);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'failed'>('loading');
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [assignmentOpen, setAssignmentOpen] = useState(false);
-  const [decisionOpen, setDecisionOpen] = useState<TaskWorkDecisionRecord | null>(null);
-  const [commandEvidenceRunId, setCommandEvidenceRunId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!props.client) return;
     setLoadState('loading');
     try {
       const [nextEmployees, nextProjection] = await Promise.all([props.client.loadProjectDigitalEmployees(props.projectId), props.client.loadTaskWorkManagement(props.taskId)]);
-      setEmployees(nextEmployees.filter((employee) => employee.enabled));
+      setEmployees(nextEmployees.filter((employee) => employee.enabled && employee.entrypointMigrationState === 'ready' && employee.entrypoint?.kind === 'agent'));
       setProjection(nextProjection);
       setError(null);
       setLoadState('ready');
@@ -62,22 +71,37 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
     return () => window.clearInterval(timer);
   }, [load, shouldPoll]);
 
-  async function act(identity: string, operation: () => Promise<unknown>): Promise<boolean> {
-    setBusy(identity);
-    setError(null);
-    try {
-      await operation();
-      await load();
-      return true;
-    } catch (cause) {
-      setError(errorMessage(cause, zh ? '工作管理操作失败。' : 'Work management action failed.'));
-      return false;
-    } finally {
-      setBusy(null);
-    }
-  }
+  const act = useCallback(
+    async (identity: string, operation: () => Promise<unknown>): Promise<boolean> => {
+      setBusy(identity);
+      setError(null);
+      try {
+        await operation();
+        await load();
+        return true;
+      } catch (cause) {
+        setError(errorMessage(cause, zh ? '工作管理操作失败。' : 'Work management action failed.'));
+        return false;
+      } finally {
+        setBusy(null);
+      }
+    },
+    [load, zh],
+  );
+
+  return { employees, projection, loadState, busy, error, load, act };
+}
+
+type ManagementTab = 'overview' | 'collaboration' | 'deliverables' | 'evidence';
+
+export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
+  const zh = props.language === 'zh-CN';
+  const [tab, setTab] = useState<ManagementTab>('collaboration');
+  const [decisionOpen, setDecisionOpen] = useState<TaskWorkDecisionRecord | null>(null);
+  const [commandEvidenceRunId, setCommandEvidenceRunId] = useState<string | null>(null);
 
   if (!props.client) return null;
+  const { projection, loadState, busy, error, load, act } = props.management;
   const summary = projection?.summary;
   const pendingDecisions = projection?.managerDecisions.filter((decision) => decision.status === 'pending') ?? [];
 
@@ -96,10 +120,6 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
         <span>
           <Button variant="secondary" size="compact" busy={loadState === 'loading'} aria-label={zh ? '刷新工作管理' : 'Refresh work management'} onClick={() => void load()}>
             <ArrowsClockwise size={16} aria-hidden="true" />
-          </Button>
-          <Button variant="primary" size="compact" disabled={props.terminalReadOnly} onClick={() => setAssignmentOpen(true)}>
-            <Plus size={16} aria-hidden="true" />
-            {zh ? '指派数字员工' : 'Assign employee'}
           </Button>
         </span>
       </header>
@@ -122,32 +142,12 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
             onOpenConversation={props.onOpenConversation}
             onRetry={(item) => void act(`retry:${item.id}`, () => props.client!.retryTaskWorkItem(props.taskId, item))}
             onCancel={(item) => void act(`cancel:${item.id}`, () => props.client!.cancelTaskWorkItem(props.taskId, item))}
-            onAssign={() => setAssignmentOpen(true)}
           />
           <ManagerInbox decisions={pendingDecisions} language={props.language} onSelect={setDecisionOpen} />
         </div>
       ) : null}
       {tab === 'deliverables' ? <DeliverablesView deliverables={projection?.deliverables ?? []} language={props.language} /> : null}
       {tab === 'evidence' ? <EvidenceView refs={projection?.evidenceRefs ?? []} language={props.language} onOpenConversation={props.onOpenConversation} onOpenCommand={setCommandEvidenceRunId} /> : null}
-
-      {assignmentOpen ? (
-        <AssignmentDrawer
-          employees={employees}
-          acceptedDeliverables={projection?.deliverables.filter((deliverable) => deliverable.status === 'accepted') ?? []}
-          client={props.client}
-          taskId={props.taskId}
-          language={props.language}
-          busy={busy === 'assign'}
-          onDismiss={() => setAssignmentOpen(false)}
-          onSubmit={async (preview, commandParameters) => {
-            const success = await act('assign', () => props.client!.createTaskWorkItem(props.taskId, preview, commandParameters));
-            if (success) {
-              setAssignmentOpen(false);
-              setTab('collaboration');
-            }
-          }}
-        />
-      ) : null}
 
       {decisionOpen ? (
         <DecisionDialog
@@ -215,7 +215,6 @@ function WorkItemBoard(props: {
   onOpenConversation?: (conversationId: string) => void;
   onRetry(item: TaskWorkItemRecord): void;
   onCancel(item: TaskWorkItemRecord): void;
-  onAssign(): void;
 }) {
   const zh = props.language === 'zh-CN';
   return (
@@ -223,7 +222,7 @@ function WorkItemBoard(props: {
       <header>
         <span>
           <strong>{zh ? '工作项' : 'Work items'}</strong>
-          <small>{zh ? '并行工作，不按指派次数推导流程' : 'Parallel work; assignment count never drives behavior'}</small>
+          <small>{zh ? '每个任务同时只运行一个执行者；历史工作项完整保留' : 'One active executor per task; historical work items remain available'}</small>
         </span>
       </header>
       {props.relationships.length === 0 && props.items.length > 1 ? <p className="task-work-relationship-note">{zh ? '这些是独立指派，当前没有依赖关系。' : 'These are independent assignments with no dependencies.'}</p> : null}
@@ -271,11 +270,10 @@ function WorkItemBoard(props: {
           );
         })}
         {props.items.length === 0 ? (
-          <button type="button" className="task-work-empty" onClick={props.onAssign} disabled={props.readOnly}>
-            <Plus size={22} aria-hidden="true" />
-            <strong>{zh ? '创建第一个工作项' : 'Create the first work item'}</strong>
-            <small>{zh ? '选择员工后，Zeus 按主入口直接启动 Agent 或 Command。' : 'Zeus starts the employee’s Agent or Command entrypoint.'}</small>
-          </button>
+          <span className="task-work-empty">
+            <strong>{zh ? '尚无工作项' : 'No work items yet'}</strong>
+            <small>{zh ? '请在上方“执行者”中选择数字员工并开始执行。' : 'Choose a digital employee from Executor above to start.'}</small>
+          </span>
         ) : null}
       </div>
     </section>
@@ -363,210 +361,309 @@ function EvidenceView(props: { refs: Array<Record<string, unknown>>; language: D
   );
 }
 
-function AssignmentDrawer(props: {
-  employees: DigitalEmployeeRecord[];
-  acceptedDeliverables: TaskWorkDeliverableRecord[];
-  client: DigitalEmployeeApiClient;
+export function TaskDigitalEmployeeExecutor(props: {
   taskId: string;
+  projectId: string;
+  terminalReadOnly: boolean;
+  client: DigitalEmployeeApiClient | null;
+  skillClient: TaskDigitalEmployeeSkillClient | null;
   language: DigitalEmployeeLanguage;
-  busy: boolean;
-  onDismiss(): void;
-  onSubmit(preview: TaskWorkPreview, commandParameters: Record<string, unknown>): Promise<void>;
+  management: TaskDigitalEmployeeManagement;
+  onLoadCapabilities?: () => Promise<CodexTaskPushCapabilities>;
 }) {
   const zh = props.language === 'zh-CN';
-  const [employeeId, setEmployeeId] = useState(props.employees[0]?.id ?? '');
+  const [selectedEmployee, setSelectedEmployee] = useState<DigitalEmployeeRecord | null>(null);
+  if (!props.client) return <strong>{zh ? '不可用' : 'Unavailable'}</strong>;
+  const activeItems = activeTaskWorkItems(props.management.projection);
+  const activeItem = activeItems[0] ?? null;
+  const activeRun = activeItem ? currentWorkRun(activeItem) : undefined;
+  const activeEmployee = activeItem ? props.management.employees.find((employee) => employee.id === activeItem.employeeId) : null;
+  const activeEmployeeName = activeEmployee?.name || employeeName(activeRun) || (activeItem ? activeItem.title : '');
+  const options = [
+    { value: '', label: zh ? '选择数字员工' : 'Choose an employee' },
+    ...props.management.employees.map((employee) => ({ value: employee.id, label: `${employee.name} · ${entrypointLabel(employee, props.language)}`, searchText: `${employee.name} ${employee.role} ${employee.domain}` })),
+  ];
+  if (activeItem && !options.some((option) => option.value === activeItem.employeeId))
+    options.push({ value: activeItem.employeeId, label: `${activeEmployeeName} · ${zh ? '历史配置' : 'Saved configuration'}`, searchText: activeEmployeeName });
+  return (
+    <span className="task-digital-employee-executor">
+      <ZeusSelect
+        size="regular"
+        ariaLabel={zh ? '选择任务执行者' : 'Choose task executor'}
+        value={activeItem?.employeeId ?? ''}
+        options={options}
+        searchable
+        searchPlaceholder={zh ? '搜索员工、岗位或领域' : 'Search employee, role, or domain'}
+        emptyLabel={zh ? '没有可执行的数字员工' : 'No runnable digital employees'}
+        disabled={props.terminalReadOnly || props.management.loadState === 'loading' || props.management.busy !== null || props.management.employees.length === 0}
+        onChange={(employeeId) => {
+          const employee = props.management.employees.find((candidate) => candidate.id === employeeId);
+          if (employee) setSelectedEmployee(employee);
+        }}
+        triggerLabel={activeItem ? activeEmployeeName : zh ? '选择数字员工' : 'Choose an employee'}
+      />
+      {activeRun ? (
+        <small className="task-digital-employee-executor-status">
+          {runStatus(activeRun.status, props.language)}
+          {activeItems.length > 1 ? ` · ${zh ? `${activeItems.length} 个历史活动项` : `${activeItems.length} active legacy items`}` : ''}
+        </small>
+      ) : null}
+      {selectedEmployee ? (
+        <TaskEmployeeRunDialog
+          key={selectedEmployee.id}
+          taskId={props.taskId}
+          projectId={props.projectId}
+          employee={selectedEmployee}
+          activeItems={activeItems}
+          acceptedDeliverables={props.management.projection?.deliverables.filter((deliverable) => deliverable.status === 'accepted') ?? []}
+          client={props.client}
+          skillClient={props.skillClient}
+          language={props.language}
+          busy={props.management.busy === 'start-executor'}
+          operationError={props.management.error}
+          onLoadCapabilities={props.onLoadCapabilities}
+          onDismiss={() => setSelectedEmployee(null)}
+          onSubmit={async (preview, replacements) => {
+            const success = await props.management.act('start-executor', () => props.client!.createTaskWorkItem(props.taskId, preview, replacements));
+            if (success) setSelectedEmployee(null);
+            return success;
+          }}
+        />
+      ) : null}
+    </span>
+  );
+}
+
+function TaskEmployeeRunDialog(props: {
+  taskId: string;
+  projectId: string;
+  employee: DigitalEmployeeRecord;
+  activeItems: TaskWorkItemRecord[];
+  acceptedDeliverables: TaskWorkDeliverableRecord[];
+  client: DigitalEmployeeApiClient;
+  skillClient: TaskDigitalEmployeeSkillClient | null;
+  language: DigitalEmployeeLanguage;
+  busy: boolean;
+  operationError: string | null;
+  onLoadCapabilities?: () => Promise<CodexTaskPushCapabilities>;
+  onDismiss(): void;
+  onSubmit(preview: TaskWorkPreview, replacements: Array<{ id: string; expectedRevision: number }>): Promise<boolean>;
+}) {
+  const zh = props.language === 'zh-CN';
+  const agentEntrypoint = props.employee.entrypoint?.kind === 'agent' ? props.employee.entrypoint : null;
+  const [models, setModels] = useState<CodexTaskPushCapabilities['models']>([]);
+  const [capabilityError, setCapabilityError] = useState<string | null>(null);
+  const [config, setConfig] = useState<AgentExecutionConfigValue>(() => initialRunConfig(props.employee));
   const [selectedDeliverableIds, setSelectedDeliverableIds] = useState<string[]>([]);
-  const [modelOverride, setModelOverride] = useState('');
-  const [reasoningEffort, setReasoningEffort] = useState('');
-  const [serviceTier, setServiceTier] = useState('');
-  const [commandParameters, setCommandParameters] = useState<Record<string, unknown>>({});
   const [preview, setPreview] = useState<TaskWorkPreview | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
-  const employee = props.employees.find((candidate) => candidate.id === employeeId) ?? null;
-
-  async function loadPreview(): Promise<void> {
-    if (!employeeId) return;
-    setPreviewBusy(true);
-    setPreviewError(null);
-    try {
-      setPreview(
-        await props.client.previewTaskWorkItem(props.taskId, { employeeId, selectedDeliverableIds, modelOverride: modelOverride || null, reasoningEffort: reasoningEffort || null, serviceTier: serviceTier || null, commandParameters }),
-      );
-    } catch (cause) {
-      setPreviewError(errorMessage(cause, zh ? '无法解析本次指派。' : 'Could not resolve this assignment.'));
-    } finally {
-      setPreviewBusy(false);
-    }
-  }
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const previewVersion = useRef(0);
+  const loadCapabilitiesRef = useRef(props.onLoadCapabilities);
+  loadCapabilitiesRef.current = props.onLoadCapabilities;
 
   useEffect(() => {
-    setPreview(null);
-    setCommandParameters({});
-    setModelOverride('');
-    setReasoningEffort('');
-    setServiceTier('');
-  }, [employeeId]);
+    if (!agentEntrypoint) return;
+    let active = true;
+    setCapabilityError(null);
+    const request = loadCapabilitiesRef.current ? loadCapabilitiesRef.current().then((capabilities) => ({ models: capabilities.models, preferredModel: capabilities.preferredModel })) : props.client.loadDigitalEmployeeCapabilities();
+    void request
+      .then((capabilities) => {
+        if (!active) return;
+        setModels(capabilities.models);
+        setConfig((current) => {
+          if (current.model) return current;
+          const model = capabilities.models.find((candidate) => candidate.id === ('preferredModel' in capabilities ? capabilities.preferredModel : '')) ?? capabilities.models.find((candidate) => candidate.available !== false);
+          return model
+            ? {
+                ...current,
+                agentKind: model.agentKind ?? 'codex',
+                model: model.id,
+                reasoningEffort: model.defaultReasoningEffort ?? model.supportedReasoningEfforts[0] ?? '',
+                serviceTier: model.defaultServiceTier ?? '',
+              }
+            : current;
+        });
+      })
+      .catch((cause) => {
+        if (active) setCapabilityError(errorMessage(cause, zh ? '无法读取本次执行能力。' : 'Could not load run capabilities.'));
+      });
+    return () => {
+      active = false;
+    };
+  }, [agentEntrypoint, props.client, zh]);
+
+  useEffect(() => {
+    const version = previewVersion.current + 1;
+    previewVersion.current = version;
+    setPreviewBusy(true);
+    setPreviewError(null);
+    const timer = window.setTimeout(() => {
+      void props.client
+        .previewTaskWorkItem(props.taskId, {
+          employeeId: props.employee.id,
+          modelOverride: config.model || null,
+          reasoningEffort: config.reasoningEffort || null,
+          serviceTier: config.serviceTier || null,
+          workMode: config.workMode,
+          permissionMode: config.permissionMode,
+          promptOverride: config.prompt,
+          skillIds: config.skillIds,
+          selectedDeliverableIds,
+        })
+        .then((nextPreview) => {
+          if (previewVersion.current === version) setPreview(nextPreview);
+        })
+        .catch((cause) => {
+          if (previewVersion.current === version) {
+            setPreview(null);
+            setPreviewError(errorMessage(cause, zh ? '无法生成本次执行预览。' : 'Could not generate this run preview.'));
+          }
+        })
+        .finally(() => {
+          if (previewVersion.current === version) setPreviewBusy(false);
+        });
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [config, props.client, props.employee.id, props.taskId, selectedDeliverableIds, zh]);
+
+  async function submit(): Promise<void> {
+    if (!preview || preview.blockers.length > 0) return;
+    setSubmitError(null);
+    const success = await props.onSubmit(
+      preview,
+      props.activeItems.map((item) => ({ id: item.id, expectedRevision: item.revision })),
+    );
+    if (!success) setSubmitError(zh ? '停止或启动未完成；原运行状态已保留，请查看页面错误并刷新后重试。' : 'Stop or start did not complete. The original run state was preserved; review the error and refresh.');
+  }
 
   return (
-    <ModalPortal rootClassName="task-work-assignment-root" backdropClassName="task-work-assignment-backdrop" dismissDisabled={props.busy} onDismiss={props.onDismiss}>
-      <section className="task-work-assignment-drawer zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="task-work-assignment-title">
+    <ModalPortal rootClassName="task-work-run-root" backdropClassName="task-work-run-backdrop" dismissDisabled={props.busy} onDismiss={props.onDismiss}>
+      <section className="task-work-run-dialog zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="task-work-run-title">
         <header>
           <span>
-            <strong id="task-work-assignment-title">{zh ? '指派数字员工' : 'Assign a digital employee'}</strong>
-            <small>{zh ? '先预览真实入口、模型、Skill、权限和上下文，再创建工作项。' : 'Preview the resolved entrypoint, model, skills, authority, and context first.'}</small>
+            <strong id="task-work-run-title">{props.activeItems.length ? (zh ? '切换任务执行者' : 'Switch task executor') : zh ? '开始任务执行' : 'Start task execution'}</strong>
+            <small>{zh ? '修改只冻结到本次运行，不回写员工或系统模板。' : 'Changes are frozen into this run and do not update the employee or template.'}</small>
           </span>
           <Button variant="secondary" size="compact" disabled={props.busy} onClick={props.onDismiss}>
             {zh ? '关闭' : 'Close'}
           </Button>
         </header>
-        <div className="task-work-assignment-body">
-          <label>
-            <span>{zh ? '数字员工' : 'Employee'}</span>
-            <ZeusSelect
-              size="regular"
-              ariaLabel={zh ? '选择数字员工' : 'Choose employee'}
-              value={employeeId}
-              options={props.employees.map((candidate) => ({ value: candidate.id, label: `${candidate.name} · ${entrypointLabel(candidate, props.language)}` }))}
-              onChange={setEmployeeId}
-              searchable
-            />
-          </label>
-          {employee ? (
-            <section className="task-work-assignment-impact">
+        <div className="task-work-run-body">
+          <section className="task-work-run-identity" aria-label={zh ? '只读员工身份' : 'Read-only employee identity'}>
+            <span>
+              <small>{zh ? '员工' : 'Employee'}</small>
+              <strong>{props.employee.name}</strong>
+            </span>
+            <span>
+              <small>{zh ? '岗位与领域' : 'Role and domain'}</small>
+              <strong>{props.employee.role}</strong>
+              <p>{props.employee.domain || (zh ? '通用' : 'General')}</p>
+            </span>
+            <span>
+              <small>{zh ? '运行方式' : 'Runtime'}</small>
+              <strong>{entrypointLabel(props.employee, props.language)}</strong>
+            </span>
+            <span>
+              <small>{zh ? '治理上限' : 'Governance ceiling'}</small>
+              <strong>{props.employee.permissionMode}</strong>
+              <p>{zh ? `${props.employee.skillIds.length} 个 Skill` : `${props.employee.skillIds.length} skills`}</p>
+            </span>
+          </section>
+
+          {props.activeItems.length > 0 ? (
+            <section className="task-work-switch-confirmation" role="note" aria-label={zh ? '停止并切换确认' : 'Stop and switch confirmation'}>
+              <WarningCircle size={20} aria-hidden="true" />
               <span>
-                <small>{zh ? '主执行入口' : 'Primary entrypoint'}</small>
-                <strong>{entrypointLabel(employee, props.language)}</strong>
-                <p>
-                  {employee.entrypoint?.kind === 'agent'
-                    ? employee.entrypoint.prompt
-                    : employee.entrypoint?.kind === 'command'
-                      ? zh
-                        ? '指派后直接确认并启动项目命令，不创建模型会话。'
-                        : 'Confirms and starts the project command without a model conversation.'
-                      : zh
-                        ? '该员工尚未完成主入口配置。'
-                        : 'This employee needs entrypoint configuration.'}
-                </p>
+                <strong>{zh ? `先真实停止以下执行，再启动“${props.employee.name}”` : `Stop the following runs before starting “${props.employee.name}”`}</strong>
+                <small>{zh ? '只有全部停止获得耐久确认后才会启动新员工；关闭此弹窗不会改变当前运行。' : 'The new employee starts only after every stop is durably confirmed. Closing this dialog leaves the current runs unchanged.'}</small>
+                <ul>
+                  {props.activeItems.map((item) => {
+                    const run = currentWorkRun(item);
+                    return (
+                      <li key={item.id}>
+                        <span>{employeeName(run) || item.title}</span>
+                        <small>{run ? runStatus(run.status, props.language) : item.status}</small>
+                      </li>
+                    );
+                  })}
+                </ul>
               </span>
             </section>
           ) : null}
-          {employee?.entrypoint?.kind === 'agent' ? (
-            <fieldset>
-              <legend>{zh ? '本次运行覆盖（仅限员工允许范围）' : 'Run overrides (within employee policy)'}</legend>
-              <label>
-                <span>{zh ? '模型' : 'Model'}</span>
-                <ZeusSelect
-                  size="regular"
-                  ariaLabel={zh ? '选择本次运行模型' : 'Choose run model'}
-                  value={modelOverride}
-                  onChange={setModelOverride}
-                  options={[{ value: '', label: zh ? '使用员工默认解析值' : 'Use employee default resolution' }, ...employee.entrypoint.modelPolicy.allowedModels.map((value) => ({ value, label: value }))]}
-                />
-              </label>
-              <label>
-                <span>{zh ? '推理强度' : 'Reasoning effort'}</span>
-                <ZeusSelect
-                  size="regular"
-                  ariaLabel={zh ? '选择本次推理强度' : 'Choose reasoning effort'}
-                  value={reasoningEffort}
-                  onChange={setReasoningEffort}
-                  options={[{ value: '', label: zh ? '使用默认值' : 'Use default' }, ...employee.entrypoint.modelPolicy.allowedReasoningEfforts.map((value) => ({ value, label: value }))]}
-                  searchable={false}
-                />
-              </label>
-              <label>
-                <span>{zh ? '服务速率' : 'Service tier'}</span>
-                <ZeusSelect
-                  size="regular"
-                  ariaLabel={zh ? '选择本次服务速率' : 'Choose service tier'}
-                  value={serviceTier}
-                  onChange={setServiceTier}
-                  options={[{ value: '', label: zh ? '使用默认值' : 'Use default' }, ...employee.entrypoint.modelPolicy.allowedServiceTiers.map((value) => ({ value, label: value }))]}
-                  searchable={false}
-                />
-              </label>
-            </fieldset>
+
+          {agentEntrypoint ? (
+            <AgentExecutionConfigFields
+              value={config}
+              models={models}
+              skillClient={props.skillClient}
+              projectId={props.projectId}
+              language={props.language}
+              allowedModelIds={agentEntrypoint.modelPolicy.allowedModels}
+              allowedReasoningEfforts={agentEntrypoint.modelPolicy.allowedReasoningEfforts}
+              allowedServiceTiers={agentEntrypoint.modelPolicy.allowedServiceTiers}
+              allowedSkillIds={agentEntrypoint.skillPolicy.allowedSkillIds}
+              maximumPermissionMode={agentEntrypoint.authorityPolicy.permissionMode}
+              compact
+              onChange={(patch) => setConfig((current) => ({ ...current, ...patch }))}
+            />
           ) : null}
-          {props.acceptedDeliverables.length ? (
-            <fieldset>
-              <legend>{zh ? '选入上下文的已验收交付物' : 'Accepted deliverables in context'}</legend>
+
+          {props.acceptedDeliverables.length > 0 ? (
+            <details className="task-work-context-details">
+              <summary>{zh ? `已验收交付物上下文（已选 ${selectedDeliverableIds.length}）` : `Accepted deliverable context (${selectedDeliverableIds.length} selected)`}</summary>
               {props.acceptedDeliverables.map((deliverable) => (
                 <label key={deliverable.id} className="task-work-checkbox">
                   <input
                     type="checkbox"
                     checked={selectedDeliverableIds.includes(deliverable.id)}
-                    onChange={(event) => setSelectedDeliverableIds((current) => (event.target.checked ? [...current, deliverable.id] : current.filter((id) => id !== deliverable.id)))}
+                    onChange={(event) => setSelectedDeliverableIds((current) => (event.currentTarget.checked ? [...current, deliverable.id] : current.filter((id) => id !== deliverable.id)))}
                   />
                   <span>
                     {deliverable.title} · v{deliverable.version}
                   </span>
                 </label>
               ))}
-            </fieldset>
+            </details>
           ) : null}
-          {preview?.command ? (
-            <fieldset>
-              <legend>{zh ? '命令参数' : 'Command parameters'}</legend>
-              {preview.command.parameters.map((parameter) => (
-                <label key={parameter.key}>
-                  <span>
-                    {parameter.label}
-                    {parameter.required ? ' *' : ''}
-                    <small>{parameter.description}</small>
-                  </span>
-                  {parameter.type === 'boolean' ? (
-                    <ZeusSelect
-                      size="regular"
-                      ariaLabel={parameter.label}
-                      value={String(commandParameters[parameter.key] ?? '')}
-                      options={[
-                        { value: '', label: zh ? '请选择' : 'Choose' },
-                        { value: 'true', label: zh ? '是' : 'True' },
-                        { value: 'false', label: zh ? '否' : 'False' },
-                      ]}
-                      onChange={(value) => setCommandParameters((current) => ({ ...current, [parameter.key]: value === '' ? undefined : value === 'true' }))}
-                    />
-                  ) : (
-                    <input
-                      type={parameter.sensitive ? 'password' : parameter.type === 'number' ? 'number' : 'text'}
-                      value={String(commandParameters[parameter.key] ?? '')}
-                      onChange={(event) => setCommandParameters((current) => ({ ...current, [parameter.key]: parameter.type === 'number' ? Number(event.target.value) : event.target.value }))}
-                      autoComplete="off"
-                    />
-                  )}
-                </label>
-              ))}
-            </fieldset>
-          ) : null}
+
           {preview ? (
-            <section className="task-work-preview">
+            <section className="task-work-preview" aria-label={zh ? '冻结后的有效配置' : 'Frozen effective configuration'}>
               <span>
-                <small>{zh ? '解析入口' : 'Resolved entrypoint'}</small>
-                <strong>{String(preview.entrypoint?.kind ?? '—')}</strong>
+                <small>{zh ? '执行能力' : 'Execution capability'}</small>
+                <strong>{zh ? 'Agent 会话' : 'Agent conversation'}</strong>
               </span>
               {preview.model ? (
                 <span>
-                  <small>{zh ? '冻结模型' : 'Frozen model'}</small>
+                  <small>{zh ? '模型与运行内核' : 'Model and runtime'}</small>
                   <strong>{String(preview.model.displayName ?? preview.model.id)}</strong>
                   <p>
-                    {String(preview.model.reasoningEffort ?? '—')} · {String(preview.model.serviceTier ?? '—')}
+                    {String(preview.model.agentKind ?? '—')} · {String(preview.model.reasoningEffort ?? '—')} · {String(preview.model.serviceTier ?? '—')}
                   </p>
                 </span>
               ) : null}
               <span>
                 <small>Skills</small>
                 <strong>{preview.skills.length}</strong>
-                <p>{preview.skills.map((skill) => skill.name).join('、') || (zh ? '未选择' : 'None selected')}</p>
+                <p>{preview.skills.map((skill) => skill.name).join(zh ? '、' : ', ') || (zh ? '未选择' : 'None')}</p>
               </span>
               <span>
-                <small>{zh ? '上下文' : 'Context'}</small>
-                <strong>
-                  {selectedDeliverableIds.length} {zh ? '份已验收交付物' : 'accepted deliverables'}
-                </strong>
-                <p>{zh ? '不包含其他工作项产物或完整会话。' : 'No unselected outputs or full conversations.'}</p>
+                <small>{zh ? '权限' : 'Permission'}</small>
+                <strong>{String(preview.authority.permissionMode ?? '—')}</strong>
               </span>
             </section>
+          ) : null}
+          {preview?.promptPreview ? <TaskPushLayoutPreview layout={preview.promptPreview} language={props.language} /> : null}
+          {previewBusy ? (
+            <p className="task-work-preview-status" role="status">
+              {zh ? '正在自动刷新权威预览…' : 'Refreshing authoritative preview…'}
+            </p>
+          ) : null}
+          {capabilityError || previewError || props.operationError || submitError ? (
+            <p className="digital-employee-feedback is-error" role="alert">
+              {capabilityError ?? previewError ?? props.operationError ?? submitError}
+            </p>
           ) : null}
           {preview?.blockers.map((blocker) => (
             <p key={blocker.code} className="digital-employee-feedback is-error">
@@ -574,19 +671,49 @@ function AssignmentDrawer(props: {
               {blocker.message}
             </p>
           ))}
-          {previewError ? <p className="digital-employee-feedback is-error">{previewError}</p> : null}
         </div>
         <footer>
-          <Button variant="secondary" size="compact" busy={previewBusy} disabled={!employeeId || props.busy} onClick={() => void loadPreview()}>
-            {preview?.command ? (zh ? '重新解析参数' : 'Resolve parameters') : zh ? '预览实际影响' : 'Preview impact'}
-          </Button>
-          <Button variant="primary" size="compact" busy={props.busy} disabled={!preview || preview.blockers.length > 0 || previewBusy} onClick={() => (preview ? void props.onSubmit(preview, commandParameters) : undefined)}>
-            {preview?.command ? (zh ? '确认并启动命令' : 'Confirm and start command') : zh ? '创建 Agent 工作项' : 'Create Agent work item'}
+          <small>
+            {props.activeItems.length
+              ? zh
+                ? '停止失败、结果未知或活动集合已变化时，不会启动新员工。'
+                : 'A stop failure, unknown outcome, or stale active set prevents the new employee from starting.'
+              : zh
+                ? '确认一次即创建并启动，不再经过手动预览步骤。'
+                : 'One confirmation creates and starts the run without a manual preview step.'}
+          </small>
+          <Button variant="primary" size="regular" busy={props.busy} disabled={!preview || previewBusy || preview.blockers.length > 0 || Boolean(capabilityError)} onClick={() => void submit()}>
+            {props.activeItems.length ? (zh ? '停止并切换' : 'Stop and switch') : zh ? '开始执行' : 'Start execution'}
           </Button>
         </footer>
       </section>
     </ModalPortal>
   );
+}
+
+function initialRunConfig(employee: DigitalEmployeeRecord): AgentExecutionConfigValue {
+  const entrypoint = employee.entrypoint?.kind === 'agent' ? employee.entrypoint : null;
+  return {
+    agentKind: entrypoint?.agentKind ?? employee.agentKind,
+    model: entrypoint?.modelPolicy.defaultModel ?? employee.model ?? '',
+    reasoningEffort: employee.reasoningEffort ?? '',
+    serviceTier: employee.serviceTier ?? '',
+    workMode: employee.workMode,
+    permissionMode: entrypoint?.authorityPolicy.permissionMode ?? employee.permissionMode,
+    skillIds: [...(entrypoint?.skillPolicy.allowedSkillIds ?? employee.skillIds)],
+    prompt: entrypoint?.prompt ?? employee.prompt,
+  };
+}
+
+function currentWorkRun(item: TaskWorkItemRecord): TaskWorkItemRecord['runs'][number] | undefined {
+  return item.runs.find((run) => run.id === item.currentRunId) ?? item.runs.at(-1);
+}
+
+function activeTaskWorkItems(projection: TaskWorkManagementProjection | null): TaskWorkItemRecord[] {
+  return (projection?.workItems ?? []).filter((item) => {
+    const run = currentWorkRun(item);
+    return run ? ['prepared', 'dispatching', 'active', 'waiting_input'].includes(run.status) : item.status === 'queued' || item.status === 'active';
+  });
 }
 
 function CommandEvidenceDialog(props: { runId: string; client: DigitalEmployeeApiClient; language: DigitalEmployeeLanguage; onDismiss(): void }) {
@@ -1033,8 +1160,8 @@ function tabLabel(tab: ManagementTab, language: DigitalEmployeeLanguage): string
   return tab === 'overview' ? (zh ? '概览' : 'Overview') : tab === 'collaboration' ? (zh ? '协作' : 'Collaboration') : tab === 'deliverables' ? (zh ? '交付物' : 'Deliverables') : zh ? '证据' : 'Evidence';
 }
 function entrypointLabel(employee: DigitalEmployeeRecord, language: DigitalEmployeeLanguage): string {
-  if (!employee.entrypoint) return language === 'zh-CN' ? '需要配置主入口' : 'Entrypoint required';
-  return employee.entrypoint.kind === 'command' ? 'Command' : `Agent · ${employee.entrypoint.agentKind}`;
+  if (employee.entrypoint?.kind !== 'agent') return language === 'zh-CN' ? '历史配置不可执行' : 'Legacy configuration unavailable';
+  return `Agent · ${employee.entrypoint.agentKind}`;
 }
 function employeeName(run: TaskWorkItemRecord['runs'][number] | undefined): string {
   return typeof run?.employeeSnapshot.name === 'string' ? run.employeeSnapshot.name : '';

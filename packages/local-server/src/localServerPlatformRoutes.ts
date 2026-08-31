@@ -2739,6 +2739,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     deliverables: taskWorkDeliverables,
     decisions: taskWorkDecisions,
     conversations,
+    conversationTurns,
     conversationExecution,
     conversationRequests,
     commandDefinitions: digitalEmployeeCommandDefinitions,

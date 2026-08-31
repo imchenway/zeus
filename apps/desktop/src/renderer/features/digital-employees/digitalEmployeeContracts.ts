@@ -1,3 +1,5 @@
+import type { TaskPushMessageLayout } from '@zeus/shared';
+import type { CodexTaskPushModelCapability } from '../../session/sessionTypes.js';
 import type { TaskWorkflowSnapshot } from '../tasks/taskContracts.js';
 
 export type DigitalEmployeeAgentKind = 'codex' | 'pi';
@@ -32,7 +34,14 @@ export interface AuthorityPolicyV1 {
   allowComplete: boolean;
 }
 
-export type EmployeeEntrypointV2 = { kind: 'agent'; prompt: string; agentKind: DigitalEmployeeAgentKind; modelPolicy: ModelPolicyV1; skillPolicy: SkillPolicyV1; authorityPolicy: AuthorityPolicyV1 } | { kind: 'command'; commandId: string };
+export interface AgentEntrypointV2 {
+  kind: 'agent';
+  prompt: string;
+  agentKind: DigitalEmployeeAgentKind;
+  modelPolicy: ModelPolicyV1;
+  skillPolicy: SkillPolicyV1;
+  authorityPolicy: AuthorityPolicyV1;
+}
 
 export interface DigitalEmployeeDeliveryGrants {
   allowCommit: boolean;
@@ -81,7 +90,7 @@ export interface DigitalEmployeeRecord extends Omit<DigitalEmployeeTemplateRecor
   allowTests: boolean;
   deliveryGrants: DigitalEmployeeDeliveryGrants;
   deployCommandId: string | null;
-  entrypoint: EmployeeEntrypointV2 | null;
+  entrypoint: AgentEntrypointV2 | null;
   entrypointMigrationState: 'ready' | 'requires_selection' | 'requires_configuration';
 }
 
@@ -163,6 +172,14 @@ export interface DigitalEmployeeTemplateInput {
   workMode?: DigitalEmployeeWorkMode;
 }
 
+export interface DigitalEmployeeCapabilitiesSnapshot {
+  generationId: string;
+  initializedAt: string;
+  models: CodexTaskPushModelCapability[];
+  available?: false;
+  availabilityReason?: string;
+}
+
 export interface DigitalEmployeeInput extends DigitalEmployeeTemplateInput {
   enabled?: boolean;
   autoClaim?: boolean;
@@ -173,8 +190,7 @@ export interface DigitalEmployeeInput extends DigitalEmployeeTemplateInput {
   allowTests?: boolean;
   deliveryGrants?: Partial<DigitalEmployeeDeliveryGrants>;
   deployCommandId?: string | null;
-  entrypoint?: EmployeeEntrypointV2 | null;
-  entrypointKind?: EmployeeEntrypointV2['kind'];
+  entrypoint?: AgentEntrypointV2 | null;
 }
 
 export type TaskWorkItemStatus = 'queued' | 'active' | 'waiting_manager' | 'completed' | 'blocked' | 'failed' | 'cancelled';
@@ -287,6 +303,9 @@ export interface TaskWorkPreviewSelection {
   modelOverride?: string | null;
   reasoningEffort?: string | null;
   serviceTier?: string | null;
+  workMode?: DigitalEmployeeWorkMode | null;
+  permissionMode?: DigitalEmployeePermissionMode | null;
+  promptOverride?: string | null;
   skillIds?: string[];
   selectedDeliverableIds?: string[];
 }
@@ -303,6 +322,7 @@ export interface TaskWorkPreview {
   skills: Array<{ id: string; name: string; description: string; directoryName: string; contentSha256: string; resourceCount: number; totalBytes: number }>;
   authority: Record<string, unknown>;
   context: Record<string, unknown>;
+  promptPreview: TaskPushMessageLayout | null;
   command: null | {
     id: string;
     title: string;

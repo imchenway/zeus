@@ -16,7 +16,7 @@ export interface DigitalEmployeeTemplateDraft {
   description: string;
   role: string;
   domain: string;
-  skillId: string;
+  skillIds: string[];
   prompt: string;
   agentKind: 'codex' | 'pi';
   model: string;
@@ -27,8 +27,6 @@ export interface DigitalEmployeeTemplateDraft {
 }
 
 export interface DigitalEmployeeDraft extends DigitalEmployeeTemplateDraft {
-  entrypointKind: 'agent' | 'command';
-  skillIds: string[];
   allowedModels: string;
   allowedReasoningEfforts: string;
   allowedServiceTiers: string;
@@ -70,7 +68,7 @@ export const emptyTemplateDraft: DigitalEmployeeTemplateDraft = {
   description: '',
   role: '',
   domain: '',
-  skillId: '',
+  skillIds: [],
   prompt: '',
   agentKind: 'codex',
   model: '',
@@ -103,7 +101,7 @@ export function templateDraft(record?: DigitalEmployeeTemplateRecord | DigitalEm
     description: record.description,
     role: record.role,
     domain: record.domain,
-    skillId: record.skillIds[0] ?? '',
+    skillIds: [...record.skillIds],
     prompt: record.prompt,
     agentKind: record.agentKind,
     model: record.model ?? '',
@@ -116,11 +114,9 @@ export function templateDraft(record?: DigitalEmployeeTemplateRecord | DigitalEm
 
 export function employeeDraft(record: DigitalEmployeeRecord): DigitalEmployeeDraft {
   const agentEntrypoint = record.entrypoint?.kind === 'agent' ? record.entrypoint : null;
-  const commandEntrypoint = record.entrypoint?.kind === 'command' ? record.entrypoint : null;
   return {
     ...templateDraft(record),
-    entrypointKind: record.entrypoint?.kind ?? 'agent',
-    skillIds: agentEntrypoint?.skillPolicy.allowedSkillIds ?? record.skillIds,
+    skillIds: [...(agentEntrypoint?.skillPolicy.allowedSkillIds ?? record.skillIds)],
     model: agentEntrypoint?.modelPolicy.defaultModel ?? record.model ?? '',
     allowedModels: (agentEntrypoint?.modelPolicy.allowedModels ?? (record.model ? [record.model] : [])).join(', '),
     allowedReasoningEfforts: (agentEntrypoint?.modelPolicy.allowedReasoningEfforts ?? (record.reasoningEffort ? [record.reasoningEffort] : [])).join(', '),
@@ -139,7 +135,7 @@ export function employeeDraft(record: DigitalEmployeeRecord): DigitalEmployeeDra
     allowMerge: record.deliveryGrants.allowMerge,
     allowDeploy: record.deliveryGrants.allowDeploy,
     allowComplete: record.deliveryGrants.allowComplete,
-    deployCommandId: commandEntrypoint?.commandId ?? record.deployCommandId ?? '',
+    deployCommandId: record.deployCommandId ?? '',
   };
 }
 
@@ -149,7 +145,7 @@ export function templateInput(draft: DigitalEmployeeTemplateDraft): DigitalEmplo
     description: draft.description.trim(),
     role: draft.role.trim(),
     domain: draft.domain.trim(),
-    skillIds: draft.skillId ? [draft.skillId] : [],
+    skillIds: draft.skillIds,
     prompt: draft.prompt.trim(),
     agentKind: draft.agentKind,
     model: nullable(draft.model),
@@ -175,8 +171,8 @@ export function employeeInput(draft: DigitalEmployeeDraft): DigitalEmployeeInput
     allowComplete: draft.allowComplete,
   } as const;
   return {
-    ...templateInput({ ...draft, skillId: draft.skillIds[0] ?? '' }),
-    skillIds: draft.entrypointKind === 'agent' ? draft.skillIds : [],
+    ...templateInput(draft),
+    skillIds: draft.skillIds,
     enabled: draft.enabled,
     autoClaim: draft.autoClaim,
     autonomousExploration: draft.autonomousExploration,
@@ -195,24 +191,21 @@ export function employeeInput(draft: DigitalEmployeeDraft): DigitalEmployeeInput
       allowDeploy: draft.allowDeploy,
       allowComplete: draft.allowComplete,
     },
-    deployCommandId: draft.entrypointKind === 'command' ? nullable(draft.deployCommandId) : null,
-    entrypoint:
-      draft.entrypointKind === 'command'
-        ? { kind: 'command', commandId: draft.deployCommandId.trim() }
-        : {
-            kind: 'agent',
-            prompt: draft.prompt.trim(),
-            agentKind: draft.agentKind,
-            modelPolicy: {
-              defaultMode: draft.model.trim() ? 'explicit' : 'project',
-              defaultModel: nullable(draft.model),
-              allowedModels,
-              allowedReasoningEfforts,
-              allowedServiceTiers,
-            },
-            skillPolicy: { allowedSkillIds: draft.skillIds },
-            authorityPolicy,
-          },
+    deployCommandId: draft.allowDeploy ? nullable(draft.deployCommandId) : null,
+    entrypoint: {
+      kind: 'agent',
+      prompt: draft.prompt.trim(),
+      agentKind: draft.agentKind,
+      modelPolicy: {
+        defaultMode: draft.model.trim() ? 'explicit' : 'project',
+        defaultModel: nullable(draft.model),
+        allowedModels,
+        allowedReasoningEfforts,
+        allowedServiceTiers,
+      },
+      skillPolicy: { allowedSkillIds: draft.skillIds },
+      authorityPolicy,
+    },
   };
 }
 

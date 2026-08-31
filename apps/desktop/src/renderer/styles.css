@@ -3098,7 +3098,7 @@ a {
 }
 
 .macos-ai-app .task-detail-center-dialog {
-  width: min(760px, calc(100vw - 40px));
+  width: min(920px, calc(100vw - 40px));
 }
 
 .macos-ai-app .task-detail-center-dialog > .task-detail-pane-content {
@@ -22875,6 +22875,18 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
 }
 
 /* 任务详情仅保留业务内容间距；悬浮形态与透明点击层由 WorkspaceDrawer 原语负责。 */
+.workspace-drawer-portal-root.macos-ai-app[data-zeus-primitive='drawer'][data-drawer-presentation='floating'][data-drawer-size='wide'] .workspace-drawer.task-detail-floating-drawer {
+  inline-size: min(920px, calc(var(--zeus-drawer-workspace-inline-size) - 24px));
+}
+
+@media (max-width: 760px) {
+  .workspace-drawer-portal-root.macos-ai-app[data-zeus-primitive='drawer'][data-drawer-presentation='floating'][data-drawer-size='wide'] .workspace-drawer.task-detail-floating-drawer {
+    inline-size: calc(100vw - 24px);
+    max-inline-size: calc(100vw - 24px);
+    min-inline-size: 0;
+  }
+}
+
 .workspace-drawer-portal-root.macos-ai-app .task-detail-floating-drawer .workspace-drawer-content {
   gap: 0;
   padding: 0;
@@ -23096,6 +23108,23 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
   display: grid;
   gap: 2px;
   white-space: normal;
+}
+
+.macos-ai-app .task-detail-executor-row {
+  grid-column: span 2;
+}
+
+.macos-ai-app .task-digital-employee-executor {
+  display: grid;
+  min-inline-size: 0;
+  grid-template-columns: minmax(180px, 1fr) auto;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.macos-ai-app .task-digital-employee-executor-status {
+  color: var(--zeus-product-muted);
+  font-size: 10px;
 }
 
 .macos-ai-app .task-detail-conversation-state {
@@ -23402,6 +23431,14 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
 
   .macos-ai-app .task-detail-pane-status-control {
     inline-size: 100%;
+  }
+
+  .macos-ai-app .task-detail-executor-row {
+    grid-column: auto;
+  }
+
+  .macos-ai-app .task-digital-employee-executor {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .macos-ai-app .task-detail-conversation-row-meta {

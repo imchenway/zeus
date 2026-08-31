@@ -96,6 +96,14 @@ export interface ConversationCapabilitiesSnapshot {
   availabilityReason?: string;
 }
 
+export interface DigitalEmployeeCapabilitiesSnapshot {
+  generationId: string;
+  initializedAt: string;
+  models: ConversationCapabilityModel[];
+  available?: false;
+  availabilityReason?: string;
+}
+
 export interface UnavailableCodexAccount {
   generationId: 'codex-unavailable';
   requiresOpenaiAuth: false;
@@ -110,6 +118,19 @@ export class ConversationCapabilityQueryApplication {
 
   async readConversation(projectId: string): Promise<ConversationCapabilitiesSnapshot> {
     return this.readExisting(this.requireProject(projectId));
+  }
+
+  /** 全局模板只读取既有能力目录；不得为了展示配置而启动 Provider。 */
+  async readDigitalEmployee(): Promise<DigitalEmployeeCapabilitiesSnapshot> {
+    const transport = this.ports.provider.getState();
+    const codexCapabilities = this.ports.codexNativeEnabled() && transport.type === 'ready' ? transport.capabilities : null;
+    const models = mapConversationCapabilityModels(codexCapabilities, await this.ports.modelCatalog.listSelectableModels());
+    const snapshot = {
+      generationId: codexCapabilities?.generationId ?? 'pi-sdk',
+      initializedAt: codexCapabilities?.initializedAt ?? this.ports.now().toISOString(),
+      models,
+    };
+    return models.length > 0 ? snapshot : { ...snapshot, available: false, availabilityReason: '当前没有已就绪的 Provider 模型；GET 不会为了读取能力而启动 Provider。' };
   }
 
   async readTaskPush(projectId: string, rawTaskId: string | undefined): Promise<Record<string, unknown>> {
@@ -193,45 +214,7 @@ export class ConversationCapabilityQueryApplication {
     const connectionSelection = await this.ports.modelCatalog.getProjectSelection(project.id);
     const connectionCatalog = await this.ports.modelCatalog.listSelectableModels();
     const allowedConnectionModels = connectionCatalog.filter((model) => connectionSelection.allowedModelRefs.includes(model.id));
-    const codexModels: ConversationCapabilityModel[] = (codexCapabilities?.models ?? []).map((model) => ({
-      id: model.id,
-      model: model.model,
-      ...(model.displayName ? { displayName: model.displayName } : {}),
-      agentKind: 'codex',
-      supports1MContext: false,
-      sourceId: 'codex',
-      sourceName: 'Codex',
-      available: true,
-      availabilityReason: 'Codex app-server 已报告该模型。',
-      supportedReasoningEfforts: [...model.supportedReasoningEfforts],
-      ...(model.defaultReasoningEffort ? { defaultReasoningEffort: model.defaultReasoningEffort } : {}),
-      serviceTiers: model.serviceTiers.map((tier) => ({ ...tier })),
-      ...(model.defaultServiceTier !== undefined ? { defaultServiceTier: model.defaultServiceTier } : {}),
-      contextWindow: positiveIntegerOrNull(model.raw.contextWindow ?? model.raw.context_window ?? model.raw.modelContextWindow ?? model.raw.model_context_window),
-    }));
-    const connectionModels: ConversationCapabilityModel[] = allowedConnectionModels.map((model) => ({
-      id: model.id,
-      model: model.model,
-      displayName: model.displayName,
-      agentKind: model.agentKind,
-      sourceId: model.sourceId,
-      sourceName: model.sourceName,
-      available: model.available,
-      availabilityReason: model.availabilityReason,
-      supportedReasoningEfforts: [...model.supportedReasoningEfforts],
-      defaultReasoningEffort: model.defaultReasoningEffort,
-      serviceTiers: [],
-      defaultServiceTier: null,
-      speedLabel: model.speedLabel,
-      tools: model.tools,
-      imageInput: model.imageInput,
-      runtimeAdapter: model.runtimeAdapter,
-      protocolFamily: model.protocolFamily,
-      authenticationScheme: model.authenticationScheme,
-      supports1MContext: model.supports1MContext,
-      contextWindow: model.contextWindow,
-    }));
-    const models = [...codexModels, ...connectionModels];
+    const models = mapConversationCapabilityModels(codexCapabilities, allowedConnectionModels);
     if (models.length === 0) throw queryError('ZEUS_MODEL_UNAVAILABLE', '当前项目没有可用的 Codex 或 Pi 模型。');
     const configuredModel = this.ports.readConfiguredModel(project.id);
     const preferredModel =
@@ -342,6 +325,48 @@ export class ConversationCapabilityQueryApplication {
     if (!project) throw queryError('ZEUS_PROJECT_NOT_FOUND', 'Project not found', 404);
     return project;
   }
+}
+
+function mapConversationCapabilityModels(codexCapabilities: CodexCapabilitiesSnapshot | null, connectionCatalog: SelectableConnectionModel[]): ConversationCapabilityModel[] {
+  const codexModels: ConversationCapabilityModel[] = (codexCapabilities?.models ?? []).map((model) => ({
+    id: model.id,
+    model: model.model,
+    ...(model.displayName ? { displayName: model.displayName } : {}),
+    agentKind: 'codex',
+    supports1MContext: false,
+    sourceId: 'codex',
+    sourceName: 'Codex',
+    available: true,
+    availabilityReason: 'Codex app-server 已报告该模型。',
+    supportedReasoningEfforts: [...model.supportedReasoningEfforts],
+    ...(model.defaultReasoningEffort ? { defaultReasoningEffort: model.defaultReasoningEffort } : {}),
+    serviceTiers: model.serviceTiers.map((tier) => ({ ...tier })),
+    ...(model.defaultServiceTier !== undefined ? { defaultServiceTier: model.defaultServiceTier } : {}),
+    contextWindow: positiveIntegerOrNull(model.raw.contextWindow ?? model.raw.context_window ?? model.raw.modelContextWindow ?? model.raw.model_context_window),
+  }));
+  const connectionModels: ConversationCapabilityModel[] = connectionCatalog.map((model) => ({
+    id: model.id,
+    model: model.model,
+    displayName: model.displayName,
+    agentKind: model.agentKind,
+    sourceId: model.sourceId,
+    sourceName: model.sourceName,
+    available: model.available,
+    availabilityReason: model.availabilityReason,
+    supportedReasoningEfforts: [...model.supportedReasoningEfforts],
+    defaultReasoningEffort: model.defaultReasoningEffort,
+    serviceTiers: [],
+    defaultServiceTier: null,
+    speedLabel: model.speedLabel,
+    tools: model.tools,
+    imageInput: model.imageInput,
+    runtimeAdapter: model.runtimeAdapter,
+    protocolFamily: model.protocolFamily,
+    authenticationScheme: model.authenticationScheme,
+    supports1MContext: model.supports1MContext,
+    contextWindow: model.contextWindow,
+  }));
+  return [...codexModels, ...connectionModels];
 }
 
 function createTaskRuntimePrompt(task: ZeusTaskRecord): string {

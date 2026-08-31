@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { lstat, readFile, readdir } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve } from 'node:path';
-import { commandEnvelopeSchemaGeneration, commandParameterValueMatchesType, type CommandDefinition, type CommandEnvelope } from '@zeus/shared';
+import { buildTaskPushLayout, commandEnvelopeSchemaGeneration, commandParameterValueMatchesType, type CommandDefinition, type CommandEnvelope, type TaskPushMessageLayout } from '@zeus/shared';
 import {
   ArtifactStore,
   CommandDefinitionRepository,
@@ -10,6 +10,7 @@ import {
   ConversationExecutionRepository,
   ConversationRepository,
   ConversationServerRequestRepository,
+  ConversationTurnRepository,
   DigitalEmployeeExecutionRepository,
   DigitalEmployeeRepository,
   ProjectRepository,
@@ -22,7 +23,7 @@ import {
   TaskWorkStoreError,
   taskWorkDeliverableArtifactGeneration,
   type DigitalEmployeeRecord,
-  type EmployeeEntrypointV2,
+  type AgentEntrypointV2,
   type TaskWorkDecisionRecord,
   type TaskWorkDeliverableRecord,
   type TaskWorkItemRecord,
@@ -49,6 +50,9 @@ export interface TaskWorkPreviewSelection {
   modelOverride?: string | null;
   reasoningEffort?: string | null;
   serviceTier?: string | null;
+  workMode?: 'default' | 'plan' | null;
+  permissionMode?: 'read-only' | 'auto' | 'full-access' | null;
+  promptOverride?: string | null;
   skillIds?: string[];
   selectedDeliverableIds?: string[];
 }
@@ -65,6 +69,7 @@ export interface TaskWorkPreview {
   skills: Array<{ id: string; name: string; description: string; directoryName: string; contentSha256: string; resourceCount: number; totalBytes: number }>;
   authority: Record<string, unknown>;
   context: WorkContextManifestV1;
+  promptPreview: TaskPushMessageLayout | null;
   command: null | {
     id: string;
     title: string;
@@ -87,12 +92,10 @@ interface TaskWorkCreateInput {
   previewSha256: string;
   expectedTaskRevision: string;
   expectedEmployeeRevision: number;
-  commandParameterDigest?: string | null;
+  replaceActiveWorkItems?: Array<{ id: string; expectedRevision: number }>;
 }
 
-interface TaskWorkCreateRequest extends WorkManagementMutationRequest<TaskWorkCreateInput> {
-  runtime?: { commandParameters?: Record<string, unknown> };
-}
+type TaskWorkCreateRequest = WorkManagementMutationRequest<TaskWorkCreateInput>;
 
 interface TaskWorkActionInput {
   expectedRevision: number;
@@ -121,6 +124,7 @@ interface TaskWorkManagementOptions {
   deliverables: TaskWorkDeliverableRepository;
   decisions: TaskWorkDecisionRepository;
   conversations: ConversationRepository;
+  conversationTurns: ConversationTurnRepository;
   conversationExecution: ConversationExecutionRepository;
   conversationRequests: ConversationServerRequestRepository;
   commandDefinitions: CommandDefinitionRepository;
@@ -194,11 +198,11 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
   );
 
   if (!options.readOnlyValidation)
-    options.server.post('/api/tasks/:taskId/work-item-previews', async (request: FastifyRequest<{ Params: { taskId: string }; Body: TaskWorkPreviewSelection & { commandParameters?: Record<string, unknown> } }>, reply) =>
+    options.server.post('/api/tasks/:taskId/work-item-previews', async (request: FastifyRequest<{ Params: { taskId: string }; Body: TaskWorkPreviewSelection }>, reply) =>
       route(reply, async () => {
         const task = requireTaskOrThrow(options, request.params.taskId);
         const selection = normalizeSelection(request.body);
-        return resolvePreview(options, task, selection, request.body.commandParameters ?? {});
+        return resolvePreview(options, task, selection);
       }),
     );
 
@@ -212,15 +216,21 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
           scopeKind: 'task',
           expectedScopeId: () => task.id,
         });
-        const runtimeParameters = request.body?.runtime?.commandParameters ?? {};
-        const preview = await resolvePreview(options, task, normalizeSelection(parsed.input.selection), runtimeParameters);
-        if (preview.previewSha256 !== parsed.input.previewSha256 || preview.expectedTaskRevision !== parsed.input.expectedTaskRevision || preview.expectedEmployeeRevision !== parsed.input.expectedEmployeeRevision) {
-          throw new TaskWorkStoreError('ZEUS_TASK_WORK_PREVIEW_STALE', '任务、员工或能力来源已变化，请重新预览后再指派。');
+        let preview = await resolvePreview(options, task, normalizeSelection(parsed.input.selection));
+        assertPreviewFresh(preview, parsed.input);
+        const replayItem = options.items.getById(parsed.operationIdentity);
+        if (!replayItem) {
+          const activeItems = requireExactActiveReplacement(options, task.id, parsed.input.replaceActiveWorkItems ?? []);
+          for (const activeItem of activeItems) {
+            await stopWorkItemRuntime(options, activeItem, `replace:${parsed.operationIdentity}:${activeItem.id}`);
+            cancelWorkItem(options, activeItem, activeItem.revision);
+            publishChanged(options, task.id, activeItem.id, 'replaced');
+            await options.save();
+          }
+          preview = await resolvePreview(options, task, normalizeSelection(parsed.input.selection));
+          assertPreviewFresh(preview, parsed.input);
+          requireExactActiveReplacement(options, task.id, []);
         }
-        if (preview.command && parsed.input.commandParameterDigest !== preview.command.parameterDigest) {
-          throw new TaskWorkStoreError('ZEUS_TASK_WORK_PREVIEW_STALE', '命令参数已变化，请重新预览后再指派。');
-        }
-        if (preview.blockers.length > 0) throw new TaskWorkStoreError(preview.blockers[0]!.code, preview.blockers[0]!.message);
         const employee = requireEmployeeOrThrow(options, task.projectId, preview.employee.id);
         const skillResources = await prepareSkillResourceSnapshots(options, task, preview);
         const created = options.application.executeCore({
@@ -230,11 +240,6 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
           mutateBusinessState: () => createWorkItemFromPreview(options, task, employee, preview, parsed.operationIdentity, { source: 'manual', sourceRef: `manual:${parsed.operationIdentity}` }, skillResources),
         });
         await options.save();
-        if (created.result.run.entrypointKind === 'command' && !created.result.run.commandRunId) {
-          const dispatching = created.result.run.status === 'prepared' ? options.runs.update(created.result.run.id, { status: 'dispatching', startedAt: options.now().toISOString() }) : created.result.run;
-          await startCommandRun(options, created.result.item, dispatching, runtimeParameters, preview);
-          await options.save();
-        }
         const currentItem = options.items.getById(created.result.item.id) ?? created.result.item;
         const currentRun = options.runs.getById(created.result.run.id) ?? created.result.run;
         publishChanged(options, task.id, currentItem.id, 'created');
@@ -270,6 +275,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
           const deliverable = requireOwnedDeliverable(options, task.id, request.params.deliverableId);
           const parsed = options.application.parse<TaskWorkActionInput>({ value: request.body, commandType: workManagementCommandTypes.taskWorkDeliverableRequestChanges, scopeKind: 'task', expectedScopeId: () => task.id });
           const reason = requiredText(parsed.input.reason, '请说明需要修改的内容。', 4_000);
+          assertNoOtherActiveTaskWorkItem(options, task.id, deliverable.workItemId);
           const result = options.application.executeCore({
             parsed,
             destinationId: 'task-work-deliverable-repository',
@@ -287,6 +293,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
     options.server.post('/api/tasks/:taskId/work-items/:workItemId/retry', async (request: FastifyRequest<{ Params: { taskId: string; workItemId: string }; Body: WorkManagementMutationRequest<TaskWorkActionInput> }>, reply) =>
       route(reply, async () => {
         const item = requireOwnedItem(options, request.params.taskId, request.params.workItemId);
+        assertNoOtherActiveTaskWorkItem(options, item.taskId, item.id);
         const parsed = options.application.parse<TaskWorkActionInput>({ value: request.body, commandType: workManagementCommandTypes.taskWorkItemRetry, scopeKind: 'task', expectedScopeId: () => item.taskId });
         const result = options.application.executeCore({ parsed, destinationId: 'task-work-item-repository', resourceId: `task_work_item:${item.id}`, mutateBusinessState: () => retryWorkItem(options, item, parsed.input.expectedRevision) });
         await options.save();
@@ -301,6 +308,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
       route(reply, async () => {
         const item = requireOwnedItem(options, request.params.taskId, request.params.workItemId);
         const parsed = options.application.parse<TaskWorkActionInput>({ value: request.body, commandType: workManagementCommandTypes.taskWorkItemCancel, scopeKind: 'task', expectedScopeId: () => item.taskId });
+        await stopWorkItemRuntime(options, item, `cancel:${parsed.operationIdentity}:${item.id}`);
         const result = options.application.executeCore({
           parsed,
           destinationId: 'task-work-item-repository',
@@ -357,34 +365,13 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
         if (run) return { item: replay, run };
       }
       const task = requireTaskOrThrow(options, taskId);
+      assertNoOtherActiveTaskWorkItem(options, task.id);
       const employee = requireEmployeeOrThrow(options, task.projectId, employeeId);
-      const preview = await resolvePreview(options, task, { employeeId }, {});
-      const blockers = preview.blockers.filter((blocker) => employee.entrypoint?.kind !== 'command' || blocker.code !== 'ZEUS_TASK_WORK_COMMAND_PARAMETER_REQUIRED');
+      const preview = await resolvePreview(options, task, { employeeId });
+      const blockers = preview.blockers;
       if (blockers.length > 0) throw new TaskWorkStoreError(blockers[0]!.code, blockers[0]!.message);
       const skillResources = await prepareSkillResourceSnapshots(options, task, preview);
       const created = createWorkItemFromPreview(options, task, employee, preview, stableIdentity('task_work_item', sourceRef), { source: 'automation', sourceRef }, skillResources);
-      if (created.run.entrypointKind === 'command') {
-        const dispatching = options.runs.update(created.run.id, { status: 'dispatching', startedAt: options.now().toISOString() });
-        const activeItem = options.items.update(created.item.id, { status: 'active' });
-        const waitingRun = options.runs.update(dispatching.id, { status: 'waiting_input' });
-        const waitingItem = options.items.update(activeItem.id, { status: 'waiting_manager' });
-        options.decisions.create({
-          projectId: waitingRun.projectId,
-          taskId: waitingRun.taskId,
-          workItemId: waitingRun.workItemId,
-          runId: waitingRun.id,
-          deliverableId: null,
-          kind: 'command_confirmation',
-          title: '确认自动化项目命令',
-          prompt: '自动化只创建待确认事项。请填写命令参数并显式确认；Zeus 不会在后台自动执行外部动作。',
-          requestPayload: { command: preview.command, commandRevision: preview.command?.revision ?? null },
-          operationIdentity: `command-confirmation:${waitingRun.id}`,
-          expiresAt: null,
-        });
-        await options.save();
-        publishChanged(options, task.id, waitingItem.id, 'automation_command_confirmation_required');
-        return { item: waitingItem, run: waitingRun };
-      }
       await options.save();
       publishChanged(options, task.id, created.item.id, 'automation_created');
       kick();
@@ -422,30 +409,34 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
   }
 }
 
-async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTaskRecord, selection: TaskWorkPreviewSelection, rawParameters: Record<string, unknown>): Promise<TaskWorkPreview> {
+async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTaskRecord, selection: TaskWorkPreviewSelection): Promise<TaskWorkPreview> {
   const blockers: TaskWorkPreview['blockers'] = [];
   const employee = options.employees.getById(selection.employeeId);
   if (!employee || employee.projectId !== task.projectId) throw new TaskWorkStoreError('ZEUS_DIGITAL_EMPLOYEE_NOT_FOUND', '数字员工不存在。', 404);
   if (options.isTaskTerminal(task) || task.status === 'completed' || task.status === 'cancelled') blockers.push({ code: 'ZEUS_TASK_WORK_TASK_TERMINAL', message: '终态任务不能创建新工作项。' });
   if (!employee.enabled) blockers.push({ code: 'ZEUS_DIGITAL_EMPLOYEE_DISABLED', message: '数字员工已停用。' });
-  if (!employee.entrypoint || employee.entrypointMigrationState !== 'ready')
-    blockers.push({
-      code: 'ZEUS_DIGITAL_EMPLOYEE_ENTRYPOINT_REQUIRED',
-      message: employee.entrypointMigrationState === 'requires_selection' ? '该员工同时保留 Agent 和命令配置，请先在员工设置中选择主执行入口。' : '该 Command 员工尚未选择项目命令，暂不可指派。',
-    });
+  if (employee.entrypoint?.kind !== 'agent' || employee.entrypointMigrationState !== 'ready') {
+    blockers.push({ code: 'ZEUS_DIGITAL_EMPLOYEE_AGENT_ENTRYPOINT_REQUIRED', message: '该记录不是可执行的 Agent 数字员工，请先在员工设置中保存为当前配置。' });
+  }
   if (options.items.countActiveByEmployee(employee.id) >= employee.maxConcurrency) blockers.push({ code: 'ZEUS_TASK_WORK_EMPLOYEE_CAPACITY', message: `该员工已达并发上限 ${employee.maxConcurrency}。` });
 
   const context = resolveContextManifest(options, task, selection.selectedDeliverableIds ?? [], blockers);
   let model: Record<string, unknown> | null = null;
   const skills: TaskWorkPreview['skills'] = [];
-  let command: TaskWorkPreview['command'] = null;
+  const command: TaskWorkPreview['command'] = null;
   let entrypoint: Record<string, unknown> | null = employee.entrypoint ? sanitizeEntrypoint(employee.entrypoint) : null;
-  const authority = employee.entrypoint?.kind === 'agent' ? { ...employee.entrypoint.authorityPolicy } : {};
+  let authority: Record<string, unknown> = employee.entrypoint?.kind === 'agent' ? { ...employee.entrypoint.authorityPolicy } : {};
+  let promptPreview: TaskPushMessageLayout | null = null;
 
   if (employee.entrypoint?.kind === 'agent') {
     const agentEntrypoint = employee.entrypoint;
+    const workMode = selection.workMode ?? employee.workMode;
+    const prompt = selection.promptOverride ?? agentEntrypoint.prompt;
+    entrypoint = { ...sanitizeEntrypoint(agentEntrypoint), prompt, workMode };
+    authority = resolveRunAuthority(agentEntrypoint, selection.permissionMode, blockers);
     const capability = await options.conversationCapabilities.readTaskPush(task.projectId, task.id);
     model = resolveAgentModel(employee, agentEntrypoint, selection, capability, blockers);
+    if (model && typeof model.agentKind === 'string') entrypoint = { ...entrypoint, agentKind: model.agentKind };
     const selectedSkillIds = normalizeIdentities(selection.skillIds ?? agentEntrypoint.skillPolicy.allowedSkillIds);
     if (selectedSkillIds.some((id) => !agentEntrypoint.skillPolicy.allowedSkillIds.includes(id))) blockers.push({ code: 'ZEUS_TASK_WORK_SKILL_NOT_ALLOWED', message: '指派包含该员工未允许的 Skill。' });
     if (selectedSkillIds.length > 0 && !options.skills) blockers.push({ code: 'ZEUS_TASK_WORK_SKILL_CATALOG_UNAVAILABLE', message: 'Zeus Skill 目录当前不可用。' });
@@ -459,14 +450,13 @@ async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTask
         }
       }
     }
-  } else if (employee.entrypoint?.kind === 'command') {
-    const definition = options.commandDefinitions.getById(employee.entrypoint.commandId);
-    if (!definition || !definition.enabled || (definition.scope === 'project' && definition.projectId !== task.projectId)) {
-      blockers.push({ code: 'ZEUS_TASK_WORK_COMMAND_UNAVAILABLE', message: '员工配置的项目命令不存在、已停用或不属于当前项目。' });
-    } else {
-      command = resolveCommandPreview(definition, rawParameters, blockers);
-      entrypoint = { kind: 'command', commandId: definition.id, commandRevision: definition.revision, title: definition.title };
-    }
+    const supplementalInfo = await buildAgentSupplementalInfoSnapshot(options, {
+      employee,
+      entrypoint,
+      context,
+      skills: skills.map((skill) => ({ ...skill, snapshotPath: '（运行创建后冻结）' })),
+    });
+    promptPreview = buildTaskWorkPromptPreview(task, supplementalInfo);
   }
 
   const digestSource = {
@@ -479,6 +469,7 @@ async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTask
     skills,
     authority,
     context,
+    promptPreview,
     command,
     blockers,
   };
@@ -494,7 +485,7 @@ function createWorkItemFromPreview(
   source: { source: 'manual' | 'automation'; sourceRef: string } = { source: 'manual', sourceRef: `manual:${operationIdentity}` },
   skillResources: PreparedSkillResourceSnapshot[] = [],
 ): { item: TaskWorkItemRecord; run: TaskWorkRunRecord } {
-  if (!employee.entrypoint) throw new TaskWorkStoreError('ZEUS_DIGITAL_EMPLOYEE_ENTRYPOINT_REQUIRED', '数字员工主入口未配置。');
+  if (employee.entrypoint?.kind !== 'agent') throw new TaskWorkStoreError('ZEUS_DIGITAL_EMPLOYEE_AGENT_ENTRYPOINT_REQUIRED', '数字员工必须通过 Agent 会话执行。');
   const item = options.items.create({
     id: operationIdentity,
     projectId: task.projectId,
@@ -504,7 +495,7 @@ function createWorkItemFromPreview(
     sourceRef: source.sourceRef,
     title: `${employee.name}·${task.title}`,
     description: task.description,
-    entrypointKind: employee.entrypoint.kind,
+    entrypointKind: 'agent',
     status: 'queued',
   });
   const existingRun = item.currentRunId ? options.runs.getById(item.currentRunId) : undefined;
@@ -519,7 +510,7 @@ function createWorkItemFromPreview(
     employeeId: employee.id,
     attempt: 1,
     status: 'prepared',
-    entrypointKind: employee.entrypoint.kind,
+    entrypointKind: 'agent',
     employeeRevision: employee.revision,
     employeeSnapshot: structuredClone(employee) as unknown as Record<string, unknown>,
     entrypointSnapshot: structuredClone(preview.entrypoint ?? {}),
@@ -529,7 +520,7 @@ function createWorkItemFromPreview(
     contextManifest: structuredClone(preview.context),
   });
   const updatedItem = options.items.update(item.id, { currentRunId: run.id });
-  options.taskEvents.create({ taskId: task.id, eventType: 'task.work_item.created', title: '已创建数字员工工作项', payload: { workItemId: item.id, runId: run.id, employeeId: employee.id, entrypointKind: employee.entrypoint.kind } });
+  options.taskEvents.create({ taskId: task.id, eventType: 'task.work_item.created', title: '已创建数字员工工作项', payload: { workItemId: item.id, runId: run.id, employeeId: employee.id, entrypointKind: 'agent' } });
   return { item: updatedItem, run };
 }
 
@@ -600,7 +591,7 @@ async function dispatchAgent(options: TaskWorkManagementOptions, run: TaskWorkRu
     ...(typeof model.serviceTier === 'string' ? { serviceTier: model.serviceTier } : {}),
     permissionMode: typeof authority.permissionMode === 'string' ? authority.permissionMode : 'read-only',
     source: 'task_push',
-    workMode: 'default',
+    workMode: run.entrypointSnapshot.workMode === 'plan' ? 'plan' : 'default',
     supplementalInfo,
     workspace,
   };
@@ -889,8 +880,85 @@ function cloneFrozenSkillSnapshot(options: TaskWorkManagementOptions, previous: 
 
 function cancelWorkItem(options: TaskWorkManagementOptions, item: TaskWorkItemRecord, expectedRevision: number) {
   const run = item.currentRunId ? options.runs.getById(item.currentRunId) : undefined;
-  if (run && !['succeeded', 'failed', 'outcome_unknown', 'cancelled'].includes(run.status)) options.runs.update(run.id, { status: 'cancelled', completedAt: options.now().toISOString() });
+  if (run && ['prepared', 'dispatching', 'active', 'waiting_input'].includes(run.status)) options.runs.update(run.id, { status: 'cancelled', completedAt: options.now().toISOString() });
   return options.items.update(item.id, { expectedRevision, status: 'cancelled' });
+}
+
+function activeTaskWorkItems(options: TaskWorkManagementOptions, taskId: string, ignoredWorkItemId?: string): TaskWorkItemRecord[] {
+  return options.items.listByTask(taskId).filter((item) => {
+    if (item.id === ignoredWorkItemId) return false;
+    const run = item.currentRunId ? options.runs.getById(item.currentRunId) : undefined;
+    return run ? ['prepared', 'dispatching', 'active', 'waiting_input'].includes(run.status) : item.status === 'queued' || item.status === 'active';
+  });
+}
+
+function assertPreviewFresh(preview: TaskWorkPreview, input: TaskWorkCreateInput): void {
+  if (preview.previewSha256 !== input.previewSha256 || preview.expectedTaskRevision !== input.expectedTaskRevision || preview.expectedEmployeeRevision !== input.expectedEmployeeRevision) {
+    throw new TaskWorkStoreError('ZEUS_TASK_WORK_PREVIEW_STALE', '任务、员工或能力来源已变化，请重新预览后再指派。');
+  }
+  if (preview.blockers.length > 0) throw new TaskWorkStoreError(preview.blockers[0]!.code, preview.blockers[0]!.message);
+}
+
+function requireExactActiveReplacement(options: TaskWorkManagementOptions, taskId: string, rawReplacement: Array<{ id: string; expectedRevision: number }>): TaskWorkItemRecord[] {
+  const replacement = rawReplacement.map((candidate) => {
+    if (!isRecord(candidate) || typeof candidate.id !== 'string' || !Number.isInteger(candidate.expectedRevision) || candidate.expectedRevision < 1) {
+      throw new TaskWorkStoreError('ZEUS_TASK_WORK_ACTIVE_REPLACEMENT_INVALID', '待停止工作项参数无效。', 400);
+    }
+    return { id: candidate.id.trim(), expectedRevision: candidate.expectedRevision };
+  });
+  if (new Set(replacement.map((candidate) => candidate.id)).size !== replacement.length) throw new TaskWorkStoreError('ZEUS_TASK_WORK_ACTIVE_REPLACEMENT_INVALID', '待停止工作项不能重复。', 400);
+  const activeItems = activeTaskWorkItems(options, taskId).sort((left, right) => left.id.localeCompare(right.id));
+  const expected = [...replacement].sort((left, right) => left.id.localeCompare(right.id));
+  if (activeItems.length === 0 && expected.length === 0) return [];
+  if (expected.length === 0) throw new TaskWorkStoreError('ZEUS_TASK_WORK_TASK_BUSY', '当前任务已有数字员工在执行；请确认停止后再切换。');
+  if (activeItems.length !== expected.length || activeItems.some((item, index) => item.id !== expected[index]?.id || item.revision !== expected[index]?.expectedRevision)) {
+    throw new TaskWorkStoreError('ZEUS_TASK_WORK_ACTIVE_REPLACEMENT_STALE', '任务的当前执行者已变化，请刷新后重新确认。');
+  }
+  return activeItems;
+}
+
+function assertNoOtherActiveTaskWorkItem(options: TaskWorkManagementOptions, taskId: string, ignoredWorkItemId?: string): void {
+  if (activeTaskWorkItems(options, taskId, ignoredWorkItemId).length > 0) throw new TaskWorkStoreError('ZEUS_TASK_WORK_TASK_BUSY', '当前任务已有数字员工在执行，不能并行启动新的运行。');
+}
+
+async function stopWorkItemRuntime(options: TaskWorkManagementOptions, item: TaskWorkItemRecord, operationIdentity: string): Promise<void> {
+  const run = item.currentRunId ? options.runs.getById(item.currentRunId) : undefined;
+  if (!run || !['dispatching', 'active', 'waiting_input'].includes(run.status)) return;
+  if (run.entrypointKind === 'agent') {
+    if (!run.conversationId) {
+      if (run.status === 'dispatching') throw new TaskWorkStoreError('ZEUS_TASK_WORK_STOP_OUTCOME_UNKNOWN', 'Agent 正在派发且尚未返回耐久会话身份；结果确认前不会启动新的数字员工。');
+      return;
+    }
+    const turns = options.conversationTurns.listByConversation(run.conversationId);
+    const providerTurns = [...turns].reverse().filter((candidate) => candidate.providerTurnId);
+    const turn = providerTurns.find((candidate) => ['dispatching', 'running', 'waiting'].includes(candidate.status));
+    if (!turn?.providerTurnId) {
+      if (providerTurns[0]?.status === 'interrupted') return;
+      throw new TaskWorkStoreError('ZEUS_TASK_WORK_STOP_STATE_CHANGED', 'Agent 已不在可中断状态，请刷新任务后重试。');
+    }
+    const input = {};
+    const response = await options.server.inject({
+      method: 'POST',
+      url: `/api/projects/${encodeURIComponent(run.projectId)}/conversations/${encodeURIComponent(run.conversationId)}/turns/${encodeURIComponent(turn.providerTurnId)}/interrupt`,
+      headers: { authorization: `Bearer ${options.apiToken}` },
+      payload: commandEnvelope(conversationDispatchCommandTypes.turnInterrupt, 'turn', turn.providerTurnId, operationIdentity, input, conversationDispatchInputSha256(input)),
+    });
+    if (response.statusCode !== 202) throw new TaskWorkStoreError(response.statusCode >= 500 ? 'ZEUS_TASK_WORK_STOP_OUTCOME_UNKNOWN' : 'ZEUS_TASK_WORK_STOP_REJECTED', safeHttpMessage(response));
+    return;
+  }
+  if (!run.commandRunId) return;
+  const commandRun = options.commandRuns.getById(run.commandRunId);
+  if (!commandRun || commandRun.status === 'cancelled') return;
+  if (commandRun.status === 'stopping') throw new TaskWorkStoreError('ZEUS_TASK_WORK_STOP_OUTCOME_UNKNOWN', '命令仍在停止中，结果确认前不会启动新的数字员工。');
+  if (commandRun.status !== 'running') throw new TaskWorkStoreError('ZEUS_TASK_WORK_STOP_STATE_CHANGED', 'Command 已不在可停止状态，请刷新任务后重试。');
+  const input = {};
+  const response = await options.server.inject({
+    method: 'POST',
+    url: `/api/command-runs/${encodeURIComponent(run.commandRunId)}/stop`,
+    headers: { authorization: `Bearer ${options.apiToken}` },
+    payload: commandEnvelope(commandCenterCommandTypes.runStop, 'command_run', run.commandRunId, operationIdentity, input, commandCenterInputSha256(input)),
+  });
+  if (response.statusCode !== 200) throw new TaskWorkStoreError(response.statusCode >= 500 ? 'ZEUS_TASK_WORK_STOP_OUTCOME_UNKNOWN' : 'ZEUS_TASK_WORK_STOP_REJECTED', safeHttpMessage(response));
 }
 
 async function confirmAutomatedCommand(options: TaskWorkManagementOptions, decision: TaskWorkDecisionRecord, response: Record<string, unknown>): Promise<void> {
@@ -1009,13 +1077,14 @@ function resolveAcceptanceDecision(options: TaskWorkManagementOptions, deliverab
 function workManagementProjection(options: TaskWorkManagementOptions, task: ZeusTaskRecord) {
   const items = options.items.listByTask(task.id);
   const runs = options.runs.listByTask(task.id);
+  const activeItems = activeTaskWorkItems(options, task.id);
   const deliverables = options.deliverables.listByTask(task.id);
   const decisions = options.decisions.listByTask(task.id);
   const legacyExecutions = options.legacyExecutions.listByTask(task.id);
   return {
     summary: {
       workItems: items.length,
-      activeWorkItems: items.filter((item) => ['queued', 'active', 'waiting_manager', 'blocked'].includes(item.status)).length,
+      activeWorkItems: activeItems.length,
       pendingManagerDecisions: decisions.filter((decision) => decision.status === 'pending').length,
       submittedDeliverables: deliverables.filter((deliverable) => deliverable.status === 'submitted').length,
       legacyExecutions: legacyExecutions.length,
@@ -1066,14 +1135,8 @@ function resolveContextManifest(options: TaskWorkManagementOptions, task: ZeusTa
   return { version: 1, task: { id: task.id, revision: task.updatedAt, title: task.title, description: task.description, taskType: task.taskType, tags: [...task.tags] }, attachments, projectRules: rules, acceptedDeliverables: deliverables };
 }
 
-function resolveAgentModel(
-  employee: DigitalEmployeeRecord,
-  entrypoint: Extract<EmployeeEntrypointV2, { kind: 'agent' }>,
-  selection: TaskWorkPreviewSelection,
-  capability: Record<string, unknown>,
-  blockers: TaskWorkPreview['blockers'],
-): Record<string, unknown> | null {
-  const models = Array.isArray(capability.models) ? capability.models.filter(isCapabilityModel).filter((model) => model.agentKind === entrypoint.agentKind) : [];
+function resolveAgentModel(employee: DigitalEmployeeRecord, entrypoint: AgentEntrypointV2, selection: TaskWorkPreviewSelection, capability: Record<string, unknown>, blockers: TaskWorkPreview['blockers']): Record<string, unknown> | null {
+  const models = Array.isArray(capability.models) ? capability.models.filter(isCapabilityModel) : [];
   const requested = selection.modelOverride?.trim() || (entrypoint.modelPolicy.defaultMode === 'explicit' ? entrypoint.modelPolicy.defaultModel : null) || (typeof capability.preferredModel === 'string' ? capability.preferredModel : null);
   const model = requested ? models.find((candidate) => candidate.id === requested || candidate.model === requested) : models.find((candidate) => candidate.available);
   if (!model || !model.available) {
@@ -1085,7 +1148,7 @@ function resolveAgentModel(
   const reasoningEffort = selection.reasoningEffort?.trim() || model.defaultReasoningEffort || employee.reasoningEffort;
   if (reasoningEffort && (!model.supportedReasoningEfforts.includes(reasoningEffort) || (entrypoint.modelPolicy.allowedReasoningEfforts.length > 0 && !entrypoint.modelPolicy.allowedReasoningEfforts.includes(reasoningEffort))))
     blockers.push({ code: 'ZEUS_TASK_WORK_REASONING_NOT_ALLOWED', message: '所选推理强度不可用或不在员工允许范围内。' });
-  const serviceTier = selection.serviceTier?.trim() || model.defaultServiceTier || employee.serviceTier;
+  const serviceTier = selection.serviceTier === null ? model.defaultServiceTier : selection.serviceTier?.trim() || model.defaultServiceTier || employee.serviceTier;
   if (serviceTier && (!model.serviceTiers.some((tier) => tier.id === serviceTier) || (entrypoint.modelPolicy.allowedServiceTiers.length > 0 && !entrypoint.modelPolicy.allowedServiceTiers.includes(serviceTier))))
     blockers.push({ code: 'ZEUS_TASK_WORK_SERVICE_TIER_NOT_ALLOWED', message: '所选服务速率不可用或不在员工允许范围内。' });
   return {
@@ -1099,6 +1162,15 @@ function resolveAgentModel(
     serviceTier: serviceTier ?? null,
     contextWindow: model.contextWindow,
   };
+}
+
+function resolveRunAuthority(entrypoint: AgentEntrypointV2, requestedPermission: TaskWorkPreviewSelection['permissionMode'], blockers: TaskWorkPreview['blockers']): Record<string, unknown> {
+  const permissionMode = requestedPermission ?? entrypoint.authorityPolicy.permissionMode;
+  const rank = { 'read-only': 0, auto: 1, 'full-access': 2 } as const;
+  if (rank[permissionMode] > rank[entrypoint.authorityPolicy.permissionMode]) {
+    blockers.push({ code: 'ZEUS_TASK_WORK_PERMISSION_NOT_ALLOWED', message: '本次权限只能在员工权限上限内收窄。' });
+  }
+  return { ...entrypoint.authorityPolicy, permissionMode };
 }
 
 function resolveCommandPreview(definition: CommandDefinition, raw: Record<string, unknown>, blockers: TaskWorkPreview['blockers']): NonNullable<TaskWorkPreview['command']> {
@@ -1315,10 +1387,17 @@ function skillManifestPaths(value: unknown): string[] {
 }
 
 async function buildAgentSupplementalInfo(options: TaskWorkManagementOptions, run: TaskWorkRunRecord): Promise<string> {
-  const employee = run.employeeSnapshot;
-  const metadata = isRecord(run.skillSnapshot) && Array.isArray(run.skillSnapshot.selected) ? run.skillSnapshot.selected : [];
+  return buildAgentSupplementalInfoSnapshot(options, {
+    employee: run.employeeSnapshot,
+    entrypoint: run.entrypointSnapshot,
+    context: run.contextManifest,
+    skills: isRecord(run.skillSnapshot) && Array.isArray(run.skillSnapshot.selected) ? run.skillSnapshot.selected : [],
+  });
+}
+
+async function buildAgentSupplementalInfoSnapshot(options: TaskWorkManagementOptions, input: { employee: { name?: unknown }; entrypoint: Record<string, unknown>; context: WorkContextManifestV1; skills: unknown[] }): Promise<string> {
   const selectedContent: string[] = [];
-  for (const ref of run.contextManifest.acceptedDeliverables) {
+  for (const ref of input.context.acceptedDeliverables) {
     const deliverable = options.deliverables.getById(ref.deliverableId);
     if (!deliverable || deliverable.status !== 'accepted' || deliverable.version !== ref.version || deliverable.contentSha256 !== ref.contentSha256)
       throw new TaskWorkStoreError('ZEUS_TASK_WORK_CONTEXT_CHANGED', '已选上下文交付物与运行快照不一致。');
@@ -1326,18 +1405,35 @@ async function buildAgentSupplementalInfo(options: TaskWorkManagementOptions, ru
     selectedContent.push(`## 已选且已验收的交付物：${deliverable.title}（v${deliverable.version}）\n\n${Buffer.from(stored.bytes).toString('utf8')}`);
   }
   return [
-    `你正在以 Zeus 数字员工“${String(employee.name ?? '')}”身份处理一个独立工作项。本次行为只由冻结的员工能力配置决定，与指派次数、尝试次数无关。`,
-    typeof run.entrypointSnapshot.prompt === 'string' ? `## 员工提示\n\n${run.entrypointSnapshot.prompt}` : '',
-    `## 冻结的上下文清单\n\n${JSON.stringify(run.contextManifest, null, 2)}`,
-    metadata.length > 0
-      ? `## 允许按需加载的 Skill 元数据\n\n${JSON.stringify(metadata, null, 2)}\n\n仅在任务需要时从各项 snapshotPath 中读取冻结资源，不得改读同名的全局或项目 Skill；读取 SKILL.md 即代表实际启用，且 Skill 不授予额外权限。`
+    `你正在以 Zeus 数字员工“${String(input.employee.name ?? '')}”身份处理一个独立工作项。本次行为只由冻结的员工能力配置决定，与指派次数、尝试次数无关。`,
+    typeof input.entrypoint.prompt === 'string' && input.entrypoint.prompt ? `## 员工提示\n\n${input.entrypoint.prompt}` : '',
+    `## 冻结的上下文清单\n\n${JSON.stringify(input.context, null, 2)}`,
+    input.skills.length > 0
+      ? `## 允许按需加载的 Skill 元数据\n\n${JSON.stringify(input.skills, null, 2)}\n\n仅在任务需要时从各项 snapshotPath 中读取冻结资源，不得改读同名的全局或项目 Skill；读取 SKILL.md 即代表实际启用，且 Skill 不授予额外权限。`
       : '本次运行未选择 Skill。',
     ...selectedContent,
-    typeof run.entrypointSnapshot.reworkReason === 'string' ? `## 管理者要求修改\n\n${run.entrypointSnapshot.reworkReason}` : '',
+    typeof input.entrypoint.reworkReason === 'string' ? `## 管理者要求修改\n\n${input.entrypoint.reworkReason}` : '',
     '提交、推送、合入、部署和任务完结均不是会话结束后的隐藏路线。如需这些动作，等待管理者显式指令。',
   ]
     .filter(Boolean)
     .join('\n\n');
+}
+
+function buildTaskWorkPromptPreview(task: ZeusTaskRecord, supplementalInfo: string): TaskPushMessageLayout {
+  return buildTaskPushLayout({
+    taskId: task.id,
+    taskCode: task.taskCode,
+    taskTitle: task.title,
+    taskType: task.taskType,
+    taskDescription: task.description,
+    defectCurrentState: task.defectCurrentState,
+    defectExpectedOutcome: task.defectExpectedOutcome,
+    defectReproductionSteps: task.defectReproductionSteps,
+    optimizationCurrentState: task.optimizationCurrentState,
+    optimizationExpectedOutcome: task.optimizationExpectedOutcome,
+    tags: task.tags,
+    supplementalInfo,
+  });
 }
 
 function projectRuleMetadata(projectPath: string): Array<{ identity: string; sha256: string; title: string }> {
@@ -1356,20 +1452,22 @@ function normalizeSelection(value: unknown): TaskWorkPreviewSelection {
     employeeId: requiredText(value.employeeId, '请选择数字员工。', 256),
     modelOverride: optionalText(value.modelOverride, 256),
     reasoningEffort: optionalText(value.reasoningEffort, 64),
-    serviceTier: optionalText(value.serviceTier, 64),
+    serviceTier: value.serviceTier === null ? null : optionalText(value.serviceTier, 64),
+    workMode: optionalMember(value.workMode, ['default', 'plan'] as const, '工作模式无效。'),
+    permissionMode: optionalMember(value.permissionMode, ['read-only', 'auto', 'full-access'] as const, '权限模式无效。'),
+    promptOverride: optionalText(value.promptOverride, 20_000),
     skillIds: Array.isArray(value.skillIds) ? normalizeIdentities(value.skillIds) : undefined,
     selectedDeliverableIds: Array.isArray(value.selectedDeliverableIds) ? normalizeIdentities(value.selectedDeliverableIds) : undefined,
   };
 }
 
-function sanitizeEntrypoint(entrypoint: EmployeeEntrypointV2): Record<string, unknown> {
-  if (entrypoint.kind === 'command') return { kind: 'command', commandId: entrypoint.commandId };
+function sanitizeEntrypoint(entrypoint: AgentEntrypointV2): Record<string, unknown> {
   return { kind: 'agent', prompt: entrypoint.prompt, agentKind: entrypoint.agentKind, modelPolicy: entrypoint.modelPolicy, skillPolicy: entrypoint.skillPolicy, authorityPolicy: entrypoint.authorityPolicy };
 }
 
 function commandEnvelope<T extends object>(
   commandType: string,
-  scopeKind: 'command_run' | 'approval',
+  scopeKind: 'command_run' | 'approval' | 'turn',
   scopeId: string,
   operationIdentity: string,
   input: T,
@@ -1460,6 +1558,12 @@ function optionalText(value: unknown, maximum: number): string | null | undefine
   if (value === undefined) return undefined;
   if (value === null || value === '') return null;
   return requiredText(value, '参数无效。', maximum);
+}
+function optionalMember<const Values extends readonly string[]>(value: unknown, values: Values, message: string): Values[number] | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  if (typeof value !== 'string' || !values.includes(value)) throw new TaskWorkStoreError('ZEUS_TASK_WORK_INPUT_INVALID', message, 400);
+  return value as Values[number];
 }
 function stableIdentity(prefix: string, seed: string): string {
   return `${prefix}_${sha256(seed).slice(0, 32)}`;

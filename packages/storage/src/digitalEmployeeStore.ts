@@ -47,19 +47,14 @@ export interface AuthorityPolicyV1 {
   allowComplete: boolean;
 }
 
-export type EmployeeEntrypointV2 =
-  | {
-      kind: 'agent';
-      prompt: string;
-      agentKind: DigitalEmployeeAgentKind;
-      modelPolicy: ModelPolicyV1;
-      skillPolicy: SkillPolicyV1;
-      authorityPolicy: AuthorityPolicyV1;
-    }
-  | {
-      kind: 'command';
-      commandId: string;
-    };
+export interface AgentEntrypointV2 {
+  kind: 'agent';
+  prompt: string;
+  agentKind: DigitalEmployeeAgentKind;
+  modelPolicy: ModelPolicyV1;
+  skillPolicy: SkillPolicyV1;
+  authorityPolicy: AuthorityPolicyV1;
+}
 
 export type DigitalEmployeeEntrypointMigrationState = 'ready' | 'requires_selection' | 'requires_configuration';
 
@@ -104,8 +99,8 @@ export interface DigitalEmployeeRecord extends Omit<DigitalEmployeeTemplateRecor
   allowTests: boolean;
   deliveryGrants: DigitalEmployeeDeliveryGrants;
   deployCommandId: string | null;
-  /** v2 主入口。null 表示旧配置需选择或 Command 尚未配置，不得指派。 */
-  entrypoint: EmployeeEntrypointV2 | null;
+  /** 当前数字员工始终使用 Agent；null 仅供读取损坏或未完成的旧快照时防御。 */
+  entrypoint: AgentEntrypointV2 | null;
   entrypointMigrationState: DigitalEmployeeEntrypointMigrationState;
 }
 
@@ -196,8 +191,7 @@ export interface CreateDigitalEmployeeInput extends Omit<CreateDigitalEmployeeTe
   allowTests?: boolean;
   deliveryGrants?: Partial<DigitalEmployeeDeliveryGrants>;
   deployCommandId?: string | null;
-  entrypoint?: EmployeeEntrypointV2 | null;
-  entrypointKind?: EmployeeEntrypointV2['kind'];
+  entrypoint?: AgentEntrypointV2 | null;
 }
 
 export type UpdateDigitalEmployeeInput = Partial<Omit<CreateDigitalEmployeeInput, 'id' | 'projectId'>> & { expectedRevision: number };
@@ -640,7 +634,7 @@ export class DigitalEmployeeRepository {
         JSON.stringify(value.entrypoint?.kind === 'agent' ? value.entrypoint.modelPolicy : defaultModelPolicy(value)),
         JSON.stringify(value.entrypoint?.kind === 'agent' ? value.entrypoint.skillPolicy : { allowedSkillIds: value.skillIds }),
         JSON.stringify(value.entrypoint?.kind === 'agent' ? value.entrypoint.authorityPolicy : defaultAuthorityPolicy(value)),
-        value.entrypoint?.kind === 'command' ? value.entrypoint.commandId : null,
+        null,
       ],
     );
     return this.getById(id)!;
@@ -662,7 +656,6 @@ export class DigitalEmployeeRepository {
       serviceTier: input.template.serviceTier,
       permissionMode: input.template.permissionMode,
       workMode: input.template.workMode,
-      entrypointKind: input.template.id === 'digital_employee_template_deployment' ? 'command' : 'agent',
       ...input.overrides,
     });
   }
@@ -671,8 +664,7 @@ export class DigitalEmployeeRepository {
     const existing = this.require(id);
     assertRevision(existing.revision, input.expectedRevision, '数字员工');
     const normalized = normalizeEmployeeInput({ ...existing, ...input, projectId: existing.projectId, deliveryGrants: { ...existing.deliveryGrants, ...input.deliveryGrants }, taskFilter: { ...existing.taskFilter, ...input.taskFilter } });
-    const entrypointExplicit = input.entrypoint !== undefined || input.entrypointKind !== undefined;
-    const value = !entrypointExplicit && existing.entrypointMigrationState !== 'ready' ? { ...normalized, entrypoint: null, entrypointMigrationState: existing.entrypointMigrationState } : normalized;
+    const value = normalized;
     const timestamp = nextTimestamp(existing.updatedAt);
     this.db.execute(
       `UPDATE digital_employees SET template_id = ?, name = ?, description = ?, role = ?, domain = ?, skill_ids_json = ?, prompt = ?, agent_kind = ?, model = ?, reasoning_effort = ?, service_tier = ?, permission_mode = ?, work_mode = ?,
@@ -712,7 +704,7 @@ export class DigitalEmployeeRepository {
         JSON.stringify(value.entrypoint?.kind === 'agent' ? value.entrypoint.modelPolicy : defaultModelPolicy(value)),
         JSON.stringify(value.entrypoint?.kind === 'agent' ? value.entrypoint.skillPolicy : { allowedSkillIds: value.skillIds }),
         JSON.stringify(value.entrypoint?.kind === 'agent' ? value.entrypoint.authorityPolicy : defaultAuthorityPolicy(value)),
-        value.entrypoint?.kind === 'command' ? value.entrypoint.commandId : null,
+        null,
         timestamp,
         existing.id,
         existing.revision,
@@ -1338,8 +1330,8 @@ function mapTemplateRow(row: DigitalEmployeeTemplateRow): DigitalEmployeeTemplat
 }
 
 function mapEmployeeRow(row: DigitalEmployeeRow): DigitalEmployeeRecord {
-  const entrypointMigrationState = oneOf(row.entrypoint_migration_state, ['ready', 'requires_selection', 'requires_configuration'] as const, 'employee.entrypointMigrationState');
-  const entrypoint = mapEmployeeEntrypoint(row, entrypointMigrationState);
+  oneOf(row.entrypoint_migration_state, ['ready', 'requires_selection', 'requires_configuration'] as const, 'employee.entrypointMigrationState');
+  const entrypoint = mapEmployeeEntrypoint(row);
   return {
     id: row.id,
     projectId: row.project_id,
@@ -1372,7 +1364,7 @@ function mapEmployeeRow(row: DigitalEmployeeRow): DigitalEmployeeRecord {
     },
     deployCommandId: row.deploy_command_id,
     entrypoint,
-    entrypointMigrationState,
+    entrypointMigrationState: 'ready',
     revision: nonNegativeInteger(row.revision, 'employee.revision'),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -1471,34 +1463,25 @@ function normalizeEmployeeInput(input: CreateDigitalEmployeeInput): Omit<Digital
     deliveryGrants,
     deployCommandId,
   };
-  const requestedKind = input.entrypoint?.kind ?? input.entrypointKind ?? 'agent';
-  let entrypoint: EmployeeEntrypointV2 | null;
-  let entrypointMigrationState: DigitalEmployeeEntrypointMigrationState;
-  if (requestedKind === 'command') {
-    const commandId = input.entrypoint?.kind === 'command' ? nullableIdentity(input.entrypoint.commandId, 'entrypoint.commandId') : deployCommandId;
-    entrypoint = commandId ? { kind: 'command', commandId } : null;
-    entrypointMigrationState = commandId ? 'ready' : 'requires_configuration';
-  } else {
-    const provided = input.entrypoint?.kind === 'agent' ? input.entrypoint : null;
-    entrypoint = {
-      kind: 'agent',
-      prompt: boundedText(provided?.prompt ?? template.prompt, 'entrypoint.prompt', 1, 20_000),
-      agentKind: oneOf(provided?.agentKind ?? template.agentKind, digitalEmployeeAgentKinds, 'entrypoint.agentKind'),
-      modelPolicy: normalizeModelPolicy(provided?.modelPolicy ?? defaultModelPolicy(base)),
-      skillPolicy: normalizeSkillPolicy(provided?.skillPolicy ?? { allowedSkillIds: template.skillIds }),
-      authorityPolicy: normalizeAuthorityPolicy(provided?.authorityPolicy ?? defaultAuthorityPolicy(base)),
-    };
-    entrypointMigrationState = 'ready';
+  const rawEntrypoint = input.entrypoint as { kind?: unknown } | null | undefined;
+  const rawEntrypointKind = (input as CreateDigitalEmployeeInput & { entrypointKind?: unknown }).entrypointKind;
+  if (rawEntrypoint?.kind === 'command' || rawEntrypointKind === 'command') {
+    throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_COMMAND_ENTRYPOINT_UNSUPPORTED', '数字员工没有 Command 类型；执行命令是 Agent 受权限约束的运行能力。');
   }
-  return { ...base, entrypoint, entrypointMigrationState };
+  const provided = input.entrypoint?.kind === 'agent' ? input.entrypoint : null;
+  const entrypoint: AgentEntrypointV2 = {
+    kind: 'agent',
+    prompt: boundedText(provided?.prompt ?? template.prompt, 'entrypoint.prompt', 1, 20_000),
+    agentKind: oneOf(provided?.agentKind ?? template.agentKind, digitalEmployeeAgentKinds, 'entrypoint.agentKind'),
+    modelPolicy: normalizeModelPolicy(provided?.modelPolicy ?? defaultModelPolicy(base)),
+    skillPolicy: normalizeSkillPolicy(provided?.skillPolicy ?? { allowedSkillIds: template.skillIds }),
+    authorityPolicy: normalizeAuthorityPolicy(provided?.authorityPolicy ?? defaultAuthorityPolicy(base)),
+  };
+  return { ...base, entrypoint, entrypointMigrationState: 'ready' };
 }
 
-function mapEmployeeEntrypoint(row: DigitalEmployeeRow, migrationState: DigitalEmployeeEntrypointMigrationState): EmployeeEntrypointV2 | null {
-  if (migrationState !== 'ready' || !row.entrypoint_kind) return null;
-  if (row.entrypoint_kind === 'command') {
-    return row.command_id ? { kind: 'command', commandId: row.command_id } : null;
-  }
-  if (row.entrypoint_kind !== 'agent') throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_CORRUPT', '数字员工主入口类型无法识别。');
+function mapEmployeeEntrypoint(row: DigitalEmployeeRow): AgentEntrypointV2 {
+  // 旧 command/待选择记录保留 deploy_command_id 作为部署能力；员工身份按已有 Agent 配置投影。
   return {
     kind: 'agent',
     prompt: row.prompt,
