@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "@zeus/shared": "workspace:*",
-    "nanoid": "^5.1.5",
+    "nanoid": "^5.1.16",
     "sql.js": "^1.13.0"
   }
 }
