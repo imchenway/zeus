@@ -3,10 +3,12 @@ import { createPortal } from 'react-dom';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
 import { FolderPlusIcon as FolderPlus } from '@phosphor-icons/react/dist/csr/FolderPlus';
+import { ListIcon as List } from '@phosphor-icons/react/dist/csr/List';
 import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { PushPinIcon as PushPin } from '@phosphor-icons/react/dist/csr/PushPin';
 import { PushPinSlashIcon as PushPinSlash } from '@phosphor-icons/react/dist/csr/PushPinSlash';
+import { StackSimpleIcon as StackSimple } from '@phosphor-icons/react/dist/csr/StackSimple';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
 import { DownloadSimpleIcon as DownloadSimple } from '@phosphor-icons/react/dist/csr/DownloadSimple';
@@ -648,16 +650,7 @@ export function SidebarNav(props: {
               title={props.conversationOrganization === 'task_status' ? copy.showConversationsFlat : copy.groupConversationsByTaskStatus}
               onClick={props.onToggleConversationOrganization}
             >
-              {props.conversationOrganization === 'task_status' ? (
-                <svg viewBox="0 0 20 20" focusable="false" aria-hidden="true">
-                  <path d="M4 5.2h12M4 10h12M4 14.8h12" />
-                </svg>
-              ) : (
-                <svg viewBox="0 0 20 20" focusable="false" aria-hidden="true">
-                  <path d="M6.2 4.4h9.8M6.2 7.2h7.2M6.2 12.8h9.8M6.2 15.6h7.2" />
-                  <path d="m3.5 4.4 1.2 1.4-1.2 1.4M3.5 12.8l1.2 1.4-1.2 1.4" />
-                </svg>
-              )}
+              {props.conversationOrganization === 'task_status' ? <List aria-hidden="true" weight="regular" /> : <StackSimple aria-hidden="true" weight="regular" />}
             </button>
             <button type="button" className="project-add-button" aria-label={copy.addProject} title={copy.addProject} onClick={props.onCreateProject} disabled={!props.canCreateProject} {...controlBusyProps(props.createProjectBusy)}>
               <Plus aria-hidden="true" weight="regular" />
