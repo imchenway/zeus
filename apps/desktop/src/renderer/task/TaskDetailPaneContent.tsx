@@ -1342,14 +1342,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           </span>
         ) : null}
         <span className="task-detail-action-buttons">
-          <Button
-            variant="primary"
-            size="regular"
-            className="task-detail-primary-action"
-            onClick={() => props.onPushNewConversation(props.task.id)}
-            busy={props.busy || modelPushCreating}
-            disabled={modelPushFailed || props.terminalReadOnly}
-          >
+          <Button variant="primary" size="regular" className="task-detail-primary-action" onClick={() => props.onPushNewConversation(props.task.id)} busy={props.busy || modelPushCreating} disabled={props.terminalReadOnly}>
             {props.terminalReadOnly ? (zh ? '重新打开任务后可新建会话' : 'Reopen task to start a conversation') : modelPushCreating ? (zh ? '正在创建会话…' : 'Creating conversation…') : props.copy.pushNewConversation}
           </Button>
           {props.onOpenCodeDelivery ? (
