@@ -1606,7 +1606,10 @@ export function projectTranscriptTurnRows(rows: readonly TranscriptRow[], active
   const processRowsByTurn = new Map<string, TranscriptRow[]>();
   for (const row of orderedRows) {
     const turnId = transcriptRowTurnId(row);
-    if (!turnId || !projectedTurnIds.has(turnId) || !isTurnProcessRow(row)) continue;
+    if (!turnId || !projectedTurnIds.has(turnId)) continue;
+    // 第一条用户消息开启轮次；同 turn 的后续用户消息是中途引导，必须留在过程时间线的真实位置。
+    const midTurnUserRow = row.kind === 'item' && itemRole(row.item) === 'user' && openingUserRowKeyByTurn.get(turnId) !== row.key;
+    if (!isTurnProcessRow(row) && !midTurnUserRow) continue;
     const workRows = processRowsByTurn.get(turnId) ?? [];
     workRows.push(row);
     processRowsByTurn.set(turnId, workRows);

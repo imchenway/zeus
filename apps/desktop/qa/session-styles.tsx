@@ -907,7 +907,31 @@ const steeringReasoning: NativeSessionItemBuffer = {
   itemId: 'steering-reasoning',
   text: '当前回复仍在执行，等待新的引导内容接管。',
   payload: { summary: ['当前回复仍在执行，等待新的引导内容接管。'] },
+  timelineAt: '2026-08-15T04:01:50.000Z',
+  updatedAt: '2026-08-15T04:01:50.000Z',
 };
+function steeringItem(id: string, type: string, text: string, timelineAt: string, payload: Record<string, unknown> = {}): NativeSessionItemBuffer {
+  const user = type === 'userMessage';
+  return {
+    ...motionItem(id, type, 'completed', text, payload),
+    key: `steering:${id}`,
+    conversationId: steeringConversationId,
+    threadId: steeringThreadId,
+    turnId: steeringTurnId,
+    itemId: `steering-${id}`,
+    timelineAt,
+    updatedAt: timelineAt,
+    ...(user ? { clientUserMessageId: `steering-${id}-client`, durableClientUserMessageId: `steering-${id}-client` } : {}),
+  };
+}
+const steeringOpening = steeringItem('opening', 'userMessage', '先检查当前页面为什么没有显示消息。', '2026-08-15T04:01:00.000Z', { role: 'user' });
+const steeringBeforeSummary = steeringItem('before-summary', 'agentMessage', '我先核对消息投影和渲染顺序。', '2026-08-15T04:01:10.000Z', { role: 'assistant', phase: 'prework' });
+const steeringBeforeCommand = steeringItem('before-command', 'commandExecution', '', '2026-08-15T04:01:20.000Z', {
+  command: ['rg', 'ConversationTranscript'],
+  commandActions: [{ type: 'read', path: 'apps/desktop/src/renderer/session/ConversationTranscript.tsx' }],
+});
+const steeringSucceeded = steeringItem('succeeded-guide', 'userMessage', '鼠标滚动一下后，就显示出来了', '2026-08-15T04:01:30.000Z', { role: 'user', delivery: 'steer_now' });
+const steeringAfterSummary = steeringItem('after-summary', 'agentMessage', '这条引导之后继续排查首次绘制与测量。', '2026-08-15T04:01:40.000Z', { role: 'assistant', phase: 'prework' });
 const steeringInitialState: NativeSessionState = {
   ...createInitialSessionState(),
   transportState: 'ready',
@@ -918,8 +942,22 @@ const steeringInitialState: NativeSessionState = {
   activeTurnId: steeringTurnId,
   startedTurnId: steeringTurnId,
   snapshot: { id: steeringConversationId } as NonNullable<NativeSessionState['snapshot']>,
-  items: { [steeringReasoning.key]: steeringReasoning },
-  itemOrder: [steeringReasoning.key],
+  items: Object.fromEntries([steeringOpening, steeringBeforeSummary, steeringBeforeCommand, steeringSucceeded, steeringAfterSummary, steeringReasoning].map((item) => [item.key, item])),
+  itemOrder: [steeringOpening.key, steeringBeforeSummary.key, steeringBeforeCommand.key, steeringSucceeded.key, steeringAfterSummary.key, steeringReasoning.key],
+  turnsByProviderId: {
+    [steeringTurnId]: {
+      id: steeringTurnId,
+      providerTurnId: steeringTurnId,
+      submissionId: 'steering-opening-submission',
+      status: 'running',
+      error: null,
+      plan: null,
+      startedAt: steeringOpening.timelineAt,
+      completedAt: null,
+      createdAt: steeringOpening.timelineAt ?? '2026-08-15T04:01:00.000Z',
+      updatedAt: steeringReasoning.updatedAt ?? '2026-08-15T04:01:50.000Z',
+    },
+  },
   queue: {
     state: { type: 'active', turnId: steeringTurnId, phase: 'prework' },
     waitReason: 'current_turn',
@@ -2462,6 +2500,14 @@ function SteeringPreview() {
   );
 }
 
+function SteeringQaApp() {
+  return (
+    <main className="macos-ai-app zeus-shell qa-page qa-motion-page">
+      <SteeringPreview />
+    </main>
+  );
+}
+
 interface MotionDiagnosticsSnapshot {
   viewport: string;
   reducedMotion: string;
@@ -3919,6 +3965,7 @@ const activeReentryQa = new URLSearchParams(window.location.search).has('active-
 const interactionRecoveryQa = new URLSearchParams(window.location.search).has('interaction-recovery');
 const zeus0388Qa = new URLSearchParams(window.location.search).has('zeus0388');
 const zeus0413Qa = new URLSearchParams(window.location.search).has('zeus0413');
+const steeringQa = new URLSearchParams(window.location.search).has('steering');
 // 开发态热更新复用同一根节点，避免视觉验收页重复挂载并制造无关控制台错误。
 const qaRoot = window.__zeusSessionStylesRoot ?? createRoot(document.getElementById('root')!);
 window.__zeusSessionStylesRoot = qaRoot;
@@ -3943,6 +3990,8 @@ qaRoot.render(
     <Zeus0388QaApp />
   ) : zeus0413Qa ? (
     <TranscriptScrollQaApp />
+  ) : steeringQa ? (
+    <SteeringQaApp />
   ) : motionQa ? (
     <MotionApp />
   ) : (
