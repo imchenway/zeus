@@ -75,6 +75,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const selectedRepository = repositories.find((repository) => repository.id === selectedRepositoryId) ?? repositories[0] ?? null;
   const changedCount = repositories.reduce((total, repository) => total + repository.snapshot.fileStatuses.length, 0);
   const conflictCount = repositories.reduce((total, repository) => total + repository.snapshot.conflictFiles.length, 0);
+  const hasStagedChanges = repositories.some((repository) => repository.snapshot.fileStatuses.some((file) => file.indexStatus !== ' ' && file.indexStatus !== '?'));
   const allCommits = useMemo(
     () =>
       repositories
@@ -231,6 +232,11 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
     setSelectedCommitHash(commitHash);
   }
 
+  function openCommit(): void {
+    if (hasStagedChanges) setCommitOpen(true);
+    else setTab('changes');
+  }
+
   function openDiffWindow(repository: ProjectGitRepositoryWorkbenchItem, filePath: string, options?: { stage?: 'combined' | ChangeStage; commitHash?: string; comparisonRef?: string; comparisonMode?: 'current' | 'working-tree' }): void {
     void window.zeus?.openProjectGitDiffWindow?.({
       projectId: props.project.id,
@@ -293,7 +299,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
           onExecute={execute}
           onOpenDiff={openDiffWindow}
           onOpenUpdate={() => setUpdateOpen(true)}
-          onOpenCommit={() => setCommitOpen(true)}
+          onOpenCommit={openCommit}
           onOpenPush={() => setPushOpen(true)}
           onOpenNewBranch={(baseRef) => {
             setNewBranchBase(baseRef ?? '');
@@ -336,7 +342,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
               <OperationsMenu
                 zh={zh}
                 onClose={() => setOperationsOpen(false)}
-                onOpenCommit={() => setCommitOpen(true)}
+                onOpenCommit={openCommit}
                 onOpenPush={() => setPushOpen(true)}
                 onOpenUpdate={() => setUpdateOpen(true)}
                 onOpenNewBranch={() => {
@@ -407,7 +413,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
           }}
           onOpenDiff={openDiffWindow}
           onExecute={execute}
-          onCommit={() => setCommitOpen(true)}
+          onCommit={openCommit}
         />
       ) : tab === 'stash' ? (
         <StashSurface zh={zh} repositories={repositories} busy={busy} onExecute={execute} />
@@ -1400,7 +1406,7 @@ function LocalChangesSurface(props: {
               </span>
             ))
           ) : (
-            <small>{props.zh ? '暂存文件后可在这里逐仓创建提交。' : 'Stage files to create a commit for each repository.'}</small>
+            <small>{props.zh ? '勾选左侧文件即可暂存；暂存后可在这里逐仓创建提交。' : 'Select files on the left to stage them, then create one commit per repository here.'}</small>
           )}
         </div>
         <Button variant="primary" onClick={props.onCommit} disabled={stagedRepositories.length === 0}>
