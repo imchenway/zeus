@@ -2004,6 +2004,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         const taskPushAttachmentKeys = new Set([...taskPushLayout.blocks.flatMap((block) => block.attachments.map((attachment) => attachment.key)), ...(taskPushLayout.supplementalAttachments ?? []).map((attachment) => attachment.key)]);
         const taskPushAttachments = attachmentInput.attachments.filter((attachment) => attachment.taskPushAttachmentKey && taskPushAttachmentKeys.has(attachment.taskPushAttachmentKey));
         const taskPushPrompt = renderTaskPushLayoutText(taskPushLayout);
+        const pluginReferences = await resolveNewConversationPluginReferences(project.id, taskPushPrompt, body.pluginReferences);
         if (selectedModel.agentKind !== 'pi') await assertCodexAccountReady(selectedModel.sourceId ?? null, selectedModel.model);
         // 先在用户实际选择 Skill 的项目目录复验身份，避免失效选择在创建 Worktree 后才失败；
         // Worktree 就绪后再按相同稳定 ID 解析一次，确保 repo Skill 使用该工作目录中的真实文件。
@@ -2050,6 +2051,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             clientUserMessageId,
             providerWriteLifecycle: reservedLifecycle,
             ...(skill ? { skill } : {}),
+            pluginReferences,
           },
           { operationIdentity: stableOperationId, modelRef: modelName, stageExecution: requestedStageExecution(body, taskStage) },
         );

@@ -1304,6 +1304,7 @@ export interface StartTaskModelPushRequest {
   workMode: 'default' | 'plan';
   permissionMode: NativePermissionMode;
   skillId?: string;
+  pluginReferences?: PluginSkillReference[];
   workspace:
     | { mode: 'direct'; confirmConcurrentWrites: boolean }
     | { mode: 'existing'; environmentId: string }

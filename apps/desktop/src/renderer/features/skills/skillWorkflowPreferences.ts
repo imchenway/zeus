@@ -1,3 +1,5 @@
+import type { PluginSkillReference } from '../../session/sessionTypes.js';
+
 export type SkillWorkflowId = 'task_push' | 'code_review' | 'conflict_resolution';
 
 export const skillWorkflowDefinitions: Array<{ id: SkillWorkflowId; zh: string; en: string }> = [
@@ -19,7 +21,7 @@ export function readSkillWorkflowPreferences(storage: Pick<Storage, 'getItem'> |
     const preferences: SkillWorkflowPreferences = {};
     for (const workflow of skillWorkflowDefinitions) {
       const value = parsed[workflow.id];
-      if (typeof value === 'string' && /^[a-f0-9]{32}$/u.test(value)) preferences[workflow.id] = value;
+      if (typeof value === 'string' && isWorkflowSkillId(workflow.id, value)) preferences[workflow.id] = value;
     }
     return preferences;
   } catch {
@@ -40,6 +42,13 @@ export function writeSkillWorkflowDefault(workflow: SkillWorkflowId, skillId: st
   if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(skillWorkflowPreferenceEvent, { detail: { workflow, skillId } }));
 }
 
+export function workflowSkillSelectionRequest(skillId: string): { skillId?: string; pluginReferences?: PluginSkillReference[] } {
+  if (!skillId) return {};
+  if (/^[a-f0-9]{32}$/u.test(skillId)) return { skillId };
+  if (/^plugin:[^:\s]+:skill:[^:\s]+$/u.test(skillId)) return { pluginReferences: [{ kind: 'skill', id: skillId }] };
+  throw new Error('Skill 选择无效，请重新选择。');
+}
+
 function browserStorage(): Storage | undefined {
   if (typeof window === 'undefined') return undefined;
   try {
@@ -51,4 +60,8 @@ function browserStorage(): Storage | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isWorkflowSkillId(workflow: SkillWorkflowId, value: string): boolean {
+  return /^[a-f0-9]{32}$/u.test(value) || (workflow === 'task_push' && /^plugin:[^:\s]+:skill:[^:\s]+$/u.test(value));
 }
