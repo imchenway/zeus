@@ -2501,7 +2501,12 @@ export function createSessionController(options: CreateSessionControllerOptions)
           : null;
       const exactPending = pendingSend?.fingerprint === fingerprint ? pendingSend : null;
       if (pendingSend?.deliveryState === 'accepted' && !exactPending) {
-        return Promise.reject(new Error('The previous accepted message is still waiting for its authoritative conversation snapshot.'));
+        const acceptedEnvelope = pendingSend;
+        // 冷历史首屏不会处理发送账本；续聊前先用权威快照销账旧 acceptance，不能让它永久阻断下一条消息。
+        return reconcileAcceptedSend().then(() => {
+          if (pendingSend === acceptedEnvelope) throw new Error('The previous accepted message is still waiting for its authoritative conversation snapshot.');
+          return controller.send(delivery, normalizedExpectedTurnId, settings);
+        });
       }
       if (pendingSend && pendingSend.deliveryState !== 'accepted' && !exactPending && !reusableIdentity) {
         return Promise.reject(new Error('上一条消息尚未确认是否被 Zeus 接收，请先重试或取消该消息。'));
