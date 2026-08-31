@@ -206,3 +206,10 @@ Telegram 只作为受认证的远程入口。入站消息、任务操作和交�
 - 主线已包含半成品入口提交 `5a3fa813`，并在 v0.3.83 阶段补过 `create/await_create` 解析与恢复；任务分支新增完整首页 callback、任务会话精确选择和单次错误反馈。`git merge-tree --write-tree` 预演准确报告服务文件与本文档冲突，集成时保留主线任务创建恢复和格式治理，并联合加入 `home.*`、`task.push_menu`、`task.push_existing` 与任务/会话身份校验，没有按任一侧整文件覆盖。
 - 首轮集成 `verify:publish` 发现两侧各自定义 `taskCreatePromptView`，TypeScript 以 `TS2393` 阻断候选。语义审计后保留支持附件、与“新建任务”交互文案一致的实现，移除被替代的旧实现；重新执行完整 `pnpm verify:publish` 通过，包括冲突残留、Git 空白、只读网络重试探针、Prettier、ESLint、126/11 架构治理、TypeScript 和生产构建。构建仍仅有既有 `markstream-react` Rolldown 注解与大 chunk 警告。
 - 上述门禁是集成候选的静态与构建证据，不等于真实 Telegram 已恢复；只有公开发布、安装新版本并重新发送 `/start` 生成新按钮后，才能复验首页、任务创建、精确会话选择与异常单次反馈。
+
+## v0.3.85 公开发布完成（2026-08-31）
+
+- `pnpm release` 从干净隔离 `main@a05a3d9a` 完成端到端发布，生成发布提交 `fe6b1c4c7701824be332ccd45d2bafad25429933`。`origin/main`、annotated tag `v0.3.85` 和 Release Workflow `33343277201` 的固定候选 SHA 完全一致；Workflow 的 preflight、typecheck、package-mac 与 publish 作业全部为 `success`。
+- GitHub Release `v0.3.85` 已公开，非草稿、非预发布。公开资产为 `Zeus-0.3.85-arm64.dmg`（115166670 字节，SHA-256 `76095c862e4cd9380fefc6a3cc728ffb18a08841971a210223723b8ee8a5f92f`）和 `zeus-release-manifest.json`（1047 字节，SHA-256 `9d62bc3623d3eb83da370869164276767d9152dcf46993ad79fa0b7940436d18`）；GitHub 服务端摘要、manifest 和 Homebrew Cask 已完成一致性对账。
+- manifest 明确记录 `signed=false`、`notarized=false`，因此本版本仍不能描述为 Developer ID 签名或 Apple 公证版本。快速发布模式未重新下载完整公开 DMG，但正式 DMG 在上传前已通过 `hdiutil verify`。
+- 本轮没有替换或重启正在运行的 `/Applications/Zeus.app` 0.3.84，也没有操作正式 Telegram 数据。真实 Bot 仍需安装 v0.3.85、重启 Zeus，并重新发送 `/start` 生成新 capability 后复验；旧消息中的一次性按钮不会因发布自动变成新版处理器的有效按钮。
