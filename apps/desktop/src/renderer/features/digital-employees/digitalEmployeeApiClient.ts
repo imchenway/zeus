@@ -3,6 +3,7 @@ import { buildWorkManagementCommandRequest, workManagementClientCommandTypes } f
 import type { CommandRunDetail } from '../runtime/runtimeContracts.js';
 import type {
   DigitalEmployeeAutomationInput,
+  DigitalEmployeeCapabilitiesSnapshot,
   DigitalEmployeeAutomationRecord,
   DigitalEmployeeCollaborationProjection,
   DigitalEmployeeExecutionRecord,
@@ -20,6 +21,7 @@ import type {
 } from './digitalEmployeeContracts.js';
 
 export interface DigitalEmployeeApiClient {
+  loadDigitalEmployeeCapabilities(): Promise<DigitalEmployeeCapabilitiesSnapshot>;
   loadDigitalEmployeeTemplates(): Promise<DigitalEmployeeTemplateRecord[]>;
   createDigitalEmployeeTemplate(input: DigitalEmployeeTemplateInput): Promise<DigitalEmployeeTemplateRecord>;
   updateDigitalEmployeeTemplate(templateId: string, expectedRevision: number, input: Partial<DigitalEmployeeTemplateInput>): Promise<DigitalEmployeeTemplateRecord>;
@@ -48,8 +50,8 @@ export interface DigitalEmployeeApiClient {
   loadTaskWorkManagement(taskId: string): Promise<TaskWorkManagementProjection>;
   loadTaskWorkDeliverableContent(taskId: string, deliverableId: string): Promise<{ deliverableId: string; version: number; contentSha256: string; content: string }>;
   loadTaskWorkCommandEvidence(runId: string): Promise<CommandRunDetail>;
-  previewTaskWorkItem(taskId: string, input: TaskWorkPreviewSelection & { commandParameters?: Record<string, unknown> }): Promise<TaskWorkPreview>;
-  createTaskWorkItem(taskId: string, preview: TaskWorkPreview, commandParameters?: Record<string, unknown>): Promise<{ item: TaskWorkItemRecord; run: TaskWorkItemRecord['runs'][number] }>;
+  previewTaskWorkItem(taskId: string, input: TaskWorkPreviewSelection): Promise<TaskWorkPreview>;
+  createTaskWorkItem(taskId: string, preview: TaskWorkPreview, replaceActiveWorkItems?: Array<{ id: string; expectedRevision: number }>): Promise<{ item: TaskWorkItemRecord; run: TaskWorkItemRecord['runs'][number] }>;
   acceptTaskWorkDeliverable(taskId: string, deliverable: TaskWorkDeliverableRecord): Promise<unknown>;
   requestTaskWorkDeliverableChanges(taskId: string, deliverable: TaskWorkDeliverableRecord, reason: string): Promise<unknown>;
   retryTaskWorkItem(taskId: string, item: TaskWorkItemRecord): Promise<unknown>;
@@ -59,6 +61,7 @@ export interface DigitalEmployeeApiClient {
 
 export function createDigitalEmployeeApiClient(transport: LocalApiTransport): DigitalEmployeeApiClient {
   return {
+    loadDigitalEmployeeCapabilities: () => transport.request('/api/digital-employee-capabilities'),
     loadDigitalEmployeeTemplates: () => transport.request('/api/digital-employee-templates'),
     createDigitalEmployeeTemplate: async (input) => {
       const body = await command(workManagementClientCommandTypes.digitalEmployeeTemplateCreate, 'settings', () => 'digital-employee-templates', 'digital_employee_template_', input);
@@ -149,16 +152,16 @@ export function createDigitalEmployeeApiClient(transport: LocalApiTransport): Di
     loadTaskWorkDeliverableContent: (taskId, deliverableId) => transport.request(`${taskPath(taskId)}/work-deliverables/${encodeURIComponent(deliverableId)}/content`),
     loadTaskWorkCommandEvidence: (runId) => transport.request(`/api/command-runs/${encodeURIComponent(runId)}?tail=true&logLimit=1000`),
     previewTaskWorkItem: (taskId, input) => transport.request(`${taskPath(taskId)}/work-item-previews`, jsonRequest('POST', input)),
-    createTaskWorkItem: async (taskId, preview, commandParameters = {}) => {
+    createTaskWorkItem: async (taskId, preview, replaceActiveWorkItems = []) => {
       const value = {
         selection: preview.selection,
         previewSha256: preview.previewSha256,
         expectedTaskRevision: preview.expectedTaskRevision,
         expectedEmployeeRevision: preview.expectedEmployeeRevision,
-        commandParameterDigest: preview.command?.parameterDigest ?? null,
+        replaceActiveWorkItems,
       };
       const body = await command(workManagementClientCommandTypes.taskWorkItemCreate, 'task', () => taskId, 'task_work_item_', value);
-      return transport.request(`${taskPath(taskId)}/work-items`, jsonRequest('POST', { ...body, runtime: { commandParameters } }));
+      return transport.request(`${taskPath(taskId)}/work-items`, jsonRequest('POST', body));
     },
     acceptTaskWorkDeliverable: async (taskId, deliverable) => {
       const value = { expectedRevision: deliverable.revision };

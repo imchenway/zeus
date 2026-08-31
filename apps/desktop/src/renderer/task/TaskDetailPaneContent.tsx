@@ -9,7 +9,7 @@ import { formatVisibleApplicationError, useApplicationErrorDialog } from '../ui/
 import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../ui/pendingResourcePolicy.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { TaskAttachmentPreviewList } from './TaskAttachmentPreviewList.js';
-import { TaskDigitalEmployeePanel } from '../features/digital-employees/TaskDigitalEmployeePanel.js';
+import { TaskDigitalEmployeeExecutor, TaskDigitalEmployeePanel, useTaskDigitalEmployeeManagement, type TaskDigitalEmployeeSkillClient } from '../features/digital-employees/TaskDigitalEmployeePanel.js';
 import type { DigitalEmployeeApiClient } from '../features/digital-employees/digitalEmployeeApiClient.js';
 import type { TaskWorkflowClient } from './TaskWorkflowSection.js';
 import type { TaskStageRecord } from '../features/tasks/taskContracts.js';
@@ -76,6 +76,7 @@ export interface TaskDetailPaneContentProps {
   busy: boolean;
   terminalReadOnly: boolean;
   digitalEmployeeClient?: DigitalEmployeeApiClient | null;
+  digitalEmployeeSkillClient?: TaskDigitalEmployeeSkillClient | null;
   conversations?: NativeConversationChoice[];
   conversationsLoading?: boolean;
   conversationsError?: string | null;
@@ -642,6 +643,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
   const [undoAttachment, setUndoAttachment] = useState<TaskAttachmentView | null>(null);
   const [relationshipSaveState, setRelationshipSaveState] = useState<TaskFieldSaveState>({ kind: 'idle' });
   const [relatedTaskCandidateId, setRelatedTaskCandidateId] = useState('');
+  const digitalEmployeeManagement = useTaskDigitalEmployeeManagement({ taskId: props.task.id, projectId: props.task.projectId, client: props.digitalEmployeeClient ?? null, language: props.language });
   useApplicationErrorDialog(props.conversationsError, {
     language: zh ? 'zh-CN' : 'en',
   });
@@ -1015,6 +1017,19 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
             onSave={(priority, expectedUpdatedAt) => (isTaskPriority(priority) ? props.onUpdateTaskContent(props.task.id, { expectedUpdatedAt, priority }) : Promise.reject(new Error(zh ? '无效的任务优先级。' : 'Invalid task priority.')))}
           />
         </span>
+        <span className="task-detail-summary-row task-detail-executor-row">
+          <small>{zh ? '执行者' : 'Executor'}</small>
+          <TaskDigitalEmployeeExecutor
+            taskId={props.task.id}
+            projectId={props.task.projectId}
+            terminalReadOnly={props.terminalReadOnly}
+            client={props.digitalEmployeeClient ?? null}
+            skillClient={props.digitalEmployeeSkillClient ?? null}
+            language={props.language}
+            management={digitalEmployeeManagement}
+            onLoadCapabilities={props.onLoadWorkflowCapabilities}
+          />
+        </span>
         <span className="task-detail-summary-row">
           <small>{props.copy.updatedAtLabel ?? '更新时间'}</small>
           <strong>{formatTaskUpdatedAt(props.task.updatedAt, props.copy.updatedAtMissing ?? '未记录')}</strong>
@@ -1039,6 +1054,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         projectId={props.task.projectId}
         terminalReadOnly={props.terminalReadOnly}
         client={props.digitalEmployeeClient ?? null}
+        management={digitalEmployeeManagement}
         language={props.language}
         onOpenConversation={(conversationId) => props.onOpenConversation(props.task.id, conversationId)}
       />

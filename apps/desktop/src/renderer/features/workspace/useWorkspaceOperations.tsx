@@ -2094,6 +2094,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           resolveTaskManagementStatus(taskDetailPaneTask) === activeTaskManagementStatusConfig.roles.cancelledStatusId
         }
         digitalEmployeeClient={props.commandClient ?? null}
+        digitalEmployeeSkillClient={props.nativeConversationClient ?? null}
         conversations={taskDetailPaneConversations}
         conversationsLoading={taskDetailPaneConversationState?.status === 'loading' && !taskDetailPaneConversationState.choicesKnown}
         conversationsError={taskDetailPaneConversationState?.status === 'error' ? taskDetailPaneConversationState.error : null}

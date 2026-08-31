@@ -190,6 +190,13 @@
   gap: 14px;
 }
 
+.macos-ai-app .digital-employee-agent-config,
+.macos-ai-app .codex-skill-multi-selector {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+}
+
 .macos-ai-app .digital-employee-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1253,6 +1260,203 @@
   justify-content: flex-end;
 }
 
+.macos-ai-app.task-work-run-root {
+  position: fixed;
+  z-index: 460;
+  inset: 0;
+}
+
+.macos-ai-app .task-work-run-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgb(7 10 18 / 36%);
+}
+
+.macos-ai-app .task-work-run-dialog {
+  position: relative;
+  display: grid;
+  width: min(920px, calc(100vw - 40px));
+  height: min(860px, calc(100dvh - 40px));
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 14px;
+  background: var(--zeus-solid-surface-bg, var(--zeus-product-panel));
+  box-shadow: 0 24px 80px rgb(8 10 18 / 26%);
+}
+
+.macos-ai-app .task-work-run-dialog > header,
+.macos-ai-app .task-work-run-dialog > footer {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 18px;
+  border-block-end: 1px solid var(--zeus-control-border);
+}
+
+.macos-ai-app .task-work-run-dialog > header > span,
+.macos-ai-app .task-work-command-run-config > header {
+  display: grid;
+  gap: 4px;
+}
+
+.macos-ai-app .task-work-run-dialog > :where(header, footer) small,
+.macos-ai-app .task-work-command-run-config small {
+  color: var(--zeus-control-muted-text);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.macos-ai-app .task-work-run-dialog > footer {
+  align-items: center;
+  border-block: 1px solid var(--zeus-control-border) 0;
+}
+
+.macos-ai-app .task-work-run-body {
+  display: grid;
+  min-height: 0;
+  align-content: start;
+  gap: 16px;
+  padding: 18px;
+  overflow: auto;
+}
+
+.macos-ai-app .task-work-run-identity,
+.macos-ai-app .task-work-preview {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 9px;
+  background: color-mix(in oklab, var(--zeus-product-panel-muted) 72%, transparent);
+}
+
+.macos-ai-app .task-work-switch-confirmation {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid color-mix(in oklab, var(--zeus-status-warning, #b7791f) 44%, var(--zeus-control-border));
+  border-radius: 9px;
+  background: color-mix(in oklab, var(--zeus-status-warning, #b7791f) 9%, var(--zeus-product-panel));
+}
+
+.macos-ai-app .task-work-switch-confirmation > span {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.macos-ai-app .task-work-switch-confirmation :where(small, ul) {
+  margin: 0;
+  color: var(--zeus-control-muted-text);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.macos-ai-app .task-work-switch-confirmation ul {
+  display: grid;
+  gap: 4px;
+  padding-inline-start: 18px;
+}
+
+.macos-ai-app .task-work-switch-confirmation li span {
+  color: var(--zeus-control-text);
+  font-weight: 650;
+}
+
+.macos-ai-app .task-work-switch-confirmation li small::before {
+  content: ' · ';
+}
+
+.macos-ai-app .task-work-run-identity > span,
+.macos-ai-app .task-work-preview > span {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 3px;
+}
+
+.macos-ai-app .task-work-run-identity :where(small, p),
+.macos-ai-app .task-work-preview :where(small, p) {
+  margin: 0;
+  color: var(--zeus-control-muted-text);
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.macos-ai-app .task-work-run-body .digital-employee-agent-config {
+  padding: 14px;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 10px;
+}
+
+.macos-ai-app .task-work-run-body :where(.digital-employee-agent-config, .task-work-command-run-config) label {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  color: var(--zeus-control-muted-text);
+  font-size: 11px;
+}
+
+.macos-ai-app .task-work-run-body :where(input:not([type='checkbox']), textarea) {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 8px;
+  padding: 8px 9px;
+  color: var(--zeus-control-text);
+  background: var(--zeus-product-panel-muted);
+  font: inherit;
+}
+
+.macos-ai-app .task-work-run-body textarea {
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.macos-ai-app .task-work-context-details,
+.macos-ai-app .task-work-command-run-config {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 9px;
+}
+
+.macos-ai-app .task-work-context-details summary {
+  color: var(--zeus-control-text);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.macos-ai-app .task-work-command-run-config pre {
+  max-height: 180px;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  border-radius: 8px;
+  background: var(--zeus-product-panel-muted);
+  font: 11px/1.5 var(--zeus-font-mono, ui-monospace, monospace);
+  white-space: pre-wrap;
+}
+
+.macos-ai-app .task-work-preview-status {
+  margin: 0;
+  color: var(--zeus-control-muted-text);
+  font-size: 11px;
+}
+
 .macos-ai-app .task-work-assignment-backdrop,
 .macos-ai-app .task-work-decision-backdrop {
   position: fixed;
@@ -1520,6 +1724,8 @@
 }
 
 .macos-ai-app .digital-employee-skill-policy-list button {
+  min-width: 24px;
+  min-height: 24px;
   border: 0;
   padding: 0;
   background: transparent;
@@ -1562,5 +1768,25 @@
   .macos-ai-app .task-work-item-actions {
     grid-column: 2;
     justify-content: flex-start;
+  }
+
+  .macos-ai-app .task-work-run-backdrop {
+    padding: 12px;
+  }
+
+  .macos-ai-app .task-work-run-dialog {
+    width: calc(100vw - 24px);
+    height: calc(100dvh - 24px);
+  }
+
+  .macos-ai-app .task-work-run-identity,
+  .macos-ai-app .task-work-preview,
+  .macos-ai-app .task-work-run-body .digital-employee-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .macos-ai-app .task-work-run-dialog > footer {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
