@@ -356,7 +356,6 @@
 }
 
 .macos-ai-app .automation-editor input:not([type='checkbox']),
-.macos-ai-app .automation-editor select,
 .macos-ai-app .automation-editor textarea {
   width: 100%;
   min-height: 36px;
@@ -461,7 +460,6 @@
 
 .macos-ai-app .automations-workspace button:focus-visible,
 .macos-ai-app .automation-editor input:focus-visible,
-.macos-ai-app .automation-editor select:focus-visible,
 .macos-ai-app .automation-editor textarea:focus-visible,
 .macos-ai-app .automation-editor summary:focus-visible {
   outline: 2px solid var(--accent, #2458d3);
