@@ -827,7 +827,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const requestWorkspaceLeaveRef = useRef<(leave: () => void, cancel?: () => void, kind?: 'navigation' | 'close') => void>((leave) => leave());
   const saveTaskTableLayoutThenLeaveRef = useRef(false);
   useEffect(() => {
-    if (!activeProjectId || taskPageViewMode !== 'board' || taskBoardSnapshots[activeProjectId] || taskBoardLoadState[activeProjectId]?.loading) return;
+    if (!activeProjectId || taskPageViewMode !== 'board' || taskBoardSnapshots[activeProjectId] || taskBoardLoadState[activeProjectId]?.loading || taskBoardLoadState[activeProjectId]?.error) return;
     void loadTaskBoard(activeProjectId);
   }, [activeProjectId, loadTaskBoard, taskBoardLoadState, taskBoardSnapshots, taskPageViewMode]);
   useEffect(() => {

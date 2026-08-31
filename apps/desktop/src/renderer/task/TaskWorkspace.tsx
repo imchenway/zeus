@@ -1,7 +1,6 @@
 import { lazy, Suspense, type CSSProperties, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { GearSixIcon as GearSix } from '@phosphor-icons/react/dist/csr/GearSix';
-import { isTaskPriority } from '@zeus/shared';
-import type { TaskManagementStatusDefinition } from '@zeus/shared';
+import { isTaskPriority, type TaskBoardFilterGroup, type TaskManagementStatusDefinition } from '@zeus/shared';
 import type {
   AiRuntimeSession,
   RuntimeStatusSnapshot,
@@ -49,8 +48,13 @@ import {
 } from './taskWorkspaceModel.js';
 import { TaskRunStatusChip, taskBranchStatusTone, taskPriorityTone, taskTypeTone } from './TaskRunStatusChip.js';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import type { TaskBoardSettingsSection } from './TaskBoardView.js';
 
 const LazyTaskBoardView = lazy(() => import('./TaskBoardView.js').then((module) => ({ default: module.TaskBoardView })));
+
+function countTaskBoardFilterRules(group: TaskBoardFilterGroup | null | undefined): number {
+  return group?.conditions.reduce((count, condition) => count + (condition.kind === 'group' ? countTaskBoardFilterRules(condition) : 1), 0) ?? 0;
+}
 
 type TaskPriorityEditResult = { kind: 'updated'; task: TaskRecord } | { kind: 'conflict'; latest: TaskRecord };
 type TaskPrioritySaveState = { kind: 'idle' } | { kind: 'saving' } | { kind: 'error'; message: string } | { kind: 'conflict'; latest: TaskRecord };
@@ -401,7 +405,7 @@ function TaskSelectionCheckbox(props: { ariaLabel: string; checked: boolean; mix
 export function TaskWorkspace(props: TaskWorkspaceProps) {
   const [fieldSettingsOpen, setFieldSettingsOpen] = useState(false);
   const [moreSettingsOpen, setMoreSettingsOpen] = useState(false);
-  const [boardSettingsOpen, setBoardSettingsOpen] = useState(false);
+  const [boardSettingsSection, setBoardSettingsSection] = useState<TaskBoardSettingsSection | null>(null);
   const [draggedColumnKey, setDraggedColumnKey] = useState<TaskTableColumnKey | null>(null);
   const [dragInsertion, setDragInsertion] = useState<{ targetColumnKey: TaskTableColumnKey; position: TaskTableColumnDropPosition } | null>(null);
   const [keyboardMovingColumnKey, setKeyboardMovingColumnKey] = useState<TaskTableColumnKey | null>(null);
@@ -447,6 +451,10 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     viewMode: props.viewMode,
     expandedTaskIds: props.expandedTaskIds,
   });
+  const boardSettings = props.taskBoardSnapshot?.settings;
+  const boardFilterCount = countTaskBoardFilterRules(boardSettings?.filters);
+  const boardSortCount = boardSettings?.sorts.length ?? 0;
+  const boardHiddenCount = (boardSettings?.hiddenGroupIds.length ?? 0) + Object.values(boardSettings?.hiddenSubgroupIdsByGroup ?? {}).reduce((count, ids) => count + ids.length, 0);
   const columnLabels: Record<TaskTableColumnKey, string> = {
     code: props.copy.codeColumnTitle,
     intent: props.copy.intentColumnTitle,
@@ -762,18 +770,35 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
               </button>
             </div>
             {props.pageViewMode === 'board' ? (
-              <button
-                className="task-table-view-pill task-table-board-settings-trigger"
-                type="button"
-                aria-haspopup="dialog"
-                aria-expanded={boardSettingsOpen}
-                aria-label={isEnglishCopy ? 'Board settings' : '看板设置'}
-                title={isEnglishCopy ? 'Board settings' : '看板设置'}
-                onClick={() => setBoardSettingsOpen(true)}
-              >
-                <GearSix aria-hidden="true" />
-                <span>{isEnglishCopy ? 'Settings' : '设置'}</span>
-              </button>
+              <>
+                {boardFilterCount > 0 ? (
+                  <button className="task-table-view-pill task-table-board-state-trigger" type="button" onClick={() => setBoardSettingsSection('rules')}>
+                    {isEnglishCopy ? `Filters ${boardFilterCount}` : `筛选 ${boardFilterCount}`}
+                  </button>
+                ) : null}
+                {boardSortCount > 0 ? (
+                  <button className="task-table-view-pill task-table-board-state-trigger" type="button" onClick={() => setBoardSettingsSection('rules')}>
+                    {isEnglishCopy ? `Sorts ${boardSortCount}` : `排序 ${boardSortCount}`}
+                  </button>
+                ) : null}
+                {boardHiddenCount > 0 ? (
+                  <button className="task-table-view-pill task-table-board-state-trigger" type="button" onClick={() => setBoardSettingsSection('layout')}>
+                    {isEnglishCopy ? `Hidden ${boardHiddenCount}` : `隐藏 ${boardHiddenCount}`}
+                  </button>
+                ) : null}
+                <button
+                  className="task-table-view-pill task-table-board-settings-trigger"
+                  type="button"
+                  aria-haspopup="dialog"
+                  aria-expanded={boardSettingsSection !== null}
+                  aria-label={isEnglishCopy ? 'Board settings' : '看板设置'}
+                  title={isEnglishCopy ? 'Board settings' : '看板设置'}
+                  onClick={() => setBoardSettingsSection('layout')}
+                >
+                  <GearSix aria-hidden="true" />
+                  <span>{isEnglishCopy ? 'Settings' : '设置'}</span>
+                </button>
+              </>
             ) : null}
             {props.pageViewMode === 'list' ? (
               <>
@@ -930,8 +955,18 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
               statusDefinitions={props.statusDefinitions}
               runStatuses={boardRunStatuses}
               branchStatuses={boardBranchStatuses}
-              settingsOpen={boardSettingsOpen}
-              onSettingsOpenChange={setBoardSettingsOpen}
+              settingsOpen={boardSettingsSection !== null}
+              settingsSection={boardSettingsSection ?? 'layout'}
+              onSettingsOpenChange={(open) => setBoardSettingsSection((current) => (open ? (current ?? 'layout') : null))}
+              onSettingsSectionChange={setBoardSettingsSection}
+              projectTaskCount={props.tasks.length}
+              externalFiltersActive={Boolean(props.searchQuery.trim() || props.statusFilter || props.tagFilter)}
+              onCreateTask={props.onCreateTask}
+              onClearExternalFilters={() => {
+                props.onSearchChange('');
+                props.onStatusFilterChange('');
+                props.onTagFilterChange('');
+              }}
               onReload={() => props.onReloadTaskBoard?.()}
               onUpdateSettings={(settings) => {
                 if (!props.onUpdateTaskBoard) return Promise.reject(new Error(isEnglishCopy ? 'Board settings are unavailable.' : '看板设置能力不可用。'));
