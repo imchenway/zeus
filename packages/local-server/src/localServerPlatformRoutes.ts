@@ -2211,6 +2211,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           ...(preset.model ? { model: preset.model } : {}),
           ...(preset.reasoningEffort ? { effort: preset.reasoningEffort } : {}),
           ...(preset.skillId ? { skillId: preset.skillId } : {}),
+          ...(preset.pluginReferences.length > 0 ? { pluginReferences: preset.pluginReferences } : {}),
         };
         const request = imInternalCommandRequest({
           commandType: graphConversationCommandTypes.projectConversationCreate,
@@ -2665,6 +2666,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           ...(preset.model ? { model: preset.model } : {}),
           ...(preset.reasoningEffort ? { effort: preset.reasoningEffort } : {}),
           ...(preset.skillId ? { skillId: preset.skillId } : {}),
+          ...(preset.pluginReferences.length > 0 ? { pluginReferences: preset.pluginReferences } : {}),
         };
         const request = imInternalCommandRequest({ commandType: graphConversationCommandTypes.taskConversationCreate, scopeKind: 'task', scopeId: task.id, operationIdentity, input: value, inputSha256: graphConversationInputSha256(value) });
         const parsed = graphConversationCommands.parse<Record<string, unknown>>({ value: request, commandType: graphConversationCommandTypes.taskConversationCreate, scopeKind: 'task', scopeId: task.id });
@@ -2747,6 +2749,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     artifacts: artifactStore,
     skillSnapshotRoot: join(dataLayout.artifactsDirectory, 'task-work-skill-snapshots'),
     skills: zeusSkillService,
+    plugins: zeusPluginService,
     conversationCapabilities: conversationCapabilityQueries,
     executeTaskConversationIdempotent: (project, task, body, idempotencyKey) => executeTaskConversationIdempotent(project, task, body, idempotencyKey),
     isTaskTerminal: taskManagementStatusIsTerminal,

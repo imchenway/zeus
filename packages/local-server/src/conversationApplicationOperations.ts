@@ -2107,6 +2107,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         const reviewCwd = reviewWorkspace.worktreePath?.trim();
         if (!reviewCwd || !existsSync(reviewCwd)) throw nativeApiError('ZEUS_TASK_EXECUTION_CONTEXT_REQUIRED', 'The exact code review worktree is unavailable.');
         const prompt = taskStage ? `${taskStageHandoffText(taskStage)}\n\n${createTaskCodeReviewPrompt(task, reviewWorkspace)}` : createTaskCodeReviewPrompt(task, reviewWorkspace);
+        const pluginReferences = body.pluginReferences === undefined ? [] : await resolveNewConversationPluginReferences(project.id, prompt, body.pluginReferences);
         const skill = projectSkill ? await resolveWorkflowSkill(projectSkill.id, reviewCwd) : undefined;
         if (selectedAgentKind === 'codex') await assertCodexAccountReady(selectedModel.sourceId ?? null, selectedModel.model);
 
@@ -2142,6 +2143,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             clientUserMessageId,
             providerWriteLifecycle: reservedLifecycle,
             ...(skill ? { skill } : {}),
+            ...(pluginReferences.length > 0 ? { pluginReferences } : {}),
           },
           { operationIdentity: stableOperationId, modelRef: modelName, stageExecution: requestedStageExecution(body, taskStage) },
         );

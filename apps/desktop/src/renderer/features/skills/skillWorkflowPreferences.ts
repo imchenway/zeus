@@ -1,3 +1,4 @@
+import { isZeusNativeSkillId, isZeusPluginSkillId } from '@zeus/shared';
 import type { PluginSkillReference } from '../../session/sessionTypes.js';
 
 export type SkillWorkflowId = 'task_push' | 'code_review' | 'conflict_resolution';
@@ -44,8 +45,8 @@ export function writeSkillWorkflowDefault(workflow: SkillWorkflowId, skillId: st
 
 export function workflowSkillSelectionRequest(skillId: string): { skillId?: string; pluginReferences?: PluginSkillReference[] } {
   if (!skillId) return {};
-  if (/^[a-f0-9]{32}$/u.test(skillId)) return { skillId };
-  if (/^plugin:[^:\s]+:skill:[^:\s]+$/u.test(skillId)) return { pluginReferences: [{ kind: 'skill', id: skillId }] };
+  if (isZeusNativeSkillId(skillId)) return { skillId };
+  if (isZeusPluginSkillId(skillId)) return { pluginReferences: [{ kind: 'skill', id: skillId }] };
   throw new Error('Skill 选择无效，请重新选择。');
 }
 
@@ -63,5 +64,5 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isWorkflowSkillId(workflow: SkillWorkflowId, value: string): boolean {
-  return /^[a-f0-9]{32}$/u.test(value) || (workflow === 'task_push' && /^plugin:[^:\s]+:skill:[^:\s]+$/u.test(value));
+  return isZeusNativeSkillId(value) || (workflow === 'task_push' && isZeusPluginSkillId(value));
 }
