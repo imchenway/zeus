@@ -1789,6 +1789,11 @@ export class ConversationTurnRepository {
     return row ? mapConversationTurnRow(row) : undefined;
   }
 
+  getByProvider(providerThreadId: string, providerTurnId: string): ZeusConversationTurnRecord | undefined {
+    const row = this.db.get<DbConversationTurnRow>(`SELECT * FROM conversation_turns WHERE provider_thread_id = ? AND provider_turn_id = ?`, [providerThreadId, providerTurnId]);
+    return row ? mapConversationTurnRow(row) : undefined;
+  }
+
   updatePlan(
     id: string,
     plan: {
