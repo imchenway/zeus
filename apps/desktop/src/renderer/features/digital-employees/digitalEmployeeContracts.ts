@@ -319,7 +319,10 @@ export interface TaskWorkPreview {
   employee: { id: string; name: string; role: string; domain: string; revision: number };
   entrypoint: Record<string, unknown> | null;
   model: Record<string, unknown> | null;
-  skills: Array<{ id: string; name: string; description: string; directoryName: string; contentSha256: string; resourceCount: number; totalBytes: number }>;
+  skills: Array<
+    | { source: 'skill'; id: string; name: string; description: string; directoryName: string; contentSha256: string; resourceCount: number; totalBytes: number }
+    | { source: 'plugin'; id: string; name: string; description: string; pluginId: string; pluginRevisionId: string }
+  >;
   authority: Record<string, unknown>;
   context: Record<string, unknown>;
   promptPreview: TaskPushMessageLayout | null;

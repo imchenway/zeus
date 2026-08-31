@@ -6,6 +6,7 @@ export * from './commandGovernance.js';
 export * from './executionHostStopCommand.js';
 export * from './readOnlyValidation.js';
 export * from './im.js';
+export * from './skillIdentity.js';
 
 export type TaskStatus = 'draft' | 'ready' | 'running' | 'paused' | 'waiting_confirmation' | 'completed' | 'failed' | 'cancelled';
 

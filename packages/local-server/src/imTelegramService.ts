@@ -14,6 +14,7 @@ import {
   type ImTelegramConnectionCreated,
   type ImTelegramConnectionLogEntry,
   parseCanonicalRequestUserInputQuestions,
+  splitZeusSkillIds,
 } from '@zeus/shared';
 import {
   type DigitalEmployeeRecord,
@@ -102,6 +103,7 @@ export interface ImTelegramPresetSnapshot {
   workMode: 'default' | 'plan';
   prompt: string;
   skillId: string | null;
+  pluginReferences: Array<{ kind: 'skill'; id: string }>;
 }
 
 export interface ImDownloadedAttachment {
@@ -1646,7 +1648,7 @@ export class ImTelegramService {
 
   private resolvePreset(projectId: string, ref: ImAgentPresetRef, connectionId?: string): ImTelegramPresetSnapshot {
     if (ref.kind === 'zeus_default') {
-      return { ref, name: '跟随 Zeus 默认', agentKind: 'codex', model: null, reasoningEffort: null, permissionMode: 'auto', workMode: 'default', prompt: '', skillId: null };
+      return { ref, name: '跟随 Zeus 默认', agentKind: 'codex', model: null, reasoningEffort: null, permissionMode: 'auto', workMode: 'default', prompt: '', skillId: null, pluginReferences: [] };
     }
     const employee = this.options.digitalEmployees.getById(ref.digitalEmployeeId);
     if (!employee || employee.projectId !== projectId || !employee.enabled) {
@@ -1654,6 +1656,8 @@ export class ImTelegramService {
       throw imError('ZEUS_IM_AGENT_PRESET_UNAVAILABLE', '绑定的数字员工已停用、删除或不属于该项目，请在 Zeus 桌面端重新选择。', 409);
     }
     if (employee.agentKind !== 'codex') throw imError('ZEUS_IM_AGENT_PRESET_UNAVAILABLE', '项目普通会话当前只支持 Codex 数字员工，请重新选择。', 409);
+    const skillSelection = splitZeusSkillIds(employee.skillIds);
+    if (skillSelection.invalidIds.length > 0) throw imError('ZEUS_IM_AGENT_PRESET_UNAVAILABLE', '数字员工包含无效的 Skill 配置，请在 Zeus 桌面端重新保存。', 409);
     return {
       ref,
       name: employee.name,
@@ -1663,7 +1667,8 @@ export class ImTelegramService {
       permissionMode: employee.permissionMode,
       workMode: employee.workMode,
       prompt: employee.prompt,
-      skillId: employee.skillIds[0] ?? null,
+      skillId: skillSelection.nativeSkillIds[0] ?? null,
+      pluginReferences: skillSelection.pluginReferences,
     };
   }
 

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { lstat, readFile, readdir } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve } from 'node:path';
-import { buildTaskPushLayout, commandEnvelopeSchemaGeneration, commandParameterValueMatchesType, type CommandDefinition, type CommandEnvelope, type TaskPushMessageLayout } from '@zeus/shared';
+import { buildTaskPushLayout, commandEnvelopeSchemaGeneration, commandParameterValueMatchesType, splitZeusSkillIds, type CommandDefinition, type CommandEnvelope, type TaskPushMessageLayout } from '@zeus/shared';
 import {
   ArtifactStore,
   CommandDefinitionRepository,
@@ -37,6 +37,7 @@ import { commandCenterCommandTypes, commandCenterInputSha256 } from './commandCe
 import { conversationDispatchCommandTypes, conversationDispatchInputSha256 } from './conversationDispatchCommandApplication.js';
 import type { ConversationCapabilityQueryApplication, ConversationCapabilityModel } from './conversationCapabilityQueryApplication.js';
 import { WorkManagementCommandApplication, type WorkManagementMutationRequest, workManagementCommandHttpError, workManagementCommandTypes } from './workManagementCommandApplication.js';
+import type { ZeusPluginService } from './zeusPluginService.js';
 import type { ZeusSkillService } from './zeusSkillService.js';
 
 const previewTtlMs = 10 * 60 * 1_000;
@@ -66,7 +67,7 @@ export interface TaskWorkPreview {
   employee: { id: string; name: string; role: string; domain: string; revision: number };
   entrypoint: Record<string, unknown> | null;
   model: Record<string, unknown> | null;
-  skills: Array<{ id: string; name: string; description: string; directoryName: string; contentSha256: string; resourceCount: number; totalBytes: number }>;
+  skills: Array<TaskWorkNativeSkillPreview | TaskWorkPluginSkillPreview>;
   authority: Record<string, unknown>;
   context: WorkContextManifestV1;
   promptPreview: TaskPushMessageLayout | null;
@@ -82,8 +83,28 @@ export interface TaskWorkPreview {
   blockers: Array<{ code: string; message: string }>;
 }
 
+interface TaskWorkNativeSkillPreview {
+  source: 'skill';
+  id: string;
+  name: string;
+  description: string;
+  directoryName: string;
+  contentSha256: string;
+  resourceCount: number;
+  totalBytes: number;
+}
+
+interface TaskWorkPluginSkillPreview {
+  source: 'plugin';
+  id: string;
+  name: string;
+  description: string;
+  pluginId: string;
+  pluginRevisionId: string;
+}
+
 interface PreparedSkillResourceSnapshot {
-  metadata: TaskWorkPreview['skills'][number];
+  metadata: TaskWorkNativeSkillPreview;
   files: Array<{ path: string; sha256: string; bytes: number; contentBase64: string }>;
 }
 
@@ -132,6 +153,7 @@ interface TaskWorkManagementOptions {
   artifacts: ArtifactStore;
   skillSnapshotRoot: string;
   skills: ZeusSkillService | null;
+  plugins: Pick<ZeusPluginService, 'listSkills'> | null;
   conversationCapabilities: ConversationCapabilityQueryApplication;
   executeTaskConversationIdempotent(project: ZeusProjectRecord, task: ZeusTaskRecord, body: Record<string, unknown>, idempotencyKey: string): Promise<{ statusCode: number; body: unknown }>;
   isTaskTerminal(task: ZeusTaskRecord): boolean;
@@ -439,9 +461,12 @@ async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTask
     if (model && typeof model.agentKind === 'string') entrypoint = { ...entrypoint, agentKind: model.agentKind };
     const selectedSkillIds = normalizeIdentities(selection.skillIds ?? agentEntrypoint.skillPolicy.allowedSkillIds);
     if (selectedSkillIds.some((id) => !agentEntrypoint.skillPolicy.allowedSkillIds.includes(id))) blockers.push({ code: 'ZEUS_TASK_WORK_SKILL_NOT_ALLOWED', message: '指派包含该员工未允许的 Skill。' });
-    if (selectedSkillIds.length > 0 && !options.skills) blockers.push({ code: 'ZEUS_TASK_WORK_SKILL_CATALOG_UNAVAILABLE', message: 'Zeus Skill 目录当前不可用。' });
+    const selectionBySource = splitZeusSkillIds(selectedSkillIds);
+    if (selectionBySource.invalidIds.length > 0) blockers.push({ code: 'ZEUS_TASK_WORK_SKILL_INVALID', message: '指派包含无效的 Skill 身份。' });
+    if (selectionBySource.nativeSkillIds.length > 0 && !options.skills) blockers.push({ code: 'ZEUS_TASK_WORK_SKILL_CATALOG_UNAVAILABLE', message: 'Zeus Skill 目录当前不可用。' });
+    if (selectionBySource.pluginReferences.length > 0 && !options.plugins) blockers.push({ code: 'ZEUS_TASK_WORK_PLUGIN_SKILL_CATALOG_UNAVAILABLE', message: 'Zeus Plugin Skill 目录当前不可用。' });
     if (options.skills) {
-      for (const skillId of selectedSkillIds) {
+      for (const skillId of selectionBySource.nativeSkillIds) {
         try {
           const resolvedSkill = await options.skills.resolve({ cwd: options.projects.getById(task.projectId)!.localPath, skillId });
           skills.push(await snapshotSkill(resolvedSkill));
@@ -450,11 +475,23 @@ async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTask
         }
       }
     }
+    if (options.plugins && selectionBySource.pluginReferences.length > 0) {
+      try {
+        const available = await options.plugins.listSkills({ projectId: task.projectId });
+        for (const reference of selectionBySource.pluginReferences) {
+          const skill = available.find((candidate) => candidate.id === reference.id);
+          if (!skill) blockers.push({ code: 'ZEUS_TASK_WORK_SKILL_UNAVAILABLE', message: `Plugin Skill ${reference.id} 在当前项目不可用。` });
+          else skills.push({ source: 'plugin', id: skill.id, name: skill.namespace, description: skill.description, pluginId: skill.pluginId, pluginRevisionId: skill.pluginRevisionId });
+        }
+      } catch (error) {
+        blockers.push({ code: 'ZEUS_TASK_WORK_SKILL_UNAVAILABLE', message: serializeError(error).message });
+      }
+    }
     const supplementalInfo = await buildAgentSupplementalInfoSnapshot(options, {
       employee,
       entrypoint,
       context,
-      skills: skills.map((skill) => ({ ...skill, snapshotPath: '（运行创建后冻结）' })),
+      skills: skills.map((skill) => (skill.source === 'skill' ? { ...skill, snapshotPath: '（运行创建后冻结）' } : skill)),
     });
     promptPreview = buildTaskWorkPromptPreview(task, supplementalInfo);
   }
@@ -501,7 +538,13 @@ function createWorkItemFromPreview(
   const existingRun = item.currentRunId ? options.runs.getById(item.currentRunId) : undefined;
   if (existingRun) return { item, run: existingRun };
   const runId = stableIdentity('task_work_run', `${item.id}\0attempt:1`);
-  const skillSnapshot = persistSkillResourceSnapshots(options, runId, task.projectId, skillResources);
+  const skillSnapshot = persistSkillResourceSnapshots(
+    options,
+    runId,
+    task.projectId,
+    skillResources,
+    preview.skills.filter((skill): skill is TaskWorkPluginSkillPreview => skill.source === 'plugin'),
+  );
   const run = options.runs.create({
     id: runId,
     projectId: task.projectId,
@@ -560,6 +603,7 @@ async function dispatchAgent(options: TaskWorkManagementOptions, run: TaskWorkRu
   if (!project) throw new TaskWorkStoreError('ZEUS_PROJECT_NOT_FOUND', '项目不存在。', 404);
   const model = run.modelSnapshot;
   if (!model || typeof model.id !== 'string' || typeof model.agentKind !== 'string') throw new TaskWorkStoreError('ZEUS_TASK_WORK_MODEL_MISSING', 'Agent 运行缺少已解析模型快照。');
+  const pluginReferences = await resolveFrozenPluginSkillReferences(options, run);
   const authority = run.authoritySnapshot;
   const capabilities = await options.conversationCapabilities.readTaskPush(project.id, task.id);
   const repositories = Array.isArray(capabilities.repositories) ? capabilities.repositories.filter(isRecord) : [];
@@ -594,6 +638,7 @@ async function dispatchAgent(options: TaskWorkManagementOptions, run: TaskWorkRu
     workMode: run.entrypointSnapshot.workMode === 'plan' ? 'plan' : 'default',
     supplementalInfo,
     workspace,
+    ...(pluginReferences.length > 0 ? { pluginReferences } : {}),
   };
   const accepted = await options.executeTaskConversationIdempotent(project, task, body, `task-work-run:${run.id}`);
   const response = isRecord(accepted.body) ? accepted.body : {};
@@ -1238,18 +1283,19 @@ async function readSkillResourceSnapshot(skill: { id: string; name: string; desc
   files.sort((left, right) => left.path.localeCompare(right.path));
   const digests = files.map(({ path, sha256: digest, bytes }) => ({ path, sha256: digest, bytes }));
   return {
-    metadata: { id: skill.id, name: skill.name, description: skill.description, directoryName: basename(root), contentSha256: sha256(canonicalJson(digests)), resourceCount: fileCount, totalBytes },
+    metadata: { source: 'skill', id: skill.id, name: skill.name, description: skill.description, directoryName: basename(root), contentSha256: sha256(canonicalJson(digests)), resourceCount: fileCount, totalBytes },
     files,
   };
 }
 
 async function prepareSkillResourceSnapshots(options: TaskWorkManagementOptions, task: ZeusTaskRecord, preview: TaskWorkPreview): Promise<PreparedSkillResourceSnapshot[]> {
-  if (preview.skills.length === 0) return [];
+  const nativeSkills = preview.skills.filter((skill): skill is TaskWorkNativeSkillPreview => skill.source === 'skill');
+  if (nativeSkills.length === 0) return [];
   if (!options.skills) throw new TaskWorkStoreError('ZEUS_TASK_WORK_SKILL_CATALOG_UNAVAILABLE', 'Zeus Skill 目录当前不可用。');
   const project = options.projects.getById(task.projectId);
   if (!project) throw new TaskWorkStoreError('ZEUS_PROJECT_NOT_FOUND', '项目不存在。', 404);
   const snapshots: PreparedSkillResourceSnapshot[] = [];
-  for (const expected of preview.skills) {
+  for (const expected of nativeSkills) {
     const skill = await options.skills.resolve({ cwd: project.localPath, skillId: expected.id });
     const snapshot = await readSkillResourceSnapshot(skill);
     if (snapshot.metadata.contentSha256 !== expected.contentSha256) throw new TaskWorkStoreError('ZEUS_TASK_WORK_PREVIEW_STALE', `Skill ${expected.name} 已变化，请重新预览后再指派。`);
@@ -1258,7 +1304,7 @@ async function prepareSkillResourceSnapshots(options: TaskWorkManagementOptions,
   return snapshots;
 }
 
-function persistSkillResourceSnapshots(options: TaskWorkManagementOptions, runId: string, projectId: string, snapshots: PreparedSkillResourceSnapshot[]): Record<string, unknown> {
+function persistSkillResourceSnapshots(options: TaskWorkManagementOptions, runId: string, projectId: string, snapshots: PreparedSkillResourceSnapshot[], pluginSkills: TaskWorkPluginSkillPreview[]): Record<string, unknown> {
   const selected = snapshots.map((snapshot) => {
     const artifactOwnerId = stableIdentity('task_work_run_skill', `${runId}\0${snapshot.metadata.id}`);
     const artifact = options.artifacts.putJsonSync({
@@ -1270,7 +1316,23 @@ function persistSkillResourceSnapshots(options: TaskWorkManagementOptions, runId
     materializeFrozenSkill(snapshotPath, snapshot.files);
     return { ...snapshot.metadata, artifactSha256: artifact.sha256, artifactContentSha256: artifact.contentSha256, artifactOwnerId, snapshotPath };
   });
-  return { generation: taskWorkSkillArtifactGeneration, selected };
+  return { generation: taskWorkSkillArtifactGeneration, selected, pluginSkills };
+}
+
+async function resolveFrozenPluginSkillReferences(options: TaskWorkManagementOptions, run: TaskWorkRunRecord): Promise<Array<{ kind: 'skill'; id: string }>> {
+  const selected = isRecord(run.skillSnapshot) && Array.isArray(run.skillSnapshot.pluginSkills) ? run.skillSnapshot.pluginSkills : [];
+  if (selected.length === 0) return [];
+  if (!options.plugins) throw new TaskWorkStoreError('ZEUS_TASK_WORK_PLUGIN_SKILL_CATALOG_UNAVAILABLE', 'Zeus Plugin Skill 目录当前不可用。');
+  const available = await options.plugins.listSkills({ projectId: run.projectId });
+  return selected.map((value) => {
+    if (!isRecord(value) || value.source !== 'plugin' || typeof value.id !== 'string' || typeof value.pluginRevisionId !== 'string') {
+      throw new TaskWorkStoreError('ZEUS_TASK_WORK_PLUGIN_SKILL_SNAPSHOT_INVALID', '运行缺少可信的 Plugin Skill 快照。');
+    }
+    const current = available.find((candidate) => candidate.id === value.id);
+    if (!current) throw new TaskWorkStoreError('ZEUS_TASK_WORK_PLUGIN_SKILL_UNAVAILABLE', `Plugin Skill ${value.id} 在当前项目不可用。`);
+    if (current.pluginRevisionId !== value.pluginRevisionId) throw new TaskWorkStoreError('ZEUS_TASK_WORK_PLUGIN_SKILL_SNAPSHOT_STALE', `Plugin Skill ${current.namespace} 已更新；本次运行不会静默改用新版本。`);
+    return { kind: 'skill', id: value.id };
+  });
 }
 
 function verifyFrozenSkillResources(options: TaskWorkManagementOptions, run: TaskWorkRunRecord): void {
@@ -1391,7 +1453,7 @@ async function buildAgentSupplementalInfo(options: TaskWorkManagementOptions, ru
     employee: run.employeeSnapshot,
     entrypoint: run.entrypointSnapshot,
     context: run.contextManifest,
-    skills: isRecord(run.skillSnapshot) && Array.isArray(run.skillSnapshot.selected) ? run.skillSnapshot.selected : [],
+    skills: isRecord(run.skillSnapshot) ? [...(Array.isArray(run.skillSnapshot.selected) ? run.skillSnapshot.selected : []), ...(Array.isArray(run.skillSnapshot.pluginSkills) ? run.skillSnapshot.pluginSkills : [])] : [],
   });
 }
 
@@ -1409,7 +1471,7 @@ async function buildAgentSupplementalInfoSnapshot(options: TaskWorkManagementOpt
     typeof input.entrypoint.prompt === 'string' && input.entrypoint.prompt ? `## 员工提示\n\n${input.entrypoint.prompt}` : '',
     `## 冻结的上下文清单\n\n${JSON.stringify(input.context, null, 2)}`,
     input.skills.length > 0
-      ? `## 允许按需加载的 Skill 元数据\n\n${JSON.stringify(input.skills, null, 2)}\n\n仅在任务需要时从各项 snapshotPath 中读取冻结资源，不得改读同名的全局或项目 Skill；读取 SKILL.md 即代表实际启用，且 Skill 不授予额外权限。`
+      ? `## 允许按需加载的 Skill 元数据\n\n${JSON.stringify(input.skills, null, 2)}\n\n普通 Skill 只允许从 snapshotPath 读取冻结资源；Plugin Skill 由本会话的 Plugin Runtime 激活快照加载。不得改读同名的其他来源，且 Skill 不授予额外权限。`
       : '本次运行未选择 Skill。',
     ...selectedContent,
     typeof input.entrypoint.reworkReason === 'string' ? `## 管理者要求修改\n\n${input.entrypoint.reworkReason}` : '',

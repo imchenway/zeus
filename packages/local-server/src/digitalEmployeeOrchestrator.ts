@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { commandEnvelopeSchemaGeneration, type CommandActor, type CommandEnvelope, type CommandScopeKind, type TaskManagementStatus } from '@zeus/shared';
+import { commandEnvelopeSchemaGeneration, splitZeusSkillIds, type CommandActor, type CommandEnvelope, type CommandScopeKind, type TaskManagementStatus } from '@zeus/shared';
 import {
   CommandRunRepository,
   ConversationRepository,
@@ -371,6 +371,9 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
     const project = task ? options.projects.getById(task.projectId) : undefined;
     if (!task || !project || task.projectId !== execution.projectId) throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_TASK_UNAVAILABLE', '数字员工要处理的任务或项目已经不存在。', false);
     const snapshot = execution.employeeSnapshot;
+    const skillSelection = splitZeusSkillIds(snapshot.skillIds);
+    if (skillSelection.invalidIds.length > 0) throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_SKILL_INVALID', '数字员工执行快照包含无效的 Skill 身份。', false);
+    const nativeSkillId = skillSelection.nativeSkillIds[0] ?? null;
     const capability = await options.conversationCapabilities.readTaskPush(project.id, task.id);
     const models = Array.isArray(capability.models) ? capability.models.filter(isCapabilityModel).filter((candidate) => candidate.agentKind === snapshot.agentKind) : [];
     const preferredModel = typeof capability.preferredModel === 'string' ? capability.preferredModel : null;
@@ -454,7 +457,7 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
           employeeId: snapshot.id,
           employeeRevision: snapshot.revision,
           employeeSnapshot: snapshot,
-          skillId: snapshot.skillIds[0] ?? null,
+          skillId: nativeSkillId,
           effectivePermissions: {
             permissionMode: effectivePermissionMode,
             allowCodeChanges: taskStage.kind === 'implementation' ? allowCodeChanges : false,
@@ -470,7 +473,8 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
       ...(snapshot.serviceTier ? { serviceTier: snapshot.serviceTier } : {}),
       permissionMode: effectivePermissionMode,
       agentKind: model.agentKind,
-      ...(snapshot.skillIds[0] ? { skillId: snapshot.skillIds[0] } : {}),
+      ...(nativeSkillId ? { skillId: nativeSkillId } : {}),
+      ...(skillSelection.pluginReferences.length > 0 ? { pluginReferences: skillSelection.pluginReferences } : {}),
       ...(taskStage ? { stageId: taskStage.id, stageExecution } : {}),
     };
     const reviewSource = taskStage?.kind === 'code_review' ? reviewSourceConversation(taskStage) : null;
