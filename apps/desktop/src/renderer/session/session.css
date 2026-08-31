@@ -1912,6 +1912,7 @@
   border: 1px solid var(--session-line-soft);
   border-radius: 10px;
   color: var(--session-text-muted);
+  cursor: zoom-in;
   display: block;
   inline-size: min(100%, 720px);
   margin-block: 4px 14px;
@@ -5658,6 +5659,7 @@
   border: 1px solid var(--session-line-soft);
   border-radius: 10px;
   color: var(--session-text-muted);
+  cursor: zoom-in;
   display: block;
   inline-size: 100%;
   max-inline-size: 720px;
@@ -6527,6 +6529,7 @@
   border: 1px solid var(--session-line);
   border-radius: 10px;
   color: var(--session-text-muted);
+  cursor: zoom-in;
   display: flex;
   inline-size: min(220px, 100%);
   justify-content: center;
@@ -6540,7 +6543,6 @@
 }
 
 .session-codex-parity-v1 .session-pending-attachment-image {
-  cursor: default;
   margin: 0;
 }
 
@@ -14385,11 +14387,6 @@
   }
 }
 
-.session-codex-parity-v1 .session-pending-attachment-image:hover,
-.session-codex-parity-v1 .session-pending-attachment-image:focus-visible {
-  border-color: var(--session-line);
-  box-shadow: none;
-}
 .session-creation-status {
   align-items: center;
   display: grid;

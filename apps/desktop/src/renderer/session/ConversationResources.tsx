@@ -1,4 +1,4 @@
-import { type ComponentType, type CSSProperties, type KeyboardEvent, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type ComponentType, type CSSProperties, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type SyntheticEvent, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
@@ -22,6 +22,7 @@ import { listConversationResourceOpenTargetsInMain } from '../appShellBridge.js'
 import type { NativeConversationAttachment } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { formatVisibleApplicationError, useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { useNativeCloseLayer } from '../ui/nativeCloseLayer.js';
 
 export interface ConversationResourceInteraction {
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
@@ -48,12 +49,14 @@ function ConversationPendingAttachmentImage(props: { attachment: NativeConversat
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const identity = pendingAttachmentIdentity(props.attachment);
 
   useEffect(() => {
     let active = true;
     setPreviewUrl(null);
     setFailed(false);
+    setPreviewOpen(false);
     const loadConversationPreview = window.zeus?.getConversationResourcePreview;
     const loadTaskPreview = window.zeus?.getTaskAttachmentPreview;
     if (!loadConversationPreview && (!props.attachment.localPath || !loadTaskPreview)) {
@@ -103,16 +106,26 @@ function ConversationPendingAttachmentImage(props: { attachment: NativeConversat
   }
 
   return (
-    <figure className="session-resource-image session-pending-attachment-image" aria-busy={loading || undefined} title={props.attachment.name}>
-      {previewUrl ? (
-        <img src={previewUrl} alt={props.attachment.name} onError={() => setFailed(true)} />
-      ) : (
-        <span className="session-resource-image-placeholder" role="status">
-          <FileImage aria-hidden="true" weight="duotone" />
-          <span>{props.language === 'zh-CN' ? '正在显示图片' : 'Showing image'}</span>
-        </span>
-      )}
-    </figure>
+    <>
+      <button
+        type="button"
+        className="session-resource-image session-pending-attachment-image"
+        aria-label={`${props.language === 'zh-CN' ? '在 Zeus 中预览' : 'Preview in Zeus'}：${props.attachment.name}`}
+        aria-busy={loading || undefined}
+        title={props.attachment.name}
+        onClick={() => setPreviewOpen(true)}
+      >
+        {previewUrl ? (
+          <img src={previewUrl} alt={props.attachment.name} onError={() => setFailed(true)} />
+        ) : (
+          <span className="session-resource-image-placeholder" role="status">
+            <FileImage aria-hidden="true" weight="duotone" />
+            <span>{props.language === 'zh-CN' ? '正在显示图片' : 'Showing image'}</span>
+          </span>
+        )}
+      </button>
+      {previewOpen ? <ConversationImagePreviewDialog previewUrl={previewUrl ?? ''} label={props.attachment.name} language={props.language} loading={loading} onClose={() => setPreviewOpen(false)} /> : null}
+    </>
   );
 }
 
@@ -209,7 +222,6 @@ function ConversationImagePreview(
     language: SessionUiLanguage;
     className: string;
     placeholderClassName: string;
-    onPreviewFailure?: (message: string) => void;
     onVisibleContentChange?: () => void;
   },
 ) {
@@ -217,21 +229,15 @@ function ConversationImagePreview(
   const [visible, setVisible] = useState(false);
   const [preview, setPreview] = useState<Extract<ConversationResourcePreview, { kind: 'image' }> | null>(null);
   const [loading, setLoading] = useState(false);
-  const [opening, setOpening] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const resourceRef = useRef(props.resource);
   const languageRef = useRef(props.language);
   const loadPreviewRef = useRef(props.onLoadResourcePreview);
-  useApplicationErrorDialog(error, {
-    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-  });
-  const previewFailureRef = useRef(props.onPreviewFailure);
   const visibleContentChangeRef = useRef(props.onVisibleContentChange);
-  const failureReportedRef = useRef(false);
   resourceRef.current = props.resource;
   languageRef.current = props.language;
   loadPreviewRef.current = props.onLoadResourcePreview;
-  previewFailureRef.current = props.onPreviewFailure;
   visibleContentChangeRef.current = props.onVisibleContentChange;
 
   useLayoutEffect(() => {
@@ -261,7 +267,7 @@ function ConversationImagePreview(
     setPreview(null);
     setError(null);
     setVisible(false);
-    failureReportedRef.current = false;
+    setPreviewOpen(false);
   }, [props.resource.id]);
 
   useEffect(() => {
@@ -290,24 +296,7 @@ function ConversationImagePreview(
   }, [props.resource.id, Boolean(props.onLoadResourcePreview), visible]);
 
   function reportPreviewFailure(cause: unknown): void {
-    const message = formatVisibleApplicationError(cause, languageRef.current === 'zh-CN' ? 'zh-CN' : 'en');
     setError(cause);
-    if (failureReportedRef.current) return;
-    failureReportedRef.current = true;
-    previewFailureRef.current?.(message);
-  }
-
-  async function open(): Promise<void> {
-    if (!props.onOpenResource || opening) return;
-    setOpening(true);
-    setError(null);
-    try {
-      await props.onOpenResource(props.resource, defaultOpenTarget(props.resource));
-    } catch (openError) {
-      setError(openError);
-    } finally {
-      setOpening(false);
-    }
   }
 
   const unavailable = !loadPreviewRef.current;
@@ -324,26 +313,110 @@ function ConversationImagePreview(
         : props.label;
 
   return (
-    <button
-      ref={rootRef}
-      type="button"
-      className={props.className}
-      aria-label={`${props.language === 'zh-CN' ? '在 Zeus 中预览' : 'Preview in Zeus'}：${props.label}`}
-      aria-busy={loading || opening || undefined}
-      data-error={Boolean(error) || undefined}
-      title={props.resource.displayName}
-      onClick={() => void open()}
-    >
-      {preview ? (
-        <img src={preview.dataUrl} alt={props.label} loading="lazy" onError={() => reportPreviewFailure(languageRef.current === 'zh-CN' ? '图片预览加载失败。' : 'The image preview failed to load.')} />
-      ) : (
-        <span className={props.placeholderClassName} role="status">
-          {!error ? <FileImage aria-hidden="true" weight="duotone" /> : null}
-          <span>{status}</span>
-        </span>
-      )}
-      {preview ? <span className="session-sr-only">{status}</span> : null}
-    </button>
+    <>
+      <button
+        ref={rootRef}
+        type="button"
+        className={props.className}
+        aria-label={`${props.language === 'zh-CN' ? '在 Zeus 中预览' : 'Preview in Zeus'}：${props.label}`}
+        aria-busy={loading || undefined}
+        data-error={Boolean(error) || undefined}
+        title={props.resource.displayName}
+        onClick={() => {
+          setVisible(true);
+          setPreviewOpen(true);
+        }}
+      >
+        {preview ? (
+          <img src={preview.dataUrl} alt={props.label} loading="lazy" onError={() => reportPreviewFailure(languageRef.current === 'zh-CN' ? '图片预览加载失败。' : 'The image preview failed to load.')} />
+        ) : (
+          <span className={props.placeholderClassName} role="status">
+            {!error ? <FileImage aria-hidden="true" weight="duotone" /> : null}
+            <span>{status}</span>
+          </span>
+        )}
+        {preview ? <span className="session-sr-only">{status}</span> : null}
+      </button>
+      {previewOpen ? (
+        <ConversationImagePreviewDialog
+          previewUrl={preview?.dataUrl ?? ''}
+          label={props.label}
+          language={props.language}
+          loading={!preview && !error && !unavailable}
+          error={error || unavailable ? status : undefined}
+          onClose={() => setPreviewOpen(false)}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function ConversationImagePreviewDialog(props: { previewUrl: string; label: string; language: SessionUiLanguage; loading: boolean; error?: string; onClose: () => void }) {
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
+  const previewId = useId();
+  const titleId = `${previewId}-conversation-image-preview-title`;
+  const descriptionId = `${previewId}-conversation-image-preview-description`;
+  const zh = props.language === 'zh-CN';
+
+  useNativeCloseLayer(true, closePreview);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    restoreFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (dialog && !dialog.open && typeof dialog.showModal === 'function') dialog.showModal();
+    return () => {
+      const trigger = restoreFocusRef.current;
+      if (trigger?.isConnected) window.requestAnimationFrame(() => trigger.focus());
+    };
+  }, []);
+
+  function closePreview(): void {
+    const dialog = dialogRef.current;
+    if (dialog?.open) {
+      dialog.close();
+      return;
+    }
+    props.onClose();
+  }
+
+  function handleDialogCancel(event: SyntheticEvent<HTMLDialogElement, Event>): void {
+    event.preventDefault();
+    closePreview();
+  }
+
+  function handleDialogPointerDown(event: ReactMouseEvent<HTMLDialogElement>): void {
+    if (event.currentTarget === event.target) closePreview();
+  }
+
+  return (
+    <dialog ref={dialogRef} className="task-attachment-zoom-dialog" aria-labelledby={titleId} aria-describedby={descriptionId} onClose={props.onClose} onCancel={handleDialogCancel} onPointerDown={handleDialogPointerDown}>
+      <div className="task-attachment-zoom-sheet">
+        <header className="task-attachment-zoom-header">
+          <span>
+            <strong id={titleId}>{props.label}</strong>
+            <small id={descriptionId}>{zh ? '会话图片附件预览' : 'Conversation image attachment preview'}</small>
+          </span>
+          <button type="button" className="task-attachment-zoom-close" onClick={closePreview} aria-label={zh ? '关闭图片预览' : 'Close image preview'}>
+            ×
+          </button>
+        </header>
+        <div className="task-attachment-zoom-stage">
+          {props.previewUrl ? (
+            <img className="task-attachment-zoom-image" src={props.previewUrl} alt={props.label} />
+          ) : props.loading ? (
+            <p className="task-attachment-zoom-state" role="status" aria-live="polite">
+              <span className="task-attachment-preview-spinner" aria-hidden="true" />
+              {zh ? '正在加载图片预览' : 'Loading image preview'}
+            </p>
+          ) : (
+            <p className="task-attachment-zoom-fallback" role="status">
+              {props.error ?? (zh ? '图片预览不可用。' : 'Image preview unavailable.')}
+            </p>
+          )}
+        </div>
+      </div>
+    </dialog>
   );
 }
 
@@ -376,24 +449,14 @@ function ConversationResourceImage(
     language: SessionUiLanguage;
   },
 ) {
-  const [previewError, setPreviewError] = useState<string | null>(null);
-
-  if (!props.onLoadResourcePreview || previewError) {
-    return (
-      <ConversationResourceCard resource={props.resource} language={props.language} onOpenResource={props.onOpenResource} initialError={previewError ?? (props.language === 'zh-CN' ? '图片预览不可用。' : 'Image preview unavailable.')} />
-    );
-  }
-
   return (
     <ConversationImagePreview
       resource={props.resource}
       label={props.resource.displayName}
       language={props.language}
-      onOpenResource={props.onOpenResource}
       onLoadResourcePreview={props.onLoadResourcePreview}
       className="session-resource-image"
       placeholderClassName="session-resource-image-placeholder"
-      onPreviewFailure={setPreviewError}
     />
   );
 }
@@ -402,11 +465,10 @@ function ConversationResourceCard(
   props: ConversationResourceInteraction & {
     resource: ConversationResource;
     language: SessionUiLanguage;
-    initialError?: string;
   },
 ) {
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<unknown>(props.initialError ?? null);
+  const [error, setError] = useState<unknown>(null);
   const subtitle = resourceSubtitle(props.resource, props.language);
 
   useApplicationErrorDialog(error, {
