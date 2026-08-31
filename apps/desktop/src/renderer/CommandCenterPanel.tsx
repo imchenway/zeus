@@ -1299,7 +1299,7 @@ function joinRuntimeLogEntries(logs: CommandRunDetail['logs']): string {
 }
 
 function formatRunTime(value: string): string {
-  return new Intl.DateTimeFormat(undefined, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
+  return new Intl.DateTimeFormat(undefined, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(value));
 }
 
 function formatRunDuration(run: CommandRun, nowMs: number, zh: boolean): string {
