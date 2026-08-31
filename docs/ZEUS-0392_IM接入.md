@@ -231,3 +231,15 @@ Telegram 只作为受认证的远程入口。入站消息、任务操作和交�
 - GitHub Release `v0.3.85` 已公开，非草稿、非预发布。公开资产为 `Zeus-0.3.85-arm64.dmg`（115166670 字节，SHA-256 `76095c862e4cd9380fefc6a3cc728ffb18a08841971a210223723b8ee8a5f92f`）和 `zeus-release-manifest.json`（1047 字节，SHA-256 `9d62bc3623d3eb83da370869164276767d9152dcf46993ad79fa0b7940436d18`）；GitHub 服务端摘要、manifest 和 Homebrew Cask 已完成一致性对账。
 - manifest 明确记录 `signed=false`、`notarized=false`，因此本版本仍不能描述为 Developer ID 签名或 Apple 公证版本。快速发布模式未重新下载完整公开 DMG，但正式 DMG 在上传前已通过 `hdiutil verify`。
 - 本轮没有替换或重启正在运行的 `/Applications/Zeus.app` 0.3.84，也没有操作正式 Telegram 数据。真实 Bot 仍需安装 v0.3.85、重启 Zeus，并重新发送 `/start` 生成新 capability 后复验；旧消息中的一次性按钮不会因发布自动变成新版处理器的有效按钮。
+
+## v0.3.86 发布候选类型门禁恢复（2026-08-31）
+
+- `pnpm release` 已在本地生成发布提交 `c3d3234c`，随后停在阻塞级 TypeScript 检查；恢复状态仍为 `release_committed`，没有证据表明
+  `origin/main`、`v0.3.86` 标签或公开资产已推送。
+- 根因不是 `push_menu` 从 capability 类型中缺失，而是冲突合并提交 `586ea164` 同时保留了两侧相同实现：`push_menu`
+  处理分支被连续写入两次，第二个分支在首个 `return` 后已被 TypeScript 收窄为不可达；`push_existing` 联合成员也相邻重复。
+- 修复只删除上述两处重复内容，保留 capability 的生成、解析、目标会话选择与处理行为不变。相关文件 Prettier、
+  `git diff --check`、`pnpm lint`、`pnpm typecheck`、`pnpm build` 和 `pnpm package:mac` 全部通过；架构治理仍为 126 张 Core
+  表和 11 张辅助表。
+- 打包仅生成 `dist/test/mac-arm64/Zeus Test.app`，`CFBundleIdentifier=dev.hypha.zeus.test`、显示名为 `Zeus Test`
+  ，deep/strict codesign 通过，`dist` 内没有生产身份 `Zeus.app`。本轮没有启动 GUI、操作真实 Telegram、提交修复、推送远端或重新执行发布。

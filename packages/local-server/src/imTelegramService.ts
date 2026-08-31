@@ -1,48 +1,52 @@
-import { createHash, randomBytes } from 'node:crypto';
-import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
-import { basename, extname, isAbsolute, relative, resolve } from 'node:path';
+import {createHash, randomBytes} from 'node:crypto';
+import {mkdir, readFile, realpath, stat, writeFile} from 'node:fs/promises';
+import {basename, extname, isAbsolute, relative, resolve} from 'node:path';
 import {
-  canonicalCommandInputJson,
-  type CanonicalRequestUserInputQuestion,
-  commandEnvelopeSchemaGeneration,
-  type ImAgentPresetRef,
-  imAttachmentLimits,
-  type ImConnectionHealth,
-  type ImConnectionSnapshot,
-  type ImPairingSessionSnapshot,
-  type ImSettingsSnapshot,
-  type ImTelegramConnectionCreated,
-  type ImTelegramConnectionLogEntry,
-  parseCanonicalRequestUserInputQuestions,
+    canonicalCommandInputJson,
+    type CanonicalRequestUserInputQuestion,
+    commandEnvelopeSchemaGeneration,
+    type ImAgentPresetRef,
+    imAttachmentLimits,
+    type ImConnectionHealth,
+    type ImConnectionSnapshot,
+    type ImPairingSessionSnapshot,
+    type ImSettingsSnapshot,
+    type ImTelegramConnectionCreated,
+    type ImTelegramConnectionLogEntry,
+    parseCanonicalRequestUserInputQuestions,
 } from '@zeus/shared';
 import {
-  type DigitalEmployeeRecord,
-  type ImActionCapabilityRecord,
-  type ImConnectionRecord,
-  ImRepository,
-  type ImTrustedEndpointRecord,
-  type ZeusConversationPlanActionRecord,
-  type ZeusConversationRecord,
-  type ZeusConversationServerRequestRecord,
-  type ZeusProjectRecord,
-  type ZeusTaskRecord,
+    type DigitalEmployeeRecord,
+    type ImActionCapabilityRecord,
+    type ImConnectionRecord,
+    ImRepository,
+    type ImTrustedEndpointRecord,
+    type ZeusConversationPlanActionRecord,
+    type ZeusConversationRecord,
+    type ZeusConversationServerRequestRecord,
+    type ZeusProjectRecord,
+    type ZeusTaskRecord,
 } from '@zeus/storage';
-import type { SecretStore } from '@zeus/security-core';
+import type {SecretStore} from '@zeus/security-core';
 import {
-  createTelegramBotMessageClient,
-  createTelegramLongPollingClient,
-  createTelegramPollingService,
-  downloadTelegramRemoteFile,
-  getTelegramBotProfile,
-  getTelegramRemoteFile,
-  TelegramApiRejectedError,
-  type TelegramCommandResponse,
-  type TelegramInboundAttachment,
-  type TelegramMessageSender,
-  type TelegramPollingService,
-  type TelegramUpdate,
+    createTelegramBotMessageClient,
+    createTelegramLongPollingClient,
+    createTelegramPollingService,
+    downloadTelegramRemoteFile,
+    getTelegramBotProfile,
+    getTelegramRemoteFile,
+    TelegramApiRejectedError,
+    type TelegramCommandResponse,
+    type TelegramInboundAttachment,
+    type TelegramMessageSender,
+    type TelegramPollingService,
+    type TelegramUpdate,
 } from '@zeus/telegram-adapter';
-import { telegramChildOperation, TelegramCommandApplication, telegramCommandTypes } from './telegramCommandApplication.js';
+import {
+    telegramChildOperation,
+    TelegramCommandApplication,
+    telegramCommandTypes
+} from './telegramCommandApplication.js';
 
 const pairingLifetimeMs = 10 * 60 * 1_000;
 const interactionLifetimeMs = 10 * 60 * 1_000;
@@ -1216,12 +1220,6 @@ export class ImTelegramService {
       await this.replaceTaskMessage(connection, update, view, `${operationIdentity}:task-push-menu`);
       return;
     }
-    if (action.kind === 'push_menu') {
-      const view = this.taskPushTargetView(connection, endpoint, task, action.page);
-      await this.answerCallback(update, '请选择任务会话');
-      await this.replaceTaskMessage(connection, update, view, `${operationIdentity}:task-push-menu`);
-      return;
-    }
     if (action.kind === 'push_new') {
       await this.answerCallback(update, '正在推送到新会话…');
       const preset = this.resolvePreset(connection.projectId, connection.agentPreset, connection.id);
@@ -1945,7 +1943,6 @@ const decodeTaskStatusId = decodeCapabilityValue;
 
 type ImTaskCapabilityAction =
   | { kind: 'list' | 'create' | 'await_create' | 'view' | 'status_menu' | 'push_menu' | 'push_new' | 'push_current' | 'confirm_cancel'; page: number }
-  | { kind: 'push_existing'; conversationId: string; page: number }
   | { kind: 'push_existing'; conversationId: string; page: number }
   | { kind: 'edit' | 'await_edit'; field: 'title' | 'description'; page: number }
   | { kind: 'status'; statusId: string; page: number }
