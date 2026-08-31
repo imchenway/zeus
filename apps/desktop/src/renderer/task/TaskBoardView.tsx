@@ -16,11 +16,16 @@ import {
 } from '@dnd-kit/core';
 import { SortableContext, horizontalListSortingStrategy, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight';
+import { ArrowCounterClockwiseIcon as ArrowCounterClockwise } from '@phosphor-icons/react/dist/csr/ArrowCounterClockwise';
+import { ArrowDownIcon as ArrowDown } from '@phosphor-icons/react/dist/csr/ArrowDown';
+import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { CaretRightIcon as CaretRight } from '@phosphor-icons/react/dist/csr/CaretRight';
 import { DotsSixVerticalIcon as DotsSixVertical } from '@phosphor-icons/react/dist/csr/DotsSixVertical';
 import { EyeSlashIcon as EyeSlash } from '@phosphor-icons/react/dist/csr/EyeSlash';
+import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import {
+  createDefaultTaskBoardViewSettings,
   taskBoardCardProperties,
   taskBoardEmptyGroupId,
   taskBoardGroupProperties,
@@ -36,10 +41,10 @@ import {
   type TaskBoardViewSnapshot,
   type TaskManagementStatusDefinition,
 } from '@zeus/shared';
-import { memo, useEffect, useId, useMemo, useState, type CSSProperties } from 'react';
+import { memo, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { TaskAgentRunStatus, TaskRecord } from '../apiClient.js';
 import { Button } from '../ui/Button.js';
-import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError, useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { parseTaskAttachments } from './taskAttachments.js';
 import { buildTaskBoardGroups, taskBoardActiveContent, taskBoardCardPropertyValues, taskBoardGroupOptions, type TaskBoardCardModel, type TaskBoardGroupModel, type TaskBoardProjectionContext } from './taskBoardModel.js';
@@ -57,13 +62,29 @@ export interface TaskBoardViewProps {
   runStatuses: Record<string, TaskAgentRunStatus | undefined>;
   branchStatuses: Record<string, TaskBranchStatus | undefined>;
   settingsOpen?: boolean;
+  settingsSection?: TaskBoardSettingsSection;
   onSettingsOpenChange?: (open: boolean) => void;
+  onSettingsSectionChange?: (section: TaskBoardSettingsSection) => void;
+  projectTaskCount?: number;
+  externalFiltersActive?: boolean;
+  onCreateTask?: () => void;
+  onClearExternalFilters?: () => void;
   onReload: () => void;
   onUpdateSettings: (settings: Partial<TaskBoardViewSettings>) => Promise<TaskBoardViewSnapshot>;
   onMoveTask: (input: TaskBoardMoveRequest) => Promise<{ task: TaskRecord; board: TaskBoardViewSnapshot }>;
   onOpenTask: (taskId: string, mode: TaskBoardOpenMode) => void;
   onLoadAttachmentPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
 }
+
+export type TaskBoardSettingsSection = 'layout' | 'cards' | 'rules';
+
+type TaskBoardFeedback = {
+  kind: 'info' | 'success' | 'error';
+  message: string;
+  actionLabel?: string;
+  onAction?: () => void;
+  timeoutMs?: number;
+};
 
 type DragData = { kind: 'group'; groupId: string } | { kind: 'lane'; groupId: string; subgroupId: string } | { kind: 'card'; card: TaskBoardCardModel };
 
@@ -329,7 +350,7 @@ function TaskBoardLane(props: {
                   loadPreview={props.loadPreview}
                 />
               ))}
-              {props.cards.length === 0 ? <span className="task-board-empty-lane">{props.context.language === 'zh-CN' ? '暂无任务' : 'No tasks'}</span> : null}
+              {props.cards.length === 0 ? <span className="task-board-empty-lane">{props.context.language === 'zh-CN' ? '暂无任务，可将任务拖到此处。' : 'No tasks. Drag a task here.'}</span> : null}
             </div>
           </SortableContext>
           <footer className="task-board-lane-calculation">
@@ -351,6 +372,8 @@ function TaskBoardColumn(props: {
   activeCardOccurrenceId: string | null;
   groupDropPosition: 'before' | 'after' | null;
   onSettingsChange: (settings: Partial<TaskBoardViewSettings>) => void;
+  onHideGroup: () => void;
+  onHideSubgroup: (subgroupId: string, subgroupLabel: string) => void;
   onMoveToLane: (card: TaskBoardCardModel, laneValue: string) => void;
   onOpenTask: TaskBoardViewProps['onOpenTask'];
   loadPreview?: TaskBoardViewProps['onLoadAttachmentPreview'];
@@ -395,12 +418,7 @@ function TaskBoardColumn(props: {
         >
           <DotsSixVertical aria-hidden="true" weight="bold" />
         </button>
-        <button
-          type="button"
-          className="task-board-column-hide"
-          aria-label={`${props.context.language === 'zh-CN' ? '隐藏分组' : 'Hide group'} ${props.group.label}`}
-          onClick={() => props.onSettingsChange({ hiddenGroupIds: [...props.settings.hiddenGroupIds, props.group.id] })}
-        >
+        <button type="button" className="task-board-column-hide" aria-label={`${props.context.language === 'zh-CN' ? '隐藏分组' : 'Hide group'} ${props.group.label}`} onClick={props.onHideGroup}>
           <EyeSlash aria-hidden="true" />
         </button>
       </header>
@@ -432,14 +450,7 @@ function TaskBoardColumn(props: {
                       },
                     })
                   }
-                  onHide={() =>
-                    props.onSettingsChange({
-                      hiddenSubgroupIdsByGroup: {
-                        ...props.settings.hiddenSubgroupIdsByGroup,
-                        [props.group.id]: [...(props.settings.hiddenSubgroupIdsByGroup[props.group.id] ?? []), subgroup.id],
-                      },
-                    })
-                  }
+                  onHide={() => props.onHideSubgroup(subgroup.id, subgroup.label)}
                   onMoveToLane={props.onMoveToLane}
                   onOpenTask={props.onOpenTask}
                   loadPreview={props.loadPreview}
@@ -560,7 +571,7 @@ function TaskBoardFilterEditor(props: { group: TaskBoardFilterGroup; depth: numb
               />
             ) : null}
             <button type="button" aria-label={zh ? '移除筛选条件' : 'Remove filter'} onClick={() => props.onChange({ ...props.group, conditions: props.group.conditions.filter((_, entryIndex) => entryIndex !== index) })}>
-              ×
+              <X aria-hidden="true" />
             </button>
           </div>
         ),
@@ -574,8 +585,11 @@ function TaskBoardSettingsDialog(props: {
   settings: TaskBoardViewSettings;
   groupOptions: ReturnType<typeof taskBoardGroupOptions>;
   subgroupOptions: ReturnType<typeof taskBoardGroupOptions>;
+  section: TaskBoardSettingsSection;
   saving: boolean;
+  errorMessage: string | null;
   onDismiss: () => void;
+  onSectionChange: (section: TaskBoardSettingsSection) => void;
   onSave: (settings: TaskBoardViewSettings) => void;
 }) {
   const zh = props.language === 'zh-CN';
@@ -589,11 +603,24 @@ function TaskBoardSettingsDialog(props: {
             <small>{zh ? '设置只影响当前项目的看板。' : 'Settings apply to this project board.'}</small>
           </div>
           <button type="button" aria-label={zh ? '关闭看板设置' : 'Close board settings'} disabled={props.saving} onClick={props.onDismiss}>
-            ×
+            <X aria-hidden="true" />
           </button>
         </header>
+        <nav className="task-board-settings-sections" aria-label={zh ? '看板设置区域' : 'Board settings sections'}>
+          {(
+            [
+              ['layout', zh ? '布局' : 'Layout'],
+              ['cards', zh ? '卡片' : 'Cards'],
+              ['rules', zh ? '规则' : 'Rules'],
+            ] as const
+          ).map(([section, label]) => (
+            <button key={section} type="button" aria-pressed={props.section === section} onClick={() => props.onSectionChange(section)}>
+              {label}
+            </button>
+          ))}
+        </nav>
         <div className="task-board-settings-content">
-          <fieldset>
+          <fieldset hidden={props.section !== 'layout'}>
             <legend>{zh ? '布局' : 'Layout'}</legend>
             <label>
               <span>{zh ? '主分组' : 'Group by'}</span>
@@ -698,7 +725,7 @@ function TaskBoardSettingsDialog(props: {
               </div>
             ) : null}
           </fieldset>
-          <fieldset>
+          <fieldset hidden={props.section !== 'cards'}>
             <legend>{zh ? '卡片' : 'Cards'}</legend>
             <label>
               <span>{zh ? '尺寸' : 'Size'}</span>
@@ -779,7 +806,7 @@ function TaskBoardSettingsDialog(props: {
                       })
                     }
                   >
-                    ↑
+                    <ArrowUp aria-hidden="true" />
                   </button>
                   <button
                     type="button"
@@ -793,13 +820,13 @@ function TaskBoardSettingsDialog(props: {
                       })
                     }
                   >
-                    ↓
+                    <ArrowDown aria-hidden="true" />
                   </button>
                 </div>
               ))}
             </div>
           </fieldset>
-          <fieldset>
+          <fieldset hidden={props.section !== 'rules'}>
             <legend>{zh ? '筛选' : 'Filters'}</legend>
             {draft.filters ? (
               <TaskBoardFilterEditor group={draft.filters} depth={1} language={props.language} onChange={(filters) => setDraft((current) => ({ ...current, filters }))} />
@@ -814,7 +841,7 @@ function TaskBoardSettingsDialog(props: {
               </Button>
             ) : null}
           </fieldset>
-          <fieldset>
+          <fieldset hidden={props.section !== 'rules'}>
             <legend>{zh ? '排序' : 'Sorts'}</legend>
             {draft.sorts.map((sort, index) => (
               <div className="task-board-sort-rule" key={sort.id}>
@@ -841,8 +868,8 @@ function TaskBoardSettingsDialog(props: {
                   <option value="ascending">{zh ? '升序' : 'Ascending'}</option>
                   <option value="descending">{zh ? '降序' : 'Descending'}</option>
                 </select>
-                <button type="button" onClick={() => setDraft((current) => ({ ...current, sorts: current.sorts.filter((_, entryIndex) => entryIndex !== index) }))}>
-                  ×
+                <button type="button" aria-label={zh ? '移除排序' : 'Remove sort'} onClick={() => setDraft((current) => ({ ...current, sorts: current.sorts.filter((_, entryIndex) => entryIndex !== index) }))}>
+                  <X aria-hidden="true" />
                 </button>
               </div>
             ))}
@@ -850,7 +877,7 @@ function TaskBoardSettingsDialog(props: {
               {zh ? '添加排序' : 'Add sort'}
             </Button>
           </fieldset>
-          <fieldset>
+          <fieldset hidden={props.section !== 'rules'}>
             <legend>{zh ? '统计与颜色' : 'Calculation and colors'}</legend>
             <label>
               <span>{zh ? '列底统计' : 'Calculation'}</span>
@@ -933,7 +960,7 @@ function TaskBoardSettingsDialog(props: {
             ))}
           </fieldset>
           {draft.hiddenGroupIds.length > 0 ? (
-            <fieldset>
+            <fieldset hidden={props.section !== 'layout'}>
               <legend>{zh ? '隐藏分组' : 'Hidden groups'}</legend>
               {props.groupOptions
                 .filter((option) => draft.hiddenGroupIds.includes(option.id))
@@ -946,7 +973,7 @@ function TaskBoardSettingsDialog(props: {
             </fieldset>
           ) : null}
           {Object.values(draft.hiddenSubgroupIdsByGroup).some((ids) => ids.length > 0) ? (
-            <fieldset>
+            <fieldset hidden={props.section !== 'layout'}>
               <legend>{zh ? '隐藏子分组' : 'Hidden subgroups'}</legend>
               {Object.entries(draft.hiddenSubgroupIdsByGroup).flatMap(([groupId, ids]) =>
                 ids.map((subgroupId) => {
@@ -976,12 +1003,23 @@ function TaskBoardSettingsDialog(props: {
           ) : null}
         </div>
         <footer>
-          <Button variant="secondary" size="regular" disabled={props.saving} onClick={props.onDismiss}>
-            {zh ? '取消' : 'Cancel'}
+          <Button className="task-board-settings-reset" variant="secondary" size="regular" disabled={props.saving} onClick={() => setDraft(createDefaultTaskBoardViewSettings())}>
+            <ArrowCounterClockwise aria-hidden="true" />
+            {zh ? '恢复默认显示设置' : 'Restore display defaults'}
           </Button>
-          <Button variant="primary" size="regular" busy={props.saving} onClick={() => props.onSave(draft)}>
-            {zh ? '保存' : 'Save'}
-          </Button>
+          {props.errorMessage ? (
+            <span className="task-board-settings-error" role="alert">
+              {props.errorMessage}
+            </span>
+          ) : null}
+          <span className="task-board-settings-footer-actions">
+            <Button variant="secondary" size="regular" disabled={props.saving} onClick={props.onDismiss}>
+              {zh ? '取消' : 'Cancel'}
+            </Button>
+            <Button variant="primary" size="regular" busy={props.saving} onClick={() => props.onSave(draft)}>
+              {zh ? '保存' : 'Save'}
+            </Button>
+          </span>
         </footer>
       </section>
     </ModalPortal>
@@ -1002,21 +1040,48 @@ function optimisticTaskForMove(task: TaskRecord, property: TaskBoardGroupPropert
   return task;
 }
 
+function isTaskBoardMoveCancellation(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  return message === '已取消移动。' || message === 'Move cancelled.';
+}
+
 export function TaskBoardView(props: TaskBoardViewProps) {
   const liveRegionId = `${useId()}-live`;
   const [localSnapshot, setLocalSnapshot] = useState(props.snapshot);
   const [localTasks, setLocalTasks] = useState(props.tasks);
   const [localSettingsOpen, setLocalSettingsOpen] = useState(false);
+  const [localSettingsSection, setLocalSettingsSection] = useState<TaskBoardSettingsSection>('layout');
   const [savingSettings, setSavingSettings] = useState(false);
   const [moving, setMoving] = useState(false);
   const [activeCard, setActiveCard] = useState<TaskBoardCardModel | null>(null);
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState('');
+  const [feedback, setFeedback] = useState<TaskBoardFeedback | null>(null);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [operationError, setOperationError] = useState<unknown>(null);
+  const updateSettingsRef = useRef(props.onUpdateSettings);
+  const moveTaskRef = useRef(props.onMoveTask);
   const settingsOpen = props.settingsOpen ?? localSettingsOpen;
+  const settingsSection = props.settingsSection ?? localSettingsSection;
   const changeSettingsOpen = (open: boolean) => {
     setLocalSettingsOpen(open);
+    if (!open) setSettingsError(null);
     props.onSettingsOpenChange?.(open);
   };
+  const changeSettingsSection = (section: TaskBoardSettingsSection) => {
+    setLocalSettingsSection(section);
+    props.onSettingsSectionChange?.(section);
+  };
+  useApplicationErrorDialog(props.error || operationError, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' });
+  useEffect(() => {
+    updateSettingsRef.current = props.onUpdateSettings;
+    moveTaskRef.current = props.onMoveTask;
+  }, [props.onMoveTask, props.onUpdateSettings]);
+  useEffect(() => {
+    if (!feedback?.timeoutMs) return;
+    const timeoutId = window.setTimeout(() => setFeedback((current) => (current === feedback ? null : current)), feedback.timeoutMs);
+    return () => window.clearTimeout(timeoutId);
+  }, [feedback]);
   useEffect(() => {
     if (!moving && !savingSettings) {
       setLocalSnapshot(props.snapshot);
@@ -1131,18 +1196,31 @@ export function TaskBoardView(props: TaskBoardViewProps) {
 
   const saveSettings = async (patch: Partial<TaskBoardViewSettings>) => {
     setSavingSettings(true);
+    setSettingsError(null);
     try {
-      const updated = await props.onUpdateSettings(patch);
+      const updated = await updateSettingsRef.current(patch);
       setLocalSnapshot(updated);
-      setAnnouncement(props.language === 'zh-CN' ? '看板设置已保存。' : 'Board settings saved.');
+      setOperationError(null);
+      setFeedback({ kind: 'success', message: props.language === 'zh-CN' ? '看板设置已保存。' : 'Board settings saved.', timeoutMs: 4_000 });
       return updated;
     } catch (error) {
-      setAnnouncement(formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'));
-      props.onReload();
+      const message = formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en');
+      setSettingsError(message);
+      setOperationError(error);
+      setFeedback({
+        kind: 'error',
+        message,
+        actionLabel: props.language === 'zh-CN' ? '重试保存' : 'Retry save',
+        onAction: () => void saveSettings(patch).catch(() => undefined),
+      });
       throw error;
     } finally {
       setSavingSettings(false);
     }
+  };
+
+  const restoreCardDragFocus = (taskId: string) => {
+    window.requestAnimationFrame(() => document.querySelector<HTMLElement>(`.task-board-card[data-task-id="${CSS.escape(taskId)}"] .task-board-drag-handle`)?.focus());
   };
 
   const moveCard = async (card: TaskBoardCardModel, targetGroupId: string, targetSubgroupId: string, anchors: { beforeTaskId?: string; afterTaskId?: string } = {}) => {
@@ -1153,9 +1231,10 @@ export function TaskBoardView(props: TaskBoardViewProps) {
     let optimisticTask = optimisticTaskForMove(card.task, settings.groupBy, card.groupId, targetGroupId);
     if (settings.subgroupBy) optimisticTask = optimisticTaskForMove(optimisticTask, settings.subgroupBy, card.subgroupId, targetSubgroupId);
     setLocalTasks((tasks) => tasks.map((task) => (task.id === optimisticTask.id ? optimisticTask : task)));
+    setOperationError(null);
     setAnnouncement(props.language === 'zh-CN' ? `正在移动“${card.task.title}”。` : `Moving “${card.task.title}”.`);
     try {
-      const result = await props.onMoveTask({
+      const result = await moveTaskRef.current({
         taskId: card.task.id,
         source: { groupId: card.groupId, subgroupId: card.subgroupId },
         target: {
@@ -1169,12 +1248,29 @@ export function TaskBoardView(props: TaskBoardViewProps) {
       });
       setLocalTasks((tasks) => tasks.map((task) => (task.id === result.task.id ? result.task : task)));
       setLocalSnapshot(result.board);
+      restoreCardDragFocus(card.task.id);
       const targetLabel = laneOptions.find((option) => option.value === `${targetGroupId}\u0000${targetSubgroupId}`)?.label ?? targetGroupId;
       setAnnouncement(props.language === 'zh-CN' ? `“${card.task.title}”已移动到${targetLabel}。` : `“${card.task.title}” moved to ${targetLabel}.`);
+      setFeedback({ kind: 'success', message: props.language === 'zh-CN' ? `“${card.task.title}”已移动到${targetLabel}。` : `“${card.task.title}” moved to ${targetLabel}.`, timeoutMs: 4_000 });
     } catch (error) {
       setLocalTasks(previousTasks);
       setLocalSnapshot(previousSnapshot);
-      setAnnouncement(formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'));
+      restoreCardDragFocus(card.task.id);
+      if (isTaskBoardMoveCancellation(error)) {
+        const message = props.language === 'zh-CN' ? '已取消移动，任务位置未改变。' : 'Move cancelled. The task position did not change.';
+        setAnnouncement(message);
+        setFeedback({ kind: 'info', message, timeoutMs: 4_000 });
+        return;
+      }
+      const message = formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en');
+      setOperationError(error);
+      setAnnouncement(message);
+      setFeedback({
+        kind: 'error',
+        message,
+        actionLabel: props.language === 'zh-CN' ? '重试移动' : 'Retry move',
+        onAction: () => void moveCard(card, targetGroupId, targetSubgroupId, anchors).catch(() => undefined),
+      });
       throw error;
     } finally {
       setMoving(false);
@@ -1186,6 +1282,41 @@ export function TaskBoardView(props: TaskBoardViewProps) {
     const [groupId = '', subgroupId = ''] = laneValue.split('\u0000');
     if (!groupId) return;
     void moveCard(card, groupId, subgroupId).catch(() => undefined);
+  };
+
+  const hideGroup = async (group: TaskBoardGroupModel) => {
+    const previousHiddenGroupIds = settings.hiddenGroupIds;
+    await saveSettings({ hiddenGroupIds: [...new Set([...previousHiddenGroupIds, group.id])] });
+    setFeedback({
+      kind: 'success',
+      message: props.language === 'zh-CN' ? `已隐藏分组“${group.label}”。` : `Hidden group “${group.label}”.`,
+      actionLabel: props.language === 'zh-CN' ? '撤销' : 'Undo',
+      timeoutMs: 8_000,
+      onAction: () =>
+        void saveSettings({ hiddenGroupIds: previousHiddenGroupIds })
+          .then(() => setFeedback({ kind: 'success', message: props.language === 'zh-CN' ? `已恢复分组“${group.label}”。` : `Restored group “${group.label}”.`, timeoutMs: 4_000 }))
+          .catch(() => undefined),
+    });
+  };
+
+  const hideSubgroup = async (group: TaskBoardGroupModel, subgroupId: string, subgroupLabel: string) => {
+    const previousHiddenSubgroupIdsByGroup = settings.hiddenSubgroupIdsByGroup;
+    await saveSettings({
+      hiddenSubgroupIdsByGroup: {
+        ...previousHiddenSubgroupIdsByGroup,
+        [group.id]: [...new Set([...(previousHiddenSubgroupIdsByGroup[group.id] ?? []), subgroupId])],
+      },
+    });
+    setFeedback({
+      kind: 'success',
+      message: props.language === 'zh-CN' ? `已隐藏子分组“${subgroupLabel}”。` : `Hidden subgroup “${subgroupLabel}”.`,
+      actionLabel: props.language === 'zh-CN' ? '撤销' : 'Undo',
+      timeoutMs: 8_000,
+      onAction: () =>
+        void saveSettings({ hiddenSubgroupIdsByGroup: previousHiddenSubgroupIdsByGroup })
+          .then(() => setFeedback({ kind: 'success', message: props.language === 'zh-CN' ? `已恢复子分组“${subgroupLabel}”。` : `Restored subgroup “${subgroupLabel}”.`, timeoutMs: 4_000 }))
+          .catch(() => undefined),
+    });
   };
 
   const handleDragStart = (event: DragStartEvent) => {
@@ -1240,8 +1371,79 @@ export function TaskBoardView(props: TaskBoardViewProps) {
     void moveCard(active.card, targetGroupId, targetSubgroupId, anchors).catch(() => undefined);
   };
 
+  const openSettings = (section: TaskBoardSettingsSection) => {
+    changeSettingsSection(section);
+    changeSettingsOpen(true);
+  };
+  const allGroupsHidden = groupOptions.length > 0 && groupOptions.every((option) => settings.hiddenGroupIds.includes(option.id));
+  const advancedFiltersActive = Boolean(settings.filters?.conditions.length);
+  const projectTaskCount = props.projectTaskCount ?? localTasks.length;
+  const visibleCardCount = groups.reduce((total, group) => total + (settings.subgroupBy ? group.subgroups.reduce((groupTotal, subgroup) => groupTotal + subgroup.cards.length, 0) : group.cards.length), 0);
+  const showEmptyState = projectTaskCount === 0 || (props.externalFiltersActive && localTasks.length === 0) || allGroupsHidden || groups.length === 0 || (advancedFiltersActive && visibleCardCount === 0);
+  const emptyState = (() => {
+    if (projectTaskCount === 0) {
+      return {
+        title: props.language === 'zh-CN' ? '项目还没有任务' : 'This project has no tasks yet',
+        help: props.language === 'zh-CN' ? '新建第一项任务后，看板会按当前分组规则显示。' : 'Create the first task to populate this board.',
+        actionLabel: props.language === 'zh-CN' ? '新建任务' : 'New task',
+        onAction: props.onCreateTask,
+      };
+    }
+    if (props.externalFiltersActive && localTasks.length === 0) {
+      return {
+        title: props.language === 'zh-CN' ? '当前搜索或快捷筛选无结果' : 'No tasks match the current quick filters',
+        help: props.language === 'zh-CN' ? '清除搜索、状态和标签筛选后查看全部任务。' : 'Clear search, status, and tag filters to see all tasks.',
+        actionLabel: props.language === 'zh-CN' ? '清除快捷筛选' : 'Clear quick filters',
+        onAction: props.onClearExternalFilters,
+      };
+    }
+    if (allGroupsHidden) {
+      return {
+        title: props.language === 'zh-CN' ? '全部分组已隐藏' : 'All groups are hidden',
+        help: props.language === 'zh-CN' ? '打开布局设置以恢复需要显示的分组。' : 'Open layout settings to restore groups.',
+        actionLabel: props.language === 'zh-CN' ? '打开布局设置' : 'Open layout settings',
+        onAction: () => openSettings('layout'),
+      };
+    }
+    if (advancedFiltersActive) {
+      return {
+        title: props.language === 'zh-CN' ? '当前看板筛选无结果' : 'No tasks match the board filters',
+        help: props.language === 'zh-CN' ? '清除高级筛选以恢复当前项目的任务。' : 'Clear advanced filters to restore project tasks.',
+        actionLabel: props.language === 'zh-CN' ? '清除高级筛选' : 'Clear advanced filters',
+        onAction: () => void saveSettings({ filters: null }).catch(() => undefined),
+      };
+    }
+    return {
+      title: props.language === 'zh-CN' ? '当前没有可显示的分组' : 'No groups are currently visible',
+      help: props.language === 'zh-CN' ? '检查隐藏空分组和分组规则设置。' : 'Review hidden empty groups and grouping rules.',
+      actionLabel: props.language === 'zh-CN' ? '打开布局设置' : 'Open layout settings',
+      onAction: () => openSettings('layout'),
+    };
+  })();
+
   return (
     <section className="task-board-workbench" data-card-size={settings.cardSize} aria-label={props.language === 'zh-CN' ? '任务看板' : 'Task board'} aria-describedby={liveRegionId}>
+      {feedback ? (
+        <section className={`task-board-feedback is-${feedback.kind}`} role={feedback.kind === 'error' ? 'alert' : 'status'} aria-live={feedback.kind === 'error' ? 'assertive' : 'polite'}>
+          <span>{feedback.message}</span>
+          {feedback.onAction && feedback.actionLabel ? (
+            <Button variant="secondary" size="compact" onClick={feedback.onAction}>
+              {feedback.actionLabel}
+            </Button>
+          ) : null}
+          <button
+            type="button"
+            className="task-board-feedback-dismiss"
+            aria-label={props.language === 'zh-CN' ? '关闭操作反馈' : 'Dismiss feedback'}
+            onClick={() => {
+              setFeedback(null);
+              setOperationError(null);
+            }}
+          >
+            <X aria-hidden="true" />
+          </button>
+        </section>
+      ) : null}
       <DndContext
         sensors={sensors}
         accessibility={{ announcements: dragAnnouncements, screenReaderInstructions }}
@@ -1254,25 +1456,39 @@ export function TaskBoardView(props: TaskBoardViewProps) {
         }}
         onDragEnd={handleDragEnd}
       >
-        <SortableContext items={groups.map((group) => `group:${group.id}`)} strategy={horizontalListSortingStrategy}>
+        <SortableContext items={showEmptyState ? [] : groups.map((group) => `group:${group.id}`)} strategy={horizontalListSortingStrategy}>
           <div className="task-board-columns">
-            {groups.map((group, groupIndex) => (
-              <TaskBoardColumn
-                key={group.id}
-                group={group}
-                context={context}
-                settings={settings}
-                laneOptions={laneOptions}
-                busy={moving || savingSettings}
-                activeCardOccurrenceId={activeCard?.occurrenceId ?? null}
-                groupDropPosition={activeGroupId === group.id ? null : groups.findIndex((entry) => entry.id === activeGroupId) >= 0 && groups.findIndex((entry) => entry.id === activeGroupId) < groupIndex ? 'after' : 'before'}
-                onSettingsChange={(patch) => void saveSettings(patch).catch(() => undefined)}
-                onMoveToLane={moveToLane}
-                onOpenTask={props.onOpenTask}
-                loadPreview={props.onLoadAttachmentPreview}
-              />
-            ))}
-            {groups.length === 0 ? <div className="task-board-empty">{props.language === 'zh-CN' ? '当前筛选没有匹配任务。' : 'No tasks match the current filters.'}</div> : null}
+            {showEmptyState
+              ? null
+              : groups.map((group, groupIndex) => (
+                  <TaskBoardColumn
+                    key={group.id}
+                    group={group}
+                    context={context}
+                    settings={settings}
+                    laneOptions={laneOptions}
+                    busy={moving || savingSettings}
+                    activeCardOccurrenceId={activeCard?.occurrenceId ?? null}
+                    groupDropPosition={activeGroupId === group.id ? null : groups.findIndex((entry) => entry.id === activeGroupId) >= 0 && groups.findIndex((entry) => entry.id === activeGroupId) < groupIndex ? 'after' : 'before'}
+                    onSettingsChange={(patch) => void saveSettings(patch).catch(() => undefined)}
+                    onHideGroup={() => void hideGroup(group).catch(() => undefined)}
+                    onHideSubgroup={(subgroupId, subgroupLabel) => void hideSubgroup(group, subgroupId, subgroupLabel).catch(() => undefined)}
+                    onMoveToLane={moveToLane}
+                    onOpenTask={props.onOpenTask}
+                    loadPreview={props.onLoadAttachmentPreview}
+                  />
+                ))}
+            {showEmptyState ? (
+              <section className="task-board-empty" role="region" aria-label={emptyState.title}>
+                <strong>{emptyState.title}</strong>
+                <small>{emptyState.help}</small>
+                {emptyState.onAction ? (
+                  <Button variant="secondary" size="compact" onClick={emptyState.onAction}>
+                    {emptyState.actionLabel}
+                  </Button>
+                ) : null}
+              </section>
+            ) : null}
           </div>
         </SortableContext>
         <DragOverlay>
@@ -1298,8 +1514,11 @@ export function TaskBoardView(props: TaskBoardViewProps) {
           settings={settings}
           groupOptions={groupOptions}
           subgroupOptions={subgroupOptions}
+          section={settingsSection}
           saving={savingSettings}
+          errorMessage={settingsError}
           onDismiss={() => changeSettingsOpen(false)}
+          onSectionChange={changeSettingsSection}
           onSave={(draft) => {
             void saveSettings(draft)
               .then(() => changeSettingsOpen(false))
