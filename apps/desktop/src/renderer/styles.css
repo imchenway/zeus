@@ -18937,9 +18937,15 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
 }
 
 .macos-ai-app .task-git-delivery-batch-result li {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
   gap: 12px;
+}
+
+.macos-ai-app .task-git-delivery-batch-result li span,
+.macos-ai-app .task-git-delivery-batch-result li small {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
 }
 
 .macos-ai-app .task-git-delivery-batch-result li small {

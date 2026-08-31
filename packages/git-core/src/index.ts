@@ -1284,10 +1284,7 @@ async function syncLocalTargetBranch(input: {
   const checkedOut = context.worktrees.find((entry) => entry.branch === input.targetBranch) ?? null;
   if (checkedOut) {
     try {
-      const review = await getTaskWorkspaceReview(checkedOut.path);
-      if (!review.clean) {
-        return { localSyncStatus: 'pending', localHeadSha: review.headSha, localWorktreePath: checkedOut.path };
-      }
+      // Git 会保留不受快进影响的本机改动，并在可能覆盖改动时自行拒绝；不要把任意脏文件都误判成合入失败。
       await runGit(checkedOut.path, ['merge', '--ff-only', input.resultHeadSha]);
       const localHeadSha = await resolveCommit(checkedOut.path, 'HEAD');
       return localHeadSha === input.resultHeadSha ? { localSyncStatus: 'synced', localHeadSha, localWorktreePath: checkedOut.path } : { localSyncStatus: 'pending', localHeadSha, localWorktreePath: checkedOut.path };

@@ -1384,12 +1384,6 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     const targetBranch = workspace.sourceBranch;
     if (requestedTargetBranch && requestedTargetBranch !== targetBranch) workspaceGitReject(400, 'ZEUS_TARGET_BRANCH_INVALID', 'Code delivery can only merge into the recorded source branch.');
     if (!targetBranch || targetBranch === 'detached') workspaceGitReject(409, 'ZEUS_TARGET_BRANCH_UNAVAILABLE', 'The recorded source branch is unavailable.');
-    try {
-      await assertTaskIntegrationTargetWorktreeClean(project, workspace, targetBranch);
-    } catch (error) {
-      if (taskGitErrorCode(error) === 'ZEUS_TARGET_BRANCH_DIRTY') workspaceGitReject(409, taskGitErrorCode(error), error instanceof Error ? error.message : 'Target branch is dirty.');
-      throw error;
-    }
     const mode = value.mode === 'squash' ? 'squash' : 'merge';
     const taskHeadSha = await getGitBranchHead(repositoryPath, workspace.branchName);
     const localTargetHeadSha = await getGitBranchHead(repositoryPath, targetBranch).catch(() => null);
@@ -1442,7 +1436,6 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
         await db.save();
         return workspaceGitResponse({ integration: updated }, 202);
       }
-      await assertTaskIntegrationTargetWorktreeClean(project, workspace, targetBranch);
       const finalized = await finalizeTaskBranchIntegration({ repositoryPath, integrationPath: started.integrationPath, targetBranch, targetHeadSha: started.targetHeadSha, resultHeadSha: started.resultHeadSha! });
       const pendingLocalSync = finalized.localSyncStatus === 'pending';
       updated = taskIntegrations.update(integration.id, {
@@ -1548,9 +1541,8 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     if (!integration.integrationPath) workspaceGitReject(409, 'ZEUS_TASK_INTEGRATION_PATH_UNAVAILABLE', 'Integration worktree is unavailable.');
     try {
       await assertTaskIntegrationStillCurrent(project, workspace, integration);
-      await assertTaskIntegrationTargetWorktreeClean(project, workspace, integration.targetBranch);
     } catch (error) {
-      if (isStaleTaskIntegrationError(error) || taskGitErrorCode(error) === 'ZEUS_TARGET_BRANCH_DIRTY') {
+      if (isStaleTaskIntegrationError(error)) {
         workspaceGitReject(409, taskGitErrorCode(error), error instanceof Error ? error.message : 'Task integration is no longer current.');
       }
       throw error;
@@ -1624,18 +1616,6 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     }
     const targetHeadSha = await getGitBranchHead(repositoryPath, integration.targetBranch).catch(() => (integration.targetBranch === workspace.sourceBranch ? workspace.sourceHeadSha : null));
     if (targetHeadSha !== integration.targetHeadSha) throw nativeApiError('ZEUS_TARGET_HEAD_CHANGED', 'Local target branch advanced while the integration was being prepared.');
-  }
-
-  async function assertTaskIntegrationTargetWorktreeClean(project: ZeusProjectRecord, workspace: ZeusTaskWorkspaceRecord, targetBranch: string): Promise<void> {
-    const repositoryPath = workspace.repositoryPath || project.localPath;
-    const repository = await getGitRepositoryContext(repositoryPath);
-    if (!repository.isRepository) throw nativeApiError('ZEUS_TARGET_BRANCH_UNAVAILABLE', 'The recorded source branch is unavailable.');
-    const targetWorktree = repository.worktrees.find((entry) => entry.branch === targetBranch);
-    if (!targetWorktree) return;
-    const ignoredPaths = projectRepositoryIgnoredPaths(workspace.projectId, workspace.repositoryId, repositoryPath);
-    if (!(await getGitWorktreeClean(targetWorktree.path, ignoredPaths))) {
-      throw nativeApiError('ZEUS_TARGET_BRANCH_DIRTY', '来源分支所在工作区存在未提交代码，请先处理后再合入。');
-    }
   }
 
   function isStaleTaskIntegrationError(error: unknown): boolean {
@@ -1910,7 +1890,6 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       if (attempt.targetHeadSha !== latestTargetHeadSha || attempt.taskHeadSha !== latestTaskHeadSha) {
         throw nativeApiError('ZEUS_TASK_INTEGRATION_ATTEMPT_STALE', '来源分支或任务分支已推进，继续准备最新执行代次。');
       }
-      await assertTaskIntegrationTargetWorktreeClean(project, workspace, integration.targetBranch);
       const commit = await completeTaskIntegrationCommit({
         integrationPath: attempt.worktreePath,
         mode: integration.mode,
@@ -2014,7 +1993,6 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       const { task, project, integration, workspace } = resolved;
       if (!integration.integrationPath) throw nativeApiError('ZEUS_TASK_INTEGRATION_PATH_UNAVAILABLE', 'Integration worktree is unavailable.');
       await assertTaskIntegrationStillCurrent(project, workspace, integration);
-      await assertTaskIntegrationTargetWorktreeClean(project, workspace, integration.targetBranch);
       const commit = await completeTaskIntegrationCommit({
         integrationPath: integration.integrationPath,
         mode: integration.mode,
@@ -2148,7 +2126,6 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     executeTaskIntegrationFinalize,
     executeTaskIntegrationPush,
     assertTaskIntegrationStillCurrent,
-    assertTaskIntegrationTargetWorktreeClean,
     isStaleTaskIntegrationError,
     sendTaskGitApiError,
     taskGitErrorCode,
