@@ -608,13 +608,14 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     if (allowedRoots.length === 0 && attachments.length > 0) {
       throw coordinatorError('ZEUS_NATIVE_ATTACHMENT_PROJECT_UNAVAILABLE', 'No trusted attachment root can be resolved.');
     }
-    const providerAttachment = (attachment: NativeConversationAttachmentInput): Record<string, unknown> => {
+    const providerAttachment = (attachment: NativeConversationAttachmentInput): Array<Record<string, unknown>> => {
       if (attachment.uploadRef) {
         throw coordinatorError('ZEUS_NATIVE_ATTACHMENT_UPLOAD_UNSUPPORTED', 'Native attachment uploadRef has no provider resolver.');
       }
       const localPath = attachment.localPath;
       if (!localPath || !isAbsolute(localPath)) throw coordinatorError('ZEUS_NATIVE_ATTACHMENT_INPUT_INVALID', 'Native attachment localPath must be absolute.');
       let canonicalPath: string;
+      let attachmentKind: 'file' | 'directory';
       try {
         canonicalPath = realpathSync(localPath);
         const pathStat = statSync(canonicalPath);
@@ -622,10 +623,18 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         if ((!exactlyAuthorized && !allowedRoots.some((root) => isInsideRoot(canonicalPath, root))) || (!pathStat.isFile() && !pathStat.isDirectory())) {
           throw new Error('outside trusted roots or not a file/directory');
         }
+        attachmentKind = pathStat.isDirectory() ? 'directory' : 'file';
       } catch {
         throw coordinatorError('ZEUS_NATIVE_ATTACHMENT_PATH_UNAVAILABLE', 'Native attachment must resolve to an authorized file or directory.');
       }
-      return isSupportedLocalImageAttachment(attachment, canonicalPath) ? { type: 'localImage', path: canonicalPath } : { type: 'mention', name: attachment.name, path: canonicalPath };
+      if (isSupportedLocalImageAttachment(attachment, canonicalPath)) return [{ type: 'localImage', path: canonicalPath }];
+      return [
+        {
+          type: 'text',
+          text: `<zeus_attachment>\n${JSON.stringify({ kind: attachmentKind, name: attachment.name, path: canonicalPath })}\n</zeus_attachment>`,
+        },
+        { type: 'mention', name: attachment.name, path: canonicalPath },
+      ];
     };
     const taskPushLayout = readNativeSubmissionTaskPushLayout(submission);
     const skill = readNativeSubmissionSkill(submission);
@@ -639,11 +648,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         }
         const attachment = attachmentsByKey.get(part.attachmentKey);
         if (!attachment) throw coordinatorError('ZEUS_NATIVE_PERSISTED_STATE_INVALID', `Task push attachment placement is missing: ${part.attachmentKey}`);
-        inputs.push(providerAttachment(attachment));
+        inputs.push(...providerAttachment(attachment));
       }
     } else {
       if (text.trim()) inputs.push({ type: 'text', text });
-      for (const attachment of attachments) inputs.push(providerAttachment(attachment));
+      for (const attachment of attachments) inputs.push(...providerAttachment(attachment));
     }
     if (inputs.length === 0) throw coordinatorError('ZEUS_INVALID_CONVERSATION_MESSAGE', 'Native submission requires text or attachments.');
     return inputs;
