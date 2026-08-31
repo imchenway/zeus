@@ -249,7 +249,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const [newConversationFocusRequest, setNewConversationFocusRequest] = useState(0);
   const [nativeConversationRuntimeStates, setNativeConversationRuntimeStates] = useState<Record<string, ConversationTreeRuntimeState>>({});
   const [nativeConversationTaskRunStatuses, setNativeConversationTaskRunStatuses] = useState<Record<string, TaskAgentRunStatus>>({});
-  const [nativeConversationStatusSyncState, setNativeConversationStatusSyncState] = useState<ZeusRealtimeConnectionState | 'syncing'>(() => (props.onSubscribeRealtimeEvents ? 'connecting' : 'connected'));
+  const [nativeConversationStatusSyncState, setNativeConversationStatusSyncState] = useState<ZeusRealtimeConnectionState | 'syncing' | 'stale'>(() => (props.onSubscribeRealtimeEvents ? 'connecting' : 'connected'));
   const [initialNativeConversationHotCache] = useState<SessionHotCache>(initialSessionHotCache);
   const nativeConversationHotCacheRef = useRef<SessionHotCache>(initialNativeConversationHotCache);
   const sessionViewCachePersistTimerRef = useRef<number | null>(null);

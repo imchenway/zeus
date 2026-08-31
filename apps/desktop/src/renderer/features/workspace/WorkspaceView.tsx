@@ -421,8 +421,16 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       </output>
       {nativeConversationStatusSyncState !== 'connected' ? (
         <output className="conversation-status-sync-indicator" data-state={nativeConversationStatusSyncState} role="status" aria-live="polite" aria-atomic="true">
-          <span className="conversation-status-sync-spinner" aria-hidden="true" />
-          <span>{appShellSettings.appLanguage === 'zh-CN' ? '正在同步会话状态' : 'Syncing conversation status'}</span>
+          {nativeConversationStatusSyncState === 'stale' ? null : <span className="conversation-status-sync-spinner" aria-hidden="true" />}
+          <span>
+            {nativeConversationStatusSyncState === 'stale'
+              ? appShellSettings.appLanguage === 'zh-CN'
+                ? '会话状态暂未同步，正在后台重试'
+                : 'Conversation status is unavailable; retrying in the background'
+              : appShellSettings.appLanguage === 'zh-CN'
+                ? '正在同步会话状态'
+                : 'Syncing conversation status'}
+          </span>
         </output>
       ) : null}
       {storageRecoveryFault ? (
