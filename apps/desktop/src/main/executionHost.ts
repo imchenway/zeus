@@ -30,7 +30,9 @@ import { type DesktopLocalServerRuntime, startOwnedDesktopLocalServer, verifyRea
 import { closeExecutionHostResources } from './executionHostClosePlan.js';
 import { isZeusDataRootHostIdentity, sameZeusDataRootHostIdentity, type ZeusDataRootHostIdentity } from './dataRootIdentity.js';
 
-const uiLeaseTimeoutMs = 15_000;
+// Main 的短时高 CPU 或网络恢复不能让仍被界面使用的 Core 误判为孤儿；
+// 超时后仍有 30 秒空闲回收，正常退出与升级交接不依赖该兜底。
+const uiLeaseTimeoutMs = 120_000;
 const detachedIdleShutdownMs = 30_000;
 const readOnlyValidationDetachedIdleShutdownMs = 300_000;
 const monitorIntervalMs = 5_000;

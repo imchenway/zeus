@@ -512,7 +512,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         return;
       }
       const generation = ++statusSyncGeneration;
-      setNativeConversationStatusSyncState('syncing');
+      if (statusSyncAttempt === 0) setNativeConversationStatusSyncState('syncing');
       void reconcileNativeConversationProjectSnapshot(projectId).then(
         () => {
           if (connectionState !== 'connected' || generation !== statusSyncGeneration) return;
@@ -522,6 +522,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         (error: unknown) => {
           if (connectionState !== 'connected' || generation !== statusSyncGeneration) return;
           console.warn('会话状态权威快照校准失败，将自动重试。', error);
+          setNativeConversationStatusSyncState('stale');
           const delay = Math.min(1_000 * 2 ** Math.min(statusSyncAttempt, 3), 8_000);
           statusSyncAttempt += 1;
           statusSyncRetryTimer = window.setTimeout(synchronizeActiveProjectConversationStatus, delay);

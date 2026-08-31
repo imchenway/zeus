@@ -481,7 +481,9 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       } catch {
         // 旧宿主正在退出时由交接链负责注册新宿主，避免恢复链与交接争抢唯一 SQLite 写入者。
         if (handoffPromise) return;
-        await recover(false);
+        // 恢复可能包含重新发现、启动与窗口 reload；不能让它占住心跳单飞，
+        // attach 更新 client 后下一轮心跳必须能立即给新宿主续租。
+        void recover(false).catch(() => undefined);
       }
     };
 
