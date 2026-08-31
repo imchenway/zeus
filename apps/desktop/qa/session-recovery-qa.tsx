@@ -24,7 +24,7 @@ const zeus0388Choice: NativeConversationChoice = {
 };
 const zeus0388SnapshotV2: NativeConversationSnapshotV2 = {
   schemaVersion: 2,
-  structureGeneration: '2026-08-29-conversation-snapshot-v2-recovered-request-input',
+  structureGeneration: '2026-08-31-conversation-snapshot-v2-active-turn-tail',
   conversationSchemaGeneration: '2026-08-16-unified-conversation-segments',
   throughEventSeq: 8,
   eventStreamGeneration: 'zeus-conversation-sync-v2',
@@ -80,7 +80,7 @@ const zeus0388SnapshotV2: NativeConversationSnapshotV2 = {
 };
 const zeus0388HistoryPage: NativeConversationSnapshotV2Page<import('../src/renderer/session/sessionTypes.js').NativeConversationModelHistoryV2Item> = {
   schemaVersion: 2,
-  structureGeneration: '2026-08-29-conversation-snapshot-v2-recovered-request-input',
+  structureGeneration: '2026-08-31-conversation-snapshot-v2-active-turn-tail',
   conversationId: zeus0388ConversationId,
   kind: 'model_history',
   throughEventSeq: 8,
@@ -203,7 +203,7 @@ const zeus0388ResourcePages: NativeConversationSnapshotV2Page<NativeConversation
   const items = zeus0388ResourceItems.slice(index * 32, (index + 1) * 32);
   return {
     schemaVersion: 2,
-    structureGeneration: '2026-08-29-conversation-snapshot-v2-recovered-request-input',
+    structureGeneration: '2026-08-31-conversation-snapshot-v2-active-turn-tail',
     conversationId: zeus0388ConversationId,
     kind: 'resources',
     throughEventSeq: 8,
