@@ -287,7 +287,7 @@ export function Zeus0388QaApp() {
   const [historyTransitions, setHistoryTransitions] = useState(0);
   const [settingsChanges, setSettingsChanges] = useState(0);
   const [historyOnly, setHistoryOnly] = useState(true);
-  const [guard, setGuard] = useState<'writable' | 'archived' | 'explicit-readonly' | 'nonresumable' | 'processing' | 'task-ended' | 'recovered'>('writable');
+  const [guard, setGuard] = useState<'writable' | 'failed' | 'archived' | 'explicit-readonly' | 'nonresumable' | 'processing' | 'task-ended' | 'recovered'>('writable');
   const controller = useMemo(
     () =>
       createSessionController({
@@ -309,6 +309,7 @@ export function Zeus0388QaApp() {
 
   const visibleConversation = {
     ...zeus0388Choice,
+    providerState: guard === 'failed' ? 'failed' : zeus0388Choice.providerState,
     archived: guard === 'archived',
     readOnly: guard === 'explicit-readonly',
     resumable: guard !== 'nonresumable',
@@ -321,33 +322,39 @@ export function Zeus0388QaApp() {
     conversationState: 'starting_turn' as const,
   };
   const visibleState =
-    guard === 'recovered'
+    guard === 'failed'
       ? {
           ...hydratedHistoryState,
-          queue: {
-            state: { type: 'paused' as const, reason: 'recovered_unsent' as const },
-            waitReason: 'recovered_unsent' as const,
-            submissions: [zeus0388RecoveredSubmission],
-          },
+          conversationState: 'turn_failed' as const,
+          snapshot: { ...hydratedHistoryState.snapshot!, providerState: 'failed' },
         }
-      : guard === 'processing'
+      : guard === 'recovered'
         ? {
             ...hydratedHistoryState,
-            activeTurnId: zeus0388ProviderTurnId,
-            startedTurnId: zeus0388ProviderTurnId,
-            conversationState: 'waiting_user_input' as const,
             queue: {
-              state: {
-                type: 'waiting' as const,
-                turnId: zeus0388ProviderTurnId,
-                requestId: 'zeus-0388-request-input',
-                reason: 'user_input' as const,
-              },
-              waitReason: 'user_input' as const,
-              submissions: [],
+              state: { type: 'paused' as const, reason: 'recovered_unsent' as const },
+              waitReason: 'recovered_unsent' as const,
+              submissions: [zeus0388RecoveredSubmission],
             },
           }
-        : hydratedHistoryState;
+        : guard === 'processing'
+          ? {
+              ...hydratedHistoryState,
+              activeTurnId: zeus0388ProviderTurnId,
+              startedTurnId: zeus0388ProviderTurnId,
+              conversationState: 'waiting_user_input' as const,
+              queue: {
+                state: {
+                  type: 'waiting' as const,
+                  turnId: zeus0388ProviderTurnId,
+                  requestId: 'zeus-0388-request-input',
+                  reason: 'user_input' as const,
+                },
+                waitReason: 'user_input' as const,
+                submissions: [],
+              },
+            }
+          : hydratedHistoryState;
   const taskEndedGate =
     guard === 'task-ended'
       ? {
@@ -385,6 +392,9 @@ export function Zeus0388QaApp() {
         <div className="qa-motion-fixture-actions">
           <button type="button" onClick={() => selectGuard('writable')}>
             可续接历史
+          </button>
+          <button type="button" onClick={() => selectGuard('failed')}>
+            失败轮次
           </button>
           <button type="button" onClick={() => selectGuard('archived')}>
             归档会话

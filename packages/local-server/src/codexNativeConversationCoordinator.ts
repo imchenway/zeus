@@ -3249,7 +3249,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         for (const submission of candidates) {
           try {
             let conversation = options.conversations.getById(submission.conversationId);
-            if (!conversation || conversation.archived || conversation.providerState === 'archived' || conversation.providerState === 'closed' || conversation.providerState === 'failed') continue;
+            if (!conversation || conversation.archived || conversation.providerState === 'archived' || conversation.providerState === 'closed') continue;
             // 计划结果等待用户决策时，普通后续消息不能抢先开启下一轮。
             if (hasPendingPlanImplementationRequest(conversation.id)) continue;
             let state = runStates.get(conversation.id) ?? inferRunState(conversation);
