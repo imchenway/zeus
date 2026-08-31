@@ -933,7 +933,9 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
           const pending = taskModelPushPendingByTask[task.id];
           const choices = nativeConversationChoicesByTask[task.id]?.choices ?? [];
           if (!pending) return [task.id, choices];
-          return [task.id, [pending.choice, ...choices.filter((choice) => choice.id !== pending.choice.id)]];
+          const authoritativeChoice = pending.status === 'accepted' ? choices.find((choice) => choice.id === pending.choice.id) : undefined;
+          const projectedChoice = authoritativeChoice ? { ...authoritativeChoice, navigationId: pending.navigationId } : pending.choice;
+          return [task.id, [projectedChoice, ...choices.filter((choice) => choice.id !== pending.choice.id)]];
         }),
       ) as Record<string, NativeConversationChoice[]>,
     [nativeConversationChoicesByTask, snapshot.tasks, taskModelPushPendingByTask],
