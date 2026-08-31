@@ -2555,6 +2555,19 @@ function MotionApp() {
   );
 }
 
+function TranscriptScrollQaApp() {
+  return (
+    <main className="macos-ai-app zeus-shell qa-page qa-motion-page">
+      <header className="qa-heading">
+        <p>ZEUS-0413 · 真实会话视口验收</p>
+        <h1>程序化贴底与虚拟窗口同步</h1>
+      </header>
+      <SendScrollPreview />
+      <LongScrollPreview />
+    </main>
+  );
+}
+
 function TimeoutRetryQaApp() {
   return (
     <main className="macos-ai-app zeus-shell qa-page qa-motion-page" data-testid="timeout-retry-qa">
@@ -3905,6 +3918,7 @@ const completeMessageQa = new URLSearchParams(window.location.search).has('compl
 const activeReentryQa = new URLSearchParams(window.location.search).has('active-reentry');
 const interactionRecoveryQa = new URLSearchParams(window.location.search).has('interaction-recovery');
 const zeus0388Qa = new URLSearchParams(window.location.search).has('zeus0388');
+const zeus0413Qa = new URLSearchParams(window.location.search).has('zeus0413');
 // 开发态热更新复用同一根节点，避免视觉验收页重复挂载并制造无关控制台错误。
 const qaRoot = window.__zeusSessionStylesRoot ?? createRoot(document.getElementById('root')!);
 window.__zeusSessionStylesRoot = qaRoot;
@@ -3927,6 +3941,8 @@ qaRoot.render(
     <InteractionRecoveryQaApp />
   ) : zeus0388Qa ? (
     <Zeus0388QaApp />
+  ) : zeus0413Qa ? (
+    <TranscriptScrollQaApp />
   ) : motionQa ? (
     <MotionApp />
   ) : (
