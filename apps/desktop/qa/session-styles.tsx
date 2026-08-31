@@ -173,6 +173,7 @@ function ignoreResourceOpen() {}
 const motionConversationId = 'motion-conversation';
 const motionThreadId = 'motion-thread';
 const motionTurnId = 'motion-turn';
+const executionPhaseLocalTurnId = 'motion-turn-local';
 
 function motionItem(id: string, type: string, status: string, text: string, payload: Record<string, unknown> = {}, phase = 'prework'): NativeSessionItemBuffer {
   return {
@@ -341,33 +342,33 @@ const interruptedQueueTakeoverSubmission: NativeQueuedSubmission = {
 };
 
 function executionPhaseState(options: { appended: boolean; completed: boolean }): NativeSessionState {
-  const baseActivities = options.completed ? executionPhaseActivities.map((item) => ({ ...item, status: 'completed' })) : executionPhaseActivities;
   const items = [
     ...(options.completed ? [interruptedQueueTakeoverDurableItem] : []),
     executionPhaseSummaryA,
     executionPhasePreviousReasoning,
-    ...baseActivities.slice(0, 12),
+    ...executionPhaseActivities.slice(0, 12),
     executionPhaseCommentary,
     executionPhaseReasoning,
-    ...baseActivities.slice(12, 33),
+    ...executionPhaseActivities.slice(12, 33),
     executionPhaseSummaryC,
     executionPhaseLaterReasoning,
-    ...baseActivities.slice(33),
-    ...(options.appended ? [{ ...executionPhaseAppendedActivity, status: options.completed ? 'completed' : 'in_progress' }] : []),
+    ...executionPhaseActivities.slice(33),
+    ...(options.appended ? [executionPhaseAppendedActivity] : []),
     ...(options.completed ? [executionPhaseFinalAnswer, executionPhaseDeliveryFile] : []),
   ].map((item, index) => {
     const timelineAt = new Date(Date.UTC(2026, 7, 15, 4, 0, index)).toISOString();
-    return { ...item, timelineAt, updatedAt: timelineAt };
+    const turnId = options.completed && item.itemId !== executionPhaseFinalAnswer.itemId && item.itemId !== executionPhaseDeliveryFile.itemId ? executionPhaseLocalTurnId : item.turnId;
+    return { ...item, turnId, timelineAt, updatedAt: timelineAt };
   });
-  return {
+  const state: NativeSessionState = {
     ...createInitialSessionState(),
     transportState: 'ready',
-    conversationState: options.completed ? 'ready' : 'active_prework',
+    conversationState: options.completed ? 'active_final_answer' : 'active_prework',
     projectId: 'project-zeus',
     conversationId: motionConversationId,
     providerThreadId: motionThreadId,
-    activeTurnId: options.completed ? null : motionTurnId,
-    startedTurnId: motionTurnId,
+    activeTurnId: options.completed ? executionPhaseLocalTurnId : motionTurnId,
+    startedTurnId: options.completed ? executionPhaseLocalTurnId : motionTurnId,
     // 视觉夹具只需要证明已水合后的滚动与新增消息路径，快照其余字段不参与渲染。
     snapshot: { id: motionConversationId } as NonNullable<NativeSessionState['snapshot']>,
     items: Object.fromEntries(items.map((item) => [item.key, item])),
@@ -375,11 +376,12 @@ function executionPhaseState(options: { appended: boolean; completed: boolean })
     turnsByProviderId: {
       [motionTurnId]: {
         ...motionSessionState.turnsByProviderId[motionTurnId]!,
-        status: options.completed ? 'completed' : 'running',
-        completedAt: options.completed ? '2026-08-15T04:01:00.000Z' : null,
+        id: options.completed ? executionPhaseLocalTurnId : motionTurnId,
+        status: 'running',
+        completedAt: null,
       },
     },
-    terminalTurnIds: options.completed ? { [motionTurnId]: 'completed' } : {},
+    terminalTurnIds: {},
     queue: options.completed
       ? {
           state: { type: 'paused', reason: 'interrupted' },
@@ -389,6 +391,28 @@ function executionPhaseState(options: { appended: boolean; completed: boolean })
       : null,
     transcriptRevision: 40 + Number(options.appended) + Number(options.completed),
   };
+  if (!options.completed) return state;
+  return sessionReducer(state, {
+    type: 'event_received',
+    event: {
+      id: 'qa-execution-phase-turn-completed',
+      type: 'conversation.turn.completed',
+      createdAt: '2026-08-15T04:01:00.000Z',
+      payload: {
+        projectId: 'project-zeus',
+        conversationId: motionConversationId,
+        threadId: motionThreadId,
+        generationId: 'qa-execution-phase-generation',
+        conversationSchemaGeneration: '2026-08-16-unified-conversation-segments',
+        syncStreamGeneration: 'zeus-conversation-sync-v2',
+        entityRevision: 1,
+        sequence: 1,
+        turnId: motionTurnId,
+        status: 'completed',
+        completedAt: '2026-08-15T04:01:00.000Z',
+      },
+    },
+  });
 }
 
 const interruptedExecutionPhaseState: NativeSessionState = (() => {
@@ -1963,8 +1987,17 @@ function ExecutionPhasePreview() {
   const [historyOnly, setHistoryOnly] = useState(false);
   const terminal = completed || historyOnly;
   const state = executionPhaseState({ appended, completed: terminal });
+  const turnIdentities = [executionPhaseLocalTurnId, motionTurnId];
+  const terminalResidueCount = terminal ? Object.values(state.items).filter((item) => turnIdentities.includes(item.turnId) && !['completed', 'interrupted', 'failed'].includes(item.status)).length : null;
+  const terminalIdentityCount = terminal ? turnIdentities.filter((identity) => state.terminalTurnIds[identity] === 'completed').length : 0;
   return (
-    <section className="qa-motion-theme session-codex-parity-v1 theme-light" data-testid="execution-phase-preview" data-phase-state={historyOnly ? 'history' : completed ? 'completed' : 'running'}>
+    <section
+      className="qa-motion-theme session-codex-parity-v1 theme-light"
+      data-testid="execution-phase-preview"
+      data-phase-state={historyOnly ? 'history' : completed ? 'completed' : 'running'}
+      data-terminal-residue-count={terminalResidueCount ?? undefined}
+      data-terminal-identity-count={terminal ? terminalIdentityCount : undefined}
+    >
       <header>
         <strong>单轮一个处理过程入口</strong>
         <small>运行中默认展开；A、B、C 只在同一个入口内部承接各自阶段过程。正文到达后自动收起，折叠态只留最终正文、交付文件与耗时。</small>
@@ -1981,6 +2014,7 @@ function ExecutionPhasePreview() {
         </button>
         <output data-testid="execution-phase-state">
           {historyOnly ? '历史投影' : completed ? '完成态' : '运行态'} · {appended ? 41 : 40} 条操作
+          {terminal ? ` · 活动态残留 ${terminalResidueCount} · 轮次身份 ${terminalIdentityCount}/2` : ''}
         </output>
       </div>
       <div className="qa-motion-transcript ai-workspace">

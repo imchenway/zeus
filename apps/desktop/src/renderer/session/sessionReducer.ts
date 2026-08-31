@@ -596,8 +596,10 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
   const changeSetsByProviderId = Object.fromEntries((snapshot.changeSets ?? []).map((changeSet) => [changeSet.providerTurnId, changeSet]));
   const terminalTurnIds = { ...state.terminalTurnIds };
   for (const turn of snapshot.turns) {
-    if (!turn.providerTurnId || !isTerminalTurnStatus(turn.status)) continue;
-    terminalTurnIds[turn.providerTurnId] = terminalStatus(turn.status);
+    if (!isTerminalTurnStatus(turn.status)) continue;
+    for (const identity of [turn.id, turn.providerTurnId]) {
+      if (identity) terminalTurnIds[identity] = terminalStatus(turn.status);
+    }
   }
   const pendingRequests = normalizePendingRequestsWithMaps(snapshot.requests, providerTurnIdByLocalId, providerItemIdByLocalId);
   const projectedItemOrder = orderedItems.sort((left, right) => left.timestamp.localeCompare(right.timestamp) || left.stableIndex - right.stableIndex).map((entry) => entry.key);
@@ -996,7 +998,7 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
       if (!turnId) return base;
       const status = terminalStatus(stringValue(payload.status) ?? 'completed');
       const warning = payload.severity === 'warning';
-      const existingTurn = base.turnsByProviderId[turnId];
+      const existingTurn = base.turnsByProviderId[turnId] ?? Object.values(base.turnsByProviderId).find((candidate) => candidate.id === turnId || candidate.providerTurnId === turnId);
       const completedAt = stringValue(payload.completedAt) ?? existingTurn?.completedAt ?? event.createdAt;
       const turn: NativeTurnSnapshot = {
         id: existingTurn?.id ?? turnId,
@@ -1010,33 +1012,42 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
         createdAt: existingTurn?.createdAt ?? completedAt,
         updatedAt: event.createdAt,
       };
-      const terminalTurnIds = { ...base.terminalTurnIds, [turnId]: status };
+      const turnIdentities = new Set([turnId, turn.id, turn.providerTurnId].filter((identity): identity is string => Boolean(identity)));
+      const canonicalTurnId = turn.providerTurnId ?? turnId;
+      const terminalTurnIds = { ...base.terminalTurnIds };
+      for (const identity of turnIdentities) terminalTurnIds[identity] = status;
       const submissionId = stringValue(payload.submissionId) ?? turn.submissionId;
       let items = base.items;
       for (const [key, item] of Object.entries(base.items)) {
-        if (!item.optimistic || !isUserMessageItem(item) || (item.turnId !== turnId && (!submissionId || stringValue(item.payload.submissionId) !== submissionId))) continue;
-        const nextPayload = { ...item.payload };
-        delete nextPayload.pausedReason;
-        delete nextPayload.error;
-        delete nextPayload.deliveryError;
+        const belongsToTurn = turnIdentities.has(item.turnId);
+        const optimisticUserItem = Boolean(item.optimistic && isUserMessageItem(item) && (belongsToTurn || (submissionId && stringValue(item.payload.submissionId) === submissionId)));
+        if (!optimisticUserItem && (!belongsToTurn || (item.turnId === canonicalTurnId && isTerminalItemStatus(item.status)))) continue;
         if (items === base.items) items = { ...base.items };
-        items[key] = {
-          ...item,
-          turnId,
-          status: 'completed',
-          payload: nextPayload,
-          optimistic: false,
-          updatedAt: event.createdAt,
-        };
+        if (optimisticUserItem) {
+          const nextPayload = { ...item.payload };
+          delete nextPayload.pausedReason;
+          delete nextPayload.error;
+          delete nextPayload.deliveryError;
+          items[key] = {
+            ...item,
+            turnId: canonicalTurnId,
+            status: 'completed',
+            payload: nextPayload,
+            optimistic: false,
+            updatedAt: event.createdAt,
+          };
+        } else {
+          items[key] = { ...item, turnId: canonicalTurnId, status: isTerminalItemStatus(item.status) ? item.status : status, updatedAt: event.createdAt };
+        }
       }
       const nextState = {
         ...base,
         terminalTurnIds,
         items,
-        turnsByProviderId: { ...base.turnsByProviderId, [turnId]: turn },
+        turnsByProviderId: { ...base.turnsByProviderId, [canonicalTurnId]: turn },
         transcriptRevision: base.transcriptRevision + 1,
       };
-      if (turnId !== state.activeTurnId) return nextState;
+      if (!base.activeTurnId || !turnIdentities.has(base.activeTurnId)) return nextState;
       return {
         ...nextState,
         activeTurnId: null,
@@ -1270,6 +1281,9 @@ function reduceItemEvent(state: NativeSessionState, event: NativeConversationEve
   const compatibilitySnapshotItem = /^item-\d+$/u.test(itemId) || Boolean(incomingPayload && stringValue(incomingPayload.compatibilitySnapshotItemId));
   const durableUserText = compatibilitySnapshotItem && resolvedClientId ? durableUserMessageText(state, resolvedClientId) : null;
   const completedText = compatibilitySnapshotItem && durableUserText !== null && incomingText !== durableUserText ? durableUserText : incomingText;
+  const previousPhase = stringValue(previous?.payload.phase) ?? previous?.phase ?? matchedUserItem?.phase;
+  const incomingPhase = stringValue(incomingPayload?.phase) ?? stringValue(payload.phase);
+  const itemPhase = previousPhase === 'final_answer' || previousPhase === 'finalAnswer' || incomingPhase === 'final_answer' || incomingPhase === 'finalAnswer' ? 'final_answer' : (incomingPhase ?? previousPhase ?? 'prework');
   const next: NativeSessionItemBuffer = {
     key,
     conversationId,
@@ -1279,7 +1293,7 @@ function reduceItemEvent(state: NativeSessionState, event: NativeConversationEve
     providerItemId: itemId,
     type: effectiveType,
     status: stringValue(payload.status) ?? (completed ? 'completed' : (previous?.status ?? 'in_progress')),
-    phase: stringValue(payload.phase) ?? previous?.phase ?? matchedUserItem?.phase ?? 'prework',
+    phase: itemPhase,
     text: completed ? completedText || previous?.text || matchedUserText || optimisticText : reconcileCumulativeText(previous?.text ?? matchedUserText ?? optimisticText, incomingText),
     // 进行中事件以 started 的类型壳为基础合并权威进度字段；completed 仍是最终投影。
     payload: completed
@@ -1832,7 +1846,7 @@ function terminalStatus(status: string): 'completed' | 'interrupted' | 'failed' 
 }
 
 function isTerminalItemStatus(status: string): boolean {
-  return status === 'completed' || status === 'failed';
+  return status === 'completed' || status === 'interrupted' || status === 'failed';
 }
 
 function sessionErrorFromPayload(payload: Record<string, unknown>): NativeSessionError {
