@@ -249,9 +249,12 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     if (userScrollIntentTimerRef.current) clearTimeout(userScrollIntentTimerRef.current);
     userScrollIntentTimerRef.current = setTimeout(() => {
       userScrollIntentTimerRef.current = null;
-      if (!userScrollPointerActiveRef.current) userScrollIntentRef.current = false;
+      if (!userScrollPointerActiveRef.current) {
+        userScrollIntentRef.current = false;
+        if (scrollController.getState().mode !== 'static') maintainLatestPositionRef.current();
+      }
     }, userScrollIntentIdleMs);
-  }, []);
+  }, [scrollController]);
   const beginUserScrollIntent = useCallback(
     (pointerActive = false) => {
       userScrollIntentRef.current = true;
@@ -562,6 +565,13 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       latestPositionFrameRef.current = -1;
       const container = containerRef.current;
       if (!container) {
+        latestPositionFrameRef.current = null;
+        latestPositionConvergenceRequestedRef.current = false;
+        return;
+      }
+      // 用户滚动先于浏览器 scroll 事件到达；此时继续贴底会抵消原生位移，
+      // 使离底距离始终无法越过历史阅读门槛。意图结束后仅跟随态会重新收敛。
+      if (userScrollIntentRef.current) {
         latestPositionFrameRef.current = null;
         latestPositionConvergenceRequestedRef.current = false;
         return;
