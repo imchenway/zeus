@@ -566,7 +566,7 @@ export interface NativeConversationActiveItemV2 {
   turnId: string;
   providerItemId: string;
   itemType: string;
-  status: 'in_progress';
+  status: 'in_progress' | 'completed' | 'failed';
   phase: 'prework' | 'final_answer';
   text: NativeBoundedContentProjection;
   payload: NativeBoundedContentProjection;
@@ -577,7 +577,7 @@ export interface NativeConversationActiveItemV2 {
 
 export interface NativeConversationSnapshotV2 {
   schemaVersion: 2;
-  structureGeneration: '2026-08-29-conversation-snapshot-v2-recovered-request-input';
+  structureGeneration: '2026-08-31-conversation-snapshot-v2-active-turn-tail';
   conversationSchemaGeneration: '2026-08-16-unified-conversation-segments';
   throughEventSeq: number;
   eventStreamGeneration: string | null;
@@ -624,7 +624,7 @@ export interface NativeConversationSnapshotV2 {
 
 export interface NativeConversationSnapshotV2Page<T> {
   schemaVersion: 2;
-  structureGeneration: '2026-08-29-conversation-snapshot-v2-recovered-request-input';
+  structureGeneration: '2026-08-31-conversation-snapshot-v2-active-turn-tail';
   conversationId: string;
   kind: 'timeline' | 'model_history' | 'process' | 'commands' | 'resources' | 'change_files';
   throughEventSeq: number;
@@ -743,7 +743,7 @@ export interface NativeConversationChangeFileV2Item {
 
 export interface NativeConversationContentV2Page {
   schemaVersion: 2;
-  structureGeneration: '2026-08-29-conversation-snapshot-v2-recovered-request-input';
+  structureGeneration: '2026-08-31-conversation-snapshot-v2-active-turn-tail';
   conversationId: string;
   kind: 'timeline_payload' | 'model_content' | 'process_detail' | 'change_file_diff';
   mimeType: string;

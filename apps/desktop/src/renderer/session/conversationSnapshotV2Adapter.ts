@@ -438,7 +438,7 @@ export function updateConversationV2Paging(snapshot: NativeConversationSnapshot,
 function assertSnapshotV2Identity(snapshot: NativeConversationSnapshotV2, history: NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>, choice: NativeConversationChoice): void {
   if (
     snapshot.schemaVersion !== 2 ||
-    snapshot.structureGeneration !== '2026-08-29-conversation-snapshot-v2-recovered-request-input' ||
+    snapshot.structureGeneration !== '2026-08-31-conversation-snapshot-v2-active-turn-tail' ||
     snapshot.conversationSchemaGeneration !== '2026-08-16-unified-conversation-segments' ||
     history.schemaVersion !== 2 ||
     history.structureGeneration !== snapshot.structureGeneration ||

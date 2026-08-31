@@ -2,7 +2,7 @@ import type { ZeusDatabasePort } from './databasePort.js';
 import { type ArtifactRef, type ArtifactStore, artifactStoreGeneration } from './artifactStore.js';
 import { conversationSchemaGeneration, type ConversationSessionMetricsSnapshot, readConversationSessionMetrics } from './conversationExecutionStore.js';
 
-export const conversationSnapshotV2StructureGeneration = '2026-08-29-conversation-snapshot-v2-recovered-request-input';
+export const conversationSnapshotV2StructureGeneration = '2026-08-31-conversation-snapshot-v2-active-turn-tail';
 
 export const conversationSnapshotV2Limits = {
   snapshot: {
@@ -137,7 +137,7 @@ export interface ConversationSnapshotV2TurnSummary {
   agentKind: string | null;
   openingUserMessage: ConversationModelHistoryPageItem | null;
   /**
-   * 活动轮次尚未形成 confirmed model history 时的有界可见投影。
+   * 活动轮次最近过程的有界可见投影，覆盖尚未确认及刚完成的条目。
    * 这里只暴露 Snapshot V2 需要的展示字段，不把 Provider 摄取表直接当成客户端协议。
    */
   activeItems?: ConversationSnapshotV2ActiveItem[];
@@ -156,7 +156,7 @@ export interface ConversationSnapshotV2ActiveItem {
   turnId: string;
   providerItemId: string;
   itemType: string;
-  status: 'in_progress';
+  status: 'in_progress' | 'completed' | 'failed';
   phase: 'prework' | 'final_answer';
   text: BoundedContentProjection;
   payload: BoundedContentProjection;
@@ -1248,6 +1248,7 @@ export class ConversationSnapshotV2Repository {
       native_item_id: string | null;
       provider_item_id: string;
       item_type: string;
+      status: 'in_progress' | 'completed' | 'failed';
       phase: 'prework' | 'final_answer';
       text_preview: string;
       text_bytes: number;
@@ -1258,14 +1259,15 @@ export class ConversationSnapshotV2Repository {
       completed_at: string | null;
       updated_at: string;
     }>(
-      `SELECT id, native_item_id, provider_item_id, item_type, phase,
+      `SELECT id, native_item_id, provider_item_id, item_type, status, phase,
               substr(text_projection, 1, ?) AS text_preview,
               length(CAST(text_projection AS BLOB)) AS text_bytes,
               substr(payload_projection_json, 1, ?) AS payload_preview,
               length(CAST(payload_projection_json AS BLOB)) AS payload_bytes,
               projection_truncated, started_at, completed_at, updated_at
          FROM conversation_provider_item_states
-        WHERE conversation_id = ? AND turn_id = ? AND status = 'in_progress'
+        WHERE conversation_id = ? AND turn_id = ?
+          AND (phase = 'prework' OR status = 'in_progress')
         ORDER BY
           CASE
             WHEN COALESCE(native_item_id, provider_item_id) GLOB 'item-[0-9]*'
@@ -1286,7 +1288,7 @@ export class ConversationSnapshotV2Repository {
         turnId,
         providerItemId: row.provider_item_id,
         itemType: row.item_type,
-        status: 'in_progress' as const,
+        status: row.status,
         phase: row.phase,
         text: activeItemProjection(row.text_preview, row.text_bytes, row.projection_truncated === 1),
         payload: activeItemProjection(row.payload_preview, row.payload_bytes, row.projection_truncated === 1),
