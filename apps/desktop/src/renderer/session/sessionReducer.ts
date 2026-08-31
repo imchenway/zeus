@@ -17,6 +17,7 @@ import type {
   NativeSessionMetricsSnapshot,
   NativeSessionState,
   NativeTokenUsageSnapshot,
+  NativeTurnFailureSnapshot,
   NativeTurnPlanSnapshot,
   NativeTurnSnapshot,
   NativeUnifiedUsageSnapshot,
@@ -1005,7 +1006,7 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
         providerTurnId: existingTurn?.providerTurnId ?? turnId,
         submissionId: existingTurn?.submissionId ?? stringValue(payload.submissionId),
         status,
-        error: existingTurn?.error ?? null,
+        error: nativeTurnFailureFrom(payload.error) ?? existingTurn?.error ?? null,
         plan: existingTurn?.plan ?? null,
         startedAt: existingTurn?.startedAt ?? stringValue(payload.startedAt),
         completedAt,
@@ -1932,6 +1933,21 @@ function nativeTurnPlanFrom(value: unknown): NativeTurnPlanSnapshot | null {
   });
   if (steps.length !== value.steps.length) return null;
   return { explanation: value.explanation, steps };
+}
+
+function nativeTurnFailureFrom(value: unknown): NativeTurnFailureSnapshot | null {
+  if (!isRecord(value)) return null;
+  const category = value.category;
+  if (category !== 'authentication' && category !== 'rate_limit' && category !== 'network' && category !== 'configuration' && category !== 'permission' && category !== 'unknown') return null;
+  if (typeof value.message !== 'string' || !Array.isArray(value.additionalDetails) || value.additionalDetails.some((detail) => typeof detail !== 'string')) return null;
+  if (!(value.code === null || typeof value.code === 'string') || !(value.providerStatus === null || typeof value.providerStatus === 'string')) return null;
+  return {
+    category,
+    code: value.code,
+    message: value.message,
+    providerStatus: value.providerStatus,
+    additionalDetails: value.additionalDetails,
+  };
 }
 
 function stringValue(value: unknown): string | null {
