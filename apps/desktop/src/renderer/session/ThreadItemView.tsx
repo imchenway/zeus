@@ -48,8 +48,8 @@ const copy = {
     error: '本轮错误',
     unknown: '未知 provider 项',
     thinking: '正在思考',
-    expand: '展开完整消息',
-    collapse: '收起消息',
+    expand: '展开全文',
+    collapse: '收起',
     copy: '复制消息',
     copied: '已复制',
     copyCommand: '复制命令',
@@ -95,8 +95,8 @@ const copy = {
     error: 'Turn error',
     unknown: 'Unknown provider item',
     thinking: 'Thinking',
-    expand: 'Expand full message',
-    collapse: 'Collapse message',
+    expand: 'Expand full text',
+    collapse: 'Collapse',
     copy: 'Copy message',
     copied: 'Copied',
     copyCommand: 'Copy command',
@@ -448,8 +448,8 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   // 实时事件接管后 reducer 会清掉标记，后续文本仍按 streaming 平滑更新。
   const markdownPhase = props.item.payload.v2SnapshotContentComplete === true ? 'final' : conversationMarkdownPhaseForStatus(props.item.status);
   const streamActive = naturalLanguageStream && markdownPhase === 'streaming';
-  const longUserMessage = role === 'user' && itemText.length > 640;
   const contextOnlyPlaceholder = role === 'user' && conversationContext ? isConversationContextPlaceholder(itemText) : false;
+  const longUserMessage = role === 'user' && !taskPushLayout && !contextOnlyPlaceholder && itemText.length > 640;
   const visibleText = contextOnlyPlaceholder ? '' : longUserMessage && !expanded ? `${itemText.slice(0, 620).trimEnd()}…` : itemText;
   const label = roleLabel(role, labels);
   const command = normalizeType(props.item.type) === 'commandexecution' || normalizeType(props.item.type) === 'command';
@@ -625,16 +625,23 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
           onVisibleContentChange={props.onVisibleContentChange}
         />
       ) : role === 'user' && visibleText ? (
-        <ConversationMarkdown
-          text={visibleText}
-          streamId={`thread-item:${props.item.itemId}`}
-          phase="final"
-          language={props.language}
-          resources={props.item.resources}
-          onOpenResource={props.onOpenResource}
-          onLoadResourcePreview={props.onLoadResourcePreview}
-          onVisibleContentChange={props.onVisibleContentChange}
-        />
+        <div className="session-user-message-content">
+          <ConversationMarkdown
+            text={visibleText}
+            streamId={`thread-item:${props.item.itemId}`}
+            phase="final"
+            language={props.language}
+            resources={props.item.resources}
+            onOpenResource={props.onOpenResource}
+            onLoadResourcePreview={props.onLoadResourcePreview}
+            onVisibleContentChange={props.onVisibleContentChange}
+          />
+          {longUserMessage ? (
+            <button type="button" className="session-user-message-disclosure" aria-expanded={expanded} onClick={() => setExpanded((current) => !current)}>
+              {expanded ? labels.collapse : labels.expand}
+            </button>
+          ) : null}
+        </div>
       ) : role === 'notice' && visibleText ? (
         <div className="session-service-tier-notice" role="status">
           <ConversationMarkdown
@@ -734,11 +741,6 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
               </MessageIconButton>
               {messageTimestamp && timestampSource ? <MessageTimestamp dateTime={timestampSource} value={messageTimestamp} /> : null}
             </>
-          ) : null}
-          {role === 'user' && longUserMessage ? (
-            <MessageIconButton label={expanded ? labels.collapse : labels.expand} expanded={expanded} onClick={() => setExpanded((current) => !current)}>
-              <MessageExpandIcon collapsed={expanded} />
-            </MessageIconButton>
           ) : null}
           {canEdit ? (
             <MessageIconButton
