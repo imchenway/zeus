@@ -42,10 +42,58 @@ export interface ProjectGitWorkbenchProps {
   language: 'zh-CN' | 'en-US';
 }
 
+interface ProjectGitWorkbenchCacheEntry {
+  snapshot: ProjectGitWorkbenchSnapshot | null;
+  request: Promise<ProjectGitWorkbenchSnapshot> | null;
+}
+
+const projectGitWorkbenchCacheLimit = 3;
+const projectGitWorkbenchCache = new WeakMap<ProjectGitWorkbenchProps['client'], Map<string, ProjectGitWorkbenchCacheEntry>>();
+
+function projectGitWorkbenchCacheEntry(client: ProjectGitWorkbenchProps['client'], projectId: string): ProjectGitWorkbenchCacheEntry {
+  let projectCache = projectGitWorkbenchCache.get(client);
+  if (!projectCache) {
+    projectCache = new Map();
+    projectGitWorkbenchCache.set(client, projectCache);
+  }
+  const current = projectCache.get(projectId);
+  if (current) {
+    projectCache.delete(projectId);
+    projectCache.set(projectId, current);
+    return current;
+  }
+  const created: ProjectGitWorkbenchCacheEntry = { snapshot: null, request: null };
+  projectCache.set(projectId, created);
+  // ponytail: 只保留最近 3 个项目；实测多项目往返仍冷加载时再改为按字节预算淘汰。
+  const oldestProjectId = projectCache.keys().next().value;
+  if (projectCache.size > projectGitWorkbenchCacheLimit && oldestProjectId) projectCache.delete(oldestProjectId);
+  return created;
+}
+
+function readCachedProjectGitWorkbench(client: ProjectGitWorkbenchProps['client'], projectId: string): ProjectGitWorkbenchSnapshot | null {
+  return projectGitWorkbenchCacheEntry(client, projectId).snapshot;
+}
+
+function requestProjectGitWorkbench(client: ProjectGitWorkbenchProps['client'], projectId: string): Promise<ProjectGitWorkbenchSnapshot> {
+  const entry = projectGitWorkbenchCacheEntry(client, projectId);
+  if (entry.request) return entry.request;
+  const request = client
+    .loadProjectGitWorkbench(projectId)
+    .then((snapshot) => {
+      entry.snapshot = snapshot;
+      return snapshot;
+    })
+    .finally(() => {
+      if (entry.request === request) entry.request = null;
+    });
+  entry.request = request;
+  return request;
+}
+
 export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const zh = props.language === 'zh-CN';
-  const [snapshot, setSnapshot] = useState<ProjectGitWorkbenchSnapshot | null>(null);
-  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [snapshot, setSnapshot] = useState<ProjectGitWorkbenchSnapshot | null>(() => readCachedProjectGitWorkbench(props.client, props.project.id));
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>(() => (snapshot ? 'ready' : 'loading'));
   const [error, setError] = useState<string | null>(null);
   useApplicationErrorDialog(error, {
     language: zh ? 'zh-CN' : 'en',
@@ -86,11 +134,15 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   );
 
   useEffect(() => {
-    void loadWorkbench();
+    if (!snapshot) void loadWorkbench();
     return () => {
       requestVersionRef.current += 1;
     };
-  }, [props.project.id]);
+  }, [props.client, props.project.id, snapshot]);
+
+  useEffect(() => {
+    if (snapshot?.projectId === props.project.id) projectGitWorkbenchCacheEntry(props.client, props.project.id).snapshot = snapshot;
+  }, [props.client, props.project.id, snapshot]);
 
   useEffect(() => {
     window.localStorage.setItem(`zeus.project-git-tab-v2:${props.project.id}`, tab);
@@ -159,7 +211,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
     setLoadState('loading');
     setError(null);
     try {
-      const next = await props.client.loadProjectGitWorkbench(props.project.id);
+      const next = await requestProjectGitWorkbench(props.client, props.project.id);
       if (version !== requestVersionRef.current) return;
       setSnapshot(next);
       setSelectedRepositoryId((current) => (next.repositories.some((repository) => repository.id === current) ? current : (next.repositories[0]?.id ?? '')));
