@@ -1,138 +1,158 @@
-import { type CodexAppServerEvent, type CodexResponsesRuntime, type CodexServerRequestResponse, type CodexThreadGoal, modelRef, parseModelRef, toCodexWireReasoningEffort } from '@zeus/ai-runtime';
-import { buildTaskPushInputParts, type CodexAdditionalContextEntry, type CodexBootstrapAdditionalContext, type TaskPushMessageLayout } from '@zeus/shared';
 import {
-  type ConversationCollaborationMode,
-  ConversationGoalRepository,
-  type ConversationNextTurnSettings,
-  ConversationPlanActionRepository,
-  ConversationProviderItemRepository,
-  ConversationProviderSyncCheckpointRepository,
-  ConversationRepository,
-  ConversationResourceRepository,
-  ConversationServerRequestRepository,
-  ProviderEventReceiptRepository,
-  type ZeusConversationItemRecord,
-  type ZeusConversationServerRequestRecord,
-  type ZeusConversationSubmissionRecord,
-  type ZeusConversationTurnRecord,
-  type ZeusConversationWithMessagesRecord,
+    type CodexAppServerEvent,
+    type CodexResponsesRuntime,
+    type CodexServerRequestResponse,
+    type CodexThreadGoal,
+    modelRef,
+    parseModelRef
+} from '@zeus/ai-runtime';
+import {buildTaskPushInputParts, type CodexAdditionalContextEntry, type TaskPushMessageLayout} from '@zeus/shared';
+import {
+    type ConversationCollaborationMode,
+    type ConversationNextTurnSettings,
+    ConversationProviderItemRepository,
+    ConversationServerRequestRepository,
+    type ZeusConversationItemRecord,
+    type ZeusConversationServerRequestRecord,
+    type ZeusConversationSubmissionRecord,
+    type ZeusConversationTurnRecord,
+    type ZeusConversationWithMessagesRecord,
 } from '@zeus/storage';
-import { randomUUID } from 'node:crypto';
-import { realpathSync, statSync } from 'node:fs';
-import { isAbsolute, resolve } from 'node:path';
-import { createCodexDynamicToolApplication } from './codexDynamicToolApplication.js';
-import { createZeusToolBroker } from './zeusToolRegistry.js';
-import { finalizeCodexPendingInteractionsForShutdown } from './codexFinalShutdownApplication.js';
-import { codexGoalEventKind, createCodexGoalApplication, ensureInitialCodexGoal } from './codexGoalApplication.js';
-import { createCodexInteractionRecoveryApplication, isInteractionRecoveryCheckpointRequest } from './codexInteractionRecoveryApplication.js';
-import type {
-  ArchiveConversationInput,
-  CodexNativeConversationCoordinator,
-  ConversationDispatchContext,
-  InterruptNativeTurnInput,
-  NativeAcceptedOperation,
-  NativeConversationAttachmentInput,
-  NativeConversationRunState,
-  NativeConversationSkillInput,
-  NativeProviderWriteLifecycle,
-  NativeQuestionAnswerAttachmentInput,
-  NativeQueueSnapshot,
-  NativeQueueWaitReason,
-  NativeSubmissionRecoveryKind,
-  NativeTurnResult,
-  NativeTurnResultWaiter,
-  RecoverNativeQueueInput,
-  RespondNativeRequestInput,
-  RespondPlanImplementationRequestInput,
-  RestoreArchivedConversationInput,
-  SendQueuedNowInput,
-  SnoozeNativeRequestInput,
-  StartNativeEphemeralConversationInput,
-  StartProjectConversationInput,
-  StartTaskConversationInput,
-  SteerNativeMessageInput,
-  SubmitNativeMessageInput,
-  WaitForNativeTurnResultInput,
-} from './codexNativeConversationContracts.js';
-import type { CreateCodexNativeConversationCoordinatorOptions } from './codexNativeConversationCoordinatorPorts.js';
-import { projectLocallyAcceptedUserMessage } from './localUserSubmissionProjection.js';
-import { projectNativeConversationTitle } from './nativeConversationTitle.js';
+import {randomUUID} from 'node:crypto';
+import {realpathSync, statSync} from 'node:fs';
+import {isAbsolute, resolve} from 'node:path';
+import {createCodexDynamicToolApplication} from './codexDynamicToolApplication.js';
+import {createZeusToolBroker} from './zeusToolRegistry.js';
+import {finalizeCodexPendingInteractionsForShutdown} from './codexFinalShutdownApplication.js';
+import {codexGoalEventKind, createCodexGoalApplication} from './codexGoalApplication.js';
 import {
-  buildInteractionRecoveryContinuation,
-  buildInteractionRecoveryDisplayText,
-  conversationSubmissionDispatchEnvelope,
-  coordinatorError,
-  developerInstructionsFor,
-  evaluateCommandApproval,
-  existingDirectoryRealpath,
-  failedTurnErrorFromRecord,
-  hasAuditableFileApprovalTarget,
-  invalidServerRequestResponse,
-  isAdvertisedCommandDecision,
-  isExecpolicyAmendmentDecision,
-  isGrantDecision,
-  isInsideRoot,
-  isProviderThreadAlreadyAvailableError,
-  isProviderThreadArchivedError,
-  isProviderTurnAlreadyEndedSteerError,
-  isRecord,
-  isSupportedLocalImageAttachment,
-  isSupportedPermissionGrant,
-  isSupportedPermissionRequest,
-  isValidMcpElicitationResponse,
-  parseJsonRecord,
-  parseStoredConversationSubmissionDispatchEnvelope,
-  providerEventReceipt,
-  providerPermissionProfile,
-  providerTurnIdFrom,
-  requestHash,
-  requireString,
-  serializeError,
-  stripRequestTransport,
-  submissionDeliveryConfirmedForTurn,
-  submissionErrorSnapshot,
-  toRecoverySubmissionError,
-  validatePermissionGrant,
+    createCodexInteractionRecoveryApplication,
+    isInteractionRecoveryCheckpointRequest
+} from './codexInteractionRecoveryApplication.js';
+import type {
+    ArchiveConversationInput,
+    CodexNativeConversationCoordinator,
+    ConversationDispatchContext,
+    CreateCodexNativeConversationCoordinatorOptions,
+    InterruptNativeTurnInput,
+    NativeAcceptedOperation,
+    NativeConversationAttachmentInput,
+    NativeConversationRunState,
+    NativeConversationSkillInput,
+    NativeQuestionAnswerAttachmentInput,
+    NativeQueueSnapshot,
+    NativeQueueWaitReason,
+    NativeSessionCommandInput,
+    NativeSubmissionRecoveryKind,
+    NativeTurnCommandInput,
+    NativeTurnResult,
+    NativeTurnResultWaiter,
+    RecoverNativeQueueInput,
+    RespondNativeRequestInput,
+    RespondPlanImplementationRequestInput,
+    RestoreArchivedConversationInput,
+    SendQueuedNowInput,
+    SnoozeNativeRequestInput,
+    StartNativeEphemeralConversationInput,
+    StartProjectConversationInput,
+    StartTaskConversationInput,
+    SteerNativeMessageInput,
+    SubmitNativeMessageInput,
+    WaitForNativeTurnResultInput,
+} from './codexNativeConversationContracts.js';
+import {projectLocallyAcceptedUserMessage} from './localUserSubmissionProjection.js';
+import {projectNativeConversationTitle} from './nativeConversationTitle.js';
+import {
+    buildInteractionRecoveryContinuation,
+    buildInteractionRecoveryDisplayText,
+    coordinatorError,
+    evaluateCommandApproval,
+    existingDirectoryRealpath,
+    failedTurnErrorFromRecord,
+    hasAuditableFileApprovalTarget,
+    invalidServerRequestResponse,
+    isAdvertisedCommandDecision,
+    isExecpolicyAmendmentDecision,
+    isGrantDecision,
+    isInsideRoot,
+    isProviderThreadAlreadyAvailableError,
+    isProviderThreadArchivedError,
+    isProviderTurnAlreadyEndedSteerError,
+    isRecord,
+    isSupportedLocalImageAttachment,
+    isSupportedPermissionGrant,
+    isSupportedPermissionRequest,
+    isValidMcpElicitationResponse,
+    parseJsonRecord,
+    providerEventReceipt,
+    providerTurnIdFrom,
+    requestHash,
+    requireString,
+    serializeError,
+    stripRequestTransport,
+    submissionDeliveryConfirmedForTurn,
+    submissionErrorSnapshot,
+    toRecoverySubmissionError,
+    validatePermissionGrant,
 } from './codexNativeConversationPolicy.js';
-import { parseCanonicalRequestUserInputQuestions, validateCanonicalRequestUserInputAnswers } from './codexNativeRuiValidation.js';
-import { createCodexExternalRequestAnswerRecovery } from './codexExternalRequestAnswerRecovery.js';
-import { createCodexModelRequestTimingTracker } from './codexModelRequestTiming.js';
-import { assertCallerDoesNotOverrideCompiledContext, mergeCodexAdditionalContext } from './codexNativeContextProtocol.js';
-import { contextFromPersistedConversation, contextFromPersistedSubmission, emitPluginCompactionHook, prepareRecoveredCodexPlugins } from './codexConversationDispatchContext.js';
-import { createCodexNativeConversationAccess } from './codexNativeConversationAccess.js';
-import { type PersistedSubmissionInput, readNativeSubmissionRecoveryKind, readNativeSubmissionSkill, readNativeSubmissionTaskPushLayout } from './nativeConversationSubmissionInputs.js';
-import { inferNativeConversationRunState, interruptedQueueSubmissions } from './codexNativeRunStateProjection.js';
-import { chooseNativeUserMessageContent, type ResolvedNativeUserMessageSubmission, resolveNativeUserMessageSubmission } from './codexNativeUserMessageProjection.js';
-import { runCodexPortableContextCompaction } from './codexPortableContextCompaction.js';
-import { CodexProviderCommandApplicationService, type CodexProviderCommandOperation } from './codexProviderCommandApplication.js';
-import { codexProviderEventIdentity, createCodexProviderEventFlow } from './codexProviderEventFlow.js';
-import { projectCodexProviderEvent } from './codexProviderEventProjection.js';
-import { createCodexProviderHistoryProjection } from './codexProviderHistoryProjection.js';
-import { createCodexProviderThreadAuthorityApplication } from './codexProviderThreadAuthority.js';
-import { type CodexProviderStopRequestResult, createCodexProviderStopRecoveryApplication } from './codexProviderStopRecoveryApplication.js';
-import { createCodexRemoteControlConversationSyncApplication } from './codexRemoteControlConversationSyncApplication.js';
-import { createCodexRecoveryStateApplication } from './codexRecoveryStateApplication.js';
-import { createCodexTurnResultRecoveryApplication } from './codexTurnResultRecoveryApplication.js';
-import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
-import { conversationToolResultDynamicTools } from './conversationPortableContext.js';
-import { ConversationQueueCoreMutationApplication } from './conversationQueueCoreMutationApplication.js';
-import { createCodexRecoveredUnsentQueueApplication, hasRecoveredUnsentSubmission } from './codexRecoveredUnsentQueueApplication.js';
-import { normalizeConversationResources, toConversationResource } from './conversationResources.js';
-import { archiveUnboundConversationLocally, restoreUnboundConversationLocally } from './unboundConversationArchiveApplication.js';
-import { persistThreadProviderSettings as persistProviderThreadMetadata, threadPath } from './codexThreadMetadataProjection.js';
-import { TurnProcessProjector } from './turnProcessProjector.js';
-import { createCodexServiceTierDowngrade, isServiceTierUnavailableError } from './codexServiceTierDowngrade.js';
-import { createCodexPluginToolApprovalApplication } from './codexPluginToolApprovalApplication.js';
+import {
+    parseCanonicalRequestUserInputQuestions,
+    validateCanonicalRequestUserInputAnswers
+} from './codexNativeRuiValidation.js';
+import {createCodexExternalRequestAnswerRecovery} from './codexExternalRequestAnswerRecovery.js';
+import {createCodexModelRequestTimingTracker} from './codexModelRequestTiming.js';
+import {mergeCodexAdditionalContext} from './codexNativeContextProtocol.js';
+import {
+    contextFromPersistedConversation,
+    contextFromPersistedSubmission,
+    prepareRecoveredCodexPlugins
+} from './codexConversationDispatchContext.js';
+import {createCodexNativeConversationAccess} from './codexNativeConversationAccess.js';
+import {createCodexNativeDispatchPipeline} from './codexNativeDispatchPipeline.js';
+import {
+    type PersistedSubmissionInput,
+    readNativeSubmissionRecoveryKind,
+    readNativeSubmissionSkill,
+    readNativeSubmissionTaskPushLayout
+} from './nativeConversationSubmissionInputs.js';
+import {inferNativeConversationRunState} from './codexNativeRunStateProjection.js';
+import {
+    chooseNativeUserMessageContent,
+    type NativeUserMessageProjection,
+    resolveNativeUserMessageSubmission
+} from './codexNativeUserMessageProjection.js';
+import {CodexProviderCommandApplicationService} from './codexProviderCommandApplication.js';
+import {codexProviderEventIdentity, createCodexProviderEventFlow} from './codexProviderEventFlow.js';
+import {projectCodexProviderEvent} from './codexProviderEventProjection.js';
+import {createCodexProviderHistoryProjection} from './codexProviderHistoryProjection.js';
+import {createCodexProviderThreadAuthorityApplication} from './codexProviderThreadAuthority.js';
+import {
+    type CodexProviderStopRequestResult,
+    createCodexProviderStopRecoveryApplication
+} from './codexProviderStopRecoveryApplication.js';
+import {createCodexRemoteControlConversationSyncApplication} from './codexRemoteControlConversationSyncApplication.js';
+import {createCodexRecoveryStateApplication} from './codexRecoveryStateApplication.js';
+import type {ConversationSegmentLifecycle} from './conversationExecutionCoordinator.js';
+import {ConversationQueueCoreMutationApplication} from './conversationQueueCoreMutationApplication.js';
+import {
+    createCodexRecoveredUnsentQueueApplication,
+    hasRecoveredUnsentSubmission
+} from './codexRecoveredUnsentQueueApplication.js';
+import {normalizeConversationResources, toConversationResource} from './conversationResources.js';
+import {
+    archiveUnboundConversationLocally,
+    restoreUnboundConversationLocally
+} from './unboundConversationArchiveApplication.js';
+import {
+    persistThreadProviderSettings as persistProviderThreadMetadata,
+    threadPath
+} from './codexThreadMetadataProjection.js';
+import {TurnProcessProjector} from './turnProcessProjector.js';
+import {createCodexServiceTierDowngrade} from './codexServiceTierDowngrade.js';
+import {createCodexPluginToolApprovalApplication} from './codexPluginToolApprovalApplication.js';
 
 export { filterCompatibilitySnapshotItemAliases } from './codexProviderHistoryProjection.js';
-export type { CreateCodexNativeConversationCoordinatorOptions } from './codexNativeConversationCoordinatorPorts.js';
-
-interface NativeConversationDispatchLease {
-  submissionId: string;
-  lifecycles: Set<NativeProviderWriteLifecycle>;
-  rpcStartedResourceId: string | null;
-  promise?: Promise<NativeAcceptedOperation>;
-}
+export type {CreateCodexNativeConversationCoordinatorOptions} from './codexNativeConversationContracts.js';
 
 export interface CodexNativeConversationRuntime extends CodexNativeConversationCoordinator {
   startEphemeralConversation(input: StartNativeEphemeralConversationInput): Promise<NativeAcceptedOperation>;
@@ -149,19 +169,11 @@ export interface CodexNativeConversationRuntime extends CodexNativeConversationC
 const providerEventErrorsSettingKey = 'codex.native.provider_event_errors';
 const providerEventHotReceiptLimit = 10_000;
 
-function isRuntimeRejected(error: unknown): boolean {
-  return isRecord(error) && error.dispatchDisposition === 'runtime_rejected';
-}
-
 export function createCodexNativeConversationCoordinator(options: CreateCodexNativeConversationCoordinatorOptions): CodexNativeConversationRuntime {
-  const now = options.now ?? (() => new Date().toISOString());
-  const operationId = options.operationId ?? randomUUID;
+    const now = options.now;
+    const operationId = randomUUID;
   const { requireConversation, requireProductConversation, requireOwnedSubmission } = createCodexNativeConversationAccess(options);
-  const planActions = options.planActions ?? new ConversationPlanActionRepository(options.db);
-  const goals = options.goals ?? new ConversationGoalRepository(options.db);
-  const resources = options.resources ?? new ConversationResourceRepository(options.db);
-  const receipts = options.receipts ?? new ProviderEventReceiptRepository(options.db);
-  const syncCheckpoints = options.syncCheckpoints ?? new ConversationProviderSyncCheckpointRepository(options.db);
+    const {planActions, goals, resources, receipts, syncCheckpoints} = options;
   const runStates = new Map<string, NativeConversationRunState>();
   const { markConversationProviderArchived, markConversationRecoveryRequired, markSubmissionRecoveryRequired } = createCodexRecoveryStateApplication({
     conversations: options.conversations,
@@ -174,7 +186,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   });
   const contexts = new Map<string, ConversationDispatchContext>();
   const executionContextPromises = new Map<string, Promise<void>>();
-  const dispatchLeases = new Map<string, NativeConversationDispatchLease>();
   const hotReceiptIdentities = new Set<string>();
   const maintainedReceiptGenerations = new Set<string>();
   const completedTurnResults = new Map<string, NativeTurnResult>();
@@ -190,8 +201,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   const reconciledConversationIds = new Set<string>();
   const completedPlanRecoverySettingKey = 'codex.native.completed_plan_recovery';
   const completedPlanRecoveryRevision = '20260815_completed_plan_projection';
-  const providerHistoryReconcilePageLimit = 20;
-  const providerHistoryReconcileTurnLimit = 2_000;
   let hotReceiptGenerationId: string | null = null;
   let queueDrainPromise: Promise<void> | null = null;
   let handoffPromise: Promise<void> | null = null;
@@ -311,19 +320,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     }
   }
 
-  function requiresImmediatePersist(event: CodexAppServerEvent, createdPlanImplementationRequest: unknown): boolean {
-    return (
-      event.requestId !== undefined ||
-      event.method === 'turn/started' ||
-      event.method === 'turn/completed' ||
-      event.method === 'thread/goal/updated' ||
-      event.method === 'thread/goal/cleared' ||
-      event.method === 'serverRequest/resolved' ||
-      event.method === 'rawResponse/completed' ||
-      createdPlanImplementationRequest !== null
-    );
-  }
-
   function syncItemResources(
     conversation: ZeusConversationWithMessagesRecord,
     turn: ZeusConversationTurnRecord,
@@ -332,7 +328,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     text: string,
     timestamp: string,
   ) {
-    const projectRoot = contexts.get(conversation.id)?.projectLocalPath ?? options.getProjectRoot?.(conversation.projectId) ?? null;
+      const projectRoot = contexts.get(conversation.id)?.projectLocalPath ?? options.getProjectRoot(conversation.projectId) ?? null;
     if (!projectRoot) return [];
     const submission = item.itemType === 'userMessage' ? submissionForProviderUserItem(conversation.id, turn, payload) : undefined;
     const resourcePayload = submission ? { ...payload, attachments: submissionAttachments(submission) } : payload;
@@ -344,7 +340,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       item,
       payload: resourcePayload,
       text,
-      trustedAttachmentRoots: options.trustedAttachmentRoots ?? [],
+        trustedAttachmentRoots: options.trustedAttachmentRoots,
       generatedImageRoot: options.generatedImageRoot,
       now: timestamp,
     });
@@ -384,16 +380,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     return typeof options.commandPath === 'function' ? options.commandPath() : options.commandPath;
   }
 
-  function executeSessionCommand<T>(input: {
-    operation: Extract<CodexProviderCommandOperation, 'goal_set' | 'goal_clear' | 'thread_archive' | 'thread_unarchive'>;
-    conversationId: string;
-    threadId: string;
-    commandKey: string;
-    requestIdentity: unknown;
-    invoke(traceIdentity: string | null): Promise<T>;
-    recoverAccepted?(nativeSessionId: string): Promise<T>;
-    mutateBusinessState?(result: T): void;
-  }): Promise<T> {
+    function executeSessionCommand<T>(input: NativeSessionCommandInput<T>): Promise<T> {
     return providerCommands.executeSession({
       ...input,
       scope: { kind: 'product_conversation', id: input.conversationId },
@@ -405,19 +392,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     });
   }
 
-  function executeTurnCommand<T>(input: {
-    operation: Extract<CodexProviderCommandOperation, 'turn_steer' | 'turn_interrupt' | 'server_request_response'>;
-    conversationId: string;
-    threadId: string;
-    turnId: string;
-    commandKey: string;
-    requestIdentity: unknown;
-    issuedAt?: string;
-    providerGenerationId?: string | null;
-    invoke(traceIdentity: string | null): Promise<T>;
-    isExplicitRejection?(error: unknown): boolean;
-    mutateBusinessState?(result: T): void;
-  }): Promise<T> {
+    function executeTurnCommand<T>(input: NativeTurnCommandInput<T>): Promise<T> {
     const turnScopeId = options.turns.listByConversation(input.conversationId).find((turn) => turn.providerTurnId === input.turnId)?.id ?? input.turnId;
     return providerCommands.executeTurn({
       ...input,
@@ -438,11 +413,10 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   const contextFromSubmission = (submission: ZeusConversationSubmissionRecord): ConversationDispatchContext => contextFromPersistedSubmission(submission, options.conversations.getById(submission.conversationId));
 
   async function ensureConversationExecutionContext(conversationId: string, mode: 'reconcile' | 'submit' | 'dispatch' | 'recover_queue' | 'restore', allowProductConversation = false): Promise<void> {
-    if (!options.ensureExecutionContext) return;
     const existing = executionContextPromises.get(conversationId);
     if (existing) return existing;
     const promise = (async () => {
-      const resolved = await options.ensureExecutionContext!({ conversationId, mode });
+        const resolved = await options.ensureExecutionContext({conversationId, mode});
       if (!resolved) return;
       const conversation = allowProductConversation ? requireProductConversation(conversationId) : requireConversation(conversationId);
       const current = contexts.get(conversationId) ?? contextFromConversation(conversation);
@@ -534,7 +508,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   function submissionProviderInput(submission: ZeusConversationSubmissionRecord, context: ConversationDispatchContext): Array<Record<string, unknown>> {
     const text = volatileSubmissionText.get(submission.id) ?? submissionText(submission);
     const attachments = submissionAttachments(submission);
-    const allowedRoots = [...(context.allowedAttachmentRoots?.length ? context.allowedAttachmentRoots : [context.projectLocalPath]), ...(options.trustedAttachmentRoots ?? [])]
+      const allowedRoots = [...(context.allowedAttachmentRoots?.length ? context.allowedAttachmentRoots : [context.projectLocalPath]), ...options.trustedAttachmentRoots]
       .map(existingDirectoryRealpath)
       .filter((root, index, roots): root is string => Boolean(root) && roots.indexOf(root) === index);
     if (allowedRoots.length === 0 && attachments.length > 0) {
@@ -916,7 +890,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   /** 创建任何产品会话前复验账号，避免先持久化一条必然失败的占位会话。 */
   async function assertCodexAccountReady(modelSourceId: string | null, model: string): Promise<void> {
-    if (options.resolveResponsesRuntime && (await options.resolveResponsesRuntime({ modelSourceId, model }))) return;
+      if (await options.resolveResponsesRuntime({modelSourceId, model})) return;
     const account = await options.manager.readAccount({ cachedOnly: true }).catch((error: unknown) => {
       // 无本地快照时由真实 thread/turn RPC 权威认证，账号探测不再成为派发门禁。
       if (error && typeof error === 'object' && Reflect.get(error, 'code') === 'ZEUS_CODEX_ACCOUNT_SNAPSHOT_UNAVAILABLE') return null;
@@ -927,7 +901,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   }
 
   async function responsesRuntimeFor(context: Pick<ConversationDispatchContext, 'modelSourceId' | 'model'>): Promise<CodexResponsesRuntime | null> {
-    return options.resolveResponsesRuntime?.({ modelSourceId: context.modelSourceId, model: context.model }) ?? null;
+      return options.resolveResponsesRuntime({modelSourceId: context.modelSourceId, model: context.model});
   }
 
   function projectGoal(conversationId: string, goal: CodexThreadGoal, providerTurnId: string | null, occurredAt: string) {
@@ -980,8 +954,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   const { setGoal, readGoal, pauseGoal, resumeGoal, clearGoal } = createCodexGoalApplication({
     manager: options.manager,
-    goals,
     providerCommands,
+      goals,
     prepareConversation: requireGoalConversation,
     projectGoal,
     persist,
@@ -1044,7 +1018,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     if (failed) return Promise.reject(failed);
     const persistedTurn = options.turns.listByConversation(input.conversationId).find((turn) => turn.providerTurnId === input.providerTurnId);
     if (persistedTurn?.status === 'failed') return Promise.reject(failedTurnErrorFromRecord(persistedTurn));
-    const timeoutMs = input.timeoutMs ?? options.turnResultTimeoutMs ?? 60_000;
+      const timeoutMs = input.timeoutMs ?? 60_000;
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return Promise.reject(coordinatorError('ZEUS_CODEX_TURN_RESULT_TIMEOUT_INVALID', 'Native turn result timeout must be a positive number.'));
     return new Promise((resolveResult, rejectResult) => {
       const waiters = turnResultWaiters.get(key) ?? [];
@@ -1057,7 +1031,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
               waiter.timer = scheduleSegment();
               return;
             }
-            void turnResultRecovery.timeoutTurnResult(input, key).catch((error) => rejectResult(error instanceof Error ? error : new Error(String(error))));
+              void interactionRecovery.timeoutTurnResult(input, key).catch((error) => rejectResult(error instanceof Error ? error : new Error(String(error))));
           },
           Math.min(Math.max(1, deadlineAt - Date.now()), 24 * 60 * 60 * 1_000),
         );
@@ -1398,535 +1372,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     return state.type === 'ready' ? state.generationId : null;
   }
 
-  function dispatchSubmission(
-    conversationInput: ZeusConversationWithMessagesRecord | ReturnType<ConversationRepository['create']>,
-    submission: ZeusConversationSubmissionRecord,
-    providerWriteLifecycle?: NativeProviderWriteLifecycle,
-    providerArchiveRecoveryAttempted = false,
-    segmentLifecycle?: ConversationSegmentLifecycle,
-  ): Promise<NativeAcceptedOperation> {
-    // 接口直派和后台队列排空共享会话级派发租约；同一提交只能启动一次 Provider 轮次。
-    const activeLease = dispatchLeases.get(conversationInput.id);
-    if (activeLease) {
-      if (activeLease.submissionId !== submission.id) {
-        const conversation = options.conversations.getById(conversationInput.id);
-        return Promise.resolve(accepted(submission, 'queued', conversation?.providerThreadId ?? null, null));
-      }
-      attachDispatchLifecycle(activeLease, providerWriteLifecycle);
-      if (activeLease.promise) return activeLease.promise;
-    }
-
-    const lease: NativeConversationDispatchLease = {
-      submissionId: submission.id,
-      lifecycles: new Set(),
-      rpcStartedResourceId: null,
-    };
-    attachDispatchLifecycle(lease, providerWriteLifecycle);
-    const promise = dispatchSubmissionWithLease(conversationInput, submission, lease, providerArchiveRecoveryAttempted, segmentLifecycle).finally(() => {
-      if (dispatchLeases.get(conversationInput.id) === lease) dispatchLeases.delete(conversationInput.id);
-    });
-    lease.promise = promise;
-    dispatchLeases.set(conversationInput.id, lease);
-    return promise;
-  }
-
-  async function dispatchSubmissionWithLease(
-    conversationInput: ZeusConversationWithMessagesRecord | ReturnType<ConversationRepository['create']>,
-    submission: ZeusConversationSubmissionRecord,
-    lease: NativeConversationDispatchLease,
-    providerArchiveRecoveryAttempted: boolean,
-    segmentLifecycle?: ConversationSegmentLifecycle,
-    serviceTierFallbackAttempted = false,
-  ): Promise<NativeAcceptedOperation> {
-    let conversation = options.conversations.getById(conversationInput.id);
-    if (!conversation) throw coordinatorError('ZEUS_NATIVE_CONVERSATION_NOT_FOUND', 'Native conversation was not found.');
-    if (!serviceTierFallbackAttempted) await segmentLifecycle?.beginDispatch();
-    try {
-      await ensureConversationExecutionContext(conversation.id, 'dispatch', segmentLifecycle?.requiresNewSegment === true);
-      const recoveryState = runStates.get(conversation.id) ?? inferRunState(conversation);
-      if (!segmentLifecycle?.requiresNewSegment && recoveryState.type === 'paused' && recoveryState.reason === 'provider_stop_pending') {
-        return accepted(submission, 'queued', conversation.providerThreadId, null);
-      }
-      if (!segmentLifecycle?.requiresNewSegment && recoveryState.type === 'paused' && recoveryState.reason === 'recovery_required') {
-        conversation = await recoverPausedConversation(conversation.id, 'dispatch');
-      }
-    } catch (error) {
-      options.submissions.updateStatus(submission.id, 'paused', { pausedReason: 'recovery_required', error: toRecoverySubmissionError(error), updatedAt: now() });
-      runStates.set(conversation.id, { type: 'paused', reason: 'recovery_required' });
-      await persist();
-      options.broadcast('conversation.native.recovery_failed', {
-        conversationId: conversation.id,
-        providerThreadId: conversation.providerThreadId,
-        submissionId: submission.id,
-        error: serializeError(error),
-      });
-      return accepted(submission, 'recovery_required', conversation.providerThreadId, null);
-    }
-    const context = dispatchContextForSubmission(submission);
-    if (conversation.permissionMode !== context.permissionMode) options.conversations.updatePermissionMode(conversation.id, context.permissionMode);
-    if (conversation.collaborationMode !== context.workMode) options.conversations.updateCollaborationMode(conversation.id, context.workMode);
-    conversation = segmentLifecycle?.requiresNewSegment ? conversation : requireConversation(conversation.id);
-    contexts.set(conversation.id, context);
-    let candidateProviderThreadId: string | null = null;
-    let commandOutboxId: string | null = null;
-    let commandTraceIdentity: string | null = null;
-    let commandProviderGenerationId: string | null = null;
-    let providerWriteStarted = false;
-    let threadStartedForSubmission = false;
-    try {
-      if (!segmentLifecycle?.requiresNewSegment) await ensureGenerationReconciled([conversation.id]);
-      conversation = options.conversations.getById(conversation.id) ?? conversation;
-      if (!segmentLifecycle?.requiresNewSegment && conversation.providerThreadId) {
-        const reconciledState = runStates.get(conversation.id) ?? inferRunState(conversation);
-        if (reconciledState.type === 'active') {
-          providerThreadAuthority.observe(conversation.id, conversation.providerThreadId);
-          return accepted(submission, 'queued', conversation.providerThreadId, null);
-        }
-        if (reconciledState.type === 'waiting' || reconciledState.type === 'dispatching') {
-          return accepted(submission, 'queued', conversation.providerThreadId, null);
-        }
-        if (reconciledState.type !== 'idle') {
-          return accepted(submission, 'recovery_required', conversation.providerThreadId, null);
-        }
-        const authority = await providerThreadAuthority.inspect(conversation, context);
-        if (authority.type === 'active') return accepted(submission, 'queued', conversation.providerThreadId, null);
-        conversation = requireConversation(conversation.id);
-      }
-      if (hasPendingPlanImplementationRequest(conversation.id) && !planControlModeForSubmission(submission)) {
-        return accepted(submission, 'queued', conversation.providerThreadId, null);
-      }
-      const freshDispatchEnvelope = conversationSubmissionDispatchEnvelope(submission);
-      const existingDelivery = options.commandDeliveries.get(freshDispatchEnvelope.commandId);
-      const dispatchEnvelope = existingDelivery ? parseStoredConversationSubmissionDispatchEnvelope(existingDelivery.inbox.envelopeJson, freshDispatchEnvelope) : freshDispatchEnvelope;
-      const preparedDelivery = options.commandDeliveries.acceptAndPrepare({
-        envelope: dispatchEnvelope,
-        requestSha256: submission.requestHash,
-        destinationKind: 'provider_turn',
-        destinationId: 'codex:turn',
-        resourceId: submission.id,
-        occurredAt: now(),
-        mutateBusinessState: () => options.submissions.updateStatus(submission.id, 'dispatching', { dispatchedAt: now() }),
-      });
-      commandOutboxId = preparedDelivery.outbox.id;
-      commandTraceIdentity = dispatchEnvelope.traceIdentity ?? null;
-      segmentLifecycle?.bindCommandDelivery({ outboxId: preparedDelivery.outbox.id, providerId: 'codex' });
-      runStates.set(conversation.id, { type: 'dispatching', submissionId: submission.id });
-      const responsesRuntime = await responsesRuntimeFor(context);
-      if (responsesRuntime) {
-        // 外部 Responses thread 在 app-server 重启后仍需先安装进程级 Provider 配置，再恢复原生 thread。
-        await options.manager.ensureReady({
-          commandPath: commandPath(),
-          ...(options.externalAgentHome ? { externalAgentHome: options.externalAgentHome } : {}),
-          providerEnvironment: responsesRuntime.environment,
-          responsesProvider: responsesRuntime.provider,
-        });
-      }
-      let providerThreadId = segmentLifecycle?.requiresNewSegment ? null : conversation.providerThreadId;
-      commandProviderGenerationId = providerThreadId ? options.manager.generationForThread(providerThreadId) : readyGenerationId();
-      if (!providerThreadId && !commandProviderGenerationId)
-        commandProviderGenerationId = (await options.manager.ensureReady({ commandPath: commandPath(), ...(options.externalAgentHome ? { externalAgentHome: options.externalAgentHome } : {}) })).generationId;
-      if (!providerThreadId)
-        options.preflightCodexModelBudget?.({
-          modelId: context.model,
-          modelSourceId: context.modelSourceId,
-          providerGenerationId: commandProviderGenerationId,
-        });
-      const pluginPreparation = await options.plugins?.prepare({
-        conversationId: conversation.id,
-        projectId: context.projectId,
-        cwd: context.projectLocalPath,
-        model: context.model,
-        source: providerThreadId ? 'resume' : 'startup',
-        ...(providerThreadId ? {} : { prompt: submissionText(submission) }),
-      });
-      const developerInstructions = [developerInstructionsFor(context, options.browserAutomation !== undefined), pluginPreparation?.developerInstructions ?? ''].filter(Boolean).join('\n');
-      const dynamicTools = [...conversationToolResultDynamicTools(), ...(zeusToolBroker ? zeusToolBroker.registry.codexTools : []), ...(pluginPreparation?.codexDynamicTools ?? [])];
-      const providerBootstrapUtf8Bytes = Buffer.byteLength(JSON.stringify({ developerInstructions, dynamicTools }), 'utf8');
-      if (!providerThreadId) {
-        const profile = providerPermissionProfile(context);
-        const threadRequest = {
-          model: context.model,
-          ...(Object.prototype.hasOwnProperty.call(context, 'serviceTier') ? { serviceTier: context.serviceTier } : {}),
-          cwd: context.projectLocalPath,
-          sandbox: profile.sandbox,
-          approvalPolicy: profile.approvalPolicy,
-          approvalsReviewer: profile.approvalsReviewer,
-          developerInstructions,
-          ephemeral: context.ephemeral,
-          dynamicTools,
-          ...(responsesRuntime ? { responsesRuntime } : {}),
-        };
-        // thread/start 是本次父派发可能发生的第一笔 Provider 写；必须先推进父命令水位。
-        markDispatchRpcStarted(lease, submission.id);
-        const thread = await providerCommands.executeSession({
-          operation: 'thread_start',
-          commandKey: submission.id,
-          scope: { kind: 'submission', id: submission.id },
-          idempotencyKey: `thread-start:${submission.id}`,
-          issuedAt: submission.createdAt,
-          resourceId: submission.id,
-          requestIdentity: {
-            conversationId: conversation.id,
-            model: context.model,
-            modelSourceId: context.modelSourceId,
-            serviceTier: Object.prototype.hasOwnProperty.call(context, 'serviceTier') ? context.serviceTier : null,
-            cwd: context.projectLocalPath,
-            sandbox: profile.sandbox,
-            approvalPolicy: profile.approvalPolicy,
-            approvalsReviewer: profile.approvalsReviewer,
-            ephemeral: context.ephemeral === true,
-            developerInstructionsSha256: requestHash(developerInstructions),
-            dynamicToolsSha256: requestHash(dynamicTools),
-          },
-          providerGenerationId: commandProviderGenerationId,
-          invoke: (traceIdentity) => options.manager.startThread({ ...threadRequest, traceIdentity }),
-          recoverAccepted: (nativeSessionId) => options.manager.readThread({ threadId: nativeSessionId }),
-          isExplicitRejection: isRuntimeRejected,
-          nativeSessionId: (acceptedThread) => acceptedThread.id,
-          acceptedProviderGenerationId: (acceptedThread) => options.manager.generationForThread(acceptedThread.id),
-        });
-        providerThreadId = thread.id;
-        threadStartedForSubmission = true;
-        providerThreadAuthority.markSubscribed(thread.id);
-        candidateProviderThreadId = thread.id;
-        segmentLifecycle?.nativeSessionReady({
-          nativeSessionId: thread.id,
-          nativeSessionPath: typeof thread.path === 'string' ? thread.path : null,
-          providerId: 'codex',
-          providerModel: context.model,
-          providerProtocolVersion: 'app-server',
-          observedAt: now(),
-        });
-        if (!segmentLifecycle?.requiresNewSegment) {
-          conversation = options.conversations.bindProvider(conversation.id, {
-            providerId: 'codex',
-            providerThreadId: thread.id,
-            providerModel: context.model,
-            providerState: 'ready',
-          });
-          persistProviderThreadMetadata(options.conversations, conversation.id, thread);
-        }
-        await persist();
-        if (!segmentLifecycle?.requiresNewSegment) {
-          options.broadcast('conversation.transport.changed', {
-            conversationId: conversation.id,
-            transportKind: 'codex_native',
-            providerState: conversation.providerState,
-            providerThreadId: conversation.providerThreadId,
-          });
-          options.broadcast('conversation.thread.changed', {
-            conversationId: conversation.id,
-            providerThreadId: conversation.providerThreadId,
-            providerState: conversation.providerState,
-          });
-        }
-      } else if (segmentLifecycle) {
-        segmentLifecycle.nativeSessionReady({ nativeSessionId: providerThreadId, nativeSessionPath: conversation.providerThreadPath, observedAt: now() });
-      }
-      providerThreadId = requireString(providerThreadId, 'provider thread id');
-      commandProviderGenerationId = options.manager.generationForThread(providerThreadId);
-      if (segmentLifecycle && commandOutboxId) {
-        segmentLifecycle.bindCommandDelivery({ outboxId: commandOutboxId, providerId: 'codex', providerGenerationId: commandProviderGenerationId });
-      }
-      const providerInput = submissionProviderInput(submission, context);
-      const pluginPromptContext = await options.plugins?.beforeUserPrompt({ conversationId: conversation.id, prompt: providerInput, permissionMode: context.permissionMode });
-      const profile = providerPermissionProfile(context);
-      const serializedAt = now();
-      const wireEffort = toCodexWireReasoningEffort(context.effort) ?? null;
-      segmentLifecycle?.adapterSerialized(
-        {
-          model: context.model,
-          effort: wireEffort,
-          serviceTier: Object.prototype.hasOwnProperty.call(context, 'serviceTier') ? context.serviceTier : null,
-          collaborationMode: context.workMode,
-          permissionMode: context.permissionMode,
-        },
-        { adapter: 'codex_app_server', method: 'turn/start', protocol: 'openai_responses' },
-        serializedAt,
-      );
-      let pluginCompactContext: CodexBootstrapAdditionalContext | undefined;
-      if (segmentLifecycle?.contextCompactionPlan) {
-        await emitPluginCompactionHook({ plugins: options.plugins, event: 'PreCompact', conversationId: conversation.id, cwd: context.projectLocalPath, model: context.model });
-        await segmentLifecycle.beginContextCompaction(now());
-        try {
-          // portable compaction 会创建临时 thread/turn，同样属于父派发的外部写边界。
-          markDispatchRpcStarted(lease, submission.id);
-          const compacted = await runCodexPortableContextCompaction({
-            manager: options.manager,
-            providerCommands,
-            providerGenerationId: commandProviderGenerationId,
-            conversationId: conversation.id,
-            plan: segmentLifecycle.contextCompactionPlan,
-            model: context.model,
-            effort: wireEffort,
-            serviceTier: Object.prototype.hasOwnProperty.call(context, 'serviceTier') ? (context.serviceTier ?? null) : null,
-            cwd: context.projectLocalPath,
-            responsesRuntime,
-            issuedAt: submission.createdAt,
-          });
-          await segmentLifecycle.completeContextCompaction({
-            summary: compacted.summary,
-            usage: compacted.usage,
-            evidence: compacted.evidence,
-            completedAt: now(),
-          });
-          pluginCompactContext = await emitPluginCompactionHook({ plugins: options.plugins, event: 'PostCompact', conversationId: conversation.id, cwd: context.projectLocalPath, model: context.model });
-        } catch (error) {
-          await segmentLifecycle.failContextCompaction(error, now());
-          throw error;
-        }
-      }
-      const fixedAdditionalContext = mergeCodexAdditionalContext(segmentLifecycle?.codexBootstrapAdditionalContext, context.additionalContext, pluginPromptContext, pluginCompactContext);
-      const fixedRequestUtf8Bytes = Buffer.byteLength(JSON.stringify({ input: providerInput, ...(fixedAdditionalContext ? { additionalContext: fixedAdditionalContext } : {}) }), 'utf8');
-      const compiledDispatchContext = options.compileDispatchContext
-        ? await options.compileDispatchContext({
-            provider: 'codex',
-            conversationId: conversation.id,
-            submissionId: submission.id,
-            projectId: context.projectId,
-            projectLocalPath: context.projectLocalPath,
-            taskId: context.taskId,
-            modelId: context.model,
-            modelSourceId: context.modelSourceId,
-            operationRisk: context.permissionMode === 'read-only' && !context.allowCodeChanges ? 'read_only' : 'local_write',
-            fixedRequestUtf8Bytes,
-            providerBootstrapUtf8Bytes,
-            providerHistoryMode: threadStartedForSubmission ? 'bootstrap' : 'latest',
-            providerGenerationId: commandProviderGenerationId,
-          })
-        : null;
-      if (compiledDispatchContext) assertCallerDoesNotOverrideCompiledContext(context.additionalContext);
-      const initialGoalObjective = submissionGoalObjective(submission);
-      if (initialGoalObjective) {
-        const goalConversationId = conversation.id;
-        await ensureInitialCodexGoal({
-          conversationId: goalConversationId,
-          providerThreadId,
-          objective: initialGoalObjective,
-          goals,
-          manager: options.manager,
-          markProviderWriteStarted: () => markDispatchRpcStarted(lease, submission.id),
-          execute: ({ objective, invoke, recoverAccepted }) =>
-            executeSessionCommand({
-              operation: 'goal_set',
-              conversationId: goalConversationId,
-              threadId: providerThreadId,
-              commandKey: `initial-goal:${submission.id}`,
-              requestIdentity: { objective, status: 'active' },
-              invoke,
-              recoverAccepted,
-            }),
-          project: (goal) => projectGoal(goalConversationId, goal, null, now()),
-          persist,
-        });
-      }
-      const additionalContext = mergeCodexAdditionalContext(segmentLifecycle?.codexBootstrapAdditionalContext, compiledDispatchContext?.codexAdditionalContext, context.additionalContext, pluginPromptContext, pluginCompactContext);
-      // turn/start 调用前先耐久记录“可能写出”；宁可保守进入 unknown，也不能在进程崩溃后盲重放。
-      if (segmentLifecycle) segmentLifecycle.markProviderWriteStarted();
-      else options.commandDeliveries.markProviderWriteStarted({ outboxId: requireString(commandOutboxId, 'command outbox id'), occurredAt: now() });
-      providerWriteStarted = true;
-      markDispatchRpcStarted(lease, submission.id);
-      const turn = await options.manager.startTurn({
-        threadId: providerThreadId,
-        traceIdentity: commandTraceIdentity,
-        ...(responsesRuntime ? { responsesRuntime } : {}),
-        clientUserMessageId: submission.clientMessageId,
-        input: providerInput,
-        ...(additionalContext ? { additionalContext } : {}),
-        ...(segmentLifecycle ? { requestWritten: () => segmentLifecycle.markProviderWriteStarted() } : {}),
-        model: context.model,
-        ...(wireEffort ? { effort: wireEffort } : {}),
-        ...(Object.prototype.hasOwnProperty.call(context, 'serviceTier') ? { serviceTier: context.serviceTier } : {}),
-        summary: 'auto',
-        ...(context.workMode
-          ? {
-              collaborationMode: {
-                mode: context.workMode,
-                settings: {
-                  model: context.model,
-                  reasoning_effort: wireEffort,
-                  developer_instructions: null,
-                },
-              },
-            }
-          : {}),
-        cwd: context.projectLocalPath,
-        approvalPolicy: profile.approvalPolicy,
-        approvalsReviewer: profile.approvalsReviewer,
-        sandboxPolicy: profile.sandbox,
-      });
-      volatileSubmissionText.delete(submission.id);
-      const timestamp = now();
-      const acceptedTurnId = segmentLifecycle?.acceptSynchronously({
-        providerTurnId: turn.id,
-        acceptedAt: timestamp,
-        runtimeEvidence: { method: 'turn/start', turnId: turn.id, responseReceived: true },
-        providerEcho: turn,
-      });
-      if (segmentLifecycle?.requiresNewSegment) {
-        conversation = options.conversations.getById(conversation.id) ?? conversation;
-      }
-      const existingProviderTurn = options.turns.listByConversation(conversation.id).find((candidate) => candidate.providerTurnId === turn.id);
-      options.turns.upsert({
-        ...(existingProviderTurn ? { id: existingProviderTurn.id } : acceptedTurnId ? { id: acceptedTurnId } : {}),
-        conversationId: conversation.id,
-        providerThreadId,
-        providerTurnId: turn.id,
-        clientSubmissionId: submission.id,
-        status: 'running',
-        startedAt: timestamp,
-        completedAt: null,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      });
-      const syncCheckpoint = syncCheckpoints.getByConversation(conversation.id);
-      if (syncCheckpoint) {
-        if (syncCheckpoint.providerThreadId === providerThreadId) {
-          syncCheckpoints.advance({ conversationId: conversation.id, providerThreadId, lastSyncedTurnId: turn.id, timestamp });
-        } else {
-          // 新分段已在同一事务中成为 current；旧线程已经 sealed，检查点必须跟随当前线程重建。
-          syncCheckpoints.rebind({ conversationId: conversation.id, providerThreadId, baselineTurnId: turn.id, timestamp });
-        }
-      } else {
-        syncCheckpoints.initialize({ conversationId: conversation.id, providerThreadId, baselineTurnId: turn.id, timestamp });
-      }
-      options.submissions.updateStatus(submission.id, 'active', { providerTurnId: turn.id, dispatchedAt: timestamp });
-      options.conversations.bindProvider(conversation.id, { providerId: 'codex', providerThreadId, providerModel: context.model, providerState: 'active' });
-      if (!segmentLifecycle && commandOutboxId) {
-        options.commandDeliveries.recordOutcomeInCurrentTransaction({
-          outboxId: commandOutboxId,
-          outcome: 'accepted',
-          evidence: { method: 'turn/start', traceIdentity: commandTraceIdentity, turnId: turn.id, responseReceived: true },
-          providerId: 'codex',
-          providerGenerationId: commandProviderGenerationId,
-          nativeSessionId: providerThreadId,
-          nativeTurnId: turn.id,
-          occurredAt: timestamp,
-        });
-      }
-      runStates.set(conversation.id, { type: 'active', turnId: turn.id, phase: 'prework' });
-      if (!serviceTierFallbackAttempted && parseJsonRecord(submission.inputJson).requestedServiceTier === 'priority' && context.serviceTier !== 'priority') {
-        recordServiceTierDowngrade(conversation.id, submission, context, 'model_unsupported');
-      }
-      const providerSettings = options.conversations.getProviderSettingsSnapshot(conversation.id);
-      if (threadStartedForSubmission && providerSettings && Object.prototype.hasOwnProperty.call(providerSettings, 'serviceTier')) {
-        persistProviderReportedServiceTierDowngrade(conversation.id, submission, context, providerSettings.serviceTier ?? null);
-      }
-      await persist();
-      // submission 已进入 provider 轮次后必须同步清出队列表面，避免其他窗口继续展示旧快照。
-      options.broadcast('conversation.queue.changed', { conversationId: conversation.id, providerThreadId, providerTurnId: turn.id, submissionId: submission.id });
-      if (!existingProviderTurn) {
-        options.broadcast('conversation.turn.started', {
-          conversationId: conversation.id,
-          providerThreadId,
-          providerTurnId: turn.id,
-          submissionId: submission.id,
-          status: 'running',
-          startedAt: timestamp,
-        });
-      }
-      return accepted(submission, 'active', providerThreadId, turn.id);
-    } catch (error) {
-      if (!serviceTierFallbackAttempted && context.serviceTier === 'priority' && isServiceTierUnavailableError(error)) {
-        const standardContext: ConversationDispatchContext = { ...context, serviceTier: null };
-        persistSubmissionDispatchContext(submission, standardContext);
-        options.conversations.updateNextTurnSettings(conversation.id, nextTurnSettingsFromContext(standardContext));
-        contexts.set(conversation.id, standardContext);
-        options.submissions.updateStatus(submission.id, 'queued', { providerTurnId: null, updatedAt: now() });
-        runStates.set(conversation.id, { type: 'idle' });
-        await persist();
-        const retrySubmission = options.submissions.getById(submission.id) ?? submission;
-        const retryConversation = options.conversations.getById(conversation.id) ?? conversation;
-        const result = await dispatchSubmissionWithLease(retryConversation, retrySubmission, lease, providerArchiveRecoveryAttempted, segmentLifecycle, true);
-        if (result.status !== 'recovery_required' && result.status !== 'provider_archived') {
-          recordServiceTierDowngrade(conversation.id, retrySubmission, standardContext, 'app_server_rejected');
-          await persist();
-        }
-        return result;
-      }
-      const providerArchived = isProviderThreadArchivedError(error);
-      const explicitlyRejected = isRuntimeRejected(error) || providerArchived;
-      const runtimeRejected = segmentLifecycle !== undefined && isRuntimeRejected(error);
-      if (segmentLifecycle) {
-        if (explicitlyRejected) await segmentLifecycle.rejectBeforeAcceptance(error, now());
-        else await segmentLifecycle.fail(error, now());
-      } else if (commandOutboxId) {
-        options.commandDeliveries.recordOutcome({
-          outboxId: commandOutboxId,
-          outcome: explicitlyRejected ? 'explicitly_rejected' : providerWriteStarted ? 'outcome_unknown_after_write' : 'failed_before_write',
-          evidence: serializeError(error),
-          providerId: 'codex',
-          providerGenerationId: commandProviderGenerationId,
-          nativeSessionId: candidateProviderThreadId ?? conversation.providerThreadId,
-          occurredAt: now(),
-        });
-      }
-      if (runtimeRejected) {
-        runStates.set(conversation.id, { type: 'paused', reason: 'runtime_rejected' });
-        options.broadcast('conversation.queue.changed', { conversationId: conversation.id, submissionId: submission.id });
-        return accepted(submission, 'queued', segmentLifecycle.requiresNewSegment ? candidateProviderThreadId : conversation.providerThreadId, null);
-      }
-      if (segmentLifecycle?.requiresNewSegment) {
-        runStates.set(conversation.id, { type: 'paused', reason: 'recovery_required' });
-        options.broadcast('conversation.queue.changed', { conversationId: conversation.id, submissionId: submission.id });
-        return accepted(submission, 'recovery_required', candidateProviderThreadId, null);
-      }
-      const current = options.conversations.getById(conversation.id);
-      const providerThreadId = current?.providerThreadId ?? null;
-      if (context.ephemeral) {
-        options.submissions.updateStatus(submission.id, 'failed', { resolvedAt: now(), error: serializeError(error) });
-        if (current?.providerThreadId) {
-          options.conversations.bindProvider(current.id, {
-            providerId: 'codex',
-            providerThreadId: current.providerThreadId,
-            providerModel: current.providerModel,
-            providerState: 'closed',
-          });
-        } else if (current) {
-          options.conversations.updateRuntimeState(current.id, { status: 'failed', summary: 'Codex native ephemeral dispatch failed.' });
-          options.conversations.archive(current.id);
-        }
-        runStates.delete(conversation.id);
-        contexts.delete(conversation.id);
-      } else if (providerThreadId === null && options.manager.getState().type !== 'ready') {
-        options.submissions.updateStatus(submission.id, 'paused', { pausedReason: 'transport_unavailable', error: serializeError(error) });
-        runStates.set(conversation.id, { type: 'paused', reason: 'transport_unavailable' });
-      } else if (providerArchived) {
-        markConversationProviderArchived(conversation.id, error);
-        await persist();
-        if (!providerArchiveRecoveryAttempted) {
-          try {
-            await restoreArchivedProviderThread(conversation.id);
-            const retrySubmission = options.submissions.getById(submission.id);
-            const retryConversation = options.conversations.getById(conversation.id);
-            if (retrySubmission && retryConversation) return dispatchSubmissionWithLease(retryConversation, retrySubmission, lease, true, segmentLifecycle, serviceTierFallbackAttempted);
-          } catch {
-            // 恢复函数已保留原始消息与可重试状态。
-          }
-        }
-        return accepted(submission, 'provider_archived', providerThreadId, null);
-      } else {
-        options.submissions.updateStatus(submission.id, 'paused', { pausedReason: 'recovery_required', error: serializeError(error) });
-        runStates.set(conversation.id, { type: 'paused', reason: 'recovery_required' });
-      }
-      await persist();
-      options.broadcast('conversation.queue.changed', { conversationId: conversation.id, submissionId: submission.id });
-      requestQueueDrain();
-      return accepted(submission, 'recovery_required', providerThreadId, null);
-    }
-  }
-
-  function attachDispatchLifecycle(lease: NativeConversationDispatchLease, lifecycle: NativeProviderWriteLifecycle | undefined): void {
-    if (!lifecycle || lease.lifecycles.has(lifecycle)) return;
-    lease.lifecycles.add(lifecycle);
-    if (lease.rpcStartedResourceId) lifecycle.markRpcStarted(lease.rpcStartedResourceId);
-  }
-
-  function markDispatchRpcStarted(lease: NativeConversationDispatchLease, resourceId: string): void {
-    lease.rpcStartedResourceId = resourceId;
-    for (const lifecycle of lease.lifecycles) lifecycle.markRpcStarted(resourceId);
-  }
-
   async function closeEphemeralConversation(conversationId: string, providerTurnId: string | null, submissionStatus: 'cancelled' | 'failed', error: unknown, interrupt: boolean): Promise<void> {
     const conversation = options.conversations.getById(conversationId);
     if (!conversation) return;
@@ -2015,10 +1460,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       waiter.resolve(result);
     }
     turnResultWaiters.delete(key);
-  }
-
-  interface NativeUserMessageProjection extends ResolvedNativeUserMessageSubmission {
-    content: string;
   }
 
   function projectProviderUserMessage(
@@ -2360,13 +1801,13 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       invoke: (traceIdentity) => options.manager.interruptTurn({ threadId: providerThreadId, turnId: input.providerTurnId, traceIdentity }),
     });
     const terminalResultPromise = waitForTurnResult({ conversationId: conversation.id, providerTurnId: input.providerTurnId });
-    void turnResultRecovery.reconcileInterruptedTurnUntilSettled(conversation.id, input.providerTurnId);
+      void interactionRecovery.reconcileInterruptedTurnUntilSettled(conversation.id, input.providerTurnId);
     let terminalResult: NativeTurnResult;
     try {
       terminalResult = await terminalResultPromise;
     } catch (error) {
       if ((error as { code?: unknown })?.code === 'ZEUS_CODEX_TURN_RESULT_TIMEOUT') {
-        await turnResultRecovery.markInterruptedTurnProviderStopPending(conversation.id, providerThreadId, input.providerTurnId, error);
+          await interactionRecovery.markInterruptedTurnProviderStopPending(conversation.id, providerThreadId, input.providerTurnId, error);
       }
       throw error;
     }
@@ -3368,9 +2809,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   const { reconcilePersistedTerminalTurnSubmissions, reconcileProviderTurnsSinceCheckpoint, projectedProviderThreadSnapshot, reconcileConversationSnapshot } = createCodexProviderHistoryProjection({
     failedTurnResults,
-    goals,
     hasExactProviderUserMessage,
-    interruptedQueueSubmissions,
     isSteeringSubmission,
     markConversationRecoveryRequired,
     markSubmissionRecoveryRequired,
@@ -3380,32 +2819,14 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     persistProviderUserMessage,
     projectProviderUserMessage,
     processProjector,
-    providerHistoryReconcilePageLimit,
-    providerHistoryReconcileTurnLimit,
     reconcileTerminalTurnSubmissions,
     rejectTurnResultWaiters,
     resolveTurnResult,
     runStates,
     submissionPresentation,
-    syncCheckpoints,
     syncItemResources,
-    threadPath,
     turnResultWaiters,
     upsertRecoveredTurn,
-  });
-
-  const interactionRecovery = createCodexInteractionRecoveryApplication({
-    enqueueProviderTurnReconciliation,
-    executeTurnCommand,
-    isClosed: () => closing || closed,
-    isPendingInteractionAuthority,
-    now,
-    options,
-    persist,
-    projectedProviderThreadSnapshot,
-    readyGenerationId,
-    reconcileConversationSnapshot,
-    runStates,
   });
 
   const providerThreadAuthority = createCodexProviderThreadAuthorityApplication({
@@ -3434,6 +2855,36 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     requestQueueDrain,
   });
 
+    const dispatchSubmission = createCodexNativeDispatchPipeline({
+        options,
+        providerCommands,
+        providerThreadAuthority,
+        runStates,
+        contexts,
+        volatileSubmissionText,
+        zeusToolBroker,
+        accepted,
+        dispatchContextForSubmission,
+        ensureConversationExecutionContext,
+        ensureGenerationReconciled,
+        executeSessionCommand,
+        inferRunState,
+        markConversationProviderArchived,
+        nextTurnSettingsFromContext,
+        persistProviderReportedServiceTierDowngrade,
+        persistSubmissionDispatchContext,
+        planControlModeForSubmission,
+        projectGoal,
+        recordServiceTierDowngrade,
+        recoverPausedConversation,
+        requireConversation,
+        requestQueueDrain,
+        restoreArchivedProviderThread,
+        submissionGoalObjective,
+        submissionProviderInput,
+        submissionText,
+    });
+
   const providerStopRecovery = createCodexProviderStopRecoveryApplication({
     manager: options.manager,
     providerCommands,
@@ -3449,16 +2900,21 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     now,
   });
 
-  const turnResultRecovery = createCodexTurnResultRecoveryApplication({
+    const interactionRecovery = createCodexInteractionRecoveryApplication({
     closeEphemeralConversation,
     completedTurnResults,
     enqueueProviderTurnReconciliation,
+        executeTurnCommand,
     failedTurnResults,
     isClosed: () => closing || closed,
+        isPendingInteractionAuthority,
     now,
     options,
     persist,
+        projectedProviderThreadSnapshot,
     providerStopRecovery,
+        readyGenerationId,
+        reconcileConversationSnapshot,
     rejectTurnResultWaiters,
     resolveTurnResult,
     runStates,
@@ -3595,37 +3051,30 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         failInvalidInteractionAuthority: interactionRecovery.failInvalidInteractionAuthority,
         failedTurnResults,
         flushScheduledPersist,
-        goals,
         hasProcessedProviderEvent,
-        interruptedQueueSubmissions,
         maintainProviderReceiptGenerations,
         markScheduledPersistDirty: () => {
           scheduledPersistDirty = true;
         },
         options,
         modelRequestTiming,
-        persist,
         persistProviderUserMessage,
         persistProviderReportedServiceTierDowngrade,
         projectGoal,
         projectProcessItem,
         projectProviderUserMessage,
-        readyGenerationId,
-        receipts,
         reconcileTerminalTurnSubmissions,
         recoverExternalRequestUserInputAnswer: (conversation: ZeusConversationWithMessagesRecord, request: ZeusConversationServerRequestRecord, resolvedAt: string) => externalAnswerRecovery.recover(conversation, request, resolvedAt),
         recoverExternallyResolvedRequestUserInputAnswers: (conversation: ZeusConversationWithMessagesRecord, providerTurnId?: string) => externalAnswerRecovery.recoverAll(conversation, providerTurnId),
         rejectTurnResultWaiters,
         resolveTurnResult,
         rememberProcessedProviderEvent,
-        requiresImmediatePersist,
         respondToRequest,
         runStates,
         scheduleAutoResolution,
         scheduleExternalAnswerRecovery: (conversationId: string, requestId: string, attempt?: number) => externalAnswerRecovery.schedule(conversationId, requestId, attempt),
         schedulePersist,
         submissionPresentation,
-        syncCheckpoints,
         syncItemResources,
       },
       event,

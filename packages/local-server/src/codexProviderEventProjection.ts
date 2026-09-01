@@ -1,53 +1,174 @@
-import type { CodexAppServerEvent } from '@zeus/ai-runtime';
-import { calculateCacheHitRate, type NativeTokenUsageSnapshot } from '@zeus/shared';
-import { ConversationPlanActionRepository, projectConversationTurnFailure, type ZeusConversationSubmissionRecord } from '@zeus/storage';
-import { parseCanonicalRequestUserInputQuestions } from './codexNativeRuiValidation.js';
-import { sanitizeConversationItemPayload } from './conversationResources.js';
-import { codexProviderEventIdentity, isCodexReadableItemTextDeltaEvent } from './codexProviderEventFlow.js';
-import type { NativeTurnResult } from './codexNativeConversationContracts.js';
-import type { CreateCodexNativeConversationCoordinatorOptions } from './codexNativeConversationCoordinator.js';
-import type { ConversationDispatchContext } from './codexNativeConversationContracts.js';
+import type {CodexAppServerEvent, CodexThreadGoal} from '@zeus/ai-runtime';
+import {calculateCacheHitRate, type ConversationResource, type NativeTokenUsageSnapshot} from '@zeus/shared';
 import {
-  completedItemProjection,
-  coordinatorError,
-  hasAuditableFileApprovalTarget,
-  hasSecretQuestion,
-  integerValue,
-  isRecord,
-  isToolResultItem,
-  itemText,
-  itemTypeFromMethod,
-  itemTypeFromValue,
-  liveProgressProjection,
-  nativePendingRequestProjection,
-  normalizeMcpStartupStatusMap,
-  normalizeSingleMcpStartupStatus,
-  normalizeTurnPlan,
-  parseJsonRecord,
-  phaseFromItem,
-  providerEventReceipt,
-  providerItemIdFrom,
-  providerTimestamp,
-  providerTurnFailure,
-  providerTurnFailureRecord,
-  providerTurnIdFrom,
-  providerTurnTerminalStatus,
-  providerTurnUserClientId,
-  reasoningSummaryProjection,
-  replayResolvedRequest,
-  requestKindFromMethod,
-  requireNumber,
-  requireString,
-  serializeError,
-  tokenUsageBreakdown,
+    projectConversationTurnFailure,
+    type ZeusConversationGoalRecord,
+    type ZeusConversationItemRecord,
+    type ZeusConversationPlanActionRecord,
+    type ZeusConversationServerRequestRecord,
+    type ZeusConversationSubmissionRecord,
+    type ZeusConversationTurnRecord,
+    type ZeusConversationWithMessagesRecord,
+} from '@zeus/storage';
+import {parseCanonicalRequestUserInputQuestions} from './codexNativeRuiValidation.js';
+import {sanitizeConversationItemPayload} from './conversationResources.js';
+import {codexProviderEventIdentity, isCodexReadableItemTextDeltaEvent} from './codexProviderEventFlow.js';
+import {interruptedQueueSubmissions} from './codexNativeRunStateProjection.js';
+import type {
+    ConversationDispatchContext,
+    CreateCodexNativeConversationCoordinatorOptions,
+    NativeAcceptedOperation,
+    NativeConversationRunState,
+    NativeTurnCommandExecutor,
+    NativeTurnResult,
+    RespondNativeRequestInput,
+} from './codexNativeConversationContracts.js';
+import type {CodexModelRequestTimingTracker} from './codexModelRequestTiming.js';
+import type {NativeUserMessageProjection} from './codexNativeUserMessageProjection.js';
+import type {CodexRolloutRequestUserInputRecovery} from './codexRolloutRequestUserInput.js';
+import {
+    completedItemProjection,
+    coordinatorError,
+    hasAuditableFileApprovalTarget,
+    hasSecretQuestion,
+    integerValue,
+    isRecord,
+    isToolResultItem,
+    itemText,
+    itemTypeFromMethod,
+    itemTypeFromValue,
+    liveProgressProjection,
+    nativePendingRequestProjection,
+    normalizeMcpStartupStatusMap,
+    normalizeSingleMcpStartupStatus,
+    normalizeTurnPlan,
+    parseJsonRecord,
+    phaseFromItem,
+    providerEventReceipt,
+    providerItemIdFrom,
+    providerTimestamp,
+    providerTurnFailure,
+    providerTurnFailureRecord,
+    providerTurnIdFrom,
+    providerTurnTerminalStatus,
+    providerTurnUserClientId,
+    reasoningSummaryProjection,
+    replayResolvedRequest,
+    requestKindFromMethod,
+    requireNumber,
+    requireString,
+    serializeError,
+    tokenUsageBreakdown,
 } from './codexNativeConversationPolicy.js';
 
-// 拆分期间保留结构化工厂依赖，后续按领域端口继续收窄。
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type CodexProviderEventProjectionDependencies = Record<string, any> & {
+export interface CodexProviderEventProjectionDependencies {
   options: CreateCodexNativeConversationCoordinatorOptions;
+    closed: boolean;
+    contexts: Map<string, ConversationDispatchContext>;
+    failedTurnResults: Map<string, Error & { code: string }>;
+    modelRequestTiming: CodexModelRequestTimingTracker;
+    runStates: Map<string, NativeConversationRunState>;
+
+    clearAutoResolutionTimer(requestId: string): void;
+
+    contextFromConversation(conversation: ZeusConversationWithMessagesRecord): ConversationDispatchContext;
+
+    contextFromSubmission(submission: ZeusConversationSubmissionRecord): ConversationDispatchContext;
+
+    drainQueuedSubmissions(): Promise<void>;
+
+    ensurePlanImplementationRequest(
+        conversationId: string,
+        turn: ZeusConversationTurnRecord,
+        submission: ZeusConversationSubmissionRecord | undefined,
+        timestamp: string,
+        recoveredPlanItem?: ZeusConversationItemRecord | null,
+    ): ZeusConversationPlanActionRecord | null;
+
+    executeTurnCommand: NativeTurnCommandExecutor;
+
+    failInvalidInteractionAuthority(input: {
+        conversation: ZeusConversationWithMessagesRecord;
+        threadId: string;
+        providerTurnId: string | null;
+        turn: ZeusConversationTurnRecord | undefined;
+        request: Pick<ZeusConversationServerRequestRecord, 'id' | 'status' | 'createdAt' | 'transportGenerationId'>;
+        error: Record<string, unknown>;
+        timestamp: string;
+    }): Promise<Record<string, unknown>>;
+
+    flushScheduledPersist(): Promise<void>;
+
+    hasProcessedProviderEvent(event: CodexAppServerEvent, identity: string): boolean;
+
+    maintainProviderReceiptGenerations(generationId: string): void;
   markScheduledPersistDirty(): void;
-};
+
+    persistProviderUserMessage(
+        conversation: ZeusConversationWithMessagesRecord,
+        itemPayload: Record<string, unknown>,
+        projection: NativeUserMessageProjection,
+        providerTurnId: string,
+        providerThreadId: string,
+        providerItemId: string,
+        createdAt: string,
+    ): string | null;
+
+    persistProviderReportedServiceTierDowngrade(conversationId: string, submission: ZeusConversationSubmissionRecord, context: ConversationDispatchContext, actualServiceTier: string | null): void;
+
+    projectGoal(conversationId: string, goal: CodexThreadGoal, providerTurnId: string | null, occurredAt: string): ZeusConversationGoalRecord;
+
+    projectProcessItem(input: {
+        conversationId: string;
+        turnId: string;
+        threadId: string;
+        providerItemId: string;
+        itemType: string;
+        status: 'in_progress' | 'completed' | 'failed';
+        payload: Record<string, unknown>;
+        text: string;
+        occurredAt: string;
+    }): void;
+
+    projectProviderUserMessage(conversation: ZeusConversationWithMessagesRecord, turn: ZeusConversationTurnRecord, itemPayload: Record<string, unknown>, providerContent: string, providerItemId: string): NativeUserMessageProjection | null;
+
+    reconcileTerminalTurnSubmissions(
+        conversation: ZeusConversationWithMessagesRecord,
+        turn: ZeusConversationTurnRecord,
+        timestamp: string,
+        failure?: unknown,
+    ): {
+        primarySubmission: ZeusConversationSubmissionRecord | undefined;
+        recoveryRequired: ZeusConversationSubmissionRecord[];
+        reconciledCount: number
+    };
+
+    recoverExternalRequestUserInputAnswer(
+        conversation: ZeusConversationWithMessagesRecord,
+        request: ZeusConversationServerRequestRecord,
+        resolvedAt: string,
+    ): Promise<{ request: ZeusConversationServerRequestRecord; recovery: CodexRolloutRequestUserInputRecovery }>;
+
+    recoverExternallyResolvedRequestUserInputAnswers(conversation: ZeusConversationWithMessagesRecord, providerTurnId?: string): Promise<number>;
+
+    rejectTurnResultWaiters(key: string, error: Error): void;
+
+    resolveTurnResult(result: NativeTurnResult): void;
+
+    rememberProcessedProviderEvent(event: CodexAppServerEvent, identity: string): void;
+
+    respondToRequest(input: RespondNativeRequestInput): Promise<NativeAcceptedOperation>;
+
+    scheduleAutoResolution(request: ZeusConversationServerRequestRecord): void;
+
+    scheduleExternalAnswerRecovery(conversationId: string, requestId: string, attempt?: number): void;
+
+    schedulePersist(): void;
+
+    submissionPresentation(conversationId: string, turn: ZeusConversationTurnRecord, itemPayload: Record<string, unknown>): Record<string, unknown>;
+
+    syncItemResources(conversation: ZeusConversationWithMessagesRecord, turn: ZeusConversationTurnRecord, item: ZeusConversationItemRecord, payload: Record<string, unknown>, text: string, timestamp: string): ConversationResource[];
+}
 
 export async function projectCodexProviderEvent(dependencies: CodexProviderEventProjectionDependencies, event: CodexAppServerEvent, receiptEvents: readonly CodexAppServerEvent[] = [event]): Promise<void> {
   const {
@@ -62,35 +183,28 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     failInvalidInteractionAuthority,
     failedTurnResults,
     flushScheduledPersist,
-    goals,
     hasProcessedProviderEvent,
-    interruptedQueueSubmissions,
     maintainProviderReceiptGenerations,
     markScheduledPersistDirty,
     options,
     modelRequestTiming,
-    persist,
     persistProviderUserMessage,
     persistProviderReportedServiceTierDowngrade,
     projectGoal,
     projectProcessItem,
     projectProviderUserMessage,
-    readyGenerationId,
-    receipts,
     reconcileTerminalTurnSubmissions,
     recoverExternalRequestUserInputAnswer,
     recoverExternallyResolvedRequestUserInputAnswers,
     rejectTurnResultWaiters,
     resolveTurnResult,
     rememberProcessedProviderEvent,
-    requiresImmediatePersist,
     respondToRequest,
     runStates,
     scheduleAutoResolution,
     scheduleExternalAnswerRecovery,
     schedulePersist,
     submissionPresentation,
-    syncCheckpoints,
     syncItemResources,
   } = dependencies;
   if (closed) return;
@@ -109,11 +223,11 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     });
     for (const receiptEvent of receiptEvents) {
       const receiptIdentity = codexProviderEventIdentity(receiptEvent);
-      receipts.record(providerEventReceipt(receiptEvent, receiptIdentity));
+        options.receipts.record(providerEventReceipt(receiptEvent, receiptIdentity));
       maintainProviderReceiptGenerations(receiptEvent.generationId);
       rememberProcessedProviderEvent(receiptEvent, receiptIdentity);
     }
-    await persist();
+      await options.db.save();
     options.broadcast('conversation.warning.changed', {
       conversationId: eventSegment.conversationId,
       warningKind: 'late_external_activity',
@@ -124,7 +238,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
   let drainAfterTurn = false;
   let queueChangedAfterTurn = false;
   let sessionMetricsChanged = false;
-  let createdPlanImplementationRequest: ReturnType<ConversationPlanActionRepository['getById']> | null = null;
+    let createdPlanImplementationRequest: ZeusConversationPlanActionRecord | null = null;
 
   function broadcastLinkedFileApprovalChanges(providerItemId: string, providerTurnId: string): void {
     if (!conversation) return;
@@ -150,8 +264,16 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     const goal = await options.manager.readThreadGoal({ threadId });
     if (goal) projectGoal(conversation.id, goal, typeof params.turnId === 'string' ? params.turnId : null, event.receivedAt);
   } else if (event.method === 'thread/goal/cleared' && conversation && threadId) {
-    const cleared = goals.clear({ conversationId: conversation.id, providerThreadId: threadId, occurredAt: event.receivedAt });
-    if (cleared) options.broadcast('conversation.goal.cleared', { conversationId: conversation.id, cleared: true, timeline: goals.listEvents(conversation.id) });
+      const cleared = options.goals.clear({
+          conversationId: conversation.id,
+          providerThreadId: threadId,
+          occurredAt: event.receivedAt
+      });
+      if (cleared) options.broadcast('conversation.goal.cleared', {
+          conversationId: conversation.id,
+          cleared: true,
+          timeline: options.goals.listEvents(conversation.id)
+      });
   } else if (event.method === 'serverRequest/resolved') {
     const providerRequestId = typeof params.requestId === 'string' || typeof params.requestId === 'number' ? params.requestId : null;
     if (providerRequestId === null) throw coordinatorError('ZEUS_NATIVE_PROVIDER_EVENT_INVALID', 'Codex serverRequest/resolved omitted requestId.');
@@ -287,16 +409,31 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       if (matchedSubmission && (matchedSubmission.status === 'dispatching' || matchedSubmission.status === 'queued')) {
         options.submissions.updateStatus(matchedSubmission.id, 'active', { providerTurnId, dispatchedAt: timestamp });
       }
-      const checkpoint = syncCheckpoints.getByConversation(conversation.id);
+        const checkpoint = options.syncCheckpoints.getByConversation(conversation.id);
       if (checkpoint) {
         if (checkpoint.providerThreadId === threadId) {
-          syncCheckpoints.advance({ conversationId: conversation.id, providerThreadId: threadId, lastSyncedTurnId: providerTurnId, timestamp: event.receivedAt });
+            options.syncCheckpoints.advance({
+                conversationId: conversation.id,
+                providerThreadId: threadId,
+                lastSyncedTurnId: providerTurnId,
+                timestamp: event.receivedAt
+            });
         } else {
           // sealed 分段已在函数入口拦截；抵达这里的不同线程只能是刚提升的 current 分段。
-          syncCheckpoints.rebind({ conversationId: conversation.id, providerThreadId: threadId, baselineTurnId: providerTurnId, timestamp: event.receivedAt });
+            options.syncCheckpoints.rebind({
+                conversationId: conversation.id,
+                providerThreadId: threadId,
+                baselineTurnId: providerTurnId,
+                timestamp: event.receivedAt
+            });
         }
       } else {
-        syncCheckpoints.initialize({ conversationId: conversation.id, providerThreadId: threadId, baselineTurnId: providerTurnId, timestamp: event.receivedAt });
+          options.syncCheckpoints.initialize({
+              conversationId: conversation.id,
+              providerThreadId: threadId,
+              baselineTurnId: providerTurnId,
+              timestamp: event.receivedAt
+          });
       }
       options.conversations.bindProvider(conversation.id, { providerId: 'codex', providerThreadId: threadId, providerModel: conversation.providerModel, providerState: 'active' });
       runStates.set(conversation.id, { type: 'active', turnId: providerTurnId, phase: 'prework' });
@@ -415,7 +552,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       completedAt: timestamp,
       updatedAt: timestamp,
     });
-    options.changeSets?.seal({ conversation, turn, timestamp });
+      options.changeSets.seal({conversation, turn, timestamp});
     const submissions = options.submissions.listByConversation(conversation.id);
     const terminalReconciliation = reconcileTerminalTurnSubmissions(conversation, terminalTurn, timestamp, failure ? providerTurnFailureRecord(params, failure) : undefined);
     const activeSubmission = terminalReconciliation.primarySubmission;
@@ -450,7 +587,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       providerState: failed ? 'failed' : recoveryRequiredSubmissions.length > 0 || (interrupted && hasInterruptedQueue) ? 'paused' : 'ready',
     });
     const ephemeral = contexts.get(conversation.id)?.ephemeral === true;
-    const conversationGoal = goals.get(conversation.id);
+      const conversationGoal = options.goals.get(conversation.id);
     if (!ephemeral && !conversationGoal) {
       options.conversations.markAttentionUnread(conversation.id, {
         kind: failed ? 'failed' : interrupted ? 'interrupted' : 'completed',
@@ -541,7 +678,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
           updatedAt: event.receivedAt,
         });
     if (item.itemType === 'fileChange') {
-      options.changeSets?.capture({
+        options.changeSets.capture({
         conversation,
         turn,
         providerItemId,
@@ -599,7 +736,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       startedAt: existing?.startedAt ?? event.receivedAt,
       updatedAt: event.receivedAt,
     });
-    options.changeSets?.capture({
+      options.changeSets.capture({
       conversation,
       turn,
       providerItemId,
@@ -747,7 +884,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       updatedAt: event.receivedAt,
     });
     // 目标存在期间，普通中间回复只更新会话进度；关注状态只由目标关键终态统一产生。
-    if (event.method === 'item/agentMessage/delta' && params.delta.trim() && !goals.get(conversation.id)) {
+      if (event.method === 'item/agentMessage/delta' && params.delta.trim() && !options.goals.get(conversation.id)) {
       const previousRevision = options.conversations.getById(conversation.id)?.attentionRevision ?? 0;
       const attention = options.conversations.markAttentionUnread(conversation.id, {
         kind: 'unread',
@@ -905,7 +1042,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
         providerTurnId,
         providerItemId,
       });
-      if (item.textContent.trim() && !goals.get(conversation.id)) {
+        if (item.textContent.trim() && !options.goals.get(conversation.id)) {
         const previousRevision = options.conversations.getById(conversation.id)?.attentionRevision ?? 0;
         const attention = options.conversations.markAttentionUnread(conversation.id, {
           kind: 'unread',
@@ -924,7 +1061,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       }
     }
     if (item.itemType === 'fileChange') {
-      options.changeSets?.capture({
+        options.changeSets.capture({
         conversation,
         turn,
         providerItemId,
@@ -1181,9 +1318,9 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     broadcast = { type: 'conversation.provider.token_usage.updated', payload: { conversationId: conversation.id, ...snapshot } };
   } else if (event.method === 'account/rateLimits/updated') {
     // 官方协议明确这是稀疏更新；只把它当作重读信号，不用不完整包覆盖快照。
-    options.usage?.handleSparseRateLimitUpdate();
+      options.usage.handleSparseRateLimitUpdate();
   } else if (event.method === 'account/updated') {
-    options.usage?.handleAccountChanged();
+      options.usage.handleAccountChanged();
   } else if (event.method === 'mcpServer/startupStatus/updated') {
     const legacyStatuses = isRecord(params.statuses) ? normalizeMcpStartupStatusMap(params.statuses) : null;
     const currentStatus = legacyStatuses ? null : normalizeSingleMcpStartupStatus(params);
@@ -1217,7 +1354,8 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
           : {}),
         createdAt: event.receivedAt,
       });
-      const currentGenerationId = readyGenerationId();
+        const managerState = options.manager.getState();
+        const currentGenerationId = managerState.type === 'ready' ? managerState.generationId : null;
       const canonicalRui = requestKind === 'request_user_input' ? parseCanonicalRequestUserInputQuestions(params) : null;
       if (canonicalRui && !canonicalRui.ok) {
         const recoveryError = await failInvalidInteractionAuthority({
@@ -1322,7 +1460,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
             // Provider 拒绝自动答复时保留真实待授权弹窗，禁止伪造已允许状态。
           }
         }
-        if (!automaticallyApproved && !goals.get(conversation.id)) {
+          if (!automaticallyApproved && !options.goals.get(conversation.id)) {
           options.conversations.markAttentionUnread(conversation.id, {
             kind: 'unread',
             turnId: providerTurnId,
@@ -1363,7 +1501,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
                 projectRoot: (contexts.get(conversation.id) ?? contextFromConversation(conversation)).projectLocalPath,
                 providerItems: options.providerItems,
               }),
-              notificationEligible: !goals.get(conversation.id),
+                notificationEligible: !options.goals.get(conversation.id),
             },
           };
           scheduleAutoResolution(request);
@@ -1374,7 +1512,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
 
   for (const receiptEvent of receiptEvents) {
     const receiptIdentity = codexProviderEventIdentity(receiptEvent);
-    receipts.record(providerEventReceipt(receiptEvent, receiptIdentity));
+      options.receipts.record(providerEventReceipt(receiptEvent, receiptIdentity));
     maintainProviderReceiptGenerations(receiptEvent.generationId);
     rememberProcessedProviderEvent(receiptEvent, receiptIdentity);
   }
@@ -1418,6 +1556,19 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     });
   }
   if (drainAfterTurn && conversation) await drainQueuedSubmissions();
+}
+
+function requiresImmediatePersist(event: CodexAppServerEvent, createdPlanImplementationRequest: unknown): boolean {
+    return (
+        event.requestId !== undefined ||
+        event.method === 'turn/started' ||
+        event.method === 'turn/completed' ||
+        event.method === 'thread/goal/updated' ||
+        event.method === 'thread/goal/cleared' ||
+        event.method === 'serverRequest/resolved' ||
+        event.method === 'rawResponse/completed' ||
+        createdPlanImplementationRequest !== null
+    );
 }
 
 function firstVisibleReceiptAt(events: readonly CodexAppServerEvent[], fallback: string): string {

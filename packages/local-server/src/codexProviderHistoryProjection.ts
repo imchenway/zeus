@@ -1,31 +1,51 @@
-import type { CodexThreadSnapshot, CodexTurnSnapshot } from '@zeus/ai-runtime';
-import { projectConversationTurnFailure, resolveSnapshotProviderItemId, type ZeusConversationItemRecord, type ZeusConversationSubmissionRecord, type ZeusConversationTurnRecord, type ZeusConversationWithMessagesRecord } from '@zeus/storage';
-import type { CreateCodexNativeConversationCoordinatorOptions } from './codexNativeConversationCoordinator.js';
+import type {CodexThreadSnapshot, CodexTurnSnapshot} from '@zeus/ai-runtime';
+import type {ConversationResource} from '@zeus/shared';
 import {
-  classifySnapshotTurn,
-  completedItemProjection,
-  coordinatorError,
-  findSnapshotTurn,
-  isRecord,
-  isRejectedHistoricalFileChangeError,
-  itemText,
-  itemTypeFromValue,
-  parseJsonRecord,
-  phaseFromItem,
-  providerTimestamp,
-  providerTurnFailure,
-  providerTurnFailureRecord,
-  providerTurnUserClientId,
-  requireString,
-  snapshotConfirmsIdleProviderThread,
-  snapshotConfirmsSafeResumeBoundary,
+    type ConversationTurnStatus,
+    projectConversationTurnFailure,
+    resolveSnapshotProviderItemId,
+    type ZeusConversationItemRecord,
+    type ZeusConversationSubmissionRecord,
+    type ZeusConversationTurnRecord,
+    type ZeusConversationWithMessagesRecord,
+} from '@zeus/storage';
+import type {
+    CreateCodexNativeConversationCoordinatorOptions,
+    NativeConversationRunState,
+    NativeTurnResult,
+    NativeTurnResultWaiter
+} from './codexNativeConversationContracts.js';
+import {
+    classifySnapshotTurn,
+    completedItemProjection,
+    coordinatorError,
+    findSnapshotTurn,
+    isRecord,
+    isRejectedHistoricalFileChangeError,
+    itemText,
+    itemTypeFromValue,
+    parseJsonRecord,
+    phaseFromItem,
+    providerTimestamp,
+    providerTurnFailure,
+    providerTurnFailureRecord,
+    providerTurnUserClientId,
+    requireString,
+    snapshotConfirmsIdleProviderThread,
+    snapshotConfirmsSafeResumeBoundary,
 } from './codexNativeConversationPolicy.js';
-import { appendProviderSyncAudit, type ProviderSyncAuditOutcome } from './providerSyncAudit.js';
-import { sanitizeConversationItemPayload } from './conversationResources.js';
-import { shouldPreserveProviderStopTerminalTurn } from './codexProviderStopRecoveryApplication.js';
-import { inspectCodexRolloutRequestUserInputEvidence } from './codexRolloutRequestUserInput.js';
+import {appendProviderSyncAudit, type ProviderSyncAuditOutcome} from './providerSyncAudit.js';
+import {sanitizeConversationItemPayload} from './conversationResources.js';
+import {shouldPreserveProviderStopTerminalTurn} from './codexProviderStopRecoveryApplication.js';
+import {inspectCodexRolloutRequestUserInputEvidence} from './codexRolloutRequestUserInput.js';
+import {interruptedQueueSubmissions} from './codexNativeRunStateProjection.js';
+import {threadPath} from './codexThreadMetadataProjection.js';
+import type {NativeUserMessageProjection} from './codexNativeUserMessageProjection.js';
+import type {TurnProcessProjector} from './turnProcessProjector.js';
 
 const compatibilitySnapshotItemIdPattern = /^item-\d+$/u;
+const providerHistoryReconcilePageLimit = 20;
+const providerHistoryReconcileTurnLimit = 2_000;
 
 function isCompatibilitySnapshotItem(item: Pick<ZeusConversationItemRecord, 'providerItemId' | 'nativeItemId'>): boolean {
   return compatibilitySnapshotItemIdPattern.test(item.nativeItemId ?? item.providerItemId);
@@ -78,19 +98,72 @@ export function filterCompatibilitySnapshotItemAliases(items: readonly ZeusConve
   return { items: projectedItems, suppressedProviderItemIds };
 }
 
-// 拆分期间保留结构化工厂依赖，后续按领域端口继续收窄。
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type CodexProviderHistoryProjectionDependencies = Record<string, any> & {
+export interface CodexProviderHistoryProjectionDependencies {
   options: CreateCodexNativeConversationCoordinatorOptions;
+    failedTurnResults: Map<string, Error & { code: string }>;
+    processProjector: TurnProcessProjector;
+    runStates: Map<string, NativeConversationRunState>;
+    turnResultWaiters: Map<string, NativeTurnResultWaiter[]>;
   now(): string;
-};
+
+    hasExactProviderUserMessage(conversation: ZeusConversationWithMessagesRecord, submission: ZeusConversationSubmissionRecord, providerTurnId: string): boolean;
+
+    isSteeringSubmission(submission: ZeusConversationSubmissionRecord): boolean;
+
+    markConversationRecoveryRequired(conversationId: string, error: unknown): boolean;
+
+    markSubmissionRecoveryRequired(submission: ZeusConversationSubmissionRecord, error: unknown): void;
+
+    failUnsentSubmissionsBeforeProviderDispatch(conversationId: string): void;
+
+    persistProviderUserMessage(
+        conversation: ZeusConversationWithMessagesRecord,
+        itemPayload: Record<string, unknown>,
+        projection: NativeUserMessageProjection,
+        providerTurnId: string,
+        providerThreadId: string,
+        providerItemId: string,
+        createdAt: string,
+    ): string | null;
+
+    projectProviderUserMessage(conversation: ZeusConversationWithMessagesRecord, turn: ZeusConversationTurnRecord, itemPayload: Record<string, unknown>, providerContent: string, providerItemId: string): NativeUserMessageProjection | null;
+
+    reconcileTerminalTurnSubmissions(
+        conversation: ZeusConversationWithMessagesRecord,
+        turn: ZeusConversationTurnRecord,
+        timestamp: string,
+        failure?: unknown,
+    ): {
+        primarySubmission: ZeusConversationSubmissionRecord | undefined;
+        recoveryRequired: ZeusConversationSubmissionRecord[];
+        reconciledCount: number
+    };
+
+    rejectTurnResultWaiters(key: string, error: Error): void;
+
+    resolveTurnResult(result: NativeTurnResult): void;
+
+    submissionPresentation(conversationId: string, turn: ZeusConversationTurnRecord, itemPayload: Record<string, unknown>): Record<string, unknown>;
+
+    syncItemResources(conversation: ZeusConversationWithMessagesRecord, turn: ZeusConversationTurnRecord, item: ZeusConversationItemRecord, payload: Record<string, unknown>, text: string, timestamp: string): ConversationResource[];
+
+    upsertRecoveredTurn(
+        existing: ZeusConversationTurnRecord | undefined,
+        input: {
+            conversationId: string;
+            providerThreadId: string;
+            providerTurnId: string;
+            clientSubmissionId: string | null;
+            status: ConversationTurnStatus;
+            timestamp: string;
+        },
+    ): ZeusConversationTurnRecord;
+}
 
 export function createCodexProviderHistoryProjection(dependencies: CodexProviderHistoryProjectionDependencies) {
   const {
     failedTurnResults,
-    goals,
     hasExactProviderUserMessage,
-    interruptedQueueSubmissions,
     isSteeringSubmission,
     markConversationRecoveryRequired,
     markSubmissionRecoveryRequired,
@@ -100,16 +173,12 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     persistProviderUserMessage,
     projectProviderUserMessage,
     processProjector,
-    providerHistoryReconcilePageLimit,
-    providerHistoryReconcileTurnLimit,
     reconcileTerminalTurnSubmissions,
     rejectTurnResultWaiters,
     resolveTurnResult,
     runStates,
     submissionPresentation,
-    syncCheckpoints,
     syncItemResources,
-    threadPath,
     turnResultWaiters,
     upsertRecoveredTurn,
   } = dependencies;
@@ -156,13 +225,13 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
 
   async function ensureProviderSyncCheckpoint(conversation: ZeusConversationWithMessagesRecord, input: { priority?: 'control' } = {}) {
     const providerThreadId = requireString(conversation.providerThreadId, 'provider thread id');
-    const existing = syncCheckpoints.getByConversation(conversation.id);
+      const existing = options.syncCheckpoints.getByConversation(conversation.id);
     if (existing) {
       if (existing.providerThreadId === providerThreadId) return existing;
       const currentSegment = options.execution.segmentByNativeSession(providerThreadId, conversation.id);
       if (currentSegment?.state !== 'current') throw coordinatorError('ZEUS_NATIVE_SYNC_CHECKPOINT_CONFLICT', 'Provider sync checkpoint belongs to another thread.');
       const latest = await options.manager.listThreadTurns({ threadId: providerThreadId, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded', ...input });
-      return syncCheckpoints.rebind({
+        return options.syncCheckpoints.rebind({
         conversationId: conversation.id,
         providerThreadId,
         baselineTurnId: latest.data[0]?.id ?? null,
@@ -170,7 +239,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       });
     }
     const latest = await options.manager.listThreadTurns({ threadId: providerThreadId, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded', ...input });
-    return syncCheckpoints.initialize({
+      return options.syncCheckpoints.initialize({
       conversationId: conversation.id,
       providerThreadId,
       baselineTurnId: latest.data[0]?.id ?? null,
@@ -289,7 +358,12 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     await reconcileRecoveredRequestUserInput(options.conversations.getById(conversation.id) ?? conversation, providerThreadId, eligibleDescending, localTurns);
 
     const newest = eligibleDescending[0];
-    if (newest) syncCheckpoints.advance({ conversationId: conversation.id, providerThreadId, lastSyncedTurnId: newest.id, timestamp: now() });
+      if (newest) options.syncCheckpoints.advance({
+          conversationId: conversation.id,
+          providerThreadId,
+          lastSyncedTurnId: newest.id,
+          timestamp: now()
+      });
     recordProviderSyncAudit({
       conversationId: conversation.id,
       providerThreadId,
@@ -437,8 +511,8 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       });
       runStates.set(conversation.id, classification === 'failed' || recoveryRequired ? { type: 'paused', reason: 'recovery_required' } : interruptedWithQueue ? { type: 'paused', reason: 'interrupted' } : { type: 'idle' });
       options.execution.resolveWarning(conversation.id, 'provider_interaction_authority_missing', completedAt ?? timestamp);
-      if (!wasTerminal) options.changeSets?.seal({ conversation, turn, timestamp });
-      if (!wasTerminal && !goals.get(conversation.id)) {
+        if (!wasTerminal) options.changeSets.seal({conversation, turn, timestamp});
+        if (!wasTerminal && !options.goals.get(conversation.id)) {
         options.conversations.markAttentionUnread(conversation.id, {
           kind: classification,
           turnId: providerTurn.id,
@@ -592,7 +666,14 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     }
     if (item.itemType === 'fileChange') {
       try {
-        options.changeSets?.capture({ conversation, turn, providerItemId, changes: itemPayload.changes, phase: itemTerminal ? 'post' : 'pre', timestamp });
+          options.changeSets.capture({
+              conversation,
+              turn,
+              providerItemId,
+              changes: itemPayload.changes,
+              phase: itemTerminal ? 'post' : 'pre',
+              timestamp
+          });
       } catch (error) {
         if (!isRejectedHistoricalFileChangeError(error)) throw error;
       }

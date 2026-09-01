@@ -1,4 +1,4 @@
-import type { ZeusConversationMessageRecord, ZeusConversationSubmissionRecord } from '@zeus/storage';
+import type {ZeusConversationMessageRecord, ZeusConversationSubmissionRecord} from '@zeus/storage';
 
 export interface ResolveNativeUserMessageSubmissionInput {
   submissions: readonly ZeusConversationSubmissionRecord[];
@@ -12,6 +12,10 @@ export interface ResolveNativeUserMessageSubmissionInput {
 export interface ResolvedNativeUserMessageSubmission {
   clientMessageId: string | null;
   submission?: ZeusConversationSubmissionRecord;
+}
+
+export interface NativeUserMessageProjection extends ResolvedNativeUserMessageSubmission {
+    content: string;
 }
 
 /** 按客户端消息、提交记录和提供方轮次的稳定关联，找出同一条本地用户输入。 */

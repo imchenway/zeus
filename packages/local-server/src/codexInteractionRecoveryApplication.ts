@@ -1,9 +1,66 @@
-import type { ZeusConversationServerRequestRecord, ZeusConversationSubmissionRecord, ZeusConversationTurnRecord, ZeusConversationWithMessagesRecord } from '@zeus/storage';
-import { coordinatorError, parseJsonRecord, requireString, serializeError } from './codexNativeConversationPolicy.js';
+import type {CodexThreadSnapshot} from '@zeus/ai-runtime';
+import type {
+    ZeusConversationServerRequestRecord,
+    ZeusConversationSubmissionRecord,
+    ZeusConversationTurnRecord,
+    ZeusConversationWithMessagesRecord
+} from '@zeus/storage';
+import type {
+    CreateCodexNativeConversationCoordinatorOptions,
+    NativeConversationRunState,
+    NativeTurnCommandExecutor,
+    NativeTurnResult,
+    NativeTurnResultWaiter,
+    WaitForNativeTurnResultInput
+} from './codexNativeConversationContracts.js';
+import {
+    coordinatorError,
+    failedTurnErrorFromRecord,
+    parseJsonRecord,
+    requireString,
+    serializeError
+} from './codexNativeConversationPolicy.js';
+import {
+    createCodexProviderStopRecoveryApplication,
+    providerStopPendingError
+} from './codexProviderStopRecoveryApplication.js';
 
-// 协调器仍是组合根；此处只拥有“Provider 报告等待交互，但 Zeus 未持有交互权限”这一恢复边界。
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type CodexInteractionRecoveryDependencies = Record<string, any>;
+interface CodexInteractionRecoveryDependencies {
+    options: CreateCodexNativeConversationCoordinatorOptions;
+    runStates: Map<string, NativeConversationRunState>;
+    completedTurnResults: Map<string, NativeTurnResult>;
+    failedTurnResults: Map<string, Error & { code: string }>;
+    turnResultWaiters: Map<string, NativeTurnResultWaiter[]>;
+    providerStopRecovery: ReturnType<typeof createCodexProviderStopRecoveryApplication>;
+
+    now(): string;
+
+    isClosed(): boolean;
+
+    persist(): Promise<void>;
+
+    readyGenerationId(): string | null;
+
+    enqueueProviderTurnReconciliation(conversation: ZeusConversationWithMessagesRecord, input?: {
+        priority?: 'control'
+    }): Promise<void>;
+
+    executeTurnCommand: NativeTurnCommandExecutor;
+
+    isPendingInteractionAuthority(request: ZeusConversationServerRequestRecord): boolean;
+
+    projectedProviderThreadSnapshot(conversationId: string, metadata: CodexThreadSnapshot): CodexThreadSnapshot;
+
+    reconcileConversationSnapshot(conversation: ZeusConversationWithMessagesRecord, snapshot: CodexThreadSnapshot, generationId: string, input?: {
+        preserveUnsentQueue?: boolean
+    }): void;
+
+    closeEphemeralConversation(conversationId: string, providerTurnId: string | null, submissionStatus: 'cancelled' | 'failed', error: unknown, interrupt: boolean): Promise<void>;
+
+    rejectTurnResultWaiters(key: string, error: Error): void;
+
+    resolveTurnResult(result: NativeTurnResult): void;
+}
 
 export function isRetiredGenerationFailure(request: ZeusConversationServerRequestRecord): boolean {
   if (request.status !== 'failed' || !request.responseJson) return false;
@@ -25,7 +82,26 @@ export function isInteractionRecoveryCheckpointRequest(request: ZeusConversation
 }
 
 export function createCodexInteractionRecoveryApplication(dependencies: CodexInteractionRecoveryDependencies) {
-  const { enqueueProviderTurnReconciliation, executeTurnCommand, isClosed, isPendingInteractionAuthority, now, options, persist, projectedProviderThreadSnapshot, readyGenerationId, reconcileConversationSnapshot, runStates } = dependencies;
+    const {
+        closeEphemeralConversation,
+        completedTurnResults,
+        enqueueProviderTurnReconciliation,
+        executeTurnCommand,
+        failedTurnResults,
+        isClosed,
+        isPendingInteractionAuthority,
+        now,
+        options,
+        persist,
+        projectedProviderThreadSnapshot,
+        providerStopRecovery,
+        readyGenerationId,
+        reconcileConversationSnapshot,
+        rejectTurnResultWaiters,
+        resolveTurnResult,
+        runStates,
+        turnResultWaiters,
+    } = dependencies;
   const reconciliationTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   function recoverStaleInteractionRequests(conversationId: string, currentGenerationId: string): void {
@@ -85,7 +161,11 @@ export function createCodexInteractionRecoveryApplication(dependencies: CodexInt
           requestIdentity: { threadId: input.threadId, turnId: providerTurnId },
           issuedAt: input.request.createdAt,
           providerGenerationId: input.request.transportGenerationId,
-          invoke: (traceIdentity: Record<string, unknown>) => options.manager.interruptTurn({ threadId: input.threadId, turnId: providerTurnId, traceIdentity }),
+            invoke: (traceIdentity) => options.manager.interruptTurn({
+                threadId: input.threadId,
+                turnId: providerTurnId,
+                traceIdentity
+            }),
         });
       } catch (error) {
         interruptFailed = true;
@@ -242,10 +322,137 @@ export function createCodexInteractionRecoveryApplication(dependencies: CodexInt
     runStates.set(conversation.id, { type: 'active', turnId: turn.providerTurnId, phase: 'prework' });
   }
 
+    function resolveTurnResultFromDurableTurn(conversationId: string, turn: {
+        providerThreadId: string;
+        providerTurnId: string | null;
+        status: string
+    }): void {
+        if (!turn.providerTurnId || (turn.status !== 'completed' && turn.status !== 'interrupted')) return;
+        const conversation = options.conversations.getById(conversationId);
+        if (!conversation || conversation.providerThreadId !== turn.providerThreadId) return;
+        const answer = [...conversation.messages].reverse().find((message) => message.providerTurnId === turn.providerTurnId && message.role === 'assistant')?.content ?? '';
+        resolveTurnResult({
+            conversationId,
+            providerThreadId: turn.providerThreadId,
+            providerTurnId: turn.providerTurnId,
+            status: turn.status,
+            answer
+        });
+    }
+
+    async function timeoutTurnResult(input: WaitForNativeTurnResultInput, key: string): Promise<void> {
+        if (!turnResultWaiters.has(key)) return;
+        const conversation = options.conversations.getById(input.conversationId);
+        if (conversation?.providerThreadId && !isClosed()) {
+            try {
+                await enqueueProviderTurnReconciliation(conversation, {priority: 'control'});
+            } catch (error) {
+                options.broadcast('conversation.native.turn_result_reconciliation_deferred', {
+                    conversationId: input.conversationId,
+                    providerThreadId: conversation.providerThreadId,
+                    providerTurnId: input.providerTurnId,
+                    error: serializeError(error),
+                });
+            }
+        }
+        if (!turnResultWaiters.has(key)) return;
+        const persistedTurn = options.turns.listByConversation(input.conversationId).find((turn) => turn.providerTurnId === input.providerTurnId);
+        if (persistedTurn?.status === 'completed' || persistedTurn?.status === 'interrupted') {
+            resolveTurnResultFromDurableTurn(input.conversationId, persistedTurn);
+            return;
+        }
+        if (persistedTurn?.status === 'failed') {
+            const failure = failedTurnErrorFromRecord(persistedTurn);
+            failedTurnResults.set(key, failure);
+            rejectTurnResultWaiters(key, failure);
+            return;
+        }
+        const error = coordinatorError('ZEUS_CODEX_TURN_RESULT_TIMEOUT', 'Codex native turn did not complete before the timeout.');
+        await closeEphemeralConversation(input.conversationId, input.providerTurnId, 'cancelled', serializeError(error), true);
+        rejectTurnResultWaiters(key, error);
+    }
+
+    async function reconcileInterruptedTurnUntilSettled(conversationId: string, providerTurnId: string): Promise<void> {
+        for (const delayMs of [0, 150, 400, 900, 1_800] as const) {
+            if (delayMs > 0) await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, delayMs));
+            const key = `${conversationId}:${providerTurnId}`;
+            if (completedTurnResults.has(key) || failedTurnResults.has(key) || isClosed()) return;
+            const conversation = options.conversations.getById(conversationId);
+            if (!conversation?.providerThreadId) return;
+            try {
+                await enqueueProviderTurnReconciliation(conversation, {priority: 'control'});
+            } catch (error) {
+                options.broadcast('conversation.native.turn_result_reconciliation_deferred', {
+                    conversationId,
+                    providerThreadId: conversation.providerThreadId,
+                    providerTurnId,
+                    error: serializeError(error),
+                });
+            }
+        }
+    }
+
+    async function markInterruptedTurnProviderStopPending(conversationId: string, providerThreadId: string, providerTurnId: string, cause: unknown): Promise<void> {
+        const turn = options.turns.listByConversation(conversationId).find((candidate) => candidate.providerTurnId === providerTurnId);
+        if (!turn || turn.status === 'completed' || turn.status === 'interrupted' || turn.status === 'failed') return;
+        const timestamp = now();
+        const stopCommandId = `turn-interrupt:${providerTurnId}`;
+        const error = providerStopPendingError({
+            providerThreadId,
+            providerTurnId,
+            stopCommandId,
+            requestedAt: timestamp,
+            cause: serializeError(cause)
+        });
+        options.turns.upsert({...turn, status: 'interrupted', error, completedAt: timestamp, updatedAt: timestamp});
+        for (const submission of options.submissions.listByConversation(conversationId)) {
+            if (!submission.providerTurnId && submission.status === 'queued') {
+                options.submissions.updateStatus(submission.id, 'paused', {
+                    pausedReason: 'provider_stop_pending',
+                    error,
+                    updatedAt: timestamp
+                });
+            }
+        }
+        const currentConversation = options.conversations.getById(conversationId);
+        if (currentConversation?.providerThreadId === providerThreadId) {
+            options.conversations.bindProvider(conversationId, {
+                providerId: 'codex',
+                providerThreadId,
+                providerModel: currentConversation.providerModel,
+                providerState: 'paused'
+            });
+        }
+        runStates.set(conversationId, {type: 'paused', reason: 'provider_stop_pending'});
+        await persist();
+        options.broadcast('conversation.native.provider_stop_pending', {
+            conversationId,
+            providerThreadId,
+            providerTurnId,
+            stopCommandId,
+            error
+        });
+        options.broadcast('conversation.queue.changed', {
+            conversationId,
+            providerThreadId,
+            providerTurnId,
+            waitReason: 'provider_stop_pending'
+        });
+        void providerStopRecovery.retry(conversationId).catch(() => undefined);
+    }
+
   function close(): void {
     for (const timer of reconciliationTimers.values()) clearTimeout(timer);
     reconciliationTimers.clear();
   }
 
-  return { close, failInvalidInteractionAuthority, recoverStaleInteractionRequests, scheduleProviderThreadStatusReconciliation };
+    return {
+        close,
+        failInvalidInteractionAuthority,
+        markInterruptedTurnProviderStopPending,
+        reconcileInterruptedTurnUntilSettled,
+        recoverStaleInteractionRequests,
+        scheduleProviderThreadStatusReconciliation,
+        timeoutTurnResult,
+    };
 }
