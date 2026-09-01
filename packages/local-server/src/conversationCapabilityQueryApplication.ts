@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { buildAiRuntimePrompt, type CodexAccountSnapshot, type CodexCapabilitiesSnapshot, type CodexTransportState, type ProjectModelSelection, type SelectableConnectionModel } from '@zeus/ai-runtime';
-import { buildTaskBranchName, type GitRepositoryContext } from '@zeus/git-core';
+import { buildTaskBranchName, buildTaskBranchPrefix, type GitRepositoryContext } from '@zeus/git-core';
 import type {
   ConversationRepository,
   ConversationSubmissionRepository,
@@ -43,7 +43,7 @@ interface ConversationCapabilityQueryPorts {
   repositories: Pick<ProjectRepositoryRegistrationRepository, 'listByProject'>;
   sharedPaths: Pick<ProjectSharedPathRepository, 'listByProject'>;
   environments: Pick<TaskEnvironmentRepository, 'listByTask'>;
-  workspaces: Pick<TaskWorkspaceRepository, 'listByEnvironment'>;
+  workspaces: Pick<TaskWorkspaceRepository, 'getByRepositoryBranch' | 'listByEnvironment'>;
   conversations: Pick<ConversationRepository, 'listByProject' | 'listByEnvironment'>;
   submissions: Pick<ConversationSubmissionRepository, 'listByConversation'>;
   provider: ExistingProviderCapabilityReadPort;
@@ -274,6 +274,18 @@ export class ConversationCapabilityQueryApplication {
         return { ref: `refs/remotes/${ref}`, label: branch, kind: 'remote' as const, group: remoteName || 'remote', current: false };
       }),
     ];
+    const localTaskBranches = repository.localBranches
+      .filter((branchName) => branchName.startsWith(buildTaskBranchPrefix(task.taskCode)))
+      .map((branchName) => {
+        const managed = this.ports.workspaces.getByRepositoryBranch(registered.id, branchName);
+        const checkedOut = repository.worktrees.find((worktree) => worktree.branch === branchName);
+        return {
+          branchName,
+          available: !managed && !checkedOut,
+          unavailableReason: managed ? ('managed_environment' as const) : checkedOut ? ('checked_out' as const) : null,
+          worktreePath: checkedOut?.path ?? null,
+        };
+      });
     return {
       ...registered,
       branch: repository.branch,
@@ -283,6 +295,7 @@ export class ConversationCapabilityQueryApplication {
       remoteRefreshStatus: 'not_requested' as const,
       remoteRefreshError: null,
       sourceRefs,
+      localTaskBranches,
       suggestedBranchName: buildTaskBranchName(task.taskCode, task.title, this.ports.environments.listByTask(task.id).length + 1),
     };
   }

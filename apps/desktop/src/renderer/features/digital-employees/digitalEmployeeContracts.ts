@@ -198,8 +198,12 @@ export type TaskWorkRunStatus = 'prepared' | 'dispatching' | 'active' | 'waiting
 export type TaskWorkDeliverableStatus = 'submitted' | 'accepted' | 'changes_requested' | 'superseded';
 export type TaskWorkDecisionStatus = 'pending' | 'resolved' | 'dismissed' | 'expired';
 
-export type TaskWorkWorkspaceChoice = { mode: 'create' } | { mode: 'existing'; environmentId: string };
-export type TaskWorkWorkspaceSnapshot = { mode: 'direct' } | { mode: 'existing'; environmentId: string } | { mode: 'create'; repositoryRevision: string; repositories: Array<{ repositoryId: string; sourceRef: string; branchName: string }> };
+export type TaskWorkWorkspaceChoice = { mode: 'create' } | { mode: 'existing'; environmentId: string } | { mode: 'local'; branchName: string };
+export type TaskWorkWorkspaceSnapshot =
+  | { mode: 'direct' }
+  | { mode: 'existing'; environmentId: string }
+  | { mode: 'local'; repositoryRevision: string; repositories: Array<{ repositoryId: string; branchName: string }> }
+  | { mode: 'create'; repositoryRevision: string; repositories: Array<{ repositoryId: string; sourceRef: string; branchName: string }> };
 
 export interface TaskWorkRunRecord {
   id: string;

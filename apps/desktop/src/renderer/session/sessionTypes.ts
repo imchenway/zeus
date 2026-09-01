@@ -961,6 +961,12 @@ export interface CodexTaskRepositoryCapability extends ProjectRepositoryRecord {
   remoteRefreshStatus: 'not_requested' | 'succeeded' | 'failed';
   remoteRefreshError: string | null;
   sourceRefs: Array<{ ref: string; label: string; kind: 'local' | 'remote'; group: string; current: boolean }>;
+  localTaskBranches?: Array<{
+    branchName: string;
+    available: boolean;
+    unavailableReason: 'managed_environment' | 'checked_out' | null;
+    worktreePath: string | null;
+  }>;
   suggestedBranchName: string;
 }
 

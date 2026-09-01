@@ -556,6 +556,11 @@ export type StartTaskConversationBody = (
       workspace?:
         | { mode: 'direct'; confirmConcurrentWrites?: boolean }
         | {
+            mode: 'local';
+            repositoryRevision: string;
+            repositories: Array<{ repositoryId: string; branchName: string }>;
+          }
+        | {
             mode: 'create';
             repositoryRevision: string;
             repositories: Array<{

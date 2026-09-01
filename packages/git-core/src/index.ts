@@ -460,11 +460,6 @@ export function buildTaskEnvironmentRootPath(projectContainerPath: string, proje
 
 /** 从任务编码、名称和开发线序号生成可读分支；最终合法性仍由 git check-ref-format 判定。 */
 export function buildTaskBranchName(taskCode: string, taskTitle: string, sequence: number): string {
-  const normalizedCode =
-    taskCode
-      .trim()
-      .replace(/[^A-Za-z0-9._-]+/gu, '-')
-      .replace(/^-+|-+$/gu, '') || 'TASK';
   const slug =
     taskTitle
       .normalize('NFKD')
@@ -472,7 +467,17 @@ export function buildTaskBranchName(taskCode: string, taskTitle: string, sequenc
       .replace(/[^a-z0-9]+/gu, '-')
       .replace(/^-+|-+$/gu, '')
       .slice(0, 36) || 'task';
-  return `zeus/${normalizedCode}-${slug}-${String(Math.max(1, Math.trunc(sequence))).padStart(2, '0')}`;
+  return `${buildTaskBranchPrefix(taskCode)}${slug}-${String(Math.max(1, Math.trunc(sequence))).padStart(2, '0')}`;
+}
+
+/** 用任务编码限定可接管的既有本地任务分支，避免把其他任务分支登记到当前任务。 */
+export function buildTaskBranchPrefix(taskCode: string): string {
+  const normalizedCode =
+    taskCode
+      .trim()
+      .replace(/[^A-Za-z0-9._-]+/gu, '-')
+      .replace(/^-+|-+$/gu, '') || 'TASK';
+  return `zeus/${normalizedCode}-`;
 }
 
 /** 使用 Git 自己的规则校验分支名，避免复制一份会漂移的手写正则。 */
@@ -495,13 +500,16 @@ export async function prepareTaskWorktree(input: PrepareTaskWorktreeInput): Prom
   if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected project is not a Git repository.');
   const branchName = await assertValidGitBranchName(context.topLevel, input.branchName);
   // 新建工作区按调用方选中的本机可用引用冻结精确提交；恢复只接受持久化对象 ID。
-  const sourceRef = input.existingBranch ? requireGitObjectId(input.sourceRef, 'source commit') : input.sourceRef.trim();
-  const sourceBranch = input.existingBranch
-    ? input.sourceBranch?.trim() || sourceRef
-    : input.sourceKind === 'remote'
-      ? await assertRemoteBranchExists(context.topLevel, sourceRef, input.sourceBranch)
-      : await assertNamedBranchExists(context.topLevel, sourceRef, 'source branch');
-  const sourceHeadSha = await resolveCommit(context.topLevel, input.existingBranch ? sourceRef : input.sourceKind === 'remote' ? `refs/remotes/${sourceRef}` : localBranchRef(sourceRef));
+  const adoptLocalBranch = input.existingBranch && input.sourceKind === 'local';
+  const sourceRef = input.existingBranch && !adoptLocalBranch ? requireGitObjectId(input.sourceRef, 'source commit') : input.sourceRef.trim();
+  const sourceBranch = adoptLocalBranch
+    ? await assertNamedBranchExists(context.topLevel, sourceRef, 'task branch')
+    : input.existingBranch
+      ? input.sourceBranch?.trim() || sourceRef
+      : input.sourceKind === 'remote'
+        ? await assertRemoteBranchExists(context.topLevel, sourceRef, input.sourceBranch)
+        : await assertNamedBranchExists(context.topLevel, sourceRef, 'source branch');
+  const sourceHeadSha = await resolveCommit(context.topLevel, input.existingBranch && !adoptLocalBranch ? sourceRef : input.sourceKind === 'remote' ? `refs/remotes/${sourceRef}` : localBranchRef(sourceRef));
   const registered = context.worktrees.find((entry) => entry.branch === branchName);
   if (registered) {
     if (!input.existingBranch) {

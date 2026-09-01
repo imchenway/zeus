@@ -2,6 +2,7 @@ import { createAiRuntimeSessionManager, parseModelRef } from '@zeus/ai-runtime';
 import {
   buildGitPatchExport,
   buildTaskBranchName,
+  buildTaskBranchPrefix,
   buildTaskEnvironmentRootPath,
   cleanupPreparedTaskWorktree,
   cleanupTaskIntegrationWorktree,
@@ -256,7 +257,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     selection: unknown,
     stableOperationId: string,
   ): Promise<{ environment: ZeusTaskEnvironmentRecord; workspaces: ZeusTaskWorkspaceRecord[]; cwd: string; writableRoots: string[] }> {
-    if (!isNativeApiRecord(selection) || (selection.mode !== 'create' && selection.mode !== 'existing')) {
+    if (!isNativeApiRecord(selection) || (selection.mode !== 'create' && selection.mode !== 'existing' && selection.mode !== 'local')) {
       throw nativeApiError('ZEUS_TASK_ENVIRONMENT_CHOICE_REQUIRED', 'Choose a new task environment or an existing task environment.');
     }
 
@@ -308,6 +309,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       return { environment, workspaces: updated, cwd, writableRoots: resolveTaskEnvironmentWritableRoots(project, updated) };
     }
 
+    const adoptLocalBranch = selection.mode === 'local';
     const registeredRepositories = projectRepositories.listByProject(project.id);
     if (registeredRepositories.length === 0) {
       throw nativeApiError('ZEUS_WORKTREE_REPOSITORY_REQUIRED', 'No Git repository was found in the project directory. Initialize a repository or use the project directory directly.');
@@ -378,20 +380,34 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
         for (const { registeredRepository, repository, targetPath } of lane) {
           const requested = requestedById.get(registeredRepository.id);
           if (!requested) throw nativeApiError('ZEUS_TASK_REPOSITORY_SELECTION_INCOMPLETE', `Choose a source branch for ${registeredRepository.relativePath}.`);
-          const requestedSourceRef = typeof requested.sourceRef === 'string' ? requested.sourceRef.trim() : '';
-          const localPrefix = 'refs/heads/';
-          const remotePrefix = 'refs/remotes/';
-          const sourceKind = requestedSourceRef.startsWith(remotePrefix) ? ('remote' as const) : ('local' as const);
-          const sourceRef = requestedSourceRef.startsWith(localPrefix) ? requestedSourceRef.slice(localPrefix.length) : requestedSourceRef.startsWith(remotePrefix) ? requestedSourceRef.slice(remotePrefix.length) : '';
-          const sourceExists = sourceKind === 'remote' ? repository.remoteBranches.includes(sourceRef) : repository.localBranches.includes(sourceRef);
-          if (!sourceRef || !sourceExists) {
-            throw nativeApiError('ZEUS_TASK_SOURCE_BRANCH_INVALID', `Choose an available local or locally known remote branch for ${registeredRepository.relativePath}.`);
+          const requestedBranchName = typeof requested.branchName === 'string' ? requested.branchName.trim() : '';
+          const branchName = requestedBranchName || buildTaskBranchName(task.taskCode, task.title, sequence);
+          let sourceKind: 'local' | 'remote' = 'local';
+          let sourceRef = branchName;
+          let sourceBranch = branchName;
+          let sourceRemoteName = '';
+          if (adoptLocalBranch) {
+            if (!requestedBranchName || !requestedBranchName.startsWith(buildTaskBranchPrefix(task.taskCode)) || !repository.localBranches.includes(requestedBranchName)) {
+              throw nativeApiError('ZEUS_TASK_LOCAL_BRANCH_INVALID', `Choose an existing local branch that belongs to ${task.taskCode}: ${registeredRepository.relativePath}.`);
+            }
+            if (repository.worktrees.some((worktree) => worktree.branch === requestedBranchName)) {
+              throw nativeApiError('ZEUS_TASK_LOCAL_BRANCH_CHECKED_OUT', `The local task branch is already checked out in another worktree: ${requestedBranchName}`);
+            }
+          } else {
+            const requestedSourceRef = typeof requested.sourceRef === 'string' ? requested.sourceRef.trim() : '';
+            const localPrefix = 'refs/heads/';
+            const remotePrefix = 'refs/remotes/';
+            sourceKind = requestedSourceRef.startsWith(remotePrefix) ? 'remote' : 'local';
+            sourceRef = requestedSourceRef.startsWith(localPrefix) ? requestedSourceRef.slice(localPrefix.length) : requestedSourceRef.startsWith(remotePrefix) ? requestedSourceRef.slice(remotePrefix.length) : '';
+            const sourceExists = sourceKind === 'remote' ? repository.remoteBranches.includes(sourceRef) : repository.localBranches.includes(sourceRef);
+            if (!sourceRef || !sourceExists) {
+              throw nativeApiError('ZEUS_TASK_SOURCE_BRANCH_INVALID', `Choose an available local or locally known remote branch for ${registeredRepository.relativePath}.`);
+            }
+            const sourceRemoteSeparator = sourceKind === 'remote' ? sourceRef.indexOf('/') : -1;
+            sourceRemoteName = sourceRemoteSeparator > 0 ? sourceRef.slice(0, sourceRemoteSeparator) : '';
+            sourceBranch = sourceRemoteSeparator > 0 ? sourceRef.slice(sourceRemoteSeparator + 1) : sourceRef;
           }
-          const sourceRemoteSeparator = sourceKind === 'remote' ? sourceRef.indexOf('/') : -1;
-          const sourceRemoteName = sourceRemoteSeparator > 0 ? sourceRef.slice(0, sourceRemoteSeparator) : '';
-          const sourceBranch = sourceRemoteSeparator > 0 ? sourceRef.slice(sourceRemoteSeparator + 1) : sourceRef;
           const remoteName = sourceRemoteName || (repository.remotes.includes('origin') ? 'origin' : (repository.remotes[0] ?? ''));
-          const branchName = typeof requested.branchName === 'string' && requested.branchName.trim() ? requested.branchName.trim() : buildTaskBranchName(task.taskCode, task.title, sequence);
           if (taskWorkspaces.getByRepositoryBranch(registeredRepository.id, branchName)) {
             throw nativeApiError('ZEUS_TASK_BRANCH_ALREADY_MANAGED', `Task branch is already managed in ${registeredRepository.relativePath}: ${branchName}`);
           }
@@ -411,9 +427,9 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
             sourceRef,
             sourceKind,
             sourceBranch,
-            existingBranch: false,
+            existingBranch: adoptLocalBranch,
             worktreePath: targetPath,
-            includeLocalChanges: sourceKind === 'local' && requested.includeLocalChanges === true,
+            includeLocalChanges: !adoptLocalBranch && sourceKind === 'local' && requested.includeLocalChanges === true,
             ignoredPaths: projectRepositoryIgnoredPaths(project.id, registeredRepository.id, registeredRepository.localPath),
           });
           preparedMembers.push({ repository: registeredRepository, prepared, remoteName });
@@ -423,7 +439,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       overlayTaskEnvironmentSharedPaths(environmentRoot, projectSharedPaths.listByProject(project.id));
     } catch (error) {
       for (const member of [...preparedMembers].sort((left, right) => right.prepared.worktreePath.length - left.prepared.worktreePath.length)) {
-        await cleanupPreparedTaskWorktree({ repositoryPath: member.repository.localPath, worktreePath: member.prepared.worktreePath, branchName: member.prepared.branchName, removeBranch: true }).catch(() => undefined);
+        await cleanupPreparedTaskWorktree({ repositoryPath: member.repository.localPath, worktreePath: member.prepared.worktreePath, branchName: member.prepared.branchName, removeBranch: !adoptLocalBranch }).catch(() => undefined);
       }
       if (registeredRepositories.length > 0) rmSync(environmentRoot, { recursive: true, force: true });
       throw error;
@@ -458,7 +474,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       }));
     } catch (error) {
       for (const member of [...preparedMembers].sort((left, right) => right.prepared.worktreePath.length - left.prepared.worktreePath.length)) {
-        await cleanupPreparedTaskWorktree({ repositoryPath: member.repository.localPath, worktreePath: member.prepared.worktreePath, branchName: member.prepared.branchName, removeBranch: true }).catch(() => undefined);
+        await cleanupPreparedTaskWorktree({ repositoryPath: member.repository.localPath, worktreePath: member.prepared.worktreePath, branchName: member.prepared.branchName, removeBranch: !adoptLocalBranch }).catch(() => undefined);
       }
       if (registeredRepositories.length > 0) rmSync(environmentRoot, { recursive: true, force: true });
       throw error;
@@ -466,7 +482,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     recordTaskEvent({
       taskId: task.id,
       eventType: 'task.environment.created',
-      title: registeredRepositories.length > 0 ? '多仓任务环境已创建' : '非 Git 任务环境已创建',
+      title: adoptLocalBranch ? '已有本地任务分支已登记' : registeredRepositories.length > 0 ? '多仓任务环境已创建' : '非 Git 任务环境已创建',
       payload: {
         environmentId: environment.id,
         rootPath: environment.rootPath,

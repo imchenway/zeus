@@ -60,7 +60,7 @@ export interface TaskWorkPreviewSelection {
   workspace?: TaskWorkWorkspaceChoice;
 }
 
-export type TaskWorkWorkspaceChoice = { mode: 'create' } | { mode: 'existing'; environmentId: string };
+export type TaskWorkWorkspaceChoice = { mode: 'create' } | { mode: 'existing'; environmentId: string } | { mode: 'local'; branchName: string };
 
 export interface TaskWorkPreview {
   previewSha256: string;
@@ -502,7 +502,7 @@ async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTask
 function resolveTaskWorkWorkspaceSnapshot(choice: TaskWorkWorkspaceChoice | undefined, capabilities: Record<string, unknown>, blockers: TaskWorkPreview['blockers']): TaskWorkWorkspaceSnapshot {
   const repositories = Array.isArray(capabilities.repositories) ? capabilities.repositories.filter(isRecord) : [];
   if (repositories.length === 0) {
-    if (choice?.mode === 'existing') blockers.push({ code: 'ZEUS_TASK_WORK_ENVIRONMENT_INVALID', message: '当前任务没有可继续的任务分支。' });
+    if (choice?.mode === 'existing' || choice?.mode === 'local') blockers.push({ code: 'ZEUS_TASK_WORK_ENVIRONMENT_INVALID', message: '当前任务没有可继续的任务分支。' });
     return { mode: 'direct' };
   }
 
@@ -520,6 +520,26 @@ function resolveTaskWorkWorkspaceSnapshot(choice: TaskWorkWorkspaceChoice | unde
 
   const repositoryRevision = typeof capabilities.repositoryRevision === 'string' ? capabilities.repositoryRevision : '';
   if (!repositoryRevision) blockers.push({ code: 'ZEUS_TASK_WORK_REPOSITORY_REVISION_REQUIRED', message: '项目仓库清单缺少稳定版本。' });
+  if (choice?.mode === 'local') {
+    const resolvedRepositories = repositories.flatMap((repository) => {
+      if (typeof repository.id !== 'string') {
+        blockers.push({ code: 'ZEUS_TASK_WORK_LOCAL_BRANCH_INVALID', message: '项目仓库缺少稳定身份。' });
+        return [];
+      }
+      const candidates = Array.isArray(repository.localTaskBranches) ? repository.localTaskBranches.filter(isRecord) : [];
+      const candidate = candidates.find((entry) => entry.branchName === choice.branchName);
+      if (!candidate) blockers.push({ code: 'ZEUS_TASK_WORK_LOCAL_BRANCH_INVALID', message: `本地任务分支在仓库中不可用：${choice.branchName}` });
+      else if (candidate.available !== true) {
+        blockers.push({
+          code: candidate.unavailableReason === 'checked_out' ? 'ZEUS_TASK_WORK_LOCAL_BRANCH_CHECKED_OUT' : 'ZEUS_TASK_WORK_LOCAL_BRANCH_MANAGED',
+          message: candidate.unavailableReason === 'checked_out' ? `本地任务分支已被其他 worktree 检出：${choice.branchName}` : `本地任务分支已经由任务环境管理：${choice.branchName}`,
+        });
+      }
+      return [{ repositoryId: repository.id, branchName: choice.branchName }];
+    });
+    return { mode: 'local', repositoryRevision, repositories: resolvedRepositories };
+  }
+
   const resolvedRepositories = repositories.flatMap((repository) => {
     const sourceRefs = Array.isArray(repository.sourceRefs) ? repository.sourceRefs.filter(isRecord) : [];
     const source = sourceRefs.find((candidate) => candidate.current === true) ?? sourceRefs.find((candidate) => candidate.kind === 'local');
@@ -667,7 +687,7 @@ async function dispatchAgent(options: TaskWorkManagementOptions, run: TaskWorkRu
   const persistedConversation = options.conversations.getById(conversationId);
   const environmentId = typeof projection.environmentId === 'string' ? projection.environmentId : (persistedConversation?.environmentId ?? null);
   if (workspace.mode === 'existing' && environmentId !== workspace.environmentId) throw new TaskWorkStoreError('ZEUS_TASK_WORK_ENVIRONMENT_MISMATCH', '新会话没有绑定所选任务环境。');
-  if (workspace.mode === 'create' && !environmentId) throw new TaskWorkStoreError('ZEUS_TASK_WORK_ENVIRONMENT_MISSING', '新任务分支没有返回任务环境身份。');
+  if ((workspace.mode === 'create' || workspace.mode === 'local') && !environmentId) throw new TaskWorkStoreError('ZEUS_TASK_WORK_ENVIRONMENT_MISSING', '任务分支没有返回任务环境身份。');
   if (workspace.mode === 'direct' && environmentId) throw new TaskWorkStoreError('ZEUS_TASK_WORK_ENVIRONMENT_MISMATCH', '项目目录直连会话意外绑定了任务环境。');
   options.runs.update(run.id, { status: 'active', conversationId, environmentId });
   publishChanged(options, run.taskId, run.workItemId, 'agent_started');
@@ -1497,8 +1517,9 @@ function normalizeSelection(value: unknown): TaskWorkPreviewSelection {
 
 function normalizeTaskWorkWorkspaceChoice(value: unknown): TaskWorkWorkspaceChoice | undefined {
   if (value === undefined) return undefined;
-  if (!isRecord(value) || (value.mode !== 'create' && value.mode !== 'existing')) throw new TaskWorkStoreError('ZEUS_TASK_WORK_WORKSPACE_INVALID', '代码现场选择无效。', 400);
+  if (!isRecord(value) || (value.mode !== 'create' && value.mode !== 'existing' && value.mode !== 'local')) throw new TaskWorkStoreError('ZEUS_TASK_WORK_WORKSPACE_INVALID', '代码现场选择无效。', 400);
   if (value.mode === 'create') return { mode: 'create' };
+  if (value.mode === 'local') return { mode: 'local', branchName: requiredText(value.branchName, '请选择已有本地任务分支。', 512) };
   return { mode: 'existing', environmentId: requiredText(value.environmentId, '请选择已有任务环境。', 512) };
 }
 

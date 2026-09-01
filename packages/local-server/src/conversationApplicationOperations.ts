@@ -1964,7 +1964,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         if (selectedEffort && !selectedModel.supportedReasoningEfforts.some((candidate) => candidate === selectedEffort)) {
           throw nativeApiError('ZEUS_CODEX_EFFORT_UNAVAILABLE', `Configured Codex effort is unavailable: ${selectedEffort}`);
         }
-        if (!isNativeApiRecord(body.workspace) || (body.workspace.mode !== 'create' && body.workspace.mode !== 'existing' && body.workspace.mode !== 'direct')) {
+        if (!isNativeApiRecord(body.workspace) || (body.workspace.mode !== 'create' && body.workspace.mode !== 'existing' && body.workspace.mode !== 'local' && body.workspace.mode !== 'direct')) {
           throw nativeApiError('ZEUS_TASK_PUSH_WORKSPACE_MODE_REQUIRED', 'Choose the project directory or a worktree for this task push.');
         }
         const directWorkspace = body.workspace.mode === 'direct';
