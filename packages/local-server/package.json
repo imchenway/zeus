@@ -186,7 +186,7 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@fastify/websocket": "^11.0.1",
+    "@fastify/websocket": "^11.3.0",
     "@modelcontextprotocol/client": "^2.0.0",
     "@zeus/ai-runtime": "workspace:*",
     "@zeus/code-indexer": "workspace:*",
