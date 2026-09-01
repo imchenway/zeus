@@ -27,7 +27,7 @@ import { ConversationComposer } from '../src/renderer/session/ConversationCompos
 import { PlanSummary } from '../src/renderer/session/PlanSummary.js';
 import { RuntimeDetails } from '../src/renderer/session/RuntimeDetails.js';
 import { SubagentWorkspace } from '../src/renderer/session/SubagentWorkspace.js';
-import { SessionPlanProgress } from '../src/renderer/session/SessionActivity.js';
+import { SessionActivityGroup, SessionPlanProgress } from '../src/renderer/session/SessionActivity.js';
 import { createHydratedSessionState, createInitialSessionState, sessionReducer } from '../src/renderer/session/sessionReducer.js';
 import { createSessionController, type SessionControllerClient } from '../src/renderer/session/useSessionController.js';
 import { adaptConversationSnapshotV2, reconcileConversationHistoryCache } from '../src/renderer/session/conversationSnapshotV2Adapter.js';
@@ -2331,6 +2331,28 @@ export function ActiveTurnReentryQaApp() {
             <p>这里用于真实卸载运行会话的 Transcript，再从 Snapshot V2 首屏重新挂载。</p>
           </article>
         )}
+      </section>
+    </main>
+  );
+}
+
+export function ActivityCompletionQaApp() {
+  const [completed, setCompleted] = useState(false);
+  const items = executionPhaseActivities.slice(-4).map((item, index, group) => (index === group.length - 1 ? { ...item, status: completed ? 'completed' : 'in_progress' } : item));
+  return (
+    <main className="macos-ai-app zeus-shell session-codex-parity-v1 qa-page theme-light" data-theme="light" data-testid="activity-completion-fixture">
+      <header className="qa-heading">
+        <p>ZEUS-0437 · 活动详情状态保持</p>
+        <h1>活动完成不覆盖用户正在查看的详情</h1>
+      </header>
+      <div className="qa-motion-fixture-actions">
+        <button type="button" data-testid="activity-completion-toggle" onClick={() => setCompleted((value) => !value)}>
+          {completed ? '恢复活动态' : '完成当前活动'}
+        </button>
+        <output data-testid="activity-completion-state">{completed ? '当前活动已完成' : '当前活动进行中'}</output>
+      </div>
+      <section className="qa-implementation-panel ai-workspace">
+        <SessionActivityGroup items={items} language="zh-CN" category="mixed" />
       </section>
     </main>
   );

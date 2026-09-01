@@ -3,7 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import '../src/renderer/styles.css';
 import '../src/renderer/session/session.css';
 import './session-styles.css';
-import { ActiveTurnReentryQaApp, CompleteMessageQaApp, ConversationDefectApp, InteractionRecoveryQaApp, MotionApp, SessionStylesQaApp, TimeoutRetryQaApp, TranscriptScrollQaApp } from './session-core-qa.js';
+import { ActiveTurnReentryQaApp, ActivityCompletionQaApp, CompleteMessageQaApp, ConversationDefectApp, InteractionRecoveryQaApp, MotionApp, SessionStylesQaApp, TimeoutRetryQaApp, TranscriptScrollQaApp } from './session-core-qa.js';
 import { MarkdownStreamingQaApp } from './markdown-streaming-qa.js';
 import { Zeus0388QaApp } from './session-recovery-qa.js';
 import { SteeringQaApp } from './steering-qa.js';
@@ -31,6 +31,8 @@ qaRoot.render(
     <TimeoutRetryQaApp />
   ) : parameters.has('complete-message') ? (
     <CompleteMessageQaApp />
+  ) : parameters.has('activity-completion') ? (
+    <ActivityCompletionQaApp />
   ) : parameters.has('active-reentry') ? (
     <ActiveTurnReentryQaApp />
   ) : parameters.has('interaction-recovery') ? (

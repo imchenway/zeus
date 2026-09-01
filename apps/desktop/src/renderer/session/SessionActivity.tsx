@@ -54,13 +54,7 @@ export const SessionActivityGroup = memo(function SessionActivityGroup(props: Se
   const imageResources = activityImageResources(props.items);
   const detailItems = imageResources.length > 0 ? props.items.filter((item) => normalizeType(item.type) !== 'imageview' || item.resources.length === 0) : props.items;
   const [open, setOpen] = useState(false);
-  const previousActiveRef = useRef(active);
   const GroupIcon = activityGroupIcon(props.items, liveItem);
-
-  useEffect(() => {
-    if (previousActiveRef.current && !active) setOpen(false);
-    previousActiveRef.current = active;
-  }, [active]);
 
   return (
     <section className="session-activity-group" data-active={active || undefined} data-activity-category={props.category} data-item-count={props.items.length} data-motion-active={props.motionActive || undefined} aria-label={summary}>
