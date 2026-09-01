@@ -1637,6 +1637,10 @@
   overflow-wrap: anywhere;
 }
 
+.session-codex-parity-v1 .session-markdown:has(.table-node-wrapper) {
+  inline-size: 100%;
+}
+
 /* 流式内容按完整块呈现；表格和代码块未闭合时先给出轻量骨架，避免逐字符重排整棵 Markdown 树。 */
 .session-codex-parity-v1 .session-streaming-markdown {
   display: grid;
@@ -1882,30 +1886,76 @@
   text-underline-offset: 2px;
 }
 
-.session-codex-parity-v1 .session-markdown table {
-  border-collapse: collapse;
-  display: block;
-  inline-size: max-content;
+.session-codex-parity-v1 .session-markdown .table-node-wrapper {
+  background: var(--session-canvas);
+  border: 1px solid var(--session-line-soft);
+  border-radius: 10px;
+  inline-size: 100%;
+  margin-block: 14px 18px;
   max-inline-size: 100%;
+  min-inline-size: 0;
   overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-color: color-mix(in srgb, var(--session-text-muted) 38%, transparent) transparent;
+  scrollbar-gutter: auto;
+  scrollbar-width: thin;
 }
 
-.session-codex-parity-v1 .session-markdown :where(th, td) {
-  border: 1px solid var(--session-line);
-  min-inline-size: 104px;
-  padding: 7px 9px;
+.session-codex-parity-v1 .session-markdown .table-node-wrapper::-webkit-scrollbar {
+  block-size: 8px;
+}
+
+.session-codex-parity-v1 .session-markdown .table-node-wrapper::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--session-text-muted) 38%, transparent);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+  border-radius: 999px;
+}
+
+.session-codex-parity-v1 .session-markdown table.table-node {
+  border-collapse: separate;
+  border-spacing: 0;
+  display: table;
+  inline-size: 100%;
+  margin: 0;
+  max-inline-size: none;
+  min-inline-size: 100%;
+  overflow: visible;
+}
+
+.session-codex-parity-v1 .session-markdown .table-node :where(th, td) {
+  border: 0;
+  border-block-end: 1px solid var(--session-line-soft);
+  min-inline-size: 8rem;
+  overflow-wrap: anywhere;
+  padding: 10px 12px;
   text-align: start;
   vertical-align: top;
+  word-break: normal;
 }
 
-.session-codex-parity-v1 .session-markdown th {
-  background: var(--session-control-hover);
+.session-codex-parity-v1 .session-markdown .table-node tr > :not(:last-child) {
+  border-inline-end: 1px solid var(--session-line-soft);
+}
+
+.session-codex-parity-v1 .session-markdown .table-node th {
+  background: color-mix(in srgb, var(--session-control-hover) 72%, var(--session-canvas));
   color: var(--session-text);
   font-weight: 620;
+  white-space: nowrap;
 }
 
-.session-codex-parity-v1 .session-markdown tbody tr:nth-child(even) {
-  background: color-mix(in srgb, var(--session-control-hover) 48%, transparent);
+.session-codex-parity-v1 .session-markdown .table-node tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--session-control-hover) 26%, transparent);
+}
+
+.session-codex-parity-v1 .session-markdown .table-node tbody tr:last-child > td {
+  border-block-end: 0;
+}
+
+.session-codex-parity-v1 .session-markdown .table-node tbody td:first-child {
+  color: var(--session-text);
+  font-weight: 540;
 }
 
 .session-codex-parity-v1 .session-markdown .contains-task-list {

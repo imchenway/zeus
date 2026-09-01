@@ -73,6 +73,17 @@ const markdownQaResources: ConversationResource[] = [
   },
 ];
 
+const markdownTableQaFixture = [
+  '严格来说：这些治理能力最终都需要具备，但不代表每轮请求都必须触发，也不代表必须一次性以相同方式实现。',
+  '',
+  '| 功能 | 典型使用场景 | 必要性 | 优点 | 缺点 |',
+  '| --- | --- | --- | --- | --- |',
+  '| app-server 显式 `thread/compact/start` | Codex 最近真实占用进入高水位；下一轮需要注入较大任务文档 | **能力必须，调用按需。** 不能完全依赖 Provider 自动压缩 | 使用 Provider 原生语义；释放活动历史；避免直接开新分段 | 压缩有延迟；需要处理失败回退、取消与重试 |',
+  '| Pi 同 session 主动压缩 | Pi usage 接近阈值；连续工具调用快速膨胀；任务进入新阶段 | **能力必须，调用按需。** Pi 已有自动压缩，但 Zeus 需要确定性的发送前治理 | 可获得压缩前后估算；保留现有 session 与工具状态 | 会影响 session 状态；必须避免与自动压缩竞争 |',
+  '| 图片 Artifact 与热历史投影 | Browser 截图、Computer 观察、OCR、视觉回归、用户连续上传图片 | **必须。** 只要工具返回图片，就不能让原图无界留在热历史 | 历史只保留缩略图或 Artifact 引用；显著降低 Token | 降低后续模型直接读取原图细节的能力 |',
+  '| 工具按需加载 | 动态工具 schema 较大；安装大量 Plugin Skill；单轮只用少数工具 | **必须逐步实施。** 不应一次隐藏全部工具 | 降低首请求固定 Token；提高缓存稳定性 | 发现工具需要一次往返；错误分类必须清晰 |',
+].join('\n');
+
 const markdownFixture20kb = buildMarkdownQaFixture(20_000);
 const markdownFixture100kb = buildMarkdownQaFixture(100_000);
 
@@ -125,9 +136,9 @@ export function MarkdownStreamingQaApp() {
   const textRef = useRef('');
   const runRef = useRef<MarkdownQaRun | null>(null);
   const cleanupRef = useRef<() => void>(() => undefined);
-  const [text, setText] = useState('');
-  const [phase, setPhase] = useState<'streaming' | 'final'>('streaming');
-  const [streamId, setStreamId] = useState('markdown-qa:idle');
+  const [text, setText] = useState(markdownTableQaFixture);
+  const [phase, setPhase] = useState<'streaming' | 'final'>('final');
+  const [streamId, setStreamId] = useState('markdown-qa:table');
   const [scenario, setScenario] = useState<MarkdownQaScenario | 'idle'>('idle');
   const [probeValue, setProbeValue] = useState('');
   const [openedResources, setOpenedResources] = useState(0);

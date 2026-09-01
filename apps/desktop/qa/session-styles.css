@@ -595,6 +595,7 @@
   background: var(--session-panel);
   border: 1px solid var(--session-line-soft);
   border-radius: 10px;
+  min-inline-size: 0;
 }
 
 .qa-markdown-stream-stage {
