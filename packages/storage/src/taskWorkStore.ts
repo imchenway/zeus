@@ -46,6 +46,11 @@ export type TaskWorkWorkspaceSnapshot =
   | { mode: 'direct' }
   | { mode: 'existing'; environmentId: string }
   | {
+      mode: 'local';
+      repositoryRevision: string;
+      repositories: Array<{ repositoryId: string; branchName: string }>;
+    }
+  | {
       mode: 'create';
       repositoryRevision: string;
       repositories: Array<{ repositoryId: string; sourceRef: string; branchName: string }>;
@@ -882,6 +887,19 @@ function taskWorkWorkspaceSnapshot(value: string): TaskWorkWorkspaceSnapshot {
   const parsed = record(value, 'run.workspaceSnapshot');
   if (parsed.mode === 'direct') return { mode: 'direct' };
   if (parsed.mode === 'existing' && typeof parsed.environmentId === 'string') return { mode: 'existing', environmentId: identity(parsed.environmentId, 'run.workspaceSnapshot.environmentId') };
+  if (parsed.mode === 'local' && typeof parsed.repositoryRevision === 'string' && Array.isArray(parsed.repositories)) {
+    const repositories = parsed.repositories.map((candidate, index) => {
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) throw new Error(`run.workspaceSnapshot.repositories[${index}] 损坏。`);
+      const repository = candidate as Record<string, unknown>;
+      if (typeof repository.repositoryId !== 'string' || typeof repository.branchName !== 'string') throw new Error(`run.workspaceSnapshot.repositories[${index}] 损坏。`);
+      return {
+        repositoryId: identity(repository.repositoryId, `run.workspaceSnapshot.repositories[${index}].repositoryId`),
+        branchName: identity(repository.branchName, `run.workspaceSnapshot.repositories[${index}].branchName`),
+      };
+    });
+    if (repositories.length === 0) throw new Error('run.workspaceSnapshot.repositories 损坏。');
+    return { mode: 'local', repositoryRevision: identity(parsed.repositoryRevision, 'run.workspaceSnapshot.repositoryRevision'), repositories };
+  }
   if (parsed.mode === 'create' && typeof parsed.repositoryRevision === 'string' && Array.isArray(parsed.repositories)) {
     const repositories = parsed.repositories.map((candidate, index) => {
       if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) throw new Error(`run.workspaceSnapshot.repositories[${index}] 损坏。`);
