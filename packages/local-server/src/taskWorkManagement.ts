@@ -118,7 +118,6 @@ interface TaskWorkCreateInput {
   previewSha256: string;
   expectedTaskRevision: string;
   expectedEmployeeRevision: number;
-  replaceActiveWorkItems?: Array<{ id: string; expectedRevision: number }>;
 }
 
 type TaskWorkCreateRequest = WorkManagementMutationRequest<TaskWorkCreateInput>;
@@ -171,7 +170,6 @@ interface TaskWorkManagementOptions {
 
 export interface TaskWorkManagementController {
   kick(): void;
-  countActiveByEmployee(employeeId: string): number;
   hasAutomationSource(sourceRef: string): boolean;
   createAutomatedWorkItem(input: { taskId: string; employeeId: string; sourceRef: string }): Promise<{ item: TaskWorkItemRecord; run: TaskWorkRunRecord }>;
   close(): Promise<void>;
@@ -243,21 +241,8 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
           scopeKind: 'task',
           expectedScopeId: () => task.id,
         });
-        let preview = await resolvePreview(options, task, normalizeSelection(parsed.input.selection));
+        const preview = await resolvePreview(options, task, normalizeSelection(parsed.input.selection));
         assertPreviewFresh(preview, parsed.input);
-        const replayItem = options.items.getById(parsed.operationIdentity);
-        if (!replayItem) {
-          const activeItems = requireExactActiveReplacement(options, task.id, parsed.input.replaceActiveWorkItems ?? []);
-          for (const activeItem of activeItems) {
-            await stopWorkItemRuntime(options, activeItem, `replace:${parsed.operationIdentity}:${activeItem.id}`);
-            cancelWorkItem(options, activeItem, activeItem.revision);
-            publishChanged(options, task.id, activeItem.id, 'replaced');
-            await options.save();
-          }
-          preview = await resolvePreview(options, task, normalizeSelection(parsed.input.selection));
-          assertPreviewFresh(preview, parsed.input);
-          requireExactActiveReplacement(options, task.id, []);
-        }
         const employee = requireEmployeeOrThrow(options, task.projectId, preview.employee.id);
         const skillResources = await prepareSkillResourceSnapshots(options, task, preview);
         const created = options.application.executeCore({
@@ -302,7 +287,6 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
           const deliverable = requireOwnedDeliverable(options, task.id, request.params.deliverableId);
           const parsed = options.application.parse<TaskWorkActionInput>({ value: request.body, commandType: workManagementCommandTypes.taskWorkDeliverableRequestChanges, scopeKind: 'task', expectedScopeId: () => task.id });
           const reason = requiredText(parsed.input.reason, '请说明需要修改的内容。', 4_000);
-          assertNoOtherActiveTaskWorkItem(options, task.id, deliverable.workItemId);
           const result = options.application.executeCore({
             parsed,
             destinationId: 'task-work-deliverable-repository',
@@ -320,7 +304,6 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
     options.server.post('/api/tasks/:taskId/work-items/:workItemId/retry', async (request: FastifyRequest<{ Params: { taskId: string; workItemId: string }; Body: WorkManagementMutationRequest<TaskWorkActionInput> }>, reply) =>
       route(reply, async () => {
         const item = requireOwnedItem(options, request.params.taskId, request.params.workItemId);
-        assertNoOtherActiveTaskWorkItem(options, item.taskId, item.id);
         const parsed = options.application.parse<TaskWorkActionInput>({ value: request.body, commandType: workManagementCommandTypes.taskWorkItemRetry, scopeKind: 'task', expectedScopeId: () => item.taskId });
         const result = options.application.executeCore({ parsed, destinationId: 'task-work-item-repository', resourceId: `task_work_item:${item.id}`, mutateBusinessState: () => retryWorkItem(options, item, parsed.input.expectedRevision) });
         await options.save();
@@ -383,7 +366,6 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
   if (!options.readOnlyValidation) schedule();
   return {
     kick,
-    countActiveByEmployee: (employeeId) => options.items.countActiveByEmployee(employeeId),
     hasAutomationSource: (sourceRef) => Boolean(options.items.getBySource('automation', sourceRef)),
     createAutomatedWorkItem: async ({ taskId, employeeId, sourceRef }) => {
       const replay = options.items.getBySource('automation', sourceRef);
@@ -392,7 +374,6 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
         if (run) return { item: replay, run };
       }
       const task = requireTaskOrThrow(options, taskId);
-      assertNoOtherActiveTaskWorkItem(options, task.id);
       const employee = requireEmployeeOrThrow(options, task.projectId, employeeId);
       const preview = await resolvePreview(options, task, { employeeId, workspace: { mode: 'create' } });
       const blockers = preview.blockers;
@@ -445,8 +426,6 @@ async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTask
   if (employee.entrypoint?.kind !== 'agent' || employee.entrypointMigrationState !== 'ready') {
     blockers.push({ code: 'ZEUS_DIGITAL_EMPLOYEE_AGENT_ENTRYPOINT_REQUIRED', message: '该记录不是可执行的 Agent 数字员工，请先在员工设置中保存为当前配置。' });
   }
-  if (options.items.countActiveByEmployee(employee.id) >= employee.maxConcurrency) blockers.push({ code: 'ZEUS_TASK_WORK_EMPLOYEE_CAPACITY', message: `该员工已达并发上限 ${employee.maxConcurrency}。` });
-
   const context = resolveContextManifest(options, task, selection.selectedDeliverableIds ?? [], blockers);
   let model: Record<string, unknown> | null = null;
   const skills: TaskWorkPreview['skills'] = [];
@@ -461,13 +440,12 @@ async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTask
     const workMode = selection.workMode ?? employee.workMode;
     const prompt = selection.promptOverride ?? agentEntrypoint.prompt;
     entrypoint = { ...sanitizeEntrypoint(agentEntrypoint), prompt, workMode };
-    authority = resolveRunAuthority(agentEntrypoint, selection.permissionMode, blockers);
+    authority = resolveRunAuthority(agentEntrypoint, selection.permissionMode);
     const capability = await options.conversationCapabilities.readTaskPush(task.projectId, task.id);
     model = resolveAgentModel(employee, agentEntrypoint, selection, capability, blockers);
-    workspace = resolveTaskWorkWorkspaceSnapshot(options, task, selection.workspace, capability, blockers);
+    workspace = resolveTaskWorkWorkspaceSnapshot(selection.workspace, capability, blockers);
     if (model && typeof model.agentKind === 'string') entrypoint = { ...entrypoint, agentKind: model.agentKind };
     const selectedSkillIds = normalizeIdentities(selection.skillIds ?? agentEntrypoint.skillPolicy.allowedSkillIds);
-    if (selectedSkillIds.some((id) => !agentEntrypoint.skillPolicy.allowedSkillIds.includes(id))) blockers.push({ code: 'ZEUS_TASK_WORK_SKILL_NOT_ALLOWED', message: '指派包含该员工未允许的 Skill。' });
     const selectionBySource = splitZeusSkillIds(selectedSkillIds);
     if (selectionBySource.invalidIds.length > 0) blockers.push({ code: 'ZEUS_TASK_WORK_SKILL_INVALID', message: '指派包含无效的 Skill 身份。' });
     if (selectionBySource.nativeSkillIds.length > 0 && !options.skills) blockers.push({ code: 'ZEUS_TASK_WORK_SKILL_CATALOG_UNAVAILABLE', message: 'Zeus Skill 目录当前不可用。' });
@@ -521,13 +499,7 @@ async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTask
   return { previewSha256: sha256(canonicalJson(digestSource)), expiresAt: new Date(options.now().getTime() + previewTtlMs).toISOString(), ...digestSource };
 }
 
-function resolveTaskWorkWorkspaceSnapshot(
-  options: TaskWorkManagementOptions,
-  task: ZeusTaskRecord,
-  choice: TaskWorkWorkspaceChoice | undefined,
-  capabilities: Record<string, unknown>,
-  blockers: TaskWorkPreview['blockers'],
-): TaskWorkWorkspaceSnapshot {
+function resolveTaskWorkWorkspaceSnapshot(choice: TaskWorkWorkspaceChoice | undefined, capabilities: Record<string, unknown>, blockers: TaskWorkPreview['blockers']): TaskWorkWorkspaceSnapshot {
   const repositories = Array.isArray(capabilities.repositories) ? capabilities.repositories.filter(isRecord) : [];
   if (repositories.length === 0) {
     if (choice?.mode === 'existing') blockers.push({ code: 'ZEUS_TASK_WORK_ENVIRONMENT_INVALID', message: '当前任务没有可继续的任务分支。' });
@@ -538,15 +510,11 @@ function resolveTaskWorkWorkspaceSnapshot(
     const environments = Array.isArray(capabilities.existingEnvironments) ? capabilities.existingEnvironments.filter(isRecord) : [];
     const environment = environments.find((candidate) => candidate.id === choice.environmentId);
     if (!environment) blockers.push({ code: 'ZEUS_TASK_WORK_ENVIRONMENT_INVALID', message: '所选任务环境不属于当前任务。' });
-    else if (environment.available !== true) {
-      const replaceable = environment.unavailableReason === 'active_conversation' && taskWorkOwnsAllActiveEnvironmentConversations(options, task.id, choice.environmentId);
-      if (!replaceable) {
-        blockers.push({
-          code: environment.unavailableReason === 'closed_workspace' ? 'ZEUS_TASK_WORK_ENVIRONMENT_CLOSED' : 'ZEUS_TASK_WORK_ENVIRONMENT_BUSY',
-          message: environment.unavailableReason === 'closed_workspace' ? '所选任务环境已经部分关闭。' : '所选任务环境正被其他会话使用。',
-        });
-      }
-    }
+    else if (environment.available !== true)
+      blockers.push({
+        code: environment.unavailableReason === 'closed_workspace' ? 'ZEUS_TASK_WORK_ENVIRONMENT_CLOSED' : 'ZEUS_TASK_WORK_ENVIRONMENT_BUSY',
+        message: environment.unavailableReason === 'closed_workspace' ? '所选任务环境已经部分关闭。' : '所选任务环境正被其他会话使用。',
+      });
     return { mode: 'existing', environmentId: choice.environmentId };
   }
 
@@ -562,21 +530,6 @@ function resolveTaskWorkWorkspaceSnapshot(
     return [{ repositoryId: repository.id, sourceRef: source.ref, branchName: repository.suggestedBranchName }];
   });
   return { mode: 'create', repositoryRevision, repositories: resolvedRepositories };
-}
-
-function taskWorkOwnsAllActiveEnvironmentConversations(options: TaskWorkManagementOptions, taskId: string, environmentId: string): boolean {
-  const activeConversationIds = options.conversations
-    .listByEnvironment(environmentId)
-    .filter((conversation) => conversation.providerState === 'binding' || conversation.providerState === 'active' || conversation.providerState === 'waiting')
-    .map((conversation) => conversation.id);
-  if (activeConversationIds.length === 0) return false;
-  const replaceableConversationIds = new Set(
-    activeTaskWorkItems(options, taskId).flatMap((item) => {
-      const run = item.currentRunId ? options.runs.getById(item.currentRunId) : undefined;
-      return run?.conversationId ? [run.conversationId] : [];
-    }),
-  );
-  return activeConversationIds.every((conversationId) => replaceableConversationIds.has(conversationId));
 }
 
 function createWorkItemFromPreview(
@@ -677,12 +630,12 @@ async function dispatchAgent(options: TaskWorkManagementOptions, run: TaskWorkRu
   if (!model || typeof model.id !== 'string' || typeof model.agentKind !== 'string') throw new TaskWorkStoreError('ZEUS_TASK_WORK_MODEL_MISSING', 'Agent 运行缺少已解析模型快照。');
   const pluginReferences = await resolveFrozenPluginSkillReferences(options, run);
   const authority = run.authoritySnapshot;
-  const writeEnabled = authority.permissionMode !== 'read-only' && (authority.allowCodeChanges === true || authority.allowTests === true);
+  const writeEnabled = authority.permissionMode !== 'read-only';
   let workspace = run.workspaceSnapshot;
   if (!workspace) {
     const legacyCapabilities = await options.conversationCapabilities.readTaskPush(project.id, task.id);
     const blockers: TaskWorkPreview['blockers'] = [];
-    workspace = resolveTaskWorkWorkspaceSnapshot(options, task, { mode: 'create' }, legacyCapabilities, blockers);
+    workspace = resolveTaskWorkWorkspaceSnapshot({ mode: 'create' }, legacyCapabilities, blockers);
     if (blockers.length > 0) throw new TaskWorkStoreError(blockers[0]!.code, blockers[0]!.message);
     options.runs.update(run.id, { workspaceSnapshot: workspace });
   }
@@ -1002,9 +955,8 @@ function cancelWorkItem(options: TaskWorkManagementOptions, item: TaskWorkItemRe
   return options.items.update(item.id, { expectedRevision, status: 'cancelled' });
 }
 
-function activeTaskWorkItems(options: TaskWorkManagementOptions, taskId: string, ignoredWorkItemId?: string): TaskWorkItemRecord[] {
+function activeTaskWorkItems(options: TaskWorkManagementOptions, taskId: string): TaskWorkItemRecord[] {
   return options.items.listByTask(taskId).filter((item) => {
-    if (item.id === ignoredWorkItemId) return false;
     const run = item.currentRunId ? options.runs.getById(item.currentRunId) : undefined;
     return run ? ['prepared', 'dispatching', 'active', 'waiting_input'].includes(run.status) : item.status === 'queued' || item.status === 'active';
   });
@@ -1015,28 +967,6 @@ function assertPreviewFresh(preview: TaskWorkPreview, input: TaskWorkCreateInput
     throw new TaskWorkStoreError('ZEUS_TASK_WORK_PREVIEW_STALE', '任务、员工或能力来源已变化，请重新预览后再指派。');
   }
   if (preview.blockers.length > 0) throw new TaskWorkStoreError(preview.blockers[0]!.code, preview.blockers[0]!.message);
-}
-
-function requireExactActiveReplacement(options: TaskWorkManagementOptions, taskId: string, rawReplacement: Array<{ id: string; expectedRevision: number }>): TaskWorkItemRecord[] {
-  const replacement = rawReplacement.map((candidate) => {
-    if (!isRecord(candidate) || typeof candidate.id !== 'string' || !Number.isInteger(candidate.expectedRevision) || candidate.expectedRevision < 1) {
-      throw new TaskWorkStoreError('ZEUS_TASK_WORK_ACTIVE_REPLACEMENT_INVALID', '待停止工作项参数无效。', 400);
-    }
-    return { id: candidate.id.trim(), expectedRevision: candidate.expectedRevision };
-  });
-  if (new Set(replacement.map((candidate) => candidate.id)).size !== replacement.length) throw new TaskWorkStoreError('ZEUS_TASK_WORK_ACTIVE_REPLACEMENT_INVALID', '待停止工作项不能重复。', 400);
-  const activeItems = activeTaskWorkItems(options, taskId).sort((left, right) => left.id.localeCompare(right.id));
-  const expected = [...replacement].sort((left, right) => left.id.localeCompare(right.id));
-  if (activeItems.length === 0 && expected.length === 0) return [];
-  if (expected.length === 0) throw new TaskWorkStoreError('ZEUS_TASK_WORK_TASK_BUSY', '当前任务已有数字员工在执行；请确认停止后再切换。');
-  if (activeItems.length !== expected.length || activeItems.some((item, index) => item.id !== expected[index]?.id || item.revision !== expected[index]?.expectedRevision)) {
-    throw new TaskWorkStoreError('ZEUS_TASK_WORK_ACTIVE_REPLACEMENT_STALE', '任务的当前执行者已变化，请刷新后重新确认。');
-  }
-  return activeItems;
-}
-
-function assertNoOtherActiveTaskWorkItem(options: TaskWorkManagementOptions, taskId: string, ignoredWorkItemId?: string): void {
-  if (activeTaskWorkItems(options, taskId, ignoredWorkItemId).length > 0) throw new TaskWorkStoreError('ZEUS_TASK_WORK_TASK_BUSY', '当前任务已有数字员工在执行，不能并行启动新的运行。');
 }
 
 async function stopWorkItemRuntime(options: TaskWorkManagementOptions, item: TaskWorkItemRecord, operationIdentity: string): Promise<void> {
@@ -1237,14 +1167,10 @@ function resolveAgentModel(employee: DigitalEmployeeRecord, entrypoint: AgentEnt
     blockers.push({ code: 'ZEUS_TASK_WORK_MODEL_UNAVAILABLE', message: requested ? `模型 ${requested} 当前不可用。` : '项目当前没有可用模型。' });
     return null;
   }
-  if (entrypoint.modelPolicy.allowedModels.length > 0 && !entrypoint.modelPolicy.allowedModels.some((allowed) => allowed === model.id || allowed === model.model))
-    blockers.push({ code: 'ZEUS_TASK_WORK_MODEL_NOT_ALLOWED', message: '所选模型不在员工允许范围内。' });
   const reasoningEffort = selection.reasoningEffort?.trim() || model.defaultReasoningEffort || employee.reasoningEffort;
-  if (reasoningEffort && (!model.supportedReasoningEfforts.includes(reasoningEffort) || (entrypoint.modelPolicy.allowedReasoningEfforts.length > 0 && !entrypoint.modelPolicy.allowedReasoningEfforts.includes(reasoningEffort))))
-    blockers.push({ code: 'ZEUS_TASK_WORK_REASONING_NOT_ALLOWED', message: '所选推理强度不可用或不在员工允许范围内。' });
+  if (reasoningEffort && !model.supportedReasoningEfforts.includes(reasoningEffort)) blockers.push({ code: 'ZEUS_TASK_WORK_REASONING_NOT_ALLOWED', message: '所选推理强度不受当前模型支持。' });
   const serviceTier = selection.serviceTier === null ? model.defaultServiceTier : selection.serviceTier?.trim() || model.defaultServiceTier || employee.serviceTier;
-  if (serviceTier && (!model.serviceTiers.some((tier) => tier.id === serviceTier) || (entrypoint.modelPolicy.allowedServiceTiers.length > 0 && !entrypoint.modelPolicy.allowedServiceTiers.includes(serviceTier))))
-    blockers.push({ code: 'ZEUS_TASK_WORK_SERVICE_TIER_NOT_ALLOWED', message: '所选服务速率不可用或不在员工允许范围内。' });
+  if (serviceTier && !model.serviceTiers.some((tier) => tier.id === serviceTier)) blockers.push({ code: 'ZEUS_TASK_WORK_SERVICE_TIER_NOT_ALLOWED', message: '所选服务速率不受当前模型支持。' });
   return {
     id: model.id,
     model: model.model,
@@ -1258,12 +1184,8 @@ function resolveAgentModel(employee: DigitalEmployeeRecord, entrypoint: AgentEnt
   };
 }
 
-function resolveRunAuthority(entrypoint: AgentEntrypointV2, requestedPermission: TaskWorkPreviewSelection['permissionMode'], blockers: TaskWorkPreview['blockers']): Record<string, unknown> {
+function resolveRunAuthority(entrypoint: AgentEntrypointV2, requestedPermission: TaskWorkPreviewSelection['permissionMode']): Record<string, unknown> {
   const permissionMode = requestedPermission ?? entrypoint.authorityPolicy.permissionMode;
-  const rank = { 'read-only': 0, auto: 1, 'full-access': 2 } as const;
-  if (rank[permissionMode] > rank[entrypoint.authorityPolicy.permissionMode]) {
-    blockers.push({ code: 'ZEUS_TASK_WORK_PERMISSION_NOT_ALLOWED', message: '本次权限只能在员工权限上限内收窄。' });
-  }
   return { ...entrypoint.authorityPolicy, permissionMode };
 }
 

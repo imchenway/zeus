@@ -148,8 +148,6 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
         const employee = options.employees.getById(automation.employeeId);
         if (!employee?.enabled || employee.projectId !== automation.projectId) continue;
         if (automation.actionKind === 'explore_project' && !employee.autonomousExploration) continue;
-        if (options.taskWorkManagement.countActiveByEmployee(employee.id) >= employee.maxConcurrency) continue;
-
         if (automation.nextRunAt && Date.parse(automation.nextRunAt) <= timestamp.getTime()) {
           const identity = `scheduled:${automation.nextRunAt}`;
           const triggered = await triggerAutomation(automation, employee, identity, null);
@@ -187,7 +185,6 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
 
   async function processProjectEvents(automation: DigitalEmployeeAutomationRecord, employee: DigitalEmployeeRecord, events: DigitalEmployeeProjectEvent[]): Promise<void> {
     for (const event of events) {
-      if (options.taskWorkManagement.countActiveByEmployee(employee.id) >= employee.maxConcurrency) return;
       if (event.suppressAutomation) {
         options.automations.advance({ id: automation.id, cursorSequence: event.sequence, lastTriggeredAt: automation.lastTriggeredAt ?? automation.createdAt });
         await options.save();
@@ -305,15 +302,11 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
   async function processTaskPool(): Promise<void> {
     for (const employee of options.employees.listEnabled()) {
       if (!employee.autoClaim) continue;
-      let capacity = employee.maxConcurrency - options.taskWorkManagement.countActiveByEmployee(employee.id);
-      if (capacity <= 0) continue;
       for (const task of options.tasks.listByProject(employee.projectId)) {
-        if (capacity <= 0) break;
         const sourceRef = `task_pool:${employee.id}:${task.id}`;
         if (!taskMatchesEmployee(task, employee) || options.taskWorkManagement.hasAutomationSource(sourceRef)) continue;
         try {
           await queueExecution({ employee, task, source: 'task_pool', sourceRef });
-          capacity -= 1;
         } catch (error) {
           options.appendAuditLog({
             actorType: 'worker',
@@ -904,7 +897,7 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
   }
 
   function selectEligibleTask(employee: DigitalEmployeeRecord): ZeusTaskRecord | null {
-    return options.tasks.listByProject(employee.projectId).find((task) => taskMatchesEmployee(task, employee) && !options.executions.hasActiveTaskExecution(task.id)) ?? null;
+    return options.tasks.listByProject(employee.projectId).find((task) => taskMatchesEmployee(task, employee)) ?? null;
   }
 
   function taskMatchesEmployee(task: ZeusTaskRecord, employee: DigitalEmployeeRecord): boolean {

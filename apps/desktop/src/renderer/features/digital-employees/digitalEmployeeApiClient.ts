@@ -51,7 +51,7 @@ export interface DigitalEmployeeApiClient {
   loadTaskWorkDeliverableContent(taskId: string, deliverableId: string): Promise<{ deliverableId: string; version: number; contentSha256: string; content: string }>;
   loadTaskWorkCommandEvidence(runId: string): Promise<CommandRunDetail>;
   previewTaskWorkItem(taskId: string, input: TaskWorkPreviewSelection): Promise<TaskWorkPreview>;
-  createTaskWorkItem(taskId: string, preview: TaskWorkPreview, replaceActiveWorkItems?: Array<{ id: string; expectedRevision: number }>): Promise<{ item: TaskWorkItemRecord; run: TaskWorkItemRecord['runs'][number] }>;
+  createTaskWorkItem(taskId: string, preview: TaskWorkPreview): Promise<{ item: TaskWorkItemRecord; run: TaskWorkItemRecord['runs'][number] }>;
   acceptTaskWorkDeliverable(taskId: string, deliverable: TaskWorkDeliverableRecord): Promise<unknown>;
   requestTaskWorkDeliverableChanges(taskId: string, deliverable: TaskWorkDeliverableRecord, reason: string): Promise<unknown>;
   retryTaskWorkItem(taskId: string, item: TaskWorkItemRecord): Promise<unknown>;
@@ -152,13 +152,12 @@ export function createDigitalEmployeeApiClient(transport: LocalApiTransport): Di
     loadTaskWorkDeliverableContent: (taskId, deliverableId) => transport.request(`${taskPath(taskId)}/work-deliverables/${encodeURIComponent(deliverableId)}/content`),
     loadTaskWorkCommandEvidence: (runId) => transport.request(`/api/command-runs/${encodeURIComponent(runId)}?tail=true&logLimit=1000`),
     previewTaskWorkItem: (taskId, input) => transport.request(`${taskPath(taskId)}/work-item-previews`, jsonRequest('POST', input)),
-    createTaskWorkItem: async (taskId, preview, replaceActiveWorkItems = []) => {
+    createTaskWorkItem: async (taskId, preview) => {
       const value = {
         selection: preview.selection,
         previewSha256: preview.previewSha256,
         expectedTaskRevision: preview.expectedTaskRevision,
         expectedEmployeeRevision: preview.expectedEmployeeRevision,
-        replaceActiveWorkItems,
       };
       const body = await command(workManagementClientCommandTypes.taskWorkItemCreate, 'task', () => taskId, 'task_work_item_', value);
       return transport.request(`${taskPath(taskId)}/work-items`, jsonRequest('POST', body));

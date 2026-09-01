@@ -222,7 +222,7 @@ function WorkItemBoard(props: {
       <header>
         <span>
           <strong>{zh ? '工作项' : 'Work items'}</strong>
-          <small>{zh ? '每个任务同时只运行一个执行者；历史工作项完整保留' : 'One active executor per task; historical work items remain available'}</small>
+          <small>{zh ? '每次指派创建独立工作项；活动与历史工作项完整保留' : 'Each assignment creates an independent work item; active and historical items remain available'}</small>
         </span>
       </header>
       {props.relationships.length === 0 && props.items.length > 1 ? <p className="task-work-relationship-note">{zh ? '这些是独立指派，当前没有依赖关系。' : 'These are independent assignments with no dependencies.'}</p> : null}
@@ -272,7 +272,7 @@ function WorkItemBoard(props: {
         {props.items.length === 0 ? (
           <span className="task-work-empty">
             <strong>{zh ? '尚无工作项' : 'No work items yet'}</strong>
-            <small>{zh ? '请在上方“执行者”中选择数字员工并开始执行。' : 'Choose a digital employee from Executor above to start.'}</small>
+            <small>{zh ? '请在上方“执行者”中选择数字员工并配置本次运行。' : 'Choose a digital employee from Executor above and configure this run.'}</small>
           </span>
         ) : null}
       </div>
@@ -394,22 +394,16 @@ export function TaskDigitalEmployeeExecutor(props: {
   const [selectedEmployee, setSelectedEmployee] = useState<DigitalEmployeeRecord | null>(null);
   if (!props.client) return <strong>{zh ? '不可用' : 'Unavailable'}</strong>;
   const activeItems = activeTaskWorkItems(props.management.projection);
-  const activeItem = activeItems[0] ?? null;
-  const activeRun = activeItem ? currentWorkRun(activeItem) : undefined;
-  const activeEmployee = activeItem ? props.management.employees.find((employee) => employee.id === activeItem.employeeId) : null;
-  const activeEmployeeName = activeEmployee?.name || employeeName(activeRun) || (activeItem ? activeItem.title : '');
   const options = [
     { value: '', label: zh ? '选择数字员工' : 'Choose an employee' },
     ...props.management.employees.map((employee) => ({ value: employee.id, label: `${employee.name} · ${entrypointLabel(employee, props.language)}`, searchText: `${employee.name} ${employee.role} ${employee.domain}` })),
   ];
-  if (activeItem && !options.some((option) => option.value === activeItem.employeeId))
-    options.push({ value: activeItem.employeeId, label: `${activeEmployeeName} · ${zh ? '历史配置' : 'Saved configuration'}`, searchText: activeEmployeeName });
   return (
     <span className="task-digital-employee-executor">
       <ZeusSelect
         size="regular"
         ariaLabel={zh ? '选择任务执行者' : 'Choose task executor'}
-        value={activeItem?.employeeId ?? ''}
+        value=""
         options={options}
         searchable
         searchPlaceholder={zh ? '搜索员工、岗位或领域' : 'Search employee, role, or domain'}
@@ -419,21 +413,15 @@ export function TaskDigitalEmployeeExecutor(props: {
           const employee = props.management.employees.find((candidate) => candidate.id === employeeId);
           if (employee) setSelectedEmployee(employee);
         }}
-        triggerLabel={activeItem ? activeEmployeeName : zh ? '选择数字员工' : 'Choose an employee'}
+        triggerLabel={zh ? '选择数字员工' : 'Choose an employee'}
       />
-      {activeRun ? (
-        <small className="task-digital-employee-executor-status">
-          {runStatus(activeRun.status, props.language)}
-          {activeItems.length > 1 ? ` · ${zh ? `${activeItems.length} 个历史活动项` : `${activeItems.length} active legacy items`}` : ''}
-        </small>
-      ) : null}
+      {activeItems.length > 0 ? <small className="task-digital-employee-executor-status">{zh ? `${activeItems.length} 个执行者运行中` : `${activeItems.length} active ${activeItems.length === 1 ? 'executor' : 'executors'}`}</small> : null}
       {selectedEmployee ? (
         <TaskEmployeeRunDialog
           key={selectedEmployee.id}
           taskId={props.taskId}
           projectId={props.projectId}
           employee={selectedEmployee}
-          activeItems={activeItems}
           acceptedDeliverables={props.management.projection?.deliverables.filter((deliverable) => deliverable.status === 'accepted') ?? []}
           client={props.client}
           skillClient={props.skillClient}
@@ -442,8 +430,8 @@ export function TaskDigitalEmployeeExecutor(props: {
           operationError={props.management.error}
           onLoadCapabilities={props.onLoadCapabilities}
           onDismiss={() => setSelectedEmployee(null)}
-          onSubmit={async (preview, replacements) => {
-            const success = await props.management.act('start-executor', () => props.client!.createTaskWorkItem(props.taskId, preview, replacements));
+          onSubmit={async (preview) => {
+            const success = await props.management.act('start-executor', () => props.client!.createTaskWorkItem(props.taskId, preview));
             if (success) setSelectedEmployee(null);
             return success;
           }}
@@ -457,7 +445,6 @@ function TaskEmployeeRunDialog(props: {
   taskId: string;
   projectId: string;
   employee: DigitalEmployeeRecord;
-  activeItems: TaskWorkItemRecord[];
   acceptedDeliverables: TaskWorkDeliverableRecord[];
   client: DigitalEmployeeApiClient;
   skillClient: TaskDigitalEmployeeSkillClient | null;
@@ -466,7 +453,7 @@ function TaskEmployeeRunDialog(props: {
   operationError: string | null;
   onLoadCapabilities?: () => Promise<CodexTaskPushCapabilities>;
   onDismiss(): void;
-  onSubmit(preview: TaskWorkPreview, replacements: Array<{ id: string; expectedRevision: number }>): Promise<boolean>;
+  onSubmit(preview: TaskWorkPreview): Promise<boolean>;
 }) {
   const zh = props.language === 'zh-CN';
   const agentEntrypoint = props.employee.entrypoint?.kind === 'agent' ? props.employee.entrypoint : null;
@@ -482,7 +469,6 @@ function TaskEmployeeRunDialog(props: {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const previewVersion = useRef(0);
-  const initialActiveItems = useRef(props.activeItems);
   const loadCapabilitiesRef = useRef(props.onLoadCapabilities);
   loadCapabilitiesRef.current = props.onLoadCapabilities;
 
@@ -495,7 +481,7 @@ function TaskEmployeeRunDialog(props: {
       .then((nextCapabilities) => {
         if (!active) return;
         const taskCapabilities = 'repositories' in nextCapabilities ? nextCapabilities : null;
-        const initialWorkspace = taskCapabilities ? initialTaskWorkWorkspaceChoice(taskCapabilities, initialActiveItems.current) : ({ mode: 'create' } as const);
+        const initialWorkspace = taskCapabilities ? initialTaskWorkWorkspaceChoice(taskCapabilities) : ({ mode: 'create' } as const);
         setCapabilities(taskCapabilities);
         setWorkspaceMode(initialWorkspace?.mode ?? null);
         setEnvironmentId(initialWorkspace?.mode === 'existing' ? initialWorkspace.environmentId : '');
@@ -565,18 +551,15 @@ function TaskEmployeeRunDialog(props: {
   }, [agentEntrypoint, config, environmentId, props.client, props.employee.id, props.taskId, selectedDeliverableIds, workspaceMode, zh]);
 
   const existingEnvironments = capabilities?.existingEnvironments ?? [];
-  const canContinueEnvironment = (environment: NonNullable<CodexTaskPushCapabilities['existingEnvironments']>[number]): boolean => environment.available || environmentAvailableAfterStop(environment, props.activeItems);
+  const canContinueEnvironment = (environment: NonNullable<CodexTaskPushCapabilities['existingEnvironments']>[number]): boolean => environment.available;
   const continuableEnvironments = existingEnvironments.filter(canContinueEnvironment);
   const selectedEnvironment = existingEnvironments.find((environment) => environment.id === environmentId);
 
   async function submit(): Promise<void> {
     if (!preview || preview.blockers.length > 0) return;
     setSubmitError(null);
-    const success = await props.onSubmit(
-      preview,
-      props.activeItems.map((item) => ({ id: item.id, expectedRevision: item.revision })),
-    );
-    if (!success) setSubmitError(zh ? '停止或启动未完成；原运行状态已保留，请查看页面错误并刷新后重试。' : 'Stop or start did not complete. The original run state was preserved; review the error and refresh.');
+    const success = await props.onSubmit(preview);
+    if (!success) setSubmitError(zh ? '本次运行未启动，请查看页面错误并刷新后重试。' : 'This run did not start. Review the error and refresh.');
   }
 
   return (
@@ -584,7 +567,7 @@ function TaskEmployeeRunDialog(props: {
       <section className="task-work-run-dialog zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="task-work-run-title">
         <header>
           <span>
-            <strong id="task-work-run-title">{props.activeItems.length ? (zh ? '切换任务执行者' : 'Switch task executor') : zh ? '开始任务执行' : 'Start task execution'}</strong>
+            <strong id="task-work-run-title">{zh ? '开始任务执行' : 'Start task execution'}</strong>
             <small>{zh ? '修改只冻结到本次运行，不回写员工或系统模板。' : 'Changes are frozen into this run and do not update the employee or template.'}</small>
           </span>
           <Button variant="secondary" size="compact" disabled={props.busy} onClick={props.onDismiss}>
@@ -607,32 +590,11 @@ function TaskEmployeeRunDialog(props: {
               <strong>{entrypointLabel(props.employee, props.language)}</strong>
             </span>
             <span>
-              <small>{zh ? '治理上限' : 'Governance ceiling'}</small>
+              <small>{zh ? '员工默认值' : 'Employee defaults'}</small>
               <strong>{props.employee.permissionMode}</strong>
               <p>{zh ? `${props.employee.skillIds.length} 个 Skill` : `${props.employee.skillIds.length} skills`}</p>
             </span>
           </section>
-
-          {props.activeItems.length > 0 ? (
-            <section className="task-work-switch-confirmation" role="note" aria-label={zh ? '停止并切换确认' : 'Stop and switch confirmation'}>
-              <WarningCircle size={20} aria-hidden="true" />
-              <span>
-                <strong>{zh ? `先真实停止以下执行，再启动“${props.employee.name}”` : `Stop the following runs before starting “${props.employee.name}”`}</strong>
-                <small>{zh ? '只有全部停止获得耐久确认后才会启动新员工；关闭此弹窗不会改变当前运行。' : 'The new employee starts only after every stop is durably confirmed. Closing this dialog leaves the current runs unchanged.'}</small>
-                <ul>
-                  {props.activeItems.map((item) => {
-                    const run = currentWorkRun(item);
-                    return (
-                      <li key={item.id}>
-                        <span>{employeeName(run) || item.title}</span>
-                        <small>{run ? runStatus(run.status, props.language) : item.status}</small>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </span>
-            </section>
-          ) : null}
 
           {agentEntrypoint && capabilities && capabilities.repositories.length > 0 ? (
             <fieldset className="task-model-push-mode-choice task-model-push-branch-choice">
@@ -667,10 +629,9 @@ function TaskEmployeeRunDialog(props: {
                     ariaLabel={zh ? '选择已有任务分支' : 'Choose existing task branches'}
                     value={environmentId}
                     options={existingEnvironments.map((environment) => {
-                      const availableAfterStop = environmentAvailableAfterStop(environment, props.activeItems);
                       return {
                         value: environment.id,
-                        label: taskPushEnvironmentLabel(environment, zh, availableAfterStop),
+                        label: taskPushEnvironmentLabel(environment, zh),
                         group: canContinueEnvironment(environment) ? (zh ? '可继续' : 'Available') : zh ? '暂不可用' : 'Unavailable',
                         disabled: !canContinueEnvironment(environment),
                       };
@@ -701,20 +662,7 @@ function TaskEmployeeRunDialog(props: {
           ) : null}
 
           {agentEntrypoint ? (
-            <AgentExecutionConfigFields
-              value={config}
-              models={models}
-              skillClient={props.skillClient}
-              projectId={props.projectId}
-              language={props.language}
-              allowedModelIds={agentEntrypoint.modelPolicy.allowedModels}
-              allowedReasoningEfforts={agentEntrypoint.modelPolicy.allowedReasoningEfforts}
-              allowedServiceTiers={agentEntrypoint.modelPolicy.allowedServiceTiers}
-              allowedSkillIds={agentEntrypoint.skillPolicy.allowedSkillIds}
-              maximumPermissionMode={agentEntrypoint.authorityPolicy.permissionMode}
-              compact
-              onChange={(patch) => setConfig((current) => ({ ...current, ...patch }))}
-            />
+            <AgentExecutionConfigFields value={config} models={models} skillClient={props.skillClient} projectId={props.projectId} language={props.language} compact onChange={(patch) => setConfig((current) => ({ ...current, ...patch }))} />
           ) : null}
 
           {props.acceptedDeliverables.length > 0 ? (
@@ -786,17 +734,9 @@ function TaskEmployeeRunDialog(props: {
           ))}
         </div>
         <footer>
-          <small>
-            {props.activeItems.length
-              ? zh
-                ? '停止失败、结果未知或活动集合已变化时，不会启动新员工。'
-                : 'A stop failure, unknown outcome, or stale active set prevents the new employee from starting.'
-              : zh
-                ? '确认一次即创建并启动，不再经过手动预览步骤。'
-                : 'One confirmation creates and starts the run without a manual preview step.'}
-          </small>
+          <small>{zh ? '确认后创建独立工作项；不会停止或改写其他执行者。' : 'Confirmation creates an independent work item without stopping or changing other executors.'}</small>
           <Button variant="primary" size="regular" busy={props.busy} disabled={!preview || previewBusy || preview.blockers.length > 0 || Boolean(capabilityError)} onClick={() => void submit()}>
-            {props.activeItems.length ? (zh ? '停止并切换' : 'Stop and switch') : zh ? '开始执行' : 'Start execution'}
+            {zh ? '开始执行' : 'Start execution'}
           </Button>
         </footer>
       </section>
@@ -822,26 +762,13 @@ function currentWorkRun(item: TaskWorkItemRecord): TaskWorkItemRecord['runs'][nu
   return item.runs.find((run) => run.id === item.currentRunId) ?? item.runs.at(-1);
 }
 
-function initialTaskWorkWorkspaceChoice(capabilities: CodexTaskPushCapabilities, activeItems: TaskWorkItemRecord[]): { mode: 'create' } | { mode: 'existing'; environmentId: string } | null {
+function initialTaskWorkWorkspaceChoice(capabilities: CodexTaskPushCapabilities): { mode: 'create' } | { mode: 'existing'; environmentId: string } | null {
   if (capabilities.repositories.length === 0) return { mode: 'create' };
   const environments = capabilities.existingEnvironments ?? [];
-  const activeEnvironmentIds = Array.from(new Set(activeItems.flatMap((item) => currentWorkRun(item)?.environmentId ?? []))).filter((environmentId) =>
-    environments.some((environment) => environment.id === environmentId && environmentAvailableAfterStop(environment, activeItems)),
-  );
-  if (activeEnvironmentIds.length === 1) return { mode: 'existing', environmentId: activeEnvironmentIds[0]! };
-  if (activeEnvironmentIds.length > 1) return null;
-  const available = environments.filter((environment) => environment.available || environmentAvailableAfterStop(environment, activeItems));
+  const available = environments.filter((environment) => environment.available);
   if (available.length === 0) return { mode: 'create' };
   if (available.length === 1) return { mode: 'existing', environmentId: available[0]!.id };
   return null;
-}
-
-function environmentAvailableAfterStop(environment: NonNullable<CodexTaskPushCapabilities['existingEnvironments']>[number], activeItems: TaskWorkItemRecord[]): boolean {
-  const currentRuns = activeItems.flatMap((item) => currentWorkRun(item) ?? []);
-  if (!currentRuns.some((run) => run.environmentId === environment.id)) return false;
-  if (environment.available) return true;
-  const replaceableConversationIds = new Set(currentRuns.flatMap((run) => run.conversationId ?? []));
-  return environment.unavailableReason === 'active_conversation' && environment.activeConversationIds.length > 0 && environment.activeConversationIds.every((conversationId) => replaceableConversationIds.has(conversationId));
 }
 
 function workspacePreviewLabel(workspace: NonNullable<TaskWorkPreview['workspace']>, zh: boolean): string {

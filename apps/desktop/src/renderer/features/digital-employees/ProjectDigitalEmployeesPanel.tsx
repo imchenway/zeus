@@ -144,11 +144,6 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
       setError(zh ? '员工提示词不能为空。' : 'The employee prompt is required.');
       return;
     }
-    const maxConcurrency = Number.parseInt(employeeDraftState.maxConcurrency, 10);
-    if (!Number.isSafeInteger(maxConcurrency) || maxConcurrency < 1 || maxConcurrency > 20) {
-      setError(zh ? '并发上限必须是 1 到 20 的整数。' : 'Concurrency must be an integer from 1 to 20.');
-      return;
-    }
     setBusyAction('save-employee');
     setError(null);
     try {
@@ -514,35 +509,14 @@ function EmployeeEditor(props: {
         <AgentExecutionConfigFields value={props.draft} models={props.capabilities?.models ?? []} skillClient={props.skillClient} projectId={props.projectId} language={props.language} allowProjectDefaultModel onChange={patch} />
       </section>
 
-      <section className="digital-employee-form-section">
-        <header>
-          <strong>{zh ? '模型策略' : 'Model policy'}</strong>
-          <small>{zh ? '指派时展示解析值，运行创建后冻结实际模型；只能在允许范围内显式覆盖。' : 'Assignments show the resolved value and freeze it at run creation; overrides are limited to the allowed ranges.'}</small>
-        </header>
-        <div className="digital-employee-form-grid">
-          <label>
-            <span>{zh ? '允许覆盖的模型' : 'Allowed model overrides'}</span>
-            <input
-              value={props.draft.allowedModels}
-              onChange={(event) => patch({ allowedModels: event.currentTarget.value })}
-              placeholder={zh ? '模型 ID，逗号分隔；默认模型自动包含' : 'Comma-separated model IDs; default is always included'}
-            />
-          </label>
-          <label>
-            <span>{zh ? '允许的推理强度' : 'Allowed reasoning efforts'}</span>
-            <input value={props.draft.allowedReasoningEfforts} onChange={(event) => patch({ allowedReasoningEfforts: event.currentTarget.value })} placeholder={zh ? '逗号分隔' : 'Comma separated'} />
-          </label>
-          <label>
-            <span>{zh ? '允许的服务速率' : 'Allowed service tiers'}</span>
-            <input value={props.draft.allowedServiceTiers} onChange={(event) => patch({ allowedServiceTiers: event.currentTarget.value })} placeholder={zh ? '逗号分隔' : 'Comma separated'} />
-          </label>
-        </div>
-      </section>
-
       <section className="digital-employee-form-section digital-employee-grants-section">
         <header>
           <strong>{zh ? '权限工具' : 'Authority and tools'}</strong>
-          <small>{zh ? '这些值只是运行权限上限，不会在会话完成后自动触发隐藏的提交、部署或完结路线。' : 'These are permission ceilings only; conversation completion never triggers hidden commit, deploy, or completion steps.'}</small>
+          <small>
+            {zh
+              ? '这些是员工默认能力；单次运行可另选权限模式，会话完成后也不会自动触发提交、部署或完结。'
+              : 'These are employee defaults. A run may choose another permission mode, and completion never triggers hidden commit, deploy, or completion steps.'}
+          </small>
         </header>
         <div className="digital-employee-policy-grid">
           <CheckboxRow
@@ -563,7 +537,7 @@ function EmployeeEditor(props: {
             ? '执行命令不是员工类型。Agent 是否可执行命令及其可写范围，由上方权限模式和 Zeus 运行时审批共同决定。'
             : 'Command execution is not an employee type. The permission mode and Zeus runtime approvals determine whether the Agent may run commands and what they may change.'}
         </p>
-        <div className="digital-employee-grant-flow" aria-label={zh ? '管理动作权限上限' : 'Management action permission ceilings'}>
+        <div className="digital-employee-grant-flow" aria-label={zh ? '管理动作授权' : 'Management action grants'}>
           <CheckboxRow
             checked={props.draft.allowCommit}
             onChange={(checked) => patchGrant('allowCommit', checked)}
@@ -642,10 +616,6 @@ function EmployeeEditor(props: {
         </div>
         <div className="digital-employee-form-grid">
           <label>
-            <span>{zh ? '最大并发工作项' : 'Maximum concurrent work items'}</span>
-            <input type="number" min={1} max={20} value={props.draft.maxConcurrency} onChange={(event) => patch({ maxConcurrency: event.currentTarget.value })} />
-          </label>
-          <label>
             <span>{zh ? '管理状态筛选' : 'Management status filter'}</span>
             <input value={props.draft.managementStatuses} onChange={(event) => patch({ managementStatuses: event.currentTarget.value })} placeholder={zh ? '空值表示不限' : 'Empty means any'} />
           </label>
@@ -678,7 +648,7 @@ function AutomationEditor(props: {
     <section className="digital-employee-automation-editor" aria-label={zh ? '新建自动化规则' : 'Create automation rule'}>
       <header>
         <strong>{zh ? '新建自动化规则' : 'Create automation rule'}</strong>
-        <small>{zh ? '每条规则独立启停、去重并受员工并发上限约束。' : 'Each rule is independently enabled, deduplicated, and bounded by employee concurrency.'}</small>
+        <small>{zh ? '每条规则独立启停并按稳定事件身份去重。' : 'Each rule is independently enabled and deduplicated by stable event identity.'}</small>
       </header>
       <div className="digital-employee-form">
         <label>
