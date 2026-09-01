@@ -157,7 +157,7 @@ export function createHomebrewUpdateService(options: CreateHomebrewUpdateService
         throw new Error('Homebrew 安装后的 Zeus App 位置与当前日常正式应用不一致。');
       }
       if (!installed.appTarget) throw new Error('Homebrew 安装后没有返回 Zeus App 的精确位置。');
-      return inspectInstalledApp(installed.appTarget, options.bundleId, prepared.update.latestVersion);
+      return inspectInstalledApp(installed.appTarget, options.bundleId, [prepared.update.latestVersion]);
     },
 
     reconnectDownload() {
@@ -167,7 +167,7 @@ export function createHomebrewUpdateService(options: CreateHomebrewUpdateService
 }
 
 /** 安装登记不能代替磁盘事实；退出旧进程前必须复验将要重启的真实 App。 */
-async function inspectInstalledApp(appPath: string, expectedBundleId: string, expectedVersion: string): Promise<HomebrewInstalledUpdate> {
+async function inspectInstalledApp(appPath: string, expectedBundleId: string, expectedVersions: readonly string[]): Promise<HomebrewInstalledUpdate> {
   const resolvedAppPath = resolve(appPath);
   const appStat = await stat(resolvedAppPath).catch(() => null);
   if (!appStat?.isDirectory()) throw new Error('Homebrew 安装后的 Zeus App 不存在。');
@@ -176,10 +176,10 @@ async function inspectInstalledApp(appPath: string, expectedBundleId: string, ex
   if (bundleId !== expectedBundleId) {
     throw new Error(`Homebrew 安装后的 Zeus App 身份不一致：expected=${expectedBundleId} actual=${bundleId}`);
   }
-  if (shortVersion !== expectedVersion || bundleVersion !== expectedVersion) {
-    throw new Error(`Homebrew 安装后的 Zeus App 版本不一致：expected=${expectedVersion} actual=${shortVersion} (${bundleVersion})`);
+  if (shortVersion !== bundleVersion || !expectedVersions.includes(shortVersion)) {
+    throw new Error(`Homebrew 安装后的 Zeus App 版本不一致：expected=${expectedVersions.join('|')} actual=${shortVersion} (${bundleVersion})`);
   }
-  return { appPath: resolvedAppPath, bundleId, version: expectedVersion };
+  return { appPath: resolvedAppPath, bundleId, version: shortVersion };
 }
 
 async function readPlistString(infoPlistPath: string, key: string): Promise<string> {
@@ -214,7 +214,8 @@ async function validateManagedCask(cask: HomebrewCaskInfo, options: CreateHomebr
   if (!options.testMode && cask.appTarget !== resolve(options.currentAppPath)) {
     throw new Error('Homebrew Cask 管理的 Zeus App 不是当前正在使用的日常正式应用。');
   }
-  await inspectInstalledApp(options.currentAppPath, options.bundleId, options.currentAppVersion);
+  // 未重启时磁盘 App 可能已是 Homebrew 刚安装的版本；路径和身份仍必须严格一致。
+  await inspectInstalledApp(options.currentAppPath, options.bundleId, [options.currentAppVersion, cask.installedVersion]);
 }
 
 async function resolveHomebrewBinary(testMode: boolean): Promise<string> {

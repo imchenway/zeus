@@ -112,9 +112,6 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
 
   async function checkForUpdate(present: boolean, updateIndicator: boolean): Promise<DesktopReleaseUpdateStatus | null> {
     phase = 'checking';
-    prepared = null;
-    installed = null;
-    currentUpdate = null;
     lastFailureStep = 'check';
     if (present) {
       await publish(copyFor(options.language(), 'checking', options.currentVersion));
@@ -126,6 +123,8 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
       const checkedAt = validIsoDate(update.checkedAt) ?? new Date().toISOString();
       for (const listener of checkCompletedListeners) listener(checkedAt);
       if (update.status === 'up_to_date') {
+        prepared = null;
+        installed = null;
         phase = 'upToDate';
         if (updateIndicator) setIndicator(idleIndicator(options.currentVersion));
         if (present) await publish(copyFor(options.language(), 'upToDate', options.currentVersion, update));
@@ -135,6 +134,14 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
         if (present) throw new Error(update.reason || '暂时无法取得可用更新。');
         return update;
       }
+      if (prepared && samePreparedUpdate(prepared, update)) {
+        phase = 'ready';
+        if (updateIndicator) setIndicator(indicatorForReady(options.language(), update));
+        if (present) await publish(copyFor(options.language(), 'ready', options.currentVersion, update));
+        return update;
+      }
+      prepared = null;
+      installed = null;
       phase = 'available';
       if (updateIndicator) setIndicator(indicatorForAvailable(options.language(), update));
       if (present) await publish(copyFor(options.language(), 'available', options.currentVersion, update));
@@ -223,14 +230,10 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
   }
 
   async function checkAutomatically(input?: { blockedPrepareVersion?: string | null }): Promise<boolean> {
-    // 用户取消重启后，新 App 已由 Homebrew 安装但接力尚未武装；周期检查不能
-    // 清掉精确安装路径并再次执行 brew upgrade，保持 ready 等待下一次显式重启。
-    if (phase === 'ready' && prepared && installed) return true;
     hidden = true;
     let loaded = false;
     await runExclusive(async () => {
       const previousIndicator = indicatorState;
-      const previousPrepared = prepared;
       const update = await checkForUpdate(false, false);
       if (!update) return;
       loaded = true;
@@ -249,10 +252,8 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
         setIndicator({ ...previousIndicator, updatedAt: new Date().toISOString() });
         return;
       }
-      if (previousIndicator.phase === 'ready' && previousIndicator.latestVersion === update.latestVersion && previousPrepared) {
-        prepared = previousPrepared;
-        phase = 'ready';
-        setIndicator({ ...previousIndicator, updatedAt: new Date().toISOString() });
+      if (phase === 'ready' && prepared) {
+        setIndicator(indicatorForReady(options.language(), update));
         return;
       }
       setIndicator(indicatorForAvailable(options.language(), update));
@@ -263,7 +264,7 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
 
   return {
     showOrCheck: () => {
-      if (phase === 'preparing' || phase === 'ready' || phase === 'installing' || phase === 'available' || (phase === 'failed' && lastState)) return showCurrent();
+      if (phase === 'preparing' || phase === 'installing' || phase === 'available' || (phase === 'failed' && lastState?.state === 'failed')) return showCurrent();
       hidden = false;
       return runExclusive(() => checkForUpdate(true, true).then(() => undefined));
     },
@@ -292,6 +293,10 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
       checkCompletedListeners.clear();
     },
   };
+}
+
+function samePreparedUpdate(prepared: HomebrewPreparedUpdate, update: DesktopReleaseUpdateStatus): boolean {
+  return prepared.update.latestVersion === update.latestVersion && prepared.update.artifact?.sha256 === update.artifact?.sha256;
 }
 
 function idleIndicator(currentVersion: string): HomebrewUpdateIndicatorState {
