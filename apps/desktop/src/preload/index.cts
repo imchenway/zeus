@@ -76,6 +76,16 @@ globalThis.addEventListener('unhandledrejection', (event) => {
 });
 
 async function authorizePendingResourceFiles(files: File[], source: 'paste' | 'drop', pathChannel: string, materializeChannel: string): Promise<{ resources: unknown[]; failedCount: number }> {
+  if (source === 'paste' && files.length === 1 && isUnsupportedPastedImage(files[0])) {
+    const normalized =
+      pathChannel === 'zeus:store-task-resource-paths'
+        ? await readTaskClipboardResources()
+        : ((await invokeMainCommand('zeus:read-conversation-clipboard-resources', 'desktop.conversation_resources.read_clipboard', 'artifact', 'conversation-input-resources')) as {
+            resources?: unknown;
+          });
+    const resources = Array.isArray(normalized.resources) ? normalized.resources : [];
+    if (resources.length > 0) return { resources, failedCount: 0 };
+  }
   const nativePaths: string[] = [];
   const pathlessFiles: File[] = [];
   for (const file of files) {
@@ -120,6 +130,12 @@ async function authorizePendingResourceFiles(files: File[], source: 'paste' | 'd
   const materialized = materializedResult.status === 'fulfilled' && Array.isArray(materializedResult.value) ? materializedResult.value : [];
   const resources = [...authorized, ...materialized];
   return { resources, failedCount: Math.max(0, files.length - resources.length) };
+}
+
+function isUnsupportedPastedImage(file: File): boolean {
+  const mimeType = file.type.trim().toLowerCase();
+  if (['image/tiff', 'image/heic', 'image/heif', 'image/bmp'].includes(mimeType)) return true;
+  return /\.(?:tiff?|heic|heif|bmp)$/iu.test(file.name);
 }
 
 contextBridge.exposeInMainWorld('zeus', {

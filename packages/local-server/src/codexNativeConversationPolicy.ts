@@ -1016,9 +1016,6 @@ const supportedLocalImageExtensions: Readonly<Record<string, readonly string[]>>
   'image/jpeg': ['.jpg', '.jpeg'],
   'image/gif': ['.gif'],
   'image/webp': ['.webp'],
-  'image/bmp': ['.bmp'],
-  'image/heic': ['.heic', '.heif'],
-  'image/tiff': ['.tif', '.tiff'],
 };
 
 export function isSupportedLocalImageAttachment(attachment: NativeConversationAttachmentInput, canonicalPath: string): boolean {
