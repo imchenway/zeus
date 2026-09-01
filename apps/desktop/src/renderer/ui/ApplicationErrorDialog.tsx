@@ -1,10 +1,26 @@
-import { useEffect, useRef } from 'react';
+import {useEffect, useRef, useState} from 'react';
+import {WarningCircleIcon as WarningCircle} from '@phosphor-icons/react/dist/csr/WarningCircle';
+import {Button} from './Button.js';
+import {ModalPortal} from './ModalPortal.js';
 
 export type ApplicationErrorLanguage = 'zh-CN' | 'en';
 
 export interface ApplicationErrorOptions {
   language?: ApplicationErrorLanguage;
 }
+
+interface ApplicationErrorEntry {
+    id: number;
+    language: ApplicationErrorLanguage;
+    title: string;
+    summary: string;
+    details: string;
+    dedupeKey: string;
+}
+
+const listeners = new Set<() => void>();
+let queue: ApplicationErrorEntry[] = [];
+let nextErrorId = 1;
 
 const secretPatterns: ReadonlyArray<[RegExp, string]> = [
   [/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [已脱敏]'],
@@ -15,12 +31,28 @@ const secretPatterns: ReadonlyArray<[RegExp, string]> = [
 
 const copyByLanguage = {
   'zh-CN': {
+      title: '操作未完成',
+      summary: 'Zeus 没有完成这项操作。可查看详情确认真实原因，关闭后当前工作面会保留。',
     unavailable: '当前操作未完成，请稍后重试。',
     unknown: '未知错误。',
+      details: '查看详情',
+      hideDetails: '收起详情',
+      close: '关闭',
+      detailTitle: '错误详情',
+      occurredAt: '发生时间',
+      originalMessage: '原始信息',
   },
   en: {
+      title: 'Operation not completed',
+      summary: 'Zeus did not complete this operation. Review the actual cause in Details; closing keeps the current workspace intact.',
     unavailable: 'The current operation did not complete. Please try again.',
     unknown: 'Unknown error.',
+      details: 'View Details',
+      hideDetails: 'Hide Details',
+      close: 'Close',
+      detailTitle: 'Error details',
+      occurredAt: 'Occurred at',
+      originalMessage: 'Original message',
   },
 } as const;
 
@@ -43,6 +75,10 @@ const visibleCopyByCode: Readonly<Record<string, Readonly<Record<ApplicationErro
   },
 };
 
+function notifyListeners(): void {
+    for (const listener of listeners) listener();
+}
+
 function redactDetails(value: string): string {
   return secretPatterns.reduce((result, [pattern, replacement]) => result.replace(pattern, replacement), value).trim();
 }
@@ -62,10 +98,6 @@ function errorCode(error: unknown): string | null {
   return candidate?.trim() || null;
 }
 
-/**
- * 界面只提供稳定、可理解的操作结果；错误码和内部消息不再进入 DOM。
- * 真实诊断信息由 reportApplicationError 写入本机运行日志。
- */
 export function formatVisibleApplicationError(error: unknown, language: ApplicationErrorLanguage = 'zh-CN'): string {
   const code = errorCode(error);
   if (code && visibleCopyByCode[code]) return visibleCopyByCode[code][language];
@@ -76,23 +108,36 @@ export function VisibleApplicationError(props: { error: unknown; language?: Appl
   return <span className={props.className}>{formatVisibleApplicationError(props.error, props.language)}</span>;
 }
 
-/**
- * 全应用统一错误出口：运行期错误只写入本机运行日志，不再生成弹窗、遮罩或全局错误卡片。
- */
+/** 全应用统一错误出口：摘要保持稳定，脱敏后的真实错误码和消息进入可展开详情。 */
 export function reportApplicationError(error: unknown, options: ApplicationErrorOptions = {}): void {
   const language = options.language ?? 'zh-CN';
+    const copy = copyByLanguage[language];
   const code = errorCode(error);
-  const message = errorMessage(error, language).replace(/\s+/gu, ' ').trim() || copyByLanguage[language].unknown;
-  const detail = redactDetails(code && message !== code && !message.startsWith(`${code}:`) ? `${code}: ${message}` : message);
-  console.error('[Zeus runtime]', detail);
-  window.zeus?.reportRendererRuntimeError?.(detail);
+    const message = errorMessage(error, language).replace(/\s+/gu, ' ').trim() || copy.unknown;
+    const original = code && message !== code && !message.startsWith(`${code}:`) ? `${code}: ${message}` : message;
+    const detailsBody = `${copy.originalMessage}: ${original}`;
+    const details = redactDetails(`${copy.occurredAt}: ${new Date().toISOString()}\n${detailsBody}`);
+    const entry: ApplicationErrorEntry = {
+        id: nextErrorId++,
+        language,
+        title: copy.title,
+        summary: code && visibleCopyByCode[code] ? visibleCopyByCode[code][language] : copy.summary,
+        details,
+        dedupeKey: redactDetails(original),
+    };
+    const duplicate = queue.some((candidate) => candidate.language === entry.language && candidate.dedupeKey === entry.dedupeKey);
+    if (!duplicate) {
+        queue = [...queue, entry];
+        notifyListeners();
+    }
+    console.error('[Zeus runtime]', details);
+    window.zeus?.reportRendererRuntimeError?.(details);
 }
 
-/** 同一个失败值只写入一次运行日志。 */
+/** 同一个失败值只上报一次；清空后再次出现同样的错误仍会重新弹窗。 */
 export function useApplicationErrorDialog(error: unknown, options: ApplicationErrorOptions = {}): void {
   const previousErrorRef = useRef<unknown>(undefined);
   const language = options.language;
-
   useEffect(() => {
     if (error === null || error === undefined || error === '') {
       previousErrorRef.current = error;
@@ -104,8 +149,57 @@ export function useApplicationErrorDialog(error: unknown, options: ApplicationEr
   }, [error, language]);
 }
 
-/** 保留旧挂载点以避免业务页批量改动；全局错误弹窗已永久停用。 */
+function subscribe(listener: () => void): () => void {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+}
+
+function dismissCurrentError(): void {
+    if (queue.length === 0) return;
+    queue = queue.slice(1);
+    notifyListeners();
+}
+
 export function ApplicationErrorDialogHost(props: { language: ApplicationErrorLanguage }) {
-  void props.language;
-  return null;
+    const [, forceRender] = useState(0);
+    const [detailsOpen, setDetailsOpen] = useState(false);
+    const current = queue[0];
+    useEffect(() => subscribe(() => forceRender((value) => value + 1)), []);
+    useEffect(() => setDetailsOpen(false), [current?.id]);
+    if (!current) return null;
+    const copy = copyByLanguage[current.language ?? props.language];
+    return (
+        <ModalPortal rootClassName="application-error-dialog-portal-root"
+                     backdropClassName="application-error-dialog-backdrop" onDismiss={dismissCurrentError}>
+            <section className="application-error-dialog zeus-solid-form-surface" role="alertdialog" aria-modal="true"
+                     aria-labelledby="application-error-dialog-title"
+                     aria-describedby="application-error-dialog-summary">
+                <div className="application-error-dialog-icon" aria-hidden="true">
+                    <WarningCircle weight="fill"/>
+                </div>
+                <div className="application-error-dialog-content">
+                    <header>
+                        <strong id="application-error-dialog-title">{current.title}</strong>
+                        <p id="application-error-dialog-summary">{current.summary}</p>
+                    </header>
+                    {detailsOpen ? (
+                        <section className="application-error-dialog-details"
+                                 aria-labelledby="application-error-dialog-details-title">
+                            <strong id="application-error-dialog-details-title">{copy.detailTitle}</strong>
+                            <pre data-zeus-selectable="text">{current.details}</pre>
+                        </section>
+                    ) : null}
+                </div>
+                <footer>
+                    <Button variant="secondary" size="regular" onClick={() => setDetailsOpen((open) => !open)}
+                            aria-expanded={detailsOpen} aria-controls="application-error-dialog-details-title">
+                        {detailsOpen ? copy.hideDetails : copy.details}
+                    </Button>
+                    <Button variant="primary" size="regular" onClick={dismissCurrentError} autoFocus>
+                        {copy.close}
+                    </Button>
+                </footer>
+            </section>
+        </ModalPortal>
+    );
 }

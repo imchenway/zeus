@@ -1,67 +1,73 @@
-import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { realpathSync, statSync } from 'node:fs';
-import { readdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
-import { promisify } from 'node:util';
+import {execFile} from 'node:child_process';
+import {createHash} from 'node:crypto';
+import {realpathSync, statSync} from 'node:fs';
+import {readdir, readFile, writeFile} from 'node:fs/promises';
+import {dirname, extname, isAbsolute, relative, resolve, sep} from 'node:path';
+import {promisify} from 'node:util';
 import {
-  type AgentImageInput,
-  type AgentModelIdentity,
-  type AgentProviderPayloadDiagnostic,
-  type AgentRuntimeEvent,
-  type AgentSessionIdentity,
-  createPiRuntimeWorkerDriver,
-  isOfficialDeepSeekApiConnection,
-  modelConnectionRequestEndpoint,
-  modelRef,
-  parseModelRef,
-  piRuntimeWorkerProtocolVersion,
-  type PiZeusToolBroker,
-  type PiZeusToolContentItem,
-  type PiZeusToolRequest,
-  type PiZeusToolResult,
+    type AgentImageInput,
+    type AgentModelIdentity,
+    type AgentProviderPayloadDiagnostic,
+    type AgentRuntimeEvent,
+    type AgentSessionIdentity,
+    createPiRuntimeWorkerDriver,
+    isOfficialDeepSeekApiConnection,
+    modelConnectionRequestEndpoint,
+    modelRef,
+    parseModelRef,
+    piRuntimeWorkerProtocolVersion,
+    type PiZeusToolBroker,
+    type PiZeusToolContentItem,
+    type PiZeusToolRequest,
+    type PiZeusToolResult,
 } from '@zeus/ai-runtime';
 import {
-  buildTaskPushInputParts,
-  calculateCacheHitRate,
-  type CodexUsageEstimate,
-  type ConversationContextDraft,
-  emptyTokenUsageBreakdown,
-  estimateDeepSeekUsage,
-  type NativeTokenUsageSnapshot,
-  serializeConversationContext,
-  type TaskPushMessageLayout,
-  type TokenUsageBreakdown,
+    buildTaskPushInputParts,
+    calculateCacheHitRate,
+    type CodexUsageEstimate,
+    type ConversationContextDraft,
+    emptyTokenUsageBreakdown,
+    estimateDeepSeekUsage,
+    type NativeTokenUsageSnapshot,
+    serializeConversationContext,
+    type TaskPushMessageLayout,
+    type TokenUsageBreakdown,
 } from '@zeus/shared';
-import { projectConversationTurnFailure } from '@zeus/storage';
 import type {
-  CodexUsageLedgerRepository,
-  CommandDeliveryRepository,
-  ConversationExecutionRepository,
-  ConversationProviderItemRepository,
-  ConversationRepository,
-  ConversationServerRequestRepository,
-  ConversationSubmissionRepository,
-  ConversationTurnRepository,
-  ZeusConversationServerRequestRecord,
-  ZeusConversationWithMessagesRecord,
-  ZeusDatabase,
+    CodexUsageLedgerRepository,
+    CommandDeliveryRepository,
+    ConversationExecutionRepository,
+    ConversationProviderItemRepository,
+    ConversationRepository,
+    ConversationServerRequestRepository,
+    ConversationSubmissionRepository,
+    ConversationTurnRepository,
+    ZeusConversationServerRequestRecord,
+    ZeusConversationWithMessagesRecord,
+    ZeusDatabase,
 } from '@zeus/storage';
-import type { ModelConnectionService } from './modelConnectionService.js';
-import type { BrowserAutomationPort } from './browserAutomation.js';
-import type { NativeConversationAttachmentInput, NativeConversationSkillInput } from './codexNativeConversationContracts.js';
-import { readNativeSubmissionSkill } from './nativeConversationSubmissionInputs.js';
-import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
-import type { ManagedConversationToolResultStore } from './conversationPortableContext.js';
-import { TurnProcessProjector } from './turnProcessProjector.js';
-import type { ContextDispatchEnvelope, ProviderDispatchContextCompiler } from './contextDispatchService.js';
-import { PiProviderCommandApplicationService, type PiProviderCommandAttempt } from './piProviderCommandDelivery.js';
-import { runPiActiveContextCompaction } from './piActiveContextCompaction.js';
-import { projectLocallyAcceptedUserMessage } from './localUserSubmissionProjection.js';
-import type { ZeusConversationPluginRuntime, ZeusPluginConversationPreparation } from './zeusConversationPluginRuntime.js';
-import { emitPluginCompactionHook } from './codexConversationDispatchContext.js';
-import type { ZeusPluginDynamicTool } from './zeusPluginMcpBroker.js';
-import { createZeusToolBroker, isZeusNativeToolMutation, type ZeusToolAuditEvent } from './zeusToolRegistry.js';
+import {projectConversationTurnFailure} from '@zeus/storage';
+import type {ModelConnectionService} from './modelConnectionService.js';
+import type {BrowserAutomationPort} from './browserAutomation.js';
+import type {
+    NativeConversationAttachmentInput,
+    NativeConversationSkillInput
+} from './codexNativeConversationContracts.js';
+import {readNativeSubmissionSkill} from './nativeConversationSubmissionInputs.js';
+import type {ConversationSegmentLifecycle} from './conversationExecutionCoordinator.js';
+import type {ManagedConversationToolResultStore} from './conversationPortableContext.js';
+import {TurnProcessProjector} from './turnProcessProjector.js';
+import type {ContextDispatchEnvelope, ProviderDispatchContextCompiler} from './contextDispatchService.js';
+import {PiProviderCommandApplicationService, type PiProviderCommandAttempt} from './piProviderCommandDelivery.js';
+import {runPiActiveContextCompaction} from './piActiveContextCompaction.js';
+import {projectLocallyAcceptedUserMessage} from './localUserSubmissionProjection.js';
+import type {
+    ZeusConversationPluginRuntime,
+    ZeusPluginConversationPreparation
+} from './zeusConversationPluginRuntime.js';
+import {emitPluginCompactionHook} from './codexConversationDispatchContext.js';
+import type {ZeusPluginDynamicTool} from './zeusPluginMcpBroker.js';
+import {createZeusToolBroker, isZeusNativeToolMutation, type ZeusToolAuditEvent} from './zeusToolRegistry.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -457,10 +463,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     let session: AgentSessionIdentity;
     try {
       sessionCommand.markProviderWriteStarted();
-      // Session Command 持有真实 write marker；Segment Lifecycle 同步记住本次切换已经越过外部写边界，
-      // 这样 openSession 返回后的任何本地投影失败都只能收敛为 outcome_unknown。
-      input.segmentLifecycle?.markProviderWriteStarted();
-      input.providerWriteLifecycle?.markRpcStarted(input.submissionId);
+        // 打开本机 Pi session 只越过内部 Worker 边界；在最终 Provider 请求体写出前，
+        // 产品 submission 和外层 Command 仍必须保持“可确定未写出”。
       session = await driver.openSession({
         cwd: input.cwd,
         model: input.model,
@@ -587,8 +591,6 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         providerGenerationId: session.runtimeInstanceId,
       });
       input.segmentLifecycle?.bindCommandDelivery({ outboxId: runCommand.outboxId, providerId: 'pi', providerGenerationId: session.runtimeInstanceId });
-      if (input.segmentLifecycle) input.segmentLifecycle.markProviderWriteStarted();
-      else runCommand.markProviderWriteStarted();
       run = await driver.startRun({
         session,
         traceIdentity: runCommand.traceIdentity,
@@ -651,8 +653,9 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           }
         },
         providerWriteMayStart: () => {
-          if (input.segmentLifecycle) input.segmentLifecycle.markProviderWriteStarted();
-          else runCommand!.markProviderWriteStarted();
+            // Pi 的 preflight 接纳已经在 durableTransactionSync 中原子收口内部命令；这里只打开
+            // Provider 传输闸门，并通知最外层命令从此不能安全自动重放。
+            input.providerWriteLifecycle?.markRpcStarted(input.submissionId);
         },
         ...(input.segmentLifecycle
           ? {
@@ -922,9 +925,6 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         providerGenerationId: context.session.runtimeInstanceId,
       });
       input.segmentLifecycle?.bindCommandDelivery({ outboxId: runCommand.outboxId, providerId: 'pi', providerGenerationId: context.session.runtimeInstanceId });
-      if (input.segmentLifecycle) input.segmentLifecycle.markProviderWriteStarted();
-      else runCommand.markProviderWriteStarted();
-      input.providerWriteLifecycle?.markRpcStarted(submission.id);
       run = await driver.startRun({
         session: context.session,
         traceIdentity: runCommand.traceIdentity,
@@ -982,8 +982,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           }
         },
         providerWriteMayStart: () => {
-          if (input.segmentLifecycle) input.segmentLifecycle.markProviderWriteStarted();
-          else runCommand!.markProviderWriteStarted();
+            // 内部 run 命令已由 durable acceptance 收口，禁止在 settled 后重复写 marker。
+            input.providerWriteLifecycle?.markRpcStarted(submission.id);
         },
         ...(input.segmentLifecycle
           ? {

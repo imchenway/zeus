@@ -1,14 +1,14 @@
 import type {
-  ConversationAttentionKind,
-  ConversationRepository,
-  ConversationServerRequestRepository,
-  ConversationSubmissionRepository,
-  ConversationTurnRepository,
-  ProjectRepository,
-  TaskRepository,
-  TaskWorkspaceRepository,
-  ZeusConversationRecord,
-  ZeusTaskWorkspaceRecord,
+    ConversationAttentionKind,
+    ConversationRepository,
+    ConversationServerRequestRepository,
+    ConversationSubmissionRepository,
+    ConversationTurnRepository,
+    ProjectRepository,
+    TaskRepository,
+    TaskWorkspaceRepository,
+    ZeusConversationRecord,
+    ZeusTaskWorkspaceRecord,
 } from '@zeus/storage';
 
 export type ProjectConversationAttentionState = 'idle' | 'running' | 'unread' | 'completed' | 'failed' | 'interrupted' | 'reply_required';
@@ -285,6 +285,10 @@ export class ConversationChoiceQueryApplication {
       return { runtimeState: 'streaming' as const, taskRunStatus: 'running' as const };
     }
     const paused = submissions.filter((submission) => submission.status === 'paused');
+      if (paused.some((submission) => submission.pausedReason === 'runtime_rejected')) return {
+          runtimeState: 'error' as const,
+          taskRunStatus: 'failed' as const
+      };
     if (paused.some((submission) => submission.pausedReason === 'recovery_required') || providerState === 'paused') return { runtimeState: 'paused' as const, taskRunStatus: 'paused' as const };
     if (paused.length > 0 && !paused.every((submission) => submission.pausedReason === 'user_confirmation')) return { runtimeState: 'paused' as const, taskRunStatus: 'paused' as const };
     if (pendingRequestKind === 'user_input') return { runtimeState: 'pending_user_input' as const, taskRunStatus: 'waiting_user' as const };

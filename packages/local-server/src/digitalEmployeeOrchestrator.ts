@@ -1,37 +1,57 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { commandEnvelopeSchemaGeneration, splitZeusSkillIds, type CommandActor, type CommandEnvelope, type CommandScopeKind, type TaskManagementStatus } from '@zeus/shared';
+import {createHash, randomUUID} from 'node:crypto';
 import {
-  CommandRunRepository,
-  ConversationRepository,
-  DigitalEmployeeAutomationRepository,
-  DigitalEmployeeExecutionRepository,
-  DigitalEmployeeProjectEventRepository,
-  DigitalEmployeeRepository,
-  ProjectRepository,
-  TaskEventRepository,
-  TaskIntegrationRepository,
-  TaskRepository,
-  TaskStageRepository,
-  TaskWorkspaceRepository,
-  type DigitalEmployeeAutomationRecord,
-  type DigitalEmployeeExecutionRecord,
-  type DigitalEmployeeExecutionSource,
-  type DigitalEmployeeProjectEvent,
-  type DigitalEmployeeRecord,
-  type ZeusProjectRecord,
-  type ZeusTaskRecord,
-  type ZeusTaskStageRecord,
-  type ZeusTaskWorkspaceRecord,
+    type CommandActor,
+    type CommandEnvelope,
+    commandEnvelopeSchemaGeneration,
+    type CommandScopeKind,
+    splitZeusSkillIds,
+    type TaskManagementStatus
+} from '@zeus/shared';
+import {
+    CommandRunRepository,
+    ConversationRepository,
+    ConversationSubmissionRepository,
+    type DigitalEmployeeAutomationRecord,
+    DigitalEmployeeAutomationRepository,
+    type DigitalEmployeeExecutionRecord,
+    DigitalEmployeeExecutionRepository,
+    type DigitalEmployeeExecutionSource,
+    type DigitalEmployeeProjectEvent,
+    DigitalEmployeeProjectEventRepository,
+    type DigitalEmployeeRecord,
+    DigitalEmployeeRepository,
+    ProjectRepository,
+    TaskEventRepository,
+    TaskIntegrationRepository,
+    TaskRepository,
+    TaskStageRepository,
+    TaskWorkspaceRepository,
+    type ZeusProjectRecord,
+    type ZeusTaskRecord,
+    type ZeusTaskStageRecord,
+    type ZeusTaskWorkspaceRecord,
 } from '@zeus/storage';
-import type { FastifyInstance } from 'fastify';
-import { commandCenterCommandTypes, commandCenterInputSha256 } from './commandCenterCommandApplication.js';
-import type { ConversationCapabilityQueryApplication } from './conversationCapabilityQueryApplication.js';
-import type { TaskStageApplication } from './taskStageApplication.js';
-import type { CreateUserTaskInput } from './workManagementCoreCommandRoutes.js';
-import { WorkManagementCommandApplication, workManagementCommandTypes, workManagementInputSha256, type ParsedWorkManagementMutation } from './workManagementCommandApplication.js';
-import { WorkspaceGitCommandApplication, workspaceGitCommandTypes, workspaceGitInputSha256, type WorkspaceGitCommandType, type WorkspaceGitScopeKind } from './workspaceGitCommandApplication.js';
-import type { PreparedWorkspaceGitCommand, WorkspaceGitCommandRouteOperations } from './workspaceGitCommandRoutes.js';
-import type { TaskWorkManagementController } from './taskWorkManagement.js';
+import type {FastifyInstance} from 'fastify';
+import {commandCenterCommandTypes, commandCenterInputSha256} from './commandCenterCommandApplication.js';
+import type {ConversationCapabilityQueryApplication} from './conversationCapabilityQueryApplication.js';
+import {conversationWorkExecutionState} from './conversationWorkExecutionState.js';
+import type {TaskStageApplication} from './taskStageApplication.js';
+import type {CreateUserTaskInput} from './workManagementCoreCommandRoutes.js';
+import {
+    type ParsedWorkManagementMutation,
+    WorkManagementCommandApplication,
+    workManagementCommandTypes,
+    workManagementInputSha256
+} from './workManagementCommandApplication.js';
+import {
+    WorkspaceGitCommandApplication,
+    type WorkspaceGitCommandType,
+    workspaceGitCommandTypes,
+    workspaceGitInputSha256,
+    type WorkspaceGitScopeKind
+} from './workspaceGitCommandApplication.js';
+import type {PreparedWorkspaceGitCommand, WorkspaceGitCommandRouteOperations} from './workspaceGitCommandRoutes.js';
+import type {TaskWorkManagementController} from './taskWorkManagement.js';
 
 const DEFAULT_TICK_MS = 10_000;
 const LEASE_MS = 45_000;
@@ -56,6 +76,7 @@ interface DigitalEmployeeOrchestratorOptions {
   stages: TaskStageRepository;
   taskStageApplication: TaskStageApplication;
   conversations: ConversationRepository;
+    conversationSubmissions: ConversationSubmissionRepository;
   commandRuns: CommandRunRepository;
   conversationCapabilities: ConversationCapabilityQueryApplication;
   taskWorkManagement: TaskWorkManagementController;
@@ -498,7 +519,7 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
     const conversation = options.conversations.getById(conversationId);
     if (!conversation || conversation.taskId !== task.id || conversation.projectId !== project.id) throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_ACCEPTANCE_NOT_DURABLE', '任务推送返回的会话与任务身份不一致。', true);
     const updated = options.executions.update(execution.id, {
-      status: conversation.stage === 'waiting_user' || conversation.stage === 'waiting_approval' ? 'waiting' : 'running',
+        status: 'running',
       conversationId: conversation.id,
       environmentId: conversation.environmentId,
       errorCode: null,
@@ -523,6 +544,7 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
       },
     });
     publishExecution(updated);
+      await monitorConversation(updated);
   }
 
   async function monitorConversation(execution: DigitalEmployeeExecutionRecord): Promise<void> {
@@ -538,12 +560,14 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
         return;
       }
     }
-    if (conversation.stage === 'waiting_user' || conversation.stage === 'waiting_approval' || conversation.providerState === 'waiting') {
+      const executionState = conversationWorkExecutionState(conversation, options.conversationSubmissions.listByConversation(conversation.id));
+      if (executionState.type === 'failed') throw orchestratorError(executionState.code, executionState.message, false);
+      if (executionState.type === 'outcome_unknown') throw orchestratorError(executionState.code, executionState.message, true);
+      if (executionState.type === 'waiting') {
       if (execution.status !== 'waiting') publishExecution(options.executions.update(execution.id, { status: 'waiting' }));
       return;
     }
-    if (conversation.stage === 'failed' || conversation.providerState === 'failed') throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_CONVERSATION_FAILED', '数字员工会话执行失败，请查看会话详情。', false);
-    if (conversation.stage !== 'completed') {
+      if (executionState.type !== 'completed') {
       if (execution.status !== 'running') publishExecution(options.executions.update(execution.id, { status: 'running' }));
       return;
     }

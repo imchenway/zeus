@@ -1,37 +1,59 @@
-import { randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { isAbsolute, join, resolve } from 'node:path';
-import { createProvider, envApiKeyAuth, type Api, type Model, type ProviderStreams, type StreamOptions } from '@earendil-works/pi-ai';
-import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy';
-import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
-import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy';
-import { type AgentSession, type AgentSessionEvent, createAgentSession, defineTool, ModelRuntime, SessionManager, SettingsManager, type ToolDefinition } from '@earendil-works/pi-coding-agent/headless';
-import { Type, type TSchema } from 'typebox';
+import {randomUUID} from 'node:crypto';
+import {mkdir, writeFile} from 'node:fs/promises';
+import {isAbsolute, join, resolve} from 'node:path';
+import {
+    type Api,
+    createProvider,
+    envApiKeyAuth,
+    type Model,
+    type ProviderStreams,
+    type StreamOptions
+} from '@earendil-works/pi-ai';
+import {anthropicMessagesApi} from '@earendil-works/pi-ai/api/anthropic-messages.lazy';
+import {openAICompletionsApi} from '@earendil-works/pi-ai/api/openai-completions.lazy';
+import {openAIResponsesApi} from '@earendil-works/pi-ai/api/openai-responses.lazy';
+import {
+    type AgentSession,
+    type AgentSessionEvent,
+    createAgentSession,
+    defineTool,
+    ModelRuntime,
+    SessionManager,
+    SettingsManager,
+    type ToolDefinition
+} from '@earendil-works/pi-coding-agent/headless';
+import {type TSchema, Type} from 'typebox';
 import type {
-  AcceptedAgentRun,
-  AgentDescriptor,
-  AgentModelIdentity,
-  AgentProviderPayloadDiagnostic,
-  AgentRuntimeDriver,
-  AgentRuntimeEvent,
-  AgentRuntimeProbe,
-  AgentRunSkillActivation,
-  AgentSessionIdentity,
-  AgentSessionSnapshot,
-  CompactAgentSessionInput,
-  CompactAgentSessionResult,
-  FollowUpAgentRunInput,
-  InterruptAgentRunInput,
-  OpenAgentSessionInput,
-  ReadAgentSessionInput,
-  RespondAgentInteractionInput,
-  ResumeAgentSessionInput,
-  StartAgentRunInput,
-  SteerAgentRunInput,
+    AcceptedAgentRun,
+    AgentDescriptor,
+    AgentModelIdentity,
+    AgentProviderPayloadDiagnostic,
+    AgentRunSkillActivation,
+    AgentRuntimeDriver,
+    AgentRuntimeEvent,
+    AgentRuntimeProbe,
+    AgentSessionIdentity,
+    AgentSessionSnapshot,
+    CompactAgentSessionInput,
+    CompactAgentSessionResult,
+    FollowUpAgentRunInput,
+    InterruptAgentRunInput,
+    OpenAgentSessionInput,
+    ReadAgentSessionInput,
+    RespondAgentInteractionInput,
+    ResumeAgentSessionInput,
+    StartAgentRunInput,
+    SteerAgentRunInput,
 } from './agentRuntimeContracts.js';
-import { modelConnectionRuntimeBaseUrl, type ConfiguredModelDefinition, type ModelAuthenticationScheme, type ModelConnectionRecord, type PiThinkingLevel } from './modelConnectionCatalog.js';
-import { buildProviderCacheDiagnostic } from './providerCacheDiagnostics.js';
-import { PiHeadlessResourceLoader, type PiPluginSkillResource } from './piHeadlessResourceLoader.js';
+import {
+    type ConfiguredModelDefinition,
+    type ModelAuthenticationScheme,
+    type ModelConnectionRecord,
+    modelConnectionRuntimeBaseUrl,
+    type PiThinkingLevel
+} from './modelConnectionCatalog.js';
+import {buildProviderCacheDiagnostic} from './providerCacheDiagnostics.js';
+import {PiHeadlessResourceLoader, type PiPluginSkillResource} from './piHeadlessResourceLoader.js';
 
 export interface PiRuntimeConnection extends ModelConnectionRecord {
   apiKey?: string;
@@ -782,7 +804,7 @@ function readPluginSkills(metadata: Record<string, unknown> | undefined): PiPlug
 
 function readPluginInstructions(metadata: Record<string, unknown> | undefined): string {
   const value = metadata?.zeusPluginDeveloperInstructions;
-  if (value === undefined) return '';
+    if (value === undefined || (typeof value === 'string' && !value.trim())) return '';
   return boundedMetadataText(value, 'Plugin developer instructions', maximumPiDispatchContextBytes);
 }
 

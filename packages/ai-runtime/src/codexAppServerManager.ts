@@ -1,28 +1,28 @@
-import { spawn as nodeSpawn } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
-import { EventEmitter } from 'node:events';
-import { AsyncLocalStorage } from 'node:async_hooks';
-import { createConnection } from 'node:net';
-import { isAbsolute, join } from 'node:path';
-import { type RawData, WebSocket } from 'ws';
-import type { CodexBootstrapAdditionalContext } from '@zeus/shared';
+import {spawn as nodeSpawn} from 'node:child_process';
+import {createHash, randomUUID} from 'node:crypto';
+import {EventEmitter} from 'node:events';
+import {AsyncLocalStorage} from 'node:async_hooks';
+import {createConnection} from 'node:net';
+import {isAbsolute, join} from 'node:path';
+import {type RawData, WebSocket} from 'ws';
+import type {CodexBootstrapAdditionalContext} from '@zeus/shared';
 import {
-  CodexJsonLineDecoder,
-  type CodexWireId,
-  type CodexWireMessage,
-  type ExternalAgentConfigDetectParams,
-  type ExternalAgentConfigDetectResponse,
-  type ExternalAgentConfigImportHistory,
-  type ExternalAgentConfigImportParams,
-  type ExternalAgentConfigImportResponse,
-  type ExternalAgentImportNotification,
-  parseExternalAgentConfigDetectResponse,
-  parseExternalAgentConfigImportHistoriesResponse,
-  parseExternalAgentConfigImportResponse,
-  parseExternalAgentImportNotification,
+    CodexJsonLineDecoder,
+    type CodexWireId,
+    type CodexWireMessage,
+    type ExternalAgentConfigDetectParams,
+    type ExternalAgentConfigDetectResponse,
+    type ExternalAgentConfigImportHistory,
+    type ExternalAgentConfigImportParams,
+    type ExternalAgentConfigImportResponse,
+    type ExternalAgentImportNotification,
+    parseExternalAgentConfigDetectResponse,
+    parseExternalAgentConfigImportHistoriesResponse,
+    parseExternalAgentConfigImportResponse,
+    parseExternalAgentImportNotification,
 } from './codexAppServerProtocol.js';
-import { expandCliSearchPath } from './cliSearchPath.js';
-import { type CodexModelBudgetEvidence, resolveCodexModelBudgetSnapshot } from './codexModelBudgetSnapshot.js';
+import {expandCliSearchPath} from './cliSearchPath.js';
+import {type CodexModelBudgetEvidence, resolveCodexModelBudgetSnapshot} from './codexModelBudgetSnapshot.js';
 
 export type {
   ExternalAgentConfigDetectParams,
@@ -1275,6 +1275,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
         validateServiceTier(model, input.serviceTier);
       }
       if (input.config !== undefined) throw managerError('ZEUS_CODEX_CONFIG_UNAVAILABLE', 'Raw Codex thread config overrides are not supported.');
+        validateDynamicTools(input.dynamicTools);
       const sandbox = normalizeThreadSandbox(input.sandbox);
       const response = asRecord(
         await rpc(
@@ -2442,6 +2443,25 @@ function turnKey(threadId: string, turnId: string): string {
 
 function compactObject<T extends Record<string, unknown>>(value: T): T {
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
+}
+
+function validateDynamicTools(specs: readonly CodexDynamicToolSpec[] | undefined): void {
+    const rootNames = new Set<string>();
+    for (const spec of specs ?? []) {
+        const name = spec.name.trim();
+        if (!name || rootNames.has(name)) throw managerError('ZEUS_CODEX_DYNAMIC_TOOL_INVALID', `Codex dynamic tool root name is missing or duplicated: ${name || '<empty>'}.`);
+        rootNames.add(name);
+        if (spec.type === 'function') {
+            if (spec.deferLoading) throw managerError('ZEUS_CODEX_DYNAMIC_TOOL_NAMESPACE_REQUIRED', `Deferred Codex dynamic tool must belong to a namespace: ${name}.`);
+            continue;
+        }
+        const toolNames = new Set<string>();
+        for (const tool of spec.tools) {
+            const toolName = tool.name.trim();
+            if (!toolName || toolNames.has(toolName)) throw managerError('ZEUS_CODEX_DYNAMIC_TOOL_INVALID', `Codex dynamic tool name is missing or duplicated in namespace ${name}: ${toolName || '<empty>'}.`);
+            toolNames.add(toolName);
+        }
+    }
 }
 
 function canonicalJson(value: unknown): string {

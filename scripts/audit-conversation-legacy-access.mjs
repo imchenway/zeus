@@ -1,7 +1,7 @@
-import { readdir, readFile } from 'node:fs/promises';
-import { extname, relative, resolve } from 'node:path';
+import {readdir, readFile} from 'node:fs/promises';
+import {extname, relative, resolve} from 'node:path';
 import process from 'node:process';
-import { fileURLToPath } from 'node:url';
+import {fileURLToPath} from 'node:url';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const sourceRoots = ['apps', 'packages', 'scripts'];
@@ -181,6 +181,13 @@ function classifyDirectAccess(file, source, occurrence) {
 }
 
 function classifyRepositoryCall(file, method) {
+    if (file === 'packages/local-server/src/taskWorkManagement.ts') {
+        return {
+            owner: 'task_work_item_repository',
+            lifecycle: 'unrelated_domain',
+            replacement: 'not a legacy conversation_items access'
+        };
+    }
   if (file === 'packages/local-server/src/legacyCodexThreadMigration.ts') {
     return { owner: 'legacy_codex_thread_migration', lifecycle: 'migration_compatibility', replacement: 'unified import adapter with stable source identities' };
   }

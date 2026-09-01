@@ -1,15 +1,26 @@
-import { createServer } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import type { AddressInfo } from 'node:net';
+import {createServer} from 'node:http';
+import {mkdtemp, rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import type {AddressInfo} from 'node:net';
 import Fastify from 'fastify';
-import type { ExecutionHostStopActiveCommandRequest, ExecutionHostStopActiveCommandResponse, ExecutionHostStopActiveResult } from '../packages/shared/src/index.js';
-import { CommandDeliveryRepository, createZeusDatabase } from '../packages/storage/src/index.js';
-import { ExecutionHostStopCommandApplication, executionHostStopCommandPolicy } from '../packages/local-server/src/executionHostStopCommandApplication.js';
-import { registerExecutionHostControlApi } from '../packages/local-server/src/executionHostControlApi.js';
-import { createExecutionHostStopActiveCommandRequest } from '../apps/desktop/src/main/executionHostStopCommand.js';
-import { createExecutionHostControlClient, executionHostProtocolVersion, type ExecutionHostRendezvous } from '../apps/desktop/src/main/executionHostProtocol.js';
+import type {
+    ExecutionHostStopActiveCommandRequest,
+    ExecutionHostStopActiveCommandResponse,
+    ExecutionHostStopActiveResult
+} from '../packages/shared/src/index.js';
+import {CommandDeliveryRepository, createZeusDatabase} from '../packages/storage/src/index.js';
+import {
+    ExecutionHostStopCommandApplication,
+    executionHostStopCommandPolicy
+} from '../packages/local-server/src/executionHostStopCommandApplication.js';
+import {registerExecutionHostControlApi} from '../packages/local-server/src/executionHostControlApi.js';
+import {createExecutionHostStopActiveCommandRequest} from '../apps/desktop/src/main/executionHostStopCommand.js';
+import {
+    createExecutionHostControlClient,
+    executionHostProtocolVersion,
+    type ExecutionHostRendezvous
+} from '../apps/desktop/src/main/executionHostProtocol.js';
 
 const probeRoot = await mkdtemp(join(tmpdir(), 'zeus-execution-host-stop-command-'));
 const observed: Record<string, unknown> = {};
@@ -67,6 +78,12 @@ try {
           goalPauses += 1;
           return {};
         },
+          requestProviderTurnStop: async () => {
+              codexInterrupts += 1;
+              releaseIfParallel();
+              await parallelInterrupts;
+              return {terminalConfirmed: true};
+          },
       },
       piCoordinator: {
         interruptTurn: async () => {
@@ -156,7 +173,7 @@ try {
     assertProbe(updatedSubmissions.length === submissions.length && updatedSubmissions.every((entry) => entry.status === 'cancelled'), '所有可恢复 submission 必须持久化为 cancelled。');
     assertProbe(failedRequests.join(',') === 'request-pending', '等待中的本机请求必须收口失败。');
     assertProbe(stoppedRuntimeSessions.join(',') === 'runtime-active' && killedRuntimeSessions.join(',') === 'runtime-active', '只停止运行中的 Runtime。');
-    assertProbe(acceptedBody.result.providerOutcomeUnconfirmed === true, '结果不能把 interrupt RPC 接纳冒充 Provider 远端终态。');
+      assertProbe(acceptedBody.result.providerOutcomeUnconfirmed === false, 'Codex 与 Pi 均已确认终态时，不得继续误报 Provider 结果未知。');
     assertProbe(acceptedAttempt.receipt.outcome === 'accepted' && acceptedAttempt.attempt.providerWriteStartedAt !== null, 'accepted 必须具有外部 write marker。');
     assertProbe(Buffer.byteLength(acceptedAttempt.receipt.evidenceJson, 'utf8') <= executionHostStopCommandPolicy.receiptMaximumBytes, 'accepted receipt 必须有界。');
     assertProbe(published.length === 0, '无失败的停止操作不应产生失败事件。');

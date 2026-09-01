@@ -1,70 +1,91 @@
-import { type AiRuntimeSession, createAiRuntimeSessionManager, modelConnectionCredentialSlotId, modelRef, parseModelRef, piRuntimeWorkerProtocolVersion, runWithCodexRpcRetryContext } from '@zeus/ai-runtime';
-import { getGitBranchHead, getGitRepositoryContext, type ProjectGitAction } from '@zeus/git-core';
 import {
-  parseCanonicalRequestUserInputQuestions,
-  renderTaskPushLayoutText,
-  type TaskPushMessageLayout,
-  type TaskPushPromptAttachment,
-  type TaskPushPromptParentContext,
-  type TaskPushPromptRelatedContext,
-  type TaskPushSupplementalAttachment,
+    type AiRuntimeSession,
+    createAiRuntimeSessionManager,
+    modelConnectionCredentialSlotId,
+    modelRef,
+    parseModelRef,
+    piRuntimeWorkerProtocolVersion,
+    runWithCodexRpcRetryContext
+} from '@zeus/ai-runtime';
+import {getGitBranchHead, getGitRepositoryContext, type ProjectGitAction} from '@zeus/git-core';
+import {
+    parseCanonicalRequestUserInputQuestions,
+    renderTaskPushLayoutText,
+    type TaskPushMessageLayout,
+    type TaskPushPromptAttachment,
+    type TaskPushPromptParentContext,
+    type TaskPushPromptRelatedContext,
+    type TaskPushSupplementalAttachment,
 } from '@zeus/shared';
 import {
-  ArtifactStore,
-  type ConversationCollaborationMode,
-  type ConversationExpertActorSnapshot,
-  type ConversationExpertExecutionRecord,
-  ConversationExpertRepository,
-  ConversationExecutionRepository,
-  type ConversationPermissionMode,
-  ConversationPlanActionRepository,
-  ConversationProviderItemRepository,
-  ConversationRepository,
-  ConversationServerRequestRepository,
-  ConversationSubmissionRepository,
-  ConversationTurnRepository,
-  DigitalEmployeeRepository,
-  IdempotencyRequestRepository,
-  ProjectRepository,
-  ProjectRepositoryRegistrationRepository,
-  ProjectSharedPathRepository,
-  TaskEnvironmentRepository,
-  TaskIntegrationAttemptRepository,
-  TaskIntegrationRepository,
-  TaskRepository,
-  TaskStageRepository,
-  TaskWorkspaceRepository,
-  type ZeusConversationRecord,
-  type ZeusConversationWithMessagesRecord,
-  type ZeusDatabase,
-  type ZeusProjectRecord,
-  type ZeusTaskRecord,
-  type ZeusTaskStageRecord,
-  type ZeusTaskWorkspaceRecord,
+    ArtifactStore,
+    type ConversationCollaborationMode,
+    ConversationExecutionRepository,
+    type ConversationExpertActorSnapshot,
+    type ConversationExpertExecutionRecord,
+    ConversationExpertRepository,
+    type ConversationPermissionMode,
+    ConversationPlanActionRepository,
+    ConversationProviderItemRepository,
+    ConversationRepository,
+    ConversationServerRequestRepository,
+    ConversationSubmissionRepository,
+    ConversationTurnRepository,
+    DigitalEmployeeRepository,
+    IdempotencyRequestRepository,
+    ProjectRepository,
+    ProjectRepositoryRegistrationRepository,
+    ProjectSharedPathRepository,
+    TaskEnvironmentRepository,
+    TaskIntegrationAttemptRepository,
+    TaskIntegrationRepository,
+    TaskRepository,
+    TaskStageRepository,
+    TaskWorkspaceRepository,
+    type ZeusConversationRecord,
+    type ZeusConversationWithMessagesRecord,
+    type ZeusDatabase,
+    type ZeusProjectRecord,
+    type ZeusTaskRecord,
+    type ZeusTaskStageRecord,
+    type ZeusTaskWorkspaceRecord,
 } from '@zeus/storage';
-import { type FastifyReply } from 'fastify';
-import { createHash } from 'node:crypto';
-import { existsSync, realpathSync, statSync } from 'node:fs';
-import { isAbsolute } from 'node:path';
-import { parseJsonObject } from './codeIntelligenceGraphStore.js';
-import { createCodexNativeConversationCoordinator } from './codexNativeConversationCoordinator.js';
-import { nativePendingRequestProjection } from './codexNativeConversationPolicy.js';
-import { isProviderStopPendingTurn } from './codexProviderStopRecoveryApplication.js';
-import type { ZeusSkillService } from './zeusSkillService.js';
-import { resolveConversationAttachmentGrant } from './conversationAttachmentGrant.js';
-import { type ConversationCapabilitiesSnapshot, ConversationCapabilityQueryApplication } from './conversationCapabilityQueryApplication.js';
-import { ConversationChoiceQueryApplication } from './conversationChoiceQueryApplication.js';
-import { ConversationExecutionCoordinator, type ConversationExecutionRoute } from './conversationExecutionCoordinator.js';
-import type { NativeConversationSkillInput } from './codexNativeConversationContracts.js';
-import { readNativeConversationSkill } from './nativeConversationSubmissionInputs.js';
-import type { CreateConversationMessageBody, NativeConversationAttachment, ProjectConversationAcceptanceReservation, StartProjectConversationBody, StartTaskConversationBody, TaskConversationAcceptanceReservation } from './index.js';
-import { createModelConnectionService } from './modelConnectionService.js';
-import { resolveWritableNonCodexLegacyConversation, type WritableNonCodexLegacyConversationContext } from './nonCodexLegacyRuntime.js';
-import { createPiNativeConversationCoordinator } from './piNativeConversationCoordinator.js';
-import { type RuntimeSettingsSnapshot } from './runtimeQueryApplication.js';
-import { buildTaskConflictAiConversationTitle, buildTaskConflictAiPrompt } from './taskConflictAi.js';
-import type { ZeusConversationPluginRuntime } from './zeusConversationPluginRuntime.js';
-import type { ZeusPluginService } from './zeusPluginService.js';
+import {type FastifyReply} from 'fastify';
+import {createHash} from 'node:crypto';
+import {existsSync, realpathSync, statSync} from 'node:fs';
+import {isAbsolute} from 'node:path';
+import {parseJsonObject} from './codeIntelligenceGraphStore.js';
+import {createCodexNativeConversationCoordinator} from './codexNativeConversationCoordinator.js';
+import {nativePendingRequestProjection} from './codexNativeConversationPolicy.js';
+import {isProviderStopPendingTurn} from './codexProviderStopRecoveryApplication.js';
+import type {ZeusSkillService} from './zeusSkillService.js';
+import {resolveConversationAttachmentGrant} from './conversationAttachmentGrant.js';
+import {
+    type ConversationCapabilitiesSnapshot,
+    ConversationCapabilityQueryApplication
+} from './conversationCapabilityQueryApplication.js';
+import {ConversationChoiceQueryApplication} from './conversationChoiceQueryApplication.js';
+import {ConversationExecutionCoordinator, type ConversationExecutionRoute} from './conversationExecutionCoordinator.js';
+import type {NativeConversationSkillInput} from './codexNativeConversationContracts.js';
+import {readNativeConversationSkill} from './nativeConversationSubmissionInputs.js';
+import type {
+    CreateConversationMessageBody,
+    NativeConversationAttachment,
+    ProjectConversationAcceptanceReservation,
+    StartProjectConversationBody,
+    StartTaskConversationBody,
+    TaskConversationAcceptanceReservation
+} from './index.js';
+import {createModelConnectionService} from './modelConnectionService.js';
+import {
+    resolveWritableNonCodexLegacyConversation,
+    type WritableNonCodexLegacyConversationContext
+} from './nonCodexLegacyRuntime.js';
+import {createPiNativeConversationCoordinator} from './piNativeConversationCoordinator.js';
+import {type RuntimeSettingsSnapshot} from './runtimeQueryApplication.js';
+import {buildTaskConflictAiConversationTitle, buildTaskConflictAiPrompt} from './taskConflictAi.js';
+import type {ZeusConversationPluginRuntime} from './zeusConversationPluginRuntime.js';
+import type {ZeusPluginService} from './zeusPluginService.js';
 
 export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, type ReadOnlyValidationApplicationIdentity } from './readOnlyValidation.js';
 
@@ -1835,7 +1856,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
   }
 
   async function executeProjectConversationIdempotent(project: ZeusProjectRecord, body: StartProjectConversationBody | Record<string, unknown>, idempotencyKey: string, markExternalWriteStarted?: () => void) {
-    assertRequestedAgentIsCodex(body);
+      assertRequestedAgentKind(body);
     const scope = `project-conversation:${project.id}`;
     const requestHash = nativeIdempotencyRequestHash(body);
     const stableOperationId = nativeStableOperationId(scope, idempotencyKey, requestHash);
@@ -1919,17 +1940,21 @@ export function createConversationApplicationOperations(dependencies: Conversati
     const skills = zeusSkillService ? await Promise.all(skillReferences.map((reference) => zeusSkillService.resolve({ cwd: project.localPath, skillId: reference.id }))) : [];
     const providerContent = skills.length > 1 ? `${skills.map((skill) => `$${skill.name}`).join(' ')}\n\n${content}` : content;
     if (body.computerUseRequested !== undefined && typeof body.computerUseRequested !== 'boolean') throw nativeApiError('ZEUS_COMPUTER_USE_REQUEST_INVALID', 'computerUseRequested 必须是布尔值。');
-    const capabilities = await resolveConversationCapabilities(project);
-    const requestedModel = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : capabilities.preferredModel;
+      const explicitModel = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : null;
+      const capabilities = await resolveConversationCapabilities(project, {
+          allowPiWhenCodexUnavailable: body.agentKind === 'pi' || Boolean(explicitModel && parseModelRef(explicitModel)?.sourceId !== 'codex'),
+      });
+      const requestedModel = explicitModel ?? capabilities.preferredModel;
     const selectedModel = resolveModelCapability(capabilities.models, requestedModel) ?? capabilities.models[0]!;
     if (selectedModel.available === false) throw nativeApiError('ZEUS_MODEL_NOT_READY', selectedModel.availabilityReason || '所选模型当前不可运行。');
+      const selectedAgentKind = selectedModel.agentKind === 'pi' ? 'pi' : 'codex';
+      if (body.agentKind !== undefined && body.agentKind !== selectedAgentKind) throw nativeApiError('ZEUS_INVALID_AGENT_KIND', 'The requested agent does not match the selected model.');
     const requestedEffort = typeof body.effort === 'string' && body.effort.trim() ? body.effort.trim() : null;
     if (requestedEffort && !selectedModel.supportedReasoningEfforts.some((effort) => effort === requestedEffort)) {
       throw nativeApiError('ZEUS_INVALID_CONVERSATION_SETTINGS', 'Selected reasoning effort is not supported by the selected Codex model.');
     }
     const requestedServiceTier = readServiceTierOverride(body);
     const serviceTier = normalizeServiceTierForCapability(requestedServiceTier, selectedModel);
-    if (selectedModel.agentKind === 'pi') throw nativeApiError('ZEUS_INVALID_CONVERSATION_SETTINGS', '项目首发当前只接受 Codex App Server 模型。');
     const effectiveEffort = requestedEffort ?? selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? null;
     const goalObjective = parseGoalObjective(body.goalObjective);
     if (goalObjective && (selectedModel.agentKind !== 'codex' || capabilities.goals?.enabled !== true)) {
@@ -1949,7 +1974,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       },
     };
     const resolvedRoute = await resolveConversationExecutionRoute({
-      agentKind: 'codex',
+        agentKind: selectedAgentKind,
       modelSourceId: selectedModel.sourceId ?? null,
       modelId: selectedModel.model,
       effort: effectiveEffort,
@@ -1972,29 +1997,54 @@ export function createConversationApplicationOperations(dependencies: Conversati
       userHistoryContent: { text: providerContent, ...(displayText !== providerContent ? { displayText } : {}), ...(attachments.length ? { attachments } : {}) },
     });
     zeusConversationPluginRuntime?.bindExplicitReferences({ conversationId: reservation.conversationId, projectId: project.id, references: pluginReferences });
-    const nativeOperation = await codexNativeCoordinator.startProjectConversation({
-      conversationId: reservation.conversationId,
-      submissionId: reservation.submissionId,
-      projectId: project.id,
-      projectLocalPath: project.localPath,
-      prompt: providerContent,
-      ...(displayText !== providerContent ? { displayText } : {}),
-      attachments,
-      model: selectedModel.model,
-      modelSourceId: selectedModel.sourceId ?? null,
-      ...(effectiveEffort ? { effort: effectiveEffort } : {}),
-      ...(requestedServiceTier.present ? { serviceTier } : {}),
-      ...(requestedServiceTier.present ? { requestedServiceTier: requestedServiceTier.value } : {}),
-      permissionMode,
-      collaborationMode,
-      ...(skills[0] ? { skill: skills[0] } : {}),
-      ...(body.computerUseRequested ? { computerUseRequested: true } : {}),
-      idempotencyKey,
-      clientUserMessageId,
-      providerWriteLifecycle: reservedLifecycle,
-      segmentLifecycle,
-      ...(goalObjective ? { goalObjective } : {}),
-    });
+      const nativeOperation =
+          selectedAgentKind === 'pi'
+              ? await piNativeCoordinator.startConversation({
+                  conversationId: reservation.conversationId,
+                  submissionId: reservation.submissionId,
+                  projectId: project.id,
+                  conversationTitle: (displayText || providerContent).slice(0, 120),
+                  cwd: project.localPath,
+                  prompt: providerContent,
+                  ...(displayText !== providerContent ? {displayText} : {}),
+                  model: {
+                      sourceId: selectedModel.sourceId ?? null,
+                      modelId: selectedModel.model,
+                      displayName: selectedModel.displayName ?? null
+                  },
+                  ...(effectiveEffort ? {thinkingLevel: effectiveEffort} : {}),
+                  attachments,
+                  permissionMode,
+                  idempotencyKey,
+                  clientUserMessageId,
+                  ...(skills[0] ? {skill: skills[0]} : {}),
+                  ...(body.computerUseRequested ? {computerUseRequested: true} : {}),
+                  providerWriteLifecycle: reservedLifecycle,
+                  segmentLifecycle,
+              })
+              : await codexNativeCoordinator.startProjectConversation({
+                  conversationId: reservation.conversationId,
+                  submissionId: reservation.submissionId,
+                  projectId: project.id,
+                  projectLocalPath: project.localPath,
+                  prompt: providerContent,
+                  ...(displayText !== providerContent ? {displayText} : {}),
+                  attachments,
+                  model: selectedModel.model,
+                  modelSourceId: selectedModel.sourceId ?? null,
+                  ...(effectiveEffort ? {effort: effectiveEffort} : {}),
+                  ...(requestedServiceTier.present ? {serviceTier} : {}),
+                  ...(requestedServiceTier.present ? {requestedServiceTier: requestedServiceTier.value} : {}),
+                  permissionMode,
+                  collaborationMode,
+                  ...(skills[0] ? {skill: skills[0]} : {}),
+                  ...(body.computerUseRequested ? {computerUseRequested: true} : {}),
+                  idempotencyKey,
+                  clientUserMessageId,
+                  providerWriteLifecycle: reservedLifecycle,
+                  segmentLifecycle,
+                  ...(goalObjective ? {goalObjective} : {}),
+              });
     const conversation = conversations.getById(nativeOperation.conversationId);
     const submission = conversationSubmissions.getById(nativeOperation.submissionId);
     if (
@@ -3406,14 +3456,6 @@ export function createConversationApplicationOperations(dependencies: Conversati
     }
   }
 
-  function assertRequestedAgentIsCodex(value: unknown): void {
-    if (!isNativeApiRecord(value) || value.agentKind === undefined || value.agentKind === 'codex') return;
-    if (value.agentKind === 'pi' || value.agentKind === 'claude') {
-      throw nativeApiError('ZEUS_AGENT_NOT_AVAILABLE', `${value.agentKind === 'pi' ? 'Pi' : 'Claude'} Agent 当前尚未开放。`);
-    }
-    throw nativeApiError('ZEUS_INVALID_AGENT_KIND', 'agentKind must be codex, pi, claude, or omitted.');
-  }
-
   function assertRequestedAgentKind(value: unknown): void {
     if (!isNativeApiRecord(value) || value.agentKind === undefined || value.agentKind === 'codex' || value.agentKind === 'pi') return;
     if (value.agentKind === 'claude') throw nativeApiError('ZEUS_AGENT_NOT_AVAILABLE', 'Claude Agent 当前尚未开放。');
@@ -3546,7 +3588,6 @@ export function createConversationApplicationOperations(dependencies: Conversati
     checkpointInProgressIdempotentResponse,
     sendNativeConversationApiError,
     parseProjectGitAction,
-    assertRequestedAgentIsCodex,
     assertRequestedAgentKind,
     parseConversationPermissionMode,
     recoverExpertRounds,

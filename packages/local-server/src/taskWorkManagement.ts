@@ -1,45 +1,66 @@
-import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { lstat, readFile, readdir } from 'node:fs/promises';
-import { basename, dirname, join, relative, resolve } from 'node:path';
-import { buildTaskPushLayout, commandEnvelopeSchemaGeneration, commandParameterValueMatchesType, splitZeusSkillIds, type CommandDefinition, type CommandEnvelope, type TaskPushMessageLayout } from '@zeus/shared';
+import {createHash} from 'node:crypto';
+import {chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync} from 'node:fs';
+import {lstat, readdir, readFile} from 'node:fs/promises';
+import {basename, dirname, join, relative, resolve} from 'node:path';
 import {
-  ArtifactStore,
-  CommandDefinitionRepository,
-  CommandRunRepository,
-  ConversationExecutionRepository,
-  ConversationRepository,
-  ConversationServerRequestRepository,
-  ConversationTurnRepository,
-  DigitalEmployeeExecutionRepository,
-  DigitalEmployeeRepository,
-  ProjectRepository,
-  TaskEventRepository,
-  TaskRepository,
-  TaskWorkDecisionRepository,
-  TaskWorkDeliverableRepository,
-  TaskWorkItemRepository,
-  TaskWorkRunRepository,
-  TaskWorkStoreError,
-  taskWorkDeliverableArtifactGeneration,
-  type DigitalEmployeeRecord,
-  type AgentEntrypointV2,
-  type TaskWorkDecisionRecord,
-  type TaskWorkDeliverableRecord,
-  type TaskWorkItemRecord,
-  type TaskWorkRunRecord,
-  type TaskWorkWorkspaceSnapshot,
-  type WorkContextManifestV1,
-  type ZeusProjectRecord,
-  type ZeusTaskRecord,
+    buildTaskPushLayout,
+    type CommandDefinition,
+    type CommandEnvelope,
+    commandEnvelopeSchemaGeneration,
+    commandParameterValueMatchesType,
+    splitZeusSkillIds,
+    type TaskPushMessageLayout
+} from '@zeus/shared';
+import {
+    type AgentEntrypointV2,
+    ArtifactStore,
+    CommandDefinitionRepository,
+    CommandRunRepository,
+    ConversationExecutionRepository,
+    ConversationRepository,
+    ConversationServerRequestRepository,
+    ConversationSubmissionRepository,
+    ConversationTurnRepository,
+    DigitalEmployeeExecutionRepository,
+    type DigitalEmployeeRecord,
+    DigitalEmployeeRepository,
+    ProjectRepository,
+    TaskEventRepository,
+    TaskRepository,
+    type TaskWorkDecisionRecord,
+    TaskWorkDecisionRepository,
+    taskWorkDeliverableArtifactGeneration,
+    type TaskWorkDeliverableRecord,
+    TaskWorkDeliverableRepository,
+    type TaskWorkItemRecord,
+    TaskWorkItemRepository,
+    type TaskWorkRunRecord,
+    TaskWorkRunRepository,
+    TaskWorkStoreError,
+    type TaskWorkWorkspaceSnapshot,
+    type WorkContextManifestV1,
+    type ZeusProjectRecord,
+    type ZeusTaskRecord,
 } from '@zeus/storage';
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { commandCenterCommandTypes, commandCenterInputSha256 } from './commandCenterCommandApplication.js';
-import { conversationDispatchCommandTypes, conversationDispatchInputSha256 } from './conversationDispatchCommandApplication.js';
-import type { ConversationCapabilityQueryApplication, ConversationCapabilityModel } from './conversationCapabilityQueryApplication.js';
-import { WorkManagementCommandApplication, type WorkManagementMutationRequest, workManagementCommandHttpError, workManagementCommandTypes } from './workManagementCommandApplication.js';
-import type { ZeusPluginService } from './zeusPluginService.js';
-import type { ZeusSkillService } from './zeusSkillService.js';
+import type {FastifyInstance, FastifyReply, FastifyRequest} from 'fastify';
+import {commandCenterCommandTypes, commandCenterInputSha256} from './commandCenterCommandApplication.js';
+import {
+    conversationDispatchCommandTypes,
+    conversationDispatchInputSha256
+} from './conversationDispatchCommandApplication.js';
+import type {
+    ConversationCapabilityModel,
+    ConversationCapabilityQueryApplication
+} from './conversationCapabilityQueryApplication.js';
+import {conversationWorkExecutionState} from './conversationWorkExecutionState.js';
+import {
+    WorkManagementCommandApplication,
+    workManagementCommandHttpError,
+    workManagementCommandTypes,
+    type WorkManagementMutationRequest
+} from './workManagementCommandApplication.js';
+import type {ZeusPluginService} from './zeusPluginService.js';
+import type {ZeusSkillService} from './zeusSkillService.js';
 
 const previewTtlMs = 10 * 60 * 1_000;
 const tickMs = 2_500;
@@ -152,6 +173,7 @@ interface TaskWorkManagementOptions {
   conversationTurns: ConversationTurnRepository;
   conversationExecution: ConversationExecutionRepository;
   conversationRequests: ConversationServerRequestRepository;
+    conversationSubmissions: ConversationSubmissionRepository;
   commandDefinitions: CommandDefinitionRepository;
   commandRuns: CommandRunRepository;
   artifacts: ArtifactStore;
@@ -625,14 +647,19 @@ async function processAgentRun(options: TaskWorkManagementOptions, run: TaskWork
   recordActuallyEnabledSkills(options, run);
   const conversation = options.conversations.getById(run.conversationId);
   if (!conversation || conversation.taskId !== run.taskId || conversation.projectId !== run.projectId) throw new TaskWorkStoreError('ZEUS_TASK_WORK_CONVERSATION_MISSING', 'Agent 工作运行的会话已不可用。');
-  if (conversation.stage === 'waiting_user' || conversation.stage === 'waiting_approval' || conversation.providerState === 'waiting') {
+    const executionState = conversationWorkExecutionState(conversation, options.conversationSubmissions.listByConversation(conversation.id));
+    if (executionState.type === 'failed') throw new TaskWorkStoreError(executionState.code, executionState.message);
+    if (executionState.type === 'outcome_unknown') {
+        blockAgentRunForUnknownOutcome(options, run, executionState.code, executionState.message);
+        return;
+    }
+    if (executionState.type === 'waiting') {
     if (run.status !== 'waiting_input') options.runs.update(run.id, { status: 'waiting_input' });
     const item = options.items.getById(run.workItemId)!;
     if (item.status !== 'waiting_manager') options.items.update(item.id, { status: 'waiting_manager' });
     return;
   }
-  if (conversation.stage === 'failed' || conversation.providerState === 'failed') throw new TaskWorkStoreError('ZEUS_TASK_WORK_AGENT_FAILED', 'Agent 会话执行失败，请打开任务会话查看详情。');
-  if (conversation.stage !== 'completed') {
+    if (executionState.type !== 'completed') {
     if (run.status !== 'active') options.runs.update(run.id, { status: 'active' });
     const item = options.items.getById(run.workItemId);
     if (item?.status === 'waiting_manager') options.items.update(item.id, { status: 'active' });
@@ -689,8 +716,30 @@ async function dispatchAgent(options: TaskWorkManagementOptions, run: TaskWorkRu
   if (workspace.mode === 'existing' && environmentId !== workspace.environmentId) throw new TaskWorkStoreError('ZEUS_TASK_WORK_ENVIRONMENT_MISMATCH', '新会话没有绑定所选任务环境。');
   if ((workspace.mode === 'create' || workspace.mode === 'local') && !environmentId) throw new TaskWorkStoreError('ZEUS_TASK_WORK_ENVIRONMENT_MISSING', '任务分支没有返回任务环境身份。');
   if (workspace.mode === 'direct' && environmentId) throw new TaskWorkStoreError('ZEUS_TASK_WORK_ENVIRONMENT_MISMATCH', '项目目录直连会话意外绑定了任务环境。');
-  options.runs.update(run.id, { status: 'active', conversationId, environmentId });
+    const attached = options.runs.update(run.id, {status: 'active', conversationId, environmentId});
   publishChanged(options, run.taskId, run.workItemId, 'agent_started');
+    await processAgentRun(options, attached);
+}
+
+function blockAgentRunForUnknownOutcome(options: TaskWorkManagementOptions, run: TaskWorkRunRecord, code: string, message: string): void {
+    const completedAt = options.now().toISOString();
+    options.runs.update(run.id, {status: 'outcome_unknown', errorCode: code, errorMessage: message, completedAt});
+    const item = options.items.getById(run.workItemId);
+    if (item && item.status !== 'blocked') options.items.update(item.id, {status: 'blocked'});
+    options.decisions.create({
+        projectId: run.projectId,
+        taskId: run.taskId,
+        workItemId: run.workItemId,
+        runId: run.id,
+        deliverableId: null,
+        kind: 'outcome_unknown',
+        title: '核对 Agent 会话派发结果',
+        prompt: '会话可能已经写入 Provider，Zeus 不会自动重发。请核对会话现场后处置。',
+        requestPayload: {code, message, conversationId: run.conversationId},
+        operationIdentity: `agent-outcome:${run.id}`,
+        expiresAt: null,
+    });
+    publishChanged(options, run.taskId, run.workItemId, 'outcome_unknown');
 }
 
 async function captureAgentDeliverable(options: TaskWorkManagementOptions, run: TaskWorkRunRecord, messages: Array<{ id: string; role: string; content: string }>): Promise<void> {

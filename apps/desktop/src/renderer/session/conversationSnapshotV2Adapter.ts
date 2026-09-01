@@ -1,19 +1,19 @@
 import type {
-  NativeConversationActiveItemV2,
-  NativeConversationChoice,
-  NativeConversationModelHistoryV2Item,
-  NativeConversationProcessV2Item,
-  NativeConversationSnapshot,
-  NativeConversationSnapshotV2,
-  NativeConversationSnapshotV2Page,
-  NativeConversationV2PagingState,
-  NativeGoalResponse,
-  NativeItemSnapshot,
-  NativePendingRequest,
-  NativePlanImplementationRequest,
-  NativeQueueSnapshot,
-  NativeTurnSnapshot,
-  NativeUnifiedUsageSnapshot,
+    NativeConversationActiveItemV2,
+    NativeConversationChoice,
+    NativeConversationModelHistoryV2Item,
+    NativeConversationProcessV2Item,
+    NativeConversationSnapshot,
+    NativeConversationSnapshotV2,
+    NativeConversationSnapshotV2Page,
+    NativeConversationV2PagingState,
+    NativeGoalResponse,
+    NativeItemSnapshot,
+    NativePendingRequest,
+    NativePlanImplementationRequest,
+    NativeQueueSnapshot,
+    NativeTurnSnapshot,
+    NativeUnifiedUsageSnapshot,
 } from './sessionTypes.js';
 
 const syncStreamProtocolGeneration = 'zeus-conversation-sync-v2' as const;
@@ -719,5 +719,10 @@ function recordValue(value: unknown): Record<string, unknown> | null {
 }
 
 function compareNativeItems(left: NativeItemSnapshot, right: NativeItemSnapshot): number {
-  return (left.startedAt ?? left.updatedAt).localeCompare(right.startedAt ?? right.updatedAt) || left.id.localeCompare(right.id);
+    const timestampOrder = (left.startedAt ?? left.updatedAt).localeCompare(right.startedAt ?? right.updatedAt);
+    if (timestampOrder !== 0) return timestampOrder;
+    const leftSequence = typeof left.payload.v2Sequence === 'number' ? left.payload.v2Sequence : null;
+    const rightSequence = typeof right.payload.v2Sequence === 'number' ? right.payload.v2Sequence : null;
+    if (leftSequence !== null && rightSequence !== null && leftSequence !== rightSequence) return leftSequence - rightSequence;
+    return left.id.localeCompare(right.id);
 }
