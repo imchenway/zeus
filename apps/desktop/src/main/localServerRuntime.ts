@@ -595,7 +595,7 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
           try {
             if (mode === 'force_quit') {
               await forceTerminateCurrentHost();
-            } else if (mode === 'final_quit') {
+            } else if (mode === 'final_quit' || mode === 'upgrade_shutdown') {
               try {
                 await client.shutdown();
                 await waitForExecutionHostExit(options.userDataPath, connection.instanceId, connection.pid, options.dataRootIdentity);

@@ -1,4 +1,4 @@
-export type DesktopLocalServerCloseMode = 'continue_in_background' | 'upgrade_handoff' | 'final_quit' | 'force_quit';
+export type DesktopLocalServerCloseMode = 'continue_in_background' | 'upgrade_handoff' | 'upgrade_shutdown' | 'final_quit' | 'force_quit';
 
 export interface BeforeQuitCleanupEvent {
   preventDefault: () => void;
