@@ -372,15 +372,14 @@ export function ConversationComposer(props: ConversationComposerProps) {
               <X aria-hidden="true" weight="bold" />
             </button>
           </div>
-        ) : (
-          <ConversationComposerAttachments
-            attachments={props.state.attachments}
-            language={props.language}
-            disabled={!inputWritable || busy || inputResources.processing}
-            onRemove={(attachment) => props.onRemoveAttachment?.(attachment)}
-            onRestorePastedText={inputResources.restorePastedText}
-          />
-        )}
+        ) : null}
+        <ConversationComposerAttachments
+          attachments={props.state.attachments}
+          language={props.language}
+          disabled={!inputWritable || busy || inputResources.processing}
+          onRemove={(attachment) => props.onRemoveAttachment?.(attachment)}
+          onRestorePastedText={goalInputActive ? undefined : inputResources.restorePastedText}
+        />
         <textarea
           ref={textareaRef}
           aria-label={goalInputActive ? copy.goalInput : copy.input}
@@ -446,7 +445,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
                 }}
               />
             ) : null}
-            {!goalInputActive && props.onChooseAttachments ? (
+            {props.onChooseAttachments ? (
               <button
                 type="button"
                 className="session-attachment-button"

@@ -3011,15 +3011,13 @@ function NewConversationComposer(props: {
       onDragLeave={inputResources.handleDragLeave}
       onDrop={inputResources.handleDrop}
     >
-      {goalInputActive ? null : (
-        <ConversationComposerAttachments
-          attachments={attachments}
-          language={props.language}
-          disabled={submitting || inputResources.processing}
-          onRemove={(attachment) => setAttachments((current) => current.filter((candidate) => candidate !== attachment))}
-          onRestorePastedText={inputResources.restorePastedText}
-        />
-      )}
+      <ConversationComposerAttachments
+        attachments={attachments}
+        language={props.language}
+        disabled={submitting || inputResources.processing}
+        onRemove={(attachment) => setAttachments((current) => current.filter((candidate) => candidate !== attachment))}
+        onRestorePastedText={goalInputActive ? undefined : inputResources.restorePastedText}
+      />
       {localError ? (
         <p className="session-new-conversation-error" role="status">
           {localError}
@@ -3123,7 +3121,7 @@ function NewConversationComposer(props: {
                 }}
               />
             ) : null}
-            {!goalInputActive && props.onChooseAttachments ? (
+            {props.onChooseAttachments ? (
               <button
                 type="button"
                 className="session-attachment-button"
