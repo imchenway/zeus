@@ -3,6 +3,7 @@ import { nanoid } from 'nanoid';
 import type { ZeusDatabasePort } from './databasePort.js';
 
 export const taskWorkSchemaMigrationId = '20260829_0001_task_work_v2';
+export const taskWorkWorkspaceBindingMigrationId = '20260831_0425_task_work_workspace_binding_v1';
 export const taskWorkDeliverableArtifactGeneration = 'task_work_deliverable_v1';
 
 export const taskWorkItemStatuses = ['queued', 'active', 'waiting_manager', 'completed', 'blocked', 'failed', 'cancelled'] as const;
@@ -41,6 +42,15 @@ export interface WorkContextManifestV1 {
   acceptedDeliverables: WorkContextDeliverableRefV1[];
 }
 
+export type TaskWorkWorkspaceSnapshot =
+  | { mode: 'direct' }
+  | { mode: 'existing'; environmentId: string }
+  | {
+      mode: 'create';
+      repositoryRevision: string;
+      repositories: Array<{ repositoryId: string; sourceRef: string; branchName: string }>;
+    };
+
 export interface TaskWorkItemRecord {
   id: string;
   projectId: string;
@@ -75,6 +85,8 @@ export interface TaskWorkRunRecord {
   skillSnapshot: Record<string, unknown>;
   authoritySnapshot: Record<string, unknown>;
   contextManifest: WorkContextManifestV1;
+  workspaceSnapshot: TaskWorkWorkspaceSnapshot | null;
+  environmentId: string | null;
   enabledSkillIds: string[];
   conversationId: string | null;
   commandRunId: string | null;
@@ -274,6 +286,50 @@ export function migrateTaskWorkSchema(db: ZeusDatabasePort): void {
   });
 }
 
+/** ZEUS-0425 只做前向加列；既有 v2 工作管理迁移账本保持不变。 */
+export function migrateTaskWorkWorkspaceBindingSchema(db: ZeusDatabasePort): void {
+  const checksumSource = ['task_work_runs:workspace_snapshot_json,environment_id', 'backfill-from-authoritative-conversation-environment'].join(';');
+  const checksum = `sha256:${createHash('sha256').update(checksumSource).digest('hex')}`;
+  db.transaction(() => {
+    const existing = db.get<{ checksum: string }>(`SELECT checksum FROM schema_migrations WHERE migration_id = ?`, [taskWorkWorkspaceBindingMigrationId]);
+    if (existing && existing.checksum !== checksum) throw new Error('任务工作区绑定迁移账本与当前结构不一致。');
+
+    addTaskWorkColumn(db, 'workspace_snapshot_json', 'TEXT');
+    addTaskWorkColumn(db, 'environment_id', 'TEXT');
+    db.execute(`
+      UPDATE task_work_runs
+      SET environment_id = (
+        SELECT conversations.environment_id
+        FROM conversations
+        WHERE conversations.id = task_work_runs.conversation_id
+      )
+      WHERE environment_id IS NULL
+        AND conversation_id IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM conversations
+          WHERE conversations.id = task_work_runs.conversation_id
+            AND conversations.environment_id IS NOT NULL
+        )
+    `);
+    db.execute(`
+      UPDATE task_work_runs
+      SET workspace_snapshot_json = json_object('mode', 'existing', 'environmentId', environment_id)
+      WHERE workspace_snapshot_json IS NULL AND environment_id IS NOT NULL
+    `);
+    db.execute(`INSERT OR IGNORE INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)`, [
+      taskWorkWorkspaceBindingMigrationId,
+      '冻结数字员工工作区选择并记录实际任务环境身份',
+      checksum,
+      new Date().toISOString(),
+    ]);
+  });
+}
+
+function addTaskWorkColumn(db: ZeusDatabasePort, column: string, definition: string): void {
+  const exists = db.select<{ name: string }>(`PRAGMA table_info(task_work_runs)`).some((candidate) => candidate.name === column);
+  if (!exists) db.execute(`ALTER TABLE task_work_runs ADD COLUMN ${column} ${definition}`);
+}
+
 export class TaskWorkItemRepository {
   constructor(
     private readonly db: ZeusDatabasePort,
@@ -380,8 +436,8 @@ export class TaskWorkRunRepository {
     const timestamp = this.now();
     this.db.execute(
       `INSERT INTO task_work_runs
-       (id, project_id, task_id, work_item_id, employee_id, attempt, status, entrypoint_kind, employee_revision, employee_snapshot_json, entrypoint_snapshot_json, model_snapshot_json, skill_snapshot_json, authority_snapshot_json, context_manifest_json, enabled_skill_ids_json, conversation_id, command_run_id, error_code, error_message, revision, created_at, updated_at, started_at, runtime_completed_at, completed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', NULL, NULL, NULL, NULL, 1, ?, ?, NULL, NULL, NULL)`,
+       (id, project_id, task_id, work_item_id, employee_id, attempt, status, entrypoint_kind, employee_revision, employee_snapshot_json, entrypoint_snapshot_json, model_snapshot_json, skill_snapshot_json, authority_snapshot_json, context_manifest_json, workspace_snapshot_json, environment_id, enabled_skill_ids_json, conversation_id, command_run_id, error_code, error_message, revision, created_at, updated_at, started_at, runtime_completed_at, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', NULL, NULL, NULL, NULL, 1, ?, ?, NULL, NULL, NULL)`,
       [
         identity(input.id, 'run.id'),
         identity(input.projectId, 'projectId'),
@@ -398,6 +454,8 @@ export class TaskWorkRunRepository {
         json(input.skillSnapshot),
         json(input.authoritySnapshot),
         json(input.contextManifest),
+        input.workspaceSnapshot ? json(input.workspaceSnapshot) : null,
+        input.environmentId ? identity(input.environmentId, 'environmentId') : null,
         timestamp,
         timestamp,
       ],
@@ -413,6 +471,8 @@ export class TaskWorkRunRepository {
       enabledSkillIds?: string[];
       conversationId?: string | null;
       commandRunId?: string | null;
+      workspaceSnapshot?: TaskWorkWorkspaceSnapshot | null;
+      environmentId?: string | null;
       errorCode?: string | null;
       errorMessage?: string | null;
       startedAt?: string | null;
@@ -429,12 +489,14 @@ export class TaskWorkRunRepository {
     if (conversationId && commandRunId) throw new TaskWorkStoreError('ZEUS_TASK_WORK_RUN_REFERENCE_CONFLICT', 'Agent 会话与 Command 运行不能同时绑定。', 400);
     const timestamp = nextTimestamp(current.updatedAt, this.now());
     this.db.execute(
-      `UPDATE task_work_runs SET status = ?, enabled_skill_ids_json = ?, conversation_id = ?, command_run_id = ?, error_code = ?, error_message = ?, started_at = ?, runtime_completed_at = ?, completed_at = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ?`,
+      `UPDATE task_work_runs SET status = ?, enabled_skill_ids_json = ?, conversation_id = ?, command_run_id = ?, workspace_snapshot_json = ?, environment_id = ?, error_code = ?, error_message = ?, started_at = ?, runtime_completed_at = ?, completed_at = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ?`,
       [
         status,
         JSON.stringify(input.enabledSkillIds ?? current.enabledSkillIds),
         conversationId,
         commandRunId,
+        input.workspaceSnapshot === undefined ? (current.workspaceSnapshot ? json(current.workspaceSnapshot) : null) : input.workspaceSnapshot ? json(input.workspaceSnapshot) : null,
+        input.environmentId === undefined ? current.environmentId : input.environmentId ? identity(input.environmentId, 'environmentId') : null,
         input.errorCode === undefined ? current.errorCode : input.errorCode,
         input.errorMessage === undefined ? current.errorMessage : input.errorMessage,
         input.startedAt === undefined ? current.startedAt : input.startedAt,
@@ -620,6 +682,8 @@ interface TaskWorkRunRow {
   skill_snapshot_json: string;
   authority_snapshot_json: string;
   context_manifest_json: string;
+  workspace_snapshot_json: string | null;
+  environment_id: string | null;
   enabled_skill_ids_json: string;
   conversation_id: string | null;
   command_run_id: string | null;
@@ -709,6 +773,8 @@ function mapWorkRun(row: TaskWorkRunRow): TaskWorkRunRecord {
     skillSnapshot: record(row.skill_snapshot_json, 'run.skillSnapshot'),
     authoritySnapshot: record(row.authority_snapshot_json, 'run.authoritySnapshot'),
     contextManifest: record(row.context_manifest_json, 'run.contextManifest') as unknown as WorkContextManifestV1,
+    workspaceSnapshot: row.workspace_snapshot_json ? taskWorkWorkspaceSnapshot(row.workspace_snapshot_json) : null,
+    environmentId: row.environment_id ? identity(row.environment_id, 'run.environmentId') : null,
     enabledSkillIds: stringArray(row.enabled_skill_ids_json, 'run.enabledSkillIds'),
     conversationId: row.conversation_id,
     commandRunId: row.command_run_id,
@@ -815,6 +881,28 @@ function record(value: string, field: string): Record<string, unknown> {
   const parsed: unknown = JSON.parse(value);
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error(`${field} 损坏。`);
   return parsed as Record<string, unknown>;
+}
+function taskWorkWorkspaceSnapshot(value: string): TaskWorkWorkspaceSnapshot {
+  const parsed = record(value, 'run.workspaceSnapshot');
+  if (parsed.mode === 'direct') return { mode: 'direct' };
+  if (parsed.mode === 'existing' && typeof parsed.environmentId === 'string') return { mode: 'existing', environmentId: identity(parsed.environmentId, 'run.workspaceSnapshot.environmentId') };
+  if (parsed.mode === 'create' && typeof parsed.repositoryRevision === 'string' && Array.isArray(parsed.repositories)) {
+    const repositories = parsed.repositories.map((candidate, index) => {
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) throw new Error(`run.workspaceSnapshot.repositories[${index}] 损坏。`);
+      const repository = candidate as Record<string, unknown>;
+      if (typeof repository.repositoryId !== 'string' || typeof repository.sourceRef !== 'string' || typeof repository.branchName !== 'string') {
+        throw new Error(`run.workspaceSnapshot.repositories[${index}] 损坏。`);
+      }
+      return {
+        repositoryId: identity(repository.repositoryId, `run.workspaceSnapshot.repositories[${index}].repositoryId`),
+        sourceRef: identity(repository.sourceRef, `run.workspaceSnapshot.repositories[${index}].sourceRef`),
+        branchName: identity(repository.branchName, `run.workspaceSnapshot.repositories[${index}].branchName`),
+      };
+    });
+    if (repositories.length === 0) throw new Error('run.workspaceSnapshot.repositories 损坏。');
+    return { mode: 'create', repositoryRevision: identity(parsed.repositoryRevision, 'run.workspaceSnapshot.repositoryRevision'), repositories };
+  }
+  throw new Error('run.workspaceSnapshot 损坏。');
 }
 function stringArray(value: string, field: string): string[] {
   const parsed: unknown = JSON.parse(value);

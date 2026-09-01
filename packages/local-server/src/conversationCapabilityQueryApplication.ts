@@ -155,12 +155,14 @@ export class ConversationCapabilityQueryApplication {
       const members = this.ports.workspaces.listByEnvironment(environment.id).filter((workspace) => workspace.kind === 'task');
       if (members.length === 0) return [];
       const hasClosedWorkspace = members.some((workspace) => workspace.state === 'merged' || workspace.state === 'discarded');
-      const hasActiveConversation = this.environmentHasActiveWritableConversation(environment.id);
+      const activeConversationIds = this.activeWritableEnvironmentConversationIds(environment.id);
+      const hasActiveConversation = activeConversationIds.length > 0;
       return [
         {
           id: environment.id,
           available: !hasClosedWorkspace && !hasActiveConversation,
           unavailableReason: hasClosedWorkspace ? ('closed_workspace' as const) : hasActiveConversation ? ('active_conversation' as const) : null,
+          activeConversationIds,
           repositories: members
             .map((workspace) => ({
               repositoryId: workspace.repositoryId,
@@ -297,8 +299,11 @@ export class ConversationCapabilityQueryApplication {
     return [...new Set([...nestedRepositories, ...sharedPaths].map((localPath) => relative(repositoryPath, localPath).split(sep).join('/')).filter((path) => Boolean(path) && path !== '.'))];
   }
 
-  private environmentHasActiveWritableConversation(environmentId: string): boolean {
-    return this.ports.conversations.listByEnvironment(environmentId).some((conversation) => conversation.providerState === 'binding' || conversation.providerState === 'active' || conversation.providerState === 'waiting');
+  private activeWritableEnvironmentConversationIds(environmentId: string): string[] {
+    return this.ports.conversations
+      .listByEnvironment(environmentId)
+      .filter((conversation) => conversation.providerState === 'binding' || conversation.providerState === 'active' || conversation.providerState === 'waiting')
+      .map((conversation) => conversation.id);
   }
 
   private countDirectProjectActiveWritableConversations(projectId: string): number {

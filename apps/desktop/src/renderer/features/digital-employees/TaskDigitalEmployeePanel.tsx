@@ -6,7 +6,7 @@ import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/c
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { areRequiredRequestAnswersComplete, buildPendingRequestResponse, normalizeRequestQuestions, supportedRequestDecisions, type RequestQuestion, type SupportedRequestDecision } from '../../session/PendingRequestSurface.js';
 import type { CodexTaskPushCapabilities, NativePendingRequest } from '../../session/sessionTypes.js';
-import { TaskPushLayoutPreview } from '../../task/TaskModelPushModal.js';
+import { taskPushEnvironmentLabel, TaskPushLayoutPreview } from '../../task/TaskModelPushModal.js';
 import { Button } from '../../ui/Button.js';
 import { ModalPortal } from '../../ui/ModalPortal.js';
 import { ZeusSelect } from '../../ZeusSelect.js';
@@ -452,6 +452,9 @@ function TaskEmployeeRunDialog(props: {
   const zh = props.language === 'zh-CN';
   const agentEntrypoint = props.employee.entrypoint?.kind === 'agent' ? props.employee.entrypoint : null;
   const [models, setModels] = useState<CodexTaskPushCapabilities['models']>([]);
+  const [capabilities, setCapabilities] = useState<CodexTaskPushCapabilities | null>(null);
+  const [workspaceMode, setWorkspaceMode] = useState<'create' | 'existing' | null>(null);
+  const [environmentId, setEnvironmentId] = useState('');
   const [capabilityError, setCapabilityError] = useState<string | null>(null);
   const [config, setConfig] = useState<AgentExecutionConfigValue>(() => initialRunConfig(props.employee));
   const [selectedDeliverableIds, setSelectedDeliverableIds] = useState<string[]>([]);
@@ -460,6 +463,7 @@ function TaskEmployeeRunDialog(props: {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const previewVersion = useRef(0);
+  const initialActiveItems = useRef(props.activeItems);
   const loadCapabilitiesRef = useRef(props.onLoadCapabilities);
   loadCapabilitiesRef.current = props.onLoadCapabilities;
 
@@ -467,14 +471,20 @@ function TaskEmployeeRunDialog(props: {
     if (!agentEntrypoint) return;
     let active = true;
     setCapabilityError(null);
-    const request = loadCapabilitiesRef.current ? loadCapabilitiesRef.current().then((capabilities) => ({ models: capabilities.models, preferredModel: capabilities.preferredModel })) : props.client.loadDigitalEmployeeCapabilities();
+    const request = loadCapabilitiesRef.current ? loadCapabilitiesRef.current() : props.client.loadDigitalEmployeeCapabilities();
     void request
-      .then((capabilities) => {
+      .then((nextCapabilities) => {
         if (!active) return;
-        setModels(capabilities.models);
+        const taskCapabilities = 'repositories' in nextCapabilities ? nextCapabilities : null;
+        const initialWorkspace = taskCapabilities ? initialTaskWorkWorkspaceChoice(taskCapabilities, initialActiveItems.current) : ({ mode: 'create' } as const);
+        setCapabilities(taskCapabilities);
+        setWorkspaceMode(initialWorkspace?.mode ?? null);
+        setEnvironmentId(initialWorkspace?.mode === 'existing' ? initialWorkspace.environmentId : '');
+        setModels(nextCapabilities.models);
         setConfig((current) => {
           if (current.model) return current;
-          const model = capabilities.models.find((candidate) => candidate.id === ('preferredModel' in capabilities ? capabilities.preferredModel : '')) ?? capabilities.models.find((candidate) => candidate.available !== false);
+          const model =
+            nextCapabilities.models.find((candidate) => candidate.id === ('preferredModel' in nextCapabilities ? nextCapabilities.preferredModel : '')) ?? nextCapabilities.models.find((candidate) => candidate.available !== false);
           return model
             ? {
                 ...current,
@@ -495,6 +505,12 @@ function TaskEmployeeRunDialog(props: {
   }, [agentEntrypoint, props.client, zh]);
 
   useEffect(() => {
+    const workspace = workspaceMode === 'create' ? ({ mode: 'create' } as const) : workspaceMode === 'existing' && environmentId ? ({ mode: 'existing', environmentId } as const) : null;
+    if (agentEntrypoint && !workspace) {
+      setPreview(null);
+      setPreviewBusy(false);
+      return;
+    }
     const version = previewVersion.current + 1;
     previewVersion.current = version;
     setPreviewBusy(true);
@@ -511,6 +527,7 @@ function TaskEmployeeRunDialog(props: {
           promptOverride: config.prompt,
           skillIds: config.skillIds,
           selectedDeliverableIds,
+          ...(workspace ? { workspace } : {}),
         })
         .then((nextPreview) => {
           if (previewVersion.current === version) setPreview(nextPreview);
@@ -526,7 +543,12 @@ function TaskEmployeeRunDialog(props: {
         });
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [config, props.client, props.employee.id, props.taskId, selectedDeliverableIds, zh]);
+  }, [agentEntrypoint, config, environmentId, props.client, props.employee.id, props.taskId, selectedDeliverableIds, workspaceMode, zh]);
+
+  const existingEnvironments = capabilities?.existingEnvironments ?? [];
+  const canContinueEnvironment = (environment: NonNullable<CodexTaskPushCapabilities['existingEnvironments']>[number]): boolean => environment.available || environmentAvailableAfterStop(environment, props.activeItems);
+  const continuableEnvironments = existingEnvironments.filter(canContinueEnvironment);
+  const selectedEnvironment = existingEnvironments.find((environment) => environment.id === environmentId);
 
   async function submit(): Promise<void> {
     if (!preview || preview.blockers.length > 0) return;
@@ -593,6 +615,72 @@ function TaskEmployeeRunDialog(props: {
             </section>
           ) : null}
 
+          {agentEntrypoint && capabilities && capabilities.repositories.length > 0 ? (
+            <fieldset className="task-model-push-mode-choice task-model-push-branch-choice">
+              <legend>{zh ? '代码现场' : 'Code workspace'}</legend>
+              <label className={workspaceMode === 'existing' ? 'is-selected' : undefined}>
+                <input
+                  type="radio"
+                  name="task-work-workspace-mode"
+                  checked={workspaceMode === 'existing'}
+                  onChange={() => {
+                    setWorkspaceMode('existing');
+                    setEnvironmentId((current) => (continuableEnvironments.some((environment) => environment.id === current) ? current : continuableEnvironments.length === 1 ? continuableEnvironments[0]!.id : ''));
+                  }}
+                  disabled={props.busy || continuableEnvironments.length === 0}
+                />
+                <span>
+                  <strong>{zh ? '继续已有任务分支' : 'Continue existing task branches'}</strong>
+                  <small>{zh ? '新员工使用独立会话，继续原 worktree 和全部仓库分支' : 'Use a separate conversation in the original worktree and repository branches'}</small>
+                </span>
+              </label>
+              <label className={workspaceMode === 'create' ? 'is-selected' : undefined}>
+                <input type="radio" name="task-work-workspace-mode" checked={workspaceMode === 'create'} onChange={() => setWorkspaceMode('create')} disabled={props.busy} />
+                <span>
+                  <strong>{zh ? '创建新的任务分支' : 'Create new task branches'}</strong>
+                  <small>{zh ? '新建一条独立执行线，不共享已有员工的代码现场' : 'Create an independent execution line without sharing an existing workspace'}</small>
+                </span>
+              </label>
+              {workspaceMode === 'existing' ? (
+                <section className="task-model-push-existing-environment" aria-label={zh ? '选择已有任务分支' : 'Choose existing task branches'}>
+                  <ZeusSelect
+                    size="regular"
+                    ariaLabel={zh ? '选择已有任务分支' : 'Choose existing task branches'}
+                    value={environmentId}
+                    options={existingEnvironments.map((environment) => {
+                      const availableAfterStop = environmentAvailableAfterStop(environment, props.activeItems);
+                      return {
+                        value: environment.id,
+                        label: taskPushEnvironmentLabel(environment, zh, availableAfterStop),
+                        group: canContinueEnvironment(environment) ? (zh ? '可继续' : 'Available') : zh ? '暂不可用' : 'Unavailable',
+                        disabled: !canContinueEnvironment(environment),
+                      };
+                    })}
+                    onChange={setEnvironmentId}
+                    disabled={props.busy || continuableEnvironments.length === 0}
+                    searchPlaceholder={zh ? '搜索任务分支或仓库' : 'Search task branches or repositories'}
+                    emptyLabel={zh ? '没有匹配的任务分支' : 'No matching task branches'}
+                  />
+                  {selectedEnvironment ? (
+                    <ul className="task-model-push-existing-repositories">
+                      {selectedEnvironment.repositories.map((repository) => (
+                        <li key={`${repository.repositoryId ?? repository.repositoryRelativePath}:${repository.branchName}`}>
+                          <span>{repository.repositoryName}</span>
+                          <code>{repository.branchName}</code>
+                          <small>{zh ? `来源：${repository.sourceBranch}` : `Source: ${repository.sourceBranch}`}</small>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="task-model-push-error" role="alert">
+                      {zh ? '请选择一组当前可继续的任务分支。' : 'Choose a task branch environment that can be continued.'}
+                    </p>
+                  )}
+                </section>
+              ) : null}
+            </fieldset>
+          ) : null}
+
           {agentEntrypoint ? (
             <AgentExecutionConfigFields
               value={config}
@@ -652,6 +740,12 @@ function TaskEmployeeRunDialog(props: {
                 <small>{zh ? '权限' : 'Permission'}</small>
                 <strong>{String(preview.authority.permissionMode ?? '—')}</strong>
               </span>
+              {preview.workspace ? (
+                <span>
+                  <small>{zh ? '代码现场' : 'Code workspace'}</small>
+                  <strong>{workspacePreviewLabel(preview.workspace, zh)}</strong>
+                </span>
+              ) : null}
             </section>
           ) : null}
           {preview?.promptPreview ? <TaskPushLayoutPreview layout={preview.promptPreview} language={props.language} /> : null}
@@ -707,6 +801,35 @@ function initialRunConfig(employee: DigitalEmployeeRecord): AgentExecutionConfig
 
 function currentWorkRun(item: TaskWorkItemRecord): TaskWorkItemRecord['runs'][number] | undefined {
   return item.runs.find((run) => run.id === item.currentRunId) ?? item.runs.at(-1);
+}
+
+function initialTaskWorkWorkspaceChoice(capabilities: CodexTaskPushCapabilities, activeItems: TaskWorkItemRecord[]): { mode: 'create' } | { mode: 'existing'; environmentId: string } | null {
+  if (capabilities.repositories.length === 0) return { mode: 'create' };
+  const environments = capabilities.existingEnvironments ?? [];
+  const activeEnvironmentIds = Array.from(new Set(activeItems.flatMap((item) => currentWorkRun(item)?.environmentId ?? []))).filter((environmentId) =>
+    environments.some((environment) => environment.id === environmentId && environmentAvailableAfterStop(environment, activeItems)),
+  );
+  if (activeEnvironmentIds.length === 1) return { mode: 'existing', environmentId: activeEnvironmentIds[0]! };
+  if (activeEnvironmentIds.length > 1) return null;
+  const available = environments.filter((environment) => environment.available || environmentAvailableAfterStop(environment, activeItems));
+  if (available.length === 0) return { mode: 'create' };
+  if (available.length === 1) return { mode: 'existing', environmentId: available[0]!.id };
+  return null;
+}
+
+function environmentAvailableAfterStop(environment: NonNullable<CodexTaskPushCapabilities['existingEnvironments']>[number], activeItems: TaskWorkItemRecord[]): boolean {
+  const currentRuns = activeItems.flatMap((item) => currentWorkRun(item) ?? []);
+  if (!currentRuns.some((run) => run.environmentId === environment.id)) return false;
+  if (environment.available) return true;
+  const replaceableConversationIds = new Set(currentRuns.flatMap((run) => run.conversationId ?? []));
+  return environment.unavailableReason === 'active_conversation' && environment.activeConversationIds.length > 0 && environment.activeConversationIds.every((conversationId) => replaceableConversationIds.has(conversationId));
+}
+
+function workspacePreviewLabel(workspace: NonNullable<TaskWorkPreview['workspace']>, zh: boolean): string {
+  if (workspace.mode === 'direct') return zh ? '项目目录' : 'Project directory';
+  if (workspace.mode === 'existing') return zh ? '继续已有任务分支' : 'Continue existing task branches';
+  const branches = Array.from(new Set(workspace.repositories.map((repository) => repository.branchName)));
+  return branches.length === 1 ? branches[0]! : zh ? `${branches.length} 个新任务分支` : `${branches.length} new task branches`;
 }
 
 function activeTaskWorkItems(projection: TaskWorkManagementProjection | null): TaskWorkItemRecord[] {

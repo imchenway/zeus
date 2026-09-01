@@ -28,6 +28,7 @@ import {
   type TaskWorkDeliverableRecord,
   type TaskWorkItemRecord,
   type TaskWorkRunRecord,
+  type TaskWorkWorkspaceSnapshot,
   type WorkContextManifestV1,
   type ZeusProjectRecord,
   type ZeusTaskRecord,
@@ -56,7 +57,10 @@ export interface TaskWorkPreviewSelection {
   promptOverride?: string | null;
   skillIds?: string[];
   selectedDeliverableIds?: string[];
+  workspace?: TaskWorkWorkspaceChoice;
 }
+
+export type TaskWorkWorkspaceChoice = { mode: 'create' } | { mode: 'existing'; environmentId: string };
 
 export interface TaskWorkPreview {
   previewSha256: string;
@@ -70,6 +74,7 @@ export interface TaskWorkPreview {
   skills: Array<TaskWorkNativeSkillPreview | TaskWorkPluginSkillPreview>;
   authority: Record<string, unknown>;
   context: WorkContextManifestV1;
+  workspace: TaskWorkWorkspaceSnapshot | null;
   promptPreview: TaskPushMessageLayout | null;
   command: null | {
     id: string;
@@ -389,7 +394,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
       const task = requireTaskOrThrow(options, taskId);
       assertNoOtherActiveTaskWorkItem(options, task.id);
       const employee = requireEmployeeOrThrow(options, task.projectId, employeeId);
-      const preview = await resolvePreview(options, task, { employeeId });
+      const preview = await resolvePreview(options, task, { employeeId, workspace: { mode: 'create' } });
       const blockers = preview.blockers;
       if (blockers.length > 0) throw new TaskWorkStoreError(blockers[0]!.code, blockers[0]!.message);
       const skillResources = await prepareSkillResourceSnapshots(options, task, preview);
@@ -448,6 +453,7 @@ async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTask
   const command: TaskWorkPreview['command'] = null;
   let entrypoint: Record<string, unknown> | null = employee.entrypoint ? sanitizeEntrypoint(employee.entrypoint) : null;
   let authority: Record<string, unknown> = employee.entrypoint?.kind === 'agent' ? { ...employee.entrypoint.authorityPolicy } : {};
+  let workspace: TaskWorkWorkspaceSnapshot | null = null;
   let promptPreview: TaskPushMessageLayout | null = null;
 
   if (employee.entrypoint?.kind === 'agent') {
@@ -458,6 +464,7 @@ async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTask
     authority = resolveRunAuthority(agentEntrypoint, selection.permissionMode, blockers);
     const capability = await options.conversationCapabilities.readTaskPush(task.projectId, task.id);
     model = resolveAgentModel(employee, agentEntrypoint, selection, capability, blockers);
+    workspace = resolveTaskWorkWorkspaceSnapshot(options, task, selection.workspace, capability, blockers);
     if (model && typeof model.agentKind === 'string') entrypoint = { ...entrypoint, agentKind: model.agentKind };
     const selectedSkillIds = normalizeIdentities(selection.skillIds ?? agentEntrypoint.skillPolicy.allowedSkillIds);
     if (selectedSkillIds.some((id) => !agentEntrypoint.skillPolicy.allowedSkillIds.includes(id))) blockers.push({ code: 'ZEUS_TASK_WORK_SKILL_NOT_ALLOWED', message: '指派包含该员工未允许的 Skill。' });
@@ -506,11 +513,70 @@ async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTask
     skills,
     authority,
     context,
+    workspace,
     promptPreview,
     command,
     blockers,
   };
   return { previewSha256: sha256(canonicalJson(digestSource)), expiresAt: new Date(options.now().getTime() + previewTtlMs).toISOString(), ...digestSource };
+}
+
+function resolveTaskWorkWorkspaceSnapshot(
+  options: TaskWorkManagementOptions,
+  task: ZeusTaskRecord,
+  choice: TaskWorkWorkspaceChoice | undefined,
+  capabilities: Record<string, unknown>,
+  blockers: TaskWorkPreview['blockers'],
+): TaskWorkWorkspaceSnapshot {
+  const repositories = Array.isArray(capabilities.repositories) ? capabilities.repositories.filter(isRecord) : [];
+  if (repositories.length === 0) {
+    if (choice?.mode === 'existing') blockers.push({ code: 'ZEUS_TASK_WORK_ENVIRONMENT_INVALID', message: '当前任务没有可继续的任务分支。' });
+    return { mode: 'direct' };
+  }
+
+  if (choice?.mode === 'existing') {
+    const environments = Array.isArray(capabilities.existingEnvironments) ? capabilities.existingEnvironments.filter(isRecord) : [];
+    const environment = environments.find((candidate) => candidate.id === choice.environmentId);
+    if (!environment) blockers.push({ code: 'ZEUS_TASK_WORK_ENVIRONMENT_INVALID', message: '所选任务环境不属于当前任务。' });
+    else if (environment.available !== true) {
+      const replaceable = environment.unavailableReason === 'active_conversation' && taskWorkOwnsAllActiveEnvironmentConversations(options, task.id, choice.environmentId);
+      if (!replaceable) {
+        blockers.push({
+          code: environment.unavailableReason === 'closed_workspace' ? 'ZEUS_TASK_WORK_ENVIRONMENT_CLOSED' : 'ZEUS_TASK_WORK_ENVIRONMENT_BUSY',
+          message: environment.unavailableReason === 'closed_workspace' ? '所选任务环境已经部分关闭。' : '所选任务环境正被其他会话使用。',
+        });
+      }
+    }
+    return { mode: 'existing', environmentId: choice.environmentId };
+  }
+
+  const repositoryRevision = typeof capabilities.repositoryRevision === 'string' ? capabilities.repositoryRevision : '';
+  if (!repositoryRevision) blockers.push({ code: 'ZEUS_TASK_WORK_REPOSITORY_REVISION_REQUIRED', message: '项目仓库清单缺少稳定版本。' });
+  const resolvedRepositories = repositories.flatMap((repository) => {
+    const sourceRefs = Array.isArray(repository.sourceRefs) ? repository.sourceRefs.filter(isRecord) : [];
+    const source = sourceRefs.find((candidate) => candidate.current === true) ?? sourceRefs.find((candidate) => candidate.kind === 'local');
+    if (!source || typeof repository.id !== 'string' || typeof source.ref !== 'string' || typeof repository.suggestedBranchName !== 'string') {
+      blockers.push({ code: 'ZEUS_TASK_WORK_SOURCE_REF_UNAVAILABLE', message: '项目仓库没有可用的来源分支。' });
+      return [];
+    }
+    return [{ repositoryId: repository.id, sourceRef: source.ref, branchName: repository.suggestedBranchName }];
+  });
+  return { mode: 'create', repositoryRevision, repositories: resolvedRepositories };
+}
+
+function taskWorkOwnsAllActiveEnvironmentConversations(options: TaskWorkManagementOptions, taskId: string, environmentId: string): boolean {
+  const activeConversationIds = options.conversations
+    .listByEnvironment(environmentId)
+    .filter((conversation) => conversation.providerState === 'binding' || conversation.providerState === 'active' || conversation.providerState === 'waiting')
+    .map((conversation) => conversation.id);
+  if (activeConversationIds.length === 0) return false;
+  const replaceableConversationIds = new Set(
+    activeTaskWorkItems(options, taskId).flatMap((item) => {
+      const run = item.currentRunId ? options.runs.getById(item.currentRunId) : undefined;
+      return run?.conversationId ? [run.conversationId] : [];
+    }),
+  );
+  return activeConversationIds.every((conversationId) => replaceableConversationIds.has(conversationId));
 }
 
 function createWorkItemFromPreview(
@@ -523,6 +589,7 @@ function createWorkItemFromPreview(
   skillResources: PreparedSkillResourceSnapshot[] = [],
 ): { item: TaskWorkItemRecord; run: TaskWorkRunRecord } {
   if (employee.entrypoint?.kind !== 'agent') throw new TaskWorkStoreError('ZEUS_DIGITAL_EMPLOYEE_AGENT_ENTRYPOINT_REQUIRED', '数字员工必须通过 Agent 会话执行。');
+  if (!preview.workspace) throw new TaskWorkStoreError('ZEUS_TASK_WORK_WORKSPACE_MISSING', 'Agent 运行缺少已解析代码现场。');
   const item = options.items.create({
     id: operationIdentity,
     projectId: task.projectId,
@@ -561,6 +628,8 @@ function createWorkItemFromPreview(
     skillSnapshot,
     authoritySnapshot: structuredClone(preview.authority),
     contextManifest: structuredClone(preview.context),
+    workspaceSnapshot: structuredClone(preview.workspace),
+    environmentId: null,
   });
   const updatedItem = options.items.update(item.id, { currentRunId: run.id });
   options.taskEvents.create({ taskId: task.id, eventType: 'task.work_item.created', title: '已创建数字员工工作项', payload: { workItemId: item.id, runId: run.id, employeeId: employee.id, entrypointKind: 'agent' } });
@@ -605,26 +674,20 @@ async function dispatchAgent(options: TaskWorkManagementOptions, run: TaskWorkRu
   if (!model || typeof model.id !== 'string' || typeof model.agentKind !== 'string') throw new TaskWorkStoreError('ZEUS_TASK_WORK_MODEL_MISSING', 'Agent 运行缺少已解析模型快照。');
   const pluginReferences = await resolveFrozenPluginSkillReferences(options, run);
   const authority = run.authoritySnapshot;
-  const capabilities = await options.conversationCapabilities.readTaskPush(project.id, task.id);
-  const repositories = Array.isArray(capabilities.repositories) ? capabilities.repositories.filter(isRecord) : [];
-  const repositoryRevision = typeof capabilities.repositoryRevision === 'string' ? capabilities.repositoryRevision : '';
   const writeEnabled = authority.permissionMode !== 'read-only' && (authority.allowCodeChanges === true || authority.allowTests === true);
-  let workspace: Record<string, unknown> = { mode: 'direct' };
-  if (repositories.length > 0) {
-    if (!repositoryRevision) throw new TaskWorkStoreError('ZEUS_TASK_WORK_REPOSITORY_REVISION_REQUIRED', '项目仓库清单缺少稳定版本。');
-    workspace = {
-      mode: 'create',
-      repositoryRevision,
-      repositories: repositories.map((repository) => {
-        const sourceRefs = Array.isArray(repository.sourceRefs) ? repository.sourceRefs.filter(isRecord) : [];
-        const source = sourceRefs.find((candidate) => candidate.current === true) ?? sourceRefs.find((candidate) => candidate.kind === 'local');
-        if (!source || typeof repository.id !== 'string' || typeof source.ref !== 'string' || typeof repository.suggestedBranchName !== 'string')
-          throw new TaskWorkStoreError('ZEUS_TASK_WORK_SOURCE_REF_UNAVAILABLE', '项目仓库没有可用的来源分支。');
-        return { repositoryId: repository.id, sourceRef: source.ref, branchName: repository.suggestedBranchName };
-      }),
-    };
-  } else if (writeEnabled && isRecord(capabilities.directWorkspace) && typeof capabilities.directWorkspace.activeWritableConversationCount === 'number' && capabilities.directWorkspace.activeWritableConversationCount > 0) {
-    throw new TaskWorkStoreError('ZEUS_TASK_WORK_DIRECT_WORKSPACE_BUSY', '项目目录已有可写会话，新运行不会隐式共享写入现场。');
+  let workspace = run.workspaceSnapshot;
+  if (!workspace) {
+    const legacyCapabilities = await options.conversationCapabilities.readTaskPush(project.id, task.id);
+    const blockers: TaskWorkPreview['blockers'] = [];
+    workspace = resolveTaskWorkWorkspaceSnapshot(options, task, { mode: 'create' }, legacyCapabilities, blockers);
+    if (blockers.length > 0) throw new TaskWorkStoreError(blockers[0]!.code, blockers[0]!.message);
+    options.runs.update(run.id, { workspaceSnapshot: workspace });
+  }
+  if (workspace.mode === 'direct' && writeEnabled) {
+    const capabilities = await options.conversationCapabilities.readTaskPush(project.id, task.id);
+    if (isRecord(capabilities.directWorkspace) && typeof capabilities.directWorkspace.activeWritableConversationCount === 'number' && capabilities.directWorkspace.activeWritableConversationCount > 0) {
+      throw new TaskWorkStoreError('ZEUS_TASK_WORK_DIRECT_WORKSPACE_BUSY', '项目目录已有可写会话，新运行不会隐式共享写入现场。');
+    }
   }
   const supplementalInfo = await buildAgentSupplementalInfo(options, run);
   const body: Record<string, unknown> = {
@@ -645,7 +708,12 @@ async function dispatchAgent(options: TaskWorkManagementOptions, run: TaskWorkRu
   const projection = isRecord(response.conversation) ? response.conversation : {};
   const conversationId = typeof projection.id === 'string' ? projection.id : null;
   if (!conversationId) throw new TaskWorkStoreError('ZEUS_TASK_WORK_ACCEPTANCE_NOT_DURABLE', '任务推送没有返回耐久会话身份。');
-  options.runs.update(run.id, { status: 'active', conversationId });
+  const persistedConversation = options.conversations.getById(conversationId);
+  const environmentId = typeof projection.environmentId === 'string' ? projection.environmentId : (persistedConversation?.environmentId ?? null);
+  if (workspace.mode === 'existing' && environmentId !== workspace.environmentId) throw new TaskWorkStoreError('ZEUS_TASK_WORK_ENVIRONMENT_MISMATCH', '新会话没有绑定所选任务环境。');
+  if (workspace.mode === 'create' && !environmentId) throw new TaskWorkStoreError('ZEUS_TASK_WORK_ENVIRONMENT_MISSING', '新任务分支没有返回任务环境身份。');
+  if (workspace.mode === 'direct' && environmentId) throw new TaskWorkStoreError('ZEUS_TASK_WORK_ENVIRONMENT_MISMATCH', '项目目录直连会话意外绑定了任务环境。');
+  options.runs.update(run.id, { status: 'active', conversationId, environmentId });
   publishChanged(options, run.taskId, run.workItemId, 'agent_started');
 }
 
@@ -905,6 +973,8 @@ function cloneRun(options: TaskWorkManagementOptions, item: TaskWorkItemRecord, 
     skillSnapshot,
     authoritySnapshot: structuredClone(previous.authoritySnapshot),
     contextManifest: structuredClone(previous.contextManifest),
+    workspaceSnapshot: previous.environmentId ? { mode: 'existing', environmentId: previous.environmentId } : structuredClone(previous.workspaceSnapshot),
+    environmentId: null,
   });
 }
 
@@ -1520,7 +1590,15 @@ function normalizeSelection(value: unknown): TaskWorkPreviewSelection {
     promptOverride: optionalText(value.promptOverride, 20_000),
     skillIds: Array.isArray(value.skillIds) ? normalizeIdentities(value.skillIds) : undefined,
     selectedDeliverableIds: Array.isArray(value.selectedDeliverableIds) ? normalizeIdentities(value.selectedDeliverableIds) : undefined,
+    workspace: normalizeTaskWorkWorkspaceChoice(value.workspace),
   };
+}
+
+function normalizeTaskWorkWorkspaceChoice(value: unknown): TaskWorkWorkspaceChoice | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value) || (value.mode !== 'create' && value.mode !== 'existing')) throw new TaskWorkStoreError('ZEUS_TASK_WORK_WORKSPACE_INVALID', '代码现场选择无效。', 400);
+  if (value.mode === 'create') return { mode: 'create' };
+  return { mode: 'existing', environmentId: requiredText(value.environmentId, '请选择已有任务环境。', 512) };
 }
 
 function sanitizeEntrypoint(entrypoint: AgentEntrypointV2): Record<string, unknown> {

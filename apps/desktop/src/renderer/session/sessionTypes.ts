@@ -1003,6 +1003,7 @@ export interface CodexTaskPushCapabilities {
     id: string;
     available: boolean;
     unavailableReason: 'active_conversation' | 'closed_workspace' | null;
+    activeConversationIds: string[];
     repositories: Array<{
       repositoryId: string | null;
       repositoryName: string;

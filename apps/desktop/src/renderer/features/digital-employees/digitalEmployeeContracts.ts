@@ -198,6 +198,9 @@ export type TaskWorkRunStatus = 'prepared' | 'dispatching' | 'active' | 'waiting
 export type TaskWorkDeliverableStatus = 'submitted' | 'accepted' | 'changes_requested' | 'superseded';
 export type TaskWorkDecisionStatus = 'pending' | 'resolved' | 'dismissed' | 'expired';
 
+export type TaskWorkWorkspaceChoice = { mode: 'create' } | { mode: 'existing'; environmentId: string };
+export type TaskWorkWorkspaceSnapshot = { mode: 'direct' } | { mode: 'existing'; environmentId: string } | { mode: 'create'; repositoryRevision: string; repositories: Array<{ repositoryId: string; sourceRef: string; branchName: string }> };
+
 export interface TaskWorkRunRecord {
   id: string;
   projectId: string;
@@ -214,6 +217,8 @@ export interface TaskWorkRunRecord {
   skillSnapshot: Record<string, unknown>;
   authoritySnapshot: Record<string, unknown>;
   contextManifest: Record<string, unknown>;
+  workspaceSnapshot: TaskWorkWorkspaceSnapshot | null;
+  environmentId: string | null;
   enabledSkillIds: string[];
   conversationId: string | null;
   commandRunId: string | null;
@@ -308,6 +313,7 @@ export interface TaskWorkPreviewSelection {
   promptOverride?: string | null;
   skillIds?: string[];
   selectedDeliverableIds?: string[];
+  workspace?: TaskWorkWorkspaceChoice;
 }
 
 export interface TaskWorkPreview {
@@ -325,6 +331,7 @@ export interface TaskWorkPreview {
   >;
   authority: Record<string, unknown>;
   context: Record<string, unknown>;
+  workspace: TaskWorkWorkspaceSnapshot | null;
   promptPreview: TaskPushMessageLayout | null;
   command: null | {
     id: string;

@@ -146,12 +146,23 @@ function taskPushCommonSourceLabel(source: TaskPushCommonSource, repositoryCount
   return `${source.label} · ${source.kind === 'local' ? 'local' : `${source.group} remote`} · ${repositoryCount} repositories`;
 }
 
-function taskPushEnvironmentLabel(environment: TaskPushEnvironmentCapability, zh: boolean): string {
+export function taskPushEnvironmentLabel(environment: TaskPushEnvironmentCapability, zh: boolean, availableAfterStop = false): string {
   const branches = Array.from(new Set(environment.repositories.map((repository) => repository.branchName)));
   const branchLabel = branches.length === 1 ? branches[0]! : branches.join(zh ? '、' : ', ');
   const repositoryLabel = environment.repositories.length === 1 ? environment.repositories[0]!.repositoryName : zh ? `${environment.repositories.length} 个仓库` : `${environment.repositories.length} repositories`;
-  const unavailableLabel =
-    environment.unavailableReason === 'active_conversation' ? (zh ? ' · 正有会话使用' : ' · active conversation') : environment.unavailableReason === 'closed_workspace' ? (zh ? ' · 已部分关闭' : ' · partially closed') : '';
+  const unavailableLabel = availableAfterStop
+    ? zh
+      ? ' · 停止后继续'
+      : ' · continue after stop'
+    : environment.unavailableReason === 'active_conversation'
+      ? zh
+        ? ' · 正有会话使用'
+        : ' · active conversation'
+      : environment.unavailableReason === 'closed_workspace'
+        ? zh
+          ? ' · 已部分关闭'
+          : ' · partially closed'
+        : '';
   return `${branchLabel} · ${repositoryLabel}${unavailableLabel}`;
 }
 

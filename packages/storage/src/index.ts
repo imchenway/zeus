@@ -26,7 +26,7 @@ import { migrateLongTermMemorySchema } from './longTermMemoryStore.js';
 import { migratePluginStoreSchema } from './pluginStore.js';
 import { migrateTaskEventFileProjectionSchema } from './taskEventFileProjectionStore.js';
 import { migrateTaskStageSchema } from './taskStageStore.js';
-import { migrateTaskWorkSchema } from './taskWorkStore.js';
+import { migrateTaskWorkSchema, migrateTaskWorkWorkspaceBindingSchema } from './taskWorkStore.js';
 import type { SqlValue, ZeusDatabasePort } from './databasePort.js';
 import { deriveConversationStageProjection, isPlainRecord, ProviderEventReceiptRepository, subtractTokenUsageBreakdown, validateTokenUsageBreakdown, type DbCodexUsageLedgerRow } from './conversationStore.js';
 
@@ -1122,6 +1122,7 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
     migrateDigitalEmployeeStageHandoffSchema(zeusDb);
     migrateDigitalEmployeeCapabilitySchema(zeusDb);
     migrateTaskWorkSchema(zeusDb);
+    migrateTaskWorkWorkspaceBindingSchema(zeusDb);
     migrateProviderEventReceipts(zeusDb);
     migrateUnifiedConversationStoreSchema(zeusDb);
     migrateConversationLegacyCutoverSchema(zeusDb);
