@@ -52,6 +52,7 @@ export interface PiDynamicToolSpec {
   description: string;
   inputSchema: Record<string, unknown>;
   executionMode?: 'parallel' | 'sequential';
+  deferLoading?: boolean;
 }
 
 export type PiZeusToolContentItem = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string };
@@ -71,6 +72,7 @@ export interface PiZeusToolDefinitionSpec {
   description: string;
   parameters: Record<string, unknown>;
   executionMode?: 'parallel' | 'sequential';
+  deferLoading?: boolean;
 }
 
 export interface PiZeusToolBroker {
@@ -644,33 +646,104 @@ function createZeusTools(getEntry: () => PiSessionEntry | null, broker: PiZeusTo
       execute: (id, args, signal) => execute(id, 'bash', args, signal),
     }),
   ];
+  const managedArtifactTools: PiDynamicToolSpec[] = [
+    {
+      name: 'read_conversation_tool_image',
+      label: '读取工具图片',
+      description: '按 Zeus 句柄读取受管工具图片。low 保持有界；original 必须显式请求且可能占用大量上下文。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          handle: { type: 'string' },
+          detail: { type: 'string', enum: ['low', 'original'] },
+        },
+        required: ['handle'],
+        additionalProperties: false,
+      },
+      deferLoading: true,
+    },
+  ];
+  const allDynamicTools = [...managedArtifactTools, ...dynamicTools];
+  const deferredTools = [
+    ...allDynamicTools.filter((tool) => tool.deferLoading).map((tool) => ({ ...tool, parameters: tool.inputSchema, kind: 'Plugin' as const })),
+    ...nativeTools.filter((tool) => tool.deferLoading).map((tool) => ({ ...tool, inputSchema: tool.parameters, kind: 'Zeus 原生' as const })),
+  ];
+  if (deferredTools.length > 0) {
+    builtInTools.push(
+      defineTool({
+        name: 'zeus_tool_catalog',
+        label: '发现按需工具',
+        description: '搜索未直接加载的 Zeus/Plugin 工具。指定精确 name 可获得完整参数 schema；普通查询最多返回 20 项。',
+        parameters: Type.Object({ name: Type.Optional(Type.String()), query: Type.Optional(Type.String()) }),
+        execute: async (_id, args) => {
+          const requestedName = typeof args.name === 'string' ? args.name.trim() : '';
+          const query = typeof args.query === 'string' ? args.query.trim().toLowerCase() : '';
+          const selected = requestedName ? deferredTools.filter((tool) => tool.name === requestedName) : deferredTools.filter((tool) => !query || `${tool.name}\n${tool.description}`.toLowerCase().includes(query)).slice(0, 20);
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: JSON.stringify(
+                  selected.map((tool) => ({
+                    name: tool.name,
+                    label: tool.label,
+                    description: tool.description,
+                    executionMode: tool.executionMode ?? 'parallel',
+                    ...(requestedName ? { inputSchema: tool.inputSchema } : {}),
+                  })),
+                ),
+              },
+            ],
+            details: { totalDeferredTools: deferredTools.length, returned: selected.length, exact: Boolean(requestedName) },
+          };
+        },
+      }),
+      defineTool({
+        name: 'zeus_tool_invoke',
+        label: '调用按需工具',
+        description: '调用 zeus_tool_catalog 返回的精确工具名。只能访问当前 session 已冻结的延迟工具。',
+        parameters: Type.Object({ name: Type.String(), arguments: Type.Unsafe({ type: 'object', additionalProperties: true }) }),
+        executionMode: 'sequential',
+        execute: (id, args, signal) => {
+          const target = deferredTools.find((tool) => tool.name === args.name);
+          if (!target) throw runtimeError('ZEUS_PI_DEFERRED_TOOL_NOT_FOUND', `Pi 延迟工具不存在：${String(args.name)}`);
+          return execute(id, target.name, asUnknownRecord(args.arguments), signal);
+        },
+      }),
+    );
+  }
   const claimedNames = new Set(builtInTools.map((tool) => tool.name));
   const claimDynamicName = (name: string, kind: 'Plugin' | 'Zeus 原生'): void => {
     if (claimedNames.has(name)) throw runtimeError('ZEUS_PI_DYNAMIC_TOOL_CONFLICT', `${kind}工具与已注册工具重名：${name}`);
     claimedNames.add(name);
   };
-  const projectedPluginTools = dynamicTools.map((tool) => {
-    claimDynamicName(tool.name, 'Plugin');
-    return defineTool({
-      name: tool.name,
-      label: tool.label,
-      description: tool.description,
-      parameters: Type.Unsafe(tool.inputSchema),
-      ...(tool.executionMode ? { executionMode: tool.executionMode } : {}),
-      execute: (id, args, signal) => execute(id, tool.name, asUnknownRecord(args), signal),
+  for (const tool of deferredTools) claimDynamicName(tool.name, tool.kind);
+  const projectedPluginTools = allDynamicTools
+    .filter((tool) => !tool.deferLoading)
+    .map((tool) => {
+      claimDynamicName(tool.name, 'Plugin');
+      return defineTool({
+        name: tool.name,
+        label: tool.label,
+        description: tool.description,
+        parameters: Type.Unsafe(tool.inputSchema),
+        ...(tool.executionMode ? { executionMode: tool.executionMode } : {}),
+        execute: (id, args, signal) => execute(id, tool.name, asUnknownRecord(args), signal),
+      });
     });
-  });
-  const projectedNativeTools = nativeTools.map((spec) => {
-    claimDynamicName(spec.name, 'Zeus 原生');
-    return defineTool({
-      name: spec.name,
-      label: spec.label,
-      description: spec.description,
-      parameters: spec.parameters as TSchema,
-      ...(spec.executionMode ? { executionMode: spec.executionMode } : {}),
-      execute: (id, args, signal) => execute(id, spec.name, args as Record<string, unknown>, signal),
+  const projectedNativeTools = nativeTools
+    .filter((tool) => !tool.deferLoading)
+    .map((spec) => {
+      claimDynamicName(spec.name, 'Zeus 原生');
+      return defineTool({
+        name: spec.name,
+        label: spec.label,
+        description: spec.description,
+        parameters: spec.parameters as TSchema,
+        ...(spec.executionMode ? { executionMode: spec.executionMode } : {}),
+        execute: (id, args, signal) => execute(id, spec.name, args as Record<string, unknown>, signal),
+      });
     });
-  });
   return [...builtInTools, ...projectedPluginTools, ...projectedNativeTools];
 }
 
@@ -686,6 +759,7 @@ function readDynamicTools(metadata: Record<string, unknown> | undefined): PiDyna
       description: boundedMetadataText(record.description, 'Plugin tool description', 8_000),
       inputSchema: asUnknownRecord(record.inputSchema),
       ...(record.executionMode === 'sequential' ? { executionMode: 'sequential' as const } : {}),
+      ...(record.deferLoading === true ? { deferLoading: true } : {}),
     };
   });
 }

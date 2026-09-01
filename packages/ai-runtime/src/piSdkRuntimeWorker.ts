@@ -277,6 +277,7 @@ function readNativeToolDefinition(value: unknown): PiZeusToolDefinitionSpec {
     description: requiredString(record.description, 'nativeTools.description'),
     parameters,
     ...(record.executionMode === 'sequential' ? { executionMode: 'sequential' as const } : record.executionMode === 'parallel' ? { executionMode: 'parallel' as const } : {}),
+    ...(record.deferLoading === true ? { deferLoading: true } : {}),
   };
 }
 

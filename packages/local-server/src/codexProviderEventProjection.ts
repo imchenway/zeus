@@ -396,6 +396,17 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
         completedAt: timestamp,
         updatedAt: timestamp,
       });
+      projectProcessItem({
+        conversationId: conversation.id,
+        turnId: turn.id,
+        threadId,
+        providerItemId: reconciledItem.providerItemId,
+        itemType: reconciledItem.itemType,
+        status: reconciledItem.status === 'failed' ? 'failed' : 'completed',
+        payload: parseJsonRecord(reconciledItem.payloadJson),
+        text: reconciledItem.textContent,
+        occurredAt: timestamp,
+      });
       options.broadcast('conversation.item.updated', {
         conversationId: conversation.id,
         providerThreadId: threadId,
@@ -417,7 +428,10 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     });
     options.changeSets?.seal({ conversation, turn, timestamp });
     const submissions = options.submissions.listByConversation(conversation.id);
-    const terminalReconciliation = reconcileTerminalTurnSubmissions(conversation, terminalTurn, timestamp, failure ? providerTurnFailureRecord(params, failure) : undefined);
+    const internalContextCompaction = turn.clientSubmissionId === null && turnItems.some((item) => item.itemType === 'contextCompaction');
+    const terminalReconciliation = internalContextCompaction
+      ? { primarySubmission: undefined, recoveryRequired: [], reconciledCount: 0 }
+      : reconcileTerminalTurnSubmissions(conversation, terminalTurn, timestamp, failure ? providerTurnFailureRecord(params, failure) : undefined);
     const activeSubmission = terminalReconciliation.primarySubmission;
     const recoveryRequiredSubmissions = terminalReconciliation.recoveryRequired;
     for (const submission of recoveryRequiredSubmissions) {
@@ -428,8 +442,10 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
         providerTurnId,
       });
     }
-    if (!failed && !interrupted) createdPlanImplementationRequest = ensurePlanImplementationRequest(conversation.id, turn, activeSubmission, timestamp);
-    if (failed) {
+    if (!internalContextCompaction && !failed && !interrupted) createdPlanImplementationRequest = ensurePlanImplementationRequest(conversation.id, turn, activeSubmission, timestamp);
+    if (internalContextCompaction) {
+      runStates.set(conversation.id, { type: 'idle' });
+    } else if (failed) {
       for (const queued of submissions.filter((entry) => entry.status === 'queued')) options.submissions.updateStatus(queued.id, 'paused', { pausedReason: 'recovery_required' });
       runStates.set(conversation.id, { type: 'paused', reason: 'recovery_required' });
     } else if (recoveryRequiredSubmissions.length > 0) {
@@ -447,11 +463,11 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       providerId: 'codex',
       providerThreadId: threadId,
       providerModel: conversation.providerModel,
-      providerState: failed ? 'failed' : recoveryRequiredSubmissions.length > 0 || (interrupted && hasInterruptedQueue) ? 'paused' : 'ready',
+      providerState: internalContextCompaction ? 'ready' : failed ? 'failed' : recoveryRequiredSubmissions.length > 0 || (interrupted && hasInterruptedQueue) ? 'paused' : 'ready',
     });
     const ephemeral = contexts.get(conversation.id)?.ephemeral === true;
     const conversationGoal = goals.get(conversation.id);
-    if (!ephemeral && !conversationGoal) {
+    if (!internalContextCompaction && !ephemeral && !conversationGoal) {
       options.conversations.markAttentionUnread(conversation.id, {
         kind: failed ? 'failed' : interrupted ? 'interrupted' : 'completed',
         turnId: providerTurnId,
@@ -459,7 +475,9 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       });
     }
     const resultKey = `${conversation.id}:${providerTurnId}`;
-    if (failure) {
+    if (internalContextCompaction) {
+      // 压缩轮次没有用户提交和回答等待者；只保留过程、usage 与终态，不制造普通回答结果。
+    } else if (failure) {
       failedTurnResults.set(resultKey, failure);
       rejectTurnResultWaiters(resultKey, failure);
     } else {
@@ -474,7 +492,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       };
       resolveTurnResult(result);
     }
-    if (ephemeral) {
+    if (!internalContextCompaction && ephemeral) {
       options.conversations.bindProvider(conversation.id, {
         providerId: 'codex',
         providerThreadId: threadId,
@@ -495,11 +513,12 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
         completedAt: timestamp,
         ...(failure ? { error: projectConversationTurnFailure(providerTurnFailureRecord(params, failure)) } : {}),
         hasUnreadAttention: options.conversations.getById(conversation.id)?.attentionUnread === true,
-        notificationEligible: !conversationGoal,
+        notificationEligible: !internalContextCompaction && !conversationGoal,
+        ...(internalContextCompaction ? { internalOperation: 'context_compaction' } : {}),
       },
     };
-    queueChangedAfterTurn = interrupted || recoveryRequiredSubmissions.length > 0 || createdPlanImplementationRequest !== null;
-    drainAfterTurn = !failed && !interrupted && recoveryRequiredSubmissions.length === 0 && conversationGoal?.status !== 'active';
+    queueChangedAfterTurn = !internalContextCompaction && (interrupted || recoveryRequiredSubmissions.length > 0 || createdPlanImplementationRequest !== null);
+    drainAfterTurn = !internalContextCompaction && !failed && !interrupted && recoveryRequiredSubmissions.length === 0 && conversationGoal?.status !== 'active';
   } else if (event.method === 'item/started' && conversation && threadId) {
     const providerTurnId = providerTurnIdFrom(params);
     const itemPayload = isRecord(params.item) ? params.item : {};
@@ -508,6 +527,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     if (!providerTurnId || !providerItemId || !turn) return;
     const presentedItemPayload = sanitizeConversationItemPayload(itemPayload.type === 'userMessage' ? { ...itemPayload, ...submissionPresentation(conversation.id, turn, itemPayload) } : itemPayload);
     const itemType = itemTypeFromValue(itemPayload.type);
+    if (itemType === 'contextCompaction') options.execution.markTurnModelRequestsAsContextCompaction(conversation.id, turn.id);
     // 兼容 app-server 不发送 rawResponseItem/completed 的版本：模型一旦产出工具、命令、
     // 文件变更等非文本项，本次请求即不能用总输出 Token 计算纯文本生成速率。
     if (isNonTextModelRequestOutput(itemType)) modelRequestTiming.observe(conversation.id, turn.id, event.receivedAt, 'non_text');
@@ -786,6 +806,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     if (!providerTurnId || !providerItemId || !turn) return;
     const presentedItemPayload = sanitizeConversationItemPayload(itemPayload.type === 'userMessage' ? { ...itemPayload, ...submissionPresentation(conversation.id, turn, itemPayload) } : itemPayload);
     const itemType = itemTypeFromValue(itemPayload.type);
+    if (itemType === 'contextCompaction') options.execution.markTurnModelRequestsAsContextCompaction(conversation.id, turn.id);
     const existing = options.providerItems.getByProvider(threadId, providerItemId);
     const userMessageProjection = itemType === 'userMessage' ? projectProviderUserMessage(conversation, turn, presentedItemPayload, itemText(itemPayload), providerItemId) : null;
     if (itemType === 'userMessage' && !userMessageProjection) return;
@@ -1107,6 +1128,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     if (segment && turn) {
       const recordedRequests = options.execution.listModelRequestsForTurn(conversation.id, turn.id);
       const latestRecordedRequest = recordedRequests.at(-1);
+      const contextCompactionTurn = options.providerItems.listByConversation(conversation.id).some((item) => item.turnId === turn.id && item.itemType === 'contextCompaction');
       const exactRequest =
         latestRecordedRequest &&
         latestRecordedRequest.providerRequestId !== null &&
@@ -1121,7 +1143,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       // app-server 的兼容 token_count 事件通常不带 requestKind；同轮首个请求是推理，
       // 后续请求只会在工具结果续跑后出现。显式 retry/compaction 标记仍优先。
       const requestKind =
-        tokenUsage.requestKind === 'context_compaction'
+        tokenUsage.requestKind === 'context_compaction' || contextCompactionTurn
           ? 'context_compaction'
           : tokenUsage.requestKind === 'retry'
             ? 'retry'
@@ -1160,20 +1182,6 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
           completedAt,
           measurementComplete,
           occurredAt: turn.completedAt ?? event.receivedAt,
-        });
-      }
-      if (requestKind === 'context_compaction') {
-        options.execution.appendProcessItem({
-          conversationId: conversation.id,
-          turnId: turn.id,
-          segmentId: segment.id,
-          kind: 'context_compaction',
-          status: 'completed',
-          title: '上下文压缩',
-          detail: { model, usage: last },
-          sourceEventId: `codex:compaction:${event.generationId}:${event.sequence}`,
-          startedAt: event.receivedAt,
-          completedAt: event.receivedAt,
         });
       }
     }

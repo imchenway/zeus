@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { commandEnvelopeSchemaGeneration, parseCommandEnvelope, type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
 import { currentDatabasePerformanceTraceId, type CommandDeliveryRepository } from '@zeus/storage';
 
-export type PiProviderCommandOperation = 'session_open' | 'run_start' | 'run_steer' | 'run_interrupt';
+export type PiProviderCommandOperation = 'session_open' | 'session_compact' | 'run_start' | 'run_steer' | 'run_interrupt';
 
 export interface PreparePiProviderCommandInput {
   operation: PiProviderCommandOperation;
@@ -74,6 +74,39 @@ export class PiProviderCommandAttempt {
       });
     });
     // 只有 COMMIT 成功后才能在进程内标为 settled；注入回滚后仍必须能记录 unknown。
+    this.settled = true;
+  }
+
+  recordSessionMutationAccepted(input: { nativeSessionId: string; evidence: unknown }): void {
+    this.assertOpen('记录 session mutation accepted');
+    this.commandDeliveries.recordOutcome({
+      outboxId: this.outboxId,
+      outcome: 'accepted',
+      providerId: 'pi',
+      providerGenerationId: this.providerGenerationId,
+      nativeSessionId: input.nativeSessionId,
+      nativeTurnId: null,
+      evidence: input.evidence,
+      occurredAt: this.now(),
+    });
+    this.settled = true;
+  }
+
+  recordSessionMutationAcceptedAtomically(input: { nativeSessionId: string; evidence: unknown }, boundary: { durableTransactionSync(operation: () => void): void; projectMutation(): void }): void {
+    this.assertOpen('原子记录 session mutation accepted');
+    boundary.durableTransactionSync(() => {
+      boundary.projectMutation();
+      this.commandDeliveries.recordOutcomeInCurrentTransaction({
+        outboxId: this.outboxId,
+        outcome: 'accepted',
+        providerId: 'pi',
+        providerGenerationId: this.providerGenerationId,
+        nativeSessionId: input.nativeSessionId,
+        nativeTurnId: null,
+        evidence: input.evidence,
+        occurredAt: this.now(),
+      });
+    });
     this.settled = true;
   }
 
@@ -171,8 +204,8 @@ export class PiProviderCommandApplicationService {
     const prepared = this.commandDeliveries.acceptAndPrepare({
       envelope,
       requestSha256,
-      destinationKind: input.operation === 'session_open' ? 'provider_session' : 'provider_turn',
-      destinationId: input.operation === 'session_open' ? 'pi:session' : 'pi:turn',
+      destinationKind: input.operation === 'session_open' || input.operation === 'session_compact' ? 'provider_session' : 'provider_turn',
+      destinationId: input.operation === 'session_open' || input.operation === 'session_compact' ? 'pi:session' : 'pi:turn',
       resourceId: input.resourceId,
       occurredAt: this.now(),
     });
@@ -202,6 +235,8 @@ function commandType(operation: PiProviderCommandOperation): string {
   switch (operation) {
     case 'session_open':
       return 'provider.pi.session.open';
+    case 'session_compact':
+      return 'provider.pi.session.compact';
     case 'run_start':
       return 'provider.pi.run.start';
     case 'run_steer':

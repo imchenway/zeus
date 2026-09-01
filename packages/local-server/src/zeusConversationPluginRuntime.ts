@@ -135,6 +135,7 @@ export function createZeusConversationPluginRuntime(options: {
       description: tool.description,
       inputSchema: tool.inputSchema,
       executionMode: 'sequential' as const,
+      deferLoading: true,
     }));
     const developerInstructions = [
       ...sessionStart.systemMessages,
@@ -283,6 +284,7 @@ function codexTools(tools: ZeusPluginDynamicTool[]): CodexDynamicToolSpec[] {
       name: tool.toolName,
       description: tool.description,
       inputSchema: tool.inputSchema as never,
+      deferLoading: true,
     })),
   }));
 }

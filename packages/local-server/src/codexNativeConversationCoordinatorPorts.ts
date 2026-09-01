@@ -18,8 +18,7 @@ import type {
 import type { BrowserAutomationPort } from './browserAutomation.js';
 import type { ZeusToolAuditEvent } from './zeusToolRegistry.js';
 import type { CodexUsageService } from './codexUsageService.js';
-import type { ContextDispatchEnvelope } from './contextDispatchService.js';
-import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
+import type { ProviderDispatchContextCompiler } from './contextDispatchService.js';
 import type { ManagedConversationToolResultStore } from './conversationPortableContext.js';
 import type { ConversationEventFlowControl } from './eventFlowControl.js';
 import type { TurnChangeSetService } from './turnChangeSets.js';
@@ -63,20 +62,6 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
     mode: 'reconcile' | 'submit' | 'dispatch' | 'recover_queue' | 'restore';
   }) => Promise<{ projectLocalPath: string; writableRoots?: string[]; executionWorkspaceMode?: 'direct' | 'worktree' } | null>;
   resolveResponsesRuntime?: (input: { modelSourceId: string | null; model: string }) => Promise<CodexResponsesRuntime | null>;
-  compileDispatchContext?: (input: {
-    provider: 'codex';
-    conversationId: string;
-    submissionId: string;
-    projectId: string;
-    projectLocalPath: string;
-    taskId: string | null;
-    modelId: string;
-    modelSourceId: string | null;
-    operationRisk: 'read_only' | 'local_write';
-    fixedRequestUtf8Bytes: number;
-    providerBootstrapUtf8Bytes: number;
-    providerHistoryMode: 'latest' | 'bootstrap';
-    providerGenerationId: string | null;
-  }) => Promise<ContextDispatchEnvelope>;
+  compileDispatchContext?: ProviderDispatchContextCompiler;
   preflightCodexModelBudget?: (input: { modelId: string; modelSourceId: string | null; providerGenerationId: string | null }) => void;
 }

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { commandEnvelopeSchemaGeneration, parseCommandEnvelope, type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
 import { currentDatabasePerformanceTraceId, type CommandDeliveryReceiptRecord, type CommandDeliveryRepository, type ZeusDatabase } from '@zeus/storage';
 
-export type CodexProviderCommandOperation = 'thread_start' | 'thread_archive' | 'thread_unarchive' | 'turn_start' | 'turn_steer' | 'turn_interrupt' | 'goal_set' | 'goal_clear' | 'server_request_response';
+export type CodexProviderCommandOperation = 'thread_start' | 'thread_archive' | 'thread_unarchive' | 'thread_compact' | 'turn_start' | 'turn_steer' | 'turn_interrupt' | 'goal_set' | 'goal_clear' | 'server_request_response';
 
 interface ExecuteCodexProviderCommandBase<T> {
   operation: CodexProviderCommandOperation;
@@ -14,6 +14,7 @@ interface ExecuteCodexProviderCommandBase<T> {
   requestIdentity: unknown;
   providerGenerationId: string | null;
   acceptedProviderGenerationId?(result: T): string | null;
+  acceptedEvidence?(result: T): unknown;
   traceIdentity?: string | null;
   invoke(traceIdentity: string | null): Promise<T>;
   isExplicitRejection?(error: unknown): boolean;
@@ -77,7 +78,13 @@ export class CodexProviderCommandApplicationService {
           providerGenerationId,
           nativeSessionId,
           nativeTurnId: null,
-          evidence: { source: 'codex_provider_command_application', operation: input.operation, traceIdentity: attempt.traceIdentity, resultIdentity: nativeSessionId },
+          evidence: {
+            source: 'codex_provider_command_application',
+            operation: input.operation,
+            traceIdentity: attempt.traceIdentity,
+            resultIdentity: nativeSessionId,
+            ...(input.acceptedEvidence ? { commandEvidence: input.acceptedEvidence(result) } : {}),
+          },
           occurredAt: this.now(),
         });
       });
@@ -113,7 +120,13 @@ export class CodexProviderCommandApplicationService {
           providerGenerationId,
           nativeSessionId,
           nativeTurnId,
-          evidence: { source: 'codex_provider_command_application', operation: input.operation, traceIdentity: attempt.traceIdentity, resultIdentity: `${nativeSessionId}:${nativeTurnId}` },
+          evidence: {
+            source: 'codex_provider_command_application',
+            operation: input.operation,
+            traceIdentity: attempt.traceIdentity,
+            resultIdentity: `${nativeSessionId}:${nativeTurnId}`,
+            ...(input.acceptedEvidence ? { commandEvidence: input.acceptedEvidence(result) } : {}),
+          },
           occurredAt: this.now(),
         });
       });

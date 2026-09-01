@@ -1,5 +1,5 @@
 import { type CodexAppServerEvent, type CodexResponsesRuntime, type CodexServerRequestResponse, type CodexThreadGoal, modelRef, parseModelRef, toCodexWireReasoningEffort } from '@zeus/ai-runtime';
-import { buildTaskPushInputParts, type CodexAdditionalContextEntry, type CodexBootstrapAdditionalContext, type TaskPushMessageLayout } from '@zeus/shared';
+import { buildTaskPushInputParts, type CodexAdditionalContextEntry, type TaskPushMessageLayout } from '@zeus/shared';
 import {
   type ConversationCollaborationMode,
   ConversationGoalRepository,
@@ -98,12 +98,12 @@ import { parseCanonicalRequestUserInputQuestions, validateCanonicalRequestUserIn
 import { createCodexExternalRequestAnswerRecovery } from './codexExternalRequestAnswerRecovery.js';
 import { createCodexModelRequestTimingTracker } from './codexModelRequestTiming.js';
 import { assertCallerDoesNotOverrideCompiledContext, mergeCodexAdditionalContext } from './codexNativeContextProtocol.js';
-import { contextFromPersistedConversation, contextFromPersistedSubmission, emitPluginCompactionHook, prepareRecoveredCodexPlugins } from './codexConversationDispatchContext.js';
+import { contextFromPersistedConversation, contextFromPersistedSubmission, prepareRecoveredCodexPlugins } from './codexConversationDispatchContext.js';
+import { prepareCodexDispatchContext } from './codexContextDispatchPreparation.js';
 import { createCodexNativeConversationAccess } from './codexNativeConversationAccess.js';
 import { type PersistedSubmissionInput, readNativeSubmissionRecoveryKind, readNativeSubmissionSkill, readNativeSubmissionTaskPushLayout } from './nativeConversationSubmissionInputs.js';
 import { inferNativeConversationRunState, interruptedQueueSubmissions } from './codexNativeRunStateProjection.js';
 import { chooseNativeUserMessageContent, type ResolvedNativeUserMessageSubmission, resolveNativeUserMessageSubmission } from './codexNativeUserMessageProjection.js';
-import { runCodexPortableContextCompaction } from './codexPortableContextCompaction.js';
 import { CodexProviderCommandApplicationService, type CodexProviderCommandOperation } from './codexProviderCommandApplication.js';
 import { codexProviderEventIdentity, createCodexProviderEventFlow } from './codexProviderEventFlow.js';
 import { projectCodexProviderEvent } from './codexProviderEventProjection.js';
@@ -1644,57 +1644,41 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         { adapter: 'codex_app_server', method: 'turn/start', protocol: 'openai_responses' },
         serializedAt,
       );
-      let pluginCompactContext: CodexBootstrapAdditionalContext | undefined;
-      if (segmentLifecycle?.contextCompactionPlan) {
-        await emitPluginCompactionHook({ plugins: options.plugins, event: 'PreCompact', conversationId: conversation.id, cwd: context.projectLocalPath, model: context.model });
-        await segmentLifecycle.beginContextCompaction(now());
-        try {
-          // portable compaction 会创建临时 thread/turn，同样属于父派发的外部写边界。
-          markDispatchRpcStarted(lease, submission.id);
-          const compacted = await runCodexPortableContextCompaction({
-            manager: options.manager,
-            providerCommands,
-            providerGenerationId: commandProviderGenerationId,
-            conversationId: conversation.id,
-            plan: segmentLifecycle.contextCompactionPlan,
-            model: context.model,
-            effort: wireEffort,
-            serviceTier: Object.prototype.hasOwnProperty.call(context, 'serviceTier') ? (context.serviceTier ?? null) : null,
-            cwd: context.projectLocalPath,
-            responsesRuntime,
-            issuedAt: submission.createdAt,
-          });
-          await segmentLifecycle.completeContextCompaction({
-            summary: compacted.summary,
-            usage: compacted.usage,
-            evidence: compacted.evidence,
-            completedAt: now(),
-          });
-          pluginCompactContext = await emitPluginCompactionHook({ plugins: options.plugins, event: 'PostCompact', conversationId: conversation.id, cwd: context.projectLocalPath, model: context.model });
-        } catch (error) {
-          await segmentLifecycle.failContextCompaction(error, now());
-          throw error;
-        }
-      }
-      const fixedAdditionalContext = mergeCodexAdditionalContext(segmentLifecycle?.codexBootstrapAdditionalContext, context.additionalContext, pluginPromptContext, pluginCompactContext);
-      const fixedRequestUtf8Bytes = Buffer.byteLength(JSON.stringify({ input: providerInput, ...(fixedAdditionalContext ? { additionalContext: fixedAdditionalContext } : {}) }), 'utf8');
-      const compiledDispatchContext = options.compileDispatchContext
-        ? await options.compileDispatchContext({
-            provider: 'codex',
-            conversationId: conversation.id,
-            submissionId: submission.id,
-            projectId: context.projectId,
-            projectLocalPath: context.projectLocalPath,
-            taskId: context.taskId,
-            modelId: context.model,
-            modelSourceId: context.modelSourceId,
-            operationRisk: context.permissionMode === 'read-only' && !context.allowCodeChanges ? 'read_only' : 'local_write',
-            fixedRequestUtf8Bytes,
-            providerBootstrapUtf8Bytes,
-            providerHistoryMode: threadStartedForSubmission ? 'bootstrap' : 'latest',
-            providerGenerationId: commandProviderGenerationId,
-          })
-        : null;
+      const preparedContext = await prepareCodexDispatchContext({
+        manager: options.manager,
+        providerCommands,
+        compileDispatchContext: options.compileDispatchContext,
+        plugins: options.plugins,
+        segmentLifecycle,
+        conversation: { id: conversation.id, projectId: context.projectId },
+        submission: { id: submission.id, createdAt: submission.createdAt },
+        providerThreadId,
+        providerGenerationId: commandProviderGenerationId,
+        providerInput,
+        providerBootstrapUtf8Bytes,
+        threadStartedForSubmission,
+        context: {
+          projectLocalPath: context.projectLocalPath,
+          taskId: context.taskId,
+          model: context.model,
+          modelSourceId: context.modelSourceId,
+          effort: wireEffort,
+          serviceTier: Object.prototype.hasOwnProperty.call(context, 'serviceTier') ? context.serviceTier : undefined,
+          permissionMode: context.permissionMode,
+          allowCodeChanges: context.allowCodeChanges,
+          additionalContext: context.additionalContext,
+        },
+        pluginPromptContext,
+        responsesRuntime,
+        beforePortableProviderWrite: () => markDispatchRpcStarted(lease, submission.id),
+        flushProviderEvents: async () => {
+          await providerEvents.enqueueBarrier(async () => undefined);
+          await flushScheduledPersist();
+        },
+        now,
+      });
+      const compiledDispatchContext = preparedContext.compiled;
+      const pluginCompactContext = preparedContext.pluginCompactContext;
       if (compiledDispatchContext) assertCallerDoesNotOverrideCompiledContext(context.additionalContext);
       const initialGoalObjective = submissionGoalObjective(submission);
       if (initialGoalObjective) {

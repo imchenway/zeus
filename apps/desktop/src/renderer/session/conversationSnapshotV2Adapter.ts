@@ -209,6 +209,7 @@ function emptyUnifiedUsageSnapshot(): NativeUnifiedUsageSnapshot {
     turnTotal: { ...empty },
     latestModelRequest: null,
     preflightEstimate: null,
+    latestContextCompaction: null,
   };
 }
 

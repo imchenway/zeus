@@ -407,7 +407,38 @@ export interface NativeUnifiedUsageSnapshot {
   conversationTotal: NativeNullableUsageBreakdown;
   turnTotal: NativeNullableUsageBreakdown;
   latestModelRequest: NativeModelRequestUsageObservation | null;
-  preflightEstimate: null;
+  preflightEstimate: NativeContextPreflightEstimate | null;
+  latestContextCompaction: NativeContextCompactionStatus | null;
+}
+
+export interface NativeContextPreflightEstimate {
+  mode: 'estimate';
+  exact: false;
+  providerId: string;
+  modelId: string;
+  submissionId: string | null;
+  contextWindowTokens: number;
+  reservedOutputTokens: number;
+  historyBaselineTokens: number;
+  historyBaselineSource: string;
+  fixedInputTokens: number;
+  estimateSafetyMarginTokens: number;
+  compilerEnvelopeTokens: number;
+  compiledContextTokens: number;
+  estimatedHeadroomTokens: number;
+  compiledAt: string;
+}
+
+export interface NativeContextCompactionStatus {
+  status: 'in_progress' | 'completed' | 'failed';
+  title: string;
+  segmentId: string;
+  sourceEventId: string | null;
+  adapter: string | null;
+  method: string | null;
+  trigger: string | null;
+  startedAt: string;
+  completedAt: string | null;
 }
 
 export interface NativeSessionMetricsSnapshot {

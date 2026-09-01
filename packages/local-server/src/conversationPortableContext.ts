@@ -11,6 +11,8 @@ const commandProjectionHeadCharacters = 12_288;
 const commandProjectionTailCharacters = 4_096;
 const maximumReadProjectionLines = 300;
 const maximumPageCharacters = 16_384;
+const maximumManagedImageBytes = 20 * 1024 * 1024;
+const maximumHotImageProjectionBytes = 768 * 1024;
 
 export interface PortableContextTargetCapabilities {
   readableReasoningSummary: boolean;
@@ -202,6 +204,15 @@ export interface StoreConversationToolResultInput {
   createdAt: string;
 }
 
+export interface StoreConversationToolImageInput {
+  conversationId: string;
+  turnId: string;
+  segmentId: string;
+  toolPairId: string;
+  imageUrl: string;
+  createdAt: string;
+}
+
 /** 完整工具结果由 Zeus 托管；模型只得到有界投影和不可猜测的分页句柄。 */
 export class ManagedConversationToolResultStore {
   private readonly root: string;
@@ -252,9 +263,58 @@ export class ManagedConversationToolResultStore {
     return { record, projection };
   }
 
+  async storeImage(input: StoreConversationToolImageInput): Promise<{ record: ConversationToolResultRecord; projectionText: string; projectedImageUrl: string | null }> {
+    const parsed = parseManagedImageDataUrl(input.imageUrl);
+    const handle = `conversation_tool_image_${randomId(32)}`;
+    const artifactRef = await this.artifacts.putBytes({
+      bytes: parsed.bytes,
+      mimeType: parsed.mimeType,
+      compression: 'never',
+      owner: {
+        kind: 'conversation_tool_image',
+        id: handle,
+        generationId: 'conversation-tool-image-artifact-v1',
+        conversationId: input.conversationId,
+      },
+      createdAt: input.createdAt,
+    });
+    this.artifacts.hold({
+      sha256: artifactRef.sha256,
+      owner: artifactRef.owner,
+      ownerClass: 'active_conversation',
+      reason: '工具图片原件随产品会话保留；Provider 热历史只接收有界投影和受控句柄。',
+      createdAt: input.createdAt,
+    });
+    const projectedImageUrl = parsed.bytes.byteLength <= maximumHotImageProjectionBytes ? input.imageUrl : null;
+    const projectionText = projectedImageUrl
+      ? `[Zeus 已将工具图片原件保存为 Artifact；句柄 ${handle}，当前调用仅携带有界热投影。]`
+      : `[Zeus 已将 ${parsed.bytes.byteLength} 字节的工具图片保存为 Artifact；句柄 ${handle}。图片超过热投影上限，按需调用 read_conversation_tool_image(handle="${handle}", detail="original")。]`;
+    const record = this.execution.recordToolResult({
+      handle,
+      conversationId: input.conversationId,
+      turnId: input.turnId,
+      segmentId: input.segmentId,
+      toolPairId: input.toolPairId,
+      relativePath: artifactRef.relativePath,
+      sha256: artifactRef.sha256,
+      byteLength: artifactRef.contentByteLength,
+      mimeType: artifactRef.mimeType,
+      projectionJson: JSON.stringify({
+        kind: 'image',
+        text: projectionText,
+        hotProjectionAvailable: projectedImageUrl !== null,
+        hotProjectionMaximumBytes: maximumHotImageProjectionBytes,
+        artifactRef,
+      }),
+      createdAt: input.createdAt,
+    });
+    return { record, projectionText, projectedImageUrl };
+  }
+
   async readPage(input: { conversationId: string; handle: string; offset?: number; limit?: number }): Promise<{ text: string; offset: number; nextOffset: number | null; totalCharacters: number; sha256: string }> {
     const record = this.execution.getToolResult(input.handle);
     if (!record || record.conversationId !== input.conversationId) throw toolResultError('ZEUS_CONVERSATION_TOOL_RESULT_NOT_FOUND', '工具结果句柄不存在或不属于当前产品会话。');
+    if (record.mimeType.startsWith('image/')) throw toolResultError('ZEUS_CONVERSATION_TOOL_RESULT_KIND_MISMATCH', '图片 Artifact 必须使用 read_conversation_tool_image 读取。');
     const artifactRef = toolResultArtifactRef(record.projectionJson);
     let text: string;
     let contentSha256: string;
@@ -283,6 +343,45 @@ export class ManagedConversationToolResultStore {
     const nextOffset = offset + page.length < text.length ? offset + page.length : null;
     return { text: page, offset, nextOffset, totalCharacters: text.length, sha256: contentSha256 };
   }
+
+  async readImage(input: {
+    conversationId: string;
+    handle: string;
+    detail?: 'low' | 'original';
+  }): Promise<{ imageUrl: string | null; mimeType: string; byteLength: number; sha256: string; detail: 'low' | 'original'; projectionText: string }> {
+    const record = this.execution.getToolResult(input.handle);
+    if (!record || record.conversationId !== input.conversationId || !record.mimeType.startsWith('image/')) {
+      throw toolResultError('ZEUS_CONVERSATION_TOOL_IMAGE_NOT_FOUND', '工具图片句柄不存在、不属于当前产品会话或不是图片 Artifact。');
+    }
+    const artifactRef = toolResultArtifactRef(record.projectionJson);
+    if (!artifactRef || artifactRef.sha256 !== record.sha256 || artifactRef.owner.kind !== 'conversation_tool_image' || artifactRef.owner.id !== record.handle) {
+      throw toolResultError('ZEUS_CONVERSATION_TOOL_RESULT_HASH_MISMATCH', '工具图片 ArtifactRef 与数据库句柄不一致。');
+    }
+    const detail = input.detail === 'original' ? 'original' : 'low';
+    if (detail === 'low' && record.byteLength > maximumHotImageProjectionBytes) {
+      return {
+        imageUrl: null,
+        mimeType: record.mimeType,
+        byteLength: record.byteLength,
+        sha256: artifactRef.contentSha256,
+        detail,
+        projectionText: `图片 ${record.handle} 超过 ${maximumHotImageProjectionBytes} 字节的热投影上限；如确需原图，请显式请求 detail="original"。`,
+      };
+    }
+    const resolved = await this.artifacts.readAuthorized({
+      sha256: artifactRef.sha256,
+      owner: artifactRef.owner,
+      maximumContentBytes: maximumManagedImageBytes,
+    });
+    return {
+      imageUrl: `data:${record.mimeType};base64,${Buffer.from(resolved.bytes).toString('base64')}`,
+      mimeType: record.mimeType,
+      byteLength: resolved.bytes.byteLength,
+      sha256: resolved.ref.contentSha256,
+      detail,
+      projectionText: `Zeus 工具图片 Artifact ${record.handle}（${resolved.bytes.byteLength} 字节，${detail}）。`,
+    };
+  }
 }
 
 /** 两个运行适配器共享的原始工具结果分页读取能力。 */
@@ -298,6 +397,21 @@ export function conversationToolResultDynamicTools(): CodexDynamicToolSpec[] {
           handle: { type: 'string', description: 'Opaque handle returned with a projected tool result.' },
           offset: { type: 'integer', minimum: 0, description: 'Character offset; defaults to 0.' },
           limit: { type: 'integer', minimum: 1, maximum: 16384, description: 'Maximum characters; defaults to 16384.' },
+        },
+        required: ['handle'],
+        additionalProperties: false,
+      },
+    },
+    {
+      type: 'function',
+      name: 'read_conversation_tool_image',
+      description: 'Read a managed tool image by its Zeus handle. Low detail stays bounded; original must be requested explicitly.',
+      deferLoading: true,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          handle: { type: 'string', description: 'Opaque image handle returned by a tool result.' },
+          detail: { type: 'string', enum: ['low', 'original'], description: 'Defaults to low; original may add substantial context.' },
         },
         required: ['handle'],
         additionalProperties: false,
@@ -347,6 +461,17 @@ function toolResultArtifactRef(value: string): ArtifactRef | null {
   } catch {
     return null;
   }
+}
+
+function parseManagedImageDataUrl(value: string): { mimeType: string; bytes: Buffer } {
+  const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=\r\n]+)$/i.exec(value);
+  if (!match) throw toolResultError('ZEUS_CONVERSATION_TOOL_IMAGE_INVALID', '工具图片必须是 PNG、JPEG、WebP 或 GIF base64 data URL。');
+  const mimeType = match[1]!.toLowerCase();
+  const bytes = Buffer.from(match[2]!.replace(/[\r\n]/g, ''), 'base64');
+  if (bytes.byteLength === 0 || bytes.byteLength > maximumManagedImageBytes) {
+    throw toolResultError('ZEUS_CONVERSATION_TOOL_IMAGE_INVALID', `工具图片大小必须在 1 到 ${maximumManagedImageBytes} 字节之间。`);
+  }
+  return { mimeType, bytes };
 }
 
 function estimatePortableTokens(entries: PortableHistoryEntry[], currentInputCharacters: number): number {
