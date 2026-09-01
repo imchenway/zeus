@@ -350,10 +350,6 @@ export class TaskWorkItemRepository {
     return this.db.select<TaskWorkItemRow>(`SELECT * FROM task_work_items WHERE task_id = ? ORDER BY created_at ASC, id ASC`, [identity(taskId, 'taskId')]).map(mapWorkItem);
   }
 
-  countActiveByEmployee(employeeId: string): number {
-    return this.db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM task_work_items WHERE employee_id = ? AND status IN ('queued','active','waiting_manager','blocked')`, [identity(employeeId, 'employeeId')])?.count ?? 0;
-  }
-
   create(input: Omit<TaskWorkItemRecord, 'revision' | 'createdAt' | 'updatedAt' | 'completedAt' | 'currentRunId'> & { currentRunId?: string | null }): TaskWorkItemRecord {
     if (input.sourceRef) {
       const replay = this.getBySource(input.source, input.sourceRef);

@@ -898,16 +898,6 @@ export class DigitalEmployeeExecutionRepository {
       .map(mapExecutionRow);
   }
 
-  listActiveByEmployee(employeeId: string): DigitalEmployeeExecutionRecord[] {
-    return this.db
-      .select<DigitalEmployeeExecutionRow>(`SELECT * FROM digital_employee_executions WHERE employee_id = ? AND status IN ('queued', 'dispatching', 'running', 'waiting', 'delivery_pending') ORDER BY created_at ASC`, [employeeId])
-      .map(mapExecutionRow);
-  }
-
-  hasActiveTaskExecution(taskId: string): boolean {
-    return Boolean(this.db.get<{ present: number }>(`SELECT 1 AS present FROM digital_employee_executions WHERE task_id = ? AND status IN ('queued', 'dispatching', 'running', 'waiting', 'delivery_pending') LIMIT 1`, [taskId]));
-  }
-
   hasTaskExecutionForEmployee(employeeId: string, taskId: string, source?: DigitalEmployeeExecutionSource): boolean {
     const sourceClause = source ? ' AND source = ?' : '';
     const params = source ? [requiredIdentity(employeeId, 'employeeId'), requiredIdentity(taskId, 'taskId'), source] : [requiredIdentity(employeeId, 'employeeId'), requiredIdentity(taskId, 'taskId')];
@@ -1457,7 +1447,8 @@ function normalizeEmployeeInput(input: CreateDigitalEmployeeInput): Omit<Digital
     enabled: input.enabled !== false,
     autoClaim: input.autoClaim === true,
     autonomousExploration: input.autonomousExploration === true,
-    maxConcurrency: positiveInteger(input.maxConcurrency ?? 1, 'employee.maxConcurrency', 20),
+    // 历史列只作存储兼容；数字员工不再设置或执行并发上限。
+    maxConcurrency: 1,
     taskFilter,
     allowCodeChanges: input.allowCodeChanges === true,
     allowTests: input.allowTests === true,

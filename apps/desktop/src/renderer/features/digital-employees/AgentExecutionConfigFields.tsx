@@ -28,17 +28,11 @@ export function AgentExecutionConfigFields(props: {
   projectId?: string;
   readOnly?: boolean;
   allowProjectDefaultModel?: boolean;
-  allowedModelIds?: readonly string[];
-  allowedReasoningEfforts?: readonly string[];
-  allowedServiceTiers?: readonly string[];
-  allowedSkillIds?: readonly string[];
-  maximumPermissionMode?: DigitalEmployeePermissionMode;
   compact?: boolean;
 }) {
   const zh = props.language === 'zh-CN';
-  const allowedModels = useMemo(() => props.models.filter((model) => !props.allowedModelIds?.length || props.allowedModelIds.some((identity) => identity === model.id || identity === model.model)), [props.allowedModelIds, props.models]);
-  const modelPresentation = useMemo(() => presentModelOptions(allowedModels, props.value.model, props.language, { preserveMissingSelection: true }), [allowedModels, props.language, props.value.model]);
-  const selectedModel = resolveModelCapability(allowedModels, props.value.model);
+  const modelPresentation = useMemo(() => presentModelOptions(props.models, props.value.model, props.language, { preserveMissingSelection: true }), [props.language, props.models, props.value.model]);
+  const selectedModel = resolveModelCapability(props.models, props.value.model);
   const unavailableSelection = selectedModel?.available === false ? selectedModel : !selectedModel && props.value.model ? { id: props.value.model, model: props.value.model, displayName: props.value.model, sourceName: '' } : null;
   const modelOptions = useMemo(
     () => [
@@ -61,20 +55,16 @@ export function AgentExecutionConfigFields(props: {
 
   useEffect(() => {
     if (props.readOnly || props.allowProjectDefaultModel || props.value.model || !modelPresentation.selectedId) return;
-    const model = resolveModelCapability(allowedModels, modelPresentation.selectedId);
+    const model = resolveModelCapability(props.models, modelPresentation.selectedId);
     if (model) props.onChange(modelDefaults(model));
-  }, [allowedModels, modelPresentation.selectedId, props.allowProjectDefaultModel, props.onChange, props.readOnly, props.value.model]);
+  }, [modelPresentation.selectedId, props.allowProjectDefaultModel, props.models, props.onChange, props.readOnly, props.value.model]);
 
-  const reasoningValues = intersectValues(selectedModel?.supportedReasoningEfforts ?? [], props.allowedReasoningEfforts);
-  const serviceValues = (selectedModel?.serviceTiers ?? []).filter((tier) => !props.allowedServiceTiers?.length || props.allowedServiceTiers.includes(tier.id)).map((tier) => ({ value: tier.id, label: tier.name || tier.id }));
-  const permissionRank: Record<DigitalEmployeePermissionMode, number> = { 'read-only': 0, auto: 1, 'full-access': 2 };
-  const maximumPermission = props.maximumPermissionMode ?? 'full-access';
-  const permissionOptions = (['read-only', 'auto', 'full-access'] as const)
-    .filter((permissionMode) => permissionRank[permissionMode] <= permissionRank[maximumPermission])
-    .map((permissionMode) => ({
-      value: permissionMode,
-      label: permissionMode === 'read-only' ? (zh ? '只读' : 'Read-only') : permissionMode === 'auto' ? (zh ? '自动' : 'Auto') : zh ? '完全访问' : 'Full access',
-    }));
+  const reasoningValues = selectedModel?.supportedReasoningEfforts ?? [];
+  const serviceValues = (selectedModel?.serviceTiers ?? []).map((tier) => ({ value: tier.id, label: tier.name || tier.id }));
+  const permissionOptions = (['read-only', 'auto', 'full-access'] as const).map((permissionMode) => ({
+    value: permissionMode,
+    label: permissionMode === 'read-only' ? (zh ? '只读' : 'Read-only') : permissionMode === 'auto' ? (zh ? '自动' : 'Auto') : zh ? '完全访问' : 'Full access',
+  }));
 
   return (
     <div className={`digital-employee-agent-config${props.compact ? ' is-compact' : ''}`}>
@@ -90,14 +80,14 @@ export function AgentExecutionConfigFields(props: {
                 props.onChange({ model: '', reasoningEffort: '', serviceTier: '' });
                 return;
               }
-              const model = resolveModelCapability(allowedModels, identity);
+              const model = resolveModelCapability(props.models, identity);
               if (model) props.onChange(modelDefaults(model));
             }}
             options={modelOptions}
             triggerLabel={props.value.model ? (unavailableSelection ? (zh ? '当前模型不可用' : 'Current model unavailable') : modelPresentation.triggerLabel) : zh ? '跟随项目默认' : 'Use project default'}
             searchPlaceholder={zh ? '搜索供应商或模型' : 'Search providers or models'}
             emptyLabel={zh ? '没有匹配模型' : 'No matching models'}
-            disabled={props.readOnly || allowedModels.length === 0}
+            disabled={props.readOnly || props.models.length === 0}
           />
         </label>
         <label>
@@ -161,7 +151,6 @@ export function AgentExecutionConfigFields(props: {
           onChange={(skillIds) => props.onChange({ skillIds })}
           language={props.language}
           disabled={props.readOnly}
-          allowedIds={props.allowedSkillIds}
           ariaLabel={zh ? '添加允许使用的 Skill' : 'Add an allowed skill'}
         />
         <small>{zh ? '可搜索并选择多个 Skill；Skill 不会扩大工具或权限范围。' : 'Search and select multiple skills; skills never expand tool or permission boundaries.'}</small>
@@ -181,10 +170,6 @@ function modelDefaults(model: CodexTaskPushModelCapability): Partial<AgentExecut
     reasoningEffort: model.defaultReasoningEffort ?? model.supportedReasoningEfforts[0] ?? '',
     serviceTier: model.defaultServiceTier ?? '',
   };
-}
-
-function intersectValues(values: readonly string[], allowed: readonly string[] | undefined): string[] {
-  return allowed?.length ? values.filter((value) => allowed.includes(value)) : [...values];
 }
 
 function capabilityOptions(currentValue: string, values: readonly string[] | ReadonlyArray<{ value: string; label: string }>, defaultLabel: string, unavailableLabel: string): Array<{ value: string; label: string; disabled?: boolean }> {

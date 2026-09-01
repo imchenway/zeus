@@ -27,13 +27,9 @@ export interface DigitalEmployeeTemplateDraft {
 }
 
 export interface DigitalEmployeeDraft extends DigitalEmployeeTemplateDraft {
-  allowedModels: string;
-  allowedReasoningEfforts: string;
-  allowedServiceTiers: string;
   enabled: boolean;
   autoClaim: boolean;
   autonomousExploration: boolean;
-  maxConcurrency: string;
   managementStatuses: string;
   taskTypes: string;
   requiredTags: string;
@@ -118,13 +114,9 @@ export function employeeDraft(record: DigitalEmployeeRecord): DigitalEmployeeDra
     ...templateDraft(record),
     skillIds: [...(agentEntrypoint?.skillPolicy.allowedSkillIds ?? record.skillIds)],
     model: agentEntrypoint?.modelPolicy.defaultModel ?? record.model ?? '',
-    allowedModels: (agentEntrypoint?.modelPolicy.allowedModels ?? (record.model ? [record.model] : [])).join(', '),
-    allowedReasoningEfforts: (agentEntrypoint?.modelPolicy.allowedReasoningEfforts ?? (record.reasoningEffort ? [record.reasoningEffort] : [])).join(', '),
-    allowedServiceTiers: (agentEntrypoint?.modelPolicy.allowedServiceTiers ?? (record.serviceTier ? [record.serviceTier] : [])).join(', '),
     enabled: record.enabled,
     autoClaim: record.autoClaim,
     autonomousExploration: record.autonomousExploration,
-    maxConcurrency: String(record.maxConcurrency),
     managementStatuses: record.taskFilter.managementStatuses.join(', '),
     taskTypes: record.taskFilter.taskTypes.join(', '),
     requiredTags: record.taskFilter.requiredTags.join(', '),
@@ -157,9 +149,6 @@ export function templateInput(draft: DigitalEmployeeTemplateDraft): DigitalEmplo
 }
 
 export function employeeInput(draft: DigitalEmployeeDraft): DigitalEmployeeInput {
-  const allowedModels = includeDefault(splitList(draft.allowedModels), draft.model);
-  const allowedReasoningEfforts = includeDefault(splitList(draft.allowedReasoningEfforts), draft.reasoningEffort);
-  const allowedServiceTiers = includeDefault(splitList(draft.allowedServiceTiers), draft.serviceTier);
   const authorityPolicy = {
     permissionMode: draft.permissionMode,
     allowCodeChanges: draft.allowCodeChanges,
@@ -176,7 +165,6 @@ export function employeeInput(draft: DigitalEmployeeDraft): DigitalEmployeeInput
     enabled: draft.enabled,
     autoClaim: draft.autoClaim,
     autonomousExploration: draft.autonomousExploration,
-    maxConcurrency: Number.parseInt(draft.maxConcurrency, 10),
     taskFilter: {
       managementStatuses: splitList(draft.managementStatuses),
       taskTypes: splitList(draft.taskTypes),
@@ -199,19 +187,14 @@ export function employeeInput(draft: DigitalEmployeeDraft): DigitalEmployeeInput
       modelPolicy: {
         defaultMode: draft.model.trim() ? 'explicit' : 'project',
         defaultModel: nullable(draft.model),
-        allowedModels,
-        allowedReasoningEfforts,
-        allowedServiceTiers,
+        allowedModels: [],
+        allowedReasoningEfforts: [],
+        allowedServiceTiers: [],
       },
       skillPolicy: { allowedSkillIds: draft.skillIds },
       authorityPolicy,
     },
   };
-}
-
-function includeDefault(values: string[], defaultValue: string): string[] {
-  const normalized = defaultValue.trim();
-  return normalized && !values.includes(normalized) ? [normalized, ...values] : values;
 }
 
 export function splitList(value: string): string[] {
