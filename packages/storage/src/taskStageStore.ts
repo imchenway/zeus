@@ -1,7 +1,7 @@
-import { createHash } from 'node:crypto';
-import { nanoid } from 'nanoid';
-import type { ArtifactRef } from './artifactStore.js';
-import type { ZeusDatabasePort } from './databasePort.js';
+import {createHash} from 'node:crypto';
+import {randomId} from './randomId.js';
+import type {ArtifactRef} from './artifactStore.js';
+import type {ZeusDatabasePort} from './databasePort.js';
 
 export const taskStageSchemaMigrationId = '20260825_0263_task_stage_workflows_v1';
 export const taskStageDeliverableArtifactGeneration = '2026-08-25-task-stage-deliverable-v1';
@@ -521,8 +521,8 @@ export class TaskStageRepository {
     if (existing) return existing;
     const stages = validateInitialStages(input.stages);
     const timestamp = this.now();
-    const workflowId = `task_workflow_${nanoid(16)}`;
-    const stageIds = stages.map(() => `task_stage_${nanoid(16)}`);
+      const workflowId = `task_workflow_${randomId(16)}`;
+      const stageIds = stages.map(() => `task_stage_${randomId(16)}`);
     this.db.transaction(() => {
       this.db.execute(
         `INSERT INTO task_workflows (id, task_id, template_key, template_revision, status, current_stage_id, revision, created_at, updated_at)
@@ -640,7 +640,7 @@ export class TaskStageRepository {
     this.assertUpstreamAccepted(stage);
     const timestamp = nextTimestamp(stage.updatedAt, this.now());
     const attemptNumber = (this.db.get<{ maximum: number }>(`SELECT COALESCE(MAX(attempt_number), 0) AS maximum FROM task_stage_attempts WHERE stage_id = ?`, [stage.id])?.maximum ?? 0) + 1;
-    const attemptId = `task_stage_attempt_${nanoid(16)}`;
+      const attemptId = `task_stage_attempt_${randomId(16)}`;
     const inputDeliverableIds = this.acceptedInputDeliverables(stage).map((deliverable) => deliverable.id);
     const employeeId = nullableString(input.employeeId, 'employeeId', 256);
     if (stage.employeeMode === 'explicit' && employeeId !== stage.employeeId) {

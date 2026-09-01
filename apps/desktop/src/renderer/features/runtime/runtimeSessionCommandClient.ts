@@ -1,5 +1,11 @@
-import { canonicalCommandInputJson, commandEnvelopeSchemaGeneration, type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
-import { ZeusApiError, type LocalApiTransport } from '../../transport/localApiTransport.js';
+import {type CommandEnvelope, type CommandScopeKind} from '@zeus/shared';
+import {type LocalApiTransport, ZeusApiError} from '../../transport/localApiTransport.js';
+import {
+    buildRendererCommandRequest,
+    randomIdentity,
+    type RendererCommandPayload,
+    sha256
+} from '../../commandRequest.js';
 
 export const runtimeSessionClientCommandTypes = {
   confirmationCreate: 'runtime.confirmation.create',
@@ -17,7 +23,6 @@ export const runtimeSessionClientCommandTypes = {
 } as const;
 
 type RuntimeSessionClientCommandType = (typeof runtimeSessionClientCommandTypes)[keyof typeof runtimeSessionClientCommandTypes];
-type RuntimeSessionCommandPayload = { operationIdentity: string; inputSha256: string };
 
 /** Transport 的两个网络 attempt 复用同一个序列化 Body；正文只进入 input，不复制到 Inbox payload。 */
 export async function buildRuntimeSessionCommandRequest<TInput extends object>(input: {
@@ -27,24 +32,17 @@ export async function buildRuntimeSessionCommandRequest<TInput extends object>(i
   operationPrefix: string;
   operationSeed?: string;
   value: TInput;
-}): Promise<{ command: CommandEnvelope<RuntimeSessionCommandPayload>; input: TInput }> {
+}): Promise<{ command: CommandEnvelope<RendererCommandPayload>; input: TInput }> {
   const suffix = input.operationSeed ? (await sha256(`${input.commandType}\0${input.operationSeed}`)).slice(0, 32) : randomIdentity();
   const operationIdentity = `${input.operationPrefix}${suffix}`;
-  const inputSha256 = await sha256(canonicalCommandInputJson(input.value));
-  return {
-    command: {
-      schemaGeneration: commandEnvelopeSchemaGeneration,
-      commandId: `command_runtime_session_${randomIdentity()}`,
-      commandType: input.commandType,
-      actor: { kind: 'local_api', id: stableRuntimeRendererClientId() },
-      scope: { kind: input.scopeKind, id: input.scopeId(operationIdentity) },
-      expectedRevision: null,
-      idempotencyKey: `${input.commandType}:${operationIdentity}`,
-      issuedAt: new Date().toISOString(),
-      payload: { operationIdentity, inputSha256 },
-    },
-    input: input.value,
-  };
+    return buildRendererCommandRequest({
+        ...input,
+        scopeId: input.scopeId(operationIdentity),
+        operationIdentity,
+        commandIdPrefix: 'command_runtime_session_',
+        actorId: stableRuntimeRendererClientId(),
+        expectedRevision: null,
+    });
 }
 
 interface RuntimeEphemeralLease {
@@ -117,16 +115,4 @@ function stableRuntimeRendererClientId(): string {
     fallbackRendererClientId ??= `zeus-desktop-runtime-${randomIdentity()}`;
     return fallbackRendererClientId;
   }
-}
-
-async function sha256(value: string): Promise<string> {
-  const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function randomIdentity(): string {
-  if (typeof globalThis.crypto.randomUUID === 'function') return globalThis.crypto.randomUUID();
-  const bytes = new Uint8Array(16);
-  globalThis.crypto.getRandomValues(bytes);
-  return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }

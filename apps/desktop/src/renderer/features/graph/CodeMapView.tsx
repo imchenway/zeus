@@ -1,50 +1,71 @@
-import { type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
-import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
-import { buildMermaidDiagramExport, buildMermaidDiagramSource, buildPlantUmlDiagramExport, buildPlantUmlDiagramSource, type MermaidDiagramExportFile, type PlantUmlDiagramExportFile } from '@zeus/diagram-engine';
-import { type AppLanguage } from '../workspace/workspaceCopy.js';
-import { ZeusSelect } from '../../ZeusSelect.js';
-import { buildArchitectureLayerModel, canRenderArchitectureLayerModel } from '../../graph/ArchitectureGraphCanvas.js';
 import {
-  type CodeMapSettings,
-  type GraphConversationHistoryItem,
-  type GraphConversationHistoryPage,
-  type GraphNeighborhood,
-  type GraphQuestionAnswer,
-  type GraphSearchResult,
-  type GraphViewSnapshot,
-  type GraphViewType,
+    type KeyboardEvent as ReactKeyboardEvent,
+    type PointerEvent as ReactPointerEvent,
+    useEffect,
+    useMemo,
+    useRef,
+    useState
+} from 'react';
+import {MagnifyingGlassIcon as MagnifyingGlass} from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
+import {XIcon as X} from '@phosphor-icons/react/dist/csr/X';
+import {
+    buildMermaidDiagramExport,
+    buildMermaidDiagramSource,
+    buildPlantUmlDiagramExport,
+    buildPlantUmlDiagramSource,
+    type MermaidDiagramExportFile,
+    type PlantUmlDiagramExportFile
+} from '@zeus/diagram-engine';
+import {type AppLanguage} from '../workspace/workspaceCopy.js';
+import {ZeusSelect} from '../../ZeusSelect.js';
+import {buildArchitectureLayerModel, canRenderArchitectureLayerModel} from '../../graph/ArchitectureGraphCanvas.js';
+import {
+    type CodeMapSettings,
+    type GraphConversationHistoryItem,
+    type GraphConversationHistoryPage,
+    type GraphNeighborhood,
+    type GraphQuestionAnswer,
+    type GraphSearchResult,
+    type GraphViewSnapshot,
+    type GraphViewType,
 } from '../../apiClient.js';
-import { formatGraphConversationStatus, formatGraphEdgeType, formatGraphLayoutAlgorithm, formatGraphMessageSource, formatGraphNodeType, formatGraphNodeTypeList } from '../workspace/workspaceFormatters.js';
 import {
-  buildGraphNeighborhoodLayout,
-  buildGraphNeighborhoodSlice,
-  buildGraphNodeActionMenu,
-  buildGraphQuestionRequest,
-  buildGraphSearchRequest,
-  buildVisibleGraphSlice,
-  GraphCanvas,
-  GraphEdgeDetailPanel,
-  type GraphNodeActionMenuItem,
-  GraphNodeDetail,
-  GraphRuntimeCanvas,
-  handleInlineRailKeyboardNavigation,
-  isAggregatedGraphNode,
-  normalizeGraphMinConfidence,
-  resolveGraphCanvasNodeLineStart,
-  resolveGraphCanvasNodeSourceRef,
+    formatGraphConversationStatus,
+    formatGraphEdgeType,
+    formatGraphLayoutAlgorithm,
+    formatGraphMessageSource,
+    formatGraphNodeType,
+    formatGraphNodeTypeList
+} from '../workspace/workspaceFormatters.js';
+import {
+    buildGraphNeighborhoodLayout,
+    buildGraphNeighborhoodSlice,
+    buildGraphNodeActionMenu,
+    buildGraphQuestionRequest,
+    buildGraphSearchRequest,
+    buildVisibleGraphSlice,
+    GraphCanvas,
+    GraphEdgeDetailPanel,
+    type GraphNodeActionMenuItem,
+    GraphNodeDetail,
+    handleInlineRailKeyboardNavigation,
+    isAggregatedGraphNode,
+    normalizeGraphMinConfidence,
+    resolveGraphCanvasNodeLineStart,
+    resolveGraphCanvasNodeSourceRef,
 } from './GraphCanvas.js';
 import {
-  type CodeMapToolPanel,
-  codeMapToolPanels,
-  type DiagramExportFormat,
-  getLanguageCopy,
-  graphEdgeTypeFilterValues,
-  type GraphNodeTaskFeedback,
-  graphNodeTypeFilterValues,
-  type GraphSourceOpenFeedback,
-  graphViewOptions,
+    type CodeMapToolPanel,
+    codeMapToolPanels,
+    type DiagramExportFormat,
+    getLanguageCopy,
+    graphEdgeTypeFilterValues,
+    type GraphNodeTaskFeedback,
+    graphNodeTypeFilterValues,
+    type GraphSourceOpenFeedback,
+    graphViewOptions,
 } from '../workspace/workspaceSupport.js';
+
 export function CodeMapView(props: {
   isActive?: boolean;
   graphView: GraphViewSnapshot;
@@ -331,7 +352,6 @@ export function CodeMapView(props: {
   const previousOffset = Math.max(0, conversationPage.offset - conversationPage.limit);
   const selectedConversation = props.selectedGraphConversation ?? props.graphConversations?.[0];
   const isSequenceDiagramExportView = props.graphView.viewType === 'api_sequence' || props.graphView.viewType === 'method_logic';
-  const shouldRenderRuntimeGraph = activeGraphTool === 'runtime' && (props.isActive || typeof window === 'undefined') && !isSequenceDiagramExportView;
   const graphQaModeItems = [
     {
       label: codeMapCopy.currentView,
@@ -1003,29 +1023,6 @@ export function CodeMapView(props: {
                 </button>
               </header>
               <section className="code-map-secondary-tools code-map-secondary-inspector" aria-label={codeMapCopy.secondaryToolsAria}>
-                <section className={`code-map-tool-pane ${activeGraphTool === 'runtime' ? 'code-map-tool-pane-active' : ''}`} aria-label={codeMapCopy.graphRuntime} hidden={activeGraphTool !== 'runtime'}>
-                  {shouldRenderRuntimeGraph ? (
-                    <GraphRuntimeCanvas
-                      nodes={visibleNodes}
-                      edges={visibleEdges}
-                      layout={graphDrilldownLayout ?? props.graphView.layout}
-                      appLanguage={props.appLanguage}
-                      currentNodeId={selectedGraphSubject === 'node' ? selectedGraphNode?.id : null}
-                      currentEdgeId={selectedGraphSubject === 'edge' ? selectedGraphEdge?.id : null}
-                      onSelectNode={selectGraphNode}
-                      onSelectEdge={selectGraphEdge}
-                    />
-                  ) : (
-                    <section className="graph-runtime-unavailable-row" aria-label={codeMapCopy.graphRuntime}>
-                      {/* 运行时预览只能按需出现；默认状态必须明确它被收纳而不是悄悄抢占主画布。 */}
-                      <span className="graph-qa-copy">
-                        <strong>{codeMapCopy.graphRuntime}</strong>
-                        <span>{isSequenceDiagramExportView ? codeMapCopy.sequenceRuntimeHidden : codeMapCopy.runtimeToolCollapsed}</span>
-                      </span>
-                    </section>
-                  )}
-                </section>
-
                 <section className={`code-map-tool-pane ${activeGraphTool === 'search' ? 'code-map-tool-pane-active' : ''}`} aria-label={codeMapCopy.searchPanelAria} hidden={activeGraphTool !== 'search'}>
                   <div className="graph-search-control-grid" aria-label={codeMapCopy.searchFilterAria}>
                     <section className="graph-search-control-row" aria-label={codeMapCopy.nodeSearchAria}>

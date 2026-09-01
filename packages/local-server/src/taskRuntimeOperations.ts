@@ -1,31 +1,52 @@
-import { type AiRuntimeLogEntry, type AiRuntimeSession, createNonCodexAiCliAdapterInvocation, isNonCodexAiCliAdapterId } from '@zeus/ai-runtime';
 import {
-  buildTaskPushLayout,
-  isTaskAttachmentField,
-  type TaskPushContextConversationOption,
-  type TaskPushMessageLayout,
-  type TaskPushParentAttachmentOption,
-  type TaskPushParentContextOption,
-  type TaskPushParentContextSelection,
-  type TaskPushPromptAttachment,
-  type TaskPushPromptParentContext,
-  type TaskPushPromptRelatedContext,
-  type TaskPushRelatedContextOption,
-  type TaskPushRelatedContextSelection,
-  type TaskPushSupplementalAttachment,
+    type AiRuntimeLogEntry,
+    type AiRuntimeSession,
+    createNonCodexAiCliAdapterInvocation,
+    isNonCodexAiCliAdapterId
+} from '@zeus/ai-runtime';
+import {
+    buildTaskPushLayout,
+    isTaskAttachmentField,
+    type TaskPushContextConversationOption,
+    type TaskPushMessageLayout,
+    type TaskPushParentAttachmentOption,
+    type TaskPushParentContextOption,
+    type TaskPushParentContextSelection,
+    type TaskPushPromptAttachment,
+    type TaskPushPromptParentContext,
+    type TaskPushPromptRelatedContext,
+    type TaskPushRelatedContextOption,
+    type TaskPushRelatedContextSelection,
+    type TaskPushSupplementalAttachment,
 } from '@zeus/shared';
-import { type ZeusConversationWithMessagesRecord, type ZeusProjectRecord, type ZeusTaskRecord, type ZeusTaskWorkspaceRecord } from '@zeus/storage';
-import { getNextTaskStatus, type TaskStatus } from '@zeus/task-core';
-import { createTelegramBotMessageClient, createTelegramLongPollingClient, createTelegramPollingService, getTelegramConfigurationState, type TelegramPollingService } from '@zeus/telegram-adapter';
-import { createHash, randomUUID } from 'node:crypto';
-import { appendFileSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, parse, relative, sep } from 'node:path';
-import { type GraphViewSnapshot } from './codeIntelligenceGraphStore.js';
-import { isNativeApiRecord, nativeApiError } from './conversationApplicationOperations.js';
-import type { NativeConversationAttachment } from './index.js';
-import { sanitizeRuntimeFileName } from './runtimeLogRetention.js';
-import { compactUtf8Tail, toAiRuntimeLogEntry, toAiRuntimeSession } from './runtimeQueryApplication.js';
-import { hasTaskImageSignature, historicalTaskAttachmentField, resolveCurrentManagedTaskAttachmentPath } from './taskAttachmentLifecycle.js';
+import {
+    type ZeusConversationWithMessagesRecord,
+    type ZeusProjectRecord,
+    type ZeusTaskRecord,
+    type ZeusTaskWorkspaceRecord
+} from '@zeus/storage';
+import {getNextTaskStatus, type TaskStatus} from './taskCore.js';
+import {
+    createTelegramBotMessageClient,
+    createTelegramLongPollingClient,
+    createTelegramPollingService,
+    getTelegramConfigurationState,
+    type TelegramPollingService
+} from './telegramAdapter.js';
+import {createHash, randomUUID} from 'node:crypto';
+import {appendFileSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync} from 'node:fs';
+import {dirname, isAbsolute, join, parse, relative, sep} from 'node:path';
+import {type GraphViewSnapshot} from './codeIntelligenceGraphStore.js';
+import {isNativeApiRecord, nativeApiError} from './conversationApplicationOperations.js';
+import type {NativeConversationAttachment} from './index.js';
+import {sanitizeRuntimeFileName} from './runtimeLogRetention.js';
+import {compactUtf8Tail, toAiRuntimeLogEntry, toAiRuntimeSession} from './runtimeQueryApplication.js';
+import {
+    hasTaskImageSignature,
+    historicalTaskAttachmentField,
+    resolveCurrentManagedTaskAttachmentPath
+} from './taskAttachmentLifecycle.js';
+
 export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, type ReadOnlyValidationApplicationIdentity } from './readOnlyValidation.js';
 // 拆分期间保留结构化工厂依赖，后续按领域端口继续收窄。
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -1,4 +1,10 @@
-import { canonicalCommandInputJson, commandEnvelopeSchemaGeneration, type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
+import {type CommandEnvelope, type CommandScopeKind} from '@zeus/shared';
+import {
+    buildRendererCommandRequest,
+    randomIdentity,
+    type RendererCommandPayload,
+    sha256
+} from '../../commandRequest.js';
 
 export const workManagementClientCommandTypes = {
   projectCreate: 'work_management.project.create',
@@ -64,7 +70,6 @@ export const workManagementClientCommandTypes = {
 } as const;
 
 type WorkManagementClientCommandType = (typeof workManagementClientCommandTypes)[keyof typeof workManagementClientCommandTypes];
-type WorkManagementCommandPayload = { operationIdentity: string; inputSha256: string };
 
 /** Local transport 重连复用此处一次生成的 Body，不能重新生成 command 或 operation identity。 */
 export async function buildWorkManagementCommandRequest<TInput extends object>(input: {
@@ -76,33 +81,13 @@ export async function buildWorkManagementCommandRequest<TInput extends object>(i
   /** 既有公开幂等键可映射为稳定资源身份；网络重连仍复用同一个已构造 Body。 */
   operationSeed?: string;
   value: TInput;
-}): Promise<{ command: CommandEnvelope<WorkManagementCommandPayload>; input: TInput }> {
-  const operationIdentity = `${input.operationPrefix}${input.operationSeed ? (await sha256(`${input.commandType}\0${input.operationSeed}`)).slice(0, 32) : randomIdentity()}`;
-  const inputSha256 = await sha256(canonicalCommandInputJson(input.value));
-  return {
-    command: {
-      schemaGeneration: commandEnvelopeSchemaGeneration,
-      commandId: `command_work_management_${randomIdentity()}`,
-      commandType: input.commandType,
-      actor: { kind: 'local_api', id: 'zeus-desktop-work-management' },
-      scope: { kind: input.scopeKind, id: input.scopeId(operationIdentity) },
-      expectedRevision: input.expectedRevision ?? null,
-      idempotencyKey: `${input.commandType}:${operationIdentity}`,
-      issuedAt: new Date().toISOString(),
-      payload: { operationIdentity, inputSha256 },
-    },
-    input: input.value,
-  };
-}
-
-async function sha256(value: string): Promise<string> {
-  const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function randomIdentity(): string {
-  if (typeof globalThis.crypto.randomUUID === 'function') return globalThis.crypto.randomUUID().replaceAll('-', '');
-  const bytes = new Uint8Array(16);
-  globalThis.crypto.getRandomValues(bytes);
-  return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}): Promise<{ command: CommandEnvelope<RendererCommandPayload>; input: TInput }> {
+    const operationIdentity = `${input.operationPrefix}${input.operationSeed ? (await sha256(`${input.commandType}\0${input.operationSeed}`)).slice(0, 32) : randomIdentity(true)}`;
+    return buildRendererCommandRequest({
+        ...input,
+        scopeId: input.scopeId(operationIdentity),
+        operationIdentity,
+        commandIdPrefix: 'command_work_management_',
+        actorId: 'zeus-desktop-work-management',
+    });
 }

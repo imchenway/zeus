@@ -1,20 +1,15 @@
 #!/usr/bin/env node
 /* global console, process */
-import { createHash } from 'node:crypto';
-import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import {mkdir, readdir, readFile, stat, writeFile} from 'node:fs/promises';
+import {dirname, join, resolve} from 'node:path';
+import {fileURLToPath, pathToFileURL} from 'node:url';
+import {parseBoolean, sha256File} from './release-script-utils.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(scriptDir, '..');
 const defaultRepository = 'imchenway/zeus';
 const defaultHomebrewTap = 'imchenway/tap';
 const currentExecutionHostProtocolVersion = 2;
-
-async function sha256File(filePath) {
-  const content = await readFile(filePath);
-  return createHash('sha256').update(content).digest('hex');
-}
 
 function normalizeVersion(version) {
   const trimmed = String(version ?? '')
@@ -37,14 +32,6 @@ function normalizeHomebrewTap(homebrewTap) {
     .replace(/^https:\/\/github\.com\//u, '')
     .replace(/\.git$/u, '');
   return trimmed || defaultHomebrewTap;
-}
-
-function parseBoolean(value) {
-  return ['1', 'true', 'yes'].includes(
-    String(value ?? '')
-      .trim()
-      .toLowerCase(),
-  );
 }
 
 export function renderReleaseManifest(input) {
@@ -137,8 +124,8 @@ async function main() {
   const repository = process.argv[4] ?? defaultRepository;
   const outputPath = process.argv[5] ?? join(rootDir, 'dist', 'zeus-release-manifest.json');
   const homebrewTap = process.argv[6] ?? defaultHomebrewTap;
-  const signed = parseBoolean(process.argv[7] ?? process.env.ZEUS_RELEASE_SIGNED);
-  const notarized = parseBoolean(process.argv[8] ?? process.env.ZEUS_RELEASE_NOTARIZED);
+    const signed = parseBoolean('ZEUS_RELEASE_SIGNED', process.argv[7] ?? process.env.ZEUS_RELEASE_SIGNED, false);
+    const notarized = parseBoolean('ZEUS_RELEASE_NOTARIZED', process.argv[8] ?? process.env.ZEUS_RELEASE_NOTARIZED, false);
   const distDir = resolve(rootDir, process.env.ZEUS_RELEASE_OUTPUT_DIR?.trim() || 'dist');
   const result = await generateReleaseManifest({
     version,

@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 /* global AbortController, URL, clearTimeout, console, fetch, process, setTimeout */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { isDeepStrictEqual } from 'node:util';
-import { validateCommandDefinitionInput } from '../packages/shared/dist/index.js';
+import {existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join, resolve} from 'node:path';
+import {isDeepStrictEqual} from 'node:util';
+import {validateCommandDefinitionInput} from '../packages/shared/dist/index.js';
+import {parseBoolean} from './release-script-utils.mjs';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const manifestPath = join(import.meta.dirname, 'zeus-release-command-definitions.json');
@@ -323,14 +324,6 @@ function requiredSecret(rawValue, name) {
   const value = requiredValue(rawValue, name);
   if (value.length < 16) throw new Error(`${name} 格式无效。`);
   return value;
-}
-
-function parseBoolean(name, rawValue, defaultValue) {
-  if (rawValue === undefined || rawValue.trim() === '') return defaultValue;
-  const normalized = rawValue.trim().toLocaleLowerCase();
-  if (['1', 'true', 'yes'].includes(normalized)) return true;
-  if (['0', 'false', 'no'].includes(normalized)) return false;
-  throw new Error(`${name} 必须是布尔值；当前值为 ${rawValue}。`);
 }
 
 function resolveOutputDirectory() {

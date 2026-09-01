@@ -1,76 +1,96 @@
-import { type ClipboardEvent as ReactClipboardEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from 'react';
-import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import {
-  defaultTaskManagementStatusConfig,
-  extractZentaoTaskLink,
-  isTaskStatusFilter,
-  normalizeTaskManagementStatusConfig,
-  type ProjectCodeWorkspacePreference,
-  type TaskManagementStatusConfig,
-  type TaskManagementStatusDefinition,
-  type ZentaoTaskExtract,
+    type ClipboardEvent as ReactClipboardEvent,
+    type FormEvent,
+    type KeyboardEvent as ReactKeyboardEvent,
+    type ReactNode,
+    type RefObject,
+    useEffect,
+    useMemo,
+    useRef,
+    useState
+} from 'react';
+import {WarningCircleIcon as WarningCircle} from '@phosphor-icons/react/dist/csr/WarningCircle';
+import {
+    defaultTaskManagementStatusConfig,
+    extractZentaoTaskLink,
+    isTaskStatusFilter,
+    normalizeTaskManagementStatusConfig,
+    type ProjectCodeWorkspacePreference,
+    type TaskManagementStatusConfig,
+    type TaskManagementStatusDefinition,
+    type ZentaoTaskExtract,
 } from '@zeus/shared';
-import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../../ui/pendingResourcePolicy.js';
-import { TaskAttachmentPreviewList } from '../../task/TaskAttachmentPreviewList.js';
-import { type NativeConversationStartStorage, type SessionWorkspaceTask } from '../../session/SessionWorkspace.js';
-import type { NativeConversationChoice, NativeConversationChoicesSnapshot, NativeProjectConversationChoicesSnapshot } from '../../session/sessionTypes.js';
-import { compareConversationStageUpdatedDesc } from '../../session/conversationOrdering.js';
-import type { SessionControllerClient } from '../../session/useSessionController.js';
-import { type TaskModelPushPendingState } from '../../task/TaskModelPushPendingWorkspace.js';
-import { languageCopy, type AppLanguage } from './workspaceCopy.js';
+import {PENDING_RESOURCE_LONG_TEXT_THRESHOLD} from '../../ui/pendingResourcePolicy.js';
+import {TaskAttachmentPreviewList} from '../../task/TaskAttachmentPreviewList.js';
+import {type NativeConversationStartStorage, type SessionWorkspaceTask} from '../../session/SessionWorkspace.js';
+import type {
+    NativeConversationChoice,
+    NativeConversationChoicesSnapshot,
+    NativeProjectConversationChoicesSnapshot
+} from '../../session/sessionTypes.js';
+import {compareConversationStageUpdatedDesc} from '../../session/conversationOrdering.js';
+import type {SessionControllerClient} from '../../session/useSessionController.js';
+import {type TaskModelPushPendingState} from '../../task/TaskModelPushPendingWorkspace.js';
+import {type AppLanguage, languageCopy} from './workspaceCopy.js';
 import {
-  type TaskAttachmentCandidate,
-  type TaskAttachmentRestoreTarget,
-  taskAttachmentsForField,
-  type TaskAttachmentView,
-  type TaskResourceAuthorizationResult,
-  type TaskResourcePayload,
-  toPersistedTaskAttachment,
+    type TaskAttachmentCandidate,
+    type TaskAttachmentRestoreTarget,
+    taskAttachmentsForField,
+    type TaskAttachmentView,
+    type TaskResourceAuthorizationResult,
+    type TaskResourcePayload,
+    toPersistedTaskAttachment,
 } from '../../task/taskAttachments.js';
-import { normalizeTaskTableColumnPreferences, normalizeTaskTableEnumSortOrders, resolveTaskManagementStatus, type TaskWorkspaceViewMode } from '../../task/taskWorkspaceModel.js';
-import { ZeusSelect } from '../../ZeusSelect.js';
-import { Button, type ButtonVariant } from '../../ui/Button.js';
-import { ModalPortal } from '../../ui/ModalPortal.js';
 import {
-  type AiRuntimeAdapterDescriptor,
-  type AiRuntimeAdapterStatus,
-  type AiRuntimeLogEntry,
-  type AiRuntimeSession,
-  type AiRuntimeSessionStatus,
-  type AppShellSettings,
-  type DashboardClient,
-  type DashboardSnapshot,
-  type DeleteTaskRequest,
-  type ExecutionHostTransition,
-  type GitDiffSummary,
-  type GitOperationConfirmation,
-  type GraphConversationHistoryItem,
-  type GraphQuestionAnswer,
-  type GraphViewSnapshot,
-  type GraphViewType,
-  type ProjectConfig,
-  type ProjectConversationAttentionState,
-  type ProjectDatabaseSecretSnapshot,
-  type ProjectRecord,
-  type ReleaseStatusSnapshot,
-  type ReleaseUpdateStatusSnapshot,
-  type RuntimeOperationConfirmation,
-  type RuntimeSettings,
-  type RuntimeStatusSnapshot,
-  type SecurityAuditLogEntry,
-  type SecuritySecretsSnapshot,
-  type TaskEventRecord,
-  type TaskManagementStatus,
-  type TaskPageViewMode,
-  type TaskPriority,
-  type TaskRecord,
-  type TaskStatusFilter,
-  type TaskTableColumnPreferences,
-  type TaskTemplateRecord,
-  type TaskType,
-  ZeusApiError,
-  type ZeusRealtimeEvent,
+    normalizeTaskTableColumnPreferences,
+    normalizeTaskTableEnumSortOrders,
+    resolveTaskManagementStatus,
+    type TaskWorkspaceViewMode
+} from '../../task/taskWorkspaceModel.js';
+import {ZeusSelect} from '../../ZeusSelect.js';
+import {Button, type ButtonVariant} from '../../ui/Button.js';
+import {ModalPortal} from '../../ui/ModalPortal.js';
+import {
+    type AiRuntimeAdapterDescriptor,
+    type AiRuntimeAdapterStatus,
+    type AiRuntimeLogEntry,
+    type AiRuntimeSession,
+    type AiRuntimeSessionStatus,
+    type AppShellSettings,
+    type DashboardClient,
+    type DashboardSnapshot,
+    type DeleteTaskRequest,
+    type ExecutionHostTransition,
+    type GitDiffSummary,
+    type GitOperationConfirmation,
+    type GraphConversationHistoryItem,
+    type GraphQuestionAnswer,
+    type GraphViewSnapshot,
+    type GraphViewType,
+    type ProjectConfig,
+    type ProjectConversationAttentionState,
+    type ProjectDatabaseSecretSnapshot,
+    type ProjectRecord,
+    type ReleaseStatusSnapshot,
+    type ReleaseUpdateStatusSnapshot,
+    type RuntimeOperationConfirmation,
+    type RuntimeSettings,
+    type RuntimeStatusSnapshot,
+    type SecurityAuditLogEntry,
+    type SecuritySecretsSnapshot,
+    type TaskEventRecord,
+    type TaskManagementStatus,
+    type TaskPageViewMode,
+    type TaskPriority,
+    type TaskRecord,
+    type TaskStatusFilter,
+    type TaskTableColumnPreferences,
+    type TaskTemplateRecord,
+    type TaskType,
+    ZeusApiError,
+    type ZeusRealtimeEvent,
 } from '../../apiClient.js';
+
 export type MainNavTarget = 'projects' | 'conversations' | 'automations' | 'skills' | 'settings';
 export type LegacyMainNavTarget = MainNavTarget | 'dashboard' | 'tasks' | 'code-map' | 'runtime' | 'git-diff' | 'telegram' | 'settings-data';
 export type ProjectWorkspaceSection = 'tasks' | 'git' | 'code' | 'sessions' | 'project-settings';
@@ -543,7 +563,7 @@ export function shouldRefreshNativeConversationListForRealtimeEvent(event: ZeusR
 }
 
 export type WorkMode = ProjectConfig['defaultWorkMode'];
-export type CodeMapToolPanel = 'runtime' | 'search' | 'qa' | 'mermaid' | 'entities';
+export type CodeMapToolPanel = 'search' | 'qa' | 'mermaid' | 'entities';
 export type DiagramExportFormat = 'mermaid' | 'plantuml';
 export type GraphNodeTaskFeedback = 'idle' | 'creating' | 'created' | 'failed';
 export type GraphSourceOpenFeedback = 'idle' | 'opening' | 'opened' | 'failed';
@@ -1545,7 +1565,9 @@ export function orderProjectsByPinnedIds(projects: ProjectRecord[], pinnedProjec
 
 export const graphViewOptions: Array<{ type: GraphViewType }> = [{ type: 'architecture' }, { type: 'module' }, { type: 'table' }, { type: 'module_detail' }, { type: 'api_sequence' }, { type: 'module_flow' }, { type: 'method_logic' }];
 
-export const codeMapToolPanels: Array<{ id: CodeMapToolPanel }> = [{ id: 'runtime' }, { id: 'search' }, { id: 'qa' }, { id: 'mermaid' }, { id: 'entities' }];
+export const codeMapToolPanels: Array<{
+    id: CodeMapToolPanel
+}> = [{id: 'search'}, {id: 'qa'}, {id: 'mermaid'}, {id: 'entities'}];
 
 export function TaskCreateFieldAttachments(props: {
   field: TaskCreateAttachmentField;

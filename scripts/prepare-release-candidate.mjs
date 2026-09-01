@@ -1,9 +1,19 @@
 #!/usr/bin/env node
 /* global console, process */
-import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import {spawnSync} from 'node:child_process';
+import {
+    copyFileSync,
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    statSync,
+    unlinkSync,
+    writeFileSync
+} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {dirname, join, resolve} from 'node:path';
+import {assertVersionAfterTag, parseBoolean, requiredVersion, validateReleaseNotes} from './release-script-utils.mjs';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 
@@ -23,7 +33,7 @@ function main() {
   const targetNotesPath = join(repositoryRoot, 'docs', 'releases', `v${releaseVersion}.md`);
   const sourceNotes = readFileSync(sourceNotesPath, 'utf8');
 
-  assertVersionAfterBase(releaseVersion, latestTag);
+    assertVersionAfterTag(releaseVersion, latestTag, '。');
   assertTagDoesNotExist(releaseVersion);
   validateReleaseNotes(sourceNotes, releaseVersion);
 
@@ -90,14 +100,6 @@ function main() {
   console.log(`ZEUS_ARTIFACT_FILE=${notesSnapshotPath}`);
 }
 
-function requiredVersion(rawValue) {
-  const version = rawValue?.trim() ?? '';
-  if (!/^\d+\.\d+\.\d+$/u.test(version)) {
-    throw new Error('RELEASE_VERSION 为必填稳定版本号，例如 0.1.10。');
-  }
-  return version;
-}
-
 function requiredFile(rawValue, name) {
   const value = rawValue?.trim() ?? '';
   if (!value) throw new Error(`${name} 为必填文件路径。`);
@@ -107,57 +109,15 @@ function requiredFile(rawValue, name) {
   return path;
 }
 
-function parseBoolean(name, rawValue, defaultValue) {
-  if (rawValue === undefined || rawValue.trim() === '') return defaultValue;
-  const normalized = rawValue.trim().toLocaleLowerCase();
-  if (['1', 'true', 'yes'].includes(normalized)) return true;
-  if (['0', 'false', 'no'].includes(normalized)) return false;
-  throw new Error(`${name} 必须是布尔值；当前值为 ${rawValue}。`);
-}
-
 function resolveLatestStableTag() {
   const tag = git(['describe', '--tags', '--abbrev=0', '--match', 'v[0-9]*']);
   if (!/^v\d+\.\d+\.\d+$/u.test(tag)) throw new Error(`最新稳定标签格式无效：${tag}`);
   return tag;
 }
 
-function assertVersionAfterBase(version, tag) {
-  const target = version.split('.').map(Number);
-  const base = tag.slice(1).split('.').map(Number);
-  for (let index = 0; index < 3; index += 1) {
-    if (target[index] > base[index]) return;
-    if (target[index] < base[index]) break;
-  }
-  throw new Error(`目标版本 ${version} 必须高于最新稳定标签 ${tag}。`);
-}
-
 function assertTagDoesNotExist(version) {
   const result = spawnSync('git', ['rev-parse', '--verify', '--quiet', `refs/tags/v${version}`], { cwd: repositoryRoot });
   if (result.status === 0) throw new Error(`标签 v${version} 已存在，拒绝重新准备同版本。`);
-}
-
-function validateReleaseNotes(markdown, version) {
-  const requiredTitle = `# Zeus ${version} 更新内容`;
-  if (!markdown.startsWith(`${requiredTitle}\n`)) throw new Error(`Release notes 标题必须是：${requiredTitle}`);
-  for (const heading of ['## 如何升级', '## 系统要求与已知限制', '## 发布验证']) {
-    if (!markdown.includes(`\n${heading}\n`)) throw new Error(`Release notes 缺少必要章节：${heading}`);
-  }
-  if (!markdown.includes('brew upgrade --cask imchenway/tap/zeus')) {
-    throw new Error('Release notes 缺少 Homebrew 升级命令。');
-  }
-  if (!markdown.includes(`Zeus-${version}-arm64.dmg`)) {
-    throw new Error(`Release notes 缺少版本化 DMG 名称：Zeus-${version}-arm64.dmg。`);
-  }
-  if (/docs\/releases\/v[^\s]+\.md|TASK_\d+/u.test(markdown)) {
-    throw new Error('Release notes 泄漏内部任务或发布文档路径。');
-  }
-  const leakedCommentary = markdown.match(/用户要求只返回|confidence\s*[=:：]|uncertainties\s*[=:：]|以下无其他字段|最终正文如上/iu)?.[0];
-  if (leakedCommentary) throw new Error(`Release notes 混入生成过程说明“${leakedCommentary}”。`);
-  const draftOnlyPublicationState = markdown.match(/本次发布前需完成以下验证流程|将由\s*(?:Release Workflow|发布流程)|发布流程将在草稿通过后执行|尚未发生/iu)?.[0];
-  if (draftOnlyPublicationState) throw new Error(`Release notes 包含只在草稿阶段成立的表述“${draftOnlyPublicationState}”。`);
-  if (/对\s*DMG\s*进行开发者签名和 Apple 公证/iu.test(markdown)) {
-    throw new Error('Release notes 无条件承诺 Developer ID 签名与 Apple 公证。');
-  }
 }
 
 function readPackage(path) {

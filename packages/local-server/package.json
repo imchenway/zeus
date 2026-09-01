@@ -192,13 +192,9 @@
     "@zeus/code-indexer": "workspace:*",
     "@zeus/git-core": "workspace:*",
     "@zeus/graph-engine": "workspace:*",
-    "@zeus/project-core": "workspace:*",
-    "@zeus/release-core": "workspace:*",
     "@zeus/security-core": "workspace:*",
     "@zeus/shared": "workspace:*",
     "@zeus/storage": "workspace:*",
-    "@zeus/task-core": "workspace:*",
-    "@zeus/telegram-adapter": "workspace:*",
     "fastify": "^5.4.0"
   }
 }

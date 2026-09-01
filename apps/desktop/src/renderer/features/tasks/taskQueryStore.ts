@@ -1,6 +1,7 @@
-import type { TaskBoardViewSnapshot } from '@zeus/shared';
-import type { TaskRecord } from '../../apiClient.js';
-import type { TaskApiClient } from './taskApiClient.js';
+import type {TaskBoardViewSnapshot} from '@zeus/shared';
+import type {TaskRecord} from '../../apiClient.js';
+import type {TaskApiClient} from './taskApiClient.js';
+import {errorMessage, ExternalStore} from '../../externalStore.js';
 
 export interface TaskQuerySnapshot {
   items: readonly TaskRecord[];
@@ -10,22 +11,12 @@ export interface TaskQuerySnapshot {
   revision: number;
 }
 
-export class TaskQueryStore {
-  readonly subscribe = (listener: () => void): (() => void) => {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  };
-
-  readonly getSnapshot = (): TaskQuerySnapshot => this.snapshot;
-
-  private readonly listeners = new Set<() => void>();
-  private snapshot: TaskQuerySnapshot;
-
+export class TaskQueryStore extends ExternalStore<TaskQuerySnapshot> {
   constructor(
     private readonly client: TaskApiClient | null,
     initialItems: readonly TaskRecord[],
   ) {
-    this.snapshot = { items: initialItems, boards: {}, loading: false, error: null, revision: 0 };
+      super({items: initialItems, boards: {}, loading: false, error: null, revision: 0});
   }
 
   replace(items: readonly TaskRecord[]): void {
@@ -42,7 +33,7 @@ export class TaskQueryStore {
       this.publish({ ...this.snapshot, loading: false });
       return items;
     } catch (error) {
-      this.publish({ ...this.snapshot, loading: false, error: messageFrom(error) });
+        this.publish({...this.snapshot, loading: false, error: errorMessage(error)});
       throw error;
     }
   }
@@ -76,13 +67,4 @@ export class TaskQueryStore {
     if (!this.client) throw new Error('Task API client is unavailable.');
     return this.client;
   }
-
-  private publish(snapshot: TaskQuerySnapshot): void {
-    this.snapshot = snapshot;
-    for (const listener of this.listeners) listener();
-  }
-}
-
-function messageFrom(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

@@ -49,15 +49,10 @@
     "@phosphor-icons/react": "^2.1.10",
     "@types/qrcode": "1.5.6",
     "@xterm/xterm": "^6.0.0",
-    "@xyflow/react": "^12.11.0",
     "codemirror": "^6.0.2",
     "framer-motion": "12.42.0",
-    "graphology": "^0.26.0",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0",
-    "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1",
-    "sigma": "^3.0.3"
+    "react-dom": "^19.1.0"
   },
   "description": "Zeus AI development workbench for projects, coding agents, code intelligence, and Git workflows",
   "author": "Zeus Contributors"

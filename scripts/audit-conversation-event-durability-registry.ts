@@ -1,8 +1,13 @@
-import { readFile, readdir } from 'node:fs/promises';
-import { basename, relative, resolve } from 'node:path';
+import {readdir, readFile} from 'node:fs/promises';
+import {basename, relative, resolve} from 'node:path';
 import process from 'node:process';
 import ts from 'typescript';
-import { classifyConversationEventDurability, conversationEventDurabilityRegistry, conversationEventTypeRegistry, type ConversationEventDurabilityLevel } from '../packages/local-server/src/eventFlowControl.js';
+import {
+    classifyConversationEventDurability,
+    type ConversationEventDurabilityLevel,
+    conversationEventDurabilityRegistry,
+    conversationEventTypeRegistry
+} from '../packages/local-server/src/eventFlowControl.js';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const sourceRoot = resolve(repositoryRoot, 'packages/local-server/src');
@@ -105,7 +110,7 @@ function propertyName(name: ts.PropertyName): string | null {
 }
 
 function isConversationEventType(value: string): boolean {
-  return /^conversation\.[a-zA-Z0-9_.-]+$/u.test(value);
+    return /^(?:conversation|plugin)\.[a-zA-Z0-9_.-]+$/u.test(value);
 }
 
 async function collectTypeScriptFiles(directory: string): Promise<string[]> {

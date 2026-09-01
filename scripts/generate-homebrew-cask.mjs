@@ -1,17 +1,14 @@
 #!/usr/bin/env node
 /* global console, process */
-import { createHash } from 'node:crypto';
-import { readFile, mkdir, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import {mkdir, readFile, writeFile} from 'node:fs/promises';
+import {dirname, join, resolve} from 'node:path';
+import {fileURLToPath, pathToFileURL} from 'node:url';
+import {sha256File} from './release-script-utils.mjs';
+
+export {sha256File} from './release-script-utils.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(scriptDir, '..');
-
-export async function sha256File(filePath) {
-  const content = await readFile(filePath);
-  return createHash('sha256').update(content).digest('hex');
-}
 
 function normalizeCaskArchitecture(arch) {
   if (arch === 'arm64') {

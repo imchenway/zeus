@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto';
-import { nanoid } from 'nanoid';
-import type { SqlValue, ZeusDatabasePort } from './databasePort.js';
+import {createHash} from 'node:crypto';
+import {randomId} from './randomId.js';
+import type {SqlValue, ZeusDatabasePort} from './databasePort.js';
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -675,7 +675,7 @@ export class TerminalEventRepository {
 
   append(input: AppendTerminalEventInput): ZeusTerminalEventRecord {
     const record: ZeusTerminalEventRecord = {
-      id: `terminal_event_${nanoid(12)}`,
+        id: `terminal_event_${randomId(12)}`,
       sessionId: input.sessionId,
       taskId: input.taskId ?? null,
       seq: input.seq,

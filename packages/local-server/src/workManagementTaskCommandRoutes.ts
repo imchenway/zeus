@@ -1,18 +1,17 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { CommandActor, TaskAttachmentReference, TaskBoardMoveRequest } from '@zeus/shared';
-import type { CommandDeliveryOutcome } from '@zeus/storage';
-import type { TaskPriority, TaskType, ZeusTaskRecord } from '@zeus/storage';
-import type { TaskStatus } from '@zeus/task-core';
+import type {FastifyInstance, FastifyReply, FastifyRequest} from 'fastify';
+import type {CommandActor, TaskAttachmentReference, TaskBoardMoveRequest} from '@zeus/shared';
+import type {CommandDeliveryOutcome, TaskPriority, TaskType, ZeusTaskRecord} from '@zeus/storage';
+import type {TaskStatus} from './taskCore.js';
 import {
-  type PreparedTaskStatusTelegramEffect,
-  type WorkManagementMutationRequest,
-  WorkManagementCommandApplication,
-  WorkManagementCommandApplicationError,
-  workManagementCommandHttpError,
-  workManagementCommandTypes,
-  workManagementExternalOutcome,
+    type PreparedTaskStatusTelegramEffect,
+    WorkManagementCommandApplication,
+    WorkManagementCommandApplicationError,
+    workManagementCommandHttpError,
+    workManagementCommandTypes,
+    workManagementExternalOutcome,
+    type WorkManagementMutationRequest,
 } from './workManagementCommandApplication.js';
-import { WorkManagementRouteError } from './workManagementCoreCommandRoutes.js';
+import {WorkManagementRouteError} from './workManagementCoreCommandRoutes.js';
 
 export interface UpdateTaskStatusCommandInput {
   status: TaskStatus;

@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto';
-import { nanoid } from 'nanoid';
-import type { ZeusDatabasePort } from './databasePort.js';
+import {createHash} from 'node:crypto';
+import {randomId} from './randomId.js';
+import type {ZeusDatabasePort} from './databasePort.js';
 
 export const pluginStoreSchemaMigrationId = '20260829_0001_zeus_plugin_host';
 export const pluginStoreSourceIdentityMigrationId = '20260829_0002_plugin_source_identity';
@@ -349,8 +349,8 @@ export class PluginRepository {
   recordInstallation(input: RecordPluginInstallationInput): { plugin: PluginRegistrationRecord; revision: PluginRevisionRecord } {
     const timestamp = input.createdAt ?? new Date().toISOString();
     const existing = input.pluginId ? this.get(input.pluginId) : undefined;
-    const pluginId = existing?.id ?? `plugin_${nanoid(16)}`;
-    const revisionId = `plugin_revision_${nanoid(16)}`;
+      const pluginId = existing?.id ?? `plugin_${randomId(16)}`;
+      const revisionId = `plugin_revision_${randomId(16)}`;
     const previousHooks = existing ? this.listHooks(existing.activeRevisionId) : [];
     this.db.transaction(() => {
       if (existing) {
@@ -493,7 +493,7 @@ export class PluginRepository {
   upsertMarketplace(input: Omit<PluginMarketplaceRecord, 'id' | 'revision' | 'createdAt' | 'updatedAt'> & { id?: string; createdAt?: string }): PluginMarketplaceRecord {
     const timestamp = input.createdAt ?? new Date().toISOString();
     const existing = input.id ? this.getMarketplace(input.id) : undefined;
-    const id = existing?.id ?? `plugin_marketplace_${nanoid(14)}`;
+      const id = existing?.id ?? `plugin_marketplace_${randomId(14)}`;
     if (existing) {
       this.db.execute(
         `UPDATE plugin_marketplaces SET name = ?, scope = ?, project_id = ?, source_kind = ?, source_locator = ?, source_ref = ?, source_subdirectory = ?, snapshot_path = ?, enabled = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,

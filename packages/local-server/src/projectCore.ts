@@ -1,3 +1,4 @@
+/** Local Server 的项目配置领域规则。 */
 export type ProjectWorkMode = 'plan' | 'develop' | 'review' | 'debug';
 export type ProjectIndexScope = 'project' | 'src' | 'custom';
 export type ProjectServiceTierPreference = 'standard' | 'priority';
