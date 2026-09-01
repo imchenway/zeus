@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { ConversationSnapshotV2Error, type ConversationSnapshotV2Repository, conversationSnapshotV2StructureGeneration } from '@zeus/storage';
+import { ConversationSnapshotV2Error, type ConversationSnapshotV2ExecutionContext, type ConversationSnapshotV2Repository, conversationSnapshotV2StructureGeneration } from '@zeus/storage';
 import type { ConversationSnapshotCompatibilityTracker } from './conversationSnapshotCompatibility.js';
 
 interface ConversationOwnershipRecord {
@@ -13,6 +13,7 @@ interface ConversationSnapshotV2ApiOptions {
   compatibility: ConversationSnapshotCompatibilityTracker;
   projectExists: (projectId: string) => boolean;
   getConversation: (conversationId: string) => ConversationOwnershipRecord | undefined;
+  readExecutionContext?: (conversationId: string) => Promise<ConversationSnapshotV2ExecutionContext>;
   readQueueState: (conversationId: string) => unknown;
 }
 
@@ -63,10 +64,12 @@ export function registerConversationSnapshotV2Api(options: ConversationSnapshotV
         if (request.query.includeMetrics !== undefined && request.query.includeMetrics !== 'true' && request.query.includeMetrics !== 'false') {
           throw new ConversationSnapshotV2Error('ZEUS_CONVERSATION_SNAPSHOT_V2_INVALID_ARGUMENT', 'includeMetrics 必须为 true 或 false。', 400);
         }
+        const executionContext = await options.readExecutionContext?.(request.params.conversationId);
         const snapshot = repository.readSnapshot(request.params.conversationId, {
           ...(request.query.closedTurns === undefined ? {} : { closedTurnLimit: Number(request.query.closedTurns) }),
           ...(request.query.byteLimit === undefined ? {} : { byteLimit: Number(request.query.byteLimit) }),
           ...(request.query.includeMetrics === undefined ? {} : { includeSessionMetrics: request.query.includeMetrics === 'true' }),
+          ...(executionContext ? { executionContext } : {}),
         });
         compatibility.recordV2(request);
         return snapshot;

@@ -56,6 +56,7 @@ export const httpReadEffectPolicy = Object.freeze({
       calleePatterns: Object.freeze([
         '^(?:readGit[A-Za-z_$]*|resolveProjectGitScope|resolveTaskGit[A-Za-z_$]*|readWorkspaceGit[A-Za-z_$]*)$',
         '^(?:git|gitService|gitWorkbench|workspaceGit)[A-Za-z_$]*\\.(?:diff|get|list|log|read|resolve|show|status)$',
+        '^options\\.readExecutionContext$',
         '^options\\.application\\.(?:readTaskPush|readStatus|readWorkbench|readCommit|readComparison|readDiff|readOverview)$',
         '^projectGitQueries\\.resolveProjectScope$',
       ]),
@@ -160,6 +161,16 @@ export const httpReadEffectPolicy = Object.freeze({
         disposition: 'fail_closed_projection',
         sourceMarkers: Object.freeze(['readOverviewStatus: (project) =>', "Promise.resolve(projectGitQueries.unsupportedStatus('只读验证模式不访问正式项目 Git"]),
         verifierMarkers: Object.freeze(['const overview = await requestJson', '项目总览必须保留复制库查询，但显式降级 Git']),
+      }),
+    }),
+    Object.freeze({
+      id: 'conversation-snapshot-execution-context-validation-projection',
+      operationPatterns: Object.freeze(['^GET /api/projects/:projectId/conversations/:conversationId/snapshot-v2$']),
+      effects: Object.freeze(['copied_db', 'git']),
+      externalInValidation: false,
+      validation: Object.freeze({
+        disposition: 'fail_closed_projection',
+        sourceMarkers: Object.freeze(['readExecutionContext: async (conversationId) =>', 'if (readOnlyValidation) return { cwd: null, branch: null, isGitRepository: null }']),
       }),
     }),
     Object.freeze({
