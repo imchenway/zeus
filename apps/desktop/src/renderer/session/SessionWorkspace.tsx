@@ -80,7 +80,7 @@ import { presentModelOptions } from '../modelOptionPresentation.js';
 import { NewConversationExecutionContext } from './NewConversationExecutionContext.js';
 import { formatVisibleApplicationError, useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import { projectModelServiceTierSelection, toProjectModelServiceTierPreference, upsertProjectModelServiceTierPreference } from './projectServiceTierPreferences.js';
-import { ExtensionMentionSelector } from './ExtensionMentionSelector.js';
+import { StructuredComposerInput, type StructuredComposerSelection } from './StructuredComposerInput.js';
 
 export interface SessionWorkspaceTaskManagementStatus {
   id: string;
@@ -117,6 +117,10 @@ export interface SessionWorkspaceStartInput {
   goalObjective?: string;
   skillId?: string;
   pluginReferences?: PluginSkillReference[];
+  expertMentions?: Array<{ employeeId: string }>;
+  skillReferences?: Array<{ id: string }>;
+  computerUseRequested?: boolean;
+  displayText?: string;
 }
 
 export interface ProjectSessionWorkspaceStartInput {
@@ -130,6 +134,10 @@ export interface ProjectSessionWorkspaceStartInput {
   effort?: string;
   goalObjective?: string;
   pluginReferences?: PluginSkillReference[];
+  expertMentions?: Array<{ employeeId: string }>;
+  skillReferences?: Array<{ id: string }>;
+  computerUseRequested?: boolean;
+  displayText?: string;
 }
 
 export interface SessionWorkspaceActions {
@@ -141,6 +149,8 @@ export interface SessionWorkspaceActions {
   onLoadProjectConfig?: (projectId: string) => Promise<ProjectConfig>;
   onSaveProjectModelServiceTierPreference?: (projectId: string, input: ProjectModelServiceTierPreference) => Promise<ProjectConfig>;
   onLoadSkills?: (projectId?: string, forceReload?: boolean) => Promise<import('../features/codex/codexContracts.js').SkillCatalog>;
+  onLoadDigitalEmployees?: (projectId: string) => Promise<import('../features/digital-employees/digitalEmployeeContracts.js').DigitalEmployeeRecord[]>;
+  onOpenComputerSettings?: () => void;
   onSelectNewConversationProject?: (projectId: string) => void;
   onLoadNewConversationProjectGit?: (projectId: string) => Promise<ProjectGitWorkbenchSnapshot>;
   onExecuteNewConversationProjectGit?: (projectId: string, repositoryId: string, action: ProjectGitAction) => Promise<ProjectGitActionResponse>;
@@ -247,6 +257,10 @@ type StartNativeConversationPayload =
       goalObjective?: string;
       skillId?: string;
       pluginReferences?: PluginSkillReference[];
+      expertMentions?: Array<{ employeeId: string }>;
+      skillReferences?: Array<{ id: string }>;
+      computerUseRequested?: boolean;
+      displayText?: string;
     }
   | { mode: 'resume'; conversationId: string; content: string; collaborationMode: NativeCollaborationMode }
   | {
@@ -304,6 +318,8 @@ export interface ConnectedSessionWorkspaceProps {
   onStartConversation?: SessionWorkspaceActions['onStartConversation'];
   onStartProjectConversation?: SessionWorkspaceActions['onStartProjectConversation'];
   onLoadSkills?: SessionWorkspaceActions['onLoadSkills'];
+  onLoadDigitalEmployees?: SessionWorkspaceActions['onLoadDigitalEmployees'];
+  onOpenComputerSettings?: SessionWorkspaceActions['onOpenComputerSettings'];
   onLoadProjectConfig?: SessionWorkspaceActions['onLoadProjectConfig'];
   onSaveProjectModelServiceTierPreference?: SessionWorkspaceActions['onSaveProjectModelServiceTierPreference'];
   onOpenTaskDetail?: SessionWorkspaceActions['onOpenTaskDetail'];
@@ -628,6 +644,8 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       onLoadProjectConfig: props.onLoadProjectConfig,
       onSaveProjectModelServiceTierPreference: props.onSaveProjectModelServiceTierPreference,
       onLoadSkills: props.onLoadSkills,
+      onLoadDigitalEmployees: props.onLoadDigitalEmployees,
+      onOpenComputerSettings: props.onOpenComputerSettings,
       onChooseStartAttachments: props.onChooseAttachments,
     };
   }, [
@@ -645,6 +663,8 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     props.onLoadProjectConfig,
     props.onSaveProjectModelServiceTierPreference,
     props.onLoadSkills,
+    props.onLoadDigitalEmployees,
+    props.onOpenComputerSettings,
     props.onOpenProjectCommands,
     props.onOpenTaskDetail,
     props.onOpenTaskGitDelivery,
@@ -991,6 +1011,10 @@ function buildProjectConversationStartPayload(input: ProjectSessionWorkspaceStar
     ...serviceTierWireOverride(input.serviceTierSelection),
     ...(input.goalObjective ? { goalObjective: input.goalObjective } : {}),
     ...(input.pluginReferences?.length ? { pluginReferences: input.pluginReferences } : {}),
+    ...(input.expertMentions?.length ? { expertMentions: input.expertMentions } : {}),
+    ...(input.skillReferences?.length ? { skillReferences: input.skillReferences } : {}),
+    ...(input.computerUseRequested ? { computerUseRequested: true } : {}),
+    ...(input.displayText ? { displayText: input.displayText } : {}),
   };
 }
 
@@ -1024,6 +1048,10 @@ function isProjectConversationStartRequest(value: unknown): value is StartProjec
     (value.effort === undefined || typeof value.effort === 'string') &&
     (value.goalObjective === undefined || (typeof value.goalObjective === 'string' && Boolean(value.goalObjective.trim()) && [...value.goalObjective].length <= 4_000)) &&
     isPluginSkillReferences(value.pluginReferences) &&
+    isExpertMentions(value.expertMentions) &&
+    isSkillReferences(value.skillReferences) &&
+    (value.computerUseRequested === undefined || typeof value.computerUseRequested === 'boolean') &&
+    (value.displayText === undefined || typeof value.displayText === 'string') &&
     typeof value.idempotencyKey === 'string' &&
     Boolean(value.idempotencyKey) &&
     typeof value.clientUserMessageId === 'string' &&
@@ -1049,6 +1077,14 @@ function isPluginSkillReferences(value: unknown): value is PluginSkillReference[
       value.length <= 64 &&
       value.every((reference) => isRecord(reference) && (reference.kind === 'plugin' || reference.kind === 'skill') && typeof reference.id === 'string' && Boolean(reference.id.trim()) && reference.id.length <= 512))
   );
+}
+
+function isExpertMentions(value: unknown): value is Array<{ employeeId: string }> | undefined {
+  return value === undefined || (Array.isArray(value) && value.length <= 8 && value.every((entry) => isRecord(entry) && typeof entry.employeeId === 'string' && Boolean(entry.employeeId)));
+}
+
+function isSkillReferences(value: unknown): value is Array<{ id: string }> | undefined {
+  return value === undefined || (Array.isArray(value) && value.length <= 8 && value.every((entry) => isRecord(entry) && typeof entry.id === 'string' && Boolean(entry.id)));
 }
 
 function stringField(value: unknown): string | null {
@@ -1202,6 +1238,10 @@ function buildStartNativeConversationPayload(input: SessionWorkspaceStartInput):
       ...(input.goalObjective ? { goalObjective: input.goalObjective } : {}),
       ...(input.skillId ? { skillId: input.skillId } : {}),
       ...(input.pluginReferences?.length ? { pluginReferences: input.pluginReferences } : {}),
+      ...(input.expertMentions?.length ? { expertMentions: input.expertMentions } : {}),
+      ...(input.skillReferences?.length ? { skillReferences: input.skillReferences } : {}),
+      ...(input.computerUseRequested ? { computerUseRequested: true } : {}),
+      ...(input.displayText ? { displayText: input.displayText } : {}),
     };
   }
   if (!content) throw new Error('Native conversation resume/reference content is required.');
@@ -1269,7 +1309,11 @@ function isStartNativeConversationRequest(value: unknown): value is StartNativeC
       (request.collaborationMode === 'default' || request.collaborationMode === 'plan') &&
       serviceTierOverrideField(request.serviceTier) &&
       (request.goalObjective === undefined || (typeof request.goalObjective === 'string' && Boolean(request.goalObjective.trim()) && [...request.goalObjective].length <= 4_000)) &&
-      isPluginSkillReferences(request.pluginReferences)
+      isPluginSkillReferences(request.pluginReferences) &&
+      isExpertMentions(request.expertMentions) &&
+      isSkillReferences(request.skillReferences) &&
+      (request.computerUseRequested === undefined || typeof request.computerUseRequested === 'boolean') &&
+      (request.displayText === undefined || typeof request.displayText === 'string')
     );
   }
   if (!request.content.trim()) return false;
@@ -2216,6 +2260,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         onContextDraftChange={actions.onContextDraftChange}
         projectId={props.conversation?.projectId}
         onLoadExtensions={actions.onLoadSkills}
+        onLoadEmployees={actions.onLoadDigitalEmployees}
+        onOpenComputerSettings={actions.onOpenComputerSettings}
         readOnly={composerReadOnly || interactionAuthorityMissing || props.state.queue?.submissions.some((submission) => submission.pausedReason === 'recovered_unsent')}
         inputBlocked={recoveredInputBlocked}
         runtimeSettings={composerRuntimeSettings}
@@ -2710,6 +2756,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
           onStartProject={actions.onStartProjectConversation}
           onLoadCapabilities={actions.onLoadCapabilities}
           onLoadSkills={actions.onLoadSkills}
+          onLoadDigitalEmployees={actions.onLoadDigitalEmployees}
+          onOpenComputerSettings={actions.onOpenComputerSettings}
           onSelectProject={actions.onSelectNewConversationProject}
           onLoadProjectGit={actions.onLoadNewConversationProjectGit}
           onExecuteProjectGit={actions.onExecuteNewConversationProjectGit}
@@ -2823,6 +2871,8 @@ function NewConversationComposer(props: {
   onStartProject?: SessionWorkspaceActions['onStartProjectConversation'];
   onLoadCapabilities?: SessionWorkspaceActions['onLoadCapabilities'];
   onLoadSkills?: SessionWorkspaceActions['onLoadSkills'];
+  onLoadDigitalEmployees?: SessionWorkspaceActions['onLoadDigitalEmployees'];
+  onOpenComputerSettings?: SessionWorkspaceActions['onOpenComputerSettings'];
   onSelectProject?: SessionWorkspaceActions['onSelectNewConversationProject'];
   onLoadProjectGit?: SessionWorkspaceActions['onLoadNewConversationProjectGit'];
   onExecuteProjectGit?: SessionWorkspaceActions['onExecuteNewConversationProjectGit'];
@@ -2832,7 +2882,14 @@ function NewConversationComposer(props: {
   const copy = labels[props.language];
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const runtimePreferencesInitializedRef = useRef(false);
-  const extensionReferencesRef = useRef(new Map<string, PluginSkillReference>());
+  const structuredSelectionRef = useRef<StructuredComposerSelection>({
+    displayText: props.initialContent ?? '',
+    promptText: props.initialContent ?? '',
+    expertMentions: [],
+    skillReferences: [],
+    pluginReferences: [],
+    computerUseRequested: false,
+  });
   const [content, setContent] = useState(() => props.initialContent ?? '');
   const [attachments, setAttachments] = useState<NativeConversationAttachment[]>(() => [...(props.initialAttachments ?? [])]);
   const [permissionMode, setPermissionMode] = useState<NativePermissionMode>('auto');
@@ -2957,13 +3014,18 @@ function NewConversationComposer(props: {
   }, []);
 
   async function submit(overrides: { content?: string; goalObjective?: string } = {}): Promise<void> {
-    const submittedContent = overrides.content ?? content;
+    const structured = structuredSelectionRef.current;
+    const submittedContent = overrides.content ?? structured.promptText;
+    const submittedDisplayText = overrides.content === undefined ? structured.displayText : overrides.content;
     const submittedGoal = (overrides.goalObjective ?? (goalInputActive ? goalObjective : '')).trim();
     if (!props.owner || submitting || executionContextBusy || capabilitiesLoading || !selectedModel || (!submittedContent.trim() && attachments.length === 0) || (goalInputActive && !submittedGoal)) return;
+    if (submittedGoal && structured.expertMentions.length > 0) {
+      setLocalError(props.language === 'zh-CN' ? '同一草稿不能同时进入目标模式并点名数字员工。' : 'A draft cannot combine goal mode with digital employee mentions.');
+      return;
+    }
     setSubmitting(true);
     setLocalError(null);
     try {
-      const pluginReferences = [...extensionReferencesRef.current].filter(([token]) => submittedContent.includes(token)).map(([, reference]) => reference);
       let accepted: void | boolean | NativeConversationStartPreparation | NativeConversationStartFailure;
       if (props.owner.kind === 'project') {
         if (!props.onStartProject) throw new Error('Project conversation start is unavailable.');
@@ -2977,7 +3039,11 @@ function NewConversationComposer(props: {
           model: selectedModel?.id,
           effort: selectedEffort || undefined,
           ...(submittedGoal ? { goalObjective: submittedGoal } : {}),
-          ...(pluginReferences.length ? { pluginReferences } : {}),
+          ...(structured.pluginReferences.length ? { pluginReferences: structured.pluginReferences } : {}),
+          ...(structured.expertMentions.length ? { expertMentions: structured.expertMentions } : {}),
+          ...(structured.skillReferences.length ? { skillReferences: structured.skillReferences } : {}),
+          ...(structured.computerUseRequested ? { computerUseRequested: true } : {}),
+          displayText: submittedDisplayText,
         });
       } else {
         if (!props.task || !props.onStartTask) throw new Error('Task conversation start is unavailable.');
@@ -2993,7 +3059,11 @@ function NewConversationComposer(props: {
           model: selectedModel?.id,
           effort: selectedEffort || undefined,
           ...(submittedGoal ? { goalObjective: submittedGoal } : {}),
-          ...(pluginReferences.length ? { pluginReferences } : {}),
+          ...(structured.pluginReferences.length ? { pluginReferences: structured.pluginReferences } : {}),
+          ...(structured.expertMentions.length ? { expertMentions: structured.expertMentions } : {}),
+          ...(structured.skillReferences.length ? { skillReferences: structured.skillReferences } : {}),
+          ...(structured.computerUseRequested ? { computerUseRequested: true } : {}),
+          displayText: submittedDisplayText,
         });
       }
       if (accepted === false) return;
@@ -3002,7 +3072,6 @@ function NewConversationComposer(props: {
         return;
       }
       await props.onAccepted?.();
-      extensionReferencesRef.current.clear();
     } catch (error) {
       setLocalError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -3066,72 +3135,103 @@ function NewConversationComposer(props: {
             </button>
           </div>
         ) : null}
-        <textarea
-          ref={textareaRef}
-          aria-label={goalInputActive ? copy.goalInput : copy.newInput}
-          aria-keyshortcuts="Enter Shift+Enter Escape"
-          autoFocus={props.autoFocus}
-          placeholder={goalInputActive ? copy.goalPlaceholder : copy.newPlaceholder}
-          value={goalInputActive ? goalObjective : content}
-          disabled={submitting || !props.owner}
-          onChange={(event) => (goalInputActive ? setGoalObjective(event.currentTarget.value) : setContent(event.currentTarget.value))}
-          onCompositionStart={() => setIsComposing(true)}
-          onCompositionEnd={() => setIsComposing(false)}
-          onPaste={goalInputActive ? undefined : inputResources.handlePaste}
-          onKeyDown={(event) => {
-            if (!goalInputActive) inputResources.handlePasteShortcut(event);
-            const intent = resolveComposerKeyIntent({
-              key: event.key,
-              shiftKey: event.shiftKey,
-              isComposing: isComposing || event.nativeEvent.isComposing,
-              keyCode: event.nativeEvent.keyCode,
-              repeat: event.repeat,
-            });
-            if (intent === 'escape' && goalInputActive) {
-              event.preventDefault();
-              event.stopPropagation();
-              setGoalInputOpen(false);
-              return;
-            }
-            if (intent !== 'submit') return;
-            event.preventDefault();
-            if (goalInputActive) {
-              if (goalObjectiveValid) void submit({ content: content.trim() ? content : goalObjective, goalObjective });
-              return;
-            }
-            if (/^\/goal(?:\s|$)/u.test(content.trim()) && goalAvailable) {
-              const objective = content.trim().slice('/goal'.length).trim();
-              if (['pause', 'resume', 'clear'].includes(objective)) return;
-              setContent('');
-              if (!objective) {
-                setGoalInputOpen(true);
-                requestAnimationFrame(() => textareaRef.current?.focus());
+        {goalInputActive ? (
+          <textarea
+            ref={textareaRef}
+            aria-label={copy.goalInput}
+            aria-keyshortcuts="Enter Shift+Enter Escape"
+            autoFocus={props.autoFocus}
+            placeholder={copy.goalPlaceholder}
+            value={goalObjective}
+            disabled={submitting || !props.owner}
+            onChange={(event) => setGoalObjective(event.currentTarget.value)}
+            onCompositionStart={() => setIsComposing(true)}
+            onCompositionEnd={() => setIsComposing(false)}
+            onKeyDown={(event) => {
+              const intent = resolveComposerKeyIntent({ key: event.key, shiftKey: event.shiftKey, isComposing: isComposing || event.nativeEvent.isComposing, keyCode: event.nativeEvent.keyCode, repeat: event.repeat });
+              if (intent === 'escape') {
+                event.preventDefault();
+                event.stopPropagation();
+                setGoalInputOpen(false);
+              } else if (intent === 'submit') {
+                event.preventDefault();
+                if (goalObjectiveValid) void submit({ content: content.trim() ? content : goalObjective, goalObjective });
+              }
+            }}
+          />
+        ) : (
+          <StructuredComposerInput
+            value={content}
+            onValueChange={setContent}
+            onSelectionChange={(selection) => {
+              structuredSelectionRef.current = selection;
+            }}
+            textareaRef={textareaRef}
+            projectId={props.owner?.projectId}
+            language={props.language}
+            disabled={submitting || !props.owner}
+            autoFocus={props.autoFocus}
+            ariaLabel={copy.newInput}
+            ariaKeyShortcuts="Enter Shift+Enter Escape"
+            placeholder={copy.newPlaceholder}
+            loadCatalog={props.onLoadSkills}
+            loadEmployees={props.onLoadDigitalEmployees}
+            goalAvailable={goalAvailable}
+            onPlanMode={() => setCollaborationMode((current) => (current === 'plan' ? 'default' : 'plan'))}
+            onGoalMode={() => {
+              if (!goalAvailable) return;
+              setGoalInputOpen(true);
+              requestAnimationFrame(() => textareaRef.current?.focus());
+            }}
+            onOpenComputerSettings={props.onOpenComputerSettings}
+            onCompositionStart={() => setIsComposing(true)}
+            onCompositionEnd={() => setIsComposing(false)}
+            onPaste={inputResources.handlePaste}
+            onKeyDown={(event) => {
+              if (!goalInputActive) inputResources.handlePasteShortcut(event);
+              const intent = resolveComposerKeyIntent({
+                key: event.key,
+                shiftKey: event.shiftKey,
+                isComposing: isComposing || event.nativeEvent.isComposing,
+                keyCode: event.nativeEvent.keyCode,
+                repeat: event.repeat,
+              });
+              if (intent === 'escape' && goalInputActive) {
+                event.preventDefault();
+                event.stopPropagation();
+                setGoalInputOpen(false);
                 return;
               }
-              setGoalObjective(objective);
-              setGoalInputOpen(true);
-              void submit({ content: objective, goalObjective: objective });
-              return;
-            }
-            void submit();
-          }}
-        />
+              if (intent !== 'submit') return;
+              event.preventDefault();
+              if (goalInputActive) {
+                if (goalObjectiveValid) void submit({ content: content.trim() ? content : goalObjective, goalObjective });
+                return;
+              }
+              if (/^\/goal(?:\s|$)/u.test(content.trim()) && goalAvailable) {
+                if (structuredSelectionRef.current.expertMentions.length > 0) {
+                  setLocalError(props.language === 'zh-CN' ? '同一草稿不能同时进入目标模式并点名数字员工。' : 'A draft cannot combine goal mode with digital employee mentions.');
+                  return;
+                }
+                const objective = content.trim().slice('/goal'.length).trim();
+                if (['pause', 'resume', 'clear'].includes(objective)) return;
+                setContent('');
+                if (!objective) {
+                  setGoalInputOpen(true);
+                  requestAnimationFrame(() => textareaRef.current?.focus());
+                  return;
+                }
+                setGoalObjective(objective);
+                setGoalInputOpen(true);
+                void submit({ content: objective, goalObjective: objective });
+                return;
+              }
+              void submit();
+            }}
+          />
+        )}
         <div className="session-composer-command-row">
           <span className="session-composer-leading-actions">
-            {!goalInputActive ? (
-              <ExtensionMentionSelector
-                projectId={props.owner?.projectId}
-                language={props.language}
-                disabled={submitting || !props.owner}
-                loadCatalog={props.onLoadSkills}
-                onInsert={(selection) => {
-                  if (selection.reference) extensionReferencesRef.current.set(selection.token, selection.reference);
-                  const token = selection.token;
-                  setContent((current) => `${current}${current && !/\s$/u.test(current) ? ' ' : ''}${token} `);
-                  requestAnimationFrame(() => textareaRef.current?.focus());
-                }}
-              />
-            ) : null}
             {props.onChooseAttachments ? (
               <button
                 type="button"
@@ -3164,6 +3264,10 @@ function NewConversationComposer(props: {
                 title={copy.createGoal}
                 disabled={submitting || !props.owner}
                 onClick={() => {
+                  if (!goalInputActive && structuredSelectionRef.current.expertMentions.length > 0) {
+                    setLocalError(props.language === 'zh-CN' ? '同一草稿不能同时进入目标模式并点名数字员工。' : 'A draft cannot combine goal mode with digital employee mentions.');
+                    return;
+                  }
                   setGoalInputOpen((open) => !open);
                   requestAnimationFrame(() => textareaRef.current?.focus());
                 }}

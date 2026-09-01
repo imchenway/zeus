@@ -158,6 +158,8 @@ const ownershipGroups = [
       'conversation_items',
       'conversation_messages',
       'conversation_message_provider_aliases',
+      'conversation_expert_participants',
+      'conversation_expert_executions',
     ],
   },
   {

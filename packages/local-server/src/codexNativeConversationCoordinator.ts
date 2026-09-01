@@ -92,7 +92,7 @@ import { mergeCodexAdditionalContext } from './codexNativeContextProtocol.js';
 import { contextFromPersistedConversation, contextFromPersistedSubmission, prepareRecoveredCodexPlugins } from './codexConversationDispatchContext.js';
 import { createCodexNativeConversationAccess } from './codexNativeConversationAccess.js';
 import { createCodexNativeDispatchPipeline } from './codexNativeDispatchPipeline.js';
-import { type PersistedSubmissionInput, readNativeSubmissionRecoveryKind, readNativeSubmissionSkill, readNativeSubmissionTaskPushLayout } from './nativeConversationSubmissionInputs.js';
+import { nativeTurnComputerUseRequested, type PersistedSubmissionInput, readNativeSubmissionRecoveryKind, readNativeSubmissionSkill, readNativeSubmissionTaskPushLayout } from './nativeConversationSubmissionInputs.js';
 import { inferNativeConversationRunState } from './codexNativeRunStateProjection.js';
 import { chooseNativeUserMessageContent, type NativeUserMessageProjection, resolveNativeUserMessageSubmission } from './codexNativeUserMessageProjection.js';
 import { CodexProviderCommandApplicationService } from './codexProviderCommandApplication.js';
@@ -112,7 +112,6 @@ import { persistThreadProviderSettings as persistProviderThreadMetadata, threadP
 import { TurnProcessProjector } from './turnProcessProjector.js';
 import { createCodexServiceTierDowngrade } from './codexServiceTierDowngrade.js';
 import { createCodexPluginToolApprovalApplication } from './codexPluginToolApprovalApplication.js';
-
 export { filterCompatibilitySnapshotItemAliases } from './codexProviderHistoryProjection.js';
 export type { CreateCodexNativeConversationCoordinatorOptions } from './codexNativeConversationContracts.js';
 
@@ -195,6 +194,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       const context = contexts.get(conversationId) ?? contextFromConversation(conversation);
       return { cwd: context.projectLocalPath, model: context.model, permissionMode: context.permissionMode };
     },
+    computerUseAllowed: (_conversationId, threadId, turnId) => nativeTurnComputerUseRequested(options.turns, options.submissions, threadId, turnId),
     requestPluginApproval: pluginToolApprovals.requestApproval,
     broadcast: options.broadcast,
     now,
@@ -607,6 +607,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       recoveryKind?: NativeSubmissionRecoveryKind;
       goalObjective?: string;
       skill?: NativeConversationSkillInput;
+      computerUseRequested?: boolean;
       requestedServiceTier?: string | null;
     },
     context: ConversationDispatchContext,
@@ -630,6 +631,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       ...(input.recoveryKind ? { recoveryKind: input.recoveryKind } : {}),
       ...(input.goalObjective ? { goalObjective: input.goalObjective } : {}),
       ...(input.skill ? { skill: input.skill } : {}),
+      ...(input.computerUseRequested ? { computerUseRequested: true } : {}),
     };
     const existing = input.submissionId ? options.submissions.getById(input.submissionId) : undefined;
     if (existing) {

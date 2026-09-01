@@ -273,6 +273,7 @@ export interface StartTaskConversationInput {
   writableRoots?: string[];
   taskTitle: string;
   prompt: string;
+  displayText?: string;
   model: string;
   skill?: NativeConversationSkillInput;
   modelSourceId?: string | null;
@@ -307,6 +308,7 @@ export interface StartTaskConversationInput {
   ephemeral?: boolean;
   providerWriteLifecycle?: NativeProviderWriteLifecycle;
   goalObjective?: string;
+  computerUseRequested?: boolean;
   segmentLifecycle?: ConversationSegmentLifecycle;
 }
 
@@ -316,6 +318,7 @@ export interface StartProjectConversationInput {
   projectId: string;
   projectLocalPath: string;
   prompt: string;
+  displayText?: string;
   model: string;
   skill?: NativeConversationSkillInput;
   modelSourceId?: string | null;
@@ -331,6 +334,7 @@ export interface StartProjectConversationInput {
   deferInitialDispatch?: boolean;
   providerWriteLifecycle?: NativeProviderWriteLifecycle;
   goalObjective?: string;
+  computerUseRequested?: boolean;
   segmentLifecycle?: ConversationSegmentLifecycle;
 }
 
@@ -356,6 +360,8 @@ export interface SubmitNativeMessageInput {
   requestedServiceTier?: string | null;
   permissionMode?: ConversationPermissionMode;
   collaborationMode?: ConversationCollaborationMode;
+  skill?: NativeConversationSkillInput;
+  computerUseRequested?: boolean;
   idempotencyKey: string;
   clientUserMessageId: string;
   /** 只创建并冻结队列提交，不在当前 HTTP 操作中恢复或写入 Provider。 */

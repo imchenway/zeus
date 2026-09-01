@@ -130,6 +130,7 @@ export interface StartPiConversationInput {
   conversationTitle?: string;
   cwd: string;
   prompt: string;
+  displayText?: string;
   model: AgentModelIdentity;
   thinkingLevel?: string;
   permissionMode: 'read-only' | 'auto' | 'full-access';
@@ -144,6 +145,7 @@ export interface StartPiConversationInput {
   conversationContext?: Record<string, unknown>;
   taskPushLayout?: TaskPushMessageLayout;
   skill?: NativeConversationSkillInput;
+  computerUseRequested?: boolean;
   holdDispatch?: boolean;
   operationContext?: Record<string, unknown>;
   internalOperation?: boolean;
@@ -277,12 +279,14 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         status: 'queued',
         input: {
           text: providerPrompt,
+          ...(input.displayText ? { displayText: input.displayText } : {}),
           ...(orderedAttachments.length > 0 ? { attachments: orderedAttachments } : {}),
           ...(input.taskPushLayout ? { taskPushLayout: input.taskPushLayout } : {}),
           ...(input.browserComments?.length ? { browserComments: input.browserComments } : {}),
           ...(input.browserCommentContent ? { browserCommentContent: input.browserCommentContent } : {}),
           ...(input.conversationContext ? { conversationContext: input.conversationContext } : {}),
           ...(input.skill ? { skill: input.skill } : {}),
+          ...(input.computerUseRequested ? { computerUseRequested: true } : {}),
           context: {
             projectId: input.projectId,
             taskId: input.taskId ?? null,
@@ -353,12 +357,14 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         status: 'queued',
         input: {
           text: providerPrompt,
+          ...(input.displayText ? { displayText: input.displayText } : {}),
           ...(attachmentInput.attachments.length > 0 ? { attachments: attachmentInput.attachments } : {}),
           ...(input.taskPushLayout ? { taskPushLayout: input.taskPushLayout } : {}),
           ...(input.browserComments?.length ? { browserComments: input.browserComments } : {}),
           ...(input.browserCommentContent ? { browserCommentContent: input.browserCommentContent } : {}),
           ...(input.conversationContext ? { conversationContext: input.conversationContext } : {}),
           ...(input.skill ? { skill: input.skill } : {}),
+          ...(input.computerUseRequested ? { computerUseRequested: true } : {}),
           context: {
             projectLocalPath: input.cwd,
             model: input.model.modelId,
@@ -726,6 +732,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     conversation: ZeusConversationWithMessagesRecord;
     submissionId: string;
     content: string;
+    displayText?: string;
     model: AgentModelIdentity;
     thinkingLevel?: string;
     idempotencyKey: string;
@@ -736,6 +743,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     browserCommentContent?: string;
     conversationContext?: Record<string, unknown>;
     skill?: NativeConversationSkillInput;
+    computerUseRequested?: boolean;
     providerWriteLifecycle?: { markPrepared(submissionId: string): Promise<void>; markRpcStarted(submissionId: string): void };
     segmentLifecycle?: ConversationSegmentLifecycle;
   }) {
@@ -757,11 +765,13 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       status: 'queued',
       input: {
         text: input.content,
+        ...(input.displayText ? { displayText: input.displayText } : {}),
         ...(input.attachments?.length ? { attachments: input.attachments } : {}),
         ...(input.browserComments?.length ? { browserComments: input.browserComments } : {}),
         ...(input.browserCommentContent ? { browserCommentContent: input.browserCommentContent } : {}),
         ...(input.conversationContext ? { conversationContext: input.conversationContext } : {}),
         ...(input.skill ? { skill: input.skill } : {}),
+        ...(input.computerUseRequested ? { computerUseRequested: true } : {}),
         context: { model: input.model.modelId, modelSourceId: input.model.sourceId, agentKind: 'pi', thinkingLevel: input.thinkingLevel, projectLocalPath: cwd },
       },
       createdAt,
@@ -1072,6 +1082,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     conversation: ZeusConversationWithMessagesRecord;
     submissionId: string;
     content: string;
+    displayText?: string;
     model: AgentModelIdentity;
     thinkingLevel?: string;
     permissionMode?: 'read-only' | 'auto' | 'full-access';
@@ -1082,6 +1093,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     browserCommentContent?: string;
     conversationContext?: Record<string, unknown>;
     skill?: NativeConversationSkillInput;
+    computerUseRequested?: boolean;
     holdDispatch?: boolean;
     providerWriteLifecycle?: {
       markPrepared(submissionId: string): Promise<void>;
@@ -1105,11 +1117,13 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       status: 'queued',
       input: {
         text: input.content,
+        ...(input.displayText ? { displayText: input.displayText } : {}),
         ...(input.attachments?.length ? { attachments: input.attachments } : {}),
         ...(input.browserComments?.length ? { browserComments: input.browserComments } : {}),
         ...(input.browserCommentContent ? { browserCommentContent: input.browserCommentContent } : {}),
         ...(input.conversationContext ? { conversationContext: input.conversationContext } : {}),
         ...(input.skill ? { skill: input.skill } : {}),
+        ...(input.computerUseRequested ? { computerUseRequested: true } : {}),
         context: {
           projectId: input.conversation.projectId,
           taskId: input.conversation.taskId,
@@ -1689,6 +1703,16 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     if (nativeTool) {
       const activeRun = [...runs.values()].reverse().find((candidate) => candidate.providerThreadId === request.session.nativeSessionId);
       if (!activeRun) throw piError('ZEUS_PI_RUN_NOT_ACTIVE', 'Pi 原生工具没有对应的活动轮次。');
+      if (nativeTool.namespace === 'zeus_computer') {
+        const submission = options.submissions.getById(activeRun.submissionId);
+        let requested = false;
+        try {
+          requested = Boolean(submission && (JSON.parse(submission.inputJson) as Record<string, unknown>).computerUseRequested === true);
+        } catch {
+          requested = false;
+        }
+        if (!requested) throw piError('ZEUS_COMPUTER_NOT_REQUESTED', 'Computer Use 仅在 Composer 为本轮明确启用后可调用。');
+      }
       if (context.permissionMode === 'read-only' && isZeusNativeToolMutation(nativeTool.namespace, nativeTool.tool, request.args)) {
         throw piError('ZEUS_PI_TOOL_READ_ONLY', '当前会话是只读模式，已拒绝 Browser 或 Computer 交互。');
       }

@@ -15,6 +15,7 @@ interface CodexDynamicToolApplicationOptions {
   turns: Pick<ConversationTurnRepository, 'getByProvider'>;
   execution: Pick<ConversationExecutionRepository, 'currentSegment'>;
   pluginContext(conversationId: string): { cwd: string; model: string; permissionMode: string } | null;
+  computerUseAllowed(conversationId: string, threadId: string, turnId: string): boolean;
   requestPluginApproval(input: { conversationId: string; threadId: string; turnId: string; callId: string; generationId: string; namespace: string; tool: string; argumentKeys: string[] }): Promise<boolean>;
   broadcast(event: string, payload: Record<string, unknown>): void;
   now(): string;
@@ -193,6 +194,9 @@ async function resolveResponse(input: {
     if (!input.options.toolBroker) throw dynamicToolError('ZEUS_NATIVE_AUTOMATION_UNAVAILABLE', 'The Zeus native automation host is unavailable.');
     if (!input.tool || (input.namespace !== 'zeus_browser' && input.namespace !== 'zeus_computer')) {
       throw dynamicToolError('ZEUS_NATIVE_TOOL_UNSUPPORTED', 'The requested dynamic tool is not owned by a Zeus native automation namespace.');
+    }
+    if (input.namespace === 'zeus_computer' && !input.options.computerUseAllowed(input.conversation.id, input.threadId, input.turnId)) {
+      throw dynamicToolError('ZEUS_COMPUTER_NOT_REQUESTED', 'Computer Use 仅在 Composer 为本轮明确启用后可调用。');
     }
     if (input.conversation.permissionMode === 'read-only' && isZeusNativeToolMutation(input.namespace, input.tool, input.argumentsValue)) {
       throw dynamicToolError('ZEUS_NATIVE_TOOL_READ_ONLY', '当前会话是只读模式，已拒绝 Browser 或 Computer 交互。');
