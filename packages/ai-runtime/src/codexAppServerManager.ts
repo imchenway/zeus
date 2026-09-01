@@ -1,28 +1,28 @@
-import { spawn as nodeSpawn } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
-import { EventEmitter } from 'node:events';
-import { AsyncLocalStorage } from 'node:async_hooks';
-import { createConnection } from 'node:net';
-import { isAbsolute, join } from 'node:path';
-import { type RawData, WebSocket } from 'ws';
-import type { CodexBootstrapAdditionalContext } from '@zeus/shared';
+import {spawn as nodeSpawn} from 'node:child_process';
+import {createHash, randomUUID} from 'node:crypto';
+import {EventEmitter} from 'node:events';
+import {AsyncLocalStorage} from 'node:async_hooks';
+import {createConnection} from 'node:net';
+import {isAbsolute, join} from 'node:path';
+import {type RawData, WebSocket} from 'ws';
+import type {CodexBootstrapAdditionalContext} from '@zeus/shared';
 import {
-  CodexJsonLineDecoder,
-  type CodexWireId,
-  type CodexWireMessage,
-  type ExternalAgentConfigDetectParams,
-  type ExternalAgentConfigDetectResponse,
-  type ExternalAgentConfigImportHistory,
-  type ExternalAgentConfigImportParams,
-  type ExternalAgentConfigImportResponse,
-  type ExternalAgentImportNotification,
-  parseExternalAgentConfigDetectResponse,
-  parseExternalAgentConfigImportHistoriesResponse,
-  parseExternalAgentConfigImportResponse,
-  parseExternalAgentImportNotification,
+    CodexJsonLineDecoder,
+    type CodexWireId,
+    type CodexWireMessage,
+    type ExternalAgentConfigDetectParams,
+    type ExternalAgentConfigDetectResponse,
+    type ExternalAgentConfigImportHistory,
+    type ExternalAgentConfigImportParams,
+    type ExternalAgentConfigImportResponse,
+    type ExternalAgentImportNotification,
+    parseExternalAgentConfigDetectResponse,
+    parseExternalAgentConfigImportHistoriesResponse,
+    parseExternalAgentConfigImportResponse,
+    parseExternalAgentImportNotification,
 } from './codexAppServerProtocol.js';
-import { expandCliSearchPath } from './cliSearchPath.js';
-import { resolveCodexModelBudgetSnapshot, type CodexModelBudgetEvidence } from './codexModelBudgetSnapshot.js';
+import {expandCliSearchPath} from './cliSearchPath.js';
+import {type CodexModelBudgetEvidence, resolveCodexModelBudgetSnapshot} from './codexModelBudgetSnapshot.js';
 
 export type {
   ExternalAgentConfigDetectParams,
@@ -488,6 +488,8 @@ export interface CodexAppServerManager {
   subscribe(listener: (event: CodexAppServerEvent) => void | Promise<void>): () => void;
   getState(): CodexTransportState;
   hasGeneration(generationId: string): boolean;
+
+    capabilitiesForGeneration(generationId: string): CodexCapabilitiesSnapshot | null;
   generationForThread(threadId: string): string | null;
   listRuntimeGenerations(): CodexRuntimeGenerationSnapshot[];
   prepareForShutdown(): Promise<void>;
@@ -705,7 +707,17 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       const goals = await readGoalCapability(generationId);
       if (remoteControlEnabled || remoteControlTransport) await rpc(generationId, 'remoteControl/enable', {});
       const initializedAt = now();
-      const providerVersion = providerVersionFromInitialize(initializeResponse) ?? providerVersionFallback;
+        const initializedProviderVersion = providerVersionFromInitialize(initializeResponse);
+        // Remote Control 的命令路径只负责连接常驻守护进程，不能代表守护进程的真实版本。
+        // 热更新替换守护进程后继续使用启动时探测值会把新模型目录误判成旧世代。
+        const providerVersion = initializedProviderVersion ?? (remoteControlTransport ? null : providerVersionFallback);
+        const modelBudgets = await resolveModelBudgetSnapshotAfterBoundedRetry({
+            codexHome,
+            generationId,
+            initializedAt,
+            providerVersion,
+            models
+        });
       const capabilities: CodexCapabilitiesSnapshot = {
         generationId,
         initializedAt,
@@ -713,7 +725,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
         protocolVersion: 'codex-app-server-v2',
         models,
         supportedModels: models.map((model) => model.model),
-        modelBudgets: resolveCodexModelBudgetSnapshot({ codexHome, generationId, initializedAt, providerVersion, models }),
+          modelBudgets,
         preflightTokenCount: {
           state: 'unavailable',
           exact: false,
@@ -1601,6 +1613,9 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     hasGeneration(generationId) {
       return state.type !== 'idle' && state.type !== 'closed' && state.generationId === generationId;
     },
+      capabilitiesForGeneration(generationId) {
+          return state.type === 'ready' && state.generationId === generationId ? state.capabilities : null;
+      },
     generationForThread() {
       return state.type === 'idle' || state.type === 'closed' ? null : state.generationId;
     },
@@ -2397,7 +2412,7 @@ function providerVersionFromInitialize(value: unknown): string | null {
     if (typeof candidate === 'string' && candidate.trim()) return candidate.trim().slice(0, 120);
   }
   if (typeof response.userAgent === 'string') {
-    const match = response.userAgent.match(/(?:^|\s|\/)(?:codex|codex-cli|codex\s+desktop)[/@]([A-Za-z0-9_.+-]{1,120})/iu);
+      const match = response.userAgent.match(/(?:^|\s|\/)(?:zeus|codex|codex-cli|codex\s+desktop)[/@]([A-Za-z0-9_.+-]{1,120})/iu);
     if (match?.[1]) return match[1];
   }
   return null;
@@ -2466,6 +2481,23 @@ function isCodexRpcTimeout(error: unknown): boolean {
 
 function waitFor(delayMs: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+async function resolveModelBudgetSnapshotAfterBoundedRetry(input: {
+    codexHome: string | null;
+    generationId: string;
+    initializedAt: string;
+    providerVersion: string | null;
+    models: readonly CodexModelCapability[];
+}): Promise<Readonly<Record<string, Readonly<CodexModelBudgetEvidence>>>> {
+    let budgets = resolveCodexModelBudgetSnapshot(input);
+    if (!input.codexHome || !input.providerVersion || input.models.length === 0 || input.models.every((model) => budgets[model.model])) return budgets;
+    for (const delayMs of [100, 400]) {
+        await waitFor(delayMs);
+        budgets = resolveCodexModelBudgetSnapshot(input);
+        if (input.models.every((model) => budgets[model.model])) break;
+    }
+    return budgets;
 }
 
 function isAccountReadTransportFailure(error: unknown): boolean {

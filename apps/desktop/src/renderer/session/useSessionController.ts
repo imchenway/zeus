@@ -1,49 +1,64 @@
-import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
-import { type ConversationContextDraft, type ConversationFileIconKind, type ConversationResource, emptyConversationContextDraft, hasConversationContext, serializeConversationContext, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
-import { createInitialSessionState, sessionReducer } from './sessionReducer.js';
+import {useCallback, useEffect, useMemo, useSyncExternalStore} from 'react';
 import {
-  type CodexConversationCapabilities,
-  type ConversationResourcePreview,
-  isNativeConversationEvent,
-  type NativeCollaborationMode,
-  type NativeConversationAttachment,
-  type NativeConversationChangeFileV2Item,
-  type NativeConversationChangeSetV2Summary,
-  type NativeConversationChoice,
-  type NativeConversationContentV2Page,
-  type NativeConversationEvent,
-  type NativeConversationEventPage,
-  type NativeConversationModelHistoryV2Item,
-  type NativeConversationProcessV2Item,
-  type NativeConversationResourceV2Item,
-  type NativeConversationSnapshot,
-  type NativeConversationSnapshotV2,
-  type NativeConversationSnapshotV2Page,
-  type NativeItemSnapshot,
-  type NativeConversationToolResultPage,
-  type NativeGoalResponse,
-  type NativeNextTurnSettings,
-  type NativeOperationAcceptance,
-  type NativePendingInteractionsSnapshot,
-  type NativePendingRequest,
-  type NativePermissionMode,
-  type PluginSkillReference,
-  type NativePlanImplementationResponseAcceptance,
-  type NativeQueuedSubmission,
-  type NativeQueueSnapshot,
-  type NativeRealtimeEventEnvelope,
-  type NativeSessionError,
-  type NativeSessionMetricsSnapshot,
-  type NativeSessionState,
-  type NativeSubagentListSnapshot,
-  type NativeSubagentThreadSnapshot,
-  type NativeTurnSettingsSelection,
-  type SendNativeMessageRequest,
-  type TurnChangeSet,
-  type TurnChangeSetOperationResult,
+    type ConversationContextDraft,
+    type ConversationFileIconKind,
+    type ConversationResource,
+    emptyConversationContextDraft,
+    hasConversationContext,
+    serializeConversationContext,
+    type ZeusBrowserPreparedSubmission
+} from '@zeus/shared';
+import {createInitialSessionState, sessionReducer} from './sessionReducer.js';
+import {
+    type CodexConversationCapabilities,
+    type ConversationResourcePreview,
+    isNativeConversationEvent,
+    type NativeCollaborationMode,
+    type NativeConversationAttachment,
+    type NativeConversationChangeFileV2Item,
+    type NativeConversationChangeSetV2Summary,
+    type NativeConversationChoice,
+    type NativeConversationContentV2Page,
+    type NativeConversationEvent,
+    type NativeConversationEventPage,
+    type NativeConversationModelHistoryV2Item,
+    type NativeConversationProcessV2Item,
+    type NativeConversationResourceV2Item,
+    type NativeConversationSnapshot,
+    type NativeConversationSnapshotV2,
+    type NativeConversationSnapshotV2Page,
+    type NativeConversationToolResultPage,
+    type NativeGoalResponse,
+    type NativeItemSnapshot,
+    type NativeNextTurnSettings,
+    type NativeOperationAcceptance,
+    type NativePendingInteractionsSnapshot,
+    type NativePendingRequest,
+    type NativePermissionMode,
+    type NativePlanImplementationResponseAcceptance,
+    type NativeQueuedSubmission,
+    type NativeQueueSnapshot,
+    type NativeRealtimeEventEnvelope,
+    type NativeSessionError,
+    type NativeSessionMetricsSnapshot,
+    type NativeSessionState,
+    type NativeSubagentListSnapshot,
+    type NativeSubagentThreadSnapshot,
+    type NativeTurnSettingsSelection,
+    type PluginSkillReference,
+    type SendNativeMessageRequest,
+    type TurnChangeSet,
+    type TurnChangeSetOperationResult,
 } from './sessionTypes.js';
-import { adaptConversationSnapshotV2, mergeConversationHistoryV2, mergeConversationProcessV2, mergeConversationTurnHistoryV2, resumeCachedConversationSnapshot, updateConversationV2Paging } from './conversationSnapshotV2Adapter.js';
-import { markConversationNavigationRenderReady } from '../performanceTraceContext.js';
+import {
+    adaptConversationSnapshotV2,
+    mergeConversationHistoryV2,
+    mergeConversationProcessV2,
+    mergeConversationTurnHistoryV2,
+    resumeCachedConversationSnapshot,
+    updateConversationV2Paging
+} from './conversationSnapshotV2Adapter.js';
+import {markConversationNavigationRenderReady} from '../performanceTraceContext.js';
 
 export const reconnectBackoffMs = [250, 500, 1_000, 2_000, 5_000] as const;
 // 同一个会话项的增量按一帧窗口合并，兼顾 Markdown 成本与首字可见延迟。
@@ -168,6 +183,8 @@ function realtimeBufferBudgetError(kind: RealtimeBufferKind): Error {
 
 export interface SessionControllerClient {
   loadCodexConversationCapabilities?(projectId: string): Promise<CodexConversationCapabilities>;
+
+    activateCodexConfig?(): Promise<unknown>;
   loadNativeConversationV2(projectId: string, conversationId: string): Promise<NativeConversationSnapshotV2>;
   loadNativeConversationSessionMetrics?(projectId: string, conversationId: string): Promise<NativeSessionMetricsSnapshot>;
   loadNativeConversationChoice(projectId: string, conversationId: string): Promise<NativeConversationChoice>;

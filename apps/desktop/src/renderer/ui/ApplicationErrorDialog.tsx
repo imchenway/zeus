@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import {useEffect, useRef} from 'react';
 
 export type ApplicationErrorLanguage = 'zh-CN' | 'en';
 
@@ -37,6 +37,10 @@ const visibleCopyByCode: Readonly<Record<string, Readonly<Record<ApplicationErro
     'zh-CN': '消息已保存，但队列调度未完成。请点击“重新恢复”进行权威核对；不要重复发送同一消息。',
     en: 'Your message was saved, but queue scheduling did not complete. Select Restore again to reconcile the authoritative state; do not send the same message again.',
   },
+    ZEUS_CONTEXT_MODEL_WINDOW_UNAVAILABLE: {
+        'zh-CN': 'Codex 模型能力尚未就绪，消息尚未发送。请重新连接 Codex，再逐条重试；系统不会自动重发。',
+        en: 'Codex model capabilities are not ready, so the message was not sent. Reconnect Codex, then retry messages individually; Zeus will not resend them automatically.',
+    },
 };
 
 function redactDetails(value: string): string {

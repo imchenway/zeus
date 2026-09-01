@@ -1,18 +1,18 @@
 import {
-  type CodexAppServerEvent,
-  type CodexAppServerManager,
-  type CodexCapabilitiesSnapshot,
-  type CodexResponsesModelProvider,
-  type CodexResponsesRuntime,
-  type CodexRpcRetryProgress,
-  type CodexServerRequestResponse,
-  type CodexTransportState,
-  createCodexAppServerManager,
-  type ExternalAgentImportEvent,
+    type CodexAppServerEvent,
+    type CodexAppServerManager,
+    type CodexCapabilitiesSnapshot,
+    type CodexResponsesModelProvider,
+    type CodexResponsesRuntime,
+    type CodexRpcRetryProgress,
+    type CodexServerRequestResponse,
+    type CodexTransportState,
+    createCodexAppServerManager,
+    type ExternalAgentImportEvent,
 } from './codexAppServerManager.js';
-import { spawn as nodeSpawn } from 'node:child_process';
-import { closeSync, constants, fstatSync, mkdirSync, openSync, readFileSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import {spawn as nodeSpawn} from 'node:child_process';
+import {closeSync, constants, fstatSync, mkdirSync, openSync, readFileSync} from 'node:fs';
+import {isAbsolute, join, relative, resolve, sep} from 'node:path';
 
 interface RuntimeEntry {
   manager: CodexAppServerManager;
@@ -757,6 +757,17 @@ export function createCodexRuntimeGenerationManager(
     hasGeneration(generationId) {
       return entryForGeneration(generationId) !== null;
     },
+      capabilitiesForGeneration(generationId) {
+          const mapped = entryForGeneration(generationId);
+          if (mapped) return mapped.manager.capabilitiesForGeneration(generationId);
+          for (const entry of entries) {
+              const capabilities = entry.manager.capabilitiesForGeneration(generationId);
+              if (!capabilities) continue;
+              rememberGeneration(entry, generationId);
+              return capabilities;
+          }
+          return null;
+      },
     generationForThread(threadId) {
       const entry = entriesByThread.get(threadId) ?? activeEntry;
       return entry ? entryGeneration(entry) : null;
