@@ -288,10 +288,21 @@ export interface TaskWorkDecisionRecord {
   expiresAt: string | null;
 }
 
+export interface TaskWorkConversationRequestRecord {
+  id: string;
+  conversationId: string;
+  workItemId: string;
+  runId: string;
+  requestKind: 'command' | 'file' | 'permissions' | 'request_user_input' | 'mcp';
+  createdAt: string;
+  expiresAt: string | null;
+}
+
 export interface TaskWorkManagementProjection {
-  summary: { workItems: number; activeWorkItems: number; pendingManagerDecisions: number; submittedDeliverables: number; legacyExecutions: number };
+  summary: { workItems: number; activeWorkItems: number; pendingActions: number; submittedDeliverables: number; legacyExecutions: number };
   workItems: TaskWorkItemRecord[];
   relationships: Array<Record<string, unknown>>;
+  conversationRequests: TaskWorkConversationRequestRecord[];
   managerDecisions: TaskWorkDecisionRecord[];
   deliverables: TaskWorkDeliverableRecord[];
   evidenceRefs: Array<Record<string, unknown>>;

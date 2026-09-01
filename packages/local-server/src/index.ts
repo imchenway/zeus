@@ -1229,7 +1229,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     submissions: conversationSubmissions,
     turns: conversationTurns,
     workspaces: taskWorkspaces,
-    isManagedConversation: (conversationId) => Boolean(db.get<{ present: number }>(`SELECT 1 AS present FROM task_work_runs WHERE conversation_id = ? LIMIT 1`, [conversationId])),
     codexNativeEnabled,
     readOnlyValidation: Boolean(readOnlyValidation),
   });

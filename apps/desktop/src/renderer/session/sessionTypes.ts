@@ -844,8 +844,6 @@ export interface NativeConversationChoice {
   taskRunStatus?: 'not_started' | 'connecting' | 'reconnecting' | 'running' | 'waiting_user' | 'waiting_approval' | 'paused' | 'idle' | 'failed' | 'legacy_readonly';
   resumable: boolean;
   readOnly: boolean;
-  /** v2 工作项会话只能下钻查看；回复、授权和验收统一返回任务管理驾驶舱。 */
-  managedByTaskWorkItem?: boolean;
   permissionMode?: NativePermissionMode;
   collaborationMode?: NativeCollaborationMode;
   agent?: NativeAgentIdentity;

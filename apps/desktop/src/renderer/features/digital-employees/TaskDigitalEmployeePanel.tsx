@@ -4,8 +4,7 @@ import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/C
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { areRequiredRequestAnswersComplete, buildPendingRequestResponse, normalizeRequestQuestions, supportedRequestDecisions, type RequestQuestion, type SupportedRequestDecision } from '../../session/PendingRequestSurface.js';
-import type { CodexTaskPushCapabilities, NativePendingRequest } from '../../session/sessionTypes.js';
+import type { CodexTaskPushCapabilities } from '../../session/sessionTypes.js';
 import { TaskPushLayoutPreview } from '../../task/TaskModelPushModal.js';
 import { Button } from '../../ui/Button.js';
 import { ModalPortal } from '../../ui/ModalPortal.js';
@@ -13,7 +12,7 @@ import { ZeusSelect } from '../../ZeusSelect.js';
 import { AgentExecutionConfigFields, type AgentExecutionConfigValue } from './AgentExecutionConfigFields.js';
 import type { DigitalEmployeeApiClient } from './digitalEmployeeApiClient.js';
 import type { CommandRunDetail } from '../runtime/runtimeContracts.js';
-import type { DigitalEmployeeRecord, TaskWorkDecisionRecord, TaskWorkDeliverableRecord, TaskWorkItemRecord, TaskWorkManagementProjection, TaskWorkPreview } from './digitalEmployeeContracts.js';
+import type { DigitalEmployeeRecord, TaskWorkConversationRequestRecord, TaskWorkDecisionRecord, TaskWorkDeliverableRecord, TaskWorkItemRecord, TaskWorkManagementProjection, TaskWorkPreview } from './digitalEmployeeContracts.js';
 import { errorMessage, formatDateTime, type DigitalEmployeeLanguage } from './digitalEmployeeUiSupport.js';
 import type { NativeConversationAppClient } from '../workspace/workspaceSupport.js';
 import './digitalEmployees.css';
@@ -64,7 +63,7 @@ export function useTaskDigitalEmployeeManagement(props: Pick<TaskDigitalEmployee
   }, [props.client, props.projectId, props.taskId, zh]);
 
   useEffect(() => void load(), [load]);
-  const shouldPoll = Boolean(projection?.summary.activeWorkItems || projection?.summary.pendingManagerDecisions);
+  const shouldPoll = Boolean(projection?.summary.activeWorkItems || projection?.summary.pendingActions);
   useEffect(() => {
     if (!shouldPoll) return;
     const timer = window.setInterval(() => void load(), 3_000);
@@ -104,6 +103,7 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
   const { projection, loadState, busy, error, load, act } = props.management;
   const summary = projection?.summary;
   const pendingDecisions = projection?.managerDecisions.filter((decision) => decision.status === 'pending') ?? [];
+  const pendingConversationRequests = projection?.conversationRequests ?? [];
 
   return (
     <section className="task-work-cockpit" aria-label={zh ? '数字员工管理驾驶舱' : 'Digital employee management cockpit'}>
@@ -143,7 +143,7 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
             onRetry={(item) => void act(`retry:${item.id}`, () => props.client!.retryTaskWorkItem(props.taskId, item))}
             onCancel={(item) => void act(`cancel:${item.id}`, () => props.client!.cancelTaskWorkItem(props.taskId, item))}
           />
-          <ManagerInbox decisions={pendingDecisions} language={props.language} onSelect={setDecisionOpen} />
+          <ManagerInbox requests={pendingConversationRequests} decisions={pendingDecisions} language={props.language} onOpenConversation={props.onOpenConversation} onSelect={setDecisionOpen} />
         </div>
       ) : null}
       {tab === 'deliverables' ? <DeliverablesView deliverables={projection?.deliverables ?? []} language={props.language} /> : null}
@@ -189,8 +189,8 @@ function WorkOverview(props: { projection: TaskWorkManagementProjection | null; 
       </span>
       <span>
         <small>{zh ? '待我处理' : 'Needs me'}</small>
-        <strong>{summary?.pendingManagerDecisions ?? 0}</strong>
-        <p>{zh ? '补充信息、授权、验收与异常处置。' : 'Input, approval, acceptance, and recovery.'}</p>
+        <strong>{summary?.pendingActions ?? 0}</strong>
+        <p>{zh ? '会话请求、验收与异常处置。' : 'Conversation requests, acceptance, and recovery.'}</p>
       </span>
       <span>
         <small>{zh ? '正式交付物' : 'Deliverables'}</small>
@@ -252,7 +252,7 @@ function WorkItemBoard(props: {
               <span className="task-work-item-actions">
                 {current?.conversationId && props.onOpenConversation ? (
                   <Button variant="secondary" size="compact" onClick={() => props.onOpenConversation?.(current.conversationId!)}>
-                    {zh ? '查看证据' : 'Evidence'}
+                    {zh ? '打开会话' : 'Open conversation'}
                   </Button>
                 ) : null}
                 {(item.status === 'failed' || item.status === 'blocked') && item.entrypointKind === 'agent' ? (
@@ -280,17 +280,36 @@ function WorkItemBoard(props: {
   );
 }
 
-function ManagerInbox(props: { decisions: TaskWorkDecisionRecord[]; language: DigitalEmployeeLanguage; onSelect(decision: TaskWorkDecisionRecord): void }) {
+function ManagerInbox(props: {
+  requests: TaskWorkConversationRequestRecord[];
+  decisions: TaskWorkDecisionRecord[];
+  language: DigitalEmployeeLanguage;
+  onOpenConversation?: (conversationId: string) => void;
+  onSelect(decision: TaskWorkDecisionRecord): void;
+}) {
   const zh = props.language === 'zh-CN';
+  const count = props.requests.length + props.decisions.length;
   return (
     <aside className="task-work-inbox" aria-label={zh ? '待我处理' : 'Needs my attention'}>
       <header>
         <span>
           <strong>{zh ? '待我处理' : 'Needs me'}</strong>
-          <small>{props.decisions.length ? (zh ? `${props.decisions.length} 项待办` : `${props.decisions.length} pending`) : zh ? '当前无待办' : 'Nothing pending'}</small>
+          <small>{count ? (zh ? `${count} 项待办` : `${count} pending`) : zh ? '当前无待办' : 'Nothing pending'}</small>
         </span>
       </header>
       <div>
+        {props.requests.map((request) => (
+          <button key={request.id} type="button" disabled={!props.onOpenConversation} onClick={() => props.onOpenConversation?.(request.conversationId)}>
+            <span aria-hidden="true">
+              <ChatCircle size={19} />
+            </span>
+            <span>
+              <strong>{request.requestKind === 'request_user_input' ? (zh ? '员工需要补充信息' : 'Employee needs input') : zh ? '员工等待授权' : 'Employee needs approval'}</strong>
+              <small>{zh ? '打开任务会话处理原始请求' : 'Open the task conversation to handle the original request'}</small>
+              <time>{formatDateTime(request.createdAt, props.language)}</time>
+            </span>
+          </button>
+        ))}
         {props.decisions.map((decision) => (
           <button key={decision.id} type="button" onClick={() => props.onSelect(decision)}>
             <span aria-hidden="true">
@@ -303,7 +322,7 @@ function ManagerInbox(props: { decisions: TaskWorkDecisionRecord[]; language: Di
             </span>
           </button>
         ))}
-        {props.decisions.length === 0 ? <p>{zh ? '员工的问题、授权、验收和未知结果会集中出现在这里。' : 'Questions, approvals, acceptance, and unknown outcomes appear here.'}</p> : null}
+        {count === 0 ? <p>{zh ? '会话请求、交付物验收和异常处置会集中出现在这里。' : 'Conversation requests, deliverable acceptance, and recovery appear here.'}</p> : null}
       </div>
     </aside>
   );
@@ -340,7 +359,7 @@ function EvidenceView(props: { refs: Array<Record<string, unknown>>; language: D
     <section className="task-work-evidence">
       <header>
         <strong>{zh ? '证据' : 'Evidence'}</strong>
-        <small>{zh ? '会话、命令日志与历史执行只在此下钻' : 'Conversations, command logs, and legacy runs are evidence only'}</small>
+        <small>{zh ? '会话、命令日志与历史执行的审计引用' : 'Audit references for conversations, command logs, and legacy runs'}</small>
       </header>
       {props.refs.map((ref, index) => (
         <button
@@ -810,16 +829,10 @@ function DecisionDialog(props: {
 }) {
   const zh = props.language === 'zh-CN';
   const [reason, setReason] = useState('');
-  const [answers, setAnswers] = useState<Record<string, string[]>>({});
-  const [otherAnswers, setOtherAnswers] = useState<Record<string, string>>({});
   const [commandParameters, setCommandParameters] = useState<Record<string, string | number | boolean>>({});
-  const [parseError, setParseError] = useState<string | null>(null);
   const [deliverableContent, setDeliverableContent] = useState<string | null>(null);
   const [deliverableContentError, setDeliverableContentError] = useState<string | null>(null);
   const deliverable = props.decision.deliverableId ? (props.projection?.deliverables.find((candidate) => candidate.id === props.decision.deliverableId) ?? null) : null;
-  const pendingRequest = managedPendingRequest(props.decision);
-  const questions = pendingRequest && props.decision.kind === 'input_required' ? normalizeRequestQuestions(pendingRequest) : [];
-  const authorizationDecisions = pendingRequest && props.decision.kind === 'authorization' ? supportedRequestDecisions(pendingRequest) : [];
   const command = isRecord(props.decision.requestPayload.command) ? props.decision.requestPayload.command : null;
   const commandParametersSchema = command && Array.isArray(command.parameters) ? command.parameters.filter(isRecord) : [];
   useEffect(() => {
@@ -867,38 +880,6 @@ function DecisionDialog(props: {
                 <textarea rows={4} maxLength={4_000} value={reason} onChange={(event) => setReason(event.target.value)} placeholder={zh ? '说明必须修改的内容…' : 'Describe the required changes…'} />
               </label>
             </>
-          ) : null}
-          {props.decision.kind === 'input_required' ? (
-            <fieldset className="task-work-manager-questions">
-              <legend>{zh ? '补充信息' : 'Additional information'}</legend>
-              {questions.map((question) => (
-                <ManagerQuestion
-                  key={question.id}
-                  question={question}
-                  answers={answers[question.id] ?? []}
-                  otherAnswer={otherAnswers[question.id] ?? ''}
-                  language={props.language}
-                  onAnswers={(values) => setAnswers((current) => ({ ...current, [question.id]: values }))}
-                  onOtherAnswer={(value) => setOtherAnswers((current) => ({ ...current, [question.id]: value }))}
-                />
-              ))}
-              {questions.length === 0 ? (
-                <p className="digital-employee-feedback is-error">
-                  {zh ? '员工问题缺少可验证的结构，已安全阻止回复。请从证据页检查原始请求。' : 'The employee request has no valid question structure. Reply is blocked; inspect the original request under Evidence.'}
-                </p>
-              ) : null}
-              {parseError ? <p className="digital-employee-feedback is-error">{parseError}</p> : null}
-            </fieldset>
-          ) : null}
-          {props.decision.kind === 'authorization' ? (
-            <section className="task-work-manager-authorization">
-              <strong>{authorizationTitle(pendingRequest, props.language)}</strong>
-              <pre>{authorizationSummary(pendingRequest, props.language)}</pre>
-              {authorizationDecisions.length === 0 ? (
-                <p className="digital-employee-feedback is-error">{zh ? '授权请求不完整，Zeus 不提供放行操作。' : 'The approval request is incomplete, so Zeus does not offer an allow action.'}</p>
-              ) : null}
-              {parseError ? <p className="digital-employee-feedback is-error">{parseError}</p> : null}
-            </section>
           ) : null}
           {props.decision.kind === 'command_confirmation' ? (
             <fieldset>
@@ -966,48 +947,6 @@ function DecisionDialog(props: {
               </Button>
             </>
           ) : null}
-          {props.decision.kind === 'input_required' ? (
-            <Button
-              variant="primary"
-              size="compact"
-              busy={props.busy}
-              disabled={!pendingRequest || !areRequiredRequestAnswersComplete(questions, answers, otherAnswers)}
-              onClick={() => {
-                try {
-                  if (!pendingRequest) throw new Error();
-                  const parsed = buildPendingRequestResponse(pendingRequest, answers, otherAnswers, {}, props.language);
-                  setParseError(null);
-                  void props.onRespond(parsed);
-                } catch {
-                  setParseError(zh ? '请完成全部问题后再提交。' : 'Complete every question before submitting.');
-                }
-              }}
-            >
-              {zh ? '回复并继续运行' : 'Reply and continue'}
-            </Button>
-          ) : null}
-          {props.decision.kind === 'authorization'
-            ? authorizationDecisions.map((decision) => (
-                <Button
-                  key={decision}
-                  variant={decision === 'accept' || decision === 'acceptForSession' ? 'primary' : 'secondary'}
-                  size="compact"
-                  busy={props.busy}
-                  onClick={() => {
-                    try {
-                      if (!pendingRequest) throw new Error();
-                      const parsed = buildPendingRequestResponse(pendingRequest, { decision: [decision] }, {}, {}, props.language);
-                      setParseError(null);
-                      void props.onRespond(parsed);
-                    } catch {
-                      setParseError(zh ? '该授权请求无法安全处置，请从证据页检查原始请求。' : 'This approval cannot be resolved safely. Inspect the original request under Evidence.');
-                    }
-                  }}
-                >
-                  {authorizationDecisionLabel(decision, props.language)}
-                </Button>
-              ))
-            : null}
           {props.decision.kind === 'command_confirmation' ? (
             <Button variant="primary" size="compact" busy={props.busy} onClick={() => void props.onRespond({ parameters: commandParameters })}>
               {zh ? '确认并启动命令' : 'Confirm and start command'}
@@ -1037,122 +976,6 @@ function DecisionDialog(props: {
       </section>
     </ModalPortal>
   );
-}
-
-function managedPendingRequest(decision: TaskWorkDecisionRecord): NativePendingRequest | null {
-  if (decision.kind !== 'input_required' && decision.kind !== 'authorization') return null;
-  const requestId = typeof decision.requestPayload.requestId === 'string' ? decision.requestPayload.requestId : null;
-  const requestKind = typeof decision.requestPayload.requestKind === 'string' ? decision.requestPayload.requestKind : null;
-  const payload = isRecord(decision.requestPayload.payload) ? decision.requestPayload.payload : null;
-  if (!requestId || !requestKind || !payload) return null;
-  return {
-    id: requestId,
-    conversationId: `managed:${decision.workItemId}`,
-    turnId: null,
-    itemId: null,
-    generationId: 'task-work-management-v2',
-    type: requestKind,
-    status: 'pending',
-    payload,
-    response: null,
-    containsSecret: decision.requestPayload.containsSecret === true,
-    expiresAt: decision.expiresAt,
-    createdAt: decision.createdAt,
-    resolvedAt: null,
-  };
-}
-
-function ManagerQuestion(props: { question: RequestQuestion; answers: string[]; otherAnswer: string; language: DigitalEmployeeLanguage; onAnswers(values: string[]): void; onOtherAnswer(value: string): void }) {
-  const zh = props.language === 'zh-CN';
-  const otherValue = managerOtherAnswerValue(props.question);
-  if (props.question.kind === 'freeform') {
-    return (
-      <label className="task-work-manager-question">
-        <strong>{props.question.header}</strong>
-        <span>{props.question.question}</span>
-        {props.question.secret ? (
-          <input type="password" value={props.answers[0] ?? ''} onChange={(event) => props.onAnswers([event.target.value])} autoComplete="off" />
-        ) : (
-          <textarea rows={4} value={props.answers[0] ?? ''} onChange={(event) => props.onAnswers([event.target.value])} />
-        )}
-        {props.question.secret ? <small>{zh ? '敏感回答不会写入工作项快照或待办记录。' : 'Sensitive answers are not stored in the work item snapshot or decision record.'}</small> : null}
-      </label>
-    );
-  }
-  return (
-    <fieldset className="task-work-manager-question">
-      <legend>{props.question.header}</legend>
-      <p>{props.question.question}</p>
-      {props.question.options.map((option) => {
-        const checked = props.answers.includes(option.label);
-        return (
-          <label key={option.label}>
-            <input
-              type={props.question.kind === 'multiple' ? 'checkbox' : 'radio'}
-              name={`managed-question-${props.question.id}`}
-              checked={checked}
-              onChange={(event) => props.onAnswers(updateManagerAnswers(props.question, props.answers, option.label, event.target.checked))}
-            />
-            <span>
-              <strong>{option.label}</strong>
-              {option.description ? <small>{option.description}</small> : null}
-            </span>
-          </label>
-        );
-      })}
-      {props.question.allowOther ? (
-        <>
-          <label>
-            <input
-              type={props.question.kind === 'multiple' ? 'checkbox' : 'radio'}
-              name={`managed-question-${props.question.id}`}
-              checked={props.answers.includes(otherValue)}
-              onChange={(event) => props.onAnswers(updateManagerAnswers(props.question, props.answers, otherValue, event.target.checked))}
-            />
-            <span>{zh ? '其他' : 'Other'}</span>
-          </label>
-          {props.answers.includes(otherValue) ? <input type={props.question.secret ? 'password' : 'text'} value={props.otherAnswer} autoComplete="off" onChange={(event) => props.onOtherAnswer(event.target.value)} /> : null}
-        </>
-      ) : null}
-    </fieldset>
-  );
-}
-
-function updateManagerAnswers(question: RequestQuestion, current: string[], value: string, checked: boolean): string[] {
-  if (question.kind !== 'multiple') return checked ? [value] : [];
-  return checked ? [...new Set([...current, value])] : current.filter((entry) => entry !== value);
-}
-
-function managerOtherAnswerValue(question: RequestQuestion): string {
-  const labels = new Set(question.options.map((option) => option.label));
-  let value = '__other__';
-  while (labels.has(value)) value += '_';
-  return value;
-}
-
-function authorizationTitle(request: NativePendingRequest | null, language: DigitalEmployeeLanguage): string {
-  const zh = language === 'zh-CN';
-  if (request?.type === 'command') return zh ? '允许员工运行命令？' : 'Allow the employee to run this command?';
-  if (request?.type === 'file') return zh ? '允许员工修改文件？' : 'Allow the employee to edit these files?';
-  if (request?.type === 'permissions') return zh ? '员工请求额外权限' : 'The employee requests additional permissions';
-  if (request?.type === 'mcp' || request?.type === 'MCP') return zh ? '员工请求外部工具授权' : 'The employee requests external tool approval';
-  return zh ? '员工等待授权' : 'The employee is waiting for approval';
-}
-
-function authorizationSummary(request: NativePendingRequest | null, language: DigitalEmployeeLanguage): string {
-  if (!request) return language === 'zh-CN' ? '授权请求缺少来源信息。' : 'The approval request has no source details.';
-  const payload = request.payload;
-  const candidates = [payload.command, payload.cmd, payload.path, payload.cwd, payload.reason, payload.description, payload.toolName, payload.serverName];
-  const lines = candidates.flatMap((value) => (typeof value === 'string' && value.trim() ? [value.trim()] : Array.isArray(value) && value.every((entry) => typeof entry === 'string') ? [value.join('\n')] : []));
-  return lines.length > 0 ? lines.join('\n') : language === 'zh-CN' ? '请在证据页核对原始请求后作出决定。' : 'Review the original request under Evidence before deciding.';
-}
-
-function authorizationDecisionLabel(decision: SupportedRequestDecision, language: DigitalEmployeeLanguage): string {
-  const zh = language === 'zh-CN';
-  const labels = zh
-    ? { accept: '允许一次', acceptWithExecpolicyAmendment: '允许类似命令', acceptForSession: '本会话允许', decline: '拒绝', cancel: '取消' }
-    : { accept: 'Allow once', acceptWithExecpolicyAmendment: 'Allow similar commands', acceptForSession: 'Allow for session', decline: 'Decline', cancel: 'Cancel' };
-  return labels[decision];
 }
 
 function tabLabel(tab: ManagementTab, language: DigitalEmployeeLanguage): string {
