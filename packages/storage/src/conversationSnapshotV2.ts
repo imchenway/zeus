@@ -218,6 +218,7 @@ export interface ConversationSnapshotV2 {
   activeTurn: ConversationSnapshotV2TurnSummary | null;
   recentClosedTurns: ConversationSnapshotV2TurnSummary[];
   sessionMetrics: ConversationSessionMetricsSnapshot | null;
+  executionContext?: ConversationSnapshotV2ExecutionContext;
   collections: {
     timeline: { throughSequence: number };
     modelHistory: { throughSequence: number };
@@ -230,6 +231,12 @@ export interface ConversationSnapshotV2 {
     returnedTurnCount: number;
     responseBytes: number;
   };
+}
+
+export interface ConversationSnapshotV2ExecutionContext {
+  cwd: string | null;
+  branch: string | null;
+  isGitRepository: boolean | null;
 }
 
 export interface ConversationSnapshotV2ProviderSettings {
@@ -551,7 +558,7 @@ export class ConversationSnapshotV2Repository {
     private readonly artifactStore?: ArtifactStore,
   ) {}
 
-  readSnapshot(conversationIdValue: string, options: { closedTurnLimit?: number; byteLimit?: number; includeSessionMetrics?: boolean } = {}): ConversationSnapshotV2 {
+  readSnapshot(conversationIdValue: string, options: { closedTurnLimit?: number; byteLimit?: number; includeSessionMetrics?: boolean; executionContext?: ConversationSnapshotV2ExecutionContext } = {}): ConversationSnapshotV2 {
     const conversationId = requiredIdentity(conversationIdValue, 'conversationId');
     const closedTurnLimit = boundedInteger(options.closedTurnLimit ?? conversationSnapshotV2Limits.snapshot.defaultClosedTurnLimit, 'closedTurnLimit', 1, conversationSnapshotV2Limits.snapshot.maximumClosedTurnLimit);
     const byteLimit = boundedInteger(options.byteLimit ?? conversationSnapshotV2Limits.snapshot.defaultByteLimit, 'byteLimit', conversationSnapshotV2Limits.snapshot.minimumByteLimit, conversationSnapshotV2Limits.snapshot.maximumByteLimit);
@@ -649,6 +656,7 @@ export class ConversationSnapshotV2Repository {
       recentClosedTurns: recentClosedTurns.map((turn) => this.toTurnSummary(conversationId, turn)),
       // 会话正文首屏允许延后读取聚合指标；旧客户端未传该选项时仍保持原响应契约。
       sessionMetrics: options.includeSessionMetrics === false ? null : readConversationSessionMetrics(this.db, conversationId, activeTurn?.id ?? null),
+      ...(options.executionContext ? { executionContext: options.executionContext } : {}),
       collections: {
         timeline: { throughSequence: this.maximumSequence('conversation_timeline_events', 'sequence', conversationId) },
         modelHistory: { throughSequence: this.maximumSequence('conversation_model_history', 'sequence', conversationId) },

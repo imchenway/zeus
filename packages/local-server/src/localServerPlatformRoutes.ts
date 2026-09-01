@@ -2,6 +2,7 @@ import { checkAiCliAdapter, type CodexRemoteControlStatus, createAgentCapability
 import {
   buildGitPatchExport,
   getGitRepositoryContext,
+  getGitWorkingContext,
   getGitWorktreeClean,
   getProjectGitCommitDetail,
   getProjectGitComparisonDiff,
@@ -707,6 +708,15 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     compatibility: conversationSnapshotCompatibility,
     projectExists: (projectId) => Boolean(projects.getById(projectId)),
     getConversation: (conversationId) => conversations.getRecordById(conversationId),
+    readExecutionContext: async (conversationId) => {
+      if (readOnlyValidation) return { cwd: null, branch: null, isGitRepository: null };
+      const conversation = conversations.getRecordById(conversationId);
+      const cwdSource = conversation ? resolveNativeConversationExecutionRoot(conversation) : null;
+      if (!cwdSource) return { cwd: null, branch: null, isGitRepository: null };
+      const cwd = resolve(cwdSource);
+      const git = await getGitWorkingContext(cwd);
+      return { cwd, branch: git.branch, isGitRepository: git.isRepository };
+    },
     readQueueState: (conversationId) => {
       const conversation = conversations.getRecordById(conversationId);
       if (!conversation) throw new Error('Conversation not found');

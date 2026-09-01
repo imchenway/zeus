@@ -615,6 +615,7 @@ export interface NativeConversationSnapshotV2 {
   activeTurn: NativeConversationSnapshotV2Turn | null;
   recentClosedTurns: NativeConversationSnapshotV2Turn[];
   sessionMetrics: NativeSessionMetricsSnapshot | null;
+  executionContext?: NativeConversationExecutionContext;
   collections: {
     timeline: { throughSequence: number };
     modelHistory: { throughSequence: number };

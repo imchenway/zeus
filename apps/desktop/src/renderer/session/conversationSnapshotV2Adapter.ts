@@ -134,6 +134,7 @@ export function adaptConversationSnapshotV2(input: ConversationSnapshotV2Bootstr
     ...(snapshot.conversation.providerSettings ? { providerSettings: snapshot.conversation.providerSettings } : snapshot.conversation.providerModel ? { providerSettings: { model: snapshot.conversation.providerModel } } : {}),
     ...(nextTurnSettings ? { nextTurnSettings } : {}),
     ...(snapshot.sessionMetrics ? { sessionMetrics: snapshot.sessionMetrics } : {}),
+    ...(snapshot.executionContext ? { executionContext: snapshot.executionContext } : {}),
     permissionMode,
     collaborationMode,
     goal: input.goal.goal,
