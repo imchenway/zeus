@@ -201,6 +201,12 @@ function turnProcessAvailable(snapshot: NativeSessionState['snapshot'], turnId: 
   return turn?.process.available ?? false;
 }
 
+function availableTurnProcessIds(snapshot: NativeSessionState['snapshot']): ReadonlySet<string> {
+  const v2 = snapshot?.snapshotV2;
+  if (!v2) return new Set();
+  return new Set([...v2.recentClosedTurns, ...(v2.activeTurn ? [v2.activeTurn] : [])].filter((turn) => turn.process.available).map((turn) => turn.providerTurnId ?? turn.id));
+}
+
 function useStableOptionalCallback<Arguments extends unknown[], Result>(callback: ((...args: Arguments) => Result) | undefined): ((...args: Arguments) => Result) | undefined {
   const callbackRef = useRef(callback);
   callbackRef.current = callback;
@@ -359,7 +365,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const lastUserKey = [...items].reverse().find((entry) => `${entry.type}`.toLocaleLowerCase().includes('user'))?.key;
   const answeredRequests = useMemo(() => props.state.pendingRequests.filter(isAnsweredUserInputRequest), [props.state.pendingRequests]);
   const transcriptRows = useMemo(() => projectTranscriptRows(items, answeredRequests, activeTurnId, props.historyOnly, props.state.terminalTurnIds), [activeTurnId, answeredRequests, items, props.historyOnly, props.state.terminalTurnIds]);
-  const turnRows = useMemo(() => projectTranscriptTurnRows(transcriptRows, activeTurnId, props.state.terminalTurnIds), [activeTurnId, props.state.terminalTurnIds, transcriptRows]);
+  const processAvailableTurnIds = useMemo(() => availableTurnProcessIds(props.state.snapshot), [props.state.snapshot?.snapshotV2]);
+  const turnRows = useMemo(() => projectTranscriptTurnRows(transcriptRows, activeTurnId, props.state.terminalTurnIds, processAvailableTurnIds), [activeTurnId, processAvailableTurnIds, props.state.terminalTurnIds, transcriptRows]);
   const planContinuationTurnIdentities = useMemo(() => planContinuationSourceTurnIdentities(props.state), [props.state.planImplementationRequests, props.state.queue, props.state.turnsByProviderId]);
   const planContinuationProcessKeys = useMemo(() => planContinuationProcessExpansionKeys(turnRows, planContinuationTurnIdentities), [planContinuationTurnIdentities, turnRows]);
   const defaultExpandedRowKeys = useMemo(
@@ -1606,7 +1613,12 @@ function renderTurnArtifacts(turnId: string, props: ConversationTranscriptProps,
   );
 }
 
-export function projectTranscriptTurnRows(rows: readonly TranscriptRow[], activeTurnId: string | null = null, terminalTurnIds: Readonly<Record<string, 'completed' | 'interrupted' | 'failed'>> = {}): TranscriptTurnRow[] {
+export function projectTranscriptTurnRows(
+  rows: readonly TranscriptRow[],
+  activeTurnId: string | null = null,
+  terminalTurnIds: Readonly<Record<string, 'completed' | 'interrupted' | 'failed'>> = {},
+  processAvailableTurnIds: ReadonlySet<string> = new Set(),
+): TranscriptTurnRow[] {
   const orderedRows = projectDeliverablesAfterFinalAnswer(rows);
   const completionOutputTurnIds = new Set(orderedRows.flatMap((row) => (row.kind === 'item' && isTurnCompletionOutputItem(row.item) ? [row.item.turnId] : [])));
   // 权威活动轮次优先于任何提前或误分类的输出；阶段摘要只负责切分单轮过程内部的内容，
@@ -1632,7 +1644,9 @@ export function projectTranscriptTurnRows(rows: readonly TranscriptRow[], active
 
   const workRowByTurn = new Map<string, TranscriptTurnWorkRow>();
   const processRowKeys = new Set<string>();
-  for (const [turnId, processRows] of processRowsByTurn) {
+  for (const turnId of new Set([...processRowsByTurn.keys(), ...processAvailableTurnIds])) {
+    if (!projectedTurnIds.has(turnId)) continue;
+    const processRows = processRowsByTurn.get(turnId) ?? [];
     const segments = segmentTurnProcessRows(turnId, processRows);
     workRowByTurn.set(turnId, {
       kind: 'turn_work',

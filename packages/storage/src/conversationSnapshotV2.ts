@@ -2,7 +2,7 @@ import type { ZeusDatabasePort } from './databasePort.js';
 import { type ArtifactRef, type ArtifactStore, artifactStoreGeneration } from './artifactStore.js';
 import { conversationSchemaGeneration, type ConversationSessionMetricsSnapshot, readConversationSessionMetrics } from './conversationExecutionStore.js';
 
-export const conversationSnapshotV2StructureGeneration = '2026-08-31-conversation-snapshot-v2-active-turn-tail';
+export const conversationSnapshotV2StructureGeneration = '2026-09-01-conversation-snapshot-v2-turn-output-anchors';
 
 export const conversationSnapshotV2Limits = {
   snapshot: {
@@ -145,6 +145,7 @@ export interface ConversationSnapshotV2TurnSummary {
   updatedAt: string;
   agentKind: string | null;
   openingUserMessage: ConversationModelHistoryPageItem | null;
+  completionOutput: ConversationModelHistoryPageItem | null;
   /**
    * 活动轮次最近过程的有界可见投影，覆盖尚未确认及刚完成的条目。
    * 这里只暴露 Snapshot V2 需要的展示字段，不把 Provider 摄取表直接当成客户端协议。
@@ -1339,6 +1340,7 @@ export class ConversationSnapshotV2Repository {
       updatedAt: row.updated_at,
       agentKind: row.agent_kind,
       openingUserMessage: this.openingUserMessage(conversationId, row.id),
+      completionOutput: this.completionOutput(conversationId, row.id),
       process: { available: Boolean(latestProcess), latestSequence: latestProcess?.process_sequence ?? 0 },
       resourcesAvailable: Boolean(this.db.get<{ present: number }>(`SELECT 1 AS present FROM conversation_resources WHERE conversation_id = ? AND turn_id = ? LIMIT 1`, [conversationId, row.id])),
       changeSetAvailable: Boolean(this.db.get<{ present: number }>(`SELECT 1 AS present FROM turn_change_sets WHERE conversation_id = ? AND turn_id = ? LIMIT 1`, [conversationId, row.id])),
@@ -1360,6 +1362,32 @@ export class ConversationSnapshotV2Repository {
          FROM conversation_model_history
         WHERE conversation_id = ? AND turn_id = ? AND role = 'user'
         ORDER BY sequence
+        LIMIT 1`,
+      [previewCharacterLimit, conversationId, turnId],
+    );
+    return row ? (this.mapModelHistoryRows(conversationId, [row])[0] ?? null) : null;
+  }
+
+  private completionOutput(conversationId: string, turnId: string): ConversationModelHistoryPageItem | null {
+    const row = this.db.get<ModelHistoryProjectionRow>(
+      `SELECT id, sequence, turn_id, submission_id,
+              (SELECT client_message_id FROM conversation_submissions WHERE id = conversation_model_history.submission_id) AS client_user_message_id,
+              ${modelHistoryProviderItemSql} AS provider_item_id,
+              ${modelHistoryReasoningSummarySql} AS reasoning_summary,
+              ${modelHistoryAssistantPhaseSql} AS assistant_phase,
+              ${modelHistoryFormalPlanSql} AS formal_plan,
+              segment_id, role, tool_pair_id, confirmed_at,
+              substr(${modelHistoryVisibleContentSql}, 1, ?)         AS content_preview,
+              length(CAST(${modelHistoryVisibleContentSql} AS BLOB)) AS content_bytes,
+              length(${modelHistoryVisibleContentSql})               AS content_characters
+         FROM conversation_model_history
+        WHERE conversation_id = ? AND turn_id = ? AND role = 'assistant' AND tool_pair_id IS NULL
+          AND (
+            ${modelHistoryAssistantPhaseSql} IN ('final_answer', 'finalAnswer', 'plan')
+            OR (${modelHistoryAssistantPhaseSql} IS NULL AND ${modelHistoryReasoningSummarySql} = 0)
+          )
+          AND (NOT json_valid(content_json) OR COALESCE(json_extract(content_json, '$.type'), '') <> 'tool_call')
+        ORDER BY sequence DESC
         LIMIT 1`,
       [previewCharacterLimit, conversationId, turnId],
     );

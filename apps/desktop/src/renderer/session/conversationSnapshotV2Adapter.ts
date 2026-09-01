@@ -45,7 +45,7 @@ export function adaptConversationSnapshotV2(input: ConversationSnapshotV2Bootstr
   const choice = input.choice;
   const turns = snapshotTurns(snapshot);
   const providerTurnByLocalId = providerTurnIdentityMap(turns);
-  const bootstrapHistory = modelHistoryWithOpeningAnchors(snapshot, input.history.items);
+  const bootstrapHistory = modelHistoryWithTurnAnchors(snapshot, input.history.items);
   const bootstrapItems = mergeActiveTurnItems(historyItems(bootstrapHistory, providerTurnByLocalId), activeTurnItems(snapshot.activeTurn?.activeItems ?? [], providerTurnByLocalId));
   const permissionMode = snapshot.conversation.nextTurnSettings?.permissionMode ?? choice.permissionMode ?? 'read-only';
   const collaborationMode = snapshot.conversation.nextTurnSettings?.collaborationMode ?? choice.collaborationMode ?? 'default';
@@ -187,10 +187,9 @@ function activeTurnItems(items: readonly NativeConversationActiveItemV2[], provi
   });
 }
 
-/** 已确认历史优先；活动投影只补齐当前水位尚未进入历史表的 Provider item。 */
+/** 历史与活动尾部按同一 Provider 身份和时间线合并，活动投影补齐尚未确认的过程状态。 */
 function mergeActiveTurnItems(history: readonly NativeItemSnapshot[], active: readonly NativeItemSnapshot[]): NativeItemSnapshot[] {
-  const confirmedProviderItems = new Set(history.map((item) => item.providerItemId).filter((providerItemId): providerItemId is string => Boolean(providerItemId)));
-  return [...history, ...active.filter((item) => !item.providerItemId || !confirmedProviderItems.has(item.providerItemId))];
+  return mergeItemsByProviderIdentity(history, active);
 }
 
 function emptyUnifiedUsageSnapshot(): NativeUnifiedUsageSnapshot {
@@ -438,7 +437,7 @@ export function updateConversationV2Paging(snapshot: NativeConversationSnapshot,
 function assertSnapshotV2Identity(snapshot: NativeConversationSnapshotV2, history: NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>, choice: NativeConversationChoice): void {
   if (
     snapshot.schemaVersion !== 2 ||
-    snapshot.structureGeneration !== '2026-08-31-conversation-snapshot-v2-active-turn-tail' ||
+    snapshot.structureGeneration !== '2026-09-01-conversation-snapshot-v2-turn-output-anchors' ||
     snapshot.conversationSchemaGeneration !== '2026-08-16-unified-conversation-segments' ||
     history.schemaVersion !== 2 ||
     history.structureGeneration !== snapshot.structureGeneration ||
@@ -473,10 +472,11 @@ function snapshotTurns(snapshot: NativeConversationSnapshotV2): NativeTurnSnapsh
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
 }
 
-function modelHistoryWithOpeningAnchors(snapshot: NativeConversationSnapshotV2, items: NativeConversationModelHistoryV2Item[]): NativeConversationModelHistoryV2Item[] {
+function modelHistoryWithTurnAnchors(snapshot: NativeConversationSnapshotV2, items: NativeConversationModelHistoryV2Item[]): NativeConversationModelHistoryV2Item[] {
   const byId = new Map<string, NativeConversationModelHistoryV2Item>();
   for (const turn of [...snapshot.recentClosedTurns, ...(snapshot.activeTurn ? [snapshot.activeTurn] : [])]) {
     if (turn.openingUserMessage) byId.set(turn.openingUserMessage.id, turn.openingUserMessage);
+    if (turn.completionOutput) byId.set(turn.completionOutput.id, turn.completionOutput);
   }
   for (const item of items) byId.set(item.id, item);
   return [...byId.values()].sort((left, right) => left.sequence - right.sequence || left.id.localeCompare(right.id));
@@ -711,5 +711,5 @@ function recordValue(value: unknown): Record<string, unknown> | null {
 }
 
 function compareNativeItems(left: NativeItemSnapshot, right: NativeItemSnapshot): number {
-  return left.updatedAt.localeCompare(right.updatedAt) || left.id.localeCompare(right.id);
+  return (left.startedAt ?? left.updatedAt).localeCompare(right.startedAt ?? right.updatedAt) || left.id.localeCompare(right.id);
 }

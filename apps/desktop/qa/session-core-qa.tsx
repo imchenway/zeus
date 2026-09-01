@@ -664,7 +664,7 @@ const completeMessageSessionState: NativeSessionState = {
       },
     ],
     snapshotV2: {
-      structureGeneration: '2026-08-31-conversation-snapshot-v2-active-turn-tail',
+      structureGeneration: '2026-09-01-conversation-snapshot-v2-turn-output-anchors',
       activeTurn: null,
       recentClosedTurns: [],
     },
@@ -679,7 +679,7 @@ function historyPagingRangeSnapshot(input: { through: number; oldest: number; cu
     id: historyPagingConversationId,
     items: [],
     snapshotV2: {
-      structureGeneration: '2026-08-31-conversation-snapshot-v2-active-turn-tail',
+      structureGeneration: '2026-09-01-conversation-snapshot-v2-turn-output-anchors',
     },
     v2Paging: {
       history: {
@@ -1934,7 +1934,7 @@ function CompleteMessagePreview() {
             const nextOffset = offset === 0 ? completeMessagePageBoundary : null;
             return {
               schemaVersion: 2 as const,
-              structureGeneration: '2026-08-31-conversation-snapshot-v2-active-turn-tail' as const,
+              structureGeneration: '2026-09-01-conversation-snapshot-v2-turn-output-anchors' as const,
               conversationId: completeMessageItem.conversationId,
               kind: 'model_content' as const,
               mimeType: 'text/plain; charset=utf-8',
@@ -2058,7 +2058,7 @@ function activeReentryProjection(preview: string) {
 
 const activeReentrySnapshot: NativeConversationSnapshotV2 = {
   schemaVersion: 2,
-  structureGeneration: '2026-08-31-conversation-snapshot-v2-active-turn-tail',
+  structureGeneration: '2026-09-01-conversation-snapshot-v2-turn-output-anchors',
   conversationSchemaGeneration: '2026-08-16-unified-conversation-segments',
   throughEventSeq: 2_948,
   eventStreamGeneration: 'zeus-conversation-sync-v2',
@@ -2110,6 +2110,7 @@ const activeReentrySnapshot: NativeConversationSnapshotV2 = {
     updatedAt: activeReentryUpdatedAt,
     agentKind: 'codex',
     openingUserMessage: null,
+    completionOutput: null,
     process: { available: false, latestSequence: 0 },
     resourcesAvailable: false,
     changeSetAvailable: false,
@@ -2162,8 +2163,28 @@ const activeReentrySnapshot: NativeConversationSnapshotV2 = {
         updatedAt: '2026-08-29T02:19:40.000Z',
       },
       {
-        id: 'qa-active-reentry-empty-reasoning',
+        id: 'qa-active-reentry-search',
         order: 3,
+        turnId: activeReentryLocalTurnId,
+        providerItemId: 'item-96',
+        itemType: 'commandExecution',
+        status: 'completed',
+        phase: 'prework',
+        text: activeReentryProjection(''),
+        payload: activeReentryProjection(
+          JSON.stringify({
+            type: 'commandExecution',
+            command: "rg -n 'permission' apps/desktop/src",
+            commandActions: [{ type: 'search', query: 'permission', path: 'apps/desktop/src' }],
+          }),
+        ),
+        startedAt: '2026-08-29T02:19:40.100Z',
+        completedAt: '2026-08-29T02:19:40.200Z',
+        updatedAt: '2026-08-29T02:19:40.200Z',
+      },
+      {
+        id: 'qa-active-reentry-empty-reasoning',
+        order: 4,
         turnId: activeReentryLocalTurnId,
         providerItemId: 'item-95',
         itemType: 'reasoning',
@@ -2191,7 +2212,7 @@ const activeReentrySnapshot: NativeConversationSnapshotV2 = {
 
 const activeReentryHistory: NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item> = {
   schemaVersion: 2,
-  structureGeneration: '2026-08-31-conversation-snapshot-v2-active-turn-tail',
+  structureGeneration: '2026-09-01-conversation-snapshot-v2-turn-output-anchors',
   conversationId: activeReentryConversationId,
   kind: 'model_history',
   throughEventSeq: activeReentrySnapshot.throughEventSeq,
