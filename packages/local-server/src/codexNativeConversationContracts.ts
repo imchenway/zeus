@@ -1,97 +1,73 @@
-import type {CodexAppServerManager, CodexResponsesRuntime, CodexServerRequestResponse} from '@zeus/ai-runtime';
-import type {CodexBootstrapAdditionalContext, TaskPushMessageLayout} from '@zeus/shared';
+import type { CodexAppServerManager, CodexResponsesRuntime, CodexServerRequestResponse } from '@zeus/ai-runtime';
+import type { CodexBootstrapAdditionalContext, TaskPushMessageLayout } from '@zeus/shared';
 import type {
-    CommandDeliveryRepository,
-    ConversationCollaborationMode,
-    ConversationExecutionRepository,
-    ConversationGoalRepository,
-    ConversationPermissionMode,
-    ConversationPlanActionRepository,
-    ConversationProviderItemRepository,
-    ConversationProviderSyncCheckpointRepository,
-    ConversationRepository,
-    ConversationResourceRepository,
-    ConversationServerRequestRepository,
-    ConversationSubmissionRepository,
-    ConversationTurnRepository,
-    ProviderEventReceiptRepository,
-    SettingRepository,
-    ZeusConversationGoalRecord,
-    ZeusDatabase,
+  CommandDeliveryRepository,
+  ConversationCollaborationMode,
+  ConversationExecutionRepository,
+  ConversationGoalRepository,
+  ConversationPermissionMode,
+  ConversationPlanActionRepository,
+  ConversationProviderItemRepository,
+  ConversationProviderSyncCheckpointRepository,
+  ConversationRepository,
+  ConversationResourceRepository,
+  ConversationServerRequestRepository,
+  ConversationSubmissionRepository,
+  ConversationTurnRepository,
+  ProviderEventReceiptRepository,
+  SettingRepository,
+  ZeusConversationGoalRecord,
+  ZeusDatabase,
 } from '@zeus/storage';
-import type {BrowserAutomationPort} from './browserAutomation.js';
-import type {ZeusToolAuditEvent} from './zeusToolRegistry.js';
-import type {CodexUsageService} from './codexUsageService.js';
-import type {ContextDispatchEnvelope} from './contextDispatchService.js';
-import type {ConversationSegmentLifecycle} from './conversationExecutionCoordinator.js';
-import type {ManagedConversationToolResultStore} from './conversationPortableContext.js';
-import type {ConversationEventFlowControl} from './eventFlowControl.js';
-import type {TurnChangeSetService} from './turnChangeSets.js';
-import type {ZeusConversationPluginRuntime} from './zeusConversationPluginRuntime.js';
+import type { BrowserAutomationPort } from './browserAutomation.js';
+import type { ZeusToolAuditEvent } from './zeusToolRegistry.js';
+import type { CodexUsageService } from './codexUsageService.js';
+import type { ProviderDispatchContextCompiler } from './contextDispatchService.js';
+import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
+import type { ManagedConversationToolResultStore } from './conversationPortableContext.js';
+import type { ConversationEventFlowControl } from './eventFlowControl.js';
+import type { TurnChangeSetService } from './turnChangeSets.js';
+import type { ZeusConversationPluginRuntime } from './zeusConversationPluginRuntime.js';
 
 export interface CreateCodexNativeConversationCoordinatorOptions {
-    manager: CodexAppServerManager;
-    enabled: boolean;
-    commandPath: string | (() => string);
-    externalAgentHome?: string;
-    db: ZeusDatabase;
-    conversations: ConversationRepository;
-    turns: ConversationTurnRepository;
-    providerItems: ConversationProviderItemRepository;
-    resources: ConversationResourceRepository;
-    changeSets: TurnChangeSetService;
-    submissions: ConversationSubmissionRepository;
-    requests: ConversationServerRequestRepository;
-    planActions: ConversationPlanActionRepository;
-    goals: ConversationGoalRepository;
-    receipts: ProviderEventReceiptRepository;
-    syncCheckpoints: ConversationProviderSyncCheckpointRepository;
-    settings: SettingRepository;
-    usage: CodexUsageService;
-    execution: ConversationExecutionRepository;
-    commandDeliveries: CommandDeliveryRepository;
-    toolResults: ManagedConversationToolResultStore;
-    eventFlow: ConversationEventFlowControl;
-    broadcast: (type: string, payload: Record<string, unknown>) => void;
-    now: () => string;
-    browserAutomation?: BrowserAutomationPort;
-    plugins?: ZeusConversationPluginRuntime;
-    auditNativeTool?: (event: ZeusToolAuditEvent) => void | Promise<void>;
-    trustedAttachmentRoots: string[];
-    generatedImageRoot?: string;
-    getProjectRoot: (projectId: string) => string | null;
-    ensureExecutionContext: (input: {
-        conversationId: string;
-        mode: 'reconcile' | 'submit' | 'dispatch' | 'recover_queue' | 'restore';
-    }) => Promise<{
-        projectLocalPath: string;
-        writableRoots?: string[];
-        executionWorkspaceMode?: 'direct' | 'worktree'
-    } | null>;
-    resolveResponsesRuntime: (input: {
-        modelSourceId: string | null;
-        model: string
-    }) => Promise<CodexResponsesRuntime | null>;
-    compileDispatchContext: (input: {
-        provider: 'codex';
-        conversationId: string;
-        submissionId: string;
-        projectId: string;
-        projectLocalPath: string;
-        taskId: string | null;
-        modelId: string;
-        modelSourceId: string | null;
-        operationRisk: 'read_only' | 'local_write';
-        fixedRequestUtf8Bytes: number;
-        providerBootstrapUtf8Bytes: number;
-        providerHistoryMode: 'latest' | 'bootstrap';
-        providerGenerationId: string | null;
-    }) => Promise<ContextDispatchEnvelope>;
-    preflightCodexModelBudget: (input: {
-        modelId: string;
-        modelSourceId: string | null;
-        providerGenerationId: string | null
-    }) => void;
+  manager: CodexAppServerManager;
+  enabled: boolean;
+  commandPath: string | (() => string);
+  externalAgentHome?: string;
+  db: ZeusDatabase;
+  conversations: ConversationRepository;
+  turns: ConversationTurnRepository;
+  providerItems: ConversationProviderItemRepository;
+  resources: ConversationResourceRepository;
+  changeSets: TurnChangeSetService;
+  submissions: ConversationSubmissionRepository;
+  requests: ConversationServerRequestRepository;
+  planActions: ConversationPlanActionRepository;
+  goals: ConversationGoalRepository;
+  receipts: ProviderEventReceiptRepository;
+  syncCheckpoints: ConversationProviderSyncCheckpointRepository;
+  settings: SettingRepository;
+  usage: CodexUsageService;
+  execution: ConversationExecutionRepository;
+  commandDeliveries: CommandDeliveryRepository;
+  toolResults: ManagedConversationToolResultStore;
+  eventFlow: ConversationEventFlowControl;
+  broadcast: (type: string, payload: Record<string, unknown>) => void;
+  now: () => string;
+  browserAutomation?: BrowserAutomationPort;
+  plugins?: ZeusConversationPluginRuntime;
+  auditNativeTool?: (event: ZeusToolAuditEvent) => void | Promise<void>;
+  trustedAttachmentRoots: string[];
+  generatedImageRoot?: string;
+  getProjectRoot: (projectId: string) => string | null;
+  ensureExecutionContext: (input: { conversationId: string; mode: 'reconcile' | 'submit' | 'dispatch' | 'recover_queue' | 'restore' }) => Promise<{
+    projectLocalPath: string;
+    writableRoots?: string[];
+    executionWorkspaceMode?: 'direct' | 'worktree';
+  } | null>;
+  resolveResponsesRuntime: (input: { modelSourceId: string | null; model: string }) => Promise<CodexResponsesRuntime | null>;
+  compileDispatchContext: ProviderDispatchContextCompiler;
+  preflightCodexModelBudget: (input: { modelId: string; modelSourceId: string | null; providerGenerationId: string | null }) => void;
 }
 
 export type NativeConversationRunState =
@@ -223,36 +199,36 @@ export interface NativeProviderWriteLifecycle {
 }
 
 export interface NativeTurnCommandInput<T> {
-    operation: 'turn_steer' | 'turn_interrupt' | 'server_request_response';
-    conversationId: string;
-    threadId: string;
-    turnId: string;
-    commandKey: string;
-    requestIdentity: unknown;
-    issuedAt?: string;
-    providerGenerationId?: string | null;
+  operation: 'turn_steer' | 'turn_interrupt' | 'server_request_response';
+  conversationId: string;
+  threadId: string;
+  turnId: string;
+  commandKey: string;
+  requestIdentity: unknown;
+  issuedAt?: string;
+  providerGenerationId?: string | null;
 
-    invoke(traceIdentity: string | null): Promise<T>;
+  invoke(traceIdentity: string | null): Promise<T>;
 
-    isExplicitRejection?(error: unknown): boolean;
+  isExplicitRejection?(error: unknown): boolean;
 
-    mutateBusinessState?(result: T): void;
+  mutateBusinessState?(result: T): void;
 }
 
 export type NativeTurnCommandExecutor = <T>(input: NativeTurnCommandInput<T>) => Promise<T>;
 
 export interface NativeSessionCommandInput<T> {
-    operation: 'goal_set' | 'goal_clear' | 'thread_archive' | 'thread_unarchive';
-    conversationId: string;
-    threadId: string;
-    commandKey: string;
-    requestIdentity: unknown;
+  operation: 'goal_set' | 'goal_clear' | 'thread_archive' | 'thread_unarchive';
+  conversationId: string;
+  threadId: string;
+  commandKey: string;
+  requestIdentity: unknown;
 
-    invoke(traceIdentity: string | null): Promise<T>;
+  invoke(traceIdentity: string | null): Promise<T>;
 
-    recoverAccepted?(nativeSessionId: string): Promise<T>;
+  recoverAccepted?(nativeSessionId: string): Promise<T>;
 
-    mutateBusinessState?(result: T): void;
+  mutateBusinessState?(result: T): void;
 }
 
 export type NativeSessionCommandExecutor = <T>(input: NativeSessionCommandInput<T>) => Promise<T>;

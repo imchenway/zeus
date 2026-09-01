@@ -19,9 +19,11 @@ export function ContextUsageIndicator(props: { unifiedUsage: NativeUnifiedUsageS
   const capacity = latestRequest?.contextWindow ?? null;
   const available = used !== null && capacity !== null && capacity > 0;
   const ratio = available ? used / capacity : null;
+  const estimate = props.unifiedUsage?.preflightEstimate ?? null;
+  const compaction = props.unifiedUsage?.latestContextCompaction ?? null;
   const progress = ratio === null ? 0 : Math.min(100, Math.max(0, ratio * 100));
   const severity = contextUsageSeverity(ratio);
-  const copy = contextUsageCopy(props.language, used, capacity, ratio, severity);
+  const copy = contextUsageCopy(props.language, used, capacity, ratio, severity, estimate?.estimatedHeadroomTokens ?? null, compaction?.status ?? null);
 
   useLayoutEffect(() => {
     if (!tooltipOpen) {
@@ -49,25 +51,41 @@ export function ContextUsageIndicator(props: { unifiedUsage: NativeUnifiedUsageS
       window.removeEventListener('resize', position);
       window.removeEventListener('scroll', position, true);
     };
-  }, [capacity, props.language, tooltipOpen, used]);
+  }, [capacity, compaction?.status, estimate?.estimatedHeadroomTokens, props.language, tooltipOpen, used]);
 
   const tooltip = (
     <span ref={tooltipRef} id={tooltipId} className="session-context-usage-tooltip" role="tooltip" style={contextUsageTooltipPositionStyle(tooltipPosition)}>
       <strong aria-hidden="true">{copy.title}</strong>
-      {available ? (
+      {available || copy.estimatedHeadroom || copy.compaction ? (
         <dl>
-          <div>
-            <dt>{copy.percentageLabel}</dt>
-            <dd>{copy.percentage}</dd>
-          </div>
-          <div>
-            <dt>{copy.usedLabel}</dt>
-            <dd title={copy.usedTitle}>{copy.used}</dd>
-          </div>
-          <div>
-            <dt>{copy.remainingLabel}</dt>
-            <dd title={copy.remainingTitle}>{copy.remaining}</dd>
-          </div>
+          {available ? (
+            <>
+              <div>
+                <dt>{copy.percentageLabel}</dt>
+                <dd>{copy.percentage}</dd>
+              </div>
+              <div>
+                <dt>{copy.usedLabel}</dt>
+                <dd title={copy.usedTitle}>{copy.used}</dd>
+              </div>
+              <div>
+                <dt>{copy.remainingLabel}</dt>
+                <dd title={copy.remainingTitle}>{copy.remaining}</dd>
+              </div>
+            </>
+          ) : null}
+          {copy.estimatedHeadroom ? (
+            <div>
+              <dt>{copy.estimatedHeadroomLabel}</dt>
+              <dd title={copy.estimatedHeadroomTitle}>{copy.estimatedHeadroom}</dd>
+            </div>
+          ) : null}
+          {copy.compaction ? (
+            <div>
+              <dt>{copy.compactionLabel}</dt>
+              <dd>{copy.compaction}</dd>
+            </div>
+          ) : null}
         </dl>
       ) : (
         <span>{copy.empty}</span>
@@ -120,14 +138,28 @@ function contextUsageSeverity(ratio: number | null): ContextUsageSeverity {
   return 'normal';
 }
 
-function contextUsageCopy(language: SessionUiLanguage, used: number | null, capacity: number | null, ratio: number | null, severity: ContextUsageSeverity) {
+function contextUsageCopy(
+  language: SessionUiLanguage,
+  used: number | null,
+  capacity: number | null,
+  ratio: number | null,
+  severity: ContextUsageSeverity,
+  estimatedHeadroomTokens: number | null,
+  compactionStatus: 'in_progress' | 'completed' | 'failed' | null,
+) {
   const zh = language === 'zh-CN';
   const title = zh ? '上下文占用' : 'Context usage';
+  const estimatedHeadroom = estimatedHeadroomTokens === null ? '' : `${estimatedHeadroomTokens < 0 ? '-' : ''}${formatTokenCount(Math.abs(estimatedHeadroomTokens), language).compact} Token`;
+  const estimatedHeadroomExact = estimatedHeadroomTokens === null ? '' : `${new Intl.NumberFormat(language).format(estimatedHeadroomTokens)} Token (${zh ? '估算，不是 Provider 实测' : 'estimate, not Provider-measured'})`;
+  const compaction =
+    compactionStatus === 'in_progress' ? (zh ? '压缩中' : 'Compacting') : compactionStatus === 'completed' ? (zh ? '最近一次已完成' : 'Latest completed') : compactionStatus === 'failed' ? (zh ? '最近一次失败' : 'Latest failed') : '';
   if (used === null || capacity === null || capacity <= 0 || ratio === null) {
-    const empty = zh ? '完成首轮后显示上下文占用。' : 'Context usage appears after the first turn.';
+    const empty = zh ? '完成首轮后显示真实上下文占用。' : 'Measured context usage appears after the first turn.';
+    const estimateAccessible = estimatedHeadroom ? `；${zh ? '下一请求估算安全余量' : 'Estimated next-request safe headroom'} ${estimatedHeadroomExact}` : '';
+    const compactionAccessible = compaction ? `；${zh ? '压缩状态' : 'Compaction status'} ${compaction}` : '';
     return {
       title,
-      accessibleLabel: `${title}：${empty}`,
+      accessibleLabel: `${title}：${empty}${estimateAccessible}${compactionAccessible}`,
       percentageLabel: '',
       percentage: '',
       usedLabel: '',
@@ -136,8 +168,13 @@ function contextUsageCopy(language: SessionUiLanguage, used: number | null, capa
       remainingLabel: '',
       remaining: '',
       remainingTitle: '',
+      estimatedHeadroomLabel: zh ? '下一请求安全余量（估算）' : 'Next-request safe headroom (estimate)',
+      estimatedHeadroom,
+      estimatedHeadroomTitle: estimatedHeadroomExact,
+      compactionLabel: zh ? '压缩状态' : 'Compaction status',
+      compaction,
       empty,
-      risk: null,
+      risk: estimatedHeadroomTokens !== null && estimatedHeadroomTokens < 0 ? (zh ? '估算已越过安全预算，将在派发前触发原生压缩。' : 'The estimate exceeds the safe budget; native compaction runs before dispatch.') : null,
     };
   }
 
@@ -145,13 +182,28 @@ function contextUsageCopy(language: SessionUiLanguage, used: number | null, capa
   const usedTokens = formatTokenCount(Math.max(0, used), language);
   const capacityTokens = formatTokenCount(Math.max(0, capacity), language);
   const remainingTokens = formatTokenCount(Math.max(0, capacity - used), language);
-  const risk = severity === 'danger' ? (zh ? '上下文接近上限' : 'Context is near its limit') : severity === 'warning' ? (zh ? '上下文占用较高' : 'Context usage is high') : null;
+  const risk =
+    estimatedHeadroomTokens !== null && estimatedHeadroomTokens < 0
+      ? zh
+        ? '下一请求估算已越过安全预算；派发前会先执行原生压缩。'
+        : 'The next-request estimate exceeds the safe budget; native compaction runs before dispatch.'
+      : severity === 'danger'
+        ? zh
+          ? '上下文接近上限'
+          : 'Context is near its limit'
+        : severity === 'warning'
+          ? zh
+            ? '上下文占用较高'
+            : 'Context usage is high'
+          : null;
   // 可见文本用 K/M 紧凑单位，精确位数只留在无障碍标签与悬停标题里，避免长数字撑破气泡。
   const usedDetail = `${usedTokens.compact} / ${capacityTokens.compact} Token`;
   const usedDetailExact = `${usedTokens.exact} / ${capacityTokens.exact} Token`;
   const remainingDetail = `${remainingTokens.compact} Token`;
   const remainingDetailExact = `${remainingTokens.exact} Token`;
-  const accessibleLabel = `${title}：${percentage}；${zh ? '已用' : 'Used'} ${usedDetailExact}；${zh ? '剩余' : 'Remaining'} ${remainingDetailExact}${risk ? `；${risk}` : ''}`;
+  const estimateAccessible = estimatedHeadroom ? `；${zh ? '下一请求估算安全余量' : 'Estimated next-request safe headroom'} ${estimatedHeadroomExact}` : '';
+  const compactionAccessible = compaction ? `；${zh ? '压缩状态' : 'Compaction status'} ${compaction}` : '';
+  const accessibleLabel = `${title}：${percentage}；${zh ? '已用' : 'Used'} ${usedDetailExact}；${zh ? '剩余' : 'Remaining'} ${remainingDetailExact}${estimateAccessible}${compactionAccessible}${risk ? `；${risk}` : ''}`;
 
   return {
     title,
@@ -164,6 +216,11 @@ function contextUsageCopy(language: SessionUiLanguage, used: number | null, capa
     remainingLabel: zh ? '剩余' : 'Remaining',
     remaining: remainingDetail,
     remainingTitle: remainingDetailExact,
+    estimatedHeadroomLabel: zh ? '下一请求安全余量（估算）' : 'Next-request safe headroom (estimate)',
+    estimatedHeadroom,
+    estimatedHeadroomTitle: estimatedHeadroomExact,
+    compactionLabel: zh ? '压缩状态' : 'Compaction status',
+    compaction,
     empty: '',
     risk,
   };

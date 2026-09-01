@@ -54,8 +54,9 @@ import { readNativeSubmissionSkill } from './nativeConversationSubmissionInputs.
 import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
 import type { ManagedConversationToolResultStore } from './conversationPortableContext.js';
 import { TurnProcessProjector } from './turnProcessProjector.js';
-import type { ContextDispatchEnvelope } from './contextDispatchService.js';
+import type { ContextDispatchEnvelope, ProviderDispatchContextCompiler } from './contextDispatchService.js';
 import { PiProviderCommandApplicationService, type PiProviderCommandAttempt } from './piProviderCommandDelivery.js';
+import { runPiActiveContextCompaction } from './piActiveContextCompaction.js';
 import { projectLocallyAcceptedUserMessage } from './localUserSubmissionProjection.js';
 import type { ZeusConversationPluginRuntime, ZeusPluginConversationPreparation } from './zeusConversationPluginRuntime.js';
 import { emitPluginCompactionHook } from './codexConversationDispatchContext.js';
@@ -117,21 +118,7 @@ export interface CreatePiNativeConversationCoordinatorOptions {
   plugins?: ZeusConversationPluginRuntime;
   browserAutomation?: BrowserAutomationPort;
   auditNativeTool?: (event: ZeusToolAuditEvent) => void | Promise<void>;
-  compileDispatchContext?: (input: {
-    provider: 'pi';
-    conversationId: string;
-    submissionId: string;
-    projectId: string;
-    projectLocalPath: string;
-    taskId: string | null;
-    modelId: string;
-    modelSourceId: string | null;
-    operationRisk: 'read_only' | 'local_write';
-    fixedRequestUtf8Bytes: number;
-    providerBootstrapUtf8Bytes: number;
-    providerHistoryMode: 'latest' | 'bootstrap';
-    providerGenerationId: string | null;
-  }) => Promise<ContextDispatchEnvelope>;
+  compileDispatchContext?: ProviderDispatchContextCompiler;
 }
 
 export interface StartPiConversationInput {
@@ -566,13 +553,13 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           evidence: { adapter: 'pi_sdk', method: 'AgentSession.compact', tokensBefore: compacted.tokensBefore, estimatedTokensAfter: compacted.estimatedTokensAfter },
           completedAt: options.now(),
         });
+        compactionFinished = true;
         const pluginCompactContext = await emitPluginCompactionHook({ plugins: options.plugins, event: 'PostCompact', conversationId: input.conversationId, cwd: input.cwd, model: piModelIdentity(input.model) });
         if (pluginCompactContext) {
           providerPrompt = `${providerPrompt}\n\n[ZEUS_PLUGIN_COMPACT_HOOK_CONTEXT]\n${Object.values(pluginCompactContext)
             .map((entry) => entry.value)
             .join('\n')}\n[/ZEUS_PLUGIN_COMPACT_HOOK_CONTEXT]`;
         }
-        compactionFinished = true;
       }
       runCommand = providerCommands.prepare({
         operation: 'run_start',
@@ -856,6 +843,55 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
             providerGenerationId: driver.getRuntimeHealth().generationId,
           })
         : null;
+      const connection = input.model.sourceId ? options.modelConnections.listMetadata().find((candidate) => candidate.id === input.model.sourceId) : undefined;
+      const activeCompaction = await runPiActiveContextCompaction({
+        driver,
+        session: context.session,
+        execution: options.execution,
+        db: options.db,
+        providerCommands,
+        plugins: options.plugins,
+        envelope: compiledDispatchContext,
+        conversationId: input.conversation.id,
+        submissionId: submission.id,
+        issuedAt: submission.createdAt,
+        cwd,
+        model: input.model.modelId,
+        ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),
+        contextWindow: connection?.models.find((model) => model.id === input.model.modelId)?.contextWindow ?? null,
+        now: options.now,
+      });
+      if (activeCompaction.compacted) {
+        if (activeCompaction.postCompactContext) providerContent = appendPiPluginCompactionContext(providerContent, activeCompaction.postCompactContext);
+        compiledDispatchContext = options.compileDispatchContext
+          ? await options.compileDispatchContext({
+              provider: 'pi',
+              conversationId: input.conversation.id,
+              submissionId: submission.id,
+              projectId: context.projectId,
+              projectLocalPath: context.cwd,
+              taskId: context.taskId,
+              modelId: input.model.modelId,
+              modelSourceId: input.model.sourceId,
+              operationRisk: context.permissionMode === 'read-only' ? 'read_only' : 'local_write',
+              fixedRequestUtf8Bytes: Buffer.byteLength(JSON.stringify({ content: providerContent, images: attachmentInput.images }), 'utf8'),
+              providerBootstrapUtf8Bytes: Buffer.byteLength(JSON.stringify(providerMetadata), 'utf8'),
+              providerHistoryMode: 'latest',
+              ...(activeCompaction.estimatedTokensAfter === null
+                ? {}
+                : {
+                    providerHistoryOverride: {
+                      tokens: activeCompaction.estimatedTokensAfter,
+                      source: `pi_compaction_estimate:${context.session.nativeSessionId}:${submission.id}`,
+                    },
+                  }),
+              providerGenerationId: driver.getRuntimeHealth().generationId,
+            })
+          : null;
+        if (activeCompaction.estimatedTokensAfter !== null && (compiledDispatchContext?.provider.requestAccounting?.estimatedRequestHeadroomTokens ?? 0) < 0) {
+          throw piError('ZEUS_PI_CONTEXT_COMPACTION_INSUFFICIENT', 'Pi 原生压缩后仍无法容纳本轮固定输入与输出预留；已停止派发，请在新分段重试。');
+        }
+      }
       runCommand = providerCommands.prepare({
         operation: 'run_start',
         commandKey: submission.id,
@@ -1545,7 +1581,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
 
   async function executeTool(request: PiZeusToolRequest): Promise<PiZeusToolResult> {
     const raw = await executeToolRaw(request);
-    if (request.toolName === 'read_conversation_tool_result') return raw;
+    if (request.toolName === 'read_conversation_tool_result' || request.toolName === 'read_conversation_tool_image') return raw;
     const run = [...runs.values()].reverse().find((candidate) => candidate.providerThreadId === request.session.nativeSessionId);
     const segment = run ? options.execution.currentSegment(run.conversationId) : null;
     if (!run || !segment) return raw;
@@ -1559,6 +1595,26 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       text: raw.text,
       createdAt: options.now(),
     });
+    const imageArtifacts: Array<{ handle: string; sha256: string; byteLength: number; mimeType: string }> = [];
+    const projectedContentItems: PiZeusToolContentItem[] = [{ type: 'text', text: stored.projection }];
+    let imageOrdinal = 0;
+    for (const item of raw.contentItems ?? []) {
+      if (item.type !== 'image') continue;
+      const image = await options.toolResults.storeImage({
+        conversationId: run.conversationId,
+        turnId: run.turnId,
+        segmentId: segment.id,
+        toolPairId: `${request.toolCallId}:image:${imageOrdinal++}`,
+        imageUrl: `data:${item.mimeType};base64,${item.data}`,
+        createdAt: options.now(),
+      });
+      imageArtifacts.push({ handle: image.record.handle, sha256: image.record.sha256, byteLength: image.record.byteLength, mimeType: image.record.mimeType });
+      projectedContentItems.push({ type: 'text', text: image.projectionText });
+      if (image.projectedImageUrl) {
+        const parsed = parseImageDataUrl(image.projectedImageUrl);
+        if (parsed) projectedContentItems.push({ type: 'image', data: parsed.data, mimeType: parsed.mimeType });
+      }
+    }
     options.execution.appendModelHistory({
       conversationId: run.conversationId,
       turnId: run.turnId,
@@ -1574,7 +1630,13 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       turnId: run.turnId,
       segmentId: segment.id,
       role: 'tool',
-      content: { projection: stored.projection, handle: stored.record.handle, sha256: stored.record.sha256, byteLength: stored.record.byteLength },
+      content: {
+        projection: stored.projection,
+        handle: stored.record.handle,
+        sha256: stored.record.sha256,
+        byteLength: stored.record.byteLength,
+        ...(imageArtifacts.length > 0 ? { imageArtifacts } : {}),
+      },
       submissionId: run.submissionId,
       toolPairId: request.toolCallId,
       confirmedAt: options.now(),
@@ -1582,11 +1644,13 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     return {
       ...raw,
       text: stored.projection,
+      contentItems: projectedContentItems,
       details: {
         ...asRecord(raw.details),
         toolResultHandle: stored.record.handle,
         sha256: stored.record.sha256,
         byteLength: stored.record.byteLength,
+        ...(imageArtifacts.length > 0 ? { imageArtifacts } : {}),
       },
     };
   }
@@ -1602,6 +1666,19 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         limit: numberArg(request.args.limit, 16_384),
       });
       return { text: page.text, details: { offset: page.offset, nextOffset: page.nextOffset, totalCharacters: page.totalCharacters, sha256: page.sha256 } };
+    }
+    if (request.toolName === 'read_conversation_tool_image') {
+      const image = await options.toolResults.readImage({
+        conversationId: context.conversationId,
+        handle: stringArg(request.args.handle, '工具图片句柄'),
+        detail: request.args.detail === 'original' ? 'original' : 'low',
+      });
+      const parsed = image.imageUrl ? parseImageDataUrl(image.imageUrl) : null;
+      return {
+        text: image.projectionText,
+        contentItems: [{ type: 'text', text: image.projectionText }, ...(parsed ? ([{ type: 'image' as const, data: parsed.data, mimeType: parsed.mimeType }] as const) : [])],
+        details: { mimeType: image.mimeType, byteLength: image.byteLength, sha256: image.sha256, detail: image.detail },
+      };
     }
     if (options.plugins) {
       const catalog = await options.plugins.getCatalog(context.conversationId);
@@ -2245,6 +2322,14 @@ function appendPiConversationContext(prompt: string, browserCommentContent: stri
   const readableContext = conversationContext ? serializeConversationContext(conversationContext as unknown as ConversationContextDraft).trim() : '';
   const missingReadableContext = readableContext && !prompt.includes(readableContext) ? readableContext : '';
   return [prompt, browserContext, missingReadableContext].filter((part) => part.trim()).join('\n\n');
+}
+
+function appendPiPluginCompactionContext(prompt: string, context: Record<string, { value: string }>): string {
+  const value = Object.values(context)
+    .map((entry) => entry.value.trim())
+    .filter(Boolean)
+    .join('\n');
+  return value ? `${prompt}\n\n[ZEUS_PLUGIN_COMPACT_HOOK_CONTEXT]\n${value}\n[/ZEUS_PLUGIN_COMPACT_HOOK_CONTEXT]` : prompt;
 }
 
 function orderPiTaskPushAttachments(layout: TaskPushMessageLayout, attachments: NativeConversationAttachmentInput[]): NativeConversationAttachmentInput[] {

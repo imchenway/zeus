@@ -372,10 +372,11 @@ async function inspectStructure(): Promise<{
   providerChildIdentityBound: boolean;
   queueCoreHasNoExternalEffect: boolean;
 }> {
-  const [application, routes, queueCore, rendererClient, rendererApi, indexComposition, routeAssembly, conversationOperations, coordinator] = await Promise.all([
+  const [application, routes, queueCore, rendererEnvelope, rendererClient, rendererApi, indexComposition, routeAssembly, conversationOperations, coordinator] = await Promise.all([
     readFile(join(repositoryRoot, 'packages/local-server/src/conversationDispatchCommandApplication.ts'), 'utf8'),
     readFile(join(repositoryRoot, 'packages/local-server/src/conversationDispatchCommandRoutes.ts'), 'utf8'),
     readFile(join(repositoryRoot, 'packages/local-server/src/conversationQueueCoreMutationApplication.ts'), 'utf8'),
+    readFile(join(repositoryRoot, 'apps/desktop/src/renderer/commandRequest.ts'), 'utf8'),
     readFile(join(repositoryRoot, 'apps/desktop/src/renderer/features/conversations/conversationDispatchCommandClient.ts'), 'utf8'),
     readFile(join(repositoryRoot, 'apps/desktop/src/renderer/features/conversations/conversationApiClient.ts'), 'utf8'),
     readFile(join(repositoryRoot, 'packages/local-server/src/index.ts'), 'utf8'),
@@ -408,7 +409,8 @@ async function inspectStructure(): Promise<{
     rendererCommandTypeCount,
     rendererBuildsEnvelopeOnce:
       rendererClient.includes('createConversationDispatchCommandRequest(input)') &&
-      rendererClient.includes('payload: { operationIdentity, inputSha256 }') &&
+      rendererClient.includes('return createRendererCommandEnvelope({') &&
+      rendererEnvelope.includes('payload: { operationIdentity: input.operationIdentity, inputSha256: input.inputSha256 }') &&
       (rendererApi.match(/buildConversationDispatchCommandRequest\(\{/gu)?.length ?? 0) === 15,
     rendererReconnectCache:
       rendererClient.includes('const stableRequests = new Map<') &&

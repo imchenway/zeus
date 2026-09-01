@@ -1,173 +1,173 @@
-import type {CodexAppServerEvent, CodexThreadGoal} from '@zeus/ai-runtime';
-import {calculateCacheHitRate, type ConversationResource, type NativeTokenUsageSnapshot} from '@zeus/shared';
+import type { CodexAppServerEvent, CodexThreadGoal } from '@zeus/ai-runtime';
+import { calculateCacheHitRate, type ConversationResource, type NativeTokenUsageSnapshot } from '@zeus/shared';
 import {
-    projectConversationTurnFailure,
-    type ZeusConversationGoalRecord,
-    type ZeusConversationItemRecord,
-    type ZeusConversationPlanActionRecord,
-    type ZeusConversationServerRequestRecord,
-    type ZeusConversationSubmissionRecord,
-    type ZeusConversationTurnRecord,
-    type ZeusConversationWithMessagesRecord,
+  projectConversationTurnFailure,
+  type ZeusConversationGoalRecord,
+  type ZeusConversationItemRecord,
+  type ZeusConversationPlanActionRecord,
+  type ZeusConversationServerRequestRecord,
+  type ZeusConversationSubmissionRecord,
+  type ZeusConversationTurnRecord,
+  type ZeusConversationWithMessagesRecord,
 } from '@zeus/storage';
-import {parseCanonicalRequestUserInputQuestions} from './codexNativeRuiValidation.js';
-import {sanitizeConversationItemPayload} from './conversationResources.js';
-import {codexProviderEventIdentity, isCodexReadableItemTextDeltaEvent} from './codexProviderEventFlow.js';
-import {interruptedQueueSubmissions} from './codexNativeRunStateProjection.js';
+import { parseCanonicalRequestUserInputQuestions } from './codexNativeRuiValidation.js';
+import { sanitizeConversationItemPayload } from './conversationResources.js';
+import { codexProviderEventIdentity, isCodexReadableItemTextDeltaEvent } from './codexProviderEventFlow.js';
+import { interruptedQueueSubmissions } from './codexNativeRunStateProjection.js';
 import type {
-    ConversationDispatchContext,
-    CreateCodexNativeConversationCoordinatorOptions,
-    NativeAcceptedOperation,
-    NativeConversationRunState,
-    NativeTurnCommandExecutor,
-    NativeTurnResult,
-    RespondNativeRequestInput,
+  ConversationDispatchContext,
+  CreateCodexNativeConversationCoordinatorOptions,
+  NativeAcceptedOperation,
+  NativeConversationRunState,
+  NativeTurnCommandExecutor,
+  NativeTurnResult,
+  RespondNativeRequestInput,
 } from './codexNativeConversationContracts.js';
-import type {CodexModelRequestTimingTracker} from './codexModelRequestTiming.js';
-import type {NativeUserMessageProjection} from './codexNativeUserMessageProjection.js';
-import type {CodexRolloutRequestUserInputRecovery} from './codexRolloutRequestUserInput.js';
+import type { CodexModelRequestTimingTracker } from './codexModelRequestTiming.js';
+import type { NativeUserMessageProjection } from './codexNativeUserMessageProjection.js';
+import type { CodexRolloutRequestUserInputRecovery } from './codexRolloutRequestUserInput.js';
 import {
-    completedItemProjection,
-    coordinatorError,
-    hasAuditableFileApprovalTarget,
-    hasSecretQuestion,
-    integerValue,
-    isRecord,
-    isToolResultItem,
-    itemText,
-    itemTypeFromMethod,
-    itemTypeFromValue,
-    liveProgressProjection,
-    nativePendingRequestProjection,
-    normalizeMcpStartupStatusMap,
-    normalizeSingleMcpStartupStatus,
-    normalizeTurnPlan,
-    parseJsonRecord,
-    phaseFromItem,
-    providerEventReceipt,
-    providerItemIdFrom,
-    providerTimestamp,
-    providerTurnFailure,
-    providerTurnFailureRecord,
-    providerTurnIdFrom,
-    providerTurnTerminalStatus,
-    providerTurnUserClientId,
-    reasoningSummaryProjection,
-    replayResolvedRequest,
-    requestKindFromMethod,
-    requireNumber,
-    requireString,
-    serializeError,
-    tokenUsageBreakdown,
+  completedItemProjection,
+  coordinatorError,
+  hasAuditableFileApprovalTarget,
+  hasSecretQuestion,
+  integerValue,
+  isRecord,
+  isToolResultItem,
+  itemText,
+  itemTypeFromMethod,
+  itemTypeFromValue,
+  liveProgressProjection,
+  nativePendingRequestProjection,
+  normalizeMcpStartupStatusMap,
+  normalizeSingleMcpStartupStatus,
+  normalizeTurnPlan,
+  parseJsonRecord,
+  phaseFromItem,
+  providerEventReceipt,
+  providerItemIdFrom,
+  providerTimestamp,
+  providerTurnFailure,
+  providerTurnFailureRecord,
+  providerTurnIdFrom,
+  providerTurnTerminalStatus,
+  providerTurnUserClientId,
+  reasoningSummaryProjection,
+  replayResolvedRequest,
+  requestKindFromMethod,
+  requireNumber,
+  requireString,
+  serializeError,
+  tokenUsageBreakdown,
 } from './codexNativeConversationPolicy.js';
 
 export interface CodexProviderEventProjectionDependencies {
   options: CreateCodexNativeConversationCoordinatorOptions;
-    closed: boolean;
-    contexts: Map<string, ConversationDispatchContext>;
-    failedTurnResults: Map<string, Error & { code: string }>;
-    modelRequestTiming: CodexModelRequestTimingTracker;
-    runStates: Map<string, NativeConversationRunState>;
+  closed: boolean;
+  contexts: Map<string, ConversationDispatchContext>;
+  failedTurnResults: Map<string, Error & { code: string }>;
+  modelRequestTiming: CodexModelRequestTimingTracker;
+  runStates: Map<string, NativeConversationRunState>;
 
-    clearAutoResolutionTimer(requestId: string): void;
+  clearAutoResolutionTimer(requestId: string): void;
 
-    contextFromConversation(conversation: ZeusConversationWithMessagesRecord): ConversationDispatchContext;
+  contextFromConversation(conversation: ZeusConversationWithMessagesRecord): ConversationDispatchContext;
 
-    contextFromSubmission(submission: ZeusConversationSubmissionRecord): ConversationDispatchContext;
+  contextFromSubmission(submission: ZeusConversationSubmissionRecord): ConversationDispatchContext;
 
-    drainQueuedSubmissions(): Promise<void>;
+  drainQueuedSubmissions(): Promise<void>;
 
-    ensurePlanImplementationRequest(
-        conversationId: string,
-        turn: ZeusConversationTurnRecord,
-        submission: ZeusConversationSubmissionRecord | undefined,
-        timestamp: string,
-        recoveredPlanItem?: ZeusConversationItemRecord | null,
-    ): ZeusConversationPlanActionRecord | null;
+  ensurePlanImplementationRequest(
+    conversationId: string,
+    turn: ZeusConversationTurnRecord,
+    submission: ZeusConversationSubmissionRecord | undefined,
+    timestamp: string,
+    recoveredPlanItem?: ZeusConversationItemRecord | null,
+  ): ZeusConversationPlanActionRecord | null;
 
-    executeTurnCommand: NativeTurnCommandExecutor;
+  executeTurnCommand: NativeTurnCommandExecutor;
 
-    failInvalidInteractionAuthority(input: {
-        conversation: ZeusConversationWithMessagesRecord;
-        threadId: string;
-        providerTurnId: string | null;
-        turn: ZeusConversationTurnRecord | undefined;
-        request: Pick<ZeusConversationServerRequestRecord, 'id' | 'status' | 'createdAt' | 'transportGenerationId'>;
-        error: Record<string, unknown>;
-        timestamp: string;
-    }): Promise<Record<string, unknown>>;
+  failInvalidInteractionAuthority(input: {
+    conversation: ZeusConversationWithMessagesRecord;
+    threadId: string;
+    providerTurnId: string | null;
+    turn: ZeusConversationTurnRecord | undefined;
+    request: Pick<ZeusConversationServerRequestRecord, 'id' | 'status' | 'createdAt' | 'transportGenerationId'>;
+    error: Record<string, unknown>;
+    timestamp: string;
+  }): Promise<Record<string, unknown>>;
 
-    flushScheduledPersist(): Promise<void>;
+  flushScheduledPersist(): Promise<void>;
 
-    hasProcessedProviderEvent(event: CodexAppServerEvent, identity: string): boolean;
+  hasProcessedProviderEvent(event: CodexAppServerEvent, identity: string): boolean;
 
-    maintainProviderReceiptGenerations(generationId: string): void;
+  maintainProviderReceiptGenerations(generationId: string): void;
   markScheduledPersistDirty(): void;
 
-    persistProviderUserMessage(
-        conversation: ZeusConversationWithMessagesRecord,
-        itemPayload: Record<string, unknown>,
-        projection: NativeUserMessageProjection,
-        providerTurnId: string,
-        providerThreadId: string,
-        providerItemId: string,
-        createdAt: string,
-    ): string | null;
+  persistProviderUserMessage(
+    conversation: ZeusConversationWithMessagesRecord,
+    itemPayload: Record<string, unknown>,
+    projection: NativeUserMessageProjection,
+    providerTurnId: string,
+    providerThreadId: string,
+    providerItemId: string,
+    createdAt: string,
+  ): string | null;
 
-    persistProviderReportedServiceTierDowngrade(conversationId: string, submission: ZeusConversationSubmissionRecord, context: ConversationDispatchContext, actualServiceTier: string | null): void;
+  persistProviderReportedServiceTierDowngrade(conversationId: string, submission: ZeusConversationSubmissionRecord, context: ConversationDispatchContext, actualServiceTier: string | null): void;
 
-    projectGoal(conversationId: string, goal: CodexThreadGoal, providerTurnId: string | null, occurredAt: string): ZeusConversationGoalRecord;
+  projectGoal(conversationId: string, goal: CodexThreadGoal, providerTurnId: string | null, occurredAt: string): ZeusConversationGoalRecord;
 
-    projectProcessItem(input: {
-        conversationId: string;
-        turnId: string;
-        threadId: string;
-        providerItemId: string;
-        itemType: string;
-        status: 'in_progress' | 'completed' | 'failed';
-        payload: Record<string, unknown>;
-        text: string;
-        occurredAt: string;
-    }): void;
+  projectProcessItem(input: {
+    conversationId: string;
+    turnId: string;
+    threadId: string;
+    providerItemId: string;
+    itemType: string;
+    status: 'in_progress' | 'completed' | 'failed';
+    payload: Record<string, unknown>;
+    text: string;
+    occurredAt: string;
+  }): void;
 
-    projectProviderUserMessage(conversation: ZeusConversationWithMessagesRecord, turn: ZeusConversationTurnRecord, itemPayload: Record<string, unknown>, providerContent: string, providerItemId: string): NativeUserMessageProjection | null;
+  projectProviderUserMessage(conversation: ZeusConversationWithMessagesRecord, turn: ZeusConversationTurnRecord, itemPayload: Record<string, unknown>, providerContent: string, providerItemId: string): NativeUserMessageProjection | null;
 
-    reconcileTerminalTurnSubmissions(
-        conversation: ZeusConversationWithMessagesRecord,
-        turn: ZeusConversationTurnRecord,
-        timestamp: string,
-        failure?: unknown,
-    ): {
-        primarySubmission: ZeusConversationSubmissionRecord | undefined;
-        recoveryRequired: ZeusConversationSubmissionRecord[];
-        reconciledCount: number
-    };
+  reconcileTerminalTurnSubmissions(
+    conversation: ZeusConversationWithMessagesRecord,
+    turn: ZeusConversationTurnRecord,
+    timestamp: string,
+    failure?: unknown,
+  ): {
+    primarySubmission: ZeusConversationSubmissionRecord | undefined;
+    recoveryRequired: ZeusConversationSubmissionRecord[];
+    reconciledCount: number;
+  };
 
-    recoverExternalRequestUserInputAnswer(
-        conversation: ZeusConversationWithMessagesRecord,
-        request: ZeusConversationServerRequestRecord,
-        resolvedAt: string,
-    ): Promise<{ request: ZeusConversationServerRequestRecord; recovery: CodexRolloutRequestUserInputRecovery }>;
+  recoverExternalRequestUserInputAnswer(
+    conversation: ZeusConversationWithMessagesRecord,
+    request: ZeusConversationServerRequestRecord,
+    resolvedAt: string,
+  ): Promise<{ request: ZeusConversationServerRequestRecord; recovery: CodexRolloutRequestUserInputRecovery }>;
 
-    recoverExternallyResolvedRequestUserInputAnswers(conversation: ZeusConversationWithMessagesRecord, providerTurnId?: string): Promise<number>;
+  recoverExternallyResolvedRequestUserInputAnswers(conversation: ZeusConversationWithMessagesRecord, providerTurnId?: string): Promise<number>;
 
-    rejectTurnResultWaiters(key: string, error: Error): void;
+  rejectTurnResultWaiters(key: string, error: Error): void;
 
-    resolveTurnResult(result: NativeTurnResult): void;
+  resolveTurnResult(result: NativeTurnResult): void;
 
-    rememberProcessedProviderEvent(event: CodexAppServerEvent, identity: string): void;
+  rememberProcessedProviderEvent(event: CodexAppServerEvent, identity: string): void;
 
-    respondToRequest(input: RespondNativeRequestInput): Promise<NativeAcceptedOperation>;
+  respondToRequest(input: RespondNativeRequestInput): Promise<NativeAcceptedOperation>;
 
-    scheduleAutoResolution(request: ZeusConversationServerRequestRecord): void;
+  scheduleAutoResolution(request: ZeusConversationServerRequestRecord): void;
 
-    scheduleExternalAnswerRecovery(conversationId: string, requestId: string, attempt?: number): void;
+  scheduleExternalAnswerRecovery(conversationId: string, requestId: string, attempt?: number): void;
 
-    schedulePersist(): void;
+  schedulePersist(): void;
 
-    submissionPresentation(conversationId: string, turn: ZeusConversationTurnRecord, itemPayload: Record<string, unknown>): Record<string, unknown>;
+  submissionPresentation(conversationId: string, turn: ZeusConversationTurnRecord, itemPayload: Record<string, unknown>): Record<string, unknown>;
 
-    syncItemResources(conversation: ZeusConversationWithMessagesRecord, turn: ZeusConversationTurnRecord, item: ZeusConversationItemRecord, payload: Record<string, unknown>, text: string, timestamp: string): ConversationResource[];
+  syncItemResources(conversation: ZeusConversationWithMessagesRecord, turn: ZeusConversationTurnRecord, item: ZeusConversationItemRecord, payload: Record<string, unknown>, text: string, timestamp: string): ConversationResource[];
 }
 
 export async function projectCodexProviderEvent(dependencies: CodexProviderEventProjectionDependencies, event: CodexAppServerEvent, receiptEvents: readonly CodexAppServerEvent[] = [event]): Promise<void> {
@@ -223,11 +223,11 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     });
     for (const receiptEvent of receiptEvents) {
       const receiptIdentity = codexProviderEventIdentity(receiptEvent);
-        options.receipts.record(providerEventReceipt(receiptEvent, receiptIdentity));
+      options.receipts.record(providerEventReceipt(receiptEvent, receiptIdentity));
       maintainProviderReceiptGenerations(receiptEvent.generationId);
       rememberProcessedProviderEvent(receiptEvent, receiptIdentity);
     }
-      await options.db.save();
+    await options.db.save();
     options.broadcast('conversation.warning.changed', {
       conversationId: eventSegment.conversationId,
       warningKind: 'late_external_activity',
@@ -238,7 +238,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
   let drainAfterTurn = false;
   let queueChangedAfterTurn = false;
   let sessionMetricsChanged = false;
-    let createdPlanImplementationRequest: ZeusConversationPlanActionRecord | null = null;
+  let createdPlanImplementationRequest: ZeusConversationPlanActionRecord | null = null;
 
   function broadcastLinkedFileApprovalChanges(providerItemId: string, providerTurnId: string): void {
     if (!conversation) return;
@@ -264,15 +264,16 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     const goal = await options.manager.readThreadGoal({ threadId });
     if (goal) projectGoal(conversation.id, goal, typeof params.turnId === 'string' ? params.turnId : null, event.receivedAt);
   } else if (event.method === 'thread/goal/cleared' && conversation && threadId) {
-      const cleared = options.goals.clear({
-          conversationId: conversation.id,
-          providerThreadId: threadId,
-          occurredAt: event.receivedAt
-      });
-      if (cleared) options.broadcast('conversation.goal.cleared', {
-          conversationId: conversation.id,
-          cleared: true,
-          timeline: options.goals.listEvents(conversation.id)
+    const cleared = options.goals.clear({
+      conversationId: conversation.id,
+      providerThreadId: threadId,
+      occurredAt: event.receivedAt,
+    });
+    if (cleared)
+      options.broadcast('conversation.goal.cleared', {
+        conversationId: conversation.id,
+        cleared: true,
+        timeline: options.goals.listEvents(conversation.id),
       });
   } else if (event.method === 'serverRequest/resolved') {
     const providerRequestId = typeof params.requestId === 'string' || typeof params.requestId === 'number' ? params.requestId : null;
@@ -409,31 +410,31 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       if (matchedSubmission && (matchedSubmission.status === 'dispatching' || matchedSubmission.status === 'queued')) {
         options.submissions.updateStatus(matchedSubmission.id, 'active', { providerTurnId, dispatchedAt: timestamp });
       }
-        const checkpoint = options.syncCheckpoints.getByConversation(conversation.id);
+      const checkpoint = options.syncCheckpoints.getByConversation(conversation.id);
       if (checkpoint) {
         if (checkpoint.providerThreadId === threadId) {
-            options.syncCheckpoints.advance({
-                conversationId: conversation.id,
-                providerThreadId: threadId,
-                lastSyncedTurnId: providerTurnId,
-                timestamp: event.receivedAt
-            });
+          options.syncCheckpoints.advance({
+            conversationId: conversation.id,
+            providerThreadId: threadId,
+            lastSyncedTurnId: providerTurnId,
+            timestamp: event.receivedAt,
+          });
         } else {
           // sealed 分段已在函数入口拦截；抵达这里的不同线程只能是刚提升的 current 分段。
-            options.syncCheckpoints.rebind({
-                conversationId: conversation.id,
-                providerThreadId: threadId,
-                baselineTurnId: providerTurnId,
-                timestamp: event.receivedAt
-            });
+          options.syncCheckpoints.rebind({
+            conversationId: conversation.id,
+            providerThreadId: threadId,
+            baselineTurnId: providerTurnId,
+            timestamp: event.receivedAt,
+          });
         }
       } else {
-          options.syncCheckpoints.initialize({
-              conversationId: conversation.id,
-              providerThreadId: threadId,
-              baselineTurnId: providerTurnId,
-              timestamp: event.receivedAt
-          });
+        options.syncCheckpoints.initialize({
+          conversationId: conversation.id,
+          providerThreadId: threadId,
+          baselineTurnId: providerTurnId,
+          timestamp: event.receivedAt,
+        });
       }
       options.conversations.bindProvider(conversation.id, { providerId: 'codex', providerThreadId: threadId, providerModel: conversation.providerModel, providerState: 'active' });
       runStates.set(conversation.id, { type: 'active', turnId: providerTurnId, phase: 'prework' });
@@ -533,6 +534,17 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
         completedAt: timestamp,
         updatedAt: timestamp,
       });
+      projectProcessItem({
+        conversationId: conversation.id,
+        turnId: turn.id,
+        threadId,
+        providerItemId: reconciledItem.providerItemId,
+        itemType: reconciledItem.itemType,
+        status: reconciledItem.status === 'failed' ? 'failed' : 'completed',
+        payload: parseJsonRecord(reconciledItem.payloadJson),
+        text: reconciledItem.textContent,
+        occurredAt: timestamp,
+      });
       options.broadcast('conversation.item.updated', {
         conversationId: conversation.id,
         providerThreadId: threadId,
@@ -552,9 +564,12 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       completedAt: timestamp,
       updatedAt: timestamp,
     });
-      options.changeSets.seal({conversation, turn, timestamp});
+    options.changeSets.seal({ conversation, turn, timestamp });
     const submissions = options.submissions.listByConversation(conversation.id);
-    const terminalReconciliation = reconcileTerminalTurnSubmissions(conversation, terminalTurn, timestamp, failure ? providerTurnFailureRecord(params, failure) : undefined);
+    const internalContextCompaction = turn.clientSubmissionId === null && turnItems.some((item) => item.itemType === 'contextCompaction');
+    const terminalReconciliation = internalContextCompaction
+      ? { primarySubmission: undefined, recoveryRequired: [], reconciledCount: 0 }
+      : reconcileTerminalTurnSubmissions(conversation, terminalTurn, timestamp, failure ? providerTurnFailureRecord(params, failure) : undefined);
     const activeSubmission = terminalReconciliation.primarySubmission;
     const recoveryRequiredSubmissions = terminalReconciliation.recoveryRequired;
     for (const submission of recoveryRequiredSubmissions) {
@@ -565,8 +580,10 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
         providerTurnId,
       });
     }
-    if (!failed && !interrupted) createdPlanImplementationRequest = ensurePlanImplementationRequest(conversation.id, turn, activeSubmission, timestamp);
-    if (failed) {
+    if (!internalContextCompaction && !failed && !interrupted) createdPlanImplementationRequest = ensurePlanImplementationRequest(conversation.id, turn, activeSubmission, timestamp);
+    if (internalContextCompaction) {
+      runStates.set(conversation.id, { type: 'idle' });
+    } else if (failed) {
       for (const queued of submissions.filter((entry) => entry.status === 'queued')) options.submissions.updateStatus(queued.id, 'paused', { pausedReason: 'recovery_required' });
       runStates.set(conversation.id, { type: 'paused', reason: 'recovery_required' });
     } else if (recoveryRequiredSubmissions.length > 0) {
@@ -584,11 +601,11 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       providerId: 'codex',
       providerThreadId: threadId,
       providerModel: conversation.providerModel,
-      providerState: failed ? 'failed' : recoveryRequiredSubmissions.length > 0 || (interrupted && hasInterruptedQueue) ? 'paused' : 'ready',
+      providerState: internalContextCompaction ? 'ready' : failed ? 'failed' : recoveryRequiredSubmissions.length > 0 || (interrupted && hasInterruptedQueue) ? 'paused' : 'ready',
     });
     const ephemeral = contexts.get(conversation.id)?.ephemeral === true;
-      const conversationGoal = options.goals.get(conversation.id);
-    if (!ephemeral && !conversationGoal) {
+    const conversationGoal = options.goals.get(conversation.id);
+    if (!internalContextCompaction && !ephemeral && !conversationGoal) {
       options.conversations.markAttentionUnread(conversation.id, {
         kind: failed ? 'failed' : interrupted ? 'interrupted' : 'completed',
         turnId: providerTurnId,
@@ -596,7 +613,9 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       });
     }
     const resultKey = `${conversation.id}:${providerTurnId}`;
-    if (failure) {
+    if (internalContextCompaction) {
+      // 压缩轮次没有用户提交和回答等待者；只保留过程、usage 与终态，不制造普通回答结果。
+    } else if (failure) {
       failedTurnResults.set(resultKey, failure);
       rejectTurnResultWaiters(resultKey, failure);
     } else {
@@ -611,7 +630,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       };
       resolveTurnResult(result);
     }
-    if (ephemeral) {
+    if (!internalContextCompaction && ephemeral) {
       options.conversations.bindProvider(conversation.id, {
         providerId: 'codex',
         providerThreadId: threadId,
@@ -632,11 +651,12 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
         completedAt: timestamp,
         ...(failure ? { error: projectConversationTurnFailure(providerTurnFailureRecord(params, failure)) } : {}),
         hasUnreadAttention: options.conversations.getById(conversation.id)?.attentionUnread === true,
-        notificationEligible: !conversationGoal,
+        notificationEligible: !internalContextCompaction && !conversationGoal,
+        ...(internalContextCompaction ? { internalOperation: 'context_compaction' } : {}),
       },
     };
-    queueChangedAfterTurn = interrupted || recoveryRequiredSubmissions.length > 0 || createdPlanImplementationRequest !== null;
-    drainAfterTurn = !failed && !interrupted && recoveryRequiredSubmissions.length === 0 && conversationGoal?.status !== 'active';
+    queueChangedAfterTurn = !internalContextCompaction && (interrupted || recoveryRequiredSubmissions.length > 0 || createdPlanImplementationRequest !== null);
+    drainAfterTurn = !internalContextCompaction && !failed && !interrupted && recoveryRequiredSubmissions.length === 0 && conversationGoal?.status !== 'active';
   } else if (event.method === 'item/started' && conversation && threadId) {
     const providerTurnId = providerTurnIdFrom(params);
     const itemPayload = isRecord(params.item) ? params.item : {};
@@ -645,6 +665,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     if (!providerTurnId || !providerItemId || !turn) return;
     const presentedItemPayload = sanitizeConversationItemPayload(itemPayload.type === 'userMessage' ? { ...itemPayload, ...submissionPresentation(conversation.id, turn, itemPayload) } : itemPayload);
     const itemType = itemTypeFromValue(itemPayload.type);
+    if (itemType === 'contextCompaction') options.execution.markTurnModelRequestsAsContextCompaction(conversation.id, turn.id);
     // 兼容 app-server 不发送 rawResponseItem/completed 的版本：模型一旦产出工具、命令、
     // 文件变更等非文本项，本次请求即不能用总输出 Token 计算纯文本生成速率。
     if (isNonTextModelRequestOutput(itemType)) modelRequestTiming.observe(conversation.id, turn.id, event.receivedAt, 'non_text');
@@ -678,7 +699,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
           updatedAt: event.receivedAt,
         });
     if (item.itemType === 'fileChange') {
-        options.changeSets.capture({
+      options.changeSets.capture({
         conversation,
         turn,
         providerItemId,
@@ -736,7 +757,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       startedAt: existing?.startedAt ?? event.receivedAt,
       updatedAt: event.receivedAt,
     });
-      options.changeSets.capture({
+    options.changeSets.capture({
       conversation,
       turn,
       providerItemId,
@@ -884,7 +905,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       updatedAt: event.receivedAt,
     });
     // 目标存在期间，普通中间回复只更新会话进度；关注状态只由目标关键终态统一产生。
-      if (event.method === 'item/agentMessage/delta' && params.delta.trim() && !options.goals.get(conversation.id)) {
+    if (event.method === 'item/agentMessage/delta' && params.delta.trim() && !options.goals.get(conversation.id)) {
       const previousRevision = options.conversations.getById(conversation.id)?.attentionRevision ?? 0;
       const attention = options.conversations.markAttentionUnread(conversation.id, {
         kind: 'unread',
@@ -923,6 +944,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     if (!providerTurnId || !providerItemId || !turn) return;
     const presentedItemPayload = sanitizeConversationItemPayload(itemPayload.type === 'userMessage' ? { ...itemPayload, ...submissionPresentation(conversation.id, turn, itemPayload) } : itemPayload);
     const itemType = itemTypeFromValue(itemPayload.type);
+    if (itemType === 'contextCompaction') options.execution.markTurnModelRequestsAsContextCompaction(conversation.id, turn.id);
     const existing = options.providerItems.getByProvider(threadId, providerItemId);
     const userMessageProjection = itemType === 'userMessage' ? projectProviderUserMessage(conversation, turn, presentedItemPayload, itemText(itemPayload), providerItemId) : null;
     if (itemType === 'userMessage' && !userMessageProjection) return;
@@ -1042,7 +1064,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
         providerTurnId,
         providerItemId,
       });
-        if (item.textContent.trim() && !options.goals.get(conversation.id)) {
+      if (item.textContent.trim() && !options.goals.get(conversation.id)) {
         const previousRevision = options.conversations.getById(conversation.id)?.attentionRevision ?? 0;
         const attention = options.conversations.markAttentionUnread(conversation.id, {
           kind: 'unread',
@@ -1061,7 +1083,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       }
     }
     if (item.itemType === 'fileChange') {
-        options.changeSets.capture({
+      options.changeSets.capture({
         conversation,
         turn,
         providerItemId,
@@ -1244,6 +1266,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     if (segment && turn) {
       const recordedRequests = options.execution.listModelRequestsForTurn(conversation.id, turn.id);
       const latestRecordedRequest = recordedRequests.at(-1);
+      const contextCompactionTurn = options.providerItems.listByConversation(conversation.id).some((item) => item.turnId === turn.id && item.itemType === 'contextCompaction');
       const exactRequest =
         latestRecordedRequest &&
         latestRecordedRequest.providerRequestId !== null &&
@@ -1258,7 +1281,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       // app-server 的兼容 token_count 事件通常不带 requestKind；同轮首个请求是推理，
       // 后续请求只会在工具结果续跑后出现。显式 retry/compaction 标记仍优先。
       const requestKind =
-        tokenUsage.requestKind === 'context_compaction'
+        tokenUsage.requestKind === 'context_compaction' || contextCompactionTurn
           ? 'context_compaction'
           : tokenUsage.requestKind === 'retry'
             ? 'retry'
@@ -1299,28 +1322,14 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
           occurredAt: turn.completedAt ?? event.receivedAt,
         });
       }
-      if (requestKind === 'context_compaction') {
-        options.execution.appendProcessItem({
-          conversationId: conversation.id,
-          turnId: turn.id,
-          segmentId: segment.id,
-          kind: 'context_compaction',
-          status: 'completed',
-          title: '上下文压缩',
-          detail: { model, usage: last },
-          sourceEventId: `codex:compaction:${event.generationId}:${event.sequence}`,
-          startedAt: event.receivedAt,
-          completedAt: event.receivedAt,
-        });
-      }
     }
     sessionMetricsChanged = true;
     broadcast = { type: 'conversation.provider.token_usage.updated', payload: { conversationId: conversation.id, ...snapshot } };
   } else if (event.method === 'account/rateLimits/updated') {
     // 官方协议明确这是稀疏更新；只把它当作重读信号，不用不完整包覆盖快照。
-      options.usage.handleSparseRateLimitUpdate();
+    options.usage.handleSparseRateLimitUpdate();
   } else if (event.method === 'account/updated') {
-      options.usage.handleAccountChanged();
+    options.usage.handleAccountChanged();
   } else if (event.method === 'mcpServer/startupStatus/updated') {
     const legacyStatuses = isRecord(params.statuses) ? normalizeMcpStartupStatusMap(params.statuses) : null;
     const currentStatus = legacyStatuses ? null : normalizeSingleMcpStartupStatus(params);
@@ -1354,8 +1363,8 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
           : {}),
         createdAt: event.receivedAt,
       });
-        const managerState = options.manager.getState();
-        const currentGenerationId = managerState.type === 'ready' ? managerState.generationId : null;
+      const managerState = options.manager.getState();
+      const currentGenerationId = managerState.type === 'ready' ? managerState.generationId : null;
       const canonicalRui = requestKind === 'request_user_input' ? parseCanonicalRequestUserInputQuestions(params) : null;
       if (canonicalRui && !canonicalRui.ok) {
         const recoveryError = await failInvalidInteractionAuthority({
@@ -1460,7 +1469,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
             // Provider 拒绝自动答复时保留真实待授权弹窗，禁止伪造已允许状态。
           }
         }
-          if (!automaticallyApproved && !options.goals.get(conversation.id)) {
+        if (!automaticallyApproved && !options.goals.get(conversation.id)) {
           options.conversations.markAttentionUnread(conversation.id, {
             kind: 'unread',
             turnId: providerTurnId,
@@ -1501,7 +1510,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
                 projectRoot: (contexts.get(conversation.id) ?? contextFromConversation(conversation)).projectLocalPath,
                 providerItems: options.providerItems,
               }),
-                notificationEligible: !options.goals.get(conversation.id),
+              notificationEligible: !options.goals.get(conversation.id),
             },
           };
           scheduleAutoResolution(request);
@@ -1512,7 +1521,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
 
   for (const receiptEvent of receiptEvents) {
     const receiptIdentity = codexProviderEventIdentity(receiptEvent);
-      options.receipts.record(providerEventReceipt(receiptEvent, receiptIdentity));
+    options.receipts.record(providerEventReceipt(receiptEvent, receiptIdentity));
     maintainProviderReceiptGenerations(receiptEvent.generationId);
     rememberProcessedProviderEvent(receiptEvent, receiptIdentity);
   }
@@ -1559,16 +1568,16 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
 }
 
 function requiresImmediatePersist(event: CodexAppServerEvent, createdPlanImplementationRequest: unknown): boolean {
-    return (
-        event.requestId !== undefined ||
-        event.method === 'turn/started' ||
-        event.method === 'turn/completed' ||
-        event.method === 'thread/goal/updated' ||
-        event.method === 'thread/goal/cleared' ||
-        event.method === 'serverRequest/resolved' ||
-        event.method === 'rawResponse/completed' ||
-        createdPlanImplementationRequest !== null
-    );
+  return (
+    event.requestId !== undefined ||
+    event.method === 'turn/started' ||
+    event.method === 'turn/completed' ||
+    event.method === 'thread/goal/updated' ||
+    event.method === 'thread/goal/cleared' ||
+    event.method === 'serverRequest/resolved' ||
+    event.method === 'rawResponse/completed' ||
+    createdPlanImplementationRequest !== null
+  );
 }
 
 function firstVisibleReceiptAt(events: readonly CodexAppServerEvent[], fallback: string): string {

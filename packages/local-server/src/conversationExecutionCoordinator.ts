@@ -24,6 +24,7 @@ export interface ConversationExecutionRoute {
 
 export interface ConversationSegmentLifecycle {
   readonly requiresNewSegment: boolean;
+  readonly newSegmentReason: 'initial' | 'route_changed' | 'context_pressure' | null;
   readonly portableContext: PortableConversationContext | null;
   readonly codexBootstrapAdditionalContext: CodexBootstrapAdditionalContext | null;
   readonly contextCompactionPlan: PortableContextCompactionPlan | null;
@@ -86,7 +87,13 @@ export class ConversationExecutionCoordinator {
     const current = this.options.execution.currentSegment(input.conversationId);
     const currentSnapshot = current?.executionSnapshotId ? this.options.execution.getExecutionSnapshot(current.executionSnapshotId) : undefined;
     const desiredFingerprint = routeFingerprint(input.route);
-    const requiresNewSegment = !current || current.runtimeKind !== input.route.runtimeKind || currentSnapshot?.routeFingerprint !== desiredFingerprint;
+    const routeChanged = Boolean(current && (current.runtimeKind !== input.route.runtimeKind || currentSnapshot?.routeFingerprint !== desiredFingerprint));
+    const completedNativeCompactions = current ? this.options.execution.countCompletedNativeContextCompactions(current.id) : 0;
+    const latestContextEstimate = current ? this.options.execution.latestContextEstimateForSegment(current.id) : null;
+    const insufficientPiCompaction = Boolean(latestContextEstimate && latestContextEstimate.historyBaselineSource.startsWith('pi_compaction_estimate:') && latestContextEstimate.estimatedHeadroomTokens < 0);
+    const contextPressureRollover = Boolean(current && !routeChanged && (completedNativeCompactions >= 2 || insufficientPiCompaction));
+    const requiresNewSegment = !current || routeChanged || contextPressureRollover;
+    const newSegmentReason = !current ? 'initial' : routeChanged ? 'route_changed' : contextPressureRollover ? 'context_pressure' : null;
     const portableContext = requiresNewSegment ? this.portableContext.build(input.conversationId, input.targetCapabilities) : null;
     const contextCompactionPlan = portableContext ? planPortableContextCompaction(portableContext, input.targetCapabilities) : null;
     let executionSnapshotId: string | null = null;
@@ -109,6 +116,7 @@ export class ConversationExecutionCoordinator {
 
     return {
       requiresNewSegment,
+      newSegmentReason,
       get portableContext() {
         return portableContext;
       },
@@ -445,6 +453,7 @@ export class ConversationExecutionCoordinator {
               acceptanceEvidence: accepted.runtimeEvidence,
               userHistoryContent: input.userHistoryContent,
               acceptedAt: accepted.acceptedAt,
+              sourceSealReason: newSegmentReason === 'context_pressure' ? 'context_pressure_rollover' : 'route_switched',
             },
             settleCommandReceipt,
           );
