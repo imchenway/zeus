@@ -1,7 +1,7 @@
-import { nanoid } from 'nanoid';
-import { dirname, join, normalize } from 'node:path';
+import {randomBytes} from 'node:crypto';
+import {dirname, join, normalize} from 'node:path';
 
-interface CodeSymbolFact {
+export interface CodeSymbolFact {
   id: string;
   symbolType: string;
   name: string;
@@ -14,10 +14,14 @@ interface CodeSymbolFact {
   metadata: Record<string, unknown>;
 }
 
-interface ProjectScanResult {
+export interface ProjectScanResult {
   projectName: string;
   rootPath: string;
   symbols: CodeSymbolFact[];
+}
+
+export function randomId(length: number): string {
+    return randomBytes(length).toString('base64url').slice(0, length);
 }
 
 export interface ProjectGraphNode {
@@ -111,7 +115,7 @@ export function buildProjectGraph(scan: ProjectScanResult): ProjectGraph {
     const target = nodeBySymbolId.get(symbol.id);
     if (!fileNode || !target) continue;
     edges.push({
-      id: `edge_${nanoid(12)}`,
+        id: `edge_${randomId(12)}`,
       edgeType: graphEdgeTypeForSymbol(symbol.symbolType),
       sourceNodeId: fileNode.id,
       targetNodeId: target.id,
@@ -158,7 +162,7 @@ export function assertNonEmptyGraph(graph: ProjectGraph): void {
 
 function toGraphNode(symbol: CodeSymbolFact): ProjectGraphNode {
   return {
-    id: `node_${nanoid(12)}`,
+      id: `node_${randomId(12)}`,
     nodeType: ['maven_project', 'maven_module'].includes(String(symbol.metadata.sourceKind)) ? 'module' : symbol.symbolType,
     name: symbol.name,
     qualifiedName: symbol.qualifiedName,
@@ -219,7 +223,7 @@ function makeApiSequenceGraphView(projectName: string, nodes: ProjectGraphNode[]
 
 function makeGraphView(projectName: string, viewType: GraphViewType, label: string, nodeIds: string[], edgeIds: string[]): ProjectGraphView {
   return {
-    id: `view_${nanoid(12)}`,
+      id: `view_${randomId(12)}`,
     schemaVersion: GRAPH_VIEW_SCHEMA_VERSION,
     viewType,
     title: `${projectName} ${label}`,
@@ -519,7 +523,7 @@ function buildTableReferenceEdges(nodes: ProjectGraphNode[]): ProjectGraphEdge[]
       if (!target || target.id === tableNode.id) continue;
       declaredReferenceKeys.add(`${tableNode.id}->${target.id}`);
       edges.push({
-        id: `edge_${nanoid(12)}`,
+          id: `edge_${randomId(12)}`,
         edgeType: 'references',
         sourceNodeId: tableNode.id,
         targetNodeId: target.id,
@@ -536,7 +540,7 @@ function buildTableReferenceEdges(nodes: ProjectGraphNode[]): ProjectGraphEdge[]
       if (!target || target.id === tableNode.id) continue;
       if (declaredReferenceKeys.has(`${tableNode.id}->${target.id}`)) continue;
       edges.push({
-        id: `edge_${nanoid(12)}`,
+          id: `edge_${randomId(12)}`,
         edgeType: 'references',
         sourceNodeId: tableNode.id,
         targetNodeId: target.id,
@@ -566,7 +570,7 @@ function buildApiHandlerEdges(nodes: ProjectGraphNode[], nodeByQualifiedName: Ma
       if (!handler) return [];
       return [
         {
-          id: `edge_${nanoid(12)}`,
+            id: `edge_${randomId(12)}`,
           edgeType: 'handles_api' as const,
           sourceNodeId: apiNode.id,
           targetNodeId: handler.id,
@@ -586,7 +590,7 @@ function buildFunctionCallEdges(nodes: ProjectGraphNode[], nodeByQualifiedName: 
       if (!owner) return [];
       return [
         {
-          id: `edge_${nanoid(12)}`,
+            id: `edge_${randomId(12)}`,
           edgeType: 'calls' as const,
           sourceNodeId: owner.id,
           targetNodeId: callNode.id,
@@ -606,7 +610,7 @@ function buildResolvedCallTargetEdges(nodes: ProjectGraphNode[], nodeByQualified
       if (!target) return [];
       return [
         {
-          id: `edge_${nanoid(12)}`,
+            id: `edge_${randomId(12)}`,
           edgeType: 'resolves_to' as const,
           sourceNodeId: callNode.id,
           targetNodeId: target.id,
@@ -626,7 +630,7 @@ function buildFunctionControlFlowEdges(nodes: ProjectGraphNode[], nodeByQualifie
       if (!owner) return [];
       return [
         {
-          id: `edge_${nanoid(12)}`,
+            id: `edge_${randomId(12)}`,
           edgeType: 'control_flow' as const,
           sourceNodeId: owner.id,
           targetNodeId: controlFlowNode.id,
@@ -653,7 +657,7 @@ function buildSequentialControlFlowEdges(nodes: ProjectGraphNode[]): ProjectGrap
       const target = ordered[index + 1];
       if (!source || !target) continue;
       edges.push({
-        id: `edge_${nanoid(12)}`,
+          id: `edge_${randomId(12)}`,
         edgeType: 'next_control_flow',
         sourceNodeId: source.id,
         targetNodeId: target.id,
@@ -682,7 +686,7 @@ function buildControlBranchEdges(nodes: ProjectGraphNode[]): ProjectGraphEdge[] 
       const trueTarget = laterNodes[0];
       if (!trueTarget) continue;
       edges.push({
-        id: `edge_${nanoid(12)}`,
+          id: `edge_${randomId(12)}`,
         edgeType: 'branch_true',
         sourceNodeId: ifNode.id,
         targetNodeId: trueTarget.id,
@@ -697,7 +701,7 @@ function buildControlBranchEdges(nodes: ProjectGraphNode[]): ProjectGraphEdge[] 
         : laterNodes.find((node) => String(node.metadata.controlType) === 'else');
       if (!falseTarget) continue;
       edges.push({
-        id: `edge_${nanoid(12)}`,
+          id: `edge_${randomId(12)}`,
         edgeType: 'branch_false',
         sourceNodeId: ifNode.id,
         targetNodeId: falseTarget.id,
@@ -714,7 +718,7 @@ function buildLoopBackEdges(nodes: ProjectGraphNode[]): ProjectGraphEdge[] {
   return nodes
     .filter((node) => node.nodeType === 'control_flow' && node.metadata.controlType === 'loop')
     .map((loopNode) => ({
-      id: `edge_${nanoid(12)}`,
+        id: `edge_${randomId(12)}`,
       edgeType: 'loop_back' as const,
       sourceNodeId: loopNode.id,
       targetNodeId: loopNode.id,
@@ -742,7 +746,7 @@ function buildLoopControlTransferEdges(nodes: ProjectGraphNode[]): ProjectGraphE
       const nearestLoop = [...ordered].reverse().find((candidate) => candidate.metadata.controlType === 'loop' && Number(candidate.metadata.lineStart) < lineStart);
       if (!nearestLoop) continue;
       edges.push({
-        id: `edge_${nanoid(12)}`,
+          id: `edge_${randomId(12)}`,
         edgeType: controlType === 'continue' ? 'loop_continue' : 'loop_break',
         sourceNodeId: node.id,
         targetNodeId: nearestLoop.id,
@@ -772,7 +776,7 @@ function buildExceptionBranchEdges(nodes: ProjectGraphNode[]): ProjectGraphEdge[
       if (!nearestTry) continue;
       const isFinally = branchNode.metadata.controlType === 'finally';
       edges.push({
-        id: `edge_${nanoid(12)}`,
+          id: `edge_${randomId(12)}`,
         edgeType: isFinally ? 'try_finally' : 'try_catch',
         sourceNodeId: nearestTry.id,
         targetNodeId: branchNode.id,
@@ -793,7 +797,7 @@ function buildAwaitedCallEdges(nodes: ProjectGraphNode[], nodeByQualifiedName: M
       if (!owner) return [];
       return [
         {
-          id: `edge_${nanoid(12)}`,
+            id: `edge_${randomId(12)}`,
           edgeType: 'awaits_call' as const,
           sourceNodeId: owner.id,
           targetNodeId: callNode.id,
@@ -815,7 +819,7 @@ function buildPromiseChainEdges(nodes: ProjectGraphNode[]): ProjectGraphEdge[] {
       if (!controlNode) return [];
       return [
         {
-          id: `edge_${nanoid(12)}`,
+            id: `edge_${randomId(12)}`,
           edgeType: handler === 'then' ? ('promise_then' as const) : ('promise_catch' as const),
           sourceNodeId: callNode.id,
           targetNodeId: controlNode.id,
@@ -835,7 +839,7 @@ function buildFunctionSqlCallEdges(nodes: ProjectGraphNode[], nodeByQualifiedNam
       if (!owner) return [];
       return [
         {
-          id: `edge_${nanoid(12)}`,
+            id: `edge_${randomId(12)}`,
           edgeType: 'executes_sql' as const,
           sourceNodeId: owner.id,
           targetNodeId: sqlCallNode.id,
@@ -856,7 +860,7 @@ function buildSqlTableImpactEdges(nodes: ProjectGraphNode[], nodeByQualifiedName
         if (!tableNode) return [];
         return [
           {
-            id: `edge_${nanoid(12)}`,
+              id: `edge_${randomId(12)}`,
             edgeType: sqlCallNode.metadata.accessMode === 'write' ? ('writes_table' as const) : ('reads_table' as const),
             sourceNodeId: sqlCallNode.id,
             targetNodeId: tableNode.id,
@@ -877,7 +881,7 @@ function buildTableColumnEdges(nodes: ProjectGraphNode[], nodeByQualifiedName: M
       if (!tableNode) return [];
       return [
         {
-          id: `edge_${nanoid(12)}`,
+            id: `edge_${randomId(12)}`,
           edgeType: 'contains' as const,
           sourceNodeId: tableNode.id,
           targetNodeId: columnNode.id,
@@ -898,7 +902,7 @@ function buildSqlColumnImpactEdges(nodes: ProjectGraphNode[], nodeByQualifiedNam
         if (!columnNode) return [];
         return [
           {
-            id: `edge_${nanoid(12)}`,
+              id: `edge_${randomId(12)}`,
             edgeType: 'uses_column' as const,
             sourceNodeId: sqlCallNode.id,
             targetNodeId: columnNode.id,
@@ -933,7 +937,7 @@ function buildSqlJoinRelationEdges(nodes: ProjectGraphNode[]): ProjectGraphEdge[
       if (!leftTable || !rightTable || leftTable.id === rightTable.id) continue;
       const direction = sqlJoinReferenceDirection(leftTable, relation.leftColumn, rightTable, relation.rightColumn);
       edges.push({
-        id: `edge_${nanoid(12)}`,
+          id: `edge_${randomId(12)}`,
         edgeType: 'references',
         sourceNodeId: direction.source.id,
         targetNodeId: direction.target.id,
@@ -996,7 +1000,7 @@ function buildImportDependencyEdges(nodes: ProjectGraphNode[], nodeByQualifiedNa
       if (!sourceFile || !targetFile || sourceFile.id === targetFile.id) return [];
       return [
         {
-          id: `edge_${nanoid(12)}`,
+            id: `edge_${randomId(12)}`,
           edgeType: 'module_depends_on' as const,
           sourceNodeId: sourceFile.id,
           targetNodeId: targetFile.id,
@@ -1136,7 +1140,7 @@ function buildArchitectureComponentDependencyEdges(nodes: ProjectGraphNode[]): P
 
 function makeArchitectureEdge(edgeType: 'contains' | 'module_depends_on', source: ProjectGraphNode, target: ProjectGraphNode, metadata: Record<string, unknown>): ProjectGraphEdge {
   return {
-    id: `edge_${nanoid(12)}`,
+      id: `edge_${randomId(12)}`,
     edgeType,
     sourceNodeId: source.id,
     targetNodeId: target.id,

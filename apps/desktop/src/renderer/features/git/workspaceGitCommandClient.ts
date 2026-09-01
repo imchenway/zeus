@@ -1,4 +1,10 @@
-import { canonicalCommandInputJson, commandEnvelopeSchemaGeneration, type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
+import {type CommandEnvelope, type CommandScopeKind} from '@zeus/shared';
+import {
+    buildRendererCommandRequest,
+    commandInputSha256,
+    randomIdentity,
+    type RendererCommandPayload
+} from '../../commandRequest.js';
 
 export const workspaceGitClientCommandTypes = {
   workbenchAction: 'git.workbench.repository.action',
@@ -21,7 +27,7 @@ export const workspaceGitClientCommandTypes = {
 
 type WorkspaceGitClientCommandType = (typeof workspaceGitClientCommandTypes)[keyof typeof workspaceGitClientCommandTypes];
 type WorkspaceGitClientScopeKind = Extract<CommandScopeKind, 'task' | 'task_workspace' | 'task_integration' | 'git_repository'>;
-type WorkspaceGitCommandPayload = { operationIdentity: string; inputSha256: string };
+type WorkspaceGitCommandPayload = RendererCommandPayload;
 const stableRequests = new Map<string, Promise<{ command: CommandEnvelope<WorkspaceGitCommandPayload>; input: object }>>();
 const maximumStableRequests = 256;
 
@@ -38,7 +44,7 @@ export async function buildWorkspaceGitCommandRequest<TInput extends object>(inp
     const existing = stableRequests.get(cacheKey);
     if (existing) {
       const request = (await existing) as { command: CommandEnvelope<WorkspaceGitCommandPayload>; input: TInput };
-      if (request.command.payload.inputSha256 !== (await sha256(canonicalCommandInputJson(input.value)))) {
+        if (request.command.payload.inputSha256 !== (await commandInputSha256(input.value))) {
         throw new Error('A reconnect identity cannot be reused with different Workspace Git command input.');
       }
       return request;
@@ -58,31 +64,11 @@ async function createWorkspaceGitCommandRequest<TInput extends object>(input: {
   value: TInput;
 }): Promise<{ command: CommandEnvelope<WorkspaceGitCommandPayload>; input: TInput }> {
   const operationIdentity = `workspace_git_operation_${randomIdentity()}`;
-  const inputSha256 = await sha256(canonicalCommandInputJson(input.value));
-  return {
-    command: {
-      schemaGeneration: commandEnvelopeSchemaGeneration,
-      commandId: `command_workspace_git_${randomIdentity()}`,
-      commandType: input.commandType,
-      actor: { kind: 'local_api', id: 'zeus-desktop-workspace-git' },
-      scope: { kind: input.scopeKind, id: input.scopeId },
-      expectedRevision: null,
-      idempotencyKey: `${input.commandType}:${operationIdentity}`,
-      issuedAt: new Date().toISOString(),
-      payload: { operationIdentity, inputSha256 },
-    },
-    input: input.value,
-  };
-}
-
-async function sha256(value: string): Promise<string> {
-  const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function randomIdentity(): string {
-  if (typeof globalThis.crypto.randomUUID === 'function') return globalThis.crypto.randomUUID();
-  const bytes = new Uint8Array(16);
-  globalThis.crypto.getRandomValues(bytes);
-  return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+    return buildRendererCommandRequest({
+        ...input,
+        operationIdentity,
+        commandIdPrefix: 'command_workspace_git_',
+        actorId: 'zeus-desktop-workspace-git',
+        expectedRevision: null
+    });
 }

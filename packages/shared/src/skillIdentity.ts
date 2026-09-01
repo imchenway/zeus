@@ -8,7 +8,9 @@ export function isZeusNativeSkillId(value: unknown): value is string {
 }
 
 export function isZeusPluginSkillId(value: unknown): value is string {
-  return typeof value === 'string' && value.length <= 512 && /^plugin:[^:\s\u0000-\u001f\u007f]+:skill:[^:\s\u0000-\u001f\u007f]+$/u.test(value);
+    if (typeof value !== 'string' || value.length > 512) return false;
+    const parts = value.split(':');
+    return parts.length === 4 && parts[0] === 'plugin' && parts[2] === 'skill' && isValidPluginSkillPart(parts[1]) && isValidPluginSkillPart(parts[3]);
 }
 
 export function isZeusSkillId(value: unknown): value is string {
@@ -26,4 +28,9 @@ export function splitZeusSkillIds(values: readonly string[]): { nativeSkillIds: 
     else invalidIds.push(value);
   }
   return { nativeSkillIds, pluginReferences, invalidIds };
+}
+
+function isValidPluginSkillPart(value: string | undefined): value is string {
+    if (!value) return false;
+    return Array.from(value).every((character) => !/\s/u.test(character) && character.charCodeAt(0) > 31 && character.charCodeAt(0) !== 127);
 }

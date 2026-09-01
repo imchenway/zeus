@@ -1,4 +1,5 @@
-import { canonicalCommandInputJson, commandEnvelopeSchemaGeneration, type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
+import {type CommandEnvelope, type CommandScopeKind} from '@zeus/shared';
+import {buildRendererCommandRequest, randomIdentity, type RendererCommandPayload} from '../../commandRequest.js';
 
 export const integrationClientCommandTypes = {
   modelConnectionCreate: 'integration.model_connection.create',
@@ -21,7 +22,6 @@ export const integrationClientCommandTypes = {
 
 type IntegrationClientCommandType = (typeof integrationClientCommandTypes)[keyof typeof integrationClientCommandTypes];
 type IntegrationClientScopeKind = Extract<CommandScopeKind, 'settings' | 'integration_account' | 'provider_configuration' | 'provider_account'>;
-type IntegrationCommandPayload = { operationIdentity: string; inputSha256: string };
 
 /** 每次 UI 操作只构造一次 Envelope；连接刷新与 HTTP 重试复用同一个序列化 Body。 */
 export async function buildIntegrationCommandRequest<TInput extends object>(input: {
@@ -30,33 +30,14 @@ export async function buildIntegrationCommandRequest<TInput extends object>(inpu
   scopeId(operationIdentity: string): string;
   operationPrefix: string;
   value: TInput;
-}): Promise<{ command: CommandEnvelope<IntegrationCommandPayload>; input: TInput }> {
+}): Promise<{ command: CommandEnvelope<RendererCommandPayload>; input: TInput }> {
   const operationIdentity = `${input.operationPrefix}_${randomIdentity()}`;
-  const inputSha256 = await sha256(canonicalCommandInputJson(input.value));
-  return {
-    command: {
-      schemaGeneration: commandEnvelopeSchemaGeneration,
-      commandId: `command_integration_${randomIdentity()}`,
-      commandType: input.commandType,
-      actor: { kind: 'local_api', id: 'zeus-desktop-integrations' },
-      scope: { kind: input.scopeKind, id: input.scopeId(operationIdentity) },
-      expectedRevision: null,
-      idempotencyKey: `${input.commandType}:${operationIdentity}`,
-      issuedAt: new Date().toISOString(),
-      payload: { operationIdentity, inputSha256 },
-    },
-    input: input.value,
-  };
-}
-
-async function sha256(value: string): Promise<string> {
-  const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function randomIdentity(): string {
-  if (typeof globalThis.crypto.randomUUID === 'function') return globalThis.crypto.randomUUID();
-  const bytes = new Uint8Array(16);
-  globalThis.crypto.getRandomValues(bytes);
-  return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+    return buildRendererCommandRequest({
+        ...input,
+        scopeId: input.scopeId(operationIdentity),
+        operationIdentity,
+        commandIdPrefix: 'command_integration_',
+        actorId: 'zeus-desktop-integrations',
+        expectedRevision: null
+    });
 }

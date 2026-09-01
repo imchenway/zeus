@@ -5,9 +5,6 @@
       "path": "packages/shared"
     },
     {
-      "path": "packages/task-core"
-    },
-    {
       "path": "packages/storage"
     },
     {
@@ -15,9 +12,6 @@
     },
     {
       "path": "packages/graph-engine"
-    },
-    {
-      "path": "packages/project-core"
     },
     {
       "path": "packages/local-server"
@@ -39,12 +33,6 @@
     },
     {
       "path": "packages/security-core"
-    },
-    {
-      "path": "packages/telegram-adapter"
-    },
-    {
-      "path": "packages/release-core"
     }
   ]
 }

@@ -1,10 +1,25 @@
 #!/usr/bin/env node
 /* global console, process */
-import { createHash } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
-import { copyFileSync, createReadStream, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import {spawnSync} from 'node:child_process';
+import {
+    copyFileSync,
+    existsSync,
+    linkSync,
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    statSync,
+    writeFileSync
+} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {basename, join, resolve} from 'node:path';
+import {
+    assertVersionAfterTag,
+    parseBoolean,
+    requiredVersion,
+    sha256File,
+    validateReleaseNotesFile
+} from './release-script-utils.mjs';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 
@@ -14,7 +29,7 @@ main().catch((error) => {
 });
 
 async function main() {
-  const expectedVersion = requiredVersion(process.env.EXPECTED_VERSION);
+    const expectedVersion = requiredVersion(process.env.EXPECTED_VERSION, 'EXPECTED_VERSION');
   const allowDirtyWorktree = parseBoolean('ALLOW_DIRTY_WORKTREE', process.env.ALLOW_DIRTY_WORKTREE, false);
   const requireAppleDistribution = parseBoolean('REQUIRE_APPLE_DISTRIBUTION', process.env.REQUIRE_APPLE_DISTRIBUTION, false);
   const registerDmgArtifact = parseBoolean('REGISTER_DMG_ARTIFACT', process.env.REGISTER_DMG_ARTIFACT, false);
@@ -23,12 +38,12 @@ async function main() {
   const branch = git(['branch', '--show-current']) || '(detached HEAD)';
   const releaseOutputDirectory = resolve(repositoryRoot, process.env.ZEUS_RELEASE_OUTPUT_DIR?.trim() || 'dist');
 
-  assertVersionAfterBase(expectedVersion, latestTag);
+    assertVersionAfterTag(expectedVersion, latestTag, '，拒绝重新打包已发布版本。');
   assertTagDoesNotExist(expectedVersion);
   assertPackageVersions(expectedVersion);
 
   const releaseNotesPath = join(repositoryRoot, 'docs', 'releases', `v${expectedVersion}.md`);
-  validateReleaseNotes(releaseNotesPath, expectedVersion);
+    validateReleaseNotesFile(releaseNotesPath, expectedVersion);
 
   const worktreeStatus = git(['status', '--short']);
   if (worktreeStatus && !allowDirtyWorktree) {
@@ -113,36 +128,10 @@ async function main() {
   for (const path of artifactPaths) console.log(`ZEUS_ARTIFACT_FILE=${path}`);
 }
 
-function requiredVersion(rawValue) {
-  const version = rawValue?.trim() ?? '';
-  if (!/^\d+\.\d+\.\d+$/u.test(version)) {
-    throw new Error('EXPECTED_VERSION 为必填稳定版本号，例如 0.1.10。');
-  }
-  return version;
-}
-
-function parseBoolean(name, rawValue, defaultValue) {
-  if (rawValue === undefined || rawValue.trim() === '') return defaultValue;
-  const normalized = rawValue.trim().toLocaleLowerCase();
-  if (['1', 'true', 'yes'].includes(normalized)) return true;
-  if (['0', 'false', 'no'].includes(normalized)) return false;
-  throw new Error(`${name} 必须是布尔值；当前值为 ${rawValue}。`);
-}
-
 function resolveLatestStableTag() {
   const tag = git(['describe', '--tags', '--abbrev=0', '--match', 'v[0-9]*']);
   if (!/^v\d+\.\d+\.\d+$/u.test(tag)) throw new Error(`最新稳定标签格式无效：${tag}`);
   return tag;
-}
-
-function assertVersionAfterBase(version, tag) {
-  const target = version.split('.').map(Number);
-  const base = tag.slice(1).split('.').map(Number);
-  for (let index = 0; index < 3; index += 1) {
-    if (target[index] > base[index]) return;
-    if (target[index] < base[index]) break;
-  }
-  throw new Error(`目标版本 ${version} 必须高于最新公开基线 ${tag}，拒绝重新打包已发布版本。`);
 }
 
 function assertTagDoesNotExist(version) {
@@ -156,32 +145,6 @@ function assertPackageVersions(expectedVersion) {
     if (actualVersion !== expectedVersion) {
       throw new Error(`${relativePath} 版本与期望不一致：expected=${expectedVersion} actual=${actualVersion ?? 'missing'}`);
     }
-  }
-}
-
-function validateReleaseNotes(path, version) {
-  if (!existsSync(path) || statSync(path).size === 0) throw new Error(`缺少已审阅的 Release notes：${path}`);
-  const markdown = readFileSync(path, 'utf8');
-  const requiredTitle = `# Zeus ${version} 更新内容`;
-  if (!markdown.startsWith(`${requiredTitle}\n`)) throw new Error(`Release notes 标题必须是：${requiredTitle}`);
-  for (const heading of ['## 如何升级', '## 系统要求与已知限制', '## 发布验证']) {
-    if (!markdown.includes(`\n${heading}\n`)) throw new Error(`Release notes 缺少必要章节：${heading}`);
-  }
-  if (!markdown.includes('brew upgrade --cask imchenway/tap/zeus')) {
-    throw new Error('Release notes 缺少 Homebrew 升级命令。');
-  }
-  if (!markdown.includes(`Zeus-${version}-arm64.dmg`)) {
-    throw new Error(`Release notes 缺少版本化 DMG 名称：Zeus-${version}-arm64.dmg。`);
-  }
-  if (/docs\/releases\/v[^\s]+\.md|TASK_\d+/u.test(markdown)) {
-    throw new Error('Release notes 泄漏内部任务或发布文档路径。');
-  }
-  const leakedCommentary = markdown.match(/用户要求只返回|confidence\s*[=:：]|uncertainties\s*[=:：]|以下无其他字段|最终正文如上/iu)?.[0];
-  if (leakedCommentary) throw new Error(`Release notes 混入生成过程说明“${leakedCommentary}”。`);
-  const draftOnlyPublicationState = markdown.match(/本次发布前需完成以下验证流程|将由\s*(?:Release Workflow|发布流程)|发布流程将在草稿通过后执行|尚未发生/iu)?.[0];
-  if (draftOnlyPublicationState) throw new Error(`Release notes 包含只在草稿阶段成立的表述“${draftOnlyPublicationState}”。`);
-  if (/对\s*DMG\s*进行开发者签名和 Apple 公证/iu.test(markdown)) {
-    throw new Error('Release notes 无条件承诺 Developer ID 签名与 Apple 公证。');
   }
 }
 
@@ -293,14 +256,4 @@ function capture(command, args, allowFailure = false) {
       .filter(Boolean)
       .join('\n'),
   };
-}
-
-function sha256File(path) {
-  return new Promise((resolveHash, rejectHash) => {
-    const hash = createHash('sha256');
-    const stream = createReadStream(path);
-    stream.on('error', rejectHash);
-    stream.on('data', (chunk) => hash.update(chunk));
-    stream.on('end', () => resolveHash(hash.digest('hex')));
-  });
 }

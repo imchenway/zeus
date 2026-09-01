@@ -1,4 +1,5 @@
-import { canonicalCommandInputJson, commandEnvelopeSchemaGeneration, type CommandEnvelope } from '@zeus/shared';
+import {type CommandEnvelope} from '@zeus/shared';
+import {buildRendererCommandRequest, randomIdentity, type RendererCommandPayload} from '../../commandRequest.js';
 
 export const conversationClientCommandTypes = {
   nextTurnSettingsUpdate: 'conversation.next_turn_settings.update',
@@ -15,7 +16,6 @@ export const conversationClientCommandTypes = {
 } as const;
 
 type ConversationClientCommandType = (typeof conversationClientCommandTypes)[keyof typeof conversationClientCommandTypes];
-type ConversationCommandPayload = { operationIdentity: string; inputSha256: string };
 
 /** Transport 内部重连或重试必须复用此处一次构造的不可变 Body。 */
 export async function buildConversationCommandRequest<TInput extends object>(input: {
@@ -23,33 +23,16 @@ export async function buildConversationCommandRequest<TInput extends object>(inp
   conversationId: string;
   expectedRevision?: number | null;
   value: TInput;
-}): Promise<{ command: CommandEnvelope<ConversationCommandPayload>; input: TInput }> {
+}): Promise<{ command: CommandEnvelope<RendererCommandPayload>; input: TInput }> {
   const operationIdentity = `conversation_operation_${randomIdentity()}`;
-  const inputSha256 = await sha256(canonicalCommandInputJson(input.value));
-  return {
-    command: {
-      schemaGeneration: commandEnvelopeSchemaGeneration,
-      commandId: `command_conversation_${randomIdentity()}`,
-      commandType: input.commandType,
-      actor: { kind: 'local_api', id: 'zeus-desktop-conversation' },
-      scope: { kind: 'product_conversation', id: input.conversationId },
-      expectedRevision: input.expectedRevision ?? null,
-      idempotencyKey: `${input.commandType}:${operationIdentity}`,
-      issuedAt: new Date().toISOString(),
-      payload: { operationIdentity, inputSha256 },
-    },
-    input: input.value,
-  };
-}
-
-async function sha256(value: string): Promise<string> {
-  const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function randomIdentity(): string {
-  if (typeof globalThis.crypto.randomUUID === 'function') return globalThis.crypto.randomUUID();
-  const bytes = new Uint8Array(16);
-  globalThis.crypto.getRandomValues(bytes);
-  return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+    return buildRendererCommandRequest({
+        commandType: input.commandType,
+        commandIdPrefix: 'command_conversation_',
+        actorId: 'zeus-desktop-conversation',
+        scopeKind: 'product_conversation',
+        scopeId: input.conversationId,
+        expectedRevision: input.expectedRevision,
+        operationIdentity,
+        value: input.value,
+    });
 }

@@ -1,5 +1,10 @@
-import type { NativeConversationChoice, NativeConversationChoicesSnapshot, NativeProjectConversationChoicesSnapshot } from '../../session/sessionTypes.js';
-import type { ConversationApiClient } from './conversationApiClient.js';
+import type {
+    NativeConversationChoice,
+    NativeConversationChoicesSnapshot,
+    NativeProjectConversationChoicesSnapshot
+} from '../../session/sessionTypes.js';
+import type {ConversationApiClient} from './conversationApiClient.js';
+import {errorMessage, ExternalStore} from '../../externalStore.js';
 
 export interface ConversationQuerySnapshot {
   choicesByTask: Readonly<Record<string, NativeConversationChoicesSnapshot>>;
@@ -13,22 +18,12 @@ export interface ConversationQuerySnapshot {
 
 type RecordUpdater<T> = Readonly<Record<string, T>> | ((current: Readonly<Record<string, T>>) => Readonly<Record<string, T>>);
 
-export class ConversationQueryStore {
-  readonly subscribe = (listener: () => void): (() => void) => {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  };
-
-  readonly getSnapshot = (): ConversationQuerySnapshot => this.snapshot;
-
-  private readonly listeners = new Set<() => void>();
-  private snapshot: ConversationQuerySnapshot;
-
+export class ConversationQueryStore extends ExternalStore<ConversationQuerySnapshot> {
   constructor(
     private readonly client: ConversationApiClient | null,
     initial: { taskChoices?: readonly NativeConversationChoicesSnapshot[]; projectChoices?: readonly NativeProjectConversationChoicesSnapshot[] },
   ) {
-    this.snapshot = {
+      super({
       choicesByTask: Object.fromEntries((initial.taskChoices ?? []).map((entry) => [entry.taskId, entry])),
       choicesByProject: Object.fromEntries((initial.projectChoices ?? []).map((entry) => [entry.projectId, entry])),
       archived: [],
@@ -36,7 +31,7 @@ export class ConversationQueryStore {
       restoringConversationId: null,
       error: null,
       revision: 0,
-    };
+      });
   }
 
   updateTaskChoices(updater: RecordUpdater<NativeConversationChoicesSnapshot>): void {
@@ -69,7 +64,7 @@ export class ConversationQueryStore {
       this.setArchived(result.choices);
       return result.choices;
     } catch (error) {
-      this.publish({ ...this.snapshot, archivedLoadState: 'error', error: messageFrom(error) });
+        this.publish({...this.snapshot, archivedLoadState: 'error', error: errorMessage(error)});
       throw error;
     }
   }
@@ -78,13 +73,4 @@ export class ConversationQueryStore {
     if (!this.client) throw new Error('Conversation API client is unavailable.');
     return this.client;
   }
-
-  private publish(snapshot: ConversationQuerySnapshot): void {
-    this.snapshot = snapshot;
-    for (const listener of this.listeners) listener();
-  }
-}
-
-function messageFrom(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

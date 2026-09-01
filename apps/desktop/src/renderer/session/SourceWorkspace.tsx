@@ -1,14 +1,15 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
-import { ArrowsInIcon as ArrowsIn } from '@phosphor-icons/react/dist/csr/ArrowsIn';
-import { ArrowsOutIcon as ArrowsOut } from '@phosphor-icons/react/dist/csr/ArrowsOut';
-import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
-import { FileImageIcon as FileImage } from '@phosphor-icons/react/dist/csr/FileImage';
-import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
-import type { ConversationResourcePreview } from './sessionTypes.js';
-import { SafeMarkdown, type SessionUiLanguage } from './ThreadItemView.js';
-import type { ConversationCodeComment, ConversationCodeCommentPosition } from '@zeus/shared';
-import { CodeCommentPanel } from './CodeCommentPanel.js';
-import { SyntaxHighlightedLine, useSyntaxHighlightedLines } from '../code/SyntaxHighlightedCode.js';
+import {Fragment, useEffect, useRef, useState} from 'react';
+import {ArrowsInIcon as ArrowsIn} from '@phosphor-icons/react/dist/csr/ArrowsIn';
+import {ArrowsOutIcon as ArrowsOut} from '@phosphor-icons/react/dist/csr/ArrowsOut';
+import {FileCodeIcon as FileCode} from '@phosphor-icons/react/dist/csr/FileCode';
+import {FileImageIcon as FileImage} from '@phosphor-icons/react/dist/csr/FileImage';
+import {XIcon as X} from '@phosphor-icons/react/dist/csr/X';
+import type {ConversationResourcePreview} from './sessionTypes.js';
+import type {SessionUiLanguage} from './ThreadItemView.js';
+import {ConversationMarkdown} from './ConversationMarkdown.js';
+import type {ConversationCodeComment, ConversationCodeCommentPosition} from '@zeus/shared';
+import {CodeCommentPanel} from './CodeCommentPanel.js';
+import {SyntaxHighlightedLine, useSyntaxHighlightedLines} from '../code/SyntaxHighlightedCode.js';
 
 export type SourceWorkspaceViewMode = 'preview' | 'source';
 
@@ -116,7 +117,8 @@ export function SourceWorkspace(props: {
         {props.preview.kind === 'image' ? (
           <img src={props.preview.dataUrl} alt={props.preview.resource.displayName} />
         ) : renderedMarkdown ? (
-          <SafeMarkdown text={props.preview.content} language={props.language} />
+            <ConversationMarkdown text={props.preview.content} streamId={`source-preview:${props.preview.resource.id}`}
+                                  phase="final" language={props.language}/>
         ) : (
           <pre aria-label={zh ? `${displayPath} 源码` : `${displayPath} source`}>
             <code>

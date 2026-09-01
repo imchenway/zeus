@@ -26,35 +26,6 @@ export interface PlantUmlDiagramExportFile {
   content: string;
 }
 
-export interface ReactFlowDiagramElements {
-  nodes: Array<{
-    id: string;
-    type: string;
-    position: { x: number; y: number };
-    data: { label: string; sourceRef: string };
-  }>;
-  edges: Array<{
-    id: string;
-    source: string;
-    target: string;
-    label: string;
-    data: { sourceRef: string; confidence: number };
-  }>;
-}
-
-export interface SigmaGraphElements {
-  nodes: Array<{
-    key: string;
-    attributes: { label: string; type: string; sourceRef: string };
-  }>;
-  edges: Array<{
-    key: string;
-    source: string;
-    target: string;
-    attributes: { label: string; sourceRef: string; confidence: number };
-  }>;
-}
-
 /**
  * 从真实图谱事实生成 Mermaid 文本；缺少可见端点的边会被跳过，不补造节点。
  */
@@ -142,59 +113,6 @@ export function buildPlantUmlDiagramExport(input: { viewTitle: string; viewType:
     fileName: `${input.viewType}-${safeTitle}-${timestamp}.puml`,
     mimeType: 'text/vnd.plantuml',
     content: ["' Zeus PlantUML export", `' view: ${input.viewTitle}`, `' type: ${input.viewType}`, `' generatedAt: ${input.generatedAt}`, input.source].join('\n'),
-  };
-}
-
-/**
- * 转换为 React Flow 兼容元素；坐标是确定性占位布局，真实布局仍由 UI/布局引擎负责。
- */
-export function toReactFlowElements(input: { nodes: DiagramGraphNode[]; edges: DiagramGraphEdge[] }): ReactFlowDiagramElements {
-  const visibleNodeIds = new Set(input.nodes.map((node) => node.id));
-  return {
-    nodes: input.nodes.map((node, index) => ({
-      id: node.id,
-      type: node.nodeType,
-      position: { x: index * 240, y: 0 },
-      data: { label: node.name, sourceRef: node.sourceRef },
-    })),
-    edges: input.edges
-      .filter((edge) => visibleNodeIds.has(edge.sourceNodeId) && visibleNodeIds.has(edge.targetNodeId))
-      .map((edge) => ({
-        id: edge.id,
-        source: edge.sourceNodeId,
-        target: edge.targetNodeId,
-        label: `${edge.edgeType} ${edge.confidence.toFixed(2)}`,
-        data: { sourceRef: edge.sourceRef, confidence: edge.confidence },
-      })),
-  };
-}
-
-/**
- * 转换为 Sigma/Graphology 风格的轻量数据结构；不引入 WebGL 依赖，不伪造渲染状态。
- */
-export function toSigmaGraph(input: { nodes: DiagramGraphNode[]; edges: DiagramGraphEdge[] }): SigmaGraphElements {
-  const visibleNodeIds = new Set(input.nodes.map((node) => node.id));
-  return {
-    nodes: input.nodes.map((node) => ({
-      key: node.id,
-      attributes: {
-        label: node.name,
-        type: node.nodeType,
-        sourceRef: node.sourceRef,
-      },
-    })),
-    edges: input.edges
-      .filter((edge) => visibleNodeIds.has(edge.sourceNodeId) && visibleNodeIds.has(edge.targetNodeId))
-      .map((edge) => ({
-        key: edge.id,
-        source: edge.sourceNodeId,
-        target: edge.targetNodeId,
-        attributes: {
-          label: edge.edgeType,
-          sourceRef: edge.sourceRef,
-          confidence: edge.confidence,
-        },
-      })),
   };
 }
 

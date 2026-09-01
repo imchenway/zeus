@@ -1,5 +1,11 @@
-import type { MemoryApiClient } from './memoryApiClient.js';
-import type { MemoryCandidateInput, MemoryListQuery, MemoryRecord, SupersedingMemoryCandidateInput } from './memoryContracts.js';
+import type {MemoryApiClient} from './memoryApiClient.js';
+import type {
+    MemoryCandidateInput,
+    MemoryListQuery,
+    MemoryRecord,
+    SupersedingMemoryCandidateInput
+} from './memoryContracts.js';
+import {errorMessage, ExternalStore} from '../../externalStore.js';
 
 export interface MemoryQuerySnapshot {
   query: Omit<MemoryListQuery, 'before'>;
@@ -21,27 +27,20 @@ const defaultQuery: MemoryQuerySnapshot['query'] = {
  * Memory 的有界分页 projection。它不保存业务事实：scope 切换会丢弃旧页，命令完成后
  * 总是从服务端重新读取；最多保留 500 条展示记录，防止设置页演变为第二份数据库。
  */
-export class MemoryQueryStore {
-  private readonly listeners = new Set<() => void>();
+export class MemoryQueryStore extends ExternalStore<MemoryQuerySnapshot> {
   private revision = 0;
-  private snapshot: MemoryQuerySnapshot = {
-    query: defaultQuery,
-    items: [],
-    phase: 'idle',
-    loadingMore: false,
-    command: 'idle',
-    error: null,
-    nextCursor: null,
-  };
 
-  constructor(private readonly client: MemoryApiClient) {}
-
-  subscribe = (listener: () => void): (() => void) => {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  };
-
-  getSnapshot = (): MemoryQuerySnapshot => this.snapshot;
+    constructor(private readonly client: MemoryApiClient) {
+        super({
+            query: defaultQuery,
+            items: [],
+            phase: 'idle',
+            loadingMore: false,
+            command: 'idle',
+            error: null,
+            nextCursor: null
+        });
+    }
 
   async setQuery(query: MemoryQuerySnapshot['query']): Promise<void> {
     if (sameQuery(this.snapshot.query, query) && this.snapshot.phase !== 'idle') return;
@@ -99,11 +98,6 @@ export class MemoryQueryStore {
       this.publish({ ...this.snapshot, phase: 'error', loadingMore: false, error: errorMessage(error) });
     }
   }
-
-  private publish(snapshot: MemoryQuerySnapshot): void {
-    this.snapshot = snapshot;
-    for (const listener of this.listeners) listener();
-  }
 }
 
 function mergeBoundedMemoryPages(current: readonly MemoryRecord[], next: readonly MemoryRecord[]): MemoryRecord[] {
@@ -114,8 +108,4 @@ function mergeBoundedMemoryPages(current: readonly MemoryRecord[], next: readonl
 
 function sameQuery(left: MemoryQuerySnapshot['query'], right: MemoryQuerySnapshot['query']): boolean {
   return left.scope.kind === right.scope.kind && left.scope.id === right.scope.id && left.includeTombstones === right.includeTombstones && left.limit === right.limit;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

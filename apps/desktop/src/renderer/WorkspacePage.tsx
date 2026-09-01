@@ -1,23 +1,21 @@
 import '@xterm/xterm/css/xterm.css';
-import '@xyflow/react/dist/style.css';
 import './styles.css';
 import './session/session.css';
 import './ui/primitives.css';
-import type { WorkspacePageProps } from './features/workspace/workspaceContracts.js';
-import { useWorkspaceQueryState } from './features/workspace/useWorkspaceQueryState.js';
-import { useWorkspaceDomainActions } from './features/workspace/useWorkspaceDomainActions.js';
-import { useWorkspaceOperations } from './features/workspace/useWorkspaceOperations.js';
-import { useWorkspaceLifecycle } from './features/workspace/useWorkspaceLifecycle.js';
-import { WorkspaceView } from './features/workspace/WorkspaceView.js';
+import type {WorkspacePageProps} from './features/workspace/workspaceContracts.js';
+import {useWorkspaceQueryState} from './features/workspace/useWorkspaceQueryState.js';
+import {useWorkspaceDomainActions} from './features/workspace/useWorkspaceDomainActions.js';
+import {useWorkspaceOperations} from './features/workspace/useWorkspaceOperations.js';
+import {useWorkspaceLifecycle} from './features/workspace/useWorkspaceLifecycle.js';
+import {WorkspaceView} from './features/workspace/WorkspaceView.js';
+
 export {
-  buildMermaidDiagramExport,
-  buildMermaidDiagramSource,
-  buildPlantUmlDiagramExport,
-  buildPlantUmlDiagramSource,
-  toReactFlowElements,
-  toSigmaGraph,
-  type MermaidDiagramExportFile,
-  type PlantUmlDiagramExportFile,
+    buildMermaidDiagramExport,
+    buildMermaidDiagramSource,
+    buildPlantUmlDiagramExport,
+    buildPlantUmlDiagramSource,
+    type MermaidDiagramExportFile,
+    type PlantUmlDiagramExportFile
 } from '@zeus/diagram-engine';
 export {
   type MainNavTarget,
@@ -97,10 +95,6 @@ export {
   isAggregatedGraphNode,
   buildAggregatedGraphNodes,
   buildAggregatedGraphEdges,
-  type SigmaRuntimeGraphNode,
-  type SigmaRuntimeGraph,
-  buildSigmaRuntimeGraph,
-  GraphRuntimeCanvas,
   buildGraphCanvasLayout,
   buildGraphCanvasViewport,
 } from './features/graph/GraphCanvas.js';

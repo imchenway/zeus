@@ -1,8 +1,8 @@
-import { existsSync, statSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
-import { GRAPH_VIEW_SCHEMA_VERSION, type ProjectGraph } from '@zeus/graph-engine';
-import type { ProjectConfigSnapshot } from '@zeus/project-core';
-import type { SqlValue } from '@zeus/storage';
+import {existsSync, statSync} from 'node:fs';
+import {join, relative, resolve} from 'node:path';
+import {GRAPH_VIEW_SCHEMA_VERSION, type ProjectGraph} from '@zeus/graph-engine';
+import type {ProjectConfigSnapshot} from './projectCore.js';
+import type {SqlValue} from '@zeus/storage';
 
 interface CodeMapSettings {
   defaultScanScope: 'project' | 'src' | 'custom';

@@ -1,34 +1,51 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { constants as fsConstants, lstatSync, realpathSync } from 'node:fs';
-import { chmod, mkdir, open, readFile, rename, stat, statfs, unlink } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
-import { backup, DatabaseSync } from 'node:sqlite';
-import type { ReadOnlyValidationDescriptor, TokenUsageBreakdown } from '@zeus/shared';
-import initSqlJs, { type Database as SqlJsDatabase, type SqlJsStatic, type SqlValue as SqlJsValue } from 'sql.js';
-import { migrateCommandCenterSchema } from './commands.js';
-import { migrateArtifactStoreSchema } from './artifactStore.js';
-import { migrateColdEvidenceSchema } from './coldEvidenceStore.js';
-import { migrateCommandDeliverySchema } from './commandDeliveryStore.js';
-import { CONVERSATION_HOT_QUERY_INDEX_CHECKSUM_SOURCE, CONVERSATION_HOT_QUERY_INDEX_MIGRATION_ID, conversationHotQueryIndexes } from './conversationHotQueryIndexes.js';
-import { migrateUnifiedConversationStoreSchema } from './conversationExecutionStore.js';
-import { migrateConversationLegacyCutoverSchema } from './conversationLegacyCutover.js';
-import { migrateCompletedProviderPlansToConversationHistory, migrateConversationProviderItemStoreSchema } from './conversationProviderItemStore.js';
-import { migrateConversationSyncEventStoreSchema, migrateConversationSyncProtocolV2 } from './conversationSyncEventStore.js';
-import { DatabasePerformanceCollector, type DatabasePerformanceSnapshot } from './databasePerformance.js';
-import { migrateExecutionHostHandoffSchema } from './executionHostHandoffStore.js';
-import { migrateExecutionHostWorkSchema } from './executionHostWorkStore.js';
-import { migrateDigitalEmployeeSchema } from './digitalEmployeeStore.js';
-import { migrateAutomationSchema } from './automationStore.js';
-import { migrateDigitalEmployeeCapabilitySchema } from './digitalEmployeeCapabilityMigration.js';
-import { migrateImSchema } from './imStore.js';
-import { migrateDigitalEmployeeStageHandoffSchema } from './digitalEmployeeStageHandoffMigration.js';
-import { migrateLongTermMemorySchema } from './longTermMemoryStore.js';
-import { migratePluginStoreSchema } from './pluginStore.js';
-import { migrateTaskEventFileProjectionSchema } from './taskEventFileProjectionStore.js';
-import { migrateTaskStageSchema } from './taskStageStore.js';
-import { migrateTaskWorkSchema } from './taskWorkStore.js';
-import type { SqlValue, ZeusDatabasePort } from './databasePort.js';
-import { deriveConversationStageProjection, isPlainRecord, ProviderEventReceiptRepository, subtractTokenUsageBreakdown, validateTokenUsageBreakdown, type DbCodexUsageLedgerRow } from './conversationStore.js';
+import {createHash, randomUUID} from 'node:crypto';
+import {constants as fsConstants, lstatSync, realpathSync} from 'node:fs';
+import {chmod, mkdir, readFile, rename, stat, statfs, unlink} from 'node:fs/promises';
+import {dirname, resolve} from 'node:path';
+import {backup, DatabaseSync} from 'node:sqlite';
+import type {ReadOnlyValidationDescriptor, TokenUsageBreakdown} from '@zeus/shared';
+import initSqlJs, {type Database as SqlJsDatabase, type SqlJsStatic, type SqlValue as SqlJsValue} from 'sql.js';
+import {migrateCommandCenterSchema} from './commands.js';
+import {migrateArtifactStoreSchema} from './artifactStore.js';
+import {migrateColdEvidenceSchema} from './coldEvidenceStore.js';
+import {migrateCommandDeliverySchema} from './commandDeliveryStore.js';
+import {
+    CONVERSATION_HOT_QUERY_INDEX_CHECKSUM_SOURCE,
+    CONVERSATION_HOT_QUERY_INDEX_MIGRATION_ID,
+    conversationHotQueryIndexes
+} from './conversationHotQueryIndexes.js';
+import {migrateUnifiedConversationStoreSchema} from './conversationExecutionStore.js';
+import {migrateConversationLegacyCutoverSchema} from './conversationLegacyCutover.js';
+import {
+    migrateCompletedProviderPlansToConversationHistory,
+    migrateConversationProviderItemStoreSchema
+} from './conversationProviderItemStore.js';
+import {
+    migrateConversationSyncEventStoreSchema,
+    migrateConversationSyncProtocolV2
+} from './conversationSyncEventStore.js';
+import {DatabasePerformanceCollector, type DatabasePerformanceSnapshot} from './databasePerformance.js';
+import {migrateExecutionHostHandoffSchema} from './executionHostHandoffStore.js';
+import {migrateExecutionHostWorkSchema} from './executionHostWorkStore.js';
+import {migrateDigitalEmployeeSchema} from './digitalEmployeeStore.js';
+import {migrateAutomationSchema} from './automationStore.js';
+import {migrateDigitalEmployeeCapabilitySchema} from './digitalEmployeeCapabilityMigration.js';
+import {migrateImSchema} from './imStore.js';
+import {migrateDigitalEmployeeStageHandoffSchema} from './digitalEmployeeStageHandoffMigration.js';
+import {migrateLongTermMemorySchema} from './longTermMemoryStore.js';
+import {migratePluginStoreSchema} from './pluginStore.js';
+import {migrateTaskEventFileProjectionSchema} from './taskEventFileProjectionStore.js';
+import {migrateTaskStageSchema} from './taskStageStore.js';
+import {migrateTaskWorkSchema} from './taskWorkStore.js';
+import type {SqlValue, ZeusDatabasePort} from './databasePort.js';
+import {
+    type DbCodexUsageLedgerRow,
+    deriveConversationStageProjection,
+    isPlainRecord,
+    ProviderEventReceiptRepository,
+    subtractTokenUsageBreakdown,
+    validateTokenUsageBreakdown
+} from './conversationStore.js';
 
 export * from './commands.js';
 export * from './artifactStore.js';
@@ -69,6 +86,7 @@ export * from './runtimeSessionStore.js';
 export * from './conversationStore.js';
 export * from './turnChangeStore.js';
 export * from './auditStore.js';
+export * from './randomId.js';
 
 const builtInTaskTemplates = [
   {

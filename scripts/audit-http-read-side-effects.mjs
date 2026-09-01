@@ -1,9 +1,9 @@
-import { createHash } from 'node:crypto';
-import { readFile, readdir } from 'node:fs/promises';
-import { dirname, join, relative, resolve } from 'node:path';
+import {createHash} from 'node:crypto';
+import {readdir, readFile} from 'node:fs/promises';
+import {dirname, join, relative, resolve} from 'node:path';
 import process from 'node:process';
 import ts from 'typescript';
-import { httpReadEffectPolicy } from './http-read-effect-policy.mjs';
+import {httpReadEffectPolicy} from './http-read-effect-policy.mjs';
 
 const repositoryRoot = resolve(process.cwd());
 const sourceRoot = join(repositoryRoot, 'packages/local-server/src');
@@ -31,8 +31,8 @@ const riskyPackageEffects = new Map([
   ['@zeus/ai-runtime', 'process_runtime'],
   ['@zeus/git-core', 'git'],
   ['@zeus/security-core', 'keychain'],
-  ['@zeus/telegram-adapter', 'provider_network'],
-  ['@zeus/release-core', 'provider_network'],
+    ['./telegramAdapter.js', 'provider_network'],
+    ['./releaseCore.js', 'provider_network'],
   ['node:child_process', 'process_runtime'],
   ['node:fs', 'filesystem_workspace'],
   ['node:fs/promises', 'filesystem_workspace'],

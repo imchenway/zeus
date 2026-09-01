@@ -1,7 +1,10 @@
-import { createHash } from 'node:crypto';
-import { readFile, readdir, stat } from 'node:fs/promises';
-import { dirname, extname, join, normalize, relative } from 'node:path';
-import { nanoid } from 'nanoid';
+import {createHash, randomBytes} from 'node:crypto';
+import {readdir, readFile, stat} from 'node:fs/promises';
+import {dirname, extname, join, normalize} from 'node:path';
+
+function randomId(length: number): string {
+    return randomBytes(length).toString('base64url').slice(0, length);
+}
 
 export interface ScanProjectInput {
   rootPath: string;
@@ -2417,7 +2420,7 @@ function makeSymbol(
   metadata: Record<string, unknown>,
 ): CodeSymbolFact {
   return {
-    id: `symbol_${nanoid(12)}`,
+      id: `symbol_${randomId(12)}`,
     symbolType,
     name,
     qualifiedName,

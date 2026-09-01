@@ -1,34 +1,54 @@
-import { type FormEvent, type KeyboardEvent, memo, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
-import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
-import Markdown, { type Components } from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { MessageCheckIcon, MessageEditIcon, MessageExpandIcon, MessageRemoteDeviceIcon, MessageThumbIcon } from './SessionMessageIcons.js';
-import { isAssistantDeliverableItem, type NativeConversationAttachment, type NativeSessionItemBuffer } from './sessionTypes.js';
-import { autosizeTextarea } from './textareaAutosize.js';
 import {
-  parseCanonicalRequestUserInputQuestions,
-  type ConversationContextDraft,
-  type ConversationFileLocation,
-  type ConversationOpenTarget,
-  type ConversationResource,
-  type ConversationResourcePreview,
-  type ConversationResponseAnnotation,
-  type ConversationResponseTextAnchor,
-  type TaskPushMessageLayout,
+    type FormEvent,
+    type KeyboardEvent,
+    memo,
+    type ReactNode,
+    useCallback,
+    useEffect,
+    useLayoutEffect,
+    useRef,
+    useState
+} from 'react';
+import {CopyIcon as Copy} from '@phosphor-icons/react/dist/csr/Copy';
+import {TerminalWindowIcon as TerminalWindow} from '@phosphor-icons/react/dist/csr/TerminalWindow';
+import {
+    MessageCheckIcon,
+    MessageEditIcon,
+    MessageExpandIcon,
+    MessageRemoteDeviceIcon,
+    MessageThumbIcon
+} from './SessionMessageIcons.js';
+import {
+    isAssistantDeliverableItem,
+    type NativeConversationAttachment,
+    type NativeSessionItemBuffer
+} from './sessionTypes.js';
+import {autosizeTextarea} from './textareaAutosize.js';
+import {
+    type ConversationContextDraft,
+    type ConversationFileLocation,
+    type ConversationOpenTarget,
+    type ConversationResource,
+    type ConversationResourcePreview,
+    type ConversationResponseAnnotation,
+    type ConversationResponseTextAnchor,
+    parseCanonicalRequestUserInputQuestions,
+    type TaskPushMessageLayout,
 } from '@zeus/shared';
-import { ConversationGeneratedImage, ConversationInlineResource, ConversationMarkdownImage, ConversationPendingAttachmentImages, ConversationResourceCards, isImageResource, isPendingImageAttachment } from './ConversationResources.js';
-import { ResponseSelectionActions } from './ResponseSelectionActions.js';
-import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
-import { ConversationMarkdown, conversationMarkdownPhaseForStatus } from './ConversationMarkdown.js';
-import { McpAppFrame, type McpAppToolCall, type McpAppToolResult } from './McpAppFrame.js';
+import {
+    ConversationGeneratedImage,
+    ConversationPendingAttachmentImages,
+    ConversationResourceCards,
+    isImageResource,
+    isPendingImageAttachment
+} from './ConversationResources.js';
+import {ResponseSelectionActions} from './ResponseSelectionActions.js';
+import {useApplicationErrorDialog, VisibleApplicationError} from '../ui/ApplicationErrorDialog.js';
+import {ConversationMarkdown, conversationMarkdownPhaseForStatus} from './ConversationMarkdown.js';
+import {McpAppFrame, type McpAppToolCall, type McpAppToolResult} from './McpAppFrame.js';
 
 export type SessionUiLanguage = 'zh-CN' | 'en-US';
 export type ThreadItemRole = 'user' | 'assistant' | 'commentary' | 'notice' | 'tool' | 'file' | 'image' | 'request' | 'error' | 'unknown';
-export const MAX_MARKDOWN_CHARACTERS = 200_000;
-export const MAX_MARKDOWN_BLOCK_CHARACTERS = 50_000;
-export const MAX_MARKDOWN_BLOCKS = 512;
-export const MAX_MARKDOWN_NODES = 4_096;
 const STREAM_IDLE_FLUSH_MS = 32;
 const STREAM_MAX_FLUSH_MS = 64;
 const STREAM_MIN_BATCH_CHARACTERS = 4;
@@ -53,7 +73,6 @@ const copy = {
     copy: '复制消息',
     copied: '已复制',
     copyCommand: '复制命令',
-    copyCode: '复制代码',
     edit: '编辑并重新发送',
     editInput: '在原消息中编辑',
     cancelEdit: '取消',
@@ -66,7 +85,6 @@ const copy = {
     conversationImage: '会话图片',
     attachments: '附件',
     details: '技术详情',
-    complexityTruncated: '内容过于复杂，已截断',
     queued: '排队中',
     conflictPreparing: '正在准备冲突现场',
     conflictPreparationFailed: '冲突现场准备失败',
@@ -100,7 +118,6 @@ const copy = {
     copy: 'Copy message',
     copied: 'Copied',
     copyCommand: 'Copy command',
-    copyCode: 'Copy code',
     edit: 'Edit and resend',
     editInput: 'Edit in the original message',
     cancelEdit: 'Cancel',
@@ -113,7 +130,6 @@ const copy = {
     conversationImage: 'Conversation image',
     attachments: 'Attachments',
     details: 'Technical details',
-    complexityTruncated: 'Content complexity truncated',
     queued: 'Queued',
     conflictPreparing: 'Preparing conflict workspace',
     conflictPreparationFailed: 'Conflict workspace preparation failed',
@@ -759,227 +775,6 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
     </article>
   );
 });
-
-export const SafeMarkdown = memo(function SafeMarkdown(props: {
-  text: string;
-  streamingTail?: boolean;
-  language?: SessionUiLanguage;
-  resources?: ConversationResource[];
-  onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
-  onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
-}) {
-  const bounded = boundedMarkdownText(props.text);
-  const labels = copy[props.language ?? 'en-US'];
-  const resources = props.resources ?? emptyConversationResources;
-  const language = props.language ?? 'en-US';
-  const components = useMemo<Components>(
-    () => ({
-      a({ children, href }) {
-        const label = markdownNodeText(children);
-        const resource = matchingInlineResource(resources, label, href ?? '');
-        if (resource) {
-          return <ConversationInlineResource resource={resource} label={label || resource.displayName} language={language} onOpenResource={props.onOpenResource} />;
-        }
-        if (href?.startsWith('#')) return <a href={href}>{children}</a>;
-        return (
-          <span className="session-markdown-unavailable-resource" title={href}>
-            {children}
-          </span>
-        );
-      },
-      img({ alt, src, title }) {
-        const label = alt?.trim() || title?.trim() || (language === 'zh-CN' ? '图片' : 'Image');
-        const resource = matchingInlineResource(resources, label, src ?? '');
-        if (!resource || !isImageResource(resource)) {
-          return (
-            <span className="session-markdown-image-unavailable" role="img" aria-label={label}>
-              {language === 'zh-CN' ? `图片不可用：${label}` : `Image unavailable: ${label}`}
-            </span>
-          );
-        }
-        return <ConversationMarkdownImage resource={resource} label={label} language={language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />;
-      },
-      pre({ children }) {
-        const code = markdownNodeText(children);
-        return (
-          <div className="session-code-block">
-            <CopyIconButton label={labels.copyCode} copiedLabel={labels.copied} text={code} />
-            <pre>{children}</pre>
-          </div>
-        );
-      },
-    }),
-    [labels.copied, labels.copyCode, language, props.onLoadResourcePreview, props.onOpenResource, resources],
-  );
-  return (
-    <div className="session-markdown zeus-fidelity-markdown" data-truncated={bounded.truncated || undefined}>
-      <Markdown components={components} remarkPlugins={[remarkGfm, [limitMarkdownComplexity, { label: labels.complexityTruncated }], [markStreamingMarkdownTail, { active: Boolean(props.streamingTail) }]]} urlTransform={(url) => url}>
-        {boundMarkdownCodeBlocks(bounded.text)}
-      </Markdown>
-      {props.streamingTail ? <span className="session-streaming-cursor" aria-hidden="true" /> : null}
-    </div>
-  );
-});
-
-const emptyConversationResources: ConversationResource[] = [];
-
-export function boundedMarkdownText(text: string): { text: string; truncated: boolean } {
-  if (text.length <= MAX_MARKDOWN_CHARACTERS) return { text, truncated: false };
-  return { text: `${text.slice(0, MAX_MARKDOWN_CHARACTERS)}\n\n[content truncated]`, truncated: true };
-}
-
-export function boundedMarkdownBlockText(text: string): { text: string; truncated: boolean } {
-  if (text.length <= MAX_MARKDOWN_BLOCK_CHARACTERS) return { text, truncated: false };
-  return { text: `${text.slice(0, MAX_MARKDOWN_BLOCK_CHARACTERS)}\n[block truncated]`, truncated: true };
-}
-
-interface MarkdownAstNode {
-  type: string;
-  children?: MarkdownAstNode[];
-  data?: {
-    hProperties?: Record<string, unknown>;
-  };
-}
-
-function markStreamingMarkdownTail(options?: { active?: boolean }) {
-  return (tree: MarkdownAstNode): void => {
-    if (!options?.active) return;
-    const anchor = lastStreamingTailAnchor(tree);
-    if (!anchor) return;
-    anchor.data = {
-      ...anchor.data,
-      hProperties: {
-        ...anchor.data?.hProperties,
-        'data-streaming-tail-anchor': 'true',
-      },
-    };
-  };
-}
-
-function lastStreamingTailAnchor(node: MarkdownAstNode): MarkdownAstNode | null {
-  // 紧凑列表不会渲染段落外壳，列表项才是最终 DOM 中可靠的行尾锚点。
-  if (node.type === 'listItem') return node;
-  const children = node.children ?? [];
-  for (let index = children.length - 1; index >= 0; index -= 1) {
-    const anchor = lastStreamingTailAnchor(children[index]!);
-    if (anchor) return anchor;
-  }
-  return node.type === 'paragraph' || node.type === 'heading' ? node : null;
-}
-
-function limitMarkdownComplexity(options?: { label?: string }) {
-  return (tree: MarkdownAstNode): void => {
-    const rootChildren = tree.children ?? [];
-    let truncated = rootChildren.length > MAX_MARKDOWN_BLOCKS;
-    let remainingNodes = MAX_MARKDOWN_NODES;
-
-    function limitNode(node: MarkdownAstNode): boolean {
-      if (remainingNodes <= 0) return false;
-      remainingNodes -= 1;
-      if (!node.children) return true;
-      const limitedChildren: MarkdownAstNode[] = [];
-      for (const child of node.children) {
-        if (!limitNode(child)) {
-          truncated = true;
-          break;
-        }
-        limitedChildren.push(child);
-      }
-      if (limitedChildren.length !== node.children.length) truncated = true;
-      node.children = limitedChildren;
-      return true;
-    }
-
-    tree.children = rootChildren.slice(0, MAX_MARKDOWN_BLOCKS).filter(limitNode);
-    if (tree.children.length !== rootChildren.length) truncated = true;
-    if (truncated) {
-      tree.children.push({
-        type: 'paragraph',
-        children: [{ type: 'text', value: options?.label ?? 'Content complexity truncated' } as MarkdownAstNode],
-        data: { hProperties: { className: ['session-markdown-complexity-truncated'], role: 'status' } },
-      } as MarkdownAstNode);
-    }
-  };
-}
-
-function boundMarkdownCodeBlocks(text: string): string {
-  const lines = text.replace(/\r\n?/gu, '\n').split('\n');
-  const output: string[] = [];
-  let fence: string | null = null;
-  let codeCharacters = 0;
-  let blockTruncated = false;
-  for (const line of lines) {
-    const marker = /^\s*(`{3,}|~{3,})/u.exec(line)?.[1] ?? null;
-    if (!fence && marker) {
-      fence = marker;
-      codeCharacters = 0;
-      blockTruncated = false;
-      output.push(line);
-      continue;
-    }
-    if (fence && marker?.startsWith(fence[0]!) && marker.length >= fence.length) {
-      if (blockTruncated) output.push('[code block truncated]');
-      output.push(line);
-      fence = null;
-      continue;
-    }
-    if (!fence) {
-      output.push(line);
-      continue;
-    }
-    const remaining = MAX_MARKDOWN_BLOCK_CHARACTERS - codeCharacters;
-    if (remaining > 0) output.push(line.slice(0, remaining));
-    codeCharacters += line.length + 1;
-    if (codeCharacters > MAX_MARKDOWN_BLOCK_CHARACTERS) blockTruncated = true;
-  }
-  if (fence && blockTruncated) output.push('[code block truncated]');
-  return output.join('\n');
-}
-
-function markdownNodeText(node: ReactNode): string {
-  if (typeof node === 'string' || typeof node === 'number') return String(node);
-  if (Array.isArray(node)) return node.map(markdownNodeText).join('');
-  if (!node || typeof node !== 'object' || !('props' in node)) return '';
-  return markdownNodeText((node as { props?: { children?: ReactNode } }).props?.children);
-}
-
-function matchingInlineResource(resources: ConversationResource[], label: string, href: string): ConversationResource | null {
-  return resources.find((resource) => resource.presentation === 'inline' && inlineResourceMatches(resource, label, href)) ?? null;
-}
-
-function inlineResourceMatches(resource: ConversationResource, label: string, href: string): boolean {
-  if (resource.kind === 'website') {
-    try {
-      return new URL(href).href === resource.url;
-    } catch {
-      return resource.displayName === label;
-    }
-  }
-  if (resource.kind === 'attachment') return resource.displayName === label;
-  const reference = decodeReferencePath(href);
-  return (
-    resource.displayName === label ||
-    reference.endsWith(resource.projectRelativePath) ||
-    reference.endsWith(`/${resource.projectRelativePath}`) ||
-    reference
-      .split('/')
-      .pop()
-      ?.replace(/(?::\d+(?::\d+)?)|(?:#L\d+(?:-L?\d+)?)$/u, '') === resource.projectRelativePath.split('/').pop()
-  );
-}
-
-function decodeReferencePath(href: string): string {
-  let value = href
-    .replace(/^file:\/\//iu, '')
-    .replace(/#L\d+(?:-L?\d+)?$/iu, '')
-    .replace(/:\d+(?::\d+)?$/u, '');
-  try {
-    value = decodeURIComponent(value);
-  } catch {
-    // 保留原始 href 参与末尾匹配；非法编码不会得到打开权限。
-  }
-  return value;
-}
 
 export function itemRole(item: NativeSessionItemBuffer): ThreadItemRole {
   const type = normalizeType(item.type);

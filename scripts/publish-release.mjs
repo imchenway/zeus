@@ -1,19 +1,31 @@
 #!/usr/bin/env node
 /* global console, process */
-import { createHash } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
-import { copyFileSync, createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
-import { commandFailureDetail, commandResultSucceeded, releaseRemoteReadAttempts, releaseRemoteReadTimeoutMs, runRemoteReadWithRetrySync } from './release-remote-read.mjs';
+import {spawnSync} from 'node:child_process';
+import {copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join, resolve} from 'node:path';
+import {setTimeout as delay} from 'node:timers/promises';
 import {
-  formatReleaseWorkflowDuration,
-  readReleaseWorkflowWaitState,
-  releaseWorkflowHeartbeatIntervalMs,
-  releaseWorkflowPollIntervalMs,
-  releaseWorkflowWaitLimitMs,
-  resolveReleaseWorkflowWaitWindow,
+    commandFailureDetail,
+    commandResultSucceeded,
+    releaseRemoteReadAttempts,
+    releaseRemoteReadTimeoutMs,
+    runRemoteReadWithRetrySync
+} from './release-remote-read.mjs';
+import {
+    parseBoolean,
+    requiredVersion,
+    sha256File,
+    sha256Text,
+    validateReleaseNotesFile
+} from './release-script-utils.mjs';
+import {
+    formatReleaseWorkflowDuration,
+    readReleaseWorkflowWaitState,
+    releaseWorkflowHeartbeatIntervalMs,
+    releaseWorkflowPollIntervalMs,
+    releaseWorkflowWaitLimitMs,
+    resolveReleaseWorkflowWaitWindow,
 } from './release-workflow-wait-policy.mjs';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
@@ -363,20 +375,6 @@ function buildPublishResult(input) {
   ].join('\n');
 }
 
-function requiredVersion(rawValue) {
-  const version = rawValue?.trim() ?? '';
-  if (!/^\d+\.\d+\.\d+$/u.test(version)) throw new Error('RELEASE_VERSION 为必填稳定版本号，例如 0.1.10。');
-  return version;
-}
-
-function parseBoolean(name, rawValue, defaultValue) {
-  if (rawValue === undefined || rawValue.trim() === '') return defaultValue;
-  const normalized = rawValue.trim().toLocaleLowerCase();
-  if (['1', 'true', 'yes'].includes(normalized)) return true;
-  if (['0', 'false', 'no'].includes(normalized)) return false;
-  throw new Error(`${name} 必须是布尔值；当前值为 ${rawValue}。`);
-}
-
 function optionalFile(rawValue, name) {
   const value = rawValue?.trim() ?? '';
   if (!value) return null;
@@ -384,23 +382,6 @@ function optionalFile(rawValue, name) {
   if (!existsSync(path) || !statSync(path).isFile()) throw new Error(`${name} 不是可读文件：${path}`);
   if (statSync(path).size > 128 * 1024) throw new Error(`${name} 超过 128 KiB。`);
   return path;
-}
-
-function validateReleaseNotesFile(path, version) {
-  if (!existsSync(path) || !statSync(path).isFile()) throw new Error(`缺少仓库 Release notes：${path}`);
-  const markdown = readFileSync(path, 'utf8');
-  const requiredTitle = `# Zeus ${version} 更新内容`;
-  if (!markdown.startsWith(`${requiredTitle}\n`)) throw new Error(`Release notes 标题必须是：${requiredTitle}`);
-  for (const heading of ['## 如何升级', '## 系统要求与已知限制', '## 发布验证']) {
-    if (!markdown.includes(`\n${heading}\n`)) throw new Error(`Release notes 缺少必要章节：${heading}`);
-  }
-  const leakedCommentary = markdown.match(/用户要求只返回|confidence\s*[=:：]|uncertainties\s*[=:：]|以下无其他字段|最终正文如上/iu)?.[0];
-  if (leakedCommentary) throw new Error(`Release notes 混入生成过程说明“${leakedCommentary}”。`);
-  const draftOnlyPublicationState = markdown.match(/本次发布前需完成以下验证流程|将由\s*(?:Release Workflow|发布流程)|发布流程将在草稿通过后执行|尚未发生/iu)?.[0];
-  if (draftOnlyPublicationState) throw new Error(`Release notes 包含只在草稿阶段成立的表述“${draftOnlyPublicationState}”。`);
-  if (/对\s*DMG\s*进行开发者签名和 Apple 公证/iu.test(markdown)) {
-    throw new Error('Release notes 无条件承诺 Developer ID 签名与 Apple 公证。');
-  }
 }
 
 function validateLocalGateSummary(path, version, headSha) {
@@ -723,18 +704,4 @@ function captureRemoteRead(label, command, args, options = {}) {
 
 function normalizeText(value) {
   return value.replace(/\r\n/gu, '\n').trim();
-}
-
-function sha256Text(value) {
-  return createHash('sha256').update(value).digest('hex');
-}
-
-function sha256File(path) {
-  return new Promise((resolveHash, rejectHash) => {
-    const hash = createHash('sha256');
-    const stream = createReadStream(path);
-    stream.on('error', rejectHash);
-    stream.on('data', (chunk) => hash.update(chunk));
-    stream.on('end', () => resolveHash(hash.digest('hex')));
-  });
 }

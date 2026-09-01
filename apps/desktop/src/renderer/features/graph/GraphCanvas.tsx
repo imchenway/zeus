@@ -1,10 +1,24 @@
-import { type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useMemo, useRef, useState, type WheelEvent as ReactWheelEvent } from 'react';
-import { toReactFlowElements, toSigmaGraph } from '@zeus/diagram-engine';
-import { type AppLanguage } from '../workspace/workspaceCopy.js';
-import { ArchitectureGraphCanvas, type ArchitectureLayerModel } from '../../graph/ArchitectureGraphCanvas.js';
-import { type AiRuntimeLogEntry, type GraphViewSnapshot, type GraphViewType, type TaskStatus } from '../../apiClient.js';
-import { formatGraphEdgeType, formatGraphEdgeWithConfidence, formatGraphNodeType, formatGraphRiskTag, formatGraphRuntimeEdgeLabel } from '../workspace/workspaceFormatters.js';
-import { getLanguageCopy } from '../workspace/workspaceSupport.js';
+import {
+    type KeyboardEvent as ReactKeyboardEvent,
+    type PointerEvent as ReactPointerEvent,
+    type ReactNode,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+    type WheelEvent as ReactWheelEvent
+} from 'react';
+import {type AppLanguage} from '../workspace/workspaceCopy.js';
+import {ArchitectureGraphCanvas, type ArchitectureLayerModel} from '../../graph/ArchitectureGraphCanvas.js';
+import {type AiRuntimeLogEntry, type GraphViewSnapshot, type GraphViewType, type TaskStatus} from '../../apiClient.js';
+import {
+    formatGraphEdgeType,
+    formatGraphEdgeWithConfidence,
+    formatGraphNodeType,
+    formatGraphRiskTag
+} from '../workspace/workspaceFormatters.js';
+import {getLanguageCopy} from '../workspace/workspaceSupport.js';
+
 export interface GraphNodeActionMenuItem {
   id: 'inspect-detail' | 'create-task' | 'open-source' | 'ask-node' | 'generate-sequence' | 'generate-flow' | 'expand-one-hop' | 'expand-two-hop' | 'toggle-visibility';
   label: string;
@@ -344,222 +358,6 @@ export function RuntimeXtermPane(props: { logs: AiRuntimeLogEntry[]; enabled: bo
   return <div className="xterm-runtime-pane" aria-label={props.ariaLabel} ref={terminalRef} />;
 }
 
-export type SigmaRendererInstance = { kill: () => void };
-export type GraphologyGraphInstance = {
-  addNode: (key: string, attributes?: Record<string, unknown>) => void;
-  addDirectedEdgeWithKey: (key: string, source: string, target: string, attributes?: Record<string, unknown>) => void;
-};
-export type GraphologyGraphConstructor = new () => GraphologyGraphInstance;
-export type SigmaRendererConstructor = new (graph: GraphologyGraphInstance, container: HTMLElement, settings?: Record<string, unknown>) => SigmaRendererInstance;
-
-export interface SigmaRuntimeGraphNode {
-  key: string;
-  attributes: {
-    label: string;
-    type: string;
-    nodeType: string;
-    sourceRef: string;
-    x: number;
-    y: number;
-    size: number;
-    color: string;
-  };
-}
-
-export interface SigmaRuntimeGraph {
-  nodes: SigmaRuntimeGraphNode[];
-  edges: ReturnType<typeof toSigmaGraph>['edges'];
-}
-
-export function buildSigmaRuntimeGraph(input: {
-  nodes: Array<GraphViewSnapshot['nodes'][number] | AggregatedGraphNode>;
-  edges: Array<GraphViewSnapshot['edges'][number] | AggregatedGraphEdge>;
-  layout?: GraphViewSnapshot['layout'];
-}): SigmaRuntimeGraph {
-  const baseGraph = toSigmaGraph({ nodes: input.nodes, edges: input.edges });
-  const width = normalizeGraphCanvasDimension(input.layout?.width, 720, 1440);
-  const height = normalizeGraphCanvasDimension(input.layout?.height, 300, 900);
-  const layout = buildGraphCanvasLayout(input.nodes, width, height, input.layout);
-
-  return {
-    ...baseGraph,
-    nodes: baseGraph.nodes.map((node) => {
-      const point = layout.get(node.key) ?? {
-        x: Math.round(width / 2),
-        y: Math.round(height / 2),
-      };
-      const nodeType = node.attributes.type;
-      return {
-        ...node,
-        attributes: {
-          ...node.attributes,
-          type: 'circle',
-          nodeType,
-          // Sigma/WebGL 运行时要求 x/y 是真实数值；这里复用服务端布局或确定性前端布局，不生成演示节点。
-          x: point.x,
-          y: point.y,
-          size: nodeType === 'aggregate' ? 11 : 8,
-          color: sigmaNodeColor(nodeType),
-        },
-      };
-    }),
-  };
-}
-
-export function sigmaNodeColor(nodeType: string): string {
-  switch (nodeType) {
-    case 'api':
-      return '#4f46e5';
-    case 'table':
-    case 'column':
-      return '#0f766e';
-    case 'function':
-      return '#7c3aed';
-    case 'aggregate':
-      return '#64748b';
-    default:
-      return '#2563eb';
-  }
-}
-
-export function GraphRuntimeCanvas(props: {
-  nodes: Array<GraphViewSnapshot['nodes'][number] | AggregatedGraphNode>;
-  edges: Array<GraphViewSnapshot['edges'][number] | AggregatedGraphEdge>;
-  layout?: GraphViewSnapshot['layout'];
-  appLanguage: AppLanguage;
-  currentNodeId?: string | null;
-  currentEdgeId?: string | null;
-  onSelectNode?: (nodeId: string) => void;
-  onSelectEdge?: (edgeId: string) => void;
-  onOpenGraphSource?: (source: { sourceRef: string; lineStart?: number }) => void;
-  onCreateTaskFromNode?: (nodeId: string) => void;
-}) {
-  const copy = getLanguageCopy(props.appLanguage).codeMapWorkspace;
-  const sigmaContainerRef = useRef<HTMLDivElement | null>(null);
-  const reactFlowContainerRef = useRef<HTMLDivElement | null>(null);
-  const sigmaGraph = useMemo(
-    () =>
-      buildSigmaRuntimeGraph({
-        nodes: props.nodes,
-        edges: props.edges,
-        layout: props.layout,
-      }),
-    [props.nodes, props.edges, props.layout],
-  );
-  const reactFlowElements = useMemo(() => toReactFlowElements({ nodes: props.nodes, edges: props.edges }), [props.nodes, props.edges]);
-
-  useEffect(() => {
-    if (!sigmaContainerRef.current || props.nodes.length === 0 || typeof window === 'undefined') return undefined;
-    let disposed = false;
-    let sigmaRenderer: SigmaRendererInstance | undefined;
-
-    void (async () => {
-      const [{ default: Graph }, { default: Sigma }] = await Promise.all([
-        import('graphology') as unknown as Promise<{
-          default: GraphologyGraphConstructor;
-        }>,
-        import('sigma') as unknown as Promise<{
-          default: SigmaRendererConstructor;
-        }>,
-        // 动态加载 React Flow 运行时，避免服务端静态渲染时访问浏览器 API。
-        import('@xyflow/react'),
-      ]);
-      if (disposed || !sigmaContainerRef.current) return;
-      const graph = new Graph();
-      for (const node of sigmaGraph.nodes) graph.addNode(node.key, node.attributes);
-      for (const edge of sigmaGraph.edges) graph.addDirectedEdgeWithKey(edge.key, edge.source, edge.target, edge.attributes);
-      // Sigma/WebGL 只渲染真实转换后的 Graphology 图，不补造空节点或演示边。
-      sigmaRenderer = new Sigma(graph, sigmaContainerRef.current, {
-        renderEdgeLabels: false,
-        labelRenderedSizeThreshold: 12,
-        allowInvalidContainer: true,
-      });
-      if (reactFlowContainerRef.current) reactFlowContainerRef.current.dataset.runtimeReady = 'true';
-    })();
-
-    return () => {
-      disposed = true;
-      sigmaRenderer?.kill();
-    };
-  }, [props.nodes.length, sigmaGraph]);
-
-  if (props.nodes.length === 0) {
-    return (
-      <section className="graph-runtime-canvas" aria-label={copy.graphRuntime}>
-        <article className="graph-runtime-pane" aria-label={copy.sigmaTitle}>
-          <h3>{copy.sigmaTitle}</h3>
-          <p>{copy.sigmaEmpty}</p>
-        </article>
-        <article className="graph-runtime-pane" aria-label={copy.reactFlowTitle}>
-          <h3>{copy.reactFlowTitle}</h3>
-          <p>{copy.reactFlowEmpty}</p>
-        </article>
-      </section>
-    );
-  }
-
-  return (
-    <section className="graph-runtime-canvas" aria-label={copy.graphRuntime}>
-      <article className="graph-runtime-pane" aria-label={copy.sigmaTitle}>
-        <div className="graph-canvas-header">
-          <h3>{copy.sigmaTitle}</h3>
-          <span>
-            {copy.nodeCount(sigmaGraph.nodes.length)} · {copy.edgeCount(sigmaGraph.edges.length)}
-          </span>
-        </div>
-        <div className="graph-runtime-mount" data-runtime="sigma" ref={sigmaContainerRef} />
-        <div className="graph-runtime-facts" aria-label={copy.sigmaSourceAria}>
-          {sigmaGraph.nodes.slice(0, 4).map((node) => (
-            <span key={node.key}>{node.attributes.label}</span>
-          ))}
-          {sigmaGraph.edges.slice(0, 3).map((edge) => (
-            <small key={edge.key}>
-              {formatGraphEdgeType(edge.attributes.label, props.appLanguage)} {edge.attributes.confidence.toFixed(2)}
-            </small>
-          ))}
-        </div>
-      </article>
-      <article className="graph-runtime-pane" aria-label={copy.reactFlowTitle}>
-        <div className="graph-canvas-header">
-          <h3>{copy.reactFlowTitle}</h3>
-          <span>
-            {copy.nodeCount(reactFlowElements.nodes.length)} · {copy.edgeCount(reactFlowElements.edges.length)}
-          </span>
-        </div>
-        <div className="graph-runtime-mount" data-runtime="react-flow" ref={reactFlowContainerRef}>
-          {reactFlowElements.nodes.slice(0, 5).map((node) => (
-            <button
-              type="button"
-              className={`react-flow-node-summary${props.currentNodeId === String(node.id) ? ' current-graph-runtime-object' : ''}`}
-              data-react-flow-node-id={node.id}
-              aria-current={props.currentNodeId === String(node.id) ? 'true' : undefined}
-              onClick={() => props.onSelectNode?.(String(node.id))}
-              key={node.id}
-            >
-              <strong>{node.data.label}</strong>
-              <span>{formatGraphNodeType(String(node.type), props.appLanguage)}</span>
-              <small>{node.data.sourceRef}</small>
-            </button>
-          ))}
-        </div>
-        <div className="graph-runtime-facts" aria-label={copy.reactFlowEdgesAria}>
-          {reactFlowElements.edges.slice(0, 4).map((edge) => (
-            <button
-              type="button"
-              className={`react-flow-edge-summary${props.currentEdgeId === String(edge.id) ? ' current-graph-runtime-object' : ''}`}
-              data-react-flow-edge-id={edge.id}
-              aria-current={props.currentEdgeId === String(edge.id) ? 'true' : undefined}
-              onClick={() => props.onSelectEdge?.(String(edge.id))}
-              key={edge.id}
-            >
-              {formatGraphRuntimeEdgeLabel(String(edge.label ?? ''), props.appLanguage)}
-            </button>
-          ))}
-        </div>
-      </article>
-    </section>
-  );
-}
 export function GraphCanvas(props: {
   title?: string;
   nodes: Array<GraphViewSnapshot['nodes'][number] | AggregatedGraphNode>;

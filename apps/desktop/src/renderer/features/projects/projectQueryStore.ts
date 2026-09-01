@@ -1,5 +1,6 @@
-import type { ProjectApiClient } from './projectApiClient.js';
-import type { ProjectRecord } from '../../apiClient.js';
+import type {ProjectApiClient} from './projectApiClient.js';
+import type {ProjectRecord} from '../../apiClient.js';
+import {errorMessage, ExternalStore} from '../../externalStore.js';
 
 export interface ProjectQuerySnapshot {
   items: readonly ProjectRecord[];
@@ -9,22 +10,18 @@ export interface ProjectQuerySnapshot {
   revision: number;
 }
 
-export class ProjectQueryStore {
-  readonly subscribe = (listener: () => void): (() => void) => {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  };
-
-  readonly getSnapshot = (): ProjectQuerySnapshot => this.snapshot;
-
-  private readonly listeners = new Set<() => void>();
-  private snapshot: ProjectQuerySnapshot;
-
+export class ProjectQueryStore extends ExternalStore<ProjectQuerySnapshot> {
   constructor(
     private readonly client: ProjectApiClient | null,
     initialItems: readonly ProjectRecord[],
   ) {
-    this.snapshot = { items: initialItems, selectedProjectId: initialItems[0]?.id ?? null, loading: false, error: null, revision: 0 };
+      super({
+          items: initialItems,
+          selectedProjectId: initialItems[0]?.id ?? null,
+          loading: false,
+          error: null,
+          revision: 0
+      });
   }
 
   replace(items: readonly ProjectRecord[]): void {
@@ -47,7 +44,7 @@ export class ProjectQueryStore {
       this.publish({ ...this.snapshot, loading: false });
       return items;
     } catch (error) {
-      this.publish({ ...this.snapshot, loading: false, error: messageFrom(error) });
+        this.publish({...this.snapshot, loading: false, error: errorMessage(error)});
       throw error;
     }
   }
@@ -71,13 +68,4 @@ export class ProjectQueryStore {
     if (!this.client) throw new Error('Project API client is unavailable.');
     return this.client;
   }
-
-  private publish(snapshot: ProjectQuerySnapshot): void {
-    this.snapshot = snapshot;
-    for (const listener of this.listeners) listener();
-  }
-}
-
-function messageFrom(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

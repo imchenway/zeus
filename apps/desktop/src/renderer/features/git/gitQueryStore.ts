@@ -1,5 +1,6 @@
-import type { GitDiffSummary, GitOperationConfirmation } from '../../apiClient.js';
-import type { GitApiClient } from './gitApiClient.js';
+import type {GitDiffSummary, GitOperationConfirmation} from '../../apiClient.js';
+import type {GitApiClient} from './gitApiClient.js';
+import {errorMessage, ExternalStore} from '../../externalStore.js';
 
 export interface GitQuerySnapshot {
   diff: GitDiffSummary | undefined;
@@ -22,22 +23,12 @@ export interface GitQuerySnapshot {
 
 export type GitQueryFieldUpdater<Key extends keyof GitQuerySnapshot> = GitQuerySnapshot[Key] | ((current: GitQuerySnapshot[Key]) => GitQuerySnapshot[Key]);
 
-export class GitQueryStore {
-  readonly subscribe = (listener: () => void): (() => void) => {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  };
-
-  readonly getSnapshot = (): GitQuerySnapshot => this.snapshot;
-
-  private readonly listeners = new Set<() => void>();
-  private snapshot: GitQuerySnapshot;
-
+export class GitQueryStore extends ExternalStore<GitQuerySnapshot> {
   constructor(
     private readonly client: GitApiClient | null,
     initial: Pick<GitQuerySnapshot, 'diff' | 'confirmation' | 'patchExportStatus' | 'operationStatus'>,
   ) {
-    this.snapshot = {
+      super({
       ...initial,
       hunkDecisions: {},
       commitMessage: '',
@@ -51,7 +42,7 @@ export class GitQueryStore {
       loading: false,
       error: null,
       revision: 0,
-    };
+      });
   }
 
   set<Key extends keyof GitQuerySnapshot>(key: Key, updater: GitQueryFieldUpdater<Key>): void {
@@ -68,7 +59,7 @@ export class GitQueryStore {
       this.publish({ ...this.snapshot, diff, loading: false, revision: this.snapshot.revision + 1 });
       return diff;
     } catch (error) {
-      this.publish({ ...this.snapshot, loading: false, error: messageFrom(error) });
+        this.publish({...this.snapshot, loading: false, error: errorMessage(error)});
       throw error;
     }
   }
@@ -77,13 +68,4 @@ export class GitQueryStore {
     if (!this.client) throw new Error('Git API client is unavailable.');
     return this.client;
   }
-
-  private publish(snapshot: GitQuerySnapshot): void {
-    this.snapshot = snapshot;
-    for (const listener of this.listeners) listener();
-  }
-}
-
-function messageFrom(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

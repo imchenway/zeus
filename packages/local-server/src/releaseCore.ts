@@ -1,3 +1,4 @@
+/** Local Server 的发布清单与更新判定规则。 */
 export const currentExecutionHostProtocolVersion = 2;
 
 export interface ReleaseArtifactManifestInput {

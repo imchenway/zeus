@@ -1,5 +1,6 @@
-import type { CodexRemoteControlPairing, CodexRemoteControlSnapshot } from '../../apiClient.js';
-import type { RemoteControlApiClient } from './remoteControlApiClient.js';
+import type {CodexRemoteControlPairing, CodexRemoteControlSnapshot} from '../../apiClient.js';
+import type {RemoteControlApiClient} from './remoteControlApiClient.js';
+import {errorMessage, ExternalStore} from '../../externalStore.js';
 
 export interface RemoteControlQuerySnapshot {
   phase: 'idle' | 'loading' | 'ready' | 'error';
@@ -20,19 +21,12 @@ const initialSnapshot: RemoteControlQuerySnapshot = {
 };
 
 /** Remote Control 的唯一 Renderer projection；轮询和命令不进入 App 全局 state。 */
-export class RemoteControlQueryStore {
-  private readonly listeners = new Set<() => void>();
-  private snapshot = initialSnapshot;
+export class RemoteControlQueryStore extends ExternalStore<RemoteControlQuerySnapshot> {
   private generation = 0;
 
-  constructor(private readonly client: RemoteControlApiClient) {}
-
-  subscribe = (listener: () => void): (() => void) => {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  };
-
-  getSnapshot = (): RemoteControlQuerySnapshot => this.snapshot;
+    constructor(private readonly client: RemoteControlApiClient) {
+        super(initialSnapshot);
+    }
 
   async load(): Promise<void> {
     const generation = ++this.generation;
@@ -100,13 +94,4 @@ export class RemoteControlQueryStore {
       this.publish({ ...this.snapshot, phase: 'error', command: 'idle', error: errorMessage(error) });
     }
   }
-
-  private publish(snapshot: RemoteControlQuerySnapshot): void {
-    this.snapshot = snapshot;
-    for (const listener of this.listeners) listener();
-  }
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

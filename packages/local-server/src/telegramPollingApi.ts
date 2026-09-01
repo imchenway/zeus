@@ -1,6 +1,12 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { TelegramPollingService, TelegramPollingStatus } from '@zeus/telegram-adapter';
-import { TelegramCommandApplication, telegramChildOperation, telegramCommandHttpError, telegramCommandTypes, type TelegramCommandRequest } from './telegramCommandApplication.js';
+import type {FastifyInstance, FastifyReply, FastifyRequest} from 'fastify';
+import type {TelegramPollingService, TelegramPollingStatus} from './telegramAdapter.js';
+import {
+    telegramChildOperation,
+    TelegramCommandApplication,
+    telegramCommandHttpError,
+    type TelegramCommandRequest,
+    telegramCommandTypes
+} from './telegramCommandApplication.js';
 
 interface TelegramPollingApiOptions {
   server: FastifyInstance;

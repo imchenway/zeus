@@ -1,11 +1,18 @@
 #!/usr/bin/env node
 /* global console, process */
-import { spawn, spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
-import { commandFailureDetail, commandResultSucceeded, releaseRemoteReadAttempts, releaseRemoteReadTimeoutMs, runRemoteReadWithRetrySync } from './release-remote-read.mjs';
-import { releaseWorkflowWaitLimitMs } from './release-workflow-wait-policy.mjs';
+import {spawn, spawnSync} from 'node:child_process';
+import {copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {basename, dirname, extname, isAbsolute, join, resolve, sep} from 'node:path';
+import {
+    commandFailureDetail,
+    commandResultSucceeded,
+    releaseRemoteReadAttempts,
+    releaseRemoteReadTimeoutMs,
+    runRemoteReadWithRetrySync
+} from './release-remote-read.mjs';
+import {releaseWorkflowWaitLimitMs} from './release-workflow-wait-policy.mjs';
+import {parseBoolean} from './release-script-utils.mjs';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const repository = 'imchenway/zeus';
@@ -31,7 +38,7 @@ async function main() {
   const initialHeadSha = git(['rev-parse', 'HEAD']);
   inspectCommittedCandidateWhitespace(initialHeadSha);
   const initialWorktreeStatus = git(['status', '--short']);
-  const isolationValidation = parseBooleanEnvironment(isolationValidationEnvironment, false);
+    const isolationValidation = parseBoolean(isolationValidationEnvironment, process.env[isolationValidationEnvironment], false);
   if (isolationValidation && (!initialWorktreeStatus || process.env[isolatedSourceEnvironment])) {
     throw new Error(`${isolationValidationEnvironment} 只允许验证脏工作区的隔离路径，不能进入当前仓库的真实发布主链路。`);
   }
@@ -142,7 +149,7 @@ async function runIsolatedRelease(input) {
 
   await runStage('准备隔离发布依赖', 'pnpm', ['install', '--frozen-lockfile'], process.env, { cwd: isolatedRepository });
 
-  if (parseBooleanEnvironment(isolationValidationEnvironment, false)) {
+    if (parseBoolean(isolationValidationEnvironment, process.env[isolationValidationEnvironment], false)) {
     const currentHead = git(['rev-parse', 'HEAD']);
     const currentWorktreeStatus = git(['status', '--short']);
     if (currentHead !== input.sourceHead || currentWorktreeStatus !== input.worktreeStatus) {
@@ -926,15 +933,6 @@ async function runStage(label, command, args, env, options = {}) {
       }
     });
   });
-}
-
-function parseBooleanEnvironment(name, defaultValue) {
-  const rawValue = process.env[name];
-  if (rawValue === undefined || rawValue.trim() === '') return defaultValue;
-  const normalized = rawValue.trim().toLocaleLowerCase();
-  if (['1', 'true', 'yes'].includes(normalized)) return true;
-  if (['0', 'false', 'no'].includes(normalized)) return false;
-  throw new Error(`${name} 必须是布尔值；当前值为 ${rawValue}。`);
 }
 
 function runInDirectory(cwd, command, args) {

@@ -1,17 +1,25 @@
-import { defaultTaskManagementStatusConfig, normalizeTaskManagementStatusConfig } from '@zeus/shared';
-import { type AppLanguage } from './workspaceCopy.js';
-import { normalizeTaskTableColumnPreferences, normalizeTaskTableEnumSortOrders } from '../../task/taskWorkspaceModel.js';
-import { type AiRuntimeLogEntry, type AppShellSettings, type ExecuteGitOperationRequest, type GitDiffHunk, type GitDiffSummary, type GitOperationConfirmation } from '../../apiClient.js';
+import {defaultTaskManagementStatusConfig, normalizeTaskManagementStatusConfig} from '@zeus/shared';
+import {type AppLanguage} from './workspaceCopy.js';
+import {normalizeTaskTableColumnPreferences, normalizeTaskTableEnumSortOrders} from '../../task/taskWorkspaceModel.js';
 import {
-  getLanguageCopy,
-  normalizeCodeWorkspaceByProject,
-  normalizeSidebarConversationCollapsedStatusIdsByProject,
-  normalizeSidebarConversationOrganization,
-  normalizeTaskExpandedIdsByProject,
-  normalizeTaskPageViewByProject,
-  normalizeTaskStatusFilterByProject,
-  normalizeTaskViewModeByProject,
+    type AiRuntimeLogEntry,
+    type AppShellSettings,
+    type ExecuteGitOperationRequest,
+    type GitDiffHunk,
+    type GitDiffSummary,
+    type GitOperationConfirmation
+} from '../../apiClient.js';
+import {
+    getLanguageCopy,
+    normalizeCodeWorkspaceByProject,
+    normalizeSidebarConversationCollapsedStatusIdsByProject,
+    normalizeSidebarConversationOrganization,
+    normalizeTaskExpandedIdsByProject,
+    normalizeTaskPageViewByProject,
+    normalizeTaskStatusFilterByProject,
+    normalizeTaskViewModeByProject,
 } from './workspaceSupport.js';
+
 export const GENERIC_SHELL_CRITICAL_CONFIRMATION_PHRASE = 'ZEUS HIGH RISK';
 
 export type GenericShellCommandRiskLevel = 'empty' | 'medium' | 'critical';
@@ -203,12 +211,6 @@ export function formatGraphRiskTag(tag: string, appLanguage: AppLanguage = 'zh-C
 
 export function formatGraphEdgeWithConfidence(edge: { edgeType: string; confidence: number }, appLanguage: AppLanguage = 'zh-CN'): string {
   return `${formatGraphEdgeType(edge.edgeType, appLanguage)} ${edge.confidence.toFixed(2)}`;
-}
-
-export function formatGraphRuntimeEdgeLabel(label: string, appLanguage: AppLanguage = 'zh-CN'): string {
-  const [edgeType, ...rest] = label.split(/\s+/u);
-  if (!edgeType) return label;
-  return [formatGraphEdgeType(edgeType, appLanguage), ...rest].join(' ');
 }
 
 /** Git clean 状态可能来自旧版本 API，缺失时用 changedFiles 兜底，保持界面向后兼容。 */

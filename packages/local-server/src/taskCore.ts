@@ -1,4 +1,6 @@
-import type { TaskStatus } from '@zeus/shared';
+import type {TaskStatus} from '@zeus/shared';
+
+/** Local Server 的任务状态迁移规则。 */
 
 /** 任务状态迁移表：所有 UI/API 状态按钮都必须受这里约束。 */
 const allowedTransitions: Record<TaskStatus, readonly TaskStatus[]> = {

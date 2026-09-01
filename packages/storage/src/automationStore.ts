@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto';
-import { nanoid } from 'nanoid';
-import type { ZeusDatabasePort } from './databasePort.js';
+import {createHash} from 'node:crypto';
+import {randomId} from './randomId.js';
+import type {ZeusDatabasePort} from './databasePort.js';
 
 export const automationSchemaMigrationId = '20260829_0374_automation_tasks_v1';
 
@@ -460,8 +460,8 @@ export class AutomationTaskRepository {
     const snapshot = normalizeSnapshot(input);
     const projectIds = stringArray(input.projectIds, '项目');
     if (projectIds.length === 0) throw new Error('ZEUS_AUTOMATION_CONFIG_PROJECT_REQUIRED: 至少选择一个项目。');
-    const id = input.id ?? `automation_${nanoid(12)}`;
-    const revisionId = `automation_revision_${nanoid(12)}`;
+      const id = input.id ?? `automation_${randomId(12)}`;
+      const revisionId = `automation_revision_${randomId(12)}`;
     const timestamp = nowIso();
     return this.db.transaction(() => {
       this.insertTask(id, revisionId, 0, snapshot, timestamp);
@@ -479,7 +479,7 @@ export class AutomationTaskRepository {
     if (projectIds.length === 0) throw new Error('ZEUS_AUTOMATION_CONFIG_PROJECT_REQUIRED: 至少选择一个项目。');
     const snapshot = normalizeSnapshot({ ...existing, ...input, projectIds });
     const revision = existing.revision + 1;
-    const revisionId = `automation_revision_${nanoid(12)}`;
+      const revisionId = `automation_revision_${randomId(12)}`;
     const timestamp = nowIso();
     return this.db.transaction(() => {
       this.db.execute(
@@ -688,8 +688,8 @@ export class AutomationRunRepository {
       if (task.blockStrategy === 'serial' && active.length > 0 && queued.length >= task.queueCapacity) {
         this.setTerminal(queued[0]!.id, 'cancelled', 'ZEUS_AUTOMATION_QUEUE_EVICTED', '队列已满，已淘汰最早等待运行。');
       }
-      const id = input.id ?? `automation_run_${nanoid(12)}`;
-      const causalChainId = input.causalChainId ?? `automation_chain_${nanoid(12)}`;
+        const id = input.id ?? `automation_run_${randomId(12)}`;
+        const causalChainId = input.causalChainId ?? `automation_chain_${randomId(12)}`;
       const queuePosition = task.blockStrategy === 'serial' && active.length > 0 ? queued.length + 1 : 0;
       this.db.execute(
         `INSERT INTO automation_runs (id, automation_id, automation_revision_id, project_id, trigger_kind, trigger_identity, causal_chain_id,
@@ -759,7 +759,7 @@ export class AutomationRunRepository {
     this.db.transaction(() => {
       this.db.execute(`UPDATE automation_runs SET status = 'dispatching', attempt = ?, started_at = COALESCE(started_at, ?), updated_at = ? WHERE id = ? AND status = 'queued'`, [attempt, timestamp, timestamp, id]);
       this.db.execute(`INSERT INTO automation_run_attempts (id, run_id, attempt, status, operation_identity, started_at) VALUES (?, ?, ?, 'dispatching', ?, ?)`, [
-        `automation_attempt_${nanoid(12)}`,
+          `automation_attempt_${randomId(12)}`,
         id,
         attempt,
         `automation-dispatch:${id}:${attempt}`,
@@ -807,7 +807,10 @@ export class AutomationRunRepository {
         this.db.execute(
           `INSERT OR IGNORE INTO automation_notification_outbox (id, run_id, kind, payload_json, status, attempt, available_at, created_at, updated_at)
            VALUES (?, ?, ?, ?, 'pending', 0, ?, ?, ?)`,
-          [`automation_notification_${nanoid(12)}`, id, status, JSON.stringify({ runId: id, status }), timestamp, timestamp, timestamp],
+            [`automation_notification_${randomId(12)}`, id, status, JSON.stringify({
+                runId: id,
+                status
+            }), timestamp, timestamp, timestamp],
         );
       }
       this.promoteNext(id);
@@ -825,8 +828,8 @@ export class AutomationRunRepository {
   }
 
   private insertTerminal(input: EnqueueAutomationRunInput, task: AutomationTaskRecord, status: Extract<AutomationRunStatus, 'blocked' | 'cancelled'>, errorCode: string, errorMessage: string, timestamp: string): AutomationRunRecord {
-    const id = input.id ?? `automation_run_${nanoid(12)}`;
-    const causalChainId = input.causalChainId ?? `automation_chain_${nanoid(12)}`;
+      const id = input.id ?? `automation_run_${randomId(12)}`;
+      const causalChainId = input.causalChainId ?? `automation_chain_${randomId(12)}`;
     this.db.execute(
       `INSERT INTO automation_runs (id, automation_id, automation_revision_id, project_id, trigger_kind, trigger_identity, causal_chain_id, status,
        attempt, unread, scheduled_at, accepted_at, completed_at, error_code, error_message, created_at, updated_at)

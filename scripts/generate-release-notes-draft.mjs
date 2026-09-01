@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 /* global console, process */
-import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { URL } from 'node:url';
+import {spawnSync} from 'node:child_process';
+import {mkdirSync, mkdtempSync, readFileSync, writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join, resolve} from 'node:path';
+import {URL} from 'node:url';
+import {assertVersionAfterTag, parseBoolean, requiredVersion} from './release-script-utils.mjs';
 
 process.on('uncaughtException', (error) => {
   console.error(error instanceof Error ? error.message : String(error));
@@ -13,9 +14,9 @@ process.on('uncaughtException', (error) => {
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const releaseVersion = requiredVersion(process.env.RELEASE_VERSION);
-const includeWorktree = parseBoolean(process.env.INCLUDE_WORKTREE, true);
+const includeWorktree = parseBoolean('INCLUDE_WORKTREE', process.env.INCLUDE_WORKTREE, true);
 const releaseContext = boundedText(process.env.RELEASE_CONTEXT, 2_000);
-const automatedRelease = parseBoolean(process.env.AUTOMATED_RELEASE, false);
+const automatedRelease = parseBoolean('AUTOMATED_RELEASE', process.env.AUTOMATED_RELEASE, false);
 const baseTag = resolveBaseTag(process.env.BASE_TAG);
 const headSha = git(['rev-parse', 'HEAD']);
 const shortHeadSha = git(['rev-parse', '--short=12', 'HEAD']);
@@ -23,7 +24,7 @@ const branch = git(['branch', '--show-current']) || '(detached HEAD)';
 const unresolvedMarkerPattern = /(?<![\p{L}\p{N}])(?:待确认|待验证|待发布门禁确认|尚未确认|尚未验证)(?![\p{L}\p{N}])|\b(?:TODO|TBD)\b/iu;
 
 assertAncestor(baseTag, headSha);
-assertVersionAfterBase(releaseVersion, baseTag);
+assertVersionAfterTag(releaseVersion, baseTag, '。');
 
 const outputDirectory = resolveOutputDirectory(releaseVersion, shortHeadSha);
 mkdirSync(outputDirectory, { recursive: true, mode: 0o700 });
@@ -200,32 +201,6 @@ function resolveBaseTag(rawValue) {
 function assertAncestor(tag, head) {
   const result = spawnSync('git', ['merge-base', '--is-ancestor', `${tag}^{commit}`, head], { cwd: repositoryRoot, encoding: 'utf8' });
   if (result.status !== 0) throw new Error(`基线标签 ${tag} 不是当前候选提交的祖先。`);
-}
-
-function requiredVersion(rawValue) {
-  const version = rawValue?.trim() ?? '';
-  if (!/^\d+\.\d+\.\d+$/u.test(version)) {
-    throw new Error('RELEASE_VERSION 为必填稳定版本号，例如 0.1.10。');
-  }
-  return version;
-}
-
-function assertVersionAfterBase(version, tag) {
-  const target = version.split('.').map(Number);
-  const base = tag.slice(1).split('.').map(Number);
-  for (let index = 0; index < 3; index += 1) {
-    if (target[index] > base[index]) return;
-    if (target[index] < base[index]) break;
-  }
-  throw new Error(`目标版本 ${version} 必须高于基线标签 ${tag.slice(1)}。`);
-}
-
-function parseBoolean(rawValue, defaultValue) {
-  if (rawValue === undefined || rawValue.trim() === '') return defaultValue;
-  const normalized = rawValue.trim().toLocaleLowerCase();
-  if (['1', 'true', 'yes'].includes(normalized)) return true;
-  if (['0', 'false', 'no'].includes(normalized)) return false;
-  throw new Error(`INCLUDE_WORKTREE 必须是布尔值；当前值为 ${rawValue}。`);
 }
 
 function boundedText(rawValue, maxLength) {

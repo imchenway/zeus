@@ -1,5 +1,6 @@
-import type { AppShellSettings } from '../../apiClient.js';
-import type { SettingsApiClient } from './settingsApiClient.js';
+import type {AppShellSettings} from '../../apiClient.js';
+import type {SettingsApiClient} from './settingsApiClient.js';
+import {errorMessage, ExternalStore} from '../../externalStore.js';
 
 export type SettingsUpdater = AppShellSettings | ((current: AppShellSettings) => AppShellSettings);
 
@@ -11,22 +12,12 @@ export interface SettingsQuerySnapshot {
   revision: number;
 }
 
-export class SettingsQueryStore {
-  readonly subscribe = (listener: () => void): (() => void) => {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  };
-
-  readonly getSnapshot = (): SettingsQuerySnapshot => this.snapshot;
-
-  private readonly listeners = new Set<() => void>();
-  private snapshot: SettingsQuerySnapshot;
-
+export class SettingsQueryStore extends ExternalStore<SettingsQuerySnapshot> {
   constructor(
     private readonly client: SettingsApiClient | null,
     initialValue: AppShellSettings,
   ) {
-    this.snapshot = { value: initialValue, loading: false, saving: false, error: null, revision: 0 };
+      super({value: initialValue, loading: false, saving: false, error: null, revision: 0});
   }
 
   update(updater: SettingsUpdater): AppShellSettings {
@@ -44,7 +35,7 @@ export class SettingsQueryStore {
       this.publish({ ...this.snapshot, value, loading: false, revision: this.snapshot.revision + 1 });
       return value;
     } catch (error) {
-      this.publish({ ...this.snapshot, loading: false, error: messageFrom(error) });
+        this.publish({...this.snapshot, loading: false, error: errorMessage(error)});
       throw error;
     }
   }
@@ -57,7 +48,7 @@ export class SettingsQueryStore {
       this.publish({ ...this.snapshot, value, saving: false, revision: this.snapshot.revision + 1 });
       return value;
     } catch (error) {
-      this.publish({ ...this.snapshot, saving: false, error: messageFrom(error) });
+        this.publish({...this.snapshot, saving: false, error: errorMessage(error)});
       throw error;
     }
   }
@@ -66,13 +57,4 @@ export class SettingsQueryStore {
     if (!this.client) throw new Error('Settings API client is unavailable.');
     return this.client;
   }
-
-  private publish(snapshot: SettingsQuerySnapshot): void {
-    this.snapshot = snapshot;
-    for (const listener of this.listeners) listener();
-  }
-}
-
-function messageFrom(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
