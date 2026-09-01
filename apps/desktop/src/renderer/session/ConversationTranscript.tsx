@@ -1,59 +1,35 @@
-import {Fragment, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
-import {motion, useReducedMotion} from 'framer-motion';
-import {
-    activityCategory,
-    isActiveSessionTurn,
-    isLiveActivityItem,
-    isOperationalActivityItem,
-    type SessionActivityCategory,
-    SessionActivityGroup,
-    SessionTurnDuration,
-    SessionTurnProcessDisclosure
-} from './SessionActivity.js';
-import {itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText} from './ThreadItemView.js';
-import {PlanSummary} from './PlanSummary.js';
+import { Fragment, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { motion, useReducedMotion } from 'framer-motion';
+import { activityCategory, isActiveSessionTurn, isLiveActivityItem, isOperationalActivityItem, type SessionActivityCategory, SessionActivityGroup, SessionTurnDuration, SessionTurnProcessDisclosure } from './SessionActivity.js';
+import { itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText } from './ThreadItemView.js';
+import { PlanSummary } from './PlanSummary.js';
 import type {
-    ConversationResource,
-    ConversationResourcePreview,
-    NativeConversationToolResultPage,
-    NativePendingRequest,
-    NativePlanImplementationRequest,
-    NativeQueuedSubmission,
-    NativeQueueSnapshot,
-    NativeSessionError,
-    NativeSessionItemBuffer,
-    NativeSessionState,
-    NativeTurnFailureSnapshot,
-    TurnChangeSet,
-    TurnChangeSetOperationResult,
+  ConversationResource,
+  ConversationResourcePreview,
+  NativeConversationToolResultPage,
+  NativePendingRequest,
+  NativePlanImplementationRequest,
+  NativeQueuedSubmission,
+  NativeQueueSnapshot,
+  NativeSessionError,
+  NativeSessionItemBuffer,
+  NativeSessionState,
+  NativeTurnFailureSnapshot,
+  TurnChangeSet,
+  TurnChangeSetOperationResult,
 } from './sessionTypes.js';
-import {isAssistantDeliverableItem} from './sessionTypes.js';
-import {
-    type ConversationFileLocation,
-    type ConversationOpenTarget,
-    type ConversationResponseAnnotation,
-    type ConversationResponseTextAnchor,
-    parseCanonicalRequestUserInputQuestions
-} from '@zeus/shared';
-import {useThreadScrollController} from './useThreadScrollController.js';
-import {TurnChangeCard} from './TurnChanges.js';
-import {
-    latestReasoningSummaryText,
-    reasoningSummaryStatus,
-    SessionReasoningSummary
-} from './SessionReasoningSummary.js';
-import {AnsweredRequestHistory, isAnsweredUserInputRequest} from './AnsweredRequestHistory.js';
-import {useNewItemMotionIds} from '../ui/useNewItemMotion.js';
-import {
-    captureTranscriptViewportAnchor,
-    compensateTranscriptViewportAnchor,
-    type TranscriptViewportAnchor,
-    useTranscriptViewportVirtualizer
-} from './transcriptViewportVirtualizer.js';
-import {useApplicationErrorDialog, VisibleApplicationError} from '../ui/ApplicationErrorDialog.js';
-import {isImageResource} from './ConversationResources.js';
-import {canSteerActiveTurn} from './ConversationComposer.js';
-import type {McpAppToolCall, McpAppToolResult} from './McpAppFrame.js';
+import { isAssistantDeliverableItem } from './sessionTypes.js';
+import { type ConversationFileLocation, type ConversationOpenTarget, type ConversationResponseAnnotation, type ConversationResponseTextAnchor, parseCanonicalRequestUserInputQuestions } from '@zeus/shared';
+import { useThreadScrollController } from './useThreadScrollController.js';
+import { TurnChangeCard } from './TurnChanges.js';
+import { latestReasoningSummaryText, reasoningSummaryStatus, SessionReasoningSummary } from './SessionReasoningSummary.js';
+import { AnsweredRequestHistory, isAnsweredUserInputRequest } from './AnsweredRequestHistory.js';
+import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
+import { captureTranscriptViewportAnchor, compensateTranscriptViewportAnchor, type TranscriptViewportAnchor, useTranscriptViewportVirtualizer } from './transcriptViewportVirtualizer.js';
+import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { isImageResource } from './ConversationResources.js';
+import { canSteerActiveTurn } from './ConversationComposer.js';
+import type { McpAppToolCall, McpAppToolResult } from './McpAppFrame.js';
 
 export interface ConversationTranscriptProps {
   state: NativeSessionState;
@@ -85,7 +61,7 @@ export interface ConversationTranscriptProps {
   onLoadV2Content?: (handle: string) => Promise<void>;
   onLoadV2ToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage>;
   onRecoverQueue?: () => void | Promise<void>;
-    onReconnectCodex?: () => void | Promise<void>;
+  onReconnectCodex?: () => void | Promise<void>;
   onInterrupt?: (turnId: string) => void | Promise<void>;
   onRetryQueuedSubmission?: (submissionId: string) => void | Promise<void>;
   onRetryPendingSend?: (clientUserMessageId: string) => void | Promise<void>;
@@ -505,7 +481,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     onLoadTurnArtifacts: useStableOptionalCallback(props.onLoadTurnArtifacts),
     onLoadV2Content: useStableOptionalCallback(props.onLoadV2Content),
     onLoadV2ToolResult: useStableOptionalCallback(props.onLoadV2ToolResult),
-      onReconnectCodex: useStableOptionalCallback(props.onReconnectCodex),
+    onReconnectCodex: useStableOptionalCallback(props.onReconnectCodex),
     onRetryQueuedSubmission: useStableOptionalCallback(props.onRetryQueuedSubmission),
   };
   const itemNeedingImageResources = useMemo(() => items.find(itemNeedsImageResources) ?? null, [items]);
@@ -1458,14 +1434,14 @@ function MessageDeliveryOutcomeFeedback(props: {
   submissionId?: string;
   language: SessionUiLanguage;
   onRecoverQueue?: () => void | Promise<void>;
-    onReconnectCodex?: () => void | Promise<void>;
+  onReconnectCodex?: () => void | Promise<void>;
   onRetryQueuedSubmission?: (submissionId: string) => void | Promise<void>;
   onCancelQueuedSubmission?: (submissionId: string) => void | Promise<void>;
   clientUserMessageId?: string;
   onRetryPendingSend?: (clientUserMessageId: string) => void | Promise<void>;
   onCancelPendingSend?: (clientUserMessageId: string) => void | Promise<void>;
 }): ReactNode {
-    const [busyAction, setBusyAction] = useState<'recover' | 'reconnect' | 'retry' | 'cancel' | null>(null);
+  const [busyAction, setBusyAction] = useState<'recover' | 'reconnect' | 'retry' | 'cancel' | null>(null);
   const [actionError, setActionError] = useState<unknown>(null);
   useApplicationErrorDialog(actionError, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' });
   const pausedReason = props.item.payload.pausedReason;
@@ -1497,7 +1473,7 @@ function MessageDeliveryOutcomeFeedback(props: {
   const interactionResumeTimedOut = interactionResponseRecovery && deliveryError.code === 'ZEUS_CODEX_RPC_TIMEOUT' && deliveryError.message.includes('thread/resume');
   const genericQueueRecoveryRequired = pausedReason === 'recovery_required' && !interactionResponseRecovery && !providerStopRecoveryFailed;
   const submissionId = props.submissionId ?? (typeof props.item.payload.submissionId === 'string' ? props.item.payload.submissionId : props.item.localItemId);
-    const runAction = (action: 'recover' | 'reconnect' | 'retry' | 'cancel', operation: (() => void | Promise<void>) | undefined) => {
+  const runAction = (action: 'recover' | 'reconnect' | 'retry' | 'cancel', operation: (() => void | Promise<void>) | undefined) => {
     if (!operation || busyAction) return;
     setActionError(null);
     setBusyAction(action);
@@ -1534,10 +1510,10 @@ function MessageDeliveryOutcomeFeedback(props: {
       ) : recoveredUnsent ? (
         <span>{props.language === 'zh-CN' ? '这条消息尚未发送，请逐条重试或取消。' : 'This message was not sent. Retry or cancel each recovered message individually.'}</span>
       ) : modelWindowUnavailable ? (
-          <span>
+        <span>
           {props.language === 'zh-CN'
-              ? 'Codex 模型能力尚未就绪，这条消息未发送。重新连接只刷新运行世代，不会自动重发消息。'
-              : 'Codex model capabilities are not ready. This message was not sent. Reconnecting refreshes the runtime generation without resending it.'}
+            ? 'Codex 模型能力尚未就绪，这条消息未发送。重新连接只刷新运行世代，不会自动重发消息。'
+            : 'Codex model capabilities are not ready. This message was not sent. Reconnecting refreshes the runtime generation without resending it.'}
         </span>
       ) : (
         <VisibleApplicationError error={deliveryError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
@@ -1587,12 +1563,11 @@ function MessageDeliveryOutcomeFeedback(props: {
         </div>
       ) : recoveredUnsent || modelWindowUnavailable ? (
         <div className="session-message-delivery-actions">
-            {modelWindowUnavailable && props.onReconnectCodex ? (
-                <button type="button" disabled={busyAction !== null}
-                        onClick={() => runAction('reconnect', props.onReconnectCodex)}>
-                    {props.language === 'zh-CN' ? '重新连接 Codex' : 'Reconnect Codex'}
-                </button>
-            ) : null}
+          {modelWindowUnavailable && props.onReconnectCodex ? (
+            <button type="button" disabled={busyAction !== null} onClick={() => runAction('reconnect', props.onReconnectCodex)}>
+              {props.language === 'zh-CN' ? '重新连接 Codex' : 'Reconnect Codex'}
+            </button>
+          ) : null}
           <button type="button" disabled={busyAction !== null || !submissionId} onClick={() => runAction('retry', submissionId && props.onRetryQueuedSubmission ? () => props.onRetryQueuedSubmission?.(submissionId) : undefined)}>
             {props.language === 'zh-CN' ? '重试' : 'Retry'}
           </button>
