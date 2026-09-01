@@ -9,6 +9,7 @@ import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import type { CodexTaskPushModelCapability } from '../../session/sessionTypes.js';
 import type { DashboardClient, ProjectRecord } from '../../apiClient.js';
 import { Button } from '../../ui/Button.js';
+import { ZeusSelect } from '../../ZeusSelect.js';
 import type { AutomationBlockStrategy, AutomationConversationMode, AutomationPermissionMode, AutomationRunRecord, AutomationTaskInput, AutomationTaskRecord, AutomationTriggerKind } from './automationContracts.js';
 
 type Draft = AutomationTaskInput & { pluginIdsText: string; maxRunsPerDayText: string; maxTokensPerDayText: string };
@@ -64,7 +65,17 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
       })),
     [models],
   );
-  const selectedModel = modelOptions.find((option) => option.value === `${draft.modelSourceId}\u0000${draft.modelId}`)?.model;
+  const selectedModelValue = `${draft.modelSourceId}\u0000${draft.modelId}`;
+  const selectedModelOption = modelOptions.find((option) => option.value === selectedModelValue);
+  const selectedModel = selectedModelOption?.model;
+  const exactModelOptions =
+    selectedModelOption || !draft.modelId ? modelOptions : [{ value: selectedModelValue, label: `${draft.modelSourceId} · ${draft.modelId} · ${zh ? '当前不可用' : 'Currently unavailable'}`, disabled: true }, ...modelOptions];
+  const reasoningEffort = draft.reasoningEffort ?? '';
+  const reasoningOptions = [
+    { value: '', label: zh ? '模型默认' : 'Model default' },
+    ...(selectedModel?.supportedReasoningEfforts ?? []).map((effort) => ({ value: effort, label: effort })),
+    ...(reasoningEffort && !selectedModel?.supportedReasoningEfforts.includes(reasoningEffort) ? [{ value: reasoningEffort, label: `${reasoningEffort} · ${zh ? '当前不可用' : 'Currently unavailable'}`, disabled: true }] : []),
+  ];
   const unreadCount = inbox.filter((run) => run.unread).length;
 
   function startCreate(): void {
@@ -320,30 +331,33 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
               <TriggerFields draft={draft} setDraft={setDraft} zh={zh} />
               <label>
                 <span>{zh ? '精确模型' : 'Exact model'}</span>
-                <select
-                  required
-                  value={`${draft.modelSourceId}\u0000${draft.modelId}`}
-                  onChange={(event) => {
-                    const option = modelOptions.find((candidate) => candidate.value === event.currentTarget.value);
+                <ZeusSelect
+                  size="regular"
+                  ariaLabel={zh ? '选择精确模型' : 'Choose exact model'}
+                  value={selectedModelValue}
+                  options={exactModelOptions}
+                  onChange={(value) => {
+                    const option = modelOptions.find((candidate) => candidate.value === value);
                     if (option) setDraft({ ...draft, modelSourceId: option.model.sourceId ?? 'codex', modelId: option.model.model, reasoningEffort: option.model.defaultReasoningEffort ?? null });
                   }}
-                >
-                  {modelOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+                  searchPlaceholder={zh ? '搜索供应商或模型' : 'Search providers or models'}
+                  emptyLabel={zh ? '没有可用模型' : 'No available models'}
+                  triggerLabel={!draft.modelId ? (zh ? '暂无可用模型' : 'No available models') : undefined}
+                  disabled={!modelOptions.length}
+                />
               </label>
               <div className="automation-form-grid">
                 <label>
                   <span>{zh ? '推理强度' : 'Reasoning effort'}</span>
-                  <select value={draft.reasoningEffort ?? ''} onChange={(event) => setDraft({ ...draft, reasoningEffort: event.currentTarget.value || null })}>
-                    <option value="">{zh ? '模型默认' : 'Model default'}</option>
-                    {selectedModel?.supportedReasoningEfforts.map((effort) => (
-                      <option key={effort}>{effort}</option>
-                    ))}
-                  </select>
+                  <ZeusSelect
+                    size="regular"
+                    ariaLabel={zh ? '选择推理强度' : 'Choose reasoning effort'}
+                    value={reasoningEffort}
+                    options={reasoningOptions}
+                    onChange={(value) => setDraft({ ...draft, reasoningEffort: value || null })}
+                    disabled={!selectedModel}
+                    searchable={false}
+                  />
                 </label>
                 <SelectField
                   label={zh ? '权限' : 'Permission'}
@@ -434,7 +448,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
               <Button variant="secondary" type="button" onClick={() => setEditingId(null)}>
                 {zh ? '取消' : 'Cancel'}
               </Button>
-              <Button variant="primary" type="submit" busy={busyId === editingId} disabled={draft.permissionMode === 'full-access' && !fullAccessAcknowledged}>
+              <Button variant="primary" type="submit" busy={busyId === editingId} disabled={!selectedModel || (draft.permissionMode === 'full-access' && !fullAccessAcknowledged)}>
                 {zh ? '保存并启用' : 'Save and enable'}
               </Button>
             </footer>
@@ -459,13 +473,7 @@ function SelectField(props: { label: string; value: string; options: Array<[stri
   return (
     <label>
       <span>{props.label}</span>
-      <select value={props.value} onChange={(event) => props.onChange(event.currentTarget.value)}>
-        {props.options.map(([value, label]) => (
-          <option key={value} value={value}>
-            {label}
-          </option>
-        ))}
-      </select>
+      <ZeusSelect size="regular" ariaLabel={props.label} value={props.value} options={props.options.map(([value, label]) => ({ value, label }))} onChange={props.onChange} searchable={false} />
     </label>
   );
 }
