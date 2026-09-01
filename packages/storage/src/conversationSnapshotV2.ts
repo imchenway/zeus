@@ -68,6 +68,7 @@ const modelHistoryAssistantProviderItemSql = `(SELECT message.provider_item_id
  LIMIT 1)`;
 const modelHistoryProviderItemSql = `COALESCE(
   ${modelHistoryUserProviderItemSql},
+  conversation_model_history.expert_execution_id,
   ${modelHistoryAssistantProviderItemSql},
   CASE
     WHEN json_valid(reasoning_source_json)
@@ -310,6 +311,10 @@ export interface ConversationModelHistoryPageItem {
   role: string;
   toolPairId: string | null;
   confirmedAt: string;
+  actorKind: string | null;
+  actorId: string | null;
+  actor: Record<string, unknown> | null;
+  expertExecutionId: string | null;
   content: BoundedContentProjection;
   toolResult: ConversationToolResultDescriptor | null;
 }
@@ -550,6 +555,10 @@ interface ModelHistoryProjectionRow {
   role: string;
   tool_pair_id: string | null;
   confirmed_at: string;
+  actor_kind: string | null;
+  actor_id: string | null;
+  actor_snapshot_json: string | null;
+  expert_execution_id: string | null;
   content_preview: string;
   content_bytes: number;
   content_characters: number;
@@ -592,9 +601,9 @@ export class ConversationSnapshotV2Repository {
     // 每个状态只从既有 (conversation_id, status, created_at, id) 索引取少量候选，
     // 避免离线热索引尚未切换时为 IN + 跨状态排序扫描全部历史 turn。
     // 历史异常退出可能留下 running turn，但 provider_state 已由恢复流程收口为 paused。
-    // 两份权威状态必须同时表明正在执行，Snapshot 才能向界面暴露 activeTurn。
+    // 专家父会话没有单一 Provider 状态，须以专家执行事实补充判断。
     const activeTurnCandidate = this.latestTurnsByStatus(conversationId, ['running', 'dispatching', 'waiting'], 1)[0];
-    const activeTurn = conversation.provider_state === 'active' || conversation.provider_state === 'waiting' ? activeTurnCandidate : undefined;
+    const activeTurn = conversation.provider_state === 'active' || conversation.provider_state === 'waiting' || this.hasActiveExpertExecution(conversationId) ? activeTurnCandidate : undefined;
     const recentClosedTurns = this.latestTurnsByStatus(conversationId, ['completed', 'interrupted', 'failed'], closedTurnLimit);
     const stream = this.db.get<{ generation_id: string; latest_sequence: number }>(
       `SELECT generation_id, latest_sequence
@@ -726,7 +735,7 @@ export class ConversationSnapshotV2Repository {
     );
     if (!conversation) throw snapshotError('ZEUS_CONVERSATION_SNAPSHOT_V2_NOT_FOUND', '会话不存在。', 404);
     const activeTurnCandidate = this.latestTurnsByStatus(conversationId, ['running', 'dispatching', 'waiting'], 1)[0];
-    const activeTurn = conversation.provider_state === 'active' || conversation.provider_state === 'waiting' ? activeTurnCandidate : undefined;
+    const activeTurn = conversation.provider_state === 'active' || conversation.provider_state === 'waiting' || this.hasActiveExpertExecution(conversationId) ? activeTurnCandidate : undefined;
     return readConversationSessionMetrics(this.db, conversationId, activeTurn?.id ?? null);
   }
 
@@ -798,6 +807,7 @@ export class ConversationSnapshotV2Repository {
                 role,
                 tool_pair_id,
                 confirmed_at,
+                actor_kind, actor_id, actor_snapshot_json, expert_execution_id,
               substr(${modelHistoryVisibleContentSql}, 1, ?)         AS content_preview,
               length(CAST(${modelHistoryVisibleContentSql} AS BLOB)) AS content_bytes,
               length(${modelHistoryVisibleContentSql})               AS content_characters
@@ -839,6 +849,7 @@ export class ConversationSnapshotV2Repository {
               role,
               tool_pair_id,
               confirmed_at,
+              actor_kind, actor_id, actor_snapshot_json, expert_execution_id,
               substr(${modelHistoryVisibleContentSql}, 1, ?)         AS content_preview,
               length(CAST(${modelHistoryVisibleContentSql} AS BLOB)) AS content_bytes,
               length(${modelHistoryVisibleContentSql})               AS content_characters
@@ -873,6 +884,7 @@ export class ConversationSnapshotV2Repository {
               ${modelHistoryAssistantPhaseSql} AS assistant_phase,
               ${modelHistoryFormalPlanSql} AS formal_plan,
               segment_id, role, tool_pair_id, confirmed_at,
+              actor_kind, actor_id, actor_snapshot_json, expert_execution_id,
               substr(${modelHistoryVisibleContentSql}, 1, ?)         AS content_preview,
               length(CAST(${modelHistoryVisibleContentSql} AS BLOB)) AS content_bytes,
               length(${modelHistoryVisibleContentSql})               AS content_characters
@@ -1278,6 +1290,52 @@ export class ConversationSnapshotV2Repository {
   }
 
   private activeTurnItems(conversationId: string, turnId: string): { items: ConversationSnapshotV2ActiveItem[]; truncated: boolean } {
+    const expertRows = this.db.select<{
+      id: string;
+      ordinal: number;
+      status: string;
+      employee_snapshot_json: string;
+      answer: string | null;
+      error_json: string | null;
+      created_at: string;
+      updated_at: string;
+      started_at: string | null;
+      completed_at: string | null;
+    }>(
+      `SELECT execution.id, execution.ordinal, execution.status, execution.employee_snapshot_json,
+              execution.answer, execution.error_json, execution.created_at, execution.updated_at,
+              execution.started_at, execution.completed_at
+         FROM conversation_expert_executions AS execution
+         JOIN conversation_turns AS turn ON turn.client_submission_id = execution.submission_id
+        WHERE execution.conversation_id = ? AND turn.id = ?
+        ORDER BY execution.ordinal, execution.id`,
+      [conversationId, turnId],
+    );
+    if (expertRows.length > 0) {
+      return {
+        items: expertRows.map((row) => {
+          const actor = parseJsonRecordOrNull(row.employee_snapshot_json) ?? {};
+          const error = parseJsonRecordOrNull(row.error_json);
+          const text = row.answer ?? '';
+          const payload = JSON.stringify({ actor, expertExecutionId: row.id, ordinal: row.ordinal, expertStatus: row.status, ...(error ? { error } : {}) });
+          return {
+            id: row.id,
+            order: row.ordinal,
+            turnId,
+            providerItemId: row.id,
+            itemType: 'agentMessage',
+            status: row.status === 'completed' ? 'completed' : row.status === 'failed' || row.status === 'interrupted' || row.status === 'cancelled' ? 'failed' : 'in_progress',
+            phase: 'final_answer',
+            text: activeItemProjection(text, Buffer.byteLength(text, 'utf8'), false),
+            payload: activeItemProjection(payload, Buffer.byteLength(payload, 'utf8'), false),
+            startedAt: row.started_at ?? row.created_at,
+            completedAt: row.completed_at,
+            updatedAt: row.updated_at,
+          };
+        }),
+        truncated: false,
+      };
+    }
     const rows = this.db.select<{
       id: string;
       native_item_id: string | null;
@@ -1376,6 +1434,7 @@ export class ConversationSnapshotV2Repository {
               NULL AS assistant_phase,
               0 AS formal_plan,
               segment_id, role, tool_pair_id, confirmed_at,
+              actor_kind, actor_id, actor_snapshot_json, expert_execution_id,
               substr(${modelHistoryVisibleContentSql}, 1, ?)         AS content_preview,
               length(CAST(${modelHistoryVisibleContentSql} AS BLOB)) AS content_bytes,
               length(${modelHistoryVisibleContentSql})               AS content_characters
@@ -1428,6 +1487,19 @@ export class ConversationSnapshotV2Repository {
       )
       .sort((left, right) => right.created_at.localeCompare(left.created_at) || right.id.localeCompare(left.id))
       .slice(0, limit);
+  }
+
+  private hasActiveExpertExecution(conversationId: string): boolean {
+    return Boolean(
+      this.db.get<{ present: number }>(
+        `SELECT 1 AS present
+           FROM conversation_expert_executions
+          WHERE conversation_id = ?
+            AND status IN ('queued', 'dispatching', 'running', 'waiting')
+          LIMIT 1`,
+        [conversationId],
+      ),
+    );
   }
 
   private sequencePageContext(
@@ -1485,6 +1557,10 @@ export class ConversationSnapshotV2Repository {
       role: row.role,
       toolPairId: row.tool_pair_id,
       confirmedAt: row.confirmed_at,
+      actorKind: row.actor_kind,
+      actorId: row.actor_id,
+      actor: parseJsonRecordOrNull(row.actor_snapshot_json),
+      expertExecutionId: row.expert_execution_id,
       content: boundedProjection(
         row.content_preview,
         row.content_bytes,
@@ -2309,6 +2385,16 @@ function boundedPresentationString(value: unknown, maximumLength: number): strin
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parseJsonRecordOrNull(value: string | null): Record<string, unknown> | null {
+  if (!value) return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 function toolPairIdFromSourceEvent(sourceEventId: string | null): string | null {

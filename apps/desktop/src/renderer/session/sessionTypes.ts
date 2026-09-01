@@ -683,6 +683,10 @@ export interface NativeConversationModelHistoryV2Item {
   role: string;
   toolPairId: string | null;
   confirmedAt: string;
+  actorKind?: string | null;
+  actorId?: string | null;
+  actor?: Record<string, unknown> | null;
+  expertExecutionId?: string | null;
   content: NativeBoundedContentProjection;
   toolResult: {
     handle: string;
@@ -1325,6 +1329,11 @@ export interface NativeTurnSettingsSelection {
   permissionMode: NativePermissionMode;
   collaborationMode: NativeCollaborationMode;
   pluginReferences?: PluginSkillReference[];
+  expertMentions?: Array<{ employeeId: string }>;
+  skillReferences?: Array<{ id: string }>;
+  computerUseRequested?: boolean;
+  displayText?: string;
+  promptText?: string;
 }
 
 export interface PluginSkillReference {
@@ -1388,6 +1397,10 @@ export type StartNativeConversationRequest =
       agentKind?: 'codex' | 'pi' | 'claude';
       goalObjective?: string;
       pluginReferences?: PluginSkillReference[];
+      expertMentions?: Array<{ employeeId: string }>;
+      skillReferences?: Array<{ id: string }>;
+      computerUseRequested?: boolean;
+      displayText?: string;
     }
   | {
       mode: 'resume';
@@ -1424,6 +1437,10 @@ export interface StartProjectConversationRequest {
   clientUserMessageId: string;
   goalObjective?: string;
   pluginReferences?: PluginSkillReference[];
+  expertMentions?: Array<{ employeeId: string }>;
+  skillReferences?: Array<{ id: string }>;
+  computerUseRequested?: boolean;
+  displayText?: string;
 }
 
 export interface SendNativeMessageRequest {
@@ -1443,6 +1460,9 @@ export interface SendNativeMessageRequest {
   permissionMode?: NativePermissionMode;
   collaborationMode: NativeCollaborationMode;
   pluginReferences?: PluginSkillReference[];
+  expertMentions?: Array<{ employeeId: string }>;
+  skillReferences?: Array<{ id: string }>;
+  computerUseRequested?: boolean;
   idempotencyKey: string;
   clientUserMessageId: string;
 }
@@ -1526,6 +1546,16 @@ type NativeItemEventPayload = NativeEventIdentity & {
   itemResources?: ConversationResource[];
 };
 
+export interface NativeExpertExecutionProjection {
+  id: string;
+  submissionId: string;
+  ordinal: number;
+  status: string;
+  actor: Record<string, unknown>;
+  text: string;
+  error: Record<string, unknown> | null;
+}
+
 export type NativeConversationEvent =
   | NativeEvent<'conversation.transport.changed', NativeEventIdentity & { transportKind?: string; providerState?: string; providerThreadId?: string }>
   | NativeEvent<'conversation.thread.changed', NativeEventIdentity & { providerThreadId?: string; providerState?: string }>
@@ -1536,6 +1566,8 @@ export type NativeConversationEvent =
   | NativeEvent<'conversation.item.started', NativeItemEventPayload>
   | NativeEvent<'conversation.item.delta', NativeItemEventPayload & { textContent: string }>
   | NativeEvent<'conversation.item.completed', NativeItemEventPayload & { textContent: string }>
+  | NativeEvent<'conversation.expert.round.changed', NativeEventIdentity & { submissionId: string; turnId: string; executions: NativeExpertExecutionProjection[] }>
+  | NativeEvent<'conversation.expert.execution.changed', NativeEventIdentity & { turnId?: string; execution: NativeExpertExecutionProjection }>
   | NativeEvent<'conversation.settings.changed', NativeEventIdentity & { model: string; effort?: string }>
   | NativeEvent<'conversation.tokenUsage.changed', NativeEventIdentity & SharedNativeTokenUsageSnapshot>
   | NativeEvent<'conversation.sessionMetrics.changed', NativeEventIdentity & { sessionMetrics: NativeSessionMetricsSnapshot }>
@@ -1617,6 +1649,8 @@ export const nativeConversationEventTypes = new Set<NativeConversationEvent['typ
   'conversation.item.started',
   'conversation.item.delta',
   'conversation.item.completed',
+  'conversation.expert.round.changed',
+  'conversation.expert.execution.changed',
   'conversation.settings.changed',
   'conversation.tokenUsage.changed',
   'conversation.sessionMetrics.changed',

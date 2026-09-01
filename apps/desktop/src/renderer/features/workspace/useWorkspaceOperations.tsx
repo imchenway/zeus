@@ -1931,6 +1931,11 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           onStartConversation={startNativeConversation}
           onStartProjectConversation={startProjectConversation}
           onLoadSkills={props.nativeConversationClient.loadSkills}
+          onLoadDigitalEmployees={props.commandClient?.loadProjectDigitalEmployees}
+          onOpenComputerSettings={() => {
+            setSettingsCategory('browser');
+            handleMainNavigate('settings');
+          }}
           onLoadProjectConfig={props.onLoadProjectConfig}
           onSaveProjectModelServiceTierPreference={props.onSaveProjectModelServiceTierPreference}
           onOpenTaskDetail={onOpenTaskDetail}
@@ -1989,6 +1994,11 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           onStartConversation={startNativeConversation}
           onStartProjectConversation={startProjectConversation}
           onLoadSkills={props.nativeConversationClient.loadSkills}
+          onLoadDigitalEmployees={props.commandClient?.loadProjectDigitalEmployees}
+          onOpenComputerSettings={() => {
+            setSettingsCategory('browser');
+            handleMainNavigate('settings');
+          }}
           onLoadProjectConfig={props.onLoadProjectConfig}
           onSaveProjectModelServiceTierPreference={props.onSaveProjectModelServiceTierPreference}
           onOpenTaskDetail={onOpenTaskDetail}
@@ -2039,6 +2049,11 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           onTaskManagementStatusChange: (taskId, status) => updateTaskManagementStatus(taskId, status),
           onLoadCapabilities: props.nativeConversationClient?.loadCodexConversationCapabilities,
           onLoadSkills: props.nativeConversationClient?.loadSkills,
+          onLoadDigitalEmployees: props.commandClient?.loadProjectDigitalEmployees,
+          onOpenComputerSettings: () => {
+            setSettingsCategory('browser');
+            handleMainNavigate('settings');
+          },
           onLoadProjectConfig: props.onLoadProjectConfig,
           onSaveProjectModelServiceTierPreference: props.onSaveProjectModelServiceTierPreference,
           onSelectNewConversationProject: selectNewConversationProject,

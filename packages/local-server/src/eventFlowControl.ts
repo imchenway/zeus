@@ -53,6 +53,8 @@ export const conversationEventTypeRegistry = {
     'conversation.warning.changed',
     'conversation.item.started',
     'conversation.item.completed',
+    'conversation.expert.round.changed',
+    'conversation.expert.execution.changed',
     'conversation.plugin_app.created',
     'plugin.conversation.activated',
     'plugin.hook.completed',

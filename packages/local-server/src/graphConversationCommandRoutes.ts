@@ -64,7 +64,28 @@ export function registerGraphConversationCommandRoutes(options: {
         scopeKind: 'project',
         scopeId: request.params.projectId,
       });
-      assertOnlyInputKeys(parsed.input, ['agentKind', 'attachments', 'clientUserMessageId', 'collaborationMode', 'content', 'effort', 'goalObjective', 'mode', 'model', 'permissionMode', 'serviceTier'], parsed.command.commandType);
+      assertOnlyInputKeys(
+        parsed.input,
+        [
+          'agentKind',
+          'attachments',
+          'clientUserMessageId',
+          'collaborationMode',
+          'computerUseRequested',
+          'content',
+          'displayText',
+          'effort',
+          'expertMentions',
+          'goalObjective',
+          'mode',
+          'model',
+          'permissionMode',
+          'pluginReferences',
+          'serviceTier',
+          'skillReferences',
+        ],
+        parsed.command.commandType,
+      );
       let prepared: unknown;
       const executed = await application.executeExternal({
         parsed,
@@ -105,11 +126,14 @@ export function registerGraphConversationCommandRoutes(options: {
           'attachments',
           'clientUserMessageId',
           'collaborationMode',
+          'computerUseRequested',
           'conflictContent',
           'conflictPath',
           'content',
           'conversationId',
+          'displayText',
           'effort',
+          'expertMentions',
           'goalObjective',
           'inheritConversationId',
           'integrationId',
@@ -120,6 +144,7 @@ export function registerGraphConversationCommandRoutes(options: {
           'pluginReferences',
           'serviceTier',
           'skillId',
+          'skillReferences',
           'source',
           'sourceConversationId',
           'stageId',
