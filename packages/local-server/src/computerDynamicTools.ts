@@ -43,7 +43,8 @@ export function zeusComputerDynamicTools(): CodexDynamicToolSpec[] {
         {
           type: 'function',
           name: 'get_app_state',
-          description: 'Inspect one already-running app and return its bounded accessibility tree, snapshot generation, and optional screenshot. This never launches the target app.',
+          description:
+            'Inspect one already-running app and return its bounded accessibility tree, snapshot generation, and optional screenshot. A time-bounded partial result is explicitly marked complete=false. This never launches the target app.',
           inputSchema: objectSchema(
             {
               app: appProperty,

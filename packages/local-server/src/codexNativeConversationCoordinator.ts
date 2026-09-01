@@ -192,7 +192,9 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
     modelId: string;
     modelSourceId: string | null;
     operationRisk: 'read_only' | 'local_write';
-    currentInputCharacters: number;
+    fixedRequestUtf8Bytes: number;
+    providerBootstrapUtf8Bytes: number;
+    providerHistoryMode: 'latest' | 'bootstrap';
     providerGenerationId: string | null;
   }) => Promise<ContextDispatchEnvelope>;
 }
@@ -279,6 +281,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     ...(options.plugins ? { plugins: options.plugins } : {}),
     ...(zeusToolBroker ? { toolBroker: zeusToolBroker } : {}),
     findConversation: (threadId) => options.conversations.getByProviderThreadId(threadId),
+    turns: options.turns,
+    execution: options.execution,
     pluginContext: (conversationId) => {
       const conversation = options.conversations.getById(conversationId);
       if (!conversation) return null;
@@ -294,7 +298,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   let scheduledPersistDirty = false;
   let persistenceChain = Promise.resolve();
   const modelRequestTiming = createCodexModelRequestTimingTracker();
-
   const providerEvents = createCodexProviderEventFlow({
     manager: options.manager,
     flowControl: options.eventFlow,
@@ -316,33 +319,27 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     enqueueBarrier: (work) => providerEvents.enqueueBarrier(work),
     isClosed: () => closing || closed,
   });
-
   const enqueueProviderTurnReconciliation = (conversation: ZeusConversationWithMessagesRecord, input: { priority?: 'control' } = {}): Promise<void> =>
     providerEvents.enqueueBarrier(() => reconcileProviderTurnsSinceCheckpoint(conversation, input));
-
   function assertOpen(): void {
     if (closing || closed) throw coordinatorError('ZEUS_CODEX_COORDINATOR_CLOSED', 'Codex native conversation coordinator is closed.');
     if (options.enabled === false) throw coordinatorError('ZEUS_CODEX_NATIVE_DISABLED', 'Codex native conversation writes are disabled by ZEUS_CODEX_NATIVE_ENABLED.');
   }
-
   async function persist(): Promise<void> {
     await options.db.save();
   }
-
   function clearScheduledPersistTimers(): void {
     if (scheduledPersistTimer) clearTimeout(scheduledPersistTimer);
     if (scheduledPersistDeadlineTimer) clearTimeout(scheduledPersistDeadlineTimer);
     scheduledPersistTimer = null;
     scheduledPersistDeadlineTimer = null;
   }
-
   function enqueuePersist(): Promise<void> {
     const run = persistenceChain.then(() => persist());
     // 单次失败由当前调用者处理；后续保存仍需能够继续尝试。
     persistenceChain = run.catch(() => undefined);
     return run;
   }
-
   async function flushScheduledPersist(): Promise<void> {
     clearScheduledPersistTimers();
     if (!scheduledPersistDirty) {
@@ -1601,10 +1598,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         source: providerThreadId ? 'resume' : 'startup',
         ...(providerThreadId ? {} : { prompt: submissionText(submission) }),
       });
+      const developerInstructions = [developerInstructionsFor(context, options.browserAutomation !== undefined), pluginPreparation?.developerInstructions ?? ''].filter(Boolean).join('\n');
+      const dynamicTools = [...conversationToolResultDynamicTools(), ...(zeusToolBroker ? zeusToolBroker.registry.codexTools : []), ...(pluginPreparation?.codexDynamicTools ?? [])];
+      const providerBootstrapUtf8Bytes = Buffer.byteLength(JSON.stringify({ developerInstructions, dynamicTools }), 'utf8');
       if (!providerThreadId) {
         const profile = providerPermissionProfile(context);
-        const developerInstructions = [developerInstructionsFor(context, options.browserAutomation !== undefined), pluginPreparation?.developerInstructions ?? ''].filter(Boolean).join('\n');
-        const dynamicTools = [...conversationToolResultDynamicTools(), ...(zeusToolBroker ? zeusToolBroker.registry.codexTools : []), ...(pluginPreparation?.codexDynamicTools ?? [])];
         const threadRequest = {
           model: context.model,
           ...(Object.prototype.hasOwnProperty.call(context, 'serviceTier') ? { serviceTier: context.serviceTier } : {}),
@@ -1691,46 +1689,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       }
       const providerInput = submissionProviderInput(submission, context);
       const pluginPromptContext = await options.plugins?.beforeUserPrompt({ conversationId: conversation.id, prompt: providerInput, permissionMode: context.permissionMode });
-      const compiledDispatchContext = options.compileDispatchContext
-        ? await options.compileDispatchContext({
-            provider: 'codex',
-            conversationId: conversation.id,
-            submissionId: submission.id,
-            projectId: context.projectId,
-            projectLocalPath: context.projectLocalPath,
-            taskId: context.taskId,
-            modelId: context.model,
-            modelSourceId: context.modelSourceId,
-            operationRisk: context.permissionMode === 'read-only' && !context.allowCodeChanges ? 'read_only' : 'local_write',
-            currentInputCharacters: JSON.stringify(providerInput).length,
-            providerGenerationId: commandProviderGenerationId,
-          })
-        : null;
-      if (compiledDispatchContext) assertCallerDoesNotOverrideCompiledContext(context.additionalContext);
-      const initialGoalObjective = submissionGoalObjective(submission);
-      if (initialGoalObjective) {
-        const goalConversationId = conversation.id;
-        await ensureInitialCodexGoal({
-          conversationId: goalConversationId,
-          providerThreadId,
-          objective: initialGoalObjective,
-          goals,
-          manager: options.manager,
-          markProviderWriteStarted: () => markDispatchRpcStarted(lease, submission.id),
-          execute: ({ objective, invoke, recoverAccepted }) =>
-            executeSessionCommand({
-              operation: 'goal_set',
-              conversationId: goalConversationId,
-              threadId: providerThreadId,
-              commandKey: `initial-goal:${submission.id}`,
-              requestIdentity: { objective, status: 'active' },
-              invoke,
-              recoverAccepted,
-            }),
-          project: (goal) => projectGoal(goalConversationId, goal, null, now()),
-          persist,
-        });
-      }
       const profile = providerPermissionProfile(context);
       const serializedAt = now();
       const wireEffort = toCodexWireReasoningEffort(context.effort) ?? null;
@@ -1776,6 +1734,50 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           await segmentLifecycle.failContextCompaction(error, now());
           throw error;
         }
+      }
+      const fixedAdditionalContext = mergeCodexAdditionalContext(segmentLifecycle?.codexBootstrapAdditionalContext, context.additionalContext, pluginPromptContext, pluginCompactContext);
+      const fixedRequestUtf8Bytes = Buffer.byteLength(JSON.stringify({ input: providerInput, ...(fixedAdditionalContext ? { additionalContext: fixedAdditionalContext } : {}) }), 'utf8');
+      const compiledDispatchContext = options.compileDispatchContext
+        ? await options.compileDispatchContext({
+            provider: 'codex',
+            conversationId: conversation.id,
+            submissionId: submission.id,
+            projectId: context.projectId,
+            projectLocalPath: context.projectLocalPath,
+            taskId: context.taskId,
+            modelId: context.model,
+            modelSourceId: context.modelSourceId,
+            operationRisk: context.permissionMode === 'read-only' && !context.allowCodeChanges ? 'read_only' : 'local_write',
+            fixedRequestUtf8Bytes,
+            providerBootstrapUtf8Bytes,
+            providerHistoryMode: threadStartedForSubmission ? 'bootstrap' : 'latest',
+            providerGenerationId: commandProviderGenerationId,
+          })
+        : null;
+      if (compiledDispatchContext) assertCallerDoesNotOverrideCompiledContext(context.additionalContext);
+      const initialGoalObjective = submissionGoalObjective(submission);
+      if (initialGoalObjective) {
+        const goalConversationId = conversation.id;
+        await ensureInitialCodexGoal({
+          conversationId: goalConversationId,
+          providerThreadId,
+          objective: initialGoalObjective,
+          goals,
+          manager: options.manager,
+          markProviderWriteStarted: () => markDispatchRpcStarted(lease, submission.id),
+          execute: ({ objective, invoke, recoverAccepted }) =>
+            executeSessionCommand({
+              operation: 'goal_set',
+              conversationId: goalConversationId,
+              threadId: providerThreadId,
+              commandKey: `initial-goal:${submission.id}`,
+              requestIdentity: { objective, status: 'active' },
+              invoke,
+              recoverAccepted,
+            }),
+          project: (goal) => projectGoal(goalConversationId, goal, null, now()),
+          persist,
+        });
       }
       const additionalContext = mergeCodexAdditionalContext(segmentLifecycle?.codexBootstrapAdditionalContext, compiledDispatchContext?.codexAdditionalContext, context.additionalContext, pluginPromptContext, pluginCompactContext);
       // turn/start 调用前先耐久记录“可能写出”；宁可保守进入 unknown，也不能在进程崩溃后盲重放。
@@ -3249,7 +3251,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         for (const submission of candidates) {
           try {
             let conversation = options.conversations.getById(submission.conversationId);
-            if (!conversation || conversation.archived || conversation.providerState === 'archived' || conversation.providerState === 'closed' || conversation.providerState === 'failed') continue;
+            if (!conversation || conversation.archived || conversation.providerState === 'archived' || conversation.providerState === 'closed') continue;
             // 计划结果等待用户决策时，普通后续消息不能抢先开启下一轮。
             if (hasPendingPlanImplementationRequest(conversation.id)) continue;
             let state = runStates.get(conversation.id) ?? inferRunState(conversation);

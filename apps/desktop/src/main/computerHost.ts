@@ -16,9 +16,18 @@ interface ComputerServiceResponse {
 }
 
 interface PendingServiceRequest {
+  method: string;
+  startedAt: number;
   resolve(value: unknown): void;
   reject(error: Error): void;
   timer: ReturnType<typeof setTimeout>;
+}
+
+interface ComputerServiceProgress {
+  requestId: string;
+  stage: string;
+  elementCount: number;
+  elapsedMs: number;
 }
 
 interface ComputerElementSummary {
@@ -48,8 +57,13 @@ interface CreateComputerHostOptions {
 }
 
 const serviceIdleTimeoutMs = 2 * 60_000;
-const serviceRequestTimeoutMs = 120_000;
+const serviceRequestTimeoutMs = 35_000;
+const snapshotDeadlineMs = 30_000;
+const serviceTerminationGraceMs = 1_000;
+const serviceTerminationKillWaitMs = 2_000;
 const maximumServiceLineBytes = 16 * 1024 * 1024;
+const maximumServiceDiagnosticBytes = 32 * 1024;
+const serviceProgressPrefix = 'ZEUS_COMPUTER_PROGRESS ';
 const sensitiveActionPattern = /\b(buy|purchase|pay|checkout|order|submit|send|publish|delete|remove|erase|confirm|authorize|transfer|sign|login|注册|登录|提交|发送|发布|购买|支付|下单|删除|移除|确认|授权|转账|签署)\b/iu;
 const secureFieldPattern = /\b(password|passcode|otp|one.?time|verification|cvv|cvc|card|iban|routing|account|ssn|身份证|密码|验证码|卡号|账户|密钥|secret|token)\b/iu;
 
@@ -60,8 +74,12 @@ export class ComputerHost implements BrowserAutomationPort {
   private readonly helperExecutable: string;
   private child: ChildProcessWithoutNullStreams | null = null;
   private stdoutBuffer = '';
+  private stderrBuffer = '';
   private readonly pending = new Map<string, PendingServiceRequest>();
   private readonly latestElements = new Map<string, { generation: number; elements: ComputerElementSummary[] }>();
+  private serviceRecovery: Promise<void> | null = null;
+  private serviceRecoveryFailure: Error | null = null;
+  private lastServiceProgress: ComputerServiceProgress | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
   private settings: ZeusComputerSettings;
   private ipcRegistered = false;
@@ -176,6 +194,8 @@ export class ComputerHost implements BrowserAutomationPort {
   }
 
   private async ensureService(): Promise<void> {
+    if (this.serviceRecovery) await this.serviceRecovery;
+    if (this.serviceRecoveryFailure) throw this.serviceRecoveryFailure;
     if (this.child && !this.child.killed) return;
     const executable = await stat(this.helperExecutable).catch(() => null);
     if (!executable?.isFile()) {
@@ -194,16 +214,16 @@ export class ComputerHost implements BrowserAutomationPort {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     this.child = child;
+    this.stdoutBuffer = '';
+    this.stderrBuffer = '';
+    this.lastServiceProgress = null;
     this.permissionPromptAttemptedForChild = false;
     child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => this.consumeStdout(chunk));
+    child.stdout.on('data', (chunk: string) => this.consumeStdout(child, chunk));
     child.stderr.setEncoding('utf8');
-    child.stderr.on('data', (chunk: string) => {
-      const detail = chunk.trim().slice(0, 1000);
-      if (detail) this.settings = { ...this.settings, detail };
-    });
-    child.once('error', (error) => this.handleServiceExit(error));
-    child.once('exit', (code, signal) => this.handleServiceExit(new Error(`Zeus Computer Service 已退出（${String(code ?? signal ?? 'unknown')}）。`)));
+    child.stderr.on('data', (chunk: string) => this.consumeStderr(child, chunk));
+    child.once('error', (error) => this.handleServiceExit(child, error));
+    child.once('exit', (code, signal) => this.handleServiceExit(child, new Error(`Zeus Computer Service 已退出（${String(code ?? signal ?? 'unknown')}）。`)));
     await this.refreshServiceStatus();
   }
 
@@ -248,11 +268,10 @@ export class ComputerHost implements BrowserAutomationPort {
     const id = `computer-${randomUUID()}`;
     return new Promise((resolveRequest, rejectRequest) => {
       const timer = setTimeout(() => {
-        this.pending.delete(id);
-        rejectRequest(Object.assign(new Error(`Computer Use 调用超时：${method}`), { code: 'ZEUS_COMPUTER_SERVICE_TIMEOUT' }));
+        this.recycleTimedOutService(child, id);
       }, serviceRequestTimeoutMs);
       timer.unref();
-      this.pending.set(id, { resolve: resolveRequest, reject: rejectRequest, timer });
+      this.pending.set(id, { method, startedAt: Date.now(), resolve: resolveRequest, reject: rejectRequest, timer });
       child.stdin.write(`${JSON.stringify({ id, method, params })}\n`, (error) => {
         if (!error) return;
         const pending = this.pending.get(id);
@@ -264,11 +283,41 @@ export class ComputerHost implements BrowserAutomationPort {
     });
   }
 
-  private consumeStdout(chunk: string): void {
+  private consumeStderr(child: ChildProcessWithoutNullStreams, chunk: string): void {
+    if (child !== this.child) return;
+    this.stderrBuffer += chunk;
+    if (Buffer.byteLength(this.stderrBuffer, 'utf8') > maximumServiceDiagnosticBytes) this.stderrBuffer = this.stderrBuffer.slice(-maximumServiceDiagnosticBytes);
+    while (true) {
+      const newline = this.stderrBuffer.indexOf('\n');
+      if (newline < 0) return;
+      const line = this.stderrBuffer.slice(0, newline).trim();
+      this.stderrBuffer = this.stderrBuffer.slice(newline + 1);
+      if (!line) continue;
+      if (!line.startsWith(serviceProgressPrefix)) {
+        this.settings = { ...this.settings, detail: line.slice(0, 1000) };
+        continue;
+      }
+      try {
+        const progress = JSON.parse(line.slice(serviceProgressPrefix.length)) as Record<string, unknown>;
+        if (typeof progress.requestId === 'string' && typeof progress.stage === 'string' && typeof progress.elementCount === 'number' && typeof progress.elapsedMs === 'number') {
+          this.lastServiceProgress = {
+            requestId: progress.requestId,
+            stage: progress.stage,
+            elementCount: progress.elementCount,
+            elapsedMs: progress.elapsedMs,
+          };
+        }
+      } catch {
+        this.settings = { ...this.settings, detail: 'Zeus Computer Service 返回了无效进度诊断。' };
+      }
+    }
+  }
+
+  private consumeStdout(child: ChildProcessWithoutNullStreams, chunk: string): void {
+    if (child !== this.child) return;
     this.stdoutBuffer += chunk;
     if (Buffer.byteLength(this.stdoutBuffer, 'utf8') > maximumServiceLineBytes) {
-      this.handleServiceExit(Object.assign(new Error('Zeus Computer Service 响应超过允许大小。'), { code: 'ZEUS_COMPUTER_RESPONSE_TOO_LARGE' }));
-      void this.stop('protocol_error');
+      this.recycleFailedService(child, Object.assign(new Error('Zeus Computer Service 响应超过允许大小。'), { code: 'ZEUS_COMPUTER_RESPONSE_TOO_LARGE' }));
       return;
     }
     while (true) {
@@ -281,8 +330,7 @@ export class ComputerHost implements BrowserAutomationPort {
       try {
         response = JSON.parse(line) as ComputerServiceResponse;
       } catch {
-        this.handleServiceExit(Object.assign(new Error('Zeus Computer Service 返回了无效 JSON。'), { code: 'ZEUS_COMPUTER_RESPONSE_INVALID' }));
-        void this.stop('protocol_error');
+        this.recycleFailedService(child, Object.assign(new Error('Zeus Computer Service 返回了无效 JSON。'), { code: 'ZEUS_COMPUTER_RESPONSE_INVALID' }));
         return;
       }
       const pending = this.pending.get(response.id);
@@ -300,45 +348,93 @@ export class ComputerHost implements BrowserAutomationPort {
     }
   }
 
-  private handleServiceExit(error: Error): void {
-    const child = this.child;
-    if (child) {
-      child.removeAllListeners();
-      child.stdout.removeAllListeners();
-      child.stderr.removeAllListeners();
-    }
+  private handleServiceExit(child: ChildProcessWithoutNullStreams, error: Error): void {
+    if (!this.detachService(child, (id, pending) => serviceInterruptionError(id, pending, error.message, 'ZEUS_COMPUTER_SERVICE_OFFLINE', this.lastServiceProgress, child.pid))) return;
+    if (!this.closed && this.settings.enabled) this.settings = { ...this.settings, serviceState: 'error', detail: error.message.slice(0, 1000) };
+  }
+
+  private recycleFailedService(child: ChildProcessWithoutNullStreams, error: Error): void {
+    const detached = this.detachService(child, (id, pending) => serviceInterruptionError(id, pending, error.message, 'ZEUS_COMPUTER_SERVICE_OFFLINE', this.lastServiceProgress, child.pid));
+    if (!detached) return;
+    this.settings = { ...this.settings, serviceState: 'error', detail: error.message.slice(0, 1000) };
+    this.beginServiceRecovery(child);
+  }
+
+  private detachService(child: ChildProcessWithoutNullStreams, rejection: (id: string, pending: PendingServiceRequest) => Error): boolean {
+    if (child !== this.child) return false;
+    child.removeAllListeners();
+    child.stdout.removeAllListeners();
+    child.stderr.removeAllListeners();
+    child.stdin.destroy();
     this.child = null;
     this.permissionPromptAttemptedForChild = false;
     this.stdoutBuffer = '';
-    for (const pending of this.pending.values()) {
+    this.stderrBuffer = '';
+    for (const [id, pending] of this.pending) {
       clearTimeout(pending.timer);
-      pending.reject(error);
+      pending.reject(rejection(id, pending));
     }
     this.pending.clear();
-    if (!this.closed && this.settings.enabled) this.settings = { ...this.settings, serviceState: 'error', detail: error.message.slice(0, 1000) };
+    this.latestElements.clear();
+    return true;
+  }
+
+  private recycleTimedOutService(child: ChildProcessWithoutNullStreams, timedOutRequestId: string): void {
+    const helperPid = child.pid;
+    const detached = this.detachService(child, (id, pending) => {
+      const message = id === timedOutRequestId ? `Computer Use 调用超时：${pending.method}` : `Computer Use 因同一 Helper 超时而中止：${pending.method}`;
+      return serviceInterruptionError(id, pending, message, 'ZEUS_COMPUTER_SERVICE_TIMEOUT', this.lastServiceProgress, helperPid);
+    });
+    if (!detached) return;
+    this.settings = { ...this.settings, serviceState: 'error', detail: `ZEUS_COMPUTER_SERVICE_TIMEOUT: helperPid=${String(helperPid ?? 'unknown')}` };
+    this.beginServiceRecovery(child);
+  }
+
+  private beginServiceRecovery(child: ChildProcessWithoutNullStreams): void {
+    const recovery = this.terminateService(child)
+      .catch((error: unknown) => {
+        this.serviceRecoveryFailure = error instanceof Error ? error : new Error(String(error));
+        this.settings = { ...this.settings, serviceState: 'error', detail: this.serviceRecoveryFailure.message.slice(0, 1000) };
+      })
+      .finally(() => {
+        if (this.serviceRecovery === recovery) this.serviceRecovery = null;
+      });
+    this.serviceRecovery = recovery;
+  }
+
+  private async terminateService(child: ChildProcessWithoutNullStreams): Promise<void> {
+    if (serviceHasExited(child)) return;
+    const gracefulExit = waitForServiceExit(child, serviceTerminationGraceMs);
+    child.kill('SIGTERM');
+    if (await gracefulExit) return;
+    const forcedExit = waitForServiceExit(child, serviceTerminationKillWaitMs);
+    child.kill('SIGKILL');
+    if (await forcedExit) return;
+    throw Object.assign(new Error(`Zeus Computer Service 无法终止（pid=${String(child.pid ?? 'unknown')}）。`), { code: 'ZEUS_COMPUTER_SERVICE_TERMINATION_FAILED' });
   }
 
   private async stop(reason: string): Promise<void> {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.idleTimer = undefined;
+    if (this.serviceRecovery) await this.serviceRecovery;
+    if (this.serviceRecoveryFailure) {
+      this.settings = { ...this.settings, serviceState: 'error', detail: this.serviceRecoveryFailure.message.slice(0, 1000) };
+      return;
+    }
     const child = this.child;
     if (!child) {
       this.settings = { ...this.settings, serviceState: this.settings.enabled ? 'idle' : 'disabled' };
       return;
     }
     this.settings = { ...this.settings, serviceState: 'stopping', detail: `正在停止 Computer Use（${reason}）…` };
-    this.child = null;
-    this.permissionPromptAttemptedForChild = false;
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer);
-      pending.reject(Object.assign(new Error('Computer Use 已停止。'), { code: 'ZEUS_COMPUTER_STOPPED' }));
+    this.detachService(child, (id, pending) => serviceInterruptionError(id, pending, 'Computer Use 已停止。', 'ZEUS_COMPUTER_STOPPED', this.lastServiceProgress, child.pid));
+    try {
+      await this.terminateService(child);
+    } catch (error) {
+      this.serviceRecoveryFailure = error instanceof Error ? error : new Error(String(error));
+      this.settings = { ...this.settings, serviceState: 'error', detail: this.serviceRecoveryFailure.message.slice(0, 1000) };
+      return;
     }
-    this.pending.clear();
-    child.removeAllListeners();
-    child.stdout.removeAllListeners();
-    child.stderr.removeAllListeners();
-    child.kill('SIGTERM');
-    this.latestElements.clear();
     this.settings = { ...this.settings, serviceState: this.settings.enabled ? 'idle' : 'disabled', detail: 'Computer Use 已停止。' };
   }
 
@@ -366,15 +462,14 @@ export class ComputerHost implements BrowserAutomationPort {
 
   private async ensureSensitiveActionApproval(input: BrowserAutomationToolCall): Promise<void> {
     let element = this.elementFor(input.arguments);
-    if (!element && typeof input.arguments.app === 'string' && ['type_text', 'paste', 'press_key'].includes(input.tool)) {
-      const refreshed = await this.callService('get_app_state', { app: input.arguments.app, include_screenshot: false, max_elements: 1000 });
-      this.rememberAppState({ app: input.arguments.app }, refreshed);
-      element = this.focusedElement(input.arguments.app);
-    }
-    if (!element && typeof input.arguments.app === 'string' && (typeof input.arguments.x === 'number' || typeof input.arguments.from_x === 'number')) {
-      const refreshed = await this.callService('get_app_state', { app: input.arguments.app, include_screenshot: false, max_elements: 1000 });
-      this.rememberAppState({ app: input.arguments.app }, refreshed);
-      element = this.elementAtPoint(input.arguments.app, Number(input.arguments.x ?? input.arguments.from_x), Number(input.arguments.y ?? input.arguments.from_y));
+    let targetUnknown = false;
+    const app = typeof input.arguments.app === 'string' ? input.arguments.app : '';
+    const focusedTarget = ['type_text', 'paste', 'press_key'].includes(input.tool);
+    const x = typeof input.arguments.x === 'number' ? input.arguments.x : typeof input.arguments.from_x === 'number' ? input.arguments.from_x : undefined;
+    const y = typeof input.arguments.y === 'number' ? input.arguments.y : typeof input.arguments.from_y === 'number' ? input.arguments.from_y : undefined;
+    if (!element && app && (focusedTarget || (x !== undefined && y !== undefined))) {
+      element = await this.describeServiceTarget(app, x, y);
+      targetUnknown = !element;
     }
     const descriptor = `${element?.role ?? ''} ${element?.subrole ?? ''} ${element?.title ?? ''} ${element?.description ?? ''} ${element?.identifier ?? ''}`;
     if (element?.secure || secureFieldPattern.test(descriptor)) {
@@ -385,6 +480,7 @@ export class ComputerHost implements BrowserAutomationPort {
     const key = typeof input.arguments.key === 'string' ? input.arguments.key.toLocaleLowerCase() : '';
     const sensitive =
       sensitiveActionPattern.test(descriptor) ||
+      targetUnknown ||
       (input.tool === 'press_key' && /(^|\+)(enter|return|delete|backspace)$/iu.test(key)) ||
       (['click', 'perform_secondary_action'].includes(input.tool) && Boolean(element && sensitiveActionPattern.test(descriptor))) ||
       (['click', 'perform_secondary_action'].includes(input.tool) && !element && typeof input.arguments.x === 'number');
@@ -404,6 +500,20 @@ export class ComputerHost implements BrowserAutomationPort {
     if (result.response !== 0) throw Object.assign(new Error('用户已拒绝敏感 Computer Use 操作。'), { code: 'ZEUS_COMPUTER_SENSITIVE_ACTION_DECLINED' });
   }
 
+  private async describeServiceTarget(app: string, x: number | undefined, y: number | undefined): Promise<ComputerElementSummary | null> {
+    const result = asRecord(await this.callService('describe_target', { app, ...(x !== undefined && y !== undefined ? { x, y } : {}) }));
+    if (result.available !== true) return null;
+    return {
+      role: typeof result.role === 'string' ? result.role : undefined,
+      subrole: typeof result.subrole === 'string' ? result.subrole : undefined,
+      title: typeof result.title === 'string' ? result.title : undefined,
+      description: typeof result.description === 'string' ? result.description : undefined,
+      identifier: typeof result.identifier === 'string' ? result.identifier : undefined,
+      secure: result.secure === true,
+      focused: result.focused === true,
+    };
+  }
+
   private elementFor(args: Record<string, unknown>): ComputerElementSummary | null {
     const app = typeof args.app === 'string' ? args.app : '';
     const index = typeof args.element_index === 'number' ? args.element_index : -1;
@@ -419,6 +529,7 @@ export class ComputerHost implements BrowserAutomationPort {
     if (input.tool === 'get_app_state') {
       if (args.disableDiff !== true && args.previous_snapshot_generation === undefined && snapshot) args.previous_snapshot_generation = snapshot.generation;
       if (args.disableDiff === true) delete args.previous_snapshot_generation;
+      args._deadline_unix_ms = Date.now() + snapshotDeadlineMs;
       return args;
     }
     if (typeof args.element_index === 'number' && args.snapshot_generation === undefined) {
@@ -426,32 +537,6 @@ export class ComputerHost implements BrowserAutomationPort {
       args.snapshot_generation = snapshot.generation;
     }
     return args;
-  }
-
-  private elementAtPoint(app: string, x: number, y: number): ComputerElementSummary | null {
-    const snapshot = this.latestElements.get(app);
-    if (!snapshot || !Number.isFinite(x) || !Number.isFinite(y)) return null;
-    return (
-      [...snapshot.elements].reverse().find((element) => {
-        const frame = element.frame;
-        return (
-          frame &&
-          typeof frame.x === 'number' &&
-          typeof frame.y === 'number' &&
-          typeof frame.width === 'number' &&
-          typeof frame.height === 'number' &&
-          x >= frame.x &&
-          y >= frame.y &&
-          x <= frame.x + frame.width &&
-          y <= frame.y + frame.height
-        );
-      }) ?? null
-    );
-  }
-
-  private focusedElement(app: string): ComputerElementSummary | null {
-    const snapshot = this.latestElements.get(app);
-    return snapshot?.elements.find((element) => element.focused === true) ?? null;
   }
 
   private async projectResult(result: unknown): Promise<{ textValue: unknown; image: string | null }> {
@@ -550,4 +635,42 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return isRecord(value) ? value : {};
+}
+
+function serviceInterruptionError(requestId: string, pending: PendingServiceRequest, message: string, fallbackCode: string, progress: ComputerServiceProgress | null, helperPid: number | undefined): Error {
+  const elapsedMs = Date.now() - pending.startedAt;
+  const stage = progress?.requestId === requestId ? progress.stage : 'queued_or_startup';
+  const elementCount = progress?.requestId === requestId ? progress.elementCount : 0;
+  const diagnostic = `helperPid=${String(helperPid ?? 'unknown')}, stage=${stage}, elements=${elementCount}, elapsedMs=${elapsedMs}`;
+  if (computerServiceMethodMayHaveEffect(pending.method)) {
+    return Object.assign(new Error(`${message}；动作可能已经生效，不得自动重试（${diagnostic}）。`), { code: 'ZEUS_COMPUTER_EFFECT_UNKNOWN' });
+  }
+  return Object.assign(new Error(`${message}（${diagnostic}）。`), { code: fallbackCode });
+}
+
+function computerServiceMethodMayHaveEffect(method: string): boolean {
+  return ['request_permissions', 'click', 'drag', 'paste', 'perform_secondary_action', 'press_key', 'scroll', 'select_text', 'set_value', 'type_text'].includes(method);
+}
+
+function serviceHasExited(child: ChildProcessWithoutNullStreams): boolean {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
+function waitForServiceExit(child: ChildProcessWithoutNullStreams, timeoutMs: number): Promise<boolean> {
+  if (serviceHasExited(child)) return Promise.resolve(true);
+  return new Promise((resolveWait) => {
+    const finish = (exited: boolean) => {
+      clearTimeout(timer);
+      child.off('exit', onExit);
+      child.off('error', onError);
+      resolveWait(exited);
+    };
+    const onExit = () => finish(true);
+    const onError = () => finish(serviceHasExited(child));
+    child.once('exit', onExit);
+    child.once('error', onError);
+    const timer = setTimeout(() => finish(serviceHasExited(child)), timeoutMs);
+    timer.unref();
+    if (serviceHasExited(child)) finish(true);
+  });
 }

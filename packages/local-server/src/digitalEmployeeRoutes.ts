@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { splitZeusSkillIds } from '@zeus/shared';
 import {
   CommandDefinitionRepository,
   ConversationRepository,
@@ -653,7 +654,7 @@ async function adoptLegacyExecution(options: DigitalEmployeeRouteOptions, execut
       employeeId: execution.employeeId,
       employeeRevision: execution.employeeSnapshot.revision,
       employeeSnapshot: { ...execution.employeeSnapshot },
-      skillId: execution.employeeSnapshot.skillIds[0] ?? null,
+      skillId: splitZeusSkillIds(execution.employeeSnapshot.skillIds).nativeSkillIds[0] ?? null,
       effectivePermissions: {
         permissionMode: conversation.permissionMode ?? execution.employeeSnapshot.permissionMode,
         allowCodeChanges: execution.employeeSnapshot.allowCodeChanges,

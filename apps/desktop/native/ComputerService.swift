@@ -14,7 +14,11 @@ private struct ElementSnapshot {
     let pid: pid_t
     let elements: [AXUIElement]
     let summaries: [[String: Any]]
+    let complete: Bool
 }
+
+private let axMessagingTimeoutSeconds: Float = 2
+private let minimumScreenshotBudgetMilliseconds: Double = 5_000
 
 @main
 private struct ZeusComputerService {
@@ -37,6 +41,7 @@ private final class ComputerService {
     private let artifactRoot: URL
     private let parentPid: pid_t
     private let qaMode: Bool
+    private let systemWideElement: AXUIElement
     private let encoder = JSONSerialization.self
 
     init() {
@@ -45,6 +50,8 @@ private final class ComputerService {
         artifactRoot = URL(fileURLWithPath: root, isDirectory: true).standardizedFileURL
         parentPid = pid_t(Int32(environment["ZEUS_PARENT_PID"] ?? "-1") ?? -1)
         qaMode = environment["ZEUS_COMPUTER_QA_MODE"] == "1"
+        systemWideElement = AXUIElementCreateSystemWide()
+        _ = AXUIElementSetMessagingTimeout(systemWideElement, axMessagingTimeoutSeconds)
     }
 
     func handle(line: String) async -> Data {
@@ -57,7 +64,8 @@ private final class ComputerService {
             guard let method = request["method"] as? String, !method.isEmpty else {
                 throw ServiceFailure(code: "ZEUS_COMPUTER_REQUEST_INVALID", message: "Computer 请求缺少 method。")
             }
-            let params = request["params"] as? [String: Any] ?? [:]
+            var params = request["params"] as? [String: Any] ?? [:]
+            if let requestId = requestId as? String { params["_request_id"] = requestId }
             let result = try await invoke(method: method, params: params)
             return try response(["id": requestId, "ok": true, "result": result])
         } catch let failure as ServiceFailure {
@@ -85,6 +93,8 @@ private final class ComputerService {
             return listApps()
         case "get_app_state":
             return try await getAppState(params)
+        case "describe_target":
+            return try await describeTarget(params)
         case "click":
             return try performClick(params, secondary: false)
         case "perform_secondary_action":
@@ -151,18 +161,38 @@ private final class ComputerService {
     }
 
     private func getAppState(_ params: [String: Any]) async throws -> [String: Any] {
+        let startedAt = Date()
         try requireAccessibility()
         try requireUnlockedSession()
         let app = try await resolveApplication(params)
         try rejectSelf(app)
         let maxElements = boundedInt(params["max_elements"], fallback: 500, min: 1, max: 1000)
+        let deadlineUnixMilliseconds = numberValue(params["_deadline_unix_ms"])
         let applicationElement = AXUIElementCreateApplication(app.processIdentifier)
         generation += 1
         var elements: [AXUIElement] = []
         var summaries: [[String: Any]] = []
         var visited = Set<CFHashCode>()
-        walk(element: applicationElement, depth: 0, maxElements: maxElements, visited: &visited, elements: &elements, summaries: &summaries)
-        let snapshot = ElementSnapshot(generation: generation, pid: app.processIdentifier, elements: elements, summaries: summaries)
+        var truncatedReason: String?
+        reportProgress(params, stage: "ax_walk", elementCount: 0, startedAt: startedAt)
+        walk(
+            element: applicationElement,
+            depth: 0,
+            maxElements: maxElements,
+            deadlineUnixMilliseconds: deadlineUnixMilliseconds,
+            visited: &visited,
+            elements: &elements,
+            summaries: &summaries,
+            truncatedReason: &truncatedReason,
+            progress: { count in
+                if count == 1 || count.isMultiple(of: 50) {
+                    self.reportProgress(params, stage: "ax_walk", elementCount: count, startedAt: startedAt)
+                }
+            }
+        )
+        if truncatedReason == nil, elements.count >= maxElements { truncatedReason = "element_limit" }
+        let complete = truncatedReason == nil
+        let snapshot = ElementSnapshot(generation: generation, pid: app.processIdentifier, elements: elements, summaries: summaries, complete: complete)
         snapshots[app.processIdentifier] = snapshot
         snapshotHistory[generation] = snapshot
         if snapshotHistory.count > 8 {
@@ -174,57 +204,118 @@ private final class ComputerService {
             "snapshot_generation": generation,
             "elements": summaries,
             "text": accessibilityText(summaries),
-            "truncated": elements.count >= maxElements,
+            "complete": complete,
+            "truncated": !complete,
             "status": status(),
+            "diagnostics": [
+                "axElementCount": elements.count,
+                "elapsedMs": Int(Date().timeIntervalSince(startedAt) * 1000),
+            ],
         ]
-        if params["include_screenshot"] as? Bool != false,
-           CGPreflightScreenCaptureAccess(),
-           let screenshot = try await captureWindow(app) {
-            result["screenshot"] = screenshot
+        if let truncatedReason { result["truncated_reason"] = truncatedReason }
+        if params["include_screenshot"] as? Bool != false {
+            if remainingMilliseconds(until: deadlineUnixMilliseconds) < minimumScreenshotBudgetMilliseconds {
+                result["screenshot_status"] = "skipped_deadline"
+            } else if !CGPreflightScreenCaptureAccess() {
+                result["screenshot_status"] = "permission_unavailable"
+            } else {
+                reportProgress(params, stage: "screenshot", elementCount: elements.count, startedAt: startedAt)
+                do {
+                    if let screenshot = try await captureWindow(app) {
+                        result["screenshot"] = screenshot
+                        result["screenshot_status"] = "captured"
+                    } else {
+                        result["screenshot_status"] = "window_unavailable"
+                    }
+                } catch {
+                    result["screenshot_status"] = "capture_failed"
+                }
+            }
         }
         if let previous = intValue(params["previous_snapshot_generation"]) {
             result["diff"] = snapshotDiff(previousGeneration: previous, current: snapshot)
         }
+        reportProgress(params, stage: "complete", elementCount: elements.count, startedAt: startedAt)
         return result
     }
 
+    @discardableResult
     private func walk(
         element: AXUIElement,
         depth: Int,
         maxElements: Int,
+        deadlineUnixMilliseconds: Double?,
         visited: inout Set<CFHashCode>,
         elements: inout [AXUIElement],
-        summaries: inout [[String: Any]]
-    ) {
-        guard elements.count < maxElements, depth <= 14 else { return }
-        let identity = CFHash(element)
-        guard visited.insert(identity).inserted else { return }
-        let index = elements.count
-        elements.append(element)
-        let role = stringAttribute(element, kAXRoleAttribute) ?? ""
-        let subrole = stringAttribute(element, kAXSubroleAttribute) ?? ""
-        let secure = role == "AXSecureTextField" || subrole.localizedCaseInsensitiveContains("secure")
-        var summary: [String: Any] = [
-            "element_index": index,
-            "depth": depth,
-            "role": role,
-            "subrole": subrole,
-            "title": stringAttribute(element, kAXTitleAttribute) ?? "",
-            "description": stringAttribute(element, kAXDescriptionAttribute) ?? "",
-            "identifier": stringAttribute(element, kAXIdentifierAttribute) ?? "",
-            "enabled": boolAttribute(element, kAXEnabledAttribute) ?? true,
-            "focused": boolAttribute(element, kAXFocusedAttribute) ?? false,
-            "secure": secure,
-        ]
-        if !secure, let value = safeValueAttribute(element) { summary["value"] = value }
-        if let frame = frameAttribute(element) { summary["frame"] = frame }
-        if let actions = actionNames(element), !actions.isEmpty { summary["actions"] = actions }
-        summaries.append(summary)
-        guard let children = attribute(element, kAXChildrenAttribute) as? [AXUIElement] else { return }
-        for child in children {
-            walk(element: child, depth: depth + 1, maxElements: maxElements, visited: &visited, elements: &elements, summaries: &summaries)
-            if elements.count >= maxElements { return }
+        summaries: inout [[String: Any]],
+        truncatedReason: inout String?,
+        progress: (Int) -> Void
+    ) -> Bool {
+        if elements.count >= maxElements {
+            truncatedReason = truncatedReason ?? "element_limit"
+            return true
         }
+        guard depth <= 14 else {
+            truncatedReason = truncatedReason ?? "depth_limit"
+            return false
+        }
+        if deadlineExceeded(deadlineUnixMilliseconds) {
+            truncatedReason = "deadline"
+            return true
+        }
+        let identity = CFHash(element)
+        guard visited.insert(identity).inserted else { return false }
+        let index = elements.count
+        let described = describeElement(element, index: index, depth: depth, includeValue: true, includeActions: true, includeChildren: true)
+        if described.error == .cannotComplete {
+            truncatedReason = "ax_cannot_complete"
+            return true
+        }
+        guard let summary = described.summary else { return false }
+        elements.append(element)
+        summaries.append(summary)
+        progress(elements.count)
+        if deadlineExceeded(deadlineUnixMilliseconds) {
+            truncatedReason = "deadline"
+            return true
+        }
+        let children = described.children
+        for child in children {
+            if walk(
+                element: child,
+                depth: depth + 1,
+                maxElements: maxElements,
+                deadlineUnixMilliseconds: deadlineUnixMilliseconds,
+                visited: &visited,
+                elements: &elements,
+                summaries: &summaries,
+                truncatedReason: &truncatedReason,
+                progress: progress
+            ) { return true }
+        }
+        return false
+    }
+
+    private func describeTarget(_ params: [String: Any]) async throws -> [String: Any] {
+        try requireAccessibility()
+        try requireUnlockedSession()
+        let app = try await resolveApplication(params)
+        try rejectSelf(app)
+        let target: AXUIElement?
+        if let x = numberValue(params["x"]), let y = numberValue(params["y"]) {
+            var candidate: AXUIElement?
+            guard AXUIElementCopyElementAtPosition(systemWideElement, Float(x), Float(y), &candidate) == .success,
+                  let candidate,
+                  elementProcessIdentifier(candidate) == app.processIdentifier
+            else { return ["available": false] }
+            target = candidate
+        } else {
+            target = focusedElement(app.processIdentifier)
+        }
+        guard let target else { return ["available": false] }
+        let described = describeElement(target, index: 0, depth: 0, includeValue: false, includeActions: false, includeChildren: false)
+        guard let summary = described.summary else { return ["available": false] }
+        return (["available": true] as [String: Any]).merging(summary) { _, value in value }
     }
 
     private func resolveApplication(_ params: [String: Any]) async throws -> NSRunningApplication {
@@ -493,6 +584,9 @@ private final class ComputerService {
         guard let previous = snapshotHistory[previousGeneration], previous.pid == current.pid else {
             return ["previous_generation": previousGeneration, "current_generation": current.generation, "available": false, "reason": "previous_snapshot_expired"]
         }
+        guard previous.complete, current.complete else {
+            return ["previous_generation": previousGeneration, "current_generation": current.generation, "available": false, "reason": "incomplete_snapshot"]
+        }
         let keyed: ([[String: Any]]) -> [String: [String: Any]] = { values in
             Dictionary(uniqueKeysWithValues: values.enumerated().map { index, value in
                 let key = [value["role"], value["subrole"], value["identifier"], value["title"], value["depth"]].map { String(describing: $0 ?? "") }.joined(separator: "\u{001f}") + "\u{001f}\(index)"
@@ -657,6 +751,67 @@ private final class ComputerService {
         return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
     }
 
+    private func describeElement(
+        _ element: AXUIElement,
+        index: Int,
+        depth: Int,
+        includeValue: Bool,
+        includeActions: Bool,
+        includeChildren: Bool
+    ) -> (summary: [String: Any]?, children: [AXUIElement], error: AXError) {
+        var names = [
+            kAXRoleAttribute,
+            kAXSubroleAttribute,
+            kAXTitleAttribute,
+            kAXDescriptionAttribute,
+            kAXIdentifierAttribute,
+            kAXEnabledAttribute,
+            kAXFocusedAttribute,
+            kAXPositionAttribute,
+            kAXSizeAttribute,
+        ]
+        if includeChildren { names.append(kAXChildrenAttribute) }
+        let copied = copyAttributes(element, names)
+        guard copied.error == .success else { return (nil, [], copied.error) }
+        let role = copied.values[kAXRoleAttribute] as? String ?? ""
+        let subrole = copied.values[kAXSubroleAttribute] as? String ?? ""
+        let secure = role == "AXSecureTextField" || subrole.localizedCaseInsensitiveContains("secure")
+        var summary: [String: Any] = [
+            "element_index": index,
+            "depth": depth,
+            "role": role,
+            "subrole": subrole,
+            "title": copied.values[kAXTitleAttribute] as? String ?? "",
+            "description": copied.values[kAXDescriptionAttribute] as? String ?? "",
+            "identifier": copied.values[kAXIdentifierAttribute] as? String ?? "",
+            "enabled": copied.values[kAXEnabledAttribute] as? Bool ?? true,
+            "focused": copied.values[kAXFocusedAttribute] as? Bool ?? false,
+            "secure": secure,
+        ]
+        if includeValue, !secure, let value = safeValueAttribute(element) { summary["value"] = value }
+        if let frame = frameFromAttributes(copied.values) { summary["frame"] = frame }
+        if includeActions, let actions = actionNames(element), !actions.isEmpty { summary["actions"] = actions }
+        return (summary, copied.values[kAXChildrenAttribute] as? [AXUIElement] ?? [], .success)
+    }
+
+    private func copyAttributes(_ element: AXUIElement, _ names: [String]) -> (values: [String: Any], error: AXError) {
+        var copied: CFArray?
+        let error = AXUIElementCopyMultipleAttributeValues(element, names as CFArray, AXCopyMultipleAttributeOptions(rawValue: 0), &copied)
+        if error == .cannotComplete { return ([:], error) }
+        guard error == .success, let values = copied as? [Any] else {
+            return (Dictionary(uniqueKeysWithValues: names.compactMap { name in attribute(element, name).map { (name, $0 as Any) } }), .success)
+        }
+        var result: [String: Any] = [:]
+        for (index, name) in names.enumerated() where index < values.count {
+            let value = values[index]
+            let cfValue = value as CFTypeRef
+            if CFGetTypeID(cfValue) == CFNullGetTypeID() { continue }
+            if CFGetTypeID(cfValue) == AXValueGetTypeID(), AXValueGetType(value as! AXValue) == .axError { continue }
+            result[name] = value
+        }
+        return (result, .success)
+    }
+
     private func stringAttribute(_ element: AXUIElement, _ name: String) -> String? { attribute(element, name) as? String }
     private func boolAttribute(_ element: AXUIElement, _ name: String) -> Bool? { attribute(element, name) as? Bool }
 
@@ -674,8 +829,14 @@ private final class ComputerService {
     }
 
     private func frameAttribute(_ element: AXUIElement) -> [String: Double]? {
-        guard let positionValue = attribute(element, kAXPositionAttribute), CFGetTypeID(positionValue) == AXValueGetTypeID(),
-              let sizeValue = attribute(element, kAXSizeAttribute), CFGetTypeID(sizeValue) == AXValueGetTypeID()
+        let copied = copyAttributes(element, [kAXPositionAttribute, kAXSizeAttribute])
+        guard copied.error == .success else { return nil }
+        return frameFromAttributes(copied.values)
+    }
+
+    private func frameFromAttributes(_ values: [String: Any]) -> [String: Double]? {
+        guard let positionValue = values[kAXPositionAttribute], CFGetTypeID(positionValue as CFTypeRef) == AXValueGetTypeID(),
+              let sizeValue = values[kAXSizeAttribute], CFGetTypeID(sizeValue as CFTypeRef) == AXValueGetTypeID()
         else { return nil }
         var point = CGPoint.zero
         var size = CGSize.zero
@@ -702,6 +863,34 @@ private final class ComputerService {
             return item
         }
         if !items.isEmpty { pasteboard.writeObjects(items) }
+    }
+
+    private func elementProcessIdentifier(_ element: AXUIElement) -> pid_t? {
+        var pid: pid_t = 0
+        return AXUIElementGetPid(element, &pid) == .success ? pid : nil
+    }
+
+    private func deadlineExceeded(_ deadlineUnixMilliseconds: Double?) -> Bool {
+        remainingMilliseconds(until: deadlineUnixMilliseconds) <= 0
+    }
+
+    private func remainingMilliseconds(until deadlineUnixMilliseconds: Double?) -> Double {
+        guard let deadlineUnixMilliseconds else { return .greatestFiniteMagnitude }
+        return deadlineUnixMilliseconds - Date().timeIntervalSince1970 * 1000
+    }
+
+    private func reportProgress(_ params: [String: Any], stage: String, elementCount: Int, startedAt: Date) {
+        guard let requestId = params["_request_id"] as? String else { return }
+        let payload: [String: Any] = [
+            "requestId": requestId,
+            "stage": stage,
+            "elementCount": elementCount,
+            "elapsedMs": Int(Date().timeIntervalSince(startedAt) * 1000),
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: []) else { return }
+        FileHandle.standardError.write(Data("ZEUS_COMPUTER_PROGRESS ".utf8))
+        FileHandle.standardError.write(data)
+        FileHandle.standardError.write(Data([0x0a]))
     }
 
     private func intValue(_ value: Any?) -> Int? {

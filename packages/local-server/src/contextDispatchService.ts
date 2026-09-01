@@ -3,6 +3,7 @@ import type { CodexBootstrapAdditionalContext } from '@zeus/shared';
 import { ColdEvidenceRepository, LongTermMemoryRepository, type LongTermMemoryResolution } from '@zeus/storage';
 import {
   compileContext,
+  defaultContextTokenCounter,
   longTermMemoryContextFragment,
   renderCompiledContext,
   type CompiledContext,
@@ -36,6 +37,19 @@ export interface ContextDispatchProviderSnapshot {
   /** 只有真实、同步、本地 tokenizer 才能传 exact；当前 Codex/Pi 均不提供。 */
   tokenCounter?: ContextTokenCounter;
   preflightTokenCount: AgentPreflightTokenCountCapability;
+  requestAccounting?: ContextDispatchRequestAccountingInput;
+}
+
+export interface ContextDispatchRequestAccountingInput {
+  historyBaselineTokens: number;
+  historyBaselineSource: string;
+  fixedInputTokens: number;
+  estimateSafetyMarginTokens: number;
+}
+
+export interface ContextDispatchRequestAccounting extends ContextDispatchRequestAccountingInput {
+  compilerEnvelopeTokens: number;
+  estimatedRequestHeadroomTokens: number;
 }
 
 export interface CompileDispatchContextInput {
@@ -72,6 +86,7 @@ export interface ContextDispatchAuditRecord {
   fingerprint: string;
   usedTokens: number;
   availableTokens: number;
+  requestAccounting: ContextDispatchRequestAccounting | null;
   tokenAccounting: CompiledContext['tokenAccounting'];
   preflightTokenCount: AgentPreflightTokenCountCapability;
   watermarks: CompiledContext['watermarks'];
@@ -117,6 +132,7 @@ export interface ContextDispatchEnvelope {
     id: string;
     modelId: string;
     preflightTokenCount: AgentPreflightTokenCountCapability;
+    requestAccounting: ContextDispatchRequestAccounting | null;
   };
   taskDocument: {
     selected: ProjectTaskDocumentCandidate | null;
@@ -167,31 +183,50 @@ export class ContextDispatchApplicationService {
         })
       : { fragment: null, selection: { primary: null, candidates: [], truncatedDirectory: false }, page: null };
     const fragments = [taskDocument.fragment, ...memory.selected.map(longTermMemoryContextFragment), ...selectedFragments].filter((fragment): fragment is ContextFragment => fragment !== null);
-    const compiled = compileContext({
-      asOf,
-      operationRisk: input.operationRisk,
-      provider: {
-        id: input.provider.id,
-        contextWindowTokens: input.provider.contextWindowTokens,
-        reservedOutputTokens: input.provider.reservedOutputTokens,
-        currentInputTokens: input.provider.currentInputTokens,
-        capabilities: input.provider.capabilities,
-      },
-      projectId: project.id,
-      task: task ? { projectId: project.id, taskId: task.id, taskCode: task.code } : null,
-      maximumCompiledTokens: input.maximumCompiledTokens,
-      budgets: input.budgets,
-      includeColdEvidence: input.includeColdEvidence === true,
-      watermarks: {
-        ...(input.sourceWatermarks ?? {}),
-        'docs.primary': taskDocument.fragment?.sourceVersion ?? (task ? 'missing' : 'not_applicable'),
-        'memory.latest': latestMemoryWatermark(memory.selected.map((record) => record.updatedAt)),
-        'provider.preflight_token_count': preflightWatermark(input.provider.preflightTokenCount),
-      },
-      fragments,
-      tokenCounter: input.provider.tokenCounter,
-    });
-    const rendered = renderCompiledContext(compiled);
+    const requestAccountingInput = normalizeRequestAccounting(input.provider.requestAccounting);
+    const compile = (currentInputTokens: number) =>
+      compileContext({
+        asOf,
+        operationRisk: input.operationRisk,
+        provider: {
+          id: input.provider.id,
+          contextWindowTokens: input.provider.contextWindowTokens,
+          reservedOutputTokens: input.provider.reservedOutputTokens,
+          currentInputTokens,
+          capabilities: input.provider.capabilities,
+        },
+        projectId: project.id,
+        task: task ? { projectId: project.id, taskId: task.id, taskCode: task.code } : null,
+        maximumCompiledTokens: input.maximumCompiledTokens,
+        budgets: input.budgets,
+        includeColdEvidence: input.includeColdEvidence === true,
+        watermarks: {
+          ...(input.sourceWatermarks ?? {}),
+          'docs.primary': taskDocument.fragment?.sourceVersion ?? (task ? 'missing' : 'not_applicable'),
+          'memory.latest': latestMemoryWatermark(memory.selected.map((record) => record.updatedAt)),
+          'provider.preflight_token_count': preflightWatermark(input.provider.preflightTokenCount),
+        },
+        fragments,
+        tokenCounter: input.provider.tokenCounter,
+      });
+    let compiled = compile(input.provider.currentInputTokens);
+    let requestAccounting: ContextDispatchRequestAccounting | null = null;
+    if (requestAccountingInput) {
+      const counter = input.provider.tokenCounter ?? defaultContextTokenCounter;
+      const firstRendered = renderCompiledContext(compiled);
+      const renderedTokens = counter.count(JSON.stringify(firstRendered));
+      const compilerEnvelopeTokens = Math.max(256, renderedTokens - compiled.usedTokens + 256);
+      const requestBudgetTokens = input.provider.contextWindowTokens - input.provider.reservedOutputTokens;
+      const fixedRequestTokens = requestAccountingInput.historyBaselineTokens + requestAccountingInput.fixedInputTokens + requestAccountingInput.estimateSafetyMarginTokens + compilerEnvelopeTokens;
+      const compilerCurrentInputTokens = Math.min(requestBudgetTokens, fixedRequestTokens);
+      if (compilerCurrentInputTokens !== input.provider.currentInputTokens) compiled = compile(compilerCurrentInputTokens);
+      requestAccounting = {
+        ...requestAccountingInput,
+        compilerEnvelopeTokens,
+        estimatedRequestHeadroomTokens: requestBudgetTokens - fixedRequestTokens - compiled.usedTokens,
+      };
+    }
+    const rendered = renderCompiledContext(compiled, requestAccounting ?? undefined);
     const envelope: ContextDispatchEnvelope = {
       schemaVersion: contextDispatchSchemaVersion,
       compiled,
@@ -201,6 +236,7 @@ export class ContextDispatchApplicationService {
         id: input.provider.id,
         modelId: input.provider.modelId,
         preflightTokenCount: { ...input.provider.preflightTokenCount },
+        requestAccounting,
       },
       taskDocument: {
         selected: taskDocument.selection.primary,
@@ -228,6 +264,7 @@ export class ContextDispatchApplicationService {
         fingerprint: compiled.fingerprint,
         usedTokens: compiled.usedTokens,
         availableTokens: compiled.availableTokens,
+        requestAccounting,
         tokenAccounting: compiled.tokenAccounting,
         preflightTokenCount: { ...input.provider.preflightTokenCount },
         watermarks: compiled.watermarks,
@@ -240,6 +277,21 @@ export class ContextDispatchApplicationService {
     }
     return envelope;
   }
+}
+
+function normalizeRequestAccounting(value: ContextDispatchRequestAccountingInput | undefined): ContextDispatchRequestAccountingInput | null {
+  if (!value) return null;
+  return {
+    historyBaselineTokens: nonNegativeSafeInteger(value.historyBaselineTokens, 'requestAccounting.historyBaselineTokens'),
+    historyBaselineSource: boundedAuditText(value.historyBaselineSource, 'requestAccounting.historyBaselineSource'),
+    fixedInputTokens: nonNegativeSafeInteger(value.fixedInputTokens, 'requestAccounting.fixedInputTokens'),
+    estimateSafetyMarginTokens: nonNegativeSafeInteger(value.estimateSafetyMarginTokens, 'requestAccounting.estimateSafetyMarginTokens'),
+  };
+}
+
+function boundedAuditText(value: string, field: string): string {
+  if (typeof value !== 'string' || value.length < 1 || value.length > 512 || value.includes('\0')) throw dispatchError('ZEUS_CONTEXT_INVALID_ARGUMENT', `${field} 无效。`);
+  return value;
 }
 
 /** 对 Provider 已序列化完整请求的真实计数做最终窗口门禁；估算结果不能调用此函数。 */

@@ -24,7 +24,7 @@ const zeus0388Choice: NativeConversationChoice = {
 };
 const zeus0388SnapshotV2: NativeConversationSnapshotV2 = {
   schemaVersion: 2,
-  structureGeneration: '2026-08-29-conversation-snapshot-v2-recovered-request-input',
+  structureGeneration: '2026-08-31-conversation-snapshot-v2-active-turn-tail',
   conversationSchemaGeneration: '2026-08-16-unified-conversation-segments',
   throughEventSeq: 8,
   eventStreamGeneration: 'zeus-conversation-sync-v2',
@@ -80,7 +80,7 @@ const zeus0388SnapshotV2: NativeConversationSnapshotV2 = {
 };
 const zeus0388HistoryPage: NativeConversationSnapshotV2Page<import('../src/renderer/session/sessionTypes.js').NativeConversationModelHistoryV2Item> = {
   schemaVersion: 2,
-  structureGeneration: '2026-08-29-conversation-snapshot-v2-recovered-request-input',
+  structureGeneration: '2026-08-31-conversation-snapshot-v2-active-turn-tail',
   conversationId: zeus0388ConversationId,
   kind: 'model_history',
   throughEventSeq: 8,
@@ -203,7 +203,7 @@ const zeus0388ResourcePages: NativeConversationSnapshotV2Page<NativeConversation
   const items = zeus0388ResourceItems.slice(index * 32, (index + 1) * 32);
   return {
     schemaVersion: 2,
-    structureGeneration: '2026-08-29-conversation-snapshot-v2-recovered-request-input',
+    structureGeneration: '2026-08-31-conversation-snapshot-v2-active-turn-tail',
     conversationId: zeus0388ConversationId,
     kind: 'resources',
     throughEventSeq: 8,
@@ -287,7 +287,7 @@ export function Zeus0388QaApp() {
   const [historyTransitions, setHistoryTransitions] = useState(0);
   const [settingsChanges, setSettingsChanges] = useState(0);
   const [historyOnly, setHistoryOnly] = useState(true);
-  const [guard, setGuard] = useState<'writable' | 'archived' | 'explicit-readonly' | 'nonresumable' | 'processing' | 'task-ended' | 'recovered'>('writable');
+  const [guard, setGuard] = useState<'writable' | 'failed' | 'other-failed' | 'archived' | 'explicit-readonly' | 'nonresumable' | 'processing' | 'task-ended' | 'recovered'>('writable');
   const controller = useMemo(
     () =>
       createSessionController({
@@ -307,8 +307,10 @@ export function Zeus0388QaApp() {
   const state = useSyncExternalStore(controller.subscribe, controller.getState, controller.getState);
   useEffect(() => () => controller.dispose(), [controller]);
 
+  const failedGuard = guard === 'failed' || guard === 'other-failed';
   const visibleConversation = {
     ...zeus0388Choice,
+    providerState: failedGuard ? 'failed' : zeus0388Choice.providerState,
     archived: guard === 'archived',
     readOnly: guard === 'explicit-readonly',
     resumable: guard !== 'nonresumable',
@@ -320,8 +322,30 @@ export function Zeus0388QaApp() {
     transportState: 'ready' as const,
     conversationState: 'starting_turn' as const,
   };
-  const visibleState =
-    guard === 'recovered'
+  const failedTurn = {
+    ...hydratedHistoryState.turnsByProviderId[zeus0388ProviderTurnId]!,
+    status: 'failed',
+    error: {
+      category: guard === 'other-failed' ? ('configuration' as const) : ('rate_limit' as const),
+      code: guard === 'other-failed' ? 'MODEL_NOT_AVAILABLE' : 'ZEUS_CODEX_MODEL_AT_CAPACITY',
+      message: guard === 'other-failed' ? 'The requested model is not available for this account.' : 'Selected model is at capacity. Please try a different model.',
+      providerStatus: 'failed',
+      additionalDetails: [],
+    },
+  };
+  const visibleState = failedGuard
+    ? {
+        ...hydratedHistoryState,
+        conversationState: 'turn_failed' as const,
+        turnsByProviderId: { ...hydratedHistoryState.turnsByProviderId, [zeus0388ProviderTurnId]: failedTurn },
+        terminalTurnIds: { ...hydratedHistoryState.terminalTurnIds, [zeus0388ProviderTurnId]: 'failed' as const },
+        snapshot: {
+          ...hydratedHistoryState.snapshot!,
+          providerState: 'failed',
+          turns: hydratedHistoryState.snapshot!.turns.map((turn) => (turn.providerTurnId === zeus0388ProviderTurnId ? failedTurn : turn)),
+        },
+      }
+    : guard === 'recovered'
       ? {
           ...hydratedHistoryState,
           queue: {
@@ -386,6 +410,12 @@ export function Zeus0388QaApp() {
           <button type="button" onClick={() => selectGuard('writable')}>
             可续接历史
           </button>
+          <button type="button" onClick={() => selectGuard('failed')}>
+            Codex 失败
+          </button>
+          <button type="button" onClick={() => selectGuard('other-failed')}>
+            其他模型失败
+          </button>
           <button type="button" onClick={() => selectGuard('archived')}>
             归档会话
           </button>
@@ -413,7 +443,7 @@ export function Zeus0388QaApp() {
           {historyOnly ? '历史快照' : '交互模式'} · 首次切换 {historyTransitions} 次 · 发送 {submitCount} 次 · 配置变更 {settingsChanges} 次 · 输入附件 {visibleState.attachments.length} 个 · 门禁 {guard}
         </output>
       </section>
-      <section className="qa-implementation-panel" style={{ blockSize: 920 }} data-testid="zeus-0388-workspace">
+      <section className="qa-implementation-panel session-codex-parity-v1 theme-light" style={{ blockSize: 920 }} data-testid="zeus-0388-workspace">
         <SessionWorkspace
           language="zh-CN"
           state={visibleState}

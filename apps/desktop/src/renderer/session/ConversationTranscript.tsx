@@ -22,7 +22,7 @@ import { isAssistantDeliverableItem } from './sessionTypes.js';
 import { parseCanonicalRequestUserInputQuestions, type ConversationFileLocation, type ConversationOpenTarget, type ConversationResponseAnnotation, type ConversationResponseTextAnchor } from '@zeus/shared';
 import { useThreadScrollController } from './useThreadScrollController.js';
 import { TurnChangeCard } from './TurnChanges.js';
-import { reasoningSummaryStatus, SessionReasoningSummary } from './SessionReasoningSummary.js';
+import { latestReasoningSummaryText, reasoningSummaryStatus, SessionReasoningSummary } from './SessionReasoningSummary.js';
 import { AnsweredRequestHistory, isAnsweredUserInputRequest } from './AnsweredRequestHistory.js';
 import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
 import { captureTranscriptViewportAnchor, compensateTranscriptViewportAnchor, type TranscriptViewportAnchor, useTranscriptViewportVirtualizer } from './transcriptViewportVirtualizer.js';
@@ -85,6 +85,16 @@ const sessionConnectionSymbol = (
   <span className="session-connection-symbol" aria-hidden="true">
     <svg viewBox="0 0 24 24">
       <path d="M4.5 9.6a11.5 11.5 0 0 1 15 0M7.8 13a6.7 6.7 0 0 1 8.4 0M11.1 16.4a1.45 1.45 0 0 1 1.8 0" />
+    </svg>
+  </span>
+);
+
+const turnFailureSymbol = (
+  <span className="session-turn-failure-icon" aria-hidden="true">
+    <svg viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7.5v5" />
+      <circle cx="12" cy="16.5" r="0.8" fill="currentColor" stroke="none" />
     </svg>
   </span>
 );
@@ -1173,15 +1183,10 @@ function SessionCreationNotice(props: { status: SessionCreationStatus; language:
 
 function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: SessionUiLanguage }) {
   const zh = props.language === 'zh-CN';
-  const warning = props.failure.code === 'ZEUS_PI_MODEL_REQUEST_FAILED';
   return (
-    <article
-      className="session-turn-failure"
-      data-severity={warning ? 'warning' : 'error'}
-      role={warning ? 'status' : 'alert'}
-      aria-label={warning ? (zh ? '模型请求警告' : 'Model request warning') : zh ? '会话失败原因' : 'Conversation failure reason'}
-    >
-      <VisibleApplicationError error={props.failure} language={zh ? 'zh-CN' : 'en'} />
+    <article className="session-turn-failure" role="alert" aria-label={zh ? '模型返回错误' : 'Model error'}>
+      {turnFailureSymbol}
+      <span className="session-turn-failure-message">{props.failure.message}</span>
     </article>
   );
 }
@@ -1917,7 +1922,7 @@ export function projectTranscriptRows(
   const emittedActivityStages = new Set<string>();
   const activeReasoningItem =
     effectiveActiveTurnId && !items.some((item) => item.turnId === effectiveActiveTurnId && isFinalAnswerItem(item))
-      ? [...items].reverse().find((item) => item.turnId === effectiveActiveTurnId && normalizeItemType(item.type) === 'reasoning')
+      ? [...items].reverse().find((item) => item.turnId === effectiveActiveTurnId && normalizeItemType(item.type) === 'reasoning' && latestReasoningSummaryText(item).length > 0)
       : undefined;
 
   for (let index = 0; index < timeline.length; index += 1) {
@@ -2323,7 +2328,7 @@ export function shouldShowTranscriptThinking(state: NativeSessionState, items: r
 function itemProvidesCurrentModelStatus(item: NativeSessionItemBuffer, state: NativeSessionState): boolean {
   // 只有“模型当前在做什么”的思考摘要或已经开始的最终回答可以替代底部状态行；
   // 命令、文件、网页和技能只是过程明细，不能让进行中状态消失。
-  if (normalizeItemType(item.type) === 'reasoning' && reasoningSummaryStatus(item, state) === 'active' && transcriptItemText(item).trim().length > 0) return true;
+  if (normalizeItemType(item.type) === 'reasoning' && reasoningSummaryStatus(item, state) === 'active' && latestReasoningSummaryText(item).length > 0) return true;
   if (item.status === 'completed' || item.status === 'failed' || item.status === 'interrupted') return false;
   return isFinalAnswerItem(item);
 }

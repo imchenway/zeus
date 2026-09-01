@@ -132,7 +132,8 @@ export class ConversationChoiceQueryApplication {
       listRuntimeState: state.runtimeState,
       taskRunStatus: state.taskRunStatus,
       // 正式数据库副本中的原生会话只允许历史投影；列表本身就必须显式禁用恢复。
-      resumable: !this.ports.readOnlyValidation && conversation.transportKind === 'codex_native' && !conversation.archived && conversation.providerState !== 'closed' && conversation.providerState !== 'failed',
+      // failed 只表示最近轮次失败；用户明确续发时仍由 Coordinator 核对 Provider 安全边界，closed 才永久不可续接。
+      resumable: !this.ports.readOnlyValidation && conversation.transportKind === 'codex_native' && !conversation.archived && conversation.providerState !== 'closed',
       readOnly: this.ports.readOnlyValidation || conversation.transportKind === 'legacy_cli',
     };
   }

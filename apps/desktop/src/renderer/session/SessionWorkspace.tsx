@@ -1576,8 +1576,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const composerFocusRestorationPendingRef = useRef(false);
   const legacy = props.conversation && props.conversation.transportKind !== 'codex_native';
   const effectiveProviderState = props.state?.snapshot?.providerState ?? props.conversation?.providerState ?? null;
-  const effectiveResumable =
-    props.conversation?.resumable !== false && (props.state?.snapshot ? !['closed', 'failed'].includes(effectiveProviderState ?? '') : effectiveProviderState === 'archived' || props.conversation?.resumable === true);
+  const effectiveResumable = props.conversation?.resumable !== false && (props.state?.snapshot ? effectiveProviderState !== 'closed' : effectiveProviderState === 'archived' || props.conversation?.resumable === true);
   // 列表和已水合快照可能跨一个归档操作短暂错代；任一权威来源声明归档都必须 fail-closed。
   const effectiveArchived = Boolean(props.state?.snapshot?.archived || props.conversation?.archived);
   const nonResumableNative = Boolean(props.conversation && !legacy && !effectiveResumable);

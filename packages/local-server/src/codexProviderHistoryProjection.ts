@@ -1,5 +1,5 @@
 import type { CodexThreadSnapshot, CodexTurnSnapshot } from '@zeus/ai-runtime';
-import { resolveSnapshotProviderItemId, type ZeusConversationItemRecord, type ZeusConversationSubmissionRecord, type ZeusConversationTurnRecord, type ZeusConversationWithMessagesRecord } from '@zeus/storage';
+import { projectConversationTurnFailure, resolveSnapshotProviderItemId, type ZeusConversationItemRecord, type ZeusConversationSubmissionRecord, type ZeusConversationTurnRecord, type ZeusConversationWithMessagesRecord } from '@zeus/storage';
 import type { CreateCodexNativeConversationCoordinatorOptions } from './codexNativeConversationCoordinator.js';
 import {
   classifySnapshotTurn,
@@ -452,6 +452,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
           providerTurnId: providerTurn.id,
           status: classification,
           completedAt: completedAt ?? timestamp,
+          ...(classification === 'failed' ? { error: projectConversationTurnFailure(providerTurnFailureRecord({ turn: providerTurn }, providerTurnFailure({ turn: providerTurn }, providerTurn.id))) } : {}),
         });
       }
       const resultKey = `${conversation.id}:${providerTurn.id}`;
@@ -709,11 +710,12 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
         markConversationRecoveryRequired(conversation.id, coordinatorError('ZEUS_NATIVE_PROVIDER_STATE_UNCONFIRMED', 'Provider thread state cannot confirm that there is no active turn.'));
         return;
       }
-      if (conversation.providerState === 'failed' || conversation.providerState === 'closed') {
+      if (conversation.providerState === 'closed') {
         markConversationRecoveryRequired(conversation.id, coordinatorError('ZEUS_NATIVE_CONVERSATION_NOT_RESUMABLE', 'The provider conversation cannot be resumed safely.'));
         return;
       }
-      if (conversation.providerState === 'paused') {
+      // 单轮失败不终止 thread；只有 Provider 快照能对上本地终态轮次时才恢复下一轮派发。
+      if (conversation.providerState === 'paused' || conversation.providerState === 'failed') {
         if (!snapshotConfirmsSafeResumeBoundary(snapshot, options.turns.listByConversation(conversation.id))) {
           markConversationRecoveryRequired(conversation.id, coordinatorError('ZEUS_NATIVE_PROVIDER_STATE_UNCONFIRMED', 'Provider thread state cannot confirm that the previous turn is terminal.'));
           return;
