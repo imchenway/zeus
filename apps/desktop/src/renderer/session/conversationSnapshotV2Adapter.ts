@@ -494,6 +494,7 @@ function historyItems(items: NativeConversationModelHistoryV2Item[], providerTur
     // 是跨分页、冷启动仍稳定的语义身份；provenance 只用于兼容旧服务端返回。
     const reasoning = item.reasoningSummary || typeof contentRecord?.provenance === 'string';
     const text = projectionText(content, item.content.preview, item.content.truncated);
+    const expertStatus = item.expertExecutionId && typeof contentRecord?.expertStatus === 'string' ? contentRecord.expertStatus : null;
     const persistedPlan = item.phase === 'plan';
     // 旧 Pi/DeepSeek 历史没有 phase；没有 reasoning/plan 证据的 assistant 内容是用户正文，
     // 不能因为缺少新版元数据就折叠进“处理过程”。
@@ -506,7 +507,7 @@ function historyItems(items: NativeConversationModelHistoryV2Item[], providerTur
         turnId: providerTurnByLocalId.get(item.turnId) ?? item.turnId,
         providerItemId: item.providerItemId,
         type: item.role === 'user' ? 'userMessage' : persistedPlan ? 'plan' : reasoning ? 'reasoning' : 'agentMessage',
-        status: 'completed',
+        status: expertStatus === 'failed' || expertStatus === 'interrupted' || expertStatus === 'cancelled' ? 'failed' : 'completed',
         phase,
         text,
         payload: {
@@ -521,6 +522,11 @@ function historyItems(items: NativeConversationModelHistoryV2Item[], providerTur
               }
             : {}),
           ...(item.phase ? { phase: item.phase } : {}),
+          ...(item.actor ? { actor: item.actor } : {}),
+          ...(item.actorKind ? { actorKind: item.actorKind } : {}),
+          ...(item.actorId ? { actorId: item.actorId } : {}),
+          ...(item.expertExecutionId ? { expertExecutionId: item.expertExecutionId } : {}),
+          ...(expertStatus ? { expertStatus } : {}),
           v2ContentKind: 'model_history',
           v2Sequence: item.sequence,
           v2ContentHandle: item.content.contentHandle,

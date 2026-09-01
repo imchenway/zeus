@@ -1353,6 +1353,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         queuedSteerDisabledReason={queuedSteerDisabledReason}
         onSteerQueuedSubmission={queuedSubmission?.status === 'queued' ? options.props.onSendQueuedNow : undefined}
         onDeleteQueuedSubmission={queuedSubmission?.status === 'queued' || queuedSubmission?.status === 'paused' ? options.props.onCancelQueuedSubmission : undefined}
+        onRetryExpertExecution={options.props.onRetryQueuedSubmission}
       />
       {showPendingDeliveryFeedback ? (
         <MessageDeliveryOutcomeFeedback

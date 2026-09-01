@@ -42,6 +42,7 @@ import {
   CommandDeliveryRepository,
   CommandRunRepository,
   type ConversationCollaborationMode,
+  ConversationExpertRepository,
   ConversationExecutionRepository,
   ConversationGoalRepository,
   type ConversationPermissionMode,
@@ -57,6 +58,7 @@ import {
   ConversationTurnRepository,
   type CreateTaskEventInput,
   createZeusDatabase,
+  DigitalEmployeeRepository,
   ExecutionHostHandoffRepository,
   ExecutionHostWorkRepository,
   GitSnapshotRepository,
@@ -116,6 +118,7 @@ import { createCodexUsageService } from './codexUsageService.js';
 import { createContextDispatchAuditPort } from './contextDispatchAudit.js';
 import { ContextDispatchApplicationService, type ContextDispatchEnvelope } from './contextDispatchService.js';
 import { createConversationApplicationOperations, isNativeApiRecord, nativeApiError } from './conversationApplicationOperations.js';
+import { routeConversationExpertEvent } from './conversationExpertEventRouting.js';
 import { ConversationCapabilityQueryApplication } from './conversationCapabilityQueryApplication.js';
 import { compareConversationStageUpdatedDesc, ConversationChoiceQueryApplication, type ProjectConversationAttentionState } from './conversationChoiceQueryApplication.js';
 import { ConversationCommandApplication } from './conversationCommandApplication.js';
@@ -505,6 +508,9 @@ export interface CreateConversationMessageBody {
   collaborationMode?: ConversationCollaborationMode;
   agentKind?: 'codex' | 'pi' | 'claude';
   pluginReferences?: unknown;
+  expertMentions?: Array<{ employeeId: string }>;
+  skillReferences?: Array<{ id: string }>;
+  computerUseRequested?: boolean;
 }
 
 export interface NativeConversationAttachment {
@@ -571,8 +577,12 @@ export type StartTaskConversationBody = (
   | { mode: 'reference_legacy'; sourceConversationId: string; messageIds: string[]; content: string; permissionMode?: ConversationPermissionMode }
 ) & {
   clientUserMessageId?: string;
+  displayText?: string;
   collaborationMode?: ConversationCollaborationMode;
   agentKind?: 'codex' | 'pi' | 'claude';
+  expertMentions?: Array<{ employeeId: string }>;
+  skillReferences?: Array<{ id: string }>;
+  computerUseRequested?: boolean;
 };
 
 export interface StartProjectConversationBody {
@@ -588,6 +598,10 @@ export interface StartProjectConversationBody {
   agentKind?: 'codex' | 'pi' | 'claude';
   goalObjective?: string;
   pluginReferences?: unknown;
+  displayText?: string;
+  expertMentions?: Array<{ employeeId: string }>;
+  skillReferences?: Array<{ id: string }>;
+  computerUseRequested?: boolean;
 }
 
 export interface TaskConversationAcceptanceReservation {
@@ -704,6 +718,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const settings = new SettingRepository(db);
   const auditLogs = new AuditLogRepository(db);
   const conversations = new ConversationRepository(db);
+  const conversationExperts = new ConversationExpertRepository(db);
+  const digitalEmployees = new DigitalEmployeeRepository(db);
   const conversationGoals = new ConversationGoalRepository(db);
   const codexUsageLedger = new CodexUsageLedgerRepository(db);
   const codexLegacyImports = new CodexLegacyImportRepository(db);
@@ -763,6 +779,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     now: () => now().toISOString(),
   });
   let dispatchUnifiedConversationQueueHead: ((conversationId: string) => Promise<void>) | null = null;
+  let dispatchQueuedExpertRound: ((submissionId: string) => Promise<void>) | null = null;
   const conversationToolResults = new ManagedConversationToolResultStore(dataLayout.conversationToolResults, conversationExecution, artifactStore);
   if (!readOnlyValidation) conversationExecution.setDispatchEnabled(false);
   if (!readOnlyValidation) await db.save();
@@ -1688,8 +1705,16 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (!conversationExecution.isDispatchEnabled()) return;
     const conversation = conversations.getById(conversationId);
     if (!conversation || conversation.archived) return;
-    const head = selectAutomaticQueueDispatchCandidate(conversationSubmissions.listQueueByConversation(conversationId));
-    if (!head || head.status !== 'queued' || !head.executionSnapshotId) return;
+    if (conversationExperts.hasExecutingRound(conversationId)) return;
+    const head = selectAutomaticQueueDispatchCandidate(conversationSubmissions.listDispatchQueueByConversation(conversationId));
+    if (!head || head.status !== 'queued') return;
+    const persistedInput = isNativeApiRecord(JSON.parse(head.inputJson)) ? (JSON.parse(head.inputJson) as Record<string, unknown>) : {};
+    if (persistedInput.expertRound === true) {
+      const dispatch = dispatchQueuedExpertRound;
+      if (dispatch) queueMicrotask(() => void dispatch(head.id));
+      return;
+    }
+    if (!head.executionSnapshotId) return;
     const frozen = conversationExecution.getExecutionSnapshot(head.executionSnapshotId);
     if (!frozen) {
       conversationSubmissions.updateStatus(head.id, 'paused', { pausedReason: 'recovery_required', updatedAt: now().toISOString() });
@@ -2466,7 +2491,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   }
 
   function publishNativeConversationEvent(type: string, payload: Record<string, unknown>): void {
-    const mappedType =
+    let mappedType =
       type === 'conversation.item.updated'
         ? payload.status === 'in_progress'
           ? 'conversation.item.delta'
@@ -2482,6 +2507,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
                 : type === 'conversation.submission.steered'
                   ? 'conversation.queue.changed'
                   : type;
+    const expertRoute = routeConversationExpertEvent({ type: mappedType, payload, experts: conversationExperts, turns: conversationTurns });
+    if (!expertRoute) return;
+    mappedType = expertRoute.type;
+    payload = expertRoute.payload;
     const conversationIds =
       typeof payload.conversationId === 'string'
         ? [payload.conversationId]
@@ -2965,6 +2994,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     zeusConversationPluginRuntime,
     conversationChoiceQueries,
     conversationExecution,
+    conversationExperts,
     conversationExecutionCoordinator,
     conversationPlanActions,
     conversationProviderItems,
@@ -2972,6 +3002,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     conversationSubmissions,
     conversationTurns,
     conversations,
+    digitalEmployees,
     countDirectProjectActiveWritableConversations: (...args: Parameters<typeof countDirectProjectActiveWritableConversations>) => countDirectProjectActiveWritableConversations(...args),
     createTaskCodeReviewPrompt,
     createTaskRuntimePrompt,
@@ -3034,6 +3065,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     transitionTaskStatus,
     trustedConversationAttachmentRoots,
   });
+  dispatchQueuedExpertRound = conversationOperations.dispatchExpertRound;
   const {
     archiveNativeConversation,
     restoreNativeConversation,
@@ -3050,6 +3082,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     executeConversationDispatchRequestResponse,
     executeProjectConversationIdempotent,
     executeTaskConversationIdempotent,
+    recoverExpertRounds,
     startNativeTaskConversationFromPlan,
     resolveProjectModelServiceTierPlan,
     toNativeDurableAcceptance,
@@ -3061,6 +3094,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     parseConversationPermissionMode,
     providerTurnClientMessageId,
   } = conversationOperations;
+  if (executionHostDispatchMayResume) await recoverExpertRounds();
   submitPluginHookContinuation = conversationOperations.submitPluginHookContinuation;
   const gitIntegrationOperations = createGitIntegrationOperations({
     aiRuntimeManager,
@@ -3346,6 +3380,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     configuredCodexRuntimeCommandPath,
     conversationChoiceQueries,
     conversationExecution,
+    conversationExperts,
+    retryExpertExecution: conversationOperations.retryExpertExecution,
     conversationAttachmentRoot,
     taskAttachmentRoot,
     conversationCommands,

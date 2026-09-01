@@ -1086,6 +1086,9 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
     case 'conversation.item.delta':
     case 'conversation.item.completed':
       return reduceItemEvent(base, event);
+    case 'conversation.expert.round.changed':
+    case 'conversation.expert.execution.changed':
+      return reduceExpertEvent(base, event);
     case 'conversation.settings.changed':
       return { ...base, providerSettings: providerSettingsFrom(payload) };
     case 'conversation.tokenUsage.changed':
@@ -1244,6 +1247,79 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
     default:
       return base;
   }
+}
+
+function reduceExpertEvent(state: NativeSessionState, event: Extract<NativeConversationEvent, { type: 'conversation.expert.round.changed' | 'conversation.expert.execution.changed' }>): NativeSessionState {
+  const payload = event.payload;
+  const conversationId = stringValue(payload.conversationId) ?? state.conversationId;
+  const turnId = stringValue(payload.turnId) ?? state.activeTurnId;
+  if (!conversationId || !turnId) return state;
+  const threadId = stringValue(payload.threadId) ?? state.providerThreadId ?? 'unbound-thread';
+  const projected = event.type === 'conversation.expert.round.changed' ? payload.executions : [payload.execution];
+  if (!Array.isArray(projected) || projected.length === 0) return state;
+
+  const items = { ...state.items };
+  for (const execution of projected) {
+    if (!isRecord(execution) || typeof execution.id !== 'string' || !Number.isSafeInteger(execution.ordinal)) continue;
+    const itemId = `expert:${execution.id}`;
+    const key = nativeSessionItemKey(conversationId, threadId, turnId, itemId);
+    const previous = items[key];
+    const terminal = expertExecutionTerminal(execution.status);
+    items[key] = {
+      key,
+      conversationId,
+      threadId,
+      turnId,
+      itemId,
+      providerItemId: itemId,
+      type: 'agentMessage',
+      status: execution.status === 'completed' ? 'completed' : terminal ? 'failed' : 'in_progress',
+      phase: 'final_answer',
+      text: typeof execution.text === 'string' ? execution.text : (previous?.text ?? ''),
+      payload: {
+        actor: isRecord(execution.actor) ? execution.actor : (previous?.payload.actor ?? {}),
+        expertExecutionId: execution.id,
+        ordinal: execution.ordinal,
+        expertStatus: execution.status,
+        ...(isRecord(execution.error) ? { error: execution.error } : {}),
+      },
+      resources: previous?.resources ?? [],
+      timelineAt: previous?.timelineAt ?? event.createdAt,
+      updatedAt: event.createdAt,
+    };
+  }
+
+  const expertEntries = Object.entries(items)
+    .filter(([, item]) => item.turnId === turnId && typeof item.payload.expertExecutionId === 'string')
+    .sort((left, right) => (numberValue(left[1].payload.ordinal) ?? Number.MAX_SAFE_INTEGER) - (numberValue(right[1].payload.ordinal) ?? Number.MAX_SAFE_INTEGER));
+  const expertKeys = new Set(expertEntries.map(([key]) => key));
+  const priorFirstIndex = state.itemOrder.findIndex((key) => expertKeys.has(key));
+  const itemOrderWithoutExperts = state.itemOrder.filter((key) => !expertKeys.has(key));
+  const lastTurnItemIndex = itemOrderWithoutExperts.reduce((last, key, index) => (items[key]?.turnId === turnId ? index : last), -1);
+  const insertionIndex = priorFirstIndex >= 0 ? Math.min(priorFirstIndex, itemOrderWithoutExperts.length) : lastTurnItemIndex + 1;
+  const itemOrder = [...itemOrderWithoutExperts.slice(0, insertionIndex), ...expertEntries.map(([key]) => key), ...itemOrderWithoutExperts.slice(insertionIndex)];
+  const allTerminal = expertEntries.length > 0 && expertEntries.every(([, item]) => expertExecutionTerminal(stringValue(item.payload.expertStatus) ?? item.status));
+  const anyFailed = expertEntries.some(([, item]) => item.status === 'failed');
+  const queuedRound = event.type === 'conversation.expert.round.changed' && payload.queued === true;
+  const terminalTurnIds = { ...state.terminalTurnIds };
+  if (!queuedRound) {
+    if (allTerminal) terminalTurnIds[turnId] = anyFailed ? 'failed' : 'completed';
+    else delete terminalTurnIds[turnId];
+  }
+  return {
+    ...state,
+    items,
+    itemOrder,
+    terminalTurnIds,
+    activeTurnId: queuedRound ? state.activeTurnId : allTerminal && state.activeTurnId === turnId ? null : turnId,
+    startedTurnId: queuedRound ? state.startedTurnId : turnId,
+    transcriptRevision: state.transcriptRevision + 1,
+    conversationState: queuedRound ? state.conversationState : allTerminal ? (anyFailed ? 'turn_failed' : 'native_idle') : 'active_final_answer',
+  };
+}
+
+function expertExecutionTerminal(status: unknown): boolean {
+  return status === 'completed' || status === 'failed' || status === 'interrupted' || status === 'cancelled';
 }
 
 function planImplementationStatus(value: unknown): NativePlanImplementationRequest['status'] | null {
@@ -1750,7 +1826,7 @@ function applyProviderIdentityChange(state: NativeSessionState, payload: Record<
 function activeTurnFromSnapshot(snapshot: NativeConversationSnapshot): string | null {
   if (snapshot.queue.state.type === 'active' || snapshot.queue.state.type === 'waiting') return snapshot.queue.state.turnId;
   const active = [...snapshot.turns].reverse().find((turn) => turn.status === 'running' || turn.status === 'waiting');
-  if (active?.providerTurnId) return active.providerTurnId;
+  if (active) return active.providerTurnId ?? active.id;
   const activeSubmission = [...snapshot.submissions].reverse().find((submission) => submission.status === 'active' && submission.providerTurnId);
   return activeSubmission?.providerTurnId ?? null;
 }

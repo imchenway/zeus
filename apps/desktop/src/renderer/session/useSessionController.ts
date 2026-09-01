@@ -356,6 +356,9 @@ interface PendingSendEnvelope {
   permissionMode?: NativePermissionMode;
   collaborationMode: NativeCollaborationMode;
   pluginReferences?: PluginSkillReference[];
+  expertMentions?: Array<{ employeeId: string }>;
+  skillReferences?: Array<{ id: string }>;
+  computerUseRequested?: boolean;
   idempotencyKey: string;
   clientUserMessageId: string;
   startedAt?: string;
@@ -1828,6 +1831,9 @@ export function createSessionController(options: CreateSessionControllerOptions)
             ...(envelope.permissionMode ? { permissionMode: envelope.permissionMode } : {}),
             collaborationMode: envelope.collaborationMode,
             ...(envelope.pluginReferences?.length ? { pluginReferences: envelope.pluginReferences } : {}),
+            ...(envelope.expertMentions?.length ? { expertMentions: envelope.expertMentions } : {}),
+            ...(envelope.skillReferences?.length ? { skillReferences: envelope.skillReferences } : {}),
+            ...(envelope.computerUseRequested ? { computerUseRequested: true } : {}),
             idempotencyKey: envelope.idempotencyKey,
             clientUserMessageId: envelope.clientUserMessageId,
           });
@@ -2446,7 +2452,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
           pendingSend.serviceTier === settings?.serviceTier &&
           pendingSend.permissionMode === requestedPermissionMode &&
           pendingSend.collaborationMode === requestedCollaborationMode &&
-          samePluginReferences(pendingSend.pluginReferences, settings?.pluginReferences)
+          samePluginReferences(pendingSend.pluginReferences, settings?.pluginReferences) &&
+          sameStructuredReferences(pendingSend.expertMentions, settings?.expertMentions) &&
+          sameStructuredReferences(pendingSend.skillReferences, settings?.skillReferences) &&
+          Boolean(pendingSend.computerUseRequested) === Boolean(settings?.computerUseRequested)
         ) {
           return activeOperation.promise as Promise<NativeOperationAcceptance | void>;
         }
@@ -2460,9 +2469,9 @@ export function createSessionController(options: CreateSessionControllerOptions)
         return Promise.reject(new Error('Conversation message content, attachments, comments, or annotations are required.'));
       }
       const attachments = mergeAttachments(composerAttachments, browserSubmission?.attachments ?? []);
-      const displayText = draft.trim() || (browserSubmission ? `Browser comments (${browserSubmission.commentIds.length})` : '') || (contextDraft.codeComments.length ? '代码评论' : '回答批注');
-      const content = [draft.trim(), browserSubmission?.content.trim(), serializeConversationContext(contextDraft)].filter(Boolean).join('\n\n');
       const appliedSettings = delivery === 'queue' ? settings : undefined;
+      const displayText = appliedSettings?.displayText?.trim() || draft.trim() || (browserSubmission ? `Browser comments (${browserSubmission.commentIds.length})` : '') || (contextDraft.codeComments.length ? '代码评论' : '回答批注');
+      const content = [appliedSettings?.promptText?.trim() ?? draft.trim(), browserSubmission?.content.trim(), serializeConversationContext(contextDraft)].filter(Boolean).join('\n\n');
       const fingerprint = sendFingerprint({
         content,
         displayText,
@@ -2478,6 +2487,9 @@ export function createSessionController(options: CreateSessionControllerOptions)
         ...(appliedSettings ? { permissionMode: appliedSettings.permissionMode } : {}),
         collaborationMode: requestedCollaborationMode,
         ...(appliedSettings?.pluginReferences?.length ? { pluginReferences: appliedSettings.pluginReferences } : {}),
+        ...(appliedSettings?.expertMentions?.length ? { expertMentions: appliedSettings.expertMentions } : {}),
+        ...(appliedSettings?.skillReferences?.length ? { skillReferences: appliedSettings.skillReferences } : {}),
+        ...(appliedSettings?.computerUseRequested ? { computerUseRequested: true } : {}),
       });
       const reusableIdentity =
         pendingSend &&
@@ -2496,7 +2508,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
         pendingSend.effort === appliedSettings?.effort &&
         pendingSend.permissionMode === (appliedSettings ? appliedSettings.permissionMode : undefined) &&
         pendingSend.collaborationMode === requestedCollaborationMode &&
-        samePluginReferences(pendingSend.pluginReferences, appliedSettings?.pluginReferences)
+        samePluginReferences(pendingSend.pluginReferences, appliedSettings?.pluginReferences) &&
+        sameStructuredReferences(pendingSend.expertMentions, appliedSettings?.expertMentions) &&
+        sameStructuredReferences(pendingSend.skillReferences, appliedSettings?.skillReferences) &&
+        Boolean(pendingSend.computerUseRequested) === Boolean(appliedSettings?.computerUseRequested)
           ? pendingSend
           : null;
       const exactPending = pendingSend?.fingerprint === fingerprint ? pendingSend : null;
@@ -2533,6 +2548,9 @@ export function createSessionController(options: CreateSessionControllerOptions)
           ...(appliedSettings ? { permissionMode: appliedSettings.permissionMode } : {}),
           collaborationMode: requestedCollaborationMode,
           ...(appliedSettings?.pluginReferences?.length ? { pluginReferences: appliedSettings.pluginReferences } : {}),
+          ...(appliedSettings?.expertMentions?.length ? { expertMentions: appliedSettings.expertMentions } : {}),
+          ...(appliedSettings?.skillReferences?.length ? { skillReferences: appliedSettings.skillReferences } : {}),
+          ...(appliedSettings?.computerUseRequested ? { computerUseRequested: true } : {}),
           // provider 尚未接受的失败提交只调整服务档位时，沿用原幂等身份重试。
           idempotencyKey: reusableIdentity?.idempotencyKey ?? createId(),
           clientUserMessageId: reusableIdentity?.clientUserMessageId ?? createId(),
@@ -3124,6 +3142,9 @@ function isPendingSendEnvelope(value: unknown): value is PendingSendEnvelope {
     (pending.permissionMode === undefined || pending.permissionMode === 'read-only' || pending.permissionMode === 'auto' || pending.permissionMode === 'full-access') &&
     (pending.collaborationMode === undefined || pending.collaborationMode === 'default' || pending.collaborationMode === 'plan') &&
     (pending.pluginReferences === undefined || isPluginSkillReferences(pending.pluginReferences)) &&
+    (pending.expertMentions === undefined || isStableIdReferences(pending.expertMentions, 'employeeId')) &&
+    (pending.skillReferences === undefined || isStableIdReferences(pending.skillReferences, 'id')) &&
+    (pending.computerUseRequested === undefined || typeof pending.computerUseRequested === 'boolean') &&
     typeof pending.idempotencyKey === 'string' &&
     typeof pending.clientUserMessageId === 'string' &&
     (pending.startedAt === undefined || typeof pending.startedAt === 'string') &&
@@ -3207,6 +3228,18 @@ function sameContextDraft(left: ConversationContextDraft, right: ConversationCon
 
 function samePluginReferences(left: PluginSkillReference[] | undefined, right: PluginSkillReference[] | undefined): boolean {
   return JSON.stringify(left ?? []) === JSON.stringify(right ?? []);
+}
+
+function sameStructuredReferences(left: unknown[] | undefined, right: unknown[] | undefined): boolean {
+  return JSON.stringify(left ?? []) === JSON.stringify(right ?? []);
+}
+
+function isStableIdReferences(value: unknown, key: 'employeeId' | 'id'): boolean {
+  return (
+    Array.isArray(value) &&
+    value.length <= 8 &&
+    value.every((entry) => typeof entry === 'object' && entry !== null && !Array.isArray(entry) && typeof (entry as Record<string, unknown>)[key] === 'string' && Boolean((entry as Record<string, unknown>)[key]))
+  );
 }
 
 function isPluginSkillReferences(value: unknown): value is PluginSkillReference[] {

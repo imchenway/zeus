@@ -106,7 +106,7 @@ import { createCodexModelRequestTimingTracker } from './codexModelRequestTiming.
 import { assertCallerDoesNotOverrideCompiledContext, mergeCodexAdditionalContext } from './codexNativeContextProtocol.js';
 import { contextFromPersistedConversation, contextFromPersistedSubmission, emitPluginCompactionHook, prepareRecoveredCodexPlugins } from './codexConversationDispatchContext.js';
 import { createCodexNativeConversationAccess } from './codexNativeConversationAccess.js';
-import { readNativeSubmissionRecoveryKind, readNativeSubmissionSkill, readNativeSubmissionTaskPushLayout, type PersistedSubmissionInput } from './nativeConversationSubmissionInputs.js';
+import { nativeTurnComputerUseRequested, readNativeSubmissionRecoveryKind, readNativeSubmissionSkill, readNativeSubmissionTaskPushLayout, type PersistedSubmissionInput } from './nativeConversationSubmissionInputs.js';
 import { inferNativeConversationRunState, interruptedQueueSubmissions } from './codexNativeRunStateProjection.js';
 import { chooseNativeUserMessageContent, type ResolvedNativeUserMessageSubmission, resolveNativeUserMessageSubmission } from './codexNativeUserMessageProjection.js';
 import { runCodexPortableContextCompaction } from './codexPortableContextCompaction.js';
@@ -134,16 +134,13 @@ import { TurnProcessProjector } from './turnProcessProjector.js';
 import { createCodexServiceTierDowngrade, isServiceTierUnavailableError } from './codexServiceTierDowngrade.js';
 import { createCodexPluginToolApprovalApplication } from './codexPluginToolApprovalApplication.js';
 import type { ZeusConversationPluginRuntime } from './zeusConversationPluginRuntime.js';
-
 export { filterCompatibilitySnapshotItemAliases } from './codexProviderHistoryProjection.js';
-
 interface NativeConversationDispatchLease {
   submissionId: string;
   lifecycles: Set<NativeProviderWriteLifecycle>;
   rpcStartedResourceId: string | null;
   promise?: Promise<NativeAcceptedOperation>;
 }
-
 export interface CreateCodexNativeConversationCoordinatorOptions {
   manager: CodexAppServerManager;
   enabled?: boolean;
@@ -289,6 +286,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       const context = contexts.get(conversationId) ?? contextFromConversation(conversation);
       return { cwd: context.projectLocalPath, model: context.model, permissionMode: context.permissionMode };
     },
+    computerUseAllowed: (_conversationId, threadId, turnId) => nativeTurnComputerUseRequested(options.turns, options.submissions, threadId, turnId),
     requestPluginApproval: pluginToolApprovals.requestApproval,
     broadcast: options.broadcast,
     now,
@@ -736,6 +734,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       recoveryKind?: NativeSubmissionRecoveryKind;
       goalObjective?: string;
       skill?: NativeConversationSkillInput;
+      computerUseRequested?: boolean;
       requestedServiceTier?: string | null;
     },
     context: ConversationDispatchContext,
@@ -759,6 +758,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       ...(input.recoveryKind ? { recoveryKind: input.recoveryKind } : {}),
       ...(input.goalObjective ? { goalObjective: input.goalObjective } : {}),
       ...(input.skill ? { skill: input.skill } : {}),
+      ...(input.computerUseRequested ? { computerUseRequested: true } : {}),
     };
     const existing = input.submissionId ? options.submissions.getById(input.submissionId) : undefined;
     if (existing) {

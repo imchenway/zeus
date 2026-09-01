@@ -21,6 +21,7 @@ import {
   AutomationTaskRepository,
   CommandDefinitionRepository,
   ConversationExecutionRepository,
+  ConversationExpertRepository,
   ConversationProviderItemRepository,
   ConversationRepository,
   ConversationResourceRepository,
@@ -205,6 +206,7 @@ export type LocalServerPlatformRouteDependencies = Record<string, any> & {
   aiRuntimeManager: ReturnType<typeof createAiRuntimeSessionManager>;
   conversationChoiceQueries: ConversationChoiceQueryApplication;
   conversationExecution: ConversationExecutionRepository;
+  conversationExperts: ConversationExpertRepository;
   conversationDispatchCommands: ConversationDispatchCommandApplication;
   conversationAttachmentRoot?: string;
   taskAttachmentRoot?: string;
@@ -306,6 +308,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     configuredCodexRuntimeCommandPath,
     conversationChoiceQueries,
     conversationExecution,
+    conversationExperts,
+    retryExpertExecution,
     conversationAttachmentRoot,
     taskAttachmentRoot,
     conversationCommands,
@@ -1079,7 +1083,9 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         return conversationQueueCoreMutations.update({ conversationId: params.conversationId, submissionId: params.submissionId, content });
       },
       queueRetry: ({ params }) => {
-        requireNativeQueueConversation(params);
+        const conversation = requireNativeQueueConversation(params);
+        const expertExecution = conversationExperts.getExecution(params.submissionId);
+        if (expertExecution && expertExecution.conversationId === conversation.id) return retryExpertExecution(conversation.id, expertExecution.id);
         return conversationQueueCoreMutations.retry({ conversationId: params.conversationId, submissionId: params.submissionId });
       },
       prepareQueueReroute: prepareConversationQueueReroute,
@@ -1099,16 +1105,55 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       },
       turnInterrupt: async ({ params, operationIdentity }) => {
         const conversation = requireNativeQueueConversation(params);
-        const turn = conversationTurns.listByConversation(conversation.id).find((candidate) => candidate.providerTurnId === params.turnId);
+        const turn = conversationTurns.listByConversation(conversation.id).find((candidate) => candidate.id === params.turnId || candidate.providerTurnId === params.turnId);
         if (!turn) throw Object.assign(nativeApiError('ZEUS_NATIVE_TURN_NOT_FOUND', 'Native provider turn not found'), { statusCode: 404 });
+        if (!turn.providerTurnId && turn.clientSubmissionId) {
+          const executions = conversationExperts.listExecutionsBySubmission(turn.clientSubmissionId);
+          if (executions.length === 0) throw Object.assign(nativeApiError('ZEUS_NATIVE_TURN_NOT_FOUND', 'Native provider turn not found'), { statusCode: 404 });
+          const interruptedAt = now().toISOString();
+          for (const execution of executions) {
+            if (['completed', 'failed', 'interrupted', 'cancelled'].includes(execution.status)) continue;
+            const child = conversations.getById(execution.childConversationId);
+            const childTurn = conversationTurns.getLatestActiveByConversation(execution.childConversationId);
+            if (child && childTurn?.providerTurnId) {
+              try {
+                if (child.agentKind === 'pi') await piNativeCoordinator.interruptTurn({ conversation: child, providerTurnId: childTurn.providerTurnId });
+                else await codexNativeCoordinator.interruptTurn({ conversationId: child.id, providerTurnId: childTurn.providerTurnId });
+              } catch {
+                // 父轮次的停止意图仍需耐久收口；子 Provider 的迟到结果会被终态门禁丢弃。
+              }
+            }
+            const interrupted = conversationExperts.setExecutionStatus({ executionId: execution.id, status: 'interrupted', updatedAt: interruptedAt });
+            publishNativeConversationEvent('conversation.expert.execution.changed', {
+              conversationId: conversation.id,
+              turnId: turn.id,
+              execution: {
+                id: interrupted.id,
+                submissionId: interrupted.submissionId,
+                ordinal: interrupted.ordinal,
+                status: interrupted.status,
+                actor: JSON.parse(interrupted.employeeSnapshotJson),
+                text: interrupted.answer ?? '',
+                error: interrupted.errorJson ? JSON.parse(interrupted.errorJson) : null,
+              },
+            });
+          }
+          conversationExperts.finishRoundIfTerminal(turn.clientSubmissionId, interruptedAt);
+          await db.save();
+          queueMicrotask(() => void dispatchUnifiedConversationQueueHead?.(conversation.id).catch(() => undefined));
+          const updatedConversation = conversations.getById(conversation.id);
+          const submission = conversationSubmissions.getById(turn.clientSubmissionId);
+          if (!updatedConversation) throw nativeApiError('ZEUS_NATIVE_ACCEPTANCE_NOT_DURABLE', 'Native interrupt acceptance was not persisted.');
+          return toNativeInterruptAcceptance(operationIdentity, params.turnId, updatedConversation, submission);
+        }
         const operation =
           conversation.agentKind === 'pi'
-            ? await piNativeCoordinator.interruptTurn({ conversation, providerTurnId: params.turnId })
-            : await codexNativeCoordinator.interruptTurn({ conversationId: conversation.id, providerTurnId: params.turnId });
+            ? await piNativeCoordinator.interruptTurn({ conversation, providerTurnId: turn.providerTurnId! })
+            : await codexNativeCoordinator.interruptTurn({ conversationId: conversation.id, providerTurnId: turn.providerTurnId! });
         const updatedConversation = conversations.getById(conversation.id);
         const submission = operation.submissionId ? conversationSubmissions.getById(operation.submissionId) : undefined;
         if (!updatedConversation) throw nativeApiError('ZEUS_NATIVE_ACCEPTANCE_NOT_DURABLE', 'Native interrupt acceptance was not persisted.');
-        return toNativeInterruptAcceptance(operationIdentity, params.turnId, updatedConversation, submission);
+        return toNativeInterruptAcceptance(operationIdentity, turn.providerTurnId!, updatedConversation, submission);
       },
       serverRequestRespond: executeConversationDispatchRequestResponse,
       planImplementationRespond: async ({ params, action, feedback, operationIdentity }) => {
@@ -1384,13 +1429,28 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       const pendingPlanAction = conversationPlanActions.getLatestPending(conversation.id);
       // 询问回答是用户参与会话的正文历史，不是一次性 pending UI。只补回已经解决的
       // request_user_input；命令审批等协议请求仍由处理过程承载，避免扩大首屏载荷。
-      const visibleRequests = conversationRequests.listByConversation(conversation.id).filter((request) => request.status === 'pending' || (request.requestKind === 'request_user_input' && request.status === 'resolved'));
+      const directRequests = conversationRequests.listByConversation(conversation.id).filter((request) => request.status === 'pending' || (request.requestKind === 'request_user_input' && request.status === 'resolved'));
+      const expertRequests = conversationExperts.listParticipants(conversation.id).flatMap((participant) => conversationRequests.listPendingByConversation(participant.childConversationId));
+      const visibleRequests = [...directRequests, ...expertRequests];
       return {
         conversationId: conversation.id,
         // 先保留存储层本地身份；Renderer 会使用当前快照已知的映射统一为 Provider
         // 身份。这样超出最近轮次窗口的旧正文和旧回答仍共同使用本地 turnId，
         // 不会因为只有回答被提前转换而拆散到两个轮次。
-        requests: visibleRequests.map(toNativeServerRequest),
+        requests: visibleRequests.map((providerRequest) => {
+          const projected = toNativeServerRequest(providerRequest);
+          const execution = conversationExperts.getActiveExecutionByChildConversation(providerRequest.conversationId);
+          if (!execution) return projected;
+          const parentTurn = conversationTurns.listByConversation(conversation.id).find((turn) => turn.clientSubmissionId === execution.submissionId);
+          return {
+            ...projected,
+            conversationId: conversation.id,
+            ...(parentTurn ? { turnId: parentTurn.id } : {}),
+            actor: JSON.parse(execution.employeeSnapshotJson),
+            expertExecutionId: execution.id,
+            ordinal: execution.ordinal,
+          };
+        }),
         planImplementationRequests: pendingPlanAction ? [pendingPlanAction] : [],
       };
     },

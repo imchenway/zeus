@@ -75,6 +75,8 @@ const copy = {
     steeringQueued: '正在引导…',
     deletingQueued: '正在删除…',
     remoteDevice: '由远程设备发送',
+    retryExpert: '重试该专家',
+    retryingExpert: '正在重试…',
   },
   'en-US': {
     user: 'You',
@@ -120,6 +122,8 @@ const copy = {
     steeringQueued: 'Steering…',
     deletingQueued: 'Deleting…',
     remoteDevice: 'Sent from a remote device',
+    retryExpert: 'Retry this expert',
+    retryingExpert: 'Retrying…',
   },
 } as const;
 
@@ -146,6 +150,7 @@ export interface ThreadItemViewProps {
   queuedSteerDisabledReason?: string | null;
   onSteerQueuedSubmission?: (submissionId: string) => void | Promise<void>;
   onDeleteQueuedSubmission?: (submissionId: string) => void | Promise<void>;
+  onRetryExpertExecution?: (executionId: string) => void | Promise<void>;
 }
 
 function taskPushMessageLayout(value: unknown): TaskPushMessageLayout | null {
@@ -154,6 +159,13 @@ function taskPushMessageLayout(value: unknown): TaskPushMessageLayout | null {
   return candidate.kind === 'task_push' && Array.isArray(candidate.blocks) && typeof candidate.supplementalInfo === 'string' && (candidate.supplementalAttachments === undefined || Array.isArray(candidate.supplementalAttachments))
     ? ({ ...candidate, supplementalAttachments: candidate.supplementalAttachments ?? [] } as TaskPushMessageLayout)
     : null;
+}
+
+function digitalEmployeeActor(value: unknown): { name: string; role: string } | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const actor = value as Record<string, unknown>;
+  if (actor.kind !== 'digital_employee' || typeof actor.name !== 'string' || !actor.name.trim()) return null;
+  return { name: actor.name.trim(), role: typeof actor.role === 'string' ? actor.role.trim() : '' };
 }
 
 function resourceTaskPushAttachmentKey(resource: ConversationResource): string | null {
@@ -402,6 +414,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
   });
   const [submittingEdit, setSubmittingEdit] = useState(false);
+  const [retryingExpert, setRetryingExpert] = useState(false);
   const [markdownSettled, setMarkdownSettled] = useState(false);
   const editTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const articleRef = useRef<HTMLElement | null>(null);
@@ -441,11 +454,14 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const contextOnlyPlaceholder = role === 'user' && conversationContext ? isConversationContextPlaceholder(itemText) : false;
   const longUserMessage = role === 'user' && !taskPushLayout && !contextOnlyPlaceholder && itemText.length > 640;
   const visibleText = contextOnlyPlaceholder ? '' : longUserMessage && !expanded ? `${itemText.slice(0, 620).trimEnd()}…` : itemText;
-  const label = roleLabel(role, labels);
+  const expertActor = role === 'assistant' ? digitalEmployeeActor(props.item.payload.actor) : null;
+  const expertExecutionId = typeof props.item.payload.expertExecutionId === 'string' ? props.item.payload.expertExecutionId : null;
+  const expertFailed = Boolean(expertActor && expertExecutionId && props.item.payload.expertStatus === 'failed');
+  const label = expertActor ? [expertActor.name, expertActor.role].filter(Boolean).join(' · ') : roleLabel(role, labels);
   const command = normalizeType(props.item.type) === 'commandexecution' || normalizeType(props.item.type) === 'command';
   const mcpApp = normalizeType(props.item.type) === 'pluginmcpapp';
   const accessibleLabel = command ? (props.language === 'zh-CN' ? '命令执行' : 'Command execution') : label;
-  const showVisibleRoleLabel = role !== 'user' && role !== 'assistant' && role !== 'commentary' && role !== 'error';
+  const showVisibleRoleLabel = Boolean(expertActor) || (role !== 'user' && role !== 'assistant' && role !== 'commentary' && role !== 'error');
   // 任务首发消息已经是工作面的稳定内容，内部创建进度只在底部统一呈现。
   const optimisticStatus = props.item.optimistic && !taskPushLayout ? optimisticDeliveryStatus(props.item, labels) : null;
   const showMeta = !command && !recoveredRequestUserInput && (showVisibleRoleLabel || Boolean(optimisticStatus));
@@ -539,7 +555,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
     >
       {showMeta ? (
         <header className="session-thread-item-meta">
-          {showVisibleRoleLabel ? <strong>{label}</strong> : null}
+          {showVisibleRoleLabel ? <strong className={expertActor ? 'session-expert-actor-label' : undefined}>{label}</strong> : null}
           {optimisticStatus ? (
             <span className="session-item-state" role="status" aria-live="polite" aria-atomic="true">
               {optimisticStatus}
@@ -672,6 +688,22 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
         <span className="session-message-remote-origin" aria-label={labels.remoteDevice} title={labels.remoteDevice}>
           <MessageRemoteDeviceIcon />
         </span>
+      ) : null}
+      {expertFailed && props.onRetryExpertExecution ? (
+        <button
+          type="button"
+          className="session-expert-retry"
+          disabled={retryingExpert}
+          onClick={() => {
+            setRetryingExpert(true);
+            setQueuedActionError(null);
+            void Promise.resolve(props.onRetryExpertExecution?.(expertExecutionId!))
+              .catch(setQueuedActionError)
+              .finally(() => setRetryingExpert(false));
+          }}
+        >
+          {retryingExpert ? labels.retryingExpert : labels.retryExpert}
+        </button>
       ) : null}
       {props.queuedSubmissionId && (props.onSteerQueuedSubmission || props.onDeleteQueuedSubmission) ? (
         <div className="session-queued-thread-actions" role="group" aria-label={labels.queuedActions}>

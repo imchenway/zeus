@@ -14,7 +14,6 @@ import type {
   NativeConversationAttachment,
   NativeGoalSnapshot,
   NativePermissionMode,
-  PluginSkillReference,
   NativeServiceTierSelection,
   NativeSessionState,
   NativeTurnSettingsSelection,
@@ -33,7 +32,7 @@ import { normalizeServiceTierSelection, selectionFromEffectiveServiceTier, servi
 import { presentModelOptions } from '../modelOptionPresentation.js';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import { findProjectModelServiceTierPreference, projectModelServiceTierSelection } from './projectServiceTierPreferences.js';
-import { ExtensionMentionSelector } from './ExtensionMentionSelector.js';
+import { StructuredComposerInput, type StructuredComposerSelection } from './StructuredComposerInput.js';
 
 export type ComposerKeyIntent = 'submit' | 'newline' | 'escape' | 'ignore';
 export interface ComposerRuntimeSettings {
@@ -62,6 +61,8 @@ export interface ConversationComposerProps {
   onContextDraftChange?: (draft: ConversationContextDraft) => void;
   projectId?: string;
   onLoadExtensions?: (projectId?: string, forceReload?: boolean) => Promise<import('../features/codex/codexContracts.js').SkillCatalog>;
+  onLoadEmployees?: (projectId: string) => Promise<import('../features/digital-employees/digitalEmployeeContracts.js').DigitalEmployeeRecord[]>;
+  onOpenComputerSettings?: () => void;
   runtimeSettings?: ComposerRuntimeSettings | null;
   onRuntimeSettingsChange?: (settings: ComposerRuntimeSettings) => void;
   readOnly?: boolean;
@@ -134,7 +135,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const fallbackRef = useRef<HTMLTextAreaElement | null>(null);
   const textareaRef = props.textareaRef ?? fallbackRef;
   const composingRef = useRef(false);
-  const extensionReferencesRef = useRef(new Map<string, PluginSkillReference>());
+  const structuredSelectionRef = useRef<StructuredComposerSelection>({ displayText: props.state.draft, promptText: props.state.draft, expertMentions: [], skillReferences: [], pluginReferences: [], computerUseRequested: false });
   const [isComposing, setIsComposing] = useState(false);
   const [editorValue, setEditorValue] = useState(props.state.draft);
   const [goalInputOpen, setGoalInputOpen] = useState(false);
@@ -232,7 +233,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
 
   function submit(nextDelivery: 'queue' | 'steer_now'): void {
     if (nextDelivery === 'queue' && !selectedCapability) return;
-    const pluginReferences = [...extensionReferencesRef.current].filter(([token]) => editorValue.includes(token)).map(([, reference]) => reference);
+    const structured = structuredSelectionRef.current;
     const settings =
       nextDelivery === 'queue' && effectiveModel
         ? {
@@ -242,10 +243,15 @@ export function ConversationComposer(props: ConversationComposerProps) {
             ...serviceTierWireOverride(selectedServiceTier),
             permissionMode: props.permissionMode,
             collaborationMode: props.collaborationMode,
-            ...(pluginReferences.length ? { pluginReferences } : {}),
+            ...(structured.pluginReferences.length ? { pluginReferences: structured.pluginReferences } : {}),
+            ...(structured.expertMentions.length ? { expertMentions: structured.expertMentions } : {}),
+            ...(structured.skillReferences.length ? { skillReferences: structured.skillReferences } : {}),
+            ...(structured.computerUseRequested ? { computerUseRequested: true } : {}),
+            displayText: structured.displayText,
+            promptText: structured.promptText,
           }
         : undefined;
-    void Promise.resolve(props.onSubmit(nextDelivery, settings)).then(() => extensionReferencesRef.current.clear());
+    void Promise.resolve(props.onSubmit(nextDelivery, settings));
   }
 
   function enterGoalInput(initialObjective?: string): void {
@@ -263,6 +269,10 @@ export function ConversationComposer(props: ConversationComposerProps) {
   async function setGoalObjective(objective: string, clearMessageDraft = false): Promise<void> {
     const normalized = objective.trim();
     if (!props.onSetGoal || !normalized || [...normalized].length > 4_000 || goalOperationBusy) return;
+    if (structuredSelectionRef.current.expertMentions.length > 0) {
+      setInputResourceError(new Error(props.language === 'zh-CN' ? '同一草稿不能同时进入目标模式并点名数字员工。' : 'A draft cannot combine goal mode with digital employee mentions.'));
+      return;
+    }
     setGoalSubmitting(true);
     try {
       const saved = await props.onSetGoal(normalized);
@@ -327,6 +337,10 @@ export function ConversationComposer(props: ConversationComposerProps) {
         return;
       }
       if (/^\/goal(?:\s|$)/u.test(editorValue.trim()) && !props.state.browserSubmission && props.goalAvailable) {
+        if (structuredSelectionRef.current.expertMentions.length > 0) {
+          setInputResourceError(new Error(props.language === 'zh-CN' ? '同一草稿不能同时进入目标模式并点名数字员工。' : 'A draft cannot combine goal mode with digital employee mentions.'));
+          return;
+        }
         void runGoalCommand(editorValue.trim());
         return;
       }
@@ -381,71 +395,81 @@ export function ConversationComposer(props: ConversationComposerProps) {
             onRestorePastedText={inputResources.restorePastedText}
           />
         )}
-        <textarea
-          ref={textareaRef}
-          aria-label={goalInputActive ? copy.goalInput : copy.input}
-          aria-keyshortcuts="Enter Shift+Enter Escape Meta+A Control+A"
-          placeholder={goalInputActive ? copy.goalPlaceholder : props.inputBlocked ? copy.recoveredInputBlocked : copy.placeholder}
-          value={goalInputActive ? goalDraft : editorValue}
-          disabled={!inputWritable || busy || goalOperationBusy}
-          onChange={(event) => {
-            autosizeTextarea(event.currentTarget);
-            const nextValue = event.currentTarget.value;
-            if (goalInputActive) {
-              setGoalDraft(nextValue);
-              return;
+        {goalInputActive ? (
+          <textarea
+            ref={textareaRef}
+            aria-label={copy.goalInput}
+            aria-keyshortcuts="Enter Shift+Enter Escape Meta+A Control+A"
+            placeholder={copy.goalPlaceholder}
+            value={goalDraft}
+            disabled={!inputWritable || busy || goalOperationBusy}
+            onChange={(event) => {
+              autosizeTextarea(event.currentTarget);
+              setGoalDraft(event.currentTarget.value);
+            }}
+            onCompositionStart={() => setIsComposing(true)}
+            onCompositionEnd={() => setIsComposing(false)}
+            onKeyDown={handleKeyDown}
+          />
+        ) : (
+          <StructuredComposerInput
+            value={editorValue}
+            onValueChange={(nextValue) => {
+              setEditorValue(nextValue);
+              if (!composingRef.current) props.onDraftChange(nextValue);
+            }}
+            onSelectionChange={(selection) => {
+              structuredSelectionRef.current = selection;
+            }}
+            textareaRef={textareaRef}
+            projectId={props.projectId}
+            language={props.language}
+            disabled={!inputWritable || busy || goalOperationBusy}
+            ariaLabel={copy.input}
+            ariaKeyShortcuts="Enter Shift+Enter Escape Meta+A Control+A"
+            placeholder={props.inputBlocked ? copy.recoveredInputBlocked : copy.placeholder}
+            loadCatalog={props.onLoadExtensions}
+            loadEmployees={props.onLoadEmployees}
+            goalAvailable={props.goalAvailable}
+            onPlanMode={() =>
+              props.onRuntimeSettingsChange?.({
+                model: effectiveModel,
+                effort: selectedEffort,
+                ...serviceTierWireOverride(selectedServiceTier),
+                permissionMode: props.permissionMode,
+                collaborationMode: props.collaborationMode === 'plan' ? 'default' : 'plan',
+              })
             }
-            setEditorValue(nextValue);
-            if (!composingRef.current) props.onDraftChange(nextValue);
-          }}
-          onCompositionStart={() => {
-            composingRef.current = true;
-            setIsComposing(true);
-          }}
-          onCompositionEnd={(event) => {
-            const nextValue = event.currentTarget.value;
-            composingRef.current = false;
-            setIsComposing(false);
-            if (goalInputActive) {
-              setGoalDraft(nextValue);
-              return;
-            }
-            setEditorValue(nextValue);
-            props.onDraftChange(nextValue);
-          }}
-          onBlur={(event) => {
-            if (!composingRef.current) return;
-            const nextValue = event.currentTarget.value;
-            composingRef.current = false;
-            setIsComposing(false);
-            if (goalInputActive) {
-              setGoalDraft(nextValue);
-              return;
-            }
-            setEditorValue(nextValue);
-            props.onDraftChange(nextValue);
-          }}
-          onPaste={goalInputActive ? undefined : inputResources.handlePaste}
-          onKeyDown={handleKeyDown}
-        />
+            onGoalMode={() => {
+              if (props.goal) props.onOpenGoal?.();
+              else enterGoalInput();
+            }}
+            onOpenComputerSettings={props.onOpenComputerSettings}
+            onCompositionStart={() => {
+              composingRef.current = true;
+              setIsComposing(true);
+            }}
+            onCompositionEnd={(event) => {
+              const nextValue = event.currentTarget.value;
+              composingRef.current = false;
+              setIsComposing(false);
+              setEditorValue(nextValue);
+              props.onDraftChange(nextValue);
+            }}
+            onBlur={(event) => {
+              if (!composingRef.current) return;
+              const nextValue = event.currentTarget.value;
+              composingRef.current = false;
+              setIsComposing(false);
+              setEditorValue(nextValue);
+              props.onDraftChange(nextValue);
+            }}
+            onPaste={inputResources.handlePaste}
+            onKeyDown={handleKeyDown}
+          />
+        )}
         <div className="session-composer-command-row">
           <span className="session-composer-leading-actions">
-            {!goalInputActive ? (
-              <ExtensionMentionSelector
-                projectId={props.projectId}
-                language={props.language}
-                disabled={!inputWritable || busy}
-                loadCatalog={props.onLoadExtensions}
-                onInsert={(selection) => {
-                  if (selection.reference) extensionReferencesRef.current.set(selection.token, selection.reference);
-                  const token = selection.token;
-                  const next = `${editorValue}${editorValue && !/\s$/u.test(editorValue) ? ' ' : ''}${token} `;
-                  setEditorValue(next);
-                  props.onDraftChange(next);
-                  requestAnimationFrame(() => textareaRef.current?.focus());
-                }}
-              />
-            ) : null}
             {!goalInputActive && props.onChooseAttachments ? (
               <button
                 type="button"
@@ -503,7 +527,9 @@ export function ConversationComposer(props: ConversationComposerProps) {
                 onClick={() => {
                   if (props.goal) props.onOpenGoal?.();
                   else if (goalInputActive) exitGoalInput();
-                  else enterGoalInput();
+                  else if (structuredSelectionRef.current.expertMentions.length > 0) {
+                    setInputResourceError(new Error(props.language === 'zh-CN' ? '同一草稿不能同时进入目标模式并点名数字员工。' : 'A draft cannot combine goal mode with digital employee mentions.'));
+                  } else enterGoalInput();
                 }}
                 disabled={props.readOnly === true || props.inputBlocked === true || goalOperationBusy || (props.goal ? !props.onOpenGoal : !props.onSetGoal)}
               >

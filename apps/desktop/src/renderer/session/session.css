@@ -1625,6 +1625,14 @@
   font-weight: 610;
 }
 
+.session-codex-parity-v1 .session-thread-item-meta .session-expert-actor-label {
+  background: color-mix(in srgb, var(--session-accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--session-accent) 26%, transparent);
+  border-radius: 999px;
+  color: var(--session-accent);
+  padding: 2px 8px;
+}
+
 .session-codex-parity-v1 .session-item-state {
   align-items: center;
   display: inline-flex;
@@ -14582,6 +14590,195 @@
   .macos-ai-app .session-permission-dialog-actions > .zeus-button {
     inline-size: 100%;
     min-inline-size: 0;
+  }
+}
+/* ZEUS-0427：原生 textarea 保持唯一输入表面，镜像层只投影结构化标签。 */
+.session-codex-parity-v1 .structured-composer-root {
+  min-inline-size: 0;
+  position: relative;
+}
+
+.session-codex-parity-v1 .structured-composer-editor {
+  display: grid;
+  min-inline-size: 0;
+  position: relative;
+}
+
+.session-codex-parity-v1 .structured-composer-editor > textarea,
+.session-codex-parity-v1 .structured-composer-mirror {
+  appearance: none;
+  border: 0;
+  box-sizing: border-box;
+  font: inherit;
+  grid-area: 1 / 1;
+  inline-size: 100%;
+  line-height: 1.45;
+  margin: 0;
+  max-block-size: 34vh;
+  min-block-size: 48px;
+  overflow-wrap: break-word;
+  padding: 4px 5px;
+  white-space: pre-wrap;
+}
+
+.session-codex-parity-v1 .structured-composer-editor > textarea {
+  background: transparent !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  caret-color: var(--session-text);
+  color: transparent !important;
+  -webkit-text-fill-color: transparent;
+  outline: 0;
+  overflow-y: hidden;
+  position: relative;
+  resize: none;
+  z-index: 1;
+}
+
+.session-codex-parity-v1 .structured-composer-editor > textarea::placeholder {
+  color: var(--session-text-muted);
+  -webkit-text-fill-color: var(--session-text-muted);
+}
+
+.session-codex-parity-v1 .structured-composer-editor > textarea::selection {
+  background: color-mix(in srgb, var(--session-accent) 22%, transparent);
+}
+
+.session-codex-parity-v1 .structured-composer-mirror {
+  color: var(--session-text);
+  overflow: hidden;
+  pointer-events: none;
+  position: relative;
+  z-index: 0;
+}
+
+.session-codex-parity-v1 .structured-composer-token {
+  border: 0;
+  border-radius: 6px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--session-accent) 42%, transparent);
+}
+
+.session-codex-parity-v1 .structured-composer-token[data-kind='expert'] {
+  background: color-mix(in srgb, #3b82f6 15%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, #3b82f6 46%, transparent);
+  color: color-mix(in srgb, #2563eb 86%, var(--session-text));
+}
+
+.session-codex-parity-v1 .structured-composer-token[data-kind='skill'],
+.session-codex-parity-v1 .structured-composer-token[data-kind='plugin'],
+.session-codex-parity-v1 .structured-composer-token[data-kind='plugin-skill'] {
+  background: color-mix(in srgb, #8b5cf6 13%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, #8b5cf6 42%, transparent);
+  color: color-mix(in srgb, #7c3aed 82%, var(--session-text));
+}
+
+.session-codex-parity-v1 .structured-composer-token[data-kind='computer'] {
+  background: color-mix(in srgb, #0f9f87 13%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, #0f9f87 42%, transparent);
+  color: color-mix(in srgb, #087f6c 84%, var(--session-text));
+}
+
+.session-codex-parity-v1 .structured-composer-menu {
+  background: color-mix(in srgb, var(--zeus-product-panel) 96%, transparent);
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 12px;
+  bottom: calc(100% + 8px);
+  box-shadow:
+    0 14px 44px var(--session-shadow),
+    0 2px 8px var(--session-shadow-soft);
+  display: grid;
+  gap: 2px;
+  inline-size: min(520px, calc(100vw - 48px));
+  inset-inline-start: 0;
+  max-block-size: min(52vh, 420px);
+  overflow-y: auto;
+  padding: 6px;
+  position: absolute;
+  z-index: 30;
+}
+
+.session-codex-parity-v1 .structured-composer-option {
+  align-items: center;
+  border-radius: 8px;
+  column-gap: 10px;
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: 86px minmax(120px, auto) minmax(0, 1fr);
+  min-block-size: 38px;
+  padding: 6px 9px;
+}
+
+.session-codex-parity-v1 .structured-composer-option[data-active='true'] {
+  background: var(--session-selected);
+}
+
+.session-codex-parity-v1 .structured-composer-option[data-disabled='true'] {
+  cursor: default;
+  opacity: 0.48;
+}
+
+.session-codex-parity-v1 .structured-composer-option-group {
+  color: var(--session-text-muted);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .structured-composer-option > strong {
+  color: var(--session-text);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .structured-composer-option > small,
+.session-codex-parity-v1 .structured-composer-empty {
+  color: var(--session-text-muted);
+  font-size: 11px;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-expert-retry {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--session-danger) 34%, var(--session-line));
+  border-radius: 7px;
+  color: var(--session-danger);
+  font-size: 11px;
+  margin-block-start: 7px;
+  min-block-size: 28px;
+  padding-inline: 9px;
+}
+
+.session-codex-parity-v1 .structured-composer-empty {
+  padding: 12px;
+  white-space: normal;
+}
+
+@media (max-width: 720px) {
+  .session-codex-parity-v1 .structured-composer-option {
+    grid-template-columns: minmax(96px, auto) minmax(0, 1fr);
+  }
+
+  .session-codex-parity-v1 .structured-composer-option > small {
+    display: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .session-codex-parity-v1 .structured-composer-token,
+  .session-codex-parity-v1 .structured-composer-menu {
+    forced-color-adjust: none;
   }
 }
 

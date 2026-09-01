@@ -1,5 +1,5 @@
 import type { TaskPushMessageLayout } from '@zeus/shared';
-import type { ZeusConversationSubmissionRecord } from '@zeus/storage';
+import type { ConversationSubmissionRepository, ConversationTurnRepository, ZeusConversationSubmissionRecord } from '@zeus/storage';
 import { realpathSync, statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import type { ConversationDispatchContext, NativeConversationAttachmentInput, NativeConversationSkillInput, NativeSubmissionRecoveryKind } from './codexNativeConversationContracts.js';
@@ -29,6 +29,18 @@ export interface PersistedSubmissionInput {
   recoveryKind?: NativeSubmissionRecoveryKind;
   goalObjective?: string;
   skill?: NativeConversationSkillInput;
+  computerUseRequested?: boolean;
+}
+
+export function nativeTurnComputerUseRequested(turns: Pick<ConversationTurnRepository, 'getByProvider'>, submissions: Pick<ConversationSubmissionRepository, 'getById'>, threadId: string, turnId: string): boolean {
+  const turn = turns.getByProvider(threadId, turnId);
+  const submission = turn?.clientSubmissionId ? submissions.getById(turn.clientSubmissionId) : undefined;
+  if (!submission) return false;
+  try {
+    return parseJsonRecord(submission.inputJson).computerUseRequested === true;
+  } catch {
+    return false;
+  }
 }
 
 export function readNativeSubmissionRecoveryKind(submission: ZeusConversationSubmissionRecord, input = parseJsonRecord(submission.inputJson)): NativeSubmissionRecoveryKind | null {
