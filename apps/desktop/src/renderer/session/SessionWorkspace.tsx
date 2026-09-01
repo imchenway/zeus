@@ -1587,6 +1587,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const interactionReadOnly = Boolean(props.historyOnly) || hardInteractionReadOnly;
   const composerReadOnly = hardInteractionReadOnly || Boolean(props.historyOnly && !historyComposerWritable);
   const transcriptInteractionsEnabled = !interactionReadOnly;
+  const contextDraftWritable = !composerReadOnly && Boolean(actions.onContextDraftChange);
   // 历史分页、过程与截断正文都是本地只读查询。会话只读时仍必须允许查看。
   const transcriptReadActionsEnabled = true;
   const realtimeExpected = sessionStateNeedsRealtime(props.state);
@@ -2547,9 +2548,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                         : undefined
                     }
                     onOperateTurnChangeSet={transcriptInteractionsEnabled && actions.onOperateTurnChangeSet ? operateTurnChangeSet : undefined}
-                    onAddResponseAnnotation={transcriptInteractionsEnabled && actions.onContextDraftChange ? addResponseAnnotation : undefined}
-                    onUpdateResponseAnnotation={transcriptInteractionsEnabled && actions.onContextDraftChange ? updateResponseAnnotation : undefined}
-                    onRemoveResponseAnnotation={transcriptInteractionsEnabled && actions.onContextDraftChange ? removeResponseAnnotation : undefined}
+                    onAddResponseAnnotation={contextDraftWritable ? addResponseAnnotation : undefined}
+                    onUpdateResponseAnnotation={contextDraftWritable ? updateResponseAnnotation : undefined}
+                    onRemoveResponseAnnotation={contextDraftWritable ? removeResponseAnnotation : undefined}
                     onOpenSideChat={
                       transcriptInteractionsEnabled && actions.onAskSideChat
                         ? (selectedText) => {
@@ -2642,7 +2643,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                           onFullWidthChange={setContextFullWidth}
                           onClose={closeContextWorkspace}
                           comments={props.state?.contextDraft.codeComments}
-                          onCommentsChange={!interactionReadOnly && actions.onContextDraftChange ? updateCodeComments : undefined}
+                          onCommentsChange={contextDraftWritable ? updateCodeComments : undefined}
                         />
                       ) : null}
                       {contextWorkspace.kind === 'turn_diff' && turnDiffChangeSet ? (
@@ -2656,7 +2657,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                           onOperate={!interactionReadOnly && actions.onOperateTurnChangeSet ? operateTurnChangeSet : undefined}
                           onOpenFile={(file, line) => openTurnChangeFile(turnDiffChangeSet, file, line)}
                           comments={props.state?.contextDraft.codeComments}
-                          onCommentsChange={!interactionReadOnly && actions.onContextDraftChange ? updateCodeComments : undefined}
+                          onCommentsChange={contextDraftWritable ? updateCodeComments : undefined}
                         />
                       ) : null}
                       {contextWorkspace.kind === 'side_chat' && actions.onAskSideChat ? (

@@ -305,6 +305,27 @@ const zeus0388Capabilities: CodexConversationCapabilities = {
   },
 };
 
+function selectZeus0388AnswerText(): void {
+  const root = document.querySelector<HTMLElement>('[data-testid="zeus-0388-workspace"] .session-thread-item-assistant .session-markdown');
+  if (!root) return;
+  root.scrollIntoView({ block: 'center' });
+  requestAnimationFrame(() => {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node && !node.textContent?.trim()) node = walker.nextNode();
+    if (!node?.textContent) return;
+    const start = node.textContent.search(/\S/u);
+    if (start < 0) return;
+    const range = document.createRange();
+    range.setStart(node, start);
+    range.setEnd(node, Math.min(node.textContent.length, start + 8));
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    root.closest('article')?.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+  });
+}
+
 export function Zeus0388QaApp() {
   const [resourceRequests, setResourceRequests] = useState(0);
   const [submitCount, setSubmitCount] = useState(0);
@@ -458,13 +479,17 @@ export function Zeus0388QaApp() {
           <button type="button" onClick={() => selectGuard('recovered')}>
             待恢复消息
           </button>
+          <button type="button" onClick={selectZeus0388AnswerText}>
+            模拟回答选区
+          </button>
         </div>
         <output data-testid="zeus-0388-resource-evidence">
           资源请求 {resourceRequests} 次 · 助手交付项 {deliverableItems.length} 个 · 权威对账后 {refreshedDeliverableItems.length} 个 · 调研报告 {reportFileProjected ? '可见' : '缺失'} · 普通过程图片未提升{' '}
           {ordinaryImageViewProjected ? '失败' : '通过'}
         </output>
         <output data-testid="zeus-0388-compose-evidence">
-          {historyOnly ? '历史快照' : '交互模式'} · 首次切换 {historyTransitions} 次 · 发送 {submitCount} 次 · 配置变更 {settingsChanges} 次 · 输入附件 {visibleState.attachments.length} 个 · 门禁 {guard}
+          {historyOnly ? '历史快照' : '交互模式'} · 首次切换 {historyTransitions} 次 · 发送 {submitCount} 次 · 配置变更 {settingsChanges} 次 · 输入附件 {visibleState.attachments.length} 个 · 批注{' '}
+          {visibleState.contextDraft.responseAnnotations.length} 个 · 门禁 {guard}
         </output>
       </section>
       <section className="qa-implementation-panel session-codex-parity-v1 theme-light" style={{ blockSize: 920 }} data-testid="zeus-0388-workspace">
@@ -491,6 +516,7 @@ export function Zeus0388QaApp() {
             },
             onChooseAttachments: () => controller.setAttachments([...state.attachments, zeus0388Attachment]),
             onRemoveAttachment: (attachment) => controller.setAttachments(state.attachments.filter((candidate) => candidate !== attachment)),
+            onContextDraftChange: (draft) => controller.setContextDraft(draft),
             onNextTurnSettingsChange: () => setSettingsChanges((count) => count + 1),
             onLoadConversationResources: () => controller.loadConversationResources(),
             onLoadResourcePreview: async (resource) => ({
