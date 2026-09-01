@@ -1,17 +1,7 @@
-import {
-    createSessionController,
-    type SessionControllerClient,
-    sessionRealtimeBufferBudget
-} from '../apps/desktop/src/renderer/session/useSessionController.ts';
-import {
-    adaptConversationSnapshotV2,
-    mergeConversationProcessV2
-} from '../apps/desktop/src/renderer/session/conversationSnapshotV2Adapter.ts';
-import {createHydratedSessionState, sessionReducer} from '../apps/desktop/src/renderer/session/sessionReducer.ts';
-import type {
-    NativePlanImplementationRequest,
-    NativeRealtimeEventEnvelope
-} from '../apps/desktop/src/renderer/session/sessionTypes.ts';
+import { createSessionController, type SessionControllerClient, sessionRealtimeBufferBudget } from '../apps/desktop/src/renderer/session/useSessionController.ts';
+import { adaptConversationSnapshotV2, mergeConversationProcessV2 } from '../apps/desktop/src/renderer/session/conversationSnapshotV2Adapter.ts';
+import { createHydratedSessionState, sessionReducer } from '../apps/desktop/src/renderer/session/sessionReducer.ts';
+import type { NativePlanImplementationRequest, NativeRealtimeEventEnvelope } from '../apps/desktop/src/renderer/session/sessionTypes.ts';
 
 const projectId = 'renderer-event-flow-project';
 const conversationId = 'renderer-event-flow-conversation';
@@ -21,7 +11,7 @@ const queue = { state: { type: 'idle' as const }, submissions: [] };
 
 const snapshotV2 = {
   schemaVersion: 2 as const,
-    structureGeneration: '2026-09-01-conversation-snapshot-v2-turn-output-anchors' as const,
+  structureGeneration: '2026-09-01-conversation-snapshot-v2-turn-output-anchors' as const,
   conversationSchemaGeneration: '2026-08-16-unified-conversation-segments' as const,
   throughEventSeq: 0,
   eventStreamGeneration: 'zeus-conversation-sync-v2',
@@ -67,7 +57,7 @@ const snapshotV2 = {
 
 const historyV2 = {
   schemaVersion: 2 as const,
-    structureGeneration: '2026-09-01-conversation-snapshot-v2-turn-output-anchors' as const,
+  structureGeneration: '2026-09-01-conversation-snapshot-v2-turn-output-anchors' as const,
   conversationId,
   kind: 'model_history' as const,
   throughEventSeq: 0,
@@ -398,7 +388,7 @@ function verifyInternalPayloadsStayOutOfTranscript() {
   assert(adapted.items[1]?.text === '最终回答' && adapted.items[1]?.type === 'agentMessage', 'Internal tool_call projections must never become visible assistant transcript rows.');
   const merged = mergeConversationProcessV2(adapted, 'turn', {
     schemaVersion: 2,
-      structureGeneration: '2026-09-01-conversation-snapshot-v2-turn-output-anchors',
+    structureGeneration: '2026-09-01-conversation-snapshot-v2-turn-output-anchors',
     conversationId,
     kind: 'process',
     throughEventSeq: 0,
@@ -510,7 +500,7 @@ function verifyProcessPageDoesNotDowngradeLiveTerminalState() {
 
   const staleProcessPage = mergeConversationProcessV2(adapted, providerTurnId, {
     schemaVersion: 2,
-      structureGeneration: '2026-09-01-conversation-snapshot-v2-turn-output-anchors',
+    structureGeneration: '2026-09-01-conversation-snapshot-v2-turn-output-anchors',
     conversationId,
     kind: 'process',
     throughEventSeq: 0,

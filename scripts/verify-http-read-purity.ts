@@ -1,19 +1,19 @@
-import {spawnSync} from 'node:child_process';
-import {mkdir, mkdtemp, rm, writeFile} from 'node:fs/promises';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import {DatabaseSync} from 'node:sqlite';
-import type {CodexAppServerManager} from '@zeus/ai-runtime';
-import {createZeusDataLayout, startZeusLocalServer} from '../packages/local-server/src/index.js';
+import { spawnSync } from 'node:child_process';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import type { CodexAppServerManager } from '@zeus/ai-runtime';
+import { createZeusDataLayout, startZeusLocalServer } from '../packages/local-server/src/index.js';
 import {
-    ConversationProviderItemRepository,
-    ConversationRepository,
-    createZeusDatabase,
-    ProjectRepository,
-    ProjectRepositoryRegistrationRepository,
-    RuntimeSessionRepository,
-    TaskEventRepository,
-    TaskRepository,
+  ConversationProviderItemRepository,
+  ConversationRepository,
+  createZeusDatabase,
+  ProjectRepository,
+  ProjectRepositoryRegistrationRepository,
+  RuntimeSessionRepository,
+  TaskEventRepository,
+  TaskRepository,
 } from '../packages/storage/src/index.js';
 
 const probeRoot = await mkdtemp(join(tmpdir(), 'zeus-http-read-purity-'));
@@ -230,7 +230,7 @@ function createPassiveCodexManager(calls: string[]): CodexAppServerManager {
     generationForThread: () => null,
     listRuntimeGenerations: () => [],
     subscribe: () => () => undefined,
-      subscribeRpcRetries: () => () => undefined,
+    subscribeRpcRetries: () => () => undefined,
     subscribeExternalAgentImport: () => () => undefined,
     prepareForShutdown: async () => undefined,
     close: async () => undefined,

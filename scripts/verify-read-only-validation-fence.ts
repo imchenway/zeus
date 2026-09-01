@@ -1,23 +1,12 @@
-import {spawnSync} from 'node:child_process';
-import {createHash, randomUUID} from 'node:crypto';
-import {chmod, lstat, mkdir, mkdtemp, open, readdir, realpath, rm, writeFile} from 'node:fs/promises';
-import {tmpdir} from 'node:os';
-import {join, resolve} from 'node:path';
-import {DatabaseSync} from 'node:sqlite';
-import type {CodexAppServerManager} from '@zeus/ai-runtime';
-import {
-    type BrowserAutomationPort,
-    createZeusDataLayout,
-    inspectReadOnlyValidationManifest,
-    startZeusLocalServer,
-    verifyReadOnlyValidationDescriptor
-} from '../packages/local-server/src/index.ts';
-import {
-    ConversationGoalRepository,
-    ConversationRepository,
-    createZeusDatabase,
-    ProjectRepository
-} from '../packages/storage/src/index.ts';
+import { spawnSync } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
+import { chmod, lstat, mkdir, mkdtemp, open, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import type { CodexAppServerManager } from '@zeus/ai-runtime';
+import { type BrowserAutomationPort, createZeusDataLayout, inspectReadOnlyValidationManifest, startZeusLocalServer, verifyReadOnlyValidationDescriptor } from '../packages/local-server/src/index.ts';
+import { ConversationGoalRepository, ConversationRepository, createZeusDatabase, ProjectRepository } from '../packages/storage/src/index.ts';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const probeRoot = await realpath(await mkdtemp(join(tmpdir(), 'zeus-read-only-validation-fence-')));
@@ -244,7 +233,7 @@ try {
       Array.isArray(diagnostics.body.skipped) &&
       diagnostics.body.skipped.length === 15 &&
       new Set(diagnostics.body.skipped.map((entry) => (isRecord(entry) ? entry.id : null))).size === 15,
-      '诊断接口必须给出同一副本身份和 15 项互异的启动副作用跳过证据。',
+    '诊断接口必须给出同一副本身份和 15 项互异的启动副作用跳过证据。',
   );
   assertProbe(
     heavyWorkers.statusCode === 200 && isRecord(heavyWorkers.body) && heavyWorkers.body.acceptingJobs === false && heavyWorkers.body.activeJobs === 0 && heavyWorkers.body.queuedJobs === 0,
@@ -288,7 +277,7 @@ try {
     '/api/security/secrets',
     '/api/git/status',
     '/api/code-map/status',
-      '/api/skills',
+    '/api/skills',
     '/api/projects/project_read_only_validation_probe/git/status',
     '/api/projects/project_read_only_validation_probe/database/secret',
     '/api/projects/project_read_only_validation_probe/model-selection',
@@ -363,7 +352,7 @@ function createPoisonCodexManager(forbiddenCalls: string[]): CodexAppServerManag
     generationForThread: () => null,
     listRuntimeGenerations: () => [],
     subscribe: () => () => undefined,
-      subscribeRpcRetries: () => () => undefined,
+    subscribeRpcRetries: () => () => undefined,
     subscribeExternalAgentImport: () => () => undefined,
     prepareForShutdown: async () => undefined,
     close: async () => undefined,

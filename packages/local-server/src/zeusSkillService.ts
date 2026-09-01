@@ -1,9 +1,9 @@
-import {execFile} from 'node:child_process';
-import {createHash, randomUUID} from 'node:crypto';
-import {cp, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat} from 'node:fs/promises';
-import {basename, dirname, isAbsolute, join, relative, resolve, sep} from 'node:path';
-import {promisify} from 'node:util';
-import type {CodexAppServerManager, CodexSkillMetadata, CodexSkillScope} from '@zeus/ai-runtime';
+import { execFile } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
+import { cp, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { promisify } from 'node:util';
+import type { CodexAppServerManager, CodexSkillMetadata, CodexSkillScope } from '@zeus/ai-runtime';
 
 const execFileAsync = promisify(execFile);
 const maximumSkillNodes = 5_000;
@@ -68,17 +68,13 @@ export function createZeusSkillService(options: { skillsRoot: string; manager: P
   const skillProfileRoot = dirname(skillsRoot);
   const now = options.now ?? (() => new Date());
 
-    async function list(input: {
-        cwd: string;
-        forceReload?: boolean;
-        startProvider?: boolean
-    }): Promise<ZeusSkillCatalog> {
+  async function list(input: { cwd: string; forceReload?: boolean; startProvider?: boolean }): Promise<ZeusSkillCatalog> {
     const cwd = await requireDirectory(input.cwd, 'Skill 工作目录');
     const installed = await discoverZeusInstalledSkills(skillsRoot);
     let providerSkills: CodexSkillMetadata[] = [];
     let providerErrors: Array<Record<string, unknown>> = [];
     try {
-        if (input.startProvider) await options.ensureReady();
+      if (input.startProvider) await options.ensureReady();
       const entries = await options.manager.listSkills({ cwds: [cwd], ...(input.forceReload ? { forceReload: true } : {}) });
       const entry = entries.find((candidate) => resolve(candidate.cwd) === cwd) ?? entries[0];
       if (entry) {
@@ -110,7 +106,7 @@ export function createZeusSkillService(options: { skillsRoot: string; manager: P
       // 本地来源可能在复制期间变化；只信任复制后的隔离快照，并再次检查符号链接、大小和元数据。
       const inspection = await inspectSkillSource(stagedSkill);
       if (inspection.name !== sourceInspection.name) throw new CodexSkillServiceError('ZEUS_CODEX_SKILL_UNSAFE_SOURCE', 'Skill 在复制期间发生变化，请确认来源稳定后重试。', 422);
-        const before = await list({cwd, forceReload: true, startProvider: true});
+      const before = await list({ cwd, forceReload: true, startProvider: true });
       if (before.skills.some((skill) => skill.name === inspection.name)) {
         throw new CodexSkillServiceError('ZEUS_CODEX_SKILL_ALREADY_EXISTS', `Skill “${inspection.name}” 已安装；Zeus 不会覆盖现有 Skill。`, 409);
       }
@@ -121,7 +117,7 @@ export function createZeusSkillService(options: { skillsRoot: string; manager: P
       }
       await rename(stagedSkill, installedDirectory);
 
-        const after = await list({cwd, forceReload: true, startProvider: true});
+      const after = await list({ cwd, forceReload: true, startProvider: true });
       const installedRealpath = await realpath(installedDirectory);
       const skill = after.skills.find((candidate) => candidate.name === inspection.name && skillDirectory(candidate.path) === installedRealpath);
       if (!skill) {
@@ -139,7 +135,7 @@ export function createZeusSkillService(options: { skillsRoot: string; manager: P
   }
 
   async function remove(input: { cwd: string; skillId: string }): Promise<{ removed: true; skillId: string; name: string }> {
-      const catalog = await list({cwd: input.cwd, forceReload: true, startProvider: true});
+    const catalog = await list({ cwd: input.cwd, forceReload: true, startProvider: true });
     const skill = catalog.skills.find((candidate) => candidate.id === requireSkillId(input.skillId));
     if (!skill) throw new CodexSkillServiceError('ZEUS_CODEX_SKILL_NOT_FOUND', '没有找到要移除的 Skill。', 404);
     if (!skill.removable) throw new CodexSkillServiceError('ZEUS_CODEX_SKILL_REMOVE_FORBIDDEN', '只能移除通过 Zeus 用户 Skill 目录安装的 Skill。', 409);
@@ -149,7 +145,7 @@ export function createZeusSkillService(options: { skillsRoot: string; manager: P
       throw new CodexSkillServiceError('ZEUS_CODEX_SKILL_REMOVE_FORBIDDEN', 'Skill 路径不属于可移除的用户 Skill 目录。', 409);
     }
     await rm(directory, { recursive: true, force: false });
-      await list({cwd: catalog.cwd, forceReload: true, startProvider: true});
+    await list({ cwd: catalog.cwd, forceReload: true, startProvider: true });
     return { removed: true, skillId: skill.id, name: skill.name };
   }
 

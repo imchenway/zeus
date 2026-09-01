@@ -1,11 +1,8 @@
-import type {FastifyInstance, FastifyRequest} from 'fastify';
-import type {ConversationChoiceQueryApplication} from './conversationChoiceQueryApplication.js';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { ConversationChoiceQueryApplication } from './conversationChoiceQueryApplication.js';
 
 /** HTTP 只校验资源存在性并映射 404；选择、排序与运行态投影均由 Application 拥有。 */
-export function registerConversationChoiceQueryRoutes(options: {
-    server: FastifyInstance;
-    application: ConversationChoiceQueryApplication
-}): void {
+export function registerConversationChoiceQueryRoutes(options: { server: FastifyInstance; application: ConversationChoiceQueryApplication }): void {
   options.server.get('/api/projects/:projectId/conversation-choices', async (request: FastifyRequest<{ Params: { projectId: string } }>, reply) => {
     const project = options.application.project(request.params.projectId);
     if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' });

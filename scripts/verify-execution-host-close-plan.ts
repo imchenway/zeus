@@ -1,8 +1,5 @@
 import assert from 'node:assert/strict';
-import {
-    closeExecutionHostResources,
-    type ExecutionHostCloseResources
-} from '../apps/desktop/src/main/executionHostClosePlan.js';
+import { closeExecutionHostResources, type ExecutionHostCloseResources } from '../apps/desktop/src/main/executionHostClosePlan.js';
 
 const successCalls: string[] = [];
 await closeExecutionHostResources(resources(successCalls));
@@ -15,9 +12,8 @@ await assert.rejects(
       runtime: new Error('runtime close failed'),
     }),
   ),
-    (error: unknown) =>
-        error instanceof AggregateError &&
-        error.errors.some((entry) => entry instanceof Error && entry.message === 'closeRuntime: runtime close failed' && entry.cause instanceof Error && entry.cause.message === 'runtime close failed'),
+  (error: unknown) =>
+    error instanceof AggregateError && error.errors.some((entry) => entry instanceof Error && entry.message === 'closeRuntime: runtime close failed' && entry.cause instanceof Error && entry.cause.message === 'runtime close failed'),
 );
 assert.deepEqual(runtimeFailureCalls, ['record-closing', 'runtime', 'control']);
 

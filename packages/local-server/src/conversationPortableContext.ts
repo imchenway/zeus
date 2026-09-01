@@ -1,16 +1,10 @@
-import {createHash} from 'node:crypto';
-import {readFile} from 'node:fs/promises';
-import {resolve} from 'node:path';
-import {randomId} from './randomId.js';
-import type {CodexBootstrapAdditionalContext, PortableConversationContext, PortableHistoryEntry} from '@zeus/shared';
-import type {CodexDynamicToolSpec} from '@zeus/ai-runtime';
-import {
-    type ArtifactRef,
-    type ArtifactStore,
-    artifactStoreGeneration,
-    type ConversationExecutionRepository,
-    type ConversationToolResultRecord
-} from '@zeus/storage';
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { randomId } from './randomId.js';
+import type { CodexBootstrapAdditionalContext, PortableConversationContext, PortableHistoryEntry } from '@zeus/shared';
+import type { CodexDynamicToolSpec } from '@zeus/ai-runtime';
+import { type ArtifactRef, type ArtifactStore, artifactStoreGeneration, type ConversationExecutionRepository, type ConversationToolResultRecord } from '@zeus/storage';
 
 const maximumProjectionCharacters = 16_384;
 const commandProjectionHeadCharacters = 12_288;
@@ -294,7 +288,7 @@ export class ManagedConversationToolResultStore {
     const projectedImageUrl = parsed.bytes.byteLength <= maximumHotImageProjectionBytes ? input.imageUrl : null;
     const projectionText = projectedImageUrl
       ? `[Zeus 已将工具图片原件保存为 Artifact；句柄 ${handle}，当前调用仅携带有界热投影。]`
-        : `[Zeus 已将 ${parsed.bytes.byteLength} 字节的工具图片保存为 Artifact；句柄 ${handle}。图片超过热投影上限，按需调用 zeus.read_conversation_tool_image(handle="${handle}", detail="original")。]`;
+      : `[Zeus 已将 ${parsed.bytes.byteLength} 字节的工具图片保存为 Artifact；句柄 ${handle}。图片超过热投影上限，按需调用 zeus.read_conversation_tool_image(handle="${handle}", detail="original")。]`;
     const record = this.execution.recordToolResult({
       handle,
       conversationId: input.conversationId,
@@ -394,50 +388,50 @@ export class ManagedConversationToolResultStore {
 export function conversationToolResultDynamicTools(): CodexDynamicToolSpec[] {
   return [
     {
-        type: 'namespace',
-        name: 'zeus',
-        description: 'Zeus-managed conversation artifacts. Reads existing immutable results and never re-runs the original tool.',
-        tools: [
-            {
-                type: 'function',
-                name: 'read_conversation_tool_result',
-                description: 'Read a page from a complete tool result already stored by Zeus. This never re-runs the original tool.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        handle: {type: 'string', description: 'Opaque handle returned with a projected tool result.'},
-                        offset: {type: 'integer', minimum: 0, description: 'Character offset; defaults to 0.'},
-                        limit: {
-                            type: 'integer',
-                            minimum: 1,
-                            maximum: 16384,
-                            description: 'Maximum characters; defaults to 16384.'
-                        },
-                    },
-                    required: ['handle'],
-                    additionalProperties: false,
-                },
+      type: 'namespace',
+      name: 'zeus',
+      description: 'Zeus-managed conversation artifacts. Reads existing immutable results and never re-runs the original tool.',
+      tools: [
+        {
+          type: 'function',
+          name: 'read_conversation_tool_result',
+          description: 'Read a page from a complete tool result already stored by Zeus. This never re-runs the original tool.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              handle: { type: 'string', description: 'Opaque handle returned with a projected tool result.' },
+              offset: { type: 'integer', minimum: 0, description: 'Character offset; defaults to 0.' },
+              limit: {
+                type: 'integer',
+                minimum: 1,
+                maximum: 16384,
+                description: 'Maximum characters; defaults to 16384.',
+              },
             },
-            {
-                type: 'function',
-                name: 'read_conversation_tool_image',
-                description: 'Read a managed tool image by its Zeus handle. Low detail stays bounded; original must be requested explicitly.',
-                deferLoading: true,
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        handle: {type: 'string', description: 'Opaque image handle returned by a tool result.'},
-                        detail: {
-                            type: 'string',
-                            enum: ['low', 'original'],
-                            description: 'Defaults to low; original may add substantial context.'
-                        },
-                    },
-                    required: ['handle'],
-                    additionalProperties: false,
-                },
+            required: ['handle'],
+            additionalProperties: false,
+          },
+        },
+        {
+          type: 'function',
+          name: 'read_conversation_tool_image',
+          description: 'Read a managed tool image by its Zeus handle. Low detail stays bounded; original must be requested explicitly.',
+          deferLoading: true,
+          inputSchema: {
+            type: 'object',
+            properties: {
+              handle: { type: 'string', description: 'Opaque image handle returned by a tool result.' },
+              detail: {
+                type: 'string',
+                enum: ['low', 'original'],
+                description: 'Defaults to low; original may add substantial context.',
+              },
             },
-        ],
+            required: ['handle'],
+            additionalProperties: false,
+          },
+        },
+      ],
     },
   ];
 }
@@ -449,12 +443,12 @@ function projectToolResult(kind: StoreConversationToolResultInput['toolKind'], t
     if (projected.length > maximumProjectionCharacters) projected = projected.slice(0, maximumProjectionCharacters);
     if (projected === text) return text;
     const nextOffset = projected.length;
-      return `${projected}\n\n[结果已截断；使用 zeus.read_conversation_tool_result(handle="${handle}", offset=${nextOffset}, limit=${maximumPageCharacters}) 继续读取]`;
+    return `${projected}\n\n[结果已截断；使用 zeus.read_conversation_tool_result(handle="${handle}", offset=${nextOffset}, limit=${maximumPageCharacters}) 继续读取]`;
   }
   if (text.length <= maximumProjectionCharacters) return text;
   const head = text.slice(0, commandProjectionHeadCharacters);
   const tail = text.slice(-commandProjectionTailCharacters);
-    return `${head}\n\n[中间结果已截断；使用 zeus.read_conversation_tool_result(handle="${handle}", offset=${commandProjectionHeadCharacters}, limit=${maximumPageCharacters}) 分页读取]\n\n${tail}`;
+  return `${head}\n\n[中间结果已截断；使用 zeus.read_conversation_tool_result(handle="${handle}", offset=${commandProjectionHeadCharacters}, limit=${maximumPageCharacters}) 分页读取]\n\n${tail}`;
 }
 
 function clampInteger(value: number, minimum: number, maximum: number): number {

@@ -1,44 +1,29 @@
-import {mkdtemp, rm} from 'node:fs/promises';
-import {registerHooks} from 'node:module';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import {DatabaseSync} from 'node:sqlite';
-import type {CodexAppServerEvent, CodexAppServerManager} from '../packages/ai-runtime/src/index.js';
-import type {TranscriptTurnWorkRow} from '../apps/desktop/src/renderer/session/ConversationTranscript.js';
-import type {NativeSessionItemBuffer} from '../apps/desktop/src/renderer/session/sessionTypes.js';
-import type {TurnChangeSet} from '../packages/shared/src/conversationResources.js';
-import {createCodexProviderEventFlow} from '../packages/local-server/src/codexProviderEventFlow.js';
-import {filterCompatibilitySnapshotItemAliases} from '../packages/local-server/src/codexProviderHistoryProjection.js';
-import {
-    selectAutomaticQueueDispatchCandidate
-} from '../packages/local-server/src/conversationQueueCoreMutationApplication.js';
-import {ConversationEventFlowControl} from '../packages/local-server/src/eventFlowControl.js';
-import {ConversationSyncProtocol} from '../packages/local-server/src/conversationSyncProtocol.js';
-import {
-    type ConversationRealtimeSocket,
-    registerConversationSyncRoutes
-} from '../packages/local-server/src/conversationSyncRoutes.js';
-import {toRealtimeChangeSet} from '../packages/local-server/src/turnChangeSets.js';
-import {
-    ConversationProviderItemRepository,
-    ConversationSyncEventRepository,
-    createZeusDatabase,
-    resolveSnapshotProviderItemId,
-    scopedSnapshotProviderItemId
-} from '../packages/storage/src/index.js';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { registerHooks } from 'node:module';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import type { CodexAppServerEvent, CodexAppServerManager } from '../packages/ai-runtime/src/index.js';
+import type { TranscriptTurnWorkRow } from '../apps/desktop/src/renderer/session/ConversationTranscript.js';
+import type { NativeSessionItemBuffer } from '../apps/desktop/src/renderer/session/sessionTypes.js';
+import type { TurnChangeSet } from '../packages/shared/src/conversationResources.js';
+import { createCodexProviderEventFlow } from '../packages/local-server/src/codexProviderEventFlow.js';
+import { filterCompatibilitySnapshotItemAliases } from '../packages/local-server/src/codexProviderHistoryProjection.js';
+import { selectAutomaticQueueDispatchCandidate } from '../packages/local-server/src/conversationQueueCoreMutationApplication.js';
+import { ConversationEventFlowControl } from '../packages/local-server/src/eventFlowControl.js';
+import { ConversationSyncProtocol } from '../packages/local-server/src/conversationSyncProtocol.js';
+import { type ConversationRealtimeSocket, registerConversationSyncRoutes } from '../packages/local-server/src/conversationSyncRoutes.js';
+import { toRealtimeChangeSet } from '../packages/local-server/src/turnChangeSets.js';
+import { ConversationProviderItemRepository, ConversationSyncEventRepository, createZeusDatabase, resolveSnapshotProviderItemId, scopedSnapshotProviderItemId } from '../packages/storage/src/index.js';
 
 // 行为探针只调用转录纯函数；Node 不需要加载渲染组件依赖的样式文件。
 registerHooks({
-    load(url, context, nextLoad) {
-        if (url.endsWith('.css')) return {format: 'module', source: '', shortCircuit: true};
-        return nextLoad(url, context);
-    },
+  load(url, context, nextLoad) {
+    if (url.endsWith('.css')) return { format: 'module', source: '', shortCircuit: true };
+    return nextLoad(url, context);
+  },
 });
-const {
-    coalesceSupersededInterruptedQueuedUserMessages,
-    projectTranscriptRows,
-    projectTranscriptTurnRows
-} = await import('../apps/desktop/src/renderer/session/ConversationTranscript.js');
+const { coalesceSupersededInterruptedQueuedUserMessages, projectTranscriptRows, projectTranscriptTurnRows } = await import('../apps/desktop/src/renderer/session/ConversationTranscript.js');
 
 async function verifyCompatibilityItemIdentity(): Promise<Record<string, unknown>> {
   const firstScopedId = scopedSnapshotProviderItemId('turn-1', 'item-1');
@@ -147,26 +132,29 @@ function verifyStageSummaryProcessGrouping(): Record<string, unknown> {
   ];
   const rows = projectTranscriptRows(items);
   const turnRows = projectTranscriptTurnRows(rows, null, { [turnId]: 'completed' });
-    const workRows = turnRows.filter((row): row is TranscriptTurnWorkRow => row.kind === 'turn_work');
-    assertBehavior(workRows.length === 1, '单轮过程必须只有一个顶层折叠入口。');
-    const stages = workRows[0]?.segments ?? [];
+  const workRows = turnRows.filter((row): row is TranscriptTurnWorkRow => row.kind === 'turn_work');
+  assertBehavior(workRows.length === 1, '单轮过程必须只有一个顶层折叠入口。');
+  const stages = workRows[0]?.segments ?? [];
   assertBehavior(stages.length === 3, 'A/B/C 三条摘要必须生成三个独立过程阶段。');
   assertBehavior(stages.map((stage) => (stage.summary?.kind === 'item' ? stage.summary.item.text : null)).join('|') === 'A 摘要|B 摘要|C 摘要', '阶段摘要顺序必须保持 A/B/C，不得被整轮活动组吞并。');
   assertBehavior(!stages.some((stage) => stage.summary === null), '首条摘要之前的准备过程必须归入 A 阶段，不能生成无摘要的孤立过程入口。');
-    assertBehavior(stages.every((stage) => !stage.rows.some((row) => row.kind === 'item' && row.item.type === 'reasoning')), '已完成轮次的 reasoning 摘要不得重新混入正文阶段。');
+  assertBehavior(
+    stages.every((stage) => !stage.rows.some((row) => row.kind === 'item' && row.item.type === 'reasoning')),
+    '已完成轮次的 reasoning 摘要不得重新混入正文阶段。',
+  );
   assertBehavior(
     stages.every((stage) => stage.rows.filter((row) => row.kind === 'activity').length === 1),
     '每个阶段的命令、工具或文件操作必须各自合并为一组。',
   );
-    assertBehavior(workRows[0]?.loadMore === true, '单轮过程入口必须负责继续加载本轮后续过程。');
+  assertBehavior(workRows[0]?.loadMore === true, '单轮过程入口必须负责继续加载本轮后续过程。');
   return {
     stages: stages.map((stage) => ({
       summary: stage.summary?.kind === 'item' ? stage.summary.item.text : null,
       detailGroups: stage.rows.length,
       activityGroups: stage.rows.filter((row) => row.kind === 'activity').length,
     })),
-      live: workRows[0]?.live ?? false,
-      loadMore: workRows[0]?.loadMore ?? false,
+    live: workRows[0]?.live ?? false,
+    loadMore: workRows[0]?.loadMore ?? false,
   };
 }
 
