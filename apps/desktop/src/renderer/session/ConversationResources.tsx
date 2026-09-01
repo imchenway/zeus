@@ -30,7 +30,7 @@ export interface ConversationResourceInteraction {
 }
 
 export function isPendingImageAttachment(attachment: Pick<NativeConversationAttachment, 'kind' | 'mime'>): boolean {
-  return attachment.kind === 'image' || attachment.mime.startsWith('image/');
+  return attachment.kind === 'image' || ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(attachment.mime.toLowerCase());
 }
 
 export function ConversationPendingAttachmentImages(props: { attachments: NativeConversationAttachment[]; language: SessionUiLanguage; onVisibleContentChange?: () => void }) {

@@ -42,6 +42,7 @@ import {
   buildTaskAttachmentPreviewDataUrl,
   coerceTaskClipboardAttachmentBuffer,
   inferTaskClipboardAttachmentMimeType,
+  isSupportedImageInputMimeType,
   readTaskClipboardAttachmentsFromClipboard,
   readTaskClipboardFileReferencesFromClipboard,
   type TaskClipboardAttachmentPayload,
@@ -2369,10 +2370,6 @@ function setupTraySafely(): void {
   }
 }
 
-function isImageAttachmentPath(filePath: string): boolean {
-  return ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.heic'].includes(extname(filePath).toLowerCase());
-}
-
 type TaskStoredResourceKind = 'image' | 'file' | 'directory' | 'pasted_text';
 
 type TaskStoredResource = {
@@ -2508,7 +2505,15 @@ async function loadSavedTaskAttachmentPreview(path: string): Promise<{ previewUr
   if (!mimeType.startsWith('image/')) return null;
   const data = await readFile(path);
   const previewUrl = buildTaskAttachmentPreviewDataUrl(data, mimeType);
-  return previewUrl ? { previewUrl, mimeType } : null;
+  if (previewUrl) return { previewUrl, mimeType };
+  try {
+    const convertedImage = nativeImage.createFromPath(path);
+    if (convertedImage.isEmpty()) return null;
+    const convertedPreviewUrl = buildTaskAttachmentPreviewDataUrl(convertedImage.toPNG(), 'image/png');
+    return convertedPreviewUrl ? { previewUrl: convertedPreviewUrl, mimeType: 'image/png' } : null;
+  } catch {
+    return null;
+  }
 }
 
 async function openSavedTaskAttachment(path: string): Promise<{ opened: boolean; error?: string }> {
@@ -2664,7 +2669,7 @@ async function saveTaskResourcePaths(paths: string[], commandId: string): Promis
         throw error;
       }
       const mimeType = inferTaskClipboardAttachmentMimeType(destination);
-      const kind = mimeType.startsWith('image/') || isImageAttachmentPath(destination) ? 'image' : 'file';
+      const kind = isSupportedImageInputMimeType(mimeType) ? 'image' : 'file';
       const previewUrl = kind === 'image' && sourceStat.size <= maximumTaskResourceBytes ? buildTaskAttachmentPreviewDataUrl(await readFile(destination), mimeType) : undefined;
       resources.push({
         path: destination,
@@ -2738,7 +2743,7 @@ async function saveTaskAttachmentPayloads(attachments: TaskResourcePayload[], co
     }
     const mimeType = attachment.type || inferTaskClipboardAttachmentMimeType(filePath);
     const pastedText = text !== undefined || attachment.kind === 'pasted_text';
-    const kind: TaskStoredResourceKind = pastedText ? 'pasted_text' : mimeType.startsWith('image/') || isImageAttachmentPath(filePath) ? 'image' : 'file';
+    const kind: TaskStoredResourceKind = pastedText ? 'pasted_text' : isSupportedImageInputMimeType(mimeType) ? 'image' : 'file';
     savedAttachments.push({
       path: filePath,
       name: safeName,
@@ -2794,6 +2799,14 @@ async function initializeApplication(): Promise<void> {
           readHTML: () => clipboard.readHTML(),
         },
         clipboardReadOptions: { readSystemFileReferences: readMacOSClipboardFileReferences },
+        convertImagePathToPng: (path) => {
+          try {
+            const image = nativeImage.createFromPath(path);
+            return image.isEmpty() ? null : image.toPNG();
+          } catch {
+            return null;
+          }
+        },
       });
     }
     externalBrowserHost = createExternalBrowserHost({

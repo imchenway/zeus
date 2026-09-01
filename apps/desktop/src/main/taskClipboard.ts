@@ -23,6 +23,7 @@ export type TaskClipboardReadOptions = {
 
 const fileReferenceClipboardFormats = ['public.file-url', 'text/uri-list', 'text/plain', 'public.utf8-plain-text', 'NSStringPboardType', 'NSFilenamesPboardType'] as const;
 const maxDecodedClipboardReferenceBytes = 8 * 1024 * 1024;
+const supportedImageInputMimeTypes = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
 const attachmentMimeTypesByExtension = new Map<string, string>([
   ['.png', 'image/png'],
@@ -89,9 +90,14 @@ export function inferTaskClipboardAttachmentMimeType(filePath: string): string {
   return attachmentMimeTypesByExtension.get(extname(filePath).toLowerCase()) ?? 'application/octet-stream';
 }
 
+export function isSupportedImageInputMimeType(mimeType: string): boolean {
+  return supportedImageInputMimeTypes.has(mimeType.trim().toLowerCase());
+}
+
 export function buildTaskAttachmentPreviewDataUrl(data: Uint8Array, mimeType: string): string | undefined {
-  if (!mimeType.toLowerCase().startsWith('image/') || data.byteLength === 0) return undefined;
-  return `data:${mimeType};base64,${Buffer.from(data).toString('base64')}`;
+  const normalizedMimeType = mimeType.trim().toLowerCase();
+  if (!isSupportedImageInputMimeType(normalizedMimeType) || data.byteLength === 0) return undefined;
+  return `data:${normalizedMimeType};base64,${Buffer.from(data).toString('base64')}`;
 }
 
 export async function readTaskAttachmentFilePathPayloads(filePaths: string[], readBinaryFile: (filePath: string) => Promise<Uint8Array> = readFile): Promise<TaskClipboardAttachmentPayload[]> {
@@ -130,13 +136,18 @@ export function extractTaskClipboardFileReferences(values: Array<string | undefi
 export async function readTaskClipboardAttachmentsFromClipboard(reader: NativeTaskClipboardReader, options: TaskClipboardReadOptions = {}): Promise<TaskClipboardAttachmentPayload[]> {
   const clipboardTexts = readNativeClipboardReferenceTexts(reader);
   const systemFileReferences = await readSystemClipboardFileReferences(options);
-  const fileReferenceAttachments = await readTaskClipboardFileReferenceAttachments(clipboardTexts, systemFileReferences);
+  const fileReferences = extractTaskClipboardFileReferences([...clipboardTexts, ...systemFileReferences]);
+  if (isSingleUnsupportedImageReference(fileReferences)) {
+    const normalizedImageAttachment = safelyReadTaskClipboardImageAttachment(reader);
+    if (normalizedImageAttachment) return [normalizedImageAttachment];
+  }
+  const fileReferenceAttachments = await readTaskAttachmentFilePathPayloads(fileReferences);
   if (fileReferenceAttachments.length > 0) return fileReferenceAttachments;
 
   const inlineImageAttachments = extractTaskClipboardInlineImageAttachments(clipboardTexts);
   if (inlineImageAttachments.length > 0) return inlineImageAttachments;
 
-  const imageAttachment = readTaskClipboardImageAttachment(reader.readImage());
+  const imageAttachment = safelyReadTaskClipboardImageAttachment(reader);
   if (imageAttachment) return [imageAttachment];
 
   const nativeImageBufferAttachments = readNativeClipboardImageBufferAttachments(reader);
@@ -146,13 +157,12 @@ export async function readTaskClipboardAttachmentsFromClipboard(reader: NativeTa
 }
 
 /** 返回剪贴板中的真实本地路径，不读取文件内容；会话附件借此保留目录和任意文件类型。 */
-export async function readTaskClipboardFileReferencesFromClipboard(
-  reader: NativeTaskClipboardReader,
-  options: TaskClipboardReadOptions = {},
-): Promise<string[]> {
+export async function readTaskClipboardFileReferencesFromClipboard(reader: NativeTaskClipboardReader, options: TaskClipboardReadOptions = {}): Promise<string[]> {
   const clipboardTexts = readNativeClipboardReferenceTexts(reader);
   const systemFileReferences = await readSystemClipboardFileReferences(options);
-  return extractTaskClipboardFileReferences([...clipboardTexts, ...systemFileReferences]);
+  const fileReferences = extractTaskClipboardFileReferences([...clipboardTexts, ...systemFileReferences]);
+  if (isSingleUnsupportedImageReference(fileReferences) && hasReadableClipboardImage(reader)) return [];
+  return fileReferences;
 }
 
 async function readSystemClipboardFileReferences(options: TaskClipboardReadOptions): Promise<string[]> {
@@ -165,8 +175,26 @@ async function readSystemClipboardFileReferences(options: TaskClipboardReadOptio
   }
 }
 
-async function readTaskClipboardFileReferenceAttachments(clipboardTexts: string[], systemFileReferences: string[]): Promise<TaskClipboardAttachmentPayload[]> {
-  return readTaskAttachmentFilePathPayloads([...extractTaskClipboardFileReferences(clipboardTexts), ...systemFileReferences]);
+function isSingleUnsupportedImageReference(fileReferences: string[]): boolean {
+  if (fileReferences.length !== 1) return false;
+  const mimeType = inferTaskClipboardAttachmentMimeType(fileReferences[0] ?? '');
+  return mimeType.startsWith('image/') && !isSupportedImageInputMimeType(mimeType);
+}
+
+function hasReadableClipboardImage(reader: NativeTaskClipboardReader): boolean {
+  try {
+    return !reader.readImage().isEmpty();
+  } catch {
+    return false;
+  }
+}
+
+function safelyReadTaskClipboardImageAttachment(reader: NativeTaskClipboardReader): TaskClipboardAttachmentPayload | null {
+  try {
+    return readTaskClipboardImageAttachment(reader.readImage());
+  } catch {
+    return null;
+  }
 }
 
 function readNativeClipboardImageBufferAttachments(reader: NativeTaskClipboardReader): TaskClipboardAttachmentPayload[] {

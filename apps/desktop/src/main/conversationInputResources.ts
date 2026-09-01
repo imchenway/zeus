@@ -6,6 +6,7 @@ import {
   buildTaskAttachmentPreviewDataUrl,
   coerceTaskClipboardAttachmentBuffer,
   inferTaskClipboardAttachmentMimeType,
+  isSupportedImageInputMimeType,
   readTaskClipboardAttachmentsFromClipboard,
   readTaskClipboardFileReferencesFromClipboard,
   type NativeTaskClipboardReader,
@@ -48,6 +49,7 @@ export interface CreateConversationInputResourceBrokerOptions {
   grantSecret: string;
   clipboard: NativeTaskClipboardReader;
   clipboardReadOptions?: TaskClipboardReadOptions;
+  convertImagePathToPng?: (path: string) => Uint8Array | null;
 }
 
 const maximumResourceCount = 100;
@@ -77,7 +79,7 @@ export function createConversationInputResourceBroker(options: CreateConversatio
             name: basename(canonicalPath) || canonicalPath,
             mime,
             size: directory ? 0 : pathStat.size,
-            kind: directory ? 'directory' : mime.startsWith('image/') ? 'image' : 'file',
+            kind: directory ? 'directory' : isSupportedImageInputMimeType(mime) ? 'image' : 'file',
             source,
             uploadRef: createConversationAttachmentGrant(canonicalPath, options.grantSecret),
           });
@@ -109,7 +111,7 @@ export function createConversationInputResourceBroker(options: CreateConversatio
           name: safeName,
           mime,
           size: data.byteLength,
-          kind: pastedText ? 'pasted_text' : mime.startsWith('image/') ? 'image' : 'file',
+          kind: pastedText ? 'pasted_text' : isSupportedImageInputMimeType(mime) ? 'image' : 'file',
           source,
           ...(pastedText ? { characterCount: text?.length ?? 0 } : {}),
           ...(pastedText && text !== undefined && text.length <= maximumRestorableTextCharacters ? { restorableText: text } : {}),
@@ -157,7 +159,10 @@ export function createConversationInputResourceBroker(options: CreateConversatio
       if (!pathStat.isFile() || pathStat.size > maximumResourceBytes) return null;
       const data = await readFile(resolvedPath);
       const previewUrl = buildTaskAttachmentPreviewDataUrl(data, mimeType);
-      return previewUrl ? { previewUrl, mimeType } : null;
+      if (previewUrl) return { previewUrl, mimeType };
+      const png = options.convertImagePathToPng?.(resolvedPath);
+      const convertedPreviewUrl = png ? buildTaskAttachmentPreviewDataUrl(png, 'image/png') : undefined;
+      return convertedPreviewUrl ? { previewUrl: convertedPreviewUrl, mimeType: 'image/png' } : null;
     },
 
     async discard(resources) {

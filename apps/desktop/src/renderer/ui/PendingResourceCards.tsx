@@ -1,4 +1,4 @@
-import { useEffect, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
 import { FileArchiveIcon as FileArchive } from '@phosphor-icons/react/dist/csr/FileArchive';
 import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
@@ -67,22 +67,28 @@ export function PendingResourceCards(props: PendingResourceCardsProps) {
 function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' | 'className'> & { resource: PendingResourceCardItem }) {
   const [loadedPreviewUrl, setLoadedPreviewUrl] = useState<string | null>(null);
   const [previewFailed, setPreviewFailed] = useState(false);
+  const resourceRef = useRef(props.resource);
+  const previewLoaderRef = useRef(props.onLoadPreview);
+  resourceRef.current = props.resource;
+  previewLoaderRef.current = props.onLoadPreview;
   const previewUrl = props.resource.previewUrl ?? loadedPreviewUrl;
+  const previewLoaderAvailable = Boolean(props.onLoadPreview);
   const extension = pendingResourceExtension(props.resource.name);
   const typeLabel = pendingResourceTypeLabel(props.resource, props.language);
   const resourceColor = pendingResourceColorFamily(props.resource, extension);
 
   useEffect(() => {
     let active = true;
+    const resource = resourceRef.current;
+    const loadPreview = previewLoaderRef.current;
     setLoadedPreviewUrl(null);
     setPreviewFailed(false);
-    if (props.resource.kind !== 'image' || props.resource.previewUrl || !props.onLoadPreview) {
+    if (resource.kind !== 'image' || resource.previewUrl || !loadPreview) {
       return () => {
         active = false;
       };
     }
-    void props
-      .onLoadPreview(props.resource)
+    void loadPreview(resource)
       .then((preview) => {
         if (active) setLoadedPreviewUrl(preview?.previewUrl ?? null);
       })
@@ -92,7 +98,7 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
     return () => {
       active = false;
     };
-  }, [props.onLoadPreview, props.resource, props.resource.id, props.resource.kind, props.resource.previewUrl]);
+  }, [previewLoaderAvailable, props.resource.id, props.resource.kind, props.resource.previewUrl]);
 
   function activate(event: ReactMouseEvent<HTMLButtonElement>): void {
     props.onActivate?.(props.resource, event.currentTarget);
