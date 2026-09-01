@@ -1,5 +1,5 @@
-import {type CommandEnvelope, type CommandScopeKind} from '@zeus/shared';
-import {buildRendererCommandRequest, randomIdentity, type RendererCommandPayload} from '../../commandRequest.js';
+import { type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
+import { buildRendererCommandRequest, randomIdentity, type RendererCommandPayload } from '../../commandRequest.js';
 
 export const settingsClientCommandTypes = {
   projectDatabaseSecretPut: 'settings.project_database_secret.put',
@@ -26,11 +26,11 @@ export async function buildSettingsCommandRequest<TInput extends object>(input: 
   value: TInput;
 }): Promise<{ command: CommandEnvelope<RendererCommandPayload>; input: TInput }> {
   const operationIdentity = `${input.operationPrefix}_${randomIdentity()}`;
-    return buildRendererCommandRequest({
-        ...input,
-        operationIdentity,
-        commandIdPrefix: 'command_settings_',
-        actorId: 'zeus-desktop-settings',
-        expectedRevision: null
-    });
+  return buildRendererCommandRequest({
+    ...input,
+    operationIdentity,
+    commandIdPrefix: 'command_settings_',
+    actorId: 'zeus-desktop-settings',
+    expectedRevision: null,
+  });
 }

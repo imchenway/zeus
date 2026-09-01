@@ -1,7 +1,7 @@
-import {createHash} from 'node:crypto';
-import {isZeusSkillId} from '@zeus/shared';
-import {randomId} from './randomId.js';
-import type {ZeusDatabasePort} from './databasePort.js';
+import { createHash } from 'node:crypto';
+import { isZeusSkillId } from '@zeus/shared';
+import { randomId } from './randomId.js';
+import type { ZeusDatabasePort } from './databasePort.js';
 
 export const digitalEmployeeSchemaMigrationId = '20260825_0001_digital_employees_v1';
 
@@ -493,7 +493,7 @@ export class DigitalEmployeeTemplateRepository {
   create(input: CreateDigitalEmployeeTemplateInput): DigitalEmployeeTemplateRecord {
     const value = normalizeTemplateInput(input);
     const timestamp = new Date().toISOString();
-      const id = input.id ? requiredIdentity(input.id, 'template.id') : `digital_employee_template_${randomId(12)}`;
+    const id = input.id ? requiredIdentity(input.id, 'template.id') : `digital_employee_template_${randomId(12)}`;
     this.db.execute(
       `INSERT INTO digital_employee_templates
        (id, name, description, role, domain, skill_ids_json, prompt, agent_kind, model, reasoning_effort, service_tier, permission_mode, work_mode, built_in, revision, created_at, updated_at)
@@ -591,7 +591,7 @@ export class DigitalEmployeeRepository {
   create(input: CreateDigitalEmployeeInput): DigitalEmployeeRecord {
     const value = normalizeEmployeeInput(input);
     const timestamp = new Date().toISOString();
-      const id = input.id ? requiredIdentity(input.id, 'employee.id') : `digital_employee_${randomId(12)}`;
+    const id = input.id ? requiredIdentity(input.id, 'employee.id') : `digital_employee_${randomId(12)}`;
     this.db.execute(
       `INSERT INTO digital_employees
        (id, project_id, template_id, name, description, role, domain, skill_ids_json, prompt, agent_kind, model, reasoning_effort, service_tier, permission_mode, work_mode,
@@ -763,7 +763,7 @@ export class DigitalEmployeeAutomationRepository {
   create(input: CreateDigitalEmployeeAutomationInput, options: { initialCursorSequence?: number } = {}): DigitalEmployeeAutomationRecord {
     const value = normalizeAutomationInput(input);
     const timestamp = new Date().toISOString();
-      const id = input.id ? requiredIdentity(input.id, 'automation.id') : `digital_employee_automation_${randomId(12)}`;
+    const id = input.id ? requiredIdentity(input.id, 'automation.id') : `digital_employee_automation_${randomId(12)}`;
     const initialCursorSequence = nonNegativeInteger(options.initialCursorSequence ?? 0, 'automation.initialCursorSequence');
     this.db.execute(
       `INSERT INTO digital_employee_automations
@@ -922,7 +922,7 @@ export class DigitalEmployeeExecutionRepository {
       const replay = this.getBySource(input.employee.id, source, sourceRef);
       if (replay) return replay;
     }
-      const id = input.id ? requiredIdentity(input.id, 'execution.id') : `digital_employee_execution_${randomId(12)}`;
+    const id = input.id ? requiredIdentity(input.id, 'execution.id') : `digital_employee_execution_${randomId(12)}`;
     const snapshot = structuredClone(input.employee);
     this.db.execute(
       `INSERT INTO digital_employee_executions

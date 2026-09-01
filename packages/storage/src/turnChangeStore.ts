@@ -1,7 +1,7 @@
-import {randomId} from './randomId.js';
-import {type ArtifactRef, type ArtifactStore, artifactStoreGeneration} from './artifactStore.js';
-import type {ZeusDatabasePort} from './databasePort.js';
-import type {TurnChangeFileType, TurnChangeSetState} from '@zeus/shared';
+import { randomId } from './randomId.js';
+import { type ArtifactRef, type ArtifactStore, artifactStoreGeneration } from './artifactStore.js';
+import type { ZeusDatabasePort } from './databasePort.js';
+import type { TurnChangeFileType, TurnChangeSetState } from '@zeus/shared';
 
 function assertEnum<const T extends readonly string[]>(value: unknown, allowed: T, label: string): T[number] {
   if (typeof value !== 'string' || !allowed.includes(value as T[number])) throw new Error(`Invalid ${label}: ${String(value)}`);
@@ -72,7 +72,7 @@ export class TurnChangeSetRepository {
   ): ZeusTurnChangeSetRecord {
     const state = assertEnum(input.state, ['capturing', 'applied', 'undoing', 'undone', 'reapplying', 'conflicted', 'unavailable'] as const, 'turn change set state');
     const existingRow = this.db.get<DbTurnChangeSetRow>(`SELECT * FROM turn_change_sets WHERE conversation_id = ? AND turn_id = ?`, [input.conversationId, input.turnId]);
-      const id = existingRow?.id ?? input.id ?? `turn_change_set_${randomId(12)}`;
+    const id = existingRow?.id ?? input.id ?? `turn_change_set_${randomId(12)}`;
     const createdAt = existingRow?.created_at ?? input.createdAt ?? input.updatedAt;
     const owner = { kind: 'turn_change_set_diff', id, generationId: turnChangeDiffArtifactGeneration, projectId: input.projectId, conversationId: input.conversationId };
     const previousRef = parseArtifactRefJson(existingRow?.unified_diff_artifact_ref_json ?? null);
@@ -169,7 +169,7 @@ export class TurnChangeFileRepository {
       input.sourceItemId === null
         ? undefined
         : this.db.get<DbTurnChangeFileRow>(`SELECT * FROM turn_change_files WHERE change_set_id = ? AND source_item_id = ? AND source_index = ?`, [input.changeSetId, input.sourceItemId, input.sourceIndex]);
-      const id = existing?.id ?? input.id ?? `turn_change_file_${randomId(12)}`;
+    const id = existing?.id ?? input.id ?? `turn_change_file_${randomId(12)}`;
     const createdAt = existing?.created_at ?? input.createdAt ?? input.updatedAt;
     const ownership = this.db.get<{ project_id: string; conversation_id: string }>(`SELECT project_id, conversation_id FROM turn_change_sets WHERE id = ?`, [input.changeSetId]);
     if (!ownership) throw new Error(`Turn change set not found: ${input.changeSetId}`);

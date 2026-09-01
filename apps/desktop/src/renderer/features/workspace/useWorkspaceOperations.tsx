@@ -1878,18 +1878,16 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
   function renderNativeConversationWorkspace(onOpenTaskDetail: (taskId: string) => void): ReactNode {
     const taskReadOnlyGate =
       nativeSessionTaskReadOnly && nativeSessionTask && selectedNativeConversation
-          ? {
-              title: appShellSettings.appLanguage === 'zh-CN' ? '此任务已结束，会话当前为只读' : 'This task is closed and the conversation is read-only',
-              description:
-                appShellSettings.appLanguage === 'zh-CN'
-                  ? '你仍可查看完整归档记录。继续对话会重新打开任务，并只取消归档当前会话。'
-                  : 'You can still review the full archive. Continuing reopens the task and unarchives only this conversation.',
-              actionLabel: appShellSettings.appLanguage === 'zh-CN' ? '重新打开任务并继续' : 'Reopen task and continue',
-              busy: taskConversationReopenState?.conversationId === selectedNativeConversation.id && taskConversationReopenState.status === 'busy',
-              error: taskConversationReopenState?.conversationId === selectedNativeConversation.id && taskConversationReopenState.status === 'error' ? taskConversationReopenState.error : null,
-              onAction: () => reopenTaskFromConversation(nativeSessionTask.id, selectedNativeConversation.id),
-            }
-          : undefined;
+        ? {
+            title: appShellSettings.appLanguage === 'zh-CN' ? '此任务已结束，会话当前为只读' : 'This task is closed and the conversation is read-only',
+            description:
+              appShellSettings.appLanguage === 'zh-CN' ? '你仍可查看完整归档记录。继续对话会重新打开任务，并只取消归档当前会话。' : 'You can still review the full archive. Continuing reopens the task and unarchives only this conversation.',
+            actionLabel: appShellSettings.appLanguage === 'zh-CN' ? '重新打开任务并继续' : 'Reopen task and continue',
+            busy: taskConversationReopenState?.conversationId === selectedNativeConversation.id && taskConversationReopenState.status === 'busy',
+            error: taskConversationReopenState?.conversationId === selectedNativeConversation.id && taskConversationReopenState.status === 'error' ? taskConversationReopenState.error : null,
+            onAction: () => reopenTaskFromConversation(nativeSessionTask.id, selectedNativeConversation.id),
+          }
+        : undefined;
     if (selectedTaskModelPushOperation && (!taskModelPushHasRealChoice(selectedTaskModelPushOperation) || selectedTaskModelPushOperation.status !== 'accepted') && nativeSessionOwner && props.nativeConversationClient) {
       const pending = selectedTaskModelPushOperation;
       return (

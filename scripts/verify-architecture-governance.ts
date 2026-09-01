@@ -1,7 +1,7 @@
-import {readdir, readFile} from 'node:fs/promises';
-import {dirname, join, resolve} from 'node:path';
-import {fileURLToPath} from 'node:url';
-import {storageAuxiliaryTableOwnership, storageTableOwnership} from '../packages/storage/src/tableOwnership.js';
+import { readdir, readFile } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { storageAuxiliaryTableOwnership, storageTableOwnership } from '../packages/storage/src/tableOwnership.js';
 
 interface ArchitectureGovernanceConfig {
   schemaVersion: 2;
@@ -111,7 +111,7 @@ async function verifyImportBoundaries(): Promise<void> {
     'packages/local-server/src/memoryContextApi.ts': ['node:crypto', 'fastify', '@zeus/shared', '@zeus/storage', './contextCompiler.js', './contextSourceCatalog.js'],
     'packages/local-server/src/projectGitQueryApplication.ts': ['node:path', '@zeus/git-core', '@zeus/storage'],
     'packages/local-server/src/projectGitQueryRoutes.ts': ['fastify', './nativeQueryRouteError.js', './projectGitQueryApplication.js'],
-      'packages/local-server/src/projectQueryApplication.ts': ['@zeus/git-core', '@zeus/storage', './projectCore.js'],
+    'packages/local-server/src/projectQueryApplication.ts': ['@zeus/git-core', '@zeus/storage', './projectCore.js'],
     'packages/local-server/src/projectQueryRoutes.ts': ['fastify', './nativeQueryRouteError.js', './projectQueryApplication.js'],
     'packages/local-server/src/workManagementQueryApplication.ts': ['@zeus/shared', '@zeus/storage'],
     'packages/local-server/src/workManagementQueryRoutes.ts': ['fastify', './nativeQueryRouteError.js', './workManagementQueryApplication.js'],

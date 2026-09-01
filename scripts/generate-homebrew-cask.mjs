@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /* global console, process */
-import {mkdir, readFile, writeFile} from 'node:fs/promises';
-import {dirname, join, resolve} from 'node:path';
-import {fileURLToPath, pathToFileURL} from 'node:url';
-import {sha256File} from './release-script-utils.mjs';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { sha256File } from './release-script-utils.mjs';
 
-export {sha256File} from './release-script-utils.mjs';
+export { sha256File } from './release-script-utils.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(scriptDir, '..');

@@ -1,8 +1,8 @@
-import {createHash} from 'node:crypto';
-import {existsSync, readFileSync} from 'node:fs';
-import {randomId} from './randomId.js';
-import type {ArtifactRef} from './artifactStore.js';
-import type {ZeusDatabasePort} from './databasePort.js';
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
+import { randomId } from './randomId.js';
+import type { ArtifactRef } from './artifactStore.js';
+import type { ZeusDatabasePort } from './databasePort.js';
 
 export const conversationSchemaGeneration = '2026-08-16-unified-conversation-segments';
 
@@ -549,7 +549,7 @@ export class ConversationExecutionRepository {
   }
 
   createExecutionSnapshot(input: ExecutionSnapshotInput): ConversationExecutionSnapshotRecord {
-      const id = `conversation_execution_snapshot_${randomId(12)}`;
+    const id = `conversation_execution_snapshot_${randomId(12)}`;
     const workspaceIdentityJson = JSON.stringify(input.workspaceIdentity);
     const routeFingerprint = createHash('sha256')
       .update(JSON.stringify([input.runtimeKind, input.connectionId ?? null, input.endpointIdentity, input.protocolFamily, input.modelId, input.credentialSlotId ?? null]))
@@ -600,8 +600,8 @@ export class ConversationExecutionRepository {
     const existing = this.getSwitchBySubmission(input.submissionId);
     if (existing) return existing;
     if (!this.getExecutionSnapshot(input.executionSnapshotId)) throw new Error(`执行快照不存在：${input.executionSnapshotId}`);
-      const segmentId = `conversation_segment_${randomId(12)}`;
-      const operationId = `conversation_switch_${randomId(12)}`;
+    const segmentId = `conversation_segment_${randomId(12)}`;
+    const operationId = `conversation_switch_${randomId(12)}`;
     this.db.transaction(() => {
       this.reconcileSwitchSlot(input.conversationId, input.createdAt);
       const source = this.currentSegment(input.conversationId);
@@ -723,17 +723,26 @@ export class ConversationExecutionRepository {
         `INSERT INTO conversation_timeline_events
          (id, conversation_id, sequence, event_kind, turn_id, submission_id, segment_id, payload_json, occurred_at)
          VALUES (?, ?, ?, 'turn_accepted', ?, ?, ?, ?, ?)`,
-          [`conversation_timeline_event_${randomId(12)}`, operation.conversationId, timelineSequence, input.turnId, operation.submissionId, target.id, JSON.stringify({
-              providerTurnId: input.providerTurnId,
-              eventSequence
-          }), input.acceptedAt],
+        [
+          `conversation_timeline_event_${randomId(12)}`,
+          operation.conversationId,
+          timelineSequence,
+          input.turnId,
+          operation.submissionId,
+          target.id,
+          JSON.stringify({
+            providerTurnId: input.providerTurnId,
+            eventSequence,
+          }),
+          input.acceptedAt,
+        ],
       );
       this.db.execute(
         `INSERT INTO conversation_model_history
          (id, conversation_id, sequence, turn_id, submission_id, segment_id, role, content_json,
           reasoning_source_json, tool_pair_id, capability_loss_json, confirmed_at)
          VALUES (?, ?, ?, ?, ?, ?, 'user', ?, NULL, NULL, NULL, ?)`,
-          [`conversation_model_history_${randomId(12)}`, operation.conversationId, modelHistorySequence, input.turnId, operation.submissionId, target.id, JSON.stringify(input.userHistoryContent), input.acceptedAt],
+        [`conversation_model_history_${randomId(12)}`, operation.conversationId, modelHistorySequence, input.turnId, operation.submissionId, target.id, JSON.stringify(input.userHistoryContent), input.acceptedAt],
       );
       this.resumeQueueBlockedByHead(operation.conversationId, input.acceptedAt);
       this.projectCurrentSegmentToLegacyConversation(target, input.acceptedAt);
@@ -776,17 +785,26 @@ export class ConversationExecutionRepository {
         `INSERT INTO conversation_timeline_events
          (id, conversation_id, sequence, event_kind, turn_id, submission_id, segment_id, payload_json, occurred_at)
          VALUES (?, ?, ?, 'turn_accepted', ?, ?, ?, ?, ?)`,
-          [`conversation_timeline_event_${randomId(12)}`, input.conversationId, timelineSequence, input.turnId, input.submissionId, segment.id, JSON.stringify({
-              providerTurnId: input.providerTurnId,
-              eventSequence
-          }), input.acceptedAt],
+        [
+          `conversation_timeline_event_${randomId(12)}`,
+          input.conversationId,
+          timelineSequence,
+          input.turnId,
+          input.submissionId,
+          segment.id,
+          JSON.stringify({
+            providerTurnId: input.providerTurnId,
+            eventSequence,
+          }),
+          input.acceptedAt,
+        ],
       );
       this.db.execute(
         `INSERT INTO conversation_model_history
          (id, conversation_id, sequence, turn_id, submission_id, segment_id, role, content_json,
           reasoning_source_json, tool_pair_id, capability_loss_json, confirmed_at)
          VALUES (?, ?, ?, ?, ?, ?, 'user', ?, NULL, NULL, NULL, ?)`,
-          [`conversation_model_history_${randomId(12)}`, input.conversationId, modelHistorySequence, input.turnId, input.submissionId, segment.id, JSON.stringify(input.userHistoryContent), input.acceptedAt],
+        [`conversation_model_history_${randomId(12)}`, input.conversationId, modelHistorySequence, input.turnId, input.submissionId, segment.id, JSON.stringify(input.userHistoryContent), input.acceptedAt],
       );
       this.resumeQueueBlockedByHead(input.conversationId, input.acceptedAt);
       settleExternalReceipt?.();
@@ -917,7 +935,7 @@ export class ConversationExecutionRepository {
   }
 
   recordRecoveryEvent(input: { conversationId: string; segmentId?: string | null; eventKind: string; payload: unknown; occurredAt: string }): string {
-      const id = `conversation_recovery_${randomId(12)}`;
+    const id = `conversation_recovery_${randomId(12)}`;
     this.db.execute(
       `INSERT INTO conversation_recovery_events
        (id, conversation_id, segment_id, event_kind, payload_json, occurred_at)
@@ -950,7 +968,7 @@ export class ConversationExecutionRepository {
     confirmedAt: string;
   }): ConversationModelHistoryRecord {
     const sequence = this.nextSequence(input.conversationId, 'model_history_sequence');
-      const id = `conversation_model_history_${randomId(12)}`;
+    const id = `conversation_model_history_${randomId(12)}`;
     this.db.execute(
       `INSERT INTO conversation_model_history
        (id, conversation_id, sequence, turn_id, submission_id, segment_id, role, content_json,
@@ -1007,7 +1025,7 @@ export class ConversationExecutionRepository {
     estimatedInputTokens: number | null;
     occurredAt: string;
   }): string {
-      const id = input.id ?? `conversation_portable_context_${randomId(12)}`;
+    const id = input.id ?? `conversation_portable_context_${randomId(12)}`;
     this.db.execute(
       `INSERT INTO conversation_portable_contexts
        (id, conversation_id, through_model_history_sequence, target_execution_snapshot_id, status,
@@ -1065,7 +1083,7 @@ export class ConversationExecutionRepository {
         WHERE conversation_id = ? AND route_fingerprint = ? AND through_model_history_sequence = ?`,
       [input.conversationId, input.routeFingerprint, input.throughModelHistorySequence],
     );
-      const id = existing?.id ?? `conversation_context_checkpoint_${randomId(12)}`;
+    const id = existing?.id ?? `conversation_context_checkpoint_${randomId(12)}`;
     this.db.execute(
       `INSERT INTO conversation_context_checkpoints
        (id, conversation_id, portable_context_id, route_fingerprint, through_model_history_sequence,
@@ -1105,7 +1123,7 @@ export class ConversationExecutionRepository {
       return this.processItemById(existing.id)!;
     }
     const processSequence = this.nextSequence(input.conversationId, 'process_sequence');
-      const id = `conversation_process_${randomId(12)}`;
+    const id = `conversation_process_${randomId(12)}`;
     this.db.execute(
       `INSERT INTO conversation_process_items
        (id, conversation_id, turn_id, segment_id, process_sequence, kind, status, title,
@@ -1140,7 +1158,7 @@ export class ConversationExecutionRepository {
   }
 
   observeModelRequest(input: Omit<ConversationModelRequestUsageRecord, 'id' | 'requestSequence'> & { observationIdentity?: string }): ConversationModelRequestUsageRecord {
-      const id = input.observationIdentity ? `conversation_model_request_${createHash('sha256').update(`${input.conversationId}\0${input.observationIdentity}`).digest('hex').slice(0, 24)}` : `conversation_model_request_${randomId(12)}`;
+    const id = input.observationIdentity ? `conversation_model_request_${createHash('sha256').update(`${input.conversationId}\0${input.observationIdentity}`).digest('hex').slice(0, 24)}` : `conversation_model_request_${randomId(12)}`;
     const existing = this.modelRequestById(id);
     if (existing) return existing;
     const requestSequence = this.nextSequence(input.conversationId, 'model_request_sequence');
@@ -1233,7 +1251,7 @@ export class ConversationExecutionRepository {
     mismatch?: boolean;
     observedAt: string;
   }): string {
-      const id = `conversation_config_evidence_${randomId(12)}`;
+    const id = `conversation_config_evidence_${randomId(12)}`;
     this.db.execute(
       `INSERT INTO conversation_config_evidence
        (id, conversation_id, turn_id, submission_id, segment_id, layer, configuration_json,
@@ -1250,7 +1268,7 @@ export class ConversationExecutionRepository {
       this.db.execute(`UPDATE conversation_persistent_warnings SET payload_json = ?, last_event_seq = ?, updated_at = ? WHERE id = ?`, [JSON.stringify(input.payload), sequence, input.occurredAt, existing.id]);
       return this.warningById(existing.id)!;
     }
-      const id = `conversation_warning_${randomId(12)}`;
+    const id = `conversation_warning_${randomId(12)}`;
     this.db.execute(
       `INSERT INTO conversation_persistent_warnings
        (id, conversation_id, warning_kind, payload_json, first_event_seq, last_event_seq, created_at, updated_at, resolved_at)
@@ -1486,7 +1504,7 @@ function sealLegacyProviderSessions(db: ZeusDatabasePort, migratedAt: string): v
       ORDER BY created_at, id`,
   );
   for (const row of rows) {
-      const segmentId = `conversation_segment_${randomId(12)}`;
+    const segmentId = `conversation_segment_${randomId(12)}`;
     const sourceIdentity = `${row.agent_kind}:${row.provider_thread_id}`;
     db.execute(
       `INSERT INTO conversation_runtime_segments
@@ -1515,7 +1533,7 @@ function sealLegacyProviderSessions(db: ZeusDatabasePort, migratedAt: string): v
       `INSERT INTO conversation_migration_mappings
        (id, conversation_id, source_kind, source_identity, target_kind, target_identity, source_hash, mapped_at)
        VALUES (?, ?, 'provider_session', ?, 'sealed_segment', ?, ?, ?)`,
-        [`conversation_migration_mapping_${randomId(12)}`, row.id, sourceIdentity, segmentId, createHash('sha256').update(JSON.stringify(row)).digest('hex'), migratedAt],
+      [`conversation_migration_mapping_${randomId(12)}`, row.id, sourceIdentity, segmentId, createHash('sha256').update(JSON.stringify(row)).digest('hex'), migratedAt],
     );
     if (row.agent_kind === 'pi') inspectPiMigrationSource(db, row.id, row.native_session_path ?? row.provider_thread_path, migratedAt);
   }
@@ -1551,7 +1569,7 @@ function migrateLegacyConversationHistory(db: ZeusDatabasePort, migratedAt: stri
         .digest('hex')
         .slice(0, 24)}`;
     const sequence = nextMigrationSequence(db, message.conversation_id, 'model_history_sequence');
-      const historyId = `conversation_model_history_${randomId(12)}`;
+    const historyId = `conversation_model_history_${randomId(12)}`;
     db.execute(
       `INSERT INTO conversation_model_history
        (id, conversation_id, sequence, turn_id, submission_id, segment_id, role, content_json,
@@ -1563,7 +1581,7 @@ function migrateLegacyConversationHistory(db: ZeusDatabasePort, migratedAt: stri
       `INSERT INTO conversation_migration_mappings
        (id, conversation_id, source_kind, source_identity, target_kind, target_identity, source_hash, mapped_at)
        VALUES (?, ?, 'conversation_message', ?, 'model_history', ?, ?, ?)`,
-        [`conversation_migration_mapping_${randomId(12)}`, message.conversation_id, message.id, historyId, createHash('sha256').update(JSON.stringify(message)).digest('hex'), migratedAt],
+      [`conversation_migration_mapping_${randomId(12)}`, message.conversation_id, message.id, historyId, createHash('sha256').update(JSON.stringify(message)).digest('hex'), migratedAt],
     );
   }
 
@@ -1596,7 +1614,7 @@ function migrateLegacyConversationHistory(db: ZeusDatabasePort, migratedAt: stri
         detail_json, source_event_id, started_at, completed_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-          `conversation_process_${randomId(12)}`,
+        `conversation_process_${randomId(12)}`,
         item.conversation_id,
         item.turn_id,
         segment.id,
@@ -1618,7 +1636,7 @@ function migrateLegacyConversationHistory(db: ZeusDatabasePort, migratedAt: stri
           reasoning_source_json, tool_pair_id, capability_loss_json, confirmed_at)
          VALUES (?, ?, ?, ?, NULL, ?, 'assistant', ?, ?, NULL, NULL, ?)`,
         [
-            `conversation_model_history_${randomId(12)}`,
+          `conversation_model_history_${randomId(12)}`,
           item.conversation_id,
           sequence,
           item.turn_id,
@@ -1636,7 +1654,7 @@ function migrateLegacyConversationHistory(db: ZeusDatabasePort, migratedAt: stri
           reasoning_source_json, tool_pair_id, capability_loss_json, confirmed_at)
          VALUES (?, ?, ?, ?, NULL, ?, 'assistant', ?, NULL, ?, NULL, ?)`,
         [
-            `conversation_model_history_${randomId(12)}`,
+          `conversation_model_history_${randomId(12)}`,
           item.conversation_id,
           callSequence,
           item.turn_id,
@@ -1653,16 +1671,16 @@ function migrateLegacyConversationHistory(db: ZeusDatabasePort, migratedAt: stri
          (id, conversation_id, sequence, turn_id, submission_id, segment_id, role, content_json,
           reasoning_source_json, tool_pair_id, capability_loss_json, confirmed_at)
          VALUES (?, ?, ?, ?, NULL, ?, 'tool', ?, NULL, ?, NULL, ?)`,
-          [
-              `conversation_model_history_${randomId(12)}`,
-              item.conversation_id,
-              sequence,
-              item.turn_id,
-              segment.id,
-              JSON.stringify({text: resultText, migratedFromItemId: item.id}),
-              item.provider_item_id,
-              item.completed_at ?? item.updated_at,
-          ],
+        [
+          `conversation_model_history_${randomId(12)}`,
+          item.conversation_id,
+          sequence,
+          item.turn_id,
+          segment.id,
+          JSON.stringify({ text: resultText, migratedFromItemId: item.id }),
+          item.provider_item_id,
+          item.completed_at ?? item.updated_at,
+        ],
       );
     }
   }
@@ -1692,7 +1710,7 @@ function inspectPiMigrationSource(db: ZeusDatabasePort, conversationId: string, 
     `INSERT INTO conversation_persistent_warnings
      (id, conversation_id, warning_kind, payload_json, first_event_seq, last_event_seq, created_at, updated_at, resolved_at)
      VALUES (?, ?, 'provider_history_gap', ?, ?, ?, ?, ?, NULL)`,
-      [`conversation_warning_${randomId(12)}`, conversationId, JSON.stringify(warning), sequence, sequence, migratedAt, migratedAt],
+    [`conversation_warning_${randomId(12)}`, conversationId, JSON.stringify(warning), sequence, sequence, migratedAt, migratedAt],
   );
 }
 

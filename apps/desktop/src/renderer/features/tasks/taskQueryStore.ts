@@ -1,7 +1,7 @@
-import type {TaskBoardViewSnapshot} from '@zeus/shared';
-import type {TaskRecord} from '../../apiClient.js';
-import type {TaskApiClient} from './taskApiClient.js';
-import {errorMessage, ExternalStore} from '../../externalStore.js';
+import type { TaskBoardViewSnapshot } from '@zeus/shared';
+import type { TaskRecord } from '../../apiClient.js';
+import type { TaskApiClient } from './taskApiClient.js';
+import { errorMessage, ExternalStore } from '../../externalStore.js';
 
 export interface TaskQuerySnapshot {
   items: readonly TaskRecord[];
@@ -16,7 +16,7 @@ export class TaskQueryStore extends ExternalStore<TaskQuerySnapshot> {
     private readonly client: TaskApiClient | null,
     initialItems: readonly TaskRecord[],
   ) {
-      super({items: initialItems, boards: {}, loading: false, error: null, revision: 0});
+    super({ items: initialItems, boards: {}, loading: false, error: null, revision: 0 });
   }
 
   replace(items: readonly TaskRecord[]): void {
@@ -33,7 +33,7 @@ export class TaskQueryStore extends ExternalStore<TaskQuerySnapshot> {
       this.publish({ ...this.snapshot, loading: false });
       return items;
     } catch (error) {
-        this.publish({...this.snapshot, loading: false, error: errorMessage(error)});
+      this.publish({ ...this.snapshot, loading: false, error: errorMessage(error) });
       throw error;
     }
   }

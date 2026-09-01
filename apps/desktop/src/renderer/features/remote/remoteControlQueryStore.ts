@@ -1,6 +1,6 @@
-import type {CodexRemoteControlPairing, CodexRemoteControlSnapshot} from '../../apiClient.js';
-import type {RemoteControlApiClient} from './remoteControlApiClient.js';
-import {errorMessage, ExternalStore} from '../../externalStore.js';
+import type { CodexRemoteControlPairing, CodexRemoteControlSnapshot } from '../../apiClient.js';
+import type { RemoteControlApiClient } from './remoteControlApiClient.js';
+import { errorMessage, ExternalStore } from '../../externalStore.js';
 
 export interface RemoteControlQuerySnapshot {
   phase: 'idle' | 'loading' | 'ready' | 'error';
@@ -24,9 +24,9 @@ const initialSnapshot: RemoteControlQuerySnapshot = {
 export class RemoteControlQueryStore extends ExternalStore<RemoteControlQuerySnapshot> {
   private generation = 0;
 
-    constructor(private readonly client: RemoteControlApiClient) {
-        super(initialSnapshot);
-    }
+  constructor(private readonly client: RemoteControlApiClient) {
+    super(initialSnapshot);
+  }
 
   async load(): Promise<void> {
     const generation = ++this.generation;

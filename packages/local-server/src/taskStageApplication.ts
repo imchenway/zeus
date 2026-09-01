@@ -1,16 +1,16 @@
-import {randomId} from './randomId.js';
+import { randomId } from './randomId.js';
 import {
-    ArtifactStore,
-    ConversationRepository,
-    type CreateTaskStageInput,
-    TaskRepository,
-    taskStageDeliverableArtifactGeneration,
-    TaskStageRepository,
-    TaskStageStoreError,
-    type UpdateTaskStageInput,
-    type ZeusDatabase,
-    type ZeusTaskStageDeliverableRecord,
-    type ZeusTaskWorkflowSnapshot,
+  ArtifactStore,
+  ConversationRepository,
+  type CreateTaskStageInput,
+  TaskRepository,
+  taskStageDeliverableArtifactGeneration,
+  TaskStageRepository,
+  TaskStageStoreError,
+  type UpdateTaskStageInput,
+  type ZeusDatabase,
+  type ZeusTaskStageDeliverableRecord,
+  type ZeusTaskWorkflowSnapshot,
 } from '@zeus/storage';
 
 const maximumDeliverableCharacters = 2_000_000;
@@ -237,7 +237,7 @@ export class TaskStageApplication {
     }
     const content = requiredContent(input.content, 'content', maximumDeliverableCharacters);
     const task = this.requireTask(input.taskId);
-      const deliverableId = `task_stage_deliverable_${randomId(16)}`;
+    const deliverableId = `task_stage_deliverable_${randomId(16)}`;
     const artifactRef = await this.ports.artifacts.putText({
       text: content,
       mimeType: 'text/markdown',

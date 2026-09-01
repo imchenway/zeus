@@ -1,21 +1,21 @@
-import {mkdtemp, rm} from 'node:fs/promises';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import Fastify from 'fastify';
-import {type CommandEnvelope, commandEnvelopeSchemaGeneration} from '../packages/shared/src/commandEnvelope.js';
-import {CommandDeliveryRepository, createZeusDatabase} from '../packages/storage/src/index.js';
-import type {TelegramPollingService} from '../packages/local-server/src/telegramAdapter.js';
+import { type CommandEnvelope, commandEnvelopeSchemaGeneration } from '../packages/shared/src/commandEnvelope.js';
+import { CommandDeliveryRepository, createZeusDatabase } from '../packages/storage/src/index.js';
+import type { TelegramPollingService } from '../packages/local-server/src/telegramAdapter.js';
 import {
-    telegramChildOperation,
-    TelegramCommandApplication,
-    telegramCommandInputSha256,
-    type TelegramCommandPayload,
-    type TelegramCommandRequest,
-    telegramCommandRoutePolicy,
-    type TelegramCommandType,
-    telegramCommandTypes,
+  telegramChildOperation,
+  TelegramCommandApplication,
+  telegramCommandInputSha256,
+  type TelegramCommandPayload,
+  type TelegramCommandRequest,
+  telegramCommandRoutePolicy,
+  type TelegramCommandType,
+  telegramCommandTypes,
 } from '../packages/local-server/src/telegramCommandApplication.js';
-import {registerTelegramPollingApi} from '../packages/local-server/src/telegramPollingApi.js';
+import { registerTelegramPollingApi } from '../packages/local-server/src/telegramPollingApi.js';
 
 const probeRoot = await mkdtemp(join(tmpdir(), 'zeus-telegram-command-probe-'));
 const secretSentinel = 'telegram-secret-probe-never-persist';

@@ -1,11 +1,6 @@
-import type {MemoryApiClient} from './memoryApiClient.js';
-import type {
-    MemoryCandidateInput,
-    MemoryListQuery,
-    MemoryRecord,
-    SupersedingMemoryCandidateInput
-} from './memoryContracts.js';
-import {errorMessage, ExternalStore} from '../../externalStore.js';
+import type { MemoryApiClient } from './memoryApiClient.js';
+import type { MemoryCandidateInput, MemoryListQuery, MemoryRecord, SupersedingMemoryCandidateInput } from './memoryContracts.js';
+import { errorMessage, ExternalStore } from '../../externalStore.js';
 
 export interface MemoryQuerySnapshot {
   query: Omit<MemoryListQuery, 'before'>;
@@ -30,17 +25,17 @@ const defaultQuery: MemoryQuerySnapshot['query'] = {
 export class MemoryQueryStore extends ExternalStore<MemoryQuerySnapshot> {
   private revision = 0;
 
-    constructor(private readonly client: MemoryApiClient) {
-        super({
-            query: defaultQuery,
-            items: [],
-            phase: 'idle',
-            loadingMore: false,
-            command: 'idle',
-            error: null,
-            nextCursor: null
-        });
-    }
+  constructor(private readonly client: MemoryApiClient) {
+    super({
+      query: defaultQuery,
+      items: [],
+      phase: 'idle',
+      loadingMore: false,
+      command: 'idle',
+      error: null,
+      nextCursor: null,
+    });
+  }
 
   async setQuery(query: MemoryQuerySnapshot['query']): Promise<void> {
     if (sameQuery(this.snapshot.query, query) && this.snapshot.phase !== 'idle') return;

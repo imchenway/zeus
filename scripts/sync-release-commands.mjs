@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /* global AbortController, URL, clearTimeout, console, fetch, process, setTimeout */
-import {existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync} from 'node:fs';
-import {tmpdir} from 'node:os';
-import {join, resolve} from 'node:path';
-import {isDeepStrictEqual} from 'node:util';
-import {validateCommandDefinitionInput} from '../packages/shared/dist/index.js';
-import {parseBoolean} from './release-script-utils.mjs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
+import { validateCommandDefinitionInput } from '../packages/shared/dist/index.js';
+import { parseBoolean } from './release-script-utils.mjs';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const manifestPath = join(import.meta.dirname, 'zeus-release-command-definitions.json');

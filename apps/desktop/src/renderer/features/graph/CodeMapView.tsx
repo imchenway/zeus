@@ -1,69 +1,48 @@
+import { type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
+import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
+import { buildMermaidDiagramExport, buildMermaidDiagramSource, buildPlantUmlDiagramExport, buildPlantUmlDiagramSource, type MermaidDiagramExportFile, type PlantUmlDiagramExportFile } from '@zeus/diagram-engine';
+import { type AppLanguage } from '../workspace/workspaceCopy.js';
+import { ZeusSelect } from '../../ZeusSelect.js';
+import { buildArchitectureLayerModel, canRenderArchitectureLayerModel } from '../../graph/ArchitectureGraphCanvas.js';
 import {
-    type KeyboardEvent as ReactKeyboardEvent,
-    type PointerEvent as ReactPointerEvent,
-    useEffect,
-    useMemo,
-    useRef,
-    useState
-} from 'react';
-import {MagnifyingGlassIcon as MagnifyingGlass} from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
-import {XIcon as X} from '@phosphor-icons/react/dist/csr/X';
-import {
-    buildMermaidDiagramExport,
-    buildMermaidDiagramSource,
-    buildPlantUmlDiagramExport,
-    buildPlantUmlDiagramSource,
-    type MermaidDiagramExportFile,
-    type PlantUmlDiagramExportFile
-} from '@zeus/diagram-engine';
-import {type AppLanguage} from '../workspace/workspaceCopy.js';
-import {ZeusSelect} from '../../ZeusSelect.js';
-import {buildArchitectureLayerModel, canRenderArchitectureLayerModel} from '../../graph/ArchitectureGraphCanvas.js';
-import {
-    type CodeMapSettings,
-    type GraphConversationHistoryItem,
-    type GraphConversationHistoryPage,
-    type GraphNeighborhood,
-    type GraphQuestionAnswer,
-    type GraphSearchResult,
-    type GraphViewSnapshot,
-    type GraphViewType,
+  type CodeMapSettings,
+  type GraphConversationHistoryItem,
+  type GraphConversationHistoryPage,
+  type GraphNeighborhood,
+  type GraphQuestionAnswer,
+  type GraphSearchResult,
+  type GraphViewSnapshot,
+  type GraphViewType,
 } from '../../apiClient.js';
+import { formatGraphConversationStatus, formatGraphEdgeType, formatGraphLayoutAlgorithm, formatGraphMessageSource, formatGraphNodeType, formatGraphNodeTypeList } from '../workspace/workspaceFormatters.js';
 import {
-    formatGraphConversationStatus,
-    formatGraphEdgeType,
-    formatGraphLayoutAlgorithm,
-    formatGraphMessageSource,
-    formatGraphNodeType,
-    formatGraphNodeTypeList
-} from '../workspace/workspaceFormatters.js';
-import {
-    buildGraphNeighborhoodLayout,
-    buildGraphNeighborhoodSlice,
-    buildGraphNodeActionMenu,
-    buildGraphQuestionRequest,
-    buildGraphSearchRequest,
-    buildVisibleGraphSlice,
-    GraphCanvas,
-    GraphEdgeDetailPanel,
-    type GraphNodeActionMenuItem,
-    GraphNodeDetail,
-    handleInlineRailKeyboardNavigation,
-    isAggregatedGraphNode,
-    normalizeGraphMinConfidence,
-    resolveGraphCanvasNodeLineStart,
-    resolveGraphCanvasNodeSourceRef,
+  buildGraphNeighborhoodLayout,
+  buildGraphNeighborhoodSlice,
+  buildGraphNodeActionMenu,
+  buildGraphQuestionRequest,
+  buildGraphSearchRequest,
+  buildVisibleGraphSlice,
+  GraphCanvas,
+  GraphEdgeDetailPanel,
+  type GraphNodeActionMenuItem,
+  GraphNodeDetail,
+  handleInlineRailKeyboardNavigation,
+  isAggregatedGraphNode,
+  normalizeGraphMinConfidence,
+  resolveGraphCanvasNodeLineStart,
+  resolveGraphCanvasNodeSourceRef,
 } from './GraphCanvas.js';
 import {
-    type CodeMapToolPanel,
-    codeMapToolPanels,
-    type DiagramExportFormat,
-    getLanguageCopy,
-    graphEdgeTypeFilterValues,
-    type GraphNodeTaskFeedback,
-    graphNodeTypeFilterValues,
-    type GraphSourceOpenFeedback,
-    graphViewOptions,
+  type CodeMapToolPanel,
+  codeMapToolPanels,
+  type DiagramExportFormat,
+  getLanguageCopy,
+  graphEdgeTypeFilterValues,
+  type GraphNodeTaskFeedback,
+  graphNodeTypeFilterValues,
+  type GraphSourceOpenFeedback,
+  graphViewOptions,
 } from '../workspace/workspaceSupport.js';
 
 export function CodeMapView(props: {

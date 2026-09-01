@@ -1,27 +1,20 @@
-import {randomId} from './randomId.js';
+import { randomId } from './randomId.js';
 import {
-    createDefaultTaskBoardViewSettings,
-    isTaskManagementStatus,
-    isTaskType,
-    normalizeTaskBoardViewSettings,
-    type TaskAttachmentReference,
-    type TaskBoardLaneIdentity,
-    type TaskBoardPosition,
-    type TaskBoardViewSettings,
-    type TaskBoardViewSnapshot,
-    type TaskManagementStatus,
-    type TaskPriority,
-    type TaskType,
+  createDefaultTaskBoardViewSettings,
+  isTaskManagementStatus,
+  isTaskType,
+  normalizeTaskBoardViewSettings,
+  type TaskAttachmentReference,
+  type TaskBoardLaneIdentity,
+  type TaskBoardPosition,
+  type TaskBoardViewSettings,
+  type TaskBoardViewSnapshot,
+  type TaskManagementStatus,
+  type TaskPriority,
+  type TaskType,
 } from '@zeus/shared';
-import type {ZeusDatabasePort} from './databasePort.js';
-import {
-    canonicalJson,
-    type CodexMcpStartupStatusSnapshot,
-    type CodexRateLimitsSnapshot,
-    shouldAcceptProviderSnapshot,
-    validateMcpStartupStatusSnapshot,
-    validateRateLimitsSnapshot
-} from './conversationStore.js';
+import type { ZeusDatabasePort } from './databasePort.js';
+import { canonicalJson, type CodexMcpStartupStatusSnapshot, type CodexRateLimitsSnapshot, shouldAcceptProviderSnapshot, validateMcpStartupStatusSnapshot, validateRateLimitsSnapshot } from './conversationStore.js';
 
 export { isTaskManagementStatus, isTaskPriority, isTaskType } from '@zeus/shared';
 export type { TaskManagementStatus, TaskPriority, TaskType } from '@zeus/shared';
@@ -478,7 +471,7 @@ function slugifyProjectName(name: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/gu, '-')
     .replace(/(^-|-$)/gu, '');
-    return slug || `project-${randomId(8)}`;
+  return slug || `project-${randomId(8)}`;
 }
 
 function normalizeProjectLocalPath(localPath: string): string {
@@ -662,9 +655,9 @@ export class ProjectRepository {
     }
     const timestamp = nowIso();
     const record: ZeusProjectRecord = {
-        id: input.id ?? `project_${randomId(12)}`,
+      id: input.id ?? `project_${randomId(12)}`,
       name: input.name,
-        slug: `${slugifyProjectName(input.name)}-${randomId(6)}`,
+      slug: `${slugifyProjectName(input.name)}-${randomId(6)}`,
       localPath,
       description: input.description ?? null,
       note: input.note ?? null,
@@ -859,7 +852,7 @@ export class TaskRepository {
       const parentTaskId = input.parentTaskId ?? null;
       if (parentTaskId) this.assertValidParent(input.projectId, '__new_task__', parentTaskId, 1);
       const record: ZeusTaskRecord = {
-          id: input.id ?? `task_${randomId(12)}`,
+        id: input.id ?? `task_${randomId(12)}`,
         projectId: input.projectId,
         taskCode: formatTaskCode(taskSequence),
         taskSequence,
@@ -1587,7 +1580,7 @@ export class ProjectRepositoryRegistrationRepository {
       for (const input of inputs) {
         const prior = existing.get(input.localPath);
         this.db.execute(`INSERT INTO project_repositories (id, project_id, name, relative_path, local_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, [
-            input.id ?? prior?.id ?? `project_repository_${randomId(12)}`,
+          input.id ?? prior?.id ?? `project_repository_${randomId(12)}`,
           projectId,
           input.name,
           input.relativePath,
@@ -1619,7 +1612,7 @@ export class ProjectSharedPathRepository {
       for (const input of inputs) {
         const prior = existing.get(input.localPath);
         this.db.execute(`INSERT INTO project_shared_paths (id, project_id, relative_path, local_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`, [
-            input.id ?? prior?.id ?? `project_shared_path_${randomId(12)}`,
+          input.id ?? prior?.id ?? `project_shared_path_${randomId(12)}`,
           projectId,
           input.relativePath,
           input.localPath,
@@ -1641,7 +1634,7 @@ export class TaskEnvironmentRepository {
   create(input: CreateTaskEnvironmentInput): ZeusTaskEnvironmentRecord {
     const timestamp = nowIso();
     const record: ZeusTaskEnvironmentRecord = {
-        id: input.id ?? `task_environment_${randomId(12)}`,
+      id: input.id ?? `task_environment_${randomId(12)}`,
       projectId: input.projectId,
       taskId: input.taskId,
       rootPath: input.rootPath ?? null,
@@ -1702,7 +1695,7 @@ export class TaskWorkspaceRepository {
     const timestamp = nowIso();
     const state = assertEnum(input.state ?? 'ready', ['ready', 'reclaimed', 'merged', 'discarded', 'failed'] as const, 'task workspace state');
     const record: ZeusTaskWorkspaceRecord = {
-        id: input.id ?? `task_workspace_${randomId(12)}`,
+      id: input.id ?? `task_workspace_${randomId(12)}`,
       projectId: input.projectId,
       taskId: input.taskId,
       kind: assertEnum(input.kind ?? 'task', ['task', 'conflict'] as const, 'task workspace kind'),
@@ -1822,7 +1815,7 @@ export class TaskIntegrationRepository {
     const mode = assertEnum(input.mode, ['merge', 'squash'] as const, 'task integration mode');
     const state = assertEnum(input.state ?? 'preparing', ['preparing', 'conflicted', 'pending_local_sync', 'merged', 'failed'] as const, 'task integration state');
     const record: ZeusTaskIntegrationRecord = {
-        id: input.id ?? `task_integration_${randomId(12)}`,
+      id: input.id ?? `task_integration_${randomId(12)}`,
       projectId: input.projectId,
       taskId: input.taskId,
       workspaceId: input.workspaceId,
@@ -1959,7 +1952,7 @@ export class TaskTemplateRepository {
   createCustom(input: CreateTaskTemplateInput): ZeusTaskTemplateRecord {
     const timestamp = nowIso();
     const record: ZeusTaskTemplateRecord = {
-        id: input.id ?? `task_template_${randomId(12)}`,
+      id: input.id ?? `task_template_${randomId(12)}`,
       name: input.name,
       description: input.description,
       category: input.category ?? 'custom',
@@ -2024,7 +2017,7 @@ export class TaskEventRepository {
 
   create(input: CreateTaskEventInput): ZeusTaskEventRecord {
     const record: ZeusTaskEventRecord = {
-        id: `task_event_${randomId(12)}`,
+      id: `task_event_${randomId(12)}`,
       taskId: input.taskId,
       eventType: input.eventType,
       title: input.title,

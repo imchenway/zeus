@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /* global console, process */
-import {spawnSync} from 'node:child_process';
-import {mkdirSync, mkdtempSync, readFileSync, writeFileSync} from 'node:fs';
-import {tmpdir} from 'node:os';
-import {join, resolve} from 'node:path';
-import {URL} from 'node:url';
-import {assertVersionAfterTag, parseBoolean, requiredVersion} from './release-script-utils.mjs';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { URL } from 'node:url';
+import { assertVersionAfterTag, parseBoolean, requiredVersion } from './release-script-utils.mjs';
 
 process.on('uncaughtException', (error) => {
   console.error(error instanceof Error ? error.message : String(error));

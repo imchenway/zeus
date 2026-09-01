@@ -1,7 +1,7 @@
-import {createHash} from 'node:crypto';
-import {randomId} from './randomId.js';
-import type {ImAgentPresetRef, ImConnectionState} from '@zeus/shared';
-import type {ZeusDatabasePort} from './databasePort.js';
+import { createHash } from 'node:crypto';
+import { randomId } from './randomId.js';
+import type { ImAgentPresetRef, ImConnectionState } from '@zeus/shared';
+import type { ZeusDatabasePort } from './databasePort.js';
 
 export const imSchemaMigrationId = '20260829_0001_im_connections_v1';
 
@@ -307,7 +307,7 @@ export class ImRepository {
   }
 
   createConnection(input: { id?: string; projectId: string; agentPreset: ImAgentPresetRef; botId: string; botUsername: string; botDisplayName: string; now: string }): ImConnectionRecord {
-      const id = input.id ?? `im_connection_${randomId(16)}`;
+    const id = input.id ?? `im_connection_${randomId(16)}`;
     this.db.execute(
       `INSERT INTO im_connections (id, channel_id, project_id, agent_preset_kind, agent_preset_id, state, bot_id, bot_username, bot_display_name, token_validated_at, last_checked_at, created_at, updated_at)
        VALUES (?, 'telegram', ?, ?, ?, 'pending_pairing', ?, ?, ?, ?, ?, ?, ?)`,
@@ -394,7 +394,7 @@ export class ImRepository {
   }
 
   createPairingSession(input: { connectionId: string; tokenHash: string; expiresAt: string; now: string }): ImPairingSessionRecord {
-      const id = `im_pairing_${randomId(16)}`;
+    const id = `im_pairing_${randomId(16)}`;
     this.db.transaction(() => {
       this.db.execute(`UPDATE im_pairing_sessions SET consumed_at = COALESCE(consumed_at, ?) WHERE connection_id = ? AND consumed_at IS NULL`, [input.now, input.connectionId]);
       this.db.execute(`INSERT INTO im_pairing_sessions (id, connection_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)`, [id, input.connectionId, input.tokenHash, input.expiresAt, input.now]);
@@ -420,7 +420,7 @@ export class ImRepository {
       if (existingEndpoint) return null;
       this.db.execute(`UPDATE im_pairing_sessions SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL`, [input.now, pairingRow.id]);
       if ((this.db.get<{ count: number }>(`SELECT changes() AS count`)?.count ?? 0) !== 1) return null;
-        const endpointId = `im_endpoint_${randomId(16)}`;
+      const endpointId = `im_endpoint_${randomId(16)}`;
       this.db.execute(`INSERT INTO im_trusted_endpoints (id, connection_id, provider_user_id, provider_chat_id, display_name, paired_at) VALUES (?, ?, ?, ?, ?, ?)`, [
         endpointId,
         pairingRow.connection_id,
@@ -450,7 +450,7 @@ export class ImRepository {
   setBinding(input: { connectionId: string; endpointId: string; conversationId: string; taskId?: string | null; now: string }): ImChatBindingRecord {
     const existing = this.getBinding(input.connectionId, input.endpointId);
     if (!existing) {
-        const id = `im_binding_${randomId(16)}`;
+      const id = `im_binding_${randomId(16)}`;
       this.db.execute(`INSERT INTO im_chat_bindings (id, connection_id, endpoint_id, conversation_id, task_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, [
         id,
         input.connectionId,
@@ -513,7 +513,7 @@ export class ImRepository {
   }
 
   createActionCapability(input: Omit<ImActionCapabilityRecord, 'id' | 'consumedAt' | 'createdAt'> & { now: string }): ImActionCapabilityRecord {
-      const id = `im_capability_${randomId(16)}`;
+    const id = `im_capability_${randomId(16)}`;
     this.db.execute(`INSERT INTO im_action_capabilities (id, connection_id, endpoint_id, token_hash, action_kind, target_kind, target_id, expected_revision, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
       id,
       input.connectionId,
@@ -572,7 +572,7 @@ export class ImRepository {
 
   appendLog(input: { connectionId: string; level: ImConnectionLogRecord['level']; event: string; message: string; now: string }): void {
     this.db.execute(`INSERT INTO im_connection_logs (id, connection_id, level, event, message, occurred_at) VALUES (?, ?, ?, ?, ?, ?)`, [
-        `im_log_${randomId(16)}`,
+      `im_log_${randomId(16)}`,
       input.connectionId,
       input.level,
       input.event.slice(0, 96),

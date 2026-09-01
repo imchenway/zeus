@@ -1,25 +1,10 @@
 #!/usr/bin/env node
 /* global console, process */
-import {spawnSync} from 'node:child_process';
-import {
-    copyFileSync,
-    existsSync,
-    linkSync,
-    mkdirSync,
-    mkdtempSync,
-    readFileSync,
-    statSync,
-    writeFileSync
-} from 'node:fs';
-import {tmpdir} from 'node:os';
-import {basename, join, resolve} from 'node:path';
-import {
-    assertVersionAfterTag,
-    parseBoolean,
-    requiredVersion,
-    sha256File,
-    validateReleaseNotesFile
-} from './release-script-utils.mjs';
+import { spawnSync } from 'node:child_process';
+import { copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, join, resolve } from 'node:path';
+import { assertVersionAfterTag, parseBoolean, requiredVersion, sha256File, validateReleaseNotesFile } from './release-script-utils.mjs';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 
@@ -29,7 +14,7 @@ main().catch((error) => {
 });
 
 async function main() {
-    const expectedVersion = requiredVersion(process.env.EXPECTED_VERSION, 'EXPECTED_VERSION');
+  const expectedVersion = requiredVersion(process.env.EXPECTED_VERSION, 'EXPECTED_VERSION');
   const allowDirtyWorktree = parseBoolean('ALLOW_DIRTY_WORKTREE', process.env.ALLOW_DIRTY_WORKTREE, false);
   const requireAppleDistribution = parseBoolean('REQUIRE_APPLE_DISTRIBUTION', process.env.REQUIRE_APPLE_DISTRIBUTION, false);
   const registerDmgArtifact = parseBoolean('REGISTER_DMG_ARTIFACT', process.env.REGISTER_DMG_ARTIFACT, false);
@@ -38,12 +23,12 @@ async function main() {
   const branch = git(['branch', '--show-current']) || '(detached HEAD)';
   const releaseOutputDirectory = resolve(repositoryRoot, process.env.ZEUS_RELEASE_OUTPUT_DIR?.trim() || 'dist');
 
-    assertVersionAfterTag(expectedVersion, latestTag, '，拒绝重新打包已发布版本。');
+  assertVersionAfterTag(expectedVersion, latestTag, '，拒绝重新打包已发布版本。');
   assertTagDoesNotExist(expectedVersion);
   assertPackageVersions(expectedVersion);
 
   const releaseNotesPath = join(repositoryRoot, 'docs', 'releases', `v${expectedVersion}.md`);
-    validateReleaseNotesFile(releaseNotesPath, expectedVersion);
+  validateReleaseNotesFile(releaseNotesPath, expectedVersion);
 
   const worktreeStatus = git(['status', '--short']);
   if (worktreeStatus && !allowDirtyWorktree) {

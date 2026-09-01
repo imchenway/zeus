@@ -1,10 +1,6 @@
-import type {
-    NativeConversationChoice,
-    NativeConversationChoicesSnapshot,
-    NativeProjectConversationChoicesSnapshot
-} from '../../session/sessionTypes.js';
-import type {ConversationApiClient} from './conversationApiClient.js';
-import {errorMessage, ExternalStore} from '../../externalStore.js';
+import type { NativeConversationChoice, NativeConversationChoicesSnapshot, NativeProjectConversationChoicesSnapshot } from '../../session/sessionTypes.js';
+import type { ConversationApiClient } from './conversationApiClient.js';
+import { errorMessage, ExternalStore } from '../../externalStore.js';
 
 export interface ConversationQuerySnapshot {
   choicesByTask: Readonly<Record<string, NativeConversationChoicesSnapshot>>;
@@ -23,7 +19,7 @@ export class ConversationQueryStore extends ExternalStore<ConversationQuerySnaps
     private readonly client: ConversationApiClient | null,
     initial: { taskChoices?: readonly NativeConversationChoicesSnapshot[]; projectChoices?: readonly NativeProjectConversationChoicesSnapshot[] },
   ) {
-      super({
+    super({
       choicesByTask: Object.fromEntries((initial.taskChoices ?? []).map((entry) => [entry.taskId, entry])),
       choicesByProject: Object.fromEntries((initial.projectChoices ?? []).map((entry) => [entry.projectId, entry])),
       archived: [],
@@ -31,7 +27,7 @@ export class ConversationQueryStore extends ExternalStore<ConversationQuerySnaps
       restoringConversationId: null,
       error: null,
       revision: 0,
-      });
+    });
   }
 
   updateTaskChoices(updater: RecordUpdater<NativeConversationChoicesSnapshot>): void {
@@ -64,7 +60,7 @@ export class ConversationQueryStore extends ExternalStore<ConversationQuerySnaps
       this.setArchived(result.choices);
       return result.choices;
     } catch (error) {
-        this.publish({...this.snapshot, archivedLoadState: 'error', error: errorMessage(error)});
+      this.publish({ ...this.snapshot, archivedLoadState: 'error', error: errorMessage(error) });
       throw error;
     }
   }

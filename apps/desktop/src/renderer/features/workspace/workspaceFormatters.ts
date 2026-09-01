@@ -1,23 +1,16 @@
-import {defaultTaskManagementStatusConfig, normalizeTaskManagementStatusConfig} from '@zeus/shared';
-import {type AppLanguage} from './workspaceCopy.js';
-import {normalizeTaskTableColumnPreferences, normalizeTaskTableEnumSortOrders} from '../../task/taskWorkspaceModel.js';
+import { defaultTaskManagementStatusConfig, normalizeTaskManagementStatusConfig } from '@zeus/shared';
+import { type AppLanguage } from './workspaceCopy.js';
+import { normalizeTaskTableColumnPreferences, normalizeTaskTableEnumSortOrders } from '../../task/taskWorkspaceModel.js';
+import { type AiRuntimeLogEntry, type AppShellSettings, type ExecuteGitOperationRequest, type GitDiffHunk, type GitDiffSummary, type GitOperationConfirmation } from '../../apiClient.js';
 import {
-    type AiRuntimeLogEntry,
-    type AppShellSettings,
-    type ExecuteGitOperationRequest,
-    type GitDiffHunk,
-    type GitDiffSummary,
-    type GitOperationConfirmation
-} from '../../apiClient.js';
-import {
-    getLanguageCopy,
-    normalizeCodeWorkspaceByProject,
-    normalizeSidebarConversationCollapsedStatusIdsByProject,
-    normalizeSidebarConversationOrganization,
-    normalizeTaskExpandedIdsByProject,
-    normalizeTaskPageViewByProject,
-    normalizeTaskStatusFilterByProject,
-    normalizeTaskViewModeByProject,
+  getLanguageCopy,
+  normalizeCodeWorkspaceByProject,
+  normalizeSidebarConversationCollapsedStatusIdsByProject,
+  normalizeSidebarConversationOrganization,
+  normalizeTaskExpandedIdsByProject,
+  normalizeTaskPageViewByProject,
+  normalizeTaskStatusFilterByProject,
+  normalizeTaskViewModeByProject,
 } from './workspaceSupport.js';
 
 export const GENERIC_SHELL_CRITICAL_CONFIRMATION_PHRASE = 'ZEUS HIGH RISK';

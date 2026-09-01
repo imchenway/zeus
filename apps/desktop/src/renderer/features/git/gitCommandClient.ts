@@ -1,5 +1,5 @@
-import {type CommandEnvelope, type CommandScopeKind} from '@zeus/shared';
-import {buildRendererCommandRequest, randomIdentity, type RendererCommandPayload} from '../../commandRequest.js';
+import { type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
+import { buildRendererCommandRequest, randomIdentity, type RendererCommandPayload } from '../../commandRequest.js';
 
 export const gitClientCommandTypes = {
   confirmationCreate: 'git.confirmation.create',
@@ -28,12 +28,12 @@ export async function buildGitCommandRequest<TInput extends object>(input: {
   value: TInput;
 }): Promise<{ command: CommandEnvelope<RendererCommandPayload>; input: TInput }> {
   const operationIdentity = `${input.operationPrefix}_${randomIdentity()}`;
-    return buildRendererCommandRequest({
-        ...input,
-        scopeId: input.scopeId(operationIdentity),
-        operationIdentity,
-        commandIdPrefix: 'command_git_',
-        actorId: 'zeus-desktop-git',
-        expectedRevision: null
-    });
+  return buildRendererCommandRequest({
+    ...input,
+    scopeId: input.scopeId(operationIdentity),
+    operationIdentity,
+    commandIdPrefix: 'command_git_',
+    actorId: 'zeus-desktop-git',
+    expectedRevision: null,
+  });
 }

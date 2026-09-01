@@ -1,111 +1,90 @@
 import {
-    type AiCliAdapterDescriptor,
-    type AiRuntimeLogEntry,
-    type AiRuntimeSession,
-    buildAiRuntimePrompt,
-    createAiRuntimeSessionManager,
-    createNonCodexAiCliAdapterInvocation,
-    expandCliSearchPath,
-    isNonCodexAiCliAdapterId,
-    listAiCliAdapters,
-    type NonCodexAiCliAdapterId,
+  type AiCliAdapterDescriptor,
+  type AiRuntimeLogEntry,
+  type AiRuntimeSession,
+  buildAiRuntimePrompt,
+  createAiRuntimeSessionManager,
+  createNonCodexAiCliAdapterInvocation,
+  expandCliSearchPath,
+  isNonCodexAiCliAdapterId,
+  listAiCliAdapters,
+  type NonCodexAiCliAdapterId,
 } from '@zeus/ai-runtime';
-import {type ProjectGraph} from '@zeus/graph-engine';
-import {createDefaultProjectConfig, normalizeProjectConfig, type ProjectConfigSnapshot} from './projectCore.js';
+import { type ProjectGraph } from '@zeus/graph-engine';
+import { createDefaultProjectConfig, normalizeProjectConfig, type ProjectConfigSnapshot } from './projectCore.js';
+import { buildAutoUpdatePolicy, detectReleaseReadiness, evaluateReleaseUpdateAvailability, parseReleaseUpdateManifest, type ReleaseUpdateArtifactArch, type ReleaseUpdateManifest, type ReleaseUpdateStatus } from './releaseCore.js';
+import { getSecretPresenceLabel, type SecretStore } from '@zeus/security-core';
+import { commandNeedsHighRiskConfirmation, isTaskAttachmentField, type TaskAttachmentField } from '@zeus/shared';
 import {
-    buildAutoUpdatePolicy,
-    detectReleaseReadiness,
-    evaluateReleaseUpdateAvailability,
-    parseReleaseUpdateManifest,
-    type ReleaseUpdateArtifactArch,
-    type ReleaseUpdateManifest,
-    type ReleaseUpdateStatus
-} from './releaseCore.js';
-import {getSecretPresenceLabel, type SecretStore} from '@zeus/security-core';
-import {commandNeedsHighRiskConfirmation, isTaskAttachmentField, type TaskAttachmentField} from '@zeus/shared';
-import {
-    CommandArtifactRepository,
-    CommandDefinitionRepository,
-    CommandRunRepository,
-    ConversationRepository,
-    ProjectionDatabaseRuntimeManager,
-    ProjectRepository,
-    RuntimeSessionRepository,
-    SettingRepository,
-    TaskEventRepository,
-    TaskRepository,
-    type ZeusConversationWithMessagesRecord,
-    type ZeusProjectRecord,
-    type ZeusTaskRecord,
+  CommandArtifactRepository,
+  CommandDefinitionRepository,
+  CommandRunRepository,
+  ConversationRepository,
+  ProjectionDatabaseRuntimeManager,
+  ProjectRepository,
+  RuntimeSessionRepository,
+  SettingRepository,
+  TaskEventRepository,
+  TaskRepository,
+  type ZeusConversationWithMessagesRecord,
+  type ZeusProjectRecord,
+  type ZeusTaskRecord,
 } from '@zeus/storage';
-import {type TaskStatus} from './taskCore.js';
+import { type TaskStatus } from './taskCore.js';
+import { createTelegramBotMessageClient, getTelegramConfigurationState, type TelegramCommand, type TelegramCommandResponse, type TelegramMessageSender, type TelegramPollingService, type TelegramUpdate } from './telegramAdapter.js';
+import { type FastifyInstance, type FastifyRequest } from 'fastify';
+import { randomUUID } from 'node:crypto';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { isAbsolute, join, parse, resolve } from 'node:path';
 import {
-    createTelegramBotMessageClient,
-    getTelegramConfigurationState,
-    type TelegramCommand,
-    type TelegramCommandResponse,
-    type TelegramMessageSender,
-    type TelegramPollingService,
-    type TelegramUpdate
-} from './telegramAdapter.js';
-import {type FastifyInstance, type FastifyRequest} from 'fastify';
-import {randomUUID} from 'node:crypto';
-import {existsSync, readFileSync, realpathSync, statSync} from 'node:fs';
-import {isAbsolute, join, parse, resolve} from 'node:path';
-import {
-    emptyGraphSearchResult,
-    type GraphEdgeDetail,
-    graphEdgeDetailFromGraph,
-    graphEdgesByNodeIdFromGraph,
-    type GraphNeighborhood,
-    graphNeighborhoodFromGraph,
-    graphNodeSnapshotFromGraph,
-    type GraphSearchResult,
-    type GraphViewSnapshot,
-    graphViewSnapshotFromGraph,
-    readGraphEdgeDetail,
-    readGraphEdgesByNodeId,
-    readGraphNeighborhood,
-    readGraphNodeById,
-    readGraphNodeIdsBySourceRef,
-    readGraphSummary,
-    readGraphSummaryByProject,
-    readGraphView,
-    searchGraphNodes,
-    searchGraphNodesInMemory,
+  emptyGraphSearchResult,
+  type GraphEdgeDetail,
+  graphEdgeDetailFromGraph,
+  graphEdgesByNodeIdFromGraph,
+  type GraphNeighborhood,
+  graphNeighborhoodFromGraph,
+  graphNodeSnapshotFromGraph,
+  type GraphSearchResult,
+  type GraphViewSnapshot,
+  graphViewSnapshotFromGraph,
+  readGraphEdgeDetail,
+  readGraphEdgesByNodeId,
+  readGraphNeighborhood,
+  readGraphNodeById,
+  readGraphNodeIdsBySourceRef,
+  readGraphSummary,
+  readGraphSummaryByProject,
+  readGraphView,
+  searchGraphNodes,
+  searchGraphNodesInMemory,
 } from './codeIntelligenceGraphStore.js';
-import {commandCenterCommandTypes, createCommandCenterCommandRequest} from './commandCenterCommandApplication.js';
-import {ConversationChoiceQueryApplication} from './conversationChoiceQueryApplication.js';
-import {isPathInsideRoot} from './conversationResourcePreview.js';
+import { commandCenterCommandTypes, createCommandCenterCommandRequest } from './commandCenterCommandApplication.js';
+import { ConversationChoiceQueryApplication } from './conversationChoiceQueryApplication.js';
+import { isPathInsideRoot } from './conversationResourcePreview.js';
 import type {
-    ProjectDatabaseSecretSnapshot,
-    ReleaseStatusSnapshot,
-    TelegramDispatchPreviewBody,
-    TelegramNotificationSettingsSnapshot,
-    TelegramRuntimeConfirmation,
-    TelegramSecuritySettingsSnapshot,
-    UpdateTelegramNotificationSettingsBody,
-    UpdateTelegramSecuritySettingsBody,
+  ProjectDatabaseSecretSnapshot,
+  ReleaseStatusSnapshot,
+  TelegramDispatchPreviewBody,
+  TelegramNotificationSettingsSnapshot,
+  TelegramRuntimeConfirmation,
+  TelegramSecuritySettingsSnapshot,
+  UpdateTelegramNotificationSettingsBody,
+  UpdateTelegramSecuritySettingsBody,
 } from './index.js';
-import {type CodeMapSettingsSnapshot, projectConfigSettingsPrefix} from './localServerSettingsNormalization.js';
-import {type WritableNonCodexLegacyConversationContext} from './nonCodexLegacyRuntime.js';
-import {sanitizeRuntimeFileName} from './runtimeLogRetention.js';
+import { type CodeMapSettingsSnapshot, projectConfigSettingsPrefix } from './localServerSettingsNormalization.js';
+import { type WritableNonCodexLegacyConversationContext } from './nonCodexLegacyRuntime.js';
+import { sanitizeRuntimeFileName } from './runtimeLogRetention.js';
 import {
-    assertPersistedRuntimeProcessIdentity,
-    discoverPersistedRuntimeProcessTargetByIdentity,
-    inspectPersistedRuntimeProcessIdentity,
-    isSafeRuntimeProcessId,
-    resolvePersistedRuntimeProcessTarget,
-    signalPersistedRuntimeProcessTarget,
-    waitForPersistedRuntimeProcessTargetExit,
+  assertPersistedRuntimeProcessIdentity,
+  discoverPersistedRuntimeProcessTargetByIdentity,
+  inspectPersistedRuntimeProcessIdentity,
+  isSafeRuntimeProcessId,
+  resolvePersistedRuntimeProcessTarget,
+  signalPersistedRuntimeProcessTarget,
+  waitForPersistedRuntimeProcessTargetExit,
 } from './runtimeProcessIdentity.js';
-import {
-    type RuntimeSettingsSnapshot,
-    toAiRuntimeLogEntry,
-    toAiRuntimeSession,
-    toAiRuntimeSessionOrUndefined
-} from './runtimeQueryApplication.js';
-import {historicalTaskAttachmentField} from './taskAttachmentLifecycle.js';
+import { type RuntimeSettingsSnapshot, toAiRuntimeLogEntry, toAiRuntimeSession, toAiRuntimeSessionOrUndefined } from './runtimeQueryApplication.js';
+import { historicalTaskAttachmentField } from './taskAttachmentLifecycle.js';
 
 export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, type ReadOnlyValidationApplicationIdentity } from './readOnlyValidation.js';
 // 拆分期间保留结构化工厂依赖，后续按领域端口继续收窄。

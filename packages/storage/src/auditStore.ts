@@ -1,5 +1,5 @@
-import {randomId} from './randomId.js';
-import type {ZeusDatabasePort} from './databasePort.js';
+import { randomId } from './randomId.js';
+import type { ZeusDatabasePort } from './databasePort.js';
 
 export interface ZeusGitSnapshotRecord {
   id: string;
@@ -75,7 +75,7 @@ export class GitSnapshotRepository {
 
   createSnapshot(input: CreateGitSnapshotInput): ZeusGitSnapshotRecord {
     const record: ZeusGitSnapshotRecord = {
-        id: `git_snapshot_${randomId(12)}`,
+      id: `git_snapshot_${randomId(12)}`,
       taskId: input.taskId,
       projectId: input.projectId,
       snapshotType: input.snapshotType,
@@ -95,7 +95,7 @@ export class GitSnapshotRepository {
 
   createChange(input: CreateGitChangeInput): ZeusGitChangeRecord {
     const record: ZeusGitChangeRecord = {
-        id: `git_change_${randomId(12)}`,
+      id: `git_change_${randomId(12)}`,
       taskId: input.taskId,
       projectId: input.projectId,
       filePath: input.filePath,
@@ -141,7 +141,7 @@ export class AuditLogRepository {
 
   append(input: AppendAuditLogInput): ZeusAuditLogRecord {
     const record: ZeusAuditLogRecord = {
-        id: `audit_log_${randomId(12)}`,
+      id: `audit_log_${randomId(12)}`,
       actorType: input.actorType,
       actorRef: input.actorRef ?? null,
       action: input.action,

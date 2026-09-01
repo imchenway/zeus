@@ -1,5 +1,5 @@
-import {type CommandEnvelope, type CommandScopeKind} from '@zeus/shared';
-import {buildRendererCommandRequest, randomIdentity, type RendererCommandPayload} from '../../commandRequest.js';
+import { type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
+import { buildRendererCommandRequest, randomIdentity, type RendererCommandPayload } from '../../commandRequest.js';
 
 export const commandCenterClientCommandTypes = {
   definitionCreate: 'command_center.definition.create',
@@ -22,11 +22,11 @@ export async function buildCommandCenterCommandRequest<TInput extends object>(in
   value: TInput;
 }): Promise<{ command: CommandEnvelope<RendererCommandPayload>; input: TInput }> {
   const operationIdentity = `${input.operationPrefix}_${randomIdentity()}`;
-    return buildRendererCommandRequest({
-        ...input,
-        scopeId: input.scopeId(operationIdentity),
-        operationIdentity,
-        commandIdPrefix: 'command_command_center_',
-        actorId: 'zeus-desktop-command-center',
-    });
+  return buildRendererCommandRequest({
+    ...input,
+    scopeId: input.scopeId(operationIdentity),
+    operationIdentity,
+    commandIdPrefix: 'command_command_center_',
+    actorId: 'zeus-desktop-command-center',
+  });
 }

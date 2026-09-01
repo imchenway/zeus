@@ -1,16 +1,10 @@
-import {createHash} from 'node:crypto';
-import {readFile} from 'node:fs/promises';
-import {resolve} from 'node:path';
-import {randomId} from './randomId.js';
-import type {CodexBootstrapAdditionalContext, PortableConversationContext, PortableHistoryEntry} from '@zeus/shared';
-import type {CodexDynamicToolSpec} from '@zeus/ai-runtime';
-import {
-    type ArtifactRef,
-    type ArtifactStore,
-    artifactStoreGeneration,
-    type ConversationExecutionRepository,
-    type ConversationToolResultRecord
-} from '@zeus/storage';
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { randomId } from './randomId.js';
+import type { CodexBootstrapAdditionalContext, PortableConversationContext, PortableHistoryEntry } from '@zeus/shared';
+import type { CodexDynamicToolSpec } from '@zeus/ai-runtime';
+import { type ArtifactRef, type ArtifactStore, artifactStoreGeneration, type ConversationExecutionRepository, type ConversationToolResultRecord } from '@zeus/storage';
 
 const maximumProjectionCharacters = 16_384;
 const commandProjectionHeadCharacters = 12_288;
@@ -221,7 +215,7 @@ export class ManagedConversationToolResultStore {
   }
 
   async store(input: StoreConversationToolResultInput): Promise<{ record: ConversationToolResultRecord; projection: string }> {
-      const handle = `conversation_tool_result_${randomId(32)}`;
+    const handle = `conversation_tool_result_${randomId(32)}`;
     const artifactRef = await this.artifacts.putText({
       text: input.text,
       mimeType: input.mimeType ?? 'text/plain; charset=utf-8',

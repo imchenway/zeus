@@ -2,21 +2,14 @@ import '@xterm/xterm/css/xterm.css';
 import './styles.css';
 import './session/session.css';
 import './ui/primitives.css';
-import type {WorkspacePageProps} from './features/workspace/workspaceContracts.js';
-import {useWorkspaceQueryState} from './features/workspace/useWorkspaceQueryState.js';
-import {useWorkspaceDomainActions} from './features/workspace/useWorkspaceDomainActions.js';
-import {useWorkspaceOperations} from './features/workspace/useWorkspaceOperations.js';
-import {useWorkspaceLifecycle} from './features/workspace/useWorkspaceLifecycle.js';
-import {WorkspaceView} from './features/workspace/WorkspaceView.js';
+import type { WorkspacePageProps } from './features/workspace/workspaceContracts.js';
+import { useWorkspaceQueryState } from './features/workspace/useWorkspaceQueryState.js';
+import { useWorkspaceDomainActions } from './features/workspace/useWorkspaceDomainActions.js';
+import { useWorkspaceOperations } from './features/workspace/useWorkspaceOperations.js';
+import { useWorkspaceLifecycle } from './features/workspace/useWorkspaceLifecycle.js';
+import { WorkspaceView } from './features/workspace/WorkspaceView.js';
 
-export {
-    buildMermaidDiagramExport,
-    buildMermaidDiagramSource,
-    buildPlantUmlDiagramExport,
-    buildPlantUmlDiagramSource,
-    type MermaidDiagramExportFile,
-    type PlantUmlDiagramExportFile
-} from '@zeus/diagram-engine';
+export { buildMermaidDiagramExport, buildMermaidDiagramSource, buildPlantUmlDiagramExport, buildPlantUmlDiagramSource, type MermaidDiagramExportFile, type PlantUmlDiagramExportFile } from '@zeus/diagram-engine';
 export {
   type MainNavTarget,
   type SettingsCategory,

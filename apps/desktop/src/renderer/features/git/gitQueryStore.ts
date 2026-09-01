@@ -1,6 +1,6 @@
-import type {GitDiffSummary, GitOperationConfirmation} from '../../apiClient.js';
-import type {GitApiClient} from './gitApiClient.js';
-import {errorMessage, ExternalStore} from '../../externalStore.js';
+import type { GitDiffSummary, GitOperationConfirmation } from '../../apiClient.js';
+import type { GitApiClient } from './gitApiClient.js';
+import { errorMessage, ExternalStore } from '../../externalStore.js';
 
 export interface GitQuerySnapshot {
   diff: GitDiffSummary | undefined;
@@ -28,7 +28,7 @@ export class GitQueryStore extends ExternalStore<GitQuerySnapshot> {
     private readonly client: GitApiClient | null,
     initial: Pick<GitQuerySnapshot, 'diff' | 'confirmation' | 'patchExportStatus' | 'operationStatus'>,
   ) {
-      super({
+    super({
       ...initial,
       hunkDecisions: {},
       commitMessage: '',
@@ -42,7 +42,7 @@ export class GitQueryStore extends ExternalStore<GitQuerySnapshot> {
       loading: false,
       error: null,
       revision: 0,
-      });
+    });
   }
 
   set<Key extends keyof GitQuerySnapshot>(key: Key, updater: GitQueryFieldUpdater<Key>): void {
@@ -59,7 +59,7 @@ export class GitQueryStore extends ExternalStore<GitQuerySnapshot> {
       this.publish({ ...this.snapshot, diff, loading: false, revision: this.snapshot.revision + 1 });
       return diff;
     } catch (error) {
-        this.publish({...this.snapshot, loading: false, error: errorMessage(error)});
+      this.publish({ ...this.snapshot, loading: false, error: errorMessage(error) });
       throw error;
     }
   }

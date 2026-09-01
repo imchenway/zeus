@@ -1,6 +1,6 @@
 /** Local Server 的 Telegram 适配实现。 */
-import {readFile} from 'node:fs/promises';
-import {basename} from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { basename } from 'node:path';
 
 export interface TelegramConfigurationState {
   enabled: boolean;

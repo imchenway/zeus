@@ -1,53 +1,49 @@
-import {createHash, randomBytes} from 'node:crypto';
-import {mkdir, readFile, realpath, stat, writeFile} from 'node:fs/promises';
-import {basename, extname, isAbsolute, relative, resolve} from 'node:path';
+import { createHash, randomBytes } from 'node:crypto';
+import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { basename, extname, isAbsolute, relative, resolve } from 'node:path';
 import {
-    canonicalCommandInputJson,
-    type CanonicalRequestUserInputQuestion,
-    commandEnvelopeSchemaGeneration,
-    type ImAgentPresetRef,
-    imAttachmentLimits,
-    type ImConnectionHealth,
-    type ImConnectionSnapshot,
-    type ImPairingSessionSnapshot,
-    type ImSettingsSnapshot,
-    type ImTelegramConnectionCreated,
-    type ImTelegramConnectionLogEntry,
-    parseCanonicalRequestUserInputQuestions,
-    splitZeusSkillIds,
+  canonicalCommandInputJson,
+  type CanonicalRequestUserInputQuestion,
+  commandEnvelopeSchemaGeneration,
+  type ImAgentPresetRef,
+  imAttachmentLimits,
+  type ImConnectionHealth,
+  type ImConnectionSnapshot,
+  type ImPairingSessionSnapshot,
+  type ImSettingsSnapshot,
+  type ImTelegramConnectionCreated,
+  type ImTelegramConnectionLogEntry,
+  parseCanonicalRequestUserInputQuestions,
+  splitZeusSkillIds,
 } from '@zeus/shared';
 import {
-    type DigitalEmployeeRecord,
-    type ImActionCapabilityRecord,
-    type ImConnectionRecord,
-    ImRepository,
-    type ImTrustedEndpointRecord,
-    type ZeusConversationPlanActionRecord,
-    type ZeusConversationRecord,
-    type ZeusConversationServerRequestRecord,
-    type ZeusProjectRecord,
-    type ZeusTaskRecord,
+  type DigitalEmployeeRecord,
+  type ImActionCapabilityRecord,
+  type ImConnectionRecord,
+  ImRepository,
+  type ImTrustedEndpointRecord,
+  type ZeusConversationPlanActionRecord,
+  type ZeusConversationRecord,
+  type ZeusConversationServerRequestRecord,
+  type ZeusProjectRecord,
+  type ZeusTaskRecord,
 } from '@zeus/storage';
-import type {SecretStore} from '@zeus/security-core';
+import type { SecretStore } from '@zeus/security-core';
 import {
-    createTelegramBotMessageClient,
-    createTelegramLongPollingClient,
-    createTelegramPollingService,
-    downloadTelegramRemoteFile,
-    getTelegramBotProfile,
-    getTelegramRemoteFile,
-    TelegramApiRejectedError,
-    type TelegramCommandResponse,
-    type TelegramInboundAttachment,
-    type TelegramMessageSender,
-    type TelegramPollingService,
-    type TelegramUpdate,
+  createTelegramBotMessageClient,
+  createTelegramLongPollingClient,
+  createTelegramPollingService,
+  downloadTelegramRemoteFile,
+  getTelegramBotProfile,
+  getTelegramRemoteFile,
+  TelegramApiRejectedError,
+  type TelegramCommandResponse,
+  type TelegramInboundAttachment,
+  type TelegramMessageSender,
+  type TelegramPollingService,
+  type TelegramUpdate,
 } from './telegramAdapter.js';
-import {
-    telegramChildOperation,
-    TelegramCommandApplication,
-    telegramCommandTypes
-} from './telegramCommandApplication.js';
+import { telegramChildOperation, TelegramCommandApplication, telegramCommandTypes } from './telegramCommandApplication.js';
 
 const pairingLifetimeMs = 10 * 60 * 1_000;
 const interactionLifetimeMs = 10 * 60 * 1_000;

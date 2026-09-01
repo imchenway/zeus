@@ -1,4 +1,4 @@
-import type {TaskStatus} from '@zeus/shared';
+import type { TaskStatus } from '@zeus/shared';
 
 /** Local Server 的任务状态迁移规则。 */
 

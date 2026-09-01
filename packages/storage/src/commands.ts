@@ -1,17 +1,8 @@
-import {randomId} from './randomId.js';
-import {createHash} from 'node:crypto';
-import {
-    type CommandArtifact,
-    type CommandDefinition,
-    type CommandDefinitionInput,
-    type CommandRun,
-    type CommandRunStatus,
-    type CommandRunTrigger,
-    type CommandScope,
-    defaultCommandRiskFlags
-} from '@zeus/shared';
-import type {ArtifactRef, ArtifactStore} from './artifactStore.js';
-import type {ZeusDatabasePort} from './databasePort.js';
+import { randomId } from './randomId.js';
+import { createHash } from 'node:crypto';
+import { type CommandArtifact, type CommandDefinition, type CommandDefinitionInput, type CommandRun, type CommandRunStatus, type CommandRunTrigger, type CommandScope, defaultCommandRiskFlags } from '@zeus/shared';
+import type { ArtifactRef, ArtifactStore } from './artifactStore.js';
+import type { ZeusDatabasePort } from './databasePort.js';
 
 interface DbCommandDefinitionRow {
   id: string;
@@ -207,7 +198,7 @@ export class CommandDefinitionRepository {
 
   create(input: CreateStoredCommandInput): CommandDefinition {
     const timestamp = input.createdAt ?? nowIso();
-      const id = input.id ?? `command_${randomId(12)}`;
+    const id = input.id ?? `command_${randomId(12)}`;
     this.db.transaction(() => {
       this.db.execute(
         `INSERT INTO command_definitions
@@ -360,9 +351,12 @@ export class CommandDefinitionRepository {
   private replaceAliases(commandId: string, aliases: string[], createdAt: string): void {
     this.db.execute(`DELETE FROM command_aliases WHERE command_id = ?`, [commandId]);
     for (const alias of aliases) {
-        this.db.execute(`INSERT INTO command_aliases (id, command_id, alias, normalized_alias, created_at)
+      this.db.execute(
+        `INSERT INTO command_aliases (id, command_id, alias, normalized_alias, created_at)
                          VALUES (?, ?, ?, ?,
-                                 ?)`, [`command_alias_${randomId(12)}`, commandId, alias.trim(), normalizeCommandToken(alias), createdAt]);
+                                 ?)`,
+        [`command_alias_${randomId(12)}`, commandId, alias.trim(), normalizeCommandToken(alias), createdAt],
+      );
     }
   }
 
@@ -396,7 +390,7 @@ export class CommandRunRepository {
   constructor(private readonly db: ZeusDatabasePort) {}
 
   create(input: CreateCommandRunRecordInput): CommandRun {
-      const id = input.id ?? `command_run_${randomId(12)}`;
+    const id = input.id ?? `command_run_${randomId(12)}`;
     const timestamp = nowIso();
     this.db.execute(
       `INSERT INTO command_runs
@@ -461,7 +455,7 @@ export class CommandArtifactRepository {
     const existing = this.db.get<DbCommandArtifactRow>(`${commandArtifactSelectSql()} WHERE run_id = ? AND relative_path = ?`, [input.runId, input.relativePath]);
     if (existing) return mapCommandArtifactRow(existing);
     const record: CommandArtifact = {
-        id: `command_artifact_${randomId(12)}`,
+      id: `command_artifact_${randomId(12)}`,
       ...input,
       artifactRef: input.artifactRef ?? null,
       createdAt: nowIso(),
@@ -478,7 +472,7 @@ export class CommandArtifactRepository {
     if (!this.artifactStore) throw new Error('ZEUS_COMMAND_ARTIFACT_STORE_REQUIRED');
     const existing = this.db.get<DbCommandArtifactRow>(`${commandArtifactSelectSql()} WHERE run_id = ? AND relative_path = ?`, [input.runId, input.relativePath]);
     if (existing) return mapCommandArtifactRow(existing);
-      const id = `command_artifact_${randomId(12)}`;
+    const id = `command_artifact_${randomId(12)}`;
     const createdAt = input.createdAt ?? nowIso();
     const owner = { kind: 'command_artifact', id, generationId: '2026-08-21-command-artifact-v1', projectId: input.projectId };
     const artifactRef = this.artifactStore.putFileSync({ sourcePath: input.sourcePath, mimeType: input.mimeType ?? 'application/octet-stream', owner, createdAt });

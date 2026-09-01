@@ -1,6 +1,6 @@
-import {createHash} from 'node:crypto';
-import {randomId} from './randomId.js';
-import type {ZeusDatabasePort} from './databasePort.js';
+import { createHash } from 'node:crypto';
+import { randomId } from './randomId.js';
+import type { ZeusDatabasePort } from './databasePort.js';
 
 export const taskWorkSchemaMigrationId = '20260829_0001_task_work_v2';
 export const taskWorkWorkspaceBindingMigrationId = '20260831_0425_task_work_workspace_binding_v1';
@@ -538,7 +538,7 @@ export class TaskWorkDeliverableRepository {
   }
 
   create(input: Omit<TaskWorkDeliverableRecord, 'id' | 'version' | 'status' | 'revision' | 'createdAt' | 'updatedAt' | 'acceptedAt'> & { id?: string }): TaskWorkDeliverableRecord {
-      const id = input.id ?? `task_work_deliverable_${randomId(16)}`;
+    const id = input.id ?? `task_work_deliverable_${randomId(16)}`;
     const version = (this.db.get<{ maximum: number | null }>(`SELECT MAX(version) AS maximum FROM task_work_deliverables WHERE work_item_id = ?`, [identity(input.workItemId, 'workItemId')])?.maximum ?? 0) + 1;
     const timestamp = this.now();
     this.db.execute(
@@ -605,7 +605,7 @@ export class TaskWorkDecisionRepository {
   create(input: Omit<TaskWorkDecisionRecord, 'id' | 'status' | 'responsePayload' | 'revision' | 'createdAt' | 'updatedAt' | 'resolvedAt'> & { id?: string }): TaskWorkDecisionRecord {
     const replay = this.getByOperation(input.operationIdentity);
     if (replay) return replay;
-      const id = input.id ?? `task_work_decision_${randomId(16)}`;
+    const id = input.id ?? `task_work_decision_${randomId(16)}`;
     const timestamp = this.now();
     this.db.execute(
       `INSERT INTO task_work_decisions (id, project_id, task_id, work_item_id, run_id, deliverable_id, kind, status, title, prompt, request_payload_json, response_payload_json, operation_identity, revision, created_at, updated_at, resolved_at, expires_at)

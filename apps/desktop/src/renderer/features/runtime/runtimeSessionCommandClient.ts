@@ -1,11 +1,6 @@
-import {type CommandEnvelope, type CommandScopeKind} from '@zeus/shared';
-import {type LocalApiTransport, ZeusApiError} from '../../transport/localApiTransport.js';
-import {
-    buildRendererCommandRequest,
-    randomIdentity,
-    type RendererCommandPayload,
-    sha256
-} from '../../commandRequest.js';
+import { type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
+import { type LocalApiTransport, ZeusApiError } from '../../transport/localApiTransport.js';
+import { buildRendererCommandRequest, randomIdentity, type RendererCommandPayload, sha256 } from '../../commandRequest.js';
 
 export const runtimeSessionClientCommandTypes = {
   confirmationCreate: 'runtime.confirmation.create',
@@ -35,14 +30,14 @@ export async function buildRuntimeSessionCommandRequest<TInput extends object>(i
 }): Promise<{ command: CommandEnvelope<RendererCommandPayload>; input: TInput }> {
   const suffix = input.operationSeed ? (await sha256(`${input.commandType}\0${input.operationSeed}`)).slice(0, 32) : randomIdentity();
   const operationIdentity = `${input.operationPrefix}${suffix}`;
-    return buildRendererCommandRequest({
-        ...input,
-        scopeId: input.scopeId(operationIdentity),
-        operationIdentity,
-        commandIdPrefix: 'command_runtime_session_',
-        actorId: stableRuntimeRendererClientId(),
-        expectedRevision: null,
-    });
+  return buildRendererCommandRequest({
+    ...input,
+    scopeId: input.scopeId(operationIdentity),
+    operationIdentity,
+    commandIdPrefix: 'command_runtime_session_',
+    actorId: stableRuntimeRendererClientId(),
+    expectedRevision: null,
+  });
 }
 
 interface RuntimeEphemeralLease {

@@ -1,51 +1,25 @@
+import { type FormEvent, type KeyboardEvent, memo, type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
+import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
+import { MessageCheckIcon, MessageEditIcon, MessageExpandIcon, MessageRemoteDeviceIcon, MessageThumbIcon } from './SessionMessageIcons.js';
+import { isAssistantDeliverableItem, type NativeConversationAttachment, type NativeSessionItemBuffer } from './sessionTypes.js';
+import { autosizeTextarea } from './textareaAutosize.js';
 import {
-    type FormEvent,
-    type KeyboardEvent,
-    memo,
-    type ReactNode,
-    useCallback,
-    useEffect,
-    useLayoutEffect,
-    useRef,
-    useState
-} from 'react';
-import {CopyIcon as Copy} from '@phosphor-icons/react/dist/csr/Copy';
-import {TerminalWindowIcon as TerminalWindow} from '@phosphor-icons/react/dist/csr/TerminalWindow';
-import {
-    MessageCheckIcon,
-    MessageEditIcon,
-    MessageExpandIcon,
-    MessageRemoteDeviceIcon,
-    MessageThumbIcon
-} from './SessionMessageIcons.js';
-import {
-    isAssistantDeliverableItem,
-    type NativeConversationAttachment,
-    type NativeSessionItemBuffer
-} from './sessionTypes.js';
-import {autosizeTextarea} from './textareaAutosize.js';
-import {
-    type ConversationContextDraft,
-    type ConversationFileLocation,
-    type ConversationOpenTarget,
-    type ConversationResource,
-    type ConversationResourcePreview,
-    type ConversationResponseAnnotation,
-    type ConversationResponseTextAnchor,
-    parseCanonicalRequestUserInputQuestions,
-    type TaskPushMessageLayout,
+  type ConversationContextDraft,
+  type ConversationFileLocation,
+  type ConversationOpenTarget,
+  type ConversationResource,
+  type ConversationResourcePreview,
+  type ConversationResponseAnnotation,
+  type ConversationResponseTextAnchor,
+  parseCanonicalRequestUserInputQuestions,
+  type TaskPushMessageLayout,
 } from '@zeus/shared';
-import {
-    ConversationGeneratedImage,
-    ConversationPendingAttachmentImages,
-    ConversationResourceCards,
-    isImageResource,
-    isPendingImageAttachment
-} from './ConversationResources.js';
-import {ResponseSelectionActions} from './ResponseSelectionActions.js';
-import {useApplicationErrorDialog, VisibleApplicationError} from '../ui/ApplicationErrorDialog.js';
-import {ConversationMarkdown, conversationMarkdownPhaseForStatus} from './ConversationMarkdown.js';
-import {McpAppFrame, type McpAppToolCall, type McpAppToolResult} from './McpAppFrame.js';
+import { ConversationGeneratedImage, ConversationPendingAttachmentImages, ConversationResourceCards, isImageResource, isPendingImageAttachment } from './ConversationResources.js';
+import { ResponseSelectionActions } from './ResponseSelectionActions.js';
+import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { ConversationMarkdown, conversationMarkdownPhaseForStatus } from './ConversationMarkdown.js';
+import { McpAppFrame, type McpAppToolCall, type McpAppToolResult } from './McpAppFrame.js';
 
 export type SessionUiLanguage = 'zh-CN' | 'en-US';
 export type ThreadItemRole = 'user' | 'assistant' | 'commentary' | 'notice' | 'tool' | 'file' | 'image' | 'request' | 'error' | 'unknown';

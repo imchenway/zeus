@@ -1,23 +1,9 @@
-import {
-    type KeyboardEvent as ReactKeyboardEvent,
-    type PointerEvent as ReactPointerEvent,
-    type ReactNode,
-    useEffect,
-    useMemo,
-    useRef,
-    useState,
-    type WheelEvent as ReactWheelEvent
-} from 'react';
-import {type AppLanguage} from '../workspace/workspaceCopy.js';
-import {ArchitectureGraphCanvas, type ArchitectureLayerModel} from '../../graph/ArchitectureGraphCanvas.js';
-import {type AiRuntimeLogEntry, type GraphViewSnapshot, type GraphViewType, type TaskStatus} from '../../apiClient.js';
-import {
-    formatGraphEdgeType,
-    formatGraphEdgeWithConfidence,
-    formatGraphNodeType,
-    formatGraphRiskTag
-} from '../workspace/workspaceFormatters.js';
-import {getLanguageCopy} from '../workspace/workspaceSupport.js';
+import { type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useMemo, useRef, useState, type WheelEvent as ReactWheelEvent } from 'react';
+import { type AppLanguage } from '../workspace/workspaceCopy.js';
+import { ArchitectureGraphCanvas, type ArchitectureLayerModel } from '../../graph/ArchitectureGraphCanvas.js';
+import { type AiRuntimeLogEntry, type GraphViewSnapshot, type GraphViewType, type TaskStatus } from '../../apiClient.js';
+import { formatGraphEdgeType, formatGraphEdgeWithConfidence, formatGraphNodeType, formatGraphRiskTag } from '../workspace/workspaceFormatters.js';
+import { getLanguageCopy } from '../workspace/workspaceSupport.js';
 
 export interface GraphNodeActionMenuItem {
   id: 'inspect-detail' | 'create-task' | 'open-source' | 'ask-node' | 'generate-sequence' | 'generate-flow' | 'expand-one-hop' | 'expand-two-hop' | 'toggle-visibility';

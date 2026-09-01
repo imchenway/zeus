@@ -1,5 +1,5 @@
-import {type CommandEnvelope} from '@zeus/shared';
-import {buildRendererCommandRequest, randomIdentity, type RendererCommandPayload} from '../../commandRequest.js';
+import { type CommandEnvelope } from '@zeus/shared';
+import { buildRendererCommandRequest, randomIdentity, type RendererCommandPayload } from '../../commandRequest.js';
 
 export const telegramClientCommandTypes = {
   securityReset: 'security.reset',
@@ -28,13 +28,13 @@ export async function buildTelegramCommandRequest<TInput extends object>(input: 
   value: TInput;
 }): Promise<{ command: CommandEnvelope<RendererCommandPayload>; input: TInput }> {
   const operationIdentity = `${input.operationPrefix}_${randomIdentity()}`;
-    return buildRendererCommandRequest({
-        commandType: input.commandType,
-        commandIdPrefix: 'command_telegram_',
-        actorId: 'zeus-desktop-telegram-settings',
-        scopeKind: 'settings',
-        scopeId: input.scopeId,
-        operationIdentity,
-        value: input.value,
-    });
+  return buildRendererCommandRequest({
+    commandType: input.commandType,
+    commandIdPrefix: 'command_telegram_',
+    actorId: 'zeus-desktop-telegram-settings',
+    scopeKind: 'settings',
+    scopeId: input.scopeId,
+    operationIdentity,
+    value: input.value,
+  });
 }

@@ -1,10 +1,5 @@
-import {type CommandEnvelope, type CommandScopeKind} from '@zeus/shared';
-import {
-    buildRendererCommandRequest,
-    commandInputSha256,
-    randomIdentity,
-    type RendererCommandPayload
-} from '../../commandRequest.js';
+import { type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
+import { buildRendererCommandRequest, commandInputSha256, randomIdentity, type RendererCommandPayload } from '../../commandRequest.js';
 
 export const workspaceGitClientCommandTypes = {
   workbenchAction: 'git.workbench.repository.action',
@@ -44,7 +39,7 @@ export async function buildWorkspaceGitCommandRequest<TInput extends object>(inp
     const existing = stableRequests.get(cacheKey);
     if (existing) {
       const request = (await existing) as { command: CommandEnvelope<WorkspaceGitCommandPayload>; input: TInput };
-        if (request.command.payload.inputSha256 !== (await commandInputSha256(input.value))) {
+      if (request.command.payload.inputSha256 !== (await commandInputSha256(input.value))) {
         throw new Error('A reconnect identity cannot be reused with different Workspace Git command input.');
       }
       return request;
@@ -64,11 +59,11 @@ async function createWorkspaceGitCommandRequest<TInput extends object>(input: {
   value: TInput;
 }): Promise<{ command: CommandEnvelope<WorkspaceGitCommandPayload>; input: TInput }> {
   const operationIdentity = `workspace_git_operation_${randomIdentity()}`;
-    return buildRendererCommandRequest({
-        ...input,
-        operationIdentity,
-        commandIdPrefix: 'command_workspace_git_',
-        actorId: 'zeus-desktop-workspace-git',
-        expectedRevision: null
-    });
+  return buildRendererCommandRequest({
+    ...input,
+    operationIdentity,
+    commandIdPrefix: 'command_workspace_git_',
+    actorId: 'zeus-desktop-workspace-git',
+    expectedRevision: null,
+  });
 }

@@ -1,4 +1,4 @@
-import {defineConfig} from 'vite';
+import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 const rendererChunkTargetBytes = 360 * 1024;
@@ -22,9 +22,9 @@ export default defineConfig({
               priority: 100,
             },
             {
-                // 会话正文与文件预览共用同一 Markdown 运行时，保持其内部模块在同一代码包中。
+              // 会话正文与文件预览共用同一 Markdown 运行时，保持其内部模块在同一代码包中。
               name: 'markdown-runtime',
-                test: /node_modules[\\/](?:markstream-react|markstream-core|stream-markdown-parser|markdown-it(?:-[^\\/]+)?|linkify-it|mdurl|uc\.micro|entities|punycode\.js|@floating-ui[\\/][^\\/]+|clsx)[\\/]/u,
+              test: /node_modules[\\/](?:markstream-react|markstream-core|stream-markdown-parser|markdown-it(?:-[^\\/]+)?|linkify-it|mdurl|uc\.micro|entities|punycode\.js|@floating-ui[\\/][^\\/]+|clsx)[\\/]/u,
               priority: 95,
               maxSize: 2 * 1024 * 1024,
             },

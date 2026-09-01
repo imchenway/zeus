@@ -1,9 +1,9 @@
-import {createHash, randomBytes} from 'node:crypto';
-import {readdir, readFile, stat} from 'node:fs/promises';
-import {dirname, extname, join, normalize, relative} from 'node:path';
+import { createHash, randomBytes } from 'node:crypto';
+import { readdir, readFile, stat } from 'node:fs/promises';
+import { dirname, extname, join, normalize, relative } from 'node:path';
 
 function randomId(length: number): string {
-    return randomBytes(length).toString('base64url').slice(0, length);
+  return randomBytes(length).toString('base64url').slice(0, length);
 }
 
 export interface ScanProjectInput {
@@ -2420,7 +2420,7 @@ function makeSymbol(
   metadata: Record<string, unknown>,
 ): CodeSymbolFact {
   return {
-      id: `symbol_${randomId(12)}`,
+    id: `symbol_${randomId(12)}`,
     symbolType,
     name,
     qualifiedName,

@@ -1,14 +1,9 @@
-import {createHash} from 'node:crypto';
-import type {SQLInputValue} from 'node:sqlite';
-import {randomId} from './randomId.js';
-import {
-    type CodexUsageEstimate,
-    type ConversationResourceKind,
-    type ConversationResourcePresentation,
-    type TokenUsageBreakdown
-} from '@zeus/shared';
-import type {ZeusDatabasePort} from './databasePort.js';
-import type {ConversationAgentKind} from './conversationItemTypes.js';
+import { createHash } from 'node:crypto';
+import type { SQLInputValue } from 'node:sqlite';
+import { randomId } from './randomId.js';
+import { type CodexUsageEstimate, type ConversationResourceKind, type ConversationResourcePresentation, type TokenUsageBreakdown } from '@zeus/shared';
+import type { ZeusDatabasePort } from './databasePort.js';
+import type { ConversationAgentKind } from './conversationItemTypes.js';
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -651,7 +646,7 @@ export class AgentCapabilitySnapshotRepository {
 
   create(input: CreateAgentCapabilitySnapshotInput): ZeusAgentCapabilitySnapshotRecord {
     const record: ZeusAgentCapabilitySnapshotRecord = {
-        id: input.id ?? `agent_capability_${randomId(12)}`,
+      id: input.id ?? `agent_capability_${randomId(12)}`,
       agentKind: assertEnum(input.agentKind, ['codex', 'pi', 'claude'] as const, 'agent capability kind'),
       transportKind: assertEnum(input.transportKind, ['app_server', 'rpc', 'sdk'] as const, 'agent capability transport'),
       supportStatus: assertEnum(input.supportStatus, ['unavailable', 'framework_only', 'experimental', 'verified'] as const, 'agent capability support status'),
@@ -724,7 +719,7 @@ export class ConversationRepository {
     const agentTransport = input.agentTransport ? assertEnum(input.agentTransport, ['app_server', 'rpc', 'sdk'] as const, 'conversation agent transport') : transportKind === 'codex_native' ? 'app_server' : null;
     const timestamp = nowIso();
     const record: ZeusConversationRecord = {
-        id: input.id ?? `conversation_${randomId(12)}`,
+      id: input.id ?? `conversation_${randomId(12)}`,
       projectId: input.projectId,
       taskId: input.taskId ?? null,
       workspaceId: input.workspaceId ?? null,
@@ -910,7 +905,7 @@ export class ConversationRepository {
 
   appendMessage(input: AppendConversationMessageInput): ZeusConversationMessageRecord {
     const record: ZeusConversationMessageRecord = {
-        id: `conversation_message_${randomId(12)}`,
+      id: `conversation_message_${randomId(12)}`,
       conversationId: input.conversationId,
       role: input.role,
       content: input.content,
@@ -1479,7 +1474,7 @@ export class CodexLegacyImportRepository {
     options: { now?: () => string; id?: () => string } = {},
   ) {
     this.now = options.now ?? nowIso;
-      this.createId = options.id ?? (() => `codex_legacy_import_${randomId(12)}`);
+    this.createId = options.id ?? (() => `codex_legacy_import_${randomId(12)}`);
   }
 
   createRun(input: CreateCodexLegacyImportRunInput): ZeusCodexLegacyImportRecord {
@@ -1571,7 +1566,7 @@ export class CodexLegacyImportRepository {
   bindThreadAndArchiveSource(input: { id: string; targetThreadId: string; providerBinaryVersion: string }): { run: ZeusCodexLegacyImportRecord; conversation: ZeusConversationWithMessagesRecord } {
     if (!input.targetThreadId.trim()) throw new Error('Codex legacy import target thread id is required.');
     const run = this.requireTransition(input.id, 'waiting', 'completed');
-      const targetConversationId = `conversation_${randomId(12)}`;
+    const targetConversationId = `conversation_${randomId(12)}`;
     this.db.transaction(() => {
       const source = this.db.get<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE id = ? AND transport_kind = 'legacy_cli' AND archived = 0`, [run.sourceConversationId]);
       if (!source) throw new Error(`Eligible Codex legacy source conversation not found: ${run.sourceConversationId}`);
@@ -1592,7 +1587,7 @@ export class CodexLegacyImportRepository {
            (id, conversation_id, role, content, source, metadata_json, created_at, provider_thread_id, provider_turn_id, provider_item_id, client_message_id)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
-              `conversation_message_${randomId(12)}`,
+            `conversation_message_${randomId(12)}`,
             targetConversationId,
             message.role,
             message.content,
@@ -1735,7 +1730,7 @@ export class ConversationGoalRepository {
     this.db.execute(
       `INSERT INTO conversation_goal_events (id, conversation_id, provider_thread_id, provider_turn_id, kind, objective, status, token_budget, tokens_used, time_used_seconds, occurred_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [`conversation_goal_event_${randomId(12)}`, conversationId, providerThreadId, providerTurnId, kind, goal.objective, goal.status, goal.tokenBudget, goal.tokensUsed, goal.timeUsedSeconds, occurredAt],
+      [`conversation_goal_event_${randomId(12)}`, conversationId, providerThreadId, providerTurnId, kind, goal.objective, goal.status, goal.tokenBudget, goal.tokensUsed, goal.timeUsedSeconds, occurredAt],
     );
   }
 }
@@ -1760,7 +1755,7 @@ export class ConversationTurnRepository {
       }
       return mapConversationTurnRow(existing);
     }
-      const id = existing?.id ?? input.id ?? `conversation_turn_${randomId(12)}`;
+    const id = existing?.id ?? input.id ?? `conversation_turn_${randomId(12)}`;
     const errorJson = input.error === undefined ? null : JSON.stringify(input.error);
     this.db.execute(
       `INSERT INTO conversation_turns (id, conversation_id, provider_thread_id, provider_turn_id, client_submission_id, status, error_json, started_at, completed_at, created_at, updated_at, agent_kind, native_run_id)
@@ -1927,7 +1922,7 @@ export class CodexUsageLedgerRepository {
     }
     const existing = this.findByProviderTurn(input.providerId, input.providerThreadId, input.providerTurnId);
     const timestamp = nowIso();
-      const id = existing?.id ?? `codex_usage_${randomId(12)}`;
+    const id = existing?.id ?? `codex_usage_${randomId(12)}`;
     const createdAt = existing?.createdAt ?? timestamp;
     this.db.execute(
       `INSERT INTO codex_usage_ledger
@@ -2047,7 +2042,7 @@ export class ConversationResourceRepository {
               kind, presentation, display_json, target_json, authority_json, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
-              resource.id ?? `conversation_resource_${randomId(12)}`,
+            resource.id ?? `conversation_resource_${randomId(12)}`,
             resource.projectId,
             resource.conversationId,
             resource.turnId,
@@ -2115,7 +2110,7 @@ export class ConversationSubmissionRepository {
       if (existing.request_hash !== input.requestHash || (input.id !== undefined && existing.id !== input.id)) throwIdempotencyConflict(input.conversationId, input.idempotencyKey);
       return mapConversationSubmissionRow(existing);
     }
-      const id = input.id ?? `conversation_submission_${randomId(12)}`;
+    const id = input.id ?? `conversation_submission_${randomId(12)}`;
     const errorJson = input.error === undefined ? null : JSON.stringify(input.error);
     this.db.execute(
       `INSERT INTO conversation_submissions (id, conversation_id, idempotency_key, request_hash, client_message_id, kind, requested_delivery, status, queue_position, input_json, target_provider_turn_id, provider_turn_id, paused_reason, error_json, created_at, updated_at, dispatched_at, resolved_at, replacement_of_submission_id, replacement_reason, execution_snapshot_id, submission_outcome)
@@ -2196,7 +2191,7 @@ export class ConversationSubmissionRepository {
       throw Object.assign(new Error('Only queued, paused, or failed submissions can be edited.'), { code: 'ZEUS_NATIVE_SUBMISSION_NOT_EDITABLE' as const });
     }
     const updatedAt = input.updatedAt ?? nowIso();
-      const replacementId = `conversation_submission_${randomId(12)}`;
+    const replacementId = `conversation_submission_${randomId(12)}`;
     const replacementStatus = input.reason === 'retry' || input.reason === 'reroute' ? 'queued' : existing.status === 'failed' ? 'paused' : existing.status;
     const replacementPausedReason = replacementStatus === 'paused' ? existing.pausedReason : null;
     this.db.transaction(() => {
@@ -2218,7 +2213,7 @@ export class ConversationSubmissionRepository {
           existing.conversationId,
           input.idempotencyKey ?? `${existing.idempotencyKey}:replacement:${replacementId}`,
           input.requestHash,
-            input.clientMessageId ?? `replacement-client-${randomId(16)}`,
+          input.clientMessageId ?? `replacement-client-${randomId(16)}`,
           input.kind ?? existing.kind,
           input.requestedDelivery ?? existing.requestedDelivery,
           replacementStatus,
@@ -2353,7 +2348,7 @@ export class ConversationServerRequestRepository {
       assertConversationServerRequestIdentity(existing, requestKind, payload, containsSecret);
       return mapConversationServerRequestRow(existing);
     }
-      const id = `conversation_server_request_${randomId(12)}`;
+    const id = `conversation_server_request_${randomId(12)}`;
     const response = containsSecret && input.response !== undefined ? createSecretResponseSummary(input.payload, input.response) : input.response;
     this.db.execute(
       `INSERT INTO conversation_server_requests (id, conversation_id, turn_id, item_id, transport_generation_id, provider_request_id_json, request_kind, payload_json, status, response_json, contains_secret, expires_at, auto_resolution_state, created_at, resolved_at)
@@ -2529,7 +2524,7 @@ export class ConversationPlanActionRepository {
         input.createdAt,
         input.conversationId,
       ]);
-        const id = `conversation_plan_action_${randomId(12)}`;
+      const id = `conversation_plan_action_${randomId(12)}`;
       this.db.execute(
         `INSERT INTO conversation_plan_actions (id, conversation_id, turn_id, plan_item_id, status, submission_id, created_at, resolved_at, updated_at)
          VALUES (?, ?, ?, ?, 'pending', NULL, ?, NULL, ?)`,

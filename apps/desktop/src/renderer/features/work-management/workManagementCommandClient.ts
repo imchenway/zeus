@@ -1,10 +1,5 @@
-import {type CommandEnvelope, type CommandScopeKind} from '@zeus/shared';
-import {
-    buildRendererCommandRequest,
-    randomIdentity,
-    type RendererCommandPayload,
-    sha256
-} from '../../commandRequest.js';
+import { type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
+import { buildRendererCommandRequest, randomIdentity, type RendererCommandPayload, sha256 } from '../../commandRequest.js';
 
 export const workManagementClientCommandTypes = {
   projectCreate: 'work_management.project.create',
@@ -82,12 +77,12 @@ export async function buildWorkManagementCommandRequest<TInput extends object>(i
   operationSeed?: string;
   value: TInput;
 }): Promise<{ command: CommandEnvelope<RendererCommandPayload>; input: TInput }> {
-    const operationIdentity = `${input.operationPrefix}${input.operationSeed ? (await sha256(`${input.commandType}\0${input.operationSeed}`)).slice(0, 32) : randomIdentity(true)}`;
-    return buildRendererCommandRequest({
-        ...input,
-        scopeId: input.scopeId(operationIdentity),
-        operationIdentity,
-        commandIdPrefix: 'command_work_management_',
-        actorId: 'zeus-desktop-work-management',
-    });
+  const operationIdentity = `${input.operationPrefix}${input.operationSeed ? (await sha256(`${input.commandType}\0${input.operationSeed}`)).slice(0, 32) : randomIdentity(true)}`;
+  return buildRendererCommandRequest({
+    ...input,
+    scopeId: input.scopeId(operationIdentity),
+    operationIdentity,
+    commandIdPrefix: 'command_work_management_',
+    actorId: 'zeus-desktop-work-management',
+  });
 }

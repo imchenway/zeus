@@ -1,6 +1,6 @@
-import type {FastifyInstance} from 'fastify';
-import type {ReleaseUpdateStatus} from './releaseCore.js';
-import type {ExecutionHostWorkStatusSnapshot} from './executionHostControlApi.js';
+import type { FastifyInstance } from 'fastify';
+import type { ReleaseUpdateStatus } from './releaseCore.js';
+import type { ExecutionHostWorkStatusSnapshot } from './executionHostControlApi.js';
 
 /**
  * 这三个 POST 是兼容旧 Renderer 的查询形状，不是下载/安装命令：

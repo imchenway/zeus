@@ -1,5 +1,5 @@
-import {type CommandEnvelope, type CommandScopeKind} from '@zeus/shared';
-import {buildRendererCommandRequest, randomIdentity, type RendererCommandPayload} from '../../commandRequest.js';
+import { type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
+import { buildRendererCommandRequest, randomIdentity, type RendererCommandPayload } from '../../commandRequest.js';
 
 export const codexPublicClientCommandTypes = {
   accountLoginStart: 'codex.account.login.start',
@@ -35,11 +35,11 @@ export async function buildCodexPublicCommandRequest<TInput extends object>(inpu
   value: TInput;
 }): Promise<{ command: CommandEnvelope<RendererCommandPayload>; input: TInput }> {
   const operationIdentity = `${input.operationPrefix}_${randomIdentity()}`;
-    return buildRendererCommandRequest({
-        ...input,
-        operationIdentity,
-        commandIdPrefix: 'command_codex_public_',
-        actorId: 'zeus-desktop-codex-control',
-        expectedRevision: null
-    });
+  return buildRendererCommandRequest({
+    ...input,
+    operationIdentity,
+    commandIdPrefix: 'command_codex_public_',
+    actorId: 'zeus-desktop-codex-control',
+    expectedRevision: null,
+  });
 }

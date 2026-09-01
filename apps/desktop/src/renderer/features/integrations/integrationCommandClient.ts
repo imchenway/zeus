@@ -1,5 +1,5 @@
-import {type CommandEnvelope, type CommandScopeKind} from '@zeus/shared';
-import {buildRendererCommandRequest, randomIdentity, type RendererCommandPayload} from '../../commandRequest.js';
+import { type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
+import { buildRendererCommandRequest, randomIdentity, type RendererCommandPayload } from '../../commandRequest.js';
 
 export const integrationClientCommandTypes = {
   modelConnectionCreate: 'integration.model_connection.create',
@@ -32,12 +32,12 @@ export async function buildIntegrationCommandRequest<TInput extends object>(inpu
   value: TInput;
 }): Promise<{ command: CommandEnvelope<RendererCommandPayload>; input: TInput }> {
   const operationIdentity = `${input.operationPrefix}_${randomIdentity()}`;
-    return buildRendererCommandRequest({
-        ...input,
-        scopeId: input.scopeId(operationIdentity),
-        operationIdentity,
-        commandIdPrefix: 'command_integration_',
-        actorId: 'zeus-desktop-integrations',
-        expectedRevision: null
-    });
+  return buildRendererCommandRequest({
+    ...input,
+    scopeId: input.scopeId(operationIdentity),
+    operationIdentity,
+    commandIdPrefix: 'command_integration_',
+    actorId: 'zeus-desktop-integrations',
+    expectedRevision: null,
+  });
 }

@@ -1,6 +1,6 @@
-import type {ProjectApiClient} from './projectApiClient.js';
-import type {ProjectRecord} from '../../apiClient.js';
-import {errorMessage, ExternalStore} from '../../externalStore.js';
+import type { ProjectApiClient } from './projectApiClient.js';
+import type { ProjectRecord } from '../../apiClient.js';
+import { errorMessage, ExternalStore } from '../../externalStore.js';
 
 export interface ProjectQuerySnapshot {
   items: readonly ProjectRecord[];
@@ -15,13 +15,13 @@ export class ProjectQueryStore extends ExternalStore<ProjectQuerySnapshot> {
     private readonly client: ProjectApiClient | null,
     initialItems: readonly ProjectRecord[],
   ) {
-      super({
-          items: initialItems,
-          selectedProjectId: initialItems[0]?.id ?? null,
-          loading: false,
-          error: null,
-          revision: 0
-      });
+    super({
+      items: initialItems,
+      selectedProjectId: initialItems[0]?.id ?? null,
+      loading: false,
+      error: null,
+      revision: 0,
+    });
   }
 
   replace(items: readonly ProjectRecord[]): void {
@@ -44,7 +44,7 @@ export class ProjectQueryStore extends ExternalStore<ProjectQuerySnapshot> {
       this.publish({ ...this.snapshot, loading: false });
       return items;
     } catch (error) {
-        this.publish({...this.snapshot, loading: false, error: errorMessage(error)});
+      this.publish({ ...this.snapshot, loading: false, error: errorMessage(error) });
       throw error;
     }
   }

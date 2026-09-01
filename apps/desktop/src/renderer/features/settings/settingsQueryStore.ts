@@ -1,6 +1,6 @@
-import type {AppShellSettings} from '../../apiClient.js';
-import type {SettingsApiClient} from './settingsApiClient.js';
-import {errorMessage, ExternalStore} from '../../externalStore.js';
+import type { AppShellSettings } from '../../apiClient.js';
+import type { SettingsApiClient } from './settingsApiClient.js';
+import { errorMessage, ExternalStore } from '../../externalStore.js';
 
 export type SettingsUpdater = AppShellSettings | ((current: AppShellSettings) => AppShellSettings);
 
@@ -17,7 +17,7 @@ export class SettingsQueryStore extends ExternalStore<SettingsQuerySnapshot> {
     private readonly client: SettingsApiClient | null,
     initialValue: AppShellSettings,
   ) {
-      super({value: initialValue, loading: false, saving: false, error: null, revision: 0});
+    super({ value: initialValue, loading: false, saving: false, error: null, revision: 0 });
   }
 
   update(updater: SettingsUpdater): AppShellSettings {
@@ -35,7 +35,7 @@ export class SettingsQueryStore extends ExternalStore<SettingsQuerySnapshot> {
       this.publish({ ...this.snapshot, value, loading: false, revision: this.snapshot.revision + 1 });
       return value;
     } catch (error) {
-        this.publish({...this.snapshot, loading: false, error: errorMessage(error)});
+      this.publish({ ...this.snapshot, loading: false, error: errorMessage(error) });
       throw error;
     }
   }
@@ -48,7 +48,7 @@ export class SettingsQueryStore extends ExternalStore<SettingsQuerySnapshot> {
       this.publish({ ...this.snapshot, value, saving: false, revision: this.snapshot.revision + 1 });
       return value;
     } catch (error) {
-        this.publish({...this.snapshot, saving: false, error: errorMessage(error)});
+      this.publish({ ...this.snapshot, saving: false, error: errorMessage(error) });
       throw error;
     }
   }

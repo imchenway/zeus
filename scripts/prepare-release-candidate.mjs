@@ -1,19 +1,10 @@
 #!/usr/bin/env node
 /* global console, process */
-import {spawnSync} from 'node:child_process';
-import {
-    copyFileSync,
-    existsSync,
-    mkdirSync,
-    mkdtempSync,
-    readFileSync,
-    statSync,
-    unlinkSync,
-    writeFileSync
-} from 'node:fs';
-import {tmpdir} from 'node:os';
-import {dirname, join, resolve} from 'node:path';
-import {assertVersionAfterTag, parseBoolean, requiredVersion, validateReleaseNotes} from './release-script-utils.mjs';
+import { spawnSync } from 'node:child_process';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { assertVersionAfterTag, parseBoolean, requiredVersion, validateReleaseNotes } from './release-script-utils.mjs';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 
@@ -33,7 +24,7 @@ function main() {
   const targetNotesPath = join(repositoryRoot, 'docs', 'releases', `v${releaseVersion}.md`);
   const sourceNotes = readFileSync(sourceNotesPath, 'utf8');
 
-    assertVersionAfterTag(releaseVersion, latestTag, '。');
+  assertVersionAfterTag(releaseVersion, latestTag, '。');
   assertTagDoesNotExist(releaseVersion);
   validateReleaseNotes(sourceNotes, releaseVersion);
 

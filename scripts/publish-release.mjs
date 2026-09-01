@@ -1,31 +1,19 @@
 #!/usr/bin/env node
 /* global console, process */
-import {spawnSync} from 'node:child_process';
-import {copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync} from 'node:fs';
-import {tmpdir} from 'node:os';
-import {join, resolve} from 'node:path';
-import {setTimeout as delay} from 'node:timers/promises';
+import { spawnSync } from 'node:child_process';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+import { commandFailureDetail, commandResultSucceeded, releaseRemoteReadAttempts, releaseRemoteReadTimeoutMs, runRemoteReadWithRetrySync } from './release-remote-read.mjs';
+import { parseBoolean, requiredVersion, sha256File, sha256Text, validateReleaseNotesFile } from './release-script-utils.mjs';
 import {
-    commandFailureDetail,
-    commandResultSucceeded,
-    releaseRemoteReadAttempts,
-    releaseRemoteReadTimeoutMs,
-    runRemoteReadWithRetrySync
-} from './release-remote-read.mjs';
-import {
-    parseBoolean,
-    requiredVersion,
-    sha256File,
-    sha256Text,
-    validateReleaseNotesFile
-} from './release-script-utils.mjs';
-import {
-    formatReleaseWorkflowDuration,
-    readReleaseWorkflowWaitState,
-    releaseWorkflowHeartbeatIntervalMs,
-    releaseWorkflowPollIntervalMs,
-    releaseWorkflowWaitLimitMs,
-    resolveReleaseWorkflowWaitWindow,
+  formatReleaseWorkflowDuration,
+  readReleaseWorkflowWaitState,
+  releaseWorkflowHeartbeatIntervalMs,
+  releaseWorkflowPollIntervalMs,
+  releaseWorkflowWaitLimitMs,
+  resolveReleaseWorkflowWaitWindow,
 } from './release-workflow-wait-policy.mjs';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');

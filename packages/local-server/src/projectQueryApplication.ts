@@ -1,6 +1,6 @@
-import type {GitStatusSummary} from '@zeus/git-core';
-import type {ProjectConfigSnapshot} from './projectCore.js';
-import type {ProjectRepository, ProjectSharedPathRepository, TaskRepository, ZeusProjectRecord} from '@zeus/storage';
+import type { GitStatusSummary } from '@zeus/git-core';
+import type { ProjectConfigSnapshot } from './projectCore.js';
+import type { ProjectRepository, ProjectSharedPathRepository, TaskRepository, ZeusProjectRecord } from '@zeus/storage';
 
 export interface ProjectQueryGitReadEffectPort {
   /** 只读既有 Git 工作区；不得 fetch、修复仓库、更新索引或保存投影。 */

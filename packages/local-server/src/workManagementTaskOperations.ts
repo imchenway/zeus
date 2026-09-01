@@ -1,36 +1,19 @@
-import {getNextTaskStatus, type TaskStatus} from './taskCore.js';
+import { getNextTaskStatus, type TaskStatus } from './taskCore.js';
+import { isTaskBoardGroupProperty, taskBoardEmptyGroupId, type TaskBoardGroupProperty, taskBoardLayoutKey, type TaskBoardMoveRequest, type TaskBoardViewSnapshot, type TaskManagementStatusConfig } from '@zeus/shared';
+import { isTaskPriority, isTaskType, TaskBoardRepository, type TaskManagementStatus, type TaskPriority, TaskRepository, type ZeusProjectRecord, type ZeusTaskRecord } from '@zeus/storage';
+import { WorkManagementRouteError } from './workManagementCoreCommandRoutes.js';
+import { normalizeWorkManagementTaskAttachments } from './workManagementTaskInput.js';
 import {
-    isTaskBoardGroupProperty,
-    taskBoardEmptyGroupId,
-    type TaskBoardGroupProperty,
-    taskBoardLayoutKey,
-    type TaskBoardMoveRequest,
-    type TaskBoardViewSnapshot,
-    type TaskManagementStatusConfig
-} from '@zeus/shared';
-import {
-    isTaskPriority,
-    isTaskType,
-    TaskBoardRepository,
-    type TaskManagementStatus,
-    type TaskPriority,
-    TaskRepository,
-    type ZeusProjectRecord,
-    type ZeusTaskRecord
-} from '@zeus/storage';
-import {WorkManagementRouteError} from './workManagementCoreCommandRoutes.js';
-import {normalizeWorkManagementTaskAttachments} from './workManagementTaskInput.js';
-import {
-    type DeleteTaskCommandInput,
-    type PreparedConditionalTaskOperation,
-    type PreparedTaskOperation,
-    type TaskRuntimeCommandAction,
-    type UpdateTaskContentCommandInput,
-    type UpdateTaskManagementStatusCommandInput,
-    type UpdateTaskRelationshipsCommandInput,
-    type UpdateTaskStatusCommandInput,
-    type UpdateTaskTagsCommandInput,
-    type WorkManagementTaskCommandContext,
+  type DeleteTaskCommandInput,
+  type PreparedConditionalTaskOperation,
+  type PreparedTaskOperation,
+  type TaskRuntimeCommandAction,
+  type UpdateTaskContentCommandInput,
+  type UpdateTaskManagementStatusCommandInput,
+  type UpdateTaskRelationshipsCommandInput,
+  type UpdateTaskStatusCommandInput,
+  type UpdateTaskTagsCommandInput,
+  type WorkManagementTaskCommandContext,
 } from './workManagementTaskCommandRoutes.js';
 
 export interface ReopenableTaskConversation {

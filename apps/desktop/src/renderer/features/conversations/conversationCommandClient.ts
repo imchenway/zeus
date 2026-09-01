@@ -1,5 +1,5 @@
-import {type CommandEnvelope} from '@zeus/shared';
-import {buildRendererCommandRequest, randomIdentity, type RendererCommandPayload} from '../../commandRequest.js';
+import { type CommandEnvelope } from '@zeus/shared';
+import { buildRendererCommandRequest, randomIdentity, type RendererCommandPayload } from '../../commandRequest.js';
 
 export const conversationClientCommandTypes = {
   nextTurnSettingsUpdate: 'conversation.next_turn_settings.update',
@@ -25,14 +25,14 @@ export async function buildConversationCommandRequest<TInput extends object>(inp
   value: TInput;
 }): Promise<{ command: CommandEnvelope<RendererCommandPayload>; input: TInput }> {
   const operationIdentity = `conversation_operation_${randomIdentity()}`;
-    return buildRendererCommandRequest({
-        commandType: input.commandType,
-        commandIdPrefix: 'command_conversation_',
-        actorId: 'zeus-desktop-conversation',
-        scopeKind: 'product_conversation',
-        scopeId: input.conversationId,
-        expectedRevision: input.expectedRevision,
-        operationIdentity,
-        value: input.value,
-    });
+  return buildRendererCommandRequest({
+    commandType: input.commandType,
+    commandIdPrefix: 'command_conversation_',
+    actorId: 'zeus-desktop-conversation',
+    scopeKind: 'product_conversation',
+    scopeId: input.conversationId,
+    expectedRevision: input.expectedRevision,
+    operationIdentity,
+    value: input.value,
+  });
 }
