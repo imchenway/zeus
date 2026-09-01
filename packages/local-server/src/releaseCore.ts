@@ -292,7 +292,7 @@ export function evaluateReleaseUpdateAvailability(input: EvaluateReleaseUpdateAv
     reason: automaticInstallEnabled
       ? '发现新版本，产物已签名、公证且执行宿主协议兼容，可下载后安装。'
       : !protocolCompatible
-        ? '发现新版本，但执行宿主协议不兼容；必须等待当前任务排空后再手动升级。'
+        ? '发现新版本，执行宿主协议已变化；通过 Zeus 编排的 Homebrew 升级会先安全关闭旧宿主。'
         : '发现新版本，但当前产物未同时签名和公证，只允许打开 GitHub Release 手动安装。',
     checkedAt,
   };

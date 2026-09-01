@@ -5,7 +5,6 @@ import { access, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { executionHostProtocolVersion } from './executionHostProtocol.js';
 import type { DesktopReleaseUpdateStatus } from './releaseUpdateService.js';
 
 const execFile = promisify(execFileCallback);
@@ -202,7 +201,6 @@ function assertUpdateCanUseHomebrew(update: DesktopReleaseUpdateStatus, options:
   if (process.platform !== 'darwin') throw new Error('Homebrew Cask 升级只支持 macOS。');
   if (update.status !== 'available' || !update.artifact) throw new Error('当前没有可预取的 Zeus 更新。');
   if (update.currentVersion !== options.currentAppVersion) throw new Error('更新状态与当前 Zeus App 版本不一致。');
-  if (update.executionHostProtocolVersion !== executionHostProtocolVersion) throw new Error('新版 Zeus 与当前执行宿主协议不兼容，不能继续升级。');
   const expectedArch = process.arch === 'x64' ? 'x64' : 'arm64';
   if (update.artifact.arch !== expectedArch) throw new Error('更新安装包与当前 Mac 架构不一致。');
 }

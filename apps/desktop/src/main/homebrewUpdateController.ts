@@ -31,7 +31,7 @@ interface CreateHomebrewUpdateControllerOptions {
   homebrew: HomebrewUpdateService;
   currentVersion: string;
   canInstall: () => void;
-  onInstallReady: (activate: () => void | Promise<void>) => Promise<boolean>;
+  onInstallReady: (targetExecutionHostProtocolVersion: number, activate: () => void | Promise<void>) => Promise<boolean>;
   retryDelaysMs?: readonly number[];
 }
 
@@ -199,7 +199,7 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
       installed ??= await options.homebrew.install(prepared, (progress) => {
         void publish(progressCopy(options.language(), progress, prepared!.update));
       });
-      const accepted = await options.onInstallReady(async () => {
+      const accepted = await options.onInstallReady(prepared.update.executionHostProtocolVersion, async () => {
         const currentHost = await ensureHost();
         currentHost.relaunchAfterProcessExit({ pid: process.pid, ...installed! });
       });

@@ -8,7 +8,7 @@ import { access, appendFile, chmod, copyFile, cp, link, lstat, mkdir, open, read
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { performance } from 'node:perf_hooks';
-import { type BeforeQuitCleanupFailureAction, createBeforeQuitCleanupHandler } from './beforeQuitCleanup.js';
+import { type BeforeQuitCleanupFailureAction, createBeforeQuitCleanupHandler, type DesktopLocalServerCloseMode } from './beforeQuitCleanup.js';
 import type { DesktopLocalServerRuntime, ExecutionHostMaintenanceStatus } from './localServerRuntime.js';
 import { createStartupCoordinator } from './startupCoordinator.js';
 import { createRendererBootstrapMonitor } from './rendererBootstrapMonitor.js';
@@ -86,6 +86,7 @@ import { createSystemMainCommandEnvelope, MainCommandLedger, type MainCommandReq
 import { StorageRecoveryRestartCoordinator } from './storageRecoveryRestartCoordinator.js';
 import { assertTestDataRootIsolation } from './testDataRootIsolation.js';
 import { expectedBundleIdForDataRootProfile, readAndVerifyZeusDataRootIdentity, zeusDataRootHostIdentity, type ZeusDataRootIdentityMarker, type ZeusDataRootProfile } from './dataRootIdentity.js';
+import { executionHostProtocolVersion } from './executionHostProtocol.js';
 
 let mainWindow: BrowserWindow | undefined;
 const windows = new Set<BrowserWindow>();
@@ -181,6 +182,7 @@ let fullRestartRequested = false;
 let fullRestartRelaunchScheduled = false;
 let pendingUpgradeHandoff: {
   activate: () => void | Promise<void>;
+  targetExecutionHostProtocolVersion: number;
   result: Promise<boolean>;
   resolve: (accepted: boolean) => void;
 } | null = null;
@@ -219,14 +221,14 @@ function scheduleExactAppRelaunchAfterCurrentProcessExit(): void {
   relauncher.unref();
 }
 
-/** 升级接力只登记为待确认；辅助程序必须等活动工作确认通过后才能真正武装。 */
-function requestUpgradeHandoffQuit(activate: () => void | Promise<void>): Promise<boolean> {
+/** 升级接力只登记为待确认；跨协议时先关闭旧宿主，辅助程序仍须等确认后才能武装。 */
+function requestUpgradeHandoffQuit(targetExecutionHostProtocolVersion: number, activate: () => void | Promise<void>): Promise<boolean> {
   if (pendingUpgradeHandoff) return pendingUpgradeHandoff.result;
   let resolveDecision: (accepted: boolean) => void = () => undefined;
   const result = new Promise<boolean>((resolve) => {
     resolveDecision = resolve;
   });
-  pendingUpgradeHandoff = { activate, result, resolve: resolveDecision };
+  pendingUpgradeHandoff = { activate, targetExecutionHostProtocolVersion, result, resolve: resolveDecision };
   upgradeHandoffRequested = true;
   taskTableLayoutQuitApproved = true;
   setImmediate(() => app.quit());
@@ -2890,7 +2892,7 @@ async function initializeApplication(): Promise<void> {
         isPackaged: true,
         testMode: isTestDistribution(),
         allowUntrustedTestUpdate: allowUntrustedReleaseUpdateTest,
-        onInstallReady: requestUpgradeHandoffQuit,
+        onInstallReady: (activate) => requestUpgradeHandoffQuit(executionHostProtocolVersion, activate),
       });
       homebrewUpdateController = createHomebrewUpdateController({
         helperPath: nativeUpdateProgressHelperPath(),
@@ -3044,7 +3046,7 @@ if (!hasSingleInstanceLock) {
   void requestMainWindow();
 }
 
-async function resolveDesktopQuitMode(): Promise<'continue_in_background' | 'upgrade_handoff' | 'final_quit' | 'force_quit' | 'cancel'> {
+async function resolveDesktopQuitMode(): Promise<DesktopLocalServerCloseMode | 'cancel'> {
   // 只读验收副本不得使用正式数据投影中的历史活动计数阻塞退出。
   if (readOnlyValidationDescriptor) return 'final_quit';
   if (storageRecoveryRestart.isRequested()) return 'final_quit';
@@ -3113,7 +3115,7 @@ async function resolveDesktopQuitMode(): Promise<'continue_in_background' | 'upg
   }
 }
 
-async function requestedRestartQuitMode(): Promise<'upgrade_handoff' | 'final_quit' | 'cancel'> {
+async function requestedRestartQuitMode(): Promise<'upgrade_handoff' | 'upgrade_shutdown' | 'final_quit' | 'cancel'> {
   if (upgradeHandoffRequested) {
     const handoff = pendingUpgradeHandoff;
     if (!handoff) {
@@ -3129,7 +3131,7 @@ async function requestedRestartQuitMode(): Promise<'upgrade_handoff' | 'final_qu
     }
     handoff.resolve(true);
     pendingUpgradeHandoff = null;
-    return 'upgrade_handoff';
+    return handoff.targetExecutionHostProtocolVersion === executionHostProtocolVersion ? 'upgrade_handoff' : 'upgrade_shutdown';
   }
   if (fullRestartRequested) scheduleExactAppRelaunchAfterCurrentProcessExit();
   return 'final_quit';
@@ -3222,7 +3224,8 @@ app.on(
         powerMonitor.removeListener('resume', handleAutomaticUpdateResume);
       });
       await attemptCleanup('Homebrew 更新控制器', () => {
-        if (mode !== 'upgrade_handoff') homebrewUpdateController?.close();
+        if (mode === 'upgrade_handoff' || mode === 'upgrade_shutdown') return;
+        homebrewUpdateController?.close();
         homebrewUpdateController = undefined;
       });
       await attemptCleanup('内置浏览器宿主', async () => {
@@ -3250,10 +3253,15 @@ app.on(
       }
       if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'Zeus 退出时一个或多个资源未能完整关闭。');
     },
-    onCleanupError: async (error): Promise<BeforeQuitCleanupFailureAction> => {
+    onCleanupError: async (error, quitMode): Promise<BeforeQuitCleanupFailureAction> => {
       if (readOnlyValidationDescriptor) {
         console.error('只读验收关闭失败；禁止以成功状态退出。', error);
         return 'force_quit';
+      }
+      if (quitMode === 'upgrade_shutdown') {
+        console.error('跨协议升级未能完整关闭旧 Zeus Core；保留当前应用，禁止启动新版本。', error);
+        cancelRequestedRestart();
+        return 'keep_open';
       }
       // 退出链已经有界等待并完成持久化优先收口；剩余技术错误只进运行日志，禁止再弹模态框卡住应用。
       console.error('Zeus 退出清理未完整成功，将使用进程退出兜底。', error);
