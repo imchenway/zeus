@@ -369,7 +369,7 @@ export function longTermMemoryContextFragment(record: LongTermMemoryRecord): Con
 }
 
 /** 为 Provider Adapter 输出带来源边界的结构，不把 untrusted 历史伪装成应用规则。 */
-export function renderCompiledContext(compiled: CompiledContext): { manifest: string; application: string; untrusted: string } {
+export function renderCompiledContext(compiled: CompiledContext, requestAccounting?: { estimatedRequestHeadroomTokens: number }): { manifest: string; application: string; untrusted: string } {
   const manifest = JSON.stringify(
     {
       schemaVersion: compiled.schemaVersion,
@@ -378,7 +378,8 @@ export function renderCompiledContext(compiled: CompiledContext): { manifest: st
       providerId: compiled.providerId,
       operationRisk: compiled.operationRisk,
       usedTokens: compiled.usedTokens,
-      availableTokens: compiled.availableTokens,
+      compilerBudgetTokens: compiled.availableTokens,
+      estimatedRequestHeadroomTokens: requestAccounting?.estimatedRequestHeadroomTokens ?? compiled.availableTokens - compiled.usedTokens,
       tokenAccounting: compiled.tokenAccounting,
       sources: [...compiled.applicationSections, ...compiled.untrustedSections].map((section) => ({
         fragmentId: section.fragmentId,

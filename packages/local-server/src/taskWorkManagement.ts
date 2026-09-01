@@ -361,7 +361,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
         const response = request.body?.runtime?.response;
         if (!isRecord(response) || sha256(canonicalJson(response)) !== parsed.input.responseSha256) throw new TaskWorkStoreError('ZEUS_TASK_WORK_DECISION_RESPONSE_INVALID', '待办回复摘要与本次输入不一致。', 400);
         if (decision.kind === 'input_required' || decision.kind === 'authorization') {
-          await respondToConversationRequest(options, decision, response, parsed.operationIdentity);
+          throw new TaskWorkStoreError('ZEUS_TASK_WORK_CONVERSATION_REQUEST_SUPERSEDED', '该历史待办已由原任务会话接管，请在会话中处理。', 409);
         } else if (decision.kind === 'command_confirmation') {
           await confirmAutomatedCommand(options, decision, response);
         } else if (decision.kind !== 'outcome_unknown' && decision.kind !== 'command_failure') {
@@ -645,21 +645,24 @@ async function processAgentRun(options: TaskWorkManagementOptions, run: TaskWork
     await dispatchAgent(options, dispatching);
     return;
   }
+  // 正式交付物提交后运行已冻结；普通会话后续轮次不回写该运行或交付物版本。
+  if (run.status === 'runtime_completed') return;
   if (!run.conversationId) throw new TaskWorkStoreError('ZEUS_TASK_WORK_CONVERSATION_MISSING', 'Agent 工作运行缺少会话身份。');
   verifyFrozenSkillResources(options, run);
   recordActuallyEnabledSkills(options, run);
   const conversation = options.conversations.getById(run.conversationId);
   if (!conversation || conversation.taskId !== run.taskId || conversation.projectId !== run.projectId) throw new TaskWorkStoreError('ZEUS_TASK_WORK_CONVERSATION_MISSING', 'Agent 工作运行的会话已不可用。');
   if (conversation.stage === 'waiting_user' || conversation.stage === 'waiting_approval' || conversation.providerState === 'waiting') {
-    createConversationDecisions(options, run);
     if (run.status !== 'waiting_input') options.runs.update(run.id, { status: 'waiting_input' });
     const item = options.items.getById(run.workItemId)!;
     if (item.status !== 'waiting_manager') options.items.update(item.id, { status: 'waiting_manager' });
     return;
   }
-  if (conversation.stage === 'failed' || conversation.providerState === 'failed') throw new TaskWorkStoreError('ZEUS_TASK_WORK_AGENT_FAILED', 'Agent 会话执行失败，请从证据页查看详情。');
+  if (conversation.stage === 'failed' || conversation.providerState === 'failed') throw new TaskWorkStoreError('ZEUS_TASK_WORK_AGENT_FAILED', 'Agent 会话执行失败，请打开任务会话查看详情。');
   if (conversation.stage !== 'completed') {
     if (run.status !== 'active') options.runs.update(run.id, { status: 'active' });
+    const item = options.items.getById(run.workItemId);
+    if (item?.status === 'waiting_manager') options.items.update(item.id, { status: 'active' });
     return;
   }
   const existing = options.deliverables.listByTask(run.taskId).find((candidate) => candidate.runId === run.id);
@@ -1139,49 +1142,9 @@ function resolveManagerDecision(options: TaskWorkManagementOptions, decision: Ta
   if (decision.kind === 'command_failure') retryFailedCommand(options, decision, response);
   const resolved = options.decisions.resolve(decision.id, expectedRevision, {
     responseSha256: sha256(canonicalJson(response)),
-    responseRecordedBy: decision.kind === 'input_required' || decision.kind === 'authorization' ? 'conversation_request' : 'manager_action',
+    responseRecordedBy: 'manager_action',
   });
-  if ((decision.kind === 'input_required' || decision.kind === 'authorization') && decision.runId) {
-    const run = options.runs.getById(decision.runId);
-    if (run?.status === 'waiting_input') options.runs.update(run.id, { status: 'active' });
-  }
-  const item = options.items.getById(decision.workItemId);
-  if ((decision.kind === 'input_required' || decision.kind === 'authorization') && item?.status === 'waiting_manager') options.items.update(item.id, { status: 'active' });
   return resolved;
-}
-
-async function respondToConversationRequest(options: TaskWorkManagementOptions, decision: TaskWorkDecisionRecord, response: Record<string, unknown>, operationIdentity: string): Promise<void> {
-  const run = decision.runId ? options.runs.getById(decision.runId) : undefined;
-  const requestId = typeof decision.requestPayload.requestId === 'string' ? decision.requestPayload.requestId : null;
-  if (!run?.conversationId || !requestId) throw new TaskWorkStoreError('ZEUS_TASK_WORK_DECISION_SOURCE_MISSING', '待办缺少可回复的会话请求。');
-  const body = commandEnvelope(conversationDispatchCommandTypes.serverRequestRespond, 'approval', requestId, operationIdentity, response, conversationDispatchInputSha256(response));
-  const result = await options.server.inject({
-    method: 'POST',
-    url: `/api/projects/${encodeURIComponent(run.projectId)}/conversations/${encodeURIComponent(run.conversationId)}/requests/${encodeURIComponent(requestId)}/respond`,
-    headers: { authorization: `Bearer ${options.apiToken}` },
-    payload: body,
-  });
-  if (result.statusCode !== 202) throw new TaskWorkStoreError(result.statusCode >= 500 ? 'ZEUS_TASK_WORK_DECISION_OUTCOME_UNKNOWN' : 'ZEUS_TASK_WORK_DECISION_REJECTED', safeHttpMessage(result));
-}
-
-function createConversationDecisions(options: TaskWorkManagementOptions, run: TaskWorkRunRecord): void {
-  if (!run.conversationId) return;
-  for (const request of options.conversationRequests.listPendingByConversation(run.conversationId)) {
-    const kind = request.requestKind === 'request_user_input' ? 'input_required' : 'authorization';
-    options.decisions.create({
-      projectId: run.projectId,
-      taskId: run.taskId,
-      workItemId: run.workItemId,
-      runId: run.id,
-      deliverableId: null,
-      kind,
-      title: kind === 'input_required' ? '员工需要补充信息' : '员工等待授权',
-      prompt: '请在任务详情中处置该请求；会话页仅作为证据查看。',
-      requestPayload: { requestId: request.id, requestKind: request.requestKind, containsSecret: request.containsSecret, payload: safeJsonParse(request.payloadJson) },
-      operationIdentity: `conversation-request:${request.id}`,
-      expiresAt: request.expiresAt,
-    });
-  }
 }
 
 function resolveAcceptanceDecision(options: TaskWorkManagementOptions, deliverableId: string, response: Record<string, unknown>): void {
@@ -1195,18 +1158,33 @@ function workManagementProjection(options: TaskWorkManagementOptions, task: Zeus
   const activeItems = activeTaskWorkItems(options, task.id);
   const deliverables = options.deliverables.listByTask(task.id);
   const decisions = options.decisions.listByTask(task.id);
+  const managerDecisions = decisions.filter((decision) => decision.kind !== 'input_required' && decision.kind !== 'authorization');
+  const conversationRequests = runs.flatMap((run) =>
+    run.conversationId && (run.status === 'active' || run.status === 'waiting_input')
+      ? options.conversationRequests.listPendingByConversation(run.conversationId).map((request) => ({
+          id: request.id,
+          conversationId: run.conversationId!,
+          workItemId: run.workItemId,
+          runId: run.id,
+          requestKind: request.requestKind,
+          createdAt: request.createdAt,
+          expiresAt: request.expiresAt,
+        }))
+      : [],
+  );
   const legacyExecutions = options.legacyExecutions.listByTask(task.id);
   return {
     summary: {
       workItems: items.length,
       activeWorkItems: activeItems.length,
-      pendingManagerDecisions: decisions.filter((decision) => decision.status === 'pending').length,
+      pendingActions: managerDecisions.filter((decision) => decision.status === 'pending').length + conversationRequests.length,
       submittedDeliverables: deliverables.filter((deliverable) => deliverable.status === 'submitted').length,
       legacyExecutions: legacyExecutions.length,
     },
     workItems: items.map((item) => ({ ...item, runs: runs.filter((run) => run.workItemId === item.id), deliverables: deliverables.filter((deliverable) => deliverable.workItemId === item.id) })),
     relationships: [],
-    managerDecisions: decisions,
+    conversationRequests,
+    managerDecisions,
     deliverables,
     evidenceRefs: [
       ...runs.flatMap((run) =>
@@ -1224,6 +1202,7 @@ function workManagementProjection(options: TaskWorkManagementOptions, task: Zeus
         runs: runs.map((run) => [run.id, run.revision]),
         deliverables: deliverables.map((deliverable) => [deliverable.id, deliverable.revision]),
         decisions: decisions.map((decision) => [decision.id, decision.revision]),
+        conversationRequests: conversationRequests.map((request) => [request.id, request.createdAt]),
       }),
     ),
   };

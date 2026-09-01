@@ -127,7 +127,9 @@ export interface CreatePiNativeConversationCoordinatorOptions {
     modelId: string;
     modelSourceId: string | null;
     operationRisk: 'read_only' | 'local_write';
-    currentInputCharacters: number;
+    fixedRequestUtf8Bytes: number;
+    providerBootstrapUtf8Bytes: number;
+    providerHistoryMode: 'latest' | 'bootstrap';
     providerGenerationId: string | null;
   }) => Promise<ContextDispatchEnvelope>;
 }
@@ -389,6 +391,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     const providerCommandIssuedAt = submission.createdAt;
     let compiledDispatchContext: ContextDispatchEnvelope | null = null;
     let pluginPreparation: ZeusPluginConversationPreparation | null = null;
+    let providerMetadata: Record<string, unknown> = {};
     try {
       attachmentInput = await resolvePiAttachmentInput(orderedAttachments, allowedResourceRoots);
       providerPrompt = appendPiConversationContext(
@@ -414,6 +417,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           permissionMode: input.permissionMode,
         });
       }
+      providerMetadata = piPluginMetadata(pluginPreparation, input.segmentLifecycle?.portableContext);
       compiledDispatchContext = options.compileDispatchContext
         ? await options.compileDispatchContext({
             provider: 'pi',
@@ -425,7 +429,9 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
             modelId: input.model.modelId,
             modelSourceId: input.model.sourceId,
             operationRisk: input.permissionMode === 'read-only' ? 'read_only' : 'local_write',
-            currentInputCharacters: providerPrompt.length + JSON.stringify(attachmentInput.images).length,
+            fixedRequestUtf8Bytes: Buffer.byteLength(JSON.stringify({ content: providerPrompt, images: attachmentInput.images }), 'utf8'),
+            providerBootstrapUtf8Bytes: Buffer.byteLength(JSON.stringify(providerMetadata), 'utf8'),
+            providerHistoryMode: 'bootstrap',
             providerGenerationId: driver.getRuntimeHealth().generationId,
           })
         : null;
@@ -466,7 +472,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         cwd: input.cwd,
         model: input.model,
         traceIdentity: sessionCommand.traceIdentity,
-        metadata: piPluginMetadata(pluginPreparation, input.segmentLifecycle?.portableContext),
+        metadata: providerMetadata,
       });
     } catch (error) {
       sessionCommand.recordFailure(error, { explicitlyRejected: false });
@@ -786,13 +792,14 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           source: 'resume',
         })
       : null;
+    const providerMetadata = piPluginMetadata(pluginPreparation);
     if (!context) {
       if (!input.conversation.nativeSessionId || !input.conversation.nativeSessionPath) throw piError('ZEUS_PI_SESSION_UNAVAILABLE', 'Pi 会话缺少可恢复的会话文件。');
       const session = await driver.resumeSession({
         nativeSessionId: input.conversation.nativeSessionId,
         nativeSessionPath: input.conversation.nativeSessionPath,
         cwd,
-        metadata: piPluginMetadata(pluginPreparation),
+        metadata: providerMetadata,
       });
       context = {
         conversationId: input.conversation.id,
@@ -843,7 +850,9 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
             modelId: input.model.modelId,
             modelSourceId: input.model.sourceId,
             operationRisk: context.permissionMode === 'read-only' ? 'read_only' : 'local_write',
-            currentInputCharacters: providerContent.length + JSON.stringify(attachmentInput.images).length,
+            fixedRequestUtf8Bytes: Buffer.byteLength(JSON.stringify({ content: providerContent, images: attachmentInput.images }), 'utf8'),
+            providerBootstrapUtf8Bytes: Buffer.byteLength(JSON.stringify(providerMetadata), 'utf8'),
+            providerHistoryMode: 'latest',
             providerGenerationId: driver.getRuntimeHealth().generationId,
           })
         : null;

@@ -1,4 +1,5 @@
 import type { CodexAppServerEvent, CodexAppServerManager, CodexServerRequestResponse } from '@zeus/ai-runtime';
+import type { ConversationExecutionRepository, ConversationTurnRepository } from '@zeus/storage';
 import type { ManagedConversationToolResultStore } from './conversationPortableContext.js';
 import type { CodexProviderCommandApplicationService } from './codexProviderCommandApplication.js';
 import type { ZeusConversationPluginRuntime } from './zeusConversationPluginRuntime.js';
@@ -11,6 +12,8 @@ interface CodexDynamicToolApplicationOptions {
   toolBroker?: ZeusToolBroker;
   plugins?: ZeusConversationPluginRuntime;
   findConversation(threadId: string): { id: string; permissionMode?: string } | undefined;
+  turns: Pick<ConversationTurnRepository, 'getByProvider'>;
+  execution: Pick<ConversationExecutionRepository, 'currentSegment'>;
   pluginContext(conversationId: string): { cwd: string; model: string; permissionMode: string } | null;
   requestPluginApproval(input: { conversationId: string; threadId: string; turnId: string; callId: string; generationId: string; namespace: string; tool: string; argumentKeys: string[] }): Promise<boolean>;
   broadcast(event: string, payload: Record<string, unknown>): void;
@@ -155,6 +158,7 @@ async function resolveResponse(input: {
         payload: { tool_name: `${input.namespace}.${input.tool}`, tool_input: args, tool_response: result.text },
       });
       const text = post.replaceToolResult ?? result.text;
+      const projection = await projectToolResult(input, text);
       if (result.app) {
         input.options.broadcast('conversation.plugin_app.created', {
           conversationId: input.conversation.id,
@@ -169,7 +173,7 @@ async function resolveResponse(input: {
           toolResult: { text: result.text, structuredContent: result.structuredContent, isError: result.isError },
         });
       }
-      return dynamicToolResponse(input.event, [{ type: 'inputText', text }], !result.isError);
+      return dynamicToolResponse(input.event, [{ type: 'inputText', text: projection }], !result.isError);
     }
     if (!input.options.toolBroker) throw dynamicToolError('ZEUS_NATIVE_AUTOMATION_UNAVAILABLE', 'The Zeus native automation host is unavailable.');
     if (!input.tool || (input.namespace !== 'zeus_browser' && input.namespace !== 'zeus_computer')) {
@@ -187,11 +191,52 @@ async function resolveResponse(input: {
       tool: input.tool,
       arguments: input.argumentsValue,
     });
-    return dynamicToolResponse(input.event, result.contentItems, result.success);
+    return dynamicToolResponse(input.event, await projectContentItems(input, result.contentItems), result.success);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     return dynamicToolResponse(input.event, [{ type: 'inputText', text: `Zeus dynamic tool failed: ${detail.slice(0, 1200)}` }], false);
   }
+}
+
+async function projectContentItems(
+  input: Parameters<typeof resolveResponse>[0],
+  contentItems: Extract<CodexServerRequestResponse, { type: 'dynamic_tool' }>['contentItems'],
+): Promise<Extract<CodexServerRequestResponse, { type: 'dynamic_tool' }>['contentItems']> {
+  const text = contentItems
+    .filter((item): item is Extract<(typeof contentItems)[number], { type: 'inputText' }> => item.type === 'inputText')
+    .map((item) => item.text)
+    .join('\n');
+  if (!text) return contentItems;
+  const projection = await projectToolResult(input, text);
+  let emitted = false;
+  const projected: Extract<CodexServerRequestResponse, { type: 'dynamic_tool' }>['contentItems'] = [];
+  for (const item of contentItems) {
+    if (item.type !== 'inputText') {
+      projected.push(item);
+      continue;
+    }
+    if (emitted) continue;
+    emitted = true;
+    projected.push({ type: 'inputText', text: projection });
+  }
+  return projected;
+}
+
+async function projectToolResult(input: Parameters<typeof resolveResponse>[0], text: string): Promise<string> {
+  if (!input.conversation) return text;
+  const turn = input.options.turns.getByProvider(input.threadId, input.turnId);
+  const segment = input.options.execution.currentSegment(input.conversation.id);
+  if (!turn || !segment) return text;
+  const stored = await input.options.toolResults.store({
+    conversationId: input.conversation.id,
+    turnId: turn.id,
+    segmentId: segment.id,
+    toolPairId: input.callId,
+    toolKind: 'other',
+    text,
+    createdAt: input.options.now(),
+  });
+  return stored.projection;
 }
 
 function dynamicToolResponse(

@@ -1615,59 +1615,6 @@
   font: inherit;
 }
 
-.macos-ai-app .task-work-manager-questions,
-.macos-ai-app .task-work-manager-authorization {
-  display: grid;
-  gap: 12px;
-}
-
-.macos-ai-app .task-work-manager-question {
-  display: grid;
-  gap: 8px;
-  padding: 12px !important;
-  border: 1px solid var(--zeus-control-border) !important;
-  border-radius: 8px;
-  background: color-mix(in oklab, var(--zeus-product-panel-muted) 64%, transparent);
-}
-
-.macos-ai-app .task-work-manager-question > p,
-.macos-ai-app .task-work-manager-question > span,
-.macos-ai-app .task-work-manager-question small {
-  margin: 0;
-  color: var(--zeus-control-muted-text);
-  font-size: 10px;
-  line-height: 1.5;
-}
-
-.macos-ai-app .task-work-manager-question > label {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: start;
-  gap: 9px;
-  padding: 8px;
-  border-radius: 7px;
-  background: var(--zeus-product-panel);
-  cursor: pointer;
-}
-
-.macos-ai-app .task-work-manager-question > label > input[type='radio'],
-.macos-ai-app .task-work-manager-question > label > input[type='checkbox'] {
-  width: auto;
-  margin: 2px 0 0;
-  padding: 0;
-}
-
-.macos-ai-app .task-work-manager-question > label > span {
-  display: grid;
-  gap: 2px;
-}
-
-.macos-ai-app .task-work-manager-authorization {
-  padding: 14px;
-  border: 1px solid var(--zeus-control-border);
-  border-radius: 9px;
-}
-
 .macos-ai-app .task-work-command-evidence-summary {
   display: grid;
   grid-template-columns: minmax(0, 2fr) repeat(2, minmax(90px, 1fr));

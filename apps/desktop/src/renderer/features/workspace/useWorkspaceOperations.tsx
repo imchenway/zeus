@@ -1877,17 +1877,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
 
   function renderNativeConversationWorkspace(onOpenTaskDetail: (taskId: string) => void): ReactNode {
     const taskReadOnlyGate =
-      selectedNativeConversation?.managedByTaskWorkItem && nativeSessionTask
-        ? {
-            title: appShellSettings.appLanguage === 'zh-CN' ? '这是受管工作项的会话证据' : 'This conversation is managed work-item evidence',
-            description:
-              appShellSettings.appLanguage === 'zh-CN'
-                ? '会话输入不会推进工作。请返回任务详情，在“待我处理”中回复问题、审批权限或验收交付物。'
-                : 'Conversation input does not advance the work. Return to the task and use Needs me for answers, approvals, and deliverable acceptance.',
-            actionLabel: appShellSettings.appLanguage === 'zh-CN' ? '返回任务详情' : 'Return to task',
-            onAction: () => onOpenTaskDetail(nativeSessionTask.id),
-          }
-        : nativeSessionTaskReadOnly && nativeSessionTask && selectedNativeConversation
+      nativeSessionTaskReadOnly && nativeSessionTask && selectedNativeConversation
           ? {
               title: appShellSettings.appLanguage === 'zh-CN' ? '此任务已结束，会话当前为只读' : 'This task is closed and the conversation is read-only',
               description:

@@ -664,7 +664,7 @@ const completeMessageSessionState: NativeSessionState = {
       },
     ],
     snapshotV2: {
-      structureGeneration: '2026-08-29-conversation-snapshot-v2-recovered-request-input',
+      structureGeneration: '2026-08-31-conversation-snapshot-v2-active-turn-tail',
       activeTurn: null,
       recentClosedTurns: [],
     },
@@ -679,7 +679,7 @@ function historyPagingRangeSnapshot(input: { through: number; oldest: number; cu
     id: historyPagingConversationId,
     items: [],
     snapshotV2: {
-      structureGeneration: '2026-08-29-conversation-snapshot-v2-recovered-request-input',
+      structureGeneration: '2026-08-31-conversation-snapshot-v2-active-turn-tail',
     },
     v2Paging: {
       history: {
@@ -1934,7 +1934,7 @@ function CompleteMessagePreview() {
             const nextOffset = offset === 0 ? completeMessagePageBoundary : null;
             return {
               schemaVersion: 2 as const,
-              structureGeneration: '2026-08-29-conversation-snapshot-v2-recovered-request-input' as const,
+              structureGeneration: '2026-08-31-conversation-snapshot-v2-active-turn-tail' as const,
               conversationId: completeMessageItem.conversationId,
               kind: 'model_content' as const,
               mimeType: 'text/plain; charset=utf-8',
@@ -2058,7 +2058,7 @@ function activeReentryProjection(preview: string) {
 
 const activeReentrySnapshot: NativeConversationSnapshotV2 = {
   schemaVersion: 2,
-  structureGeneration: '2026-08-29-conversation-snapshot-v2-recovered-request-input',
+  structureGeneration: '2026-08-31-conversation-snapshot-v2-active-turn-tail',
   conversationSchemaGeneration: '2026-08-16-unified-conversation-segments',
   throughEventSeq: 2_948,
   eventStreamGeneration: 'zeus-conversation-sync-v2',
@@ -2120,7 +2120,7 @@ const activeReentrySnapshot: NativeConversationSnapshotV2 = {
         turnId: activeReentryLocalTurnId,
         providerItemId: 'item-92',
         itemType: 'reasoning',
-        status: 'in_progress',
+        status: 'completed',
         phase: 'prework',
         text: activeReentryProjection('**Outlining key decision points**\n\n**Recommending per automation permission settings**'),
         payload: activeReentryProjection(
@@ -2130,21 +2130,49 @@ const activeReentrySnapshot: NativeConversationSnapshotV2 = {
           }),
         ),
         startedAt: activeReentryStartedAt,
-        completedAt: null,
-        updatedAt: activeReentryUpdatedAt,
+        completedAt: '2026-08-29T02:18:30.000Z',
+        updatedAt: '2026-08-29T02:18:30.000Z',
       },
       {
-        id: 'qa-active-reentry-commentary',
+        id: 'qa-active-reentry-command',
         order: 1,
         turnId: activeReentryLocalTurnId,
         providerItemId: 'item-93',
+        itemType: 'commandExecution',
+        status: 'completed',
+        phase: 'prework',
+        text: activeReentryProjection(''),
+        payload: activeReentryProjection(JSON.stringify({ type: 'commandExecution', command: 'pnpm typecheck' })),
+        startedAt: '2026-08-29T02:18:31.000Z',
+        completedAt: '2026-08-29T02:19:00.000Z',
+        updatedAt: '2026-08-29T02:19:00.000Z',
+      },
+      {
+        id: 'qa-active-reentry-commentary',
+        order: 2,
+        turnId: activeReentryLocalTurnId,
+        providerItemId: 'item-94',
         itemType: 'agentMessage',
-        status: 'in_progress',
+        status: 'completed',
         phase: 'prework',
         text: activeReentryProjection('工作区默认已锁定：独立运行中，只读任务直接使用项目目录；允许写入的 Git 项目默认每次运行使用隔离 Worktree。\n\n下一项是无人值守权限。自动化运行不能在后台弹出审批后无限等待。'),
         payload: activeReentryProjection(JSON.stringify({ type: 'agentMessage', phase: 'commentary' })),
-        startedAt: activeReentryStartedAt,
-        completedAt: null,
+        startedAt: '2026-08-29T02:19:01.000Z',
+        completedAt: '2026-08-29T02:19:40.000Z',
+        updatedAt: '2026-08-29T02:19:40.000Z',
+      },
+      {
+        id: 'qa-active-reentry-empty-reasoning',
+        order: 3,
+        turnId: activeReentryLocalTurnId,
+        providerItemId: 'item-95',
+        itemType: 'reasoning',
+        status: 'completed',
+        phase: 'prework',
+        text: activeReentryProjection(''),
+        payload: activeReentryProjection(JSON.stringify({ type: 'reasoning', summary: [] })),
+        startedAt: '2026-08-29T02:19:41.000Z',
+        completedAt: activeReentryUpdatedAt,
         updatedAt: activeReentryUpdatedAt,
       },
     ],
@@ -2163,7 +2191,7 @@ const activeReentrySnapshot: NativeConversationSnapshotV2 = {
 
 const activeReentryHistory: NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item> = {
   schemaVersion: 2,
-  structureGeneration: '2026-08-29-conversation-snapshot-v2-recovered-request-input',
+  structureGeneration: '2026-08-31-conversation-snapshot-v2-active-turn-tail',
   conversationId: activeReentryConversationId,
   kind: 'model_history',
   throughEventSeq: activeReentrySnapshot.throughEventSeq,
@@ -2248,8 +2276,8 @@ export function ActiveTurnReentryQaApp() {
   return (
     <main className="macos-ai-app zeus-shell session-codex-parity-v1 qa-page theme-light" data-theme="light" data-testid="active-reentry-fixture">
       <header className="qa-heading">
-        <p>ZEUS-0383 · Snapshot V2 活动轮次首屏恢复</p>
-        <h1>切走再切回，立即显示已有处理过程</h1>
+        <p>ZEUS-0418 · Snapshot V2 活动轮次尾部恢复</p>
+        <h1>切走再切回，已完成过程和当前状态都不留白</h1>
       </header>
       <nav className="qa-motion-fixture-actions" aria-label="会话切换">
         <button type="button" data-testid="active-reentry-away" onClick={() => setSelected('other')}>
