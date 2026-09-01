@@ -46,6 +46,17 @@ const modelHistoryVisibleContentSql = `CASE
     THEN json_extract(content_json, '$.text')
   ELSE content_json
 END`;
+const modelHistoryUserProviderItemSql = `(SELECT message.provider_item_id
+  FROM conversation_submissions AS submission
+  JOIN conversation_messages AS message
+    ON message.conversation_id = submission.conversation_id
+   AND message.role = 'user'
+   AND message.client_message_id = submission.client_message_id
+ WHERE conversation_model_history.role = 'user'
+   AND submission.id = conversation_model_history.submission_id
+   AND submission.conversation_id = conversation_model_history.conversation_id
+   AND message.provider_item_id IS NOT NULL
+ LIMIT 1)`;
 const modelHistoryAssistantProviderItemSql = `(SELECT message.provider_item_id
   FROM conversation_messages AS message
   JOIN conversation_turns AS history_turn ON history_turn.id = conversation_model_history.turn_id
@@ -56,6 +67,7 @@ const modelHistoryAssistantProviderItemSql = `(SELECT message.provider_item_id
    AND message.content = ${modelHistoryVisibleContentSql}
  LIMIT 1)`;
 const modelHistoryProviderItemSql = `COALESCE(
+  ${modelHistoryUserProviderItemSql},
   ${modelHistoryAssistantProviderItemSql},
   CASE
     WHEN json_valid(reasoning_source_json)
