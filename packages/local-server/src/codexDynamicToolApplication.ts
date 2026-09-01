@@ -103,6 +103,21 @@ async function resolveResponse(input: {
       });
       return dynamicToolResponse(input.event, [{ type: 'inputText', text: JSON.stringify(page) }], true);
     }
+    if ((!input.namespace || input.namespace === 'zeus') && input.tool === 'read_conversation_tool_image') {
+      const image = await input.options.toolResults.readImage({
+        conversationId: input.conversation.id,
+        handle: requiredString(input.argumentsValue.handle, 'tool image handle'),
+        detail: input.argumentsValue.detail === 'original' ? 'original' : 'low',
+      });
+      return dynamicToolResponse(
+        input.event,
+        [
+          { type: 'inputText', text: JSON.stringify({ handle: input.argumentsValue.handle, mimeType: image.mimeType, byteLength: image.byteLength, sha256: image.sha256, detail: image.detail, note: image.projectionText }) },
+          ...(image.imageUrl ? ([{ type: 'inputImage' as const, imageUrl: image.imageUrl }] as const) : []),
+        ],
+        true,
+      );
+    }
     if (input.options.plugins && input.namespace.startsWith('mcp__') && input.tool) {
       const pluginContext = input.options.pluginContext(input.conversation.id);
       if (!pluginContext) throw dynamicToolError('ZEUS_PLUGIN_CONVERSATION_CONTEXT_MISSING', 'The Plugin Host is not bound to this conversation context.');
@@ -206,18 +221,37 @@ async function projectContentItems(
     .filter((item): item is Extract<(typeof contentItems)[number], { type: 'inputText' }> => item.type === 'inputText')
     .map((item) => item.text)
     .join('\n');
-  if (!text) return contentItems;
-  const projection = await projectToolResult(input, text);
+  const projection = text ? await projectToolResult(input, text) : null;
   let emitted = false;
+  let imageOrdinal = 0;
   const projected: Extract<CodexServerRequestResponse, { type: 'dynamic_tool' }>['contentItems'] = [];
   for (const item of contentItems) {
-    if (item.type !== 'inputText') {
-      projected.push(item);
+    if (item.type === 'inputImage') {
+      if (!input.conversation) {
+        projected.push(item);
+        continue;
+      }
+      const turn = input.options.turns.getByProvider(input.threadId, input.turnId);
+      const segment = input.options.execution.currentSegment(input.conversation.id);
+      if (!turn || !segment) {
+        projected.push(item);
+        continue;
+      }
+      const stored = await input.options.toolResults.storeImage({
+        conversationId: input.conversation.id,
+        turnId: turn.id,
+        segmentId: segment.id,
+        toolPairId: `${input.callId}:image:${imageOrdinal++}`,
+        imageUrl: item.imageUrl,
+        createdAt: input.options.now(),
+      });
+      projected.push({ type: 'inputText', text: stored.projectionText });
+      if (stored.projectedImageUrl) projected.push({ type: 'inputImage', imageUrl: stored.projectedImageUrl });
       continue;
     }
     if (emitted) continue;
     emitted = true;
-    projected.push({ type: 'inputText', text: projection });
+    if (projection) projected.push({ type: 'inputText', text: projection });
   }
   return projected;
 }

@@ -152,7 +152,38 @@ export interface ConversationUsageSnapshot {
   conversationTotal: NullableUsage;
   turnTotal: NullableUsage;
   latestModelRequest: ConversationModelRequestUsageRecord | null;
-  preflightEstimate: null;
+  preflightEstimate: ConversationPreflightEstimate | null;
+  latestContextCompaction: ConversationContextCompactionStatus | null;
+}
+
+export interface ConversationPreflightEstimate {
+  mode: 'estimate';
+  exact: false;
+  providerId: string;
+  modelId: string;
+  submissionId: string | null;
+  contextWindowTokens: number;
+  reservedOutputTokens: number;
+  historyBaselineTokens: number;
+  historyBaselineSource: string;
+  fixedInputTokens: number;
+  estimateSafetyMarginTokens: number;
+  compilerEnvelopeTokens: number;
+  compiledContextTokens: number;
+  estimatedHeadroomTokens: number;
+  compiledAt: string;
+}
+
+export interface ConversationContextCompactionStatus {
+  status: 'in_progress' | 'completed' | 'failed';
+  title: string;
+  segmentId: string;
+  sourceEventId: string | null;
+  adapter: string | null;
+  method: string | null;
+  trigger: string | null;
+  startedAt: string;
+  completedAt: string | null;
 }
 
 export interface ConversationSessionMetricsSnapshot {
@@ -262,6 +293,7 @@ interface AcceptSwitchInput {
   acceptanceEvidence: unknown;
   userHistoryContent: unknown;
   acceptedAt: string;
+  sourceSealReason?: 'route_switched' | 'context_pressure_rollover';
 }
 
 interface AcceptCurrentSegmentInput {
@@ -683,9 +715,9 @@ export class ConversationExecutionRepository {
       if (operation.sourceSegmentId) {
         this.db.execute(
           `UPDATE conversation_runtime_segments
-              SET state = 'sealed', sealed_at = ?, seal_reason = 'route_switched', updated_at = ?
+              SET state = 'sealed', sealed_at = ?, seal_reason = ?, updated_at = ?
             WHERE id = ? AND state = 'current'`,
-          [input.acceptedAt, input.acceptedAt, operation.sourceSegmentId],
+          [input.acceptedAt, input.sourceSealReason ?? 'route_switched', input.acceptedAt, operation.sourceSegmentId],
         );
       }
       this.db.execute(
@@ -907,6 +939,35 @@ export class ConversationExecutionRepository {
   currentSegment(conversationId: string): ConversationRuntimeSegmentRecord | null {
     const row = this.db.get<RuntimeSegmentRow>(`SELECT * FROM conversation_runtime_segments WHERE conversation_id = ? AND state = 'current'`, [conversationId]);
     return row ? mapRuntimeSegment(row) : null;
+  }
+
+  countCompletedNativeContextCompactions(segmentId: string): number {
+    return (
+      this.db.get<{ row_count: number }>(
+        `SELECT COUNT(*) AS row_count
+           FROM conversation_process_items
+          WHERE segment_id = ? AND kind = 'context_compaction' AND status = 'completed'
+            AND (source_event_id IS NULL OR source_event_id NOT LIKE 'context-compaction:%')`,
+        [segmentId],
+      )?.row_count ?? 0
+    );
+  }
+
+  latestContextEstimateForSegment(segmentId: string): { estimatedHeadroomTokens: number; historyBaselineSource: string } | null {
+    const rows = this.db.select<{ evidence_json: string }>(
+      `SELECT evidence_json
+         FROM conversation_config_evidence
+        WHERE segment_id = ? AND layer = 'adapter_serialized'
+        ORDER BY observed_at DESC, id DESC LIMIT 100`,
+      [segmentId],
+    );
+    for (const row of rows) {
+      const evidence = parseJsonRecord(row.evidence_json);
+      if (evidence.kind === 'context_request_estimate' && typeof evidence.estimatedHeadroomTokens === 'number' && Number.isSafeInteger(evidence.estimatedHeadroomTokens) && typeof evidence.historyBaselineSource === 'string') {
+        return { estimatedHeadroomTokens: evidence.estimatedHeadroomTokens, historyBaselineSource: evidence.historyBaselineSource };
+      }
+    }
+    return null;
   }
 
   provisionalSegment(conversationId: string): ConversationRuntimeSegmentRecord | null {
@@ -1200,6 +1261,16 @@ export class ConversationExecutionRepository {
   /** 读取同一产品轮次已经确认的真实模型请求，供 Provider 的增量用量事件恢复请求边界。 */
   listModelRequestsForTurn(conversationId: string, turnId: string): ConversationModelRequestUsageRecord[] {
     return this.db.select<ModelRequestRow>(`SELECT * FROM conversation_model_requests WHERE conversation_id = ? AND turn_id = ? ORDER BY request_sequence`, [conversationId, turnId]).map(mapModelRequest);
+  }
+
+  /** Provider 可能先发送 usage、后发送 contextCompaction item；item 到达后统一修正该内部轮次的请求类型。 */
+  markTurnModelRequestsAsContextCompaction(conversationId: string, turnId: string): void {
+    this.db.execute(
+      `UPDATE conversation_model_requests
+          SET request_kind = 'context_compaction'
+        WHERE conversation_id = ? AND turn_id = ? AND request_kind <> 'context_compaction'`,
+      [conversationId, turnId],
+    );
   }
 
   enrichModelRequest(id: string, input: { contextWindow?: number | null; estimatedUsd?: number | null }): ConversationModelRequestUsageRecord | undefined {
@@ -2065,13 +2136,99 @@ function mapConfigEvidence(row: ConfigEvidenceRow): ConversationConfigEvidenceRe
 
 export function readConversationUsageSnapshot(db: ZeusDatabasePort, conversationId: string, turnId?: string | null): ConversationUsageSnapshot {
   const rows = db.select<ModelRequestRow>(`SELECT * FROM conversation_model_requests WHERE conversation_id = ? ORDER BY request_sequence`, [conversationId]);
-  const latest = rows.at(-1);
+  // 压缩请求自身的 token 用量不是当前产品会话上下文规模，不能覆盖最新 inference/tool continuation 基线。
+  const latest = [...rows].reverse().find((row) => row.request_kind !== 'context_compaction');
+  const estimateRow = db
+    .select<ConfigEvidenceRow>(
+      `SELECT * FROM conversation_config_evidence
+        WHERE conversation_id = ? AND layer = 'adapter_serialized'
+        ORDER BY observed_at DESC, id DESC LIMIT 100`,
+      [conversationId],
+    )
+    .find((row) => parseJsonRecord(row.evidence_json).kind === 'context_request_estimate' && (!latest || row.observed_at > latest.occurred_at));
+  const latestCompaction = db.get<ProcessItemRow>(
+    `SELECT * FROM conversation_process_items
+      WHERE conversation_id = ? AND kind = 'context_compaction'
+      ORDER BY process_sequence DESC LIMIT 1`,
+    [conversationId],
+  );
   return {
     conversationTotal: aggregateUsage(rows),
     turnTotal: turnId ? aggregateUsage(rows.filter((row) => row.turn_id === turnId)) : emptyNullableUsage(),
     latestModelRequest: latest ? mapModelRequest(latest) : null,
-    preflightEstimate: null,
+    preflightEstimate: estimateRow ? parsePreflightEstimate(estimateRow) : null,
+    latestContextCompaction: latestCompaction ? mapContextCompactionStatus(latestCompaction) : null,
   };
+}
+
+function parsePreflightEstimate(row: ConfigEvidenceRow): ConversationPreflightEstimate | null {
+  const evidence = parseJsonRecord(row.evidence_json);
+  const configuration = parseJsonRecord(row.configuration_json);
+  if (evidence.kind !== 'context_request_estimate' || evidence.mode !== 'estimate' || evidence.exact !== false) return null;
+  const values = {
+    providerId: configuration.providerId,
+    modelId: configuration.modelId,
+    contextWindowTokens: configuration.contextWindowTokens,
+    reservedOutputTokens: configuration.reservedOutputTokens,
+    historyBaselineTokens: evidence.historyBaselineTokens,
+    historyBaselineSource: evidence.historyBaselineSource,
+    fixedInputTokens: evidence.fixedInputTokens,
+    estimateSafetyMarginTokens: evidence.estimateSafetyMarginTokens,
+    compilerEnvelopeTokens: evidence.compilerEnvelopeTokens,
+    compiledContextTokens: evidence.compiledContextTokens,
+    estimatedHeadroomTokens: evidence.estimatedHeadroomTokens,
+    compiledAt: evidence.compiledAt,
+  };
+  if (
+    typeof values.providerId !== 'string' ||
+    typeof values.modelId !== 'string' ||
+    typeof values.historyBaselineSource !== 'string' ||
+    typeof values.compiledAt !== 'string' ||
+    ![
+      values.contextWindowTokens,
+      values.reservedOutputTokens,
+      values.historyBaselineTokens,
+      values.fixedInputTokens,
+      values.estimateSafetyMarginTokens,
+      values.compilerEnvelopeTokens,
+      values.compiledContextTokens,
+      values.estimatedHeadroomTokens,
+    ].every((value) => typeof value === 'number' && Number.isSafeInteger(value))
+  ) {
+    return null;
+  }
+  return { mode: 'estimate', exact: false, submissionId: row.submission_id, ...(values as Omit<ConversationPreflightEstimate, 'mode' | 'exact' | 'submissionId'>) };
+}
+
+function mapContextCompactionStatus(row: ProcessItemRow): ConversationContextCompactionStatus {
+  const detail = parseJsonRecord(row.detail_json);
+  const evidence = parseJsonRecord(detail.evidence);
+  return {
+    status: row.status,
+    title: row.title,
+    segmentId: row.segment_id,
+    sourceEventId: row.source_event_id,
+    adapter: stringOrNull(evidence.adapter ?? detail.adapter ?? detail.provider),
+    method: stringOrNull(evidence.method ?? detail.method),
+    trigger: stringOrNull(evidence.trigger ?? detail.trigger),
+    startedAt: row.started_at,
+    completedAt: row.completed_at,
+  };
+}
+
+function parseJsonRecord(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+  if (typeof value !== 'string') return {};
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
 }
 
 export function readConversationSessionMetrics(db: ZeusDatabasePort, conversationId: string, turnId?: string | null): ConversationSessionMetricsSnapshot {

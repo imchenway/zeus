@@ -114,7 +114,7 @@ import { CodexPublicCommandApplicationService } from './codexPublicCommandApplic
 import { type CodexRemoteControlSnapshot } from './codexPublicCommandRoutes.js';
 import { createCodexUsageService } from './codexUsageService.js';
 import { createContextDispatchAuditPort } from './contextDispatchAudit.js';
-import { ContextDispatchApplicationService, type ContextDispatchEnvelope } from './contextDispatchService.js';
+import { ContextDispatchApplicationService, type ContextDispatchEnvelope, type ProviderDispatchContextCompilerInput } from './contextDispatchService.js';
 import { createConversationApplicationOperations, isNativeApiRecord, nativeApiError } from './conversationApplicationOperations.js';
 import { ConversationCapabilityQueryApplication } from './conversationCapabilityQueryApplication.js';
 import { compareConversationStageUpdatedDesc, ConversationChoiceQueryApplication, type ProjectConversationAttentionState } from './conversationChoiceQueryApplication.js';
@@ -1031,21 +1031,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     now,
     audit: contextDispatchAudit,
   });
-  type ProviderDispatchContextInput = {
-    provider: 'codex' | 'pi';
-    conversationId: string;
-    submissionId: string;
-    projectId: string;
-    projectLocalPath: string;
-    taskId: string | null;
-    modelId: string;
-    modelSourceId: string | null;
-    operationRisk: 'read_only' | 'local_write';
-    fixedRequestUtf8Bytes: number;
-    providerBootstrapUtf8Bytes: number;
-    providerHistoryMode: 'latest' | 'bootstrap';
-    providerGenerationId: string | null;
-  };
   type DispatchModelBudget = {
     contextWindowTokens: number;
     reservedOutputTokens: number;
@@ -1061,7 +1046,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     return budget;
   }
 
-  async function compileProviderDispatchContext(input: ProviderDispatchContextInput): Promise<ContextDispatchEnvelope> {
+  async function compileProviderDispatchContext(input: ProviderDispatchContextCompilerInput): Promise<ContextDispatchEnvelope> {
     const project = projects.getById(input.projectId);
     if (!project) throw nativeApiError('ZEUS_CONTEXT_PROJECT_NOT_FOUND', '上下文编译找不到目标项目，已拒绝 Provider 派发。');
     const task = input.taskId ? tasks.getById(input.taskId) : undefined;
@@ -1099,11 +1084,16 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (!Number.isSafeInteger(input.fixedRequestUtf8Bytes) || input.fixedRequestUtf8Bytes < 0 || !Number.isSafeInteger(input.providerBootstrapUtf8Bytes) || input.providerBootstrapUtf8Bytes < 0) {
       throw nativeApiError('ZEUS_CONTEXT_INPUT_SIZE_INVALID', 'Provider 待发请求或启动前缀规模无效，已拒绝上下文编译。');
     }
-    const latestRequest = input.providerHistoryMode === 'latest' ? conversationExecution.usageSnapshot(input.conversationId).latestModelRequest : null;
+    if (input.providerHistoryOverride && (!Number.isSafeInteger(input.providerHistoryOverride.tokens) || input.providerHistoryOverride.tokens < 0 || !input.providerHistoryOverride.source.trim())) {
+      throw nativeApiError('ZEUS_CONTEXT_HISTORY_BASELINE_INVALID', 'Provider 历史基线覆盖值无效，已拒绝上下文编译。');
+    }
+    const latestRequest = input.providerHistoryMode === 'latest' && !input.providerHistoryOverride ? conversationExecution.usageSnapshot(input.conversationId).latestModelRequest : null;
     const latestTotalTokens = latestRequest?.totalTokens;
-    const historyBaselineTokens = typeof latestTotalTokens === 'number' && Number.isSafeInteger(latestTotalTokens) && latestTotalTokens >= 0 ? latestTotalTokens : Math.ceil(input.providerBootstrapUtf8Bytes / 4);
+    const historyBaselineTokens =
+      input.providerHistoryOverride?.tokens ?? (typeof latestTotalTokens === 'number' && Number.isSafeInteger(latestTotalTokens) && latestTotalTokens >= 0 ? latestTotalTokens : Math.ceil(input.providerBootstrapUtf8Bytes / 4));
     const historyBaselineSource =
-      typeof latestTotalTokens === 'number' && Number.isSafeInteger(latestTotalTokens) && latestTotalTokens >= 0 ? `latest_model_request:${latestRequest!.id}:${latestRequest!.requestSequence}` : 'provider_bootstrap_known_prefix';
+      input.providerHistoryOverride?.source ??
+      (typeof latestTotalTokens === 'number' && Number.isSafeInteger(latestTotalTokens) && latestTotalTokens >= 0 ? `latest_model_request:${latestRequest!.id}:${latestRequest!.requestSequence}` : 'provider_bootstrap_known_prefix');
     const fixedInputTokens = Math.ceil(input.fixedRequestUtf8Bytes / 4);
     if (fixedInputTokens + budget.reservedOutputTokens > budget.contextWindowTokens) {
       throw nativeApiError('ZEUS_CONTEXT_INPUT_BUDGET_EXCEEDED', '本轮固定输入与输出预留已经超过模型窗口，已拒绝 Provider 派发。');
@@ -1119,7 +1109,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       checkedAt: budget.checkedAt,
       reason: input.provider === 'codex' ? '当前 Codex app-server 没有请求前 token-count RPC；只能使用请求后的真实 usage 通知。' : 'Pi SDK 0.83.0 没有对完整待发请求进行精确预检计数的公共端口；运行后的 usage 不能替代预检。',
     };
-    return contextDispatch.compileForDispatch({
+    const envelope = await contextDispatch.compileForDispatch({
       project: { id: project.id, localPath: input.projectLocalPath },
       task: task ? { id: task.id, code: task.taskCode } : null,
       provider: {
@@ -1158,6 +1148,42 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         submissionId: input.submissionId,
       },
     });
+    const compiledAt = now().toISOString();
+    const accounting = envelope.provider.requestAccounting;
+    if (accounting) {
+      const segment = conversationExecution.provisionalSegment(input.conversationId) ?? conversationExecution.currentSegment(input.conversationId);
+      conversationExecution.appendConfigEvidence({
+        conversationId: input.conversationId,
+        submissionId: input.submissionId,
+        segmentId: segment?.id ?? null,
+        layer: 'adapter_serialized',
+        configuration: {
+          kind: 'context_request_estimate',
+          providerId: envelope.provider.id,
+          modelId: envelope.provider.modelId,
+          contextWindowTokens: budget.contextWindowTokens,
+          reservedOutputTokens: budget.reservedOutputTokens,
+        },
+        evidence: {
+          kind: 'context_request_estimate',
+          mode: 'estimate',
+          exact: false,
+          historyBaselineTokens: accounting.historyBaselineTokens,
+          historyBaselineSource: accounting.historyBaselineSource,
+          fixedInputTokens: accounting.fixedInputTokens,
+          estimateSafetyMarginTokens: accounting.estimateSafetyMarginTokens,
+          compilerEnvelopeTokens: accounting.compilerEnvelopeTokens,
+          compiledContextTokens: envelope.compiled.usedTokens,
+          estimatedHeadroomTokens: accounting.estimatedRequestHeadroomTokens,
+          providerHistoryMode: input.providerHistoryMode,
+          providerGenerationId: input.providerGenerationId,
+          compiledAt,
+        },
+        observedAt: compiledAt,
+      });
+      await db.save();
+    }
+    return envelope;
   }
   const zentaoCredentials = createZentaoCredentialService({
     settings,

@@ -276,6 +276,11 @@ export interface CodexTurnStartInput extends CodexPerformanceTraceContext {
   sandboxPolicy?: CodexSandboxPolicy;
 }
 
+export interface CodexThreadCompactInput extends CodexPerformanceTraceContext {
+  threadId: string;
+  requestWritten?: () => void;
+}
+
 /** 产品层沿用 Pi 的 `off` 术语；Codex Responses 线协议对应值是 `none`。 */
 export function toCodexWireReasoningEffort(effort: string | null | undefined): string | null | undefined {
   return effort === 'off' ? 'none' : effort;
@@ -469,6 +474,7 @@ export interface CodexAppServerManager {
     priority?: 'control';
   }): Promise<CodexThreadTurnsPage>;
   listSkills(input: { cwds?: string[]; forceReload?: boolean }): Promise<CodexSkillsListEntry[]>;
+  compactThread(input: CodexThreadCompactInput): Promise<void>;
   startTurn(input: CodexTurnStartInput): Promise<CodexTurnSnapshot>;
   steerTurn(input: CodexTurnSteerInput): Promise<{ turnId: string }>;
   interruptTurn(input: { threadId: string; turnId: string } & CodexPerformanceTraceContext): Promise<void>;
@@ -1395,6 +1401,10 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     async listSkills(input) {
       const capabilities = await awaitCapabilities();
       return parseSkillsList(await retryableReadRpc(capabilities.generationId, 'skills/list', compactObject(input)));
+    },
+    async compactThread(input) {
+      const capabilities = await awaitCapabilities();
+      await rpc(capabilities.generationId, 'thread/compact/start', { threadId: input.threadId }, { requestWritten: input.requestWritten, traceIdentity: input.traceIdentity });
     },
     async startTurn(input) {
       const capabilities = await awaitCapabilities();

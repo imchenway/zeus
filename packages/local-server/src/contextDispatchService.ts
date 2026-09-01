@@ -147,6 +147,25 @@ export interface ContextDispatchEnvelope {
   };
 }
 
+export interface ProviderDispatchContextCompilerInput {
+  provider: 'codex' | 'pi';
+  conversationId: string;
+  submissionId: string;
+  projectId: string;
+  projectLocalPath: string;
+  taskId: string | null;
+  modelId: string;
+  modelSourceId: string | null;
+  operationRisk: 'read_only' | 'local_write';
+  fixedRequestUtf8Bytes: number;
+  providerBootstrapUtf8Bytes: number;
+  providerHistoryMode: 'latest' | 'bootstrap';
+  providerHistoryOverride?: { tokens: number; source: string };
+  providerGenerationId: string | null;
+}
+
+export type ProviderDispatchContextCompiler = (input: ProviderDispatchContextCompilerInput) => Promise<ContextDispatchEnvelope>;
+
 /**
  * 真实派发的 Context Application Service。
  *

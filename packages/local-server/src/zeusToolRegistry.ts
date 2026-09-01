@@ -55,6 +55,7 @@ export function createZeusToolRegistry(): ZeusToolRegistry {
         description: tool.description,
         parameters: asSchemaRecord(tool.inputSchema),
         ...(isSequentialTool(namespace.name, tool.name) ? { executionMode: 'sequential' } : {}),
+        ...(tool.deferLoading ? { deferLoading: true } : {}),
       });
     }
   }

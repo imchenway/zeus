@@ -293,6 +293,7 @@ function createRestartProbeManager(input: { providerThreadId: string; turnIds: s
     },
     getState: () => ({ type: 'ready' as const, generationId, capabilities }),
     hasGeneration: (candidate: string) => candidate === generationId,
+    capabilitiesForGeneration: (candidate: string) => (candidate === generationId ? capabilities : null),
     generationForThread: (threadId: string) => (threadId === input.providerThreadId ? generationId : null),
     listRuntimeGenerations: () => [{ generationId, commandPath: '/usr/bin/true', state: 'ready' as const, active: true, activeThreadCount: 1, pendingRequestCount: 0 }],
     prepareForShutdown: async () => undefined,

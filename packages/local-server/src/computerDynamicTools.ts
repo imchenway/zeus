@@ -60,12 +60,14 @@ export function zeusComputerDynamicTools(): CodexDynamicToolSpec[] {
           type: 'function',
           name: 'click',
           description: 'Click a semantic element, or use an app-scoped coordinate fallback without moving the physical pointer.',
+          deferLoading: true,
           inputSchema: objectSchema({ ...elementTargetProperties, mouse_button: mouseButtonProperty, click_count: { type: 'integer', minimum: 1, maximum: 3 } }, ['app']),
         },
         {
           type: 'function',
           name: 'drag',
           description: 'Drag within the explicitly targeted app using semantic or app-scoped virtual coordinates.',
+          deferLoading: true,
           inputSchema: objectSchema(
             {
               app: appProperty,
@@ -82,30 +84,35 @@ export function zeusComputerDynamicTools(): CodexDynamicToolSpec[] {
           type: 'function',
           name: 'paste',
           description: 'Paste text into the targeted app while restoring the user clipboard afterward.',
+          deferLoading: true,
           inputSchema: objectSchema({ app: appProperty, text: { type: 'string', description: 'Text to paste.' }, format: { type: 'string', enum: ['text', 'md', 'html'] } }, ['app', 'text', 'format']),
         },
         {
           type: 'function',
           name: 'perform_secondary_action',
           description: 'Open the semantic secondary action or context menu for the target.',
+          deferLoading: true,
           inputSchema: objectSchema({ ...elementTargetProperties, action: { type: 'string', description: 'Exact accessibility action exposed by get_app_state.' } }, ['app', 'element_index', 'action']),
         },
         {
           type: 'function',
           name: 'press_key',
           description: 'Send a key or key chord to the explicitly targeted app.',
+          deferLoading: true,
           inputSchema: objectSchema({ app: appProperty, key: { type: 'string', description: 'Key or chord such as Enter, Escape, Tab, or Meta+K.' } }, ['app', 'key']),
         },
         {
           type: 'function',
           name: 'scroll',
           description: 'Scroll a semantic element or app-scoped point.',
+          deferLoading: true,
           inputSchema: objectSchema({ ...elementTargetProperties, direction: directionProperty, pages: { type: 'number', minimum: 0.1, maximum: 100 } }, ['app', 'direction']),
         },
         {
           type: 'function',
           name: 'select_text',
           description: 'Select a text range in an accessible text element.',
+          deferLoading: true,
           inputSchema: objectSchema(
             {
               ...elementTargetProperties,
@@ -121,12 +128,14 @@ export function zeusComputerDynamicTools(): CodexDynamicToolSpec[] {
           type: 'function',
           name: 'set_value',
           description: 'Set the accessible value of a semantic control; secure fields are rejected.',
+          deferLoading: true,
           inputSchema: objectSchema({ ...elementTargetProperties, value: { type: 'string' } }, ['app', 'element_index', 'value']),
         },
         {
           type: 'function',
           name: 'type_text',
           description: 'Type Unicode text into the target app or semantic element; secure fields are rejected.',
+          deferLoading: true,
           inputSchema: objectSchema({ app: appProperty, text: { type: 'string' } }, ['app', 'text']),
         },
       ],
