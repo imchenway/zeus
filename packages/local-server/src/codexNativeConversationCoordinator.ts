@@ -1,9 +1,7 @@
-import { type CodexAppServerEvent, type CodexAppServerManager, type CodexResponsesRuntime, type CodexServerRequestResponse, type CodexThreadGoal, modelRef, parseModelRef, toCodexWireReasoningEffort } from '@zeus/ai-runtime';
+import { type CodexAppServerEvent, type CodexResponsesRuntime, type CodexServerRequestResponse, type CodexThreadGoal, modelRef, parseModelRef, toCodexWireReasoningEffort } from '@zeus/ai-runtime';
 import { buildTaskPushInputParts, type CodexAdditionalContextEntry, type CodexBootstrapAdditionalContext, type TaskPushMessageLayout } from '@zeus/shared';
 import {
-  CommandDeliveryRepository,
   type ConversationCollaborationMode,
-  ConversationExecutionRepository,
   ConversationGoalRepository,
   type ConversationNextTurnSettings,
   ConversationPlanActionRepository,
@@ -12,23 +10,18 @@ import {
   ConversationRepository,
   ConversationResourceRepository,
   ConversationServerRequestRepository,
-  ConversationSubmissionRepository,
-  ConversationTurnRepository,
   ProviderEventReceiptRepository,
-  SettingRepository,
   type ZeusConversationItemRecord,
   type ZeusConversationServerRequestRecord,
   type ZeusConversationSubmissionRecord,
   type ZeusConversationTurnRecord,
   type ZeusConversationWithMessagesRecord,
-  type ZeusDatabase,
 } from '@zeus/storage';
 import { randomUUID } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
-import type { BrowserAutomationPort } from './browserAutomation.js';
 import { createCodexDynamicToolApplication } from './codexDynamicToolApplication.js';
-import { createZeusToolBroker, type ZeusToolAuditEvent } from './zeusToolRegistry.js';
+import { createZeusToolBroker } from './zeusToolRegistry.js';
 import { finalizeCodexPendingInteractionsForShutdown } from './codexFinalShutdownApplication.js';
 import { codexGoalEventKind, createCodexGoalApplication, ensureInitialCodexGoal } from './codexGoalApplication.js';
 import { createCodexInteractionRecoveryApplication, isInteractionRecoveryCheckpointRequest } from './codexInteractionRecoveryApplication.js';
@@ -61,6 +54,7 @@ import type {
   SubmitNativeMessageInput,
   WaitForNativeTurnResultInput,
 } from './codexNativeConversationContracts.js';
+import type { CreateCodexNativeConversationCoordinatorOptions } from './codexNativeConversationCoordinatorPorts.js';
 import { projectLocallyAcceptedUserMessage } from './localUserSubmissionProjection.js';
 import { projectNativeConversationTitle } from './nativeConversationTitle.js';
 import {
@@ -119,23 +113,19 @@ import { type CodexProviderStopRequestResult, createCodexProviderStopRecoveryApp
 import { createCodexRemoteControlConversationSyncApplication } from './codexRemoteControlConversationSyncApplication.js';
 import { createCodexRecoveryStateApplication } from './codexRecoveryStateApplication.js';
 import { createCodexTurnResultRecoveryApplication } from './codexTurnResultRecoveryApplication.js';
-import type { CodexUsageService } from './codexUsageService.js';
-import type { ContextDispatchEnvelope } from './contextDispatchService.js';
 import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
-import { conversationToolResultDynamicTools, type ManagedConversationToolResultStore } from './conversationPortableContext.js';
+import { conversationToolResultDynamicTools } from './conversationPortableContext.js';
 import { ConversationQueueCoreMutationApplication } from './conversationQueueCoreMutationApplication.js';
 import { createCodexRecoveredUnsentQueueApplication, hasRecoveredUnsentSubmission } from './codexRecoveredUnsentQueueApplication.js';
 import { normalizeConversationResources, toConversationResource } from './conversationResources.js';
 import { archiveUnboundConversationLocally, restoreUnboundConversationLocally } from './unboundConversationArchiveApplication.js';
 import { persistThreadProviderSettings as persistProviderThreadMetadata, threadPath } from './codexThreadMetadataProjection.js';
-import type { ConversationEventFlowControl } from './eventFlowControl.js';
-import type { TurnChangeSetService } from './turnChangeSets.js';
 import { TurnProcessProjector } from './turnProcessProjector.js';
 import { createCodexServiceTierDowngrade, isServiceTierUnavailableError } from './codexServiceTierDowngrade.js';
 import { createCodexPluginToolApprovalApplication } from './codexPluginToolApprovalApplication.js';
-import type { ZeusConversationPluginRuntime } from './zeusConversationPluginRuntime.js';
 
 export { filterCompatibilitySnapshotItemAliases } from './codexProviderHistoryProjection.js';
+export type { CreateCodexNativeConversationCoordinatorOptions } from './codexNativeConversationCoordinatorPorts.js';
 
 interface NativeConversationDispatchLease {
   submissionId: string;
@@ -144,61 +134,6 @@ interface NativeConversationDispatchLease {
   promise?: Promise<NativeAcceptedOperation>;
 }
 
-export interface CreateCodexNativeConversationCoordinatorOptions {
-  manager: CodexAppServerManager;
-  enabled?: boolean;
-  commandPath: string | (() => string);
-  externalAgentHome?: string;
-  db: ZeusDatabase;
-  conversations: ConversationRepository;
-  turns: ConversationTurnRepository;
-  providerItems: ConversationProviderItemRepository;
-  resources?: ConversationResourceRepository;
-  changeSets?: TurnChangeSetService;
-  submissions: ConversationSubmissionRepository;
-  requests: ConversationServerRequestRepository;
-  planActions?: ConversationPlanActionRepository;
-  goals?: ConversationGoalRepository;
-  receipts?: ProviderEventReceiptRepository;
-  syncCheckpoints?: ConversationProviderSyncCheckpointRepository;
-  settings: SettingRepository;
-  usage?: CodexUsageService;
-  execution: ConversationExecutionRepository;
-  commandDeliveries: CommandDeliveryRepository;
-  toolResults: ManagedConversationToolResultStore;
-  eventFlow?: ConversationEventFlowControl;
-  broadcast: (type: string, payload: Record<string, unknown>) => void;
-  now?: () => string;
-  operationId?: () => string;
-  turnResultTimeoutMs?: number;
-  browserAutomation?: BrowserAutomationPort;
-  plugins?: ZeusConversationPluginRuntime;
-  auditNativeTool?: (event: ZeusToolAuditEvent) => void | Promise<void>;
-  trustedAttachmentRoots?: string[];
-  generatedImageRoot?: string;
-  getProjectRoot?: (projectId: string) => string | null;
-  ensureExecutionContext?: (input: {
-    conversationId: string;
-    mode: 'reconcile' | 'submit' | 'dispatch' | 'recover_queue' | 'restore';
-  }) => Promise<{ projectLocalPath: string; writableRoots?: string[]; executionWorkspaceMode?: 'direct' | 'worktree' } | null>;
-  resolveResponsesRuntime?: (input: { modelSourceId: string | null; model: string }) => Promise<CodexResponsesRuntime | null>;
-  compileDispatchContext?: (input: {
-    provider: 'codex';
-    conversationId: string;
-    submissionId: string;
-    projectId: string;
-    projectLocalPath: string;
-    taskId: string | null;
-    modelId: string;
-    modelSourceId: string | null;
-    operationRisk: 'read_only' | 'local_write';
-    fixedRequestUtf8Bytes: number;
-    providerBootstrapUtf8Bytes: number;
-    providerHistoryMode: 'latest' | 'bootstrap';
-    providerGenerationId: string | null;
-  }) => Promise<ContextDispatchEnvelope>;
-  preflightCodexModelBudget?: (input: { modelId: string; modelSourceId: string | null; providerGenerationId: string | null }) => void;
-}
 export interface CodexNativeConversationRuntime extends CodexNativeConversationCoordinator {
   startEphemeralConversation(input: StartNativeEphemeralConversationInput): Promise<NativeAcceptedOperation>;
   waitForTurnResult(input: WaitForNativeTurnResultInput): Promise<NativeTurnResult>;
