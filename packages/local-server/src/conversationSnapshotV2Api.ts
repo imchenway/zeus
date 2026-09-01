@@ -1,6 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ConversationSnapshotV2Error, type ConversationSnapshotV2ExecutionContext, type ConversationSnapshotV2Repository, conversationSnapshotV2StructureGeneration } from '@zeus/storage';
-import type { ConversationSnapshotCompatibilityTracker } from './conversationSnapshotCompatibility.js';
 
 interface ConversationOwnershipRecord {
   id: string;
@@ -10,7 +9,6 @@ interface ConversationOwnershipRecord {
 interface ConversationSnapshotV2ApiOptions {
   server: FastifyInstance;
   repository: ConversationSnapshotV2Repository;
-  compatibility: ConversationSnapshotCompatibilityTracker;
   projectExists: (projectId: string) => boolean;
   getConversation: (conversationId: string) => ConversationOwnershipRecord | undefined;
   readExecutionContext?: (conversationId: string) => Promise<ConversationSnapshotV2ExecutionContext>;
@@ -47,7 +45,7 @@ type ProcessKind = 'reasoning' | 'tool' | 'command' | 'retry' | 'context_compact
 
 /** 注册 Snapshot V2 与所有重内容按需读取入口；V1 路由继续由主 server 保持兼容。 */
 export function registerConversationSnapshotV2Api(options: ConversationSnapshotV2ApiOptions): void {
-  const { server, repository, compatibility } = options;
+  const { server, repository } = options;
 
   server.get(
     '/api/projects/:projectId/conversations/:conversationId/snapshot-v2',
@@ -71,7 +69,6 @@ export function registerConversationSnapshotV2Api(options: ConversationSnapshotV
           ...(request.query.includeMetrics === undefined ? {} : { includeSessionMetrics: request.query.includeMetrics === 'true' }),
           ...(executionContext ? { executionContext } : {}),
         });
-        compatibility.recordV2(request);
         return snapshot;
       } catch (error) {
         return sendSnapshotV2Error(reply, error);
@@ -244,11 +241,6 @@ export function registerConversationSnapshotV2Api(options: ConversationSnapshotV
       reply,
     ) => readContent(request, reply),
   );
-
-  server.get('/api/diagnostics/conversation-snapshot-compatibility', async (_request, reply) => {
-    reply.header('cache-control', 'no-store');
-    return compatibility.snapshot();
-  });
 }
 
 function pageInput(conversationId: string, query: PageQuery): { conversationId: string; cursor?: string; entryLimit?: number; byteLimit?: number } {

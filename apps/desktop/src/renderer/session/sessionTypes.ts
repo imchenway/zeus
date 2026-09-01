@@ -1,6 +1,9 @@
 import type {
   ConversationContextDraft,
   ConversationResource,
+  conversationSnapshotV2StructureGeneration,
+  ConversationSnapshotV2BoundedContent,
+  ConversationSnapshotV2Page as SharedConversationSnapshotV2Page,
   NativeTokenUsageSnapshot as SharedNativeTokenUsageSnapshot,
   TaskPushParentContextOption,
   TaskPushParentContextSelection,
@@ -561,14 +564,7 @@ export interface NativeConversationSnapshot {
   v2Paging?: NativeConversationV2PagingState;
 }
 
-export interface NativeBoundedContentProjection {
-  preview: string;
-  byteLength: number;
-  truncated: boolean;
-  redacted: boolean;
-  contentHandle: string | null;
-  refreshRequired: boolean;
-}
+export type NativeBoundedContentProjection = ConversationSnapshotV2BoundedContent;
 
 export interface NativeConversationSnapshotV2Turn {
   id: string;
@@ -610,7 +606,7 @@ export interface NativeConversationActiveItemV2 {
 
 export interface NativeConversationSnapshotV2 {
   schemaVersion: 2;
-  structureGeneration: '2026-09-01-conversation-snapshot-v2-turn-output-anchors';
+  structureGeneration: typeof conversationSnapshotV2StructureGeneration;
   conversationSchemaGeneration: '2026-08-16-unified-conversation-segments';
   throughEventSeq: number;
   eventStreamGeneration: string | null;
@@ -656,18 +652,7 @@ export interface NativeConversationSnapshotV2 {
   limits: { closedTurnLimit: number; byteLimit: number; returnedTurnCount: number; responseBytes: number };
 }
 
-export interface NativeConversationSnapshotV2Page<T> {
-  schemaVersion: 2;
-  structureGeneration: '2026-09-01-conversation-snapshot-v2-turn-output-anchors';
-  conversationId: string;
-  kind: 'timeline' | 'model_history' | 'process' | 'commands' | 'resources' | 'change_files';
-  throughEventSeq: number;
-  throughSequence: number;
-  items: T[];
-  hasMore: boolean;
-  nextCursor: string | null;
-  limits: { entryLimit: number; byteLimit: number; returnedItems: number; responseBytes: number };
-}
+export type NativeConversationSnapshotV2Page<T> = SharedConversationSnapshotV2Page<T>;
 
 export interface NativeConversationModelHistoryV2Item {
   id: string;

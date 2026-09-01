@@ -1,8 +1,15 @@
+import {
+  conversationSnapshotV2StructureGeneration,
+  type ConversationSnapshotV2BoundedContent,
+  type ConversationSnapshotV2Page as ConversationSnapshotV2WirePage,
+  type ConversationSnapshotV2PageKind,
+  type ConversationSnapshotV2ToolResult,
+} from '@zeus/shared';
 import type { ZeusDatabasePort } from './databasePort.js';
 import { type ArtifactRef, type ArtifactStore, artifactStoreGeneration } from './artifactStore.js';
 import { conversationSchemaGeneration, type ConversationSessionMetricsSnapshot, readConversationSessionMetrics } from './conversationExecutionStore.js';
 
-export const conversationSnapshotV2StructureGeneration = '2026-09-01-conversation-snapshot-v2-turn-output-anchors';
+export { conversationSnapshotV2StructureGeneration };
 
 export const conversationSnapshotV2Limits = {
   snapshot: {
@@ -26,8 +33,8 @@ export const conversationSnapshotV2Limits = {
   },
 } as const;
 
-type ConversationPageKind = 'timeline' | 'model_history' | 'process' | 'commands' | 'resources' | 'change_files';
 type ConversationContentKind = 'timeline_payload' | 'model_content' | 'process_detail' | 'change_file_diff';
+type ConversationPageKind = ConversationSnapshotV2PageKind;
 type ConversationProcessKind = 'reasoning' | 'tool' | 'command' | 'retry' | 'context_compaction' | 'waiting' | 'warning';
 
 // 模型历史持久化的是结构化 JSON；普通会话正文只读取其中的可见文本，绝不能把内部 tool_call 包装层当作消息正文。
@@ -268,23 +275,7 @@ export interface ConversationSnapshotV2NextTurnSettings {
   collaborationMode: 'default' | 'plan';
 }
 
-export interface ConversationSnapshotV2Page<T> {
-  schemaVersion: 2;
-  structureGeneration: typeof conversationSnapshotV2StructureGeneration;
-  conversationId: string;
-  kind: ConversationPageKind;
-  throughEventSeq: number;
-  throughSequence: number;
-  items: T[];
-  hasMore: boolean;
-  nextCursor: string | null;
-  limits: {
-    entryLimit: number;
-    byteLimit: number;
-    returnedItems: number;
-    responseBytes: number;
-  };
-}
+export type ConversationSnapshotV2Page<T> = ConversationSnapshotV2WirePage<T>;
 
 export interface ConversationTimelinePageItem {
   id: string;
@@ -413,24 +404,8 @@ export interface ConversationContentPage {
   redacted: boolean;
 }
 
-interface BoundedContentProjection {
-  preview: string;
-  byteLength: number;
-  truncated: boolean;
-  redacted: boolean;
-  contentHandle: string | null;
-  refreshRequired: boolean;
-}
-
-interface ConversationToolResultDescriptor {
-  handle: string;
-  sha256: string;
-  byteLength: number;
-  mimeType: string;
-  projection: string;
-  projectionTruncated: boolean;
-  redacted: boolean;
-}
+type BoundedContentProjection = ConversationSnapshotV2BoundedContent;
+type ConversationToolResultDescriptor = ConversationSnapshotV2ToolResult;
 
 interface ConversationRow {
   id: string;

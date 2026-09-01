@@ -1,6 +1,6 @@
+import { validateCanonicalRequestUserInputAnswers } from '@zeus/shared';
 import { type ConversationRepository, type ConversationServerRequestRepository, type ConversationTurnRepository, type ZeusConversationServerRequestRecord, type ZeusConversationWithMessagesRecord } from '@zeus/storage';
 import { nativePendingRequestProjection, isRecord, parseJsonRecord, requireString } from './codexNativeConversationPolicy.js';
-import { validateCanonicalRequestUserInputAnswers } from './codexNativeRuiValidation.js';
 import { recoverRequestUserInputAnswersFromCodexRollout, type CodexRolloutRequestUserInputRecovery } from './codexRolloutRequestUserInput.js';
 
 export interface CodexExternalRequestAnswerRecoveryOptions {

@@ -1,16 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { CommandEnvelopeError, parseCommandEnvelope, type CommandEnvelope } from '@zeus/shared';
-import {
-  ColdEvidenceRepository,
-  CommandDeliveryRepository,
-  CommandDeliveryStoreError,
-  LongTermMemoryRepository,
-  LongTermMemoryStoreError,
-  type ListLongTermMemoriesInput,
-  type LongTermMemoryRecord,
-  type RecordLongTermMemoryCandidateInput,
-} from '@zeus/storage';
+import { CommandDeliveryRepository, CommandDeliveryStoreError, LongTermMemoryRepository, LongTermMemoryStoreError, type ListLongTermMemoriesInput, type LongTermMemoryRecord, type RecordLongTermMemoryCandidateInput } from '@zeus/storage';
 import { compileContext, ContextCompilerError, longTermMemoryContextFragment, renderCompiledContext, type CompileContextInput, type ContextBudget } from './contextCompiler.js';
 import { ContextSourceCatalog, ContextSourceCatalogError } from './contextSourceCatalog.js';
 
@@ -21,7 +12,6 @@ export interface MemoryContextProject {
 
 export interface MemoryContextApplicationServiceOptions {
   memory: LongTermMemoryRepository;
-  coldEvidence: ColdEvidenceRepository;
   commandDeliveries: CommandDeliveryRepository;
   getProject(projectId: string): MemoryContextProject | undefined;
   now(): Date;
@@ -145,7 +135,7 @@ export class MemoryContextApplicationService {
     const asOf = input.asOf ?? this.options.now().toISOString();
     const memory = this.options.memory.resolveForContext({ projectId: project.id, asOf, minimumConfidence: input.minimumMemoryConfidence });
     const rootId = `project:${project.id}`;
-    const catalog = new ContextSourceCatalog([{ id: rootId, path: project.localPath, owner: 'project' }], this.options.coldEvidence, () => false);
+    const catalog = new ContextSourceCatalog([{ id: rootId, path: project.localPath }]);
     const taskDocument = await catalog.primaryTaskDocumentFragment({
       rootId,
       projectId: project.id,
@@ -160,7 +150,6 @@ export class MemoryContextApplicationService {
       provider: input.provider,
       maximumCompiledTokens: input.maximumCompiledTokens,
       budgets: input.budgets,
-      includeColdEvidence: false,
       task: { projectId: project.id, taskId: input.taskId, taskCode: input.taskCode.toUpperCase() },
       watermarks: {
         'docs.primary': taskDocument.fragment?.sourceVersion ?? 'missing',
@@ -453,8 +442,7 @@ function sendMemoryContextError(reply: FastifyReply, error: unknown) {
   }
   if (error instanceof ContextCompilerError) return reply.code(error.code === 'ZEUS_CONTEXT_COMPILER_INVALID_ARGUMENT' ? 400 : 409).send({ error: error.code, message: error.message, details: error.details });
   if (error instanceof ContextSourceCatalogError) {
-    const statusCode =
-      error.code === 'ZEUS_CONTEXT_SOURCE_NOT_FOUND' || error.code === 'ZEUS_CONTEXT_SOURCE_ROOT_NOT_FOUND' ? 404 : error.code === 'ZEUS_CONTEXT_SOURCE_UNAUTHORIZED' ? 403 : error.code === 'ZEUS_CONTEXT_SOURCE_CHANGED' ? 409 : 400;
+    const statusCode = error.code === 'ZEUS_CONTEXT_SOURCE_NOT_FOUND' || error.code === 'ZEUS_CONTEXT_SOURCE_ROOT_NOT_FOUND' ? 404 : error.code === 'ZEUS_CONTEXT_SOURCE_CHANGED' ? 409 : 400;
     return reply.code(statusCode).send({ error: error.code, message: error.message, details: error.details });
   }
   return reply.code(500).send({ error: 'ZEUS_MEMORY_CONTEXT_FAILED', message: error instanceof Error ? error.message : 'Memory/context operation failed.' });

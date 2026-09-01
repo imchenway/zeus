@@ -1,5 +1,4 @@
 import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { ArchiveIcon as Archive } from '@phosphor-icons/react/dist/csr/Archive';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
@@ -131,7 +130,6 @@ interface FlattenedProjectConversations {
 
 export function ProjectConversationTree(props: ProjectConversationTreeProps) {
   const copy = labels[props.language];
-  const reduceMotion = useReducedMotion();
   const [archivingConversationId, setArchivingConversationId] = useState<string | null>(null);
   const normalizedQuery = props.query?.trim().toLocaleLowerCase() ?? '';
   const organization = props.organization ?? 'flat';
@@ -145,7 +143,6 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
   });
   const conversationIds = visibleConversations.map((entry) => conversationNavigationId(entry.conversation));
   const allConversationIds = props.groups.flatMap((project) => flattenProjectConversations(project, '').flatConversations.map((entry) => conversationNavigationId(entry.conversation)));
-  const conversationLayoutDependency = allConversationIds.join('\u0000');
   const enteringConversationIds = useNewItemMotionIds(allConversationIds);
   const fallbackTabStopId = props.selectedConversationId && conversationIds.includes(props.selectedConversationId) ? null : (conversationIds[0] ?? null);
 
@@ -171,18 +168,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
       const archiving = archivingConversationId === conversation.id;
       const archiveLabel = archiving ? copy.archiving : archiveAvailable ? copy.archive : archiveUnavailableReason;
       return (
-        <motion.li
-          className="session-conversation-tree-item"
-          key={navigationId}
-          layout={reduceMotion ? false : 'position'}
-          layoutDependency={conversationLayoutDependency}
-          initial={false}
-          animate={reduceMotion ? { opacity: 1 } : { opacity: 1, height: 'auto', overflow: 'visible' }}
-          exit={reduceMotion ? { opacity: 0, transition: { duration: 0 } } : { opacity: 0, height: 0, overflow: 'hidden', transition: { duration: 0.16, ease: [0.22, 1, 0.36, 1] } }}
-          transition={reduceMotion ? { duration: 0 } : { layout: { duration: 0.16, ease: [0.22, 1, 0.36, 1] }, opacity: { duration: 0.12 }, height: { duration: 0.16, ease: [0.22, 1, 0.36, 1] } }}
-          data-motion-surface="list-item"
-          data-motion-state={enteringConversationIds.has(navigationId) ? 'entering' : undefined}
-        >
+        <li className="session-conversation-tree-item" key={navigationId} data-motion-surface="list-item" data-motion-state={enteringConversationIds.has(navigationId) ? 'entering' : undefined}>
           <button
             type="button"
             className={`session-conversation-tree-row${current ? ' is-current' : ''}`}
@@ -216,7 +202,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
               {archiving ? <CircleNotch className="session-conversation-archive-spinner" aria-hidden="true" /> : <Archive aria-hidden="true" />}
             </button>
           ) : null}
-        </motion.li>
+        </li>
       );
     });
   }
@@ -227,16 +213,10 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
         <section className="session-conversation-project-group" key={project.projectId} aria-label={project.projectName}>
           {!props.compactProjectLabel && props.onStartConversation ? <ProjectConversationHeader project={project} language={props.language} onStartConversation={props.onStartConversation} /> : null}
           {organization === 'flat' ? (
-            <ul className="session-conversation-project-items">
-              <AnimatePresence initial={false}>{renderConversationItems(flatConversations)}</AnimatePresence>
-            </ul>
+            <ul className="session-conversation-project-items">{renderConversationItems(flatConversations)}</ul>
           ) : (
             <>
-              {projectConversations.length > 0 ? (
-                <ul className="session-conversation-project-items session-conversation-project-direct-items">
-                  <AnimatePresence initial={false}>{renderConversationItems(projectConversations)}</AnimatePresence>
-                </ul>
-              ) : null}
+              {projectConversations.length > 0 ? <ul className="session-conversation-project-items session-conversation-project-direct-items">{renderConversationItems(projectConversations)}</ul> : null}
               {statusGroups.map((statusGroup) => {
                 const collapsed = props.collapsedStatusIdsByProject?.[project.projectId]?.includes(statusGroup.statusId) ?? false;
                 const actionLabel = `${collapsed ? copy.expandStatusGroup : copy.collapseStatusGroup}: ${statusGroup.statusLabel}`;
@@ -255,19 +235,11 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
                       </span>
                       <strong>{statusGroup.statusLabel}</strong>
                     </button>
-                    <AnimatePresence initial={false}>
-                      {!collapsed ? (
-                        <motion.div
-                          className="session-conversation-status-group-content"
-                          initial={reduceMotion ? false : { opacity: 0, height: 0, overflow: 'hidden' }}
-                          animate={reduceMotion ? { opacity: 1 } : { opacity: 1, height: 'auto', overflow: 'visible' }}
-                          exit={reduceMotion ? { opacity: 0, transition: { duration: 0 } } : { opacity: 0, height: 0, overflow: 'hidden', transition: { duration: 0.16, ease: [0.22, 1, 0.36, 1] } }}
-                          transition={reduceMotion ? { duration: 0 } : { duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-                        >
-                          <ul className="session-conversation-project-items">{renderConversationItems(statusGroup.conversations)}</ul>
-                        </motion.div>
-                      ) : null}
-                    </AnimatePresence>
+                    {!collapsed ? (
+                      <div className="session-conversation-status-group-content" data-motion-surface="list-item" data-motion-state="entering">
+                        <ul className="session-conversation-project-items">{renderConversationItems(statusGroup.conversations)}</ul>
+                      </div>
+                    ) : null}
                   </section>
                 );
               })}

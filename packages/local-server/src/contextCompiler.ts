@@ -5,12 +5,12 @@ export const contextCompilerSchemaVersion = 'zeus-context-compiler-v1';
 export const maximumContextFragmentCount = 2_048;
 export const maximumContextCandidateCharacters = 32 * 1024 * 1024;
 
-export type ContextFragmentCategory = 'safety_boundary' | 'task_document' | 'long_term_memory' | 'project_code' | 'conversation_history' | 'runtime_evidence' | 'cold_evidence';
-export type ContextFragmentAuthority = 'user_explicit' | 'project_document' | 'zeus_business' | 'provider_native' | 'derived_cold';
+export type ContextFragmentCategory = 'safety_boundary' | 'task_document' | 'long_term_memory' | 'project_code' | 'conversation_history' | 'runtime_evidence';
+export type ContextFragmentAuthority = 'user_explicit' | 'project_document' | 'zeus_business' | 'provider_native';
 export type ContextFragmentStatus = 'current' | 'review_due' | 'stale' | 'missing';
 export type ContextPlacement = 'application' | 'untrusted';
 export type ContextOperationRisk = 'read_only' | 'local_write' | 'external_state';
-export type ContextProvenance = 'zeus_current' | 'provider_native' | 'zeus_portable' | 'derived_cold';
+export type ContextProvenance = 'zeus_current' | 'provider_native' | 'zeus_portable';
 export type ContextSourceTruncationReason = 'source_page_limit';
 export type ContextTruncationReason = ContextSourceTruncationReason | 'category_budget' | 'global_budget';
 
@@ -77,7 +77,6 @@ export interface CompileContextInput {
   };
   maximumCompiledTokens?: number;
   budgets?: Partial<ContextBudget>;
-  includeColdEvidence?: boolean;
   /** 项目会话没有 task 时仍需明确 scope；与 task.projectId 同时存在时必须一致。 */
   projectId?: string | null;
   task?: { projectId: string; taskId: string; taskCode: string } | null;
@@ -120,7 +119,6 @@ export type ContextCompilationDecisionReason =
   | 'review_due'
   | 'stale'
   | 'missing'
-  | 'cold_evidence_not_requested'
   | 'external_state_confirmation_required'
   | 'project_context_mismatch'
   | 'task_context_mismatch'
@@ -188,7 +186,6 @@ export const defaultContextBudgets: ContextBudget = {
   project_code: 8_192,
   conversation_history: 12_288,
   runtime_evidence: 2_048,
-  cold_evidence: 0,
 };
 
 /**
@@ -237,7 +234,7 @@ export function compileContext(input: CompileContextInput): CompiledContext {
       requestedTokens: fragment.requestedTokens,
       truncationReasons: [] as ContextTruncationReason[],
     };
-    const excludedReason = exclusionReason(fragment, { includeColdEvidence: input.includeColdEvidence === true, operationRisk, providerId, providerCapabilities, projectId, task });
+    const excludedReason = exclusionReason(fragment, { operationRisk, providerId, providerCapabilities, projectId, task });
     if (excludedReason) {
       if (fragment.category === 'safety_boundary' && excludedReason === 'provider_application_context_unsupported') {
         throw new ContextCompilerError('ZEUS_CONTEXT_COMPILER_SAFETY_CAPABILITY_UNAVAILABLE', 'Provider 不支持安全边界所需的应用级上下文，已拒绝降级为不可信历史。', {
@@ -438,7 +435,7 @@ function prepareFragment(fragment: ContextFragment, asOf: string, tokenCounter: 
   if (provenance !== 'zeus_current' && (category === 'safety_boundary' || category === 'task_document' || category === 'long_term_memory')) {
     throw invalidArgument('Provider 原生、便携或派生证据不能伪装成应用级安全、任务文档或长期记忆。', { fragmentId: fragment.id, provenance, category });
   }
-  if ((category === 'safety_boundary' || category === 'task_document' || category === 'long_term_memory') && (authority === 'provider_native' || authority === 'derived_cold')) {
+  if ((category === 'safety_boundary' || category === 'task_document' || category === 'long_term_memory') && authority === 'provider_native') {
     throw invalidArgument('不可信来源不能升格为应用级上下文分类。', { fragmentId: fragment.id, authority, category });
   }
   if (fragment.sourceTruncationReason !== undefined && fragment.sourceTruncationReason !== 'source_page_limit') throw invalidArgument('未知来源截断原因。', { fragmentId: fragment.id });
@@ -468,7 +465,6 @@ function prepareFragment(fragment: ContextFragment, asOf: string, tokenCounter: 
 function exclusionReason(
   fragment: PreparedContextFragment,
   input: {
-    includeColdEvidence: boolean;
     operationRisk: ContextOperationRisk;
     providerId: string;
     providerCapabilities: Required<NonNullable<CompileContextInput['provider']['capabilities']>>;
@@ -482,7 +478,6 @@ function exclusionReason(
   if (fragment.projectId && fragment.projectId !== input.projectId) return 'project_context_mismatch';
   if ((fragment.taskId && fragment.taskId !== input.task?.taskId) || (fragment.taskCode && fragment.taskCode !== input.task?.taskCode)) return 'task_context_mismatch';
   if (fragment.providerId && fragment.providerId !== input.providerId) return 'provider_context_mismatch';
-  if (fragment.category === 'cold_evidence' && !input.includeColdEvidence) return 'cold_evidence_not_requested';
   if (input.operationRisk === 'external_state' && fragment.externalStateEffect && fragment.confirmationLevel !== 'explicit') return 'external_state_confirmation_required';
   const placement = placementFor(fragment);
   if (placement === 'application' && !input.providerCapabilities.applicationContext) return 'provider_application_context_unsupported';
@@ -509,7 +504,6 @@ function categoryPriority(fragment: PreparedContextFragment): number {
     project_code: 300,
     conversation_history: 400,
     runtime_evidence: 500,
-    cold_evidence: 600,
   };
   if (fragment.category !== 'long_term_memory') return base[fragment.category];
   return base.long_term_memory + (fragment.memoryKind === 'stable_workflow' ? 0 : 10);
@@ -631,7 +625,7 @@ function validCategory(value: ContextFragmentCategory): ContextFragmentCategory 
 }
 
 function validAuthority(value: ContextFragmentAuthority): ContextFragmentAuthority {
-  if (value !== 'user_explicit' && value !== 'project_document' && value !== 'zeus_business' && value !== 'provider_native' && value !== 'derived_cold') {
+  if (value !== 'user_explicit' && value !== 'project_document' && value !== 'zeus_business' && value !== 'provider_native') {
     throw invalidArgument('未知上下文权威来源。', { value: String(value) });
   }
   return value;
@@ -644,12 +638,11 @@ function validStatus(value: ContextFragmentStatus): ContextFragmentStatus {
 
 function defaultProvenance(authority: ContextFragmentAuthority): ContextProvenance {
   if (authority === 'provider_native') return 'provider_native';
-  if (authority === 'derived_cold') return 'derived_cold';
   return 'zeus_current';
 }
 
 function validProvenance(value: ContextProvenance): ContextProvenance {
-  if (value !== 'zeus_current' && value !== 'provider_native' && value !== 'zeus_portable' && value !== 'derived_cold') throw invalidArgument('未知上下文 provenance。', { value: String(value) });
+  if (value !== 'zeus_current' && value !== 'provider_native' && value !== 'zeus_portable') throw invalidArgument('未知上下文 provenance。', { value: String(value) });
   return value;
 }
 

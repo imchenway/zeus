@@ -85,7 +85,7 @@ import {
   toRecoverySubmissionError,
   validatePermissionGrant,
 } from './codexNativeConversationPolicy.js';
-import { parseCanonicalRequestUserInputQuestions, validateCanonicalRequestUserInputAnswers } from './codexNativeRuiValidation.js';
+import { parseCanonicalRequestUserInputQuestions, validateCanonicalRequestUserInputAnswers } from '@zeus/shared';
 import { createCodexExternalRequestAnswerRecovery } from './codexExternalRequestAnswerRecovery.js';
 import { createCodexModelRequestTimingTracker } from './codexModelRequestTiming.js';
 import { mergeCodexAdditionalContext } from './codexNativeContextProtocol.js';
@@ -1117,7 +1117,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   async function dispatchQueuedMessage(input: { conversationId: string; submissionId: string; segmentLifecycle: ConversationSegmentLifecycle }): Promise<NativeAcceptedOperation> {
     assertOpen();
-    const conversation = input.segmentLifecycle.requiresNewSegment ? requireProductConversation(input.conversationId) : requireConversation(input.conversationId);
+    let conversation = input.segmentLifecycle.requiresNewSegment ? requireProductConversation(input.conversationId) : requireConversation(input.conversationId);
     const submission = requireOwnedSubmission(input.conversationId, input.submissionId);
     if (submission.status !== 'queued') {
       throw coordinatorError('ZEUS_NATIVE_SUBMISSION_NOT_QUEUED', 'Only a queued native submission can be dispatched.');
@@ -1130,7 +1130,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     // 既破坏不可变审计身份，也会让相同 idempotency key 被存储层判定为冲突。
     await input.segmentLifecycle.prepare(submission);
     await persist();
-    const state = runStates.get(conversation.id) ?? inferRunState(conversation);
+    let state = runStates.get(conversation.id) ?? inferRunState(conversation);
+    if (!input.segmentLifecycle.requiresNewSegment && state.type === 'paused' && state.reason === 'recovery_required') {
+      conversation = await recoverPausedConversation(conversation.id, 'dispatch');
+      state = runStates.get(conversation.id) ?? inferRunState(conversation);
+    }
     runStates.set(conversation.id, state);
     if (state.type !== 'idle') {
       if (state.type === 'active' && conversation.providerThreadId) providerThreadAuthority.observe(conversation.id, conversation.providerThreadId);

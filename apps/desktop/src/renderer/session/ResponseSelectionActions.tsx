@@ -34,7 +34,6 @@ export function ResponseSelectionActions(props: {
   onAddAnnotation?: (anchor: ConversationResponseTextAnchor) => string;
   onUpdateAnnotation?: (id: string, note: string) => void;
   onRemoveAnnotation?: (id: string) => void;
-  onOpenSideChat?: (selectedText: string) => void;
 }) {
   const [candidate, setCandidate] = useState<SelectionCandidate | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -139,16 +138,6 @@ export function ResponseSelectionActions(props: {
             }}
           >
             {props.language === 'zh-CN' ? '添加到对话' : 'Add to chat'}
-          </button>
-          <button
-            type="button"
-            onPointerDown={(event) => event.preventDefault()}
-            onClick={() => {
-              props.onOpenSideChat?.(candidate.anchor.selectedText);
-              setCandidate(null);
-            }}
-          >
-            {props.language === 'zh-CN' ? '在侧边聊天中提问' : 'Ask in side chat'}
           </button>
         </div>
       ) : null}

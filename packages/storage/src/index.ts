@@ -7,7 +7,6 @@ import type { ReadOnlyValidationDescriptor, TokenUsageBreakdown } from '@zeus/sh
 import initSqlJs, { type Database as SqlJsDatabase, type SqlJsStatic, type SqlValue as SqlJsValue } from 'sql.js';
 import { migrateCommandCenterSchema } from './commands.js';
 import { migrateArtifactStoreSchema } from './artifactStore.js';
-import { migrateColdEvidenceSchema } from './coldEvidenceStore.js';
 import { migrateCommandDeliverySchema } from './commandDeliveryStore.js';
 import { CONVERSATION_HOT_QUERY_INDEX_CHECKSUM_SOURCE, CONVERSATION_HOT_QUERY_INDEX_MIGRATION_ID, conversationHotQueryIndexes } from './conversationHotQueryIndexes.js';
 import { migrateUnifiedConversationStoreSchema } from './conversationExecutionStore.js';
@@ -22,6 +21,7 @@ import { migrateAutomationSchema } from './automationStore.js';
 import { migrateDigitalEmployeeCapabilitySchema } from './digitalEmployeeCapabilityMigration.js';
 import { migrateImSchema } from './imStore.js';
 import { migrateDigitalEmployeeStageHandoffSchema } from './digitalEmployeeStageHandoffMigration.js';
+import { migrateDigitalEmployeeLegacyRetirement } from './digitalEmployeeLegacyRetirementMigration.js';
 import { migrateConversationExpertSchema } from './conversationExpertStore.js';
 import { migrateLongTermMemorySchema } from './longTermMemoryStore.js';
 import { migratePluginStoreSchema } from './pluginStore.js';
@@ -34,7 +34,6 @@ import { type DbCodexUsageLedgerRow, deriveConversationStageProjection, isPlainR
 export * from './commands.js';
 export * from './artifactStore.js';
 export * from './artifactRetentionLifecycle.js';
-export * from './coldEvidenceStore.js';
 export * from './commandDeliveryStore.js';
 export * from './databasePerformance.js';
 export * from './databasePort.js';
@@ -43,6 +42,7 @@ export * from './digitalEmployeeStore.js';
 export * from './automationStore.js';
 export * from './digitalEmployeeCapabilityMigration.js';
 export * from './digitalEmployeeStageHandoffMigration.js';
+export * from './digitalEmployeeLegacyRetirementMigration.js';
 export * from './executionHostHandoffStore.js';
 export * from './executionHostWorkStore.js';
 export * from './conversationHotQueryIndexes.js';
@@ -1126,6 +1126,7 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
     migrateDigitalEmployeeCapabilitySchema(zeusDb);
     migrateTaskWorkSchema(zeusDb);
     migrateTaskWorkWorkspaceBindingSchema(zeusDb);
+    migrateDigitalEmployeeLegacyRetirement(zeusDb);
     migrateProviderEventReceipts(zeusDb);
     migrateUnifiedConversationStoreSchema(zeusDb);
     migrateConversationExpertSchema(zeusDb);
@@ -1137,7 +1138,6 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
     migrateConversationSyncProtocolV2(zeusDb);
     migrateLongTermMemorySchema(zeusDb);
     migratePluginStoreSchema(zeusDb);
-    migrateColdEvidenceSchema(zeusDb);
     migrateExecutionHostWorkSchema(zeusDb);
     migrateExecutionHostHandoffSchema(zeusDb);
     if (!databaseExists || options.applyDeferredConversationHotQueryIndexes === true) {

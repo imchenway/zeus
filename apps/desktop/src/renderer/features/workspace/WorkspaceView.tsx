@@ -18,6 +18,7 @@ import { MemorySettingsPane } from '../memory/MemorySettingsPane.js';
 import { DigitalEmployeeTemplatesSettings } from '../digital-employees/DigitalEmployeeTemplatesSettings.js';
 import { ImRobotSettingsPane } from '../telegram/ImRobotSettingsPane.js';
 import { ProjectDigitalEmployeesPanel } from '../digital-employees/ProjectDigitalEmployeesPanel.js';
+import { ProjectModelsSettings } from '../../settings/ProjectModelsSettings.js';
 import { ExtensionsWorkspace } from '../skills/ExtensionsWorkspace.js';
 import { AutomationsWorkspace } from '../automations/AutomationsWorkspace.js';
 import { defaultTaskTableEnumSortOrders, normalizeTaskTableEnumSortOrders } from '../../task/taskWorkspaceModel.js';
@@ -699,13 +700,16 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           <section className="workspace-view workspace-view-project-settings" aria-label={codeWorkspaceCopy.projectSettingsAria}>
             <section className="workspace-detail-pane project-detail-pane" aria-label={codeWorkspaceCopy.detailAria}>
               {selectedProject ? (
-                <ProjectDigitalEmployeesPanel
-                  projectId={selectedProject.id}
-                  projectName={selectedProject.name}
-                  client={props.commandClient ?? null}
-                  skillClient={props.nativeConversationClient ?? null}
-                  language={appShellSettings.appLanguage}
-                />
+                <>
+                  <ProjectModelsSettings projectId={selectedProject.id} client={props.commandClient ?? null} language={appShellSettings.appLanguage} />
+                  <ProjectDigitalEmployeesPanel
+                    projectId={selectedProject.id}
+                    projectName={selectedProject.name}
+                    client={props.commandClient ?? null}
+                    skillClient={props.nativeConversationClient ?? null}
+                    language={appShellSettings.appLanguage}
+                  />
+                </>
               ) : (
                 <>
                   <InlineRecoveryPrompt

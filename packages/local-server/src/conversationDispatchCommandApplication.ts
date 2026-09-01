@@ -1,38 +1,23 @@
 import { createHash } from 'node:crypto';
-import { canonicalCommandInputJson, CommandEnvelopeError, parseCommandEnvelope, type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
+import {
+  canonicalCommandInputJson,
+  CommandEnvelopeError,
+  conversationDispatchWireCommandTypes,
+  parseCommandEnvelope,
+  type CommandEnvelope,
+  type ConversationDispatchWireCommandType,
+  type ConversationDispatchWirePayload,
+  type ConversationDispatchWireRequest,
+  type ConversationDispatchWireScopeKind,
+} from '@zeus/shared';
 import { ArtifactStore, CommandDeliveryRepository, CommandDeliveryStoreError, type ArtifactRef, type CommandDeliveryOutcome, type CommandDeliveryReceiptRecord, type CommandOutboxRecord, type ZeusDatabase } from '@zeus/storage';
+import { createCommandValidation } from './commandApplicationPrimitives.js';
 
-export const conversationDispatchCommandTypes = {
-  changeSetUndo: 'conversation.turn.change_set.undo',
-  changeSetReapply: 'conversation.turn.change_set.reapply',
-  messageSubmit: 'conversation.message.submit',
-  sideChatAsk: 'conversation.side_chat.ask',
-  queueUpdate: 'conversation.queue.update',
-  queueRetry: 'conversation.queue.retry',
-  queueReroute: 'conversation.queue.reroute',
-  queueDelete: 'conversation.queue.delete',
-  queueSendNow: 'conversation.queue.send_now',
-  queueResume: 'conversation.queue.resume',
-  queueRecover: 'conversation.queue.recover',
-  queueReorder: 'conversation.queue.reorder',
-  turnInterrupt: 'conversation.turn.interrupt',
-  serverRequestRespond: 'conversation.server_request.respond',
-  planImplementationRespond: 'conversation.plan_implementation.respond',
-  requestSnooze: 'conversation.request.snooze',
-} as const;
-
-export type ConversationDispatchCommandType = (typeof conversationDispatchCommandTypes)[keyof typeof conversationDispatchCommandTypes];
-export type ConversationDispatchScopeKind = Extract<CommandScopeKind, 'product_conversation' | 'submission' | 'turn' | 'approval'>;
-
-export interface ConversationDispatchCommandPayload extends Record<string, unknown> {
-  operationIdentity: string;
-  inputSha256: string;
-}
-
-export interface ConversationDispatchMutationRequest<TInput extends object> {
-  command: CommandEnvelope<ConversationDispatchCommandPayload>;
-  input: TInput;
-}
+export const conversationDispatchCommandTypes = conversationDispatchWireCommandTypes;
+export type ConversationDispatchCommandType = ConversationDispatchWireCommandType;
+export type ConversationDispatchScopeKind = ConversationDispatchWireScopeKind;
+export type ConversationDispatchCommandPayload = ConversationDispatchWirePayload;
+export type ConversationDispatchMutationRequest<TInput extends object> = ConversationDispatchWireRequest<TInput>;
 
 export interface ParsedConversationDispatchMutation<TInput extends object> {
   command: CommandEnvelope<ConversationDispatchCommandPayload>;
@@ -72,6 +57,7 @@ const resultArtifactGeneration = 'conversation-dispatch-command-result-v1';
 const maximumExternalReplayResultBytes = 32 * 1024 * 1024;
 const maximumCoreReceiptEvidenceBytes = 256 * 1024;
 const maximumErrorMessageBytes = 2 * 1024;
+const { requireRecord, assertExactKeys, boundedIdentity, validSha256 } = createCommandValidation(invalidCommand);
 
 /**
  * 会话消息、队列与交互公开命令边界。
@@ -323,32 +309,6 @@ function readInlineCoreResult<TResult>(receipt: CommandDeliveryReceiptRecord, co
     if (error instanceof ConversationDispatchCommandApplicationError) throw error;
     throw missingResult(receipt.commandId);
   }
-}
-
-function requireRecord(value: unknown, field: string): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalidCommand(`${field} must be an object.`);
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) throw invalidCommand(`${field} must be a plain object.`);
-  return value as Record<string, unknown>;
-}
-
-function assertExactKeys(value: Record<string, unknown>, expected: readonly string[], commandType: string): void {
-  const actual = Object.keys(value).sort();
-  const normalizedExpected = [...expected].sort();
-  if (actual.length === normalizedExpected.length && actual.every((key, index) => key === normalizedExpected[index])) return;
-  throw invalidCommand(`${commandType} must contain exactly: ${normalizedExpected.join(', ')}.`);
-}
-
-function boundedIdentity(value: unknown, field: string): string {
-  if (typeof value !== 'string' || value.trim() !== value || value.length < 1 || value.length > 512 || Array.from(value).some((character) => (character.codePointAt(0) ?? 0) <= 31 || character.codePointAt(0) === 127)) {
-    throw invalidCommand(`${field} is invalid.`);
-  }
-  return value;
-}
-
-function validSha256(value: unknown, field: string): string {
-  if (typeof value !== 'string' || !/^[0-9a-f]{64}$/u.test(value)) throw invalidCommand(`${field} must be a lowercase SHA-256.`);
-  return value;
 }
 
 function assertBoundedCoreEvidence(value: unknown): void {

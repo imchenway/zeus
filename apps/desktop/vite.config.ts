@@ -38,8 +38,8 @@ export default defineConfig({
               maxSize: 8 * 1024 * 1024,
             },
             {
-              name: 'motion-runtime',
-              test: /node_modules[\\/](?:framer-motion|motion-dom|motion-utils)[\\/]/u,
+              name: 'floating-ui-runtime',
+              test: /node_modules[\\/]@floating-ui[\\/]/u,
               priority: 90,
             },
             {

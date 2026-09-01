@@ -110,24 +110,24 @@ try {
 
     const acceptedRequest = commandRequest({
       label: 'accepted',
-      commandType: conversationDispatchCommandTypes.sideChatAsk,
+      commandType: conversationDispatchCommandTypes.messageSubmit,
       scopeKind: 'product_conversation',
       scopeId: 'conversation-external-accepted',
       operationIdentity: 'conversation-dispatch-external-accepted-operation',
-      input: { selectedText: 'selection', question: 'why?' },
+      input: { idempotencyKey: 'message-accepted', content: 'accepted external write' },
     });
-    const acceptedParsed = application.parse<{ selectedText: string; question: string }>({
+    const acceptedParsed = application.parse<{ idempotencyKey: string; content: string }>({
       value: acceptedRequest.body,
-      commandType: conversationDispatchCommandTypes.sideChatAsk,
+      commandType: conversationDispatchCommandTypes.messageSubmit,
       scopeKind: 'product_conversation',
       scopeId: 'conversation-external-accepted',
     });
     let acceptedInvocations = 0;
     const acceptedFirst = await application.executeExternal({
       parsed: acceptedParsed,
-      destinationId: 'conversation-side-chat-provider',
+      destinationId: 'conversation-message-dispatch',
       resourceId: 'conversation-external-accepted',
-      externalOperationId: 'side-chat:conversation-dispatch-external-accepted-operation',
+      externalOperationId: 'conversation-message:conversation-external-accepted:message-accepted',
       invoke: async () => {
         acceptedInvocations += 1;
         return { answer: 'a'.repeat(1_250_000) };
@@ -135,9 +135,9 @@ try {
     });
     const acceptedReplay = await application.executeExternal({
       parsed: acceptedParsed,
-      destinationId: 'conversation-side-chat-provider',
+      destinationId: 'conversation-message-dispatch',
       resourceId: 'conversation-external-accepted',
-      externalOperationId: 'side-chat:conversation-dispatch-external-accepted-operation',
+      externalOperationId: 'conversation-message:conversation-external-accepted:message-accepted',
       invoke: async () => {
         acceptedInvocations += 1;
         return { answer: 'must-not-run' };
@@ -298,7 +298,7 @@ try {
     );
     assertProbe(observed.unknownError === 'ZEUS_CONVERSATION_DISPATCH_COMMAND_OUTCOME_UNKNOWN' && observed.unknownReplayError === 'ZEUS_COMMAND_DELIVERY_REPLAY_BLOCKED', 'write marker 后未知必须要求恢复并阻断自动重发。');
     assertProbe(unknownInvocations === 1 && unknownAttempt.receipt.outcome === 'outcome_unknown_after_write' && unknownAttempt.attempt.providerWriteStartedAt !== null, '未知结果必须保留 write marker 且不得二次写出。');
-    assertProbe(structure.routeRegistrationCount === 15 && structure.commandTypeCount === 16 && structure.rendererCommandTypeCount === 16, '公开路由必须精确覆盖 15 个 registration 与 16 个 command type。');
+    assertProbe(structure.routeRegistrationCount === 14 && structure.commandTypeCount === 15 && structure.rendererCommandTypeCount === 15, '公开路由必须精确覆盖 14 个 registration 与 15 个 command type。');
     assertProbe(structure.rendererBuildsEnvelopeOnce && structure.rendererReconnectCache && structure.oldInlineRoutesRemoved, 'Renderer 必须一次构造 Envelope 并在重连复用，旧 inline mutation handler 必须删除。');
     assertProbe(structure.providerChildIdentityBound && structure.queueCoreHasNoExternalEffect, '父 Command 必须稳定绑定既有 Provider 子操作，纯 Core queue mutation 不得触发外部副作用。');
     assertProbe(observed.quickCheck === 'ok', '临时 SQLite quick_check 必须通过。');
@@ -372,8 +372,9 @@ async function inspectStructure(): Promise<{
   providerChildIdentityBound: boolean;
   queueCoreHasNoExternalEffect: boolean;
 }> {
-  const [application, routes, queueCore, rendererEnvelope, rendererClient, rendererApi, indexComposition, routeAssembly, conversationOperations, coordinator] = await Promise.all([
+  const [application, wire, routes, queueCore, rendererEnvelope, rendererClient, rendererApi, indexComposition, routeAssembly, conversationOperations, coordinator] = await Promise.all([
     readFile(join(repositoryRoot, 'packages/local-server/src/conversationDispatchCommandApplication.ts'), 'utf8'),
+    readFile(join(repositoryRoot, 'packages/shared/src/conversationDispatchWire.ts'), 'utf8'),
     readFile(join(repositoryRoot, 'packages/local-server/src/conversationDispatchCommandRoutes.ts'), 'utf8'),
     readFile(join(repositoryRoot, 'packages/local-server/src/conversationQueueCoreMutationApplication.ts'), 'utf8'),
     readFile(join(repositoryRoot, 'apps/desktop/src/renderer/commandRequest.ts'), 'utf8'),
@@ -386,11 +387,10 @@ async function inspectStructure(): Promise<{
   ]);
   const composition = `${indexComposition}\n${routeAssembly}\n${conversationOperations}`;
   const routeRegistrationCount = routes.match(/\bserver\.(?:post|patch|delete)\s*\(/gu)?.length ?? 0;
-  const commandTypeCount = application.match(/'conversation\.[a-z_.]+'/gu)?.filter((value) => !value.includes('conversation_dispatch_')).length ?? 0;
-  const rendererCommandTypeCount = rendererClient.match(/'conversation\.[a-z_.]+'/gu)?.length ?? 0;
+  const commandTypeCount = application.includes('conversationDispatchWireCommandTypes') ? (wire.match(/'conversation\.[a-z_.]+'/gu)?.length ?? 0) : 0;
+  const rendererCommandTypeCount = rendererClient.includes('conversationDispatchWireCommandTypes') ? commandTypeCount : 0;
   const oldRoutes = [
     "server.post('/api/projects/:projectId/conversations/:conversationId/messages'",
-    "server.post('/api/projects/:projectId/conversations/:conversationId/side-chat'",
     "server.patch('/api/projects/:projectId/conversations/:conversationId/queue/:submissionId'",
     "server.post('/api/projects/:projectId/conversations/:conversationId/queue/:submissionId/retry'",
     "server.post('/api/projects/:projectId/conversations/:conversationId/queue/:submissionId/reroute'",
@@ -411,7 +411,7 @@ async function inspectStructure(): Promise<{
       rendererClient.includes('createConversationDispatchCommandRequest(input)') &&
       rendererClient.includes('return createRendererCommandEnvelope({') &&
       rendererEnvelope.includes('payload: { operationIdentity: input.operationIdentity, inputSha256: input.inputSha256 }') &&
-      (rendererApi.match(/buildConversationDispatchCommandRequest\(\{/gu)?.length ?? 0) === 15,
+      (rendererApi.match(/buildConversationDispatchCommandRequest\(\{/gu)?.length ?? 0) === 14,
     rendererReconnectCache:
       rendererClient.includes('const stableRequests = new Map<') &&
       rendererClient.includes('const maximumStableRequests = 256') &&
@@ -419,8 +419,8 @@ async function inspectStructure(): Promise<{
       (rendererApi.match(/reconnectIdentity: input\.idempotencyKey/gu)?.length ?? 0) === 2,
     oldInlineRoutesRemoved: oldRoutes.every((marker) => !composition.includes(marker)) && composition.includes('registerConversationDispatchCommandRoutes({'),
     providerChildIdentityBound:
-      composition.includes('acceptNativeConversationMessage(conversation, content, body, idempotencyKey, input.operationIdentity') &&
-      composition.includes('idempotencyKey: input.operationIdentity') &&
+      composition.includes('acceptNativeConversationMessage(') &&
+      composition.includes('stableOperationId: input.operationIdentity') &&
       composition.includes('operationIdentity,') &&
       coordinator.includes('const submissionIdentity = input.operationIdentity ?? operationId()'),
     queueCoreHasNoExternalEffect: !['db.save(', 'publishRealtimeEvent(', 'codexNativeCoordinator', 'piNativeCoordinator', 'manager.', 'writeFile('].some((marker) => queueCore.includes(marker)),

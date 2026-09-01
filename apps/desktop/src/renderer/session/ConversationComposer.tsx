@@ -80,7 +80,7 @@ export interface ConversationComposerProps {
 
 const labels = {
   'zh-CN': {
-    input: '发送消息给 Codex',
+    input: (provider: string) => `发送消息给 ${provider}`,
     placeholder: '继续对话，Enter 发送，Shift+Enter 换行',
     send: '发送',
     stop: '停止',
@@ -101,7 +101,7 @@ const labels = {
     recoveredInputBlocked: '断线恢复的问题当前只读；可使用停止按钮终止本轮。',
   },
   'en-US': {
-    input: 'Message Codex',
+    input: (provider: string) => `Message ${provider}`,
     placeholder: 'Continue the conversation. Enter to send, Shift+Enter for a newline.',
     send: 'Send',
     stop: 'Stop',
@@ -161,6 +161,8 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const modelPresentation = useMemo(() => presentModelOptions(props.capabilities?.models ?? [], selectedModel, props.language, { preserveMissingSelection: true }), [props.capabilities?.models, props.language, selectedModel]);
   const effectiveModel = modelPresentation.selectedId || selectedModel;
   const selectedCapability = resolveModelCapability(modelPresentation.models, effectiveModel);
+  const providerLabel = selectedCapability?.sourceName?.trim() || (selectedCapability?.agentKind === 'pi' ? 'Pi' : 'Codex');
+  const inputLabel = copy.input(providerLabel);
   const settingsWritable = props.readOnly !== true && props.inputBlocked !== true && Boolean(selectedCapability);
   const modelSelectionWritable = props.readOnly !== true && props.inputBlocked !== true && modelPresentation.options.length > 0;
   const modelOptions = modelPresentation.options;
@@ -359,7 +361,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
   return (
     <section
       className="session-composer-shell"
-      aria-label={copy.input}
+      aria-label={inputLabel}
       data-active={active ? 'true' : 'false'}
       data-goal-input={goalInputActive ? 'true' : 'false'}
       data-input-blocked={props.inputBlocked ? 'true' : 'false'}
@@ -424,7 +426,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
             projectId={props.projectId}
             language={props.language}
             disabled={!inputWritable || busy || goalOperationBusy}
-            ariaLabel={copy.input}
+            ariaLabel={inputLabel}
             ariaKeyShortcuts="Enter Shift+Enter Escape Meta+A Control+A"
             placeholder={props.inputBlocked ? copy.recoveredInputBlocked : copy.placeholder}
             loadCatalog={props.onLoadExtensions}

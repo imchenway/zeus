@@ -5,6 +5,8 @@ export * from './commandEnvelope.js';
 export * from './commandGovernance.js';
 export * from './executionHostStopCommand.js';
 export * from './readOnlyValidation.js';
+export * from './conversationDispatchWire.js';
+export * from './conversationSnapshotV2Wire.js';
 export * from './im.js';
 export * from './skillIdentity.js';
 

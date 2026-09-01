@@ -1,29 +1,11 @@
-import { type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
+import { type CommandEnvelope, conversationDispatchWireCommandTypes, type ConversationDispatchWireCommandType, type ConversationDispatchWirePayload, type ConversationDispatchWireScopeKind } from '@zeus/shared';
 import { commandInputSha256, createRendererCommandEnvelope, randomIdentity, type RendererCommandPayload } from '../../commandRequest.js';
 import { durableConversationCommandEnvelope, forgetDurableConversationCommandEnvelope } from './durableCommandEnvelopeCache.js';
 
-export const conversationDispatchClientCommandTypes = {
-  changeSetUndo: 'conversation.turn.change_set.undo',
-  changeSetReapply: 'conversation.turn.change_set.reapply',
-  messageSubmit: 'conversation.message.submit',
-  sideChatAsk: 'conversation.side_chat.ask',
-  queueUpdate: 'conversation.queue.update',
-  queueRetry: 'conversation.queue.retry',
-  queueReroute: 'conversation.queue.reroute',
-  queueDelete: 'conversation.queue.delete',
-  queueSendNow: 'conversation.queue.send_now',
-  queueResume: 'conversation.queue.resume',
-  queueRecover: 'conversation.queue.recover',
-  queueReorder: 'conversation.queue.reorder',
-  turnInterrupt: 'conversation.turn.interrupt',
-  serverRequestRespond: 'conversation.server_request.respond',
-  planImplementationRespond: 'conversation.plan_implementation.respond',
-  requestSnooze: 'conversation.request.snooze',
-} as const;
-
-type ConversationDispatchClientCommandType = (typeof conversationDispatchClientCommandTypes)[keyof typeof conversationDispatchClientCommandTypes];
-type ConversationDispatchClientScopeKind = Extract<CommandScopeKind, 'product_conversation' | 'submission' | 'turn' | 'approval'>;
-type ConversationDispatchCommandPayload = RendererCommandPayload;
+export const conversationDispatchClientCommandTypes = conversationDispatchWireCommandTypes;
+type ConversationDispatchClientCommandType = ConversationDispatchWireCommandType;
+type ConversationDispatchClientScopeKind = ConversationDispatchWireScopeKind;
+type ConversationDispatchCommandPayload = ConversationDispatchWirePayload & RendererCommandPayload;
 const stableRequests = new Map<string, Promise<{ command: CommandEnvelope<ConversationDispatchCommandPayload>; input: object }>>();
 const maximumStableRequests = 256;
 const conversationDispatchCommandNamespace = 'conversation-dispatch';

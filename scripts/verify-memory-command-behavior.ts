@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { commandEnvelopeSchemaGeneration, type CommandEnvelope } from '../packages/shared/src/commandEnvelope.js';
-import { ColdEvidenceRepository, CommandDeliveryRepository, CommandDeliveryStoreError, createZeusDatabase, LongTermMemoryRepository, LongTermMemoryStoreError } from '../packages/storage/src/index.js';
+import { CommandDeliveryRepository, CommandDeliveryStoreError, createZeusDatabase, LongTermMemoryRepository, LongTermMemoryStoreError } from '../packages/storage/src/index.js';
 import {
   MemoryContextApplicationService,
   memoryCommandTypes,
@@ -29,7 +29,6 @@ try {
     let clock = Date.parse('2026-08-21T01:00:00.000Z');
     const service = new MemoryContextApplicationService({
       memory,
-      coldEvidence: new ColdEvidenceRepository(db),
       commandDeliveries,
       getProject: (projectId) => (projectId === 'project-memory-probe' ? { id: projectId, localPath: projectRoot } : undefined),
       now: () => new Date((clock += 1_000)),

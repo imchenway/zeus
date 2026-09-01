@@ -1,5 +1,5 @@
 import type { CodexAppServerEvent, CodexThreadGoal } from '@zeus/ai-runtime';
-import { calculateCacheHitRate, type ConversationResource, type NativeTokenUsageSnapshot } from '@zeus/shared';
+import { calculateCacheHitRate, parseCanonicalRequestUserInputQuestions, type ConversationResource, type NativeTokenUsageSnapshot } from '@zeus/shared';
 import {
   projectConversationTurnFailure,
   type ZeusConversationGoalRecord,
@@ -10,7 +10,6 @@ import {
   type ZeusConversationTurnRecord,
   type ZeusConversationWithMessagesRecord,
 } from '@zeus/storage';
-import { parseCanonicalRequestUserInputQuestions } from './codexNativeRuiValidation.js';
 import { sanitizeConversationItemPayload } from './conversationResources.js';
 import { codexProviderEventIdentity, isCodexReadableItemTextDeltaEvent } from './codexProviderEventFlow.js';
 import { interruptedQueueSubmissions } from './codexNativeRunStateProjection.js';

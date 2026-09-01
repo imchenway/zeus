@@ -152,8 +152,6 @@ Zeus 的恢复边界必须拆成五个互不冒充的事实域：Zeus 业务 SQL
 | `conversation_model_history` | 会话编排 | `E` | 不可假定 Provider 可重放 | `T3` | `B-DB` | 只随会话永久删除 | Context Compiler 只能使用完整边界前的历史，并报告能力损失 |
 | `conversation_expert_participants` | 会话编排 | `Z/E` 父会话中的专家参与者与持久执行通道绑定 | 不可；不能从员工当前配置或 Provider 线程反推历史绑定 | `T3/T4`，随父会话及恢复窗口 | `B-DB`；Provider 原生线程另按 `B-PROVIDER` | 只随父会话永久删除；员工修订或运行指纹变化只能轮换通道 | 缺失时停止专家续接并保留父历史，要求重新点名建立新通道，不把工作指派记录冒充参与者 |
 | `conversation_expert_executions` | 会话编排 | `Z/E` 本轮点名顺序、冻结设置、子提交身份与专家终态 | 不可；不能从完成顺序或消息文本重建 | `T3`，随父提交和会话审计窗口 | `B-DB` | 专家轮次状态机；未终态执行禁止直接删除 | 按稳定执行 ID 对账子通道；结果未知时保持失败或中断槽位，禁止重复扇出 |
-| `cold_evidence_sources` | 会话编排/冷索引器 | `D` 来源目录 | 条件；原始 docs、rollout/history 或运行证据仍在时可重建 | `T1/T2`，按来源 owner 和引用 | `B-NONE` | 冷索引器按来源身份替换或淘汰；无权删除原始来源 | 普通会话不受影响；显式冷查前重建，不能用摘要冒充原文 |
-| `cold_evidence_anchors` | 会话编排/冷索引器 | `D` 字节位置索引 | 条件；需原始来源 | `T1/T2`，随 source | `B-NONE` | 随 source 由冷索引器替换/删除 | 精确 turn/event 分页不可用；禁止退化为启动时全目录全文扫描 |
 | `conversation_process_items` | 会话编排 | `D` | 条件；需原生事件和相同投影规则 | `T2/T3` | 当前随 `B-DB`；可重放后可排除 | 投影 GC，不得删除来源事实 | 仅处理过程详情不可用；消息/提交事实保持可读 |
 | `conversation_portable_contexts` | 会话编排 | `D/E` | 条件；需完整模型历史 | `T2/T3` | 当前 `B-DB`；资产化后 `B-BUNDLE` | Context Compiler 的引用感知 GC | 不能跨 Provider 续接；要求重新编译或新会话 |
 | `conversation_context_checkpoints` | 会话编排 | `D/E` | 条件 | `T2/T3` | `B-DB` | Context Compiler 的引用感知 GC | 从更早已证实边界重编译；不可用时禁止假装连续 |
@@ -376,7 +374,7 @@ Zeus 的恢复边界必须拆成五个互不冒充的事实域：Zeus 业务 SQL
 - Storage 主 schema：`packages/storage/src/index.ts:1780-3053`。
 - 统一会话 schema：`packages/storage/src/conversationExecutionStore.ts:239-454`。
 - 长期记忆治理：`packages/storage/src/longTermMemoryStore.ts`。
-- 冷证据目录与锚点：`packages/storage/src/coldEvidenceStore.ts`、`packages/local-server/src/contextSourceCatalog.ts`。
+- 当前主任务文档读取边界：`packages/local-server/src/contextSourceCatalog.ts`；不再维护 Provider rollout 的 Zeus 派生冷索引。
 - 耐久同步事件：`packages/storage/src/conversationSyncEventStore.ts`。
 - 内容寻址资产与两阶段 GC：`packages/storage/src/artifactStore.ts`。
 - 一致性恢复包与客户端加密副本：`packages/storage/src/recoveryBackup.ts`、`packages/storage/src/recoveryBackupReplication.ts`。

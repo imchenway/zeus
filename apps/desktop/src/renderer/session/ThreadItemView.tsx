@@ -130,6 +130,7 @@ const copy = {
 export interface ThreadItemViewProps {
   item: NativeSessionItemBuffer;
   language: SessionUiLanguage;
+  assistantLabel?: string;
   isLatest?: boolean;
   animateEntrance?: boolean;
   motionActive?: boolean;
@@ -145,7 +146,6 @@ export interface ThreadItemViewProps {
   onAddResponseAnnotation?: (anchor: ConversationResponseTextAnchor) => string;
   onUpdateResponseAnnotation?: (id: string, note: string) => void;
   onRemoveResponseAnnotation?: (id: string) => void;
-  onOpenSideChat?: (selectedText: string) => void;
   queuedSubmissionId?: string;
   queuedSteerDisabledReason?: string | null;
   onSteerQueuedSubmission?: (submissionId: string) => void | Promise<void>;
@@ -457,7 +457,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const expertActor = role === 'assistant' ? digitalEmployeeActor(props.item.payload.actor) : null;
   const expertExecutionId = typeof props.item.payload.expertExecutionId === 'string' ? props.item.payload.expertExecutionId : null;
   const expertFailed = Boolean(expertActor && expertExecutionId && props.item.payload.expertStatus === 'failed');
-  const label = expertActor ? [expertActor.name, expertActor.role].filter(Boolean).join(' · ') : roleLabel(role, labels);
+  const label = expertActor ? [expertActor.name, expertActor.role].filter(Boolean).join(' · ') : (providerRoleLabel(props.item, role, props.assistantLabel) ?? roleLabel(role, labels));
   const command = normalizeType(props.item.type) === 'commandexecution' || normalizeType(props.item.type) === 'command';
   const mcpApp = normalizeType(props.item.type) === 'pluginmcpapp';
   const accessibleLabel = command ? (props.language === 'zh-CN' ? '命令执行' : 'Command execution') : label;
@@ -738,13 +738,12 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
       <ResponseSelectionActions
         articleRef={articleRef}
         itemId={props.item.itemId}
-        enabled={role === 'assistant' && props.item.status === 'completed' && markdownSettled && Boolean(visibleText) && Boolean(props.onAddResponseAnnotation || props.onOpenSideChat)}
+        enabled={role === 'assistant' && props.item.status === 'completed' && markdownSettled && Boolean(visibleText) && Boolean(props.onAddResponseAnnotation)}
         language={props.language}
         annotations={props.responseAnnotations ?? []}
         onAddAnnotation={props.onAddResponseAnnotation}
         onUpdateAnnotation={props.onUpdateResponseAnnotation}
         onRemoveAnnotation={props.onRemoveResponseAnnotation}
-        onOpenSideChat={props.onOpenSideChat}
       />
       {hasActions ? (
         <footer className="session-thread-item-actions" data-message-actions={role}>
@@ -979,6 +978,17 @@ function normalizeType(value: string): string {
 }
 function roleLabel(role: ThreadItemRole, labels: (typeof copy)[SessionUiLanguage]): string {
   return labels[role];
+}
+
+function providerRoleLabel(item: NativeSessionItemBuffer, role: ThreadItemRole, fallback?: string): string | null {
+  if (role !== 'assistant' && role !== 'commentary') return null;
+  const sourceName = primitiveText(item.payload.modelSourceName);
+  if (sourceName) return sourceName;
+  const agentKind = primitiveText(item.payload.agentKind);
+  if (agentKind === 'pi') return 'Pi';
+  if (agentKind === 'claude') return 'Claude';
+  if (agentKind === 'codex') return 'Codex';
+  return fallback?.trim() || null;
 }
 
 function TypedItemFacts(props: { item: NativeSessionItemBuffer; role: ThreadItemRole; language: SessionUiLanguage }) {

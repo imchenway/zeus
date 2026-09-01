@@ -1,243 +1,177 @@
+import { checkAiCliAdapter, type CodexRemoteControlStatus, createAgentCapabilityCatalog, createAiRuntimeSessionManager, isNonCodexAiCliAdapterId, listAiCliAdapters, modelRef } from '@zeus/ai-runtime';
 import {
-    checkAiCliAdapter,
-    type CodexRemoteControlStatus,
-    createAgentCapabilityCatalog,
-    createAiRuntimeSessionManager,
-    isNonCodexAiCliAdapterId,
-    listAiCliAdapters,
-    modelRef
-} from '@zeus/ai-runtime';
-import {
-    buildGitPatchExport,
-    getGitRepositoryContext,
-    getGitWorkingContext,
-    getGitWorktreeClean,
-    getProjectGitCommitDetail,
-    getProjectGitComparisonDiff,
-    getProjectGitRepositorySnapshot,
-    getTaskBranchFileDiff,
-    getTaskWorkspaceFileDiff,
-    type GitDiffSummary,
-    type GitPatchExport,
-    readTaskIntegrationConflict,
+  buildGitPatchExport,
+  getGitRepositoryContext,
+  getGitWorkingContext,
+  getGitWorktreeClean,
+  getProjectGitCommitDetail,
+  getProjectGitComparisonDiff,
+  getProjectGitRepositorySnapshot,
+  getTaskBranchFileDiff,
+  getTaskWorkspaceFileDiff,
+  type GitDiffSummary,
+  type GitPatchExport,
+  readTaskIntegrationConflict,
 } from '@zeus/git-core';
-import {type ProjectGraph} from '@zeus/graph-engine';
+import { type ProjectGraph } from '@zeus/graph-engine';
+import { normalizeProjectConfig, normalizeProjectModelServiceTierPreference, type ProjectConfigSnapshot, type ProjectModelServiceTierPreference, type UpdateProjectConfigBody } from './projectCore.js';
+import { getSecretPresenceLabel } from '@zeus/security-core';
+import { cloneTaskManagementStatusConfig, type CommandEnvelope, commandEnvelopeSchemaGeneration, type TaskAttachmentReference, type TaskPushParentAttachmentOption } from '@zeus/shared';
 import {
-    normalizeProjectConfig,
-    normalizeProjectModelServiceTierPreference,
-    type ProjectConfigSnapshot,
-    type ProjectModelServiceTierPreference,
-    type UpdateProjectConfigBody
-} from './projectCore.js';
-import {getSecretPresenceLabel} from '@zeus/security-core';
-import {
-    cloneTaskManagementStatusConfig,
-    type CommandEnvelope,
-    commandEnvelopeSchemaGeneration,
-    type TaskAttachmentReference,
-    type TaskPushParentAttachmentOption
-} from '@zeus/shared';
-import {
-    AutomationRunRepository,
-    AutomationTaskRepository,
-    CommandDefinitionRepository,
-    ConversationExecutionRepository,
-    ConversationExpertRepository,
-    ConversationProviderItemRepository,
-    ConversationRepository,
-    ConversationResourceRepository,
-    ConversationServerRequestRepository,
-    ConversationTurnRepository,
-    DigitalEmployeeAutomationRepository,
-    DigitalEmployeeExecutionRepository,
-    DigitalEmployeeProjectEventRepository,
-    DigitalEmployeeRepository,
-    DigitalEmployeeTemplateRepository,
-    ImRepository,
-    ProjectionDatabaseRuntimeManager,
-    ProjectRepository,
-    runtimeSessionMayOwnProcess,
-    SettingRepository,
-    TaskBoardRepository,
-    TaskEventRepository,
-    type TaskManagementStatus,
-    TaskRepository,
-    TaskStageRepository,
-    TaskWorkDecisionRepository,
-    TaskWorkDeliverableRepository,
-    TaskWorkItemRepository,
-    TaskWorkRunRepository,
-    TaskWorkspaceRepository,
-    TerminalEventRepository,
-    type ZeusConversationRecord,
-    type ZeusProjectRecord,
-    type ZeusTaskIntegrationAttemptRecord,
-    type ZeusTaskRecord,
+  AutomationRunRepository,
+  AutomationTaskRepository,
+  CommandDefinitionRepository,
+  ConversationExecutionRepository,
+  ConversationExpertRepository,
+  ConversationProviderItemRepository,
+  ConversationRepository,
+  ConversationResourceRepository,
+  ConversationServerRequestRepository,
+  ConversationTurnRepository,
+  DigitalEmployeeAutomationRepository,
+  DigitalEmployeeExecutionRepository,
+  DigitalEmployeeProjectEventRepository,
+  DigitalEmployeeRepository,
+  DigitalEmployeeTemplateRepository,
+  ImRepository,
+  ProjectionDatabaseRuntimeManager,
+  ProjectRepository,
+  runtimeSessionMayOwnProcess,
+  SettingRepository,
+  TaskBoardRepository,
+  TaskEventRepository,
+  type TaskManagementStatus,
+  TaskRepository,
+  TaskStageRepository,
+  TaskWorkDecisionRepository,
+  TaskWorkDeliverableRepository,
+  TaskWorkItemRepository,
+  TaskWorkRunRepository,
+  TaskWorkspaceRepository,
+  TerminalEventRepository,
+  type ZeusConversationRecord,
+  type ZeusProjectRecord,
+  type ZeusTaskIntegrationAttemptRecord,
+  type ZeusTaskRecord,
 } from '@zeus/storage';
-import {type TaskStatus} from './taskCore.js';
-import {
-    createTelegramBotMessageClient,
-    dispatchTelegramUpdate,
-    getTelegramConfigurationState,
-    type TelegramMessageSender,
-    type TelegramPollingService
-} from './telegramAdapter.js';
-import {type FastifyInstance, type FastifyReply, type FastifyRequest} from 'fastify';
-import {createHash} from 'node:crypto';
-import {existsSync, realpathSync, statSync} from 'node:fs';
-import {basename, join, resolve} from 'node:path';
-import {clearAllPersistedGraphCaches} from './codeIntelligenceGraphCache.js';
-import {type GraphViewSnapshot, hasDatabaseUriPassword, resolveCodeMapScanRoot} from './codeIntelligenceGraphStore.js';
-import {CodeIntelligenceQueryApplication} from './codeIntelligenceQueryApplication.js';
-import {registerCodeIntelligenceQueryRoutes} from './codeIntelligenceQueryRoutes.js';
-import {isUnsafeCodeMapScanRoot} from './codeMapScanBoundary.js';
-import {type CodexRemoteControlSnapshot, registerCodexPublicCommandRoutes} from './codexPublicCommandRoutes.js';
-import {CodexSubagentQueryApplication} from './codexSubagentQueryApplication.js';
-import {registerCodexSubagentQueryRoutes} from './codexSubagentQueryRoutes.js';
-import {createCodexSubagentRuntimeReader} from './codexSubagentRuntimeProjection.js';
-import {createCommandCenter} from './commandCenter.js';
-import {ConversationCapabilityQueryApplication} from './conversationCapabilityQueryApplication.js';
-import {createDigitalEmployeeOrchestrator, type DigitalEmployeeOrchestrator} from './digitalEmployeeOrchestrator.js';
-import {type AutomationScheduler, createAutomationScheduler} from './automationScheduler.js';
-import {registerAutomationRoutes} from './automationRoutes.js';
-import {registerDigitalEmployeeRoutes} from './digitalEmployeeRoutes.js';
-import {registerConversationCapabilityQueryRoutes} from './conversationCapabilityQueryRoutes.js';
-import {ConversationChoiceQueryApplication} from './conversationChoiceQueryApplication.js';
-import {registerConversationChoiceQueryRoutes} from './conversationChoiceQueryRoutes.js';
-import {registerConversationCommandRoutes} from './conversationCommandRoutes.js';
-import {registerConversationDispatchCommandRoutes} from './conversationDispatchCommandRoutes.js';
-import {
-    ConversationDispatchCommandApplication,
-    conversationDispatchCommandTypes,
-    conversationDispatchInputSha256
-} from './conversationDispatchCommandApplication.js';
-import {isPathInsideRoot, readConversationResourcePreview} from './conversationResourcePreview.js';
-import {
-    type ConversationFileOpenGrant,
-    createConversationFileOpenGrant,
-    toConversationResource,
-    toConversationResourceOpenIntent
-} from './conversationResources.js';
-import {registerConversationSnapshotV2Api} from './conversationSnapshotV2Api.js';
-import {registerConversationSyncRoutes} from './conversationSyncRoutes.js';
-import {registerExecutionHostControlApi} from './executionHostControlApi.js';
-import {createPollingAdmissionPause, registerExecutionHostHandoffApi} from './executionHostHandoffApi.js';
-import {registerGitCommandRoutes} from './gitCommandRoutes.js';
-import {
-    graphConversationReject,
-    isExplicitGraphConversationRejection,
-    registerGraphConversationCommandRoutes
-} from './graphConversationCommandRoutes.js';
-import {
-    GraphConversationCommandApplication,
-    graphConversationCommandTypes,
-    graphConversationInputSha256
-} from './graphConversationCommandApplication.js';
-import {closeHeavyWorkerJobs, heavyWorkerPoolSnapshot} from './heavyWorkerPool.js';
+import { type TaskStatus } from './taskCore.js';
+import { createTelegramBotMessageClient, dispatchTelegramUpdate, getTelegramConfigurationState, type TelegramMessageSender, type TelegramPollingService } from './telegramAdapter.js';
+import { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
+import { createHash } from 'node:crypto';
+import { existsSync, realpathSync, statSync } from 'node:fs';
+import { basename, join, resolve } from 'node:path';
+import { clearAllPersistedGraphCaches } from './codeIntelligenceGraphCache.js';
+import { type GraphViewSnapshot, hasDatabaseUriPassword, resolveCodeMapScanRoot } from './codeIntelligenceGraphStore.js';
+import { CodeIntelligenceQueryApplication } from './codeIntelligenceQueryApplication.js';
+import { registerCodeIntelligenceQueryRoutes } from './codeIntelligenceQueryRoutes.js';
+import { isUnsafeCodeMapScanRoot } from './codeMapScanBoundary.js';
+import { type CodexRemoteControlSnapshot, registerCodexPublicCommandRoutes } from './codexPublicCommandRoutes.js';
+import { CodexSubagentQueryApplication } from './codexSubagentQueryApplication.js';
+import { registerCodexSubagentQueryRoutes } from './codexSubagentQueryRoutes.js';
+import { createCodexSubagentRuntimeReader } from './codexSubagentRuntimeProjection.js';
+import { createCommandCenter } from './commandCenter.js';
+import { ConversationCapabilityQueryApplication } from './conversationCapabilityQueryApplication.js';
+import { createDigitalEmployeeOrchestrator, type DigitalEmployeeOrchestrator } from './digitalEmployeeOrchestrator.js';
+import { type AutomationScheduler, createAutomationScheduler } from './automationScheduler.js';
+import { registerAutomationRoutes } from './automationRoutes.js';
+import { registerDigitalEmployeeRoutes } from './digitalEmployeeRoutes.js';
+import { registerConversationCapabilityQueryRoutes } from './conversationCapabilityQueryRoutes.js';
+import { ConversationChoiceQueryApplication } from './conversationChoiceQueryApplication.js';
+import { registerConversationChoiceQueryRoutes } from './conversationChoiceQueryRoutes.js';
+import { registerConversationCommandRoutes } from './conversationCommandRoutes.js';
+import { registerConversationDispatchCommandRoutes } from './conversationDispatchCommandRoutes.js';
+import { ConversationDispatchCommandApplication, conversationDispatchCommandTypes, conversationDispatchInputSha256 } from './conversationDispatchCommandApplication.js';
+import { isPathInsideRoot, readConversationResourcePreview } from './conversationResourcePreview.js';
+import { type ConversationFileOpenGrant, createConversationFileOpenGrant, toConversationResource, toConversationResourceOpenIntent } from './conversationResources.js';
+import { registerConversationSnapshotV2Api } from './conversationSnapshotV2Api.js';
+import { registerConversationSyncRoutes } from './conversationSyncRoutes.js';
+import { registerExecutionHostControlApi } from './executionHostControlApi.js';
+import { createPollingAdmissionPause, registerExecutionHostHandoffApi } from './executionHostHandoffApi.js';
+import { registerGitCommandRoutes } from './gitCommandRoutes.js';
+import { graphConversationReject, isExplicitGraphConversationRejection, registerGraphConversationCommandRoutes } from './graphConversationCommandRoutes.js';
+import { GraphConversationCommandApplication, graphConversationCommandTypes, graphConversationInputSha256 } from './graphConversationCommandApplication.js';
+import { closeHeavyWorkerJobs, heavyWorkerPoolSnapshot } from './heavyWorkerPool.js';
 import type {
-    DashboardSnapshot,
-    GraphConversationHistoryItem,
-    GraphConversationHistoryPage,
-    ProjectDatabaseSecretSnapshot,
-    ReleaseStatusSnapshot,
-    RuntimeStatusSnapshot,
-    SaveProjectDatabaseSecretBody,
-    SecurityAuditLogEntry,
-    SecurityResetResult,
-    SecuritySecretsSnapshot,
-    TelegramDispatchPreviewBody,
-    TelegramNotificationSettingsSnapshot,
-    TelegramSecuritySettingsSnapshot,
-    TelegramSettingsSnapshot,
-    TelegramStatusSnapshot,
-    TelegramTestConnectionResult,
-    UpdateTelegramNotificationSettingsBody,
-    UpdateTelegramSecuritySettingsBody,
-    UpdateTelegramSettingsBody,
+  DashboardSnapshot,
+  GraphConversationHistoryItem,
+  GraphConversationHistoryPage,
+  ProjectDatabaseSecretSnapshot,
+  ReleaseStatusSnapshot,
+  RuntimeStatusSnapshot,
+  SaveProjectDatabaseSecretBody,
+  SecurityAuditLogEntry,
+  SecurityResetResult,
+  SecuritySecretsSnapshot,
+  TelegramDispatchPreviewBody,
+  TelegramNotificationSettingsSnapshot,
+  TelegramSecuritySettingsSnapshot,
+  TelegramSettingsSnapshot,
+  TelegramStatusSnapshot,
+  TelegramTestConnectionResult,
+  UpdateTelegramNotificationSettingsBody,
+  UpdateTelegramSecuritySettingsBody,
+  UpdateTelegramSettingsBody,
 } from './index.js';
-import {registerIntegrationCommandRoutes} from './integrationCommandRoutes.js';
-import {registerImConnectionRoutes} from './imConnectionRoutes.js';
-import {ImTelegramService, stableIdentity} from './imTelegramService.js';
+import { registerIntegrationCommandRoutes } from './integrationCommandRoutes.js';
+import { registerImConnectionRoutes } from './imConnectionRoutes.js';
+import { ImTelegramService, stableIdentity } from './imTelegramService.js';
 import {
-    exportLocalBusinessData,
-    findInvalidPortableProjectPaths,
-    importLocalBusinessData,
-    type ImportLocalDataResult,
-    type LocalDataExportSnapshot,
-    plannedLocalBusinessDataImportCounts,
-    validateLocalBusinessDataImport,
+  exportLocalBusinessData,
+  findInvalidPortableProjectPaths,
+  importLocalBusinessData,
+  type ImportLocalDataResult,
+  type LocalDataExportSnapshot,
+  plannedLocalBusinessDataImportCounts,
+  validateLocalBusinessDataImport,
 } from './localDataTransfer.js';
 import {
-    type AppShellSettingsSnapshot,
-    type ClearCacheResult,
-    codeMapSettingsKey,
-    type CodeMapSettingsSnapshot,
-    codexRemoteControlEnabledSettingKey,
-    type ImportLocalSettingsBody,
-    type ImportLocalSettingsResult,
-    type LocalSettingsExportSnapshot,
-    normalizeCodeMapSettings,
-    normalizeImportedRuntimeSettings,
-    patchAppShellSettings,
-    projectConfigSettingsPrefix,
-    runtimeSettingsKey,
-    type UpdateAppShellSettingsBody,
-    type UpdateCodeMapSettingsBody,
-    type UpdateRuntimeSettingsBody,
+  type AppShellSettingsSnapshot,
+  type ClearCacheResult,
+  codeMapSettingsKey,
+  type CodeMapSettingsSnapshot,
+  codexRemoteControlEnabledSettingKey,
+  type ImportLocalSettingsBody,
+  type ImportLocalSettingsResult,
+  type LocalSettingsExportSnapshot,
+  normalizeCodeMapSettings,
+  normalizeImportedRuntimeSettings,
+  patchAppShellSettings,
+  projectConfigSettingsPrefix,
+  runtimeSettingsKey,
+  type UpdateAppShellSettingsBody,
+  type UpdateCodeMapSettingsBody,
+  type UpdateRuntimeSettingsBody,
 } from './localServerSettingsNormalization.js';
-import {MemoryContextApplicationService, registerMemoryContextApi} from './memoryContextApi.js';
-import {ProjectGitQueryApplication} from './projectGitQueryApplication.js';
-import {registerProjectGitQueryRoutes} from './projectGitQueryRoutes.js';
-import {ProjectQueryApplication} from './projectQueryApplication.js';
-import {registerProjectQueryRoutes} from './projectQueryRoutes.js';
-import {generateReleaseNotesWithDeepSeek} from './releaseNotesGeneration.js';
-import {registerReleaseUpdateApi} from './releaseUpdateApi.js';
-import {
-    parseRuntimeArgs,
-    RuntimeQueryApplication,
-    runtimeSessionIsConfirmedTerminal,
-    type RuntimeSettingsSnapshot,
-    toAiRuntimeLogEntry,
-    toAiRuntimeSession
-} from './runtimeQueryApplication.js';
-import {registerRuntimeQueryRoutes} from './runtimeQueryRoutes.js';
-import {registerRuntimeSessionCommandRoutes} from './runtimeSessionCommandRoutes.js';
-import {
-    type ParsedSettingsCommand,
-    SettingsCommandApplication,
-    settingsCommandHttpError,
-    type SettingsCommandRequest,
-    settingsCommandTypes
-} from './settingsCommandApplication.js';
-import {registerStorageRecoveryPreflightApi} from './storageRecoveryPreflightApi.js';
-import {TaskStageApplication} from './taskStageApplication.js';
-import {registerTaskStageRoutes} from './taskStageRoutes.js';
-import {registerTaskWorkManagement, type TaskWorkManagementController} from './taskWorkManagement.js';
-import {
-    telegramChildOperation,
-    TelegramCommandApplication,
-    telegramCommandHttpError,
-    type TelegramCommandRequest,
-    telegramCommandTypes
-} from './telegramCommandApplication.js';
-import {registerTelegramPollingApi} from './telegramPollingApi.js';
-import {changeSetErrorStatus, errorCode as turnChangeSetErrorCode} from './turnChangeSets.js';
-import {
-    WorkManagementCommandApplication,
-    workManagementCommandTypes,
-    workManagementInputSha256
-} from './workManagementCommandApplication.js';
-import {registerWorkManagementCoreCommandRoutes} from './workManagementCoreCommandRoutes.js';
-import {WorkManagementCoreOperations} from './workManagementCoreOperations.js';
-import {registerWorkManagementProjectCommandRoutes} from './workManagementProjectCommandRoutes.js';
-import {WorkManagementProjectOperations} from './workManagementProjectOperations.js';
-import {WorkManagementQueryApplication} from './workManagementQueryApplication.js';
-import {registerWorkManagementQueryRoutes} from './workManagementQueryRoutes.js';
-import {registerWorkManagementTaskCommandRoutes} from './workManagementTaskCommandRoutes.js';
-import {WorkManagementTaskEffectService} from './workManagementTaskEffectService.js';
-import {WorkManagementTaskOperations} from './workManagementTaskOperations.js';
-import {registerWorkspaceGitCommandRoutes} from './workspaceGitCommandRoutes.js';
-import {registerZeusPluginRoutes} from './zeusPluginRoutes.js';
+import { MemoryContextApplicationService, registerMemoryContextApi } from './memoryContextApi.js';
+import { ProjectGitQueryApplication } from './projectGitQueryApplication.js';
+import { registerProjectGitQueryRoutes } from './projectGitQueryRoutes.js';
+import { ProjectQueryApplication } from './projectQueryApplication.js';
+import { registerProjectQueryRoutes } from './projectQueryRoutes.js';
+import { generateReleaseNotesWithDeepSeek } from './releaseNotesGeneration.js';
+import { registerReleaseUpdateApi } from './releaseUpdateApi.js';
+import { parseRuntimeArgs, RuntimeQueryApplication, runtimeSessionIsConfirmedTerminal, type RuntimeSettingsSnapshot, toAiRuntimeLogEntry, toAiRuntimeSession } from './runtimeQueryApplication.js';
+import { registerRuntimeQueryRoutes } from './runtimeQueryRoutes.js';
+import { registerRuntimeSessionCommandRoutes } from './runtimeSessionCommandRoutes.js';
+import { type ParsedSettingsCommand, SettingsCommandApplication, settingsCommandHttpError, type SettingsCommandRequest, settingsCommandTypes } from './settingsCommandApplication.js';
+import { registerStorageRecoveryPreflightApi } from './storageRecoveryPreflightApi.js';
+import { TaskStageApplication } from './taskStageApplication.js';
+import { registerTaskStageRoutes } from './taskStageRoutes.js';
+import { registerTaskWorkManagement, type TaskWorkManagementController } from './taskWorkManagement.js';
+import { telegramChildOperation, TelegramCommandApplication, telegramCommandHttpError, type TelegramCommandRequest, telegramCommandTypes } from './telegramCommandApplication.js';
+import { registerTelegramPollingApi } from './telegramPollingApi.js';
+import { changeSetErrorStatus, errorCode as turnChangeSetErrorCode } from './turnChangeSets.js';
+import { WorkManagementCommandApplication, workManagementCommandTypes, workManagementInputSha256 } from './workManagementCommandApplication.js';
+import { registerWorkManagementCoreCommandRoutes } from './workManagementCoreCommandRoutes.js';
+import { WorkManagementCoreOperations } from './workManagementCoreOperations.js';
+import { registerWorkManagementProjectCommandRoutes } from './workManagementProjectCommandRoutes.js';
+import { WorkManagementProjectOperations } from './workManagementProjectOperations.js';
+import { WorkManagementQueryApplication } from './workManagementQueryApplication.js';
+import { registerWorkManagementQueryRoutes } from './workManagementQueryRoutes.js';
+import { registerWorkManagementTaskCommandRoutes } from './workManagementTaskCommandRoutes.js';
+import { WorkManagementTaskEffectService } from './workManagementTaskEffectService.js';
+import { WorkManagementTaskOperations } from './workManagementTaskOperations.js';
+import { registerWorkspaceGitCommandRoutes } from './workspaceGitCommandRoutes.js';
+import { registerZeusPluginRoutes } from './zeusPluginRoutes.js';
 
 export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, type ReadOnlyValidationApplicationIdentity } from './readOnlyValidation.js';
 
@@ -316,7 +250,7 @@ export type LocalServerPlatformRouteDependencies = Record<string, any> & {
 
 export async function registerLocalServerPlatformRoutes(dependencies: LocalServerPlatformRouteDependencies): Promise<{
   close(): Promise<void>;
-    recover(): void;
+  recover(): void;
   projectGitQueries: ProjectGitQueryApplication;
   conversationCapabilityQueries: ConversationCapabilityQueryApplication;
   commandCenter: ReturnType<typeof createCommandCenter>;
@@ -326,7 +260,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     zeusLocalServerHost,
     archiveNativeConversation,
     buildRuntimeProcessEnv,
-    coldEvidence,
     commandDeliveries,
     createReleaseNotesCapability,
     publishRuntimeSessionEvent,
@@ -389,7 +322,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     conversationQueueCoreMutations,
     conversationRequests,
     conversationResources,
-    conversationSnapshotCompatibility,
     conversationSnapshotV2,
     conversationSubmissions,
     conversationSyncProtocol,
@@ -404,7 +336,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     eventSubscribers,
     executeConversationDispatchMessage,
     executeConversationDispatchRequestResponse,
-    executeConversationDispatchSideChat,
     executeProjectConversationIdempotent,
     executeTaskConversationIdempotent,
     executeWorkspaceGitCommand,
@@ -775,7 +706,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   registerConversationSnapshotV2Api({
     server,
     repository: conversationSnapshotV2,
-    compatibility: conversationSnapshotCompatibility,
     projectExists: (projectId) => Boolean(projects.getById(projectId)),
     getConversation: (conversationId) => conversations.getRecordById(conversationId),
     readExecutionContext: async (conversationId) => {
@@ -798,7 +728,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     server,
     new MemoryContextApplicationService({
       memory: longTermMemories,
-      coldEvidence,
       commandDeliveries,
       getProject: (projectId) => {
         const project = projects.getById(projectId);
@@ -1153,7 +1082,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           request: { changeSetId, expectedState, idempotencyKey: operationIdentity },
         }),
       message: executeConversationDispatchMessage,
-      sideChat: executeConversationDispatchSideChat,
       queueUpdate: ({ params, content }) => {
         requireNativeQueueConversation(params);
         return conversationQueueCoreMutations.update({ conversationId: params.conversationId, submissionId: params.submissionId, content });
@@ -1307,7 +1235,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       prepareProjectConversation: async ({ projectId, value }) => {
         const project = projects.getById(projectId);
         if (!project) graphConversationReject(404, 'ZEUS_PROJECT_NOT_FOUND', 'Project not found');
-          assertRequestedAgentKind(value);
+        assertRequestedAgentKind(value);
         if (value.mode !== 'create') graphConversationReject(400, 'ZEUS_INVALID_CONVERSATION_START', 'Project conversations require mode create.');
         return { kind: 'project', project } satisfies PreparedGraphProject;
       },
@@ -1554,7 +1482,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           message: 'Conversation not found',
         });
       }
-      conversationSnapshotCompatibility.recordV1(request);
       reply.header('deprecation', 'true');
       reply.header('link', `</api/projects/${encodeURIComponent(project.id)}/conversations/${encodeURIComponent(conversation.id)}/snapshot-v2>; rel="successor-version"`);
       return reply.code(410).send({
@@ -2879,7 +2806,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     conversationTurns,
     conversationExecution,
     conversationRequests,
-      conversationSubmissions,
+    conversationSubmissions,
     commandDefinitions: digitalEmployeeCommandDefinitions,
     commandRuns,
     artifacts: artifactStore,
@@ -2932,33 +2859,35 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         const connection = snapshot.modelSourceId === 'codex' ? undefined : modelConnections.listMetadata().find((candidate: { id: string }) => candidate.id === snapshot.modelSourceId);
         const configuredModel = connection?.models.find((candidate: { id: string; runtimeAdapter?: string }) => candidate.id === snapshot.modelId);
         const runtimeKind = configuredModel?.runtimeAdapter === 'pi_sdk' ? 'pi' : 'codex';
-          const result = await executeProjectConversationIdempotent(
-              project,
-              {
-                  mode: 'create',
-                  content: snapshot.prompt,
-                  model: snapshot.modelSourceId === 'codex' ? snapshot.modelId : modelRef(snapshot.modelSourceId, snapshot.modelId),
-                  agentKind: runtimeKind,
-                  ...(snapshot.reasoningEffort ? {effort: snapshot.reasoningEffort} : {}),
-                  ...(snapshot.serviceTier ? {serviceTier: snapshot.serviceTier} : {}),
-                  permissionMode: snapshot.permissionMode,
-                  collaborationMode: 'default',
-                  clientUserMessageId: `automation-client-${digest}`,
-                  ...(snapshot.skillId ? {skillReferences: [{id: snapshot.skillId}]} : {}),
-                  ...(snapshot.pluginIds.length > 0 ? {
-                      pluginReferences: snapshot.pluginIds.map((id) => ({
-                          kind: 'plugin',
-                          id
-                      }))
-                  } : {}),
-              },
+        const result = await executeProjectConversationIdempotent(
+          project,
+          {
+            mode: 'create',
+            content: snapshot.prompt,
+            model: snapshot.modelSourceId === 'codex' ? snapshot.modelId : modelRef(snapshot.modelSourceId, snapshot.modelId),
+            agentKind: runtimeKind,
+            ...(snapshot.reasoningEffort ? { effort: snapshot.reasoningEffort } : {}),
+            ...(snapshot.serviceTier ? { serviceTier: snapshot.serviceTier } : {}),
+            permissionMode: snapshot.permissionMode,
+            collaborationMode: 'default',
+            clientUserMessageId: `automation-client-${digest}`,
+            ...(snapshot.skillId ? { skillReferences: [{ id: snapshot.skillId }] } : {}),
+            ...(snapshot.pluginIds.length > 0
+              ? {
+                  pluginReferences: snapshot.pluginIds.map((id) => ({
+                    kind: 'plugin',
+                    id,
+                  })),
+                }
+              : {}),
+          },
           idempotencyKey,
-          );
-          const body = isNativeApiRecord(result.body) ? result.body : {};
-          const conversation = isNativeApiRecord(body.conversation) ? body.conversation : {};
-          const submission = isNativeApiRecord(body.submission) ? body.submission : {};
-          if (typeof conversation.id !== 'string' || typeof submission.id !== 'string') throw nativeApiError('ZEUS_AUTOMATION_ACCEPTANCE_INVALID', 'Automation conversation acceptance omitted durable identities.');
-          return {conversationId: conversation.id, submissionId: submission.id};
+        );
+        const body = isNativeApiRecord(result.body) ? result.body : {};
+        const conversation = isNativeApiRecord(body.conversation) ? body.conversation : {};
+        const submission = isNativeApiRecord(body.submission) ? body.submission : {};
+        if (typeof conversation.id !== 'string' || typeof submission.id !== 'string') throw nativeApiError('ZEUS_AUTOMATION_ACCEPTANCE_INVALID', 'Automation conversation acceptance omitted durable identities.');
+        return { conversationId: conversation.id, submissionId: submission.id };
       },
     });
     digitalEmployeeOrchestrator = createDigitalEmployeeOrchestrator({
@@ -2983,7 +2912,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       stages: taskStages,
       taskStageApplication,
       conversations,
-        conversationSubmissions,
+      conversationSubmissions,
       commandRuns,
       conversationCapabilities: conversationCapabilityQueries,
       taskWorkManagement,
@@ -4018,13 +3947,13 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     if (cleanupErrors.length === 1) throw cleanupErrors[0];
     if (cleanupErrors.length > 1) throw new AggregateError(cleanupErrors, 'Zeus local-server shutdown cleanup failed.');
   };
-    return {
-        close: closeLocalServerResources,
-        recover: () => {
-            if (!readOnlyValidation) workManagementTaskEffects.recover();
-        },
-        projectGitQueries,
-        conversationCapabilityQueries,
-        commandCenter,
-    };
+  return {
+    close: closeLocalServerResources,
+    recover: () => {
+      if (!readOnlyValidation) workManagementTaskEffects.recover();
+    },
+    projectGitQueries,
+    conversationCapabilityQueries,
+    commandCenter,
+  };
 }

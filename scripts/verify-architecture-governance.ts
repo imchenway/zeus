@@ -104,10 +104,10 @@ async function verifyImportBoundaries(): Promise<void> {
   }
 
   const modularPolicies: Record<string, string[]> = {
-    'packages/local-server/src/conversationSnapshotV2Api.ts': ['fastify', '@zeus/storage', './conversationSnapshotCompatibility.js'],
+    'packages/local-server/src/conversationSnapshotV2Api.ts': ['fastify', '@zeus/storage'],
     'packages/local-server/src/conversationSyncRoutes.ts': ['node:crypto', 'fastify', './conversationSyncProtocol.js'],
     'packages/local-server/src/contextCompiler.ts': ['node:crypto', '@zeus/storage'],
-    'packages/local-server/src/contextSourceCatalog.ts': ['node:crypto', 'node:fs', 'node:fs/promises', 'node:path', '@zeus/storage', './contextCompiler.js'],
+    'packages/local-server/src/contextSourceCatalog.ts': ['node:crypto', 'node:fs', 'node:fs/promises', 'node:path', './contextCompiler.js'],
     'packages/local-server/src/memoryContextApi.ts': ['node:crypto', 'fastify', '@zeus/shared', '@zeus/storage', './contextCompiler.js', './contextSourceCatalog.js'],
     'packages/local-server/src/projectGitQueryApplication.ts': ['node:path', '@zeus/git-core', '@zeus/storage'],
     'packages/local-server/src/projectGitQueryRoutes.ts': ['fastify', './nativeQueryRouteError.js', './projectGitQueryApplication.js'],

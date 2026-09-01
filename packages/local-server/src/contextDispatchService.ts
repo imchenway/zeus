@@ -1,6 +1,6 @@
 import type { AgentPreflightTokenCountCapability, AgentPreflightTokenCountResult } from '@zeus/ai-runtime';
 import type { CodexBootstrapAdditionalContext } from '@zeus/shared';
-import { ColdEvidenceRepository, LongTermMemoryRepository, type LongTermMemoryResolution } from '@zeus/storage';
+import { LongTermMemoryRepository, type LongTermMemoryResolution } from '@zeus/storage';
 import {
   compileContext,
   defaultContextTokenCounter,
@@ -62,7 +62,6 @@ export interface CompileDispatchContextInput {
   budgets?: Partial<ContextBudget>;
   minimumMemoryConfidence?: number;
   maximumTaskDocumentBytes?: number;
-  includeColdEvidence?: boolean;
   /** 只接纳上游已精确选择的非权威片段；本服务不会主动扫描代码、会话或 rollout。 */
   selectedFragments?: ContextFragment[];
   sourceWatermarks?: Readonly<Record<string, string | number | boolean | null>>;
@@ -118,7 +117,6 @@ export interface ContextDispatchAuditPort {
 
 export interface ContextDispatchApplicationServiceOptions {
   memory: LongTermMemoryRepository;
-  coldEvidence: ColdEvidenceRepository;
   now(): Date;
   audit?: ContextDispatchAuditPort;
 }
@@ -191,7 +189,7 @@ export class ContextDispatchApplicationService {
     const selectedFragments = normalizeSelectedFragments(input.selectedFragments);
     const memory = this.options.memory.resolveForContext({ projectId: project.id, asOf, minimumConfidence: input.minimumMemoryConfidence });
     const rootId = `project:${project.id}`;
-    const catalog = new ContextSourceCatalog([{ id: rootId, path: project.localPath, owner: 'project' }], this.options.coldEvidence, () => false);
+    const catalog = new ContextSourceCatalog([{ id: rootId, path: project.localPath }]);
     const taskDocument = task
       ? await catalog.primaryTaskDocumentFragment({
           rootId,
@@ -218,7 +216,6 @@ export class ContextDispatchApplicationService {
         task: task ? { projectId: project.id, taskId: task.id, taskCode: task.code } : null,
         maximumCompiledTokens: input.maximumCompiledTokens,
         budgets: input.budgets,
-        includeColdEvidence: input.includeColdEvidence === true,
         watermarks: {
           ...(input.sourceWatermarks ?? {}),
           'docs.primary': taskDocument.fragment?.sourceVersion ?? (task ? 'missing' : 'not_applicable'),

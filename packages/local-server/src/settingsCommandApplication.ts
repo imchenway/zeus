@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { canonicalCommandInputJson, CommandEnvelopeError, parseCommandEnvelope, type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
 import { ArtifactStore, CommandDeliveryRepository, CommandDeliveryStoreError, type ArtifactRef, type CommandDeliveryOutcome, type CommandDeliveryReceiptRecord, type CommandOutboxRecord, type ZeusDatabase } from '@zeus/storage';
+import { createCommandValidation } from './commandApplicationPrimitives.js';
 
 export const settingsCommandTypes = {
   projectDatabaseSecretPut: 'settings.project_database_secret.put',
@@ -359,30 +360,7 @@ function assertJsonBudget(value: unknown, maximumBytes: number, label: string): 
   if (serialized === undefined || Buffer.byteLength(serialized, 'utf8') > maximumBytes) throw new SettingsCommandApplicationError('ZEUS_SETTINGS_COMMAND_RESULT_TOO_LARGE', `${label} exceeds the ${maximumBytes}-byte budget.`, 413);
 }
 
-function requireRecord(value: unknown, field: string): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalidCommand(`${field} must be an object.`);
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) throw invalidCommand(`${field} must be a plain object.`);
-  return value as Record<string, unknown>;
-}
-
-function assertExactKeys(value: Record<string, unknown>, expected: readonly string[], commandType: string): void {
-  const actual = Object.keys(value).sort();
-  const normalizedExpected = [...expected].sort();
-  if (actual.length === normalizedExpected.length && actual.every((key, index) => key === normalizedExpected[index])) return;
-  throw invalidCommand(`${commandType} must contain exactly: ${normalizedExpected.join(', ')}.`);
-}
-
-function boundedIdentity(value: unknown, field: string): string {
-  if (typeof value !== 'string' || value.trim() !== value || value.length < 1 || value.length > 512 || Array.from(value).some((character) => (character.codePointAt(0) ?? 0) <= 31 || character.codePointAt(0) === 127))
-    throw invalidCommand(`${field} is invalid.`);
-  return value;
-}
-
-function validSha256(value: unknown, field: string): string {
-  if (typeof value !== 'string' || !/^[0-9a-f]{64}$/u.test(value)) throw invalidCommand(`${field} must be a lowercase SHA-256.`);
-  return value;
-}
+const { requireRecord, assertExactKeys, boundedIdentity, validSha256 } = createCommandValidation(invalidCommand);
 
 function serializeError(error: unknown, redactSensitiveText: (value: string) => { text: string }, sensitiveValues: readonly string[] = []): Record<string, unknown> {
   if (error instanceof Error) {

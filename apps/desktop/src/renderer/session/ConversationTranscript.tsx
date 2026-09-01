@@ -1,5 +1,4 @@
 import { Fragment, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { motion, useReducedMotion } from 'framer-motion';
 import { activityCategory, isActiveSessionTurn, isLiveActivityItem, isOperationalActivityItem, type SessionActivityCategory, SessionActivityGroup, SessionTurnDuration, SessionTurnProcessDisclosure } from './SessionActivity.js';
 import { itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText } from './ThreadItemView.js';
 import { PlanSummary } from './PlanSummary.js';
@@ -34,6 +33,7 @@ import type { McpAppToolCall, McpAppToolResult } from './McpAppFrame.js';
 export interface ConversationTranscriptProps {
   state: NativeSessionState;
   language: SessionUiLanguage;
+  assistantLabel?: string;
   historyOnly?: boolean;
   /** 子线程等只读投影没有主会话快照时，仍可明确声明时间线已完成水合。 */
   transcriptHydrated?: boolean;
@@ -53,7 +53,6 @@ export interface ConversationTranscriptProps {
   onAddResponseAnnotation?: (anchor: ConversationResponseTextAnchor) => string;
   onUpdateResponseAnnotation?: (id: string, note: string) => void;
   onRemoveResponseAnnotation?: (id: string) => void;
-  onOpenSideChat?: (selectedText: string) => void;
   onLoadEarlierHistory?: () => void | Promise<void>;
   onLoadTurnProcess?: (turnId: string) => void | Promise<void>;
   onLoadConversationResources?: () => void | Promise<void>;
@@ -101,7 +100,6 @@ const turnFailureSymbol = (
 );
 
 const emptyResponseAnnotations: ConversationResponseAnnotation[] = [];
-const liveTurnLayoutTransition = { duration: 0.22, ease: [0.22, 1, 0.36, 1] as const };
 const userScrollIntentIdleMs = 180;
 const latestPositionFallbackMs = 80;
 const transcriptVerticalScrollKeys = new Set(['ArrowDown', 'ArrowUp', 'End', 'Home', 'PageDown', 'PageUp', ' ', 'Spacebar']);
@@ -216,7 +214,6 @@ function useStableOptionalCallback<Arguments extends unknown[], Result>(callback
 }
 
 export function ConversationTranscript(props: ConversationTranscriptProps) {
-  const reduceMotion = useReducedMotion();
   const containerRef = useRef<HTMLElement | null>(null);
   const latestContentMarkerRef = useRef<HTMLSpanElement | null>(null);
   const latestMarkerIntersectingRef = useRef(true);
@@ -474,7 +471,6 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     onAddResponseAnnotation: useStableOptionalCallback(props.onAddResponseAnnotation),
     onUpdateResponseAnnotation: useStableOptionalCallback(props.onUpdateResponseAnnotation),
     onRemoveResponseAnnotation: useStableOptionalCallback(props.onRemoveResponseAnnotation),
-    onOpenSideChat: useStableOptionalCallback(props.onOpenSideChat),
     onLoadEarlierHistory: useStableOptionalCallback(props.onLoadEarlierHistory),
     onLoadTurnProcess: useStableOptionalCallback(props.onLoadTurnProcess),
     onLoadConversationResources: useStableOptionalCallback(props.onLoadConversationResources),
@@ -830,9 +826,9 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                 transcriptRowRenderOptions(renderProps, items, showActiveStatus && activeTurnId === row.turnId, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId),
               );
               return active ? (
-                <motion.div className="session-live-turn-row" key={child.key} layout={reduceMotion ? false : 'position'} transition={reduceMotion ? { duration: 0 } : liveTurnLayoutTransition}>
+                <div className="session-live-turn-row" key={child.key}>
                   {content}
-                </motion.div>
+                </div>
               ) : (
                 <Fragment key={child.key}>{content}</Fragment>
               );
@@ -1342,6 +1338,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
       <ThreadItemView
         item={row.item}
         language={options.props.language}
+        assistantLabel={options.props.assistantLabel}
         isLatest={!options.insideWork && row.item.key === options.items[options.items.length - 1]?.key && !options.showThinking}
         animateEntrance={options.enteringItemIds.has(row.item.key)}
         showAssistantActions={!options.insideWork && itemRole(row.item) === 'assistant' && !options.showThinking}
@@ -1357,7 +1354,6 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         onAddResponseAnnotation={options.props.onAddResponseAnnotation}
         onUpdateResponseAnnotation={options.props.onUpdateResponseAnnotation}
         onRemoveResponseAnnotation={options.props.onRemoveResponseAnnotation}
-        onOpenSideChat={options.props.onOpenSideChat}
         queuedSubmissionId={queuedSubmissionId}
         queuedSteerDisabledReason={queuedSteerDisabledReason}
         onSteerQueuedSubmission={queuedSubmission?.status === 'queued' ? options.props.onSendQueuedNow : undefined}

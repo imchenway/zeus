@@ -110,7 +110,6 @@ export interface ConversationApiClient {
   updateNativeNextTurnSettings: (projectId: string, conversationId: string, settings: NativeNextTurnSettings) => Promise<NativeNextTurnSettings>;
   sendNativeMessage: (projectId: string, conversationId: string, input: SendNativeMessageRequest) => Promise<NativeOperationAcceptance>;
   forgetNativeMessageCommand: (projectId: string, conversationId: string, idempotencyKey: string) => void;
-  askNativeSideChat: (projectId: string, conversationId: string, input: { selectedText: string; question: string }) => Promise<{ answer: string; status: 'completed' | 'interrupted' }>;
   editNativeQueuedSubmission: (projectId: string, conversationId: string, submissionId: string, content: string) => Promise<NativeQueueSnapshot>;
   retryNativeQueuedSubmission: (projectId: string, conversationId: string, submissionId: string) => Promise<NativeQueueSnapshot>;
   rerouteNativeQueuedSubmission: (projectId: string, conversationId: string, submissionId: string, settings: NativeNextTurnSettings) => Promise<NativeQueueSnapshot>;
@@ -286,10 +285,6 @@ export function createConversationApiClient(transport: LocalApiTransport): Conve
         scopeId: conversationId,
         reconnectIdentity: idempotencyKey,
       }),
-    askNativeSideChat: async (projectId, conversationId, input) => {
-      const body = await buildConversationDispatchCommandRequest({ commandType: conversationDispatchClientCommandTypes.sideChatAsk, scopeKind: 'product_conversation', scopeId: conversationId, value: input });
-      return transport.request(`${conversationPath(projectId, conversationId)}/side-chat`, jsonRequest('POST', body));
-    },
     editNativeQueuedSubmission: async (projectId, conversationId, submissionId, content) => {
       const body = await buildConversationDispatchCommandRequest({ commandType: conversationDispatchClientCommandTypes.queueUpdate, scopeKind: 'submission', scopeId: submissionId, value: { content } });
       return transport.request<NativeQueueSnapshot>(queueSubmissionPath(projectId, conversationId, submissionId), jsonRequest('PATCH', body));

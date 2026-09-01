@@ -4,7 +4,6 @@ import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/G
 import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paperclip';
 import { TargetIcon as Target } from '@phosphor-icons/react/dist/csr/Target';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
-import { animate as animateMotion, motion, useMotionValue, useTransform } from 'framer-motion';
 import { type ConversationContextDraft, type ConversationFileLocation, type ConversationOpenTarget, type TurnChangeFile, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import type { ProjectConfig, ProjectGitAction, ProjectGitActionResponse, ProjectGitWorkbenchSnapshot, ProjectModelServiceTierPreference, ProjectRecord } from '../apiClient.js';
 import { openConversationResourceInMain, openTurnChangeFileInMain } from '../appShellBridge.js';
@@ -22,7 +21,6 @@ import { PlanWorkspace } from './PlanWorkspace.js';
 import { BrowserWorkspace } from './BrowserWorkspace.js';
 import { defaultSourceWorkspaceViewMode, SourceWorkspace, type SourceWorkspaceViewMode } from './SourceWorkspace.js';
 import { TurnDiffWorkspace } from './TurnChanges.js';
-import { SideChatWorkspace } from './SideChatWorkspace.js';
 import { SubagentWorkspace } from './SubagentWorkspace.js';
 import { RuntimeDetails } from './RuntimeDetails.js';
 import { defaultOpenTarget } from './ConversationResources.js';
@@ -161,7 +159,6 @@ export interface SessionWorkspaceActions {
   onStageBrowserComments?: (prepared: ZeusBrowserPreparedSubmission) => void | Promise<void>;
   onRemoveBrowserSubmission?: () => void;
   onContextDraftChange?: (draft: ConversationContextDraft) => void;
-  onAskSideChat?: (selectedText: string, question: string) => Promise<string>;
   onInterrupt?: (turnId: string) => void | Promise<void>;
   onChooseAttachments?: () => void | Promise<void>;
   onChooseStartAttachments?: () => Promise<NativeConversationAttachment[]>;
@@ -616,14 +613,6 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
               await props.client.clearNativeGoal(projectId, conversationId, confirmUnfinished);
               await controller.reconnect();
             },
-            ...(props.client.askNativeSideChat
-              ? {
-                  onAskSideChat: async (selectedText: string, question: string) => {
-                    const result = await props.client.askNativeSideChat!(projectId, conversationId, { selectedText, question });
-                    return result.answer;
-                  },
-                }
-              : {}),
           }
         : {}),
       ...(props.client.loadNativeSubagents && props.client.loadNativeSubagentThread
@@ -1549,8 +1538,7 @@ type SessionContextWorkspace =
   | { kind: 'subagents' }
   | { kind: 'plan'; itemKey: string }
   | { kind: 'source'; preview: ConversationResourcePreview; viewMode: SourceWorkspaceViewMode }
-  | { kind: 'turn_diff'; turnId: string; initialFileId?: string }
-  | { kind: 'side_chat'; selectedText: string };
+  | { kind: 'turn_diff'; turnId: string; initialFileId?: string };
 
 export interface SessionHeaderSnapshot {
   conversationId: string;
@@ -1591,7 +1579,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const [contextWorkspace, setContextWorkspace] = useState<SessionContextWorkspace>({ kind: 'none' });
   const contextWorkspaceRef = useRef<SessionContextWorkspace>(contextWorkspace);
   contextWorkspaceRef.current = contextWorkspace;
-  const [contextMounted, setContextMounted] = useState(false);
   const [quickActionsPersistentHost, setQuickActionsPersistentHost] = useState<HTMLDivElement | null>(null);
   const [contextFullWidth, setContextFullWidth] = useState(false);
   const [browserPaneShare, setBrowserPaneShare] = useState(56);
@@ -1608,10 +1595,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const [computerStopError, setComputerStopError] = useState<unknown>(null);
   const browserSplitRef = useRef<HTMLDivElement | null>(null);
   const browserResizeActiveRef = useRef(false);
-  const browserMotionStopRef = useRef<(() => void) | null>(null);
-  const browserVisibilityProgress = useMotionValue(0);
-  const browserTargetWidth = useMotionValue(0);
-  const browserAnimatedWidth = useTransform<number, number>([browserVisibilityProgress, browserTargetWidth], ([progress, targetWidth]) => Math.max(0, Math.min(1, progress)) * targetWidth);
   const contextOpen = contextWorkspace.kind !== 'none';
   const browserOpen = contextWorkspace.kind === 'browser';
   const planWorkspaceItemKey = contextWorkspace.kind === 'plan' ? contextWorkspace.itemKey : null;
@@ -1719,6 +1702,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       reason: capabilityGoals?.supported && capabilityGoals?.enabled ? 'available' : capabilityGoals?.supported ? 'disabled' : 'unverified',
     } as const);
   const selectedComposerModel = resolveModelCapability(props.capabilities?.models, composerRuntimeSettings?.model ?? props.state?.snapshot?.nextTurnSettings?.model ?? props.state?.providerSettings?.model);
+  const assistantLabel = selectedComposerModel?.sourceName?.trim() || ((selectedComposerModel?.agentKind ?? props.state?.snapshot?.agent?.kind ?? props.conversation?.agent?.kind) === 'pi' ? 'Pi' : 'Codex');
   const goalAvailable = !legacy && goalCapability.supported && goalCapability.enabled && (selectedComposerModel?.agentKind ?? props.state?.snapshot?.agent?.kind ?? props.conversation?.agent?.kind) === 'codex';
   const subagentActivity = useMemo(() => projectSubagentActivity(Object.values(props.state?.items ?? {})), [props.state?.items]);
   const subagentThreadIds = useMemo(() => [...new Set([...subagentActivity.threadIds, ...(props.subagentListSnapshot?.items.map((item) => item.id) ?? [])])].sort(), [props.subagentListSnapshot?.items, subagentActivity.threadIds]);
@@ -1743,14 +1727,10 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     setGoalBusy(false);
     setGoalError(null);
     autoOpenedSubagentSignatureRef.current = '';
-    browserMotionStopRef.current?.();
-    browserMotionStopRef.current = null;
-    browserVisibilityProgress.set(0);
-    setContextMounted(false);
     setBrowserResizing(false);
     setQuickActionsPopoverOpen(false);
     browserResizeActiveRef.current = false;
-  }, [browserVisibilityProgress, escapeController, props.conversation?.id]);
+  }, [escapeController, props.conversation?.id]);
 
   useEffect(() => {
     if (!subagentSignature || subagentSignature === autoOpenedSubagentSignatureRef.current) return;
@@ -1823,47 +1803,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     updateWidth();
     return () => observer.disconnect();
   }, [props.conversation?.id, sessionReady]);
-
-  useLayoutEffect(() => {
-    browserTargetWidth.set(resolvedBrowserTargetWidth);
-  }, [browserTargetWidth, resolvedBrowserTargetWidth]);
-
-  useEffect(() => {
-    browserMotionStopRef.current?.();
-    browserMotionStopRef.current = null;
-    const target = contextOpen ? 1 : 0;
-    if (sessionPrefersReducedMotion()) {
-      browserVisibilityProgress.set(target);
-      setContextMounted(contextOpen);
-      return;
-    }
-    if (!contextOpen && browserVisibilityProgress.get() <= 0) {
-      setContextMounted(false);
-      return;
-    }
-    let cancelled = false;
-    let frame = 0;
-    if (contextOpen) setContextMounted(true);
-    const start = (): void => {
-      const controls = animateMotion(browserVisibilityProgress, target, {
-        type: 'spring',
-        duration: 0.5,
-        bounce: 0.1,
-        onComplete: () => {
-          if (!cancelled && target === 0) setContextMounted(false);
-        },
-      });
-      browserMotionStopRef.current = () => controls.stop();
-    };
-    if (contextOpen) frame = requestAnimationFrame(start);
-    else start();
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(frame);
-      browserMotionStopRef.current?.();
-      browserMotionStopRef.current = null;
-    };
-  }, [browserVisibilityProgress, contextOpen]);
 
   useEffect(() => {
     const bridge = window.zeus;
@@ -2439,7 +2378,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 state={props.state}
                 task={props.task}
                 persistentHost={quickActionsPersistentHost}
-                forceCollapsed={contextOpen || contextMounted}
+                forceCollapsed={contextOpen}
                 suppressed={props.quickActionsSuppressed}
                 capabilities={props.capabilities}
                 serviceTierPreferences={serviceTierPreferences}
@@ -2549,6 +2488,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     state={props.state}
                     controller={props.stateController}
                     language={props.language}
+                    assistantLabel={assistantLabel}
                     historyOnly={props.historyOnly}
                     projectPersistedPlans={props.projectPersistedPlans}
                     localSubmissionRevision={localSubmissionRevision}
@@ -2607,15 +2547,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     onAddResponseAnnotation={contextDraftWritable ? addResponseAnnotation : undefined}
                     onUpdateResponseAnnotation={contextDraftWritable ? updateResponseAnnotation : undefined}
                     onRemoveResponseAnnotation={contextDraftWritable ? removeResponseAnnotation : undefined}
-                    onOpenSideChat={
-                      transcriptInteractionsEnabled && actions.onAskSideChat
-                        ? (selectedText) => {
-                            contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-                            setContextFullWidth(false);
-                            setContextWorkspace({ kind: 'side_chat', selectedText });
-                          }
-                        : undefined
-                    }
                   />
                   {props.suppressComposer || props.historyOnly || !dockedPlan ? null : <SessionPlanProgress plan={dockedPlan} language={props.language} />}
                   {renderBlockingInteraction()}
@@ -2631,8 +2562,14 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     </p>
                   ) : null}
                 </div>
-                {contextMounted && props.conversation ? (
-                  <motion.aside className="session-browser-sidecar session-context-sidecar" aria-label={contextWorkspaceLabel(contextWorkspace, props.language)} style={{ width: browserAnimatedWidth, opacity: browserVisibilityProgress }}>
+                {props.conversation ? (
+                  <aside
+                    className="session-browser-sidecar session-context-sidecar"
+                    aria-label={contextWorkspaceLabel(contextWorkspace, props.language)}
+                    aria-hidden={!contextOpen}
+                    data-context-open={contextOpen}
+                    style={{ width: contextOpen ? resolvedBrowserTargetWidth : 0, opacity: contextOpen ? 1 : 0 }}
+                  >
                     <div
                       className="session-browser-resizer"
                       role="separator"
@@ -2641,7 +2578,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       aria-valuemin={38}
                       aria-valuemax={72}
                       aria-valuenow={browserPaneShare}
-                      tabIndex={contextFullWidth ? -1 : 0}
+                      tabIndex={!contextOpen || contextFullWidth ? -1 : 0}
                       onPointerDown={handleBrowserResizePointerDown}
                       onPointerMove={handleBrowserResizePointerMove}
                       onPointerUp={finishBrowserResize}
@@ -2716,11 +2653,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                           onCommentsChange={contextDraftWritable ? updateCodeComments : undefined}
                         />
                       ) : null}
-                      {contextWorkspace.kind === 'side_chat' && actions.onAskSideChat ? (
-                        <SideChatWorkspace selectedText={contextWorkspace.selectedText} language={props.language} onAsk={(question) => actions.onAskSideChat!(contextWorkspace.selectedText, question)} onClose={closeContextWorkspace} />
-                      ) : null}
                     </div>
-                  </motion.aside>
+                  </aside>
                 ) : null}
               </div>
             </div>
@@ -2782,7 +2716,6 @@ function contextWorkspaceLabel(workspace: SessionContextWorkspace, language: Ses
   if (workspace.kind === 'plan') return zh ? '计划工作区' : 'Plan workspace';
   if (workspace.kind === 'source') return zh ? '源码预览' : 'Source preview';
   if (workspace.kind === 'turn_diff') return zh ? '变更审核' : 'Change review';
-  if (workspace.kind === 'side_chat') return zh ? '侧边聊天' : 'Side chat';
   return zh ? '会话上下文工作区' : 'Conversation context workspace';
 }
 
@@ -3563,8 +3496,4 @@ function resolveBrowserTargetWidth(layoutWidth: number, paneShare: number, expan
   const minimumConversation = Math.min(360, layoutWidth * 0.48);
   const maximumBrowser = Math.max(minimumBrowser, layoutWidth - minimumConversation);
   return Math.min(Math.max((layoutWidth * paneShare) / 100, minimumBrowser), maximumBrowser);
-}
-
-function sessionPrefersReducedMotion(): boolean {
-  return typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
 }

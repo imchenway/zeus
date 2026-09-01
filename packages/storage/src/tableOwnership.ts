@@ -141,8 +141,6 @@ const ownershipGroups = [
       'conversation_switch_operations',
       'conversation_timeline_events',
       'conversation_model_history',
-      'cold_evidence_sources',
-      'cold_evidence_anchors',
       'conversation_process_items',
       'conversation_portable_contexts',
       'conversation_context_checkpoints',

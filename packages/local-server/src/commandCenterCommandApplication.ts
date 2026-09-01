@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { commandEnvelopeSchemaGeneration, CommandEnvelopeError, parseCommandEnvelope, type CommandActor, type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
 import { CommandDeliveryRepository, CommandDeliveryStoreError, type CommandDeliveryOutcome, type CommandDeliveryReceiptRecord, type CommandOutboxRecord, type ZeusDatabase } from '@zeus/storage';
+import { createCommandValidation } from './commandApplicationPrimitives.js';
 
 export const commandCenterCommandTypes = {
   definitionCreate: 'command_center.definition.create',
@@ -62,6 +63,8 @@ export class CommandCenterCommandApplicationError extends Error {
     super(message);
   }
 }
+
+const { requireRecord, assertExactKeys, boundedIdentity, validSha256 } = createCommandValidation(invalidCommand);
 
 /**
  * Command Center 的统一命令边界：输入正文与 Envelope 分离，Core mutation 与 accepted
@@ -304,37 +307,6 @@ function readCommandCenterResult<TResult>(receipt: CommandDeliveryReceiptRecord)
     if (error instanceof CommandCenterCommandApplicationError) throw error;
     throw missingResult(receipt.commandId);
   }
-}
-
-function requireRecord(value: unknown, field: string): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalidCommand(`${field} must be an object.`);
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) throw invalidCommand(`${field} must be a plain object.`);
-  return value as Record<string, unknown>;
-}
-
-function assertExactKeys(value: Record<string, unknown>, expected: readonly string[], commandType: string): void {
-  const actual = Object.keys(value).sort();
-  const normalizedExpected = [...expected].sort();
-  if (actual.length === normalizedExpected.length && actual.every((key, index) => key === normalizedExpected[index])) return;
-  throw invalidCommand(`${commandType} must contain exactly: ${normalizedExpected.join(', ')}.`);
-}
-
-function boundedIdentity(value: unknown, field: string): string {
-  if (typeof value !== 'string' || value.trim() !== value || value.length < 1 || value.length > 512 || Array.from(value).some(isControlCharacter)) {
-    throw invalidCommand(`${field} is invalid.`);
-  }
-  return value;
-}
-
-function isControlCharacter(character: string): boolean {
-  const codePoint = character.codePointAt(0) ?? 0;
-  return codePoint <= 31 || codePoint === 127;
-}
-
-function validSha256(value: unknown, field: string): string {
-  if (typeof value !== 'string' || !/^[0-9a-f]{64}$/u.test(value)) throw invalidCommand(`${field} must be a lowercase SHA-256.`);
-  return value;
 }
 
 function invalidCommand(message: string): CommandCenterCommandApplicationError {

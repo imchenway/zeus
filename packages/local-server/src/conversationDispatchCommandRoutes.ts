@@ -28,11 +28,6 @@ interface QueueReorderInput {
   orderedSubmissionIds?: unknown;
 }
 
-interface SideChatInput {
-  selectedText?: unknown;
-  question?: unknown;
-}
-
 interface PlanImplementationInput {
   action?: unknown;
   feedback?: unknown;
@@ -51,7 +46,6 @@ export interface ConversationDispatchCommandRouteOperations {
     operationIdentity: string;
     providerWriteLifecycle: { markPrepared(resourceId: string): Promise<void>; markRpcStarted(resourceId: string): void };
   }): Promise<RouteResponse>;
-  sideChat(input: { params: ConversationParams; selectedText: string; question: string; operationIdentity: string }): Promise<unknown>;
   queueUpdate(input: { params: SubmissionParams; content: string }): unknown;
   queueRetry(input: { params: SubmissionParams }): unknown;
   prepareQueueReroute(input: { params: SubmissionParams; settings: QueueRerouteInput }): Promise<unknown>;
@@ -132,27 +126,6 @@ export function registerConversationDispatchCommandRoutes(options: {
       });
       operations.afterMessageAccepted({ params: request.params, message: parsed.input, result: executed.result, replayed: executed.replayed });
       return reply.code(executed.result.statusCode).send(executed.result.body);
-    } catch (error) {
-      return sendRouteError(reply, error);
-    }
-  });
-
-  server.post('/api/projects/:projectId/conversations/:conversationId/side-chat', async (request: FastifyRequest<{ Params: ConversationParams; Body: ConversationDispatchMutationRequest<SideChatInput> }>, reply) => {
-    try {
-      const parsed = parseConversationCommand(request, conversationDispatchCommandTypes.sideChatAsk);
-      assertExactInputKeys(parsed.input, ['question', 'selectedText'], parsed.command.commandType);
-      const selectedText = requiredString(parsed.input.selectedText, 'selectedText').trim();
-      const question = requiredString(parsed.input.question, 'question').trim();
-      if (!selectedText || selectedText.length > 20_000 || !question || question.length > 100_000) throw routeError('ZEUS_SIDE_CHAT_INPUT_INVALID', 'Selected text and question must stay within the supported size.', 400);
-      const executed = await application.executeExternal({
-        parsed,
-        destinationId: 'conversation-side-chat-provider',
-        resourceId: request.params.conversationId,
-        externalOperationId: `side-chat:${parsed.operationIdentity}`,
-        invoke: () => operations.sideChat({ params: request.params, selectedText, question, operationIdentity: parsed.operationIdentity }),
-        isExplicitRejection: isExplicitRouteRejection,
-      });
-      return executed.result;
     } catch (error) {
       return sendRouteError(reply, error);
     }

@@ -2,9 +2,9 @@
 
 ## 结论与实施状态
 
-P5 已建立三个彼此独立的核心能力：Zeus 可治理的稳定长期记忆、确定性的 Context Compiler，以及 `/docs` 优先且不复制原文的冷证据目录。它们遵守 Provider 与 Zeus 双层事实源：Provider 继续拥有原生 session、turn、item 和 raw rollout，Zeus 只保存业务事实、受控长期记忆与可重建冷索引；本实现没有新增第三份完整会话 JSONL。
+P5 当前保留三个清晰边界：Zeus 可治理的稳定长期记忆、确定性的 Context Compiler，以及只读取项目 `/docs` 当前主任务文档的有界目录。Provider 继续拥有原生 session、turn、item 和 raw rollout；Zeus 不再保存 Provider rollout 的派生冷索引，也没有第三份完整会话 JSONL。
 
-当前完成的是存储、领域规则、文件边界、纯编译器、受本机鉴权保护的 Memory 管理 API、桌面端真实“设置 → 长期记忆”入口，以及 Codex/Pi submission 派发接线。UI 以独立 Memory client/query store/controller 接入 `/api/memory*`，支持 global/project keyset 分页、显式新增、supersede 修正和 tombstone 停用/删除，并展示 review_due、superseded、tombstone、来源、确认等级与置信度。三个写入口直接接收统一 Command Envelope，并把业务 mutation 与 accepted receipt 放进同一 SQLite 耐久事务；Context preview 仍是明确的只读端口。每次真实 Provider 写出前由 `ContextDispatchApplicationService` 编译并审计上下文指纹，Codex 使用 application/untrusted additional context，Pi 使用 SDK application/untrusted context。2026-08-22 已在独立 `Zeus Test` 根中使用用户授权的正式 1xm 配置与 Keychain 凭据副本完成真实 Pi 回复及原生 JSONL 冷索引；正式数据库和正式 Provider Home 没有被迁移、改写或索引。
+当前完成的是存储、领域规则、文件边界、纯编译器、受本机鉴权保护的 Memory 管理 API、桌面端真实“设置 → 长期记忆”入口，以及 Codex/Pi submission 派发接线。UI 以独立 Memory client/query store/controller 接入 `/api/memory*`，支持 global/project keyset 分页、显式新增、supersede 修正和 tombstone 停用/删除，并展示 review_due、superseded、tombstone、来源、确认等级与置信度。三个写入口直接接收统一 Command Envelope，并把业务 mutation 与 accepted receipt 放进同一 SQLite 耐久事务；Context preview 仍是明确的只读端口。每次真实 Provider 写出前由 `ContextDispatchApplicationService` 编译并审计上下文指纹，Codex 使用 application/untrusted additional context，Pi 使用 SDK application/untrusted context。2026-09-01 起，旧 `cold_evidence_sources/anchors` 运行时代码和 schema 所有权已移除；既有数据库中的两表不主动删除，避免发布迁移误伤历史数据。
 
 ## 所有权与事实优先级
 
@@ -13,10 +13,9 @@ P5 已建立三个彼此独立的核心能力：Zeus 可治理的稳定长期记
 | `/docs` 当前主任务文档 | 当前项目/任务 | `Doc` | 是，受任务文档预算限制 | 报告 `primary_task_document_missing/excluded`；不用 Memory 或 rollout 猜测 |
 | `long_term_memories` | Zeus Memory 治理层 | `M` | 仅未过核对期且确定选中的 head | 到达 `review_after` 后保留但不注入；项目 scope 覆盖全局 scope |
 | Zeus 已证实模型历史/便携上下文 | 会话编排 | `E/D` | 按会话历史预算，以不可信载荷交给 Adapter | 水位不完整时只使用已证实边界，不伪装连续 |
-| Provider raw rollout/history | Provider | `P` | 否 | 只有显式冷查才按锚点读取；索引摘要不能证明接纳或完成 |
-| `cold_evidence_sources/anchors` | Zeus 冷索引器 | `D` | 否，除非调用方显式允许且分配预算 | 原文件仍在时重建；hash 不符则拒绝读取并要求重建 |
+| Provider raw rollout/history | Provider | `P` | 否 | 由 Provider 自身管理；Zeus 不扫描、不派生索引，也不能用其摘要证明接纳或完成 |
 
-固定选择优先级为：安全边界、当前主任务文档、稳定工作流/偏好、项目代码、已证实会话历史、运行证据、显式冷证据。Provider 原生历史、Zeus 便携上下文和派生冷证据一律进入 `untrusted` 分区，不会因为片段自称“安全规则”而升格为应用级指令。
+固定选择优先级为：安全边界、当前主任务文档、稳定工作流/偏好、项目代码、已证实会话历史、运行证据。Provider 原生历史和 Zeus 便携上下文一律进入 `untrusted` 分区，不会因为片段自称“安全规则”而升格为应用级指令。
 
 ## ZARCH-050：稳定长期记忆
 
@@ -79,13 +78,12 @@ Renderer 的 `features/memory` 是独立 bounded context：`memoryApiClient.ts` 
 | 项目代码 | 8,192 | `untrusted` |
 | 会话历史 | 12,288 | `untrusted` |
 | 运行证据 | 2,048 | `untrusted` |
-| 冷证据 | 0 | `untrusted`；必须显式开启并单独给预算 |
 
-编译器会排除 scope/task/Provider 不匹配、review due、stale、missing、未请求冷证据、外部状态确认不足和 Provider 能力不支持的片段。安全边界不能完整放入预算或 Provider 不支持应用级上下文时，编译器直接失败，不能降级成不可信历史后继续执行。
+编译器会排除 scope/task/Provider 不匹配、review due、stale、missing、外部状态确认不足和 Provider 能力不支持的片段。安全边界不能完整放入预算或 Provider 不支持应用级上下文时，编译器直接失败，不能降级成不可信历史后继续执行。
 
 ### 可解释输出
 
-每个纳入片段保留 category、authority、`zeus_current/provider_native/zeus_portable/derived_cold` provenance、项目/任务/Provider/原生会话身份、source ref、source version、内容摘要、请求/纳入 token 和截断原因。每个排除片段也产生 decision，说明 duplicate、预算耗尽、scope 不匹配、核对期到达或能力不支持等原因。
+每个纳入片段保留 category、authority、`zeus_current/provider_native/zeus_portable` provenance、项目/任务/Provider/原生会话身份、source ref、source version、内容摘要、请求/纳入 token 和截断原因。每个排除片段也产生 decision，说明 duplicate、预算耗尽、scope 不匹配、核对期到达或能力不支持等原因。
 
 `renderCompiledContext` 分别输出 manifest、application 和 untrusted 三段。Adapter 后续必须将三段映射到 Provider 正式协议，不得把 untrusted 内容拼进 system/application 指令。
 
@@ -97,7 +95,7 @@ Provider 原始证据；若 Codex CLI `0.149.0` 缺少这些字段，只允许�
 CLI 版本和完整模型 ID 双键匹配并保留来源，不做家族推断；任一键变化就恢复 `ZEUS_CONTEXT_MODEL_WINDOW_UNAVAILABLE`
 。这解决的是模型总窗口安全边界，不会把字符估算升级为精确 tokenizer。
 
-## ZARCH-052：`/docs` 与冷证据
+## ZARCH-052：`/docs` 当前主任务文档
 
 ### `/docs` 主文档
 
@@ -105,35 +103,14 @@ CLI 版本和完整模型 ID 双键匹配并保留来源，不做家族推断；
 
 目录项数超过调用方上限时会停止枚举，不会因已读部分看似匹配就猜一个主文档，而是返回 `truncatedDirectory=true` 且不选择 primary。文档正文使用 UTF-8 字节 cursor 有界分页；读取前后校验 inode、大小和修改时间，变化时要求重新定位。主文档只把当前页交给编译器，并显式记录 `source_page_limit`，不会把“读到第一页”伪装成完整读取。
 
-### 冷索引 schema
-
-迁移 `20260821_0521_cold_evidence_metadata_index` 创建：
-
-- `cold_evidence_sources`：来源 kind、受控 root ID、POSIX 相对路径、项目/任务、Provider/原生 session、摘要、ready/partial/stale/missing、版本、已索引字节、原文件长度/时间、前缀 hash、事件时间范围和锚点数。
-- `cold_evidence_anchors`：source、ordinal、line number、byte offset/length、line hash、event kind、turn ID、event sequence 和发生时间。
-
-两张表都不保存原始 JSONL 正文。原始文件仍由 Provider 或运行证据 owner 持有，索引可以在原始来源存在时重建。Provider rollout/history 索引必须携带 provider ID；任务文档索引必须携带 project ID 和 task code。
-
-### 索引与精确读取
-
-JSONL 索引只能由 Provider/运行 owner 对一个明确的受控相对路径显式触发；构造目录、普通启动和 Context Compiler 都不会遍历 Provider sessions。索引采用流式读取，默认最多 512 MiB、单行最多 16 MiB、单来源最多 250,000 个锚点；到达字节或锚点上限时保存完整行边界前的 `partial` 索引。
-
-正式结构兼容不能只假设 Codex rollout。Codex 使用 `session_meta/turn_context`，Pi SDK 原生文件首行使用 `type=session`、正文使用 `type=message`。索引器会从两类首行提取并核对 native session ID；Pi 的 user/assistant message 分别形成锚点，保证真实回复可被精确分页读取，而不是只锚定首行后误称文件已可查询。
-
-同一 source ID 一旦绑定非空的项目、任务、Provider 或原生 session 身份，后续重索引只能补充此前为空的身份，不能静默清空或换绑；文件在索引期间被替换、截短或跨 inode 变化时也拒绝写入新索引。
-
-精确读取先按 project/task/provider/native session 定位有限 source 页，再按 source ID 加 turn、event sequence 和 ordinal cursor 查询锚点。读取原文件的精确字节范围并核对逐行 SHA-256；授权回调拒绝、受控根 owner 不匹配、符号链接/越界、stale/missing 或 hash 变化都会失败。冷查不会退化成目录全文搜索。
-
-不同来源类型有不同保留所有权：任务文档随项目/Git，Provider rollout/history 由 Provider API 管理，运行证据由有界运行保留策略管理。当前只把差异固化为可执行 policy 元数据和 owner 边界，不自动物理删除任何原始来源。
-
-优点是多年历史不会增加普通启动和默认 prompt 成本，仍可按原生身份精确回溯。缺点是首次显式索引仍需对单个来源做线性流式读取；原文件缺失时索引不能替代事实，hash 变化后必须重建。
+Provider rollout/history 仍由 Provider 管理；Zeus 不再复制目录、建立派生索引或提供冷查 API。收益是删除了一套从未形成稳定产品入口的第二历史检索系统，普通启动、迁移与恢复更简单；缺点是 Zeus 不再提供跨 Provider 原生文件的统一离线检索，需要时必须通过 Provider 自身能力或一个重新立项、具备真实用户入口的方案实现。
 
 ## 迁移与公开边界
 
 - Storage 启动迁移已登记两项 schema，Repository 从 `@zeus/storage` 公开。
 - Context Compiler 和 Context Source Catalog 通过 `@zeus/local-server/context-compiler`、`@zeus/local-server/context-source-catalog` 子路径公开，避免继续扩大 `local-server/src/index.ts` 的跨上下文表面积。
-- `MemoryContextApplicationService` 与路由通过 `@zeus/local-server/memory-context-api` 公开；Local Server 入口只注入 Memory/Cold Evidence Repository、统一 Command Delivery Repository、项目定位与时钟。Memory 写入由 `core_application` 耐久事务直接提交，不再从 Application Service 回调异步 `db.save()`。preview 目前只覆盖主任务文档和 Memory，并在响应中列明未接入来源。
-- 产品实现不会自行读取、导入、改写或索引当前正式 `~/.zeus` Memory、Provider Home、正式数据库和正式 rollout。2026-08-22 验收只在用户明确授权后只读取得正式 1xm 配置与 Keychain API Key，并临时写入按独立数据根派生的 Test Keychain 身份；冷索引对象仅为 Test 新建 Pi 会话文件。验收完成后 Test 凭据副本已删除，正式 Keychain 原件保持存在。
+- `MemoryContextApplicationService` 与路由通过 `@zeus/local-server/memory-context-api` 公开；Local Server 入口只注入 Memory Repository、统一 Command Delivery Repository、项目定位与时钟。Memory 写入由 `core_application` 耐久事务直接提交，不再从 Application Service 回调异步 `db.save()`。preview 目前只覆盖主任务文档和 Memory，并在响应中列明未接入来源。
+- 产品实现不会自行读取、导入、改写或索引当前正式 `~/.zeus` Memory、Provider Home、正式数据库和正式 rollout。2026-08-22 曾在独立 Test 根验证 Pi 原生文件索引；该实验能力现已退役，正式数据库、正式 Provider Home 与正式 Keychain 原件均未被改写。
 
 ## 后续接入门禁
 
@@ -141,18 +118,16 @@ JSONL 索引只能由 Provider/运行 owner 对一个明确的受控相对路径
 
 1. 来源扩展：在当前主任务文档和 Memory 基础上，只有在权威与预算明确后才接入已证实模型历史、代码和运行证据；不能为提高召回而自动扫描 rollout。
 2. 精确 token 预检：Provider 未来提供正式同步 tokenizer/count RPC 时再接入；接入前继续保留 `unavailable` 与保守上界，禁止把估算改名为 exact。
-3. 冷索引调度：仅在明确任务/会话或用户查询触发，增加容量、重建、stale 标记和保留期可见性；禁止启动时全量扫描。
-4. 剩余真实运行验收：真实 Pi 与 Codex 请求、终态、原生文件以及 Pi 冷索引已通过；仍需在 Computer Use 宿主恢复强制确认回调后补齐 Memory 可见性和冷证据产品交互的 GUI 证据，不接触正式应用与正式 Provider Home。
+3. 剩余真实运行验收：真实 Pi 与 Codex 请求、终态、原生文件已通过；仍需补齐 Memory 可见性的 GUI 证据，不接触正式应用与正式 Provider Home。
 
 ## 代码证据
 
 - 长期记忆：`packages/storage/src/longTermMemoryStore.ts`。
-- 冷证据元数据与 keyset 分页：`packages/storage/src/coldEvidenceStore.ts`。
 - Context Compiler：`packages/local-server/src/contextCompiler.ts`。
 - `/docs` 与精确原文读取边界：`packages/local-server/src/contextSourceCatalog.ts`。
 - Memory 管理与 Context preview Application Service：`packages/local-server/src/memoryContextApi.ts`。
 - Memory 桌面管理：`apps/desktop/src/renderer/features/memory/`；真实设置入口位于 `features/workspace/WorkspaceView.tsx`。
 - Memory Command 行为证据：`scripts/verify-memory-command-behavior.ts`；副作用结构清单：`scripts/audit-command-side-effect-entries.mjs`。
-- 真实 Pi Provider 文件证据：`scripts/probe-writable-test-provider-sessions.ts` 与 `scripts/probe-writable-test-cold-evidence.ts`。
+- 真实 Pi Provider 文件证据：`scripts/probe-writable-test-provider-sessions.ts`。
 - 双层事实源 ADR：`docs/adr/0002-provider-and-zeus-dual-authority.md`。
 - 禁止第三份完整会话 JSONL ADR：`docs/adr/0003-no-third-zeus-session-jsonl.md`。
