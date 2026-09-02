@@ -19,6 +19,10 @@ export function mustWaitForInProcessRuntimeTurn(runtimeKind: 'codex' | 'pi', inP
   return runtimeKind === 'pi' || inProgressTurns.some((turn) => turn.agentKind === 'pi');
 }
 
+export function shouldRequestConversationQueueDispatch(type: string, payload: Readonly<Record<string, unknown>>): boolean {
+  return type === 'conversation.turn.completed' || (type === 'conversation.queue.changed' && payload.queueDispatchRequested !== false);
+}
+
 /**
  * 会话队首派发的进程内单 owner 调度器。
  *

@@ -1,7 +1,13 @@
 import { type ConversationRepository, type ZeusConversationSubmissionRecord } from '@zeus/storage';
 
 /** Provider 回显前先用 Zeus 已耐久接纳的 submission 投影用户消息。 */
-export function projectLocallyAcceptedUserMessage(input: { conversations: ConversationRepository; submission: ZeusConversationSubmissionRecord; broadcast(event: string, payload: Record<string, unknown>): void }): void {
+export function projectLocallyAcceptedUserMessage(input: {
+  conversations: ConversationRepository;
+  submission: ZeusConversationSubmissionRecord;
+  broadcast(event: string, payload: Record<string, unknown>): void;
+  /** 当前调用已持有直接派发 owner 时，事件只用于刷新投影。 */
+  requestQueueDispatch?: boolean;
+}): void {
   const submissionInput = parseRecord(input.submission.inputJson);
   if (submissionInput.internalOperation === true) return;
   const displayText = typeof submissionInput.displayText === 'string' ? submissionInput.displayText.trim() : '';
@@ -32,7 +38,11 @@ export function projectLocallyAcceptedUserMessage(input: { conversations: Conver
     createdAt: input.submission.createdAt,
     clientMessageId: input.submission.clientMessageId,
   });
-  input.broadcast('conversation.queue.changed', { conversationId: input.submission.conversationId, submissionId: input.submission.id });
+  input.broadcast('conversation.queue.changed', {
+    conversationId: input.submission.conversationId,
+    submissionId: input.submission.id,
+    ...(input.requestQueueDispatch === false ? { queueDispatchRequested: false } : {}),
+  });
 }
 
 function parseRecord(value: string): Record<string, unknown> {
