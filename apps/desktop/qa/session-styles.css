@@ -171,6 +171,21 @@
   background: rgb(236 238 241);
 }
 
+.macos-ai-app.zeus-shell.qa-plan-preview-page {
+  block-size: 100vh;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  min-block-size: 0;
+  min-inline-size: 960px;
+  padding: 20px;
+}
+
+.qa-plan-preview-workspace {
+  display: flex;
+  min-block-size: 0;
+  overflow: hidden;
+}
+
 .qa-motion-theme {
   background: var(--session-canvas);
   border: 1px solid var(--session-line);

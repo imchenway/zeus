@@ -40,7 +40,7 @@ export interface ConversationTranscriptProps {
   /** 从历史入口打开后持续补齐已持久化计划；首次续聊不能让旧计划从时间线消失。 */
   projectPersistedPlans?: boolean;
   onEditUserItem?: (item: NativeSessionItemBuffer, content: string) => void | Promise<void>;
-  openPlanItemKey?: string | null;
+  openPlanItem?: NativeSessionItemBuffer | null;
   onOpenPlan?: (item: NativeSessionItemBuffer) => void;
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
@@ -1330,7 +1330,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
   if (row.item.type === 'plan') {
     return (
       <TranscriptV2ContentBoundary item={row.item} onLoadContent={options.props.onLoadV2Content}>
-        <PlanSummary item={row.item} language={options.props.language} motionActive={row.item.key === options.motionFocus?.itemKey} panelOpen={options.props.openPlanItemKey === row.item.key} onOpenPanel={options.props.onOpenPlan} />
+        <PlanSummary item={row.item} language={options.props.language} motionActive={row.item.key === options.motionFocus?.itemKey} panelOpen={isSamePlanItem(options.props.openPlanItem, row.item)} onOpenPanel={options.props.onOpenPlan} />
       </TranscriptV2ContentBoundary>
     );
   }
@@ -1414,6 +1414,14 @@ function TranscriptV2ContentBoundary(props: { item: NativeSessionItemBuffer; onL
   }, [canLoad, handle, props.onLoadContent, truncated]);
 
   return props.children;
+}
+
+function isSamePlanItem(openItem: NativeSessionItemBuffer | null | undefined, item: NativeSessionItemBuffer): boolean {
+  if (!openItem) return false;
+  if (openItem.key === item.key) return true;
+  if (openItem.providerItemId && item.providerItemId && openItem.providerItemId === item.providerItemId) return true;
+  if (openItem.localItemId && item.localItemId && openItem.localItemId === item.localItemId) return true;
+  return openItem.itemId === item.itemId && openItem.turnId === item.turnId;
 }
 
 function TranscriptActiveStatus(props: { language: SessionUiLanguage; kind: 'starting' | 'thinking' }): ReactNode {
