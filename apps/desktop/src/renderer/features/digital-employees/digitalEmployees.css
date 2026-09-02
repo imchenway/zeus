@@ -1424,6 +1424,17 @@
   resize: vertical;
 }
 
+.macos-ai-app .task-work-run-supplemental {
+  display: grid;
+  gap: 6px;
+  color: var(--zeus-control-muted-text);
+  font-size: 11px;
+}
+
+.macos-ai-app .task-work-run-supplemental small {
+  line-height: 1.45;
+}
+
 .macos-ai-app .task-work-context-details,
 .macos-ai-app .task-work-command-run-config {
   display: grid;

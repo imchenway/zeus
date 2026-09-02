@@ -320,6 +320,7 @@ export interface TaskWorkManagementProjection {
 
 export interface TaskWorkPreviewSelection {
   employeeId: string;
+  supplementalInfo?: string | null;
   modelOverride?: string | null;
   reasoningEffort?: string | null;
   serviceTier?: string | null;
