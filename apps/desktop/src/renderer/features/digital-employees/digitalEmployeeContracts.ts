@@ -1,5 +1,5 @@
 import type { TaskPushMessageLayout } from '@zeus/shared';
-import type { CodexTaskPushModelCapability } from '../../session/sessionTypes.js';
+import type { CodexTaskPushModelCapability, TaskPushSupplementalAttachmentInput } from '../../session/sessionTypes.js';
 import type { TaskWorkflowSnapshot } from '../tasks/taskContracts.js';
 
 export type DigitalEmployeeAgentKind = 'codex' | 'pi';
@@ -321,6 +321,7 @@ export interface TaskWorkManagementProjection {
 export interface TaskWorkPreviewSelection {
   employeeId: string;
   supplementalInfo?: string | null;
+  supplementalAttachments?: TaskPushSupplementalAttachmentInput[];
   modelOverride?: string | null;
   reasoningEffort?: string | null;
   serviceTier?: string | null;

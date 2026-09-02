@@ -2,7 +2,16 @@ import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { lstat, readdir, readFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve } from 'node:path';
-import { buildTaskPushLayout, type CommandDefinition, type CommandEnvelope, commandEnvelopeSchemaGeneration, commandParameterValueMatchesType, splitZeusSkillIds, type TaskPushMessageLayout } from '@zeus/shared';
+import {
+  buildTaskPushLayout,
+  type CommandDefinition,
+  type CommandEnvelope,
+  commandEnvelopeSchemaGeneration,
+  commandParameterValueMatchesType,
+  splitZeusSkillIds,
+  type TaskPushMessageLayout,
+  type TaskPushSupplementalAttachment,
+} from '@zeus/shared';
 import {
   type AgentEntrypointV2,
   ArtifactStore,
@@ -52,6 +61,7 @@ const taskWorkSkillArtifactGeneration = '2026-08-29-task-work-skill-snapshot-v1'
 export interface TaskWorkPreviewSelection {
   employeeId: string;
   supplementalInfo?: string | null;
+  supplementalAttachments?: TaskWorkSupplementalAttachmentInput[];
   modelOverride?: string | null;
   reasoningEffort?: string | null;
   serviceTier?: string | null;
@@ -62,6 +72,16 @@ export interface TaskWorkPreviewSelection {
   selectedDeliverableIds?: string[];
   workspace?: TaskWorkWorkspaceChoice;
 }
+
+type TaskWorkSupplementalAttachmentInput = {
+  taskPushAttachmentKey: string;
+  name: string;
+  mime: string;
+  size: number;
+  kind: 'image' | 'file' | 'directory' | 'pasted_text';
+  localPath?: string;
+  uploadRef?: string;
+};
 
 export type TaskWorkWorkspaceChoice = { mode: 'create' } | { mode: 'existing'; environmentId: string } | { mode: 'local'; branchName: string };
 
@@ -163,6 +183,7 @@ interface TaskWorkManagementOptions {
   skills: ZeusSkillService | null;
   plugins: Pick<ZeusPluginService, 'listSkills'> | null;
   conversationCapabilities: ConversationCapabilityQueryApplication;
+  normalizeTaskPushSupplementalAttachments(value: unknown, projectLocalPath: string): { promptAttachments: TaskPushSupplementalAttachment[] };
   executeTaskConversationIdempotent(project: ZeusProjectRecord, task: ZeusTaskRecord, body: Record<string, unknown>, idempotencyKey: string): Promise<{ statusCode: number; body: unknown }>;
   isTaskTerminal(task: ZeusTaskRecord): boolean;
   taskEvents: TaskEventRepository;
@@ -438,12 +459,21 @@ async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTask
   let authority: Record<string, unknown> = employee.entrypoint?.kind === 'agent' ? { ...employee.entrypoint.authorityPolicy } : {};
   let workspace: TaskWorkWorkspaceSnapshot | null = null;
   let promptPreview: TaskPushMessageLayout | null = null;
+  const project = options.projects.getById(task.projectId);
+  if (!project) throw new TaskWorkStoreError('ZEUS_PROJECT_NOT_FOUND', '项目不存在。', 404);
+  const supplementalAttachments = resolveTaskWorkSupplementalAttachments(options, selection.supplementalAttachments, project.localPath);
 
   if (employee.entrypoint?.kind === 'agent') {
     const agentEntrypoint = employee.entrypoint;
     const workMode = selection.workMode ?? employee.workMode;
     const prompt = selection.promptOverride ?? agentEntrypoint.prompt;
-    entrypoint = { ...sanitizeEntrypoint(agentEntrypoint), prompt, workMode, supplementalInfo: selection.supplementalInfo };
+    entrypoint = {
+      ...sanitizeEntrypoint(agentEntrypoint),
+      prompt,
+      workMode,
+      supplementalInfo: selection.supplementalInfo,
+      ...(selection.supplementalAttachments ? { supplementalAttachments: selection.supplementalAttachments } : {}),
+    };
     authority = resolveRunAuthority(agentEntrypoint, selection.permissionMode);
     const capability = await options.conversationCapabilities.readTaskPush(task.projectId, task.id);
     model = resolveAgentModel(employee, agentEntrypoint, selection, capability, blockers);
@@ -482,7 +512,7 @@ async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTask
       context,
       skills: skills.map((skill) => (skill.source === 'skill' ? { ...skill, snapshotPath: '（运行创建后冻结）' } : skill)),
     });
-    promptPreview = buildTaskWorkPromptPreview(task, supplementalInfo);
+    promptPreview = buildTaskWorkPromptPreview(task, supplementalInfo, supplementalAttachments);
   }
 
   const digestSource = {
@@ -675,6 +705,7 @@ async function dispatchAgent(options: TaskWorkManagementOptions, run: TaskWorkRu
     }
   }
   const supplementalInfo = await buildAgentSupplementalInfo(options, run);
+  const supplementalAttachments = Array.isArray(run.entrypointSnapshot.supplementalAttachments) ? run.entrypointSnapshot.supplementalAttachments : [];
   const body: Record<string, unknown> = {
     mode: 'create',
     model: model.id,
@@ -685,6 +716,7 @@ async function dispatchAgent(options: TaskWorkManagementOptions, run: TaskWorkRu
     source: 'task_push',
     workMode: run.entrypointSnapshot.workMode === 'plan' ? 'plan' : 'default',
     supplementalInfo,
+    ...(supplementalAttachments.length > 0 ? { supplementalAttachments } : {}),
     workspace,
     ...(pluginReferences.length > 0 ? { pluginReferences } : {}),
   };
@@ -1504,7 +1536,7 @@ async function buildAgentSupplementalInfoSnapshot(options: TaskWorkManagementOpt
     .join('\n\n');
 }
 
-function buildTaskWorkPromptPreview(task: ZeusTaskRecord, supplementalInfo: string): TaskPushMessageLayout {
+function buildTaskWorkPromptPreview(task: ZeusTaskRecord, supplementalInfo: string, supplementalAttachments: TaskPushSupplementalAttachment[]): TaskPushMessageLayout {
   return buildTaskPushLayout({
     taskId: task.id,
     taskCode: task.taskCode,
@@ -1518,6 +1550,7 @@ function buildTaskWorkPromptPreview(task: ZeusTaskRecord, supplementalInfo: stri
     optimizationExpectedOutcome: task.optimizationExpectedOutcome,
     tags: task.tags,
     supplementalInfo,
+    supplementalAttachments,
   });
 }
 
@@ -1536,6 +1569,7 @@ function normalizeSelection(value: unknown): TaskWorkPreviewSelection {
   return {
     employeeId: requiredText(value.employeeId, '请选择数字员工。', 256),
     supplementalInfo: optionalText(value.supplementalInfo, 20_000),
+    supplementalAttachments: optionalSupplementalAttachments(value.supplementalAttachments),
     modelOverride: optionalText(value.modelOverride, 256),
     reasoningEffort: optionalText(value.reasoningEffort, 64),
     serviceTier: value.serviceTier === null ? null : optionalText(value.serviceTier, 64),
@@ -1546,6 +1580,20 @@ function normalizeSelection(value: unknown): TaskWorkPreviewSelection {
     selectedDeliverableIds: Array.isArray(value.selectedDeliverableIds) ? normalizeIdentities(value.selectedDeliverableIds) : undefined,
     workspace: normalizeTaskWorkWorkspaceChoice(value.workspace),
   };
+}
+
+function optionalSupplementalAttachments(value: unknown): TaskWorkSupplementalAttachmentInput[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > 100) throw new TaskWorkStoreError('ZEUS_TASK_WORK_INPUT_INVALID', '补充附件必须是不超过 100 项的数组。', 400);
+  return structuredClone(value) as TaskWorkSupplementalAttachmentInput[];
+}
+
+function resolveTaskWorkSupplementalAttachments(options: TaskWorkManagementOptions, value: TaskWorkSupplementalAttachmentInput[] | undefined, projectLocalPath: string): TaskPushSupplementalAttachment[] {
+  try {
+    return options.normalizeTaskPushSupplementalAttachments(value, projectLocalPath).promptAttachments;
+  } catch (error) {
+    throw new TaskWorkStoreError('ZEUS_TASK_WORK_INPUT_INVALID', serializeError(error).message, 400);
+  }
 }
 
 function normalizeTaskWorkWorkspaceChoice(value: unknown): TaskWorkWorkspaceChoice | undefined {
