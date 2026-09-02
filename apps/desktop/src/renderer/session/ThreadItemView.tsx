@@ -60,6 +60,7 @@ const copy = {
     attachments: '附件',
     details: '技术详情',
     queued: '排队中',
+    restoringConversation: '正在恢复对话',
     conflictPreparing: '正在准备冲突现场',
     conflictPreparationFailed: '冲突现场准备失败',
     deliveryPaused: '发送已暂停',
@@ -107,6 +108,7 @@ const copy = {
     attachments: 'Attachments',
     details: 'Technical details',
     queued: 'Queued',
+    restoringConversation: 'Restoring conversation',
     conflictPreparing: 'Preparing conflict workspace',
     conflictPreparationFailed: 'Conflict workspace preparation failed',
     deliveryPaused: 'Sending paused',
@@ -310,7 +312,8 @@ function optimisticDeliveryStatus(item: NativeSessionItemBuffer, labels: (typeof
     if (pausedReason === 'provider_stop_pending') return labels.providerStopPending;
     return labels.deliveryPaused;
   }
-  return item.status === 'queued' ? labels.queued : null;
+  if (item.status !== 'queued') return null;
+  return item.payload.queuedUntilHydrated === true ? labels.restoringConversation : labels.queued;
 }
 
 function recoveredRequestAnswers(value: unknown): Record<string, string[]> {

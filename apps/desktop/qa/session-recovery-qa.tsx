@@ -332,6 +332,7 @@ export function Zeus0388QaApp() {
   const [historyTransitions, setHistoryTransitions] = useState(0);
   const [settingsChanges, setSettingsChanges] = useState(0);
   const [historyOnly, setHistoryOnly] = useState(true);
+  const [restoringMessage, setRestoringMessage] = useState<string | null>(null);
   const [guard, setGuard] = useState<'writable' | 'failed' | 'other-failed' | 'archived' | 'explicit-readonly' | 'nonresumable' | 'processing' | 'task-ended' | 'recovered'>('writable');
   const controller = useMemo(
     () =>
@@ -378,7 +379,7 @@ export function Zeus0388QaApp() {
       additionalDetails: [],
     },
   };
-  const visibleState = failedGuard
+  const guardedState = failedGuard
     ? {
         ...hydratedHistoryState,
         conversationState: 'turn_failed' as const,
@@ -417,6 +418,29 @@ export function Zeus0388QaApp() {
             },
           }
         : hydratedHistoryState;
+  const visibleState = restoringMessage
+    ? {
+        ...sessionReducer(
+          { ...guardedState, conversationState: 'native_idle' as const },
+          {
+            type: 'send_started',
+            clientUserMessageId: 'zeus-0439-history-continuation',
+            durableClientUserMessageId: 'zeus-0439-history-continuation',
+            draft: restoringMessage,
+            attachments: guardedState.attachments,
+            submittedAttachments: guardedState.attachments,
+            browserSubmission: guardedState.browserSubmission,
+            contextDraft: guardedState.contextDraft,
+            browserComments: [],
+            delivery: 'queue',
+            previousConversationState: 'native_idle',
+            startedAt: '2026-09-02T01:00:00.000Z',
+            queuedUntilHydrated: true,
+          },
+        ),
+        transportState: 'reconnecting' as const,
+      }
+    : guardedState;
   const taskEndedGate =
     guard === 'task-ended'
       ? {
@@ -442,6 +466,7 @@ export function Zeus0388QaApp() {
   const selectGuard = (next: typeof guard): void => {
     setGuard(next);
     setHistoryOnly(true);
+    setRestoringMessage(null);
   };
 
   return (
@@ -507,6 +532,7 @@ export function Zeus0388QaApp() {
           actions={{
             onDraftChange: (draft) => controller.setDraft(draft),
             onSubmit: () => {
+              setRestoringMessage(visibleState.draft.trim() || '继续处理');
               setSubmitCount((count) => count + 1);
               setHistoryOnly((current) => {
                 if (current) setHistoryTransitions((count) => count + 1);
