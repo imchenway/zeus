@@ -18,6 +18,7 @@ import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/Applic
 
 interface BrowserWorkspaceProps {
   conversationId: string;
+  initialSnapshot?: ZeusBrowserConversationSnapshot | null;
   language: 'zh-CN' | 'en-US';
   disabled?: boolean;
   suspended?: boolean;
@@ -112,7 +113,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
   const closedTabIdsRef = useRef(new Set<string>());
   const stageRef = useRef(props.onStageComments);
   stageRef.current = props.onStageComments;
-  const [snapshot, setSnapshot] = useState<ZeusBrowserConversationSnapshot | null>(null);
+  const [snapshot, setSnapshot] = useState<ZeusBrowserConversationSnapshot | null>(() => (props.initialSnapshot?.conversationId === props.conversationId ? props.initialSnapshot : null));
   const [address, setAddress] = useState('');
   const [addressFocused, setAddressFocused] = useState(false);
   const [commentsOpen, setCommentsOpen] = useState(false);
