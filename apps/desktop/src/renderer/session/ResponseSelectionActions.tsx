@@ -95,11 +95,12 @@ export function ResponseSelectionActions(props: {
     };
     view.addEventListener('resize', update);
     transcript?.addEventListener('scroll', update, { passive: true });
+    update();
     return () => {
       view.removeEventListener('resize', update);
       transcript?.removeEventListener('scroll', update);
     };
-  }, [props.articleRef]);
+  }, [props.articleRef, props.itemId]);
 
   if (!props.enabled) return null;
   const article = props.articleRef.current;
