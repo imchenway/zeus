@@ -1536,7 +1536,7 @@ type SessionContextWorkspace =
   | { kind: 'none' }
   | { kind: 'browser' }
   | { kind: 'subagents' }
-  | { kind: 'plan'; itemKey: string }
+  | { kind: 'plan'; item: NativeSessionItemBuffer }
   | { kind: 'source'; preview: ConversationResourcePreview; viewMode: SourceWorkspaceViewMode }
   | { kind: 'turn_diff'; turnId: string; initialFileId?: string };
 
@@ -1597,7 +1597,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const browserResizeActiveRef = useRef(false);
   const contextOpen = contextWorkspace.kind !== 'none';
   const browserOpen = contextWorkspace.kind === 'browser';
-  const planWorkspaceItemKey = contextWorkspace.kind === 'plan' ? contextWorkspace.itemKey : null;
+  const planWorkspaceItem = contextWorkspace.kind === 'plan' ? contextWorkspace.item : null;
   const sessionReady = props.state != null;
   const resolvedBrowserTargetWidth = resolveBrowserTargetWidth(browserLayoutWidth, browserPaneShare, contextFullWidth);
   const currentHeader = useMemo(() => createSessionHeaderSnapshot(props.conversation, props.task, owner), [owner, props.conversation, props.task]);
@@ -1688,9 +1688,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const blockingPendingRequest = pendingRequests[0] ?? null;
   const blockingPlanImplementationRequest = blockingPendingRequest ? null : (pendingPlanImplementationRequests[0] ?? null);
   const blockingInteractionCount = pendingRequests.length + pendingPlanImplementationRequests.length;
-  // 计划工作区绑定渲染层稳定 key，避免本地记录 ID 在实时事件合并后消失，导致右侧只打开空壳。
-  const planWorkspaceItemCandidate = planWorkspaceItemKey ? props.state?.items[planWorkspaceItemKey] : null;
-  const planWorkspaceItem = planWorkspaceItemCandidate?.type === 'plan' ? planWorkspaceItemCandidate : null;
   const turnDiffChangeSet = contextWorkspace.kind === 'turn_diff' ? (props.state?.changeSetsByProviderId[contextWorkspace.turnId] ?? null) : null;
   const dockedPlan = props.state ? selectDockedTurnPlan(props.state) : null;
   const goal = props.state?.snapshot?.goal ?? null;
@@ -2511,16 +2508,12 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     onCancelPendingSend={transcriptInteractionsEnabled ? actions.onCancelPendingSend : undefined}
                     onCancelQueuedSubmission={transcriptInteractionsEnabled ? actions.onDeleteQueuedSubmission : undefined}
                     onSendQueuedNow={transcriptInteractionsEnabled ? actions.onSendQueuedNow : undefined}
-                    openPlanItemKey={planWorkspaceItemKey}
-                    onOpenPlan={
-                      transcriptInteractionsEnabled
-                        ? (item) => {
-                            contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-                            setContextFullWidth(false);
-                            setContextWorkspace({ kind: 'plan', itemKey: item.key });
-                          }
-                        : undefined
-                    }
+                    openPlanItem={planWorkspaceItem}
+                    onOpenPlan={(item) => {
+                      contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+                      setContextFullWidth(false);
+                      setContextWorkspace({ kind: 'plan', item });
+                    }}
                     onOpenResource={transcriptReadActionsEnabled ? openConversationResource : undefined}
                     onLoadResourcePreview={transcriptReadActionsEnabled ? actions.onLoadResourcePreview : undefined}
                     onCallMcpAppTool={transcriptInteractionsEnabled ? actions.onCallMcpAppTool : undefined}

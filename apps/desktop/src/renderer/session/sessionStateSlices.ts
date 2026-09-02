@@ -47,7 +47,6 @@ export function createSessionWorkspaceStateSelector(): StateSelector {
 export function createConversationTranscriptStateSelector(): StateSelector {
   return cachedSelector((state) => ({
     ...state,
-    planImplementationRequests: emptyPlanRequests,
     providerSettings: null,
     tokenUsage: null,
     unifiedUsage: null,
@@ -149,5 +148,5 @@ function itemNeededByWorkspaceResourcePanels(item: NativeSessionItemBuffer): boo
   const payloadType = typeof item.payload.type === 'string' ? item.payload.type : item.type;
   const normalizedType = payloadType.toLocaleLowerCase().replaceAll(/[^a-z]/gu, '');
   const recoveredUserInput = normalizedType === 'requestuserinput' && item.payload.recovery === 'content_only' && item.payload.outcome === 'pending';
-  return recoveredUserInput || item.type === 'plan' || normalizedType === 'subagentactivity' || normalizedType === 'collabagenttoolcall' || normalizedType === 'filechange';
+  return recoveredUserInput || normalizedType === 'subagentactivity' || normalizedType === 'collabagenttoolcall' || normalizedType === 'filechange';
 }
