@@ -2202,11 +2202,12 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const pagingKey = turn?.providerTurnId ?? turn?.id ?? turnIdentity;
     const currentChange = current.v2Paging.changeSetsByTurn[pagingKey];
     const resources = current.v2Paging.resources;
-    if (currentChange?.loading || resources.loading) return;
+    if (currentChange?.loading) return;
     const v2Turn = turn ? [...current.snapshotV2.recentClosedTurns, ...(current.snapshotV2.activeTurn ? [current.snapshotV2.activeTurn] : [])].find((candidate) => candidate.id === turn.id) : undefined;
-    const shouldLoadResources = Boolean(options.client.loadNativeConversationResourcesV2 && (!resources.loaded || resources.hasMore));
+    const shouldLoadResources = Boolean(!resources.loading && options.client.loadNativeConversationResourcesV2 && (!resources.loaded || resources.hasMore));
     const shouldLoadChange = Boolean(turn && v2Turn?.changeSetAvailable && options.client.loadTurnChangeSet && !(current.changeSets ?? []).some((changeSet) => changeSet.providerTurnId === pagingKey || changeSet.turnId === turn.id));
     if (!shouldLoadResources && !shouldLoadChange) {
+      if (resources.loading) return;
       const merged = await attachV2ResourcesToSnapshot(current, resources.items);
       if (!disposed && generation === connectionToken && merged !== current) dispatchV2Snapshot(merged);
       return;
@@ -2266,12 +2267,12 @@ export function createSessionController(options: CreateSessionControllerOptions)
       const latest = state.snapshot;
       if (!latest?.snapshotV2 || !latest.v2Paging) return;
       const resourceItems = resourceResult?.items ?? latest.v2Paging.resources.items;
-      let merged = await attachV2ResourcesToSnapshot(latest, resourceItems);
+      let merged = resourceResult ? await attachV2ResourcesToSnapshot(latest, resourceItems) : latest;
       if (disposed || generation !== connectionToken) return;
       if (changeSet) merged = { ...merged, changeSets: dedupeById([...(merged.changeSets ?? []), changeSet]) };
       merged = updateConversationV2Paging(merged, (paging) => ({
         ...paging,
-        resources: resourceResult ? { nextCursor: resourceResult.nextCursor, hasMore: resourceResult.hasMore, loading: false, loaded: true, error: null, items: resourceItems } : { ...paging.resources, loading: false },
+        resources: resourceResult ? { nextCursor: resourceResult.nextCursor, hasMore: resourceResult.hasMore, loading: false, loaded: true, error: null, items: resourceItems } : paging.resources,
         changeSetsByTurn:
           shouldLoadChange || currentChange
             ? {
