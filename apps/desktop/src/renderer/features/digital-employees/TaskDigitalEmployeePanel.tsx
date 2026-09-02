@@ -463,6 +463,7 @@ function TaskEmployeeRunDialog(props: {
   const [workspaceTarget, setWorkspaceTarget] = useState('');
   const [capabilityError, setCapabilityError] = useState<string | null>(null);
   const [config, setConfig] = useState<AgentExecutionConfigValue>(() => initialRunConfig(props.employee));
+  const [supplementalInfo, setSupplementalInfo] = useState('');
   const [selectedDeliverableIds, setSelectedDeliverableIds] = useState<string[]>([]);
   const [preview, setPreview] = useState<TaskWorkPreview | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
@@ -531,6 +532,7 @@ function TaskEmployeeRunDialog(props: {
       void props.client
         .previewTaskWorkItem(props.taskId, {
           employeeId: props.employee.id,
+          supplementalInfo: supplementalInfo.trim() || null,
           modelOverride: config.model || null,
           reasoningEffort: config.reasoningEffort || null,
           serviceTier: config.serviceTier || null,
@@ -555,7 +557,7 @@ function TaskEmployeeRunDialog(props: {
         });
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [agentEntrypoint, config, props.client, props.employee.id, props.taskId, selectedDeliverableIds, workspaceMode, workspaceTarget, zh]);
+  }, [agentEntrypoint, config, props.client, props.employee.id, props.taskId, selectedDeliverableIds, supplementalInfo, workspaceMode, workspaceTarget, zh]);
 
   const existingEnvironments = capabilities?.existingEnvironments ?? [];
   const canContinueEnvironment = (environment: NonNullable<CodexTaskPushCapabilities['existingEnvironments']>[number]): boolean => environment.available;
@@ -607,6 +609,19 @@ function TaskEmployeeRunDialog(props: {
               <p>{zh ? `${props.employee.skillIds.length} 个 Skill` : `${props.employee.skillIds.length} skills`}</p>
             </span>
           </section>
+
+          <label className="task-work-run-supplemental">
+            <span>{zh ? '补充信息' : 'Supplemental information'}</span>
+            <textarea
+              rows={4}
+              maxLength={20_000}
+              value={supplementalInfo}
+              placeholder={zh ? '例如：本次优先处理的边界、已知线索或验收重点' : 'For example: priorities, known clues, or acceptance focus for this work item'}
+              disabled={props.busy}
+              onChange={(event) => setSupplementalInfo(event.currentTarget.value)}
+            />
+            <small>{zh ? '只提供给本次独立工作项，不修改任务描述或员工提示词。' : 'Used only for this independent work item; it does not change the task description or employee prompt.'}</small>
+          </label>
 
           {agentEntrypoint && capabilities && capabilities.repositories.length > 0 ? (
             <fieldset className="task-model-push-mode-choice task-model-push-branch-choice">

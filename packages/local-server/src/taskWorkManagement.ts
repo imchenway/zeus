@@ -51,6 +51,7 @@ const taskWorkSkillArtifactGeneration = '2026-08-29-task-work-skill-snapshot-v1'
 
 export interface TaskWorkPreviewSelection {
   employeeId: string;
+  supplementalInfo?: string | null;
   modelOverride?: string | null;
   reasoningEffort?: string | null;
   serviceTier?: string | null;
@@ -442,7 +443,7 @@ async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTask
     const agentEntrypoint = employee.entrypoint;
     const workMode = selection.workMode ?? employee.workMode;
     const prompt = selection.promptOverride ?? agentEntrypoint.prompt;
-    entrypoint = { ...sanitizeEntrypoint(agentEntrypoint), prompt, workMode };
+    entrypoint = { ...sanitizeEntrypoint(agentEntrypoint), prompt, workMode, supplementalInfo: selection.supplementalInfo };
     authority = resolveRunAuthority(agentEntrypoint, selection.permissionMode);
     const capability = await options.conversationCapabilities.readTaskPush(task.projectId, task.id);
     model = resolveAgentModel(employee, agentEntrypoint, selection, capability, blockers);
@@ -1489,6 +1490,7 @@ async function buildAgentSupplementalInfoSnapshot(options: TaskWorkManagementOpt
   }
   return [
     `你正在以 Zeus 数字员工“${String(input.employee.name ?? '')}”身份处理一个独立工作项。本次行为只由冻结的员工能力配置决定，与指派次数、尝试次数无关。`,
+    typeof input.entrypoint.supplementalInfo === 'string' && input.entrypoint.supplementalInfo ? `## 本次补充信息\n\n${input.entrypoint.supplementalInfo}` : '',
     typeof input.entrypoint.prompt === 'string' && input.entrypoint.prompt ? `## 员工提示\n\n${input.entrypoint.prompt}` : '',
     `## 冻结的上下文清单\n\n${JSON.stringify(input.context, null, 2)}`,
     input.skills.length > 0
@@ -1533,6 +1535,7 @@ function normalizeSelection(value: unknown): TaskWorkPreviewSelection {
   if (!isRecord(value)) throw new TaskWorkStoreError('ZEUS_TASK_WORK_PREVIEW_INVALID', '指派预览参数必须是对象。', 400);
   return {
     employeeId: requiredText(value.employeeId, '请选择数字员工。', 256),
+    supplementalInfo: optionalText(value.supplementalInfo, 20_000),
     modelOverride: optionalText(value.modelOverride, 256),
     reasoningEffort: optionalText(value.reasoningEffort, 64),
     serviceTier: value.serviceTier === null ? null : optionalText(value.serviceTier, 64),
