@@ -21,9 +21,9 @@ interface OverlayBounds {
   bottom: number;
 }
 
-const ANNOTATION_MARKER_SIZE = 26;
-const ANNOTATION_MARKER_INLINE_OFFSET = 7;
-const ANNOTATION_MARKER_BLOCK_OFFSET = -7;
+const ANNOTATION_MARKER_SIZE = 24;
+const ANNOTATION_MARKER_INLINE_OFFSET = 5;
+const ANNOTATION_MARKER_BLOCK_OFFSET = -5;
 
 export function ResponseSelectionActions(props: {
   articleRef: RefObject<HTMLElement | null>;
@@ -156,6 +156,7 @@ export function ResponseSelectionActions(props: {
           className="session-response-annotation-marker"
           style={{ left, top }}
           aria-label={props.language === 'zh-CN' ? `打开第 ${index + 1} 条注释` : `Open annotation ${index + 1}`}
+          aria-expanded={editingId === annotation.id}
           onClick={() => setEditingId(annotation.id)}
         >
           {index + 1}

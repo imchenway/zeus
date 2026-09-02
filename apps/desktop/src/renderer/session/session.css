@@ -1588,34 +1588,55 @@
 
 .session-response-annotation-marker {
   align-items: center;
-  background: var(--session-accent, #087fe7);
-  border: 2px solid var(--session-canvas, #fff);
+  background: color-mix(in oklab, var(--session-accent, #087fe7) 10%, var(--session-canvas, #fff));
+  border: 1px solid color-mix(in oklab, var(--session-accent, #087fe7) 36%, var(--session-line, rgb(0 0 0 / 10%)));
   border-radius: 999px;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 18%);
-  color: #fff;
+  box-shadow: 0 1px 3px var(--session-shadow-soft, rgb(0 0 0 / 10%));
+  color: var(--session-accent, #087fe7);
   cursor: pointer;
   display: flex;
   font:
-    600 12px/1 system-ui,
+    700 10px/1 system-ui,
     sans-serif;
-  block-size: 26px;
-  inline-size: 26px;
+  block-size: 24px;
+  inline-size: 24px;
   justify-content: center;
   position: absolute;
-  transform: translate(7px, -7px);
+  transform: translate(5px, -5px);
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    color 120ms ease;
   z-index: 998;
+}
+
+.session-response-annotation-marker:hover,
+.session-response-annotation-marker[aria-expanded='true'] {
+  background: var(--session-accent, #087fe7);
+  border-color: var(--session-accent, #087fe7);
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--session-accent, #087fe7) 24%, transparent);
+  color: var(--session-canvas, #fff);
+}
+
+.session-response-annotation-marker:focus-visible {
+  outline: 2px solid var(--session-focus-outline, var(--session-accent, #087fe7));
+  outline-offset: 2px;
 }
 
 .session-response-annotation-editor {
   background: var(--session-canvas, #fff);
-  border: 1px solid var(--session-line, rgb(0 0 0 / 10%));
-  border-radius: 12px;
-  box-shadow: 0 10px 28px rgb(0 0 0 / 18%);
+  border: 1px solid var(--session-line-soft, var(--session-line, rgb(0 0 0 / 10%)));
+  border-radius: 10px;
+  box-shadow:
+    0 12px 30px var(--session-shadow, rgb(0 0 0 / 12%)),
+    0 2px 6px var(--session-shadow-soft, rgb(0 0 0 / 8%));
   color: var(--session-text, #171717);
   display: grid;
-  gap: 8px;
+  gap: 0;
   inline-size: min(300px, calc(100vw - 24px));
-  padding: 10px;
+  overflow: hidden;
+  padding: 0;
   position: fixed;
   z-index: 1001;
 }
@@ -1631,63 +1652,103 @@
   justify-content: space-between;
 }
 
+.session-response-annotation-editor header {
+  padding: 7px 7px 7px 10px;
+}
+
 .session-response-annotation-editor header strong {
-  font-size: 13px;
-  line-height: 18px;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 17px;
 }
 
 .session-response-annotation-editor blockquote {
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  background: var(--session-sidebar, #f7f7f7);
-  border-inline-start: 2px solid var(--session-accent, #087fe7);
-  color: var(--session-text-secondary, #60656f);
+  -webkit-line-clamp: 2;
+  background: var(--session-control, var(--session-sidebar, #f7f7f7));
+  border-block: 1px solid var(--session-line-soft, var(--session-line, rgb(0 0 0 / 10%)));
+  color: var(--session-text-muted, #60656f);
   display: -webkit-box;
-  font-size: 12px;
-  line-height: 17px;
+  font-size: 11px;
+  line-height: 16px;
   margin: 0;
   overflow: hidden;
-  padding: 5px 7px;
+  padding: 6px 10px;
   white-space: pre-wrap;
 }
 
 .session-response-annotation-editor textarea {
-  background: var(--session-sidebar, #f7f7f7);
-  border: 1px solid var(--session-line, rgb(0 0 0 / 10%));
-  border-radius: 8px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
   color: inherit;
   font: inherit;
   font-size: 13px;
   line-height: 18px;
   max-block-size: 120px;
-  min-block-size: 54px;
-  padding: 7px 8px;
+  min-block-size: 62px;
+  outline: 0;
+  padding: 9px 10px;
   resize: vertical;
+}
+
+.session-response-annotation-editor textarea:focus-visible {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--session-accent, #087fe7) 34%, transparent);
 }
 
 .session-response-annotation-editor button {
   appearance: none;
   background: transparent;
   border: 0;
-  border-radius: 7px;
+  border-radius: 6px;
   color: inherit;
   cursor: pointer;
-  font-size: 12px;
-  min-block-size: 28px;
-  padding-inline: 8px;
+  font-size: 11px;
+  min-block-size: 26px;
+  padding-inline: 7px;
 }
 
 .session-response-annotation-editor footer {
   gap: 4px;
   justify-content: flex-end;
+  padding: 7px 8px;
 }
 
 .session-response-annotation-editor footer > button:first-child {
+  color: var(--session-text-muted, #60656f);
   margin-inline-end: auto;
+}
+
+.session-response-annotation-editor footer > button:last-child {
+  background: var(--session-text, #171717);
+  color: var(--session-canvas, #fff);
+  font-weight: 650;
+  padding-inline: 10px;
 }
 
 .session-response-annotation-editor button:hover {
   background: var(--session-control-hover, rgb(0 0 0 / 6%));
+}
+
+.session-response-annotation-editor footer > button:first-child:hover {
+  background: color-mix(in srgb, var(--session-danger, #c43d3d) 9%, transparent);
+  color: var(--session-danger, #c43d3d);
+}
+
+.session-response-annotation-editor footer > button:last-child:hover {
+  background: color-mix(in oklab, var(--session-text, #171717) 88%, var(--session-canvas, #fff));
+}
+
+.session-response-annotation-editor button:focus-visible {
+  outline: 2px solid var(--session-focus-outline, var(--session-accent, #087fe7));
+  outline-offset: 1px;
+}
+
+.session-response-annotation-editor header > button {
+  color: var(--session-text-muted, #60656f);
+  font-size: 17px;
+  inline-size: 26px;
+  padding: 0;
 }
 
 /* 评论和回答注释共享一个输入框上下文胶囊，发送后仍可在用户消息中辨认。 */
