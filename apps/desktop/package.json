@@ -12,12 +12,9 @@
   },
   "dependencies": {
     "@zeus/ai-runtime": "workspace:*",
-    "@zeus/diagram-engine": "workspace:*",
     "@zeus/git-core": "workspace:*",
     "@zeus/local-server": "workspace:*",
-    "@zeus/security-core": "workspace:*",
     "@zeus/shared": "workspace:*",
-    "@zeus/terminal-core": "workspace:*",
     "markstream-react": "2.0.6",
     "qrcode": "1.5.4"
   },

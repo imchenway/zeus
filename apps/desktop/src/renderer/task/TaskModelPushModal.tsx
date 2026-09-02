@@ -1,7 +1,6 @@
 import { type Dispatch, type FormEvent, type KeyboardEvent, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
 import {
   buildTaskPushLayout,
-  renderTaskPushLayoutText,
   type TaskPushContextConversationOption,
   type TaskPushContextOption,
   type TaskPushMessageLayout,
@@ -164,18 +163,6 @@ export function taskPushEnvironmentLabel(environment: TaskPushEnvironmentCapabil
           : ' · partially closed'
         : '';
   return `${branchLabel} · ${repositoryLabel}${unavailableLabel}`;
-}
-
-export function buildTaskModelPushMessage(
-  task: Pick<TaskRecord, 'id' | 'taskCode' | 'title' | 'taskType' | 'description' | 'defectCurrentState' | 'defectExpectedOutcome' | 'defectReproductionSteps' | 'optimizationCurrentState' | 'optimizationExpectedOutcome' | 'tags'>,
-  supplementalInfo: string,
-  currentAttachments: TaskPushPromptAttachment[] = [],
-  currentConversationPaths: string[] = [],
-  parentContexts: TaskPushPromptParentContext[] = [],
-  relatedContexts: TaskPushPromptRelatedContext[] = [],
-  supplementalAttachments: TaskPushSupplementalAttachment[] = [],
-): string {
-  return renderTaskPushLayoutText(buildTaskModelPushLayout(task, supplementalInfo, currentAttachments, currentConversationPaths, parentContexts, relatedContexts, supplementalAttachments));
 }
 
 export function buildTaskModelPushLayout(

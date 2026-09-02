@@ -4,6 +4,7 @@ import { chmod, link, lstat, mkdtemp, open, readdir, realpath, rm, statfs, unlin
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { backup, DatabaseSync } from 'node:sqlite';
+import { parseArgs } from 'node:util';
 import { expectedBundleIdForDataRootProfile, publishProvisionedZeusDataRootIdentity, zeusDataRootHostIdentity, zeusDataRootIdentityPath } from '../apps/desktop/src/main/dataRootIdentity.js';
 import { resolveDesktopKeychainService } from '../apps/desktop/src/main/secretServiceIdentity.js';
 import { createZeusDatabase } from '../packages/storage/src/index.js';
@@ -402,32 +403,34 @@ interface ParsedArguments {
 }
 
 function parseArguments(values: string[]): ParsedArguments {
+  const args = parseArgs({
+    args: values,
+    strict: true,
+    options: {
+      source: { type: 'string' },
+      destination: { type: 'string' },
+      'validation-root': { type: 'string' },
+      confirmation: { type: 'string' },
+      progress: { type: 'boolean' },
+      'require-source-tree-immutable': { type: 'boolean' },
+      'online-backup-snapshot': { type: 'boolean' },
+      'migrate-offline-candidate': { type: 'boolean' },
+      'validation-base': { type: 'string' },
+      'backup-rate-pages': { type: 'string' },
+    },
+  }).values;
   const parsed: ParsedArguments = {
-    sourcePath: '',
-    destinationPath: '',
-    validationRootPath: '',
-    confirmation: null,
-    emitProgress: false,
-    requireSourceTreeImmutable: false,
-    onlineBackupSnapshot: false,
-    migrateOfflineCandidate: false,
-    validationBasePath: '',
-    backupRatePages: 8_192,
+    sourcePath: args.source ?? '',
+    destinationPath: args.destination ?? '',
+    validationRootPath: args['validation-root'] ?? '',
+    confirmation: args.confirmation ?? null,
+    emitProgress: args.progress ?? false,
+    requireSourceTreeImmutable: args['require-source-tree-immutable'] ?? false,
+    onlineBackupSnapshot: args['online-backup-snapshot'] ?? false,
+    migrateOfflineCandidate: args['migrate-offline-candidate'] ?? false,
+    validationBasePath: args['validation-base'] ?? '',
+    backupRatePages: args['backup-rate-pages'] === undefined ? 8_192 : requireIntegerArgument(args['backup-rate-pages'], '--backup-rate-pages', 1, 8_192),
   };
-  for (let index = 0; index < values.length; index += 1) {
-    const value = values[index];
-    if (value === '--source') parsed.sourcePath = requiredArgument(values[++index], '--source');
-    else if (value === '--destination') parsed.destinationPath = requiredArgument(values[++index], '--destination');
-    else if (value === '--validation-root') parsed.validationRootPath = requiredArgument(values[++index], '--validation-root');
-    else if (value === '--confirmation') parsed.confirmation = requiredArgument(values[++index], '--confirmation');
-    else if (value === '--progress') parsed.emitProgress = true;
-    else if (value === '--require-source-tree-immutable') parsed.requireSourceTreeImmutable = true;
-    else if (value === '--online-backup-snapshot') parsed.onlineBackupSnapshot = true;
-    else if (value === '--migrate-offline-candidate') parsed.migrateOfflineCandidate = true;
-    else if (value === '--validation-base') parsed.validationBasePath = requiredArgument(values[++index], '--validation-base');
-    else if (value === '--backup-rate-pages') parsed.backupRatePages = requireIntegerArgument(values[++index], '--backup-rate-pages', 1, 8_192);
-    else fail('ZEUS_TEST_DATABASE_COPY_INVALID_ARGUMENT', `未知参数：${String(value)}`);
-  }
   if (!parsed.sourcePath || !parsed.destinationPath || !parsed.validationRootPath) {
     fail(
       'ZEUS_TEST_DATABASE_COPY_INVALID_ARGUMENT',
@@ -449,14 +452,8 @@ function parseArguments(values: string[]): ParsedArguments {
   return parsed;
 }
 
-function requiredArgument(value: string | undefined, flag: string): string {
-  if (!value || value.startsWith('--')) fail('ZEUS_TEST_DATABASE_COPY_INVALID_ARGUMENT', `${flag} 缺少参数。`);
-  return value;
-}
-
 function requireIntegerArgument(value: string | undefined, flag: string, minimum: number, maximum: number): number {
-  const text = requiredArgument(value, flag);
-  const parsed = Number(text);
+  const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
     fail('ZEUS_TEST_DATABASE_COPY_INVALID_ARGUMENT', `${flag} 必须是 ${minimum}..${maximum} 的整数。`);
   }

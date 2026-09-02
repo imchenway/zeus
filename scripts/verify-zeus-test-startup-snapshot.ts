@@ -1,6 +1,7 @@
 import { lstat, realpath } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { parseArgs } from 'node:util';
 import { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor } from '../packages/local-server/src/readOnlyValidation.ts';
 
 const arguments_ = parseArguments(process.argv.slice(2));
@@ -100,24 +101,11 @@ interface ParsedArguments {
 }
 
 function parseArguments(values: string[]): ParsedArguments {
-  const parsed: ParsedArguments = { databasePath: '', expectedRoot: '', formalSourcePath: null, validationManifestPath: null };
-  for (let index = 0; index < values.length; index += 1) {
-    const value = values[index];
-    if (value === '--db') parsed.databasePath = requiredValue(values[++index], '--db');
-    else if (value === '--expected-root') parsed.expectedRoot = requiredValue(values[++index], '--expected-root');
-    else if (value === '--formal-source') parsed.formalSourcePath = requiredValue(values[++index], '--formal-source');
-    else if (value === '--validation-manifest') parsed.validationManifestPath = requiredValue(values[++index], '--validation-manifest');
-    else fail('ZEUS_TEST_STARTUP_INVALID_ARGUMENT', `未知参数：${String(value)}`);
-  }
-  if (!parsed.databasePath || !parsed.expectedRoot) {
+  const parsed = parseArgs({ args: values, strict: true, options: { db: { type: 'string' }, 'expected-root': { type: 'string' }, 'formal-source': { type: 'string' }, 'validation-manifest': { type: 'string' } } }).values;
+  if (!parsed.db || !parsed['expected-root']) {
     fail('ZEUS_TEST_STARTUP_INVALID_ARGUMENT', '用法：--db <Test zeus.db> --expected-root <独立 ZEUS_USER_DATA_DIR> [--formal-source <正式 zeus.db>] [--validation-manifest <manifest>]');
   }
-  return parsed;
-}
-
-function requiredValue(value: string | undefined, flag: string): string {
-  if (!value || value.startsWith('--')) fail('ZEUS_TEST_STARTUP_INVALID_ARGUMENT', `${flag} 缺少参数。`);
-  return value;
+  return { databasePath: parsed.db, expectedRoot: parsed['expected-root'], formalSourcePath: parsed['formal-source'] ?? null, validationManifestPath: parsed['validation-manifest'] ?? null };
 }
 
 async function requireRealDirectory(value: string, label: string): Promise<string> {

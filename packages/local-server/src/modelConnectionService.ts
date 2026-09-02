@@ -17,7 +17,7 @@ import {
   type SaveModelConnectionInput,
   type SelectableConnectionModel,
 } from '@zeus/ai-runtime';
-import type { SecretStore } from '@zeus/security-core';
+import type { SecretStore } from './securityCore.js';
 import type { SettingRepository } from '@zeus/storage';
 
 export interface SaveModelConnectionRequest extends SaveModelConnectionInput {

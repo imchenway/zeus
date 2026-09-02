@@ -4,7 +4,6 @@ import type {
   TaskAgentRunStatus,
   TaskManagementStatus,
   TaskRecord,
-  TaskStatus,
   TaskStatusFilter,
   TaskTableColumnKey,
   TaskTableColumnPreferences,
@@ -19,27 +18,13 @@ import { compareConversationStageUpdatedDesc } from '../session/conversationOrde
 export type TaskWorkspaceEmptyState = 'empty' | 'no-results' | undefined;
 export type TaskWorkspaceViewMode = 'hierarchy' | 'flat';
 export type TaskRowAction = 'open-detail';
-export type TaskTableColumnMoveDirection = 'up' | 'down';
 export type TaskTableColumnDropPosition = 'before' | 'after';
 export type TaskBranchStatus = 'action_required' | 'active' | 'pushed' | 'merged' | 'discarded' | 'not_created';
-export type TaskNextActionLabels = Partial<Record<TaskStatus, string>>;
 export type TaskSourceLabels = Partial<Record<string, string>>;
 export type { TaskAgentRunStatus } from '../apiClient.js';
 
 export const taskManagementStatuses: TaskManagementStatus[] = ['todo', 'in_development', 'in_testing', 'awaiting_acceptance', 'blocked', 'completed', 'cancelled'];
 export const taskTypes: TaskType[] = ['requirement', 'defect', 'optimization'];
-const allowedTaskStatusTransitions: Record<TaskStatus, readonly TaskStatus[]> = {
-  draft: ['ready', 'cancelled'],
-  // ready -> running 会创建 Runtime 会话，必须逐任务进入显式 conversation chooser，不能作为批量状态迁移。
-  ready: ['cancelled'],
-  running: ['paused', 'waiting_confirmation', 'completed', 'failed', 'cancelled'],
-  paused: ['running', 'cancelled'],
-  waiting_confirmation: ['running', 'cancelled', 'failed'],
-  completed: [],
-  failed: ['ready'],
-  cancelled: ['ready'],
-};
-
 export const defaultTaskTableColumnOrder: TaskTableColumnKey[] = [
   'code',
   'intent',
@@ -265,20 +250,6 @@ export function toggleTaskTableColumn(preferences: TaskTableColumnPreferences, c
   return normalizeTaskTableColumnPreferences({
     ...normalized,
     visibleColumnKeys,
-  });
-}
-
-export function moveTaskTableColumn(preferences: TaskTableColumnPreferences, columnKey: TaskTableColumnKey, direction: TaskTableColumnMoveDirection): TaskTableColumnPreferences {
-  const normalized = normalizeTaskTableColumnPreferences(preferences);
-  const currentIndex = normalized.columnOrder.indexOf(columnKey);
-  const nextIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
-  if (currentIndex < 0 || nextIndex < 0 || nextIndex >= normalized.columnOrder.length) return normalized;
-  const columnOrder = [...normalized.columnOrder];
-  [columnOrder[currentIndex], columnOrder[nextIndex]] = [columnOrder[nextIndex], columnOrder[currentIndex]];
-  // 列顺序只在受支持字段集合内交换；再走 normalize 可确保 code/intent 仍可见，且 owner/assignee 不会被带回。
-  return normalizeTaskTableColumnPreferences({
-    ...normalized,
-    columnOrder,
   });
 }
 
@@ -610,22 +581,6 @@ function buildBulkDeleteEligibility(tasks: TaskRecord[]): TaskBulkDeleteEligibil
   return { eligibleTaskIds, skippedTaskIds };
 }
 
-export function canTransitionTaskStatusInWorkspace(from: TaskStatus, to: TaskStatus): boolean {
-  return allowedTaskStatusTransitions[from]?.includes(to) ?? false;
-}
-
-export function formatTaskNextAction(task: TaskRecord, labels?: TaskNextActionLabels): string {
-  const customLabel = labels?.[task.status];
-  if (customLabel) return customLabel;
-  if (task.status === 'draft' || task.status === 'ready') return '可启动 AI';
-  if (task.status === 'running') return '等待 AI 输出';
-  if (task.status === 'paused') return '可继续';
-  if (task.status === 'waiting_confirmation') return '需要我确认';
-  if (task.status === 'failed') return '可重试';
-  if (task.status === 'completed') return '已完成';
-  return '已取消';
-}
-
 export function formatTaskSource(task: TaskRecord, labels?: TaskSourceLabels): string {
   const context = parseTaskSourceContext(task.sourceContextJson);
   const contextType = typeof context.type === 'string' ? normalizeSourceType(context.type) : undefined;
@@ -678,12 +633,6 @@ export function findLinkedRuntimeSession(task: TaskRecord, runtimeSessions: AiRu
   const sourceSessionId = typeof context.sessionId === 'string' && context.sessionId.trim() ? context.sessionId : undefined;
   // 只接受真实 taskId 或来源上下文 sessionId 作为证据链，避免抽屉把无关 Runtime 会话误贴到任务上。
   return runtimeSessions.find((session) => session.taskId === task.id) ?? (sourceSessionId ? runtimeSessions.find((session) => session.id === sourceSessionId) : undefined);
-}
-
-export function formatRuntimeCommandPreview(session: AiRuntimeSession | undefined, missingLabel: string, sensitiveReplacement = '***'): string {
-  if (!session) return missingLabel;
-  const args = session.args.map((arg, index, argsList) => maskRuntimeCommandArgument(arg, index, argsList, sensitiveReplacement));
-  return [session.command, ...args].join(' ');
 }
 
 export function formatRuntimeSessionStatus(session: AiRuntimeSession | undefined, labels?: Partial<Record<AiRuntimeSessionStatus, string>>, missingLabel = '未启动 Runtime 会话'): string {
@@ -894,14 +843,4 @@ export function parseTaskSourceContext(value?: string): Record<string, unknown> 
   } catch {
     return {};
   }
-}
-
-function maskRuntimeCommandArgument(arg: string, index: number, argsList: string[], sensitiveReplacement: string): string {
-  const sensitiveNamePattern = /(?:token|key|password|secret)/iu;
-  const inlineMatch = /^(--?[^=\s]*(?:token|key|password|secret)[^=\s]*=)(.*)$/iu.exec(arg);
-  if (inlineMatch) return `${inlineMatch[1]}${sensitiveReplacement}`;
-
-  const previous = argsList[index - 1] ?? '';
-  if (previous.trim().startsWith('-') && sensitiveNamePattern.test(previous) && !previous.includes('=')) return sensitiveReplacement;
-  return arg;
 }

@@ -811,10 +811,6 @@ export function createConnectedSessionActions(input: { controller: SessionContro
   };
 }
 
-export function buildStartNativeConversationRequest(input: SessionWorkspaceStartInput, createId: () => string): StartNativeConversationRequest {
-  return { ...buildStartNativeConversationPayload(input), idempotencyKey: createId(), clientUserMessageId: createId() } as StartNativeConversationRequest;
-}
-
 /** 在尽力刷新历史记录前，先把已持久接受的启动结果转成可选会话行。 */
 export function nativeConversationChoiceFromAcceptance(acceptance: NativeOperationAcceptance, task: Pick<SessionWorkspaceTask, 'id' | 'projectId' | 'title'>, now = new Date().toISOString()): NativeConversationChoice {
   const conversation = acceptance.conversation;
@@ -2758,10 +2754,6 @@ export function createRequestResponseGuard(): { begin(requestId: string): boolea
 export function isRequestResponseBusy(operation: string | null, requestId: string): boolean {
   const prefixes = [`request:respond:${requestId}`, `plan-request:${requestId}`];
   return prefixes.some((prefix) => operation === prefix || operation?.startsWith(`${prefix}:`) === true);
-}
-
-export function shouldRestoreComposerFocus(previousPendingCount: number, pendingCount: number, state: NativeSessionState | null): boolean {
-  return previousPendingCount > 0 && pendingCount === 0 && isComposerWritableForFocus(state, false);
 }
 
 export function resolveComposerFocusRestoration(input: { previousPendingCount: number; pendingCount: number; restorationPending: boolean; state: NativeSessionState | null; readOnly: boolean }): {

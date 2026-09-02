@@ -310,37 +310,6 @@ function boundedAuditText(value: string, field: string): string {
   return value;
 }
 
-/** 对 Provider 已序列化完整请求的真实计数做最终窗口门禁；估算结果不能调用此函数。 */
-export async function verifyExactProviderContextBudget(input: {
-  envelope: ContextDispatchEnvelope;
-  contextWindowTokens: number;
-  reservedOutputTokens: number;
-  result: AgentPreflightTokenCountResult;
-  audit?: ContextDispatchAuditPort;
-}): Promise<{ accepted: boolean; remainingTokens: number }> {
-  const contextWindowTokens = positiveSafeInteger(input.contextWindowTokens, 'contextWindowTokens');
-  const reservedOutputTokens = nonNegativeSafeInteger(input.reservedOutputTokens, 'reservedOutputTokens');
-  if (reservedOutputTokens > contextWindowTokens) throw dispatchError('ZEUS_CONTEXT_INVALID_ARGUMENT', 'reservedOutputTokens 不能超过 contextWindowTokens。');
-  const inputTokens = nonNegativeSafeInteger(input.result.inputTokens, 'result.inputTokens');
-  if (input.result.exact !== true) throw dispatchError('ZEUS_CONTEXT_INVALID_ARGUMENT', 'Provider preflight 结果必须明确为 exact=true。');
-  const remainingTokens = contextWindowTokens - reservedOutputTokens - inputTokens;
-  const accepted = remainingTokens >= 0;
-  if (input.audit?.recordProviderPreflight) {
-    await input.audit.recordProviderPreflight({
-      schemaVersion: contextDispatchSchemaVersion,
-      fingerprint: input.envelope.compiled.fingerprint,
-      providerId: input.envelope.provider.id,
-      modelId: input.envelope.provider.modelId,
-      contextWindowTokens,
-      reservedOutputTokens,
-      result: input.result,
-      accepted,
-      remainingTokens,
-    });
-  }
-  return { accepted, remainingTokens };
-}
-
 function toCodexAdditionalContext(rendered: ReturnType<typeof renderCompiledContext>): CodexBootstrapAdditionalContext {
   const result: CodexBootstrapAdditionalContext = {
     zeus_context_manifest: { kind: 'application', value: rendered.manifest },
@@ -385,11 +354,6 @@ function boundedText(value: string, field: string, maximum: number): string {
   if (typeof value !== 'string' || value.length === 0 || value.length > maximum || value.includes('\0')) {
     throw dispatchError('ZEUS_CONTEXT_INVALID_ARGUMENT', `${field} 必须是 1 到 ${maximum} 个字符且不含 NUL 的字符串。`);
   }
-  return value;
-}
-
-function positiveSafeInteger(value: number, field: string): number {
-  if (!Number.isSafeInteger(value) || value <= 0) throw dispatchError('ZEUS_CONTEXT_INVALID_ARGUMENT', `${field} 必须是正安全整数。`);
   return value;
 }
 

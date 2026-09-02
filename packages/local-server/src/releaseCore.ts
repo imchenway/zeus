@@ -1,28 +1,6 @@
 /** Local Server 的发布清单与更新判定规则。 */
 export const currentExecutionHostProtocolVersion = 2;
 
-export interface ReleaseArtifactManifestInput {
-  version: string;
-  arch: string;
-  appName?: string;
-  caskSha256?: string;
-  signed?: boolean;
-  notarized?: boolean;
-}
-
-export interface ReleaseArtifactManifest {
-  version: string;
-  appName: string;
-  arch: string;
-  appBundlePath: string;
-  dmgPath: string;
-  caskPath: string;
-  caskSha256: string | null;
-  signed: boolean;
-  notarized: boolean;
-  statusLabel: string;
-}
-
 export interface ReleaseReadinessInput {
   hasAppleCertificate: boolean;
   hasNotaryCredentials: boolean;
@@ -57,15 +35,6 @@ export type ReleaseUpdateChannel = 'stable' | 'preview';
 export type ReleaseUpdateArtifactArch = 'arm64' | 'x64';
 export type ReleaseUpdateArtifactKind = 'dmg';
 
-export interface ReleaseUpdateArtifactInput {
-  arch: ReleaseUpdateArtifactArch;
-  kind: ReleaseUpdateArtifactKind;
-  fileName: string;
-  sha256: string;
-  sizeBytes?: number;
-  downloadUrl?: string;
-}
-
 export interface ReleaseUpdateArtifact {
   arch: ReleaseUpdateArtifactArch;
   kind: ReleaseUpdateArtifactKind;
@@ -73,19 +42,6 @@ export interface ReleaseUpdateArtifact {
   sha256: string;
   sizeBytes: number | null;
   downloadUrl: string;
-}
-
-export interface ReleaseUpdateManifestInput {
-  version: string;
-  channel: ReleaseUpdateChannel;
-  repository: string;
-  homebrewTap?: string;
-  publishedAt?: string;
-  signed?: boolean;
-  notarized?: boolean;
-  minimumSystemVersion?: string;
-  executionHostProtocolVersion?: number;
-  artifacts: ReleaseUpdateArtifactInput[];
 }
 
 export interface ReleaseUpdateManifest {
@@ -138,29 +94,6 @@ export interface EvaluateReleaseUpdateAvailabilityInput {
 }
 
 /**
- * 构造 Zeus macOS 发布产物清单；只描述真实路径与已知签名状态，不伪造签名或 notarization 成功。
- */
-export function buildReleaseArtifactManifest(input: ReleaseArtifactManifestInput): ReleaseArtifactManifest {
-  const appName = input.appName?.trim() || 'Zeus';
-  const version = input.version.trim();
-  const arch = input.arch.trim();
-  const signed = Boolean(input.signed);
-  const notarized = Boolean(input.notarized);
-  return {
-    version,
-    appName,
-    arch,
-    appBundlePath: `dist/mac-${arch}/${appName}.app`,
-    dmgPath: `dist/${appName}-${version}-${arch}.dmg`,
-    caskPath: 'dist/homebrew/zeus.rb',
-    caskSha256: input.caskSha256?.trim() || null,
-    signed,
-    notarized,
-    statusLabel: signed && notarized ? 'signed and notarized' : 'unsigned DMG',
-  };
-}
-
-/**
  * 根据真实外部配置输入给出发布就绪度；缺少证书时仍允许构建 unsigned 本地产物。
  */
 export function detectReleaseReadiness(input: ReleaseReadinessInput): ReleaseReadiness {
@@ -194,47 +127,6 @@ export function buildAutoUpdatePolicy(input: AutoUpdatePolicyInput): AutoUpdateP
     changelogPath,
     waitingFor,
     label: updateFeedConfigured ? `${channel === 'preview' ? 'Preview' : 'Stable'} 更新 · ${currentVersion}` : `手动更新 · ${currentVersion}`,
-  };
-}
-
-/** 构造公开 GitHub Release 更新清单；所有下载地址都来源于仓库名和版本，不内嵌本机路径。 */
-export function buildReleaseUpdateManifest(input: ReleaseUpdateManifestInput): ReleaseUpdateManifest {
-  const repository = normalizeRepository(input.repository);
-  const homebrewTap = normalizeRepository(input.homebrewTap ?? 'imchenway/tap');
-  const version = normalizeVersion(input.version);
-  const tag = `v${version}`;
-  const releaseBaseUrl = `https://github.com/${repository}/releases`;
-  const releaseDownloadBaseUrl = `${releaseBaseUrl}/download/${tag}`;
-  const artifacts = input.artifacts.map((artifact) => ({
-    arch: artifact.arch,
-    kind: artifact.kind,
-    fileName: artifact.fileName.trim(),
-    sha256: artifact.sha256.trim(),
-    sizeBytes: typeof artifact.sizeBytes === 'number' && Number.isFinite(artifact.sizeBytes) ? artifact.sizeBytes : null,
-    downloadUrl: artifact.downloadUrl?.trim() || `${releaseDownloadBaseUrl}/${encodeURIComponent(artifact.fileName.trim())}`,
-  }));
-  return {
-    app: 'Zeus',
-    schemaVersion: 1,
-    version,
-    channel: input.channel,
-    repository,
-    releasePageUrl: `${releaseBaseUrl}/tag/${tag}`,
-    latestReleaseUrl: `${releaseBaseUrl}/latest`,
-    releaseNotesUrl: `${releaseBaseUrl}/tag/${tag}`,
-    publishedAt: input.publishedAt?.trim() || new Date(0).toISOString(),
-    signed: Boolean(input.signed),
-    notarized: Boolean(input.notarized),
-    minimumSystemVersion: input.minimumSystemVersion?.trim() || '13.0',
-    executionHostProtocolVersion:
-      typeof input.executionHostProtocolVersion === 'number' && Number.isInteger(input.executionHostProtocolVersion) && input.executionHostProtocolVersion > 0 ? input.executionHostProtocolVersion : currentExecutionHostProtocolVersion,
-    artifacts,
-    homebrew: {
-      tap: homebrewTap,
-      cask: 'zeus',
-      installCommand: `brew install --cask ${homebrewTap}/zeus`,
-      upgradeCommand: `brew upgrade --cask ${homebrewTap}/zeus`,
-    },
   };
 }
 

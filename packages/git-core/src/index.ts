@@ -36,8 +36,6 @@ export const gitMutatingCapabilityNames = [
   'executeProjectGitAction',
 ] as const;
 
-export type GitMutatingCapabilityName = (typeof gitMutatingCapabilityNames)[number];
-
 export interface GitStatusSummary {
   isRepository: boolean;
   branch: string;
@@ -818,11 +816,6 @@ export async function refreshConflictTaskWorkspace(input: { cwd: string; sourceB
     }
   }
   return { headSha: await resolveCommit(input.cwd, 'HEAD'), conflictFiles: [] };
-}
-
-/** 只读查询远端命名分支提交；远端分支不存在时返回 null。 */
-export async function getRemoteBranchHead(cwd: string, remoteName: string, remoteBranch: string): Promise<string | null> {
-  return readRemoteHead(cwd, remoteName, remoteBranch);
 }
 
 /**

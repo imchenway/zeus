@@ -57,11 +57,6 @@ export interface ImPairingSessionSnapshot {
   consumed: boolean;
 }
 
-export interface ImPairingStatusSnapshot {
-  connection: ImConnectionSnapshot;
-  pairing: ImPairingSessionSnapshot | null;
-}
-
 export interface ImTelegramConnectionLogEntry {
   id: string;
   occurredAt: string;

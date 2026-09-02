@@ -11,7 +11,7 @@ import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { ShieldCheckIcon as ShieldCheck } from '@phosphor-icons/react/dist/csr/ShieldCheck';
 import { WarningIcon as Warning } from '@phosphor-icons/react/dist/csr/Warning';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
-import type { NativeConversationChoice, NativeConversationSnapshot, NativeSessionState } from './sessionTypes.js';
+import type { NativeConversationChoice, NativeSessionState } from './sessionTypes.js';
 import { compareConversationStageUpdatedDesc } from './conversationOrdering.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { conversationDisplayTitle } from './conversationDisplayTitle.js';
@@ -488,26 +488,6 @@ export function conversationTreeRuntimeStateFromSession(state: NativeSessionStat
   )
     return 'streaming';
   return 'ready';
-}
-
-/** 后台会话没有独立 controller 时，使用服务端完整快照恢复同一套列表状态。 */
-export function conversationTreeRuntimeStateFromSnapshot(snapshot: NativeConversationSnapshot): ConversationTreeRuntimeState {
-  const fallback = conversationTreeRuntimeStateFromConversation(snapshot);
-  if (fallback === 'legacy_readonly' || fallback === 'error' || fallback === 'connecting' || fallback === 'reconnecting') return fallback;
-  if (snapshot.queue.state.type === 'paused') {
-    if (snapshot.queue.state.reason === 'provider_archived') return snapshot.queue.submissions.length > 0 ? 'queued' : 'ready';
-    if (snapshot.queue.state.reason === 'recovery_required') return 'error';
-  }
-  if (snapshot.planImplementationRequests.some((request) => request.status === 'pending')) return 'pending_user_input';
-  if (snapshot.queue.state.type === 'paused') return 'paused';
-  const pendingRequest = snapshot.requests.find((request) => request.status === 'pending');
-  if (pendingRequest?.type === 'request_user_input' || pendingRequest?.type === 'userInput' || snapshot.pendingRequestKind === 'user_input') return 'pending_user_input';
-  if (pendingRequest || snapshot.pendingRequestKind === 'approval') return 'pending_approval';
-  if (snapshot.queue.state.type === 'waiting') return snapshot.queue.state.reason === 'user_input' ? 'pending_user_input' : 'pending_approval';
-  if (snapshot.queue.state.type === 'dispatching') return 'queued';
-  if (snapshot.queue.state.type === 'active') return 'streaming';
-  if (snapshot.queue.submissions.some((submission) => submission.status === 'queued')) return 'queued';
-  return fallback;
 }
 
 export function conversationTreeRuntimeStateFromConversation(

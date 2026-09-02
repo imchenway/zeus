@@ -30,7 +30,7 @@ const safeReceiverRoots = new Set(['Array', 'Boolean', 'Buffer', 'Date', 'JSON',
 const riskyPackageEffects = new Map([
   ['@zeus/ai-runtime', 'process_runtime'],
   ['@zeus/git-core', 'git'],
-  ['@zeus/security-core', 'keychain'],
+  ['./securityCore.js', 'keychain'],
   ['./telegramAdapter.js', 'provider_network'],
   ['./releaseCore.js', 'provider_network'],
   ['node:child_process', 'process_runtime'],

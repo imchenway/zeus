@@ -1,4 +1,3 @@
-import type { CommandDeliveryOutcome } from '@zeus/storage';
 import { type PreparedTaskStatusTelegramEffect, type TaskStatusTelegramEffectInput, WorkManagementCommandApplication } from './workManagementCommandApplication.js';
 
 export interface PreparedTelegramTaskStatusNotification {
@@ -181,5 +180,3 @@ function safeError(error: unknown, redactSensitiveText: (value: string) => { tex
 function yieldToEventLoop(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
-
-export type WorkManagementTaskEffectOutcome = Exclude<CommandDeliveryOutcome, 'accepted'>;

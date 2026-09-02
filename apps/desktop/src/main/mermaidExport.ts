@@ -28,9 +28,6 @@ export interface ExportDiagramSourceToFileResult {
   filePath: string | null;
 }
 
-export type MermaidSaveDialogResult = DiagramSaveDialogResult;
-export type MermaidDiagramExportPayload = DiagramSourceExportPayload;
-
 export type ExportMermaidDiagramToFileInput = Omit<ExportDiagramSourceToFileInput, 'format'>;
 export type ExportPlantUmlDiagramToFileInput = Omit<ExportDiagramSourceToFileInput, 'format'>;
 export type ExportMermaidDiagramToFileResult = ExportDiagramSourceToFileResult;

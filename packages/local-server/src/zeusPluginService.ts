@@ -14,7 +14,7 @@ import {
   type PluginRevisionRecord,
   type PluginScope,
 } from '@zeus/storage';
-import type { SecretStore } from '@zeus/security-core';
+import type { SecretStore } from './securityCore.js';
 import { inspectZeusPluginDirectory, ZeusPluginManifestError, type ZeusPluginManifestInspection } from './zeusPluginManifest.js';
 import { discoverMarketplace, inspectSafeSourceTree, materializePluginSource, ZeusPluginSourceError, type ZeusMarketplaceEntry, type ZeusPluginDirectSource } from './zeusPluginSource.js';
 

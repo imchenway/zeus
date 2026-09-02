@@ -1,16 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { ArtifactStore, ZeusDatabase } from '@zeus/storage';
 
-export const storageRecoveryPreflightRouteDeclaration = {
-  method: 'POST',
-  path: '/api/diagnostics/storage/recovery-preflight',
-  classification: 'diagnostic_capability',
-  writesBusinessState: false,
-  requiresWritableCommandLedger: false,
-  safelyRepeatable: true,
-  commandLedger: 'not_applicable',
-} as const;
-
 /**
  * 存储故障期间 Command WAL 本身可能不可写，因此恢复预检不能伪装成普通 Command。
  * 它只执行可重复的 SQLite/Artifact staging 探针并返回是否可重启，不创建业务事实；

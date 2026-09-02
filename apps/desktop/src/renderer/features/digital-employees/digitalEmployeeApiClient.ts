@@ -1,4 +1,5 @@
 import { jsonRequest, type LocalApiTransport } from '../../transport/localApiTransport.js';
+import { commandInputSha256 } from '../../commandRequest.js';
 import { buildWorkManagementCommandRequest, workManagementClientCommandTypes } from '../work-management/workManagementCommandClient.js';
 import type { CommandRunDetail } from '../runtime/runtimeContracts.js';
 import type {
@@ -183,7 +184,7 @@ export function createDigitalEmployeeApiClient(transport: LocalApiTransport): Di
       return transport.request(`${taskPath(taskId)}/work-items/${encodeURIComponent(item.id)}/cancel`, jsonRequest('POST', body));
     },
     resolveTaskWorkDecision: async (taskId, decision, response) => {
-      const value = { expectedRevision: decision.revision, responseSha256: await sha256(canonicalJson(response)) };
+      const value = { expectedRevision: decision.revision, responseSha256: await commandInputSha256(response) };
       const body = await command(workManagementClientCommandTypes.taskWorkDecisionResolve, 'task', () => taskId, 'task_work_decision_resolve_', value, decision.revision);
       return transport.request(`${taskPath(taskId)}/work-decisions/${encodeURIComponent(decision.id)}/resolve`, jsonRequest('POST', { ...body, runtime: { response } }));
     },
@@ -207,21 +208,4 @@ function projectPath(projectId: string): string {
 
 function taskPath(taskId: string): string {
   return `/api/tasks/${encodeURIComponent(taskId)}`;
-}
-
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  if (value && typeof value === 'object') {
-    const record = value as Record<string, unknown>;
-    return `{${Object.keys(record)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
-      .join(',')}}`;
-  }
-  return JSON.stringify(value) ?? 'null';
-}
-
-async function sha256(value: string): Promise<string> {
-  const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }

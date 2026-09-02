@@ -3,6 +3,7 @@ import { chmod, lstat, open, realpath, stat } from 'node:fs/promises';
 import { dirname, resolve, sep } from 'node:path';
 import { backup, DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
+import { parseArgs } from 'node:util';
 import { createZeusDatabase, migrateLegacyConversationItemsCandidate } from '../packages/storage/src/index.js';
 
 interface Arguments {
@@ -102,30 +103,11 @@ async function main(): Promise<void> {
 }
 
 function parseArguments(values: string[]): Arguments {
-  let sourcePath: string | null = null;
-  let candidatePath: string | null = null;
-  let rollbackPath: string | null = null;
-  let apply = false;
-  for (let index = 0; index < values.length; index += 1) {
-    const value = values[index];
-    const next = values[index + 1];
-    if ((value === '--source' || value === '--candidate' || value === '--rollback') && next) {
-      if (value === '--source') sourcePath = resolve(next);
-      if (value === '--candidate') candidatePath = resolve(next);
-      if (value === '--rollback') rollbackPath = resolve(next);
-      index += 1;
-      continue;
-    }
-    if (value === '--apply') {
-      apply = true;
-      continue;
-    }
-    throw new Error(`未知参数：${value ?? ''}`);
-  }
-  if (!sourcePath || !candidatePath || !rollbackPath) {
+  const parsed = parseArgs({ args: values, strict: true, options: { source: { type: 'string' }, candidate: { type: 'string' }, rollback: { type: 'string' }, apply: { type: 'boolean' } } }).values;
+  if (!parsed.source || !parsed.candidate || !parsed.rollback) {
     throw new Error('用法：tsx scripts/prepare-conversation-legacy-cutover.ts --source <只读来源库> --candidate <*.conversation-cutover.candidate.db> --rollback <*.conversation-cutover.rollback.db> [--apply]');
   }
-  return { sourcePath, candidatePath, rollbackPath, apply };
+  return { sourcePath: resolve(parsed.source), candidatePath: resolve(parsed.candidate), rollbackPath: resolve(parsed.rollback), apply: parsed.apply ?? false };
 }
 
 async function assertSafeSource(value: string): Promise<string> {

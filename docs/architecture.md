@@ -42,14 +42,11 @@ Zeus 采用 pnpm monorepo：`apps/desktop` 是 Electron/React 桌面应用，`pa
 核心模块包括 @zeus/code-indexer、@zeus/graph-engine、@zeus/local-server、@zeus/ai-runtime、@zeus/storage。
 
 - `@zeus/storage`：SQLite/sql.js schema、项目、任务、事件、Runtime、会话、Git、图谱、Telegram、安全审计和导入/导出。
-- `@zeus/local-server`：Fastify API、WebSocket、本地 token、跨模块编排、真实路径校验、安全错误与运行时状态。
+- `@zeus/local-server`：Fastify API、WebSocket、本地 token、Keychain、Telegram/发布边界、跨模块编排、真实路径校验与运行时状态。
 - `@zeus/code-indexer`：真实代码扫描、Java/Spring/MyBatis/SQL/DDL/TypeScript 事实抽取。
 - `@zeus/graph-engine`：project nodes/edges/views 生成，系统架构图、表关系图、模块图、模块详情图、接口时序图、模块流程图、方法逻辑图。
 - `@zeus/ai-runtime`：adapter 检测、会话生命周期、Generic shell 风险判断和运行时事件。
 - `@zeus/git-core`：Git status/diff/confirmation/白名单写操作参数校验。
-- `@zeus/telegram-adapter`：Telegram 命令解析、sendMessage、getUpdates 和 long polling 服务。
-- `@zeus/security-core`：Keychain account 约束、密钥状态和安全重置辅助。
-- `@zeus/release-core`：release 状态、自动更新预留和签名/公证等待项表达。
 
 ## 安全与发布边界
 

@@ -154,12 +154,6 @@ export function buildProjectGraph(scan: ProjectScanResult): ProjectGraph {
   };
 }
 
-export function assertNonEmptyGraph(graph: ProjectGraph): void {
-  if (graph.nodes.length === 0 || graph.edges.length === 0 || graph.views.length === 0) {
-    throw new Error(`Zeus graph is empty: nodes=${graph.nodes.length}, edges=${graph.edges.length}, views=${graph.views.length}`);
-  }
-}
-
 function toGraphNode(symbol: CodeSymbolFact): ProjectGraphNode {
   return {
     id: `node_${randomId(12)}`,

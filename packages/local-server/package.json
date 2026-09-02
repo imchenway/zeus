@@ -192,7 +192,6 @@
     "@zeus/code-indexer": "workspace:*",
     "@zeus/git-core": "workspace:*",
     "@zeus/graph-engine": "workspace:*",
-    "@zeus/security-core": "workspace:*",
     "@zeus/shared": "workspace:*",
     "@zeus/storage": "workspace:*",
     "fastify": "^5.4.0"

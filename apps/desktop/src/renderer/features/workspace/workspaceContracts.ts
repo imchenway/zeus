@@ -1,4 +1,4 @@
-import { type MermaidDiagramExportFile, type PlantUmlDiagramExportFile } from '@zeus/diagram-engine';
+import type { MermaidDiagramExportFile, PlantUmlDiagramExportFile } from '../graph/diagramExport.js';
 import { type ZentaoTaskExtract } from '@zeus/shared';
 import type { NativeConversationAttachment, NativeConversationChoicesSnapshot, NativeProjectConversationChoicesSnapshot } from '../../session/sessionTypes.js';
 import { type TaskResourceAuthorizationResult, type TaskResourcePayload } from '../../task/taskAttachments.js';

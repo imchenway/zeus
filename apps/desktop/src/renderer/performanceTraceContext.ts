@@ -51,11 +51,6 @@ export function markConversationNavigationRenderReady(projectId: string, convers
   activeConversationNavigation = { ...activeConversationNavigation, renderReady: true };
 }
 
-export function cancelConversationNavigationTrace(projectId: string, conversationId: string): void {
-  expireStaleTrace();
-  if (activeConversationNavigation?.snapshotPathname === conversationSnapshotPathname(projectId, conversationId)) activeConversationNavigation = null;
-}
-
 export function readyConversationNavigationTrace(): ConversationNavigationTrace | null {
   expireStaleTrace();
   return activeConversationNavigation?.snapshotSettled && activeConversationNavigation.renderReady ? publicTrace(activeConversationNavigation) : null;

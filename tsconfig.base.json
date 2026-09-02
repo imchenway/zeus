@@ -19,10 +19,7 @@
       "@zeus/graph-engine": ["packages/graph-engine/src/index.ts"],
       "@zeus/local-server": ["packages/local-server/src/index.ts"],
       "@zeus/ai-runtime": ["packages/ai-runtime/src/index.ts"],
-      "@zeus/git-core": ["packages/git-core/src/index.ts"],
-      "@zeus/security-core": ["packages/security-core/src/index.ts"],
-      "@zeus/terminal-core": ["packages/terminal-core/src/index.ts"],
-      "@zeus/diagram-engine": ["packages/diagram-engine/src/index.ts"]
+      "@zeus/git-core": ["packages/git-core/src/index.ts"]
     }
   }
 }

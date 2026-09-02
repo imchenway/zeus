@@ -37,24 +37,6 @@ interface ExecuteGitOperationInput {
 type EmptyInput = Record<string, never>;
 type GitExecutionPort = (input: ExecuteHighRiskGitOperationInput) => Promise<ExecutedGitOperationResult>;
 
-export const gitCommandRoutePolicy = {
-  ephemeralCapabilities: ['POST /api/git/confirmations', 'POST /api/git/confirmations/:confirmationId/reject', 'POST /api/git/confirmations/:confirmationId/confirm'],
-  externalOperations: [
-    'POST /api/git/operations',
-    'POST /api/projects/:projectId/git/branch',
-    'POST /api/projects/:projectId/git/checkout',
-    'POST /api/projects/:projectId/git/commit',
-    'POST /api/projects/:projectId/git/stash',
-    'POST /api/projects/:projectId/git/apply-stash',
-    'POST /api/projects/:projectId/git/pull',
-    'POST /api/projects/:projectId/git/push',
-    'POST /api/tasks/:taskId/git/rollback',
-  ],
-  externalIdentity: 'git-confirmation-id',
-  postWriteFailure: 'outcome_unknown_after_write',
-  automaticRetryAfterUnknown: false,
-} as const;
-
 interface GitConfirmationReplay<TResult> {
   commandType: string;
   inputSha256: string;

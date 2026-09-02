@@ -1,8 +1,5 @@
 import type { CommandEnvelope, CommandScopeKind } from './commandEnvelope.js';
 
-/** 会话派发 HTTP/Renderer/Core 共用的稳定协议代次。 */
-export const conversationDispatchWireGeneration = '2026-09-01-conversation-dispatch-v1' as const;
-
 export const conversationDispatchWireCommandTypes = {
   changeSetUndo: 'conversation.turn.change_set.undo',
   changeSetReapply: 'conversation.turn.change_set.reapply',

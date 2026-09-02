@@ -1,686 +1,104 @@
-.macos-ai-app.zeus-shell.qa-page {
-  background: var(--session-canvas);
-  box-sizing: border-box;
-  color: var(--session-text);
-  display: grid;
-  gap: 28px;
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto;
-  inline-size: 100%;
-  margin: 0;
-  min-block-size: 100vh;
-  padding: 32px;
+:root {
+  color-scheme: light dark;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+  background: #e9edf3;
 }
 
-.qa-page :where(h1, h2, p) {
+body {
   margin: 0;
+}
+
+.qa-page {
+  min-height: 100vh;
+  padding: 32px;
+  color: #172033;
 }
 
 .qa-heading {
-  display: grid;
-  gap: 5px;
+  max-width: 1120px;
+  margin: 0 auto 24px;
 }
 
 .qa-heading p,
-.qa-reference-panel h2,
-.qa-implementation-panel > h2 {
-  color: var(--session-text-muted);
-  font-size: 12px;
-  font-weight: 560;
+.qa-heading span {
+  color: #667085;
 }
 
 .qa-heading h1 {
-  font-size: 24px;
-  letter-spacing: -0.02em;
+  margin: 8px 0;
 }
 
-.qa-comparison {
-  align-items: start;
+.qa-themes {
   display: grid;
-  gap: 24px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+  max-width: 1120px;
+  margin: auto;
 }
 
-.qa-list-comparison {
-  grid-template-columns: minmax(0, 1fr) 480px;
-}
-
-.qa-approval-comparison {
-  grid-template-columns: minmax(0, 1fr) minmax(620px, 1fr);
-}
-
-.qa-reference-stack,
-.qa-reference-panel,
-.qa-implementation-panel {
-  display: grid;
-  gap: 9px;
-  min-inline-size: 0;
-}
-
-.qa-reference-stack {
-  gap: 18px;
-}
-
-.qa-reference-panel img {
-  background: white;
-  border: 1px solid var(--session-line);
-  border-radius: 12px;
-  display: block;
-  inline-size: 100%;
-  max-block-size: 330px;
-  object-fit: contain;
-  object-position: left top;
-}
-
-.qa-reference-wide-crop img {
-  block-size: 150px;
-  object-fit: cover;
-  object-position: left top;
-}
-
-.qa-implementation-panel {
-  background: var(--session-sidebar);
-  border: 1px solid var(--session-line);
-  border-radius: 14px;
-  padding: 14px;
-}
-
-.qa-session-list {
-  border: 0;
-  inline-size: 450px;
-  min-block-size: 300px;
-}
-
-.qa-session-list .session-project-conversation-tree {
-  block-size: auto;
-}
-
-.qa-resource-implementation {
-  inline-size: min(100%, 760px);
-}
-
-.qa-resource-implementation .ai-workspace {
-  color: var(--session-text);
-}
-
-.qa-resource-implementation .session-markdown {
-  inline-size: 100%;
-}
-
-.qa-source-preview-page {
-  background: var(--session-canvas);
-  box-sizing: border-box;
-  color: var(--session-text);
-  display: grid;
-  gap: 18px;
-  grid-template-rows: auto minmax(0, 1fr);
-  inline-size: 100%;
-  min-block-size: 100vh;
+.qa-theme {
+  min-height: 420px;
   padding: 24px;
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 18px 50px rgb(15 23 42 / 8%);
 }
 
-.qa-source-preview-page > header {
-  align-items: end;
-  display: flex;
-  gap: 24px;
-  justify-content: space-between;
+.qa-theme.theme-dark {
+  color: #edf2f7;
+  background: #171a21;
 }
 
-.qa-source-preview-page > header div {
-  display: grid;
-  gap: 4px;
+.qa-user-message {
+  width: fit-content;
+  max-width: 78%;
+  margin: 0 0 24px auto;
+  padding: 10px 14px;
+  border-radius: 14px 14px 4px 14px;
+  color: #fff;
+  background: #405de6;
 }
 
-.qa-source-preview-page :where(h1, p) {
-  margin: 0;
+.qa-answer {
+  margin-top: 24px;
+  line-height: 1.65;
 }
 
-.qa-source-preview-page p {
-  color: var(--session-text-muted);
-  font-size: 12px;
-}
-
-.qa-source-preview-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.qa-source-preview-actions button {
-  background: var(--session-control);
-  border: 1px solid var(--session-line);
-  border-radius: 8px;
-  color: var(--session-text);
-  cursor: pointer;
-  padding: 7px 12px;
-}
-
-.qa-source-preview-workspace {
-  border: 1px solid var(--session-line);
-  border-radius: 12px;
-  min-block-size: 0;
-  overflow: hidden;
-}
-
-@media (max-width: 1000px) {
-  .qa-list-comparison,
-  .qa-approval-comparison {
-    grid-template-columns: 1fr;
-  }
-}
-
-.qa-motion-page {
-  background: rgb(236 238 241);
-}
-
-.macos-ai-app.zeus-shell.qa-plan-preview-page {
-  block-size: 100vh;
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, 1fr);
-  min-block-size: 0;
-  min-inline-size: 960px;
-  padding: 20px;
-}
-
-.qa-plan-preview-workspace {
-  display: flex;
-  min-block-size: 0;
-  overflow: hidden;
-}
-
-.qa-motion-theme {
-  background: var(--session-canvas);
-  border: 1px solid var(--session-line);
-  border-radius: 16px;
-  color: var(--session-text);
-  display: grid;
-  gap: 18px;
-  min-inline-size: 0;
-  overflow: hidden;
-  padding: 20px;
-}
-
-.qa-motion-theme.theme-dark {
-  box-shadow: 0 16px 36px rgb(18 22 28 / 0.18);
-}
-
-.qa-motion-diagnostics {
-  background: white;
-  border: 1px solid rgb(207 212 219);
-  border-radius: 12px;
-  color: rgb(31 35 41);
-  display: grid;
-  gap: 10px;
-  padding: 14px;
-}
-
-.qa-motion-diagnostics h2 {
-  font-size: 13px;
-  margin: 0;
-}
-
-.qa-motion-diagnostics dl {
-  display: grid;
-  gap: 7px 18px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin: 0;
-}
-
-.qa-motion-diagnostics dl > div {
-  display: grid;
-  font-size: 11px;
-  gap: 2px;
-  grid-template-columns: minmax(120px, auto) minmax(0, 1fr);
-}
-
-.qa-motion-diagnostics :where(dt, dd) {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.qa-motion-diagnostics dt {
-  color: rgb(94 102 114);
-}
-
-.qa-motion-theme > header {
-  display: grid;
-  gap: 3px;
-}
-
-.qa-motion-send-preview {
-  background: var(--session-canvas);
-  border: 1px solid var(--session-line);
-  border-radius: 16px;
-  color: var(--session-text);
-  display: grid;
-  gap: 12px;
-  padding: 20px;
-}
-
-.qa-motion-send-preview > div:first-child {
-  align-items: center;
-  display: flex;
-  gap: 12px;
-  justify-content: space-between;
-}
-
-.qa-motion-send-preview h3 {
-  font-size: 13px;
-  margin: 0;
-}
-
-.qa-motion-send-preview button {
-  background: var(--session-accent);
-  border: 0;
-  border-radius: 8px;
-  color: white;
-  cursor: pointer;
-  font: inherit;
-  font-size: 12px;
-  padding: 7px 12px;
-}
-
-.qa-motion-fixture-actions {
-  align-items: center;
+.qa-scenes {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  max-width: 1120px;
+  margin: 20px auto 0;
 }
 
-.qa-motion-fixture-actions button,
-.qa-motion-theme > .qa-motion-fixture-actions button {
-  background: var(--session-accent);
-  border: 0;
-  border-radius: 8px;
-  color: white;
-  cursor: pointer;
-  font: inherit;
-  font-size: 12px;
-  padding: 7px 12px;
+.qa-scenes a {
+  padding: 8px 12px;
+  border-radius: 999px;
+  color: inherit;
+  text-decoration: none;
+  background: rgb(255 255 255 / 65%);
 }
 
-.qa-motion-fixture-actions button:disabled {
-  cursor: default;
-  opacity: 0.55;
-}
-
-.qa-motion-fixture-actions output,
-.qa-motion-send-preview > output {
-  color: var(--session-text-muted);
-  font-size: 11px;
-}
-
-.qa-send-transcript {
-  border: 1px solid var(--session-line-soft);
-  border-radius: 12px;
-  min-block-size: 280px;
-  overflow: hidden;
-}
-
-.qa-send-transcript .session-transcript {
-  block-size: 230px;
-  padding-block-start: 18px;
-  padding-block-end: 72px;
-}
-
-.qa-motion-send-preview[data-narrow='true'] {
-  inline-size: min(360px, 100%);
-}
-
-.qa-creation-status-grid {
-  align-items: start;
-  display: grid;
-  gap: 12px;
-  grid-template-columns: minmax(0, 1fr) 320px;
-}
-
-.qa-creation-status-narrow {
-  inline-size: 320px;
-  max-inline-size: 100%;
-}
-
-@media (width <= 760px) {
-  .qa-creation-status-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-.qa-long-scroll-transcript .session-transcript {
-  block-size: 420px;
-}
-
-.qa-no-refill-results {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin: 0;
-}
-
-.qa-no-refill-results > div,
-.qa-error-contract-lines > p {
-  background: var(--session-sidebar);
-  border: 1px solid var(--session-line-soft);
-  border-radius: 8px;
-  display: grid;
-  gap: 4px;
-  margin: 0;
-  min-inline-size: 0;
-  padding: 10px 12px;
-}
-
-.qa-no-refill-results :where(dt, dd) {
-  margin: 0;
-}
-
-.qa-no-refill-results dt {
-  color: var(--session-text-muted);
-  font-size: 11px;
-}
-
-.qa-no-refill-results dd,
-.qa-error-contract-lines code {
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-
-.qa-error-contract-lines {
-  display: grid;
-  gap: 8px;
-}
-
-.qa-motion-theme > header small,
-.qa-motion-theme h3 {
-  color: var(--session-text-muted);
-}
-
-.qa-motion-transcript {
-  border: 1px solid var(--session-line-soft);
-  border-radius: 12px;
-  min-block-size: 280px;
-  overflow: hidden;
-}
-
-.qa-motion-transcript .session-transcript {
-  block-size: 280px;
-  padding-block: 22px;
-}
-
-.qa-motion-grid {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.qa-motion-grid > section {
-  background: var(--session-sidebar);
-  border: 1px solid var(--session-line-soft);
-  border-radius: 12px;
-  display: grid;
-  gap: 12px;
-  min-block-size: 150px;
-  min-inline-size: 0;
-  overflow: hidden;
-  padding: 14px;
-}
-
-.qa-motion-grid h3 {
-  font-size: 12px;
-  font-weight: 620;
-  margin: 0;
-}
-
-.qa-motion-activity-flow {
-  grid-column: 1 / -1;
-}
-
-.qa-motion-activity-flow > header {
-  align-items: center;
-  display: flex;
-  gap: 16px;
-  justify-content: space-between;
-}
-
-.qa-motion-activity-flow > header > div {
-  display: grid;
-  gap: 3px;
-}
-
-.qa-motion-activity-flow > header small {
-  color: var(--session-text-muted);
-  font-size: 11px;
-}
-
-.qa-motion-activity-flow > header button {
-  background: var(--session-selected);
-  border: 1px solid var(--session-line);
-  border-radius: 8px;
-  color: var(--session-text);
-  flex: 0 0 auto;
-  font: inherit;
-  padding: 6px 10px;
-}
-
-.qa-motion-activity-flow > .ai-workspace {
-  border: 1px solid var(--session-line-soft);
-  border-radius: 9px;
-  block-size: 240px;
-  overflow: hidden;
-}
-
-.qa-motion-activity-flow .session-transcript {
-  block-size: 240px;
-  padding-block: 14px;
-}
-
-.qa-motion-grid .session-transcript {
-  block-size: 110px;
-  padding: 10px 0;
-}
-
-.qa-motion-grid .session-thread-item,
-.qa-motion-grid .session-plan-summary {
-  inline-size: 100%;
-  margin-inline: 0;
-}
-
-.qa-motion-functional-row {
-  align-items: center;
-  color: var(--session-text-muted);
-  display: flex;
-  font-size: 12px;
-  gap: 10px;
-}
-
-.qa-motion-functional-row .session-workspace-root {
-  display: inline-flex;
-}
-
-.qa-motion-grid .session-reconnect-notice {
-  border: 1px solid var(--session-line-soft);
-  border-radius: 9px;
-  grid-template-columns: 20px minmax(0, 1fr);
-  padding: 8px 10px;
-}
-
-.qa-motion-grid .browser-workspace-loading {
-  flex: 0 0 auto;
-  min-block-size: 74px;
-}
-
-.qa-motion-loading {
-  grid-column: 1 / -1;
-}
-
-.qa-motion-cold-history {
-  block-size: 150px;
-  border: 1px solid var(--session-line-soft);
-  border-radius: 9px;
-  min-block-size: 0;
-  overflow: hidden;
-}
-
-.qa-defect-page {
-  background: var(--session-canvas);
-}
-
-.qa-defect-transcript {
-  block-size: 720px;
-  inline-size: min(920px, 100%);
-  justify-self: center;
-  overflow: hidden;
-  padding: 0;
-}
-
-.qa-defect-transcript .session-transcript {
-  block-size: 720px;
-  padding-block: 32px;
+.qa-scenes a[aria-current='page'] {
+  color: #fff;
+  background: #405de6;
 }
 
 @media (max-width: 760px) {
-  .macos-ai-app.zeus-shell.qa-motion-page {
-    padding: 16px;
+  .qa-page {
+    padding: 18px;
   }
 
-  .qa-motion-theme {
-    padding: 14px;
-  }
-
-  .qa-motion-grid {
+  .qa-themes {
     grid-template-columns: 1fr;
-  }
-
-  .qa-motion-diagnostics dl {
-    grid-template-columns: 1fr;
-  }
-
-  .qa-motion-loading {
-    grid-column: auto;
-  }
-
-  .qa-motion-activity-flow {
-    grid-column: auto;
-  }
-}
-
-.qa-markdown-stream-page {
-  background: var(--session-canvas);
-  color: var(--session-text);
-  min-block-size: 100vh;
-  padding: 28px;
-}
-
-.qa-markdown-stream-controls {
-  align-items: end;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-block: 18px;
-}
-
-.qa-markdown-stream-controls button,
-.qa-markdown-stream-controls input {
-  background: var(--session-control);
-  border: 1px solid var(--session-line);
-  border-radius: 8px;
-  color: var(--session-text);
-  min-block-size: 34px;
-  padding: 6px 10px;
-}
-
-.qa-markdown-stream-controls label {
-  color: var(--session-text-muted);
-  display: grid;
-  font-size: 11px;
-  gap: 4px;
-  min-inline-size: 220px;
-}
-
-.qa-markdown-stream-controls [role='status'] {
-  color: var(--session-text-muted);
-  font-variant-numeric: tabular-nums;
-  margin-inline-start: auto;
-}
-
-.qa-markdown-stream-grid {
-  display: grid;
-  gap: 16px;
-  grid-template-columns: minmax(0, 1fr) 260px;
-}
-
-.qa-markdown-stream-stage,
-.qa-markdown-stream-results {
-  background: var(--session-panel);
-  border: 1px solid var(--session-line-soft);
-  border-radius: 10px;
-  min-inline-size: 0;
-}
-
-.qa-markdown-stream-stage {
-  block-size: 68vh;
-  overflow: auto;
-  padding: 22px;
-}
-
-.qa-markdown-stream-stage .session-markdown {
-  inline-size: 100%;
-}
-
-.qa-markdown-stream-results {
-  align-self: start;
-  padding: 16px;
-  position: sticky;
-  top: 16px;
-}
-
-.qa-markdown-stream-results[data-pass='true'] {
-  border-color: color-mix(in srgb, var(--session-success) 55%, var(--session-line));
-}
-
-.qa-markdown-stream-results[data-pass='false'] {
-  border-color: color-mix(in srgb, var(--session-danger) 55%, var(--session-line));
-}
-
-.qa-markdown-stream-results h2 {
-  font-size: 14px;
-  margin-block: 0 12px;
-}
-
-.qa-markdown-stream-results dl {
-  display: grid;
-  font-size: 11px;
-  gap: 7px 10px;
-  grid-template-columns: minmax(0, 1fr) auto;
-  margin: 0;
-}
-
-.qa-markdown-stream-results :where(dt, dd) {
-  margin: 0;
-}
-
-.qa-markdown-stream-results dt,
-.qa-markdown-stream-results small,
-.qa-markdown-stream-results p {
-  color: var(--session-text-muted);
-}
-
-.qa-markdown-stream-results dd {
-  font-variant-numeric: tabular-nums;
-  text-align: end;
-}
-
-.qa-markdown-stream-results small {
-  display: block;
-  margin-block-start: 14px;
-}
-
-@media (max-width: 760px) {
-  .qa-markdown-stream-page {
-    padding: 14px;
-  }
-
-  .qa-markdown-stream-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .qa-markdown-stream-results {
-    position: static;
   }
 }

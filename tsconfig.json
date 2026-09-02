@@ -17,22 +17,13 @@
       "path": "packages/local-server"
     },
     {
-      "path": "packages/diagram-engine"
-    },
-    {
       "path": "apps/desktop"
-    },
-    {
-      "path": "packages/terminal-core"
     },
     {
       "path": "packages/ai-runtime"
     },
     {
       "path": "packages/git-core"
-    },
-    {
-      "path": "packages/security-core"
     }
   ]
 }

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { parseZentaoInstanceBaseUrl, zentaoInstanceApiBase, zentaoSecretAccount, type SaveZentaoInstanceRequest, type ZentaoInstanceRecord, type ZentaoInstanceVerifyCode, type ZentaoInstanceVerifyResult } from '@zeus/shared';
-import type { SecretStore } from '@zeus/security-core';
+import type { SecretStore } from './securityCore.js';
 import type { SettingRepository } from '@zeus/storage';
 
 const zentaoInstancesSettingKey = 'zentao.instances';

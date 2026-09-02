@@ -1,7 +1,7 @@
 import { type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
-import { buildMermaidDiagramExport, buildMermaidDiagramSource, buildPlantUmlDiagramExport, buildPlantUmlDiagramSource, type MermaidDiagramExportFile, type PlantUmlDiagramExportFile } from '@zeus/diagram-engine';
+import { buildMermaidDiagramExport, buildMermaidDiagramSource, buildPlantUmlDiagramExport, buildPlantUmlDiagramSource, type MermaidDiagramExportFile, type PlantUmlDiagramExportFile } from './diagramExport.js';
 import { type AppLanguage } from '../workspace/workspaceCopy.js';
 import { ZeusSelect } from '../../ZeusSelect.js';
 import { buildArchitectureLayerModel, canRenderArchitectureLayerModel } from '../../graph/ArchitectureGraphCanvas.js';

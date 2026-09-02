@@ -6,7 +6,6 @@ import { resolve } from 'node:path';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const checks = [
-  { id: 'no-undeclared-cloud-sync', command: 'node', args: ['scripts/audit-no-cloud-sync-implementation.mjs'] },
   { id: 'architecture-governance', command: 'pnpm', args: ['verify:architecture'] },
   { id: 'legacy-conversation-cutover', command: 'node', args: ['scripts/audit-conversation-legacy-access.mjs', '--require-cutover-ready'] },
   { id: 'conversation-query-plans', command: 'pnpm', args: ['exec', 'tsx', 'scripts/verify-conversation-query-plans.ts'] },

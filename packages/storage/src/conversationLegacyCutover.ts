@@ -5,8 +5,6 @@ import type { ConversationAgentKind, ConversationItemPhase, ConversationItemStat
 
 export const conversationLegacyCutoverGeneration = '2026-08-21-conversation-items-cutover-v1';
 
-export type ConversationLegacyCutoverState = 'not_started' | 'migrating' | 'ready' | 'failed';
-
 export interface ConversationLegacyCutoverReceipt {
   schemaVersion: 1;
   generation: typeof conversationLegacyCutoverGeneration;
@@ -38,17 +36,6 @@ interface LegacyItemRow {
   updated_at: string;
   agent_kind: ConversationAgentKind | null;
   native_item_id: string | null;
-}
-
-interface CutoverMetadataRow {
-  state: ConversationLegacyCutoverState;
-  source_rows: number;
-  provider_state_rows: number;
-  mapped_rows: number;
-  source_digest: string | null;
-  mapping_digest: string | null;
-  rollback_database_identity: string | null;
-  completed_at: string | null;
 }
 
 const legacyItemBatchSize = 1_000;
@@ -154,32 +141,6 @@ export function migrateLegacyConversationItemsCandidate(db: ZeusDatabasePort, in
     db.execute(`UPDATE conversation_legacy_cutover_metadata SET state = 'failed', failure_json = ? WHERE singleton = 1`, [safeErrorJson(error)]);
     throw error;
   }
-}
-
-export function readConversationLegacyCutoverReceipt(db: ZeusDatabasePort): ConversationLegacyCutoverReceipt | null {
-  migrateConversationLegacyCutoverSchema(db);
-  const row = db.get<CutoverMetadataRow>(
-    `SELECT state, source_rows, provider_state_rows, mapped_rows, source_digest, mapping_digest,
-            rollback_database_identity, completed_at
-       FROM conversation_legacy_cutover_metadata WHERE singleton = 1`,
-  );
-  if (!row || row.state !== 'ready' || !row.source_digest || !row.mapping_digest || !row.rollback_database_identity || !row.completed_at || row.source_rows !== row.provider_state_rows || row.source_rows !== row.mapped_rows) {
-    return null;
-  }
-  assertLegacyWriteFenceClosed(db);
-  return {
-    schemaVersion: 1,
-    generation: conversationLegacyCutoverGeneration,
-    state: 'ready',
-    sourceRows: row.source_rows,
-    providerStateRows: row.provider_state_rows,
-    mappedRows: row.mapped_rows,
-    sourceDigest: row.source_digest,
-    mappingDigest: row.mapping_digest,
-    legacyWriteFenceClosed: true,
-    rollbackDatabaseIdentity: row.rollback_database_identity,
-    completedAt: row.completed_at,
-  };
 }
 
 function readLegacyBatch(db: ZeusDatabasePort, conversationId: string, updatedAt: string, id: string): LegacyItemRow[] {

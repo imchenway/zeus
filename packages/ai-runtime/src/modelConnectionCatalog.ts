@@ -244,10 +244,6 @@ export function isOfficialDeepSeekResponsesModel(connection: Pick<ModelConnectio
   return isOfficialDeepSeekApiConnection(connection) && officialDeepSeekResponsesModelIds.has(modelId.trim().toLowerCase());
 }
 
-export function modelConnectionAgentKind(connection: Pick<ModelConnectionRecord, 'templateId' | 'baseUrl'>, modelId: string): 'codex' | 'pi' {
-  return isOfficialDeepSeekResponsesModel(connection, modelId) ? 'codex' : 'pi';
-}
-
 export function modelConnectionRoute(
   connection: Pick<ModelConnectionRecord, 'templateId' | 'baseUrl'>,
   modelId: string,

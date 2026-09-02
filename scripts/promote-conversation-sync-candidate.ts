@@ -4,7 +4,7 @@ import { execFile } from 'node:child_process';
 import { lstat, mkdir, open, readFile, realpath, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
-import { promisify } from 'node:util';
+import { parseArgs, promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
 import { promoteValidatedRecoveryCandidate, type RecoveryPromotionOfflineLeasePort } from '../packages/storage/src/index.js';
 import { conversationSyncProtocolV2Generation } from '../packages/storage/src/conversationSyncEventStore.js';
@@ -254,24 +254,21 @@ async function publishOrVerifyMarker(path: string, marker: Record<string, unknow
 }
 
 function parseArguments(values: string[]): Arguments {
-  let candidateDatabasePath: string | null = null;
-  let targetDatabasePath: string | null = null;
-  let rollbackDirectoryPath: string | null = null;
-  let apply = false;
-  let confirmation: string | null = null;
-  for (let index = 0; index < values.length; index += 1) {
-    const value = values[index];
-    if (value === '--candidate-db' && values[index + 1]) candidateDatabasePath = resolve(values[++index]!);
-    else if (value === '--target-db' && values[index + 1]) targetDatabasePath = resolve(values[++index]!);
-    else if (value === '--rollback-dir' && values[index + 1]) rollbackDirectoryPath = resolve(values[++index]!);
-    else if (value === '--apply') apply = true;
-    else if (value === '--confirmation' && values[index + 1]) confirmation = values[++index]!;
-    else throw new Error(`未知参数：${value ?? ''}`);
-  }
-  if (!candidateDatabasePath || !targetDatabasePath || !rollbackDirectoryPath) {
+  const parsed = parseArgs({
+    args: values,
+    strict: true,
+    options: { 'candidate-db': { type: 'string' }, 'target-db': { type: 'string' }, 'rollback-dir': { type: 'string' }, apply: { type: 'boolean' }, confirmation: { type: 'string' } },
+  }).values;
+  if (!parsed['candidate-db'] || !parsed['target-db'] || !parsed['rollback-dir']) {
     throw new Error('用法：tsx scripts/promote-conversation-sync-candidate.ts --candidate-db <候选根/database/zeus.db> --target-db ~/.zeus/data/zeus.db --rollback-dir <回退目录> [--apply --confirmation <确认>]');
   }
-  return { candidateDatabasePath, targetDatabasePath, rollbackDirectoryPath, apply, confirmation };
+  return {
+    candidateDatabasePath: resolve(parsed['candidate-db']),
+    targetDatabasePath: resolve(parsed['target-db']),
+    rollbackDirectoryPath: resolve(parsed['rollback-dir']),
+    apply: parsed.apply ?? false,
+    confirmation: parsed.confirmation ?? null,
+  };
 }
 
 function sha256(value: string): string {

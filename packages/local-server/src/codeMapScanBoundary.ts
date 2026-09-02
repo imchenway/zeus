@@ -14,7 +14,3 @@ export function isUnsafeCodeMapScanRoot(rootPath: string): boolean {
   const normalizedRoot = resolve(rootPath);
   return normalizedRoot === parse(normalizedRoot).root;
 }
-
-export function isUnsafeCodeMapScanRootError(error: unknown): error is UnsafeCodeMapScanRootError {
-  return error instanceof UnsafeCodeMapScanRootError;
-}

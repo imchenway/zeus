@@ -100,24 +100,15 @@ importers:
       '@zeus/ai-runtime':
         specifier: workspace:*
         version: link:../../packages/ai-runtime
-      '@zeus/diagram-engine':
-        specifier: workspace:*
-        version: link:../../packages/diagram-engine
       '@zeus/git-core':
         specifier: workspace:*
         version: link:../../packages/git-core
       '@zeus/local-server':
         specifier: workspace:*
         version: link:../../packages/local-server
-      '@zeus/security-core':
-        specifier: workspace:*
-        version: link:../../packages/security-core
       '@zeus/shared':
         specifier: workspace:*
         version: link:../../packages/shared
-      '@zeus/terminal-core':
-        specifier: workspace:*
-        version: link:../../packages/terminal-core
       markstream-react:
         specifier: 2.0.6
         version: 2.0.6(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -227,9 +218,6 @@ importers:
       '@zeus/shared':
         specifier: workspace:*
         version: link:../shared
-      '@zeus/terminal-core':
-        specifier: workspace:*
-        version: link:../terminal-core
       node-pty:
         specifier: ^1.1.0
         version: 1.1.0
@@ -242,8 +230,6 @@ importers:
       '@zeus/storage':
         specifier: workspace:*
         version: link:../storage
-
-  packages/diagram-engine: {}
 
   packages/git-core: {}
 
@@ -273,9 +259,6 @@ importers:
       '@zeus/graph-engine':
         specifier: workspace:*
         version: link:../graph-engine
-      '@zeus/security-core':
-        specifier: workspace:*
-        version: link:../security-core
       '@zeus/shared':
         specifier: workspace:*
         version: link:../shared
@@ -285,8 +268,6 @@ importers:
       fastify:
         specifier: ^5.4.0
         version: 5.8.5
-
-  packages/security-core: {}
 
   packages/shared: {}
 
@@ -298,8 +279,6 @@ importers:
       sql.js:
         specifier: ^1.13.0
         version: 1.14.1
-
-  packages/terminal-core: {}
 
 packages:
 
@@ -1475,6 +1454,7 @@ packages:
   eslint@9.39.4:
     resolution: {integrity: sha512-XoMjdBOwe/esVgEvLmNsD3IRHkm7fbKIUGvrleloJXUZgDHig2IPWNniv+GwjyJXzuNqVjlr5+4yVUZjycJwfQ==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+    deprecated: This version is no longer supported. Please see https://eslint.org/version-support for other options.
     hasBin: true
     peerDependencies:
       jiti: '*'

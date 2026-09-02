@@ -19,7 +19,7 @@ import { type GitDiffSummary, type GitStatusSummary } from '@zeus/git-core';
 import { type ProjectGraph } from '@zeus/graph-engine';
 import { type ProjectConfigSnapshot } from './projectCore.js';
 import { type AutoUpdatePolicy, type ReleaseReadiness } from './releaseCore.js';
-import { createMacOSKeychainStore, type SecretPresenceLabel, type SecretStore } from '@zeus/security-core';
+import { createMacOSKeychainStore, type SecretPresenceLabel, type SecretStore } from './securityCore.js';
 import {
   cloneTaskManagementStatusConfig,
   type ReadOnlyValidationDescriptor,
@@ -181,6 +181,7 @@ import { createZentaoCredentialService } from './zentaoCredentialService.js';
 import { createZeusDataLayoutForDatabase, type ZeusDataLayout } from './zeusDataLayout.js';
 
 export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, type ReadOnlyValidationApplicationIdentity } from './readOnlyValidation.js';
+export { createMacOSKeychainStore, getSecretPresenceLabel, type SecretPresenceLabel, type SecretStore } from './securityCore.js';
 
 export type { GraphEdgeDetail, GraphNeighborhood, GraphSearchResult, GraphViewSnapshot } from './codeIntelligenceGraphStore.js';
 export { prepareUnifiedConversationStoreMigration, readUnifiedConversationStoreMigrationStatus, type ConversationStoreMigrationStatus } from './conversationStoreMigration.js';

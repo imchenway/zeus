@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
+import { parseArgs } from 'node:util';
 import { conversationSyncProtocolV2Generation, conversationSyncProtocolV2MigrationId } from '../packages/storage/src/conversationSyncEventStore.js';
 
 const maintenanceMigrationId = '20260826_0002_retired_conversation_sync_event_cleanup';
@@ -241,20 +242,9 @@ function assertOutsideFormalDataRoot(path: string): void {
 }
 
 function parseArguments(values: string[]): Arguments {
-  let databasePath: string | null = null;
-  let apply = false;
-  let confirmation: string | null = null;
-  let candidateCopy = false;
-  for (let index = 0; index < values.length; index += 1) {
-    const value = values[index];
-    if (value === '--db' && values[index + 1]) databasePath = resolve(values[++index]!);
-    else if (value === '--candidate-copy') candidateCopy = true;
-    else if (value === '--apply') apply = true;
-    else if (value === '--confirmation' && values[index + 1]) confirmation = values[++index]!;
-    else throw new Error(`未知参数：${value ?? ''}`);
-  }
-  if (!databasePath || !candidateCopy) throw new Error('用法：tsx scripts/compact-conversation-sync-candidate.ts --db <离线候选库> --candidate-copy [--apply --confirmation <计划确认>]');
-  return { databasePath, apply, confirmation };
+  const parsed = parseArgs({ args: values, strict: true, options: { db: { type: 'string' }, 'candidate-copy': { type: 'boolean' }, apply: { type: 'boolean' }, confirmation: { type: 'string' } } }).values;
+  if (!parsed.db || !parsed['candidate-copy']) throw new Error('用法：tsx scripts/compact-conversation-sync-candidate.ts --db <离线候选库> --candidate-copy [--apply --confirmation <计划确认>]');
+  return { databasePath: resolve(parsed.db), apply: parsed.apply ?? false, confirmation: parsed.confirmation ?? null };
 }
 
 function sqlString(value: string): string {

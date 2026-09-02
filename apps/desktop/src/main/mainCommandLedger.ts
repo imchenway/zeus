@@ -427,10 +427,6 @@ export class MainCommandLedger {
   }
 }
 
-export function createMainCommandRequest<TBody>(envelope: unknown, body: TBody): MainCommandRequest<TBody> {
-  return { envelope, body };
-}
-
 export function parseMainCommandRequest<TBody>(value: unknown, expectedCommandType: string): { envelope: CommandEnvelope; body: TBody } {
   if (!value || typeof value !== 'object' || Array.isArray(value) || !('envelope' in value) || !('body' in value)) {
     throw new MainCommandLedgerError('ZEUS_MAIN_COMMAND_REQUEST_INVALID', 'Main mutation IPC requires an immutable Command Envelope and body.');

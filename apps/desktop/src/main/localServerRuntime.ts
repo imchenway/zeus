@@ -258,10 +258,6 @@ class ExecutionHostOwnershipError extends Error {
   }
 }
 
-export function executionHostMaintenanceStatus(error: unknown): ExecutionHostMaintenanceStatus | null {
-  return error instanceof ExecutionHostCompatibilityError || error instanceof ExecutionHostOwnershipError ? { ...error.maintenance } : null;
-}
-
 /**
  * 写入可追踪的本机运行配置文件；该文件只记录路径与监听边界，
  * 严禁写入 Renderer API token、Telegram token 等敏感凭据。
@@ -722,16 +718,6 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
     await browserBridge.close().catch(() => undefined);
     throw error;
   }
-}
-
-/**
- * 主进程内嵌启动前先清退旧版本遗留的独立宿主，避免升级后出现两个 SQLite 写入者。
- * 独立宿主上的活动工作会先停止；这是移除后台常驻能力后的明确退出语义。
- */
-export async function startEmbeddedDesktopLocalServer(options: StartDesktopLocalServerOptions): Promise<DesktopLocalServerRuntime> {
-  if (options.readOnlyValidation) return startOwnedDesktopLocalServer({ ...options, conversationStoreMigrationPrepared: true });
-  await prepareDesktopConversationStoreMigration(options.userDataPath, options.dataRootIdentity, options.dataLayout);
-  return startOwnedDesktopLocalServer({ ...options, conversationStoreMigrationPrepared: true });
 }
 
 /** 首次启动和维护页重试共享完全相同的旧宿主清退与数据库预检顺序。 */

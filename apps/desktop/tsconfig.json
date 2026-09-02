@@ -11,10 +11,5 @@
     "baseUrl": ".",
     "paths": {}
   },
-  "include": ["src/renderer/**/*.ts", "src/renderer/**/*.tsx", "src/preload/**/*.ts", "src/preload/**/*.cts", "src/preload/**/*.cjs"],
-  "references": [
-    {
-      "path": "../../packages/diagram-engine"
-    }
-  ]
+  "include": ["src/renderer/**/*.ts", "src/renderer/**/*.tsx", "src/preload/**/*.ts", "src/preload/**/*.cts", "src/preload/**/*.cjs"]
 }

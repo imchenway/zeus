@@ -28,7 +28,7 @@ import {
   type ZeusProjectRecord,
   type ZeusTaskRecord,
 } from '@zeus/storage';
-import type { SecretStore } from '@zeus/security-core';
+import type { SecretStore } from './securityCore.js';
 import {
   createTelegramBotMessageClient,
   createTelegramLongPollingClient,

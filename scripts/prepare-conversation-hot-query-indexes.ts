@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
+import { parseArgs } from 'node:util';
 import { CONVERSATION_HOT_QUERY_INDEX_MIGRATION_ID, conversationHotQueryIndexes, createZeusDatabase } from '../packages/storage/src/index.js';
 
 const FREE_SPACE_RESERVE_BYTES = 512 * 1024 * 1024;
@@ -13,30 +14,11 @@ interface Arguments {
 }
 
 function parseArguments(arguments_: string[]): Arguments {
-  let databasePath: string | null = null;
-  let apply = false;
-  let candidateCopy = false;
-  for (let index = 0; index < arguments_.length; index += 1) {
-    const argument = arguments_[index];
-    if (argument === '--db' && arguments_[index + 1]) {
-      databasePath = resolve(arguments_[index + 1]!);
-      index += 1;
-      continue;
-    }
-    if (argument === '--apply') {
-      apply = true;
-      continue;
-    }
-    if (argument === '--candidate-copy') {
-      candidateCopy = true;
-      continue;
-    }
-    throw new Error(`未知参数：${argument ?? ''}`);
-  }
-  if (!databasePath || !candidateCopy) {
+  const { values } = parseArgs({ args: arguments_, strict: true, options: { db: { type: 'string' }, apply: { type: 'boolean' }, 'candidate-copy': { type: 'boolean' } } });
+  if (!values.db || !values['candidate-copy']) {
     throw new Error('用法：tsx scripts/prepare-conversation-hot-query-indexes.ts --db <离线候选库> --candidate-copy [--apply]\n不带 --apply 时只执行只读预检。');
   }
-  return { databasePath, apply };
+  return { databasePath: resolve(values.db), apply: values.apply ?? false };
 }
 
 function assertOutsideZeusDataRoot(databasePath: string): void {

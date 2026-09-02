@@ -5,6 +5,7 @@ export * from './commandEnvelope.js';
 export * from './commandGovernance.js';
 export * from './executionHostStopCommand.js';
 export * from './readOnlyValidation.js';
+export * from './terminalOutput.js';
 export * from './conversationDispatchWire.js';
 export * from './conversationSnapshotV2Wire.js';
 export * from './im.js';
@@ -179,16 +180,6 @@ export function isTaskStatusFilter(value: unknown): value is TaskStatusFilter {
   return value === '' || value === 'unfinished' || isTaskManagementStatus(value);
 }
 
-/** 任务状态展示顺序，前端和服务端共用，避免多处硬编码。 */
-export const taskStatusOrder: readonly TaskStatus[] = ['draft', 'ready', 'running', 'paused', 'waiting_confirmation', 'completed', 'failed', 'cancelled'] as const;
-
-const terminalTaskStatuses = new Set<TaskStatus>(['completed', 'failed', 'cancelled']);
-
-/** 判断任务是否已经进入不可继续推进的终态。 */
-export function isTerminalTaskStatus(status: TaskStatus): boolean {
-  return terminalTaskStatuses.has(status);
-}
-
 /** Zeus 事件命名统一使用 zeus.* 命名空间，便于落库、日志和 WebSocket 过滤。 */
 export enum ZeusEventKind {
   ProjectCreated = 'zeus.project.created',
@@ -201,15 +192,6 @@ export enum ZeusEventKind {
   GitUpdated = 'zeus.git.updated',
   TelegramUpdated = 'zeus.telegram.updated',
   SecurityWarning = 'zeus.security.warning',
-}
-
-/** 所有事件必须带真实来源，禁止用无来源的假数据填充图谱或执行日志。 */
-export interface ZeusEvent<TPayload extends Record<string, unknown> = Record<string, unknown>> {
-  id: string;
-  kind: ZeusEventKind;
-  payload: TPayload;
-  source: 'user' | 'system' | 'scanner' | 'runtime' | 'git' | 'telegram';
-  createdAt: string;
 }
 
 /** 任务页一级视图；列表内部的层级和平铺不属于一级视图。 */

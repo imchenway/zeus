@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { ModelConnectionRecord, ProjectModelSelection } from '@zeus/ai-runtime';
-import type { SecretPresenceLabel, SecretStore } from '@zeus/security-core';
+import type { SecretPresenceLabel, SecretStore } from './securityCore.js';
 import type { SaveZentaoInstanceRequest, ZentaoInstanceRecord } from '@zeus/shared';
 import type { AppendAuditLogInput, ProjectRepository } from '@zeus/storage';
 import { IntegrationCommandApplication, integrationCommandHttpError, integrationCommandTypes, type IntegrationCommandRequest, type ParsedIntegrationCommand } from './integrationCommandApplication.js';

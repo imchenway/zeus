@@ -11,7 +11,7 @@ import { StopIcon as Stop } from '@phosphor-icons/react/dist/csr/Stop';
 import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { commandNeedsHighRiskConfirmation, type CommandRiskFlags } from '@zeus/shared';
-import { projectTerminalOutput } from '@zeus/terminal-core';
+import { projectTerminalOutput } from '@zeus/shared';
 import {
   isLikelyLocalServerConnectionError,
   ZeusApiError,

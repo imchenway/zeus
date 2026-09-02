@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { isAbsolute, join } from 'node:path';
 import { Client, StreamableHTTPClientTransport, type Tool } from '@modelcontextprotocol/client';
 import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/client/stdio';
-import type { SecretStore } from '@zeus/security-core';
+import type { SecretStore } from './securityCore.js';
 import type { PluginApprovalMode } from '@zeus/storage';
 import type { PluginActivationSnapshot } from './zeusPluginService.js';
 

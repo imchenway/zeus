@@ -1,14 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { historicalTurnChangeUnavailableReason, type TurnChangeConflict, type TurnChangeFile, type TurnChangeFileType, type TurnChangeSet, type TurnChangeSetOperationRequest, type TurnChangeSetOperationResult } from '@zeus/shared';
+import { type TurnChangeConflict, type TurnChangeFile, type TurnChangeFileType, type TurnChangeSet, type TurnChangeSetOperationRequest, type TurnChangeSetOperationResult } from '@zeus/shared';
 import {
   type AuditLogRepository,
   type IdempotencyRequestRepository,
   type ProjectRepository,
   type TurnChangeFileRepository,
   type TurnChangeSetRepository,
-  type ZeusConversationItemRecord,
   type ZeusConversationTurnRecord,
   type ZeusConversationWithMessagesRecord,
   type ZeusDatabase,
@@ -72,105 +71,6 @@ export interface CreateTurnChangeSetServiceOptions {
 }
 
 const absentDigest = 'sha256:absent';
-
-export function projectHistoricalTurnChangeSet(input: {
-  existing: TurnChangeSet | null;
-  projectId: string;
-  conversationId: string;
-  turn: ZeusConversationTurnRecord;
-  items: readonly ZeusConversationItemRecord[];
-  executionRoot: string | null;
-}): TurnChangeSet | null {
-  if (input.existing && input.existing.state !== 'capturing') return input.existing;
-  if (!input.turn.providerTurnId || !['completed', 'interrupted', 'failed'].includes(input.turn.status) || !input.executionRoot) return input.existing;
-
-  const root = resolve(input.executionRoot);
-  const byPath = new Map<string, TurnChangeFile>();
-  for (const item of input.items) {
-    if (item.turnId !== input.turn.id || item.itemType !== 'fileChange') continue;
-    const payload = parseJsonObject(item.payloadJson);
-    normalizeProviderChanges(payload.changes).forEach((change) => {
-      const paths = historicalChangePaths(change, root);
-      if (!paths) return;
-      const counts = countDiffLines(change.diff);
-      const changeType = isBinaryDiff(change.diff) ? 'binary' : paths.changeType;
-      const key = paths.newPath ?? paths.oldPath;
-      if (!key) return;
-      let existingKey = key;
-      let existing = byPath.get(key);
-      if (!existing && paths.oldPath) {
-        const prior = [...byPath.entries()].find(([, file]) => file.newPath === paths.oldPath);
-        existingKey = prior?.[0] ?? key;
-        existing = prior?.[1];
-      }
-      if (existing) {
-        if (existing.changeType === 'added' && changeType === 'deleted') {
-          byPath.delete(existingKey);
-          return;
-        }
-        if (existingKey !== key) byPath.delete(existingKey);
-        byPath.set(key, {
-          ...mergeHistoricalFileIdentity(existing, paths, changeType),
-          addedLines: existing.addedLines + counts.added,
-          deletedLines: existing.deletedLines + counts.deleted,
-          unifiedDiff: [existing.unifiedDiff, change.diff].filter(Boolean).join('\n'),
-        });
-        return;
-      }
-      const digest = createHash('sha256').update(`${input.turn.id}\0${key}`).digest('hex').slice(0, 20);
-      byPath.set(key, {
-        id: `historical_turn_change_file_${digest}`,
-        oldPath: paths.oldPath,
-        newPath: paths.newPath,
-        changeType,
-        addedLines: counts.added,
-        deletedLines: counts.deleted,
-        unifiedDiff: change.diff,
-        preHash: null,
-        postHash: null,
-        reversible: false,
-        unavailableReason: historicalTurnChangeUnavailableReason,
-      });
-    });
-  }
-
-  const files = [...byPath.values()].sort((left, right) => (left.newPath ?? left.oldPath ?? '').localeCompare(right.newPath ?? right.oldPath ?? ''));
-  if (files.length === 0) {
-    if (!input.existing?.files.length) return input.existing;
-    const unavailableFiles = input.existing.files.map((file) => ({ ...file, reversible: false, unavailableReason: historicalTurnChangeUnavailableReason }));
-    return {
-      ...input.existing,
-      state: 'unavailable',
-      files: unavailableFiles,
-      fileCount: unavailableFiles.length,
-      unavailableReason: historicalTurnChangeUnavailableReason,
-    };
-  }
-  const timestamp = input.turn.completedAt ?? input.existing?.updatedAt ?? input.turn.updatedAt;
-  const id = input.existing?.id ?? `historical_turn_change_set_${createHash('sha256').update(`${input.conversationId}\0${input.turn.id}`).digest('hex').slice(0, 20)}`;
-  return {
-    id,
-    projectId: input.projectId,
-    conversationId: input.conversationId,
-    turnId: input.turn.id,
-    providerTurnId: input.turn.providerTurnId,
-    state: 'unavailable',
-    files,
-    unifiedDiff: files
-      .map((file) => file.unifiedDiff)
-      .filter(Boolean)
-      .join('\n'),
-    fileCount: files.length,
-    addedLines: files.reduce((total, file) => total + file.addedLines, 0),
-    deletedLines: files.reduce((total, file) => total + file.deletedLines, 0),
-    preImageDigest: null,
-    postImageDigest: null,
-    unavailableReason: historicalTurnChangeUnavailableReason,
-    conflict: null,
-    createdAt: input.existing?.createdAt ?? input.turn.createdAt,
-    updatedAt: timestamp,
-  };
-}
 
 export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOptions): TurnChangeSetService {
   const now = options.now ?? (() => new Date().toISOString());
@@ -723,76 +623,6 @@ function normalizeProviderChanges(value: unknown): ProviderFileUpdateChange[] {
     }
   }
   return changes;
-}
-
-function historicalChangePaths(
-  change: ProviderFileUpdateChange,
-  executionRoot: string,
-): {
-  oldPath: string | null;
-  newPath: string | null;
-  changeType: Exclude<TurnChangeFileType, 'binary'>;
-} | null {
-  const sourcePath = historicalRelativePath(change.path, executionRoot);
-  if (!sourcePath) return null;
-  if (change.kind.type === 'add') return { oldPath: null, newPath: sourcePath, changeType: 'added' };
-  if (change.kind.type === 'delete') return { oldPath: sourcePath, newPath: null, changeType: 'deleted' };
-  const movePath = change.kind.move_path ? historicalRelativePath(change.kind.move_path, executionRoot) : null;
-  if (change.kind.move_path && !movePath) return null;
-  return {
-    oldPath: sourcePath,
-    newPath: movePath ?? sourcePath,
-    changeType: movePath ? 'renamed' : 'modified',
-  };
-}
-
-function mergeHistoricalFileIdentity(
-  existing: TurnChangeFile,
-  next: { oldPath: string | null; newPath: string | null; changeType: Exclude<TurnChangeFileType, 'binary'> },
-  nextType: TurnChangeFileType,
-): Pick<TurnChangeFile, 'id' | 'oldPath' | 'newPath' | 'changeType' | 'preHash' | 'postHash' | 'reversible' | 'unavailableReason'> {
-  const oldPath = existing.oldPath;
-  const newPath = next.newPath;
-  const changeType: TurnChangeFileType =
-    existing.changeType === 'added' && nextType !== 'deleted'
-      ? 'added'
-      : nextType === 'deleted'
-        ? oldPath === null
-          ? 'modified'
-          : 'deleted'
-        : existing.changeType === 'deleted'
-          ? 'modified'
-          : existing.changeType === 'renamed'
-            ? 'renamed'
-            : nextType;
-  return {
-    id: existing.id,
-    oldPath,
-    newPath,
-    changeType,
-    preHash: null,
-    postHash: null,
-    reversible: false,
-    unavailableReason: historicalTurnChangeUnavailableReason,
-  };
-}
-
-function historicalRelativePath(path: string, executionRoot: string): string | null {
-  if (!path || path.includes('\0')) return null;
-  const root = resolve(executionRoot);
-  const absolutePath = resolve(isAbsolute(path) ? path : resolve(root, path));
-  if (!isInsideRoot(absolutePath, root) || absolutePath === root) return null;
-  const relativePath = relative(root, absolutePath).split(sep).join('/');
-  return relativePath && !relativePath.startsWith('../') ? relativePath : null;
-}
-
-function parseJsonObject(value: string): Record<string, unknown> {
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    return isRecord(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
 }
 
 function changePaths(

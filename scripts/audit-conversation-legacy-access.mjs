@@ -159,9 +159,6 @@ function classifyDirectAccess(file, source, occurrence) {
   if (file === 'packages/local-server/src/conversationStoreMigration.ts') {
     return { owner: 'candidate_store_migrator', lifecycle: 'migration_read_only', replacement: 'retain until legacy import window closes' };
   }
-  if (file === 'packages/storage/src/conversationLegacyReconciliation.ts') {
-    return { owner: 'legacy_reconciliation_diagnostic', lifecycle: 'diagnostic_read_only', replacement: 'remove after cutover evidence retention expires' };
-  }
   if (file === 'packages/storage/src/conversationLegacyCutover.ts') {
     return { owner: 'legacy_cutover_candidate_migrator', lifecycle: 'migration_read_only', replacement: 'candidate-only migration, fence verification, and cutover receipt' };
   }

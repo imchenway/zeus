@@ -63,8 +63,6 @@ export interface TaskPushContextConversationOption {
   unavailableReason: string | null;
 }
 
-export type TaskPushParentConversationOption = TaskPushContextConversationOption;
-
 export interface TaskPushContextAttachmentOption extends TaskPushPromptAttachment {
   available: boolean;
   unavailableReason: string | null;

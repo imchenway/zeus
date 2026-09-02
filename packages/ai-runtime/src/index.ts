@@ -5,7 +5,7 @@ import { Buffer } from 'node:buffer';
 import { randomUUID } from 'node:crypto';
 import { basename, delimiter, isAbsolute, relative, resolve } from 'node:path';
 import { createRequire } from 'node:module';
-import { normalizeTerminalChunk } from '@zeus/terminal-core';
+import { normalizeTerminalChunk } from './terminalOutput.js';
 import { buildTaskPushPrompt, type TaskPushPromptInput } from '@zeus/shared';
 import { expandCliSearchPath } from './cliSearchPath.js';
 
@@ -16,14 +16,13 @@ export * from './codexModelBudgetSnapshot.js';
 export * from './agentRuntimeContracts.js';
 export * from './agentRuntimeRegistry.js';
 export * from './agentCapabilityCatalog.js';
-export * from './piRpcProtocol.js';
 export * from './piRuntimeWorkerProtocol.js';
 export * from './piRuntimeWorkerDriver.js';
 export * from './providerRuntimeHealth.js';
 export * from './modelConnectionCatalog.js';
 export * from './piSdkRuntimeDriver.js';
 export { expandCliSearchPath } from './cliSearchPath.js';
-export { projectTerminalOutput } from '@zeus/terminal-core';
+export { projectTerminalOutput } from './terminalOutput.js';
 
 export interface AiCliDescriptor {
   name: string;
@@ -83,13 +82,6 @@ export interface AiCliAdapterInvocationOptions {
   model?: string;
   defaultArgs?: string[];
   commandPath?: string;
-}
-
-export type AiRuntimeOutputState = 'running' | 'waiting_input' | 'completed' | 'error';
-
-export interface AiRuntimeOutputStateResult {
-  state: AiRuntimeOutputState;
-  reason: string;
 }
 
 const AI_CLI_ADAPTERS: AiCliAdapterDescriptor[] = [
@@ -168,36 +160,10 @@ export function createNonCodexAiCliAdapterInvocation(adapterId: NonCodexAiCliAda
   return { adapterId: runtimeAdapterId, command, args: argsByAdapter[runtimeAdapterId] };
 }
 
-/** 兼容旧调用点；Codex 在运行时继续 fail-closed，非 Codex 委托给严格 builder。 */
-export function createAiCliAdapterInvocation(adapterId: AiCliAdapterDescriptor['id'], prompt: string, options: AiCliAdapterInvocationOptions = {}): AiCliAdapterInvocation {
-  if (adapterId === 'codex') throw createCodexNativeTransportRequiredError();
-  if (!isNonCodexAiCliAdapterId(adapterId)) throw new Error(`AI CLI adapter not found: ${String(adapterId)}`);
-  return createNonCodexAiCliAdapterInvocation(adapterId, prompt, options);
-}
-
 function createCodexNativeTransportRequiredError(): Error & { code: string } {
   return Object.assign(new Error('Codex requires the native app-server transport.'), {
     code: 'CODEX_NATIVE_APP_SERVER_REQUIRED',
   });
-}
-
-/** 从真实 CLI 输出中识别粗粒度状态，供 UI/通知层提示，不把解析结果当作 AI 结论。 */
-export function parseAiRuntimeOutputState(text: string): AiRuntimeOutputStateResult {
-  const normalized = text.toLowerCase();
-  const waitingPattern = new RegExp('(do you want to proceed|\\(y/n\\)|\\[y/n\\]|需要.*确认|等待.*输入|press enter|continue\\?)', 'i');
-  if (waitingPattern.test(text)) {
-    return {
-      state: 'waiting_input',
-      reason: '检测到等待用户输入或确认的输出。',
-    };
-  }
-  if (/(error|failed|exception|traceback|fatal|command failed)/.test(normalized)) {
-    return { state: 'error', reason: '检测到错误或失败输出。' };
-  }
-  if (/(completed|successfully|done|任务完成|已完成)/.test(normalized)) {
-    return { state: 'completed', reason: '检测到完成输出。' };
-  }
-  return { state: 'running', reason: '未检测到等待、完成或错误信号。' };
 }
 
 /** 检测单个 adapter 的真实命令可用性、版本输出与显式登录缺失提示；不伪造成功登录。 */
@@ -463,22 +429,6 @@ const MAX_IN_MEMORY_RUNTIME_SESSIONS = 64;
 const RUNTIME_PROCESS_IDENTITY_ENV = 'ZEUS_RUNTIME_PROCESS_IDENTITY_TOKEN';
 const RUNTIME_STOP_TERM_GRACE_MS = 500;
 const RUNTIME_STOP_KILL_WAIT_MS = 5_000;
-
-/** 检测 AI CLI 是否存在；只报告真实可用性，不伪造执行输出。 */
-export async function detectAiCli(descriptor: AiCliDescriptor): Promise<AiCliStatus> {
-  const candidate = await findCommandOnPath(descriptor.command);
-  if (candidate)
-    return {
-      ...descriptor,
-      available: true,
-      reason: `检测到 ${descriptor.name}: ${candidate}`,
-    };
-  return {
-    ...descriptor,
-    available: false,
-    reason: `未检测到 ${descriptor.name} CLI，请在 Zeus 设置中配置。`,
-  };
-}
 
 async function findCommandOnPath(command: string): Promise<string | null> {
   const pathEntries = expandCliSearchPath().split(delimiter).filter(Boolean);

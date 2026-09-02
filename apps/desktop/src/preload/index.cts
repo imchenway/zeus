@@ -227,7 +227,6 @@ contextBridge.exposeInMainWorld('zeus', {
   reportRendererRuntimeError: (message: string) => ipcRenderer.send('zeus:renderer-runtime-log', message),
   reportRendererBootstrapReady: () => rendererBootstrapReporter.reportReady(),
   chooseProjectDirectory: () => ipcRenderer.invoke('zeus:choose-project-directory'),
-  chooseRecoveryBackupDestinations: () => ipcRenderer.invoke('zeus:choose-recovery-backup-destinations'),
   revealProjectInFinder: (projectPath: string) => ipcRenderer.invoke('zeus:reveal-project-in-finder', projectPath),
   chooseConversationResources: () => ipcRenderer.invoke('zeus:choose-conversation-resources'),
   authorizeConversationFiles: (files: File[], source: 'paste' | 'drop') => authorizePendingResourceFiles(files, source, 'zeus:authorize-conversation-files', 'zeus:materialize-conversation-resources'),

@@ -1,15 +1,6 @@
 import type { AgentRuntimeHealthSnapshot } from './agentRuntimeContracts.js';
 import type { CodexAppServerManager, CodexTransportState } from './codexAppServerManager.js';
 
-export interface ProviderRuntimeHealthReader {
-  getRuntimeHealth(): AgentRuntimeHealthSnapshot;
-}
-
-/** 为现有 Codex app-server 管理器建立统一被动健康端口；构造和读取都不会启动 Provider。 */
-export function createCodexProviderRuntimeHealthReader(manager: Pick<CodexAppServerManager, 'getState'>, now: () => string = () => new Date().toISOString()): ProviderRuntimeHealthReader {
-  return { getRuntimeHealth: () => readCodexProviderRuntimeHealth(manager, now) };
-}
-
 /** 把既有 Codex app-server 世代投影到公共 Provider health/circuit 语义，不触发登录或能力探测。 */
 export function readCodexProviderRuntimeHealth(manager: Pick<CodexAppServerManager, 'getState'>, now: () => string = () => new Date().toISOString()): AgentRuntimeHealthSnapshot {
   const state = manager.getState();

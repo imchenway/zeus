@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import type { CodexDynamicToolSpec, PiDynamicToolSpec } from '@zeus/ai-runtime';
-import type { SecretStore } from '@zeus/security-core';
+import type { SecretStore } from './securityCore.js';
 import type { CodexBootstrapAdditionalContext } from '@zeus/shared';
 import { createZeusPluginHookRuntime, type ZeusPluginHookEvent, type ZeusPluginHookEventResult, type ZeusPluginHookRuntime } from './zeusPluginHookRuntime.js';
 import { createZeusPluginMcpBroker, type ZeusPluginDynamicTool, type ZeusPluginMcpBroker, type ZeusPluginMcpCatalog, type ZeusPluginMcpToolResult } from './zeusPluginMcpBroker.js';

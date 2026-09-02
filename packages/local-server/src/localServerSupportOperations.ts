@@ -13,7 +13,7 @@ import {
 import { type ProjectGraph } from '@zeus/graph-engine';
 import { createDefaultProjectConfig, normalizeProjectConfig, type ProjectConfigSnapshot } from './projectCore.js';
 import { buildAutoUpdatePolicy, detectReleaseReadiness, evaluateReleaseUpdateAvailability, parseReleaseUpdateManifest, type ReleaseUpdateArtifactArch, type ReleaseUpdateManifest, type ReleaseUpdateStatus } from './releaseCore.js';
-import { getSecretPresenceLabel, type SecretStore } from '@zeus/security-core';
+import { getSecretPresenceLabel, type SecretStore } from './securityCore.js';
 import { commandNeedsHighRiskConfirmation, isTaskAttachmentField, type TaskAttachmentField } from '@zeus/shared';
 import {
   CommandArtifactRepository,

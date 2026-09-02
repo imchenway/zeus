@@ -146,14 +146,6 @@ declare global {
       reportRendererRuntimeError: (message: string) => void;
       reportRendererBootstrapReady: () => void;
       chooseProjectDirectory: () => Promise<string | null>;
-      chooseRecoveryBackupDestinations: () => Promise<{
-        cancelled: boolean;
-        destinations: Array<{
-          grantId: string;
-          destinationId: string;
-          displayName: string;
-        }>;
-      }>;
       revealProjectInFinder: (projectPath: string) => Promise<{ revealed: true; path: string }>;
       chooseConversationResources: () => Promise<ConversationInputResourceBridge[]>;
       authorizeConversationFiles: (

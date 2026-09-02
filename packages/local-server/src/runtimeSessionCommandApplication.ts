@@ -312,11 +312,6 @@ export class RuntimeBoundedEphemeralReplayService {
   }
 }
 
-export interface RuntimeEphemeralRequest<TInput extends object> {
-  capability: { leaseId: string; clientId: string; sequence: number };
-  input: TInput;
-}
-
 interface RuntimeEphemeralLeaseState {
   leaseId: string;
   clientId: string;

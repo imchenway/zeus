@@ -9,7 +9,6 @@ export const conversationSchemaGeneration = '2026-08-16-unified-conversation-seg
 export type ConversationRuntimeKind = 'codex' | 'pi';
 export type ConversationSegmentState = 'provisional' | 'current' | 'sealed' | 'abandoned';
 export type ConversationSwitchState = 'preflight' | 'provisional' | 'outcome_unknown' | 'accepted' | 'failed' | 'cancelled';
-export type ConversationSubmissionOutcome = 'queued' | 'paused' | 'outcome_unknown' | 'accepted' | 'terminal';
 export type ConversationProcessKind = 'reasoning' | 'tool' | 'command' | 'retry' | 'context_compaction' | 'waiting' | 'warning';
 export type ConversationConfigEvidenceLayer = 'selected' | 'frozen' | 'adapter_serialized' | 'runtime_acknowledged' | 'provider_echo';
 

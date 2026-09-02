@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { parseArgs } from 'node:util';
+
 interface ParsedArguments {
   mode: 'plan' | 'apply';
   dataRoot: string;
@@ -61,41 +63,32 @@ if (process.argv.length === 2) {
 }
 
 function parseArguments(argumentsList: readonly string[]): ParsedArguments {
-  const values = new Map<string, string>();
-  let plan = false;
-  for (let index = 0; index < argumentsList.length; index += 1) {
-    const argument = argumentsList[index]!;
-    if (index === 0 && argument === '--') continue;
-    if (argument === '--plan') {
-      if (plan) throw cliError('ZEUS_DATA_ROOT_OFFLINE_ARGUMENT_DUPLICATE', '--plan 只能出现一次。');
-      plan = true;
-      continue;
-    }
-    if (!['--data-root', '--profile', '--distribution-label', '--confirm-token'].includes(argument)) {
-      throw cliError('ZEUS_DATA_ROOT_OFFLINE_ARGUMENT_UNKNOWN', `未知参数：${argument}`);
-    }
-    if (values.has(argument)) throw cliError('ZEUS_DATA_ROOT_OFFLINE_ARGUMENT_DUPLICATE', `参数重复：${argument}`);
-    const value = argumentsList[index + 1];
-    if (!value || value.startsWith('--')) throw cliError('ZEUS_DATA_ROOT_OFFLINE_ARGUMENT_MISSING', `参数缺少值：${argument}`);
-    values.set(argument, value);
-    index += 1;
-  }
-
-  const dataRoot = requireArgument(values, '--data-root');
-  const profile = requireArgument(values, '--profile');
-  const distributionLabel = requireArgument(values, '--distribution-label');
+  const { values } = parseArgs({
+    args: argumentsList,
+    strict: true,
+    options: {
+      'data-root': { type: 'string' },
+      profile: { type: 'string' },
+      'distribution-label': { type: 'string' },
+      'confirm-token': { type: 'string' },
+      plan: { type: 'boolean' },
+    },
+  });
+  const dataRoot = requireArgument(values['data-root'], '--data-root');
+  const profile = requireArgument(values.profile, '--profile');
+  const distributionLabel = requireArgument(values['distribution-label'], '--distribution-label');
   if (profile !== 'production' && profile !== 'test') {
     throw cliError('ZEUS_DATA_ROOT_OFFLINE_PROFILE_INVALID', '--profile 只能逐字使用 production 或 test。');
   }
-  const confirmationToken = values.get('--confirm-token');
-  if (plan === Boolean(confirmationToken)) {
+  const confirmationToken = values['confirm-token'];
+  if (Boolean(values.plan) === Boolean(confirmationToken)) {
     throw cliError('ZEUS_DATA_ROOT_OFFLINE_CONFIRMATION_MODE_INVALID', '必须且只能选择 --plan 或 --confirm-token。');
   }
   if (confirmationToken && !/^[0-9a-f]{64}$/u.test(confirmationToken)) {
     throw cliError('ZEUS_DATA_ROOT_OFFLINE_CONFIRMATION_INVALID', '--confirm-token 必须是 plan 输出的 64 位小写 SHA-256。');
   }
   return {
-    mode: plan ? 'plan' : 'apply',
+    mode: values.plan ? 'plan' : 'apply',
     dataRoot,
     profile,
     distributionLabel,
@@ -103,8 +96,8 @@ function parseArguments(argumentsList: readonly string[]): ParsedArguments {
   };
 }
 
-function requireArgument(values: ReadonlyMap<string, string>, name: string): string {
-  const value = values.get(name)?.trim();
+function requireArgument(input: string | undefined, name: string): string {
+  const value = input?.trim();
   if (!value) throw cliError('ZEUS_DATA_ROOT_OFFLINE_ARGUMENT_MISSING', `缺少必填参数：${name}`);
   return value;
 }

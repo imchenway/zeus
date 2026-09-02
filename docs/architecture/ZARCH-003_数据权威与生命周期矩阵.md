@@ -377,7 +377,7 @@ Zeus 的恢复边界必须拆成五个互不冒充的事实域：Zeus 业务 SQL
 - 当前主任务文档读取边界：`packages/local-server/src/contextSourceCatalog.ts`；不再维护 Provider rollout 的 Zeus 派生冷索引。
 - 耐久同步事件：`packages/storage/src/conversationSyncEventStore.ts`。
 - 内容寻址资产与两阶段 GC：`packages/storage/src/artifactStore.ts`。
-- 一致性恢复包与客户端加密副本：`packages/storage/src/recoveryBackup.ts`、`packages/storage/src/recoveryBackupReplication.ts`。
+- 一致性恢复包与客户端加密副本：`packages/storage/src/recoveryBackup.ts`；当前无双目的地复制产品入口。
 - 命令 schema：`packages/storage/src/commands.ts:114-173`。
 - 可重建代码图谱 cache：`packages/local-server/src/index.ts:22318-22373`。
 - 上下文所有权：`docs/contexts/*/CONTEXT.md`。

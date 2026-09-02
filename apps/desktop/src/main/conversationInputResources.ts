@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { chmod, link, mkdir, open, readFile, realpath, rm, stat, unlink, writeFile } from 'node:fs/promises';
-import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { createConversationAttachmentGrant, resolveConversationAttachmentGrant } from '@zeus/local-server/conversation-attachment-grant';
 import {
   buildTaskAttachmentPreviewDataUrl,
@@ -305,9 +305,4 @@ function isMissingFileError(error: unknown): boolean {
 
 function isExistingFileError(error: unknown): boolean {
   return error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'EEXIST';
-}
-
-/** 供 UI 只显示后缀时使用，避免 broker 退化成 picker filter。 */
-export function conversationResourceExtension(name: string): string {
-  return extname(name).toLocaleLowerCase();
 }

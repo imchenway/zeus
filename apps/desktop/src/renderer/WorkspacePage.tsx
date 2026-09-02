@@ -9,7 +9,7 @@ import { useWorkspaceOperations } from './features/workspace/useWorkspaceOperati
 import { useWorkspaceLifecycle } from './features/workspace/useWorkspaceLifecycle.js';
 import { WorkspaceView } from './features/workspace/WorkspaceView.js';
 
-export { buildMermaidDiagramExport, buildMermaidDiagramSource, buildPlantUmlDiagramExport, buildPlantUmlDiagramSource, type MermaidDiagramExportFile, type PlantUmlDiagramExportFile } from '@zeus/diagram-engine';
+export { buildMermaidDiagramExport, buildMermaidDiagramSource, buildPlantUmlDiagramExport, buildPlantUmlDiagramSource, type MermaidDiagramExportFile, type PlantUmlDiagramExportFile } from './features/graph/diagramExport.js';
 export {
   type MainNavTarget,
   type SettingsCategory,

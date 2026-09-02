@@ -126,28 +126,6 @@ class RuntimeConfirmationCapabilityRegistry {
   }
 }
 
-export const runtimeSessionRoutePolicy = {
-  durableCommands: [
-    'POST /api/runtime/sessions',
-    'POST /api/runtime/sessions/:sessionId/interrupt',
-    'POST /api/runtime/sessions/:sessionId/stop',
-    'POST /api/runtime/sessions/:sessionId/summary',
-    'PUT /api/runtime/sessions/:sessionId/favorite',
-    'POST /api/runtime/sessions/:sessionId/archive',
-    'POST /api/runtime/sessions/:sessionId/restore',
-    'POST /api/runtime/sessions/:sessionId/tasks',
-    'DELETE /api/runtime/sessions/:sessionId',
-  ],
-  ephemeralCapabilities: [
-    'POST /api/runtime/confirmations',
-    'POST /api/runtime/confirmations/:confirmationId/reject',
-    'POST /api/runtime/confirmations/:confirmationId/confirm',
-    'POST /api/runtime/sessions/:sessionId/capabilities/ephemeral',
-    'POST /api/runtime/sessions/:sessionId/input',
-    'POST /api/runtime/sessions/:sessionId/resize',
-  ],
-} as const;
-
 export function registerRuntimeSessionCommandRoutes(options: {
   server: FastifyInstance;
   application: RuntimeSessionCommandApplication;

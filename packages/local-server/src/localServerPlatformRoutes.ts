@@ -15,7 +15,7 @@ import {
 } from '@zeus/git-core';
 import { type ProjectGraph } from '@zeus/graph-engine';
 import { normalizeProjectConfig, normalizeProjectModelServiceTierPreference, type ProjectConfigSnapshot, type ProjectModelServiceTierPreference, type UpdateProjectConfigBody } from './projectCore.js';
-import { getSecretPresenceLabel } from '@zeus/security-core';
+import { getSecretPresenceLabel } from './securityCore.js';
 import { cloneTaskManagementStatusConfig, type CommandEnvelope, commandEnvelopeSchemaGeneration, type TaskAttachmentReference, type TaskPushParentAttachmentOption } from '@zeus/shared';
 import {
   AutomationRunRepository,

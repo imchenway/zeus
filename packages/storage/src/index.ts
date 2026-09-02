@@ -33,7 +33,6 @@ import { type DbCodexUsageLedgerRow, deriveConversationStageProjection, isPlainR
 
 export * from './commands.js';
 export * from './artifactStore.js';
-export * from './artifactRetentionLifecycle.js';
 export * from './commandDeliveryStore.js';
 export * from './databasePerformance.js';
 export * from './databasePort.js';
@@ -49,7 +48,6 @@ export * from './conversationHotQueryIndexes.js';
 export * from './conversationItemTypes.js';
 export * from './conversationExecutionStore.js';
 export * from './conversationExpertStore.js';
-export * from './conversationLegacyReconciliation.js';
 export * from './conversationLegacyCutover.js';
 export * from './conversationProviderItemStore.js';
 export * from './conversationSnapshotV2.js';
@@ -62,10 +60,8 @@ export * from './taskWorkStore.js';
 export * from './projectionDatabaseCandidate.js';
 export * from './projectionDatabaseRuntime.js';
 export * from './recoveryBackup.js';
-export * from './recoveryBackupRetention.js';
 export * from './recoveryCandidatePromotion.js';
 export * from './tableOwnership.js';
-export * from './recoveryBackupReplication.js';
 export * from './workManagementStore.js';
 export * from './runtimeSessionStore.js';
 export * from './conversationStore.js';

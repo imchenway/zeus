@@ -65,13 +65,12 @@ import { createHomebrewUpdateService } from './homebrewUpdateService.js';
 import { createHomebrewUpdateController, type HomebrewUpdateController, type HomebrewUpdateIndicatorState } from './homebrewUpdateController.js';
 import { type AutomaticUpdateScheduler, createAutomaticUpdateScheduler } from './automaticUpdateScheduler.js';
 import { createZeusDataLayout, type ZeusDataLayout } from '@zeus/local-server/zeus-data-layout';
-import { readUnifiedConversationStoreMigrationStatus } from '@zeus/local-server';
+import { createMacOSKeychainStore, readUnifiedConversationStoreMigrationStatus } from '@zeus/local-server';
 import { prepareZeusDataRoot } from './zeusDataMigration.js';
 import { loadDesktopReadOnlyValidationDescriptor, readOnlyValidationManifestEnvironmentName, verifyDesktopReadOnlyValidationDescriptor } from './readOnlyValidationManifest.js';
 import { installReadOnlyValidationIpcFence } from './readOnlyValidationIpcFence.js';
 import { ProjectSourceWorkspaceService } from './projectSourceWorkspace.js';
 import { type ProjectGitProjectIdentity, ProjectGitWorkbenchService } from './projectGitWorkbench.js';
-import { ElectronRecoveryBackupDestinationPort } from './recoveryBackupDestinationPort.js';
 import {
   type CreateProjectSourceEntryInput,
   type MoveProjectSourceEntryInput,
@@ -81,7 +80,6 @@ import {
   type ZentaoInstanceRecord,
   zentaoSecretAccount,
 } from '@zeus/shared';
-import { createMacOSKeychainStore } from '@zeus/security-core';
 import { resolveDesktopKeychainService } from './secretServiceIdentity.js';
 import { createSystemMainCommandEnvelope, MainCommandLedger, type MainCommandExecutionContext, type MainCommandRequest } from './mainCommandLedger.js';
 import { StorageRecoveryRestartCoordinator } from './storageRecoveryRestartCoordinator.js';
@@ -139,7 +137,6 @@ let readOnlyValidationDescriptor: ReadOnlyValidationDescriptor | undefined;
 let projectSourceWorkspace: ProjectSourceWorkspaceService | undefined;
 let projectGitWorkbench: ProjectGitWorkbenchService | undefined;
 let mainCommandLedger: MainCommandLedger | undefined;
-const recoveryBackupDestinationPort = new ElectronRecoveryBackupDestinationPort();
 let fatalStartup = false;
 const applicationStartupStartedAt = performance.now();
 function traceApplicationStartup(stage: string): void {
@@ -1864,13 +1861,6 @@ function setupIpc(): void {
       }),
     ),
   );
-  ipcMain.handle('zeus:choose-recovery-backup-destinations', (event) => {
-    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
-    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) {
-      throw new Error('恢复包目的地选择请求来自不受信任窗口。');
-    }
-    return recoveryBackupDestinationPort.chooseExactlyTwoDirectories(requestingWindow);
-  });
   ipcMain.handle('zeus:reveal-project-in-finder', (event, projectPath: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) {
@@ -3230,12 +3220,7 @@ app.on(
       } catch (error) {
         cleanupErrors.push(error);
       }
-      try {
-        recoveryBackupDestinationPort.releaseAll();
-      } catch (error) {
-        cleanupErrors.push(error);
-      }
-      if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'Zeus 系统通知或恢复目的地资源未能完整关闭。');
+      if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'Zeus 系统通知资源未能完整关闭。');
     },
     resolveQuitMode: resolveDesktopQuitMode,
     closeLocalServer: async (mode) => {
