@@ -1,0 +1,1479 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>故障与修复｜Zeus 命令卡死现状与优化方案</title>
+    <style data-vd-shell="1">
+      :root {
+        color-scheme: light;
+        --vd-ink: #10243a;
+        --vd-muted: #5d7187;
+        --vd-blue: #176aa6;
+        --vd-blue-soft: #e8f3fb;
+        --vd-green: #237a5b;
+        --vd-green-soft: #e8f7f0;
+        --vd-amber: #9a6709;
+        --vd-amber-soft: #fff5d8;
+        --vd-red: #aa3f45;
+        --vd-red-soft: #fff0f1;
+        --vd-violet: #6958ad;
+        --vd-violet-soft: #f1effd;
+        --vd-line: #b7cce0;
+        --vd-paper: #fbfdff;
+        --vd-panel: rgba(255, 255, 255, 0.9);
+        --vd-shadow: 0 14px 38px rgba(31, 72, 108, 0.09);
+        --vd-radius: 18px;
+        --vd-grid: 24px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        min-inline-size: 0;
+        background: var(--vd-paper);
+      }
+
+      body {
+        margin: 0;
+        min-inline-size: 0;
+        overflow-x: clip;
+        color: var(--vd-ink);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
+        background:
+          radial-gradient(circle at 12% 0%, rgba(207, 230, 249, 0.62), transparent 29rem), radial-gradient(circle at 88% 4%, rgba(221, 243, 234, 0.58), transparent 26rem), linear-gradient(rgba(78, 118, 154, 0.045) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(78, 118, 154, 0.045) 1px, transparent 1px), linear-gradient(180deg, #fff 0%, #f7fbff 55%, #fbfdff 100%);
+        background-size:
+          auto,
+          auto,
+          var(--vd-grid) var(--vd-grid),
+          var(--vd-grid) var(--vd-grid),
+          auto;
+      }
+
+      [data-vd-artifact='1'] {
+        width: min(1440px, calc(100vw - 32px));
+        margin-inline: auto;
+        padding: 24px 0 64px;
+      }
+
+      [data-vd-title-region] {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: start;
+        gap: 16px 24px;
+        margin-bottom: 20px;
+      }
+
+      [data-vd-title-copy] {
+        min-inline-size: 0;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(1.65rem, 3vw, 2.5rem);
+        line-height: 1.12;
+        letter-spacing: -0.025em;
+        overflow-wrap: anywhere;
+      }
+
+      [data-vd-summary] {
+        max-inline-size: 76rem;
+        margin: 10px 0 0;
+        color: #314d67;
+        font-size: 1.04rem;
+        font-weight: 650;
+        line-height: 1.65;
+      }
+
+      .vd-tech-label {
+        display: block;
+        margin-top: 4px;
+        color: var(--vd-muted);
+        font:
+          600 0.72rem/1.4 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          Consolas,
+          monospace;
+        overflow-wrap: anywhere;
+      }
+
+      .vd-product-callout,
+      .vd-decision-callout {
+        padding: 14px 16px;
+        border-inline-start: 4px solid var(--vd-blue);
+        border-radius: 0 12px 12px 0;
+        background: rgba(232, 243, 251, 0.72);
+      }
+
+      .vd-decision-callout {
+        border-inline-start-color: var(--vd-amber);
+        background: rgba(255, 245, 216, 0.72);
+      }
+
+      [data-vd-evidence-state] {
+        display: inline-flex;
+        align-items: center;
+        min-block-size: 24px;
+        padding: 3px 8px;
+        border: 1px solid currentColor;
+        border-radius: 999px;
+        color: var(--vd-muted);
+        background: #fff;
+        font-size: 0.72rem;
+        font-weight: 800;
+      }
+
+      [data-vd-controls] {
+        display: inline-flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 4px;
+        padding: 4px;
+        border: 1px solid rgba(108, 148, 184, 0.46);
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.9);
+        box-shadow: 0 6px 18px rgba(31, 72, 108, 0.06);
+      }
+
+      [data-vd-zoom] {
+        min-inline-size: 44px;
+        min-block-size: 38px;
+        padding: 6px 10px;
+        border: 0;
+        border-radius: 8px;
+        color: var(--vd-muted);
+        background: transparent;
+        font: 800 0.75rem/1 inherit;
+        cursor: pointer;
+      }
+
+      [data-vd-zoom]:hover {
+        color: var(--vd-blue);
+        background: var(--vd-blue-soft);
+      }
+      [data-vd-zoom][aria-pressed='true'] {
+        color: #fff;
+        background: var(--vd-blue);
+      }
+      [data-vd-zoom]:focus-visible {
+        outline: 3px solid rgba(23, 106, 166, 0.3);
+        outline-offset: 2px;
+      }
+
+      [data-vd-content] {
+        display: grid;
+        gap: 24px;
+        min-inline-size: 0;
+      }
+
+      [data-vd-view] {
+        position: relative;
+        min-inline-size: 0;
+      }
+
+      [data-vd-view] > :first-child {
+        margin-top: 0;
+      }
+      [data-vd-view] > :last-child {
+        margin-bottom: 0;
+      }
+
+      [data-vd-viewport] {
+        min-inline-size: 0;
+        overflow-x: auto;
+        overflow-y: visible;
+        overscroll-behavior-inline: contain;
+        scrollbar-gutter: stable;
+      }
+
+      [data-vd-zoom-target] {
+        --vd-applied-zoom: 1;
+        min-inline-size: 0;
+        transform-origin: top left;
+      }
+
+      [data-vd-detail-trigger] {
+        cursor: pointer;
+      }
+
+      dialog[data-vd-detail-for] {
+        width: min(34rem, calc(100vw - 32px));
+        max-height: min(74vh, 44rem);
+        padding: 0;
+        border: 1px solid rgba(108, 148, 184, 0.6);
+        border-radius: 16px;
+        color: var(--vd-ink);
+        background: #fff;
+        box-shadow: 0 24px 68px rgba(20, 52, 82, 0.22);
+      }
+
+      dialog[data-vd-detail-for]::backdrop {
+        background: rgba(14, 31, 48, 0.28);
+        backdrop-filter: blur(2px);
+      }
+
+      .vd-detail-body {
+        padding: 20px;
+        overflow: auto;
+      }
+      .vd-detail-body h2 {
+        margin: 0 0 8px;
+        font-size: 1.2rem;
+      }
+      .vd-detail-body p,
+      .vd-detail-body li {
+        line-height: 1.55;
+      }
+      .vd-detail-close {
+        float: right;
+        margin: 12px 12px 0;
+      }
+
+      .vd-visually-hidden,
+      [data-vd-audit-output] {
+        position: absolute !important;
+        inline-size: 1px !important;
+        block-size: 1px !important;
+        overflow: hidden !important;
+        clip-path: inset(50%) !important;
+        white-space: nowrap !important;
+      }
+
+      [data-vd-static-fallback] {
+        margin-top: 16px;
+      }
+
+      @media (max-width: 48rem) {
+        [data-vd-artifact='1'] {
+          width: min(100vw - 20px, 48rem);
+          padding-top: 14px;
+        }
+        [data-vd-title-region] {
+          grid-template-columns: 1fr;
+          gap: 12px;
+        }
+        [data-vd-controls] {
+          justify-self: start;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          transition-duration: 0.001ms !important;
+        }
+      }
+
+      @media print {
+        body {
+          background: #fff;
+        }
+        [data-vd-artifact='1'] {
+          width: 100%;
+          padding: 0;
+        }
+        [data-vd-controls],
+        [data-vd-audit-output] {
+          display: none !important;
+        }
+        [data-vd-viewport] {
+          overflow: visible !important;
+        }
+        [data-vd-zoom-target] {
+          zoom: 1 !important;
+          transform: none !important;
+        }
+        dialog[data-vd-detail-for] {
+          display: block;
+          position: static;
+          width: auto;
+          max-height: none;
+          margin: 1rem 0;
+          box-shadow: none;
+        }
+      }
+    </style>
+    <style data-vd-author-style="1">
+      .view-card {
+        overflow: hidden;
+        border: 1px solid rgba(108, 148, 184, 0.42);
+        border-radius: 22px;
+        background: rgba(255, 255, 255, 0.92);
+        box-shadow: var(--vd-shadow);
+      }
+
+      .view-heading {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 20px 22px 14px;
+        border-bottom: 1px solid rgba(108, 148, 184, 0.22);
+      }
+
+      .view-heading h2 {
+        margin: 0;
+        font-size: 1.28rem;
+        letter-spacing: -0.015em;
+      }
+
+      .view-heading p {
+        max-width: 56rem;
+        margin: 6px 0 0;
+        color: var(--vd-muted);
+        line-height: 1.55;
+      }
+
+      .view-kicker {
+        flex: none;
+        padding: 5px 10px;
+        border-radius: 999px;
+        color: var(--vd-blue);
+        background: var(--vd-blue-soft);
+        font-size: 0.74rem;
+        font-weight: 850;
+      }
+
+      .diagram-canvas {
+        position: relative;
+        isolation: isolate;
+        margin: 0;
+        background: linear-gradient(180deg, rgba(246, 250, 254, 0.7), rgba(255, 255, 255, 0.28)), linear-gradient(rgba(78, 118, 154, 0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(78, 118, 154, 0.04) 1px, transparent 1px);
+        background-size:
+          auto,
+          24px 24px,
+          24px 24px;
+      }
+
+      .current-canvas {
+        width: 1480px;
+        height: 740px;
+      }
+      .target-canvas {
+        width: 1320px;
+        height: 880px;
+      }
+
+      .diagram-boundary {
+        position: absolute;
+        z-index: 0;
+        border: 1px solid rgba(108, 148, 184, 0.5);
+        border-radius: 20px;
+        background: rgba(247, 251, 255, 0.82);
+      }
+
+      .diagram-boundary.command-lane {
+        left: 230px;
+        top: 70px;
+        width: 720px;
+        height: 250px;
+      }
+      .diagram-boundary.zeus-lane {
+        left: 230px;
+        top: 390px;
+        width: 720px;
+        height: 250px;
+      }
+      .diagram-boundary.recovery-boundary {
+        left: 20px;
+        top: 70px;
+        width: 1280px;
+        height: 420px;
+      }
+      .diagram-boundary.diagnosis-boundary {
+        left: 20px;
+        top: 550px;
+        width: 1280px;
+        height: 290px;
+      }
+
+      .boundary-title {
+        position: absolute;
+        left: 18px;
+        top: 14px;
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        color: #2d506e;
+        font-weight: 850;
+      }
+
+      .boundary-title small {
+        color: var(--vd-muted);
+        font-size: 0.72rem;
+        font-weight: 700;
+      }
+
+      .diagram-node {
+        position: absolute;
+        z-index: 3;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-start;
+        min-width: 0;
+        padding: 13px 14px;
+        border: 1px solid rgba(94, 133, 168, 0.46);
+        border-radius: 15px;
+        background: #fff;
+        box-shadow: 0 10px 24px rgba(29, 72, 107, 0.08);
+      }
+
+      .diagram-node h3 {
+        margin: 0;
+        color: #15334d;
+        font-size: 0.96rem;
+        line-height: 1.32;
+        letter-spacing: -0.01em;
+      }
+
+      .diagram-node p {
+        margin: 6px 0 0;
+        color: #4f6579;
+        font-size: 0.76rem;
+        line-height: 1.45;
+      }
+
+      .diagram-node .node-foot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 6px;
+        margin-top: auto;
+        padding-top: 8px;
+      }
+
+      .node-state {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        color: var(--vd-muted);
+        font-size: 0.68rem;
+        font-weight: 850;
+      }
+
+      .node-state::before {
+        content: '';
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: currentColor;
+      }
+
+      .node-state.observed {
+        color: var(--vd-blue);
+      }
+      .node-state.proposed {
+        color: var(--vd-green);
+      }
+      .node-state.unresolved {
+        color: var(--vd-amber);
+      }
+
+      .evidence-button {
+        min-height: 26px;
+        padding: 3px 8px;
+        border: 1px solid rgba(23, 106, 166, 0.35);
+        border-radius: 8px;
+        color: var(--vd-blue);
+        background: var(--vd-blue-soft);
+        font: 800 0.68rem/1 inherit;
+      }
+
+      .evidence-button:hover {
+        background: #d9ecf9;
+      }
+      .evidence-button:focus-visible {
+        outline: 3px solid rgba(23, 106, 166, 0.25);
+        outline-offset: 2px;
+      }
+
+      .node-blue {
+        border-color: rgba(23, 106, 166, 0.58);
+        background: linear-gradient(180deg, #fff, #f4faff);
+      }
+      .node-red {
+        border-color: rgba(170, 63, 69, 0.55);
+        background: linear-gradient(180deg, #fff, var(--vd-red-soft));
+      }
+      .node-amber {
+        border-color: rgba(154, 103, 9, 0.55);
+        background: linear-gradient(180deg, #fff, var(--vd-amber-soft));
+      }
+      .node-green {
+        border-color: rgba(35, 122, 91, 0.58);
+        background: linear-gradient(180deg, #fff, var(--vd-green-soft));
+      }
+      .node-violet {
+        border-color: rgba(105, 88, 173, 0.52);
+        background: linear-gradient(180deg, #fff, var(--vd-violet-soft));
+      }
+
+      .impact-node {
+        border-width: 2px;
+        box-shadow: 0 16px 34px rgba(170, 63, 69, 0.13);
+      }
+
+      .impact-node h3 {
+        font-size: 1.08rem;
+        color: #7d2730;
+      }
+      .repair-node h3,
+      .acceptance-node h3 {
+        color: #1f674f;
+      }
+
+      .start-node {
+        left: 30px;
+        top: 285px;
+        width: 170px;
+        height: 120px;
+      }
+      .impact-node {
+        left: 990px;
+        top: 245px;
+        width: 220px;
+        height: 210px;
+      }
+      .repair-node {
+        left: 1240px;
+        top: 125px;
+        width: 210px;
+        height: 170px;
+      }
+      .acceptance-node {
+        left: 1240px;
+        top: 485px;
+        width: 210px;
+        height: 145px;
+      }
+
+      .command-lane .node-a,
+      .zeus-lane .node-a {
+        left: 30px;
+        top: 75px;
+        width: 190px;
+        height: 140px;
+      }
+      .command-lane .node-b,
+      .zeus-lane .node-b {
+        left: 270px;
+        top: 75px;
+        width: 190px;
+        height: 140px;
+      }
+      .command-lane .node-c,
+      .zeus-lane .node-c {
+        left: 510px;
+        top: 75px;
+        width: 180px;
+        height: 140px;
+      }
+
+      .flow-lines {
+        position: absolute;
+        inset: 0;
+        z-index: 2;
+        width: 100%;
+        height: 100%;
+        overflow: visible;
+        pointer-events: none;
+      }
+
+      .flow-lines path {
+        fill: none;
+        stroke: #7597b5;
+        stroke-width: 2.2;
+        vector-effect: non-scaling-stroke;
+      }
+
+      .flow-lines path.failure {
+        stroke: var(--vd-red);
+      }
+      .flow-lines path.repair {
+        stroke: var(--vd-green);
+        stroke-width: 2.6;
+      }
+      .flow-lines path.signal {
+        stroke: var(--vd-violet);
+      }
+      .flow-lines path.dashed {
+        stroke-dasharray: 7 7;
+      }
+
+      .edge-label {
+        fill: #57718a;
+        paint-order: stroke;
+        stroke: rgba(255, 255, 255, 0.96);
+        stroke-width: 7px;
+        stroke-linejoin: round;
+        font-size: 13px;
+        font-weight: 800;
+      }
+
+      .edge-label.failure-label {
+        fill: #97353d;
+      }
+      .edge-label.repair-label {
+        fill: #237a5b;
+      }
+
+      .recovery-boundary .events-node {
+        left: 40px;
+        top: 90px;
+        width: 190px;
+        height: 110px;
+      }
+      .recovery-boundary .poll-node {
+        left: 40px;
+        top: 250px;
+        width: 190px;
+        height: 110px;
+      }
+      .recovery-boundary .reconcile-node {
+        left: 320px;
+        top: 170px;
+        width: 210px;
+        height: 130px;
+      }
+      .recovery-boundary .freshness-node {
+        left: 600px;
+        top: 170px;
+        width: 190px;
+        height: 130px;
+      }
+      .recovery-boundary .live-node {
+        left: 870px;
+        top: 70px;
+        width: 190px;
+        height: 120px;
+      }
+      .recovery-boundary .stale-node {
+        left: 870px;
+        top: 270px;
+        width: 190px;
+        height: 120px;
+      }
+      .recovery-boundary .caught-up-node {
+        left: 1090px;
+        top: 70px;
+        width: 160px;
+        height: 120px;
+      }
+      .recovery-boundary .catchup-node {
+        left: 1090px;
+        top: 270px;
+        width: 160px;
+        height: 120px;
+      }
+
+      .diagnosis-boundary .heartbeat-evidence-node {
+        left: 40px;
+        top: 85px;
+        width: 190px;
+        height: 120px;
+      }
+      .diagnosis-boundary .metrics-node {
+        left: 280px;
+        top: 85px;
+        width: 190px;
+        height: 120px;
+      }
+      .diagnosis-boundary .correlate-node {
+        left: 520px;
+        top: 85px;
+        width: 210px;
+        height: 120px;
+      }
+      .diagnosis-boundary .hotspot-node {
+        left: 780px;
+        top: 85px;
+        width: 190px;
+        height: 120px;
+      }
+      .diagnosis-boundary .target-fix-node {
+        left: 1020px;
+        top: 85px;
+        width: 230px;
+        height: 120px;
+      }
+
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 0;
+        padding: 14px 22px 18px;
+        border-top: 1px solid rgba(108, 148, 184, 0.2);
+        color: var(--vd-muted);
+        font-size: 0.75rem;
+      }
+
+      .legend span {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .legend i {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: currentColor;
+      }
+      .legend .observed {
+        color: var(--vd-blue);
+      }
+      .legend .proposed {
+        color: var(--vd-green);
+      }
+      .legend .unresolved {
+        color: var(--vd-amber);
+      }
+
+      .decision-strip {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 10px 14px;
+        align-items: center;
+        margin: 0 0 20px;
+        padding: 14px 16px;
+        border: 1px solid rgba(35, 122, 91, 0.34);
+        border-radius: 16px;
+        background: rgba(232, 247, 240, 0.8);
+      }
+
+      .decision-strip strong {
+        color: #1f674f;
+      }
+      .decision-strip p {
+        margin: 0;
+        color: #3f6255;
+        line-height: 1.5;
+      }
+
+      .vd-detail-body code {
+        padding: 2px 5px;
+        border-radius: 5px;
+        background: #eef4f9;
+        color: #274b68;
+        font-size: 0.86em;
+        overflow-wrap: anywhere;
+      }
+
+      .vd-detail-body ul {
+        padding-left: 1.2rem;
+      }
+
+      @media (max-width: 48rem) {
+        .view-heading {
+          display: block;
+        }
+        .view-kicker {
+          display: inline-flex;
+          margin-top: 10px;
+        }
+        .decision-strip {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div data-vd-artifact="1">
+      <header data-vd-title-region>
+        <div data-vd-title-copy>
+          <h1>故障与修复｜Zeus 命令卡死现状与优化方案</h1>
+          <p data-vd-summary id="product-summary">
+            结论：发布命令因 GitHub 网络失败而退出，但 Zeus 控制面同时失去响应，导致日志与“运行中”状态停在旧值。修复重点不是延长命令超时，而是让失联状态真实可见、恢复后自动追平，再用关联证据只修被证实的阻塞热点。
+          </p>
+        </div>
+        <div data-vd-controls role="group" aria-label="图形缩放" data-vd-zoom-request="fit">
+          <button type="button" data-vd-zoom="0.75" aria-pressed="false">75%</button>
+          <button type="button" data-vd-zoom="0.9" aria-pressed="false">90%</button>
+          <button type="button" data-vd-zoom="1" aria-pressed="false">100%</button>
+          <button type="button" data-vd-zoom="fit" aria-pressed="true">适配</button>
+        </div>
+      </header>
+      <main data-vd-content>
+        <section class="view-card" id="current-view" data-vd-view="current-fault-view" data-vd-family="fault-debugging" data-vd-view-role="primary">
+          <div class="view-heading">
+            <div>
+              <h2 data-vd-view-title>故障因果链｜命令继续运行，但 Zeus 展示停住</h2>
+              <p>同一次操作分成“命令真实执行”和“Zeus 状态投影”两条链。两条链在用户界面汇合，形成“命令卡死”的表象。</p>
+            </div>
+            <span class="view-kicker">当前现场</span>
+          </div>
+          <div data-vd-viewport>
+            <div class="diagram-canvas current-canvas" data-vd-zoom-target>
+              <article class="diagram-node node-blue start-node" id="start-node" data-vd-node="user-action">
+                <h3>用户启动发布命令</h3>
+                <p>在命令中心执行“一键升级发布 Zeus”。</p>
+                <div class="node-foot"><span class="node-state observed">已确认事实</span></div>
+              </article>
+
+              <div class="diagram-boundary command-lane" id="command-runtime-group" data-vd-group="command-runtime">
+                <div class="boundary-title">命令真实执行链 <small>独立子进程</small></div>
+                <article class="diagram-node node-blue node-a" id="command-running-node" data-vd-node="runtime-process">
+                  <h3>命令继续运行</h3>
+                  <p>截图最后一行之后仍有后续日志。</p>
+                  <div class="node-foot"><span class="node-state observed">已确认事实</span></div>
+                </article>
+                <article class="diagram-node node-blue node-b" id="remote-read-node" data-vd-node="external-read">
+                  <h3>读取 GitHub 远端</h3>
+                  <p>检查远程 main 与稳定标签。</p>
+                  <div class="node-foot"><span class="node-state observed">已确认事实</span></div>
+                </article>
+                <article class="diagram-node node-red node-c" id="command-exit-node" data-vd-node="runtime-outcome" data-vd-critical>
+                  <h3>23.7 秒后退出 1</h3>
+                  <p>GitHub 443 端口连接失败。</p>
+                  <div class="node-foot">
+                    <span class="node-state observed">已确认事实</span>
+                    <button class="evidence-button" type="button" data-vd-detail-trigger="command-evidence-dialog">证据</button>
+                  </div>
+                </article>
+              </div>
+
+              <div class="diagram-boundary zeus-lane" id="zeus-control-group" data-vd-group="zeus-control-projection">
+                <div class="boundary-title">Zeus 状态投影链 <small>Core、控制心跳、界面</small></div>
+                <article class="diagram-node node-amber node-a" id="core-node" data-vd-node="hypothesis" data-vd-critical>
+                  <h3>Core 未在 5 秒内响应</h3>
+                  <p>具体阻塞回调仍待确认，不能直接归因数据库。</p>
+                  <div class="node-foot">
+                    <span class="node-state unresolved">待确认根因</span>
+                    <button class="evidence-button" type="button" data-vd-detail-trigger="unresolved-dialog">边界</button>
+                  </div>
+                </article>
+                <article class="diagram-node node-violet node-b" id="heartbeat-node" data-vd-node="control-timeout" data-vd-critical>
+                  <h3>控制心跳超时并重连</h3>
+                  <p>同一 UI lease 再次 attached。</p>
+                  <div class="node-foot">
+                    <span class="node-state observed">已确认事实</span>
+                    <button class="evidence-button" type="button" data-vd-detail-trigger="heartbeat-evidence-dialog">证据</button>
+                  </div>
+                </article>
+                <article class="diagram-node node-red node-c" id="stale-projection-node" data-vd-node="stale-projection">
+                  <h3>日志与状态停在旧值</h3>
+                  <p>界面仍显示“运行中”和旧日志。</p>
+                  <div class="node-foot"><span class="node-state observed">已确认事实</span></div>
+                </article>
+              </div>
+
+              <article class="diagram-node node-red impact-node" id="impact-node" data-vd-node="symptom" data-vd-critical>
+                <h3>用户看到“Zeus 卡死”</h3>
+                <p>真实命令已经继续并退出，但界面没有同步。这是 Zeus 命令功能的可靠性问题，不是发布脚本卡在同步阶段。</p>
+                <div class="node-foot"><span class="node-state observed">已确认影响</span></div>
+              </article>
+
+              <article class="diagram-node node-green repair-node" id="repair-node" data-vd-node="repair" data-vd-critical>
+                <h3>修复决策</h3>
+                <p>实时事件触发、1 秒增量轮询探测；失联 3 秒即明示，恢复后按游标追平。</p>
+                <div class="node-foot">
+                  <span class="node-state observed">已实施</span>
+                  <button class="evidence-button" type="button" data-vd-detail-trigger="repair-dialog">方案</button>
+                </div>
+              </article>
+
+              <article class="diagram-node node-green acceptance-node" id="acceptance-node" data-vd-node="verification" data-vd-critical>
+                <h3>验收结果</h3>
+                <p>不再假装“运行中”；重连后日志和终态自动一致；热点有证据再修。</p>
+                <div class="node-foot"><span class="node-state proposed">验收目标</span></div>
+              </article>
+
+              <svg class="flow-lines" viewBox="0 0 1480 740" aria-hidden="true">
+                <defs>
+                  <marker id="arrow-current" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L10,5 L0,10 z" fill="#7597b5" /></marker>
+                  <marker id="arrow-failure" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L10,5 L0,10 z" fill="#aa3f45" /></marker>
+                  <marker id="arrow-repair" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L10,5 L0,10 z" fill="#237a5b" /></marker>
+                  <marker id="arrow-signal" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L10,5 L0,10 z" fill="#6958ad" /></marker>
+                </defs>
+                <path id="edge-start-command" data-vd-edge="starts-runtime" data-from="start-node" data-to="command-running-node" d="M200 325 C224 325 226 200 260 200" marker-end="url(#arrow-current)" />
+                <text class="edge-label" id="edge-label-start-command" data-vd-edge-label="edge-start-command" x="207" y="252">子进程</text>
+                <path id="edge-start-core" data-vd-edge="starts-projection" data-from="start-node" data-to="core-node" d="M200 365 C224 365 226 520 260 520" marker-end="url(#arrow-current)" />
+                <text class="edge-label" id="edge-label-start-core" data-vd-edge-label="edge-start-core" x="207" y="463">状态投影</text>
+                <path id="edge-command-remote" data-vd-edge="continues" data-from="command-running-node" data-to="remote-read-node" d="M450 200 L500 200" marker-end="url(#arrow-current)" />
+                <path id="edge-remote-exit" class="failure" data-vd-edge="external-failure" data-from="remote-read-node" data-to="command-exit-node" d="M690 200 L740 200" marker-end="url(#arrow-failure)" />
+                <path id="edge-core-heartbeat" class="signal" data-vd-edge="control-timeout" data-from="core-node" data-to="heartbeat-node" d="M450 520 L500 520" marker-end="url(#arrow-signal)" />
+                <path id="edge-heartbeat-stale" class="failure" data-vd-edge="stales-projection" data-from="heartbeat-node" data-to="stale-projection-node" d="M690 520 L740 520" marker-end="url(#arrow-failure)" />
+                <path id="edge-exit-impact" class="failure" data-vd-edge="actual-outcome" data-from="command-exit-node" data-to="impact-node" d="M920 200 C956 200 950 305 990 305" marker-end="url(#arrow-failure)" />
+                <text class="edge-label failure-label" id="edge-label-exit-impact" data-vd-edge-label="edge-exit-impact" x="936" y="245">真实结果</text>
+                <path id="edge-stale-impact" class="failure" data-vd-edge="visible-outcome" data-from="stale-projection-node" data-to="impact-node" d="M920 520 C956 520 950 395 990 395" marker-end="url(#arrow-failure)" />
+                <text class="edge-label failure-label" id="edge-label-stale-impact" data-vd-edge-label="edge-stale-impact" x="936" y="485">界面结果</text>
+                <path id="edge-impact-repair" class="repair" data-vd-edge="repair-boundary" data-from="impact-node" data-to="repair-node" d="M1210 325 C1230 325 1220 210 1240 210" marker-end="url(#arrow-repair)" />
+                <text class="edge-label repair-label" id="edge-label-impact-repair" data-vd-edge-label="edge-impact-repair" x="1207" y="272">修复</text>
+                <path id="edge-repair-acceptance" class="repair" data-vd-edge="verifies" data-from="repair-node" data-to="acceptance-node" d="M1345 295 L1345 485" marker-end="url(#arrow-repair)" />
+                <text class="edge-label repair-label" id="edge-label-repair-acceptance" data-vd-edge-label="edge-repair-acceptance" x="1355" y="397">验收</text>
+              </svg>
+            </div>
+          </div>
+          <div class="legend" aria-label="证据状态图例">
+            <span class="observed"><i></i>已确认事实</span>
+            <span class="unresolved"><i></i>待确认根因</span>
+            <span class="proposed"><i></i>拟议方案 / 验收目标</span>
+          </div>
+        </section>
+
+        <div class="decision-strip" id="implementation-decision">
+          <strong>当前实施边界</strong>
+          <p>已交付“失联可见 + 自动追平”和关联诊断；只有证据指向 Runtime 日志或 SQLite 时，才改同步文件写入或日志批处理。没有先加超时，也没有拆第二套 Core。</p>
+        </div>
+
+        <section class="view-card" id="target-view" data-vd-view="target-architecture-view" data-vd-family="system-architecture" data-vd-view-role="supporting">
+          <div class="view-heading">
+            <div>
+              <h2 data-vd-view-title>修复架构｜失联可见、恢复追平、热点再优化</h2>
+              <p>第一层保证界面永远如实表达连接状态；第二层把下一次心跳超时和真实耗时关联起来，只修被证实的共享热点。</p>
+            </div>
+            <span class="view-kicker">目标方案</span>
+          </div>
+          <div data-vd-viewport>
+            <div class="diagram-canvas target-canvas" data-vd-zoom-target>
+              <div class="diagram-boundary recovery-boundary" id="command-ui-recovery-group" data-vd-group="command-ui-recovery">
+                <div class="boundary-title">界面恢复面 <small>复用现有事件流和日志游标</small></div>
+                <article class="diagram-node node-violet events-node" id="events-node" data-vd-node="interface">
+                  <h3>实时事件主通道</h3>
+                  <p>输出、错误、结束与命令终态。</p>
+                  <span class="vd-tech-label">DashboardClient.subscribeEvents</span>
+                </article>
+                <article class="diagram-node node-blue poll-node" id="poll-node" data-vd-node="interface">
+                  <h3>1 秒增量轮询探测</h3>
+                  <p>实时通道漏报或重连时仍读取权威状态。</p>
+                </article>
+                <article class="diagram-node node-blue reconcile-node" id="reconcile-node" data-vd-node="component">
+                  <h3>统一状态协调器</h3>
+                  <p>按日志游标合并增量，终态读取尾页，避免重复。</p>
+                  <span class="vd-tech-label">CommandCenterPanel</span>
+                </article>
+                <article class="diagram-node node-amber freshness-node" id="freshness-node" data-vd-node="component">
+                  <h3>最近 3 秒同步成功？</h3>
+                  <p>连接状态与命令状态分开表达。</p>
+                </article>
+                <article class="diagram-node node-green live-node" id="live-node" data-vd-node="fresh-ui-outcome">
+                  <h3>是：正常跟随</h3>
+                  <p>实时展示日志和权威运行状态。</p>
+                </article>
+                <article class="diagram-node node-red stale-node" id="target-stale-node" data-vd-node="disconnected-ui-outcome">
+                  <h3>否：明确显示失联</h3>
+                  <p>“命令可能仍在执行”，并禁用停止动作。</p>
+                </article>
+                <article class="diagram-node node-blue catchup-node" id="catchup-node" data-vd-node="cursor-catchup">
+                  <h3>连接恢复</h3>
+                  <p>按游标强制增量追平。</p>
+                </article>
+                <article class="diagram-node node-green caught-up-node" id="caught-up-node" data-vd-node="recovered-outcome">
+                  <h3>日志与终态一致</h3>
+                  <p>不丢、不重、不假运行。</p>
+                </article>
+              </div>
+
+              <div class="diagram-boundary diagnosis-boundary" id="root-cause-diagnosis-group" data-vd-group="root-cause-diagnosis">
+                <div class="boundary-title">根因收敛面 <small>复用既有性能采样，不新增通用系统</small></div>
+                <article class="diagram-node node-violet heartbeat-evidence-node" id="heartbeat-evidence-node" data-vd-node="heartbeat-evidence">
+                  <h3>心跳超时事实</h3>
+                  <p>保留故障起止、Main/Core 身份与活跃工作数量。</p>
+                </article>
+                <article class="diagram-node node-blue metrics-node" id="metrics-node" data-vd-node="bounded-metrics">
+                  <h3>有界性能样本</h3>
+                  <p>事件循环、SQLite、API 慢样本与存储体积。</p>
+                </article>
+                <article class="diagram-node node-violet correlate-node" id="correlate-node" data-vd-node="evidence-correlation">
+                  <h3>同一时间轴关联</h3>
+                  <p>先区分事件循环、API 与 SQLite；不足时再补日志写入观测。</p>
+                </article>
+                <article class="diagram-node node-amber hotspot-node" id="hotspot-node" data-vd-node="evidence-decision">
+                  <h3>热点被证实？</h3>
+                  <p>未证实就继续观察，不猜数据库根因。</p>
+                </article>
+                <article class="diagram-node node-green target-fix-node" id="target-fix-node" data-vd-node="targeted-fix">
+                  <h3>只修共享热点</h3>
+                  <p>日志热点才异步追加 / 批量镜像；否则修真实慢路由。</p>
+                </article>
+              </div>
+
+              <svg class="flow-lines" viewBox="0 0 1320 880" aria-hidden="true">
+                <defs>
+                  <marker id="arrow-target" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L10,5 L0,10 z" fill="#7597b5" /></marker>
+                  <marker id="arrow-target-green" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L10,5 L0,10 z" fill="#237a5b" /></marker>
+                  <marker id="arrow-target-red" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L10,5 L0,10 z" fill="#aa3f45" /></marker>
+                  <marker id="arrow-target-violet" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L10,5 L0,10 z" fill="#6958ad" /></marker>
+                </defs>
+                <path id="edge-events-reconcile" class="signal" data-vd-edge="publishes" data-from="events-node" data-to="reconcile-node" d="M250 215 C295 215 295 280 340 280" marker-end="url(#arrow-target-violet)" />
+                <text class="edge-label" id="edge-label-events-reconcile" data-vd-edge-label="edge-events-reconcile" x="265" y="235">主通道</text>
+                <path id="edge-poll-reconcile" data-vd-edge="polls" data-from="poll-node" data-to="reconcile-node" d="M250 375 C295 375 295 330 340 330" marker-end="url(#arrow-target)" />
+                <text class="edge-label" id="edge-label-poll-reconcile" data-vd-edge-label="edge-poll-reconcile" x="265" y="368">兜底</text>
+                <path id="edge-reconcile-freshness" data-vd-edge="evaluates-freshness" data-from="reconcile-node" data-to="freshness-node" d="M550 305 L620 305" marker-end="url(#arrow-target)" />
+                <path id="edge-freshness-live" class="repair" data-vd-edge="fresh-branch" data-from="freshness-node" data-to="live-node" d="M810 275 C850 275 850 200 890 200" marker-end="url(#arrow-target-green)" />
+                <text class="edge-label repair-label" id="edge-label-freshness-live" data-vd-edge-label="edge-freshness-live" x="824" y="242">同步正常</text>
+                <path id="edge-freshness-stale" class="failure" data-vd-edge="stale-branch" data-from="freshness-node" data-to="target-stale-node" d="M810 335 C850 335 850 400 890 400" marker-end="url(#arrow-target-red)" />
+                <text class="edge-label failure-label" id="edge-label-freshness-stale" data-vd-edge-label="edge-freshness-stale" x="824" y="378">超过 3 秒</text>
+                <path id="edge-stale-catchup" class="dashed" data-vd-edge="reconnects" data-from="target-stale-node" data-to="catchup-node" d="M1080 400 L1110 400" marker-end="url(#arrow-target)" />
+                <path id="edge-catchup-recovered" class="repair" data-vd-edge="catches-up" data-from="catchup-node" data-to="caught-up-node" d="M1190 340 L1190 260" marker-end="url(#arrow-target-green)" />
+                <text class="edge-label repair-label" id="edge-label-catchup-recovered" data-vd-edge-label="edge-catchup-recovered" x="1200" y="305">追平</text>
+                <path id="edge-heartbeat-metrics" class="signal" data-vd-edge="triggers-snapshot" data-from="heartbeat-evidence-node" data-to="metrics-node" d="M250 695 L300 695" marker-end="url(#arrow-target-violet)" />
+                <path id="edge-metrics-correlate" data-vd-edge="feeds" data-from="metrics-node" data-to="correlate-node" d="M490 695 L540 695" marker-end="url(#arrow-target)" />
+                <path id="edge-correlate-hotspot" data-vd-edge="evaluates" data-from="correlate-node" data-to="hotspot-node" d="M750 695 L800 695" marker-end="url(#arrow-target)" />
+                <path id="edge-hotspot-fix" class="repair" data-vd-edge="authorizes-targeted-fix" data-from="hotspot-node" data-to="target-fix-node" d="M990 695 L1040 695" marker-end="url(#arrow-target-green)" />
+                <text class="edge-label repair-label" id="edge-label-hotspot-fix" data-vd-edge-label="edge-hotspot-fix" x="992" y="623">有证据才改</text>
+              </svg>
+            </div>
+          </div>
+        </section>
+
+        <dialog id="command-evidence-dialog" data-vd-detail-for="command-exit-node">
+          <button class="vd-detail-close" type="button" data-vd-detail-close>关闭</button>
+          <div class="vd-detail-body">
+            <h2>命令没有卡住</h2>
+            <ul>
+              <li>运行记录：<code>command_run_313ab6ca-b059-430c-9398-ff821f2f7142</code></li>
+              <li>开始：2026-09-01 12:06:39.834；结束：12:07:03.497。</li>
+              <li>截图可见行之后，日志继续进入本地 main 核对、格式检查和候选前置检查。</li>
+              <li>最终失败：<code>git ls-remote origin refs/tags/v0.3.93</code> 无法连接 GitHub 443 端口。</li>
+            </ul>
+          </div>
+        </dialog>
+
+        <dialog id="heartbeat-evidence-dialog" data-vd-detail-for="heartbeat-node">
+          <button class="vd-detail-close" type="button" data-vd-detail-close>关闭</button>
+          <div class="vd-detail-body">
+            <h2>Zeus 控制链失去响应</h2>
+            <ul>
+              <li>12:06:52.432，Execution Host 记录同一 UI lease 再次 <code>ui_attached</code>。</li>
+              <li>当前控制请求使用 5 秒超时；心跳失败会进入重新注册路径。</li>
+              <li>同一时期命令仍继续输出，因此“命令卡住”不能解释界面陈旧。</li>
+            </ul>
+          </div>
+        </dialog>
+
+        <dialog id="unresolved-dialog" data-vd-detail-for="core-node">
+          <button class="vd-detail-close" type="button" data-vd-detail-close>关闭</button>
+          <div class="vd-detail-body">
+            <h2>当前证据边界</h2>
+            <p>没有该时刻的 hang report、spindump 或 JavaScript 堆栈，因此只能确认 Core 没有及时响应，不能确认具体阻塞函数。</p>
+            <p><code>zeus.db</code> 约 9.92 GB，但命令查询命中索引；数据库体积是风险放大因素，不是已证实根因。</p>
+          </div>
+        </dialog>
+
+        <dialog id="repair-dialog" data-vd-detail-for="repair-node">
+          <button class="vd-detail-close" type="button" data-vd-detail-close>关闭</button>
+          <div class="vd-detail-body">
+            <h2>最小修复边界</h2>
+            <ul>
+              <li>复用已有 <code>DashboardClient.subscribeEvents</code>，不新建消息通道。</li>
+              <li><code>CommandCenterPanel</code> 以实时事件触发增量读取，保留 1 秒轮询作为可靠探针。</li>
+              <li>失联超过 3 秒时显示连接中断并禁用停止；重连后按日志游标追平。</li>
+              <li>复用既有 API、数据库和事件循环性能采样，关联下一次心跳超时。</li>
+            </ul>
+          </div>
+        </dialog>
+      </main>
+      <output data-vd-audit-output aria-live="polite"></output>
+    </div>
+    <script id="vibe-diagram-manifest" type="application/json">
+      {
+        "$schema": "vibe-diagram/artifact-manifest@1",
+        "artifactId": "zeus-0438-command-freeze-current-and-repair",
+        "language": "zh-CN",
+        "title": "故障与修复｜Zeus 命令卡死现状与优化方案",
+        "audience": ["product-manager"],
+        "questions": [
+          {
+            "id": "q-ownership",
+            "text": "这次卡死是发布命令还是 Zeus 命令功能的问题？",
+            "priority": "critical",
+            "answeredBy": ["command-exit-node", "impact-node"]
+          },
+          {
+            "id": "q-current-chain",
+            "text": "命令真实执行和 Zeus 状态投影如何共同形成卡死表象？",
+            "priority": "critical",
+            "answeredBy": ["impact-node"]
+          },
+          {
+            "id": "q-repair",
+            "text": "最小修复如何让失联可见、恢复后追平？",
+            "priority": "critical",
+            "answeredBy": ["repair-node"]
+          },
+          {
+            "id": "q-unknown",
+            "text": "哪些根因仍未确认，下一次如何收敛？",
+            "priority": "important",
+            "answeredBy": ["core-node", "target-view"]
+          }
+        ],
+        "criticalFacts": [
+          {
+            "id": "fact-command-exited",
+            "statement": "发布命令没有卡在同步阶段，而是在约 23.7 秒后因 GitHub 网络不可达退出。",
+            "status": "observed",
+            "visibleIn": ["command-exit-node"],
+            "evidenceIds": ["ev-command-runtime"]
+          },
+          {
+            "id": "fact-control-timeout",
+            "statement": "命令运行期间 Zeus 控制心跳失败并重新注册同一 UI lease。",
+            "status": "observed",
+            "visibleIn": ["heartbeat-node"],
+            "evidenceIds": ["ev-execution-host"]
+          },
+          {
+            "id": "fact-product-impact",
+            "statement": "界面停留在旧日志和运行中状态，造成 Zeus 卡死表象。",
+            "status": "observed",
+            "visibleIn": ["impact-node"],
+            "evidenceIds": ["ev-screenshot", "ev-command-runtime"]
+          },
+          {
+            "id": "fact-callback-unresolved",
+            "statement": "具体阻塞回调尚无堆栈证据，数据库体积不能被直接认定为根因。",
+            "status": "unresolved",
+            "visibleIn": ["core-node"],
+            "evidenceIds": ["ev-task-diagnosis"]
+          },
+          {
+            "id": "fact-repair",
+            "statement": "先复用实时事件和轮询兜底实现失联可见与恢复追平，再根据关联证据修共享热点。",
+            "status": "proposed",
+            "visibleIn": ["repair-node"],
+            "evidenceIds": ["ev-source-current", "ev-task-diagnosis"]
+          }
+        ],
+        "views": [
+          {
+            "id": "current-fault-view",
+            "family": "fault-debugging",
+            "role": "primary",
+            "elementId": "current-view"
+          },
+          {
+            "id": "target-architecture-view",
+            "family": "system-architecture",
+            "role": "supporting",
+            "elementId": "target-view"
+          }
+        ],
+        "evidence": [
+          {
+            "id": "ev-command-runtime",
+            "status": "observed",
+            "sourceKind": "runtime-log",
+            "source": "/Users/david/.zeus/artifacts/runtime-sessions/ai-session-1788235599834-9eb6b19319074/",
+            "supports": ["fact-command-exited", "fact-product-impact"]
+          },
+          {
+            "id": "ev-execution-host",
+            "status": "observed",
+            "sourceKind": "host-log",
+            "source": "/Users/david/.zeus/runtime/execution-host/host.log",
+            "supports": ["fact-control-timeout"]
+          },
+          {
+            "id": "ev-screenshot",
+            "status": "observed",
+            "sourceKind": "user-screenshot",
+            "source": "/Users/david/.zeus/artifacts/task-attachments/command-610eb3c0cb2d7cef698dcd3f-1-770c63d9bb23ef36-pasted-task-screenshot-1788235723142.png",
+            "supports": ["fact-product-impact"]
+          },
+          {
+            "id": "ev-source-current",
+            "status": "observed",
+            "sourceKind": "source-code",
+            "source": "apps/desktop/src/renderer/CommandCenterPanel.tsx; packages/local-server/src/index.ts; apps/desktop/src/main/localServerRuntime.ts",
+            "supports": ["fact-repair"]
+          },
+          {
+            "id": "ev-task-diagnosis",
+            "status": "observed",
+            "sourceKind": "task-document",
+            "source": "docs/ZEUS-0438_执行命令时Zeus经常卡死诊断.md",
+            "supports": ["fact-callback-unresolved", "fact-repair"]
+          }
+        ],
+        "extensions": {
+          "verification": {
+            "artifactStaticValid": true,
+            "productReadingReviewed": true,
+            "browserLayoutVerified": false,
+            "clientRuntimeVerified": false,
+            "browserBlocker": "Zeus built-in BrowserHost did not return for file, localhost, or tab inspection requests during this run."
+          }
+        }
+      }
+    </script>
+    <script data-vd-shell="1">
+      (() => {
+        'use strict';
+
+        const $ = (selector, root = document) => root.querySelector(selector);
+        const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+        const auditOutput = () => $('[data-vd-audit-output]');
+
+        function zoomTargets() {
+          const explicit = $$('[data-vd-zoom-target]');
+          return explicit.length ? explicit : $$('[data-vd-view]');
+        }
+
+        function viewportFor(target) {
+          return target.closest('[data-vd-viewport]') || target.parentElement;
+        }
+
+        function naturalWidth(target) {
+          const previous = target.style.zoom;
+          target.style.zoom = '1';
+          const width = Math.max(target.scrollWidth, target.getBoundingClientRect().width, 1);
+          target.style.zoom = previous;
+          return width;
+        }
+
+        function applyZoom(request) {
+          let allApplied = true;
+          zoomTargets().forEach((target) => {
+            const viewport = viewportFor(target);
+            if (!viewport) return;
+            const width = naturalWidth(target);
+            const available = Math.max(viewport.clientWidth, 1);
+            const requested = request === 'fit' ? Math.min(1, available / width) : Number(request);
+            const applied = Math.max(0.75, Math.min(1, requested || 1));
+            const overflow = request === 'fit' && available / width < 0.75;
+            target.style.zoom = String(applied);
+            target.dataset.vdAppliedZoom = String(applied);
+            viewport.style.overflowX = overflow ? 'auto' : 'visible';
+            viewport.dataset.vdHorizontalOverflow = String(overflow);
+            if (request === 'fit' && requested < 0.75) allApplied = false;
+          });
+
+          $$('[data-vd-zoom]').forEach((button) => {
+            button.setAttribute('aria-pressed', String(button.dataset.vdZoom === request));
+          });
+          const controls = $('[data-vd-controls]');
+          if (controls) {
+            controls.dataset.vdZoomRequest = request;
+            controls.dataset.vdZoomFullyApplied = String(allApplied);
+          }
+          return allApplied;
+        }
+
+        function bindZoom() {
+          $$('[data-vd-zoom]').forEach((button) => {
+            button.addEventListener('click', () => applyZoom(button.dataset.vdZoom || 'fit'));
+          });
+          let frame = 0;
+          window.addEventListener('resize', () => {
+            cancelAnimationFrame(frame);
+            frame = requestAnimationFrame(() => {
+              const request = $('[data-vd-controls]')?.dataset.vdZoomRequest || 'fit';
+              applyZoom(request);
+            });
+          });
+          applyZoom('fit');
+        }
+
+        function bindDetails() {
+          let returnFocus = null;
+          $$('[data-vd-detail-trigger]').forEach((trigger) => {
+            trigger.addEventListener('click', (event) => {
+              const targetId = trigger.getAttribute('data-vd-detail-trigger');
+              const dialog = targetId ? document.getElementById(targetId) : null;
+              if (!(dialog instanceof HTMLDialogElement)) return;
+              event.preventDefault();
+              returnFocus = trigger;
+              dialog.showModal();
+              $('[data-vd-detail-close]', dialog)?.focus();
+            });
+          });
+          $$('dialog[data-vd-detail-for]').forEach((dialog) => {
+            $$('[data-vd-detail-close]', dialog).forEach((button) => button.addEventListener('click', () => dialog.close()));
+            dialog.addEventListener('click', (event) => {
+              if (event.target === dialog) dialog.close();
+            });
+            dialog.addEventListener('close', () => {
+              if (returnFocus instanceof HTMLElement && returnFocus.isConnected) returnFocus.focus();
+              returnFocus = null;
+            });
+          });
+        }
+
+        const rect = (element) => element.getBoundingClientRect();
+        const visible = (element) => {
+          const style = getComputedStyle(element);
+          const box = rect(element);
+          if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
+          if (box.width < 1 || box.height < 1) return false;
+          if (element.closest('details:not([open]), dialog:not([open]), [hidden], [aria-hidden="true"]')) return false;
+          return true;
+        };
+        const intersects = (a, b, pad = 1) => a.left + pad < b.right && a.right - pad > b.left && a.top + pad < b.bottom && a.bottom - pad > b.top;
+        const contains = (outer, inner, tolerance = 1) => inner.left >= outer.left - tolerance && inner.right <= outer.right + tolerance && inner.top >= outer.top - tolerance && inner.bottom <= outer.bottom + tolerance;
+
+        function screenPoint(path, length) {
+          if (!(path instanceof SVGGeometryElement) || typeof path.getPointAtLength !== 'function') return null;
+          const point = path.getPointAtLength(length);
+          const matrix = path.getScreenCTM();
+          if (!matrix) return null;
+          return new DOMPoint(point.x, point.y).matrixTransform(matrix);
+        }
+
+        function nearBoundary(point, box, tolerance = 18) {
+          if (!point) return false;
+          const insideExpanded = point.x >= box.left - tolerance && point.x <= box.right + tolerance && point.y >= box.top - tolerance && point.y <= box.bottom + tolerance;
+          const distance = Math.min(Math.abs(point.x - box.left), Math.abs(point.x - box.right), Math.abs(point.y - box.top), Math.abs(point.y - box.bottom));
+          return insideExpanded && distance <= tolerance;
+        }
+
+        function issue(code, element, detail = '') {
+          return {
+            code,
+            id: element?.id || element?.getAttribute?.('data-vd-view') || '',
+            detail,
+          };
+        }
+
+        function authoredBounds(element, fallback) {
+          const svg = element.closest('svg');
+          if (svg) return rect(svg);
+          const target = element.closest('[data-vd-zoom-target]');
+          if (!target) return fallback;
+          const box = rect(target);
+          const zoom = Number.parseFloat(getComputedStyle(target).zoom) || 1;
+          return {
+            left: box.left,
+            top: box.top,
+            right: box.left + Math.max(box.width, target.scrollWidth * zoom),
+            bottom: box.top + Math.max(box.height, target.scrollHeight * zoom),
+          };
+        }
+
+        function auditView(view) {
+          const issues = [];
+          const viewRect = rect(view);
+          const nodes = $$('[data-vd-node]', view).filter(visible);
+          const groups = $$('[data-vd-group]', view).filter(visible);
+          const labels = $$('[data-vd-edge-label]', view).filter(visible);
+          const edges = $$('[data-vd-edge]', view).filter(visible);
+
+          nodes.forEach((node) => {
+            const box = rect(node);
+            if (!contains(authoredBounds(node, viewRect), box, 2)) issues.push(issue('node-outside-view', node));
+            if (node.scrollWidth > node.clientWidth + 2 || node.scrollHeight > node.clientHeight + 2) {
+              issues.push(issue('node-content-overflow', node));
+            }
+          });
+
+          for (let i = 0; i < nodes.length; i += 1) {
+            for (let j = i + 1; j < nodes.length; j += 1) {
+              const a = rect(nodes[i]);
+              const b = rect(nodes[j]);
+              if (intersects(a, b, 2)) issues.push(issue('node-overlap', nodes[i], nodes[j].id || 'anonymous'));
+            }
+          }
+
+          groups.forEach((group) => {
+            const box = rect(group);
+            $$('[data-vd-node]', group)
+              .filter(visible)
+              .forEach((node) => {
+                if (!contains(box, rect(node), 2)) issues.push(issue('group-clips-node', group, node.id || 'anonymous'));
+              });
+          });
+
+          labels.forEach((label, index) => {
+            const box = rect(label);
+            if (label.scrollWidth > label.clientWidth + 2 || label.scrollHeight > label.clientHeight + 2) {
+              issues.push(issue('edge-label-overflow', label));
+            }
+            nodes.forEach((node) => {
+              if (intersects(box, rect(node), 1)) issues.push(issue('edge-label-node-collision', label, node.id || 'anonymous'));
+            });
+            labels.slice(index + 1).forEach((other) => {
+              if (intersects(box, rect(other), 1)) issues.push(issue('edge-label-collision', label, other.id || 'anonymous'));
+            });
+          });
+
+          edges.forEach((edge) => {
+            const from = document.getElementById(edge.getAttribute('data-from') || '');
+            const to = document.getElementById(edge.getAttribute('data-to') || '');
+            if (!from || !to) return;
+            if (edge instanceof SVGGeometryElement && typeof edge.getTotalLength === 'function') {
+              const length = edge.getTotalLength();
+              const start = screenPoint(edge, 0);
+              const end = screenPoint(edge, length);
+              if (!nearBoundary(start, rect(from))) issues.push(issue('edge-start-not-anchored', edge, from.id));
+              if (!nearBoundary(end, rect(to))) issues.push(issue('edge-end-not-anchored', edge, to.id));
+              const excluded = new Set([from, to]);
+              for (let sample = 10; sample < length - 10; sample += 8) {
+                const point = screenPoint(edge, sample);
+                if (!point) break;
+                const hit = nodes.find(
+                  (node) =>
+                    !excluded.has(node) &&
+                    contains(
+                      rect(node),
+                      {
+                        left: point.x,
+                        right: point.x,
+                        top: point.y,
+                        bottom: point.y,
+                      },
+                      -2,
+                    ),
+                );
+                if (hit) {
+                  issues.push(issue('edge-through-node', edge, hit.id || 'anonymous'));
+                  break;
+                }
+              }
+            }
+          });
+
+          return issues;
+        }
+
+        function auditAll() {
+          const issues = [];
+          $$('[data-vd-view]')
+            .filter(visible)
+            .forEach((view) => issues.push(...auditView(view)));
+          const summary = $('[data-vd-summary]');
+          if (!summary || !visible(summary)) issues.push(issue('product-summary-not-visible', summary));
+          $$('[data-vd-critical]').forEach((element) => {
+            if (!visible(element) || !element.closest('[data-vd-view-role="primary"]')) {
+              issues.push(issue('critical-target-not-primary-visible', element));
+            }
+          });
+          if (document.documentElement.scrollWidth > document.documentElement.clientWidth + 2) {
+            issues.push(issue('page-horizontal-overflow', document.documentElement));
+          }
+          const controls = $('[data-vd-controls]');
+          if (!controls || $$('[data-vd-zoom]', controls).length !== 4) issues.push(issue('zoom-controls-incomplete', controls));
+
+          const report = {
+            status: issues.length ? 'failed' : 'passed',
+            viewport: { width: window.innerWidth, height: window.innerHeight },
+            issues,
+          };
+          const output = auditOutput();
+          if (output) {
+            output.setAttribute('data-vd-audit-status', report.status);
+            output.textContent = JSON.stringify(report);
+          }
+          document.documentElement.setAttribute('data-vd-audit-status', report.status);
+          return report;
+        }
+
+        globalThis.VibeDiagramQuality = { auditAll, applyZoom };
+
+        const ready = document.fonts?.ready || Promise.resolve();
+        ready.then(() => {
+          bindZoom();
+          bindDetails();
+          requestAnimationFrame(() => requestAnimationFrame(auditAll));
+        });
+      })();
+    </script>
+  </body>
+</html>

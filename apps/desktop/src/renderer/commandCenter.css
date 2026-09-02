@@ -202,11 +202,13 @@
 
 .status-failed,
 .status-timed_out,
-.status-rejected {
+.status-rejected,
+.status-stale {
   color: var(--zeus-control-danger-text);
 }
 
-.status-running {
+.status-running,
+.status-syncing {
   color: var(--zeus-control-accent, #1769d2);
 }
 
@@ -217,6 +219,29 @@
 
 .command-run-detail > header {
   justify-content: space-between;
+}
+
+.command-run-sync-warning {
+  align-items: flex-start;
+  background: color-mix(in oklch, var(--zeus-control-danger-bg) 55%, transparent);
+  border: 1px solid var(--zeus-control-danger-line);
+  border-radius: 10px;
+  color: var(--zeus-control-danger-text);
+  display: flex;
+  gap: 9px;
+  margin: 14px 0 0;
+  padding: 10px 12px;
+}
+
+.command-run-sync-warning > svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.command-run-sync-warning > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .command-run-detail dl,

@@ -6,7 +6,7 @@
  */
 export { createDashboardClient, type DashboardClient } from './dashboardClient.js';
 export { createEmptyDashboardSnapshot, normalizeDashboardSnapshot } from './features/dashboard/dashboardApiClient.js';
-export { ZeusApiError, type ZeusClientPerformanceSpan } from './transport/localApiTransport.js';
+export { isLikelyLocalServerConnectionError, ZeusApiError, type ZeusClientPerformanceSpan } from './transport/localApiTransport.js';
 
 export type {
   CommandArtifact,
