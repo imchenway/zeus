@@ -10951,9 +10951,9 @@
 .session-codex-parity-v1 .session-runtime-detail-group {
   align-items: start;
   display: grid;
-  gap: 6px;
+  gap: 7px;
   grid-template-columns: minmax(0, 1fr);
-  padding-block: 10px;
+  padding-block: 12px;
 }
 
 .session-codex-parity-v1 .session-runtime-detail-group + .session-runtime-detail-group {
@@ -10963,32 +10963,44 @@
 .session-codex-parity-v1 .session-runtime-detail-group > h3 {
   color: var(--session-text);
   font-size: 12px;
-  font-weight: 740;
-  letter-spacing: 0.015em;
+  font-weight: 680;
+  letter-spacing: 0.01em;
   line-height: 1.35;
   margin: 0;
 }
 
 .session-codex-parity-v1 .session-runtime-detail-body {
+  border-inline-start: 1px solid color-mix(in srgb, var(--session-line) 78%, transparent);
   display: grid;
-  gap: 8px;
+  gap: 7px;
+  margin-inline-start: 2px;
   min-inline-size: 0;
+  padding-inline-start: 16px;
 }
 
 .session-codex-parity-v1 .session-runtime-detail-line {
-  display: grid;
-  gap: 6px 18px;
-  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 28px;
   margin: 0;
   min-inline-size: 0;
 }
 
 .session-codex-parity-v1 .session-runtime-detail-line > div {
   align-items: baseline;
-  display: grid;
-  gap: 4px;
-  grid-template-columns: max-content minmax(0, 1fr);
+  display: inline-flex;
+  flex: 0 1 auto;
+  gap: 5px;
+  line-height: 1.45;
+  max-inline-size: 100%;
   min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-line dt {
+  color: var(--session-text-muted);
+  flex: 0 0 auto;
+  font-weight: 560;
 }
 
 .session-codex-parity-v1 .session-runtime-detail-line dt::after {
@@ -11000,7 +11012,14 @@
 }
 
 .session-codex-parity-v1 .session-runtime-detail-line dd {
+  color: var(--session-text);
+  font-weight: 500;
   min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group[data-group='environment'] .session-runtime-detail-line > div {
+  flex: 1 1 320px;
+  min-inline-size: min(320px, 100%);
 }
 
 .session-codex-parity-v1 .session-runtime-code-value {
