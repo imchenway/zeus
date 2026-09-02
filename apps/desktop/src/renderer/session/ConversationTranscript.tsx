@@ -206,6 +206,10 @@ function availableTurnProcessIds(snapshot: NativeSessionState['snapshot']): Read
   return new Set([...v2.recentClosedTurns, ...(v2.activeTurn ? [v2.activeTurn] : [])].filter((turn) => turn.process.available).map((turn) => turn.providerTurnId ?? turn.id));
 }
 
+function availableClosedTurnChangeSetIds(snapshot: NativeSessionState['snapshot']): readonly string[] {
+  return snapshot?.snapshotV2?.recentClosedTurns.filter((turn) => turn.changeSetAvailable).map((turn) => turn.providerTurnId ?? turn.id) ?? [];
+}
+
 function useStableOptionalCallback<Arguments extends unknown[], Result>(callback: ((...args: Arguments) => Result) | undefined): ((...args: Arguments) => Result) | undefined {
   const callbackRef = useRef(callback);
   callbackRef.current = callback;
@@ -364,6 +368,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const answeredRequests = useMemo(() => props.state.pendingRequests.filter(isAnsweredUserInputRequest), [props.state.pendingRequests]);
   const transcriptRows = useMemo(() => projectTranscriptRows(items, answeredRequests, activeTurnId, props.historyOnly, props.state.terminalTurnIds), [activeTurnId, answeredRequests, items, props.historyOnly, props.state.terminalTurnIds]);
   const processAvailableTurnIds = useMemo(() => availableTurnProcessIds(props.state.snapshot), [props.state.snapshot?.snapshotV2]);
+  const closedTurnChangeSetIds = useMemo(() => availableClosedTurnChangeSetIds(props.state.snapshot), [props.state.snapshot?.snapshotV2]);
   const turnRows = useMemo(() => projectTranscriptTurnRows(transcriptRows, activeTurnId, props.state.terminalTurnIds, processAvailableTurnIds), [activeTurnId, processAvailableTurnIds, props.state.terminalTurnIds, transcriptRows]);
   const planContinuationTurnIdentities = useMemo(() => planContinuationSourceTurnIdentities(props.state), [props.state.planImplementationRequests, props.state.queue, props.state.turnsByProviderId]);
   const planContinuationProcessKeys = useMemo(() => planContinuationProcessExpansionKeys(turnRows, planContinuationTurnIdentities), [planContinuationTurnIdentities, turnRows]);
@@ -483,6 +488,19 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const itemNeedingImageResources = useMemo(() => items.find(itemNeedsImageResources) ?? null, [items]);
   const resourcePaging = props.state.snapshot?.v2Paging?.resources;
   const assistantDeliverablesAvailable = Boolean(props.state.snapshot?.snapshotV2?.collections.resources.assistantDeliverablesAvailable);
+  useEffect(() => {
+    if (props.state.transportState !== 'ready' || !renderProps.onLoadTurnArtifacts) return;
+    let active = true;
+    void (async () => {
+      for (const turnId of closedTurnChangeSetIds) {
+        if (!active) return;
+        await renderProps.onLoadTurnArtifacts?.(turnId);
+      }
+    })().catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [closedTurnChangeSetIds, props.state.conversationId, props.state.transportState, renderProps.onLoadTurnArtifacts]);
   useEffect(() => {
     const loadConversationResources = renderProps.onLoadConversationResources ?? (itemNeedingImageResources && renderProps.onLoadTurnArtifacts ? () => renderProps.onLoadTurnArtifacts?.(itemNeedingImageResources.turnId) : undefined);
     const assistantDeliverablesNeedLoading = Boolean(assistantDeliverablesAvailable && resourcePaging && (!resourcePaging.loaded || resourcePaging.hasMore));

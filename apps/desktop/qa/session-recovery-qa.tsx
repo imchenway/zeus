@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import type { ConversationResource } from '@zeus/shared';
+import type { ConversationResource, TurnChangeSet } from '@zeus/shared';
 import type {
   CodexConversationCapabilities,
   NativeConversationAttachment,
@@ -114,7 +114,7 @@ const zeus0388SnapshotV2: NativeConversationSnapshotV2 = {
       completionOutput: zeus0388CompletionOutput,
       process: { available: true, latestSequence: 4 },
       resourcesAvailable: true,
-      changeSetAvailable: false,
+      changeSetAvailable: true,
     },
   ],
   sessionMetrics: null,
@@ -239,6 +239,40 @@ const zeus0388ResourcePages: NativeConversationSnapshotV2Page<NativeConversation
   };
 });
 const zeus0388ResourcePageIndexByCursor = new Map(zeus0388ResourceCursors.map((cursor, index) => [cursor, index + 1]));
+const zeus0388ChangeSet: TurnChangeSet = {
+  id: 'zeus-0388-change-set',
+  projectId: 'project-zeus',
+  conversationId: zeus0388ConversationId,
+  turnId: zeus0388LocalTurnId,
+  providerTurnId: zeus0388ProviderTurnId,
+  state: 'unavailable',
+  files: [
+    {
+      id: 'zeus-0388-change-file',
+      oldPath: 'docs/ZEUS-0438_执行命令时Zeus经常卡死诊断.md',
+      newPath: 'docs/ZEUS-0438_执行命令时Zeus经常卡死诊断.md',
+      changeType: 'modified',
+      addedLines: 0,
+      deletedLines: 18,
+      unifiedDiff: '@@ -1,18 +0,0 @@\n-诊断记录',
+      preHash: null,
+      postHash: null,
+      reversible: false,
+      unavailableReason: 'The captured recovery snapshots do not reproduce the provider patch.',
+    },
+  ],
+  unifiedDiff: '@@ -1,18 +0,0 @@\n-诊断记录',
+  fileCount: 1,
+  addedLines: 0,
+  deletedLines: 18,
+  preImageDigest: null,
+  postImageDigest: null,
+  unavailableReason: 'The captured recovery snapshots do not reproduce the provider patch.',
+  conflict: null,
+  createdAt: '2026-08-29T03:58:00.000Z',
+  updatedAt: '2026-08-29T03:59:00.000Z',
+  contentProjection: 'full',
+};
 const zeus0388InitialSnapshot = adaptConversationSnapshotV2({
   snapshot: zeus0388SnapshotV2,
   history: zeus0388HistoryPage,
@@ -328,6 +362,7 @@ function selectZeus0388AnswerText(): void {
 
 export function Zeus0388QaApp() {
   const [resourceRequests, setResourceRequests] = useState(0);
+  const [changeSetRequests, setChangeSetRequests] = useState(0);
   const [submitCount, setSubmitCount] = useState(0);
   const [historyTransitions, setHistoryTransitions] = useState(0);
   const [settingsChanges, setSettingsChanges] = useState(0);
@@ -341,6 +376,11 @@ export function Zeus0388QaApp() {
           async loadNativeConversationResourcesV2(_projectId, _conversationId, options) {
             setResourceRequests((count) => count + 1);
             return zeus0388ResourcePages[options?.cursor ? (zeus0388ResourcePageIndexByCursor.get(options.cursor) ?? 0) : 0]!;
+          },
+          async loadTurnChangeSet(_projectId, _conversationId, turnId) {
+            if (turnId !== zeus0388LocalTurnId) throw new Error('QA 变更集轮次身份错误。');
+            setChangeSetRequests((count) => count + 1);
+            return zeus0388ChangeSet;
           },
         } as unknown as SessionControllerClient,
         projectId: 'project-zeus',
@@ -509,8 +549,8 @@ export function Zeus0388QaApp() {
           </button>
         </div>
         <output data-testid="zeus-0388-resource-evidence">
-          资源请求 {resourceRequests} 次 · 助手交付项 {deliverableItems.length} 个 · 权威对账后 {refreshedDeliverableItems.length} 个 · 调研报告 {reportFileProjected ? '可见' : '缺失'} · 普通过程图片未提升{' '}
-          {ordinaryImageViewProjected ? '失败' : '通过'}
+          资源请求 {resourceRequests} 次 · 变更集请求 {changeSetRequests} 次 · 助手交付项 {deliverableItems.length} 个 · 权威对账后 {refreshedDeliverableItems.length} 个 · 调研报告 {reportFileProjected ? '可见' : '缺失'} ·
+          普通过程图片未提升 {ordinaryImageViewProjected ? '失败' : '通过'}
         </output>
         <output data-testid="zeus-0388-compose-evidence">
           {historyOnly ? '历史快照' : '交互模式'} · 首次切换 {historyTransitions} 次 · 发送 {submitCount} 次 · 配置变更 {settingsChanges} 次 · 输入附件 {visibleState.attachments.length} 个 · 批注{' '}
@@ -545,6 +585,7 @@ export function Zeus0388QaApp() {
             onContextDraftChange: (draft) => controller.setContextDraft(draft),
             onNextTurnSettingsChange: () => setSettingsChanges((count) => count + 1),
             onLoadConversationResources: () => controller.loadConversationResources(),
+            onLoadTurnArtifacts: (turnId) => controller.loadTurnArtifacts(turnId),
             onLoadResourcePreview: async (resource) => ({
               kind: 'image',
               resource: resource as Extract<ConversationResource, { kind: 'attachment' }>,
