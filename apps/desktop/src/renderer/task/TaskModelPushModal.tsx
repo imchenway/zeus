@@ -233,7 +233,7 @@ export function taskPushSupplementalRequestAttachments(attachments: TaskPushSupp
   });
 }
 
-function supplementalAttachmentIdentity(attachment: NativeConversationAttachment): string {
+export function taskPushSupplementalAttachmentIdentity(attachment: NativeConversationAttachment): string {
   return attachment.localPath ?? attachment.uploadRef;
 }
 
@@ -242,10 +242,10 @@ function createSupplementalAttachmentKey(): string {
   return `task-push-supplemental-${id}`;
 }
 
-function mergeSupplementalAttachments(current: TaskPushSupplementalAttachmentDraft[], added: NativeConversationAttachment[]): TaskPushSupplementalAttachmentDraft[] {
-  const byIdentity = new Map(current.map((attachment) => [supplementalAttachmentIdentity(attachment), attachment]));
+export function mergeTaskPushSupplementalAttachments(current: TaskPushSupplementalAttachmentDraft[], added: NativeConversationAttachment[]): TaskPushSupplementalAttachmentDraft[] {
+  const byIdentity = new Map(current.map((attachment) => [taskPushSupplementalAttachmentIdentity(attachment), attachment]));
   for (const attachment of added) {
-    const identity = supplementalAttachmentIdentity(attachment);
+    const identity = taskPushSupplementalAttachmentIdentity(attachment);
     if (byIdentity.has(identity)) continue;
     byIdentity.set(identity, { ...attachment, taskPushAttachmentKey: createSupplementalAttachmentKey() });
   }
@@ -796,11 +796,11 @@ export function TaskModelPushModal(props: {
     onTextChange: (supplementalInfo) => props.onChange((current) => ({ ...current, supplementalInfo })),
     onAddAttachments: (attachments) => {
       setSupplementalResourceError(null);
-      props.onChange((current) => ({ ...current, supplementalAttachments: mergeSupplementalAttachments(current.supplementalAttachments, attachments) }));
+      props.onChange((current) => ({ ...current, supplementalAttachments: mergeTaskPushSupplementalAttachments(current.supplementalAttachments, attachments) }));
     },
     onRemoveAttachment: (attachment) => {
-      const identity = supplementalAttachmentIdentity(attachment);
-      props.onChange((current) => ({ ...current, supplementalAttachments: current.supplementalAttachments.filter((candidate) => supplementalAttachmentIdentity(candidate) !== identity) }));
+      const identity = taskPushSupplementalAttachmentIdentity(attachment);
+      props.onChange((current) => ({ ...current, supplementalAttachments: current.supplementalAttachments.filter((candidate) => taskPushSupplementalAttachmentIdentity(candidate) !== identity) }));
     },
     onError: setSupplementalResourceError,
   });
@@ -1368,8 +1368,8 @@ export function TaskModelPushModal(props: {
               language={props.language}
               disabled={busy}
               onRemove={(attachment) => {
-                const identity = supplementalAttachmentIdentity(attachment);
-                props.onChange((current) => ({ ...current, supplementalAttachments: current.supplementalAttachments.filter((candidate) => supplementalAttachmentIdentity(candidate) !== identity) }));
+                const identity = taskPushSupplementalAttachmentIdentity(attachment);
+                props.onChange((current) => ({ ...current, supplementalAttachments: current.supplementalAttachments.filter((candidate) => taskPushSupplementalAttachmentIdentity(candidate) !== identity) }));
               }}
               onRestoreText={inputResources.restorePastedText}
               onError={setSupplementalResourceError}

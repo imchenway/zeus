@@ -4,8 +4,10 @@ import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/C
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { CodexTaskPushCapabilities } from '../../session/sessionTypes.js';
-import { taskPushEnvironmentLabel, TaskPushLayoutPreview } from '../../task/TaskModelPushModal.js';
+import type { CodexTaskPushCapabilities, TaskPushSupplementalAttachmentDraft } from '../../session/sessionTypes.js';
+import { useConversationInputResources } from '../../session/useConversationInputResources.js';
+import { mergeTaskPushSupplementalAttachments, taskPushEnvironmentLabel, taskPushSupplementalAttachmentIdentity, taskPushSupplementalRequestAttachments, TaskPushLayoutPreview } from '../../task/TaskModelPushModal.js';
+import { TaskPushSupplementalAttachmentCards } from '../../task/TaskPushSupplementalAttachmentCards.js';
 import { Button } from '../../ui/Button.js';
 import { ModalPortal } from '../../ui/ModalPortal.js';
 import { ZeusSelect } from '../../ZeusSelect.js';
@@ -464,14 +466,32 @@ function TaskEmployeeRunDialog(props: {
   const [capabilityError, setCapabilityError] = useState<string | null>(null);
   const [config, setConfig] = useState<AgentExecutionConfigValue>(() => initialRunConfig(props.employee));
   const [supplementalInfo, setSupplementalInfo] = useState('');
+  const [supplementalAttachments, setSupplementalAttachments] = useState<TaskPushSupplementalAttachmentDraft[]>([]);
+  const [supplementalResourceError, setSupplementalResourceError] = useState<string | null>(null);
   const [selectedDeliverableIds, setSelectedDeliverableIds] = useState<string[]>([]);
   const [preview, setPreview] = useState<TaskWorkPreview | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const previewVersion = useRef(0);
+  const supplementalTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const loadCapabilitiesRef = useRef(props.onLoadCapabilities);
   loadCapabilitiesRef.current = props.onLoadCapabilities;
+  const inputResources = useConversationInputResources({
+    textareaRef: supplementalTextareaRef,
+    text: supplementalInfo,
+    disabled: props.busy,
+    onTextChange: setSupplementalInfo,
+    onAddAttachments: (attachments) => {
+      setSupplementalResourceError(null);
+      setSupplementalAttachments((current) => mergeTaskPushSupplementalAttachments(current, attachments));
+    },
+    onRemoveAttachment: (attachment) => {
+      const identity = taskPushSupplementalAttachmentIdentity(attachment);
+      setSupplementalAttachments((current) => current.filter((candidate) => taskPushSupplementalAttachmentIdentity(candidate) !== identity));
+    },
+    onError: setSupplementalResourceError,
+  });
 
   useEffect(() => {
     if (!agentEntrypoint) return;
@@ -533,6 +553,7 @@ function TaskEmployeeRunDialog(props: {
         .previewTaskWorkItem(props.taskId, {
           employeeId: props.employee.id,
           supplementalInfo: supplementalInfo.trim() || null,
+          ...(supplementalAttachments.length > 0 ? { supplementalAttachments: taskPushSupplementalRequestAttachments(supplementalAttachments) } : {}),
           modelOverride: config.model || null,
           reasoningEffort: config.reasoningEffort || null,
           serviceTier: config.serviceTier || null,
@@ -557,7 +578,7 @@ function TaskEmployeeRunDialog(props: {
         });
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [agentEntrypoint, config, props.client, props.employee.id, props.taskId, selectedDeliverableIds, supplementalInfo, workspaceMode, workspaceTarget, zh]);
+  }, [agentEntrypoint, config, props.client, props.employee.id, props.taskId, selectedDeliverableIds, supplementalAttachments, supplementalInfo, workspaceMode, workspaceTarget, zh]);
 
   const existingEnvironments = capabilities?.existingEnvironments ?? [];
   const canContinueEnvironment = (environment: NonNullable<CodexTaskPushCapabilities['existingEnvironments']>[number]): boolean => environment.available;
@@ -570,7 +591,7 @@ function TaskEmployeeRunDialog(props: {
   const selectedLocalBranch = workspaceTarget.startsWith('local:') ? localTaskBranches.find((branch) => branch.branchName === workspaceTarget.slice('local:'.length)) : undefined;
 
   async function submit(): Promise<void> {
-    if (!preview || preview.blockers.length > 0) return;
+    if (!preview || preview.blockers.length > 0 || inputResources.processing) return;
     setSubmitError(null);
     const success = await props.onSubmit(preview);
     if (!success) setSubmitError(zh ? '本次运行未启动，请查看页面错误并刷新后重试。' : 'This run did not start. Review the error and refresh.');
@@ -610,18 +631,39 @@ function TaskEmployeeRunDialog(props: {
             </span>
           </section>
 
-          <label className="task-work-run-supplemental">
-            <span>{zh ? '补充信息' : 'Supplemental information'}</span>
+          <section className="task-work-run-supplemental" aria-busy={inputResources.processing || undefined} aria-labelledby="task-work-run-supplemental-label">
+            <label id="task-work-run-supplemental-label" htmlFor="task-work-run-supplemental-input">
+              {zh ? '补充信息' : 'Supplemental information'}
+            </label>
+            <TaskPushSupplementalAttachmentCards
+              attachments={supplementalAttachments}
+              language={props.language}
+              disabled={props.busy || inputResources.processing}
+              onRemove={(attachment) => {
+                const identity = taskPushSupplementalAttachmentIdentity(attachment);
+                setSupplementalAttachments((current) => current.filter((candidate) => taskPushSupplementalAttachmentIdentity(candidate) !== identity));
+              }}
+              onRestoreText={inputResources.restorePastedText}
+              onError={setSupplementalResourceError}
+            />
             <textarea
+              ref={supplementalTextareaRef}
+              id="task-work-run-supplemental-input"
               rows={4}
               maxLength={20_000}
               value={supplementalInfo}
               placeholder={zh ? '例如：本次优先处理的边界、已知线索或验收重点' : 'For example: priorities, known clues, or acceptance focus for this work item'}
-              disabled={props.busy}
+              disabled={props.busy || inputResources.processing}
               onChange={(event) => setSupplementalInfo(event.currentTarget.value)}
+              onPaste={inputResources.handlePaste}
+              onKeyDown={inputResources.handlePasteShortcut}
             />
-            <small>{zh ? '只提供给本次独立工作项，不修改任务描述或员工提示词。' : 'Used only for this independent work item; it does not change the task description or employee prompt.'}</small>
-          </label>
+            <small>
+              {zh
+                ? '可粘贴图片、文件或长文本；只提供给本次独立工作项，不修改任务描述或员工提示词。'
+                : 'Paste images, files, or long text here. They are used only for this independent work item and do not change the task or employee prompt.'}
+            </small>
+          </section>
 
           {agentEntrypoint && capabilities && capabilities.repositories.length > 0 ? (
             <fieldset className="task-model-push-mode-choice task-model-push-branch-choice">
@@ -764,9 +806,9 @@ function TaskEmployeeRunDialog(props: {
               {zh ? '正在自动刷新权威预览…' : 'Refreshing authoritative preview…'}
             </p>
           ) : null}
-          {capabilityError || previewError || props.operationError || submitError ? (
+          {capabilityError || previewError || supplementalResourceError || props.operationError || submitError ? (
             <p className="digital-employee-feedback is-error" role="alert">
-              {capabilityError ?? previewError ?? props.operationError ?? submitError}
+              {capabilityError ?? previewError ?? supplementalResourceError ?? props.operationError ?? submitError}
             </p>
           ) : null}
           {preview?.blockers.map((blocker) => (
@@ -778,7 +820,13 @@ function TaskEmployeeRunDialog(props: {
         </div>
         <footer>
           <small>{zh ? '确认后创建独立工作项；不会停止或改写其他执行者。' : 'Confirmation creates an independent work item without stopping or changing other executors.'}</small>
-          <Button variant="primary" size="regular" busy={props.busy} disabled={!preview || previewBusy || preview.blockers.length > 0 || Boolean(capabilityError)} onClick={() => void submit()}>
+          <Button
+            variant="primary"
+            size="regular"
+            busy={props.busy || inputResources.processing}
+            disabled={!preview || previewBusy || inputResources.processing || preview.blockers.length > 0 || Boolean(capabilityError || supplementalResourceError)}
+            onClick={() => void submit()}
+          >
             {zh ? '开始执行' : 'Start execution'}
           </Button>
         </footer>
