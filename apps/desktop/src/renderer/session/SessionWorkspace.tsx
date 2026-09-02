@@ -4,7 +4,7 @@ import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/G
 import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paperclip';
 import { TargetIcon as Target } from '@phosphor-icons/react/dist/csr/Target';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
-import { type ConversationContextDraft, type ConversationFileLocation, type ConversationOpenTarget, type TurnChangeFile, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import { type ConversationContextDraft, type ConversationFileLocation, type ConversationOpenTarget, type TurnChangeFile, type ZeusBrowserConversationSnapshot, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import type { ProjectConfig, ProjectGitAction, ProjectGitActionResponse, ProjectGitWorkbenchSnapshot, ProjectModelServiceTierPreference, ProjectRecord } from '../apiClient.js';
 import { openConversationResourceInMain, openTurnChangeFileInMain } from '../appShellBridge.js';
 import { ZeusSelect } from '../ZeusSelect.js';
@@ -1570,6 +1570,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const escapeController = useRef(createSessionEscapeController()).current;
   const interruptResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contextReturnFocusRef = useRef<HTMLElement | null>(null);
+  const browserSnapshotRef = useRef<ZeusBrowserConversationSnapshot | null>(null);
   const [requestErrors, setRequestErrors] = useState<Record<string, string>>({});
   const [interruptArmed, setInterruptArmed] = useState(false);
   const [contextWorkspace, setContextWorkspace] = useState<SessionContextWorkspace>({ kind: 'none' });
@@ -1801,7 +1802,11 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     const bridge = window.zeus;
     if (!bridge?.onBrowserEvent || !props.conversation) return;
     return bridge.onBrowserEvent((event) => {
-      if (event.type === 'open_requested' && event.conversationId === (props.state?.conversationId ?? props.conversation?.id)) {
+      const conversationId = props.state?.conversationId ?? props.conversation?.id;
+      if (event.type === 'snapshot' && event.snapshot.conversationId === conversationId) {
+        // BrowserHost 先发布标签快照，再请求打开工作面；保留这份权威快照，避免子组件挂载后再等一次 IPC。
+        browserSnapshotRef.current = event.snapshot;
+      } else if (event.type === 'open_requested' && event.conversationId === conversationId) {
         setContextFullWidth(false);
         setContextWorkspace({ kind: 'browser' });
       }
@@ -2582,6 +2587,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       {contextWorkspace.kind === 'browser' && actions.onStageBrowserComments ? (
                         <BrowserWorkspace
                           conversationId={props.state?.conversationId ?? props.conversation.id}
+                          initialSnapshot={browserSnapshotRef.current}
                           language={props.language}
                           disabled={interactionReadOnly || nonResumableNative}
                           suspended={browserResizing || quickActionsPopoverOpen}
