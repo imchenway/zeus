@@ -4979,14 +4979,16 @@
   resize: none;
 }
 
-.session-codex-parity-v1 .ai-workspace .session-composer-input-frame > textarea:focus-visible {
+.session-codex-parity-v1 .ai-workspace .session-composer-input-frame > textarea:focus-visible,
+.session-codex-parity-v1 .ai-workspace .structured-composer-editor > textarea:focus-visible {
   border: 0;
   box-shadow: none;
   outline: 0;
 }
 
 @media (forced-colors: active) {
-  .session-codex-parity-v1 .ai-workspace .session-composer-input-frame > textarea:focus-visible {
+  .session-codex-parity-v1 .ai-workspace .session-composer-input-frame > textarea:focus-visible,
+  .session-codex-parity-v1 .ai-workspace .structured-composer-editor > textarea:focus-visible {
     outline: 1px solid CanvasText;
     outline-offset: 2px;
   }
