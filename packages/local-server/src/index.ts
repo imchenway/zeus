@@ -126,7 +126,7 @@ import { createConversationExecutionContextOperations } from './conversationExec
 import { ConversationExecutionCoordinator, type ConversationExecutionRoute } from './conversationExecutionCoordinator.js';
 import { ManagedConversationToolResultStore } from './conversationPortableContext.js';
 import { ConversationQueueCoreMutationApplication, selectAutomaticQueueDispatchCandidate } from './conversationQueueCoreMutationApplication.js';
-import { ConversationQueueDispatchScheduler, mustWaitForInProcessRuntimeTurn } from './conversationQueueDispatchScheduler.js';
+import { ConversationQueueDispatchScheduler, mustWaitForInProcessRuntimeTurn, shouldRequestConversationQueueDispatch } from './conversationQueueDispatchScheduler.js';
 import { isObjectLike, quotePosixShellArgument } from './conversationResourcePreview.js';
 import { normalizeConversationResources } from './conversationResources.js';
 import { readNativeSubmissionSkill } from './nativeConversationSubmissionInputs.js';
@@ -2549,7 +2549,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         }
       }
     }
-    if ((mappedType === 'conversation.turn.completed' || mappedType === 'conversation.queue.changed') && typeof payload.conversationId === 'string' && dispatchUnifiedConversationQueueHead) {
+    if (shouldRequestConversationQueueDispatch(mappedType, payload) && typeof payload.conversationId === 'string' && dispatchUnifiedConversationQueueHead) {
       const conversationId = payload.conversationId;
       queueMicrotask(() => void dispatchUnifiedConversationQueueHead?.(conversationId).catch(() => undefined));
     }

@@ -377,7 +377,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         },
         createdAt: acceptedAt,
       });
-    projectLocallyAcceptedUserMessage({ conversations: options.conversations, submission, broadcast: options.publish });
+    projectLocallyAcceptedUserMessage({ conversations: options.conversations, submission, broadcast: options.publish, requestQueueDispatch: false });
     await input.segmentLifecycle?.prepare(submission);
     await options.db.save();
     await input.providerWriteLifecycle?.markPrepared(input.submissionId);
@@ -773,7 +773,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       },
       createdAt,
     });
-    projectLocallyAcceptedUserMessage({ conversations: options.conversations, submission, broadcast: options.publish });
+    projectLocallyAcceptedUserMessage({ conversations: options.conversations, submission, broadcast: options.publish, requestQueueDispatch: false });
     await input.segmentLifecycle?.prepare(submission);
     await options.db.save();
     await input.providerWriteLifecycle?.markPrepared(submission.id);
