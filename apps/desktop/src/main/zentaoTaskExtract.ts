@@ -274,6 +274,16 @@ async function attachZentaoDownloads(extract: Extract<ZentaoTaskExtract, { kind:
 
 async function downloadZentaoRestAttachments(endpoint: ZentaoRestEndpoint, token: string, payload: Record<string, unknown>): Promise<ZentaoAttachmentDownloads> {
   const { descriptors, failedCount: invalidCount } = zentaoRestAttachmentDescriptors(payload.files);
+  const seen = new Set(descriptors.flatMap((descriptor) => (descriptor.id ? [descriptor.id] : [])));
+  const richText = ['steps', 'spec', 'verify', 'desc']
+    .map((field) => zentaoString(payload[field]))
+    .filter(Boolean)
+    .join('\n');
+  for (const descriptor of zentaoInlineAttachmentDescriptors(richText, `${endpoint.host}${endpoint.basePath}/`)) {
+    if (!descriptor.id || seen.has(descriptor.id)) continue;
+    seen.add(descriptor.id);
+    descriptors.push(descriptor);
+  }
   const selected = descriptors.slice(0, ZENTAO_ATTACHMENT_COUNT_LIMIT);
   const payloads: ZentaoAttachmentPayload[] = [];
   let failedCount = invalidCount + Math.max(0, descriptors.length - selected.length);
@@ -404,13 +414,48 @@ function zentaoHtmlAttachmentDescriptors(html: string, pageUrl: string): ZentaoA
     const anchorText = flattenZentaoPageText(match[2]).replace(/\s*\([^)]*(?:bytes?|[KMGT]?B)\)\s*$/iu, '');
     descriptors.push({ id, name: normalizeZentaoAttachmentName(anchorText, id), url: resolved.toString() });
   }
+  for (const descriptor of zentaoInlineAttachmentDescriptors(html, pageUrl)) {
+    if (!descriptor.id || seen.has(descriptor.id)) continue;
+    seen.add(descriptor.id);
+    descriptors.push(descriptor);
+  }
+  return descriptors;
+}
+
+function zentaoInlineAttachmentDescriptors(html: string, pageUrl: string): ZentaoAttachmentDescriptor[] {
+  let pageOrigin: string;
+  try {
+    pageOrigin = new URL(pageUrl).origin;
+  } catch {
+    return [];
+  }
+  const descriptors: ZentaoAttachmentDescriptor[] = [];
+  const seen = new Set<string>();
+  for (const match of html.matchAll(/<img\b([^>]*)>/giu)) {
+    const src = zentaoHtmlAttribute(match[1], 'src');
+    if (!src) continue;
+    let resolved: URL;
+    try {
+      resolved = new URL(decodeZentaoHtmlEntities(src), pageUrl);
+    } catch {
+      continue;
+    }
+    if (resolved.origin !== pageOrigin) continue;
+    const id = zentaoDownloadFileId(resolved);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const extension = new RegExp(`file-(?:download|read)-${id}\\.([a-z0-9]{1,16})$`, 'iu').exec(resolved.pathname)?.[1];
+    const name = firstNonEmpty(zentaoHtmlAttribute(match[1], 'alt'), zentaoHtmlAttribute(match[1], 'title'), `zentao-inline-image-${id}${extension ? `.${extension}` : ''}`);
+    descriptors.push({ id, name: normalizeZentaoAttachmentName(name, id), url: resolved.toString() });
+  }
   return descriptors;
 }
 
 function zentaoDownloadFileId(url: URL): string | undefined {
-  const pathMatch = /(?:^|\/)file-download-(\d+)(?:[-./]|$)/iu.exec(url.pathname);
+  const pathMatch = /(?:^|\/)file-(?:download|read)-(\d+)(?:[-./]|$)/iu.exec(url.pathname);
   if (pathMatch) return pathMatch[1];
-  if (url.searchParams.get('m')?.toLowerCase() !== 'file' || url.searchParams.get('f')?.toLowerCase() !== 'download') return undefined;
+  const method = url.searchParams.get('f')?.toLowerCase();
+  if (url.searchParams.get('m')?.toLowerCase() !== 'file' || (method !== 'download' && method !== 'read')) return undefined;
   return zentaoNumericString(url.searchParams.get('fileID') ?? url.searchParams.get('id'));
 }
 
