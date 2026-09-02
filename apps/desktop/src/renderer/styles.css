@@ -378,12 +378,6 @@
   padding: 0;
   border: 0;
 }
-.macos-ai-app .automation-project-options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-}
-.macos-ai-app .automation-project-options label,
 .macos-ai-app .automation-risk-ack,
 .macos-ai-app .automation-check {
   display: flex !important;
@@ -395,14 +389,10 @@
   border-radius: 8px;
   background: var(--surface-primary, #fff);
 }
-.macos-ai-app .automation-project-options label {
-  align-items: center;
-}
 .macos-ai-app .automation-risk-ack {
   border-color: #e5b35c;
   background: #fff8e9;
 }
-.macos-ai-app .automation-project-options input,
 .macos-ai-app .automation-risk-ack input,
 .macos-ai-app .automation-check input {
   width: 16px;
@@ -427,6 +417,11 @@
 }
 .macos-ai-app .automation-editor details[open] summary {
   margin-bottom: 12px;
+}
+.macos-ai-app .automation-capability-error {
+  color: var(--zeus-control-danger-text, #a62c32);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 .macos-ai-app .automations-error {
   margin: 0 0 12px;

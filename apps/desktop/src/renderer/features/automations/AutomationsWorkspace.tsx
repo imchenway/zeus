@@ -10,10 +10,13 @@ import type { CodexTaskPushModelCapability } from '../../session/sessionTypes.js
 import type { DashboardClient, ProjectRecord } from '../../apiClient.js';
 import { Button } from '../../ui/Button.js';
 import { ZeusSelect } from '../../ZeusSelect.js';
+import type { SkillCatalog } from '../codex/codexContracts.js';
+import { SkillSelector } from '../skills/SkillSelector.js';
 import type { AutomationBlockStrategy, AutomationConversationMode, AutomationPermissionMode, AutomationRunRecord, AutomationTaskInput, AutomationTaskRecord, AutomationTriggerKind } from './automationContracts.js';
 
-type Draft = AutomationTaskInput & { pluginIdsText: string; maxRunsPerDayText: string; maxTokensPerDayText: string };
+type Draft = Omit<AutomationTaskInput, 'pluginIds'> & { pluginIds: string[]; maxRunsPerDayText: string; maxTokensPerDayText: string };
 type View = 'tasks' | 'inbox';
+const allProjectsValue = '__all_projects__';
 
 export function AutomationsWorkspace(props: { client: DashboardClient | null; projects: ProjectRecord[]; language: 'zh-CN' | 'en-US'; onOpenConversation: (run: AutomationRunRecord) => Promise<void> }) {
   const zh = props.language === 'zh-CN';
@@ -21,6 +24,9 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
   const [tasks, setTasks] = useState<AutomationTaskRecord[]>([]);
   const [inbox, setInbox] = useState<AutomationRunRecord[]>([]);
   const [models, setModels] = useState<CodexTaskPushModelCapability[]>([]);
+  const [extensionCatalog, setExtensionCatalog] = useState<SkillCatalog | null>(null);
+  const [extensionsLoading, setExtensionsLoading] = useState(false);
+  const [extensionsError, setExtensionsError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -56,6 +62,42 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
     // 首次进入并行读取定义、收件箱和能力；后续由用户显式刷新，避免定时水合打断编辑。
   }, [props.client]);
 
+  const selectedProjectKey = draft.projectIds.join('\u0000');
+  useEffect(() => {
+    if (!props.client || !editingId || !selectedProjectKey) {
+      setExtensionCatalog(null);
+      setExtensionsLoading(false);
+      setExtensionsError(null);
+      return;
+    }
+    let active = true;
+    setExtensionCatalog(null);
+    setExtensionsLoading(true);
+    setExtensionsError(null);
+    const projectIds = selectedProjectKey.split('\u0000');
+    void Promise.all(projectIds.map((projectId) => props.client!.loadSkills(projectId)))
+      .then((catalogs) => {
+        if (!active) return;
+        const first = catalogs[0]!;
+        const rest = catalogs.slice(1);
+        setExtensionCatalog({
+          ...first,
+          skills: first.skills.filter((skill) => skill.source !== 'plugin' && rest.every((catalog) => catalog.skills.some((candidate) => candidate.source !== 'plugin' && candidate.id === skill.id))),
+          plugins: (first.plugins ?? []).filter((plugin) => rest.every((catalog) => catalog.plugins?.some((candidate) => candidate.id === plugin.id))),
+          errors: catalogs.flatMap((catalog) => catalog.errors),
+        });
+      })
+      .catch((cause: unknown) => {
+        if (active) setExtensionsError(messageOf(cause));
+      })
+      .finally(() => {
+        if (active) setExtensionsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [editingId, props.client, selectedProjectKey]);
+
   const modelOptions = useMemo(
     () =>
       models.map((model) => ({
@@ -77,6 +119,54 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
     ...(reasoningEffort && !selectedModel?.supportedReasoningEfforts.includes(reasoningEffort) ? [{ value: reasoningEffort, label: `${reasoningEffort} · ${zh ? '当前不可用' : 'Currently unavailable'}`, disabled: true }] : []),
   ];
   const unreadCount = inbox.filter((run) => run.unread).length;
+  const allProjectsSelected = props.projects.length > 0 && props.projects.every((project) => draft.projectIds.includes(project.id));
+  const projectOptions = [
+    { value: allProjectsValue, label: zh ? `全选项目（${props.projects.length}）` : `Select all projects (${props.projects.length})`, group: zh ? '批量选择' : 'Bulk selection' },
+    ...props.projects.map((project) => ({ value: project.id, label: project.name, group: zh ? '项目' : 'Projects', searchText: project.localPath })),
+  ];
+  const projectSelectionValues = allProjectsSelected ? [allProjectsValue, ...draft.projectIds] : draft.projectIds;
+  const selectedProjectNames = draft.projectIds.map((id) => props.projects.find((project) => project.id === id)?.name ?? id);
+  const projectTriggerLabel = allProjectsSelected
+    ? zh
+      ? `全部 ${props.projects.length} 个项目`
+      : `All ${props.projects.length} projects`
+    : selectedProjectNames.length === 0
+      ? zh
+        ? '未选择项目'
+        : 'No projects selected'
+      : selectedProjectNames.length === 1
+        ? selectedProjectNames[0]
+        : zh
+          ? `已选择 ${selectedProjectNames.length} 个项目`
+          : `${selectedProjectNames.length} projects selected`;
+  const availablePluginIds = new Set((extensionCatalog?.plugins ?? []).map((plugin) => plugin.id));
+  const pluginOptions = [
+    ...(extensionCatalog?.plugins ?? []).map((plugin) => ({
+      value: plugin.id,
+      label: plugin.displayName || plugin.name,
+      group: plugin.scope === 'project' ? (zh ? '项目 Plugin' : 'Project plugins') : zh ? '个人 Plugin' : 'Personal plugins',
+      searchText: `${plugin.name} ${plugin.description} ${plugin.sourceLocator} ${plugin.id}`,
+    })),
+    ...draft.pluginIds.filter((id) => !availablePluginIds.has(id)).map((id) => ({ value: id, label: `${id} · ${zh ? '当前不可用' : 'Currently unavailable'}`, group: zh ? '需要重选' : 'Reselect' })),
+  ];
+  const selectedPluginNames = draft.pluginIds.map((id) => pluginOptions.find((option) => option.value === id)?.label ?? id);
+  const pluginTriggerLabel =
+    selectedPluginNames.length === 0
+      ? extensionsLoading
+        ? zh
+          ? '正在读取 Plugin…'
+          : 'Loading plugins…'
+        : zh
+          ? '不使用 Plugin'
+          : 'No plugins'
+      : selectedPluginNames.length === 1
+        ? selectedPluginNames[0]
+        : zh
+          ? `已选择 ${selectedPluginNames.length} 个 Plugin`
+          : `${selectedPluginNames.length} plugins selected`;
+  const extensionsValid =
+    (!draft.skillId && draft.pluginIds.length === 0) ||
+    (!extensionsLoading && !extensionsError && Boolean(extensionCatalog) && (!draft.skillId || extensionCatalog!.skills.some((skill) => skill.id === draft.skillId)) && draft.pluginIds.every((id) => availablePluginIds.has(id)));
 
   function startCreate(): void {
     setEditingId('new');
@@ -106,7 +196,6 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
       fastMode: task.fastMode,
       skillId: task.skillId,
       pluginIds: task.pluginIds,
-      pluginIdsText: task.pluginIds.join(', '),
       blockStrategy: task.blockStrategy,
       queueCapacity: task.queueCapacity,
       maxRunsPerDay: task.maxRunsPerDay,
@@ -308,18 +397,25 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
               </label>
               <fieldset>
                 <legend>{zh ? '目标项目' : 'Target projects'}</legend>
-                <div className="automation-project-options">
-                  {props.projects.map((project) => (
-                    <label key={project.id}>
-                      <input
-                        type="checkbox"
-                        checked={draft.projectIds.includes(project.id)}
-                        onChange={(event) => setDraft({ ...draft, projectIds: event.currentTarget.checked ? [...draft.projectIds, project.id] : draft.projectIds.filter((id) => id !== project.id) })}
-                      />
-                      <span>{project.name}</span>
-                    </label>
-                  ))}
-                </div>
+                <ZeusSelect
+                  size="regular"
+                  ariaLabel={zh ? '选择目标项目' : 'Choose target projects'}
+                  value=""
+                  selectedValues={projectSelectionValues}
+                  options={projectOptions}
+                  onChange={(value) => {
+                    if (value === allProjectsValue) {
+                      setDraft({ ...draft, projectIds: allProjectsSelected ? [] : props.projects.map((project) => project.id) });
+                      return;
+                    }
+                    setDraft({ ...draft, projectIds: draft.projectIds.includes(value) ? draft.projectIds.filter((id) => id !== value) : [...draft.projectIds, value] });
+                  }}
+                  triggerLabel={projectTriggerLabel}
+                  disabled={!props.projects.length}
+                  searchable={props.projects.length > 8}
+                  searchPlaceholder={zh ? '搜索项目' : 'Search projects'}
+                  emptyLabel={zh ? '没有匹配的项目' : 'No matching projects'}
+                />
               </fieldset>
               <div className="automation-form-grid">
                 <SelectField label={zh ? '触发方式' : 'Trigger'} value={draft.triggerKind ?? 'manual'} options={triggerOptions(zh)} onChange={(value) => setDraft({ ...draft, triggerKind: value as AutomationTriggerKind })} />
@@ -410,14 +506,39 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
                 <summary>{zh ? '能力、预算与保留' : 'Capabilities, budgets, and retention'}</summary>
                 <div className="automation-form-grid">
                   <label>
-                    <span>Skill ID</span>
-                    <input value={draft.skillId ?? ''} onChange={(event) => setDraft({ ...draft, skillId: event.currentTarget.value || null })} />
+                    <span>Skill</span>
+                    <SkillSelector
+                      client={props.client}
+                      value={draft.skillId ?? ''}
+                      onChange={(value) => setDraft({ ...draft, skillId: value || null })}
+                      language={props.language}
+                      catalog={extensionCatalog}
+                      disabled={!draft.projectIds.length || extensionsLoading || Boolean(extensionsError) || !extensionCatalog}
+                      ariaLabel={zh ? '选择自动化 Skill' : 'Choose automation skill'}
+                    />
                   </label>
                   <label>
-                    <span>Plugin IDs</span>
-                    <input value={draft.pluginIdsText} placeholder="plugin-a, plugin-b" onChange={(event) => setDraft({ ...draft, pluginIdsText: event.currentTarget.value })} />
+                    <span>Plugins</span>
+                    <ZeusSelect
+                      size="regular"
+                      ariaLabel={zh ? '选择自动化 Plugin' : 'Choose automation plugins'}
+                      value=""
+                      selectedValues={draft.pluginIds}
+                      options={pluginOptions}
+                      onChange={(value) => setDraft({ ...draft, pluginIds: draft.pluginIds.includes(value) ? draft.pluginIds.filter((id) => id !== value) : [...draft.pluginIds, value] })}
+                      triggerLabel={pluginTriggerLabel}
+                      disabled={!draft.projectIds.length || extensionsLoading || Boolean(extensionsError) || !extensionCatalog || !pluginOptions.length}
+                      searchable
+                      searchPlaceholder={zh ? '搜索 Plugin' : 'Search plugins'}
+                      emptyLabel={zh ? '没有可用的 Plugin' : 'No available plugins'}
+                    />
                   </label>
                 </div>
+                {extensionsError ? (
+                  <small className="automation-capability-error" role="alert">
+                    {extensionsError}
+                  </small>
+                ) : null}
                 <div className="automation-form-grid">
                   <label>
                     <span>{zh ? '队列容量' : 'Queue capacity'}</span>
@@ -448,7 +569,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
               <Button variant="secondary" type="button" onClick={() => setEditingId(null)}>
                 {zh ? '取消' : 'Cancel'}
               </Button>
-              <Button variant="primary" type="submit" busy={busyId === editingId} disabled={!selectedModel || (draft.permissionMode === 'full-access' && !fullAccessAcknowledged)}>
+              <Button variant="primary" type="submit" busy={busyId === editingId} disabled={!draft.projectIds.length || !selectedModel || !extensionsValid || (draft.permissionMode === 'full-access' && !fullAccessAcknowledged)}>
                 {zh ? '保存并启用' : 'Save and enable'}
               </Button>
             </footer>
@@ -555,7 +676,6 @@ function emptyDraft(projects: ProjectRecord[], model?: CodexTaskPushModelCapabil
     fastMode: false,
     skillId: null,
     pluginIds: [],
-    pluginIdsText: '',
     blockStrategy: 'serial',
     queueCapacity: 10,
     maxRunsPerDay: null,
@@ -570,10 +690,6 @@ function emptyDraft(projects: ProjectRecord[], model?: CodexTaskPushModelCapabil
 function normalizeDraft(draft: Draft): AutomationTaskInput {
   return {
     ...draft,
-    pluginIds: draft.pluginIdsText
-      .split(',')
-      .map((value) => value.trim())
-      .filter(Boolean),
     maxRunsPerDay: draft.maxRunsPerDayText ? Number(draft.maxRunsPerDayText) : null,
     maxTokensPerDay: draft.maxTokensPerDayText ? Number(draft.maxTokensPerDayText) : null,
   };
