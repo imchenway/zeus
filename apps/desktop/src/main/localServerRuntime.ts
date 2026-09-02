@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -135,6 +135,30 @@ export interface DesktopLocalAppConfigFile {
   localLogDirectory: string;
   localServerHost: '127.0.0.1';
   updatedAt: string;
+}
+
+interface ExecutionHostPerformanceDiagnostics {
+  api?: {
+    coreRuntime?: {
+      processUptimeSeconds: number;
+      eventLoopUtilization: number;
+      eventLoopDelayMs: { count: number; min: number | null; max: number | null; mean: number | null; p50: number | null; p95: number | null; p99: number | null };
+      memoryBytes: { rss: number; heapTotal: number; heapUsed: number; external: number; arrayBuffers: number };
+    };
+    recent?: Array<{ traceId: string; method: string; route: string; statusCode: number; durationMs: number; responseBytes: number | null; completedAt: string }>;
+  };
+  database?: {
+    recent?: Array<{ traceId: string | null; operation: string; statementTarget: string | null; durationMs: number; success: boolean; completedAt: string }>;
+    storage?: {
+      databaseFileBytes: number | null;
+      walFileBytes: number | null;
+      sharedMemoryFileBytes: number | null;
+      pageCount: number;
+      pageSizeBytes: number;
+      freePageCount: number;
+      logicalDatabaseBytes: number;
+    };
+  };
 }
 
 export interface ExecutionHostMaintenanceStatus {
@@ -308,6 +332,7 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
   let recoveryPromise: Promise<void> | undefined;
   let handoffPromise: Promise<void> | undefined;
   let closePromise: Promise<void> | undefined;
+  let heartbeatFailureStartedAt: number | undefined;
   let closing = false;
   try {
     const initialConnection = await connectOrLaunchExecutionHost(options);
@@ -336,6 +361,82 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       instanceId: connection.instanceId,
       pid: connection.pid,
       protocolVersion: connection.protocolVersion,
+    };
+    const executionHostLogPath = join((options.dataLayout ?? createZeusDataLayout(options.userDataPath)).executionHost, 'host.log');
+    let controlEventWrite = Promise.resolve();
+    const recordControlEvent = (event: string, detail: Record<string, unknown>, host = { instanceId: connection.instanceId, pid: connection.pid }) => {
+      controlEventWrite = controlEventWrite
+        .then(async () => {
+          await mkdir(dirname(executionHostLogPath), { recursive: true, mode: 0o700 });
+          await appendFile(executionHostLogPath, `${JSON.stringify({ timestamp: new Date().toISOString(), event, mainPid: process.pid, executionHostInstanceId: host.instanceId, executionHostPid: host.pid, ...detail })}\n`, {
+            encoding: 'utf8',
+            mode: 0o600,
+          });
+        })
+        .catch(() => undefined);
+    };
+
+    const captureControlRecoverySnapshot = async (recoveredAt: string) => {
+      const snapshotClient = client;
+      const snapshotBaseUrl = config.baseUrl;
+      const snapshotApiToken = config.apiToken;
+      const snapshotHost = { instanceId: connection.instanceId, pid: connection.pid };
+      const [health, performance] = await Promise.allSettled([
+        snapshotClient.health(),
+        fetch(`${snapshotBaseUrl}/api/diagnostics/performance?recentLimit=20`, {
+          headers: { authorization: `Bearer ${snapshotApiToken}` },
+          signal: AbortSignal.timeout(5_000),
+        }).then(async (response) => {
+          if (!response.ok) throw new Error(`Zeus performance diagnostics failed with HTTP ${response.status}.`);
+          return (await response.json()) as ExecutionHostPerformanceDiagnostics;
+        }),
+      ]);
+      recordControlEvent(
+        'execution_host.control_heartbeat_recovery_snapshot',
+        {
+          recoveredAt,
+          work: health.status === 'fulfilled' ? summarizeExecutionHostWork(health.value.work) : null,
+          performance: performance.status === 'fulfilled' ? summarizeExecutionHostPerformance(performance.value) : null,
+        },
+        snapshotHost,
+      );
+    };
+
+    const heartbeat = async (): Promise<void> => {
+      const startedAt = Date.now();
+      const heartbeatClient = client;
+      const heartbeatHost = { instanceId: connection.instanceId, pid: connection.pid };
+      try {
+        await heartbeatClient.heartbeat(leaseId);
+        if (heartbeatFailureStartedAt === undefined) return;
+        const failureStartedAt = heartbeatFailureStartedAt;
+        heartbeatFailureStartedAt = undefined;
+        const recoveredAt = new Date().toISOString();
+        recordControlEvent(
+          'execution_host.control_heartbeat_recovered',
+          {
+            failureStartedAt: new Date(failureStartedAt).toISOString(),
+            outageDurationMs: Date.now() - failureStartedAt,
+            heartbeatDurationMs: Date.now() - startedAt,
+          },
+          heartbeatHost,
+        );
+        void captureControlRecoverySnapshot(recoveredAt).catch(() => undefined);
+      } catch (error) {
+        if (heartbeatFailureStartedAt === undefined) {
+          heartbeatFailureStartedAt = startedAt;
+          recordControlEvent(
+            'execution_host.control_heartbeat_failed',
+            {
+              failureStartedAt: new Date(startedAt).toISOString(),
+              heartbeatDurationMs: Date.now() - startedAt,
+              ...executionHostControlErrorIdentity(error),
+            },
+            heartbeatHost,
+          );
+        }
+        throw error;
+      }
     };
 
     const connectionChanged = (next: ExecutionHostRendezvous): boolean =>
@@ -437,7 +538,7 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       if (advertised && connectionChanged(advertised)) await recover(true);
       else {
         try {
-          await client.heartbeat(leaseId);
+          await heartbeat();
         } catch {
           await recover(false);
         }
@@ -477,7 +578,7 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
     const maintainLease = async (): Promise<void> => {
       if (closing) return;
       try {
-        await client.heartbeat(leaseId);
+        await heartbeat();
       } catch {
         // 旧宿主正在退出时由交接链负责注册新宿主，避免恢复链与交接争抢唯一 SQLite 写入者。
         if (handoffPromise) return;
@@ -1445,6 +1546,58 @@ async function waitForProcessExit(pid: number, deadline: number): Promise<void> 
     await wait(200);
   }
   throw new Error(`Zeus 旧版 execution-host PID ${pid} 未能在 45 秒内退出。`);
+}
+
+function executionHostControlErrorIdentity(error: unknown): { errorName: string; errorCode?: string | number } {
+  if (!(error instanceof Error)) return { errorName: 'UnknownError' };
+  const code = 'code' in error && (typeof error.code === 'string' || typeof error.code === 'number') ? error.code : undefined;
+  return { errorName: error.name.slice(0, 80), ...(code !== undefined ? { errorCode: typeof code === 'string' ? code.slice(0, 80) : code } : {}) };
+}
+
+function summarizeExecutionHostWork(work: ExecutionHostWorkStatus): Record<string, unknown> {
+  return {
+    activeTurnCount: work.activeTurnCount,
+    effectfulTurnCount: work.effectfulTurnCount ?? null,
+    waitingRequestCount: work.waitingRequestCount,
+    activeRuntimeCount: work.activeRuntimeCount,
+    activeCommandRunCount: work.activeCommandRunCount,
+    hasActiveWork: work.hasActiveWork,
+    observedAt: work.observedAt,
+  };
+}
+
+function summarizeExecutionHostPerformance(snapshot: ExecutionHostPerformanceDiagnostics): Record<string, unknown> {
+  const coreRuntime = snapshot.api?.coreRuntime;
+  const storage = snapshot.database?.storage;
+  return {
+    coreRuntime: coreRuntime
+      ? {
+          processUptimeSeconds: coreRuntime.processUptimeSeconds,
+          eventLoopUtilization: coreRuntime.eventLoopUtilization,
+          eventLoopDelayMs: coreRuntime.eventLoopDelayMs,
+          memoryBytes: coreRuntime.memoryBytes,
+        }
+      : null,
+    storage: storage
+      ? {
+          databaseFileBytes: storage.databaseFileBytes,
+          walFileBytes: storage.walFileBytes,
+          sharedMemoryFileBytes: storage.sharedMemoryFileBytes,
+          pageCount: storage.pageCount,
+          pageSizeBytes: storage.pageSizeBytes,
+          freePageCount: storage.freePageCount,
+          logicalDatabaseBytes: storage.logicalDatabaseBytes,
+        }
+      : null,
+    slowApiSamples: (snapshot.api?.recent ?? [])
+      .filter((sample) => sample.durationMs >= 100)
+      .slice(-10)
+      .map(({ traceId, method, route, statusCode, durationMs, responseBytes, completedAt }) => ({ traceId, method, route, statusCode, durationMs, responseBytes, completedAt })),
+    slowDatabaseSamples: (snapshot.database?.recent ?? [])
+      .filter((sample) => sample.durationMs >= 100)
+      .slice(-10)
+      .map(({ traceId, operation, statementTarget, durationMs, success, completedAt }) => ({ traceId, operation, statementTarget, durationMs, success, completedAt })),
+  };
 }
 
 function processExists(pid: number | null): boolean {

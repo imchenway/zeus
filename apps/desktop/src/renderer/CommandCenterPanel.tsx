@@ -13,6 +13,7 @@ import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/c
 import { commandNeedsHighRiskConfirmation, type CommandRiskFlags } from '@zeus/shared';
 import { projectTerminalOutput } from '@zeus/terminal-core';
 import {
+  isLikelyLocalServerConnectionError,
   ZeusApiError,
   type CommandDefinition,
   type CommandDefinitionInput,
@@ -23,6 +24,7 @@ import {
   type ProjectConfig,
   type ProjectRecord,
   type SaveProjectConfigRequest,
+  type ZeusRealtimeEvent,
 } from './apiClient.js';
 import { Button } from './ui/Button.js';
 import { ModalPortal } from './ui/ModalPortal.js';
@@ -73,7 +75,12 @@ const MAX_DISPLAYED_COMMAND_RUN_LOGS = 2_000;
 const MAX_DISPLAYED_COMMAND_RUN_LOG_BYTES = 4 * 1024 * 1024;
 const COMMAND_RUN_LOG_FOLLOW_DISTANCE_PX = 24;
 const COMMAND_RUN_COPY_SUCCESS_DURATION_MS = 2_000;
+const COMMAND_RUN_POLL_INTERVAL_MS = 1_000;
+const COMMAND_RUN_SYNC_STALE_MS = 3_000;
+const COMMAND_RUN_EVENT_REFRESH_DELAY_MS = 100;
 const UTF8_ENCODER = new TextEncoder();
+
+type CommandRunSyncState = 'syncing' | 'live' | 'stale';
 
 function CommandRunDurationValue(props: { run: CommandRun; zh: boolean }) {
   const shouldTick = props.run.status === 'running' && Boolean(props.run.startedAt) && !props.run.endedAt;
@@ -252,6 +259,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
   const [historyCommand, setHistoryCommand] = useState<CommandDefinition | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [runDetail, setRunDetail] = useState<CommandRunDetail | null>(null);
+  const [runSyncState, setRunSyncState] = useState<CommandRunSyncState>('syncing');
   const [artifactPreviewUrls, setArtifactPreviewUrls] = useState<Record<string, string>>({});
   const artifactPreviewUrlsRef = useRef<Record<string, string>>({});
   const runLogCursorRef = useRef<{ runId: string | null; nextSeq: number }>({ runId: null, nextSeq: 0 });
@@ -260,7 +268,9 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
   const canMaintain = props.mode === 'global' || Boolean(props.project);
   const historyRuns = useMemo(() => (historyCommand ? runs.filter((run) => run.commandId === historyCommand.id) : []), [historyCommand, runs]);
   const activeHistoryRuns = useMemo(() => historyRuns.filter((run) => run.status === 'running'), [historyRuns]);
-  const selectedRunIsActive = runs.some((run) => run.id === selectedRunId && run.status === 'running');
+  const selectedRun = runs.find((run) => run.id === selectedRunId);
+  const selectedRunIsActive = selectedRun?.status === 'running';
+  const selectedRuntimeSessionId = selectedRun?.runtimeSessionId ?? null;
   const projectedRunLogContent = useMemo(() => {
     if (!runDetail) return '';
     const raw = `${runDetail.logsTruncated ? (zh ? '…仅显示最新日志，完整历史已保存在 Runtime 日志中。\n' : '…Showing recent logs only. The complete history remains in Runtime logs.\n') : ''}${joinRuntimeLogEntries(runDetail.logs)}`;
@@ -312,6 +322,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
   useEffect(() => {
     if (!selectedRunId) {
       setRunDetail(null);
+      setRunSyncState('syncing');
       runLogCursorRef.current = { runId: null, nextSeq: 0 };
       return;
     }
@@ -321,9 +332,36 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
     }
     let active = true;
     let loading = false;
+    let refreshQueued = false;
+    let eventRefreshTimer: number | undefined;
+    let staleTimer: number | undefined;
+
+    const clearStaleTimer = () => {
+      if (staleTimer === undefined) return;
+      window.clearTimeout(staleTimer);
+      staleTimer = undefined;
+    };
+
+    const scheduleLoad = (delay = COMMAND_RUN_EVENT_REFRESH_DELAY_MS) => {
+      if (!active || eventRefreshTimer !== undefined) return;
+      eventRefreshTimer = window.setTimeout(() => {
+        eventRefreshTimer = undefined;
+        void load();
+      }, delay);
+    };
+
     const load = async () => {
-      if (loading) return;
+      if (loading) {
+        refreshQueued = true;
+        return;
+      }
       loading = true;
+      refreshQueued = false;
+      if (selectedRunIsActive) {
+        staleTimer = window.setTimeout(() => {
+          if (active && loading) setRunSyncState('stale');
+        }, COMMAND_RUN_SYNC_STALE_MS);
+      }
       try {
         const requestedAfterSeq = runLogCursorRef.current.runId === selectedRunId ? runLogCursorRef.current.nextSeq : 0;
         const loadTail = !selectedRunIsActive && requestedAfterSeq === 0;
@@ -354,19 +392,43 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
           next[index] = detail.run;
           return next;
         });
+        setRunSyncState('live');
       } catch (loadError) {
-        if (active) setError(loadError);
+        if (active) {
+          if (isLikelyLocalServerConnectionError(loadError)) setRunSyncState('stale');
+          else {
+            setRunSyncState('live');
+            setError(loadError);
+          }
+        }
       } finally {
+        clearStaleTimer();
         loading = false;
+        if (active && refreshQueued) scheduleLoad(0);
       }
     };
     void load();
-    const timer = selectedRunIsActive ? window.setInterval(() => void load(), 1000) : undefined;
+    const pollTimer = selectedRunIsActive ? window.setInterval(() => void load(), COMMAND_RUN_POLL_INTERVAL_MS) : undefined;
+    const unsubscribe = selectedRunIsActive
+      ? props.client.subscribeEvents(
+          (event) => {
+            if (commandRunRealtimeEventMatches(event, selectedRunId, selectedRuntimeSessionId)) scheduleLoad();
+          },
+          (state) => {
+            if (!active) return;
+            if (state === 'reconnecting') setRunSyncState('stale');
+            else if (state === 'connected') scheduleLoad(0);
+          },
+        )
+      : undefined;
     return () => {
       active = false;
-      if (timer) window.clearInterval(timer);
+      if (eventRefreshTimer !== undefined) window.clearTimeout(eventRefreshTimer);
+      clearStaleTimer();
+      if (pollTimer) window.clearInterval(pollTimer);
+      unsubscribe?.();
     };
-  }, [props.client, selectedRunId, selectedRunIsActive]);
+  }, [props.client, selectedRunId, selectedRunIsActive, selectedRuntimeSessionId]);
 
   useEffect(() => {
     artifactPreviewUrlsRef.current = artifactPreviewUrls;
@@ -397,6 +459,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
     setHistoryCommand(command);
     setError(null);
     setRunDetail(null);
+    setRunSyncState('syncing');
     runLogCursorRef.current = { runId: null, nextSeq: 0 };
     const currentCommandRuns = runs.filter((run) => run.commandId === command.id);
     setSelectedRunId(selectRunId ?? currentCommandRuns[0]?.id ?? null);
@@ -416,10 +479,12 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
     setHistoryCommand(null);
     setSelectedRunId(null);
     setRunDetail(null);
+    setRunSyncState('syncing');
   }
 
   function selectHistoryRun(runId: string): void {
     setSelectedRunId(runId);
+    setRunSyncState('syncing');
     setRunDetail((current) => (current?.run.id === runId ? current : null));
   }
 
@@ -717,6 +782,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
           activeRunCount={activeHistoryRuns.length}
           selectedRunId={selectedRunId}
           runDetail={runDetail}
+          syncState={runSyncState}
           projectedRunLogContent={projectedRunLogContent}
           artifactPreviewUrls={artifactPreviewUrls}
           client={props.client}
@@ -739,6 +805,7 @@ function CommandRunHistoryModal(props: {
   activeRunCount: number;
   selectedRunId: string | null;
   runDetail: CommandRunDetail | null;
+  syncState: CommandRunSyncState;
   projectedRunLogContent: string;
   artifactPreviewUrls: Record<string, string>;
   client: DashboardClient;
@@ -750,6 +817,8 @@ function CommandRunHistoryModal(props: {
   onPreviewArtifact: (artifactId: string) => void;
 }) {
   const zh = props.language === 'zh-CN';
+  const activeRunSyncState = props.runDetail?.run.status === 'running' ? props.syncState : 'live';
+  const stopUnavailable = activeRunSyncState !== 'live';
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape' && !props.busy) props.onClose();
   };
@@ -774,19 +843,22 @@ function CommandRunHistoryModal(props: {
           ) : (
             <div className="command-run-layout">
               <ul className="command-run-list" aria-label={zh ? '执行记录' : 'Run records'}>
-                {props.runs.map((run) => (
-                  <li key={run.id}>
-                    <button type="button" aria-pressed={props.selectedRunId === run.id} className={props.selectedRunId === run.id ? 'selected' : ''} onClick={() => props.onSelectRun(run.id)}>
-                      <span>
-                        <strong>{formatRunTime(run.createdAt)}</strong>
-                        <small>
-                          {zh ? '耗时' : 'Duration'} <CommandRunDurationValue run={run} zh={zh} />
-                        </small>
-                      </span>
-                      <span className={`command-run-status status-${run.status}`}>{runStatusLabel(run.status, zh)}</span>
-                    </button>
-                  </li>
-                ))}
+                {props.runs.map((run) => {
+                  const status = commandRunStatusPresentation(run, props.selectedRunId, props.syncState, zh);
+                  return (
+                    <li key={run.id}>
+                      <button type="button" aria-pressed={props.selectedRunId === run.id} className={props.selectedRunId === run.id ? 'selected' : ''} onClick={() => props.onSelectRun(run.id)}>
+                        <span>
+                          <strong>{formatRunTime(run.createdAt)}</strong>
+                          <small>
+                            {zh ? '耗时' : 'Duration'} <CommandRunDurationValue run={run} zh={zh} />
+                          </small>
+                        </span>
+                        <span className={`command-run-status ${status.className}`}>{status.label}</span>
+                      </button>
+                    </li>
+                  );
+                })}
               </ul>
               {props.runDetail ? (
                 <section className="command-run-detail" aria-label={zh ? '执行详情' : 'Run details'}>
@@ -796,16 +868,31 @@ function CommandRunHistoryModal(props: {
                       <small>{props.runDetail.run.cwd}</small>
                     </span>
                     {props.runDetail.run.status === 'running' ? (
-                      <Button variant="danger" size="compact" onClick={() => props.onStopRun(props.runDetail!.run)} disabled={props.busy}>
+                      <Button
+                        variant="danger"
+                        size="compact"
+                        onClick={() => props.onStopRun(props.runDetail!.run)}
+                        disabled={props.busy || stopUnavailable}
+                        title={stopUnavailable ? (zh ? '连接恢复并确认命令状态后才能停止。' : 'Stop is available after the connection recovers and the run state is confirmed.') : undefined}
+                      >
                         <Stop aria-hidden="true" />
                         {zh ? '停止' : 'Stop'}
                       </Button>
                     ) : null}
                   </header>
+                  {activeRunSyncState === 'stale' ? (
+                    <p className="command-run-sync-warning" role="status" aria-live="polite">
+                      <WarningCircle aria-hidden="true" />
+                      <span>
+                        <strong>{zh ? '连接中断，命令可能仍在执行。' : 'Connection lost; the command may still be running.'}</strong>
+                        <small>{zh ? 'Zeus 正在重连，恢复后会自动追平日志与最终状态。' : 'Zeus is reconnecting and will automatically catch up logs and the final state.'}</small>
+                      </span>
+                    </p>
+                  ) : null}
                   <dl>
                     <div>
                       <dt>{zh ? '状态' : 'Status'}</dt>
-                      <dd>{runStatusLabel(props.runDetail.run.status, zh)}</dd>
+                      <dd>{commandRunStatusPresentation(props.runDetail.run, props.runDetail.run.id, props.syncState, zh).label}</dd>
                     </div>
                     <div>
                       <dt>{zh ? '实际耗时' : 'Duration'}</dt>
@@ -1215,6 +1302,18 @@ function commandRiskLabels(riskFlags: CommandRiskFlags, zh: boolean): string[] {
   if (riskFlags.outsideProjectWrite) labels.push(zh ? '写入项目目录之外' : 'Write outside the project');
   if (riskFlags.externalServiceWrite) labels.push(zh ? '写入外部服务' : 'Write to an external service');
   return labels;
+}
+
+function commandRunRealtimeEventMatches(event: ZeusRealtimeEvent, runId: string, runtimeSessionId: string | null): boolean {
+  return event.payload.runId === runId || (runtimeSessionId !== null && (event.payload.sessionId === runtimeSessionId || event.payload.runtimeSessionId === runtimeSessionId));
+}
+
+function commandRunStatusPresentation(run: CommandRun, selectedRunId: string | null, syncState: CommandRunSyncState, zh: boolean): { label: string; className: string } {
+  if (run.id === selectedRunId && run.status === 'running') {
+    if (syncState === 'stale') return { label: zh ? '连接中断' : 'Disconnected', className: 'status-stale' };
+    if (syncState === 'syncing') return { label: zh ? '正在同步' : 'Synchronizing', className: 'status-syncing' };
+  }
+  return { label: runStatusLabel(run.status, zh), className: `status-${run.status}` };
 }
 
 function runStatusLabel(status: CommandRun['status'], zh: boolean): string {
