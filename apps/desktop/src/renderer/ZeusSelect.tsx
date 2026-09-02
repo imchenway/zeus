@@ -14,6 +14,7 @@ export interface ZeusSelectProps<T extends string> {
   ariaLabel: string;
   ariaDescribedBy?: string;
   value: T;
+  selectedValues?: readonly T[];
   options: readonly ZeusSelectOption<T>[];
   onChange: (value: T) => void;
   triggerLabel?: string;
@@ -131,6 +132,8 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
   const optionRefs = useRef(new Map<T, HTMLButtonElement>());
   const popoverContentWidthRef = useRef(0);
   const enabledOptions = useMemo(() => props.options.filter((option) => !option.disabled), [props.options]);
+  const selectedValues = useMemo(() => new Set(props.selectedValues), [props.selectedValues]);
+  const multiple = props.selectedValues !== undefined;
   const searchable = props.searchable ?? props.options.length > 8;
   const selectedOption = props.options.find((option) => option.value === props.value);
   const [open, setOpen] = useState(false);
@@ -215,7 +218,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
   const selectOption = (value: T) => {
     props.onChange(value);
     setActiveValue(value);
-    closeListbox();
+    if (!multiple) closeListbox();
   };
 
   const moveActiveOption = (direction: 1 | -1 | 'first' | 'last') => {
@@ -389,40 +392,43 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
             </span>
           </span>
         ) : null}
-        <span id={listboxId} className="zeus-select-listbox" role="listbox" aria-label={props.ariaLabel}>
+        <span id={listboxId} className="zeus-select-listbox" role="listbox" aria-label={props.ariaLabel} aria-multiselectable={multiple || undefined}>
           {visibleOptions.length > 0 ? (
-            visibleOptions.map((option, index) => (
-              <Fragment key={`${option.value || 'empty'}-${index}`}>
-                {option.group && visibleOptions[index - 1]?.group !== option.group ? (
-                  <span className="zeus-select-option-group" role="presentation">
-                    {option.group}
-                  </span>
-                ) : null}
-                <button
-                  ref={(element) => {
-                    if (element) optionRefs.current.set(option.value, element);
-                    else optionRefs.current.delete(option.value);
-                  }}
-                  id={`${listboxId}-option-${index}`}
-                  type="button"
-                  className="zeus-select-option"
-                  role="option"
-                  aria-label={option.group ? `${option.group}: ${option.label}` : option.label}
-                  aria-selected={option.value === props.value}
-                  tabIndex={open && option.value === activeValue ? 0 : -1}
-                  disabled={option.disabled}
-                  data-value={option.value}
-                  onClick={() => selectOption(option.value)}
-                  onKeyDown={(event) => handleOptionKeyDown(event, option)}
-                >
-                  {option.color ? <span className="zeus-select-option-color" style={{ backgroundColor: option.color }} aria-hidden="true" /> : null}
-                  <span className="zeus-select-option-label">{option.label}</span>
-                  <span className="zeus-select-option-check" aria-hidden="true">
-                    {option.value === props.value ? '✓' : ''}
-                  </span>
-                </button>
-              </Fragment>
-            ))
+            visibleOptions.map((option, index) => {
+              const selected = multiple ? selectedValues.has(option.value) : option.value === props.value;
+              return (
+                <Fragment key={`${option.value || 'empty'}-${index}`}>
+                  {option.group && visibleOptions[index - 1]?.group !== option.group ? (
+                    <span className="zeus-select-option-group" role="presentation">
+                      {option.group}
+                    </span>
+                  ) : null}
+                  <button
+                    ref={(element) => {
+                      if (element) optionRefs.current.set(option.value, element);
+                      else optionRefs.current.delete(option.value);
+                    }}
+                    id={`${listboxId}-option-${index}`}
+                    type="button"
+                    className="zeus-select-option"
+                    role="option"
+                    aria-label={option.group ? `${option.group}: ${option.label}` : option.label}
+                    aria-selected={selected}
+                    tabIndex={open && option.value === activeValue ? 0 : -1}
+                    disabled={option.disabled}
+                    data-value={option.value}
+                    onClick={() => selectOption(option.value)}
+                    onKeyDown={(event) => handleOptionKeyDown(event, option)}
+                  >
+                    {option.color ? <span className="zeus-select-option-color" style={{ backgroundColor: option.color }} aria-hidden="true" /> : null}
+                    <span className="zeus-select-option-label">{option.label}</span>
+                    <span className="zeus-select-option-check" aria-hidden="true">
+                      {selected ? '✓' : ''}
+                    </span>
+                  </button>
+                </Fragment>
+              );
+            })
           ) : (
             <span className="zeus-select-empty" role="status">
               {emptyLabel}
