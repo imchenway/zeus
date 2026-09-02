@@ -489,17 +489,10 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const resourcePaging = props.state.snapshot?.v2Paging?.resources;
   const assistantDeliverablesAvailable = Boolean(props.state.snapshot?.snapshotV2?.collections.resources.assistantDeliverablesAvailable);
   useEffect(() => {
-    if (props.state.transportState !== 'ready' || !renderProps.onLoadTurnArtifacts) return;
-    let active = true;
-    void (async () => {
-      for (const turnId of closedTurnChangeSetIds) {
-        if (!active) return;
-        await renderProps.onLoadTurnArtifacts?.(turnId);
-      }
-    })().catch(() => undefined);
-    return () => {
-      active = false;
-    };
+    const loadTurnArtifacts = renderProps.onLoadTurnArtifacts;
+    if (props.state.transportState !== 'ready' || !loadTurnArtifacts) return;
+    // 最近完成轮次彼此独立；较旧轮次或会话资源较慢时，不能挡住当前轮文件卡。
+    void Promise.allSettled(closedTurnChangeSetIds.map(loadTurnArtifacts));
   }, [closedTurnChangeSetIds, props.state.conversationId, props.state.transportState, renderProps.onLoadTurnArtifacts]);
   useEffect(() => {
     const loadConversationResources = renderProps.onLoadConversationResources ?? (itemNeedingImageResources && renderProps.onLoadTurnArtifacts ? () => renderProps.onLoadTurnArtifacts?.(itemNeedingImageResources.turnId) : undefined);
