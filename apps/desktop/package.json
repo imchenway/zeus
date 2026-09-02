@@ -1,6 +1,6 @@
 {
   "name": "@zeus/desktop",
-  "version": "0.3.96",
+  "version": "0.3.97",
   "type": "module",
   "main": "dist/main/main.js",
   "scripts": {
