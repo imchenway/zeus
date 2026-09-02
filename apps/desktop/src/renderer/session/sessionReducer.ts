@@ -1486,6 +1486,7 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
     payload: {
       attachments: action.submittedAttachments,
       delivery: action.delivery,
+      ...(action.queuedUntilHydrated ? { queuedUntilHydrated: true } : {}),
       ...(action.taskPushLayout ? { taskPushLayout: action.taskPushLayout } : {}),
       ...(action.browserComments.length ? { browserComments: action.browserComments } : {}),
       ...(action.contextDraft.responseAnnotations.length || action.contextDraft.codeComments.length ? { conversationContext: action.contextDraft } : {}),
