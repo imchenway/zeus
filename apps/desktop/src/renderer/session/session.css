@@ -10927,16 +10927,10 @@
   box-shadow: none !important;
 }
 
-/* 最终覆盖：运行详情按会话/费用双栏与通栏数据表排列。 */
+/* 最终覆盖：运行详情按高频事实分区，每条描述列表对应一行。 */
 .session-codex-parity-v1 .session-runtime-detail-groups {
   gap: 0;
   grid-template-columns: minmax(0, 1fr);
-}
-
-.session-codex-parity-v1 .session-runtime-detail-split {
-  display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-  min-inline-size: 0;
 }
 
 .session-codex-parity-v1 .session-runtime-detail-group {
@@ -10944,14 +10938,10 @@
   display: grid;
   gap: 10px 18px;
   grid-template-columns: minmax(108px, 0.12fr) minmax(0, 1fr);
-  padding-block: 8px;
+  padding-block: 10px;
 }
 
 .session-codex-parity-v1 .session-runtime-detail-group + .session-runtime-detail-group {
-  border-block-start: 1px solid var(--session-line-soft);
-}
-
-.session-codex-parity-v1 .session-runtime-detail-split + .session-runtime-detail-group {
   border-block-start: 1px solid var(--session-line-soft);
 }
 
@@ -10964,46 +10954,38 @@
   margin: 1px 0 0;
 }
 
-.session-codex-parity-v1 .session-runtime-detail-group > dl {
-  align-items: start;
-  grid-template-columns: repeat(auto-fit, minmax(min(132px, 100%), 1fr));
-}
-
-.session-codex-parity-v1 .session-runtime-detail-split > .session-runtime-detail-group {
-  display: block;
+.session-codex-parity-v1 .session-runtime-detail-body {
+  display: grid;
+  gap: 8px;
   min-inline-size: 0;
 }
 
-.session-codex-parity-v1 .session-runtime-detail-split > .session-runtime-detail-group + .session-runtime-detail-group {
-  border-block-start: 0;
-  border-inline-start: 1px solid var(--session-line-soft);
-  padding-inline-start: 18px;
+.session-codex-parity-v1 .session-runtime-detail-line {
+  display: grid;
+  gap: 6px 18px;
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+  margin: 0;
+  min-inline-size: 0;
 }
 
-.session-codex-parity-v1 .session-runtime-detail-split > .session-runtime-detail-group > h3 {
-  margin-block-end: 8px;
+.session-codex-parity-v1 .session-runtime-detail-line > div {
+  align-items: baseline;
+  display: grid;
+  gap: 4px;
+  grid-template-columns: max-content minmax(0, 1fr);
+  min-inline-size: 0;
 }
 
-.session-codex-parity-v1 .session-runtime-detail-group[data-group='session'] > dl {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+.session-codex-parity-v1 .session-runtime-detail-line dt::after {
+  content: ':';
 }
 
-.session-codex-parity-v1 .session-runtime-detail-group[data-group='cost'] > dl {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.session-codex-parity-v1 .session-runtime-details[data-language='zh-CN'] .session-runtime-detail-line dt::after {
+  content: '：';
 }
 
-.session-codex-parity-v1 .session-runtime-detail-group > dl > div[data-wide='true'] {
-  grid-column: 1 / -1;
-}
-
-.session-codex-parity-v1 .session-runtime-detail-group[data-group='environment'] > dl {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.session-codex-parity-v1 .session-runtime-detail-group[data-group='environment'] > dl > div {
-  align-items: center;
-  column-gap: 12px;
-  grid-template-columns: minmax(92px, 0.12fr) minmax(0, 1fr);
+.session-codex-parity-v1 .session-runtime-detail-line dd {
+  min-inline-size: 0;
 }
 
 .session-codex-parity-v1 .session-runtime-code-value {
@@ -11054,46 +11036,10 @@
   inline-size: 14px;
 }
 
-.session-codex-parity-v1 .session-runtime-pricing-source {
-  display: inline-block;
-  margin-inline-end: 9px;
-  white-space: nowrap;
-}
-
-.session-codex-parity-v1 .session-runtime-pricing-source > a {
-  border-block-end: 1px dotted currentColor;
-  color: inherit;
-  text-decoration: none;
-}
-
-.session-codex-parity-v1 .session-runtime-pricing-source > a:hover {
-  border-block-end-style: solid;
-}
-
 @media (max-width: 720px) {
   .session-codex-parity-v1 .session-runtime-detail-group {
+    gap: 6px;
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .session-codex-parity-v1 .session-runtime-detail-split {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .session-codex-parity-v1 .session-runtime-detail-split > .session-runtime-detail-group + .session-runtime-detail-group {
-    border-block-start: 1px solid var(--session-line-soft);
-    border-inline-start: 0;
-    padding-inline-start: 0;
-  }
-
-  .session-codex-parity-v1 .session-runtime-detail-group[data-group='environment'] > dl > div {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-@media (max-width: 460px) {
-  .session-codex-parity-v1 .session-runtime-detail-group[data-group='session'] > dl,
-  .session-codex-parity-v1 .session-runtime-detail-group[data-group='cost'] > dl {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 .session-codex-parity-v1 .session-extension-mention-selector {
