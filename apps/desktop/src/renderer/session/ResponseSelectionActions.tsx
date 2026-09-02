@@ -84,7 +84,9 @@ export function ResponseSelectionActions(props: {
   }, [props.articleRef, props.enabled, props.itemId]);
 
   useLayoutEffect(() => {
-    const view = props.articleRef.current?.ownerDocument.defaultView;
+    const article = props.articleRef.current;
+    const view = article?.ownerDocument.defaultView;
+    const transcript = article?.closest<HTMLElement>('.session-transcript');
     if (!view) return;
     const update = () => {
       // 选区工具条只服务当前静止选区；滚动或窗口变化后关闭，避免悬浮在已经离开的文字上。
@@ -92,10 +94,10 @@ export function ResponseSelectionActions(props: {
       setRevision((value) => value + 1);
     };
     view.addEventListener('resize', update);
-    view.addEventListener('scroll', update, true);
+    transcript?.addEventListener('scroll', update, { passive: true });
     return () => {
       view.removeEventListener('resize', update);
-      view.removeEventListener('scroll', update, true);
+      transcript?.removeEventListener('scroll', update);
     };
   }, [props.articleRef]);
 
@@ -103,20 +105,25 @@ export function ResponseSelectionActions(props: {
   const article = props.articleRef.current;
   const root = article?.querySelector<HTMLElement>('.session-markdown') ?? null;
   const view = article?.ownerDocument.defaultView ?? null;
+  const transcript = article?.closest<HTMLElement>('.session-transcript') ?? null;
+  const transcriptRect = transcript?.getBoundingClientRect() ?? null;
   const overlayBounds = visibleOverlayBounds(article, view);
-  const markers = root
-    ? props.annotations.flatMap((annotation, index) => {
-        const range = rangeFromOffsets(root, annotation.anchor.startOffset, annotation.anchor.endOffset);
-        const rect = range ? rangeEndRect(range) : null;
-        return rect && rect.width > 0 && markerFitsVisibleBounds(rect, overlayBounds) ? [{ annotation, index, left: rect.right, top: rect.top }] : [];
-      })
-    : [];
+  const markers =
+    root && transcript && transcriptRect
+      ? props.annotations.flatMap((annotation, index) => {
+          const range = rangeFromOffsets(root, annotation.anchor.startOffset, annotation.anchor.endOffset);
+          const rect = range ? rangeEndRect(range) : null;
+          return rect && rect.width > 0 && markerFitsVisibleBounds(rect, overlayBounds)
+            ? [{ annotation, index, left: rect.right - transcriptRect.left + transcript.scrollLeft, top: rect.top - transcriptRect.top + transcript.scrollTop }]
+            : [];
+        })
+      : [];
   const editingAnnotation = props.annotations.find((annotation) => annotation.id === editingId) ?? null;
   const editingRange = root && editingAnnotation ? rangeFromOffsets(root, editingAnnotation.anchor.startOffset, editingAnnotation.anchor.endOffset) : null;
   const editingRect = editingRange ? rangeEndRect(editingRange) : null;
   const editorPoint = editingRect && rectFitsVisibleBounds(editingRect, overlayBounds) ? annotationEditorPoint(editingRect, view, overlayBounds) : null;
   void revision;
-  const portalRoot = article?.closest<HTMLElement>('.session-codex-parity-v1') ?? article?.ownerDocument.body ?? document.body;
+  const portalRoot = transcript ?? article?.closest<HTMLElement>('.session-codex-parity-v1') ?? article?.ownerDocument.body ?? document.body;
 
   return createPortal(
     <>
