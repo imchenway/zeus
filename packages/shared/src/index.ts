@@ -538,6 +538,8 @@ export type ZentaoTaskExtract =
       reproductionSteps: string;
       expectedOutcome: string;
       sourceUrl: string;
+      attachments: TaskAttachmentReference[];
+      attachmentFailedCount: number;
     }
   | { kind: 'login_required'; zentaoKind: ZentaoLinkKind; objectId: string; sourceUrl: string }
   | { kind: 'unsupported'; sourceUrl: string }

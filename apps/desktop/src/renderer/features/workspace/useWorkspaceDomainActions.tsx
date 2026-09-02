@@ -1691,6 +1691,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       defectCurrentState: extract.currentState.trim() ? extract.currentState : current.defectCurrentState,
       defectExpectedOutcome: extract.expectedOutcome.trim() ? extract.expectedOutcome : current.defectExpectedOutcome,
       defectReproductionSteps: extract.reproductionSteps.trim() ? extract.reproductionSteps : current.defectReproductionSteps,
+      attachments: Array.from(new Map([...current.attachments, ...extract.attachments].map((attachment) => [attachment.path, attachment])).values()),
     }));
     setTaskCreateError('');
   }
