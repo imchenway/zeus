@@ -1713,7 +1713,7 @@ export function TaskCreateModal(props: {
       const result = await props.onParseZentaoLink(url);
       if (result.kind === 'ok') {
         props.onApplyZentaoTaskInfo(result);
-        setZentaoHint({ tone: 'ok', text: props.copy.taskCreateZentaoApplied(result.title || result.objectId) });
+        setZentaoHint({ tone: 'ok', text: props.copy.taskCreateZentaoApplied(result.title || result.objectId, result.attachments.length, result.attachmentFailedCount) });
       } else if (result.kind === 'login_required') {
         // 外部打开只接受 HTTPS；内网 HTTP 禅道不提供跳转按钮，避免点了没反应。
         setZentaoHint({ tone: 'error', text: props.copy.taskCreateZentaoLoginRequired, ...(url.startsWith('https://') ? { openUrl: url } : {}) });

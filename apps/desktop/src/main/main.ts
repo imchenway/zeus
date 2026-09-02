@@ -83,7 +83,7 @@ import {
 } from '@zeus/shared';
 import { createMacOSKeychainStore } from '@zeus/security-core';
 import { resolveDesktopKeychainService } from './secretServiceIdentity.js';
-import { createSystemMainCommandEnvelope, MainCommandLedger, type MainCommandRequest } from './mainCommandLedger.js';
+import { createSystemMainCommandEnvelope, MainCommandLedger, type MainCommandExecutionContext, type MainCommandRequest } from './mainCommandLedger.js';
 import { StorageRecoveryRestartCoordinator } from './storageRecoveryRestartCoordinator.js';
 import { assertTestDataRootIsolation } from './testDataRootIsolation.js';
 import { expectedBundleIdForDataRootProfile, readAndVerifyZeusDataRootIdentity, zeusDataRootHostIdentity, type ZeusDataRootIdentityMarker, type ZeusDataRootProfile } from './dataRootIdentity.js';
@@ -1168,7 +1168,7 @@ async function loadProjectIdentity(projectId: string): Promise<ProjectGitProject
   return { id: projectId, name: payload.name, localPath: payload.localPath };
 }
 
-async function loadZentaoExtractServices(): Promise<ZentaoExtractServices | undefined> {
+async function loadZentaoExtractServices(command: MainCommandExecutionContext): Promise<ZentaoExtractServices | undefined> {
   if (!localServerRuntime) return undefined;
   const secretStore = createMacOSKeychainStore({ service: activeDesktopKeychainService() });
   return {
@@ -1184,6 +1184,18 @@ async function loadZentaoExtractServices(): Promise<ZentaoExtractServices | unde
       return payload.items.filter((item): item is ZentaoInstanceRecord => typeof item === 'object' && item !== null && typeof (item as ZentaoInstanceRecord).id === 'string' && typeof (item as ZentaoInstanceRecord).host === 'string');
     },
     readPassword: async (instanceId) => secretStore.getSecret(zentaoSecretAccount(instanceId)),
+    storeAttachments: async (attachments) => {
+      await command.markWriteStarted();
+      const stored: TaskStoredResource[] = [];
+      for (const [index, attachment] of attachments.entries()) {
+        try {
+          stored.push(...(await saveTaskAttachmentPayloads([attachment], `${command.envelope.commandId}-zentao-${index + 1}`)));
+        } catch {
+          // 单个远程附件物化失败时保留同批其他附件和已解析文本。
+        }
+      }
+      return stored;
+    },
   };
 }
 
@@ -2014,9 +2026,15 @@ function setupIpc(): void {
   });
   ipcMain.handle('zeus:get-task-attachment-preview', (_event, path: string) => loadSavedTaskAttachmentPreview(path));
   ipcMain.handle('zeus:open-task-attachment', (_event, path: string) => openSavedTaskAttachment(path));
-  ipcMain.handle('zeus:zentao:parse-link', async (_event, url: unknown) => {
-    if (typeof url !== 'string' || !url.trim()) return { kind: 'unsupported', sourceUrl: typeof url === 'string' ? url : '' };
-    return extractZentaoTaskInfo(url.trim(), await loadZentaoExtractServices());
+  ipcMain.handle('zeus:zentao:parse-link', async (event, request: MainCommandRequest<string>) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('禅道任务解析来自不受信任窗口。');
+    return activeMainCommandLedger().execute(request, 'desktop.task_resources.import_zentao', async (url, command) => {
+      const result = typeof url === 'string' && url.trim() ? await extractZentaoTaskInfo(url.trim(), await loadZentaoExtractServices(command)) : { kind: 'unsupported' as const, sourceUrl: typeof url === 'string' ? url : '' };
+      // 无附件的成功解析也要生成可重放回执；附件路径已在首次写入前标记。
+      await command.markWriteStarted();
+      return result;
+    });
   });
   ipcMain.handle('zeus:export-settings-snapshot', (_event, snapshot: unknown) =>
     exportSettingsSnapshotToFile({

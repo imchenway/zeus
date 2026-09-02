@@ -12,7 +12,7 @@
 4. 项目源码（4）：`zeus:project-source:save-file/create-entry/move-entry/trash-entry` 分别映射 `desktop.project_source.save_file/create_entry/move_entry/trash_entry`。
 5. 更新/发布（5）：`zeus:release:download-update/install-update` → `desktop.release.download_update/install_update`；`zeus:automatic-update-indicator:open/record-manual-check` → `desktop.automatic_update.open/record_manual_check`；原生 `checkForUpdates` → `desktop.automatic_update.menu_check`。
 6. 会话资源（3）：`zeus:materialize-conversation-resources`、`zeus:read-conversation-clipboard-resources`、`zeus:discard-conversation-resources` 分别映射 `desktop.conversation_resources.materialize/read_clipboard/discard`。
-7. 任务资源（5）：`zeus:choose-task-attachments`、`zeus:store-task-resource-paths`、`zeus:materialize-task-resources`、`zeus:save-task-clipboard-attachments`、`zeus:save-task-pasted-attachments` 分别映射 `desktop.task_resources.choose/store_paths/materialize/save_clipboard/save_pasted`。
+7. 任务资源（6）：`zeus:choose-task-attachments`、`zeus:store-task-resource-paths`、`zeus:materialize-task-resources`、`zeus:save-task-clipboard-attachments`、`zeus:save-task-pasted-attachments`、`zeus:zentao:parse-link` 分别映射 `desktop.task_resources.choose/store_paths/materialize/save_clipboard/save_pasted/import_zentao`。
 
 `zeus:read-task-clipboard-resources` 不在上述 26 个写入入口中。它只返回文件引用、附件载荷或文字，不复制、不物化、不落盘；Renderer 只在确实需要物化时生成一个新的不可变 Envelope。
 
