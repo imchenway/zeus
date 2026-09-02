@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { ConversationResource, TurnChangeSet } from '@zeus/shared';
 import type {
   CodexConversationCapabilities,
@@ -363,6 +363,8 @@ function selectZeus0388AnswerText(): void {
 export function Zeus0388QaApp() {
   const [resourceRequests, setResourceRequests] = useState(0);
   const [changeSetRequests, setChangeSetRequests] = useState(0);
+  const [changeSetProjectedBeforeResources, setChangeSetProjectedBeforeResources] = useState(false);
+  const slowResourcePageResolvedRef = useRef(false);
   const [submitCount, setSubmitCount] = useState(0);
   const [historyTransitions, setHistoryTransitions] = useState(0);
   const [settingsChanges, setSettingsChanges] = useState(0);
@@ -375,6 +377,10 @@ export function Zeus0388QaApp() {
         client: {
           async loadNativeConversationResourcesV2(_projectId, _conversationId, options) {
             setResourceRequests((count) => count + 1);
+            if (!options?.cursor) {
+              await new Promise<void>((resolve) => setTimeout(resolve, 800));
+              slowResourcePageResolvedRef.current = true;
+            }
             return zeus0388ResourcePages[options?.cursor ? (zeus0388ResourcePageIndexByCursor.get(options.cursor) ?? 0) : 0]!;
           },
           async loadTurnChangeSet(_projectId, _conversationId, turnId) {
@@ -392,6 +398,9 @@ export function Zeus0388QaApp() {
   );
   const state = useSyncExternalStore(controller.subscribe, controller.getState, controller.getState);
   useEffect(() => () => controller.dispose(), [controller]);
+  useEffect(() => {
+    if (!slowResourcePageResolvedRef.current && state.changeSetsByProviderId[zeus0388ProviderTurnId]) setChangeSetProjectedBeforeResources(true);
+  }, [state.changeSetsByProviderId]);
 
   const failedGuard = guard === 'failed' || guard === 'other-failed';
   const visibleConversation = {
@@ -549,8 +558,8 @@ export function Zeus0388QaApp() {
           </button>
         </div>
         <output data-testid="zeus-0388-resource-evidence">
-          资源请求 {resourceRequests} 次 · 变更集请求 {changeSetRequests} 次 · 助手交付项 {deliverableItems.length} 个 · 权威对账后 {refreshedDeliverableItems.length} 个 · 调研报告 {reportFileProjected ? '可见' : '缺失'} ·
-          普通过程图片未提升 {ordinaryImageViewProjected ? '失败' : '通过'}
+          资源请求 {resourceRequests} 次 · 变更集请求 {changeSetRequests} 次 · 变更集先于慢资源投影 {changeSetProjectedBeforeResources ? '通过' : '待验证'} · 助手交付项 {deliverableItems.length} 个 · 权威对账后{' '}
+          {refreshedDeliverableItems.length} 个 · 调研报告 {reportFileProjected ? '可见' : '缺失'} · 普通过程图片未提升 {ordinaryImageViewProjected ? '失败' : '通过'}
         </output>
         <output data-testid="zeus-0388-compose-evidence">
           {historyOnly ? '历史快照' : '交互模式'} · 首次切换 {historyTransitions} 次 · 发送 {submitCount} 次 · 配置变更 {settingsChanges} 次 · 输入附件 {visibleState.attachments.length} 个 · 批注{' '}

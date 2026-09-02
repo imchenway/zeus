@@ -2235,9 +2235,11 @@ export function createSessionController(options: CreateSessionControllerOptions)
             : paging.changeSetsByTurn,
       })),
     );
-    try {
-      const resourcePromise = shouldLoadResources
-        ? (async () => {
+    const loads: Promise<void>[] = [];
+    if (shouldLoadResources) {
+      loads.push(
+        (async () => {
+          try {
             let items = resources.items;
             let cursor = resources.nextCursor;
             let hasMore = !resources.loaded || resources.hasMore;
@@ -2256,63 +2258,93 @@ export function createSessionController(options: CreateSessionControllerOptions)
               cursor = page.nextCursor;
               hasMore = page.hasMore;
               if (hasMore && !cursor) throw new Error('会话资源分页缺少下一页游标。');
-              if (disposed || generation !== connectionToken) return null;
+              if (disposed || generation !== connectionToken) return;
             }
-            return { items, nextCursor: cursor, hasMore };
-          })()
-        : Promise.resolve(null);
-      const changePromise = shouldLoadChange && turn ? options.client.loadTurnChangeSet!(options.projectId, options.conversationId, turn.id) : Promise.resolve(null);
-      const [resourceResult, changeSet] = await Promise.all([resourcePromise, changePromise]);
-      if (disposed || generation !== connectionToken) return;
-      const latest = state.snapshot;
-      if (!latest?.snapshotV2 || !latest.v2Paging) return;
-      const resourceItems = resourceResult?.items ?? latest.v2Paging.resources.items;
-      let merged = resourceResult ? await attachV2ResourcesToSnapshot(latest, resourceItems) : latest;
-      if (disposed || generation !== connectionToken) return;
-      if (changeSet) merged = { ...merged, changeSets: dedupeById([...(merged.changeSets ?? []), changeSet]) };
-      merged = updateConversationV2Paging(merged, (paging) => ({
-        ...paging,
-        resources: resourceResult ? { nextCursor: resourceResult.nextCursor, hasMore: resourceResult.hasMore, loading: false, loaded: true, error: null, items: resourceItems } : paging.resources,
-        changeSetsByTurn:
-          shouldLoadChange || currentChange
-            ? {
-                ...paging.changeSetsByTurn,
-                [pagingKey]: {
-                  loading: false,
-                  loaded: true,
-                  error: null,
-                  summary: currentChange?.summary ?? null,
-                  files: currentChange?.files ?? [],
-                  nextCursor: null,
-                  hasMore: false,
-                },
-              }
-            : paging.changeSetsByTurn,
-      }));
-      dispatchV2Snapshot(merged);
-    } catch (error) {
-      const latest = state.snapshot;
-      if (latest?.v2Paging) {
-        dispatchV2Snapshot(
-          updateConversationV2Paging(latest, (paging) => ({
-            ...paging,
-            resources: shouldLoadResources ? { ...paging.resources, loading: false, error: errorMessage(error) } : paging.resources,
-            changeSetsByTurn:
-              shouldLoadChange || currentChange
-                ? {
+            let latest = state.snapshot;
+            if (!latest?.snapshotV2 || !latest.v2Paging) return;
+            let merged = await attachV2ResourcesToSnapshot(latest, items);
+            if (disposed || generation !== connectionToken) return;
+            // 资源挂接会计算 Provider item 身份；期间变更集可能已先写回，须基于最新快照重放一次。
+            if (state.snapshot !== latest) {
+              latest = state.snapshot;
+              if (!latest?.snapshotV2 || !latest.v2Paging) return;
+              merged = await attachV2ResourcesToSnapshot(latest, items);
+              if (disposed || generation !== connectionToken) return;
+            }
+            dispatchV2Snapshot(
+              updateConversationV2Paging(merged, (paging) => ({
+                ...paging,
+                resources: { nextCursor: cursor, hasMore, loading: false, loaded: true, error: null, items },
+              })),
+            );
+          } catch (error) {
+            const latest = state.snapshot;
+            if (latest?.v2Paging) {
+              dispatchV2Snapshot(
+                updateConversationV2Paging(latest, (paging) => ({
+                  ...paging,
+                  resources: { ...paging.resources, loading: false, error: errorMessage(error) },
+                })),
+              );
+            }
+            throw error;
+          }
+        })(),
+      );
+    }
+    if (shouldLoadChange && turn) {
+      loads.push(
+        (async () => {
+          try {
+            const changeSet = await options.client.loadTurnChangeSet!(options.projectId, options.conversationId, turn.id);
+            if (disposed || generation !== connectionToken) return;
+            const latest = state.snapshot;
+            if (!latest?.snapshotV2 || !latest.v2Paging) return;
+            dispatchV2Snapshot(
+              updateConversationV2Paging({ ...latest, changeSets: dedupeById([...(latest.changeSets ?? []), changeSet]) }, (paging) => {
+                const page = paging.changeSetsByTurn[pagingKey];
+                return {
+                  ...paging,
+                  changeSetsByTurn: {
+                    ...paging.changeSetsByTurn,
+                    [pagingKey]: {
+                      loading: false,
+                      loaded: true,
+                      error: null,
+                      summary: page?.summary ?? null,
+                      files: page?.files ?? [],
+                      nextCursor: null,
+                      hasMore: false,
+                    },
+                  },
+                };
+              }),
+            );
+          } catch (error) {
+            const latest = state.snapshot;
+            if (latest?.v2Paging) {
+              dispatchV2Snapshot(
+                updateConversationV2Paging(latest, (paging) => ({
+                  ...paging,
+                  changeSetsByTurn: {
                     ...paging.changeSetsByTurn,
                     [pagingKey]: {
                       ...(paging.changeSetsByTurn[pagingKey] ?? { loaded: false, summary: null, files: [], nextCursor: null, hasMore: true }),
                       loading: false,
                       error: errorMessage(error),
                     },
-                  }
-                : paging.changeSetsByTurn,
-          })),
-        );
-      }
-      throw error;
+                  },
+                })),
+              );
+            }
+            throw error;
+          }
+        })(),
+      );
     }
+    const settled = await Promise.allSettled(loads);
+    const failed = settled.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+    if (failed) throw failed.reason;
   }
 
   async function loadConversationResourcesV2(): Promise<void> {
