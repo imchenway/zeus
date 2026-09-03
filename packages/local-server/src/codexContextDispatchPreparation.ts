@@ -1,13 +1,12 @@
-import type { CodexAppServerManager, CodexResponsesRuntime } from '@zeus/ai-runtime';
-import type { CodexBootstrapAdditionalContext } from '@zeus/shared';
-import { emitPluginCompactionHook } from './codexConversationDispatchContext.js';
-import { mergeCodexAdditionalContext } from './codexNativeContextProtocol.js';
-import { runCodexActiveThreadCompaction, runCodexPortableContextCompaction } from './codexPortableContextCompaction.js';
-import type { CodexProviderCommandApplicationService } from './codexProviderCommandApplication.js';
-import type { ContextDispatchEnvelope, ProviderDispatchContextCompiler } from './contextDispatchService.js';
-import { decideContextPressure } from './contextPressurePolicy.js';
-import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
-import type { ZeusConversationPluginRuntime } from './zeusConversationPluginRuntime.js';
+import type {CodexAppServerManager, CodexResponsesRuntime} from '@zeus/ai-runtime';
+import type {CodexBootstrapAdditionalContext} from '@zeus/shared';
+import {emitPluginCompactionHook} from './codexConversationDispatchContext.js';
+import {mergeCodexAdditionalContext} from './codexNativeContextProtocol.js';
+import {runCodexPortableContextCompaction} from './codexPortableContextCompaction.js';
+import type {CodexProviderCommandApplicationService} from './codexProviderCommandApplication.js';
+import type {ContextDispatchEnvelope, ProviderDispatchContextCompiler} from './contextDispatchService.js';
+import type {ConversationSegmentLifecycle} from './conversationExecutionCoordinator.js';
+import type {ZeusConversationPluginRuntime} from './zeusConversationPluginRuntime.js';
 
 interface PrepareCodexContextInput {
   manager: CodexAppServerManager;
@@ -17,7 +16,6 @@ interface PrepareCodexContextInput {
   segmentLifecycle?: ConversationSegmentLifecycle;
   conversation: { id: string; projectId: string };
   submission: { id: string; createdAt: string };
-  providerThreadId: string;
   providerGenerationId: string | null;
   providerInput: Array<Record<string, unknown>>;
   providerBootstrapUtf8Bytes: number;
@@ -36,17 +34,15 @@ interface PrepareCodexContextInput {
   pluginPromptContext?: CodexBootstrapAdditionalContext;
   responsesRuntime: CodexResponsesRuntime | null;
   beforePortableProviderWrite(): void;
-  flushProviderEvents(): Promise<void>;
   now(): string;
 }
 
 export interface PreparedCodexDispatchContext {
   compiled: ContextDispatchEnvelope | null;
   pluginCompactContext: CodexBootstrapAdditionalContext | undefined;
-  activeCompactionEvidence: unknown | null;
 }
 
-/** 把跨分段摘要与同线程原生压缩收口在一个发送前边界，避免主协调器继续膨胀。 */
+/** 在 Provider 写入前完成换路由所需的有界交接上下文。 */
 export async function prepareCodexDispatchContext(input: PrepareCodexContextInput): Promise<PreparedCodexDispatchContext> {
   let pluginCompactContext: CodexBootstrapAdditionalContext | undefined;
   const lifecycle = input.segmentLifecycle;
@@ -103,32 +99,6 @@ export async function prepareCodexDispatchContext(input: PrepareCodexContextInpu
     });
   };
 
-  let compiled = await compile();
-  let activeCompactionEvidence: unknown | null = null;
-  if (!input.threadStartedForSubmission && !lifecycle?.requiresNewSegment && decideContextPressure(compiled).action === 'compact') {
-    await emitPluginCompactionHook({ plugins: input.plugins, event: 'PreCompact', conversationId: input.conversation.id, cwd: input.context.projectLocalPath, model: input.context.model });
-    const compacted = await runCodexActiveThreadCompaction({
-      manager: input.manager,
-      providerCommands: input.providerCommands,
-      providerGenerationId: input.providerGenerationId,
-      conversationId: input.conversation.id,
-      submissionId: input.submission.id,
-      threadId: input.providerThreadId,
-      issuedAt: input.submission.createdAt,
-    });
-    activeCompactionEvidence = compacted.evidence;
-    await input.flushProviderEvents();
-    const postCompact = await emitPluginCompactionHook({
-      plugins: input.plugins,
-      event: 'PostCompact',
-      conversationId: input.conversation.id,
-      cwd: input.context.projectLocalPath,
-      model: input.context.model,
-      turnId: compacted.providerTurnId,
-    });
-    pluginCompactContext = mergeCodexAdditionalContext(pluginCompactContext, postCompact);
-    // app-server 不提供压缩后精确 token-count；本轮继续使用零/低可选上下文预算，只重新计入 Hook 固定输入。
-    compiled = await compile();
-  }
-  return { compiled, pluginCompactContext, activeCompactionEvidence };
+    // 同一 thread 的原生压缩由 app-server 自主管理；这里只压缩换路由时必须携带的有界交接上下文。
+    return {compiled: await compile(), pluginCompactContext};
 }

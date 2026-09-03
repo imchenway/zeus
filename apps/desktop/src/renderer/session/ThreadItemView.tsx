@@ -1,25 +1,51 @@
-import { type FormEvent, type KeyboardEvent, memo, type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
-import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
-import { MessageCheckIcon, MessageEditIcon, MessageExpandIcon, MessageRemoteDeviceIcon, MessageThumbIcon } from './SessionMessageIcons.js';
-import { isAssistantDeliverableItem, type NativeConversationAttachment, type NativeSessionItemBuffer } from './sessionTypes.js';
-import { autosizeTextarea } from './textareaAutosize.js';
 import {
-  type ConversationContextDraft,
-  type ConversationFileLocation,
-  type ConversationOpenTarget,
-  type ConversationResource,
-  type ConversationResourcePreview,
-  type ConversationResponseAnnotation,
-  type ConversationResponseTextAnchor,
-  parseCanonicalRequestUserInputQuestions,
-  type TaskPushMessageLayout,
+    type FormEvent,
+    type KeyboardEvent,
+    memo,
+    type ReactNode,
+    useCallback,
+    useEffect,
+    useLayoutEffect,
+    useRef,
+    useState
+} from 'react';
+import {CopyIcon as Copy} from '@phosphor-icons/react/dist/csr/Copy';
+import {TerminalWindowIcon as TerminalWindow} from '@phosphor-icons/react/dist/csr/TerminalWindow';
+import {
+    MessageCheckIcon,
+    MessageEditIcon,
+    MessageExpandIcon,
+    MessageRemoteDeviceIcon,
+    MessageThumbIcon
+} from './SessionMessageIcons.js';
+import {
+    isAssistantDeliverableItem,
+    type NativeConversationAttachment,
+    type NativeSessionItemBuffer
+} from './sessionTypes.js';
+import {autosizeTextarea} from './textareaAutosize.js';
+import {
+    type ConversationContextDraft,
+    type ConversationFileLocation,
+    type ConversationOpenTarget,
+    type ConversationResource,
+    type ConversationResourcePreview,
+    type ConversationResponseAnnotation,
+    type ConversationResponseTextAnchor,
+    parseCanonicalRequestUserInputQuestions,
+    type TaskPushMessageLayout,
 } from '@zeus/shared';
-import { ConversationGeneratedImage, ConversationPendingAttachmentImages, ConversationResourceCards, isImageResource, isPendingImageAttachment } from './ConversationResources.js';
-import { ResponseSelectionActions } from './ResponseSelectionActions.js';
-import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
-import { ConversationMarkdown, conversationMarkdownPhaseForStatus } from './ConversationMarkdown.js';
-import { McpAppFrame, type McpAppToolCall, type McpAppToolResult } from './McpAppFrame.js';
+import {
+    ConversationGeneratedImage,
+    ConversationPendingAttachmentImages,
+    ConversationResourceCards,
+    isImageResource,
+    isPendingImageAttachment
+} from './ConversationResources.js';
+import {ResponseSelectionActions} from './ResponseSelectionActions.js';
+import {useApplicationErrorDialog, VisibleApplicationError} from '../ui/ApplicationErrorDialog.js';
+import {ConversationMarkdown, conversationMarkdownPhaseForStatus} from './ConversationMarkdown.js';
+import {McpAppFrame, type McpAppToolCall, type McpAppToolResult} from './McpAppFrame.js';
 
 export type SessionUiLanguage = 'zh-CN' | 'en-US';
 export type ThreadItemRole = 'user' | 'assistant' | 'commentary' | 'notice' | 'tool' | 'file' | 'image' | 'request' | 'error' | 'unknown';
@@ -64,6 +90,7 @@ const copy = {
     conflictPreparing: '正在准备冲突现场',
     conflictPreparationFailed: '冲突现场准备失败',
     deliveryPaused: '发送已暂停',
+      preflightFailed: '发送前检查未通过，消息尚未发送',
     waitingConnection: '等待连接恢复',
     providerArchived: '等待恢复原会话',
     providerStopPending: '正在确认上次运行已停止',
@@ -112,6 +139,7 @@ const copy = {
     conflictPreparing: 'Preparing conflict workspace',
     conflictPreparationFailed: 'Conflict workspace preparation failed',
     deliveryPaused: 'Sending paused',
+      preflightFailed: 'Preflight failed; the message was not sent',
     waitingConnection: 'Waiting for connection',
     providerArchived: 'Waiting for conversation restore',
     providerStopPending: 'Confirming the previous run has stopped',
@@ -310,6 +338,11 @@ function optimisticDeliveryStatus(item: NativeSessionItemBuffer, labels: (typeof
     if (pausedReason === 'transport_unavailable') return labels.waitingConnection;
     if (pausedReason === 'provider_archived') return labels.providerArchived;
     if (pausedReason === 'provider_stop_pending') return labels.providerStopPending;
+      if (pausedReason === 'preflight_failed') {
+          // 优先展示服务端持久化的真实失败原因，避免笼统状态掩盖下一步。
+          const deliveryError = isRecord(item.payload.deliveryError) ? primitiveText(item.payload.deliveryError.message) : '';
+          return deliveryError || labels.preflightFailed;
+      }
     return labels.deliveryPaused;
   }
   if (item.status !== 'queued') return null;

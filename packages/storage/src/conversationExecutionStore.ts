@@ -1,8 +1,8 @@
-import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
-import { randomId } from './randomId.js';
-import type { ArtifactRef } from './artifactStore.js';
-import type { ZeusDatabasePort } from './databasePort.js';
+import {createHash} from 'node:crypto';
+import {existsSync, readFileSync} from 'node:fs';
+import {randomId} from './randomId.js';
+import type {ArtifactRef} from './artifactStore.js';
+import type {ZeusDatabasePort} from './databasePort.js';
 
 export const conversationSchemaGeneration = '2026-08-16-unified-conversation-segments';
 
@@ -938,35 +938,6 @@ export class ConversationExecutionRepository {
   currentSegment(conversationId: string): ConversationRuntimeSegmentRecord | null {
     const row = this.db.get<RuntimeSegmentRow>(`SELECT * FROM conversation_runtime_segments WHERE conversation_id = ? AND state = 'current'`, [conversationId]);
     return row ? mapRuntimeSegment(row) : null;
-  }
-
-  countCompletedNativeContextCompactions(segmentId: string): number {
-    return (
-      this.db.get<{ row_count: number }>(
-        `SELECT COUNT(*) AS row_count
-           FROM conversation_process_items
-          WHERE segment_id = ? AND kind = 'context_compaction' AND status = 'completed'
-            AND (source_event_id IS NULL OR source_event_id NOT LIKE 'context-compaction:%')`,
-        [segmentId],
-      )?.row_count ?? 0
-    );
-  }
-
-  latestContextEstimateForSegment(segmentId: string): { estimatedHeadroomTokens: number; historyBaselineSource: string } | null {
-    const rows = this.db.select<{ evidence_json: string }>(
-      `SELECT evidence_json
-         FROM conversation_config_evidence
-        WHERE segment_id = ? AND layer = 'adapter_serialized'
-        ORDER BY observed_at DESC, id DESC LIMIT 100`,
-      [segmentId],
-    );
-    for (const row of rows) {
-      const evidence = parseJsonRecord(row.evidence_json);
-      if (evidence.kind === 'context_request_estimate' && typeof evidence.estimatedHeadroomTokens === 'number' && Number.isSafeInteger(evidence.estimatedHeadroomTokens) && typeof evidence.historyBaselineSource === 'string') {
-        return { estimatedHeadroomTokens: evidence.estimatedHeadroomTokens, historyBaselineSource: evidence.historyBaselineSource };
-      }
-    }
-    return null;
   }
 
   provisionalSegment(conversationId: string): ConversationRuntimeSegmentRecord | null {

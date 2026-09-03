@@ -1,67 +1,72 @@
-import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { realpathSync, statSync } from 'node:fs';
-import { readdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
-import { promisify } from 'node:util';
+import {execFile} from 'node:child_process';
+import {createHash} from 'node:crypto';
+import {realpathSync, statSync} from 'node:fs';
+import {readdir, readFile, writeFile} from 'node:fs/promises';
+import {dirname, extname, isAbsolute, relative, resolve, sep} from 'node:path';
+import {promisify} from 'node:util';
 import {
-  type AgentImageInput,
-  type AgentModelIdentity,
-  type AgentProviderPayloadDiagnostic,
-  type AgentRuntimeEvent,
-  type AgentSessionIdentity,
-  createPiRuntimeWorkerDriver,
-  isOfficialDeepSeekApiConnection,
-  modelConnectionRequestEndpoint,
-  modelRef,
-  parseModelRef,
-  piRuntimeWorkerProtocolVersion,
-  type PiZeusToolBroker,
-  type PiZeusToolContentItem,
-  type PiZeusToolRequest,
-  type PiZeusToolResult,
+    type AgentImageInput,
+    type AgentModelIdentity,
+    type AgentProviderPayloadDiagnostic,
+    type AgentRuntimeEvent,
+    type AgentSessionIdentity,
+    createPiRuntimeWorkerDriver,
+    isOfficialDeepSeekApiConnection,
+    modelConnectionRequestEndpoint,
+    modelRef,
+    parseModelRef,
+    piRuntimeWorkerProtocolVersion,
+    type PiZeusToolBroker,
+    type PiZeusToolContentItem,
+    type PiZeusToolRequest,
+    type PiZeusToolResult,
 } from '@zeus/ai-runtime';
 import {
-  buildTaskPushInputParts,
-  calculateCacheHitRate,
-  type CodexUsageEstimate,
-  type ConversationContextDraft,
-  emptyTokenUsageBreakdown,
-  estimateDeepSeekUsage,
-  type NativeTokenUsageSnapshot,
-  serializeConversationContext,
-  type TaskPushMessageLayout,
-  type TokenUsageBreakdown,
+    buildTaskPushInputParts,
+    calculateCacheHitRate,
+    type CodexUsageEstimate,
+    type ConversationContextDraft,
+    emptyTokenUsageBreakdown,
+    estimateDeepSeekUsage,
+    type NativeTokenUsageSnapshot,
+    serializeConversationContext,
+    type TaskPushMessageLayout,
+    type TokenUsageBreakdown,
 } from '@zeus/shared';
 import type {
-  CodexUsageLedgerRepository,
-  CommandDeliveryRepository,
-  ConversationExecutionRepository,
-  ConversationProviderItemRepository,
-  ConversationRepository,
-  ConversationServerRequestRepository,
-  ConversationSubmissionRepository,
-  ConversationTurnRepository,
-  ZeusConversationServerRequestRecord,
-  ZeusConversationWithMessagesRecord,
-  ZeusDatabase,
+    CodexUsageLedgerRepository,
+    CommandDeliveryRepository,
+    ConversationExecutionRepository,
+    ConversationProviderItemRepository,
+    ConversationRepository,
+    ConversationServerRequestRepository,
+    ConversationSubmissionRepository,
+    ConversationTurnRepository,
+    ZeusConversationServerRequestRecord,
+    ZeusConversationWithMessagesRecord,
+    ZeusDatabase,
 } from '@zeus/storage';
-import { projectConversationTurnFailure } from '@zeus/storage';
-import type { ModelConnectionService } from './modelConnectionService.js';
-import type { BrowserAutomationPort } from './browserAutomation.js';
-import type { NativeConversationAttachmentInput, NativeConversationSkillInput } from './codexNativeConversationContracts.js';
-import { readNativeSubmissionSkill } from './nativeConversationSubmissionInputs.js';
-import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
-import type { ManagedConversationToolResultStore } from './conversationPortableContext.js';
-import { TurnProcessProjector } from './turnProcessProjector.js';
-import type { ContextDispatchEnvelope, ProviderDispatchContextCompiler } from './contextDispatchService.js';
-import { PiProviderCommandApplicationService, type PiProviderCommandAttempt } from './piProviderCommandDelivery.js';
-import { runPiActiveContextCompaction } from './piActiveContextCompaction.js';
-import { projectLocallyAcceptedUserMessage } from './localUserSubmissionProjection.js';
-import type { ZeusConversationPluginRuntime, ZeusPluginConversationPreparation } from './zeusConversationPluginRuntime.js';
-import { emitPluginCompactionHook } from './codexConversationDispatchContext.js';
-import type { ZeusPluginDynamicTool } from './zeusPluginMcpBroker.js';
-import { createZeusToolBroker, isZeusNativeToolMutation, type ZeusToolAuditEvent } from './zeusToolRegistry.js';
+import {projectConversationTurnFailure} from '@zeus/storage';
+import type {ModelConnectionService} from './modelConnectionService.js';
+import type {BrowserAutomationPort} from './browserAutomation.js';
+import type {
+    NativeConversationAttachmentInput,
+    NativeConversationSkillInput
+} from './codexNativeConversationContracts.js';
+import {readNativeSubmissionSkill} from './nativeConversationSubmissionInputs.js';
+import type {ConversationSegmentLifecycle} from './conversationExecutionCoordinator.js';
+import type {ManagedConversationToolResultStore} from './conversationPortableContext.js';
+import {TurnProcessProjector} from './turnProcessProjector.js';
+import type {ContextDispatchEnvelope, ProviderDispatchContextCompiler} from './contextDispatchService.js';
+import {PiProviderCommandApplicationService, type PiProviderCommandAttempt} from './piProviderCommandDelivery.js';
+import {projectLocallyAcceptedUserMessage} from './localUserSubmissionProjection.js';
+import type {
+    ZeusConversationPluginRuntime,
+    ZeusPluginConversationPreparation
+} from './zeusConversationPluginRuntime.js';
+import {emitPluginCompactionHook} from './codexConversationDispatchContext.js';
+import type {ZeusPluginDynamicTool} from './zeusPluginMcpBroker.js';
+import {createZeusToolBroker, isZeusNativeToolMutation, type ZeusToolAuditEvent} from './zeusToolRegistry.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -850,55 +855,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
             providerGenerationId: driver.getRuntimeHealth().generationId,
           })
         : null;
-      const connection = input.model.sourceId ? options.modelConnections.listMetadata().find((candidate) => candidate.id === input.model.sourceId) : undefined;
-      const activeCompaction = await runPiActiveContextCompaction({
-        driver,
-        session: context.session,
-        execution: options.execution,
-        db: options.db,
-        providerCommands,
-        plugins: options.plugins,
-        envelope: compiledDispatchContext,
-        conversationId: input.conversation.id,
-        submissionId: submission.id,
-        issuedAt: submission.createdAt,
-        cwd,
-        model: input.model.modelId,
-        ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),
-        contextWindow: connection?.models.find((model) => model.id === input.model.modelId)?.contextWindow ?? null,
-        now: options.now,
-      });
-      if (activeCompaction.compacted) {
-        if (activeCompaction.postCompactContext) providerContent = appendPiPluginCompactionContext(providerContent, activeCompaction.postCompactContext);
-        compiledDispatchContext = options.compileDispatchContext
-          ? await options.compileDispatchContext({
-              provider: 'pi',
-              conversationId: input.conversation.id,
-              submissionId: submission.id,
-              projectId: context.projectId,
-              projectLocalPath: context.cwd,
-              taskId: context.taskId,
-              modelId: input.model.modelId,
-              modelSourceId: input.model.sourceId,
-              operationRisk: context.permissionMode === 'read-only' ? 'read_only' : 'local_write',
-              fixedRequestUtf8Bytes: Buffer.byteLength(JSON.stringify({ content: providerContent, images: attachmentInput.images }), 'utf8'),
-              providerBootstrapUtf8Bytes: Buffer.byteLength(JSON.stringify(providerMetadata), 'utf8'),
-              providerHistoryMode: 'latest',
-              ...(activeCompaction.estimatedTokensAfter === null
-                ? {}
-                : {
-                    providerHistoryOverride: {
-                      tokens: activeCompaction.estimatedTokensAfter,
-                      source: `pi_compaction_estimate:${context.session.nativeSessionId}:${submission.id}`,
-                    },
-                  }),
-              providerGenerationId: driver.getRuntimeHealth().generationId,
-            })
-          : null;
-        if (activeCompaction.estimatedTokensAfter !== null && (compiledDispatchContext?.provider.requestAccounting?.estimatedRequestHeadroomTokens ?? 0) < 0) {
-          throw piError('ZEUS_PI_CONTEXT_COMPACTION_INSUFFICIENT', 'Pi 原生压缩后仍无法容纳本轮固定输入与输出预留；已停止派发，请在新分段重试。');
-        }
-      }
+        // 同一 session 的压缩时机与恢复由 Pi SDK 自己负责；Zeus 的估算只约束可选应用上下文，不阻断核心消息。
       runCommand = providerCommands.prepare({
         operation: 'run_start',
         commandKey: submission.id,
@@ -2342,14 +2299,6 @@ function appendPiConversationContext(prompt: string, browserCommentContent: stri
   const readableContext = conversationContext ? serializeConversationContext(conversationContext as unknown as ConversationContextDraft).trim() : '';
   const missingReadableContext = readableContext && !prompt.includes(readableContext) ? readableContext : '';
   return [prompt, browserContext, missingReadableContext].filter((part) => part.trim()).join('\n\n');
-}
-
-function appendPiPluginCompactionContext(prompt: string, context: Record<string, { value: string }>): string {
-  const value = Object.values(context)
-    .map((entry) => entry.value.trim())
-    .filter(Boolean)
-    .join('\n');
-  return value ? `${prompt}\n\n[ZEUS_PLUGIN_COMPACT_HOOK_CONTEXT]\n${value}\n[/ZEUS_PLUGIN_COMPACT_HOOK_CONTEXT]` : prompt;
 }
 
 function orderPiTaskPushAttachments(layout: TaskPushMessageLayout, attachments: NativeConversationAttachmentInput[]): NativeConversationAttachmentInput[] {

@@ -1,38 +1,45 @@
-import { type CodexThreadGoal, toCodexWireReasoningEffort } from '@zeus/ai-runtime';
-import type { ConversationCollaborationMode, ConversationNextTurnSettings, ConversationRepository, ZeusConversationGoalRecord, ZeusConversationSubmissionRecord, ZeusConversationWithMessagesRecord } from '@zeus/storage';
-import { ensureInitialCodexGoal } from './codexGoalApplication.js';
+import {type CodexThreadGoal, toCodexWireReasoningEffort} from '@zeus/ai-runtime';
 import type {
-  ConversationDispatchContext,
-  CreateCodexNativeConversationCoordinatorOptions,
-  NativeAcceptedOperation,
-  NativeConversationRunState,
-  NativeOperationStatus,
-  NativeProviderWriteLifecycle,
-  NativeQueueSnapshot,
-  NativeSessionCommandExecutor,
+    ConversationCollaborationMode,
+    ConversationNextTurnSettings,
+    ConversationRepository,
+    ZeusConversationGoalRecord,
+    ZeusConversationSubmissionRecord,
+    ZeusConversationWithMessagesRecord
+} from '@zeus/storage';
+import {ensureInitialCodexGoal} from './codexGoalApplication.js';
+import type {
+    ConversationDispatchContext,
+    CreateCodexNativeConversationCoordinatorOptions,
+    NativeAcceptedOperation,
+    NativeConversationRunState,
+    NativeOperationStatus,
+    NativeProviderWriteLifecycle,
+    NativeQueueSnapshot,
+    NativeSessionCommandExecutor,
 } from './codexNativeConversationContracts.js';
 import {
-  conversationSubmissionDispatchEnvelope,
-  coordinatorError,
-  developerInstructionsFor,
-  isProviderThreadArchivedError,
-  parseJsonRecord,
-  parseStoredConversationSubmissionDispatchEnvelope,
-  providerPermissionProfile,
-  requestHash,
-  requireString,
-  serializeError,
-  toRecoverySubmissionError,
+    conversationSubmissionDispatchEnvelope,
+    coordinatorError,
+    developerInstructionsFor,
+    isProviderThreadArchivedError,
+    parseJsonRecord,
+    parseStoredConversationSubmissionDispatchEnvelope,
+    providerPermissionProfile,
+    requestHash,
+    requireString,
+    serializeError,
+    toRecoverySubmissionError,
 } from './codexNativeConversationPolicy.js';
-import { assertCallerDoesNotOverrideCompiledContext, mergeCodexAdditionalContext } from './codexNativeContextProtocol.js';
-import { prepareCodexDispatchContext } from './codexContextDispatchPreparation.js';
-import { CodexProviderCommandApplicationService } from './codexProviderCommandApplication.js';
-import type { CodexProviderThreadAuthorityApplication } from './codexProviderThreadAuthority.js';
-import { conversationToolResultDynamicTools } from './conversationPortableContext.js';
-import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
-import { isServiceTierUnavailableError } from './codexServiceTierDowngrade.js';
-import { persistThreadProviderSettings } from './codexThreadMetadataProjection.js';
-import type { ZeusToolBroker } from './zeusToolRegistry.js';
+import {assertCallerDoesNotOverrideCompiledContext, mergeCodexAdditionalContext} from './codexNativeContextProtocol.js';
+import {prepareCodexDispatchContext} from './codexContextDispatchPreparation.js';
+import {CodexProviderCommandApplicationService} from './codexProviderCommandApplication.js';
+import type {CodexProviderThreadAuthorityApplication} from './codexProviderThreadAuthority.js';
+import {conversationToolResultDynamicTools} from './conversationPortableContext.js';
+import type {ConversationSegmentLifecycle} from './conversationExecutionCoordinator.js';
+import {isServiceTierUnavailableError} from './codexServiceTierDowngrade.js';
+import {persistThreadProviderSettings} from './codexThreadMetadataProjection.js';
+import type {ZeusToolBroker} from './zeusToolRegistry.js';
 
 interface NativeConversationDispatchLease {
   submissionId: string;
@@ -59,8 +66,6 @@ interface CodexNativeDispatchPipelineDependencies {
   ensureGenerationReconciled(conversationIds: readonly string[]): Promise<void>;
 
   executeSessionCommand: NativeSessionCommandExecutor;
-
-  flushProviderEvents(): Promise<void>;
 
   inferRunState(conversation: ZeusConversationWithMessagesRecord): NativeConversationRunState;
 
@@ -101,7 +106,6 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
     ensureConversationExecutionContext,
     ensureGenerationReconciled,
     executeSessionCommand,
-    flushProviderEvents,
     inferRunState,
     markConversationProviderArchived,
     nextTurnSettingsFromContext,
@@ -407,7 +411,6 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
         segmentLifecycle,
         conversation: { id: conversation.id, projectId: context.projectId },
         submission: { id: submission.id, createdAt: submission.createdAt },
-        providerThreadId,
         providerGenerationId: commandProviderGenerationId,
         providerInput,
         providerBootstrapUtf8Bytes,
@@ -426,7 +429,6 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
         pluginPromptContext,
         responsesRuntime,
         beforePortableProviderWrite: () => markDispatchRpcStarted(lease, submission.id),
-        flushProviderEvents,
         now,
       });
       const compiledDispatchContext = preparedContext.compiled;
