@@ -1,10 +1,7 @@
-import {createHash} from 'node:crypto';
-import type {CodexAppServerManager, CodexResponsesRuntime} from '@zeus/ai-runtime';
-import {
-    encodeCodexPortableAdditionalContext,
-    type PortableContextCompactionPlan
-} from './conversationPortableContext.js';
-import type {CodexProviderCommandApplicationService} from './codexProviderCommandApplication.js';
+import { createHash } from 'node:crypto';
+import type { CodexAppServerManager, CodexResponsesRuntime } from '@zeus/ai-runtime';
+import { encodeCodexPortableAdditionalContext, type PortableContextCompactionPlan } from './conversationPortableContext.js';
+import type { CodexProviderCommandApplicationService } from './codexProviderCommandApplication.js';
 
 export async function runCodexPortableContextCompaction(input: {
   manager: CodexAppServerManager;

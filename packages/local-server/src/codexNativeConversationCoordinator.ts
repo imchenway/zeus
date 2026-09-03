@@ -1,158 +1,116 @@
+import { type CodexAppServerEvent, type CodexResponsesRuntime, type CodexServerRequestResponse, type CodexThreadGoal, modelRef, parseModelRef } from '@zeus/ai-runtime';
+import { buildTaskPushInputParts, type CodexAdditionalContextEntry, parseCanonicalRequestUserInputQuestions, type TaskPushMessageLayout, validateCanonicalRequestUserInputAnswers } from '@zeus/shared';
 import {
-    type CodexAppServerEvent,
-    type CodexResponsesRuntime,
-    type CodexServerRequestResponse,
-    type CodexThreadGoal,
-    modelRef,
-    parseModelRef
-} from '@zeus/ai-runtime';
-import {
-    buildTaskPushInputParts,
-    type CodexAdditionalContextEntry,
-    parseCanonicalRequestUserInputQuestions,
-    type TaskPushMessageLayout,
-    validateCanonicalRequestUserInputAnswers
-} from '@zeus/shared';
-import {
-    type ConversationCollaborationMode,
-    type ConversationNextTurnSettings,
-    ConversationProviderItemRepository,
-    ConversationServerRequestRepository,
-    type ZeusConversationItemRecord,
-    type ZeusConversationServerRequestRecord,
-    type ZeusConversationSubmissionRecord,
-    type ZeusConversationTurnRecord,
-    type ZeusConversationWithMessagesRecord,
+  type ConversationCollaborationMode,
+  type ConversationNextTurnSettings,
+  ConversationProviderItemRepository,
+  ConversationServerRequestRepository,
+  type ZeusConversationItemRecord,
+  type ZeusConversationServerRequestRecord,
+  type ZeusConversationSubmissionRecord,
+  type ZeusConversationTurnRecord,
+  type ZeusConversationWithMessagesRecord,
 } from '@zeus/storage';
-import {randomUUID} from 'node:crypto';
-import {realpathSync, statSync} from 'node:fs';
-import {isAbsolute, resolve} from 'node:path';
-import {createCodexDynamicToolApplication} from './codexDynamicToolApplication.js';
-import {createZeusToolBroker} from './zeusToolRegistry.js';
-import {finalizeCodexPendingInteractionsForShutdown} from './codexFinalShutdownApplication.js';
-import {codexGoalEventKind, createCodexGoalApplication} from './codexGoalApplication.js';
-import {
-    createCodexInteractionRecoveryApplication,
-    isInteractionRecoveryCheckpointRequest
-} from './codexInteractionRecoveryApplication.js';
+import { randomUUID } from 'node:crypto';
+import { realpathSync, statSync } from 'node:fs';
+import { isAbsolute, resolve } from 'node:path';
+import { createCodexDynamicToolApplication } from './codexDynamicToolApplication.js';
+import { createZeusToolBroker } from './zeusToolRegistry.js';
+import { finalizeCodexPendingInteractionsForShutdown } from './codexFinalShutdownApplication.js';
+import { codexGoalEventKind, createCodexGoalApplication } from './codexGoalApplication.js';
+import { createCodexInteractionRecoveryApplication, isInteractionRecoveryCheckpointRequest } from './codexInteractionRecoveryApplication.js';
 import type {
-    ArchiveConversationInput,
-    CodexNativeConversationCoordinator,
-    ConversationDispatchContext,
-    CreateCodexNativeConversationCoordinatorOptions,
-    InterruptNativeTurnInput,
-    NativeAcceptedOperation,
-    NativeConversationAttachmentInput,
-    NativeConversationRunState,
-    NativeConversationSkillInput,
-    NativeQuestionAnswerAttachmentInput,
-    NativeQueueSnapshot,
-    NativeQueueWaitReason,
-    NativeSessionCommandInput,
-    NativeSubmissionRecoveryKind,
-    NativeTurnCommandInput,
-    NativeTurnResult,
-    NativeTurnResultWaiter,
-    RecoverNativeQueueInput,
-    RespondNativeRequestInput,
-    RespondPlanImplementationRequestInput,
-    RestoreArchivedConversationInput,
-    SendQueuedNowInput,
-    SnoozeNativeRequestInput,
-    StartNativeEphemeralConversationInput,
-    StartProjectConversationInput,
-    StartTaskConversationInput,
-    SteerNativeMessageInput,
-    SubmitNativeMessageInput,
-    WaitForNativeTurnResultInput,
+  ArchiveConversationInput,
+  CodexNativeConversationCoordinator,
+  ConversationDispatchContext,
+  CreateCodexNativeConversationCoordinatorOptions,
+  InterruptNativeTurnInput,
+  NativeAcceptedOperation,
+  NativeConversationAttachmentInput,
+  NativeConversationRunState,
+  NativeConversationSkillInput,
+  NativeQuestionAnswerAttachmentInput,
+  NativeQueueSnapshot,
+  NativeQueueWaitReason,
+  NativeSessionCommandInput,
+  NativeSubmissionRecoveryKind,
+  NativeTurnCommandInput,
+  NativeTurnResult,
+  NativeTurnResultWaiter,
+  RecoverNativeQueueInput,
+  RespondNativeRequestInput,
+  RespondPlanImplementationRequestInput,
+  RestoreArchivedConversationInput,
+  SendQueuedNowInput,
+  SnoozeNativeRequestInput,
+  StartNativeEphemeralConversationInput,
+  StartProjectConversationInput,
+  StartTaskConversationInput,
+  SteerNativeMessageInput,
+  SubmitNativeMessageInput,
+  WaitForNativeTurnResultInput,
 } from './codexNativeConversationContracts.js';
-import {projectLocallyAcceptedUserMessage} from './localUserSubmissionProjection.js';
-import {projectNativeConversationTitle} from './nativeConversationTitle.js';
+import { projectLocallyAcceptedUserMessage } from './localUserSubmissionProjection.js';
+import { projectNativeConversationTitle } from './nativeConversationTitle.js';
 import {
-    buildInteractionRecoveryContinuation,
-    buildInteractionRecoveryDisplayText,
-    coordinatorError,
-    evaluateCommandApproval,
-    existingDirectoryRealpath,
-    failedTurnErrorFromRecord,
-    hasAuditableFileApprovalTarget,
-    invalidServerRequestResponse,
-    isAdvertisedCommandDecision,
-    isExecpolicyAmendmentDecision,
-    isGrantDecision,
-    isInsideRoot,
-    isProviderThreadAlreadyAvailableError,
-    isProviderThreadArchivedError,
-    isProviderTurnAlreadyEndedSteerError,
-    isRecord,
-    isSupportedLocalImageAttachment,
-    isSupportedPermissionGrant,
-    isSupportedPermissionRequest,
-    isValidMcpElicitationResponse,
-    parseJsonRecord,
-    providerEventReceipt,
-    providerTurnIdFrom,
-    requestHash,
-    requireString,
-    serializeError,
-    stripRequestTransport,
-    submissionDeliveryConfirmedForTurn,
-    submissionErrorSnapshot,
-    toRecoverySubmissionError,
-    validatePermissionGrant,
+  buildInteractionRecoveryContinuation,
+  buildInteractionRecoveryDisplayText,
+  coordinatorError,
+  evaluateCommandApproval,
+  existingDirectoryRealpath,
+  failedTurnErrorFromRecord,
+  hasAuditableFileApprovalTarget,
+  invalidServerRequestResponse,
+  isAdvertisedCommandDecision,
+  isExecpolicyAmendmentDecision,
+  isGrantDecision,
+  isInsideRoot,
+  isProviderThreadAlreadyAvailableError,
+  isProviderThreadArchivedError,
+  isProviderTurnAlreadyEndedSteerError,
+  isRecord,
+  isSupportedLocalImageAttachment,
+  isSupportedPermissionGrant,
+  isSupportedPermissionRequest,
+  isValidMcpElicitationResponse,
+  parseJsonRecord,
+  providerEventReceipt,
+  providerTurnIdFrom,
+  requestHash,
+  requireString,
+  serializeError,
+  stripRequestTransport,
+  submissionDeliveryConfirmedForTurn,
+  submissionErrorSnapshot,
+  toRecoverySubmissionError,
+  validatePermissionGrant,
 } from './codexNativeConversationPolicy.js';
-import {createCodexExternalRequestAnswerRecovery} from './codexExternalRequestAnswerRecovery.js';
-import {createCodexModelRequestTimingTracker} from './codexModelRequestTiming.js';
-import {mergeCodexAdditionalContext} from './codexNativeContextProtocol.js';
-import {
-    contextFromPersistedConversation,
-    contextFromPersistedSubmission,
-    prepareRecoveredCodexPlugins
-} from './codexConversationDispatchContext.js';
-import {createCodexNativeConversationAccess} from './codexNativeConversationAccess.js';
-import {createCodexNativeDispatchPipeline} from './codexNativeDispatchPipeline.js';
-import {
-    nativeTurnComputerUseRequested,
-    type PersistedSubmissionInput,
-    readNativeSubmissionRecoveryKind,
-    readNativeSubmissionSkill,
-    readNativeSubmissionTaskPushLayout
-} from './nativeConversationSubmissionInputs.js';
-import {inferNativeConversationRunState} from './codexNativeRunStateProjection.js';
-import {
-    chooseNativeUserMessageContent,
-    type NativeUserMessageProjection,
-    resolveNativeUserMessageSubmission
-} from './codexNativeUserMessageProjection.js';
-import {CodexProviderCommandApplicationService} from './codexProviderCommandApplication.js';
-import {codexProviderEventIdentity, createCodexProviderEventFlow} from './codexProviderEventFlow.js';
-import {projectCodexProviderEvent} from './codexProviderEventProjection.js';
-import {createCodexProviderHistoryProjection} from './codexProviderHistoryProjection.js';
-import {createCodexProviderThreadAuthorityApplication} from './codexProviderThreadAuthority.js';
-import {
-    type CodexProviderStopRequestResult,
-    createCodexProviderStopRecoveryApplication
-} from './codexProviderStopRecoveryApplication.js';
-import {createCodexRemoteControlConversationSyncApplication} from './codexRemoteControlConversationSyncApplication.js';
-import {createCodexRecoveryStateApplication} from './codexRecoveryStateApplication.js';
-import type {ConversationSegmentLifecycle} from './conversationExecutionCoordinator.js';
-import {ConversationQueueCoreMutationApplication} from './conversationQueueCoreMutationApplication.js';
-import {
-    createCodexRecoveredUnsentQueueApplication,
-    hasRecoveredUnsentSubmission
-} from './codexRecoveredUnsentQueueApplication.js';
-import {normalizeConversationResources, toConversationResource} from './conversationResources.js';
-import {
-    archiveUnboundConversationLocally,
-    restoreUnboundConversationLocally
-} from './unboundConversationArchiveApplication.js';
-import {
-    persistThreadProviderSettings as persistProviderThreadMetadata,
-    threadPath
-} from './codexThreadMetadataProjection.js';
-import {TurnProcessProjector} from './turnProcessProjector.js';
-import {createCodexServiceTierDowngrade} from './codexServiceTierDowngrade.js';
-import {createCodexPluginToolApprovalApplication} from './codexPluginToolApprovalApplication.js';
+import { createCodexExternalRequestAnswerRecovery } from './codexExternalRequestAnswerRecovery.js';
+import { createCodexModelRequestTimingTracker } from './codexModelRequestTiming.js';
+import { mergeCodexAdditionalContext } from './codexNativeContextProtocol.js';
+import { contextFromPersistedConversation, contextFromPersistedSubmission, prepareRecoveredCodexPlugins } from './codexConversationDispatchContext.js';
+import { createCodexNativeConversationAccess } from './codexNativeConversationAccess.js';
+import { createCodexNativeDispatchPipeline } from './codexNativeDispatchPipeline.js';
+import { nativeTurnComputerUseRequested, type PersistedSubmissionInput, readNativeSubmissionRecoveryKind, readNativeSubmissionSkill, readNativeSubmissionTaskPushLayout } from './nativeConversationSubmissionInputs.js';
+import { inferNativeConversationRunState } from './codexNativeRunStateProjection.js';
+import { chooseNativeUserMessageContent, type NativeUserMessageProjection, resolveNativeUserMessageSubmission } from './codexNativeUserMessageProjection.js';
+import { CodexProviderCommandApplicationService } from './codexProviderCommandApplication.js';
+import { codexProviderEventIdentity, createCodexProviderEventFlow } from './codexProviderEventFlow.js';
+import { projectCodexProviderEvent } from './codexProviderEventProjection.js';
+import { createCodexProviderHistoryProjection } from './codexProviderHistoryProjection.js';
+import { createCodexProviderThreadAuthorityApplication } from './codexProviderThreadAuthority.js';
+import { type CodexProviderStopRequestResult, createCodexProviderStopRecoveryApplication } from './codexProviderStopRecoveryApplication.js';
+import { createCodexRemoteControlConversationSyncApplication } from './codexRemoteControlConversationSyncApplication.js';
+import { createCodexRecoveryStateApplication } from './codexRecoveryStateApplication.js';
+import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
+import { ConversationQueueCoreMutationApplication } from './conversationQueueCoreMutationApplication.js';
+import { createCodexRecoveredUnsentQueueApplication, hasRecoveredUnsentSubmission } from './codexRecoveredUnsentQueueApplication.js';
+import { normalizeConversationResources, toConversationResource } from './conversationResources.js';
+import { archiveUnboundConversationLocally, restoreUnboundConversationLocally } from './unboundConversationArchiveApplication.js';
+import { persistThreadProviderSettings as persistProviderThreadMetadata, threadPath } from './codexThreadMetadataProjection.js';
+import { TurnProcessProjector } from './turnProcessProjector.js';
+import { createCodexServiceTierDowngrade } from './codexServiceTierDowngrade.js';
+import { createCodexPluginToolApprovalApplication } from './codexPluginToolApprovalApplication.js';
 
 export { filterCompatibilitySnapshotItemAliases } from './codexProviderHistoryProjection.js';
 export type { CreateCodexNativeConversationCoordinatorOptions } from './codexNativeConversationContracts.js';
@@ -1234,7 +1192,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     }
 
     const state = runStates.get(conversation.id) ?? inferRunState(conversation);
-      if ((state.type !== 'active' && state.type !== 'waiting') || state.turnId !== input.expectedTurnId || turnHasCompletedOutput(conversation.id, input.expectedTurnId)) {
+    if ((state.type !== 'active' && state.type !== 'waiting') || state.turnId !== input.expectedTurnId || turnHasCompletedOutput(conversation.id, input.expectedTurnId)) {
       const requeued = options.submissions.requeueRejectedSteer(submission.id, now());
       await persist();
       options.broadcast('conversation.queue.changed', {
@@ -1328,18 +1286,18 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   const inferRunState = (conversation: ZeusConversationWithMessagesRecord): NativeConversationRunState =>
     inferNativeConversationRunState(conversation, { submissions: options.submissions, turns: options.turns, requests: options.requests }, isPendingInteractionAuthority);
 
-    /** 正式正文或计划完成后关闭同一 Provider turn 的引导窗口。 */
-    function turnHasCompletedOutput(conversationId: string, providerTurnId: string): boolean {
-        // Provider turn id 与 Zeus 本地 turn id 均可能出现在恢复后的调用参数中。
-        const turn = options.turns.listByConversation(conversationId).find((candidate) => candidate.providerTurnId === providerTurnId || candidate.id === providerTurnId);
-        // 只有已经建立实施请求的计划才属于正式交付。
-        const formalPlanItemIds = new Set(planActions.listByConversation(conversationId).map((request) => request.planItemId));
-        return options.providerItems.listByConversation(conversationId).some((item) => {
-            // 项目必须明确属于目标 turn，不能被同会话其他已完成正文误伤。
-            const belongsToTurn = item.providerTurnId === providerTurnId || (turn ? item.turnId === turn.id : false);
-            return belongsToTurn && item.status === 'completed' && item.textContent.trim().length > 0 && ((item.itemType === 'agentMessage' && item.phase === 'final_answer') || formalPlanItemIds.has(item.id));
-        });
-    }
+  /** 正式正文或计划完成后关闭同一 Provider turn 的引导窗口。 */
+  function turnHasCompletedOutput(conversationId: string, providerTurnId: string): boolean {
+    // Provider turn id 与 Zeus 本地 turn id 均可能出现在恢复后的调用参数中。
+    const turn = options.turns.listByConversation(conversationId).find((candidate) => candidate.providerTurnId === providerTurnId || candidate.id === providerTurnId);
+    // 只有已经建立实施请求的计划才属于正式交付。
+    const formalPlanItemIds = new Set(planActions.listByConversation(conversationId).map((request) => request.planItemId));
+    return options.providerItems.listByConversation(conversationId).some((item) => {
+      // 项目必须明确属于目标 turn，不能被同会话其他已完成正文误伤。
+      const belongsToTurn = item.providerTurnId === providerTurnId || (turn ? item.turnId === turn.id : false);
+      return belongsToTurn && item.status === 'completed' && item.textContent.trim().length > 0 && ((item.itemType === 'agentMessage' && item.phase === 'final_answer') || formalPlanItemIds.has(item.id));
+    });
+  }
 
   async function recoverPausedConversation(conversationId: string, mode: 'submit' | 'dispatch' | 'recover_queue' | 'restore'): Promise<ZeusConversationWithMessagesRecord> {
     let conversation = requireConversation(conversationId);
@@ -1738,16 +1696,16 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const providerThreadId = requireString(conversation.providerThreadId, 'provider thread id');
     const context = { ...contextFromSubmission(submission), permissionMode: conversation.permissionMode };
     await input.providerWriteLifecycle?.markPrepared(submission.id);
-      if (turnHasCompletedOutput(conversation.id, turnId)) {
-          // 陈旧界面或竞态请求不得污染已交付正文；保留原队首，等待旧 turn 正式终止后作为下一轮派发。
-          providerThreadAuthority.queueChanged(conversation.id);
-          options.broadcast('conversation.queue.changed', {
-              conversationId: conversation.id,
-              queue: toQueueSnapshot(conversation.id),
-          });
-          requestQueueDrain();
-          return accepted(submission, 'queued', providerThreadId, null);
-      }
+    if (turnHasCompletedOutput(conversation.id, turnId)) {
+      // 陈旧界面或竞态请求不得污染已交付正文；保留原队首，等待旧 turn 正式终止后作为下一轮派发。
+      providerThreadAuthority.queueChanged(conversation.id);
+      options.broadcast('conversation.queue.changed', {
+        conversationId: conversation.id,
+        queue: toQueueSnapshot(conversation.id),
+      });
+      requestQueueDrain();
+      return accepted(submission, 'queued', providerThreadId, null);
+    }
     input.providerWriteLifecycle?.markRpcStarted(submission.id);
     options.submissions.updateStatus(submission.id, 'dispatching', { providerTurnId: turnId, dispatchedAt: now() });
     providerThreadAuthority.queueChanged(conversation.id);

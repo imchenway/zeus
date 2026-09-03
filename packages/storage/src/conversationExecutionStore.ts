@@ -1,8 +1,8 @@
-import {createHash} from 'node:crypto';
-import {existsSync, readFileSync} from 'node:fs';
-import {randomId} from './randomId.js';
-import type {ArtifactRef} from './artifactStore.js';
-import type {ZeusDatabasePort} from './databasePort.js';
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
+import { randomId } from './randomId.js';
+import type { ArtifactRef } from './artifactStore.js';
+import type { ZeusDatabasePort } from './databasePort.js';
 
 export const conversationSchemaGeneration = '2026-08-16-unified-conversation-segments';
 

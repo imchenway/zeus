@@ -1,72 +1,66 @@
-import {execFile} from 'node:child_process';
-import {createHash} from 'node:crypto';
-import {realpathSync, statSync} from 'node:fs';
-import {readdir, readFile, writeFile} from 'node:fs/promises';
-import {dirname, extname, isAbsolute, relative, resolve, sep} from 'node:path';
-import {promisify} from 'node:util';
+import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { realpathSync, statSync } from 'node:fs';
+import { readdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { promisify } from 'node:util';
 import {
-    type AgentImageInput,
-    type AgentModelIdentity,
-    type AgentProviderPayloadDiagnostic,
-    type AgentRuntimeEvent,
-    type AgentSessionIdentity,
-    createPiRuntimeWorkerDriver,
-    isOfficialDeepSeekApiConnection,
-    modelConnectionRequestEndpoint,
-    modelRef,
-    parseModelRef,
-    piRuntimeWorkerProtocolVersion,
-    type PiZeusToolBroker,
-    type PiZeusToolContentItem,
-    type PiZeusToolRequest,
-    type PiZeusToolResult,
+  type AgentImageInput,
+  type AgentModelIdentity,
+  type AgentProviderPayloadDiagnostic,
+  type AgentRuntimeEvent,
+  type AgentSessionIdentity,
+  createPiRuntimeWorkerDriver,
+  isOfficialDeepSeekApiConnection,
+  modelConnectionRequestEndpoint,
+  modelRef,
+  parseModelRef,
+  piRuntimeWorkerProtocolVersion,
+  type PiZeusToolBroker,
+  type PiZeusToolContentItem,
+  type PiZeusToolRequest,
+  type PiZeusToolResult,
 } from '@zeus/ai-runtime';
 import {
-    buildTaskPushInputParts,
-    calculateCacheHitRate,
-    type CodexUsageEstimate,
-    type ConversationContextDraft,
-    emptyTokenUsageBreakdown,
-    estimateDeepSeekUsage,
-    type NativeTokenUsageSnapshot,
-    serializeConversationContext,
-    type TaskPushMessageLayout,
-    type TokenUsageBreakdown,
+  buildTaskPushInputParts,
+  calculateCacheHitRate,
+  type CodexUsageEstimate,
+  type ConversationContextDraft,
+  emptyTokenUsageBreakdown,
+  estimateDeepSeekUsage,
+  type NativeTokenUsageSnapshot,
+  serializeConversationContext,
+  type TaskPushMessageLayout,
+  type TokenUsageBreakdown,
 } from '@zeus/shared';
 import type {
-    CodexUsageLedgerRepository,
-    CommandDeliveryRepository,
-    ConversationExecutionRepository,
-    ConversationProviderItemRepository,
-    ConversationRepository,
-    ConversationServerRequestRepository,
-    ConversationSubmissionRepository,
-    ConversationTurnRepository,
-    ZeusConversationServerRequestRecord,
-    ZeusConversationWithMessagesRecord,
-    ZeusDatabase,
+  CodexUsageLedgerRepository,
+  CommandDeliveryRepository,
+  ConversationExecutionRepository,
+  ConversationProviderItemRepository,
+  ConversationRepository,
+  ConversationServerRequestRepository,
+  ConversationSubmissionRepository,
+  ConversationTurnRepository,
+  ZeusConversationServerRequestRecord,
+  ZeusConversationWithMessagesRecord,
+  ZeusDatabase,
 } from '@zeus/storage';
-import {projectConversationTurnFailure} from '@zeus/storage';
-import type {ModelConnectionService} from './modelConnectionService.js';
-import type {BrowserAutomationPort} from './browserAutomation.js';
-import type {
-    NativeConversationAttachmentInput,
-    NativeConversationSkillInput
-} from './codexNativeConversationContracts.js';
-import {readNativeSubmissionSkill} from './nativeConversationSubmissionInputs.js';
-import type {ConversationSegmentLifecycle} from './conversationExecutionCoordinator.js';
-import type {ManagedConversationToolResultStore} from './conversationPortableContext.js';
-import {TurnProcessProjector} from './turnProcessProjector.js';
-import type {ContextDispatchEnvelope, ProviderDispatchContextCompiler} from './contextDispatchService.js';
-import {PiProviderCommandApplicationService, type PiProviderCommandAttempt} from './piProviderCommandDelivery.js';
-import {projectLocallyAcceptedUserMessage} from './localUserSubmissionProjection.js';
-import type {
-    ZeusConversationPluginRuntime,
-    ZeusPluginConversationPreparation
-} from './zeusConversationPluginRuntime.js';
-import {emitPluginCompactionHook} from './codexConversationDispatchContext.js';
-import type {ZeusPluginDynamicTool} from './zeusPluginMcpBroker.js';
-import {createZeusToolBroker, isZeusNativeToolMutation, type ZeusToolAuditEvent} from './zeusToolRegistry.js';
+import { projectConversationTurnFailure } from '@zeus/storage';
+import type { ModelConnectionService } from './modelConnectionService.js';
+import type { BrowserAutomationPort } from './browserAutomation.js';
+import type { NativeConversationAttachmentInput, NativeConversationSkillInput } from './codexNativeConversationContracts.js';
+import { readNativeSubmissionSkill } from './nativeConversationSubmissionInputs.js';
+import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
+import type { ManagedConversationToolResultStore } from './conversationPortableContext.js';
+import { TurnProcessProjector } from './turnProcessProjector.js';
+import type { ContextDispatchEnvelope, ProviderDispatchContextCompiler } from './contextDispatchService.js';
+import { PiProviderCommandApplicationService, type PiProviderCommandAttempt } from './piProviderCommandDelivery.js';
+import { projectLocallyAcceptedUserMessage } from './localUserSubmissionProjection.js';
+import type { ZeusConversationPluginRuntime, ZeusPluginConversationPreparation } from './zeusConversationPluginRuntime.js';
+import { emitPluginCompactionHook } from './codexConversationDispatchContext.js';
+import type { ZeusPluginDynamicTool } from './zeusPluginMcpBroker.js';
+import { createZeusToolBroker, isZeusNativeToolMutation, type ZeusToolAuditEvent } from './zeusToolRegistry.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -855,7 +849,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
             providerGenerationId: driver.getRuntimeHealth().generationId,
           })
         : null;
-        // 同一 session 的压缩时机与恢复由 Pi SDK 自己负责；Zeus 的估算只约束可选应用上下文，不阻断核心消息。
+      // 同一 session 的压缩时机与恢复由 Pi SDK 自己负责；Zeus 的估算只约束可选应用上下文，不阻断核心消息。
       runCommand = providerCommands.prepare({
         operation: 'run_start',
         commandKey: submission.id,

@@ -1,21 +1,8 @@
-import {createHash} from 'node:crypto';
-import type {CodexBootstrapAdditionalContext, PortableConversationContext} from '@zeus/shared';
-import type {
-    CommandDeliveryRepository,
-    ConversationExecutionRepository,
-    ConversationRuntimeKind,
-    ConversationSubmissionRepository,
-    ZeusConversationSubmissionRecord,
-    ZeusDatabase
-} from '@zeus/storage';
-import {
-    applyPortableContextCompaction,
-    planPortableContextCompaction,
-    type PortableContextCompactionPlan,
-    type PortableContextTargetCapabilities,
-    PortableConversationContextBuilder
-} from './conversationPortableContext.js';
-import type {ManagedPortableContextStore} from './managedPortableContextStore.js';
+import { createHash } from 'node:crypto';
+import type { CodexBootstrapAdditionalContext, PortableConversationContext } from '@zeus/shared';
+import type { CommandDeliveryRepository, ConversationExecutionRepository, ConversationRuntimeKind, ConversationSubmissionRepository, ZeusConversationSubmissionRecord, ZeusDatabase } from '@zeus/storage';
+import { applyPortableContextCompaction, planPortableContextCompaction, type PortableContextCompactionPlan, type PortableContextTargetCapabilities, PortableConversationContextBuilder } from './conversationPortableContext.js';
+import type { ManagedPortableContextStore } from './managedPortableContextStore.js';
 
 export interface ConversationExecutionRoute {
   runtimeKind: ConversationRuntimeKind;
@@ -37,7 +24,7 @@ export interface ConversationExecutionRoute {
 
 export interface ConversationSegmentLifecycle {
   readonly requiresNewSegment: boolean;
-    readonly newSegmentReason: 'initial' | 'route_changed' | null;
+  readonly newSegmentReason: 'initial' | 'route_changed' | null;
   readonly portableContext: PortableConversationContext | null;
   readonly codexBootstrapAdditionalContext: CodexBootstrapAdditionalContext | null;
   readonly contextCompactionPlan: PortableContextCompactionPlan | null;
@@ -101,9 +88,9 @@ export class ConversationExecutionCoordinator {
     const currentSnapshot = current?.executionSnapshotId ? this.options.execution.getExecutionSnapshot(current.executionSnapshotId) : undefined;
     const desiredFingerprint = routeFingerprint(input.route);
     const routeChanged = Boolean(current && (current.runtimeKind !== input.route.runtimeKind || currentSnapshot?.routeFingerprint !== desiredFingerprint));
-      // 同一 Provider 会话的上下文生命周期由 Provider 自己管理；Zeus 只在首次创建或真实换路由时建立新分段。
-      const requiresNewSegment = !current || routeChanged;
-      const newSegmentReason = !current ? 'initial' : routeChanged ? 'route_changed' : null;
+    // 同一 Provider 会话的上下文生命周期由 Provider 自己管理；Zeus 只在首次创建或真实换路由时建立新分段。
+    const requiresNewSegment = !current || routeChanged;
+    const newSegmentReason = !current ? 'initial' : routeChanged ? 'route_changed' : null;
     const portableContext = requiresNewSegment ? this.portableContext.build(input.conversationId, input.targetCapabilities) : null;
     const contextCompactionPlan = portableContext ? planPortableContextCompaction(portableContext, input.targetCapabilities) : null;
     let executionSnapshotId: string | null = null;
@@ -463,7 +450,7 @@ export class ConversationExecutionCoordinator {
               acceptanceEvidence: accepted.runtimeEvidence,
               userHistoryContent: input.userHistoryContent,
               acceptedAt: accepted.acceptedAt,
-                sourceSealReason: 'route_switched',
+              sourceSealReason: 'route_switched',
             },
             settleCommandReceipt,
           );

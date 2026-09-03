@@ -1,91 +1,70 @@
+import { type AiRuntimeSession, createAiRuntimeSessionManager, modelConnectionCredentialSlotId, modelRef, parseModelRef, piRuntimeWorkerProtocolVersion, runWithCodexRpcRetryContext } from '@zeus/ai-runtime';
+import { getGitBranchHead, getGitRepositoryContext, type ProjectGitAction } from '@zeus/git-core';
 import {
-    type AiRuntimeSession,
-    createAiRuntimeSessionManager,
-    modelConnectionCredentialSlotId,
-    modelRef,
-    parseModelRef,
-    piRuntimeWorkerProtocolVersion,
-    runWithCodexRpcRetryContext
-} from '@zeus/ai-runtime';
-import {getGitBranchHead, getGitRepositoryContext, type ProjectGitAction} from '@zeus/git-core';
-import {
-    parseCanonicalRequestUserInputQuestions,
-    renderTaskPushLayoutText,
-    type TaskPushMessageLayout,
-    type TaskPushPromptAttachment,
-    type TaskPushPromptParentContext,
-    type TaskPushPromptRelatedContext,
-    type TaskPushSupplementalAttachment,
+  parseCanonicalRequestUserInputQuestions,
+  renderTaskPushLayoutText,
+  type TaskPushMessageLayout,
+  type TaskPushPromptAttachment,
+  type TaskPushPromptParentContext,
+  type TaskPushPromptRelatedContext,
+  type TaskPushSupplementalAttachment,
 } from '@zeus/shared';
 import {
-    ArtifactStore,
-    type ConversationCollaborationMode,
-    ConversationExecutionRepository,
-    type ConversationExpertActorSnapshot,
-    type ConversationExpertExecutionRecord,
-    ConversationExpertRepository,
-    type ConversationPermissionMode,
-    ConversationPlanActionRepository,
-    ConversationProviderItemRepository,
-    ConversationRepository,
-    ConversationServerRequestRepository,
-    ConversationSubmissionRepository,
-    ConversationTurnRepository,
-    DigitalEmployeeRepository,
-    IdempotencyRequestRepository,
-    ProjectRepository,
-    ProjectRepositoryRegistrationRepository,
-    ProjectSharedPathRepository,
-    TaskEnvironmentRepository,
-    TaskIntegrationAttemptRepository,
-    TaskIntegrationRepository,
-    TaskRepository,
-    TaskStageRepository,
-    TaskWorkspaceRepository,
-    type ZeusConversationRecord,
-    type ZeusConversationWithMessagesRecord,
-    type ZeusDatabase,
-    type ZeusProjectRecord,
-    type ZeusTaskRecord,
-    type ZeusTaskStageRecord,
-    type ZeusTaskWorkspaceRecord,
+  ArtifactStore,
+  type ConversationCollaborationMode,
+  ConversationExecutionRepository,
+  type ConversationExpertActorSnapshot,
+  type ConversationExpertExecutionRecord,
+  ConversationExpertRepository,
+  type ConversationPermissionMode,
+  ConversationPlanActionRepository,
+  ConversationProviderItemRepository,
+  ConversationRepository,
+  ConversationServerRequestRepository,
+  ConversationSubmissionRepository,
+  ConversationTurnRepository,
+  DigitalEmployeeRepository,
+  IdempotencyRequestRepository,
+  ProjectRepository,
+  ProjectRepositoryRegistrationRepository,
+  ProjectSharedPathRepository,
+  TaskEnvironmentRepository,
+  TaskIntegrationAttemptRepository,
+  TaskIntegrationRepository,
+  TaskRepository,
+  TaskStageRepository,
+  TaskWorkspaceRepository,
+  type ZeusConversationRecord,
+  type ZeusConversationWithMessagesRecord,
+  type ZeusDatabase,
+  type ZeusProjectRecord,
+  type ZeusTaskRecord,
+  type ZeusTaskStageRecord,
+  type ZeusTaskWorkspaceRecord,
 } from '@zeus/storage';
-import {type FastifyReply} from 'fastify';
-import {createHash} from 'node:crypto';
-import {existsSync, realpathSync, statSync} from 'node:fs';
-import {isAbsolute} from 'node:path';
-import {parseJsonObject} from './codeIntelligenceGraphStore.js';
-import {createCodexNativeConversationCoordinator} from './codexNativeConversationCoordinator.js';
-import {nativePendingRequestProjection} from './codexNativeConversationPolicy.js';
-import {isProviderStopPendingTurn} from './codexProviderStopRecoveryApplication.js';
-import type {ZeusSkillService} from './zeusSkillService.js';
-import {resolveConversationAttachmentGrant} from './conversationAttachmentGrant.js';
-import {
-    type ConversationCapabilitiesSnapshot,
-    ConversationCapabilityQueryApplication
-} from './conversationCapabilityQueryApplication.js';
-import {ConversationChoiceQueryApplication} from './conversationChoiceQueryApplication.js';
-import {ConversationExecutionCoordinator, type ConversationExecutionRoute} from './conversationExecutionCoordinator.js';
-import type {NativeConversationSkillInput} from './codexNativeConversationContracts.js';
-import {readNativeConversationSkill} from './nativeConversationSubmissionInputs.js';
-import type {
-    CreateConversationMessageBody,
-    NativeConversationAttachment,
-    ProjectConversationAcceptanceReservation,
-    StartProjectConversationBody,
-    StartTaskConversationBody,
-    TaskConversationAcceptanceReservation
-} from './index.js';
-import {createModelConnectionService} from './modelConnectionService.js';
-import {
-    resolveWritableNonCodexLegacyConversation,
-    type WritableNonCodexLegacyConversationContext
-} from './nonCodexLegacyRuntime.js';
-import {createPiNativeConversationCoordinator} from './piNativeConversationCoordinator.js';
-import {type RuntimeSettingsSnapshot} from './runtimeQueryApplication.js';
-import {buildTaskConflictAiConversationTitle, buildTaskConflictAiPrompt} from './taskConflictAi.js';
-import type {ZeusConversationPluginRuntime} from './zeusConversationPluginRuntime.js';
-import type {ZeusPluginService} from './zeusPluginService.js';
+import { type FastifyReply } from 'fastify';
+import { createHash } from 'node:crypto';
+import { existsSync, realpathSync, statSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
+import { parseJsonObject } from './codeIntelligenceGraphStore.js';
+import { createCodexNativeConversationCoordinator } from './codexNativeConversationCoordinator.js';
+import { nativePendingRequestProjection } from './codexNativeConversationPolicy.js';
+import { isProviderStopPendingTurn } from './codexProviderStopRecoveryApplication.js';
+import type { ZeusSkillService } from './zeusSkillService.js';
+import { resolveConversationAttachmentGrant } from './conversationAttachmentGrant.js';
+import { type ConversationCapabilitiesSnapshot, ConversationCapabilityQueryApplication } from './conversationCapabilityQueryApplication.js';
+import { ConversationChoiceQueryApplication } from './conversationChoiceQueryApplication.js';
+import { ConversationExecutionCoordinator, type ConversationExecutionRoute } from './conversationExecutionCoordinator.js';
+import type { NativeConversationSkillInput } from './codexNativeConversationContracts.js';
+import { readNativeConversationSkill } from './nativeConversationSubmissionInputs.js';
+import type { CreateConversationMessageBody, NativeConversationAttachment, ProjectConversationAcceptanceReservation, StartProjectConversationBody, StartTaskConversationBody, TaskConversationAcceptanceReservation } from './index.js';
+import { createModelConnectionService } from './modelConnectionService.js';
+import { resolveWritableNonCodexLegacyConversation, type WritableNonCodexLegacyConversationContext } from './nonCodexLegacyRuntime.js';
+import { createPiNativeConversationCoordinator } from './piNativeConversationCoordinator.js';
+import { type RuntimeSettingsSnapshot } from './runtimeQueryApplication.js';
+import { buildTaskConflictAiConversationTitle, buildTaskConflictAiPrompt } from './taskConflictAi.js';
+import type { ZeusConversationPluginRuntime } from './zeusConversationPluginRuntime.js';
+import type { ZeusPluginService } from './zeusPluginService.js';
 
 export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, type ReadOnlyValidationApplicationIdentity } from './readOnlyValidation.js';
 
@@ -1222,7 +1201,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     providerWriteLifecycle: { markPrepared(resourceId: string): Promise<void>; markRpcStarted(resourceId: string): void },
     reservedSubmissionId?: string,
   ) {
-      let delivery = body.delivery ?? 'queue';
+    let delivery = body.delivery ?? 'queue';
     if (delivery !== 'queue' && delivery !== 'steer_now') throw nativeApiError('ZEUS_INVALID_CONVERSATION_MESSAGE', 'Message delivery must be queue or steer_now.');
     const project = projects.getById(conversation.projectId);
     if (!project) throw nativeApiError('ZEUS_PROJECT_NOT_FOUND', 'Conversation project was not found.');
@@ -1284,20 +1263,20 @@ export function createConversationApplicationOperations(dependencies: Conversati
       if (!expectedTurnId || activeTurn?.providerTurnId !== expectedTurnId) {
         throw nativeApiError('ZEUS_NATIVE_TURN_MISMATCH', 'steer_now requires the exact currently active provider turn id.');
       }
-        // UI 可能仍停留在旧活动态；只要正式正文或计划已经完成，本次输入就无损降级为普通下一轮。
-        // 正式计划由已经落账的实施请求指向，普通过程计划不关闭引导窗口。
-        const formalPlanItemIds = new Set(conversationPlanActions.listByConversation(conversation.id).map((request) => request.planItemId));
-        // 共用入口同时覆盖 Codex、Pi 和远程调用，避免只依赖界面状态。
-        const completedOutput = conversationProviderItems
-            .listByConversation(conversation.id)
-            .some(
-                (item) =>
-                    (item.providerTurnId === expectedTurnId || item.turnId === activeTurn.id) &&
-                    item.status === 'completed' &&
-                    item.textContent.trim().length > 0 &&
-                    ((item.itemType === 'agentMessage' && item.phase === 'final_answer') || formalPlanItemIds.has(item.id)),
-            );
-        if (completedOutput) delivery = 'queue';
+      // UI 可能仍停留在旧活动态；只要正式正文或计划已经完成，本次输入就无损降级为普通下一轮。
+      // 正式计划由已经落账的实施请求指向，普通过程计划不关闭引导窗口。
+      const formalPlanItemIds = new Set(conversationPlanActions.listByConversation(conversation.id).map((request) => request.planItemId));
+      // 共用入口同时覆盖 Codex、Pi 和远程调用，避免只依赖界面状态。
+      const completedOutput = conversationProviderItems
+        .listByConversation(conversation.id)
+        .some(
+          (item) =>
+            (item.providerTurnId === expectedTurnId || item.turnId === activeTurn.id) &&
+            item.status === 'completed' &&
+            item.textContent.trim().length > 0 &&
+            ((item.itemType === 'agentMessage' && item.phase === 'final_answer') || formalPlanItemIds.has(item.id)),
+        );
+      if (completedOutput) delivery = 'queue';
     }
     let selectedModel: string | null = null;
     let selectedModelSourceId: string | null = conversation.modelSourceId;

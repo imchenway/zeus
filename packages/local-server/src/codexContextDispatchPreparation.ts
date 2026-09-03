@@ -1,12 +1,12 @@
-import type {CodexAppServerManager, CodexResponsesRuntime} from '@zeus/ai-runtime';
-import type {CodexBootstrapAdditionalContext} from '@zeus/shared';
-import {emitPluginCompactionHook} from './codexConversationDispatchContext.js';
-import {mergeCodexAdditionalContext} from './codexNativeContextProtocol.js';
-import {runCodexPortableContextCompaction} from './codexPortableContextCompaction.js';
-import type {CodexProviderCommandApplicationService} from './codexProviderCommandApplication.js';
-import type {ContextDispatchEnvelope, ProviderDispatchContextCompiler} from './contextDispatchService.js';
-import type {ConversationSegmentLifecycle} from './conversationExecutionCoordinator.js';
-import type {ZeusConversationPluginRuntime} from './zeusConversationPluginRuntime.js';
+import type { CodexAppServerManager, CodexResponsesRuntime } from '@zeus/ai-runtime';
+import type { CodexBootstrapAdditionalContext } from '@zeus/shared';
+import { emitPluginCompactionHook } from './codexConversationDispatchContext.js';
+import { mergeCodexAdditionalContext } from './codexNativeContextProtocol.js';
+import { runCodexPortableContextCompaction } from './codexPortableContextCompaction.js';
+import type { CodexProviderCommandApplicationService } from './codexProviderCommandApplication.js';
+import type { ContextDispatchEnvelope, ProviderDispatchContextCompiler } from './contextDispatchService.js';
+import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
+import type { ZeusConversationPluginRuntime } from './zeusConversationPluginRuntime.js';
 
 interface PrepareCodexContextInput {
   manager: CodexAppServerManager;
@@ -99,6 +99,6 @@ export async function prepareCodexDispatchContext(input: PrepareCodexContextInpu
     });
   };
 
-    // 同一 thread 的原生压缩由 app-server 自主管理；这里只压缩换路由时必须携带的有界交接上下文。
-    return {compiled: await compile(), pluginCompactContext};
+  // 同一 thread 的原生压缩由 app-server 自主管理；这里只压缩换路由时必须携带的有界交接上下文。
+  return { compiled: await compile(), pluginCompactContext };
 }

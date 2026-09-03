@@ -1,27 +1,20 @@
-import {createHash} from 'node:crypto';
-import {dirname, isAbsolute, join, relative, sep} from 'node:path';
-import {
-    buildAiRuntimePrompt,
-    type CodexAccountSnapshot,
-    type CodexCapabilitiesSnapshot,
-    type CodexTransportState,
-    type ProjectModelSelection,
-    type SelectableConnectionModel
-} from '@zeus/ai-runtime';
-import {buildTaskBranchName, buildTaskBranchPrefix, type GitRepositoryContext} from '@zeus/git-core';
+import { createHash } from 'node:crypto';
+import { dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { buildAiRuntimePrompt, type CodexAccountSnapshot, type CodexCapabilitiesSnapshot, type CodexTransportState, type ProjectModelSelection, type SelectableConnectionModel } from '@zeus/ai-runtime';
+import { buildTaskBranchName, buildTaskBranchPrefix, type GitRepositoryContext } from '@zeus/git-core';
 import type {
-    ConversationRepository,
-    ConversationSubmissionRepository,
-    ProjectRepository,
-    ProjectRepositoryRegistrationRepository,
-    ProjectSharedPathRepository,
-    TaskEnvironmentRepository,
-    TaskRepository,
-    TaskWorkspaceRepository,
-    ZeusConversationWithMessagesRecord,
-    ZeusProjectRecord,
-    ZeusProjectRepositoryRecord,
-    ZeusTaskRecord,
+  ConversationRepository,
+  ConversationSubmissionRepository,
+  ProjectRepository,
+  ProjectRepositoryRegistrationRepository,
+  ProjectSharedPathRepository,
+  TaskEnvironmentRepository,
+  TaskRepository,
+  TaskWorkspaceRepository,
+  ZeusConversationWithMessagesRecord,
+  ZeusProjectRecord,
+  ZeusProjectRepositoryRecord,
+  ZeusTaskRecord,
 } from '@zeus/storage';
 
 interface TaskPushContextProjection {
@@ -367,9 +360,8 @@ function mapConversationCapabilityModels(codexCapabilities: CodexCapabilitiesSna
     ...(model.defaultReasoningEffort ? { defaultReasoningEffort: model.defaultReasoningEffort } : {}),
     serviceTiers: model.serviceTiers.map((tier) => ({ ...tier })),
     ...(model.defaultServiceTier !== undefined ? { defaultServiceTier: model.defaultServiceTier } : {}),
-      // app-server 目录与同代际预算快照必须对外呈现同一个模型窗口，避免交接预检和真实派发各用一套数字。
-      contextWindow:
-          positiveIntegerOrNull(model.raw.contextWindow ?? model.raw.context_window ?? model.raw.modelContextWindow ?? model.raw.model_context_window) ?? codexCapabilities?.modelBudgets[model.model]?.contextWindowTokens ?? null,
+    // app-server 目录与同代际预算快照必须对外呈现同一个模型窗口，避免交接预检和真实派发各用一套数字。
+    contextWindow: positiveIntegerOrNull(model.raw.contextWindow ?? model.raw.context_window ?? model.raw.modelContextWindow ?? model.raw.model_context_window) ?? codexCapabilities?.modelBudgets[model.model]?.contextWindowTokens ?? null,
   }));
   const connectionModels: ConversationCapabilityModel[] = connectionCatalog.map((model) => ({
     id: model.id,

@@ -1,45 +1,38 @@
-import {type CodexThreadGoal, toCodexWireReasoningEffort} from '@zeus/ai-runtime';
+import { type CodexThreadGoal, toCodexWireReasoningEffort } from '@zeus/ai-runtime';
+import type { ConversationCollaborationMode, ConversationNextTurnSettings, ConversationRepository, ZeusConversationGoalRecord, ZeusConversationSubmissionRecord, ZeusConversationWithMessagesRecord } from '@zeus/storage';
+import { ensureInitialCodexGoal } from './codexGoalApplication.js';
 import type {
-    ConversationCollaborationMode,
-    ConversationNextTurnSettings,
-    ConversationRepository,
-    ZeusConversationGoalRecord,
-    ZeusConversationSubmissionRecord,
-    ZeusConversationWithMessagesRecord
-} from '@zeus/storage';
-import {ensureInitialCodexGoal} from './codexGoalApplication.js';
-import type {
-    ConversationDispatchContext,
-    CreateCodexNativeConversationCoordinatorOptions,
-    NativeAcceptedOperation,
-    NativeConversationRunState,
-    NativeOperationStatus,
-    NativeProviderWriteLifecycle,
-    NativeQueueSnapshot,
-    NativeSessionCommandExecutor,
+  ConversationDispatchContext,
+  CreateCodexNativeConversationCoordinatorOptions,
+  NativeAcceptedOperation,
+  NativeConversationRunState,
+  NativeOperationStatus,
+  NativeProviderWriteLifecycle,
+  NativeQueueSnapshot,
+  NativeSessionCommandExecutor,
 } from './codexNativeConversationContracts.js';
 import {
-    conversationSubmissionDispatchEnvelope,
-    coordinatorError,
-    developerInstructionsFor,
-    isProviderThreadArchivedError,
-    parseJsonRecord,
-    parseStoredConversationSubmissionDispatchEnvelope,
-    providerPermissionProfile,
-    requestHash,
-    requireString,
-    serializeError,
-    toRecoverySubmissionError,
+  conversationSubmissionDispatchEnvelope,
+  coordinatorError,
+  developerInstructionsFor,
+  isProviderThreadArchivedError,
+  parseJsonRecord,
+  parseStoredConversationSubmissionDispatchEnvelope,
+  providerPermissionProfile,
+  requestHash,
+  requireString,
+  serializeError,
+  toRecoverySubmissionError,
 } from './codexNativeConversationPolicy.js';
-import {assertCallerDoesNotOverrideCompiledContext, mergeCodexAdditionalContext} from './codexNativeContextProtocol.js';
-import {prepareCodexDispatchContext} from './codexContextDispatchPreparation.js';
-import {CodexProviderCommandApplicationService} from './codexProviderCommandApplication.js';
-import type {CodexProviderThreadAuthorityApplication} from './codexProviderThreadAuthority.js';
-import {conversationToolResultDynamicTools} from './conversationPortableContext.js';
-import type {ConversationSegmentLifecycle} from './conversationExecutionCoordinator.js';
-import {isServiceTierUnavailableError} from './codexServiceTierDowngrade.js';
-import {persistThreadProviderSettings} from './codexThreadMetadataProjection.js';
-import type {ZeusToolBroker} from './zeusToolRegistry.js';
+import { assertCallerDoesNotOverrideCompiledContext, mergeCodexAdditionalContext } from './codexNativeContextProtocol.js';
+import { prepareCodexDispatchContext } from './codexContextDispatchPreparation.js';
+import { CodexProviderCommandApplicationService } from './codexProviderCommandApplication.js';
+import type { CodexProviderThreadAuthorityApplication } from './codexProviderThreadAuthority.js';
+import { conversationToolResultDynamicTools } from './conversationPortableContext.js';
+import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
+import { isServiceTierUnavailableError } from './codexServiceTierDowngrade.js';
+import { persistThreadProviderSettings } from './codexThreadMetadataProjection.js';
+import type { ZeusToolBroker } from './zeusToolRegistry.js';
 
 interface NativeConversationDispatchLease {
   submissionId: string;

@@ -1,46 +1,38 @@
-import {type KeyboardEvent, type RefObject, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
-import {ChatCircleIcon as ChatCircle} from '@phosphor-icons/react/dist/csr/ChatCircle';
-import {ArrowUpIcon as ArrowUp} from '@phosphor-icons/react/dist/csr/ArrowUp';
-import {GlobeSimpleIcon as GlobeSimple} from '@phosphor-icons/react/dist/csr/GlobeSimple';
-import {PaperclipIcon as Paperclip} from '@phosphor-icons/react/dist/csr/Paperclip';
-import {SquareIcon as Square} from '@phosphor-icons/react/dist/csr/Square';
-import {TargetIcon as Target} from '@phosphor-icons/react/dist/csr/Target';
-import {XIcon as X} from '@phosphor-icons/react/dist/csr/X';
-import type {ConversationContextDraft, ZeusBrowserPreparedSubmission} from '@zeus/shared';
-import type {ProjectModelServiceTierPreference} from '../apiClient.js';
+import { type KeyboardEvent, type RefObject, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
+import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
+import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
+import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paperclip';
+import { SquareIcon as Square } from '@phosphor-icons/react/dist/csr/Square';
+import { TargetIcon as Target } from '@phosphor-icons/react/dist/csr/Target';
+import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
+import type { ConversationContextDraft, ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import type { ProjectModelServiceTierPreference } from '../apiClient.js';
 import type {
-    CodexConversationCapabilities,
-    NativeCollaborationMode,
-    NativeConversationAttachment,
-    NativeGoalSnapshot,
-    NativePermissionMode,
-    NativeServiceTierSelection,
-    NativeSessionState,
-    NativeTurnSettingsSelection,
+  CodexConversationCapabilities,
+  NativeCollaborationMode,
+  NativeConversationAttachment,
+  NativeGoalSnapshot,
+  NativePermissionMode,
+  NativeServiceTierSelection,
+  NativeSessionState,
+  NativeTurnSettingsSelection,
 } from './sessionTypes.js';
-import {ComposerDropdown} from './ComposerDropdown.js';
-import {PermissionModeControl} from './PermissionModeControl.js';
-import type {SessionUiLanguage} from './ThreadItemView.js';
-import {autosizeTextarea} from './textareaAutosize.js';
-import {CollaborationModeControl} from './CollaborationModeControl.js';
-import {ConversationComposerAttachments} from './ConversationComposerAttachments.js';
-import {ContextUsageIndicator} from './ContextUsageIndicator.js';
-import {ServiceTierToggle} from './ServiceTierToggle.js';
-import {resolveModelCapability} from './modelSelection.js';
-import {useConversationInputResources} from './useConversationInputResources.js';
-import {
-    normalizeServiceTierSelection,
-    selectionFromEffectiveServiceTier,
-    serviceTierSelectionValue,
-    serviceTierWireOverride
-} from './serviceTierSelection.js';
-import {presentModelOptions} from '../modelOptionPresentation.js';
-import {useApplicationErrorDialog} from '../ui/ApplicationErrorDialog.js';
-import {
-    findProjectModelServiceTierPreference,
-    projectModelServiceTierSelection
-} from './projectServiceTierPreferences.js';
-import {StructuredComposerInput, type StructuredComposerSelection} from './StructuredComposerInput.js';
+import { ComposerDropdown } from './ComposerDropdown.js';
+import { PermissionModeControl } from './PermissionModeControl.js';
+import type { SessionUiLanguage } from './ThreadItemView.js';
+import { autosizeTextarea } from './textareaAutosize.js';
+import { CollaborationModeControl } from './CollaborationModeControl.js';
+import { ConversationComposerAttachments } from './ConversationComposerAttachments.js';
+import { ContextUsageIndicator } from './ContextUsageIndicator.js';
+import { ServiceTierToggle } from './ServiceTierToggle.js';
+import { resolveModelCapability } from './modelSelection.js';
+import { useConversationInputResources } from './useConversationInputResources.js';
+import { normalizeServiceTierSelection, selectionFromEffectiveServiceTier, serviceTierSelectionValue, serviceTierWireOverride } from './serviceTierSelection.js';
+import { presentModelOptions } from '../modelOptionPresentation.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { findProjectModelServiceTierPreference, projectModelServiceTierSelection } from './projectServiceTierPreferences.js';
+import { StructuredComposerInput, type StructuredComposerSelection } from './StructuredComposerInput.js';
 
 export type ComposerKeyIntent = 'submit' | 'newline' | 'escape' | 'ignore';
 export interface ComposerRuntimeSettings {
@@ -699,21 +691,18 @@ export function resolveComposerKeyIntent(input: { key: string; shiftKey: boolean
 
 export function canSteerActiveTurn(state: NativeSessionState): boolean {
   const active = state.conversationState === 'active_prework' || state.conversationState === 'active_final_answer';
-    if (!active || state.transportState !== 'ready' || !state.activeTurnId || state.startedTurnId !== state.activeTurnId) return false;
-    // 正式正文或正式计划完成后，用户看到的这一轮已经交付；Provider 的后台收尾不能继续开放“引导”。
-    return !Object.values(state.items).some((item) => {
-        if (item.turnId !== state.activeTurnId || item.status !== 'completed' || !item.text.trim()) return false;
-        // 不同 Provider 的正文类型命名先归一化再判断。
-        const type = item.type.toLocaleLowerCase().replace(/[\s_\-/]+/gu, '');
-        // 旧快照可能把阶段保存在顶层，新快照优先使用原始载荷。
-        const phase = typeof item.payload.phase === 'string' ? item.payload.phase : item.phase;
-        if ((type === 'agentmessage' || type === 'assistantmessage' || type === 'assistant' || type === 'message') && (phase === 'final_answer' || phase === 'finalAnswer')) return true;
-        if (type !== 'plan') return false;
-        return (
-            item.payload.formalPlan === true ||
-            state.planImplementationRequests.some((request) => request.planItemId === item.localItemId || request.planItemId === item.itemId || request.planItemId === item.providerItemId)
-        );
-    });
+  if (!active || state.transportState !== 'ready' || !state.activeTurnId || state.startedTurnId !== state.activeTurnId) return false;
+  // 正式正文或正式计划完成后，用户看到的这一轮已经交付；Provider 的后台收尾不能继续开放“引导”。
+  return !Object.values(state.items).some((item) => {
+    if (item.turnId !== state.activeTurnId || item.status !== 'completed' || !item.text.trim()) return false;
+    // 不同 Provider 的正文类型命名先归一化再判断。
+    const type = item.type.toLocaleLowerCase().replace(/[\s_\-/]+/gu, '');
+    // 旧快照可能把阶段保存在顶层，新快照优先使用原始载荷。
+    const phase = typeof item.payload.phase === 'string' ? item.payload.phase : item.phase;
+    if ((type === 'agentmessage' || type === 'assistantmessage' || type === 'assistant' || type === 'message') && (phase === 'final_answer' || phase === 'finalAnswer')) return true;
+    if (type !== 'plan') return false;
+    return item.payload.formalPlan === true || state.planImplementationRequests.some((request) => request.planItemId === item.localItemId || request.planItemId === item.itemId || request.planItemId === item.providerItemId);
+  });
 }
 
 function resolveComposerModel(capabilities: CodexConversationCapabilities | null | undefined, providerModel: string | undefined): string {
