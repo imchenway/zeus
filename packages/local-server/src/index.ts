@@ -66,7 +66,7 @@ import {
   LongTermMemoryRepository,
   PluginRepository,
   ProjectionDatabaseRuntimeManager,
-    ProjectRepository,
+  ProjectRepository,
   ProjectRepositoryRegistrationRepository,
   ProjectSharedPathRepository,
   ProviderEventReceiptRepository,
