@@ -1541,9 +1541,13 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     if (relativePath) {
       setGraphSourceOpenFeedback('opening');
       try {
-        await projectSourceWorkspaceRef.current?.openFile(relativePath, source.lineStart);
         setProjectCodeWorkspaceMode('source');
         setVisitedCodeWorkspaceModes((current) => new Set(current).add('source'));
+        // 源码工作区按页面生命周期挂载；先切回源码页，等待一次绘制使命令式句柄就绪。
+        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+        const sourceWorkspace = projectSourceWorkspaceRef.current;
+        if (!sourceWorkspace) throw new Error('源码工作区尚未完成挂载。');
+        await sourceWorkspace.openFile(relativePath, source.lineStart);
         setGraphSourceOpenFeedback('opened');
         return;
       } catch (error) {

@@ -654,18 +654,20 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
         {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && activeProjectSection === 'code' && selectedProject ? (
           <section className="workspace-view workspace-view-project-code project-code-workspace" aria-label={codeWorkspaceCopy.projectCodeAria}>
             <div className="project-code-mode-host">
-              <div className="project-code-mode-pane" hidden={projectCodeWorkspaceMode !== 'source'}>
-                <ProjectSourceWorkspace
-                  key={selectedProject.id}
-                  ref={projectSourceWorkspaceRef}
-                  project={selectedProject}
-                  language={appShellSettings.appLanguage}
-                  preference={appShellSettings.codeWorkspaceByProject?.[selectedProject.id]}
-                  onPreferenceChange={(preference) => persistCodeWorkspacePreference(selectedProject.id, preference)}
-                  onDirtyChange={setSourceWorkspaceDirty}
-                  onOpenExternal={(relativePath, line) => void props.onOpenGraphSource?.({ sourceRef: relativePath, lineStart: line, projectRoot: selectedProject.localPath })}
-                />
-              </div>
+              {projectCodeWorkspaceMode === 'source' ? (
+                <div className="project-code-mode-pane">
+                  <ProjectSourceWorkspace
+                    key={selectedProject.id}
+                    ref={projectSourceWorkspaceRef}
+                    project={selectedProject}
+                    language={appShellSettings.appLanguage}
+                    preference={appShellSettings.codeWorkspaceByProject?.[selectedProject.id]}
+                    onPreferenceChange={(preference) => persistCodeWorkspacePreference(selectedProject.id, preference)}
+                    onDirtyChange={setSourceWorkspaceDirty}
+                    onOpenExternal={(relativePath, line) => void props.onOpenGraphSource?.({ sourceRef: relativePath, lineStart: line, projectRoot: selectedProject.localPath })}
+                  />
+                </div>
+              ) : null}
               {visitedCodeWorkspaceModes.has('graph') ? (
                 <div className="project-code-mode-pane project-code-graph-pane" hidden={projectCodeWorkspaceMode !== 'graph'}>
                   {activeGraphView ? (

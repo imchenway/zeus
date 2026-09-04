@@ -279,17 +279,19 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     updateTaskManagementStatus,
     updateTaskRelationships,
   } = domainActions;
-  async function handleCodeMapAction(): Promise<void> {
-    handleMainNavigate('projects');
-    setActiveProjectSection('code');
-    await selectProjectCodeWorkspaceMode('graph');
+  function handleCodeMapAction(): void {
+    requestWorkspaceLeave(() => {
+      setActiveNavTarget('projects');
+      setActiveProjectSection('code');
+      void selectProjectCodeWorkspaceMode('graph');
+    });
   }
 
   function renderProjectCodeMapStage(): ReactNode {
     if (!activeGraphView) return null;
     return (
       <section className="project-code-map-stage" aria-label={codeWorkspaceCopy.graphDrawerAria}>
-        {/* 图谱按首次进入模式再加载，源码工作台始终保持已打开标签和草稿。 */}
+        {/* 图谱按首次进入模式再加载；源码工作台离开时释放监听器，返回后再从偏好和磁盘恢复。 */}
         <CodeMapView
           isActive={activeProjectSection === 'code'}
           graphView={activeGraphView}
