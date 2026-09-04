@@ -195,7 +195,7 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
     }
     window.addEventListener('keydown', onProjectWorkspaceShortcut);
     return () => window.removeEventListener('keydown', onProjectWorkspaceShortcut);
-  }, [activeNavTarget, selectedProject]);
+  }, [activeNavTarget, selectedProject, sourceWorkspaceDirty, taskTableLayoutDirty]);
   useEffect(() => {
     const bridge = window.zeus;
     if (bridge?.getRequestingWindowForeground && bridge.onRequestingWindowForegroundChanged) {

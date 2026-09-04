@@ -13,6 +13,8 @@ import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import './projectSourceWorkspace.css';
 
 const CodeEditor = lazy(() => import('./CodeEditor.js').then((module) => ({ default: module.CodeEditor })));
+// 文件系统事件在这个时间窗内按目录和文件去重，避免批量写入触发重复读取与渲染。
+const sourceEventRefreshDelayMs = 100;
 
 type AppLanguage = 'zh-CN' | 'en-US';
 
@@ -77,9 +79,11 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   const [operationParent, setOperationParent] = useState('');
   const [pendingClosePath, setPendingClosePath] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ entry: ProjectSourceEntry; x: number; y: number } | null>(null);
+  const directoriesRef = useRef(directories);
   const tabsRef = useRef(tabs);
   const activePathRef = useRef(activePath);
   const dirtyRef = useRef(false);
+  directoriesRef.current = directories;
   tabsRef.current = tabs;
   activePathRef.current = activePath;
   const activeTab = tabs.find((tab) => tab.document.relativePath === activePath) ?? null;
@@ -178,6 +182,13 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
 
   useEffect(() => props.onDirtyChange?.(dirty), [dirty, props.onDirtyChange]);
 
+  useEffect(
+    () => () => {
+      props.onDirtyChange?.(false);
+    },
+    [props.onDirtyChange],
+  );
+
   useEffect(() => {
     let active = true;
     setLoadingTree(true);
@@ -222,35 +233,82 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   useEffect(() => {
     if (!bridge?.watchProjectSource || !bridge.onProjectSourceEvent) return undefined;
     const sourceBridge = bridge;
-    void sourceBridge.watchProjectSource(props.project.id).catch(setError);
-    const unsubscribe = sourceBridge.onProjectSourceEvent((event) => void handleSourceEvent(event));
+    let active = true;
+    let refreshing = false;
+    let refreshTimer: number | null = null;
+    const pendingDirectoryPaths = new Set<string>();
+    const pendingFilePaths = new Set<string>();
+    const watcherReady = sourceBridge.watchProjectSource(props.project.id);
+    void watcherReady.catch((watchError) => {
+      if (active) setError(watchError);
+    });
+    const unsubscribe = sourceBridge.onProjectSourceEvent(queueSourceEvent);
     return () => {
+      active = false;
       unsubscribe();
-      void sourceBridge.unwatchProjectSource?.();
+      if (refreshTimer !== null) window.clearTimeout(refreshTimer);
+      pendingDirectoryPaths.clear();
+      pendingFilePaths.clear();
+      void watcherReady.then(() => sourceBridge.unwatchProjectSource?.()).catch(() => undefined);
     };
 
-    async function handleSourceEvent(event: ProjectSourceEvent): Promise<void> {
+    /** 只把界面已加载的目录或已打开的文件放入有界刷新队列。 */
+    function queueSourceEvent(event: ProjectSourceEvent): void {
       if (event.projectId !== props.project.id) return;
-      void sourceBridge
-        .listProjectSourceDirectory({ projectId: props.project.id, relativePath: event.parentRelativePath })
-        .then((snapshot) => setDirectories((current) => ({ ...current, [snapshot.relativePath]: snapshot })))
-        .catch(() => undefined);
-      const tab = tabsRef.current.find((candidate) => candidate.document.relativePath === event.relativePath);
-      if (!tab) return;
+      if (Object.prototype.hasOwnProperty.call(directoriesRef.current, event.parentRelativePath)) pendingDirectoryPaths.add(event.parentRelativePath);
+      if (tabsRef.current.some((candidate) => candidate.document.relativePath === event.relativePath)) pendingFilePaths.add(event.relativePath);
+      scheduleSourceRefresh();
+    }
+
+    /** 在当前刷新结束后统一处理积压事件，保证同一时刻最多只有一批磁盘读取。 */
+    function scheduleSourceRefresh(): void {
+      if (refreshing || refreshTimer !== null || (pendingDirectoryPaths.size === 0 && pendingFilePaths.size === 0)) return;
+      refreshTimer = window.setTimeout(() => void flushSourceRefresh(), sourceEventRefreshDelayMs);
+    }
+
+    /** 合并读取已加载目录和已打开文件，并一次性更新目录快照。 */
+    async function flushSourceRefresh(): Promise<void> {
+      refreshTimer = null;
+      refreshing = true;
+      const directoryPaths = [...pendingDirectoryPaths];
+      const filePaths = [...pendingFilePaths];
+      pendingDirectoryPaths.clear();
+      pendingFilePaths.clear();
+      try {
+        const snapshots = await Promise.all(directoryPaths.map((relativePath) => sourceBridge.listProjectSourceDirectory({ projectId: props.project.id, relativePath }).catch(() => null)));
+        if (active) {
+          const availableSnapshots = snapshots.filter((snapshot): snapshot is ProjectSourceDirectorySnapshot => Boolean(snapshot));
+          if (availableSnapshots.length > 0) {
+            setDirectories((current) => ({ ...current, ...Object.fromEntries(availableSnapshots.map((snapshot) => [snapshot.relativePath, snapshot])) }));
+          }
+          await Promise.all(filePaths.map(refreshOpenFile));
+        }
+      } finally {
+        refreshing = false;
+        if (active) scheduleSourceRefresh();
+      }
+    }
+
+    /** 保留脏草稿，只标记外部变更；干净标签直接同步磁盘内容。 */
+    async function refreshOpenFile(relativePath: string): Promise<void> {
+      const tab = tabsRef.current.find((candidate) => candidate.document.relativePath === relativePath);
+      if (!tab || !active) return;
       if (tab.dirty) {
-        setTabs((current) => current.map((candidate) => (candidate.document.relativePath === event.relativePath ? { ...candidate, externalChange: true } : candidate)));
+        setTabs((current) => current.map((candidate) => (candidate.document.relativePath === relativePath ? { ...candidate, externalChange: true } : candidate)));
         return;
       }
       try {
-        const document = await sourceBridge.readProjectSourceFile({ projectId: props.project.id, relativePath: event.relativePath });
-        setTabs((current) => current.map((candidate) => (candidate.document.relativePath === event.relativePath ? { ...candidate, document, draft: document.content, externalChange: false } : candidate)));
+        const document = await sourceBridge.readProjectSourceFile({ projectId: props.project.id, relativePath });
+        if (active) setTabs((current) => current.map((candidate) => (candidate.document.relativePath === relativePath ? { ...candidate, document, draft: document.content, externalChange: false } : candidate)));
       } catch {
-        setTabs((current) => current.map((candidate) => (candidate.document.relativePath === event.relativePath ? { ...candidate, externalChange: true } : candidate)));
-        setError(
-          zh
-            ? `“${event.relativePath}”已在磁盘中删除、重命名或变得不可访问。标签内容仍保留，可另存为或关闭。`
-            : `“${event.relativePath}” was deleted, renamed, or became inaccessible on disk. The tab content is retained and can be saved as or closed.`,
-        );
+        if (active) {
+          setTabs((current) => current.map((candidate) => (candidate.document.relativePath === relativePath ? { ...candidate, externalChange: true } : candidate)));
+          setError(
+            zh
+              ? `“${relativePath}”已在磁盘中删除、重命名或变得不可访问。标签内容仍保留，可另存为或关闭。`
+              : `“${relativePath}” was deleted, renamed, or became inaccessible on disk. The tab content is retained and can be saved as or closed.`,
+          );
+        }
       }
     }
   }, [bridge, props.project.id]);

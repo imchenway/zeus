@@ -19,6 +19,8 @@ const maximumEditableBytes = 2 * 1024 * 1024;
 const maximumSearchResults = 200;
 const maximumSearchVisits = 50_000;
 const utf8Bom = Buffer.from([0xef, 0xbb, 0xbf]);
+// 生成目录只供按需浏览，不应把高频外部写入放大成主进程与渲染进程之间的事件风暴。
+const ignoredWatchDirectoryNames = new Set(['.git', '.tmp', 'node_modules', 'dist', 'coverage']);
 
 export interface ProjectSourceWorkspaceServices {
   loadProjectRoot(projectId: string): Promise<string>;
@@ -211,6 +213,7 @@ export class ProjectSourceWorkspaceService {
     return watch(root, { recursive: true }, (eventType, fileName) => {
       if (!fileName) return;
       const relativePath = fileName.split(sep).join('/');
+      if (relativePath.split('/').some((segment) => ignoredWatchDirectoryNames.has(segment))) return;
       try {
         assertSafeRelativePath(relativePath, false);
       } catch {
