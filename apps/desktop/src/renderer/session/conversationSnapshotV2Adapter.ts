@@ -190,7 +190,15 @@ function activeTurnItems(items: readonly NativeConversationActiveItemV2[], provi
 
 /** 历史与活动尾部按同一 Provider 身份和时间线合并，活动投影补齐尚未确认的过程状态。 */
 function mergeActiveTurnItems(history: readonly NativeItemSnapshot[], active: readonly NativeItemSnapshot[]): NativeItemSnapshot[] {
-  return mergeItemsByProviderIdentity(history, active);
+  // 历史用户项携带稳定客户端身份；活动预览即使被截断，仍可按 Provider 身份继承这些信息。
+  const historicalUsers = new Map(history.filter((item) => item.type === 'userMessage' && item.providerItemId).map((item) => [item.providerItemId!, item]));
+  return mergeItemsByProviderIdentity(
+    history,
+    active.map((item) => {
+      const historical = item.type === 'userMessage' ? historicalUsers.get(item.providerItemId ?? '') : undefined;
+      return historical ? { ...item, payload: { ...historical.payload, ...item.payload } } : item;
+    }),
+  );
 }
 
 function emptyUnifiedUsageSnapshot(): NativeUnifiedUsageSnapshot {
