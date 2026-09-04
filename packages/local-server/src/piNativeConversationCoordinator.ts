@@ -14,6 +14,7 @@ import {
   isOfficialDeepSeekApiConnection,
   modelConnectionRequestEndpoint,
   modelRef,
+  type ModelProtocolFamily,
   parseModelRef,
   piRuntimeWorkerProtocolVersion,
   type PiZeusToolBroker,
@@ -96,6 +97,10 @@ interface PiRunContext {
     firstTextOutputAt: string | null;
     hasNonTextOutput: boolean;
   } | null;
+  /** 当前 Assistant 响应的稳定展示阶段。 */
+  currentStageId: string | null;
+  /** 工具调用身份到所属展示阶段的映射。 */
+  stageIdByToolCallId: Map<string, string>;
 }
 
 export interface CreatePiNativeConversationCoordinatorOptions {
@@ -203,6 +208,43 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       authenticationScheme: configuredModel?.authenticationScheme ?? 'protocol_default',
       endpoint: connection ? modelConnectionRequestEndpoint(connection.baseUrl, protocolFamily) : null,
     };
+  }
+
+  /** 优先读取排队时冻结的协议族，避免运行中模型目录变更造成展示语义漂移。 */
+  function projectionProtocolFamily(run: PiRunContext, segment: { executionSnapshotId: string | null }): ModelProtocolFamily {
+    const frozenProtocol = segment.executionSnapshotId ? options.execution.getExecutionSnapshot(segment.executionSnapshotId)?.protocolFamily : null;
+    if (frozenProtocol === 'anthropic_messages' || frozenProtocol === 'openai_responses' || frozenProtocol === 'openai_completions') return frozenProtocol;
+    const api = adapterRouteForModel({ sourceId: run.sourceId, modelId: run.modelId, displayName: run.modelId }).api;
+    return api === 'anthropic-messages' ? 'anthropic_messages' : api === 'openai-responses' ? 'openai_responses' : 'openai_completions';
+  }
+
+  /** 发布已持久化的 Pi 处理过程，并保持实时事件与 Snapshot 投影字段一致。 */
+  function publishPiProcessItems(run: PiRunContext, processItems: ReturnType<TurnProcessProjector['projectPiEvent']>): void {
+    for (const processItem of processItems) {
+      const detail = asRecord(JSON.parse(processItem.detailJson));
+      publish(processItem.status === 'in_progress' ? 'conversation.item.started' : 'conversation.item.completed', run.conversationId, {
+        turnId: run.providerTurnId,
+        itemId: processItem.id,
+        itemType:
+          processItem.kind === 'reasoning' ? 'reasoning' : processItem.kind === 'command' ? 'commandExecution' : processItem.kind === 'context_compaction' ? 'contextCompaction' : processItem.kind === 'warning' ? 'error' : 'dynamicToolCall',
+        itemPayload: {
+          processKind: processItem.kind,
+          title: processItem.title,
+          detail,
+          protocolFamily: detail.protocolFamily,
+          stageId: detail.stageId,
+          ...(detail.reasoningPresentation !== undefined ? { reasoningPresentation: detail.reasoningPresentation } : {}),
+        },
+        protocolFamily: detail.protocolFamily,
+        stageId: detail.stageId,
+        status: processItem.status,
+        phase: 'prework',
+        textContent: processText(processItem.title, processItem.detailJson),
+      });
+    }
+    if (processItems.some((item) => item.status !== 'in_progress' && (item.kind === 'tool' || item.kind === 'command' || item.kind === 'retry'))) {
+      publish('conversation.sessionMetrics.changed', run.conversationId, {});
+    }
   }
 
   function settleInterruptedRun(run: PiRunContext, timestamp: string): void {
@@ -719,6 +761,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       lastRequestUsage: null,
       modelRequestCount: 0,
       pendingModelRequest: null,
+      currentStageId: null,
+      stageIdByToolCallId: new Map(),
     });
     await options.db.save();
     publish('conversation.turn.started', input.conversationId, { turnId: run.nativeRunId, submissionId: submission.id, status: 'running', startedAt: run.acceptedAt });
@@ -1066,6 +1110,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       lastRequestUsage: null,
       modelRequestCount: 0,
       pendingModelRequest: null,
+      currentStageId: null,
+      stageIdByToolCallId: new Map(),
     });
     await options.db.save();
     publish('conversation.turn.started', input.conversation.id, { turnId: run.nativeRunId, submissionId: submission.id, status: 'running', startedAt: run.acceptedAt });
@@ -1269,34 +1315,23 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     if (!run) return;
     const payload = asRecord(event.payload);
     const segment = options.execution.segmentByNativeSession(run.providerThreadId, run.conversationId);
-    if (segment) {
-      const processItems = processProjector.projectPiEvent({ conversationId: run.conversationId, turnId: run.turnId, segment }, event);
-      if (processItems.length > 0) {
-        await options.db.save();
-        for (const processItem of processItems) {
-          publish(processItem.status === 'in_progress' ? 'conversation.item.started' : 'conversation.item.completed', run.conversationId, {
-            turnId: run.providerTurnId,
-            itemId: processItem.id,
-            itemType:
-              processItem.kind === 'reasoning'
-                ? 'reasoning'
-                : processItem.kind === 'command'
-                  ? 'commandExecution'
-                  : processItem.kind === 'context_compaction'
-                    ? 'contextCompaction'
-                    : processItem.kind === 'warning'
-                      ? 'error'
-                      : 'dynamicToolCall',
-            itemPayload: { processKind: processItem.kind, title: processItem.title, detail: asRecord(JSON.parse(processItem.detailJson)) },
-            status: processItem.status,
-            phase: 'prework',
-            textContent: processText(processItem.title, processItem.detailJson),
-          });
-        }
-        if (processItems.some((item) => item.status !== 'in_progress' && (item.kind === 'tool' || item.kind === 'command' || item.kind === 'retry'))) {
-          publish('conversation.sessionMetrics.changed', run.conversationId, {});
-        }
-      }
+    const protocolFamily = segment ? projectionProtocolFamily(run, segment) : null;
+    const terminalMessage = event.type === 'message_end' ? asRecord(payload.message) : null;
+    if (terminalMessage?.role === 'assistant') {
+      const stageId = piAssistantStageId(terminalMessage, event);
+      run.currentStageId = stageId;
+      for (const toolCallId of piToolCallIds(terminalMessage)) run.stageIdByToolCallId.set(toolCallId, stageId);
+    }
+    const eventToolCallId = piEventToolCallId(payload);
+    const stageId = (eventToolCallId ? run.stageIdByToolCallId.get(eventToolCallId) : null) ?? run.currentStageId;
+    const processItems =
+      segment && protocolFamily && (event.type !== 'message_end' || terminalMessage?.role === 'assistant')
+        ? processProjector.projectPiEvent({ conversationId: run.conversationId, turnId: run.turnId, segment, protocolFamily, stageId }, event)
+        : [];
+    // message_end 的过程与阶段摘要必须先一起落盘，再按语义顺序发布；其他过程事件仍即时交付。
+    if (event.type !== 'message_end' && processItems.length > 0) {
+      await options.db.save();
+      publishPiProcessItems(run, processItems);
     }
     if (event.type === 'message_start') {
       const message = asRecord(payload.message);
@@ -1336,6 +1371,11 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     if (event.type === 'message_end') {
       const message = asRecord(payload.message);
       if (message.role !== 'assistant') return;
+      const content = Array.isArray(message.content) ? message.content.map(asRecord) : [];
+      const stopReason = typeof message.stopReason === 'string' ? message.stopReason : null;
+      const failed = stopReason === 'error' || stopReason === 'aborted';
+      const messageStageId = run.currentStageId ?? piAssistantStageId(message, event);
+      const messageProtocolFamily = protocolFamily ?? projectionProtocolFamily(run, { executionSnapshotId: null });
       const requestUsage = readPiUsage(message.usage);
       addUsage(run.usage, requestUsage);
       // 账本累加整轮消耗，快照的 last 只保留最后一次请求，两者口径不能互相冒充。
@@ -1344,7 +1384,6 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         const connection = options.modelConnections.listMetadata().find((candidate) => candidate.id === run.sourceId);
         const contextWindow = connection?.models.find((model) => model.id === run.modelId)?.contextWindow ?? null;
         const rawUsage = readPiUsageObservation(message.usage);
-        const content = Array.isArray(message.content) ? message.content.map(asRecord) : [];
         const hasReasoningContent = content.some((part) => part.type === 'thinking');
         // Pi 的 reasoning 拆分是可选字段；完整消息已证明只有文本时，缺失值可以精确归零。
         // 一旦存在 thinking 内容却缺少拆分，仍保持 null，避免把推理 Token 当作可见输出。
@@ -1361,8 +1400,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           pending?.firstTextOutputAt !== undefined &&
           Date.parse(event.createdAt) > Date.parse(pending.firstTextOutputAt) &&
           !hasNonTextOutput &&
-          message.stopReason !== 'error' &&
-          message.stopReason !== 'aborted';
+          !failed;
         options.execution.observeModelRequest({
           conversationId: run.conversationId,
           turnId: run.turnId,
@@ -1384,75 +1422,81 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         run.modelRequestCount += 1;
       }
       run.pendingModelRequest = null;
-      await options.db.save();
-      publish('conversation.sessionMetrics.changed', run.conversationId, {});
       const text = messageText(message);
-      if (!text) return;
-      const itemId = `pi_message_${event.nativeRunId}`;
-      const isToolUseStage = message.stopReason === 'toolUse';
+      const hasToolCall = content.some((part) => part.type === 'toolCall' || part.type === 'tool_use');
+      const isToolUseStage = stopReason === 'toolUse' || stopReason === 'tool_use' || hasToolCall;
       const modelSourceName = options.modelConnections.listMetadata().find((candidate) => candidate.id === run.sourceId)?.name ?? 'Pi';
       const providerPresentation = { agentKind: 'pi', modelSourceId: run.sourceId, modelSourceName, modelId: run.modelId } as const;
-      const itemInput = {
-        conversationId: run.conversationId,
-        turnId: run.turnId,
-        providerThreadId: event.nativeSessionId ?? '',
-        providerTurnId: run.providerTurnId,
-        providerItemId: itemId,
-        itemType: 'agentMessage' as const,
-        phase: isToolUseStage ? ('prework' as const) : ('final_answer' as const),
-        payload: { ...providerPresentation, stopReason: message.stopReason },
-        textContent: text,
-        updatedAt: event.createdAt,
-        agentKind: 'pi' as const,
-        nativeItemId: itemId,
-      };
-      if (isToolUseStage) options.providerItems.upsertProgress({ ...itemInput, status: 'in_progress' });
-      else options.providerItems.upsertCompleted({ ...itemInput, status: 'completed', completedAt: event.createdAt });
-      options.conversations.appendMessage({
-        conversationId: run.conversationId,
-        role: 'assistant',
-        content: text,
-        source: 'pi_sdk',
-        metadata: { ...providerPresentation, phase: itemInput.phase },
-        createdAt: event.createdAt,
-        providerThreadId: event.nativeSessionId ?? undefined,
-        providerTurnId: run.providerTurnId,
-        providerItemId: itemId,
-      });
-      if (segment) {
-        options.execution.appendModelHistory({
+      const phase = isToolUseStage ? ('prework' as const) : ('final_answer' as const);
+      const previousRevision = options.conversations.getById(run.conversationId)?.attentionRevision ?? 0;
+      let attention: ReturnType<ConversationRepository['markAttentionUnread']> | null = null;
+      if (text && !failed) {
+        const itemInput = {
           conversationId: run.conversationId,
           turnId: run.turnId,
-          segmentId: segment.id,
+          providerThreadId: event.nativeSessionId ?? '',
+          providerTurnId: run.providerTurnId,
+          providerItemId: messageStageId,
+          itemType: 'agentMessage' as const,
+          phase,
+          payload: { ...providerPresentation, protocolFamily: messageProtocolFamily, stageId: messageStageId, stopReason },
+          textContent: text,
+          updatedAt: event.createdAt,
+          agentKind: 'pi' as const,
+          nativeItemId: messageStageId,
+        };
+        options.providerItems.upsertCompleted({ ...itemInput, status: 'completed', completedAt: event.createdAt });
+        options.conversations.appendMessage({
+          conversationId: run.conversationId,
           role: 'assistant',
-          content: { text, ...providerPresentation },
-          submissionId: run.submissionId,
-          confirmedAt: event.createdAt,
+          content: text,
+          source: 'pi_sdk',
+          metadata: { ...providerPresentation, protocolFamily: messageProtocolFamily, stageId: messageStageId, phase },
+          createdAt: event.createdAt,
+          providerThreadId: event.nativeSessionId ?? undefined,
+          providerTurnId: run.providerTurnId,
+          providerItemId: messageStageId,
+        });
+        if (segment) {
+          options.execution.appendModelHistory({
+            conversationId: run.conversationId,
+            turnId: run.turnId,
+            segmentId: segment.id,
+            role: 'assistant',
+            content: { text, ...providerPresentation, protocolFamily: messageProtocolFamily, stageId: messageStageId, phase },
+            submissionId: run.submissionId,
+            confirmedAt: event.createdAt,
+          });
+        }
+        attention = options.conversations.markAttentionUnread(run.conversationId, {
+          kind: 'unread',
+          turnId: run.providerTurnId,
+          occurredAt: event.createdAt,
         });
       }
-      const previousRevision = options.conversations.getById(run.conversationId)?.attentionRevision ?? 0;
-      const attention = options.conversations.markAttentionUnread(run.conversationId, {
-        kind: 'unread',
-        turnId: run.providerTurnId,
-        occurredAt: event.createdAt,
-      });
       await options.db.save();
-      if (attention.attentionRevision !== previousRevision) {
+      publishPiProcessItems(run, processItems);
+      publish('conversation.sessionMetrics.changed', run.conversationId, {});
+      if (attention && attention.attentionRevision !== previousRevision) {
         publish('conversation.attention.changed', run.conversationId, {
           turnId: run.providerTurnId,
           attentionKind: attention.attentionKind,
           attentionRevision: attention.attentionRevision,
         });
       }
-      publish(isToolUseStage ? 'conversation.item.started' : 'conversation.item.completed', run.conversationId, {
-        turnId: run.providerTurnId,
-        itemId,
-        itemType: 'agentMessage',
-        itemPayload: { ...providerPresentation, stopReason: message.stopReason },
-        status: isToolUseStage ? 'in_progress' : 'completed',
-        phase: isToolUseStage ? 'prework' : 'final_answer',
-        textContent: text,
-      });
+      if (text && !failed) {
+        publish('conversation.item.completed', run.conversationId, {
+          turnId: run.providerTurnId,
+          itemId: messageStageId,
+          itemType: 'agentMessage',
+          itemPayload: { ...providerPresentation, protocolFamily: messageProtocolFamily, stageId: messageStageId, stopReason },
+          protocolFamily: messageProtocolFamily,
+          stageId: messageStageId,
+          status: 'completed',
+          phase,
+          textContent: text,
+        });
+      }
     }
     if (event.type === 'agent_settled' || event.type === 'runtime_error') {
       const failed = event.type === 'runtime_error';
@@ -1595,6 +1639,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     const run = [...runs.values()].reverse().find((candidate) => candidate.providerThreadId === request.session.nativeSessionId);
     const segment = run ? options.execution.currentSegment(run.conversationId) : null;
     if (!run || !segment) return raw;
+    const stageId = run.stageIdByToolCallId.get(request.toolCallId) ?? run.currentStageId;
+    const protocolFamily = projectionProtocolFamily(run, segment);
     const toolKind = request.toolName === 'read' ? 'read' : request.toolName === 'bash' ? 'command' : request.toolName === 'grep' || request.toolName === 'find' || request.toolName === 'ls' ? 'search' : 'other';
     const stored = await options.toolResults.store({
       conversationId: run.conversationId,
@@ -1630,7 +1676,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       turnId: run.turnId,
       segmentId: segment.id,
       role: 'assistant',
-      content: { type: 'tool_call', name: request.toolName, arguments: redactArgs(request.args) },
+      content: { type: 'tool_call', name: request.toolName, arguments: redactArgs(request.args), protocolFamily, stageId },
       submissionId: run.submissionId,
       toolPairId: request.toolCallId,
       confirmedAt: options.now(),
@@ -1645,6 +1691,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         handle: stored.record.handle,
         sha256: stored.record.sha256,
         byteLength: stored.record.byteLength,
+        protocolFamily,
+        stageId,
         ...(imageArtifacts.length > 0 ? { imageArtifacts } : {}),
       },
       submissionId: run.submissionId,
@@ -2445,6 +2493,31 @@ function resolveConversationCwd(conversation: ZeusConversationWithMessagesRecord
   const first = conversation.messages.find((message) => message.role === 'user');
   const metadata = first ? asRecord(JSON.parse(first.metadataJson || '{}')) : {};
   return typeof metadata.cwd === 'string' ? metadata.cwd : process.cwd();
+}
+
+/** 为一次完整 Assistant 响应生成稳定且不会与同轮其他响应冲突的展示阶段身份。 */
+function piAssistantStageId(message: Record<string, unknown>, event: AgentRuntimeEvent): string {
+  const providerIdentity = [message.responseId, message.id].find((value): value is string => typeof value === 'string' && value.trim().length > 0);
+  return `pi_message_${providerIdentity ?? `${event.nativeRunId ?? 'run'}_${event.sequence}`}`;
+}
+
+/** 提取 Assistant 响应中需要继承同一展示阶段的工具调用身份。 */
+function piToolCallIds(message: Record<string, unknown>): string[] {
+  if (!Array.isArray(message.content)) return [];
+  return message.content.flatMap((candidate) => {
+    const block = asRecord(candidate);
+    if (block.type !== 'toolCall' && block.type !== 'tool_use') return [];
+    return typeof block.id === 'string' && block.id.trim() ? [block.id] : [];
+  });
+}
+
+/** 从 Pi 的通用工具事件包装中读取工具调用身份。 */
+function piEventToolCallId(payload: Record<string, unknown>): string | null {
+  const request = asRecord(payload.request);
+  const toolCall = asRecord(payload.toolCall);
+  const result = asRecord(payload.result);
+  const value = payload.toolCallId ?? payload.tool_call_id ?? request.toolCallId ?? toolCall.id ?? result.toolCallId;
+  return typeof value === 'string' && value.trim() ? value : null;
 }
 
 function messageText(message: Record<string, unknown>): string {

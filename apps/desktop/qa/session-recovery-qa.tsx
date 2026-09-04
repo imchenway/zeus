@@ -71,7 +71,7 @@ const zeus0388CompletionOutput: NativeConversationModelHistoryV2Item = {
 };
 const zeus0388SnapshotV2: NativeConversationSnapshotV2 = {
   schemaVersion: 2,
-  structureGeneration: '2026-09-01-conversation-snapshot-v2-turn-output-anchors',
+  structureGeneration: '2026-09-03-conversation-stage-identity',
   conversationSchemaGeneration: '2026-08-16-unified-conversation-segments',
   throughEventSeq: 8,
   eventStreamGeneration: 'zeus-conversation-sync-v2',
@@ -128,7 +128,7 @@ const zeus0388SnapshotV2: NativeConversationSnapshotV2 = {
 };
 const zeus0388HistoryPage: NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item> = {
   schemaVersion: 2,
-  structureGeneration: '2026-09-01-conversation-snapshot-v2-turn-output-anchors',
+  structureGeneration: '2026-09-03-conversation-stage-identity',
   conversationId: zeus0388ConversationId,
   kind: 'model_history',
   throughEventSeq: 8,
@@ -227,7 +227,7 @@ const zeus0388ResourcePages: NativeConversationSnapshotV2Page<NativeConversation
   const items = zeus0388ResourceItems.slice(index * 32, (index + 1) * 32);
   return {
     schemaVersion: 2,
-    structureGeneration: '2026-09-01-conversation-snapshot-v2-turn-output-anchors',
+    structureGeneration: '2026-09-03-conversation-stage-identity',
     conversationId: zeus0388ConversationId,
     kind: 'resources',
     throughEventSeq: 8,

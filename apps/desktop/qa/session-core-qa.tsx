@@ -664,7 +664,7 @@ const completeMessageSessionState: NativeSessionState = {
       },
     ],
     snapshotV2: {
-      structureGeneration: '2026-09-01-conversation-snapshot-v2-turn-output-anchors',
+      structureGeneration: '2026-09-03-conversation-stage-identity',
       activeTurn: null,
       recentClosedTurns: [],
     },
@@ -679,7 +679,7 @@ function historyPagingRangeSnapshot(input: { through: number; oldest: number; cu
     id: historyPagingConversationId,
     items: [],
     snapshotV2: {
-      structureGeneration: '2026-09-01-conversation-snapshot-v2-turn-output-anchors',
+      structureGeneration: '2026-09-03-conversation-stage-identity',
     },
     v2Paging: {
       history: {
@@ -1934,7 +1934,7 @@ function CompleteMessagePreview() {
             const nextOffset = offset === 0 ? completeMessagePageBoundary : null;
             return {
               schemaVersion: 2 as const,
-              structureGeneration: '2026-09-01-conversation-snapshot-v2-turn-output-anchors' as const,
+              structureGeneration: '2026-09-03-conversation-stage-identity' as const,
               conversationId: completeMessageItem.conversationId,
               kind: 'model_content' as const,
               mimeType: 'text/plain; charset=utf-8',
@@ -2058,7 +2058,7 @@ function activeReentryProjection(preview: string) {
 
 const activeReentrySnapshot: NativeConversationSnapshotV2 = {
   schemaVersion: 2,
-  structureGeneration: '2026-09-01-conversation-snapshot-v2-turn-output-anchors',
+  structureGeneration: '2026-09-03-conversation-stage-identity',
   conversationSchemaGeneration: '2026-08-16-unified-conversation-segments',
   throughEventSeq: 2_948,
   eventStreamGeneration: 'zeus-conversation-sync-v2',
@@ -2212,7 +2212,7 @@ const activeReentrySnapshot: NativeConversationSnapshotV2 = {
 
 const activeReentryHistory: NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item> = {
   schemaVersion: 2,
-  structureGeneration: '2026-09-01-conversation-snapshot-v2-turn-output-anchors',
+  structureGeneration: '2026-09-03-conversation-stage-identity',
   conversationId: activeReentryConversationId,
   kind: 'model_history',
   throughEventSeq: activeReentrySnapshot.throughEventSeq,

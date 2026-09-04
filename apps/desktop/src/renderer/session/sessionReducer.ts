@@ -26,13 +26,13 @@ import type {
 import { isAssistantDeliverableItem } from './sessionTypes.js';
 import type { ZeusBrowserComment, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { type ConversationContextDraft, emptyConversationContextDraft, type TaskPushMessageLayout } from '@zeus/shared';
-import { mergeConversationModelContentV2, reconcileConversationHistoryCache } from './conversationSnapshotV2Adapter.js';
+import { mergeConversationContentV2, reconcileConversationHistoryCache } from './conversationSnapshotV2Adapter.js';
 
 export type NativeSessionAction =
   | { type: 'transport_changed'; transportState: TransportState; reconnectAttempt?: number; error?: NativeSessionError | null }
   | { type: 'snapshot_hydrated'; snapshot: NativeConversationSnapshot }
   | { type: 'snapshot_v2_page_merged'; snapshot: NativeConversationSnapshot }
-  | { type: 'v2_model_content_loaded'; conversationId: string; handle: string; text: string; redacted: boolean }
+  | { type: 'v2_content_loaded'; conversationId: string; handle: string; text: string; redacted: boolean }
   | { type: 'session_metrics_hydrated'; conversationId: string; sessionMetrics: NativeSessionMetricsSnapshot }
   | { type: 'goal_hydrated'; conversationId: string; response: NativeGoalResponse }
   | { type: 'next_turn_settings_changed'; settings: NativeNextTurnSettings }
@@ -166,8 +166,8 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
       return hydrateSnapshot(state, action.snapshot);
     case 'snapshot_v2_page_merged':
       return mergeSnapshotV2Page(state, action.snapshot);
-    case 'v2_model_content_loaded':
-      return mergeCompleteModelContent(state, action);
+    case 'v2_content_loaded':
+      return mergeCompleteContent(state, action);
     case 'session_metrics_hydrated': {
       if (state.conversationId !== action.conversationId || state.snapshot?.id !== action.conversationId) return state;
       const currentUpdatedAt = state.sessionMetrics?.updatedAt;
@@ -424,7 +424,7 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
     // 投影为空。资源属于同一持久 item 的展示增量，必须按稳定身份合并，不能在新一轮
     // 对账时倒退为“图片不可用”。
     const previousDurableItem = state.items[key] ?? (item.providerItemId ? previousItemsByProviderId.get(item.providerItemId) : undefined) ?? previousItemsByLocalId.get(item.id);
-    const previousCompleteContent = matchingCompleteModelContent(previousDurableItem, item);
+    const previousCompleteContent = matchingCompleteContent(previousDurableItem, item);
     const projectedPayload = previousUserItem ? mergeStableUserMessagePresentation(previousUserItem.payload, item.payload) : item.payload;
     items[key] = {
       key,
@@ -437,8 +437,10 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
       type: item.type,
       status: item.status,
       phase: item.phase,
+      protocolFamily: item.protocolFamily ?? null,
+      stageId: item.stageId ?? null,
       text: previousCompleteContent?.text ?? item.text,
-      payload: previousCompleteContent ? preserveCompleteModelContentPayload(projectedPayload, previousCompleteContent) : projectedPayload,
+      payload: previousCompleteContent ? preserveCompleteContentPayload(projectedPayload, previousCompleteContent) : projectedPayload,
       resources: mergeDurableItemResources(previousDurableItem?.resources, item.resources),
       timelineAt,
       updatedAt: item.updatedAt,
@@ -675,26 +677,30 @@ function mergeSnapshotPageItem(previous: NativeSessionItemBuffer, projected: Nat
     timelineAt: previous.timelineAt ?? projected.timelineAt,
     updatedAt: (previous.updatedAt ?? previous.timelineAt ?? '').localeCompare(projected.updatedAt ?? projected.timelineAt ?? '') > 0 ? previous.updatedAt : projected.updatedAt,
   };
-  const completeContent = matchingCompleteModelContent(previous, projected) ?? matchingCompleteModelContent(projected, previous);
+  const completeContent = matchingCompleteContent(previous, projected) ?? matchingCompleteContent(projected, previous);
   return completeContent
     ? {
         ...merged,
         text: completeContent.text,
-        payload: preserveCompleteModelContentPayload(merged.payload, completeContent),
+        payload: preserveCompleteContentPayload(merged.payload, completeContent),
       }
     : merged;
 }
 
-function matchingCompleteModelContent(previous: NativeSessionItemBuffer | undefined, projected: Pick<NativeSessionItemBuffer, 'payload'>): NativeSessionItemBuffer | null {
-  if (!previous || projected.payload.v2ContentKind !== 'model_history' || projected.payload.v2ContentTruncated !== true) return null;
+/** 判断热缓存中的完整内容能否安全复用于同一个不可变句柄。 */
+function matchingCompleteContent(previous: NativeSessionItemBuffer | undefined, projected: Pick<NativeSessionItemBuffer, 'payload'>): NativeSessionItemBuffer | null {
+  const contentKind = projected.payload.v2ContentKind;
+  if (!previous || (contentKind !== 'model_history' && contentKind !== 'process_detail') || previous.payload.v2ContentKind !== contentKind || projected.payload.v2ContentTruncated !== true) return null;
   const projectedHandle = stringValue(projected.payload.v2ContentHandle);
   return projectedHandle && previous.payload.v2ContentCompleteHandle === projectedHandle && previous.payload.v2ContentTruncated === false ? previous : null;
 }
 
-function preserveCompleteModelContentPayload(payload: Record<string, unknown>, completeContent: NativeSessionItemBuffer): Record<string, unknown> {
+/** 合并权威投影时保留已按句柄读取的完整正文或过程详情。 */
+function preserveCompleteContentPayload(payload: Record<string, unknown>, completeContent: NativeSessionItemBuffer): Record<string, unknown> {
   return {
     ...payload,
     ...(completeContent.payload.content !== undefined ? { content: completeContent.payload.content } : {}),
+    ...(completeContent.payload.detail !== undefined ? { detail: completeContent.payload.detail } : {}),
     ...(completeContent.payload.attachments !== undefined ? { attachments: completeContent.payload.attachments } : {}),
     ...(completeContent.payload.taskPushLayout !== undefined ? { taskPushLayout: completeContent.payload.taskPushLayout } : {}),
     ...(completeContent.payload.conversationContext !== undefined ? { conversationContext: completeContent.payload.conversationContext } : {}),
@@ -704,15 +710,16 @@ function preserveCompleteModelContentPayload(payload: Record<string, unknown>, c
   };
 }
 
-function mergeCompleteModelContent(state: NativeSessionState, action: Extract<NativeSessionAction, { type: 'v2_model_content_loaded' }>): NativeSessionState {
+/** 把完整内容同步写入快照投影与当前 reducer 条目。 */
+function mergeCompleteContent(state: NativeSessionState, action: Extract<NativeSessionAction, { type: 'v2_content_loaded' }>): NativeSessionState {
   if (state.conversationId !== action.conversationId || state.snapshot?.id !== action.conversationId) return state;
   const matchingKeys = state.itemOrder.filter((key) => {
     const item = state.items[key];
-    return item?.payload.v2ContentKind === 'model_history' && item.payload.v2ContentHandle === action.handle && item.payload.v2ContentTruncated === true;
+    return (item?.payload.v2ContentKind === 'model_history' || item?.payload.v2ContentKind === 'process_detail') && item.payload.v2ContentHandle === action.handle && item.payload.v2ContentTruncated === true;
   });
-  if (matchingKeys.length === 0 || !state.snapshot.items.some((item) => item.payload.v2ContentKind === 'model_history' && item.payload.v2ContentHandle === action.handle)) return state;
-  const snapshot = mergeConversationModelContentV2(state.snapshot, action.handle, action.text, action.redacted);
-  const completeSnapshotItem = snapshot.items.find((item) => item.payload.v2ContentKind === 'model_history' && item.payload.v2ContentHandle === action.handle);
+  if (matchingKeys.length === 0 || !state.snapshot.items.some((item) => (item.payload.v2ContentKind === 'model_history' || item.payload.v2ContentKind === 'process_detail') && item.payload.v2ContentHandle === action.handle)) return state;
+  const snapshot = mergeConversationContentV2(state.snapshot, action.handle, action.text, action.redacted);
+  const completeSnapshotItem = snapshot.items.find((item) => (item.payload.v2ContentKind === 'model_history' || item.payload.v2ContentKind === 'process_detail') && item.payload.v2ContentHandle === action.handle);
   if (!completeSnapshotItem) return state;
   const items = { ...state.items };
   for (const key of matchingKeys) {
@@ -855,6 +862,8 @@ function equivalentSessionItem(left: NativeSessionItemBuffer, right: NativeSessi
     left.type === right.type &&
     left.status === right.status &&
     left.phase === right.phase &&
+    left.protocolFamily === right.protocolFamily &&
+    left.stageId === right.stageId &&
     left.text === right.text &&
     left.optimistic === right.optimistic &&
     left.clientUserMessageId === right.clientUserMessageId &&
@@ -1340,6 +1349,8 @@ function reduceItemEvent(state: NativeSessionState, event: NativeConversationEve
   const incomingText = stringValue(payload.textContent) ?? '';
   const incomingType = stringValue(payload.itemType);
   const incomingPayload = isRecord(payload.itemPayload) ? payload.itemPayload : null;
+  const incomingProtocolFamily = stringValue(payload.protocolFamily) ?? stringValue(incomingPayload?.protocolFamily);
+  const incomingStageId = stringValue(payload.stageId) ?? stringValue(incomingPayload?.stageId);
   const incomingResources = Array.isArray(payload.itemResources) ? payload.itemResources : null;
   const effectiveType = completed ? (incomingType ?? providerItem?.type ?? 'providerItem') : (providerItem?.type ?? incomingType ?? 'providerItem');
   const providerClientId = isUserMessageType(effectiveType) && incomingPayload ? (stringValue(incomingPayload.clientId) ?? stringValue(incomingPayload.clientUserMessageId)) : null;
@@ -1371,6 +1382,8 @@ function reduceItemEvent(state: NativeSessionState, event: NativeConversationEve
     type: effectiveType,
     status: stringValue(payload.status) ?? (completed ? 'completed' : (previous?.status ?? 'in_progress')),
     phase: itemPhase,
+    protocolFamily: incomingProtocolFamily ?? previous?.protocolFamily ?? null,
+    stageId: incomingStageId ?? previous?.stageId ?? null,
     text: completed ? completedText || previous?.text || matchedUserText || optimisticText : reconcileCumulativeText(previous?.text ?? matchedUserText ?? optimisticText, incomingText),
     // 进行中事件以 started 的类型壳为基础合并权威进度字段；completed 仍是最终投影。
     payload: completed

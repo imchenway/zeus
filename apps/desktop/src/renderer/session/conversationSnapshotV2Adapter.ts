@@ -168,9 +168,13 @@ function activeTurnItems(items: readonly NativeConversationActiveItemV2[], provi
       type: item.itemType,
       status: item.status,
       phase: item.phase,
+      protocolFamily: item.protocolFamily ?? null,
+      stageId: item.stageId ?? null,
       text: item.text.preview,
       payload: {
         ...(recordValue(parsedPayload) ?? {}),
+        protocolFamily: item.protocolFamily ?? null,
+        stageId: item.stageId ?? null,
         v2ContentKind: 'active_item',
         // 这是首屏时点上已经完整取得的预览，不应让流式 Markdown 从空白重新播放。
         // 首个实时 item 事件到达后 reducer 会移除此标记，后续增量继续走流式渲染。
@@ -243,24 +247,25 @@ export function mergeConversationHistoryV2(snapshot: NativeConversationSnapshot,
 }
 
 /**
- * 完整正文读取成功后只替换同一稳定句柄对应的模型历史投影。
+ * 完整内容读取成功后只替换同一稳定句柄对应的模型历史或过程投影。
  * 句柄包含正文 revision；后续权威快照只有携带同一句柄时才能复用该全文。
  */
-export function mergeConversationModelContentV2(snapshot: NativeConversationSnapshot, handle: string, text: string, redacted: boolean): NativeConversationSnapshot {
+export function mergeConversationContentV2(snapshot: NativeConversationSnapshot, handle: string, text: string, redacted: boolean): NativeConversationSnapshot {
   if (!snapshot.snapshotV2) throw new Error('当前会话不支持 Snapshot V2 完整正文。');
   let matched = false;
   const items = snapshot.items.map((item) => {
     if (item.payload.v2ContentHandle !== handle) return item;
-    if (item.payload.v2ContentKind !== 'model_history') throw new Error('正文句柄没有指向模型历史。');
+    if (item.payload.v2ContentKind !== 'model_history' && item.payload.v2ContentKind !== 'process_detail') throw new Error('内容句柄没有指向模型历史或过程详情。');
     matched = true;
     const content = parseProjection(text, false);
+    const processDetail = item.payload.v2ContentKind === 'process_detail';
     return {
       ...item,
-      text: projectionText(content, text, false),
+      text: projectionText(content, processDetail ? item.text : text, false),
       payload: {
         ...item.payload,
-        content,
-        ...historicalUserPresentation(content, item.type === 'userMessage'),
+        ...(processDetail ? { detail: content } : { content }),
+        ...(processDetail ? {} : historicalUserPresentation(content, item.type === 'userMessage')),
         v2ContentTruncated: false,
         v2ContentCompleteHandle: handle,
         v2ContentRedacted: item.payload.v2ContentRedacted === true || redacted,
@@ -439,7 +444,7 @@ export function updateConversationV2Paging(snapshot: NativeConversationSnapshot,
 function assertSnapshotV2Identity(snapshot: NativeConversationSnapshotV2, history: NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>, choice: NativeConversationChoice): void {
   if (
     snapshot.schemaVersion !== 2 ||
-    snapshot.structureGeneration !== '2026-09-01-conversation-snapshot-v2-turn-output-anchors' ||
+    snapshot.structureGeneration !== '2026-09-03-conversation-stage-identity' ||
     snapshot.conversationSchemaGeneration !== '2026-08-16-unified-conversation-segments' ||
     history.schemaVersion !== 2 ||
     history.structureGeneration !== snapshot.structureGeneration ||
@@ -511,9 +516,13 @@ function historyItems(items: NativeConversationModelHistoryV2Item[], providerTur
         type: item.role === 'user' ? 'userMessage' : persistedPlan ? 'plan' : reasoning ? 'reasoning' : 'agentMessage',
         status: expertStatus === 'failed' || expertStatus === 'interrupted' || expertStatus === 'cancelled' ? 'failed' : 'completed',
         phase,
+        protocolFamily: item.protocolFamily ?? null,
+        stageId: item.stageId ?? null,
         text,
         payload: {
           content,
+          protocolFamily: item.protocolFamily ?? null,
+          stageId: item.stageId ?? null,
           ...(persistedPlan ? { formalPlan: item.formalPlan } : {}),
           ...historicalUserPayload,
           ...(item.submissionId ? { submissionId: item.submissionId } : {}),
@@ -590,9 +599,14 @@ function processItems(items: NativeConversationProcessV2Item[], providerTurnByLo
       type,
       status: item.status,
       phase: 'prework',
+      protocolFamily: item.protocolFamily ?? null,
+      stageId: item.stageId ?? null,
       text,
       payload: {
         ...processPresentationPayload(item, detail, text),
+        protocolFamily: item.protocolFamily ?? null,
+        stageId: item.stageId ?? null,
+        ...(item.kind === 'reasoning' && item.protocolFamily === 'anthropic_messages' ? { reasoningPresentation: 'details_collapsed' } : {}),
         processKind: item.kind,
         title: item.title,
         toolResult: item.toolResult,
@@ -660,7 +674,7 @@ function processPresentationPayload(item: NativeConversationProcessV2Item, detai
     }
   }
   if (detailRecord) {
-    for (const key of ['provider', 'itemType', 'eventType'] as const) {
+    for (const key of ['provider', 'itemType', 'eventType', 'protocolFamily', 'stageId', 'reasoningPresentation'] as const) {
       if (detailRecord[key] !== undefined) presentation[key] = detailRecord[key];
     }
   }
@@ -675,7 +689,7 @@ function startsWithToolCallProjection(preview: string): boolean {
 function processProjectionText(item: NativeConversationProcessV2Item, detail: unknown): string {
   const projected = projectionText(detail, item.title, item.detail.truncated);
   if (!item.detail.truncated || typeof detail !== 'string') return projected;
-  const preferredFields = item.kind === 'command' ? ['command'] : item.kind === 'tool' ? ['name', 'toolName', 'query'] : item.kind === 'reasoning' ? ['text', 'summary'] : ['message', 'text', 'summary'];
+  const preferredFields = item.kind === 'command' ? ['command'] : item.kind === 'tool' ? ['name', 'toolName', 'query'] : item.kind === 'reasoning' ? ['thinking', 'text', 'summary'] : ['message', 'text', 'summary'];
   for (const field of preferredFields) {
     const value = leadingJsonString(detail, field);
     if (value?.trim()) return value.trim();
@@ -722,7 +736,7 @@ function textFragments(value: unknown, depth = 0): string[] {
   if (Array.isArray(value)) return value.flatMap((entry) => textFragments(entry, depth + 1));
   const record = recordValue(value);
   if (!record) return [];
-  return ['text', 'content', 'summary', 'value'].flatMap((key) => textFragments(record[key], depth + 1));
+  return ['text', 'thinking', 'content', 'summary', 'value', 'block'].flatMap((key) => textFragments(record[key], depth + 1));
 }
 
 function recordValue(value: unknown): Record<string, unknown> | null {
