@@ -1,6 +1,6 @@
 import { createSessionController, type SessionControllerClient, sessionRealtimeBufferBudget } from '../apps/desktop/src/renderer/session/useSessionController.ts';
 import { adaptConversationSnapshotV2, mergeConversationProcessV2 } from '../apps/desktop/src/renderer/session/conversationSnapshotV2Adapter.ts';
-import { createHydratedSessionState, sessionReducer } from '../apps/desktop/src/renderer/session/sessionReducer.ts';
+import { createHydratedSessionState, createInitialSessionState, sessionReducer } from '../apps/desktop/src/renderer/session/sessionReducer.ts';
 import type { NativePlanImplementationRequest, NativeRealtimeEventEnvelope } from '../apps/desktop/src/renderer/session/sessionTypes.ts';
 
 const projectId = 'renderer-event-flow-project';
@@ -293,6 +293,173 @@ async function verifyRestartedPendingSendReplaysOnce() {
   assert(second.sentMessages[0]?.clientUserMessageId === originalIdentity.clientUserMessageId, 'Explicit retry must preserve the original client message id.');
   second.controller.dispose();
   return { automaticReplayCalls: 1, secondRestartAutomaticCalls: 0, explicitRetryCalls: 1, identitiesPreserved: true };
+}
+
+/** 长任务推送载荷被截断时，历史身份仍须让本地任务卡与 Provider 用户项合并。 */
+function verifyTruncatedTaskPushIdentityCoalescing() {
+  // 客户端消息身份代表发送前已创建的本地任务卡。
+  const clientUserMessageId = 'task-push-client-message';
+  // Provider 项身份用于关联历史投影和活动投影。
+  const providerItemId = 'task-push-provider-item';
+  // 提交身份用于保持持久化发送链路连续。
+  const submissionId = 'task-push-submission';
+  // 附件模拟推送任务中的粘贴文本，验证水合后仍归属原任务卡。
+  const attachment = {
+    name: 'Pasted text.txt',
+    mime: 'text/plain',
+    size: 9_105,
+    kind: 'pasted_text' as const,
+    localPath: '/tmp/Pasted text.txt',
+    taskPushAttachmentKey: 'task-push-attachment',
+  };
+  // 结构化布局模拟推送任务在本地乐观展示时保存的任务卡信息。
+  const taskPushLayout = {
+    kind: 'task_push' as const,
+    blocks: [
+      {
+        contextKind: 'current' as const,
+        taskId: 'task-push-task',
+        taskCode: 'ZEUS-0451',
+        taskTitle: '推送子任务提示词重复显示',
+        taskType: 'defect' as const,
+        taskTypeLabel: '缺陷',
+        fields: [{ field: 'defectCurrentState' as const, label: '现状', text: '同一提示词显示两次', attachmentKeys: ['task-push-attachment'] }],
+        attachments: [{ key: 'task-push-attachment', field: 'defectCurrentState' as const, name: attachment.name, kind: 'pasted_text' as const, mimeType: attachment.mime, size: attachment.size }],
+        conversationPaths: [],
+      },
+    ],
+    supplementalInfo: '',
+    supplementalAttachments: [],
+  };
+  // 历史用户项携带完整稳定身份，代表已经持久化的首发消息。
+  const openingUserMessage = {
+    id: 'task-push-history',
+    sequence: 1,
+    turnId: 'task-push-turn',
+    submissionId,
+    clientUserMessageId,
+    providerItemId,
+    reasoningSummary: false,
+    phase: null,
+    segmentId: 'segment',
+    role: 'user',
+    toolPairId: null,
+    confirmedAt: occurredAt,
+    content: {
+      preview: '{"text":"同一提示词"}',
+      byteLength: 27,
+      truncated: false,
+      redacted: false,
+      contentHandle: null,
+      refreshRequired: false,
+    },
+    toolResult: null,
+  };
+  // 活动用户项故意提供无法解析的截断载荷，复现现场身份丢失条件。
+  const activeSnapshot = {
+    ...snapshotV2,
+    activeTurn: {
+      id: 'task-push-turn',
+      providerTurnId: 'task-push-provider-turn',
+      submissionId,
+      status: 'running',
+      hasError: false,
+      hasPlan: false,
+      plan: null,
+      startedAt: occurredAt,
+      completedAt: null,
+      createdAt: occurredAt,
+      updatedAt: occurredAt,
+      agentKind: 'codex',
+      openingUserMessage,
+      completionOutput: null,
+      activeItems: [
+        {
+          id: 'task-push-active',
+          order: 0,
+          turnId: 'task-push-turn',
+          providerItemId,
+          itemType: 'userMessage',
+          status: 'completed' as const,
+          phase: 'prework' as const,
+          text: { preview: '同一提示词', byteLength: 15, truncated: false, redacted: false, contentHandle: null, refreshRequired: true },
+          payload: {
+            preview: `{"clientId":"${clientUserMessageId}","taskPushLayout":`,
+            byteLength: 2_348,
+            truncated: true,
+            redacted: false,
+            contentHandle: null,
+            refreshRequired: true,
+          },
+          startedAt: occurredAt,
+          completedAt: occurredAt,
+          updatedAt: occurredAt,
+        },
+      ],
+      activeItemsTruncated: false,
+      process: { available: false, latestSequence: 0 },
+      resourcesAvailable: true,
+      changeSetAvailable: false,
+    },
+    collections: { ...snapshotV2.collections, modelHistory: { throughSequence: 1 }, resources: { available: true } },
+    limits: { ...snapshotV2.limits, returnedTurnCount: 1 },
+  };
+  // 历史页只返回与活动项同一 Provider 身份的用户消息。
+  const history = { ...historyV2, throughSequence: 1, items: [openingUserMessage], limits: { ...historyV2.limits, returnedItems: 1 } };
+  // 首屏适配结果应从历史项继承身份，同时保留活动项最新投影。
+  const adapted = adaptConversationSnapshotV2({ snapshot: activeSnapshot, history, queue, requests: [], planImplementationRequests: [], choice, goal });
+  assert(adapted.items.length === 1 && adapted.items[0]?.payload.clientId === clientUserMessageId, 'A truncated active task-push item must retain the stable client identity from model history.');
+  assert(adapted.items[0]?.payload.clientUserMessageId === clientUserMessageId, 'A truncated active task-push item must retain the durable client user message identity from model history.');
+  assert(adapted.items[0]?.payload.submissionId === submissionId, 'A truncated active task-push item must retain the stable submission identity from model history.');
+
+  let state = createInitialSessionState();
+  state = { ...state, projectId, conversationId, providerThreadId: threadId, conversationState: 'active_prework' };
+  state = sessionReducer(state, {
+    type: 'send_started',
+    clientUserMessageId,
+    durableClientUserMessageId: clientUserMessageId,
+    draft: '同一提示词',
+    attachments: [attachment],
+    submittedAttachments: [attachment],
+    browserSubmission: null,
+    contextDraft: { responseAnnotations: [], codeComments: [] },
+    browserComments: [],
+    delivery: 'queue',
+    previousConversationState: 'active_prework',
+    startedAt: occurredAt,
+    taskPushLayout,
+  });
+  state = sessionReducer(state, { type: 'snapshot_hydrated', snapshot: adapted });
+  // 水合后的用户项数量直接验证原任务卡没有再生成第二张 Provider 卡。
+  const userItems = state.itemOrder.map((key) => state.items[key]).filter((item) => item?.type === 'userMessage');
+  assert(userItems.length === 1, 'The optimistic task card and matching Provider projection must hydrate as one user item.');
+  assert(
+    userItems[0]?.payload.taskPushLayout === taskPushLayout && Array.isArray(userItems[0]?.payload.attachments) && userItems[0].payload.attachments.length === 1,
+    'The single hydrated user item must retain its task layout and attachment.',
+  );
+
+  // 第二条历史消息仅复用正文，所有稳定身份均不同，必须作为真实重复发送保留。
+  const repeatedHistory = {
+    ...history,
+    throughSequence: 2,
+    items: [
+      openingUserMessage,
+      { ...openingUserMessage, id: 'deliberate-repeat-history', sequence: 2, submissionId: 'deliberate-repeat-submission', clientUserMessageId: 'deliberate-repeat-client', providerItemId: 'deliberate-repeat-provider' },
+    ],
+    limits: { ...history.limits, returnedItems: 2 },
+  };
+  // 再次适配用于确认实现没有引入按正文相等去重。
+  const repeated = adaptConversationSnapshotV2({
+    snapshot: { ...activeSnapshot, collections: { ...activeSnapshot.collections, modelHistory: { throughSequence: 2 } } },
+    history: repeatedHistory,
+    queue,
+    requests: [],
+    planImplementationRequests: [],
+    choice,
+    goal,
+  });
+  assert(repeated.items.filter((item) => item.type === 'userMessage').length === 2, 'Identical text with distinct durable identities must remain two user messages.');
+  return { mergedUserItems: userItems.length, taskLayoutPreserved: true, attachmentCount: 1, deliberateRepeats: 2 };
 }
 
 function verifyInternalPayloadsStayOutOfTranscript() {
@@ -821,6 +988,7 @@ async function verifyContiguousGapReplay() {
 
 const result = {
   budget: sessionRealtimeBufferBudget,
+  truncatedTaskPushIdentity: verifyTruncatedTaskPushIdentityCoalescing(),
   internalPayloadVisibility: verifyInternalPayloadsStayOutOfTranscript(),
   processPageTerminalPreservation: verifyProcessPageDoesNotDowngradeLiveTerminalState(),
   queuedSubmissionThreadTransition: verifyQueuedSubmissionCanChangeNativeThread(),
