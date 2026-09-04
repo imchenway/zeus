@@ -106,6 +106,52 @@ const modelHistoryAssistantPhaseSql = `CASE
      AND json_valid(message.metadata_json)
    LIMIT 1)
 END`;
+// 协议族优先读取新记录携带的语义字段，旧记录只读回退到创建该分段的冻结执行快照。
+const modelHistoryProtocolFamilySql = `COALESCE(
+  CASE WHEN json_valid(content_json) THEN json_extract(content_json, '$.protocolFamily') ELSE NULL END,
+  CASE WHEN json_valid(reasoning_source_json) THEN json_extract(reasoning_source_json, '$.protocolFamily') ELSE NULL END,
+  (SELECT execution.protocol_family
+     FROM conversation_runtime_segments AS segment
+     JOIN conversation_execution_snapshots AS execution ON execution.id = segment.execution_snapshot_id
+    WHERE segment.id = conversation_model_history.segment_id
+    LIMIT 1)
+)`;
+// 新记录使用稳定阶段身份；旧 Anthropic 正文只按分段和确认时间生成只读身份，不写回数据库。
+const modelHistoryStageIdSql = `COALESCE(
+  CASE WHEN json_valid(content_json) THEN json_extract(content_json, '$.stageId') ELSE NULL END,
+  CASE WHEN json_valid(reasoning_source_json) THEN json_extract(reasoning_source_json, '$.stageId') ELSE NULL END,
+  CASE
+    WHEN conversation_model_history.role = 'assistant' AND ${modelHistoryProtocolFamilySql} = 'anthropic_messages'
+      THEN 'legacy:' || conversation_model_history.segment_id || ':' || conversation_model_history.confirmed_at
+    ELSE NULL
+  END
+)`;
+// 过程页同样从冻结执行快照恢复旧记录的协议归属。
+const processProtocolFamilySql = `COALESCE(
+  CASE WHEN json_valid(detail_json) THEN json_extract(detail_json, '$.protocolFamily') ELSE NULL END,
+  (SELECT execution.protocol_family
+     FROM conversation_runtime_segments AS segment
+     JOIN conversation_execution_snapshots AS execution ON execution.id = segment.execution_snapshot_id
+    WHERE segment.id = conversation_process_items.segment_id
+    LIMIT 1)
+)`;
+// 旧 Anthropic 过程只有与 Assistant 正文时间完全相等时才安全归组，避免猜测跨阶段关系。
+const processStageIdSql = `COALESCE(
+  CASE WHEN json_valid(detail_json) THEN json_extract(detail_json, '$.stageId') ELSE NULL END,
+  CASE
+    WHEN ${processProtocolFamilySql} = 'anthropic_messages' AND EXISTS (
+      SELECT 1
+        FROM conversation_model_history AS history
+       WHERE history.conversation_id = conversation_process_items.conversation_id
+         AND history.turn_id = conversation_process_items.turn_id
+         AND history.segment_id = conversation_process_items.segment_id
+         AND history.role = 'assistant'
+         AND history.confirmed_at = conversation_process_items.started_at
+    )
+      THEN 'legacy:' || conversation_process_items.segment_id || ':' || conversation_process_items.started_at
+    ELSE NULL
+  END
+)`;
 const modelHistoryFormalPlanSql = `CASE
   WHEN ${modelHistoryAssistantPhaseSql} = 'plan'
    AND EXISTS (
@@ -188,6 +234,10 @@ export interface ConversationSnapshotV2ActiveItem {
   itemType: string;
   status: 'in_progress' | 'completed' | 'failed';
   phase: 'prework' | 'final_answer';
+  /** 生成该条目的线协议族。 */
+  protocolFamily?: string | null;
+  /** 同一 Assistant 响应内摘要、思考与工具共享的展示阶段。 */
+  stageId?: string | null;
   text: BoundedContentProjection;
   payload: BoundedContentProjection;
   startedAt: string | null;
@@ -297,6 +347,10 @@ export interface ConversationModelHistoryPageItem {
   providerItemId: string | null;
   reasoningSummary: boolean;
   phase: string | null;
+  /** 生成该历史条目的线协议族。 */
+  protocolFamily?: string | null;
+  /** 该历史条目所属的稳定展示阶段。 */
+  stageId?: string | null;
   formalPlan: boolean;
   segmentId: string;
   role: string;
@@ -316,6 +370,10 @@ export interface ConversationProcessPageItem {
   turnId: string;
   segmentId: string;
   providerItemId: string | null;
+  /** 生成该过程条目的线协议族。 */
+  protocolFamily?: string | null;
+  /** 该过程条目所属的稳定展示阶段。 */
+  stageId?: string | null;
   kind: ConversationProcessKind;
   status: string;
   title: string;
@@ -525,6 +583,8 @@ interface ModelHistoryProjectionRow {
   provider_item_id: string | null;
   reasoning_summary: number;
   assistant_phase: string | null;
+  protocol_family: string | null;
+  stage_id: string | null;
   formal_plan: number;
   segment_id: string;
   role: string;
@@ -777,6 +837,8 @@ export class ConversationSnapshotV2Repository {
                 ${modelHistoryProviderItemSql}                        AS provider_item_id,
                 ${modelHistoryReasoningSummarySql}                    AS reasoning_summary,
                 ${modelHistoryAssistantPhaseSql}                      AS assistant_phase,
+                ${modelHistoryProtocolFamilySql}                      AS protocol_family,
+                ${modelHistoryStageIdSql}                             AS stage_id,
                 ${modelHistoryFormalPlanSql}                           AS formal_plan,
                 segment_id,
                 role,
@@ -819,6 +881,8 @@ export class ConversationSnapshotV2Repository {
               ${modelHistoryProviderItemSql}                        AS provider_item_id,
               ${modelHistoryReasoningSummarySql}                    AS reasoning_summary,
               ${modelHistoryAssistantPhaseSql}                      AS assistant_phase,
+              ${modelHistoryProtocolFamilySql}                      AS protocol_family,
+              ${modelHistoryStageIdSql}                             AS stage_id,
               ${modelHistoryFormalPlanSql}                          AS formal_plan,
               segment_id,
               role,
@@ -857,6 +921,8 @@ export class ConversationSnapshotV2Repository {
               ${modelHistoryProviderItemSql} AS provider_item_id,
               ${modelHistoryReasoningSummarySql} AS reasoning_summary,
               ${modelHistoryAssistantPhaseSql} AS assistant_phase,
+              ${modelHistoryProtocolFamilySql} AS protocol_family,
+              ${modelHistoryStageIdSql} AS stage_id,
               ${modelHistoryFormalPlanSql} AS formal_plan,
               segment_id, role, tool_pair_id, confirmed_at,
               actor_kind, actor_id, actor_snapshot_json, expert_execution_id,
@@ -905,9 +971,13 @@ export class ConversationSnapshotV2Repository {
       detail_bytes: number;
       detail_characters: number;
       presentation_json: string | null;
+      protocol_family: string | null;
+      stage_id: string | null;
     }>(
       `SELECT id, process_sequence, turn_id, segment_id, kind, status, substr(title, 1, 512) AS title,
               source_event_id, started_at, completed_at,
+              ${processProtocolFamilySql} AS protocol_family,
+              ${processStageIdSql} AS stage_id,
               substr(detail_json, 1, ?) AS detail_preview,
               length(CAST(detail_json AS BLOB)) AS detail_bytes,
               length(detail_json) AS detail_characters,
@@ -930,6 +1000,8 @@ export class ConversationSnapshotV2Repository {
         turnId: row.turn_id,
         segmentId: row.segment_id,
         providerItemId: pairId,
+        protocolFamily: row.protocol_family,
+        stageId: row.stage_id,
         kind: row.kind,
         status: row.status,
         title: row.title,
@@ -1301,6 +1373,8 @@ export class ConversationSnapshotV2Repository {
             itemType: 'agentMessage',
             status: row.status === 'completed' ? 'completed' : row.status === 'failed' || row.status === 'interrupted' || row.status === 'cancelled' ? 'failed' : 'in_progress',
             phase: 'final_answer',
+            protocolFamily: null,
+            stageId: null,
             text: activeItemProjection(text, Buffer.byteLength(text, 'utf8'), false),
             payload: activeItemProjection(payload, Buffer.byteLength(payload, 'utf8'), false),
             startedAt: row.started_at ?? row.created_at,
@@ -1323,6 +1397,8 @@ export class ConversationSnapshotV2Repository {
       payload_preview: string;
       payload_bytes: number;
       projection_truncated: number;
+      protocol_family: string | null;
+      stage_id: string | null;
       started_at: string | null;
       completed_at: string | null;
       updated_at: string;
@@ -1332,6 +1408,8 @@ export class ConversationSnapshotV2Repository {
               length(CAST(text_projection AS BLOB)) AS text_bytes,
               substr(payload_projection_json, 1, ?) AS payload_preview,
               length(CAST(payload_projection_json AS BLOB)) AS payload_bytes,
+              CASE WHEN json_valid(payload_projection_json) THEN json_extract(payload_projection_json, '$.protocolFamily') ELSE NULL END AS protocol_family,
+              CASE WHEN json_valid(payload_projection_json) THEN json_extract(payload_projection_json, '$.stageId') ELSE NULL END AS stage_id,
               projection_truncated, started_at, completed_at, updated_at
          FROM conversation_provider_item_states
         WHERE conversation_id = ? AND turn_id = ?
@@ -1358,6 +1436,8 @@ export class ConversationSnapshotV2Repository {
         itemType: row.item_type,
         status: row.status,
         phase: row.phase,
+        protocolFamily: row.protocol_family,
+        stageId: row.stage_id,
         text: activeItemProjection(row.text_preview, row.text_bytes, row.projection_truncated === 1),
         payload: activeItemProjection(row.payload_preview, row.payload_bytes, row.projection_truncated === 1),
         startedAt: row.started_at,
@@ -1407,6 +1487,8 @@ export class ConversationSnapshotV2Repository {
               ${modelHistoryProviderItemSql} AS provider_item_id,
               0 AS reasoning_summary,
               NULL AS assistant_phase,
+              ${modelHistoryProtocolFamilySql} AS protocol_family,
+              ${modelHistoryStageIdSql} AS stage_id,
               0 AS formal_plan,
               segment_id, role, tool_pair_id, confirmed_at,
               actor_kind, actor_id, actor_snapshot_json, expert_execution_id,
@@ -1429,6 +1511,8 @@ export class ConversationSnapshotV2Repository {
               ${modelHistoryProviderItemSql} AS provider_item_id,
               ${modelHistoryReasoningSummarySql} AS reasoning_summary,
               ${modelHistoryAssistantPhaseSql} AS assistant_phase,
+              ${modelHistoryProtocolFamilySql} AS protocol_family,
+              ${modelHistoryStageIdSql} AS stage_id,
               ${modelHistoryFormalPlanSql} AS formal_plan,
               segment_id, role, tool_pair_id, confirmed_at,
               substr(${modelHistoryVisibleContentSql}, 1, ?)         AS content_preview,
@@ -1527,6 +1611,8 @@ export class ConversationSnapshotV2Repository {
       providerItemId: row.provider_item_id,
       reasoningSummary: row.reasoning_summary === 1,
       phase: row.assistant_phase,
+      protocolFamily: row.protocol_family,
+      stageId: row.stage_id,
       formalPlan: row.formal_plan === 1,
       segmentId: row.segment_id,
       role: row.role,

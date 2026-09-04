@@ -12,6 +12,10 @@ _避免：模型、连接、产品会话_
 把统一运行命令和 Provider 专有协议互相转换的边界。
 _避免：Provider、协调器、连接_
 
+**协议族**：
+模型端点实际使用的线协议约定，例如 OpenAI Responses、OpenAI Chat Completions 或 Anthropic Messages；它独立于供应商、模型和 Runtime Adapter，并在派发前冻结。
+_避免：供应商、模型类型、运行时类型_
+
 **运行代次**：
 一次具有稳定事件身份空间和生命周期的 Runtime 实例。
 _避免：应用版本、产品会话代次_

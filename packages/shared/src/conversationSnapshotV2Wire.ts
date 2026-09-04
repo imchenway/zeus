@@ -1,5 +1,5 @@
 /** Snapshot V2 的服务端、桌面端与存储层共用协议代次。 */
-export const conversationSnapshotV2StructureGeneration = '2026-09-01-conversation-snapshot-v2-turn-output-anchors' as const;
+export const conversationSnapshotV2StructureGeneration = '2026-09-03-conversation-stage-identity' as const;
 
 export type ConversationSnapshotV2PageKind = 'timeline' | 'model_history' | 'process' | 'commands' | 'resources' | 'change_files';
 

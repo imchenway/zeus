@@ -144,6 +144,10 @@ export interface NativeItemSnapshot {
   type: string;
   status: string;
   phase: string;
+  /** 生成该条目的线协议族。 */
+  protocolFamily?: string | null;
+  /** 摘要、思考和工具活动共享的稳定展示阶段。 */
+  stageId?: string | null;
   text: string;
   payload: Record<string, unknown>;
   resources?: ConversationResource[];
@@ -597,6 +601,10 @@ export interface NativeConversationActiveItemV2 {
   itemType: string;
   status: 'in_progress' | 'completed' | 'failed';
   phase: 'prework' | 'final_answer';
+  /** 生成该活动条目的线协议族。 */
+  protocolFamily?: string | null;
+  /** 该活动条目所属的稳定展示阶段。 */
+  stageId?: string | null;
   text: NativeBoundedContentProjection;
   payload: NativeBoundedContentProjection;
   startedAt: string | null;
@@ -663,6 +671,10 @@ export interface NativeConversationModelHistoryV2Item {
   providerItemId: string | null;
   reasoningSummary: boolean;
   phase: string | null;
+  /** 生成该历史条目的线协议族。 */
+  protocolFamily?: string | null;
+  /** 该历史条目所属的稳定展示阶段。 */
+  stageId?: string | null;
   formalPlan?: boolean;
   segmentId: string;
   role: string;
@@ -690,6 +702,10 @@ export interface NativeConversationProcessV2Item {
   turnId: string;
   segmentId: string;
   providerItemId: string | null;
+  /** 生成该过程条目的线协议族。 */
+  protocolFamily?: string | null;
+  /** 该过程条目所属的稳定展示阶段。 */
+  stageId?: string | null;
   kind: 'reasoning' | 'tool' | 'command' | 'retry' | 'context_compaction' | 'waiting' | 'warning';
   status: string;
   title: string;
@@ -766,7 +782,7 @@ export interface NativeConversationChangeFileV2Item {
 
 export interface NativeConversationContentV2Page {
   schemaVersion: 2;
-  structureGeneration: '2026-09-01-conversation-snapshot-v2-turn-output-anchors';
+  structureGeneration: '2026-09-03-conversation-stage-identity';
   conversationId: string;
   kind: 'timeline_payload' | 'model_content' | 'process_detail' | 'change_file_diff';
   mimeType: string;
@@ -1527,6 +1543,10 @@ type NativeItemEventPayload = NativeEventIdentity & {
   itemPayload: Record<string, unknown>;
   status?: string;
   phase?: string;
+  /** 实时事件对应的线协议族。 */
+  protocolFamily?: string | null;
+  /** 实时事件对应的稳定展示阶段。 */
+  stageId?: string | null;
   textContent?: string;
   itemResources?: ConversationResource[];
 };
@@ -1670,6 +1690,10 @@ export interface NativeSessionItemBuffer {
   type: string;
   status: string;
   phase: string;
+  /** 生成该条目的线协议族。 */
+  protocolFamily?: string | null;
+  /** 摘要、思考和工具活动共享的稳定展示阶段。 */
+  stageId?: string | null;
   text: string;
   payload: Record<string, unknown>;
   resources: ConversationResource[];

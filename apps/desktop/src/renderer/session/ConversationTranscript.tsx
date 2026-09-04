@@ -21,7 +21,7 @@ import { isAssistantDeliverableItem } from './sessionTypes.js';
 import { type ConversationFileLocation, type ConversationOpenTarget, type ConversationResponseAnnotation, type ConversationResponseTextAnchor, parseCanonicalRequestUserInputQuestions } from '@zeus/shared';
 import { useThreadScrollController } from './useThreadScrollController.js';
 import { TurnChangeCard } from './TurnChanges.js';
-import { latestReasoningSummaryText, reasoningSummaryStatus, SessionReasoningSummary } from './SessionReasoningSummary.js';
+import { latestReasoningSummaryText, reasoningSummaryStatus, SessionReasoningDetail, SessionReasoningSummary } from './SessionReasoningSummary.js';
 import { AnsweredRequestHistory, isAnsweredUserInputRequest } from './AnsweredRequestHistory.js';
 import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
 import { captureTranscriptViewportAnchor, compensateTranscriptViewportAnchor, type TranscriptViewportAnchor, useTranscriptViewportVirtualizer } from './transcriptViewportVirtualizer.js';
@@ -1328,6 +1328,9 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
     );
   }
   if (normalizeItemType(row.item.type) === 'reasoning') {
+    if (isReasoningDetailItem(row.item)) {
+      return <SessionReasoningDetail item={row.item} language={options.props.language} onLoadContent={options.props.onLoadV2Content} />;
+    }
     return (
       <TranscriptV2ContentBoundary item={row.item} onLoadContent={options.props.onLoadV2Content}>
         <SessionReasoningSummary
@@ -1711,40 +1714,66 @@ export function projectTranscriptTurnRows(
 }
 
 function segmentTurnProcessRows(turnId: string, rows: readonly TranscriptRow[]): TranscriptTurnProcessSegment[] {
-  const segments: Array<{ summary: TranscriptRow | null; rows: TranscriptRow[] }> = [];
-  let current: { summary: TranscriptRow | null; rows: TranscriptRow[] } = { summary: null, rows: [] };
-  const flush = (): void => {
-    if (!current.summary && current.rows.length === 0) return;
-    segments.push(current);
+  const segments: Array<{ stageId: string | null; summary: TranscriptRow | null; rows: TranscriptRow[] }> = [];
+  const segmentByStageId = new Map<string, (typeof segments)[number]>();
+  let current: (typeof segments)[number] | null = null;
+  const appendSegment = (stageId: string | null): (typeof segments)[number] => {
+    const segment = { stageId, summary: null, rows: [] };
+    segments.push(segment);
+    if (stageId) segmentByStageId.set(stageId, segment);
+    return segment;
   };
 
-  for (const row of rows) {
-    if (isTurnStageSummaryRow(row)) {
-      // Provider 在第一条用户可见摘要前通常已经产生了若干 reasoning。它们仍属于
-      // 第一阶段的准备过程，不能单独生成一个没有摘要的“查看处理过程”，否则界面
-      // 看起来仍像按整轮过程分组。首条摘要接管这些前置行；后续摘要才真正结束上一
-      // 阶段并开启下一阶段。
-      if (!current.summary && segments.length === 0) {
-        current = { summary: row, rows: current.rows };
-        continue;
-      }
-      flush();
-      current = { summary: row, rows: [] };
+  for (const row of deduplicateAdjacentStageSummaries(rows)) {
+    const stageId = transcriptRowStageId(row);
+    if (stageId) {
+      current = segmentByStageId.get(stageId) ?? appendSegment(stageId);
+      if (isTurnStageSummaryRow(row)) current.summary ??= row;
+      else current.rows.push(row);
       continue;
     }
+    if (isTurnStageSummaryRow(row)) {
+      // 旧记录没有 stageId，仍沿用“首条摘要接管前置过程、后续摘要开启新阶段”的时序规则。
+      if (!current || current.summary) current = appendSegment(null);
+      current.summary = row;
+      continue;
+    }
+    current ??= appendSegment(null);
     current.rows.push(row);
   }
-  flush();
 
   return segments.map((segment, index) => {
     const identityRow = segment.summary ?? segment.rows[0];
-    const identity = identityRow?.key ?? `empty-${index}`;
+    const identity = segment.stageId ?? identityRow?.key ?? `empty-${index}`;
     return {
       key: `turn-process-stage:${encodeURIComponent(turnId)}:${encodeURIComponent(identity)}`,
       summary: segment.summary,
       rows: mergeStageActivityRows(segment.rows, turnId, identity),
     };
   });
+}
+
+/** 只合并相邻且规范化后完全相同的阶段摘要，不使用模糊文本匹配。 */
+function deduplicateAdjacentStageSummaries(rows: readonly TranscriptRow[]): TranscriptRow[] {
+  const projected: TranscriptRow[] = [];
+  for (const row of rows) {
+    const previous = projected.at(-1);
+    if (previous && isTurnStageSummaryRow(previous) && isTurnStageSummaryRow(row) && normalizedStageSummaryText(previous) === normalizedStageSummaryText(row)) continue;
+    projected.push(row);
+  }
+  return projected;
+}
+
+/** 将阶段摘要中的空白差异规范化后用于严格相等比较。 */
+function normalizedStageSummaryText(row: TranscriptRow): string {
+  return row.kind === 'item' ? transcriptItemText(row.item).replace(/\s+/gu, ' ').trim() : '';
+}
+
+/** 读取一行过程内容显式携带的展示阶段。 */
+function transcriptRowStageId(row: TranscriptRow): string | null {
+  if (row.kind === 'answered_request') return null;
+  const items = row.kind === 'item' ? [row.item] : row.items;
+  return items.map(itemStageId).find((stageId): stageId is string => Boolean(stageId)) ?? null;
 }
 
 function mergeStageActivityRows(rows: readonly TranscriptRow[], turnId: string, stageIdentity: string): TranscriptRow[] {
@@ -1916,6 +1945,17 @@ function itemProviderPhase(item: NativeSessionItemBuffer): string {
   return typeof item.payload.phase === 'string' ? item.payload.phase : item.phase;
 }
 
+/** 读取条目在投影边界确定的稳定展示阶段。 */
+function itemStageId(item: NativeSessionItemBuffer): string | null {
+  const value = item.stageId ?? item.payload.stageId;
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+/** Anthropic thinking 被投影为同阶段可按需展开的详情，而不是正文或状态摘要。 */
+function isReasoningDetailItem(item: NativeSessionItemBuffer): boolean {
+  return item.payload.reasoningPresentation === 'details_collapsed' || recordValue(item.payload.detail)?.reasoningPresentation === 'details_collapsed';
+}
+
 export function projectTranscriptRows(
   items: readonly NativeSessionItemBuffer[],
   answeredRequests: readonly NativePendingRequest[] = [],
@@ -1938,19 +1978,27 @@ export function projectTranscriptRows(
     timeline.splice(insertionIndex < 0 ? timeline.length : insertionIndex, 0, { kind: 'answered_request', request });
   }
 
-  // 阶段边界来自用户真正看到的中间摘要回复，而不是内部 reasoning 或整轮 turnId。
-  // 同一摘要之后、下一摘要之前发生的命令/工具/文件操作共享一个活动组，避免整轮几十条操作被错误压成一组。
+  // 新投影优先使用协议层给出的稳定 stageId；旧记录才继续按摘要出现顺序推断阶段。
   const stageOrdinalByTurn = new Map<string, number>();
+  const currentStageIdentityByTurn = new Map<string, string>();
   const stageIdentityByTimelineIndex = new Map<number, string>();
   timeline.forEach((entry, index) => {
     const turnId = entry.kind === 'item' ? entry.item.turnId : entry.request.turnId;
     if (!turnId) return;
+    const explicitStageId = entry.kind === 'item' ? itemStageId(entry.item) : null;
+    if (explicitStageId) {
+      const identity = `${turnId}\u0000stage:${explicitStageId}`;
+      currentStageIdentityByTurn.set(turnId, identity);
+      stageIdentityByTimelineIndex.set(index, identity);
+      return;
+    }
     let ordinal = stageOrdinalByTurn.get(turnId) ?? 0;
     if (entry.kind === 'item' && isTurnStageSummaryItem(entry.item)) {
       ordinal += 1;
       stageOrdinalByTurn.set(turnId, ordinal);
+      currentStageIdentityByTurn.set(turnId, `${turnId}\u0000legacy:${ordinal}`);
     }
-    stageIdentityByTimelineIndex.set(index, `${turnId}\u0000${ordinal}`);
+    stageIdentityByTimelineIndex.set(index, currentStageIdentityByTurn.get(turnId) ?? `${turnId}\u0000legacy:${ordinal}`);
   });
 
   const activitiesByStage = new Map<string, NativeSessionItemBuffer[]>();
@@ -1965,7 +2013,7 @@ export function projectTranscriptRows(
   const emittedActivityStages = new Set<string>();
   const activeReasoningItem =
     effectiveActiveTurnId && !items.some((item) => item.turnId === effectiveActiveTurnId && isFinalAnswerItem(item))
-      ? [...items].reverse().find((item) => item.turnId === effectiveActiveTurnId && normalizeItemType(item.type) === 'reasoning' && latestReasoningSummaryText(item).length > 0)
+      ? [...items].reverse().find((item) => item.turnId === effectiveActiveTurnId && normalizeItemType(item.type) === 'reasoning' && !isReasoningDetailItem(item) && latestReasoningSummaryText(item).length > 0)
       : undefined;
 
   for (let index = 0; index < timeline.length; index += 1) {
@@ -1977,9 +2025,8 @@ export function projectTranscriptRows(
       // 多智能体协调事件统一进入右侧智能体面板，不在主会话重复暴露协议载荷。
       if (!isSubagentCoordinationItem(item)) {
         const stageIdentity = stageIdentityByTimelineIndex.get(index) ?? `${item.turnId}\u00000`;
-        // Reasoning 只表达活动轮次的当前状态，不是历史正文。当前轮只保留最新一条，
-        // 并在完成普通时间线投影后固定放到该轮最底部；最终回答到达或轮次结束后全部隐藏。
-        if (normalizeItemType(item.type) === 'reasoning') continue;
+        // Provider 的状态型 reasoning 仍只显示活动轮最新一条；显式思考详情属于阶段过程，默认收起但不能丢弃。
+        if (normalizeItemType(item.type) === 'reasoning' && !isReasoningDetailItem(item)) continue;
         if (!isOperationalActivityItem(item)) {
           rows.push({ kind: 'item', key: transcriptItemRenderKey(item), item });
         } else {

@@ -1,4 +1,4 @@
-import type { AgentRuntimeEvent } from '@zeus/ai-runtime';
+import type { AgentRuntimeEvent, ModelProtocolFamily } from '@zeus/ai-runtime';
 import type { ConversationExecutionRepository, ConversationProcessItemRecord, ConversationProcessKind, ConversationRuntimeSegmentRecord } from '@zeus/storage';
 import type { CodexRolloutRequestUserInputEvidence } from './codexRolloutRequestUserInput.js';
 
@@ -6,6 +6,14 @@ interface TurnIdentity {
   conversationId: string;
   turnId: string;
   segment: ConversationRuntimeSegmentRecord;
+}
+
+/** Pi 事件进入 Zeus 会话语义时必须携带的冻结协议与展示阶段。 */
+interface PiTurnIdentity extends TurnIdentity {
+  /** 本次执行快照冻结的线协议族。 */
+  protocolFamily: ModelProtocolFamily;
+  /** 当前 Assistant 响应对应的稳定展示阶段；旧事件允许为空。 */
+  stageId: string | null;
 }
 
 interface NativeItemProjection extends TurnIdentity {
@@ -73,17 +81,19 @@ export class TurnProcessProjector {
     });
   }
 
-  projectPiEvent(identity: TurnIdentity, event: AgentRuntimeEvent): ConversationProcessItemRecord[] {
+  projectPiEvent(identity: PiTurnIdentity, event: AgentRuntimeEvent): ConversationProcessItemRecord[] {
     const payload = asRecord(event.payload);
     if (event.type === 'message_end') {
       const message = asRecord(payload.message);
       const blocks = Array.isArray(message.content) ? message.content : [];
       const records: ConversationProcessItemRecord[] = [];
+      const failed = message.stopReason === 'error' || message.stopReason === 'aborted';
       for (const [index, candidate] of blocks.entries()) {
         const block = asRecord(candidate);
         const type = typeof block.type === 'string' ? block.type : '';
-        if (type !== 'thinking' && type !== 'reasoning' && type !== 'toolCall' && type !== 'tool_use') continue;
-        const kind: ConversationProcessKind = type === 'thinking' || type === 'reasoning' ? 'reasoning' : 'tool';
+        const failureText = failed && type === 'text';
+        if (!failureText && type !== 'thinking' && type !== 'reasoning' && type !== 'toolCall' && type !== 'tool_use') continue;
+        const kind: ConversationProcessKind = failureText ? 'warning' : type === 'thinking' || type === 'reasoning' ? 'reasoning' : 'tool';
         const sourceId = typeof block.id === 'string' ? block.id : `${event.sequence}:${index}`;
         records.push(
           this.execution.appendProcessItem({
@@ -91,9 +101,15 @@ export class TurnProcessProjector {
             turnId: identity.turnId,
             segmentId: identity.segment.id,
             kind,
-            status: 'completed',
-            title: processTitle(kind, type),
-            detail: { provider: 'pi', block },
+            status: failureText ? 'failed' : 'completed',
+            title: failureText ? (message.stopReason === 'aborted' ? '运行已中止' : '运行错误') : processTitle(kind, type),
+            detail: {
+              provider: 'pi',
+              protocolFamily: identity.protocolFamily,
+              stageId: identity.stageId,
+              ...(identity.protocolFamily === 'anthropic_messages' && type === 'thinking' ? { reasoningPresentation: 'details_collapsed' } : {}),
+              block,
+            },
             sourceEventId: `pi:block:${sourceId}`,
             startedAt: event.createdAt,
             completedAt: event.createdAt,
@@ -115,7 +131,7 @@ export class TurnProcessProjector {
         kind: mapped,
         status: failed ? 'failed' : ending ? 'completed' : 'in_progress',
         title: processTitle(mapped, event.type),
-        detail: { provider: 'pi', eventType: event.type, payload },
+        detail: { provider: 'pi', protocolFamily: identity.protocolFamily, stageId: identity.stageId, eventType: event.type, payload },
         sourceEventId: `pi:${event.type.replace(/_(start|end|complete|completed)$/, '')}:${sourceId}`,
         startedAt: event.createdAt,
         completedAt: failed || ending ? event.createdAt : null,

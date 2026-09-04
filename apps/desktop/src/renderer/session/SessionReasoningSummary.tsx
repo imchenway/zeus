@@ -1,4 +1,4 @@
-import { memo, useLayoutEffect } from 'react';
+import { memo, useLayoutEffect, useRef } from 'react';
 import type { NativeSessionItemBuffer, NativeSessionState } from './sessionTypes.js';
 import { type SessionUiLanguage, useAdaptiveTranscriptText } from './ThreadItemView.js';
 
@@ -26,6 +26,32 @@ export const SessionReasoningSummary = memo(function SessionReasoningSummary(pro
       </span>
       <span className="zeus-fidelity-text">{adaptiveText.text}</span>
     </p>
+  );
+});
+
+/** 将协议明确标识的模型思考保留在所属阶段，并以原生可访问控件默认收起。 */
+export const SessionReasoningDetail = memo(function SessionReasoningDetail(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage; onLoadContent?: (handle: string) => Promise<void> }) {
+  const detailsRef = useRef<HTMLDetailsElement | null>(null);
+  const attemptedHandleRef = useRef<string | null>(null);
+  const handle = typeof props.item.payload.v2ContentHandle === 'string' && props.item.payload.v2ContentHandle ? props.item.payload.v2ContentHandle : null;
+  const truncated = props.item.payload.v2ContentTruncated === true;
+  const text = props.item.text.trim();
+
+  /** 只有用户首次展开截断详情时才读取全文，避免冷启动加载整轮隐藏思考。 */
+  const loadFullDetail = (): void => {
+    if (!detailsRef.current?.open || !truncated || !handle || !props.onLoadContent || attemptedHandleRef.current === handle) return;
+    attemptedHandleRef.current = handle;
+    void props.onLoadContent(handle).catch(() => {
+      attemptedHandleRef.current = null;
+    });
+  };
+
+  if (!text) return null;
+  return (
+    <details ref={detailsRef} className="session-reasoning-detail" onToggle={loadFullDetail}>
+      <summary>{props.language === 'zh-CN' ? '查看思考详情' : 'View reasoning details'}</summary>
+      <div className="session-reasoning-detail-content">{text}</div>
+    </details>
   );
 });
 

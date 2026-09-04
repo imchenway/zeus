@@ -1,0 +1,1979 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>技术设计｜多供应商多模型会话完整闭环</title>
+    <style data-vd-shell="1">
+      :root {
+        color-scheme: light;
+        --vd-ink: #10243a;
+        --vd-muted: #5d7187;
+        --vd-blue: #176aa6;
+        --vd-blue-soft: #e8f3fb;
+        --vd-green: #237a5b;
+        --vd-green-soft: #e8f7f0;
+        --vd-amber: #9a6709;
+        --vd-amber-soft: #fff5d8;
+        --vd-red: #aa3f45;
+        --vd-red-soft: #fff0f1;
+        --vd-violet: #6958ad;
+        --vd-violet-soft: #f1effd;
+        --vd-line: #b7cce0;
+        --vd-paper: #fbfdff;
+        --vd-panel: rgba(255, 255, 255, 0.9);
+        --vd-shadow: 0 14px 38px rgba(31, 72, 108, 0.09);
+        --vd-radius: 18px;
+        --vd-grid: 24px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        min-inline-size: 0;
+        background: var(--vd-paper);
+      }
+
+      body {
+        margin: 0;
+        min-inline-size: 0;
+        overflow-x: clip;
+        color: var(--vd-ink);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
+        background:
+          radial-gradient(circle at 12% 0%, rgba(207, 230, 249, 0.62), transparent 29rem), radial-gradient(circle at 88% 4%, rgba(221, 243, 234, 0.58), transparent 26rem), linear-gradient(rgba(78, 118, 154, 0.045) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(78, 118, 154, 0.045) 1px, transparent 1px), linear-gradient(180deg, #fff 0%, #f7fbff 55%, #fbfdff 100%);
+        background-size:
+          auto,
+          auto,
+          var(--vd-grid) var(--vd-grid),
+          var(--vd-grid) var(--vd-grid),
+          auto;
+      }
+
+      [data-vd-artifact='1'] {
+        width: min(1440px, calc(100vw - 32px));
+        margin-inline: auto;
+        padding: 24px 0 64px;
+      }
+
+      [data-vd-title-region] {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: start;
+        gap: 16px 24px;
+        margin-bottom: 20px;
+      }
+
+      [data-vd-title-copy] {
+        min-inline-size: 0;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(1.65rem, 3vw, 2.5rem);
+        line-height: 1.12;
+        letter-spacing: -0.025em;
+        overflow-wrap: anywhere;
+      }
+
+      [data-vd-summary] {
+        max-inline-size: 76rem;
+        margin: 10px 0 0;
+        color: #314d67;
+        font-size: 1.04rem;
+        font-weight: 650;
+        line-height: 1.65;
+      }
+
+      .vd-tech-label {
+        display: block;
+        margin-top: 4px;
+        color: var(--vd-muted);
+        font:
+          600 0.72rem/1.4 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          Consolas,
+          monospace;
+        overflow-wrap: anywhere;
+      }
+
+      .vd-product-callout,
+      .vd-decision-callout {
+        padding: 14px 16px;
+        border-inline-start: 4px solid var(--vd-blue);
+        border-radius: 0 12px 12px 0;
+        background: rgba(232, 243, 251, 0.72);
+      }
+
+      .vd-decision-callout {
+        border-inline-start-color: var(--vd-amber);
+        background: rgba(255, 245, 216, 0.72);
+      }
+
+      [data-vd-evidence-state] {
+        display: inline-flex;
+        align-items: center;
+        min-block-size: 24px;
+        padding: 3px 8px;
+        border: 1px solid currentColor;
+        border-radius: 999px;
+        color: var(--vd-muted);
+        background: #fff;
+        font-size: 0.72rem;
+        font-weight: 800;
+      }
+
+      [data-vd-controls] {
+        display: inline-flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 4px;
+        padding: 4px;
+        border: 1px solid rgba(108, 148, 184, 0.46);
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.9);
+        box-shadow: 0 6px 18px rgba(31, 72, 108, 0.06);
+      }
+
+      [data-vd-zoom] {
+        min-inline-size: 44px;
+        min-block-size: 38px;
+        padding: 6px 10px;
+        border: 0;
+        border-radius: 8px;
+        color: var(--vd-muted);
+        background: transparent;
+        font: 800 0.75rem/1 inherit;
+        cursor: pointer;
+      }
+
+      [data-vd-zoom]:hover {
+        color: var(--vd-blue);
+        background: var(--vd-blue-soft);
+      }
+      [data-vd-zoom][aria-pressed='true'] {
+        color: #fff;
+        background: var(--vd-blue);
+      }
+      [data-vd-zoom]:focus-visible {
+        outline: 3px solid rgba(23, 106, 166, 0.3);
+        outline-offset: 2px;
+      }
+
+      [data-vd-content] {
+        display: grid;
+        gap: 24px;
+        min-inline-size: 0;
+      }
+
+      [data-vd-view] {
+        position: relative;
+        min-inline-size: 0;
+      }
+
+      [data-vd-view] > :first-child {
+        margin-top: 0;
+      }
+      [data-vd-view] > :last-child {
+        margin-bottom: 0;
+      }
+
+      [data-vd-viewport] {
+        min-inline-size: 0;
+        overflow-x: auto;
+        overflow-y: visible;
+        overscroll-behavior-inline: contain;
+        scrollbar-gutter: stable;
+      }
+
+      [data-vd-zoom-target] {
+        --vd-applied-zoom: 1;
+        min-inline-size: 0;
+        transform-origin: top left;
+      }
+
+      [data-vd-detail-trigger] {
+        cursor: pointer;
+      }
+
+      dialog[data-vd-detail-for] {
+        width: min(34rem, calc(100vw - 32px));
+        max-height: min(74vh, 44rem);
+        padding: 0;
+        border: 1px solid rgba(108, 148, 184, 0.6);
+        border-radius: 16px;
+        color: var(--vd-ink);
+        background: #fff;
+        box-shadow: 0 24px 68px rgba(20, 52, 82, 0.22);
+      }
+
+      dialog[data-vd-detail-for]::backdrop {
+        background: rgba(14, 31, 48, 0.28);
+        backdrop-filter: blur(2px);
+      }
+
+      .vd-detail-body {
+        padding: 20px;
+        overflow: auto;
+      }
+      .vd-detail-body h2 {
+        margin: 0 0 8px;
+        font-size: 1.2rem;
+      }
+      .vd-detail-body p,
+      .vd-detail-body li {
+        line-height: 1.55;
+      }
+      .vd-detail-close {
+        float: right;
+        margin: 12px 12px 0;
+      }
+
+      .vd-visually-hidden,
+      [data-vd-audit-output] {
+        position: absolute !important;
+        inline-size: 1px !important;
+        block-size: 1px !important;
+        overflow: hidden !important;
+        clip-path: inset(50%) !important;
+        white-space: nowrap !important;
+      }
+
+      [data-vd-static-fallback] {
+        margin-top: 16px;
+      }
+
+      @media (max-width: 48rem) {
+        [data-vd-artifact='1'] {
+          width: min(100vw - 20px, 48rem);
+          padding-top: 14px;
+        }
+        [data-vd-title-region] {
+          grid-template-columns: 1fr;
+          gap: 12px;
+        }
+        [data-vd-controls] {
+          justify-self: start;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          transition-duration: 0.001ms !important;
+        }
+      }
+
+      @media print {
+        body {
+          background: #fff;
+        }
+        [data-vd-artifact='1'] {
+          width: 100%;
+          padding: 0;
+        }
+        [data-vd-controls],
+        [data-vd-audit-output] {
+          display: none !important;
+        }
+        [data-vd-viewport] {
+          overflow: visible !important;
+        }
+        [data-vd-zoom-target] {
+          zoom: 1 !important;
+          transform: none !important;
+        }
+        dialog[data-vd-detail-for] {
+          display: block;
+          position: static;
+          width: auto;
+          max-height: none;
+          margin: 1rem 0;
+          box-shadow: none;
+        }
+      }
+    </style>
+    <style data-vd-author-style="1">
+      .artifact-kicker {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+        color: var(--vd-blue);
+        font-size: 0.76rem;
+        font-weight: 850;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .artifact-kicker::before {
+        content: '';
+        inline-size: 24px;
+        block-size: 2px;
+        border-radius: 999px;
+        background: currentColor;
+      }
+
+      .summary-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      .summary-meta [data-vd-evidence-state='observed'] {
+        color: var(--vd-blue);
+      }
+      .summary-meta [data-vd-evidence-state='proposed'] {
+        color: var(--vd-green);
+      }
+      .summary-meta [data-vd-evidence-state='unresolved'] {
+        color: var(--vd-amber);
+      }
+
+      .view-card {
+        overflow: hidden;
+        border: 1px solid rgba(114, 151, 184, 0.4);
+        border-radius: 22px;
+        background: rgba(255, 255, 255, 0.9);
+        box-shadow: var(--vd-shadow);
+      }
+
+      .view-heading {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 12px 20px;
+        align-items: start;
+        padding: 22px 24px 18px;
+        border-bottom: 1px solid rgba(114, 151, 184, 0.24);
+        background: linear-gradient(135deg, rgba(232, 243, 251, 0.72), rgba(255, 255, 255, 0.72));
+      }
+
+      .view-heading h2 {
+        margin: 0;
+        font-size: clamp(1.18rem, 2vw, 1.55rem);
+        letter-spacing: -0.015em;
+      }
+
+      .view-heading p {
+        max-inline-size: 74rem;
+        margin: 7px 0 0;
+        color: var(--vd-muted);
+        font-size: 0.92rem;
+        line-height: 1.58;
+      }
+
+      .view-kind {
+        align-self: start;
+        white-space: nowrap;
+      }
+
+      .decision-banner {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        gap: 14px;
+        align-items: center;
+        margin: 18px 24px 0;
+        padding: 14px 16px;
+        border: 1px solid rgba(35, 122, 91, 0.34);
+        border-radius: 15px;
+        background: linear-gradient(90deg, rgba(232, 247, 240, 0.96), rgba(255, 255, 255, 0.96));
+      }
+
+      .decision-banner strong {
+        color: #185f46;
+      }
+      .decision-banner span:not([data-vd-evidence-state]) {
+        color: #395f52;
+        line-height: 1.5;
+      }
+
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px 18px;
+        padding: 14px 24px 4px;
+        color: var(--vd-muted);
+        font-size: 0.78rem;
+        font-weight: 720;
+      }
+
+      .legend span {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+      }
+      .legend i {
+        inline-size: 24px;
+        block-size: 3px;
+        border-radius: 999px;
+        background: var(--vd-blue);
+      }
+      .legend .legend-current i {
+        background: var(--vd-red);
+      }
+      .legend .legend-proposed i {
+        background: var(--vd-green);
+      }
+      .legend .legend-live i {
+        background: var(--vd-violet);
+      }
+      .legend .legend-trust i {
+        block-size: 10px;
+        border: 1.5px dashed var(--vd-amber);
+        background: transparent;
+      }
+
+      .diagram-viewport {
+        padding: 8px 24px 24px;
+      }
+      .diagram-surface {
+        inline-size: 1320px;
+        margin-inline: auto;
+      }
+      .diagram-surface svg {
+        display: block;
+        inline-size: 1320px;
+        block-size: auto;
+        overflow: visible;
+      }
+
+      .diagram-surface svg text {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
+      }
+
+      .boundary-rect {
+        fill: rgba(247, 251, 255, 0.82);
+        stroke: #bfd2e3;
+        stroke-width: 1.5;
+      }
+
+      .boundary-rect.alt {
+        fill: rgba(246, 252, 249, 0.82);
+        stroke: #bddccc;
+      }
+      .boundary-rect.trust {
+        fill: rgba(255, 251, 240, 0.72);
+        stroke: #c99b3b;
+        stroke-dasharray: 8 6;
+      }
+      .boundary-title {
+        fill: #3d5f7c;
+        font-size: 16px;
+        font-weight: 850;
+        letter-spacing: 0.03em;
+      }
+      .boundary-subtitle {
+        fill: #70859a;
+        font-size: 11px;
+        font-weight: 680;
+      }
+
+      .node-bg {
+        fill: #fff;
+        stroke: #94b4cf;
+        stroke-width: 1.5;
+        filter: drop-shadow(0 5px 10px rgba(32, 75, 111, 0.08));
+      }
+
+      .node.route .node-bg {
+        fill: #f7fbff;
+        stroke: #5b98c5;
+      }
+      .node.runtime .node-bg {
+        fill: #f8f7ff;
+        stroke: #8575c3;
+      }
+      .node.external .node-bg {
+        fill: #fffaf0;
+        stroke: #bd8a29;
+        stroke-dasharray: 7 5;
+      }
+      .node.store .node-bg {
+        fill: #f3fbf7;
+        stroke: #5eaa86;
+      }
+      .node.current-fault .node-bg {
+        fill: #fff3f3;
+        stroke: #c75d64;
+        stroke-width: 2.5;
+      }
+      .node.proposed .node-bg {
+        fill: #edf9f3;
+        stroke: #318566;
+        stroke-width: 2.5;
+      }
+      .node.final .node-bg {
+        fill: #f4f8ff;
+        stroke: #4b83b1;
+        stroke-width: 2;
+      }
+      .node.dimensions .node-bg {
+        fill: #102f4a;
+        stroke: #102f4a;
+        filter: none;
+      }
+
+      .fo-body {
+        inline-size: 100%;
+        block-size: 100%;
+        overflow: hidden;
+        padding: 12px 14px;
+        color: #1f3e59;
+        font-size: 13px;
+        line-height: 1.4;
+      }
+
+      .fo-body.compact {
+        padding: 9px 12px;
+        font-size: 12px;
+        line-height: 1.32;
+      }
+      .fo-body.dark {
+        color: #fff;
+        padding: 11px 18px;
+      }
+      .fo-body h3 {
+        margin: 0 0 5px;
+        color: #173a58;
+        font-size: 15px;
+        line-height: 1.24;
+      }
+      .fo-body.dark h3 {
+        color: #fff;
+        font-size: 16px;
+      }
+      .fo-body p {
+        margin: 0;
+      }
+      .fo-body ul {
+        margin: 5px 0 0;
+        padding-left: 17px;
+      }
+      .fo-body li {
+        margin: 2px 0;
+      }
+      .fo-body code {
+        color: #345c7d;
+        font:
+          700 0.84em/1.35 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          Consolas,
+          monospace;
+      }
+      .fo-body.dark code {
+        color: #d8efff;
+      }
+      .fo-tech {
+        display: block;
+        margin-top: 5px;
+        color: #6f8295;
+        font:
+          650 10px/1.3 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          Consolas,
+          monospace;
+      }
+      .fo-body.dark .fo-tech {
+        color: #c8deef;
+      }
+      .fo-em {
+        color: #154f77;
+        font-weight: 800;
+      }
+      .fo-danger {
+        color: #a12d36;
+        font-weight: 850;
+      }
+      .fo-success {
+        color: #1d694f;
+        font-weight: 850;
+      }
+
+      .svg-tag rect {
+        fill: #fff;
+        stroke: currentColor;
+        stroke-width: 1;
+      }
+      .svg-tag text {
+        fill: currentColor;
+        font-size: 10px;
+        font-weight: 850;
+      }
+      .tag-observed {
+        color: #176aa6;
+      }
+      .tag-proposed {
+        color: #237a5b;
+      }
+      .tag-unresolved {
+        color: #9a6709;
+      }
+
+      .edge {
+        fill: none;
+        stroke: #497fa8;
+        stroke-width: 2.25;
+        marker-end: url(#arrow-blue);
+      }
+
+      .edge.live {
+        stroke: #6958ad;
+        marker-end: url(#arrow-violet);
+      }
+      .edge.current {
+        stroke: #b84d55;
+        stroke-width: 2.75;
+        marker-end: url(#arrow-red);
+      }
+      .edge.proposed {
+        stroke: #2f8564;
+        stroke-width: 2.75;
+        marker-end: url(#arrow-green);
+      }
+      .edge.read {
+        stroke: #6c879d;
+        stroke-dasharray: 6 5;
+        marker-end: url(#arrow-slate);
+      }
+      .edge.excluded {
+        stroke: #9c8b70;
+        stroke-dasharray: 5 5;
+        marker-end: none;
+      }
+      .edge-note {
+        fill: #557187;
+        font-size: 10.5px;
+        font-weight: 750;
+      }
+      .edge-note.red {
+        fill: #ad3e47;
+      }
+      .edge-note.green {
+        fill: #237a5b;
+      }
+
+      .fault-step-number {
+        fill: #fff;
+        font-size: 11px;
+        font-weight: 900;
+        text-anchor: middle;
+        dominant-baseline: central;
+      }
+      .fault-step-circle {
+        fill: #557fa3;
+      }
+      .current-fault .fault-step-circle {
+        fill: #b5454d;
+      }
+      .proposed .fault-step-circle {
+        fill: #287558;
+      }
+
+      .fault-group-label {
+        fill: #3d5f7c;
+        font-size: 14px;
+        font-weight: 850;
+      }
+      .fault-current-box {
+        fill: rgba(255, 245, 245, 0.7);
+        stroke: #dfb4b7;
+        stroke-width: 1.3;
+      }
+      .fault-repair-box {
+        fill: rgba(240, 250, 245, 0.78);
+        stroke: #a8d4c0;
+        stroke-width: 1.3;
+      }
+      .fault-exclusion-box {
+        fill: rgba(255, 251, 240, 0.75);
+        stroke: #dec797;
+        stroke-width: 1.2;
+        stroke-dasharray: 7 5;
+      }
+
+      .evidence-index {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) repeat(5, auto);
+        gap: 10px;
+        align-items: center;
+        padding: 18px 24px 22px;
+        border-top: 1px solid rgba(114, 151, 184, 0.24);
+        background: #fbfdff;
+      }
+
+      .evidence-index h3 {
+        margin: 0;
+        font-size: 0.9rem;
+      }
+      .evidence-index p {
+        margin: 3px 0 0;
+        color: var(--vd-muted);
+        font-size: 0.78rem;
+      }
+
+      .evidence-button,
+      .vd-detail-close {
+        min-block-size: 38px;
+        padding: 7px 11px;
+        border: 1px solid rgba(84, 125, 160, 0.45);
+        border-radius: 9px;
+        color: #315875;
+        background: #fff;
+        font: 760 0.76rem/1.2 inherit;
+        cursor: pointer;
+      }
+
+      .evidence-button:hover,
+      .vd-detail-close:hover {
+        border-color: var(--vd-blue);
+        background: var(--vd-blue-soft);
+      }
+      .evidence-button:focus-visible,
+      .vd-detail-close:focus-visible {
+        outline: 3px solid rgba(23, 106, 166, 0.28);
+        outline-offset: 2px;
+      }
+
+      .evidence-list {
+        margin: 12px 0 0;
+        padding-left: 20px;
+      }
+      .evidence-list code {
+        font-size: 0.8rem;
+        overflow-wrap: anywhere;
+      }
+      .evidence-list li + li {
+        margin-top: 8px;
+      }
+      .detail-status {
+        display: inline-flex;
+        margin-top: 4px;
+      }
+
+      .acceptance-strip {
+        display: grid;
+        grid-template-columns: 0.9fr 1.1fr;
+        gap: 14px;
+        margin: 0 24px 22px;
+      }
+
+      .acceptance-strip article {
+        padding: 15px 16px;
+        border: 1px solid rgba(114, 151, 184, 0.32);
+        border-radius: 14px;
+        background: #fff;
+      }
+
+      .acceptance-strip h3 {
+        margin: 0 0 7px;
+        font-size: 0.92rem;
+      }
+      .acceptance-strip p,
+      .acceptance-strip li {
+        color: #4c657c;
+        font-size: 0.82rem;
+        line-height: 1.5;
+      }
+      .acceptance-strip ul {
+        margin: 0;
+        padding-left: 18px;
+      }
+
+      @media (max-width: 70rem) {
+        .evidence-index {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+        .evidence-index > div {
+          grid-column: 1 / -1;
+        }
+      }
+
+      @media (max-width: 48rem) {
+        .view-heading {
+          grid-template-columns: 1fr;
+          padding: 18px 16px 14px;
+        }
+        .view-kind {
+          justify-self: start;
+        }
+        .decision-banner {
+          grid-template-columns: 1fr;
+          margin-inline: 14px;
+        }
+        .legend {
+          padding-inline: 16px;
+        }
+        .diagram-viewport {
+          padding-inline: 12px;
+        }
+        .evidence-index {
+          grid-template-columns: 1fr 1fr;
+          padding-inline: 16px;
+        }
+        .evidence-index > div {
+          grid-column: 1 / -1;
+        }
+        .acceptance-strip {
+          grid-template-columns: 1fr;
+          margin-inline: 14px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div data-vd-artifact="1">
+      <header data-vd-title-region>
+        <div data-vd-title-copy>
+          <span class="artifact-kicker">ZEUS-0446 · 架构与故障定位</span>
+          <h1>技术设计｜多供应商多模型会话完整闭环</h1>
+          <p data-vd-summary>
+            供应商、模型、协议和运行时是四个独立维度；Zeus 必须先冻结这四维路由，再把各 Provider 响应投影成统一会话语义。 当前 Anthropic 展示问题发生在 <strong>Pi 标准事件进入 Zeus 会话投影</strong>的边界：原始 JSON
+            已正确解析，但协议身份、阶段身份和落库顺序没有被完整保留，导致思考、阶段说明与工具活动混排。
+          </p>
+          <div class="summary-meta" aria-label="证据状态">
+            <span data-vd-evidence-state="observed">已确认事实：JSON 与 Pi 解析正常</span>
+            <span data-vd-evidence-state="observed">已确认根因：语义投影丢失阶段身份</span>
+            <span data-vd-evidence-state="proposed">拟议方案：Anthropic 协议语义适配</span>
+            <span data-vd-evidence-state="unresolved">待验证：真实中转与历史会话回放</span>
+          </div>
+        </div>
+        <div data-vd-controls role="group" aria-label="图形缩放" data-vd-zoom-request="fit">
+          <button type="button" data-vd-zoom="0.75" aria-pressed="false">75%</button>
+          <button type="button" data-vd-zoom="0.9" aria-pressed="false">90%</button>
+          <button type="button" data-vd-zoom="1" aria-pressed="false">100%</button>
+          <button type="button" data-vd-zoom="fit" aria-pressed="true">适配</button>
+        </div>
+      </header>
+      <main data-vd-content>
+        <section id="architecture-view" class="view-card" data-vd-view="architecture-view" data-vd-family="system-architecture" data-vd-view-role="primary">
+          <header class="view-heading">
+            <div>
+              <h2 data-vd-view-title>系统架构｜一次会话如何跨供应商完整往返</h2>
+              <p>从用户看到的输入开始，沿语义路由、运行时分流、响应摄取、权威存储一路回到 Transcript。蓝色是现有正确主线，红色是当前断点，绿色是推荐修复路径。</p>
+            </div>
+            <span class="view-kind" data-vd-evidence-state="observed">现状 + 拟议修复</span>
+          </header>
+
+          <div id="arch-business-conclusion" class="decision-banner" data-vd-node="rule" data-vd-critical>
+            <span data-vd-evidence-state="observed">关键决策</span>
+            <span><strong>协议语义必须在 Provider 边界收口。</strong>Renderer 只消费 Zeus 的阶段、过程和最终回答，不再根据文本长相猜测 Anthropic 内容属于哪里。</span>
+            <span data-vd-evidence-state="proposed">最小扩展</span>
+          </div>
+
+          <div class="legend" aria-label="关系图例">
+            <span><i></i>请求、投影或权威读取</span>
+            <span class="legend-live"><i></i>实时事件</span>
+            <span class="legend-current"><i></i>当前错误路径</span>
+            <span class="legend-proposed"><i></i>推荐路径</span>
+            <span class="legend-trust"><i></i>外部供应商信任边界</span>
+          </div>
+
+          <div class="diagram-viewport" data-vd-viewport>
+            <div class="diagram-surface" data-vd-zoom-target>
+              <svg viewBox="0 0 1320 2010" role="img" aria-label="多供应商多模型会话输入与响应的完整系统架构" aria-describedby="architecture-svg-desc">
+                <desc id="architecture-svg-desc">六层架构展示会话输入、语义路由冻结、Codex 与 Pi 运行时分流、响应摄取、统一事实存储和最终展示。Anthropic 通用 Pi 投影断点为红色，推荐协议语义投影为绿色。</desc>
+                <defs>
+                  <marker id="arrow-blue" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#497fa8" /></marker>
+                  <marker id="arrow-violet" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#6958ad" /></marker>
+                  <marker id="arrow-red" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#b84d55" /></marker>
+                  <marker id="arrow-green" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2f8564" /></marker>
+                  <marker id="arrow-slate" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#6c879d" /></marker>
+                </defs>
+
+                <g id="arch-four-dim" class="node dimensions" data-vd-node="rule" data-vd-critical>
+                  <rect class="node-bg" x="20" y="18" width="1280" height="74" rx="18" />
+                  <foreignObject x="32" y="26" width="1256" height="58">
+                    <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body dark">
+                      <h3>四维路由不可混同</h3>
+                      <p>
+                        <strong>供应商</strong>决定账户与端点；<strong>模型</strong>决定能力；<strong>协议</strong>决定请求/响应结构；<strong>运行时</strong>决定谁负责执行。一个供应商可以暴露多模型、多协议，同一协议也可由不同运行时承载。
+                      </p>
+                    </div>
+                  </foreignObject>
+                </g>
+
+                <g id="arch-boundary-input" data-vd-group="product-input-boundary">
+                  <rect class="boundary-rect" x="20" y="120" width="1280" height="240" rx="20" />
+                  <text class="boundary-title" x="42" y="148">1 · 会话输入</text>
+                  <text class="boundary-subtitle" x="42" y="168">用户表达与 Provider 输入同时保留，但用途不同</text>
+
+                  <g id="arch-input-visible" class="node" data-vd-node="component">
+                    <rect class="node-bg" x="55" y="195" width="260" height="115" rx="14" />
+                    <foreignObject x="65" y="204" width="240" height="98">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3>用户看到的表达</h3>
+                        <p><code>displayText</code> 保留 @、/、附件提示等完整可读文本。</p>
+                        <span class="fo-tech">StructuredComposerInput</span>
+                      </div>
+                    </foreignObject>
+                  </g>
+
+                  <g id="arch-input-provider" class="node" data-vd-node="component">
+                    <rect class="node-bg" x="350" y="195" width="285" height="115" rx="14" />
+                    <foreignObject x="360" y="204" width="265" height="98">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3>真正发给模型的输入</h3>
+                        <p><code>promptText / providerContent</code> 移除结构化 Token，并注入已解析 Skill。</p>
+                        <span class="fo-tech">prompt 与 display 双轨</span>
+                      </div>
+                    </foreignObject>
+                  </g>
+
+                  <g id="arch-input-context" class="node" data-vd-node="component">
+                    <rect class="node-bg" x="670" y="195" width="280" height="115" rx="14" />
+                    <foreignObject x="680" y="204" width="260" height="98">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3>结构化上下文</h3>
+                        <p>附件、浏览器批注、会话上下文、Skill、Plugin、Computer Use。</p>
+                        <span class="fo-tech">资源能力在边界校验</span>
+                      </div>
+                    </foreignObject>
+                  </g>
+
+                  <g id="arch-input-settings" class="node" data-vd-node="interface">
+                    <rect class="node-bg" x="985" y="195" width="280" height="115" rx="14" />
+                    <foreignObject x="995" y="204" width="260" height="98">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3>执行设置与稳定身份</h3>
+                        <p>模型、effort、tier、权限、模式；<code>clientUserMessageId</code>、幂等键、queue/steer。</p>
+                        <span class="fo-tech">消息接纳信封</span>
+                      </div>
+                    </foreignObject>
+                  </g>
+                </g>
+
+                <g id="arch-boundary-route" data-vd-group="semantic-routing-boundary">
+                  <rect class="boundary-rect alt" x="20" y="400" width="1280" height="230" rx="20" />
+                  <text class="boundary-title" x="42" y="428">2 · 语义路由与冻结</text>
+                  <text class="boundary-subtitle" x="42" y="448">先接纳提交，再冻结供应商、协议、运行时和执行设置</text>
+
+                  <g id="arch-accepted-submission" class="node route" data-vd-node="component">
+                    <rect class="node-bg" x="55" y="475" width="275" height="105" rx="14" />
+                    <foreignObject x="65" y="484" width="255" height="88">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3>持久接纳的提交</h3>
+                        <p>幂等接纳、排队或插话；用户消息身份成为后续对账锚点。</p>
+                        <span class="fo-tech">conversation_submissions</span>
+                      </div>
+                    </foreignObject>
+                  </g>
+
+                  <g id="arch-model-catalog" class="node route" data-vd-node="component">
+                    <rect class="node-bg" x="370" y="475" width="275" height="105" rx="14" />
+                    <foreignObject x="380" y="484" width="255" height="88">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3>模型目录解析</h3>
+                        <p><code>modelSourceId + modelId</code> 解析连接、能力、协议与运行适配器。</p>
+                        <span class="fo-tech">ModelConnectionCatalog</span>
+                      </div>
+                    </foreignObject>
+                  </g>
+
+                  <g id="arch-frozen-route" class="node route" data-vd-node="store" data-vd-critical>
+                    <rect class="node-bg" x="685" y="462" width="340" height="130" rx="14" />
+                    <foreignObject x="695" y="471" width="320" height="112">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3>冻结语义路由</h3>
+                        <p><code>runtimeKind + connectionId + endpoint + protocolFamily + modelId + credentialSlot</code></p>
+                        <p>并冻结 effort、tier、权限、协作模式与 workspace。</p>
+                        <span class="fo-tech">conversation_execution_snapshots</span>
+                      </div>
+                    </foreignObject>
+                  </g>
+
+                  <g id="arch-segment-lifecycle" class="node route" data-vd-node="component">
+                    <rect class="node-bg" x="1065" y="475" width="200" height="105" rx="14" />
+                    <foreignObject x="1075" y="484" width="180" height="88">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3>分段生命周期</h3>
+                        <p>路由变化或上下文压力才切段；排队配置不会静默漂移。</p>
+                        <span class="fo-tech">segment + compaction</span>
+                      </div>
+                    </foreignObject>
+                  </g>
+                </g>
+
+                <g id="arch-boundary-runtime" data-vd-group="runtime-and-provider-boundary">
+                  <rect class="boundary-rect" x="20" y="670" width="1280" height="360" rx="20" />
+                  <text class="boundary-title" x="42" y="698">3 · 运行时与协议分流</text>
+                  <text class="boundary-subtitle" x="42" y="718">运行时不是供应商名称；路由按已冻结配置进入 Codex App Server 或 Pi SDK</text>
+
+                  <g id="arch-runtime-codex" class="node runtime" data-vd-node="service" data-vd-critical>
+                    <rect class="node-bg" x="80" y="750" width="500" height="120" rx="16" />
+                    <foreignObject x="92" y="760" width="476" height="100">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body">
+                        <h3>Codex App Server 运行时</h3>
+                        <p>承载 Codex managed account 与 OpenAI Responses 路径；当前官方 DeepSeek Responses 特定模型也可按能力证据进入。</p>
+                        <span class="fo-tech">runtimeKind=codex · protocol=openai_responses</span>
+                      </div>
+                    </foreignObject>
+                  </g>
+
+                  <g id="arch-runtime-pi" class="node runtime" data-vd-node="service" data-vd-critical>
+                    <rect class="node-bg" x="720" y="750" width="520" height="120" rx="16" />
+                    <foreignObject x="732" y="760" width="496" height="100">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body">
+                        <h3>Pi SDK 运行时</h3>
+                        <p>同一运行时按模型配置使用 OpenAI Chat Completions、OpenAI Responses 或 Anthropic Messages。</p>
+                        <span class="fo-tech">runtimeKind=pi · api 由 protocolFamily 决定</span>
+                      </div>
+                    </foreignObject>
+                  </g>
+
+                  <g id="arch-provider-codex" class="node external" data-vd-node="external">
+                    <rect class="node-bg" x="80" y="905" width="500" height="85" rx="14" />
+                    <foreignObject x="92" y="913" width="476" height="69">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3>外部 Provider：Codex / Responses 兼容端点</h3>
+                        <p>Codex 账户或已配置连接；认证槽被冻结，图中不暴露密钥。</p>
+                      </div>
+                    </foreignObject>
+                  </g>
+
+                  <g id="arch-provider-pi" class="node external" data-vd-node="external">
+                    <rect class="node-bg" x="720" y="905" width="520" height="85" rx="14" />
+                    <foreignObject x="732" y="913" width="496" height="69">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3>外部 Provider：自定义与中转端点</h3>
+                        <p><code>/chat/completions</code>、<code>/responses</code> 或 <code>/v1/messages</code>；Bearer / x-api-key 由协议配置。</p>
+                      </div>
+                    </foreignObject>
+                  </g>
+                </g>
+
+                <g id="arch-boundary-ingest" data-vd-group="response-ingestion-boundary">
+                  <rect class="boundary-rect alt" x="20" y="1070" width="1280" height="330" rx="20" />
+                  <text class="boundary-title" x="42" y="1098">4 · 响应摄取与 Zeus 语义投影</text>
+                  <text class="boundary-subtitle" x="42" y="1118">协议响应在这里转换为阶段、过程、工具与最终回答；当前根因就在此边界</text>
+
+                  <g id="arch-codex-projection" class="node" data-vd-node="component">
+                    <rect class="node-bg" x="80" y="1150" width="500" height="125" rx="16" />
+                    <foreignObject x="92" y="1160" width="476" height="105">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body">
+                        <h3>Codex 原生事件投影</h3>
+                        <p>App Server item/event 保留原生 item 身份、phase、状态、资源和过程语义，再进入统一存储。</p>
+                        <span class="fo-tech">CodexProviderEventProjection + TurnProcessProjector</span>
+                      </div>
+                    </foreignObject>
+                  </g>
+
+                  <g id="arch-pi-normalized" class="node" data-vd-node="interface">
+                    <rect class="node-bg" x="720" y="1130" width="520" height="125" rx="16" />
+                    <foreignObject x="732" y="1140" width="496" height="105">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body">
+                        <h3>Pi 标准事件：解析仍然正确</h3>
+                        <p>Anthropic 的 <code>thinking + text + tool_use</code> 已被解析为 <code>thinking / text / toolCall</code>，并进入同一 <code>message_end</code>。</p>
+                        <span class="fo-tech">AgentRuntimeEvent · JSON 解析不是根因</span>
+                      </div>
+                    </foreignObject>
+                  </g>
+
+                  <g id="arch-root-cause" class="node current-fault" data-vd-node="component" data-vd-critical>
+                    <rect class="node-bg" x="650" y="1290" width="315" height="90" rx="14" />
+                    <foreignObject x="660" y="1298" width="295" height="74">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3 class="fo-danger">当前断点：通用 Pi 投影</h3>
+                        <p>缺 <code>protocolFamily/stageId</code>；同一 run 复用消息 ID；process 先于摘要落库。</p>
+                      </div>
+                    </foreignObject>
+                  </g>
+
+                  <g id="arch-proposed-projection" class="node proposed" data-vd-node="component" data-vd-critical>
+                    <rect class="node-bg" x="995" y="1290" width="245" height="90" rx="14" />
+                    <foreignObject x="1005" y="1298" width="225" height="74">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3 class="fo-success">推荐：Anthropic 语义适配</h3>
+                        <p>稳定 stage/message 身份，并把 thinking、摘要、工具、终态映射到 Zeus 语义。</p>
+                      </div>
+                    </foreignObject>
+                  </g>
+                </g>
+
+                <g id="arch-boundary-storage" data-vd-group="authoritative-storage-boundary">
+                  <rect class="boundary-rect" x="20" y="1440" width="1280" height="260" rx="20" />
+                  <text class="boundary-title" x="42" y="1468">5 · 统一事实存储与同步</text>
+                  <text class="boundary-subtitle" x="42" y="1488">实时 UI 与冷启动历史共享同一组权威事实，不从 Provider JSONL 直接渲染</text>
+
+                  <g id="arch-unified-store" class="node store" data-vd-node="store" data-vd-critical>
+                    <rect class="node-bg" x="60" y="1530" width="760" height="125" rx="16" />
+                    <foreignObject x="72" y="1540" width="736" height="105">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body">
+                        <h3>统一会话事实</h3>
+                        <p><strong>接纳与路由：</strong>submission、turn、execution snapshot、runtime segment</p>
+                        <p><strong>内容与过程：</strong>provider item state、messages/model history、process items、resources</p>
+                        <span class="fo-tech">SQLite authoritative records · 不重写旧历史即可做只读投影兼容</span>
+                      </div>
+                    </foreignObject>
+                  </g>
+
+                  <g id="arch-sync-snapshot" class="node store" data-vd-node="interface">
+                    <rect class="node-bg" x="880" y="1530" width="360" height="125" rx="16" />
+                    <foreignObject x="892" y="1540" width="336" height="105">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body">
+                        <h3>两条读取路径，同一语义</h3>
+                        <p><span class="fo-em">实时：</span>conversation.item.* / sync event stream</p>
+                        <p><span class="fo-em">冷启动：</span>Snapshot V2 + model/process 分页</p>
+                        <span class="fo-tech">generation + event watermark</span>
+                      </div>
+                    </foreignObject>
+                  </g>
+                </g>
+
+                <g id="arch-boundary-display" data-vd-group="renderer-projection-boundary">
+                  <rect class="boundary-rect alt" x="20" y="1740" width="1280" height="240" rx="20" />
+                  <text class="boundary-title" x="42" y="1768">6 · 展示投影</text>
+                  <text class="boundary-subtitle" x="42" y="1788">Renderer 只负责合并实时与历史、按显式阶段归组并呈现一致的会话结构</text>
+
+                  <g id="arch-snapshot-adapter" class="node" data-vd-node="component">
+                    <rect class="node-bg" x="60" y="1830" width="340" height="105" rx="14" />
+                    <foreignObject x="70" y="1839" width="320" height="88">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3>Snapshot + Realtime 合流</h3>
+                        <p>adapter 统一本地/Provider turn 身份，reducer 以事件水位增量更新。</p>
+                        <span class="fo-tech">conversationSnapshotV2Adapter + sessionReducer</span>
+                      </div>
+                    </foreignObject>
+                  </g>
+
+                  <g id="arch-session-buffer" class="node" data-vd-node="component">
+                    <rect class="node-bg" x="490" y="1830" width="320" height="105" rx="14" />
+                    <foreignObject x="500" y="1839" width="300" height="88">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3>统一 Renderer Item</h3>
+                        <p><code>NativeSessionItemBuffer</code> 携带 turn、phase、status、资源与拟议 stage 身份。</p>
+                        <span class="fo-tech">稳定 item key 防重复</span>
+                      </div>
+                    </foreignObject>
+                  </g>
+
+                  <g id="arch-final-view" class="node final" data-vd-node="component" data-vd-critical>
+                    <rect class="node-bg" x="900" y="1810" width="340" height="145" rx="16" />
+                    <foreignObject x="912" y="1820" width="316" height="125">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3>用户最终看到的 Zeus 会话</h3>
+                        <p>完成轮次</p>
+                        <p>├─ 查看处理过程：阶段说明 / 思考详情 / 工具</p>
+                        <p>├─ 最终回答与交付物</p>
+                        <p>└─ 已处理时长</p>
+                        <span class="fo-tech">ConversationTranscript</span>
+                      </div>
+                    </foreignObject>
+                  </g>
+                </g>
+
+                <path id="arch-edge-input-accept" class="edge" data-vd-edge="submit" data-from="arch-boundary-input" data-to="arch-accepted-submission" d="M 660 360 V 382 H 192 V 475" />
+                <path id="arch-edge-accept-catalog" class="edge" data-vd-edge="resolve" data-from="arch-accepted-submission" data-to="arch-model-catalog" d="M 330 527 H 370" />
+                <path id="arch-edge-catalog-freeze" class="edge" data-vd-edge="freeze" data-from="arch-model-catalog" data-to="arch-frozen-route" d="M 645 527 H 685" />
+                <path id="arch-edge-freeze-lifecycle" class="edge" data-vd-edge="own" data-from="arch-frozen-route" data-to="arch-segment-lifecycle" d="M 1025 527 H 1065" />
+                <path id="arch-edge-freeze-codex" class="edge" data-vd-edge="dispatch" data-from="arch-frozen-route" data-to="arch-runtime-codex" d="M 855 592 V 650 H 330 V 750" />
+                <path id="arch-edge-freeze-pi" class="edge" data-vd-edge="dispatch" data-from="arch-frozen-route" data-to="arch-runtime-pi" d="M 855 592 V 650 H 980 V 750" />
+                <text class="edge-note" x="388" y="642">runtimeKind = codex</text>
+                <text class="edge-note" x="990" y="642">runtimeKind = pi</text>
+
+                <path id="arch-edge-codex-provider" class="edge" data-vd-edge="request" data-from="arch-runtime-codex" data-to="arch-provider-codex" d="M 330 870 V 905" />
+                <path id="arch-edge-pi-provider" class="edge" data-vd-edge="request" data-from="arch-runtime-pi" data-to="arch-provider-pi" d="M 980 870 V 905" />
+                <path id="arch-edge-provider-codex-response" class="edge" data-vd-edge="response" data-from="arch-provider-codex" data-to="arch-codex-projection" d="M 330 990 V 1150" />
+                <path id="arch-edge-provider-pi-response" class="edge" data-vd-edge="response" data-from="arch-provider-pi" data-to="arch-pi-normalized" d="M 980 990 V 1130" />
+                <text class="edge-note" x="342" y="1060">Codex item/event</text>
+                <text class="edge-note" x="992" y="1060">协议响应 → AgentRuntimeEvent</text>
+
+                <path id="arch-edge-pi-current" class="edge current" data-vd-edge="current-projection" data-from="arch-pi-normalized" data-to="arch-root-cause" d="M 980 1255 V 1272 H 807 V 1290" />
+                <path id="arch-edge-pi-proposed" class="edge proposed" data-vd-edge="proposed-projection" data-from="arch-pi-normalized" data-to="arch-proposed-projection" d="M 980 1255 V 1272 H 1117 V 1290" />
+                <text class="edge-note red" x="700" y="1270">当前：丢失协议/阶段语义</text>
+                <text class="edge-note green" x="1050" y="1270">推荐：显式映射</text>
+
+                <path id="arch-edge-codex-store" class="edge" data-vd-edge="write" data-from="arch-codex-projection" data-to="arch-unified-store" d="M 330 1275 V 1420 H 280 V 1530" />
+                <path id="arch-edge-current-store" class="edge current" data-vd-edge="write-misaligned" data-from="arch-root-cause" data-to="arch-unified-store" d="M 807 1380 V 1430 H 650 V 1530" />
+                <path id="arch-edge-proposed-store" class="edge proposed" data-vd-edge="write-semantic" data-from="arch-proposed-projection" data-to="arch-unified-store" d="M 1117 1380 V 1460 H 780 V 1530" />
+                <path id="arch-edge-store-sync" class="edge live" data-vd-edge="publish-and-read" data-from="arch-unified-store" data-to="arch-sync-snapshot" d="M 820 1592 H 880" />
+                <path id="arch-edge-sync-adapter" class="edge read" data-vd-edge="hydrate" data-from="arch-sync-snapshot" data-to="arch-snapshot-adapter" d="M 1060 1655 V 1720 H 230 V 1830" />
+                <path id="arch-edge-adapter-buffer" class="edge" data-vd-edge="adapt" data-from="arch-snapshot-adapter" data-to="arch-session-buffer" d="M 400 1882 H 490" />
+                <path id="arch-edge-buffer-view" class="edge" data-vd-edge="render" data-from="arch-session-buffer" data-to="arch-final-view" d="M 810 1882 H 900" />
+              </svg>
+            </div>
+          </div>
+
+          <div class="acceptance-strip">
+            <article>
+              <h3>推荐设计的优势</h3>
+              <ul>
+                <li>在协议边界一次修复根因，新旧历史与实时展示共享语义。</li>
+                <li>Codex、OpenAI-compatible Pi、DeepSeek 继续走现有逻辑。</li>
+                <li>不新增第二套 Transcript，不要求迁移或重写 SQLite 历史。</li>
+              </ul>
+            </article>
+            <article>
+              <h3>明确代价与边界</h3>
+              <ul>
+                <li>Snapshot V2 增加可选 <code>protocolFamily</code>、<code>stageId</code> 并刷新 structure generation。</li>
+                <li>Anthropic 分支需维护明确内容映射；仅做相邻摘要精确去重，不做模糊推断。</li>
+                <li>空 thinking signature 属于协议重放兼容，和本次展示根因分开治理。</li>
+              </ul>
+            </article>
+          </div>
+        </section>
+
+        <section id="fault-view" class="view-card" data-vd-view="fault-view" data-vd-family="fault-debugging" data-vd-view-role="supporting">
+          <header class="view-heading">
+            <div>
+              <h2 data-vd-view-title>故障因果链｜Anthropic 思考内容为何混入展示</h2>
+              <p>蓝色节点是已确认的输入与解析事实，红色节点构成当前故障链，绿色节点是关闭故障的最小修复。底部两个方向已被现有证据排除。</p>
+            </div>
+            <span class="view-kind" data-vd-evidence-state="observed">根因已定位</span>
+          </header>
+
+          <div class="diagram-viewport" data-vd-viewport>
+            <div class="diagram-surface" data-vd-zoom-target>
+              <svg viewBox="0 0 1320 1030" role="img" aria-label="Anthropic 会话展示问题的故障因果链" aria-describedby="fault-svg-desc">
+                <desc id="fault-svg-desc">从合法 Anthropic 结构化响应开始，经 Pi 正确解析后，在 Zeus 通用 Pi 投影处丢失协议和阶段语义，并因身份复用、落库顺序与 Renderer 阶段推断而造成内容混排。绿色路径展示推荐修复与验收。</desc>
+                <defs>
+                  <marker id="fault-arrow-blue" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#497fa8" /></marker>
+                  <marker id="fault-arrow-red" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#b84d55" /></marker>
+                  <marker id="fault-arrow-green" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2f8564" /></marker>
+                </defs>
+
+                <g id="fault-current-group" data-vd-group="current-fault-chain">
+                  <rect class="fault-current-box" x="20" y="45" width="1280" height="400" rx="20" />
+                  <text class="fault-group-label" x="42" y="75">现状：有效响应在语义投影后失去正确分层</text>
+
+                  <g id="fault-valid-response" class="node" data-vd-node="cause">
+                    <rect class="node-bg" x="50" y="105" width="250" height="105" rx="14" />
+                    <circle class="fault-step-circle" cx="70" cy="125" r="13" />
+                    <text class="fault-step-number" x="70" y="125">1</text>
+                    <foreignObject x="82" y="115" width="206" height="86">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3>Anthropic 响应合法</h3>
+                        <p><code>thinking + text + tool_use</code> 同处 assistant content。</p>
+                      </div>
+                    </foreignObject>
+                  </g>
+
+                  <g id="fault-pi-parsed" class="node" data-vd-node="cause">
+                    <rect class="node-bg" x="360" y="105" width="250" height="105" rx="14" />
+                    <circle class="fault-step-circle" cx="380" cy="125" r="13" />
+                    <text class="fault-step-number" x="380" y="125">2</text>
+                    <foreignObject x="392" y="115" width="206" height="86">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3>Pi 已正确解析</h3>
+                        <p>结构成为 <code>thinking / text / toolCall</code>。</p>
+                      </div>
+                    </foreignObject>
+                  </g>
+
+                  <g id="fault-semantic-loss" class="node current-fault" data-vd-node="cause">
+                    <rect class="node-bg" x="670" y="105" width="250" height="105" rx="14" />
+                    <circle class="fault-step-circle" cx="690" cy="125" r="13" />
+                    <text class="fault-step-number" x="690" y="125">3</text>
+                    <foreignObject x="702" y="115" width="206" height="86">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3>协议语义丢失</h3>
+                        <p>过程项只记录 <code>provider=pi</code>，没有 protocol/stage。</p>
+                      </div>
+                    </foreignObject>
+                  </g>
+
+                  <g id="fault-identity-reuse" class="node current-fault" data-vd-node="cause">
+                    <rect class="node-bg" x="980" y="105" width="250" height="105" rx="14" />
+                    <circle class="fault-step-circle" cx="1000" cy="125" r="13" />
+                    <text class="fault-step-number" x="1000" y="125">4</text>
+                    <foreignObject x="1012" y="115" width="206" height="86">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3>消息身份按 run 复用</h3>
+                        <p>多次 <code>message_end</code> 共用 <code>pi_message_nativeRunId</code>。</p>
+                      </div>
+                    </foreignObject>
+                  </g>
+
+                  <g id="fault-ordering" class="node current-fault" data-vd-node="cause">
+                    <rect class="node-bg" x="980" y="295" width="250" height="105" rx="14" />
+                    <circle class="fault-step-circle" cx="1000" cy="315" r="13" />
+                    <text class="fault-step-number" x="1000" y="315">5</text>
+                    <foreignObject x="1012" y="305" width="206" height="86">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3>落库顺序与语义相反</h3>
+                        <p><code>thinking/tool</code> 先写 process，text 后写阶段摘要。</p>
+                      </div>
+                    </foreignObject>
+                  </g>
+
+                  <g id="fault-renderer-guess" class="node current-fault" data-vd-node="cause">
+                    <rect class="node-bg" x="670" y="295" width="250" height="105" rx="14" />
+                    <circle class="fault-step-circle" cx="690" cy="315" r="13" />
+                    <text class="fault-step-number" x="690" y="315">6</text>
+                    <foreignObject x="702" y="305" width="206" height="86">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3>Renderer 只能猜阶段</h3>
+                        <p>按“摘要出现顺序”划分，后续摘要才结束上一阶段。</p>
+                      </div>
+                    </foreignObject>
+                  </g>
+
+                  <g id="fault-cross-stage" class="node current-fault" data-vd-node="cause">
+                    <rect class="node-bg" x="360" y="295" width="250" height="105" rx="14" />
+                    <circle class="fault-step-circle" cx="380" cy="315" r="13" />
+                    <text class="fault-step-number" x="380" y="315">7</text>
+                    <foreignObject x="392" y="305" width="206" height="86">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3>内容跨阶段串位/覆盖</h3>
+                        <p>思考、阶段说明和工具活动不再共享稳定归属。</p>
+                      </div>
+                    </foreignObject>
+                  </g>
+
+                  <g id="fault-user-impact" class="node current-fault" data-vd-node="symptom">
+                    <rect class="node-bg" x="50" y="295" width="250" height="105" rx="14" />
+                    <circle class="fault-step-circle" cx="70" cy="315" r="13" />
+                    <text class="fault-step-number" x="70" y="315">8</text>
+                    <foreignObject x="82" y="305" width="206" height="86">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3 class="fo-danger">最终症状</h3>
+                        <p>思考过程像正文一样堆叠，会话过长且阶段含义混乱。</p>
+                      </div>
+                    </foreignObject>
+                  </g>
+                </g>
+
+                <g id="fault-repair-group" data-vd-group="recommended-repair-chain">
+                  <rect class="fault-repair-box" x="20" y="475" width="1280" height="315" rx="20" />
+                  <text class="fault-group-label" x="42" y="505">推荐：在现有 Pi 边界补齐 Anthropic 语义，再让存储与 Renderer 使用显式阶段身份</text>
+
+                  <g id="fault-repair-mapper" class="node proposed" data-vd-node="repair">
+                    <rect class="node-bg" x="50" y="545" width="250" height="105" rx="14" />
+                    <circle class="fault-step-circle" cx="70" cy="565" r="13" />
+                    <text class="fault-step-number" x="70" y="565">A</text>
+                    <foreignObject x="82" y="555" width="206" height="86">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3>Anthropic 语义映射</h3>
+                        <p>toolUse text→摘要；thinking→详情；tool→活动；terminal text→正文。</p>
+                      </div>
+                    </foreignObject>
+                  </g>
+
+                  <g id="fault-repair-identity" class="node proposed" data-vd-node="repair">
+                    <rect class="node-bg" x="360" y="545" width="250" height="105" rx="14" />
+                    <circle class="fault-step-circle" cx="380" cy="565" r="13" />
+                    <text class="fault-step-number" x="380" y="565">B</text>
+                    <foreignObject x="392" y="555" width="206" height="86">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3>消息级稳定身份</h3>
+                        <p><code>message.id</code> 优先，回退 <code>nativeRunId + sequence</code>。</p>
+                      </div>
+                    </foreignObject>
+                  </g>
+
+                  <g id="fault-repair-snapshot" class="node proposed" data-vd-node="repair">
+                    <rect class="node-bg" x="670" y="545" width="250" height="105" rx="14" />
+                    <circle class="fault-step-circle" cx="690" cy="565" r="13" />
+                    <text class="fault-step-number" x="690" y="565">C</text>
+                    <foreignObject x="702" y="555" width="206" height="86">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3>实时与历史同一元数据</h3>
+                        <p>Snapshot V2 和实时 item 都携带 <code>protocolFamily/stageId</code>。</p>
+                      </div>
+                    </foreignObject>
+                  </g>
+
+                  <g id="fault-repair-renderer" class="node proposed" data-vd-node="repair">
+                    <rect class="node-bg" x="980" y="545" width="250" height="105" rx="14" />
+                    <circle class="fault-step-circle" cx="1000" cy="565" r="13" />
+                    <text class="fault-step-number" x="1000" y="565">D</text>
+                    <foreignObject x="1012" y="555" width="206" height="86">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3>按 stageId 展示</h3>
+                        <p>思考详情默认收起；旧协议继续使用现有时序投影。</p>
+                      </div>
+                    </foreignObject>
+                  </g>
+
+                  <g id="fault-verification" class="node proposed" data-vd-node="verification">
+                    <rect class="node-bg" x="420" y="685" width="480" height="75" rx="14" />
+                    <foreignObject x="432" y="694" width="456" height="58">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3>目标验收：实时、冷启动、旧历史保持同一分层</h3>
+                        <p>过程默认收起；展开后阶段说明、思考详情、工具活动归属正确；最终回答只有一份。</p>
+                      </div>
+                    </foreignObject>
+                  </g>
+                </g>
+
+                <g id="fault-exclusion-group" data-vd-group="excluded-hypotheses">
+                  <rect class="fault-exclusion-box" x="20" y="825" width="1280" height="165" rx="20" />
+                  <text class="fault-group-label" x="42" y="855">已排除的方向：不能用与根因无关的补丁替代协议语义修复</text>
+
+                  <g id="fault-excluded-json" class="node external" data-vd-node="hypothesis">
+                    <rect class="node-bg" x="120" y="885" width="470" height="70" rx="14" />
+                    <foreignObject x="132" y="894" width="446" height="52">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3>不是 JSON 解析问题</h3>
+                        <p>附件中 16 个 thinking、30 个 text、33 个 tool call 均已成为结构化 block。</p>
+                      </div>
+                    </foreignObject>
+                  </g>
+
+                  <g id="fault-excluded-signature" class="node external" data-vd-node="hypothesis">
+                    <rect class="node-bg" x="730" y="885" width="470" height="70" rx="14" />
+                    <foreignObject x="742" y="894" width="446" height="52">
+                      <div xmlns="http://www.w3.org/1999/xhtml" class="fo-body compact">
+                        <h3>空 thinking signature 不是展示根因</h3>
+                        <p>它可能影响协议重放兼容，但不能解释 stage 归属、身份复用与落库顺序。</p>
+                      </div>
+                    </foreignObject>
+                  </g>
+                </g>
+
+                <path id="fault-edge-1-2" class="edge" style="marker-end: url(#fault-arrow-blue)" data-vd-edge="evidence" data-from="fault-valid-response" data-to="fault-pi-parsed" d="M 300 157 H 360" />
+                <path id="fault-edge-2-3" class="edge current" style="marker-end: url(#fault-arrow-red)" data-vd-edge="semantic-loss" data-from="fault-pi-parsed" data-to="fault-semantic-loss" d="M 610 157 H 670" />
+                <path id="fault-edge-3-4" class="edge current" style="marker-end: url(#fault-arrow-red)" data-vd-edge="identity-loss" data-from="fault-semantic-loss" data-to="fault-identity-reuse" d="M 920 157 H 980" />
+                <path id="fault-edge-4-5" class="edge current" style="marker-end: url(#fault-arrow-red)" data-vd-edge="sequence" data-from="fault-identity-reuse" data-to="fault-ordering" d="M 1105 210 V 295" />
+                <path id="fault-edge-5-6" class="edge current" style="marker-end: url(#fault-arrow-red)" data-vd-edge="projection" data-from="fault-ordering" data-to="fault-renderer-guess" d="M 980 347 H 920" />
+                <path id="fault-edge-6-7" class="edge current" style="marker-end: url(#fault-arrow-red)" data-vd-edge="misgroup" data-from="fault-renderer-guess" data-to="fault-cross-stage" d="M 670 347 H 610" />
+                <path id="fault-edge-7-8" class="edge current" style="marker-end: url(#fault-arrow-red)" data-vd-edge="impact" data-from="fault-cross-stage" data-to="fault-user-impact" d="M 360 347 H 300" />
+                <path id="fault-edge-impact-repair" class="edge proposed" style="marker-end: url(#fault-arrow-green)" data-vd-edge="repair" data-from="fault-user-impact" data-to="fault-repair-mapper" d="M 175 400 V 545" />
+                <path id="fault-edge-repair-1-2" class="edge proposed" style="marker-end: url(#fault-arrow-green)" data-vd-edge="repair" data-from="fault-repair-mapper" data-to="fault-repair-identity" d="M 300 597 H 360" />
+                <path id="fault-edge-repair-2-3" class="edge proposed" style="marker-end: url(#fault-arrow-green)" data-vd-edge="repair" data-from="fault-repair-identity" data-to="fault-repair-snapshot" d="M 610 597 H 670" />
+                <path id="fault-edge-repair-3-4" class="edge proposed" style="marker-end: url(#fault-arrow-green)" data-vd-edge="repair" data-from="fault-repair-snapshot" data-to="fault-repair-renderer" d="M 920 597 H 980" />
+                <path id="fault-edge-repair-verify" class="edge proposed" style="marker-end: url(#fault-arrow-green)" data-vd-edge="verify" data-from="fault-repair-renderer" data-to="fault-verification" d="M 1105 650 V 668 H 660 V 685" />
+              </svg>
+            </div>
+          </div>
+
+          <div class="evidence-index">
+            <div>
+              <h3>代码与现场证据</h3>
+              <p>详情只补充精确标识，不承担主图的产品结论。</p>
+            </div>
+            <button class="evidence-button" type="button" data-vd-detail-trigger="detail-input-route">输入与路由</button>
+            <button class="evidence-button" type="button" data-vd-detail-trigger="detail-anthropic-jsonl">原始响应</button>
+            <button class="evidence-button" type="button" data-vd-detail-trigger="detail-root-cause">根因代码</button>
+            <button class="evidence-button" type="button" data-vd-detail-trigger="detail-snapshot-renderer">存储与展示</button>
+            <button class="evidence-button" type="button" data-vd-detail-trigger="detail-proposed-contract">推荐接口</button>
+          </div>
+        </section>
+
+        <noscript data-vd-static-fallback>
+          <p>此图的架构与因果链均已作为静态 SVG 写入 HTML；启用 JavaScript 可使用缩放和证据详情。</p>
+        </noscript>
+      </main>
+
+      <dialog id="detail-input-route" data-vd-detail-for="arch-frozen-route">
+        <button class="vd-detail-close" type="button" data-vd-detail-close>关闭</button>
+        <div class="vd-detail-body">
+          <h2>输入与冻结路由证据</h2>
+          <span class="detail-status" data-vd-evidence-state="observed">已确认事实</span>
+          <ul class="evidence-list">
+            <li><code>StructuredComposerInput.tsx:400-414</code>：同时生成 displayText、promptText、expert/skill/plugin 引用与 computerUseRequested。</li>
+            <li><code>conversationApplicationOperations.ts:1238-1305</code>：校验内容、模型、effort、tier、权限、协作模式和 clientUserMessageId。</li>
+            <li><code>conversationApplicationOperations.ts:2098-2144</code>：解析 connection/model，并形成 runtimeKind、protocolFamily、endpoint、credentialSlot 等完整路由。</li>
+            <li><code>conversationExecutionCoordinator.ts:128-161</code>：创建 execution snapshot 并冻结到 submission。</li>
+          </ul>
+        </div>
+      </dialog>
+
+      <dialog id="detail-anthropic-jsonl" data-vd-detail-for="arch-pi-normalized">
+        <button class="vd-detail-close" type="button" data-vd-detail-close>关闭</button>
+        <div class="vd-detail-body">
+          <h2>Anthropic 原始响应证据</h2>
+          <span class="detail-status" data-vd-evidence-state="observed">已确认事实</span>
+          <p>用户附件共 70 条 JSONL、236,328 字节。32 条 assistant 消息中包含 16 个 thinking block、30 个 text block、33 个 tool call。</p>
+          <ul class="evidence-list">
+            <li>这些 block 已经出现在 Pi assistant message.content 中，证明 JSON 解析和基本协议识别已经完成。</li>
+            <li>截图中的长内容与 JSONL 中的 thinking/text/tool 规模一致，展示问题发生在后续投影与归组。</li>
+            <li>本证据只能确认当前样本；其他中转对 Anthropic block 的保持程度仍需真实回放验证。</li>
+          </ul>
+        </div>
+      </dialog>
+
+      <dialog id="detail-root-cause" data-vd-detail-for="arch-root-cause">
+        <button class="vd-detail-close" type="button" data-vd-detail-close>关闭</button>
+        <div class="vd-detail-body">
+          <h2>根因代码证据</h2>
+          <span class="detail-status" data-vd-evidence-state="observed">已确认根因</span>
+          <ul class="evidence-list">
+            <li><code>turnProcessProjector.ts:76-103</code>：thinking/tool block 只以 provider=pi 写入 process detail，没有 protocolFamily 或 stageId。</li>
+            <li><code>piNativeConversationCoordinator.ts:1266-1295</code>：processProjector 在 message_end 文本摘要处理之前执行。</li>
+            <li><code>piNativeConversationCoordinator.ts:1388-1455</code>：每次 assistant message_end 都使用 <code>pi_message_${nativeRunId}</code>，并在之后写入 text 摘要和 model history。</li>
+            <li>因此同一 run 的多次模型续接缺少消息级稳定身份，且 reasoning/tool 与摘要的语义顺序无法由存储直接表达。</li>
+          </ul>
+        </div>
+      </dialog>
+
+      <dialog id="detail-snapshot-renderer" data-vd-detail-for="arch-final-view">
+        <button class="vd-detail-close" type="button" data-vd-detail-close>关闭</button>
+        <div class="vd-detail-body">
+          <h2>Snapshot 与 Renderer 证据</h2>
+          <span class="detail-status" data-vd-evidence-state="observed">已确认事实</span>
+          <ul class="evidence-list">
+            <li><code>conversationSnapshotV2Adapter.ts:570-610</code>：process item 被投影为统一 Renderer item，但当前没有协议和阶段字段。</li>
+            <li><code>ConversationTranscript.tsx:1720-1754</code>：阶段按摘要出现顺序切分；第一条摘要接管前置 reasoning，后续摘要结束上一阶段。</li>
+            <li><code>ConversationTranscript.tsx:1948-1971</code>：活动组使用摘要递增 ordinal 作为阶段身份，而不是 Provider 明确提供的 stageId。</li>
+            <li>该算法对 Codex 现有事件顺序成立，但不能无损恢复 Anthropic message_end 内的 block 关系。</li>
+          </ul>
+        </div>
+      </dialog>
+
+      <dialog id="detail-proposed-contract" data-vd-detail-for="arch-proposed-projection">
+        <button class="vd-detail-close" type="button" data-vd-detail-close>关闭</button>
+        <div class="vd-detail-body">
+          <h2>推荐接口与兼容边界</h2>
+          <span class="detail-status" data-vd-evidence-state="proposed">拟议方案</span>
+          <ul class="evidence-list">
+            <li>Anthropic assistant message 产生消息级 <code>stageId/providerItemId</code>：优先 message.id，回退 nativeRunId + event.sequence。</li>
+            <li>Pi process detail、provider item payload、model history content 同时写入 <code>protocolFamily=anthropic_messages</code> 与 <code>stageId</code>。</li>
+            <li>Snapshot V2 model-history/process/active-item 增加同名可选字段；旧记录通过 segment → execution snapshot 推导协议，通过同消息事件时间生成只读阶段回退。</li>
+            <li>Renderer 仅对 Anthropic 且存在 stageId 的项目启用显式归组；其他协议沿用现有时序。</li>
+            <li>redacted thinking 不展示原始载荷；error/aborted 不生成 final_answer；相邻摘要仅做规范化空白后的精确去重。</li>
+          </ul>
+        </div>
+      </dialog>
+      <output data-vd-audit-output aria-live="polite"></output>
+    </div>
+    <script id="vibe-diagram-manifest" type="application/json">
+      {
+        "$schema": "vibe-diagram/artifact-manifest@1",
+        "artifactId": "zeus-0446-multi-provider-multi-model-conversation",
+        "language": "zh-CN",
+        "title": "技术设计｜多供应商多模型会话完整闭环",
+        "audience": ["product-manager"],
+        "questions": [
+          {
+            "id": "q-four-dimensions",
+            "text": "供应商、模型、协议和运行时为什么必须分开管理？",
+            "priority": "critical",
+            "answeredBy": ["arch-four-dim"]
+          },
+          {
+            "id": "q-routing",
+            "text": "一次用户输入如何冻结路由并进入 Codex 或 Pi？",
+            "priority": "critical",
+            "answeredBy": ["arch-frozen-route", "arch-runtime-codex", "arch-runtime-pi"]
+          },
+          {
+            "id": "q-response-loop",
+            "text": "不同 Provider 的响应如何回到同一个 Zeus 会话展示？",
+            "priority": "critical",
+            "answeredBy": ["arch-unified-store", "arch-final-view"]
+          },
+          {
+            "id": "q-root-cause",
+            "text": "Anthropic 会话内容混排的根因具体发生在哪里？",
+            "priority": "critical",
+            "answeredBy": ["arch-root-cause"]
+          },
+          {
+            "id": "q-repair",
+            "text": "推荐方案如何修复根因并保持其他协议不变？",
+            "priority": "critical",
+            "answeredBy": ["arch-proposed-projection", "arch-final-view"]
+          }
+        ],
+        "criticalFacts": [
+          {
+            "id": "fact-dimensions",
+            "statement": "供应商、模型、协议和运行时是四个独立路由维度。",
+            "status": "observed",
+            "visibleIn": ["arch-four-dim"],
+            "evidenceIds": ["ev-route-resolver", "ev-model-catalog"]
+          },
+          {
+            "id": "fact-json-valid",
+            "statement": "当前样本的 Anthropic thinking、text 与 tool call 已被 Pi 正确解析。",
+            "status": "observed",
+            "visibleIn": ["arch-root-cause"],
+            "evidenceIds": ["ev-jsonl", "ev-pi-model"]
+          },
+          {
+            "id": "fact-root-cause",
+            "statement": "根因是通用 Pi 投影未保留协议和阶段身份，并复用 run 级消息身份且先写过程后写摘要。",
+            "status": "observed",
+            "visibleIn": ["arch-root-cause"],
+            "evidenceIds": ["ev-pi-projector", "ev-pi-coordinator", "ev-transcript"]
+          },
+          {
+            "id": "fact-repair",
+            "statement": "推荐在现有 Anthropic Pi 分支增加语义映射与稳定 stageId，而不是创建并行会话系统。",
+            "status": "proposed",
+            "visibleIn": ["arch-proposed-projection"],
+            "evidenceIds": ["ev-confirmed-plan"]
+          },
+          {
+            "id": "fact-acceptance",
+            "statement": "目标展示是处理过程分层收起、最终回答唯一且新旧历史一致。",
+            "status": "proposed",
+            "visibleIn": ["arch-final-view"],
+            "evidenceIds": ["ev-confirmed-plan", "ev-snapshot-adapter"]
+          }
+        ],
+        "views": [
+          {
+            "id": "architecture-view",
+            "family": "system-architecture",
+            "role": "primary",
+            "elementId": "architecture-view"
+          },
+          {
+            "id": "fault-view",
+            "family": "fault-debugging",
+            "role": "supporting",
+            "elementId": "fault-view"
+          }
+        ],
+        "evidence": [
+          {
+            "id": "ev-structured-composer",
+            "status": "observed",
+            "sourceKind": "source-code",
+            "source": "apps/desktop/src/renderer/session/StructuredComposerInput.tsx:400-414",
+            "supports": ["fact-dimensions"]
+          },
+          {
+            "id": "ev-route-resolver",
+            "status": "observed",
+            "sourceKind": "source-code",
+            "source": "packages/local-server/src/conversationApplicationOperations.ts:2098-2144",
+            "supports": ["fact-dimensions"]
+          },
+          {
+            "id": "ev-model-catalog",
+            "status": "observed",
+            "sourceKind": "source-code",
+            "source": "packages/ai-runtime/src/modelConnectionCatalog.ts:251-260,372-383",
+            "supports": ["fact-dimensions"]
+          },
+          {
+            "id": "ev-pi-model",
+            "status": "observed",
+            "sourceKind": "source-code",
+            "source": "packages/ai-runtime/src/piSdkRuntimeDriver.ts:803-818",
+            "supports": ["fact-json-valid"]
+          },
+          {
+            "id": "ev-jsonl",
+            "status": "observed",
+            "sourceKind": "user-supplied-artifact",
+            "source": "2026-09-02 Zeus session JSONL: 32 assistant messages, 16 thinking blocks, 30 text blocks, 33 tool calls",
+            "supports": ["fact-json-valid", "fact-root-cause"]
+          },
+          {
+            "id": "ev-pi-projector",
+            "status": "observed",
+            "sourceKind": "source-code",
+            "source": "packages/local-server/src/turnProcessProjector.ts:76-103",
+            "supports": ["fact-root-cause"]
+          },
+          {
+            "id": "ev-pi-coordinator",
+            "status": "observed",
+            "sourceKind": "source-code",
+            "source": "packages/local-server/src/piNativeConversationCoordinator.ts:1266-1295,1388-1455",
+            "supports": ["fact-root-cause"]
+          },
+          {
+            "id": "ev-transcript",
+            "status": "observed",
+            "sourceKind": "source-code",
+            "source": "apps/desktop/src/renderer/session/ConversationTranscript.tsx:1720-1754,1948-1971",
+            "supports": ["fact-root-cause"]
+          },
+          {
+            "id": "ev-snapshot-adapter",
+            "status": "observed",
+            "sourceKind": "source-code",
+            "source": "apps/desktop/src/renderer/session/conversationSnapshotV2Adapter.ts:570-610",
+            "supports": ["fact-acceptance"]
+          },
+          {
+            "id": "ev-confirmed-plan",
+            "status": "proposed",
+            "sourceKind": "user-confirmed-plan",
+            "source": "ZEUS-0446 confirmed Anthropic protocol conversation presentation plan",
+            "supports": ["fact-repair", "fact-acceptance"]
+          }
+        ],
+        "extensions": {
+          "claimBoundary": "架构现状与根因来自当前代码和用户附件；绿色路径是已确认但尚未实现的优化设计。",
+          "unresolved": ["不同 Anthropic 中转是否都完整保留同一组 content block，需真实 Provider 回放验证。", "推荐代码尚未在本任务中实施，client runtime verification 不属于本图交付。"]
+        }
+      }
+    </script>
+    <script data-vd-shell="1">
+      (() => {
+        'use strict';
+
+        const $ = (selector, root = document) => root.querySelector(selector);
+        const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+        const auditOutput = () => $('[data-vd-audit-output]');
+
+        function zoomTargets() {
+          const explicit = $$('[data-vd-zoom-target]');
+          return explicit.length ? explicit : $$('[data-vd-view]');
+        }
+
+        function viewportFor(target) {
+          return target.closest('[data-vd-viewport]') || target.parentElement;
+        }
+
+        function naturalWidth(target) {
+          const previous = target.style.zoom;
+          target.style.zoom = '1';
+          const width = Math.max(target.scrollWidth, target.getBoundingClientRect().width, 1);
+          target.style.zoom = previous;
+          return width;
+        }
+
+        function applyZoom(request) {
+          let allApplied = true;
+          zoomTargets().forEach((target) => {
+            const viewport = viewportFor(target);
+            if (!viewport) return;
+            const width = naturalWidth(target);
+            const available = Math.max(viewport.clientWidth, 1);
+            const requested = request === 'fit' ? Math.min(1, available / width) : Number(request);
+            const applied = Math.max(0.75, Math.min(1, requested || 1));
+            const overflow = request === 'fit' && available / width < 0.75;
+            target.style.zoom = String(applied);
+            target.dataset.vdAppliedZoom = String(applied);
+            viewport.style.overflowX = overflow ? 'auto' : 'visible';
+            viewport.dataset.vdHorizontalOverflow = String(overflow);
+            if (request === 'fit' && requested < 0.75) allApplied = false;
+          });
+
+          $$('[data-vd-zoom]').forEach((button) => {
+            button.setAttribute('aria-pressed', String(button.dataset.vdZoom === request));
+          });
+          const controls = $('[data-vd-controls]');
+          if (controls) {
+            controls.dataset.vdZoomRequest = request;
+            controls.dataset.vdZoomFullyApplied = String(allApplied);
+          }
+          return allApplied;
+        }
+
+        function bindZoom() {
+          $$('[data-vd-zoom]').forEach((button) => {
+            button.addEventListener('click', () => applyZoom(button.dataset.vdZoom || 'fit'));
+          });
+          let frame = 0;
+          window.addEventListener('resize', () => {
+            cancelAnimationFrame(frame);
+            frame = requestAnimationFrame(() => {
+              const request = $('[data-vd-controls]')?.dataset.vdZoomRequest || 'fit';
+              applyZoom(request);
+            });
+          });
+          applyZoom('fit');
+        }
+
+        function bindDetails() {
+          let returnFocus = null;
+          $$('[data-vd-detail-trigger]').forEach((trigger) => {
+            trigger.addEventListener('click', (event) => {
+              const targetId = trigger.getAttribute('data-vd-detail-trigger');
+              const dialog = targetId ? document.getElementById(targetId) : null;
+              if (!(dialog instanceof HTMLDialogElement)) return;
+              event.preventDefault();
+              returnFocus = trigger;
+              dialog.showModal();
+              $('[data-vd-detail-close]', dialog)?.focus();
+            });
+          });
+          $$('dialog[data-vd-detail-for]').forEach((dialog) => {
+            $$('[data-vd-detail-close]', dialog).forEach((button) => button.addEventListener('click', () => dialog.close()));
+            dialog.addEventListener('click', (event) => {
+              if (event.target === dialog) dialog.close();
+            });
+            dialog.addEventListener('close', () => {
+              if (returnFocus instanceof HTMLElement && returnFocus.isConnected) returnFocus.focus();
+              returnFocus = null;
+            });
+          });
+        }
+
+        const rect = (element) => element.getBoundingClientRect();
+        const visible = (element) => {
+          const style = getComputedStyle(element);
+          const box = rect(element);
+          if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
+          if (box.width < 1 || box.height < 1) return false;
+          if (element.closest('details:not([open]), dialog:not([open]), [hidden], [aria-hidden="true"]')) return false;
+          return true;
+        };
+        const intersects = (a, b, pad = 1) => a.left + pad < b.right && a.right - pad > b.left && a.top + pad < b.bottom && a.bottom - pad > b.top;
+        const contains = (outer, inner, tolerance = 1) => inner.left >= outer.left - tolerance && inner.right <= outer.right + tolerance && inner.top >= outer.top - tolerance && inner.bottom <= outer.bottom + tolerance;
+
+        function screenPoint(path, length) {
+          if (!(path instanceof SVGGeometryElement) || typeof path.getPointAtLength !== 'function') return null;
+          const point = path.getPointAtLength(length);
+          const matrix = path.getScreenCTM();
+          if (!matrix) return null;
+          return new DOMPoint(point.x, point.y).matrixTransform(matrix);
+        }
+
+        function nearBoundary(point, box, tolerance = 18) {
+          if (!point) return false;
+          const insideExpanded = point.x >= box.left - tolerance && point.x <= box.right + tolerance && point.y >= box.top - tolerance && point.y <= box.bottom + tolerance;
+          const distance = Math.min(Math.abs(point.x - box.left), Math.abs(point.x - box.right), Math.abs(point.y - box.top), Math.abs(point.y - box.bottom));
+          return insideExpanded && distance <= tolerance;
+        }
+
+        function issue(code, element, detail = '') {
+          return {
+            code,
+            id: element?.id || element?.getAttribute?.('data-vd-view') || '',
+            detail,
+          };
+        }
+
+        function authoredBounds(element, fallback) {
+          const svg = element.closest('svg');
+          if (svg) return rect(svg);
+          const target = element.closest('[data-vd-zoom-target]');
+          if (!target) return fallback;
+          const box = rect(target);
+          const zoom = Number.parseFloat(getComputedStyle(target).zoom) || 1;
+          return {
+            left: box.left,
+            top: box.top,
+            right: box.left + Math.max(box.width, target.scrollWidth * zoom),
+            bottom: box.top + Math.max(box.height, target.scrollHeight * zoom),
+          };
+        }
+
+        function auditView(view) {
+          const issues = [];
+          const viewRect = rect(view);
+          const nodes = $$('[data-vd-node]', view).filter(visible);
+          const groups = $$('[data-vd-group]', view).filter(visible);
+          const labels = $$('[data-vd-edge-label]', view).filter(visible);
+          const edges = $$('[data-vd-edge]', view).filter(visible);
+
+          nodes.forEach((node) => {
+            const box = rect(node);
+            if (!contains(authoredBounds(node, viewRect), box, 2)) issues.push(issue('node-outside-view', node));
+            if (node.scrollWidth > node.clientWidth + 2 || node.scrollHeight > node.clientHeight + 2) {
+              issues.push(issue('node-content-overflow', node));
+            }
+          });
+
+          for (let i = 0; i < nodes.length; i += 1) {
+            for (let j = i + 1; j < nodes.length; j += 1) {
+              const a = rect(nodes[i]);
+              const b = rect(nodes[j]);
+              if (intersects(a, b, 2)) issues.push(issue('node-overlap', nodes[i], nodes[j].id || 'anonymous'));
+            }
+          }
+
+          groups.forEach((group) => {
+            const box = rect(group);
+            $$('[data-vd-node]', group)
+              .filter(visible)
+              .forEach((node) => {
+                if (!contains(box, rect(node), 2)) issues.push(issue('group-clips-node', group, node.id || 'anonymous'));
+              });
+          });
+
+          labels.forEach((label, index) => {
+            const box = rect(label);
+            if (label.scrollWidth > label.clientWidth + 2 || label.scrollHeight > label.clientHeight + 2) {
+              issues.push(issue('edge-label-overflow', label));
+            }
+            nodes.forEach((node) => {
+              if (intersects(box, rect(node), 1)) issues.push(issue('edge-label-node-collision', label, node.id || 'anonymous'));
+            });
+            labels.slice(index + 1).forEach((other) => {
+              if (intersects(box, rect(other), 1)) issues.push(issue('edge-label-collision', label, other.id || 'anonymous'));
+            });
+          });
+
+          edges.forEach((edge) => {
+            const from = document.getElementById(edge.getAttribute('data-from') || '');
+            const to = document.getElementById(edge.getAttribute('data-to') || '');
+            if (!from || !to) return;
+            if (edge instanceof SVGGeometryElement && typeof edge.getTotalLength === 'function') {
+              const length = edge.getTotalLength();
+              const start = screenPoint(edge, 0);
+              const end = screenPoint(edge, length);
+              if (!nearBoundary(start, rect(from))) issues.push(issue('edge-start-not-anchored', edge, from.id));
+              if (!nearBoundary(end, rect(to))) issues.push(issue('edge-end-not-anchored', edge, to.id));
+              const excluded = new Set([from, to]);
+              for (let sample = 10; sample < length - 10; sample += 8) {
+                const point = screenPoint(edge, sample);
+                if (!point) break;
+                const hit = nodes.find(
+                  (node) =>
+                    !excluded.has(node) &&
+                    contains(
+                      rect(node),
+                      {
+                        left: point.x,
+                        right: point.x,
+                        top: point.y,
+                        bottom: point.y,
+                      },
+                      -2,
+                    ),
+                );
+                if (hit) {
+                  issues.push(issue('edge-through-node', edge, hit.id || 'anonymous'));
+                  break;
+                }
+              }
+            }
+          });
+
+          return issues;
+        }
+
+        function auditAll() {
+          const issues = [];
+          $$('[data-vd-view]')
+            .filter(visible)
+            .forEach((view) => issues.push(...auditView(view)));
+          const summary = $('[data-vd-summary]');
+          if (!summary || !visible(summary)) issues.push(issue('product-summary-not-visible', summary));
+          $$('[data-vd-critical]').forEach((element) => {
+            if (!visible(element) || !element.closest('[data-vd-view-role="primary"]')) {
+              issues.push(issue('critical-target-not-primary-visible', element));
+            }
+          });
+          if (document.documentElement.scrollWidth > document.documentElement.clientWidth + 2) {
+            issues.push(issue('page-horizontal-overflow', document.documentElement));
+          }
+          const controls = $('[data-vd-controls]');
+          if (!controls || $$('[data-vd-zoom]', controls).length !== 4) issues.push(issue('zoom-controls-incomplete', controls));
+
+          const report = {
+            status: issues.length ? 'failed' : 'passed',
+            viewport: { width: window.innerWidth, height: window.innerHeight },
+            issues,
+          };
+          const output = auditOutput();
+          if (output) {
+            output.setAttribute('data-vd-audit-status', report.status);
+            output.textContent = JSON.stringify(report);
+          }
+          document.documentElement.setAttribute('data-vd-audit-status', report.status);
+          return report;
+        }
+
+        globalThis.VibeDiagramQuality = { auditAll, applyZoom };
+
+        const ready = document.fonts?.ready || Promise.resolve();
+        ready.then(() => {
+          bindZoom();
+          bindDetails();
+          requestAnimationFrame(() => requestAnimationFrame(auditAll));
+        });
+      })();
+    </script>
+  </body>
+</html>

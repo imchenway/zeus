@@ -535,8 +535,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
   const pendingRenderDeltaBytes = new Map<string, number>();
   let pendingRenderBytes = 0;
   const fullChangeSetHydrationRevisions = new Map<string, string>();
-  const completeModelContentLoads = new Map<string, Promise<void>>();
-  const completeModelContentRetryWaiters = new Set<() => void>();
+  /** 同一 Snapshot 内容句柄只允许一个完整读取任务。 */
+  const completeContentLoads = new Map<string, Promise<void>>();
+  /** 连接换代时立即唤醒完整内容读取的重试等待。 */
+  const completeContentRetryWaiters = new Set<() => void>();
   // steer 请求确认前保留队列中的可见占位；只有 steering 事件或明确回队事件到达后才交给正常投影。
   const pendingSteeringSubmissions = new Map<string, NativeQueuedSubmission>();
   let renderDeltaTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1941,8 +1943,9 @@ export function createSessionController(options: CreateSessionControllerOptions)
     dispatch({ type: 'snapshot_v2_page_merged', snapshot });
   }
 
-  function loadCompleteModelContentV2(handle: string): Promise<void> {
-    const existing = completeModelContentLoads.get(handle);
+  /** 按不可变句柄完整读取模型正文或用户展开的过程详情。 */
+  function loadCompleteContentV2(handle: string): Promise<void> {
+    const existing = completeContentLoads.get(handle);
     if (existing) return existing;
     const request = (async () => {
       let retryAttempt = 0;
@@ -1953,8 +1956,9 @@ export function createSessionController(options: CreateSessionControllerOptions)
         const current = state.snapshot;
         const generation = connectionToken;
         const structureGeneration = current?.snapshotV2?.structureGeneration;
-        const contentItem = current?.items.find((item) => item.payload.v2ContentHandle === handle && item.payload.v2ContentKind === 'model_history');
-        if (!load || !current?.snapshotV2 || !structureGeneration) throw new Error('当前会话不支持 Snapshot V2 正文分页。');
+        const contentItem = current?.items.find((item) => item.payload.v2ContentHandle === handle && (item.payload.v2ContentKind === 'model_history' || item.payload.v2ContentKind === 'process_detail'));
+        const expectedPageKind = contentItem?.payload.v2ContentKind === 'process_detail' ? 'process_detail' : 'model_content';
+        if (!load || !current?.snapshotV2 || !structureGeneration) throw new Error('当前会话不支持 Snapshot V2 内容分页。');
         if (!contentItem || contentItem.payload.v2ContentTruncated !== true || contentItem.payload.v2ContentCompleteHandle === handle) return;
 
         try {
@@ -1974,8 +1978,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
               generationChanged = true;
               break;
             }
-            if (page.schemaVersion !== 2 || page.structureGeneration !== structureGeneration || page.conversationId !== options.conversationId || page.kind !== 'model_content' || page.offset !== offset)
-              throw new Error('完整正文分页响应与当前消息不匹配。');
+            if (page.schemaVersion !== 2 || page.structureGeneration !== structureGeneration || page.conversationId !== options.conversationId || page.kind !== expectedPageKind || page.offset !== offset)
+              throw new Error('完整内容分页响应与当前条目不匹配。');
             if (!Number.isSafeInteger(page.totalCharacters) || page.totalCharacters < 0 || !Number.isSafeInteger(page.totalBytes) || page.totalBytes < 0 || page.offset > page.totalCharacters) throw new Error('完整正文分页大小无效。');
             if (totalCharacters !== null && (page.totalCharacters !== totalCharacters || page.totalBytes !== totalBytes)) throw new Error('完整正文在分页期间发生变化。');
             totalCharacters ??= page.totalCharacters;
@@ -2005,32 +2009,33 @@ export function createSessionController(options: CreateSessionControllerOptions)
             retryAttempt = 0;
             continue;
           }
-          const latestItem = latest.items.find((item) => item.payload.v2ContentHandle === handle && item.payload.v2ContentKind === 'model_history');
+          const latestItem = latest.items.find((item) => item.payload.v2ContentHandle === handle && item.payload.v2ContentKind === contentItem.payload.v2ContentKind);
           if (!latestItem || latestItem.payload.v2ContentTruncated !== true || latestItem.payload.v2ContentCompleteHandle === handle) return;
-          dispatch({ type: 'v2_model_content_loaded', conversationId: options.conversationId, handle, text, redacted });
+          dispatch({ type: 'v2_content_loaded', conversationId: options.conversationId, handle, text, redacted });
           return;
         } catch {
           if (disposed) return;
-          const latestItem = state.snapshot?.items.find((item) => item.payload.v2ContentHandle === handle && item.payload.v2ContentKind === 'model_history');
+          const latestItem = state.snapshot?.items.find((item) => item.payload.v2ContentHandle === handle && (item.payload.v2ContentKind === 'model_history' || item.payload.v2ContentKind === 'process_detail'));
           if (!latestItem || latestItem.payload.v2ContentTruncated !== true || latestItem.payload.v2ContentCompleteHandle === handle) return;
           retryAttempt += 1;
-          await waitForCompleteModelContentRetry(retryAttempt);
+          await waitForCompleteContentRetry(retryAttempt);
         }
       }
     })();
-    completeModelContentLoads.set(handle, request);
+    completeContentLoads.set(handle, request);
     void request.then(
       () => {
-        if (completeModelContentLoads.get(handle) === request) completeModelContentLoads.delete(handle);
+        if (completeContentLoads.get(handle) === request) completeContentLoads.delete(handle);
       },
       () => {
-        if (completeModelContentLoads.get(handle) === request) completeModelContentLoads.delete(handle);
+        if (completeContentLoads.get(handle) === request) completeContentLoads.delete(handle);
       },
     );
     return request;
   }
 
-  function waitForCompleteModelContentRetry(attempt: number): Promise<void> {
+  /** 在瞬时读取失败后等待可被连接换代提前唤醒的重试窗口。 */
+  function waitForCompleteContentRetry(attempt: number): Promise<void> {
     const delayMs = reconnectDelayMs(attempt);
     if (options.reconnectDelay) return options.reconnectDelay(delayMs);
     return new Promise((resolve) => {
@@ -2038,11 +2043,11 @@ export function createSessionController(options: CreateSessionControllerOptions)
       const finish = (): void => {
         if (timer) clearTimeout(timer);
         timer = null;
-        completeModelContentRetryWaiters.delete(finish);
+        completeContentRetryWaiters.delete(finish);
         resolve();
       };
       timer = setTimeout(finish, delayMs);
-      completeModelContentRetryWaiters.add(finish);
+      completeContentRetryWaiters.add(finish);
     });
   }
 
@@ -2385,8 +2390,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
       targetedHydrationBuffer = null;
       syncGapRecoveryPromise = null;
       pendingSteeringSubmissions.clear();
-      for (const finish of [...completeModelContentRetryWaiters]) finish();
-      completeModelContentLoads.clear();
+      for (const finish of [...completeContentRetryWaiters]) finish();
+      completeContentLoads.clear();
       cancelPendingRequestRefreshRetry();
       requestsAwaitingDetails.clear();
       cancelReconnectLoop();
@@ -2835,7 +2840,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     loadTurnProcess: loadTurnProcessV2,
     loadConversationResources: loadConversationResourcesV2,
     loadTurnArtifacts: loadTurnArtifactsV2,
-    loadV2Content: loadCompleteModelContentV2,
+    loadV2Content: loadCompleteContentV2,
     loadV2ToolResult(handle, offset) {
       const load = options.client.loadNativeConversationToolResult;
       if (!load || !state.snapshot?.snapshotV2) return Promise.reject(new Error('当前会话不支持完整工具结果分页。'));
