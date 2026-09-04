@@ -52,6 +52,8 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
   const authorityChains = new Map<string, Promise<ProviderThreadAuthority>>();
   const activeObservers = new Map<string, ProviderActiveObserver>();
   const subscribedThreads = new Set<string>();
+    /** 关闭协调器时结束仍在加载大体量历史的本地恢复等待。 */
+    const resumeAbortController = new AbortController();
   let closing = false;
   let closePromise: Promise<void> | null = null;
 
@@ -227,8 +229,11 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
         threadId: providerThreadId,
         ...(context.projectLocalPath ? { cwd: context.projectLocalPath } : {}),
         ...(responsesRuntime ? { responsesRuntime } : {}),
+          signal: resumeAbortController.signal,
       });
     } catch (resumeError) {
+        // 关闭流程已经明确取消本地等待，不再追加一次权威读取拖延执行宿主交接。
+        if (closing) throw resumeError;
       // 只读确认后可能恰好开始新轮次；仅当本连接已从实时事件确认订阅时才能
       // 接受该竞争结果。活动态本身不代表新宿主拥有后续事件订阅。
       const raced = await readAndProject(options.requireConversation(conversation.id)).catch(() => null);
@@ -276,6 +281,7 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
   function close(): Promise<void> {
     if (closePromise) return closePromise;
     closing = true;
+      resumeAbortController.abort();
     stopAllObservers();
     closePromise = Promise.allSettled([...authorityChains.values()]).then(() => {
       subscribedThreads.clear();

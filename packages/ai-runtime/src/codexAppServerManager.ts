@@ -235,6 +235,8 @@ export interface CodexThreadResumeInput extends CodexPerformanceTraceContext {
   threadId: string;
   cwd?: string;
   responsesRuntime?: CodexResponsesRuntime;
+    /** 仅用于宿主退出时结束本地等待；不会向 Provider 发送重复恢复请求。 */
+    signal?: AbortSignal;
 }
 
 export type CodexThreadRuntimeStatus = { type: 'notLoaded' } | { type: 'idle' } | { type: 'systemError'; [key: string]: unknown } | { type: 'active'; activeFlags: string[] };
@@ -510,7 +512,7 @@ type PendingRequest = {
   traceIdentity: string | null;
   resolve(value: unknown): void;
   reject(error: Error): void;
-  timeout: ReturnType<typeof setTimeout>;
+    timeout: ReturnType<typeof setTimeout> | null;
 };
 
 interface CreateCodexAppServerManagerOptions {
@@ -520,8 +522,6 @@ interface CreateCodexAppServerManagerOptions {
   now?: () => string;
   generationId?: () => string;
   requestTimeoutMs?: number;
-  /** 仅覆盖不可自动重试的 thread/resume 单次加载窗口；生产默认 120 秒。 */
-  threadResumeTimeoutMs?: number;
   appServerFlags?: readonly string[];
   onRestartScheduled?: (delayMs: number, attempt: number) => void;
   onDiagnostic?: (entry: { generationId: string; sequence: number; stderrSummary: string }) => void;
@@ -567,8 +567,6 @@ const SAFE_READ_RPC_MAX_RETRIES = 5;
 const SAFE_READ_RPC_ATTEMPT_TIMEOUT_MS = 4_000;
 const SAFE_READ_RPC_DEADLINE_MS = 30_000;
 const SAFE_READ_RPC_INITIAL_DELAY_MS = 200;
-// thread/resume 需要加载完整历史；它不是可自动重试的只读 RPC，只放宽单次后台恢复窗口。
-const THREAD_RESUME_RPC_TIMEOUT_MS = 120_000;
 
 type TimedGenerationSnapshot<T extends { generationId: string }> = {
   value: T;
@@ -596,7 +594,6 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
   const now = options.now ?? (() => new Date().toISOString());
   const makeGenerationId = options.generationId ?? randomUUID;
   const requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
-  const threadResumeTimeoutMs = Math.max(1, options.threadResumeTimeoutMs ?? THREAD_RESUME_RPC_TIMEOUT_MS);
   const eventReplayLimit = options.eventReplayLimit ?? 1_024;
   const shutdownTimeoutMs = Math.max(0, options.shutdownTimeoutMs ?? 5_000);
   const accountFingerprintSalt = options.accountFingerprintSalt?.trim() || 'zeus-local-account-scope';
@@ -820,53 +817,75 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     });
   }
 
-  function rpc(generationId: string, method: string, params: unknown, input: { requestWritten?: () => void; traceIdentity?: string | null; timeoutMs?: number } = {}): Promise<unknown> {
+    function rpc(generationId: string, method: string, params: unknown, input: {
+        requestWritten?: () => void;
+        traceIdentity?: string | null;
+        timeoutMs?: number | null;
+        signal?: AbortSignal
+    } = {}): Promise<unknown> {
     if (preparingForShutdown || state.type === 'closed') return Promise.reject(managerError('ZEUS_CODEX_CLOSED', 'Codex app-server manager is closing.'));
     if (generationId !== currentGenerationId()) return Promise.reject(managerError('ZEUS_CODEX_STALE_GENERATION', 'Codex app-server generation is stale.'));
+        if (input.signal?.aborted) return Promise.reject(managerError('ZEUS_CODEX_RPC_ABORTED', `Codex app-server request was cancelled: ${method}`));
     const id = `${generationId}:${++requestSequence}`;
     return new Promise((resolve, reject) => {
       // 官方 stdio 协议把 RPC 回包与过程通知复用在同一条 JSONL stdout 上。
       // 任何已写出的 RPC 都必须保持读取窗口，否则事件投影的异步背压会把回包一起堵住。
       const finishRpcRead = beginRpcRead(generationId, method === 'turn/interrupt' ? 2_000 : 0);
-      const timeout = setTimeout(
-        () => {
-          const key = pendingKey(generationId, id);
-          const pending = pendingRequests.get(key);
-          pendingRequests.delete(key);
-          if (pending) pending.reject(managerError('ZEUS_CODEX_RPC_TIMEOUT', `Codex app-server request timed out: ${method}`));
-        },
-        Math.max(1, input.timeoutMs ?? requestTimeoutMs),
-      );
-      pendingRequests.set(pendingKey(generationId, id), {
+        /** 同一世代内的请求键同时约束回包、超时和取消三条终结路径。 */
+        const key = pendingKey(generationId, id);
+        /** 清理单次请求绑定的取消监听，避免长驻 manager 保留已完成闭包。 */
+        const detachAbort = (): void => input.signal?.removeEventListener('abort', abortRequest);
+        /** 只取消 Zeus 的本地等待；Provider 进程会在宿主关闭阶段统一终止。 */
+        const abortRequest = (): void => {
+            const pending = pendingRequests.get(key);
+            if (!pending) return;
+            if (pending.timeout) clearTimeout(pending.timeout);
+            pendingRequests.delete(key);
+            pending.reject(managerError('ZEUS_CODEX_RPC_ABORTED', `Codex app-server request was cancelled: ${method}`));
+        };
+        /** null 只供无法安全按时限判错的 RPC 使用；其余请求保留原有超时。 */
+        const timeout =
+            input.timeoutMs === null
+                ? null
+                : setTimeout(
+                    () => {
+                        const pending = pendingRequests.get(key);
+                        pendingRequests.delete(key);
+                        if (pending) pending.reject(managerError('ZEUS_CODEX_RPC_TIMEOUT', `Codex app-server request timed out: ${method}`));
+                    },
+                    Math.max(1, input.timeoutMs ?? requestTimeoutMs),
+                );
+        pendingRequests.set(key, {
         generationId,
         method,
         traceIdentity: input.traceIdentity ?? null,
         resolve(value) {
+            detachAbort();
           finishRpcRead();
           resolve(value);
         },
         reject(error) {
+            detachAbort();
           finishRpcRead();
           reject(error);
         },
         timeout,
       });
+        input.signal?.addEventListener('abort', abortRequest, {once: true});
       try {
         write({ id, method, params }, (error) => {
           if (!error) {
             input.requestWritten?.();
             return;
           }
-          const key = pendingKey(generationId, id);
           const pending = pendingRequests.get(key);
           if (!pending) return;
-          clearTimeout(pending.timeout);
+            if (pending.timeout) clearTimeout(pending.timeout);
           pendingRequests.delete(key);
           pending.reject(error);
         });
       } catch (error) {
-        clearTimeout(timeout);
-        const key = pendingKey(generationId, id);
+          if (timeout) clearTimeout(timeout);
         const pending = pendingRequests.get(key);
         pendingRequests.delete(key);
         if (pending) pending.reject(asError(error));
@@ -943,7 +962,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       const pending = pendingRequests.get(key);
       if (!pending) return;
       pendingRequests.delete(key);
-      clearTimeout(pending.timeout);
+        if (pending.timeout) clearTimeout(pending.timeout);
       if (message.error) {
         pending.reject(
           Object.assign(new Error(message.error.message), {
@@ -1123,7 +1142,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
   function rejectGeneration(generationId: string, error: Error): void {
     for (const [key, pending] of pendingRequests) {
       if (pending.generationId !== generationId) continue;
-      clearTimeout(pending.timeout);
+        if (pending.timeout) clearTimeout(pending.timeout);
       pendingRequests.delete(key);
       pending.reject(error);
     }
@@ -1318,7 +1337,9 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
             modelProvider: responsesProvider?.id,
             config: responsesProvider ? responsesProviderConfig(responsesProvider) : undefined,
           }),
-          { timeoutMs: threadResumeTimeoutMs },
+            // 恢复耗时随完整历史增长，固定超时无法区分“仍在加载”和“已经失败”。
+            // 等待明确回包；宿主交接时由调用方 signal 结束本地等待。
+            {timeoutMs: null, ...(input.signal ? {signal: input.signal} : {})},
         ),
       );
       const thread = parseThread(response.thread);
