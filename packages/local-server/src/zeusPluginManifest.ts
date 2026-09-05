@@ -25,21 +25,19 @@ export class ZeusPluginManifestError extends Error {
   readonly name = 'ZeusPluginManifestError';
 
   constructor(
-    readonly code: 'ZEUS_PLUGIN_MANIFEST_MISSING' | 'ZEUS_PLUGIN_MANIFEST_INVALID' | 'ZEUS_PLUGIN_COMPONENT_UNSUPPORTED' | 'ZEUS_PLUGIN_UNSAFE_PATH' | 'ZEUS_PLUGIN_TOO_LARGE',
+    readonly code: 'ZEUS_PLUGIN_SOURCE_IS_MARKETPLACE' | 'ZEUS_PLUGIN_MANIFEST_MISSING' | 'ZEUS_PLUGIN_MANIFEST_INVALID' | 'ZEUS_PLUGIN_COMPONENT_UNSUPPORTED' | 'ZEUS_PLUGIN_UNSAFE_PATH' | 'ZEUS_PLUGIN_TOO_LARGE',
     message: string,
   ) {
     super(message);
   }
 }
 
+/** 将受支持的插件清单读取为统一组件快照，保留原文件和内容摘要。 */
 export async function inspectZeusPluginDirectory(pluginRootInput: string): Promise<ZeusPluginManifestInspection> {
   const pluginRoot = await requireSafeDirectory(pluginRootInput);
   const inventory = await inventoryPlugin(pluginRoot);
-  const manifestPath = join(pluginRoot, '.codex-plugin', 'plugin.json');
-  const manifest = await readJsonRecord(manifestPath, 'Plugin Manifest').catch((error: unknown) => {
-    if (isNodeError(error, 'ENOENT')) throw new ZeusPluginManifestError('ZEUS_PLUGIN_MANIFEST_MISSING', 'Plugin 缺少 .codex-plugin/plugin.json。');
-    throw error;
-  });
+  /** 不把缺失清单与市场目录混为同一种失败。 */
+  const manifest = await readPluginManifest(pluginRoot);
   const name = requiredKebabName(manifest.name, 'Plugin name');
   const version = optionalText(manifest.version, 120) ?? 'local';
   const description = optionalText(manifest.description, 4_000) ?? '';
@@ -70,6 +68,26 @@ export async function inspectZeusPluginDirectory(pluginRootInput: string): Promi
     totalBytes: inventory.totalBytes,
     totalNodes: inventory.totalNodes,
   };
+}
+
+/** Codex 清单优先；Claude 仅导入默认 skills 结构，不静默丢弃其他能力。 */
+async function readPluginManifest(pluginRoot: string): Promise<Record<string, unknown>> {
+  if (await pathExists(join(pluginRoot, '.codex-plugin', 'plugin.json'))) return readJsonRecord(join(pluginRoot, '.codex-plugin', 'plugin.json'), 'Plugin Manifest');
+  if (await pathExists(join(pluginRoot, '.claude-plugin', 'plugin.json'))) {
+    /** Claude 元数据进入原有快照，默认 skills 目录只在读取时补全。 */
+    const manifest = await readJsonRecord(join(pluginRoot, '.claude-plugin', 'plugin.json'), 'Claude Plugin Manifest');
+    /** 当前支持范围限于默认 Skill 目录；新增其他能力需先实现其真实运行语义。 */
+    const unsupported = Object.keys(manifest).filter((key) => !['name', 'version', 'description', 'author', 'homepage', 'repository', 'license', 'keywords'].includes(key) && !(key === 'skills' && manifest.skills === './skills'));
+    for (const component of ['commands', 'agents', 'hooks', '.mcp.json', '.lsp.json', 'output-styles', 'settings.json']) {
+      if (await pathExists(join(pluginRoot, component))) unsupported.push(component);
+    }
+    if (unsupported.length) throw new ZeusPluginManifestError('ZEUS_PLUGIN_COMPONENT_UNSUPPORTED', `当前仅支持 Claude 默认 skills 目录插件；尚不支持：${unsupported.join(', ')}。`);
+    return { ...manifest, skills: './skills' };
+  }
+  for (const marketplace of ['.agents/plugins/marketplace.json', 'marketplace.json', '.claude-plugin/marketplace.json']) {
+    if (await pathExists(join(pluginRoot, marketplace))) throw new ZeusPluginManifestError('ZEUS_PLUGIN_SOURCE_IS_MARKETPLACE', '此来源是插件市场，请添加为 Marketplace 后选择需要安装的插件。');
+  }
+  throw new ZeusPluginManifestError('ZEUS_PLUGIN_MANIFEST_MISSING', 'Plugin 缺少 .codex-plugin/plugin.json 或 .claude-plugin/plugin.json。');
 }
 
 async function inventoryPlugin(pluginRoot: string): Promise<{ contentSha256: string; totalBytes: number; totalNodes: number }> {

@@ -172,7 +172,7 @@ export function migratePluginStoreSchema(db: ZeusDatabasePort): void {
         FOREIGN KEY (project_id) REFERENCES projects(id)
       )
     `);
-    db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_plugin_registrations_identity ON plugin_registrations(scope, COALESCE(project_id, ''), name) WHERE deleted_at IS NULL`);
+    // 唯一性由下方包含来源的索引维护；重启时不能重建已废弃的同名唯一约束。
     db.execute(`CREATE INDEX IF NOT EXISTS idx_plugin_registrations_active ON plugin_registrations(enabled, scope, project_id, name) WHERE deleted_at IS NULL`);
     db.execute(`
       CREATE TABLE IF NOT EXISTS plugin_revisions (
