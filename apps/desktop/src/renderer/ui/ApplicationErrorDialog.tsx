@@ -3,6 +3,9 @@ import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/c
 import { Button } from './Button.js';
 import { ModalPortal } from './ModalPortal.js';
 
+/** 全局错误出口请求原地打开模型接入，不切换工作面或销毁草稿。 */
+export const modelSetupRequestedEvent = 'zeus:model-setup-requested';
+
 export type ApplicationErrorLanguage = 'zh-CN' | 'en';
 
 export interface ApplicationErrorOptions {
@@ -16,6 +19,8 @@ interface ApplicationErrorEntry {
   summary: string;
   details: string;
   dedupeKey: string;
+  /** 保留可操作错误身份，不依赖翻译后的文案识别登录门禁。 */
+  code: string | null;
 }
 
 const listeners = new Set<() => void>();
@@ -58,8 +63,16 @@ const copyByLanguage = {
 
 const visibleCopyByCode: Readonly<Record<string, Readonly<Record<ApplicationErrorLanguage, string>>>> = {
   ZEUS_CODEX_LOGIN_REQUIRED: {
-    'zh-CN': 'Zeus 专属 Codex 尚未登录。请先前往“设置 > AI CLI / Runtime”完成登录，再重试。',
-    en: 'The dedicated Codex runtime for Zeus is not signed in. Sign in under Settings > AI CLI / Runtime, then try again.',
+    'zh-CN': 'Zeus 专属 Codex 尚未登录。请先前往“设置 > 模型供应商”完成登录，再重试。',
+    en: 'The dedicated Codex runtime for Zeus is not signed in. Sign in under Settings > Model providers, then try again.',
+  },
+  ZEUS_NEW_PROJECT_MODEL_UNAVAILABLE: {
+    'zh-CN': '新项目默认模型已不可用，请在模型接入中重新选择已保存密钥且启用的模型。',
+    en: 'The default model for new projects is unavailable. Select an enabled model with saved credentials in model setup.',
+  },
+  ZEUS_CODEX_DEPENDENCY_UNAVAILABLE: {
+    'zh-CN': 'Codex 尚未安装或无法启动。请按官方安装指引完成安装，或在“设置 > AI CLI / Runtime”检查路径后重试。',
+    en: 'Codex is not installed or cannot start. Follow the official installation guide, or check its path in Settings > AI CLI / Runtime and retry.',
   },
   ZEUS_UNIFIED_QUEUE_HEAD_FAILED: {
     'zh-CN': '消息已保存，但后台派发未完成。请点击“重新恢复”进行权威核对；不要重复发送同一消息。',
@@ -124,6 +137,7 @@ export function reportApplicationError(error: unknown, options: ApplicationError
     summary: code && visibleCopyByCode[code] ? visibleCopyByCode[code][language] : copy.summary,
     details,
     dedupeKey: redactDetails(original),
+    code,
   };
   const duplicate = queue.some((candidate) => candidate.language === entry.language && candidate.dedupeKey === entry.dedupeKey);
   if (!duplicate) {
@@ -190,6 +204,19 @@ export function ApplicationErrorDialogHost(props: { language: ApplicationErrorLa
           <Button variant="secondary" size="regular" onClick={() => setDetailsOpen((open) => !open)} aria-expanded={detailsOpen} aria-controls="application-error-dialog-details-title">
             {detailsOpen ? copy.hideDetails : copy.details}
           </Button>
+          {current.code === 'ZEUS_CODEX_LOGIN_REQUIRED' || current.code === 'ZEUS_NEW_PROJECT_MODEL_UNAVAILABLE' ? (
+            <Button
+              variant="primary"
+              size="regular"
+              onClick={() => {
+                const step = current.code === 'ZEUS_CODEX_LOGIN_REQUIRED' ? 'codex' : 'choose';
+                dismissCurrentError();
+                window.dispatchEvent(new CustomEvent(modelSetupRequestedEvent, { detail: step }));
+              }}
+            >
+              {current.language === 'zh-CN' ? '连接模型' : 'Connect a model'}
+            </Button>
+          ) : null}
           <Button variant="primary" size="regular" onClick={dismissCurrentError} autoFocus>
             {copy.close}
           </Button>

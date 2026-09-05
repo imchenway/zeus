@@ -98,7 +98,7 @@ import { type TaskStatus } from './taskCore.js';
 import { type TelegramMessageSender, type TelegramPollingService, type TelegramUpdate } from './telegramAdapter.js';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { createHash, randomUUID } from 'node:crypto';
-import { accessSync, appendFileSync, constants as fsConstants, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { accessSync, appendFileSync, existsSync, constants as fsConstants, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import type { BrowserAutomationPort } from './browserAutomation.js';
@@ -654,10 +654,12 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     if (process.env.ZEUS_STARTUP_TIMING !== '1') return;
     console.info(`[Zeus startup] ${stage} ${Math.round(performance.now() - startupStartedAt)}ms`);
   };
+  // 首次资料识别不启动 Provider，也不读取其他应用的账号。
+  const newDatabase = !options.readOnlyValidation && !existsSync(options.dbPath);
   const db = await createZeusDatabase(options.dbPath, { readOnlyValidation: options.readOnlyValidation });
   traceStartup('database_ready');
   try {
-    const server = await createLocalServerWithDatabase(options, db, traceStartup);
+    const server = await createLocalServerWithDatabase(options, db, traceStartup, newDatabase);
     traceStartup('local_server_created');
     return server;
   } catch (error) {
@@ -670,7 +672,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   }
 }
 
-async function createLocalServerWithDatabase(options: CreateLocalServerOptions, db: ZeusDatabase, traceStartup: (stage: string) => void): Promise<FastifyInstance> {
+async function createLocalServerWithDatabase(options: CreateLocalServerOptions, db: ZeusDatabase, traceStartup: (stage: string) => void, newDatabase: boolean): Promise<FastifyInstance> {
   const readOnlyValidation = options.readOnlyValidation;
   const dataLayout = options.dataLayout ?? createZeusDataLayoutForDatabase(options.dbPath);
   if (resolve(dataLayout.database) !== resolve(options.dbPath)) throw new Error('Zeus 数据路径登记表与数据库路径不一致。');
@@ -910,6 +912,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   let memoryGraphCache: ProjectGraph | null = null;
   const persistedAppShellSettings = settings.getJson<AppShellSettingsSnapshot>(appShellSettingsKey);
   let appShellSettings: AppShellSettingsSnapshot = normalizeAppShellSettings(persistedAppShellSettings, localLogDirectory, localConfigPath, settingsIdentityCatalog);
+  if (newDatabase) {
+    appShellSettings = { ...appShellSettings, modelSetupStatus: 'pending' };
+    settings.setJson(appShellSettingsKey, appShellSettings);
+    await db.save();
+  }
   const missingTaskStatusProjectIds = projects
     .list()
     .map((project) => project.id)

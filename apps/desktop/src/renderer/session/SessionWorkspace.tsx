@@ -221,6 +221,8 @@ export interface NativeConversationStartPreparation {
 }
 
 export interface NativeConversationStartFailure {
+  /** 服务端错误码用于原地打开接入引导。 */
+  code?: string;
   state: 'failed';
   message: string;
 }
@@ -2826,7 +2828,7 @@ function NewConversationComposer(props: {
   const [isComposing, setIsComposing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [executionContextBusy, setExecutionContextBusy] = useState(false);
-  const [localError, setLocalError] = useState<string | null>(null);
+  const [localError, setLocalError] = useState<string | NativeConversationStartFailure | null>(null);
   const [goalInputOpen, setGoalInputOpen] = useState(false);
   const [goalObjective, setGoalObjective] = useState('');
   const inputResources = useConversationInputResources({
@@ -2992,7 +2994,7 @@ function NewConversationComposer(props: {
       }
       if (accepted === false) return;
       if (accepted && typeof accepted === 'object' && accepted.state === 'failed') {
-        setLocalError(accepted.message);
+        setLocalError(accepted);
         return;
       }
       await props.onAccepted?.();
@@ -3024,7 +3026,7 @@ function NewConversationComposer(props: {
       />
       {localError ? (
         <p className="session-new-conversation-error" role="status">
-          {localError}
+          {typeof localError === 'string' ? localError : localError.message}
         </p>
       ) : null}
       <div className="session-composer-input-frame" data-goal-input={goalInputActive ? 'true' : 'false'}>

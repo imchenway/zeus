@@ -1,7 +1,7 @@
 import { type FormEvent, useCallback, useEffect } from 'react';
 import { type ProjectCodeWorkspacePreference, renderTaskPushLayoutText, type ZentaoTaskExtract } from '@zeus/shared';
-import { activateRequestingZeusWindowInMain, openExternalHttpsUrlInMain } from '../../appShellBridge.js';
-import { completeCodexLoginHandoff } from '../../codexLoginHandoff.js';
+import { openExternalHttpsUrlInMain } from '../../appShellBridge.js';
+import { authenticateCodexWithBrowser } from '../../codexLoginHandoff.js';
 import { type ConversationTreeRuntimeState, conversationTreeRuntimeStateFromConversation } from '../../session/ProjectConversationTree.js';
 import {
   loadLegacyConversationDetail,
@@ -743,6 +743,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     // 只记录真实捕获到的前端操作失败，并在渲染前脱敏，避免把 token / API key 明文带到界面。
     setLocalError({
       action,
+      code: error instanceof ZeusApiError ? (error.error ?? undefined) : undefined,
       message: redactLocalUiErrorMessage(errorToLocalUiMessage(error)),
       occurredAt: new Date().toISOString(),
     });
@@ -2112,7 +2113,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       } catch (error) {
         const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error));
         setNativeConversationChoiceTaskStates((current) => ({ ...current, [input.task.id]: completeNativeConversationChoiceTaskLoad(current[input.task.id]) }));
-        return { state: 'failed', message };
+        return { state: 'failed', message, code: error instanceof ZeusApiError ? (error.error ?? undefined) : undefined };
       }
     }
     let refreshError: unknown | null = null;
@@ -2159,13 +2160,13 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error));
       if (input.source === 'code_review') {
         setNativeConversationChoiceTaskStates((current) => ({ ...current, [input.task.id]: completeNativeConversationChoiceTaskLoad(current[input.task.id]) }));
-        return { state: 'failed', message };
+        return { state: 'failed', message, code: error instanceof ZeusApiError ? (error.error ?? undefined) : undefined };
       }
       setNativeConversationChoiceTaskStates((current) => ({
         ...current,
         [input.task.id]: completeNativeConversationChoiceTaskLoad(current[input.task.id]),
       }));
-      return { state: 'failed', message };
+      return { state: 'failed', message, code: error instanceof ZeusApiError ? (error.error ?? undefined) : undefined };
     }
     if (refreshError) {
       setNativeConversationChoiceTaskStates((current) => ({
@@ -2214,7 +2215,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         ...current,
         [projectId]: completeNativeConversationChoiceTaskLoad(current[projectId]),
       }));
-      return { state: 'failed', message };
+      return { state: 'failed', message, code: error instanceof ZeusApiError ? (error.error ?? undefined) : undefined };
     }
     if (refreshError) {
       setNativeConversationChoiceProjectStates((current) => ({
@@ -2739,45 +2740,20 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setTaskModelPushStatus('authenticating');
     setTaskModelPushError(null);
     try {
-      const login = await client.startCodexChatGptLogin();
-      if (taskModelPushLoginRequestRef.current !== requestVersion) {
-        await client.cancelCodexChatGptLogin(login.loginId).catch(() => undefined);
-        return;
-      }
-      taskModelPushLoginIdRef.current = login.loginId;
-      const opened = await openExternalHttpsUrlInMain({
-        zeus: typeof window === 'undefined' ? undefined : window.zeus,
-        url: login.authUrl,
+      await authenticateCodexWithBrowser({
+        client,
+        isCurrent: () => taskModelPushLoginRequestRef.current === requestVersion,
+        onLoginId: (loginId) => {
+          taskModelPushLoginIdRef.current = loginId;
+        },
+        showSuccess: (account) => {
+          setTaskModelPushCapabilities({ ...capabilities, codexAccount: account });
+          setTaskModelPushStatus('authenticated');
+          setTaskModelPushError(null);
+        },
+        recordActivationError: (error) => recordLocalError('codex-login-window-activation', error),
+        continueOriginalAction: (account) => continueTaskModelPush(task, { ...capabilities, codexAccount: account }, form),
       });
-      if (!opened.opened) throw new Error('ZEUS_CODEX_LOGIN_BROWSER_OPEN_FAILED');
-
-      const deadline = Date.now() + 5 * 60_000;
-      while (Date.now() < deadline) {
-        if (taskModelPushLoginRequestRef.current !== requestVersion) return;
-        const account = await client.loadCodexAccount();
-        if (taskModelPushLoginRequestRef.current !== requestVersion) return;
-        if (account.signedIn || !account.requiresOpenaiAuth) {
-          taskModelPushLoginIdRef.current = null;
-          const updatedCapabilities = { ...capabilities, codexAccount: account };
-          setTaskModelPushCapabilities(updatedCapabilities);
-          await completeCodexLoginHandoff({
-            isCurrent: () => taskModelPushLoginRequestRef.current === requestVersion,
-            showSuccess: () => {
-              setTaskModelPushStatus('authenticated');
-              setTaskModelPushError(null);
-            },
-            activateZeus: async () => {
-              const result = await activateRequestingZeusWindowInMain({ zeus: typeof window === 'undefined' ? undefined : window.zeus });
-              if (!result.activated) throw new Error(result.error ?? 'window_activation_failed');
-            },
-            recordActivationError: (error) => recordLocalError('codex-login-window-activation', error),
-            continueOriginalAction: () => continueTaskModelPush(task, updatedCapabilities, form),
-          });
-          return;
-        }
-        await new Promise<void>((resolve) => window.setTimeout(resolve, 800));
-      }
-      throw new Error('ZEUS_CODEX_LOGIN_TIMED_OUT');
     } catch (error) {
       if (taskModelPushLoginRequestRef.current !== requestVersion) return;
       const loginId = taskModelPushLoginIdRef.current;

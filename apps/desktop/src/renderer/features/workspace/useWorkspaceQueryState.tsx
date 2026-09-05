@@ -582,6 +582,15 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const taskModelPushCapabilityRequestRef = useRef(0);
   const taskModelPushLoginRequestRef = useRef(0);
   const taskModelPushLoginIdRef = useRef<string | null>(null);
+  useEffect(
+    () => () => {
+      // 工作面卸载后旧登录不可继续推送，也不可抢回窗口。
+      taskModelPushLoginRequestRef.current += 1;
+      const loginId = taskModelPushLoginIdRef.current;
+      if (loginId) void props.nativeConversationClient?.cancelCodexChatGptLogin(loginId).catch(() => undefined);
+    },
+    [props.nativeConversationClient],
+  );
   const taskModelPushEnvelopeRef = useRef(new Map<string, { fingerprint: string; request: StartTaskModelPushRequest }>());
   const taskModelPushDispatchingTaskIdsRef = useRef(new Set<string>());
   const taskModelPushDeferredDispatchingTaskIdsRef = useRef(new Set<string>());
@@ -717,7 +726,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const releaseUpdateBusy = releaseUpdateCheckState === 'loading';
   const [localError, setLocalError] = useState<LocalUiErrorSnapshot | undefined>(() => normalizeLocalUiError(props.initialLocalError));
   const [storageRecoveryFault, setStorageRecoveryFault] = useState<StorageRecoveryFaultState | null>(null);
-  useApplicationErrorDialog(localError?.message, {
+  useApplicationErrorDialog(localError, {
     language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en',
   });
   const projectCreationReady = Boolean(props.onChooseProjectDirectory && props.onCreateCurrentProject);

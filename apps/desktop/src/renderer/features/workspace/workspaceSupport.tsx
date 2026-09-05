@@ -1074,6 +1074,8 @@ export function mergeAppShellSettingsSaveResponse(input: { currentSettings: AppS
   // 普通 AppShell 保存可能比字段偏好保存更晚返回；合并时固定保留当前最新字段列，避免旧 payload 把任务表配置回滚。
   return {
     ...savedSettings,
+    modelSetupStatus: currentSettings.modelSetupStatus,
+    newProjectDefaultModelRef: currentSettings.newProjectDefaultModelRef,
     taskTableColumns: currentSettings.taskTableColumns,
     taskTableColumnsByProject: currentSettings.taskTableColumnsByProject,
     taskTableEnumSortOrders: currentSettings.taskTableEnumSortOrders,
@@ -2543,6 +2545,8 @@ export function ProjectArchiveWorkbench(props: {
 }
 
 export type LocalUiErrorSnapshot = {
+  /** 保留可操作错误身份供统一错误出口使用。 */
+  code?: string;
   action: string;
   message: string;
   occurredAt: string;
