@@ -35,6 +35,7 @@ import {
   buildTaskModelPushLayout,
   normalizeTaskModelPushCapabilities,
   readTaskModelPushPreferences,
+  reconcileTaskPushRepositories,
   resolveTaskModelPushInitialForm,
   selectedTaskPushCurrentConversationPaths,
   selectedTaskPushParentContexts,
@@ -130,6 +131,7 @@ import {
   writeCodexConfigImportPromptPreference,
 } from './workspaceSupport.js';
 import type { WorkspaceQueryState } from './useWorkspaceQueryState.js';
+import { useProjectRepositoryDiscovery } from './useProjectRepositoryDiscovery.js';
 
 /** 旧偏好只保存裸模型名时，只有项目默认来源能解除同名歧义；其他情况一律要求用户重选。 */
 function resolveTaskModelPushCapability(capabilities: CodexTaskPushCapabilities, requestedIdentity: string) {
@@ -140,6 +142,8 @@ function resolveTaskModelPushCapability(capabilities: CodexTaskPushCapabilities,
 }
 
 export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
+  /** 后台发现与当前推送弹窗的仓库更新共用独立生命周期。 */
+  const refreshTaskModelPushRepositories = useProjectRepositoryDiscovery(state);
   const {
     actionState,
     activeGraphView,
@@ -302,7 +306,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     taskGitReviewState,
     taskLocalVersionTransitionsRef,
     taskManagementStatusReplacementsRef,
-    taskModelPushCapabilities,
+    taskModelPushCapabilities: loadedTaskModelPushCapabilities,
     taskModelPushCapabilityRequestRef,
     taskModelPushConfigImportNeedsActivation,
     taskModelPushConfigImportPreview,
@@ -328,6 +332,11 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     visibleTasks,
     workspaceScrollRef,
   } = state;
+  /** 模型目录晚于本地仓库就绪时，各提交入口使用与界面一致的真实模型来源。 */
+  const taskModelPushCapabilities =
+    loadedTaskModelPushCapabilities && loadedTaskModelPushCapabilities.models.length === 0 && taskModelPushRuntimeCapabilities?.projectId === loadedTaskModelPushCapabilities.projectId
+      ? { ...loadedTaskModelPushCapabilities, models: taskModelPushRuntimeCapabilities.models, preferredModel: taskModelPushRuntimeCapabilities.preferredModel }
+      : loadedTaskModelPushCapabilities;
   const persistCodeWorkspacePreference = useCallback(
     (projectId: string, preference: ProjectCodeWorkspacePreference) => {
       const normalizedPreference = normalizeCodeWorkspaceByProject({ [projectId]: preference })[projectId];
@@ -2428,6 +2437,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       permissionMode: stage?.permissionMode ?? remembered?.permissionMode ?? 'read-only',
       skillId: readSkillWorkflowDefault('task_push'),
       workspaceMode: remembered?.workspaceMode ?? 'direct',
+      workspaceModeSelected: Boolean(remembered?.workspaceMode),
       taskBranchMode: 'create',
       environmentId: '',
       directConcurrencyConfirmed: false,
@@ -2472,27 +2482,35 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
             serviceTier: current.serviceTier,
             workMode: current.workMode,
             permissionMode: current.permissionMode,
-            workspaceMode: current.workspaceMode,
+            ...(current.workspaceModeSelected ? { workspaceMode: current.workspaceMode } : {}),
           },
           serviceTierPreferences,
           current.skillId,
         );
-        return {
-          ...normalized,
-          ...(current.stageId ? { stageId: current.stageId } : {}),
-          ...(current.stageId
-            ? {
-                model: current.model,
-                effort: current.effort,
-                serviceTier: current.serviceTier,
-                serviceTierDowngraded: false,
-                workMode: current.workMode,
-                permissionMode: current.permissionMode,
-              }
-            : {}),
-          supplementalInfo: current.supplementalInfo,
-          supplementalAttachments: current.supplementalAttachments,
-        };
+        return reconcileTaskPushRepositories(
+          {
+            ...current,
+            model: normalized.model,
+            effort: normalized.effort,
+            serviceTier: normalized.serviceTier,
+            serviceTierDowngraded: normalized.serviceTierDowngraded,
+            environmentId: current.environmentId || normalized.environmentId,
+            ...(current.stageId ? { stageId: current.stageId } : {}),
+            ...(current.stageId
+              ? {
+                  model: current.model,
+                  effort: current.effort,
+                  serviceTier: current.serviceTier,
+                  serviceTierDowngraded: false,
+                  workMode: current.workMode,
+                  permissionMode: current.permissionMode,
+                }
+              : {}),
+            supplementalInfo: current.supplementalInfo,
+            supplementalAttachments: current.supplementalAttachments,
+          },
+          capabilities,
+        );
       });
       setTaskModelPushStatus('ready');
     } catch (error) {
@@ -2574,12 +2592,12 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       setTaskModelPushForm((current) => {
         const selection = current.repositorySelections[repository.id];
         if (!selection || repository.sourceRefs.some((source) => source.ref === selection.sourceRef)) return current;
-        const fallback = repository.sourceRefs.find((source) => source.current)?.ref ?? repository.sourceRefs[0]?.ref ?? '';
         return {
           ...current,
+          repositorySelectionNeedsReview: true,
           repositorySelections: {
             ...current.repositorySelections,
-            [repository.id]: { ...selection, sourceRef: fallback, includeLocalChanges: false },
+            [repository.id]: { ...selection, sourceRef: '', includeLocalChanges: false },
           },
         };
       });
@@ -2611,6 +2629,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       taskModelPushDispatchingTaskIdsRef.current.has(task.id)
     )
       return;
+    if (form.workspaceMode === 'worktree' && form.taskBranchMode === 'create' && (!capabilities.repositoryDiscovery.completedAt || form.repositorySelectionNeedsReview)) return;
     const runtimeAccount = taskModelPushRuntimeCapabilities?.projectId === capabilities.projectId ? taskModelPushRuntimeCapabilities.codexAccount : null;
     proceedTaskModelPush(task, client, runtimeAccount ? { ...capabilities, codexAccount: runtimeAccount } : capabilities, form);
   }
@@ -3448,6 +3467,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     refreshNativeConversationChoices,
     refreshOpenTaskEvents,
     refreshTaskModelPushRepository,
+    refreshTaskModelPushRepositories,
     removeTaskCreateAttachment,
     renameProjectDisplayName,
     reopenTaskFromConversation,

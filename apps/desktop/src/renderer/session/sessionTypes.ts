@@ -990,6 +990,8 @@ export interface ProjectSharedPathRecord {
 }
 
 export interface CodexTaskRepositoryCapability extends ProjectRepositoryRecord {
+  /** 仓库无法读取时保留条目和原因，但不给出可选分支。 */
+  unavailableReason?: string | null;
   branch: string;
   headSha: string;
   clean: boolean;
@@ -1021,6 +1023,8 @@ export interface CodexChatGptLogin {
 }
 
 export interface CodexTaskPushCapabilities {
+  /** 本地仓库发现与模型加载分别表达；完成后的空清单才表示没有仓库。 */
+  repositoryDiscovery: import('@zeus/shared').ProjectRepositoryDiscovery;
   generationId: string;
   initializedAt: string;
   projectId: string;

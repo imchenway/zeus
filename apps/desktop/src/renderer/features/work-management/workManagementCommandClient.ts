@@ -5,6 +5,8 @@ export const workManagementClientCommandTypes = {
   projectCreate: 'work_management.project.create',
   projectUpdate: 'work_management.project.update',
   projectWorkspaceUpdate: 'work_management.project.workspace.update',
+  /** 项目本地仓库后台发现命令。 */
+  projectRepositoriesRefresh: 'work_management.project.repositories.refresh',
   projectDelete: 'work_management.project.delete',
   projectArchive: 'work_management.project.archive',
   projectRestore: 'work_management.project.restore',

@@ -71,6 +71,7 @@ import { registerCodexSubagentQueryRoutes } from './codexSubagentQueryRoutes.js'
 import { createCodexSubagentRuntimeReader } from './codexSubagentRuntimeProjection.js';
 import { createCommandCenter } from './commandCenter.js';
 import { ConversationCapabilityQueryApplication } from './conversationCapabilityQueryApplication.js';
+import { ProjectRepositoryDiscoveryService } from './projectRepositoryDiscovery.js';
 import { createDigitalEmployeeOrchestrator, type DigitalEmployeeOrchestrator } from './digitalEmployeeOrchestrator.js';
 import { type AutomationScheduler, createAutomationScheduler } from './automationScheduler.js';
 import { registerAutomationRoutes } from './automationRoutes.js';
@@ -674,6 +675,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   registerCodexSubagentQueryRoutes({ server, application: codexSubagentQueries });
 
   const conversationCapabilityQueries = new ConversationCapabilityQueryApplication({
+    settings,
     projects,
     tasks,
     repositories: projectRepositories,
@@ -2011,7 +2013,10 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     }
   });
 
+  /** 后台发现只在普通可写宿主中被项目命令或恢复入口触发。 */
+  const repositoryDiscovery = new ProjectRepositoryDiscoveryService({ db, projects, repositories: projectRepositories, settings, publishRealtimeEvent, redactSensitiveText });
   const workManagementProjectOperations = new WorkManagementProjectOperations({
+    repositoryDiscovery,
     projects,
     sharedPaths: projectSharedPaths,
     templates: taskTemplates,
@@ -2043,6 +2048,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     application: workManagementCommands,
     create: (input, projectId, context) => workManagementProjectOperations.create(input, projectId, context),
     update: (projectId, input, context) => workManagementProjectOperations.update(projectId, input, context),
+    refreshRepositories: (projectId, context) => workManagementProjectOperations.refreshRepositories(projectId, context),
     updateWorkspace: (projectId, input, context) => workManagementProjectOperations.updateWorkspace(projectId, input, context),
     remove: (projectId, context) => workManagementProjectOperations.remove(projectId, context),
     archiveConfirmation: (projectId) => workManagementProjectOperations.archiveConfirmation(projectId),
@@ -3922,6 +3928,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       }
     }
     try {
+      await repositoryDiscovery.close();
       await workManagementTaskEffects.close();
     } catch (error) {
       cleanupErrors.push(error);
@@ -3952,7 +3959,10 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   return {
     close: closeLocalServerResources,
     recover: () => {
-      if (!readOnlyValidation) workManagementTaskEffects.recover();
+      if (!readOnlyValidation) {
+        workManagementTaskEffects.recover();
+        repositoryDiscovery.recover();
+      }
     },
     projectGitQueries,
     conversationCapabilityQueries,

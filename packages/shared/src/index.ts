@@ -11,6 +11,20 @@ export * from './conversationSnapshotV2Wire.js';
 export * from './im.js';
 export * from './skillIdentity.js';
 
+/** 项目本地仓库发现状态；完成时间只代表当前目录最近一次完整扫描。 */
+export interface ProjectRepositoryDiscovery {
+  /** 本次发现所属的项目。 */
+  projectId: string;
+  /** 已规范化的项目目录，防止目录变更后接受旧结果。 */
+  localPath: string;
+  /** 未开始、后台进行中、完整完成或失败。 */
+  status: 'not_started' | 'running' | 'completed' | 'failed';
+  /** 最近一次完整扫描时间；刷新失败时保留。 */
+  completedAt: string | null;
+  /** 本次失败的可读原因，成功或进行中时为空。 */
+  error: string | null;
+}
+
 export type TaskStatus = 'draft' | 'ready' | 'running' | 'paused' | 'waiting_confirmation' | 'completed' | 'failed' | 'cancelled';
 
 /** 任务优先级只表达处理顺序；P0 不会隐式启动任务或 AI 会话。 */

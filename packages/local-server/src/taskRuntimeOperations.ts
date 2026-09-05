@@ -266,8 +266,13 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
     });
   }
 
+  /** 项目目录不可读时移除该授权根，仍可投影托管附件和仓库发现错误。 */
   function taskPushTrustedAttachmentRoots(projectLocalPath: string): string[] {
-    return [realpathSync(projectLocalPath), ...(taskAttachmentRoot ? [taskAttachmentRoot] : [])];
+    try {
+      return [realpathSync(projectLocalPath), ...(taskAttachmentRoot ? [taskAttachmentRoot] : [])];
+    } catch {
+      return taskAttachmentRoot ? [taskAttachmentRoot] : [];
+    }
   }
 
   function inspectTaskPushAttachment(task: ZeusTaskRecord, rawAttachment: unknown, index: number, allowedRoots: string[]): InspectedTaskPushAttachment {

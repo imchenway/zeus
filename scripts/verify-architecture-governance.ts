@@ -120,7 +120,7 @@ async function verifyImportBoundaries(): Promise<void> {
     'packages/local-server/src/codexSubagentQueryApplication.ts': ['@zeus/ai-runtime', '@zeus/storage', './codexSubagentRuntimeProjection.js', './conversationResources.js'],
     'packages/local-server/src/codexSubagentQueryRoutes.ts': ['fastify', './codexSubagentQueryApplication.js'],
     'packages/local-server/src/codexSubagentRuntimeProjection.ts': ['node:fs', 'node:fs/promises', 'node:path', '@zeus/ai-runtime', '@zeus/shared'],
-    'packages/local-server/src/conversationCapabilityQueryApplication.ts': ['node:crypto', 'node:path', '@zeus/ai-runtime', '@zeus/git-core', '@zeus/storage'],
+    'packages/local-server/src/conversationCapabilityQueryApplication.ts': ['node:crypto', 'node:path', '@zeus/ai-runtime', '@zeus/git-core', '@zeus/storage', './projectRepositoryDiscovery.js'],
     'packages/local-server/src/conversationCapabilityQueryRoutes.ts': ['fastify', './conversationCapabilityQueryApplication.js', './nativeQueryRouteError.js'],
     'packages/local-server/src/nativeQueryRouteError.ts': ['fastify'],
   };

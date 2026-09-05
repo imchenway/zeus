@@ -953,6 +953,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                 }}
                 onServiceTierPreferenceChange={domainActions.saveTaskModelPushServiceTierPreference}
                 onRefreshRepository={(repositoryId) => void refreshTaskModelPushRepository(repositoryId)}
+                onRefreshLocalRepositories={() => void domainActions.refreshTaskModelPushRepositories()}
                 onClose={closeTaskModelPush}
                 onCancelAuthentication={cancelTaskModelPushAuthentication}
                 onCancelCodexConfigImport={cancelTaskModelPushCodexConfigImport}
