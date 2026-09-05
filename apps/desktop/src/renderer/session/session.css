@@ -4055,7 +4055,8 @@
   display: flex;
   font-size: 14px;
   gap: 8px;
-  inline-size: min(var(--session-thread-max), calc(100% - (2 * var(--session-gutter))));
+  /* 会话容器已经提供左右留白，状态行与正文共用同一宽度。 */
+  inline-size: min(var(--session-thread-max), 100%);
   margin: 8px auto;
 }
 
