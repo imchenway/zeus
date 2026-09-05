@@ -1,4 +1,6 @@
 import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
+import {useId, useState} from 'react';
+import type {DashboardClient, ProjectRecord} from '../../apiClient.js';
 import { openAutomaticUpdateIndicatorInMain } from '../../appShellBridge.js';
 import { ProjectGitWorkbench } from '../../git/ProjectGitWorkbench.js';
 import { conversationDisplayTitle } from '../../session/conversationDisplayTitle.js';
@@ -58,6 +60,7 @@ import {
   formatRuntimeAdapterDisplayName,
   formatRuntimeSessionStatus,
   NativeControlRow,
+    type NativeConversationAppClient,
   NativeSettingsPane,
   PROJECT_SIDEBAR_MIN_WIDTH,
   ProjectArchiveWorkbench,
@@ -72,6 +75,69 @@ import {
 import type { WorkspaceQueryState } from './useWorkspaceQueryState.js';
 import type { WorkspaceDomainActions } from './useWorkspaceDomainActions.js';
 import type { WorkspaceOperations } from './useWorkspaceOperations.js';
+
+/** 项目设置只保留两个同级入口，避免把两块长内容纵向拼成一个页面。 */
+type ProjectSettingsSection = 'employees' | 'models';
+
+/** 项目设置页在离开页面或切换项目时重新挂载，因此默认入口始终是数字员工。 */
+function ProjectSettingsWorkspace(props: {
+    project: ProjectRecord;
+    commandClient: DashboardClient | null;
+    conversationClient: NativeConversationAppClient | null;
+    language: 'zh-CN' | 'en-US'
+}) {
+    const zh = props.language === 'zh-CN';
+    const [section, setSection] = useState<ProjectSettingsSection>('employees');
+    const sectionId = useId();
+    const employeesTabId = `${sectionId}-employees-tab`;
+    const employeesPanelId = `${sectionId}-employees-panel`;
+    const modelsTabId = `${sectionId}-models-tab`;
+    const modelsPanelId = `${sectionId}-models-panel`;
+
+    return (
+        <div className="project-settings-shell">
+            <header className="project-settings-page-heading">
+        <span className="project-settings-page-title">
+          <h1>{zh ? '项目设置' : 'Project settings'}</h1>
+          <p>{props.project.name}</p>
+        </span>
+                <nav className="project-settings-section-tabs"
+                     aria-label={zh ? '项目设置分类' : 'Project settings sections'} role="tablist"
+                     data-inline-rail-keyboard="horizontal" onKeyDown={handleInlineRailKeyboardNavigation}>
+                    <button
+                        id={employeesTabId}
+                        type="button"
+                        role="tab"
+                        aria-selected={section === 'employees'}
+                        aria-controls={employeesPanelId}
+                        tabIndex={section === 'employees' ? 0 : -1}
+                        data-inline-rail-item="true"
+                        onClick={() => setSection('employees')}
+                    >
+                        {zh ? '数字员工' : 'Digital employees'}
+                    </button>
+                    <button id={modelsTabId} type="button" role="tab" aria-selected={section === 'models'}
+                            aria-controls={modelsPanelId} tabIndex={section === 'models' ? 0 : -1}
+                            data-inline-rail-item="true" onClick={() => setSection('models')}>
+                        {zh ? '可用模型' : 'Available models'}
+                    </button>
+                </nav>
+            </header>
+
+            <section id={employeesPanelId} className="project-settings-panel" role="tabpanel"
+                     aria-labelledby={employeesTabId} hidden={section !== 'employees'}>
+                <ProjectDigitalEmployeesPanel projectId={props.project.id} projectName={props.project.name}
+                                              client={props.commandClient} skillClient={props.conversationClient}
+                                              language={props.language}/>
+            </section>
+            <section id={modelsPanelId} className="project-settings-panel" role="tabpanel" aria-labelledby={modelsTabId}
+                     hidden={section !== 'models'}>
+                <ProjectModelsSettings projectId={props.project.id} client={props.commandClient}
+                                       language={props.language}/>
+            </section>
+        </div>
+    );
+}
 
 export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions: WorkspaceDomainActions; operations: WorkspaceOperations }) {
   const { state, domainActions, operations } = input;
@@ -702,16 +768,10 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           <section className="workspace-view workspace-view-project-settings" aria-label={codeWorkspaceCopy.projectSettingsAria}>
             <section className="workspace-detail-pane project-detail-pane" aria-label={codeWorkspaceCopy.detailAria}>
               {selectedProject ? (
-                <>
-                  <ProjectModelsSettings projectId={selectedProject.id} client={props.commandClient ?? null} language={appShellSettings.appLanguage} />
-                  <ProjectDigitalEmployeesPanel
-                    projectId={selectedProject.id}
-                    projectName={selectedProject.name}
-                    client={props.commandClient ?? null}
-                    skillClient={props.nativeConversationClient ?? null}
-                    language={appShellSettings.appLanguage}
-                  />
-                </>
+                  <ProjectSettingsWorkspace key={selectedProject.id} project={selectedProject}
+                                            commandClient={props.commandClient ?? null}
+                                            conversationClient={props.nativeConversationClient ?? null}
+                                            language={appShellSettings.appLanguage}/>
               ) : (
                 <>
                   <InlineRecoveryPrompt

@@ -5630,21 +5630,65 @@ body[data-surface='project-git-diff'] #root {
 
 .macos-ai-app .project-model-settings {
   display: grid;
-  grid-template-columns: minmax(180px, 0.85fr) minmax(260px, 1.25fr);
-  gap: 18px;
-  padding-block: 14px;
-  border-block-end: 1px solid var(--zeus-product-line);
+    gap: 14px;
+    min-inline-size: 0;
 }
 
+.macos-ai-app .project-model-settings-heading,
 .macos-ai-app .project-model-settings-body,
 .macos-ai-app .project-model-choice-list,
-.macos-ai-app .project-model-default-field {
+.macos-ai-app .project-model-default-field,
+.macos-ai-app .project-model-settings-footer-main {
   display: grid;
   gap: 8px;
   min-inline-size: 0;
 }
 
+.macos-ai-app .project-model-settings-heading {
+    gap: 4px;
+}
+
+.macos-ai-app .project-model-settings-heading :where(h2, p) {
+    margin: 0;
+}
+
+.macos-ai-app .project-model-settings-heading h2 {
+    font-size: 20px;
+    letter-spacing: -0.015em;
+    line-height: 1.25;
+}
+
+.macos-ai-app .project-model-settings-heading p {
+    max-inline-size: 720px;
+    color: var(--zeus-product-muted);
+    font-size: 12px;
+    line-height: 1.55;
+}
+
+.macos-ai-app .project-model-settings-toolbar {
+    align-items: end;
+    display: grid;
+    gap: 12px;
+    grid-template-columns: minmax(220px, 420px) auto;
+    justify-content: space-between;
+}
+
+.macos-ai-app .project-model-settings-toolbar > small {
+    color: var(--zeus-product-muted);
+    font-size: 11px;
+    line-height: 16px;
+    white-space: nowrap;
+}
+
+.macos-ai-app .project-model-search-field input {
+    box-sizing: border-box;
+    inline-size: 100%;
+    min-block-size: 32px;
+    padding-inline: 10px;
+}
+
 .macos-ai-app .project-model-choice-list {
+    gap: 12px;
   margin: 0;
   padding: 0;
   border: 0;
@@ -5659,6 +5703,14 @@ body[data-surface='project-git-diff'] #root {
   border: 1px solid var(--zeus-product-line);
   border-radius: 9px;
   background: var(--zeus-product-panel);
+    cursor: pointer;
+    min-block-size: 38px;
+    scroll-margin-block: 16px 144px;
+}
+
+/* 固定操作栏会覆盖滚动视口底部；键盘聚焦复选框时必须预留完整操作栏高度。 */
+.macos-ai-app .project-model-choice-list input {
+    scroll-margin-block: 16px 144px;
 }
 
 .macos-ai-app .project-model-choice-list label > span {
@@ -5666,18 +5718,46 @@ body[data-surface='project-git-diff'] #root {
   gap: 2px;
 }
 
+.macos-ai-app .project-model-choice-list label:has(input:focus-visible) {
+    border-color: var(--zeus-control-border-hover);
+    box-shadow: var(--zeus-control-focus);
+}
+
 .macos-ai-app .project-model-choice-list small,
 .macos-ai-app .project-model-default-field > span,
-.macos-ai-app .project-model-settings-body > small {
+.macos-ai-app .project-model-settings-body > small,
+.macos-ai-app .project-model-settings-footer-main > small {
   color: var(--zeus-product-muted);
   font-size: 11px;
   line-height: 16px;
 }
 
+.macos-ai-app .project-model-search-empty {
+    padding-block: 18px;
+    text-align: center;
+}
+
+.macos-ai-app .project-model-settings-footer {
+    align-items: end;
+    display: grid;
+    gap: 16px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    position: sticky;
+    z-index: 2;
+    inset-block-end: 0;
+    margin-block-start: 4px;
+    padding-block: 12px 2px;
+    border-block-start: 1px solid var(--zeus-product-line);
+    background: var(--zeus-product-canvas);
+}
+
+.macos-ai-app .project-model-default-field {
+    max-inline-size: 520px;
+}
+
 @media (max-width: 780px) {
   .macos-ai-app .model-connections-layout,
-  .macos-ai-app .model-connection-field-grid,
-  .macos-ai-app .project-model-settings {
+  .macos-ai-app .model-connection-field-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -5690,6 +5770,26 @@ body[data-surface='project-git-diff'] #root {
     overflow: visible;
     position: static;
   }
+}
+
+@media (max-width: 820px) {
+    .macos-ai-app .project-model-settings-toolbar,
+    .macos-ai-app .project-model-settings-footer {
+        align-items: stretch;
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .macos-ai-app .project-model-settings-toolbar > small {
+        justify-self: start;
+    }
+
+    .macos-ai-app .project-model-default-field {
+        max-inline-size: none;
+    }
+
+    .macos-ai-app .project-model-settings-footer > .zeus-button {
+        justify-self: stretch;
+    }
 }
 
 @media (max-width: 520px) {
@@ -6991,9 +7091,108 @@ body[data-surface='project-git-diff'] #root {
   }
 }
 
-/* 2026-06-17 项目仓库工作台最终覆盖：代码/项目设置页不再只剩一排状态卡和大片空白。 */
-.macos-ai-app .project-detail-pane {
+/* 代码工作台管理自己的内层滚动；项目设置必须保留页面滚动，不能共用隐藏溢出。 */
+.macos-ai-app .workspace-view-project-code > .project-detail-pane {
   overflow: hidden;
+}
+
+.macos-ai-app .workspace-view-project-settings > .project-detail-pane {
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scroll-padding-block: 20px 144px;
+}
+
+.macos-ai-app .project-settings-shell {
+    display: grid;
+    gap: 0;
+    inline-size: min(1120px, 100%);
+    min-inline-size: 0;
+    margin-inline: auto;
+}
+
+.macos-ai-app .project-settings-page-heading {
+    align-items: end;
+    display: flex;
+    gap: 18px;
+    justify-content: space-between;
+    padding-block-end: 14px;
+    border-block-end: 1px solid var(--zeus-product-line);
+}
+
+.macos-ai-app .project-settings-page-title {
+    display: grid;
+    gap: 3px;
+    min-inline-size: 0;
+}
+
+.macos-ai-app .project-settings-page-title :where(h1, p) {
+    margin: 0;
+}
+
+.macos-ai-app .project-settings-page-title h1 {
+    font-size: 20px;
+    letter-spacing: -0.015em;
+    line-height: 1.25;
+}
+
+.macos-ai-app .project-settings-page-title p {
+    color: var(--zeus-product-muted);
+    font-size: 12px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.macos-ai-app .project-settings-section-tabs {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 4px;
+    padding: 3px;
+    border: 1px solid var(--zeus-control-border);
+    border-radius: 9px;
+    background: var(--zeus-product-panel-muted);
+}
+
+.macos-ai-app .workspace-view-project-settings .project-settings-section-tabs button {
+    min-block-size: 32px;
+    min-inline-size: 104px;
+    padding: 5px 11px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--zeus-control-muted-text);
+    font-size: 12px;
+}
+
+.macos-ai-app .workspace-view-project-settings .project-settings-section-tabs button[aria-selected='true'] {
+    background: var(--zeus-product-panel);
+    box-shadow: 0 1px 2px color-mix(in oklab, black 10%, transparent);
+    color: var(--zeus-control-text);
+}
+
+.macos-ai-app .project-settings-panel {
+    min-inline-size: 0;
+    padding-block-start: 18px;
+}
+
+.macos-ai-app .project-settings-panel[hidden] {
+    display: none;
+}
+
+@media (max-width: 820px) {
+    .macos-ai-app .project-settings-page-heading {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .macos-ai-app .project-settings-section-tabs {
+        inline-size: 100%;
+    }
+
+    .macos-ai-app .workspace-view-project-settings .project-settings-section-tabs button {
+        flex: 1 1 0;
+        min-inline-size: 0;
+    }
 }
 
 .macos-ai-app .project-repository-workbench {

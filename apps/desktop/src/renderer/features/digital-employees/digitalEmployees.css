@@ -271,7 +271,7 @@
 
 .macos-ai-app .workspace-view-project-settings .project-digital-employees {
   margin: 0;
-  padding: 18px;
+    padding: 0;
   border-block-start: 0;
 }
 
