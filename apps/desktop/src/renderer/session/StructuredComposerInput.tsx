@@ -5,6 +5,7 @@ import type { PluginSkillReference } from './sessionTypes.js';
 
 type StructuredTokenKind = 'expert' | 'skill' | 'plugin' | 'plugin-skill' | 'computer';
 
+/** 保留标签展示范围、结构化身份与模型可识别的调用文本。 */
 interface StructuredToken {
   id: string;
   kind: StructuredTokenKind;
@@ -12,6 +13,8 @@ interface StructuredToken {
   end: number;
   label: string;
   stableId: string;
+  /** Skill 与 Plugin 的显式调用文本；其他标签仅通过结构化字段提交。 */
+  invocation?: string;
 }
 
 interface TriggerRange {
@@ -215,7 +218,8 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
         label: `/${plugin.displayName || plugin.name}`,
         detail: plugin.description,
         disabled: selectedIds.has(`plugin:${plugin.id}`),
-        token: { kind: 'plugin', label: `/${plugin.displayName || plugin.name}`, stableId: plugin.id },
+        // 调用使用插件名称，界面仍展示用户可读名称。
+        token: { kind: 'plugin', label: `/${plugin.displayName || plugin.name}`, stableId: plugin.id, invocation: `@${plugin.name}` },
       });
     }
     for (const skill of catalog?.skills ?? []) {
@@ -230,7 +234,8 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
         detail: skill.shortDescription || skill.description,
         disabled: selectedIds.has(`${kind}:${skill.id}`) || (!pluginSkill && selectedSkillCount >= 8),
         disabledReason: !pluginSkill && selectedSkillCount >= 8 ? (zh ? '每轮最多选择 8 个 Skill' : 'Up to 8 Skills per turn') : undefined,
-        token: { kind, label: `/${skill.name}`, stableId: skill.id },
+        // 复用目录已区分普通 Skill 与 Plugin Skill 的调用文本。
+        token: { kind, label: `/${skill.name}`, stableId: skill.id, invocation: skill.invocation },
       });
     }
     return values;
@@ -397,12 +402,13 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
   );
 }
 
+/** 按标签原位置保留显式调用意图，并继续独立提交展示文本和结构化引用。 */
 function selectionFromTokens(value: string, tokens: StructuredToken[]): StructuredComposerSelection {
   const ordered = [...tokens].sort((left, right) => left.start - right.start);
   let cursor = 0;
   let promptText = '';
   for (const token of ordered) {
-    promptText += value.slice(cursor, token.start);
+    promptText += value.slice(cursor, token.start) + (token.invocation ?? '');
     cursor = token.end;
   }
   promptText += value.slice(cursor);
