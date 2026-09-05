@@ -8,6 +8,7 @@ import type { PluginApprovalMode, PluginDescriptor, PluginDirectSource, PluginIn
 import type { NativeConversationAppClient } from '../workspace/workspaceSupport.js';
 import { Button } from '../../ui/Button.js';
 import { ModalPortal } from '../../ui/ModalPortal.js';
+import { ZeusApiError } from '../../transport/localApiTransport.js';
 import { SkillsWorkspace } from './SkillsWorkspace.js';
 import { skillCatalogChangedEvent } from './SkillSelector.js';
 
@@ -112,10 +113,19 @@ export function ExtensionsWorkspace(props: { client: ExtensionsClient | null; la
     };
   }
 
+  /** 市场来源进入已有条目选择列表，不擅自安装其中全部插件。 */
   async function install(event: FormEvent): Promise<void> {
     event.preventDefault();
     const installSource: PluginInstallSource = directSource();
-    const succeeded = await mutate('install', () => props.client!.installPlugin({ scope, projectId: scope === 'project' ? props.projectId : null, source: installSource }));
+    const succeeded = await mutate('install', async () => {
+      try {
+        await props.client!.installPlugin({ scope, projectId: scope === 'project' ? props.projectId : null, source: installSource });
+      } catch (reason) {
+        if (!(reason instanceof ZeusApiError) || reason.error !== 'ZEUS_PLUGIN_SOURCE_IS_MARKETPLACE') throw reason;
+        await props.client!.addPluginMarketplace({ scope, projectId: scope === 'project' ? props.projectId : null, source: installSource });
+        setTab('marketplaces');
+      }
+    });
     if (succeeded) {
       setInstallOpen(false);
       setSource(emptySource());

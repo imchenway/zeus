@@ -16,7 +16,7 @@ import {
 } from '@zeus/storage';
 import type { SecretStore } from './securityCore.js';
 import { inspectZeusPluginDirectory, ZeusPluginManifestError, type ZeusPluginManifestInspection } from './zeusPluginManifest.js';
-import { discoverMarketplace, inspectSafeSourceTree, materializePluginSource, ZeusPluginSourceError, type ZeusMarketplaceEntry, type ZeusPluginDirectSource } from './zeusPluginSource.js';
+import { discoverMarketplace, inspectSafeSourceTree, materializePluginSource, normalizePluginSource, ZeusPluginSourceError, type ZeusMarketplaceEntry, type ZeusPluginDirectSource } from './zeusPluginSource.js';
 
 const maximumMarketplaceNodes = 25_000;
 const maximumMarketplaceBytes = 512 * 1024 * 1024;
@@ -199,6 +199,11 @@ export function createZeusPluginService(options: {
       }
 
       const providerLegacyConflict = (await discoverProviderLegacyNames(codexHome)).has(stagedInspection.name);
+      // 内容未变化且缓存检查通过时沿用现有修订及启停、信任状态，避免重复登记相同内容摘要。
+      if (input.updatePluginId && requireRevision(requirePlugin(input.updatePluginId).activeRevisionId).contentSha256 === stagedInspection.contentSha256) {
+        createdBundlePath = null;
+        return toDescriptor(requirePlugin(input.updatePluginId), providerLegacyConflict);
+      }
       const connection = deriveConnectionState(stagedInspection, providerLegacyConflict);
       const result = options.repository.recordInstallation({
         ...(input.updatePluginId ? { pluginId: input.updatePluginId } : {}),
@@ -301,7 +306,9 @@ export function createZeusPluginService(options: {
     return persistMarketplace({ id: marketplace.id, scope: marketplace.scope, projectId: marketplace.projectId, source });
   }
 
+  /** 市场保存归一后的来源，刷新时继续读取同一个分支及目录。 */
   async function persistMarketplace(input: { id: string | null; scope: PluginScope; projectId: string | null; source: ZeusPluginDirectSource }): Promise<ZeusMarketplaceCatalog> {
+    input = { ...input, source: await normalizePluginSource(input.source) };
     await mkdir(bundlesRoot, { recursive: true, mode: 0o700 });
     await mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
     const stagingRoot = await mkdtemp(join(runtimeRoot, '.marketplace-install-'));
@@ -526,12 +533,14 @@ export function createZeusPluginService(options: {
     return hydrateActivationRecords(records);
   }
 
+  /** 插件注册与更新共用归一来源，防止页面 URL 和克隆 URL 形成重复身份。 */
   async function resolveInstallSource(source: ZeusPluginInstallSource): Promise<ResolvedInstallSource> {
     if (!source || typeof source !== 'object') throw new ZeusPluginServiceError('ZEUS_PLUGIN_INPUT_INVALID', 'Plugin 安装来源无效。');
     if (source.kind === 'local') {
       return { source, sourceKind: 'local', sourceLocator: source.path, sourceRef: null, sourceSubdirectory: null, marketplaceId: null, expectedName: null };
     }
     if (source.kind === 'git') {
+      source = (await normalizePluginSource(source)) as Extract<ZeusPluginDirectSource, { kind: 'git' }>;
       return {
         source,
         sourceKind: 'git',
