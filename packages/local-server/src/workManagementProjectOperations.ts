@@ -35,6 +35,8 @@ interface ProjectOperationPorts {
   sharedPaths: Pick<ProjectSharedPathRepository, 'replaceForProject'>;
   templates: Pick<TaskTemplateRepository, 'getById'>;
   saveProjectConfig(projectId: string, config: ProjectConfigSnapshot): void;
+  /** 为新项目写入经过目录验证的默认模型及可用模型集合。 */
+  stageProjectModelSelection(projectId: string, explicitModel: string | null): void;
   stageProjectManagementStatus(projectId: string): void;
   activateProjectManagementStatus(projectId: string): void;
   appendAuditLog(input: Omit<AppendAuditLogInput, 'createdAt'> & { createdAt?: string }): void;
@@ -56,6 +58,7 @@ export class WorkManagementProjectOperations {
     const project = this.ports.projects.create({ id: projectId, name: input.name, localPath, description: input.description, note: input.note });
     this.ports.saveProjectConfig(project.id, { ...projectConfig, projectId: project.id });
     this.ports.stageProjectManagementStatus(project.id);
+    this.ports.stageProjectModelSelection(project.id, projectConfig.defaultModel);
     this.audit(context, 'project.config.detected', project, {
       language: projectConfig.language.primary,
       packageManagers: projectConfig.dependencies.packageManagers,

@@ -1,3 +1,4 @@
+import { useModelSetup, ModelSetupDialog, CodexAccountSettings } from '../../settings/ModelSetup.js';
 import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
 import { useId, useState } from 'react';
 import type { DashboardClient, ProjectRecord } from '../../apiClient.js';
@@ -456,6 +457,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     updateTaskManagementStatusConfigDraft,
     workspaceDrawerPortalStyle,
   } = operations;
+  // 登录和接入弹窗留在现有工作面上方，避免切路由丢失会话草稿。
+  const modelSetup = useModelSetup({ client: props.nativeConversationClient ?? null, settings: appShellSettings, onSettingsSaved: state.setAppShellSettings });
   const runtimeTimeoutUnit = durationUnitForSeconds(runtimeSettings.executionTimeoutSeconds);
   const runtimeTimeoutValue = runtimeSettings.executionTimeoutSeconds / durationUnitSeconds(runtimeTimeoutUnit);
   return (
@@ -468,6 +471,12 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       lang={uiCopy.documentLang}
       aria-label={uiCopy.shellAriaLabel}
     >
+      <ModelSetupDialog controller={modelSetup} />
+      {appShellSettings.modelSetupStatus === 'pending' || appShellSettings.modelSetupStatus === 'skipped' ? (
+        <Button className="model-setup-connect-entry" variant="secondary" onClick={() => modelSetup.setStep('choose')}>
+          {appShellSettings.appLanguage === 'zh-CN' ? '连接模型' : 'Connect a model'}
+        </Button>
+      ) : null}
       <div className="window-drag-strip" aria-hidden="true" onPointerDown={handleWindowDragPointerDown} />
       <output className="sr-only" aria-live="polite" aria-atomic="true">
         {taskModelPushAnnouncement}
@@ -2064,7 +2073,12 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                   </section>
                 ) : null}
                 {settingsCategory === 'browser' ? <BrowserSettingsPane language={appShellSettings.appLanguage} /> : null}
-                {settingsCategory === 'models' ? <ModelConnectionsSettingsPane language={appShellSettings.appLanguage} client={props.nativeConversationClient ?? null} /> : null}
+                {settingsCategory === 'models' ? (
+                  <>
+                    <CodexAccountSettings controller={modelSetup} />
+                    <ModelConnectionsSettingsPane language={appShellSettings.appLanguage} client={props.nativeConversationClient ?? null} />
+                  </>
+                ) : null}
                 {settingsCategory === 'zentao' ? <ZentaoSettingsPane language={appShellSettings.appLanguage} client={props.nativeConversationClient ?? null} /> : null}
                 {settingsCategory === 'im' ? <ImRobotSettingsPane client={props.commandClient ?? null} language={appShellSettings.appLanguage} /> : null}
                 {settingsCategory === 'security' ? (
