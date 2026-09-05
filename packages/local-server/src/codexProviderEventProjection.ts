@@ -891,6 +891,8 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     const turn = providerTurnId ? options.turns.listByConversation(conversation.id).find((candidate) => candidate.providerTurnId === providerTurnId) : undefined;
     if (!providerTurnId || !providerItemId || !turn || typeof params.delta !== 'string') return;
     if (params.delta.trim()) modelRequestTiming.observe(conversation.id, turn.id, firstVisibleReceiptAt(receiptEvents, event.receivedAt), 'visible_text');
+    // 增量本身不声明正文阶段，沿用已知分类；缺少开始事件时等待完成事件确认。
+    const existing = options.providerItems.getByProvider(threadId, providerItemId);
     const item = options.providerItems.appendDelta({
       conversationId: conversation.id,
       turnId: turn.id,
@@ -898,13 +900,13 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       providerTurnId,
       providerItemId,
       itemType: itemTypeFromMethod(event.method),
-      phase: 'prework',
-      payload: params,
+      phase: existing?.phase ?? 'prework',
+      payload: { ...(existing ? parseJsonRecord(existing.payloadJson) : {}), ...params },
       delta: params.delta,
       updatedAt: event.receivedAt,
     });
-    // 目标存在期间，普通中间回复只更新会话进度；关注状态只由目标关键终态统一产生。
-    if (event.method === 'item/agentMessage/delta' && params.delta.trim() && !options.goals.get(conversation.id)) {
+    // 只有正式正文产生普通未读与通知；目标模式继续由目标关键终态统一提醒。
+    if (event.method === 'item/agentMessage/delta' && item.phase === 'final_answer' && params.delta.trim() && !options.goals.get(conversation.id)) {
       const previousRevision = options.conversations.getById(conversation.id)?.attentionRevision ?? 0;
       const attention = options.conversations.markAttentionUnread(conversation.id, {
         kind: 'unread',
@@ -957,7 +959,8 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       providerTurnId,
       providerItemId,
       itemType,
-      phase: phaseFromItem(itemPayload),
+      // 完成事件省略阶段时保留已知分类，避免把过程说明误判成正文。
+      phase: phaseFromItem(completedProjection.payload),
       payload: completedProjection.payload,
       textContent: completedProjection.textContent,
       status: itemPayload.status === 'failed' ? 'failed' : 'completed',
@@ -1063,7 +1066,8 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
         providerTurnId,
         providerItemId,
       });
-      if (item.textContent.trim() && !options.goals.get(conversation.id)) {
+      // 完成事件也检查正文阶段，覆盖没有流式增量的回复并排除过程说明。
+      if (item.phase === 'final_answer' && item.textContent.trim() && !options.goals.get(conversation.id)) {
         const previousRevision = options.conversations.getById(conversation.id)?.attentionRevision ?? 0;
         const attention = options.conversations.markAttentionUnread(conversation.id, {
           kind: 'unread',

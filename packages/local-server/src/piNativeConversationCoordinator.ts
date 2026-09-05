@@ -1419,11 +1419,14 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
             confirmedAt: event.createdAt,
           });
         }
-        attention = options.conversations.markAttentionUnread(run.conversationId, {
-          kind: 'unread',
-          turnId: run.providerTurnId,
-          occurredAt: event.createdAt,
-        });
+        // 工具调用阶段的说明只记录过程；正式正文才产生普通未读与通知。
+        if (phase === 'final_answer') {
+          attention = options.conversations.markAttentionUnread(run.conversationId, {
+            kind: 'unread',
+            turnId: run.providerTurnId,
+            occurredAt: event.createdAt,
+          });
+        }
       }
       await options.db.save();
       publishPiProcessItems(run, processItems);
