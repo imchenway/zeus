@@ -9,8 +9,8 @@ export function useProjectRepositoryDiscovery(state: WorkspaceQueryState) {
   const { activeProjectId, selectedProject, props, taskModelPushTaskId, taskModelPushCapabilities, taskModelPushCapabilityRequestRef, snapshot, setTaskModelPushCapabilities, setTaskModelPushForm, setTaskModelPushError } = state;
   /** 项目服务和能力查询由当前受信客户端提供。 */
   const client = props.nativeConversationClient;
-  /** 项目路径变化也需要发现新目录。 */
-  const projectPath = selectedProject?.id === activeProjectId ? selectedProject.localPath : undefined;
+  /** 首次没有项目时保持空路径；实际项目路径变化才发现新目录。 */
+  const projectPath = selectedProject?.id === activeProjectId ? selectedProject?.localPath : undefined;
   /** 区分重新进入项目和同项目的重复渲染。 */
   const enteredProject = useRef('');
   /** 推送可能来自非当前项目任务，以任务真实归属作为查询范围。 */
