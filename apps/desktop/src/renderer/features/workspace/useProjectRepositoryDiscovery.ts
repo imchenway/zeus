@@ -6,20 +6,8 @@ import type { WorkspaceQueryState } from './useWorkspaceQueryState.js';
 /** 项目进入触发后台发现，推送弹窗只在事件或连接恢复后补读仓库快照。 */
 export function useProjectRepositoryDiscovery(state: WorkspaceQueryState) {
   /** 只依赖稳定项目身份，普通表单编辑不重新发起扫描。 */
-  const {
-      activeProjectId,
-      appShellSettings,
-      selectedProject,
-      props,
-      taskModelPushTaskId,
-      taskModelPushCapabilities,
-      taskModelPushCapabilityRequestRef,
-      snapshot,
-      setTaskModelPushCapabilities,
-      setTaskModelPushForm,
-      setTaskModelPushError
-  } =
-      state;
+  const { activeProjectId, appShellSettings, selectedProject, props, taskModelPushTaskId, taskModelPushCapabilities, taskModelPushCapabilityRequestRef, snapshot, setTaskModelPushCapabilities, setTaskModelPushForm, setTaskModelPushError } =
+    state;
   /** 项目服务和能力查询由当前受信客户端提供。 */
   const client = props.nativeConversationClient;
   /** 首次没有项目时保持空路径；实际项目路径变化才发现新目录。 */
@@ -43,7 +31,7 @@ export function useProjectRepositoryDiscovery(state: WorkspaceQueryState) {
     if (enteredProject.current === identity) return;
     enteredProject.current = identity;
     void client.projects.refreshProjectRepositories(activeProjectId).catch((error: unknown) => {
-        console.warn('项目后台仓库发现请求未完成，可在推送弹窗重试。', redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage)));
+      console.warn('项目后台仓库发现请求未完成，可在推送弹窗重试。', redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage)));
     });
   }, [activeProjectId, appShellSettings.appLanguage, client, projectPath]);
 
@@ -81,7 +69,7 @@ export function useProjectRepositoryDiscovery(state: WorkspaceQueryState) {
         );
         setTaskModelPushForm((current) => reconcileTaskPushRepositories(current, capabilities));
       } catch (error) {
-          if (!disposed) setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage)));
+        if (!disposed) setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage)));
       } finally {
         loading = false;
         if (pending && !disposed) {
@@ -117,7 +105,7 @@ export function useProjectRepositoryDiscovery(state: WorkspaceQueryState) {
       await client.projects.refreshProjectRepositories(pushProjectId);
       if (taskModelPushCapabilityRequestRef.current === requestVersion) reload.current();
     } catch (error) {
-        if (taskModelPushCapabilityRequestRef.current === requestVersion) setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage)));
+      if (taskModelPushCapabilityRequestRef.current === requestVersion) setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage)));
     }
   }, [appShellSettings.appLanguage, client, pushProjectId, setTaskModelPushError, taskModelPushCapabilityRequestRef]);
 }
