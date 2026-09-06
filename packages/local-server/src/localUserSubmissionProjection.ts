@@ -34,6 +34,7 @@ export function projectLocallyAcceptedUserMessage(input: {
       ...(typeof submissionInput.origin === 'string' ? { origin: submissionInput.origin } : {}),
       ...(typeof submissionInput.planItemId === 'string' ? { planItemId: submissionInput.planItemId } : {}),
       ...(typeof submissionInput.requestAnswerId === 'string' ? { requestAnswerId: submissionInput.requestAnswerId } : {}),
+      ...(isRecord(submissionInput.questionAnswer) ? { questionAnswer: submissionInput.questionAnswer } : {}),
     },
     createdAt: input.submission.createdAt,
     clientMessageId: input.submission.clientMessageId,

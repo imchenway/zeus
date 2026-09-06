@@ -1,3 +1,4 @@
+import { classifyAssistantMessage } from '@zeus/shared';
 import type {
   NativeConversationActiveItemV2,
   NativeConversationChoice,
@@ -194,12 +195,12 @@ function activeTurnItems(items: readonly NativeConversationActiveItemV2[], provi
 
 /** 历史与活动尾部按同一 Provider 身份和时间线合并，活动投影补齐尚未确认的过程状态。 */
 function mergeActiveTurnItems(history: readonly NativeItemSnapshot[], active: readonly NativeItemSnapshot[]): NativeItemSnapshot[] {
-  // 历史用户项携带稳定客户端身份；活动预览即使被截断，仍可按 Provider 身份继承这些信息。
-  const historicalUsers = new Map(history.filter((item) => item.type === 'userMessage' && item.providerItemId).map((item) => [item.providerItemId!, item]));
+  // 历史项携带稳定客户端身份、问题结构与答复关联；活动预览截断也不能丢失这些信息。
+  const historicalItems = new Map(history.filter((item) => item.providerItemId).map((item) => [item.providerItemId!, item]));
   return mergeItemsByProviderIdentity(
     history,
     active.map((item) => {
-      const historical = item.type === 'userMessage' ? historicalUsers.get(item.providerItemId ?? '') : undefined;
+      const historical = historicalItems.get(item.providerItemId ?? '');
       return historical ? { ...item, payload: { ...historical.payload, ...item.payload } } : item;
     }),
   );
@@ -514,7 +515,7 @@ function historyItems(items: NativeConversationModelHistoryV2Item[], providerTur
     // 旧 Pi/DeepSeek 历史没有 phase；没有 reasoning/plan 证据的 assistant 内容是用户正文，
     // 不能因为缺少新版元数据就折叠进“处理过程”。
     const missingPhase = item.phase === null || item.phase === undefined || item.phase === '';
-    const phase = item.role === 'assistant' && (item.phase === 'final_answer' || item.phase === 'finalAnswer' || (missingPhase && !persistedPlan && !reasoning)) ? 'final_answer' : 'prework';
+    const phase = item.role === 'assistant' && classifyAssistantMessage({ ...item.assistantMessage }, missingPhase && !persistedPlan && !reasoning ? 'final_answer' : item.phase) === 'final' ? 'final_answer' : 'prework';
     const historicalUserPayload = historicalUserPresentation(content, item.role === 'user');
     return [
       {
@@ -541,6 +542,9 @@ function historyItems(items: NativeConversationModelHistoryV2Item[], providerTur
               }
             : {}),
           ...(item.phase ? { phase: item.phase } : {}),
+          ...item.assistantMessage,
+          ...(item.questionResponse ? { questionResponse: item.questionResponse } : {}),
+          ...(item.questionAnswer ? { questionAnswer: item.questionAnswer } : {}),
           ...providerPresentation(contentRecord),
           ...(item.actor ? { actor: item.actor } : {}),
           ...(item.actorKind ? { actorKind: item.actorKind } : {}),

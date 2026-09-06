@@ -1,3 +1,4 @@
+import { classifyAssistantMessage, type AsyncQuestionAnswer } from '@zeus/shared';
 import { userFacingErrorCause } from '@zeus/shared';
 import type {
   ConversationState,
@@ -79,6 +80,8 @@ export type NativeSessionAction =
       startedAt: string;
       queuedUntilHydrated?: boolean;
       preserveComposer?: boolean;
+      /** 异步回答的原问题身份，不从可见正文推断。 */
+      questionAnswer?: AsyncQuestionAnswer;
       taskPushLayout?: TaskPushMessageLayout;
     }
   | {
@@ -1372,7 +1375,7 @@ function reduceItemEvent(state: NativeSessionState, event: NativeConversationEve
   const completedText = compatibilitySnapshotItem && durableUserText !== null && incomingText !== durableUserText ? durableUserText : incomingText;
   const previousPhase = stringValue(previous?.payload.phase) ?? previous?.phase ?? matchedUserItem?.phase;
   const incomingPhase = stringValue(incomingPayload?.phase) ?? stringValue(payload.phase);
-  const itemPhase = previousPhase === 'final_answer' || previousPhase === 'finalAnswer' || incomingPhase === 'final_answer' || incomingPhase === 'finalAnswer' ? 'final_answer' : (incomingPhase ?? previousPhase ?? 'prework');
+  const itemPhase = classifyAssistantMessage({ ...previous?.payload, ...incomingPayload }, incomingPhase ?? previousPhase ?? 'prework') === 'final' ? 'final_answer' : 'prework';
   const next: NativeSessionItemBuffer = {
     key,
     conversationId,
@@ -1390,7 +1393,9 @@ function reduceItemEvent(state: NativeSessionState, event: NativeConversationEve
     payload: completed
       ? isUserMessageType(effectiveType)
         ? mergeStableUserMessagePresentation(previous?.payload ?? matchedUserItem?.payload, incomingPayload)
-        : (incomingPayload ?? previous?.payload ?? matchedUserItem?.payload ?? {})
+        : effectiveType === 'agentMessage'
+          ? { ...previous?.payload, ...incomingPayload }
+          : (incomingPayload ?? previous?.payload ?? matchedUserItem?.payload ?? {})
       : liveProgressPayload(previous?.payload ?? matchedUserItem?.payload, incomingPayload),
     resources: completed ? (incomingResources ?? previous?.resources ?? matchedUserItem?.resources ?? []) : (previous?.resources ?? matchedUserItem?.resources ?? incomingResources ?? []),
     ...(resolvedClientId ? { clientUserMessageId: resolvedClientId, durableClientUserMessageId: resolvedClientId, optimistic: false } : {}),
@@ -1500,6 +1505,7 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
     payload: {
       attachments: action.submittedAttachments,
       delivery: action.delivery,
+      ...(action.questionAnswer ? { questionAnswer: action.questionAnswer } : {}),
       ...(action.queuedUntilHydrated ? { queuedUntilHydrated: true } : {}),
       ...(action.taskPushLayout ? { taskPushLayout: action.taskPushLayout } : {}),
       ...(action.browserComments.length ? { browserComments: action.browserComments } : {}),
@@ -1733,6 +1739,7 @@ function submissionUserMessagePayload(submission: NativeQueuedSubmission): Recor
       : null);
   return {
     delivery: submission.delivery ?? 'queue',
+    ...(submission.questionAnswer ? { questionAnswer: submission.questionAnswer } : {}),
     submissionId: submission.id,
     attachments: submission.attachments ?? [],
     ...(submission.conversationContext ? { conversationContext: submission.conversationContext } : {}),

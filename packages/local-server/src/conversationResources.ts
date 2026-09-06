@@ -1,3 +1,4 @@
+import { classifyAssistantMessage } from '@zeus/shared';
 import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, closeSync, constants as fsConstants, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -228,8 +229,9 @@ function normalizeArchivedAssistantMarkdownImage(input: {
   sourceRoots: readonly string[];
   budget: { remainingBytes: number };
 }): AttachmentResourceCandidate | null {
-  if (!input.archiveRoot || input.item.itemType === 'userMessage' || input.item.status !== 'completed' || input.item.phase !== 'final_answer') return null;
+  if (!input.archiveRoot || input.item.itemType === 'userMessage' || input.item.status !== 'completed') return null;
   try {
+    if (classifyAssistantMessage(JSON.parse(input.item.payloadJson) as Record<string, unknown>, input.item.phase) !== 'final') return null;
     const sourcePath = localMarkdownImagePath(input.href);
     if (!sourcePath) return null;
     const sourceExtension = extname(sourcePath).toLocaleLowerCase();

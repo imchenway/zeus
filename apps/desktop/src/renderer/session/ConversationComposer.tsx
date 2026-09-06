@@ -1,3 +1,4 @@
+import { classifyAssistantMessage } from '@zeus/shared';
 import { type KeyboardEvent, type RefObject, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
@@ -699,8 +700,8 @@ export function canSteerActiveTurn(state: NativeSessionState): boolean {
     // 不同 Provider 的正文类型命名先归一化再判断。
     const type = item.type.toLocaleLowerCase().replace(/[\s_\-/]+/gu, '');
     // 旧快照可能把阶段保存在顶层，新快照优先使用原始载荷。
-    const phase = typeof item.payload.phase === 'string' ? item.payload.phase : item.phase;
-    if ((type === 'agentmessage' || type === 'assistantmessage' || type === 'assistant' || type === 'message') && (phase === 'final_answer' || phase === 'finalAnswer')) return true;
+    const messageKind = classifyAssistantMessage(item.payload, item.phase);
+    if ((type === 'agentmessage' || type === 'assistantmessage' || type === 'assistant' || type === 'message') && messageKind === 'final') return true;
     if (type !== 'plan') return false;
     return item.payload.formalPlan === true || state.planImplementationRequests.some((request) => request.planItemId === item.localItemId || request.planItemId === item.itemId || request.planItemId === item.providerItemId);
   });

@@ -1,3 +1,4 @@
+import { classifyAssistantMessage } from '@zeus/shared';
 import type { CodexThreadListInput, CodexThreadSnapshot, CodexThreadsPage, CodexTransportState } from '@zeus/ai-runtime';
 import type { ConversationProviderItemRepository, ConversationRepository, ZeusConversationRecord } from '@zeus/storage';
 import type { CodexSubagentRuntimeReadPort, SubagentRuntimeDetails } from './codexSubagentRuntimeProjection.js';
@@ -170,7 +171,7 @@ export class CodexSubagentQueryApplication {
       const completedAt = epochIso(rawTurn.completedAt);
       const items = (Array.isArray(rawTurn.items) ? rawTurn.items : []).flatMap((rawItem) => {
         if (!isRecord(rawItem) || typeof rawItem.id !== 'string' || typeof rawItem.type !== 'string') return [];
-        const phase = rawItem.phase === 'final_answer' || rawItem.phase === 'finalAnswer' || rawItem.type === 'agentMessage' ? ('final_answer' as const) : ('prework' as const);
+        const phase = classifyAssistantMessage(rawItem, rawItem.type === 'agentMessage' ? 'final_answer' : 'prework') === 'final' ? ('final_answer' as const) : ('prework' as const);
         return [
           {
             id: rawItem.id,

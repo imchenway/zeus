@@ -990,7 +990,7 @@ export class ConversationExecutionRepository {
     conversationId: string;
     turnId: string;
     segmentId: string;
-    role: 'assistant' | 'tool';
+    role: 'user' | 'assistant' | 'tool';
     content: unknown;
     submissionId?: string | null;
     reasoningSource?: unknown;

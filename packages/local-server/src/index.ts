@@ -1,3 +1,4 @@
+import type { AsyncQuestionAnswer } from '@zeus/shared';
 import { userFacingErrorCause } from '@zeus/shared';
 import websocketPlugin from '@fastify/websocket';
 import {
@@ -491,6 +492,8 @@ export interface WorkspaceGitExplicitRejection extends Error {
 }
 
 export interface CreateConversationMessageBody {
+  /** 绑定原始异步问题，沿用现有提交及确认链路。 */
+  questionAnswer?: AsyncQuestionAnswer;
   content?: string;
   displayText?: string;
   composerDraft?: string;

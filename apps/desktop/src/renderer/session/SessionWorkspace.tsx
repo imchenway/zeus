@@ -1,3 +1,4 @@
+import type { AsyncQuestionAnswer } from '@zeus/shared';
 import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
@@ -173,6 +174,8 @@ export interface SessionWorkspaceActions {
   onRerouteQueuedSubmission?: (submissionId: string, settings: NativeNextTurnSettings) => void | Promise<void>;
   onDeleteQueuedSubmission?: (submissionId: string) => void | Promise<void>;
   onSendQueuedNow?: (submissionId: string) => void | Promise<void>;
+  /** 异步问题答复与普通 Composer 消息分开取草稿，共用提交通道。 */
+  onAnswerAsyncQuestion?: (item: NativeSessionItemBuffer, answers: AsyncQuestionAnswer['answers'], asNewMessage: boolean) => Promise<void>;
   onReorderQueue?: (orderedSubmissionIds: string[]) => void | Promise<void>;
   onResumeQueue?: () => void | Promise<void>;
   onRecoverQueue?: () => void | Promise<void>;
@@ -774,6 +777,9 @@ export function createConnectedSessionActions(input: { controller: SessionContro
     // 引导失败由队列气泡给出可重试结果，技术细节同时写入统一运行日志。
     onSendQueuedNow: async (submissionId) => {
       await input.controller.sendQueuedNow(submissionId);
+    },
+    onAnswerAsyncQuestion: async (item, answers, asNewMessage) => {
+      await input.controller.answerAsyncQuestion(item, answers, asNewMessage);
     },
     onReorderQueue: (orderedSubmissionIds) => settle(input.controller.reorderQueue(orderedSubmissionIds)),
     onResumeQueue: () => settle(input.controller.resumeQueue()),
@@ -2512,6 +2518,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     onCancelPendingSend={transcriptInteractionsEnabled ? actions.onCancelPendingSend : undefined}
                     onCancelQueuedSubmission={transcriptInteractionsEnabled ? actions.onDeleteQueuedSubmission : undefined}
                     onSendQueuedNow={transcriptInteractionsEnabled ? actions.onSendQueuedNow : undefined}
+                    onAnswerAsyncQuestion={transcriptInteractionsEnabled ? actions.onAnswerAsyncQuestion : undefined}
                     openPlanItem={planWorkspaceItem}
                     onOpenPlan={(item) => {
                       contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;

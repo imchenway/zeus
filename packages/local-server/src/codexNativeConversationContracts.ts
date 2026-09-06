@@ -1,3 +1,4 @@
+import type { AsyncQuestionAnswer } from '@zeus/shared';
 import type { UserFacingErrorCause } from '@zeus/shared';
 import type { CodexAppServerManager, CodexResponsesRuntime, CodexServerRequestResponse } from '@zeus/ai-runtime';
 import type { CodexBootstrapAdditionalContext, TaskPushMessageLayout } from '@zeus/shared';
@@ -142,6 +143,8 @@ export interface NativeSubmissionError {
 export type NativeSubmissionRecoveryKind = 'interaction_response';
 
 export interface NativeQueuedSubmission {
+  /** 绑定原始异步问题，沿用现有提交及确认链路。 */
+  questionAnswer?: AsyncQuestionAnswer;
   id: string;
   conversationId: string;
   content: string;
@@ -262,6 +265,8 @@ export interface NativeQuestionAnswerAttachmentInput {
 }
 
 export interface StartTaskConversationInput {
+  /** 绑定原始异步问题，沿用现有提交及确认链路。 */
+  questionAnswer?: AsyncQuestionAnswer;
   conversationId?: string;
   submissionId?: string;
   projectId: string;
@@ -316,6 +321,8 @@ export interface StartTaskConversationInput {
 }
 
 export interface StartProjectConversationInput {
+  /** 绑定原始异步问题，沿用现有提交及确认链路。 */
+  questionAnswer?: AsyncQuestionAnswer;
   conversationId?: string;
   submissionId?: string;
   projectId: string;
@@ -347,6 +354,8 @@ export interface SetNativeGoalInput {
 }
 
 export interface SubmitNativeMessageInput {
+  /** 绑定原始异步问题，沿用现有提交及确认链路。 */
+  questionAnswer?: AsyncQuestionAnswer;
   conversationId: string;
   submissionId?: string;
   content: string;
@@ -381,6 +390,8 @@ export interface DispatchQueuedNativeMessageInput {
 }
 
 export interface SteerNativeMessageInput {
+  /** 绑定原始异步问题，沿用现有提交及确认链路。 */
+  questionAnswer?: AsyncQuestionAnswer;
   conversationId: string;
   content: string;
   displayText?: string;

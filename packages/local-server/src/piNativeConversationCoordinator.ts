@@ -1,3 +1,4 @@
+import type { AsyncQuestionAnswer } from '@zeus/shared';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
@@ -1070,6 +1071,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   }
 
   async function queueHeldMessage(input: {
+    /** 原异步问题的答复关联。 */
+    questionAnswer?: AsyncQuestionAnswer;
     conversation: ZeusConversationWithMessagesRecord;
     submissionId: string;
     content: string;
@@ -1108,6 +1111,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       status: 'queued',
       input: {
         text: input.content,
+        ...(input.questionAnswer ? { questionAnswer: input.questionAnswer } : {}),
         ...(input.displayText ? { displayText: input.displayText } : {}),
         ...(input.attachments?.length ? { attachments: input.attachments } : {}),
         ...(input.browserComments?.length ? { browserComments: input.browserComments } : {}),
@@ -1176,6 +1180,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   }
 
   async function steerMessage(input: {
+    /** 原异步问题的答复关联。 */
+    questionAnswer?: AsyncQuestionAnswer;
     conversation: ZeusConversationWithMessagesRecord;
     submissionId: string;
     content: string;
@@ -1198,7 +1204,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       kind: 'message',
       requestedDelivery: 'send_now',
       status: 'dispatching',
-      input: { text: input.content, context: { agentKind: 'pi', projectLocalPath: context.cwd }, delivery: 'steer_now', expectedTurnId: input.expectedTurnId },
+      input: { text: input.content, ...(input.questionAnswer ? { questionAnswer: input.questionAnswer } : {}), context: { agentKind: 'pi', projectLocalPath: context.cwd }, delivery: 'steer_now', expectedTurnId: input.expectedTurnId },
       createdAt,
       dispatchedAt: createdAt,
     });

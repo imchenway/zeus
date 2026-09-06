@@ -1,3 +1,4 @@
+import { assistantMessageMetadata, classifyAssistantMessage } from '@zeus/shared';
 import type { CodexAppServerEvent, CodexThreadGoal } from '@zeus/ai-runtime';
 import { calculateCacheHitRate, parseCanonicalRequestUserInputQuestions, type ConversationResource, type NativeTokenUsageSnapshot } from '@zeus/shared';
 import {
@@ -906,7 +907,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       updatedAt: event.receivedAt,
     });
     // 只有正式正文产生普通未读与通知；目标模式继续由目标关键终态统一提醒。
-    if (event.method === 'item/agentMessage/delta' && item.phase === 'final_answer' && params.delta.trim() && !options.goals.get(conversation.id)) {
+    if (event.method === 'item/agentMessage/delta' && classifyAssistantMessage(parseJsonRecord(item.payloadJson), item.phase) === 'final' && params.delta.trim() && !options.goals.get(conversation.id)) {
       const previousRevision = options.conversations.getById(conversation.id)?.attentionRevision ?? 0;
       const attention = options.conversations.markAttentionUnread(conversation.id, {
         kind: 'unread',
@@ -982,13 +983,14 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     if (isToolResultItem(item.itemType)) sessionMetricsChanged = true;
     const executionSegment = options.execution.segmentByNativeSession(threadId, conversation.id);
     if (executionSegment && executionSegment.state !== 'sealed') {
-      if (item.itemType === 'agentMessage') {
+      if (item.itemType === 'agentMessage' && !options.execution.modelHistoryByProviderItem(conversation.id, providerItemId, 'agentMessage')) {
         options.execution.appendModelHistory({
           conversationId: conversation.id,
           turnId: turn.id,
           segmentId: executionSegment.id,
           role: 'assistant',
-          content: { text: item.textContent },
+          content: { text: item.textContent, providerItemId, assistantMessage: assistantMessageMetadata(parseJsonRecord(item.payloadJson), item.phase) },
+          reasoningSource: { provider: 'codex', itemId: providerItemId, itemType: 'agentMessage', readableSummary: false },
           submissionId: turn.clientSubmissionId,
           confirmedAt: event.receivedAt,
         });
@@ -1060,14 +1062,14 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
         role: 'assistant',
         content: item.textContent,
         source: 'codex_native',
-        metadata: { phase: item.phase },
+        metadata: { ...assistantMessageMetadata(parseJsonRecord(item.payloadJson), item.phase) },
         createdAt: event.receivedAt,
         providerThreadId: threadId,
         providerTurnId,
         providerItemId,
       });
       // 完成事件也检查正文阶段，覆盖没有流式增量的回复并排除过程说明。
-      if (item.phase === 'final_answer' && item.textContent.trim() && !options.goals.get(conversation.id)) {
+      if (classifyAssistantMessage(parseJsonRecord(item.payloadJson), item.phase) === 'final' && item.textContent.trim() && !options.goals.get(conversation.id)) {
         const previousRevision = options.conversations.getById(conversation.id)?.attentionRevision ?? 0;
         const attention = options.conversations.markAttentionUnread(conversation.id, {
           kind: 'unread',
@@ -1096,7 +1098,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       });
       broadcastLinkedFileApprovalChanges(providerItemId, providerTurnId);
     }
-    if (item.phase === 'final_answer') runStates.set(conversation.id, { type: 'active', turnId: providerTurnId, phase: 'final_answer' });
+    if (classifyAssistantMessage(parseJsonRecord(item.payloadJson), item.phase) === 'final') runStates.set(conversation.id, { type: 'active', turnId: providerTurnId, phase: 'final_answer' });
     const itemResources = syncItemResources(conversation, turn, item, presentedItemPayload, item.textContent, event.receivedAt);
     broadcast = {
       type: 'conversation.item.updated',

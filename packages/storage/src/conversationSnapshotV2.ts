@@ -1,3 +1,4 @@
+import { assistantMessageMetadata, type AssistantMessageMetadata, type AsyncQuestionAnswer, type AsyncQuestionResponse } from '@zeus/shared';
 import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import {
   conversationSnapshotV2StructureGeneration,
@@ -75,6 +76,7 @@ const modelHistoryAssistantProviderItemSql = `(SELECT message.provider_item_id
    AND message.content = ${modelHistoryVisibleContentSql}
  LIMIT 1)`;
 const modelHistoryProviderItemSql = `COALESCE(
+  CASE WHEN json_valid(content_json) THEN json_extract(content_json, '$.providerItemId') ELSE NULL END,
   ${modelHistoryUserProviderItemSql},
   conversation_model_history.expert_execution_id,
   ${modelHistoryAssistantProviderItemSql},
@@ -93,20 +95,40 @@ const modelHistoryReasoningSummarySql = `CASE
     THEN 1
   ELSE 0
 END`;
+// 历史元数据按 Provider 消息身份取回；正文和时间只参与已有消息身份映射，不用于猜测问题。
+const modelHistoryAssistantMetadataSql = `COALESCE(
+  CASE WHEN json_valid(content_json) THEN json_extract(content_json, '$.assistantMessage') ELSE NULL END,
+  (SELECT json_object(
+      'phase', COALESCE(json_extract(item.payload_projection_json, '$.phase'), item.phase),
+      'delivery', json_extract(item.payload_projection_json, '$.delivery'),
+      'questions', json_extract(item.payload_projection_json, '$.questions'))
+     FROM conversation_provider_item_states AS item
+    WHERE item.conversation_id = conversation_model_history.conversation_id
+      AND item.turn_id = conversation_model_history.turn_id
+      AND item.provider_thread_id = (SELECT provider_thread_id FROM conversation_turns WHERE id = conversation_model_history.turn_id)
+      AND item.provider_item_id = ${modelHistoryProviderItemSql}
+      AND item.item_type = 'agentMessage' AND json_valid(item.payload_projection_json)
+    LIMIT 1),
+  (SELECT message.metadata_json
+     FROM conversation_messages AS message
+    WHERE message.conversation_id = conversation_model_history.conversation_id
+      AND message.provider_item_id = ${modelHistoryProviderItemSql}
+      AND message.role = 'assistant' AND json_valid(message.metadata_json)
+    LIMIT 1)
+)`;
+// SQL 只根据明确的异步交付字段排除完成锚点；完整分类统一在 mapModelHistoryRows 中执行。
 const modelHistoryAssistantPhaseSql = `CASE
-  WHEN json_valid(reasoning_source_json) AND json_extract(reasoning_source_json, '$.itemType') = 'plan'
-    THEN 'plan'
-  ELSE (SELECT json_extract(message.metadata_json, '$.phase')
-    FROM conversation_messages AS message
-    JOIN conversation_turns AS history_turn ON history_turn.id = conversation_model_history.turn_id
-   WHERE message.conversation_id = conversation_model_history.conversation_id
-     AND message.provider_turn_id = history_turn.provider_turn_id
-     AND message.role = conversation_model_history.role
-     AND message.created_at = conversation_model_history.confirmed_at
-     AND message.content = ${modelHistoryVisibleContentSql}
-     AND json_valid(message.metadata_json)
-   LIMIT 1)
+  WHEN json_valid(reasoning_source_json) AND json_extract(reasoning_source_json, '$.itemType') = 'plan' THEN 'plan'
+  WHEN json_extract(${modelHistoryAssistantMetadataSql}, '$.delivery') = 'async' THEN 'prework'
+  ELSE json_extract(${modelHistoryAssistantMetadataSql}, '$.phase')
 END`;
+// 答复关联复用提交账本，历史分页与重启无需另建答复队列。
+const modelHistoryQuestionAnswerSql = `(SELECT json_extract(submission.input_json, '$.questionAnswer')
+  FROM conversation_submissions AS submission
+ WHERE submission.id = conversation_model_history.submission_id
+   AND submission.conversation_id = conversation_model_history.conversation_id
+   AND conversation_model_history.role = 'user' AND json_valid(submission.input_json)
+ LIMIT 1)`;
 // 协议族优先读取新记录携带的语义字段，旧记录只读回退到创建该分段的冻结执行快照。
 const modelHistoryProtocolFamilySql = `COALESCE(
   CASE WHEN json_valid(content_json) THEN json_extract(content_json, '$.protocolFamily') ELSE NULL END,
@@ -350,6 +372,12 @@ export interface ConversationModelHistoryPageItem {
   providerItemId: string | null;
   reasoningSummary: boolean;
   phase: string | null;
+  /** 保留异步交付与问题结构，旧记录按身份从原载荷恢复。 */
+  assistantMessage?: AssistantMessageMetadata;
+  /** 本条用户消息所回答的原问题。 */
+  questionAnswer?: AsyncQuestionAnswer;
+  /** 问题答复可能位于其他历史页，状态仍按原问题身份恢复。 */
+  questionResponse?: AsyncQuestionResponse;
   /** 生成该历史条目的线协议族。 */
   protocolFamily?: string | null;
   /** 该历史条目所属的稳定展示阶段。 */
@@ -588,6 +616,8 @@ interface ModelHistoryProjectionRow {
   provider_item_id: string | null;
   reasoning_summary: number;
   assistant_phase: string | null;
+  assistant_metadata_json: string | null;
+  question_answer_json: string | null;
   protocol_family: string | null;
   stage_id: string | null;
   formal_plan: number;
@@ -842,6 +872,8 @@ export class ConversationSnapshotV2Repository {
                 ${modelHistoryProviderItemSql}                        AS provider_item_id,
                 ${modelHistoryReasoningSummarySql}                    AS reasoning_summary,
                 ${modelHistoryAssistantPhaseSql}                      AS assistant_phase,
+              ${modelHistoryAssistantMetadataSql} AS assistant_metadata_json,
+              ${modelHistoryQuestionAnswerSql} AS question_answer_json,
                 ${modelHistoryProtocolFamilySql}                      AS protocol_family,
                 ${modelHistoryStageIdSql}                             AS stage_id,
                 ${modelHistoryFormalPlanSql}                           AS formal_plan,
@@ -886,6 +918,8 @@ export class ConversationSnapshotV2Repository {
               ${modelHistoryProviderItemSql}                        AS provider_item_id,
               ${modelHistoryReasoningSummarySql}                    AS reasoning_summary,
               ${modelHistoryAssistantPhaseSql}                      AS assistant_phase,
+              ${modelHistoryAssistantMetadataSql} AS assistant_metadata_json,
+              ${modelHistoryQuestionAnswerSql} AS question_answer_json,
               ${modelHistoryProtocolFamilySql}                      AS protocol_family,
               ${modelHistoryStageIdSql}                             AS stage_id,
               ${modelHistoryFormalPlanSql}                          AS formal_plan,
@@ -926,6 +960,8 @@ export class ConversationSnapshotV2Repository {
               ${modelHistoryProviderItemSql} AS provider_item_id,
               ${modelHistoryReasoningSummarySql} AS reasoning_summary,
               ${modelHistoryAssistantPhaseSql} AS assistant_phase,
+              ${modelHistoryAssistantMetadataSql} AS assistant_metadata_json,
+              ${modelHistoryQuestionAnswerSql} AS question_answer_json,
               ${modelHistoryProtocolFamilySql} AS protocol_family,
               ${modelHistoryStageIdSql} AS stage_id,
               ${modelHistoryFormalPlanSql} AS formal_plan,
@@ -1418,7 +1454,7 @@ export class ConversationSnapshotV2Repository {
               projection_truncated, started_at, completed_at, updated_at
          FROM conversation_provider_item_states
         WHERE conversation_id = ? AND turn_id = ?
-          AND (phase = 'prework' OR status = 'in_progress')
+          AND (phase = 'prework' OR status = 'in_progress' OR (json_valid(payload_projection_json) AND json_extract(payload_projection_json, '$.delivery') = 'async'))
         ORDER BY
           CASE
             WHEN COALESCE(native_item_id, provider_item_id) GLOB 'item-[0-9]*'
@@ -1492,6 +1528,8 @@ export class ConversationSnapshotV2Repository {
               ${modelHistoryProviderItemSql} AS provider_item_id,
               0 AS reasoning_summary,
               NULL AS assistant_phase,
+              NULL AS assistant_metadata_json,
+              ${modelHistoryQuestionAnswerSql} AS question_answer_json,
               ${modelHistoryProtocolFamilySql} AS protocol_family,
               ${modelHistoryStageIdSql} AS stage_id,
               0 AS formal_plan,
@@ -1516,6 +1554,8 @@ export class ConversationSnapshotV2Repository {
               ${modelHistoryProviderItemSql} AS provider_item_id,
               ${modelHistoryReasoningSummarySql} AS reasoning_summary,
               ${modelHistoryAssistantPhaseSql} AS assistant_phase,
+              ${modelHistoryAssistantMetadataSql} AS assistant_metadata_json,
+              ${modelHistoryQuestionAnswerSql} AS question_answer_json,
               ${modelHistoryProtocolFamilySql} AS protocol_family,
               ${modelHistoryStageIdSql} AS stage_id,
               ${modelHistoryFormalPlanSql} AS formal_plan,
@@ -1616,6 +1656,9 @@ export class ConversationSnapshotV2Repository {
       providerItemId: row.provider_item_id,
       reasoningSummary: row.reasoning_summary === 1,
       phase: row.assistant_phase,
+      ...(row.role === 'assistant' && row.assistant_phase !== 'plan' && row.reasoning_summary !== 1 ? { assistantMessage: assistantMessageMetadata(parseJsonRecordOrNull(row.assistant_metadata_json) ?? {}, row.assistant_phase) } : {}),
+      ...(row.question_answer_json ? { questionAnswer: JSON.parse(row.question_answer_json) as AsyncQuestionAnswer } : {}),
+      ...(row.role === 'assistant' && row.provider_item_id && parseJsonRecordOrNull(row.assistant_metadata_json)?.delivery === 'async' ? { questionResponse: this.questionResponse(conversationId, row.provider_item_id, row.turn_id) } : {}),
       protocolFamily: row.protocol_family,
       stageId: row.stage_id,
       formalPlan: row.formal_plan === 1,
@@ -1643,6 +1686,21 @@ export class ConversationSnapshotV2Repository {
       ),
       toolResult: row.tool_pair_id ? (toolResults.get(row.tool_pair_id) ?? null) : null,
     }));
+  }
+
+  /** 仅按问题、轮次和会话身份关联现有提交，不扫描正文或猜测回答。 */
+  private questionResponse(conversationId: string, providerItemId: string, turnId: string): AsyncQuestionResponse | undefined {
+    const row = this.db.get<{ status: string; answer: string }>(
+      `SELECT submission.status, json_extract(submission.input_json, '$.questionAnswer') AS answer
+         FROM conversation_submissions AS submission
+        WHERE submission.conversation_id = ? AND json_valid(submission.input_json)
+          AND json_extract(submission.input_json, '$.questionAnswer.providerItemId') = ?
+          AND json_extract(submission.input_json, '$.questionAnswer.providerTurnId') = (SELECT provider_turn_id FROM conversation_turns WHERE id = ?)
+          AND submission.status NOT IN ('failed', 'cancelled', 'deleted')
+        ORDER BY submission.created_at DESC LIMIT 1`,
+      [conversationId, providerItemId, turnId],
+    );
+    return row ? { status: row.status, answer: JSON.parse(row.answer) as AsyncQuestionAnswer } : undefined;
   }
 
   private throughEventSeq(conversationId: string): number {
