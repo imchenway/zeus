@@ -16,6 +16,7 @@ import { UsersThreeIcon as UsersThree } from '@phosphor-icons/react/dist/csr/Use
 import { conversationAttachmentIdentity } from './ConversationComposerAttachments.js';
 import { isImageResource, isPendingImageAttachment, ResourceIcon } from './ConversationResources.js';
 import { SessionCodeReviewDialog, type SessionCodeReviewSelection } from './SessionCodeReviewDialog.js';
+import { SessionComputerPreview } from './SessionComputerPreview.js';
 import type {
   CodexConversationCapabilities,
   CodexTaskPushModelCapability,
@@ -418,6 +419,8 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                 <ArrowSquareOut aria-hidden="true" weight="regular" />
               </button>
             </div>
+
+            <SessionComputerPreview key={props.conversation.id} conversationId={props.conversation.id} language={props.language} active={cardVisible} />
 
             <section className="session-quick-actions-sources" aria-label={zh ? '来源' : 'Sources'}>
               <header>

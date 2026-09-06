@@ -133,6 +133,28 @@ export interface ZeusComputerSettings {
   detail?: string;
 }
 
+/** 会话内用户按钮必须携带控制身份，避免迟到的点击停止或恢复另一轮。 */
+export interface ZeusComputerControlIdentity {
+  /** 发起桌面控制的产品会话。 */
+  conversationId: string;
+  /** 宿主签发且仅在本次控制期间有效的身份。 */
+  sessionId: string;
+}
+
+/** 原生采集的实时缩略图，仅供所属会话展示，不作为历史消息持久化。 */
+export interface ZeusComputerPreview extends ZeusComputerControlIdentity {
+  /** 当前受控应用的系统名称。 */
+  appName: string;
+  /** 用户接管后等待明确继续。 */
+  paused: boolean;
+  /** 恢复或窗口变化后需由模型重新观察。 */
+  needsObservation: boolean;
+  /** 有界 JPEG 缩略图；尚未产生首帧时为空。 */
+  imageUrl: string | null;
+  /** 虚拟光标在受控窗口内的归一化位置。 */
+  cursor: { x: number; y: number } | null;
+}
+
 export interface ZeusRetiredNativeRuntimeState {
   sourceRoot: string;
   entries: string[];

@@ -8,6 +8,8 @@ const allowedChannels = new Set([
   'zeus:browser:get-snapshot',
   'zeus:browser:get-settings',
   'zeus:computer:get-settings',
+  // 只读预览查询不会创建采集或恢复控制。
+  'zeus:computer:get-preview',
   'zeus:task-git-delivery:get-current-context',
   'zeus:automatic-update-indicator:get',
   'zeus:requesting-window-foreground',

@@ -1595,8 +1595,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const [localSubmissionRevision, setLocalSubmissionRevision] = useState(0);
   const [serviceTierPreferences, setServiceTierPreferences] = useState<ProjectModelServiceTierPreference[]>([]);
   const [serviceTierPreferenceError, setServiceTierPreferenceError] = useState<string | null>(null);
-  const [computerStopBusy, setComputerStopBusy] = useState(false);
-  const [computerStopError, setComputerStopError] = useState<unknown>(null);
   const browserSplitRef = useRef<HTMLDivElement | null>(null);
   const browserResizeActiveRef = useRef(false);
   const contextOpen = contextWorkspace.kind !== 'none';
@@ -1643,9 +1641,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
   });
   useApplicationErrorDialog(serviceTierPreferenceError, {
-    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-  });
-  useApplicationErrorDialog(computerStopError, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
   });
   const serviceTierPreferenceProjectId = props.conversation?.projectId ?? owner?.projectId ?? null;

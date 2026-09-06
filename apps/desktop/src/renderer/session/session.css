@@ -1,4 +1,87 @@
 /* ZEUS-0074：会话右上角只汇总真实执行现场与既有 Git 能力，不在 Renderer 猜测工作区状态。 */
+/* 屏幕控制画面归属当前环境卡，不创建桌面窗口；来源展开时也保留完整控制入口。 */
+.session-computer-preview {
+  border-top: 1px solid var(--session-line);
+  flex: 0 0 auto;
+  margin-block-start: 12px;
+  padding-block-start: 12px;
+}
+
+.session-computer-preview > header,
+.session-computer-preview > header > div {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  justify-content: space-between;
+}
+
+.session-computer-preview > header > span {
+  display: grid;
+  gap: 3px;
+  min-inline-size: 0;
+}
+
+.session-computer-preview strong {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-computer-preview small,
+.session-computer-preview p {
+  color: var(--session-text-muted);
+  font-size: 11px;
+}
+
+.session-computer-preview button {
+  background: var(--session-control-hover);
+  border: 1px solid var(--session-line);
+  border-radius: 6px;
+  color: var(--session-text);
+  cursor: pointer;
+  font-size: 11px;
+  min-block-size: 28px;
+  padding-inline: 8px;
+}
+
+.session-computer-preview button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+.session-computer-preview button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.session-computer-preview-image {
+  border: 1px solid var(--session-line);
+  border-radius: 8px;
+  margin-block-start: 10px;
+  overflow: hidden;
+  position: relative;
+}
+
+.session-computer-preview-image > img {
+  display: block;
+  inline-size: 100%;
+}
+
+.session-computer-preview-image > p {
+  padding: 20px 12px;
+  text-align: center;
+}
+
+.session-computer-preview-cursor {
+  block-size: 16px;
+  color: #151515;
+  filter: drop-shadow(0 0 1px white);
+  inline-size: 16px;
+  pointer-events: none;
+  position: absolute;
+}
+
 .session-codex-parity-v1 .session-quick-actions-anchor {
   display: inline-flex;
   position: relative;

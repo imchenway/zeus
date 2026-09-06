@@ -1778,6 +1778,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const stateTurnId =
       state.type === 'active' || state.type === 'waiting' ? state.turnId : options.turns.listByConversation(conversation.id).find((turn) => turn.providerTurnId === input.providerTurnId && turn.status === 'waiting')?.providerTurnId;
     if (stateTurnId !== input.providerTurnId) throw coordinatorError('ZEUS_NATIVE_TURN_MISMATCH', 'Interrupt target is not the current active provider turn.');
+    // 同时撤销桌面控制与中断 Provider；桌面桥断线不能阻止用户停止模型。
+    const computerStop = options.browserAutomation?.endComputerUse?.({ conversationId: conversation.id, turnId: input.providerTurnId }).then(
+      () => null,
+      (error: unknown) => ({ error }),
+    );
     const providerThreadId = requireString(conversation.providerThreadId, 'provider thread id');
     await input.providerWriteLifecycle?.markPrepared(input.providerTurnId);
     input.providerWriteLifecycle?.markRpcStarted(input.providerTurnId);
@@ -1805,6 +1810,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     if (terminalResult.status !== 'interrupted') {
       throw coordinatorError('ZEUS_NATIVE_INTERRUPT_OUTCOME_UNKNOWN', 'Codex did not confirm a terminal outcome for the interrupted turn.');
     }
+    // 模型停止后仍如实报告桌面撤销失败，不将两者混同为全部停止。
+    const computerStopFailure = await computerStop;
+    if (computerStopFailure) throw computerStopFailure.error;
     const submission = options.submissions.listByConversation(conversation.id).find((entry) => entry.providerTurnId === input.providerTurnId);
     return {
       operationId: operationId(),

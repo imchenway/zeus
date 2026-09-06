@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { mkdir, open, readFile, rename, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import type { BrowserAutomationContentItem, BrowserAutomationPort, BrowserAutomationToolCall } from '@zeus/local-server';
-import type { ZeusComputerSettings } from '@zeus/shared';
+import type { ZeusComputerPreview, ZeusComputerSettings } from '@zeus/shared';
 import type { MainCommandLedger, MainCommandRequest } from './mainCommandLedger.js';
 
 interface ComputerServiceResponse {
@@ -13,6 +13,20 @@ interface ComputerServiceResponse {
   ok: boolean;
   result?: unknown;
   error?: { code?: string; message?: string };
+  /** 原生采集或用户交互产生的主动停止通知。 */
+  event?: string;
+  /** 通知所属的控制会话，防止旧采集回调停止新会话。 */
+  sessionId?: string;
+  /** 原生流主动提供的缩略图与暂停状态。 */
+  preview?: unknown;
+}
+
+/** 每个宿主同一时间只允许一个轮次拥有桌面控制权。 */
+interface ComputerControlOwner {
+  /** 本地随机会话身份，同时传给原生服务。 */
+  id: string;
+  /** 工具来源的完整身份；不接受模型参数覆盖。 */
+  input: Pick<BrowserAutomationToolCall, 'conversationId' | 'threadId' | 'turnId'>;
 }
 
 interface PendingServiceRequest {
@@ -87,6 +101,19 @@ export class ComputerHost implements BrowserAutomationPort {
   private ipcRegistered = false;
   private closed = false;
   private permissionPromptAttemptedForChild = false;
+  /** 当前控制者在任何异步操作之前占位，避免并发轮次抢占。 */
+  // ponytail: 每个宿主只允许一个桌面控制者；确有并行需求时再按应用划分。
+  private controlOwner: ComputerControlOwner | null = null;
+  /** 停止世代使等待审批、排队和启动中的请求一并失效。 */
+  private controlGeneration = 0;
+  /** 已撤销的轮次不允许自动恢复；随本宿主退出释放。 */
+  private readonly revokedTurns = new Set<string>();
+  /** 原生服务使用串行请求，避免快照和动作互相越过。 */
+  private operationTail: Promise<void> = Promise.resolve();
+  /** 设置入口和工具入口共用一次启动，避免生成两个 Helper。 */
+  private serviceStartup: Promise<void> | null = null;
+  /** 仅缓存当前控制者的最后一张缩略图，结束时同步清空。 */
+  private controlPreview: ZeusComputerPreview | null = null;
 
   constructor(private readonly options: CreateComputerHostOptions) {
     this.now = options.now ?? (() => new Date().toISOString());
@@ -106,6 +133,7 @@ export class ComputerHost implements BrowserAutomationPort {
     if (this.ipcRegistered) return;
     this.ipcRegistered = true;
     ipcMain.handle('zeus:computer:get-settings', () => this.getSettings());
+    ipcMain.handle('zeus:computer:get-preview', (_event, conversationId: unknown) => this.getPreview(conversationId));
     ipcMain.handle('zeus:computer:update-settings', async (_event, request: MainCommandRequest) => {
       return this.options.mainCommandLedger().execute(request, 'desktop.computer.update_settings', async (input, command) => {
         this.assertWritable();
@@ -146,11 +174,21 @@ export class ComputerHost implements BrowserAutomationPort {
       });
     });
     ipcMain.handle('zeus:computer:stop', async (_event, request: MainCommandRequest) => {
-      return this.options.mainCommandLedger().execute(request, 'desktop.computer.stop', async (_input, command) => {
+      return this.options.mainCommandLedger().execute(request, 'desktop.computer.stop', async (input, command) => {
         this.assertWritable();
+        if (input != null) this.assertPreviewOwner(input);
         await command.markWriteStarted();
-        await this.stop('user');
+        await this.stopFromUser(input);
         return this.getSettings();
+      });
+    });
+    ipcMain.handle('zeus:computer:resume', async (_event, request: MainCommandRequest) => {
+      return this.options.mainCommandLedger().execute(request, 'desktop.computer.resume', async (input, command) => {
+        this.assertWritable();
+        this.assertPreviewOwner(input);
+        await command.markWriteStarted();
+        await this.resumeFromUser(input);
+        return { resumed: true };
       });
     });
   }
@@ -159,21 +197,78 @@ export class ComputerHost implements BrowserAutomationPort {
     return { ...this.settings };
   }
 
+  /** 只读查询不会启动 Helper；其他会话看不到当前控制画面。 */
+  getPreview(conversationId: unknown): ZeusComputerPreview | null {
+    return typeof conversationId === 'string' && this.controlPreview?.conversationId === conversationId ? this.controlPreview : null;
+  }
+
+  /** 设置入口可以全局停止；会话按钮必须仍属于当前控制者。 */
+  async stopFromUser(input?: unknown): Promise<void> {
+    this.assertWritable();
+    if (input != null) this.assertPreviewOwner(input);
+    await this.stop('user');
+  }
+
+  /** 用户继续仅解除暂停，不启动新 Helper，也不恢复已结束的轮次。 */
+  async resumeFromUser(input: unknown): Promise<void> {
+    this.assertWritable();
+    const sessionId = this.assertPreviewOwner(input);
+    await this.callService('resume_control', { _control_session_id: sessionId });
+    this.assertPreviewOwner(input);
+  }
+
+  /** 在每个用户命令的写入前复核会话与控制身份。 */
+  private assertPreviewOwner(input: unknown): string {
+    if (!isRecord(input) || !this.controlOwner || input.conversationId !== this.controlOwner.input.conversationId || input.sessionId !== this.controlOwner.id) {
+      throw Object.assign(new Error('该会话的屏幕控制已结束或发生变化，请查看当前会话状态。'), { code: 'ZEUS_COMPUTER_STOPPED' });
+    }
+    return this.controlOwner.id;
+  }
+
   async invoke(input: BrowserAutomationToolCall): Promise<{ contentItems: BrowserAutomationContentItem[]; success: boolean }> {
     if (input.namespace !== 'zeus_computer') return computerText(`ComputerHost 不支持命名空间：${String(input.namespace)}`, false);
     if (this.options.readOnlyValidation) return computerText('只读验证模式禁止启动或调用 Computer Use。', false);
     if (!this.settings.enabled) return computerText('Zeus Computer Use 尚未在设置中全局启用。', false);
     if (!isComputerMethod(input.tool)) return computerText(`Computer Use 方法不受支持：${input.tool}`, false);
+    // 入队前捕获停止世代，用户停止后不能由旧排队请求重新取得控制权。
+    const generation = this.controlGeneration;
     try {
+      this.assertControlAllowed(input, generation);
+      if (input.tool !== 'list_apps') {
+        if (this.controlOwner && (this.controlOwner.input.conversationId !== input.conversationId || this.controlOwner.input.threadId !== input.threadId || this.controlOwner.input.turnId !== input.turnId)) {
+          return computerText('ZEUS_COMPUTER_BUSY: 另一个轮次正在使用桌面控制，请等待它结束或由用户停止。', false);
+        }
+        this.controlOwner ??= { id: randomUUID(), input: { conversationId: input.conversationId, threadId: input.threadId, turnId: input.turnId } };
+      }
+    } catch (error) {
+      return computerText(error instanceof Error ? error.message : String(error), false);
+    }
+    const operation = this.operationTail.then(() => this.invokeSerial(input, generation));
+    this.operationTail = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
+  }
+
+  /** 与文件、浏览器工具独立，仅串行执行桌面工具。 */
+  private async invokeSerial(input: BrowserAutomationToolCall, generation: number): Promise<{ contentItems: BrowserAutomationContentItem[]; success: boolean }> {
+    try {
+      this.assertControlAllowed(input, generation);
       await this.ensureService();
+      this.assertControlAllowed(input, generation);
       await this.refreshServiceStatus();
       await this.requestMissingPermissionsForTool(input);
+      this.assertControlAllowed(input, generation);
       await this.ensureSensitiveActionApproval(input);
+      this.assertControlAllowed(input, generation);
       const serviceArguments = this.prepareServiceArguments(input);
       const result = await this.callService(input.tool, serviceArguments);
+      this.assertControlAllowed(input, generation);
       if (input.tool === 'get_app_state') this.rememberAppState(input.arguments, result);
       else if (!['list_apps'].includes(input.tool)) this.latestElements.clear();
       const { textValue, image } = await this.projectResult(result);
+      this.assertControlAllowed(input, generation);
       this.scheduleIdleStop();
       return {
         contentItems: [{ type: 'inputText', text: JSON.stringify(textValue, null, 2) }, ...(image ? [{ type: 'inputImage' as const, imageUrl: image }] : [])],
@@ -189,6 +284,28 @@ export class ComputerHost implements BrowserAutomationPort {
     }
   }
 
+  /** 统一接收正常完成、失败和用户中断；旧轮次通知不得停止新轮次。 */
+  async endComputerUse(input: { conversationId: string; turnId: string }): Promise<void> {
+    this.revokedTurns.add(JSON.stringify([input.conversationId, input.turnId]));
+    if (this.controlOwner?.input.conversationId === input.conversationId && this.controlOwner.input.turnId === input.turnId) await this.stop('turn_ended');
+  }
+
+  /** 所有异步边界复核同一停止世代，审批通过不代表已撤销控制可以恢复。 */
+  private assertControlAllowed(input: BrowserAutomationToolCall, generation: number): void {
+    if (this.closed || !this.settings.enabled || generation !== this.controlGeneration || this.revokedTurns.has(JSON.stringify([input.conversationId, input.turnId]))) {
+      throw Object.assign(new Error('ZEUS_COMPUTER_STOPPED: 本轮桌面控制已撤销；需要用户发起新轮次，禁止自动恢复或重试动作。'), { code: 'ZEUS_COMPUTER_STOPPED' });
+    }
+  }
+
+  /** 先撤销所有排队和在途请求，再释放原生资源。 */
+  private revokeControl(): void {
+    this.controlGeneration += 1;
+    if (this.controlOwner) this.revokedTurns.add(JSON.stringify([this.controlOwner.input.conversationId, this.controlOwner.input.turnId]));
+    this.controlOwner = null;
+    this.controlPreview = null;
+    this.latestElements.clear();
+  }
+
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
@@ -196,6 +313,19 @@ export class ComputerHost implements BrowserAutomationPort {
   }
 
   private async ensureService(): Promise<void> {
+    if (this.serviceStartup) return this.serviceStartup;
+    const generation = this.controlGeneration;
+    const startup = this.startService(generation);
+    this.serviceStartup = startup;
+    try {
+      await startup;
+    } finally {
+      if (this.serviceStartup === startup) this.serviceStartup = null;
+    }
+  }
+
+  /** 启动等待期间发生停止时，不创建新的原生进程。 */
+  private async startService(generation: number): Promise<void> {
     if (this.serviceRecovery) await this.serviceRecovery;
     if (this.serviceRecoveryFailure) throw this.serviceRecoveryFailure;
     if (this.child && !this.child.killed) return;
@@ -204,6 +334,7 @@ export class ComputerHost implements BrowserAutomationPort {
       throw Object.assign(new Error(`Zeus Computer Service 不存在：${this.helperExecutable}`), { code: 'ZEUS_COMPUTER_SERVICE_MISSING' });
     }
     await mkdir(this.artifactRoot, { recursive: true, mode: 0o700 });
+    if (this.closed || !this.settings.enabled || generation !== this.controlGeneration) throw new Error('Computer Use 已关闭或本次启动已撤销。');
     this.settings = { ...this.settings, serviceState: 'starting', detail: '正在启动 Zeus Computer Service…' };
     const child = spawn(this.helperExecutable, [], {
       env: {
@@ -257,7 +388,7 @@ export class ComputerHost implements BrowserAutomationPort {
   private async requestMissingPermissionsForTool(input: BrowserAutomationToolCall): Promise<void> {
     if (input.tool === 'list_apps' || this.permissionPromptAttemptedForChild) return;
     const needsAccessibility = !this.settings.accessibilityTrusted;
-    const needsScreenCapture = input.tool === 'get_app_state' && input.arguments.include_screenshot !== false && !this.settings.screenCaptureAvailable;
+    const needsScreenCapture = !this.settings.screenCaptureAvailable;
     if (!needsAccessibility && !needsScreenCapture) return;
     await this.requestPermissions({ accessibility: needsAccessibility, screenCapture: needsScreenCapture });
   }
@@ -335,6 +466,14 @@ export class ComputerHost implements BrowserAutomationPort {
         this.recycleFailedService(child, Object.assign(new Error('Zeus Computer Service 返回了无效 JSON。'), { code: 'ZEUS_COMPUTER_RESPONSE_INVALID' }));
         return;
       }
+      if (response.event === 'control_stopped' && response.sessionId === this.controlOwner?.id) {
+        void this.stop('native_stop');
+        return;
+      }
+      if (response.event === 'control_preview') {
+        this.rememberPreview(response);
+        continue;
+      }
       const pending = this.pending.get(response.id);
       if (!pending) continue;
       clearTimeout(pending.timer);
@@ -348,6 +487,26 @@ export class ComputerHost implements BrowserAutomationPort {
         );
       }
     }
+  }
+
+  /** 拒绝旧控制及无效图像，原生身份由宿主映射为产品会话。 */
+  private rememberPreview(response: ComputerServiceResponse): void {
+    const owner = this.controlOwner;
+    const value = response.preview;
+    if (!owner || response.sessionId !== owner.id || !isRecord(value) || typeof value.appName !== 'string' || typeof value.paused !== 'boolean' || typeof value.needsObservation !== 'boolean') return;
+    if (value.imageUrl !== null && (typeof value.imageUrl !== 'string' || value.imageUrl.length > 1024 * 1024 || !/^data:image\/jpeg;base64,[A-Za-z0-9+/]+=*$/u.test(value.imageUrl))) return;
+    const point = isRecord(value.cursor) ? value.cursor : null;
+    const cursor =
+      point && typeof point.x === 'number' && typeof point.y === 'number' && Number.isFinite(point.x) && Number.isFinite(point.y) && point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1 ? { x: point.x, y: point.y } : null;
+    this.controlPreview = {
+      conversationId: owner.input.conversationId,
+      sessionId: owner.id,
+      appName: value.appName.slice(0, 200),
+      paused: value.paused,
+      needsObservation: value.needsObservation,
+      imageUrl: value.imageUrl as string | null,
+      cursor,
+    };
   }
 
   private handleServiceExit(child: ChildProcessWithoutNullStreams, error: Error): void {
@@ -364,6 +523,7 @@ export class ComputerHost implements BrowserAutomationPort {
 
   private detachService(child: ChildProcessWithoutNullStreams, rejection: (id: string, pending: PendingServiceRequest) => Error): boolean {
     if (child !== this.child) return false;
+    this.revokeControl();
     child.removeAllListeners();
     child.stdout.removeAllListeners();
     child.stderr.removeAllListeners();
@@ -416,24 +576,18 @@ export class ComputerHost implements BrowserAutomationPort {
   }
 
   private async stop(reason: string): Promise<void> {
+    this.revokeControl();
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.idleTimer = undefined;
+    // 同步脱离旧进程，再等待退出；新轮次启动必须等回收完成，不能并存两个采集服务。
+    const child = this.child;
+    if (child) {
+      this.settings = { ...this.settings, serviceState: 'stopping', detail: `正在停止 Computer Use（${reason}）…` };
+      this.detachService(child, (id, pending) => serviceInterruptionError(id, pending, 'Computer Use 已停止。', 'ZEUS_COMPUTER_STOPPED', this.lastServiceProgress, child.pid));
+      this.beginServiceRecovery(child);
+    }
     if (this.serviceRecovery) await this.serviceRecovery;
     if (this.serviceRecoveryFailure) {
-      this.settings = { ...this.settings, serviceState: 'error', detail: this.serviceRecoveryFailure.message.slice(0, 1000) };
-      return;
-    }
-    const child = this.child;
-    if (!child) {
-      this.settings = { ...this.settings, serviceState: this.settings.enabled ? 'idle' : 'disabled' };
-      return;
-    }
-    this.settings = { ...this.settings, serviceState: 'stopping', detail: `正在停止 Computer Use（${reason}）…` };
-    this.detachService(child, (id, pending) => serviceInterruptionError(id, pending, 'Computer Use 已停止。', 'ZEUS_COMPUTER_STOPPED', this.lastServiceProgress, child.pid));
-    try {
-      await this.terminateService(child);
-    } catch (error) {
-      this.serviceRecoveryFailure = error instanceof Error ? error : new Error(String(error));
       this.settings = { ...this.settings, serviceState: 'error', detail: this.serviceRecoveryFailure.message.slice(0, 1000) };
       return;
     }
@@ -442,6 +596,8 @@ export class ComputerHost implements BrowserAutomationPort {
 
   private scheduleIdleStop(): void {
     if (this.idleTimer) clearTimeout(this.idleTimer);
+    // 活跃采集由轮次生命周期结束；空闲 Helper 才采用延迟回收。
+    if (this.controlOwner) return;
     this.idleTimer = setTimeout(() => void this.stop('idle'), serviceIdleTimeoutMs);
     this.idleTimer.unref();
   }
@@ -525,7 +681,7 @@ export class ComputerHost implements BrowserAutomationPort {
   }
 
   private prepareServiceArguments(input: BrowserAutomationToolCall): Record<string, unknown> {
-    const args = { ...input.arguments };
+    const args: Record<string, unknown> = { ...input.arguments, _control_session_id: this.controlOwner?.id };
     const app = typeof args.app === 'string' ? args.app : '';
     const snapshot = app ? this.latestElements.get(app) : undefined;
     if (input.tool === 'get_app_state') {
@@ -563,6 +719,10 @@ export class ComputerHost implements BrowserAutomationPort {
           byteLength: file.size,
           width: screenshot.width,
           height: screenshot.height,
+          window_id: screenshot.window_id,
+          frame: screenshot.frame,
+          scale: screenshot.scale,
+          captured_at: screenshot.captured_at,
         },
       },
       image: `data:image/png;base64,${data.toString('base64')}`,

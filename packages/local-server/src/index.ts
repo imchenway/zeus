@@ -2529,6 +2529,13 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   }
 
   function publishNativeConversationEvent(type: string, payload: Record<string, unknown>): void {
+    // 在专家会话重映射前使用工具调用的原始身份，正常完成、失败和中断共用撤销入口。
+    const computerTurnId = typeof payload.providerTurnId === 'string' ? payload.providerTurnId : payload.turnId;
+    if (type === 'conversation.turn.completed' && typeof payload.conversationId === 'string' && typeof computerTurnId === 'string') {
+      void options.browserAutomation?.endComputerUse?.({ conversationId: payload.conversationId, turnId: computerTurnId }).catch((error: unknown) => {
+        server.log.error({ err: error }, '撤销已结束轮次的 Computer Use 失败');
+      });
+    }
     const expertRoute = routeConversationExpertEvent({ type, payload, experts: conversationExperts, turns: conversationTurns });
     if (!expertRoute) return;
     const mappedType = expertRoute.type;
