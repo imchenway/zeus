@@ -63,6 +63,18 @@ export function createReconnectableBrowserAutomationProxy(): ReconnectableBrowse
   return {
     register,
     currentLeaseId: () => registration?.leaseId ?? null,
+    /** 只通知当前界面租约结束控制，不重放到另一个界面实例。 */
+    async endComputerUse(input) {
+      const current = registration;
+      if (!current) return;
+      const response = await fetch(`${current.baseUrl}/computer/end`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${current.token}`, 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) throw new Error(`撤销 Computer Use 失败：HTTP ${response.status}`);
+    },
     async invoke(input) {
       let lastError: unknown;
       for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -84,6 +96,12 @@ export function createReconnectableBrowserAutomationProxy(): ReconnectableBrowse
           if (!isBrowserAutomationResult(payload)) throw new Error('Zeus BrowserHost bridge returned an invalid result.');
           return payload;
         } catch (error) {
+          // 桌面调用可能已执行；断线不能在新租约自动重放点击、输入或控制会话。
+          if (input.namespace === 'zeus_computer') {
+            throw Object.assign(new Error(`Computer Use 桥连接中断，动作结果未知，请先停止控制并检查目标应用：${error instanceof Error ? error.message : String(error)}`), {
+              code: 'ZEUS_COMPUTER_EFFECT_UNKNOWN',
+            });
+          }
           lastError = error;
           if (registration?.leaseId === current.leaseId) register(null);
         }
@@ -98,12 +116,21 @@ async function handleDesktopBrowserBridgeRequest(request: IncomingMessage, respo
     sendJson(response, 401, { error: 'ZEUS_BROWSER_BRIDGE_UNAUTHORIZED', message: '浏览器自动化桥凭据无效。' });
     return;
   }
-  if (request.method !== 'POST' || request.url !== '/invoke') {
+  if (request.method !== 'POST' || !['/invoke', '/computer/end'].includes(request.url ?? '')) {
     sendJson(response, 404, { error: 'ZEUS_BROWSER_BRIDGE_NOT_FOUND', message: '浏览器自动化桥路径不存在。' });
     return;
   }
   try {
     const input = await readJsonBody(request);
+    if (request.url === '/computer/end') {
+      if (!isRecord(input) || !isNonEmptyString(input.conversationId) || !isNonEmptyString(input.turnId)) {
+        sendJson(response, 400, { message: 'Computer Use 轮次身份无效。' });
+        return;
+      }
+      await browserAutomation.endComputerUse?.({ conversationId: input.conversationId, turnId: input.turnId });
+      sendJson(response, 200, { stopped: true });
+      return;
+    }
     if (!isBrowserAutomationToolCall(input)) {
       sendJson(response, 400, { error: 'ZEUS_BROWSER_BRIDGE_INPUT_INVALID', message: '浏览器自动化请求格式无效。' });
       return;

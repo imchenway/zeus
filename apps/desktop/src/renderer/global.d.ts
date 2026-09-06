@@ -20,6 +20,8 @@ import type {
   ZeusBrowserPreparedSubmission,
   ZeusBrowserSettings,
   ZeusComputerSettings,
+  ZeusComputerPreview,
+  ZeusComputerControlIdentity,
   ZeusRetiredNativeRuntimeState,
 } from '@zeus/shared';
 
@@ -310,10 +312,15 @@ declare global {
       archiveRetiredNativeRuntimes: () => Promise<ZeusRetiredNativeRuntimeState>;
       restoreRetiredNativeRuntimes: () => Promise<ZeusRetiredNativeRuntimeState>;
       getComputerSettings: () => Promise<ZeusComputerSettings>;
+      /** 仅返回该会话正在进行的控制预览。 */
+      getComputerPreview: (conversationId: string) => Promise<ZeusComputerPreview | null>;
       updateComputerSettings: (input: Pick<ZeusComputerSettings, 'enabled'>) => Promise<ZeusComputerSettings>;
       requestComputerPermissions: () => Promise<ZeusComputerSettings>;
       openComputerPermissionSettings: (input: { permission: 'accessibility' | 'screen_capture' }) => Promise<{ opened: true; permission: 'accessibility' | 'screen_capture' }>;
-      stopComputerUse: () => Promise<ZeusComputerSettings>;
+      /** 会话内停止须携带控制身份；无参数为设置页全局停止。 */
+      stopComputerUse: (input?: ZeusComputerControlIdentity) => Promise<ZeusComputerSettings>;
+      /** 用户恢复暂停，随后模型必须重新观察。 */
+      resumeComputerUse: (input: ZeusComputerControlIdentity) => Promise<{ resumed: true }>;
       onBrowserEvent: (listener: (event: ZeusBrowserEvent) => void) => () => void;
     };
   }

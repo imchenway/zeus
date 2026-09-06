@@ -27,7 +27,7 @@ const computerExecutableDirectory = resolve(computerApp, 'Contents/MacOS');
 const computerExecutable = resolve(computerExecutableDirectory, 'Zeus Computer Service');
 await mkdir(computerExecutableDirectory, { recursive: true });
 await compileSwift({
-  source: resolve(desktopRoot, 'native/ComputerService.swift'),
+  source: [resolve(desktopRoot, 'native/ComputerService.swift'), resolve(desktopRoot, 'native/ComputerControlSession.swift')],
   output: computerExecutable,
   frameworks: ['AppKit', 'ApplicationServices', 'CoreGraphics', 'ScreenCaptureKit'],
 });
@@ -47,7 +47,7 @@ await writeFile(
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>1.0</string>
   <key>CFBundleVersion</key><string>1</string>
-  <key>LSBackgroundOnly</key><true/>
+  <key>LSUIElement</key><true/>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSScreenCaptureUsageDescription</key><string>Zeus captures only the explicitly targeted app window for user-authorized Computer Use.</string>
@@ -67,7 +67,7 @@ await chmod(resolve(outputDirectory, 'ZeusBrowserNativeHost'), 0o755);
 async function compileSwift({ source, output, frameworks }) {
   const frameworkArgs = frameworks.flatMap((framework) => ['-framework', framework]);
   await new Promise((resolveBuild, rejectBuild) => {
-    const child = spawn('/usr/bin/xcrun', ['swiftc', '-parse-as-library', '-O', ...frameworkArgs, '-target', `${architecture}-apple-macos13.0`, source, '-o', output], {
+    const child = spawn('/usr/bin/xcrun', ['swiftc', '-parse-as-library', '-O', ...frameworkArgs, '-target', `${architecture}-apple-macos13.0`, ...[source].flat(), '-o', output], {
       stdio: 'inherit',
     });
     child.once('error', rejectBuild);

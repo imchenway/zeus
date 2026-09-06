@@ -2007,6 +2007,11 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       if (!run || run.conversationId !== input.conversation.id) throw piError('ZEUS_PI_RUN_NOT_ACTIVE', '目标 Pi 轮次当前未在执行。');
       const context = input.conversation.nativeSessionId ? contexts.get(input.conversation.nativeSessionId) : undefined;
       if (!context) throw piError('ZEUS_PI_SESSION_NOT_LOADED', '目标 Pi 会话当前未载入运行内核。');
+      // 同时撤销桌面控制与中断 Provider；桌面桥断线不能阻止用户停止模型。
+      const computerStop = options.browserAutomation?.endComputerUse?.({ conversationId: input.conversation.id, turnId: input.providerTurnId }).then(
+        () => null,
+        (error: unknown) => ({ error }),
+      );
       const persistedTurn = options.turns.getById(run.turnId);
       const command = providerCommands.prepare({
         operation: 'run_interrupt',
@@ -2081,6 +2086,9 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           acceptedAt: options.now(),
         });
       }
+      // 模型停止后仍如实报告桌面撤销失败，不将两者混同为全部停止。
+      const computerStopFailure = await computerStop;
+      if (computerStopFailure) throw computerStopFailure.error;
       return { submissionId: run.submissionId };
     },
     async respondToRequest(input: { requestId: string; response: unknown }): Promise<void> {
