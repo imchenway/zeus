@@ -1,3 +1,4 @@
+import type { AssistantMessageMetadata, AsyncQuestionAnswer, AsyncQuestionResponse } from '@zeus/shared';
 import type {
   ConversationContextDraft,
   ConversationResource,
@@ -253,6 +254,8 @@ export interface NativeSubagentPromptFact {
 }
 
 export interface NativeQueuedSubmission {
+  /** 绑定原始异步问题，沿用现有提交及确认链路。 */
+  questionAnswer?: AsyncQuestionAnswer;
   id: string;
   conversationId?: string;
   content: string;
@@ -671,6 +674,12 @@ export interface NativeConversationModelHistoryV2Item {
   providerItemId: string | null;
   reasoningSummary: boolean;
   phase: string | null;
+  /** 助手消息的统一语义与原始问题结构。 */
+  assistantMessage?: AssistantMessageMetadata;
+  /** 不依赖答复与原问题处于同一分页。 */
+  questionResponse?: AsyncQuestionResponse;
+  /** 用户回答与原问题的稳定关联。 */
+  questionAnswer?: AsyncQuestionAnswer;
   /** 生成该历史条目的线协议族。 */
   protocolFamily?: string | null;
   /** 该历史条目所属的稳定展示阶段。 */
@@ -1445,6 +1454,8 @@ export interface StartProjectConversationRequest {
 }
 
 export interface SendNativeMessageRequest {
+  /** 绑定原始异步问题，沿用现有提交及确认链路。 */
+  questionAnswer?: AsyncQuestionAnswer;
   agentKind?: 'codex' | 'pi' | 'claude';
   content: string;
   displayText?: string;

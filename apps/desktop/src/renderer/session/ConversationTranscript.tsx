@@ -1,3 +1,5 @@
+import { AsyncQuestionMessage, asyncQuestionReply, asyncQuestionAnchor } from './AsyncQuestionMessage.js';
+import { classifyAssistantMessage, type AsyncQuestionAnswer } from '@zeus/shared';
 import { Fragment, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { activityCategory, isActiveSessionTurn, isLiveActivityItem, isOperationalActivityItem, type SessionActivityCategory, SessionActivityGroup, SessionTurnDuration, SessionTurnProcessDisclosure } from './SessionActivity.js';
 import { itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText } from './ThreadItemView.js';
@@ -67,6 +69,8 @@ export interface ConversationTranscriptProps {
   onCancelPendingSend?: (clientUserMessageId: string) => void | Promise<void>;
   onCancelQueuedSubmission?: (submissionId: string) => void | Promise<void>;
   onSendQueuedNow?: (submissionId: string) => void | Promise<void>;
+  /** 使用原问题与原轮次的引导身份提交答复。 */
+  onAnswerAsyncQuestion?: (item: NativeSessionItemBuffer, answers: AsyncQuestionAnswer['answers'], asNewMessage: boolean) => Promise<void>;
   /** 当前会话工作面每次本地提交或编辑重发后递增；不依赖异步 Provider 投影推断用户发送。 */
   localSubmissionRevision?: number;
 }
@@ -441,13 +445,16 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   }, [props.state.turnsByProviderId, transcriptRows]);
   const showActiveStatus = !props.historyOnly && shouldShowTranscriptThinking(props.state, items);
   const motionFocus = props.historyOnly ? null : resolveSessionMotionFocus(props.state, transcriptItems, showActiveStatus);
-  const activeStatusKind = props.state.conversationState === 'starting_turn' ? 'starting' : 'thinking';
+  const activeStatusKind = transcriptRunStatus(props.state);
+  const unansweredQuestions = items.filter(
+    (item) => item.turnId === activeTurnId && itemRole(item) === 'assistant' && classifyAssistantMessage(item.payload, item.phase) === 'question' && !item.payload.questionResponse && !asyncQuestionReply(item, props.state),
+  );
   const creatingSession = props.creationStatus?.state === 'creating' || props.creationStatus?.state === 'retrying';
   const creationFailed = props.creationStatus?.state === 'failed';
   const realTurnStarted = Boolean(activeTurnId);
   // 创建期只保留一个主进度：真实轮次建立前显示连接，建立后由轮次状态或真实过程内容接管。
   const showCreationStatus = Boolean(props.creationStatus) && !(creatingSession && realTurnStarted);
-  const showStandaloneActiveStatus = showActiveStatus && !creationFailed && !(creatingSession && !realTurnStarted);
+  const showStandaloneActiveStatus = !props.historyOnly && Boolean(activeStatusKind) && !creationFailed && !(creatingSession && !realTurnStarted);
   const interactionAuthorityMissing = props.state.queue?.state.type === 'paused' && props.state.queue.state.reason === 'interaction_authority_missing' && Boolean(props.state.activeTurnId);
   const awaitingReplyMessageIdsKey = items
     .filter(isOptimisticMessageAwaitingReply)
@@ -1053,7 +1060,23 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             <TurnFailureCard key={`turn-failure:${turn.providerTurnId ?? turn.id}`} failure={turn.error!} language={props.language} />
           ))}
           {showCreationStatus && props.creationStatus ? <SessionCreationNotice status={props.creationStatus} language={props.language} /> : null}
-          {showStandaloneActiveStatus ? <TranscriptActiveStatus language={props.language} kind={activeStatusKind} /> : null}
+          {showStandaloneActiveStatus && activeStatusKind ? <TranscriptActiveStatus language={props.language} kind={activeStatusKind} /> : null}
+          {unansweredQuestions.length > 0 ? (
+            <p className="session-message-delivery-actions">
+              {unansweredQuestions.map((item, index) => (
+                <a key={item.key} href={`#${asyncQuestionAnchor(item)}`}>
+                  {props.language === 'zh-CN' ? `回答问题${unansweredQuestions.length > 1 ? ` ${index + 1}` : ''}` : `Answer question ${index + 1}`}
+                </a>
+              ))}
+            </p>
+          ) : null}
+          {activeTurnId && items.some((item) => item.turnId === activeTurnId && recordValue(item.payload.userActionRequired)?.code === 'ZEUS_COMPUTER_NOT_REQUESTED') ? (
+            <p className="session-message-delivery-feedback" role="status">
+              {props.language === 'zh-CN'
+                ? 'Computer Use 本轮未启用。需要此能力的工作须在输入框启用后开始新轮次；其他工作仍可继续。'
+                : 'Computer Use is not enabled for this turn. Enable it in the composer for a new turn to use it; other work can continue.'}
+            </p>
+          ) : null}
           {interactionAuthorityMissing && props.state.activeTurnId ? <InteractionAuthorityMissingNotice language={props.language} turnId={props.state.activeTurnId} onInterrupt={props.onInterrupt} /> : null}
           <span ref={latestContentMarkerRef} className="session-latest-content-marker" aria-hidden="true" />
         </section>
@@ -1320,6 +1343,9 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
       />
     );
   }
+  if (itemRole(row.item) === 'assistant' && classifyAssistantMessage(row.item.payload, row.item.phase) === 'question') {
+    return <AsyncQuestionMessage item={row.item} state={options.props.state} language={options.props.language} onAnswer={row.item.status === 'completed' ? options.props.onAnswerAsyncQuestion : undefined} />;
+  }
   if (row.item.type === 'plan') {
     return (
       <TranscriptV2ContentBoundary item={row.item} onLoadContent={options.props.onLoadV2Content}>
@@ -1420,11 +1446,31 @@ function isSamePlanItem(openItem: NativeSessionItemBuffer | null | undefined, it
   return openItem.itemId === item.itemId && openItem.turnId === item.turnId;
 }
 
-function TranscriptActiveStatus(props: { language: SessionUiLanguage; kind: 'starting' | 'thinking' }): ReactNode {
+/** 运行状态只读取正式轮次、请求、连接及过程事件，不从计时或正文猜测。 */
+export function transcriptRunStatus(state: NativeSessionState): 'starting' | 'executing' | 'compacting' | 'waiting_input' | 'waiting_approval' | 'reconnecting' | null {
+  if (state.conversationState === 'starting_turn') return 'starting';
+  if (!state.activeTurnId || state.terminalTurnIds[state.activeTurnId]) return null;
+  if (state.transportState !== 'ready') return 'reconnecting';
+  if (state.conversationState === 'waiting_user_input') return 'waiting_input';
+  if (state.conversationState === 'waiting_approval') return 'waiting_approval';
+  if (state.conversationState !== 'active_prework' && state.conversationState !== 'active_final_answer') return null;
+  if (Object.values(state.items).some((item) => item.turnId === state.activeTurnId && normalizeItemType(item.type) === 'contextcompaction' && item.status === 'in_progress')) return 'compacting';
+  return 'executing';
+}
+
+/** 任务耗时仍单独显示；此处不把时间增长当作模型继续推进的证据。 */
+function TranscriptActiveStatus(props: { language: SessionUiLanguage; kind: NonNullable<ReturnType<typeof transcriptRunStatus>> }): ReactNode {
+  const labels = {
+    starting: ['正在启动处理', 'Starting processing'],
+    executing: ['正在执行', 'Executing'],
+    compacting: ['正在整理上下文', 'Compacting context'],
+    waiting_input: ['等待回答，请处理问题表单', 'Waiting for your answer'],
+    waiting_approval: ['等待审批，请处理审批事项', 'Waiting for your approval'],
+    reconnecting: ['正在恢复连接，运行进度尚未确认', 'Reconnecting; progress is not yet confirmed'],
+  };
   return (
-    <p className="session-transcript-thinking" data-motion-active="true" role="status" aria-live="polite">
-      <span className="session-thinking-pulse" aria-hidden="true" />
-      <span className="session-current-status-text">{props.kind === 'starting' ? (props.language === 'zh-CN' ? '正在启动处理' : 'Starting processing') : props.language === 'zh-CN' ? '正在思考' : 'Thinking'}</span>
+    <p className="session-transcript-thinking" role="status" aria-live="polite">
+      <span className="session-current-status-text">{labels[props.kind][props.language === 'zh-CN' ? 0 : 1]}</span>
     </p>
   );
 }
@@ -1654,7 +1700,7 @@ export function projectTranscriptTurnRows(
   const orderedRows = projectDeliverablesAfterFinalAnswer(rows);
   const completionOutputTurnIds = new Set(orderedRows.flatMap((row) => (row.kind === 'item' && isTurnCompletionOutputItem(row.item) ? [row.item.turnId] : [])));
   // 权威活动轮次优先于任何提前或误分类的输出；阶段摘要只负责切分单轮过程内部的内容，
-  // 不能再生成多个顶层折叠入口。正式正文或正式 Plan 到达后，该轮过程立即进入完成态 disclosure。
+  // 不能再生成多个顶层折叠入口。活动轮次继续展开，只有正式结束后才收起过程。
   const projectedTurnIds = new Set([...completionOutputTurnIds, ...Object.keys(terminalTurnIds), ...(activeTurnId ? [activeTurnId] : [])]);
   const openingUserRowKeyByTurn = new Map<string, string>();
   for (const row of orderedRows) {
@@ -1685,7 +1731,7 @@ export function projectTranscriptTurnRows(
       key: `turn-work:${encodeURIComponent(turnId)}`,
       turnId,
       segments,
-      live: turnId === activeTurnId && !completionOutputTurnIds.has(turnId),
+      live: turnId === activeTurnId && !terminalTurnIds[turnId],
       loadMore: true,
     });
     processRows.forEach((row) => processRowKeys.add(row.key));
@@ -1839,7 +1885,7 @@ function isTurnProcessRow(row: TranscriptRow): boolean {
   if (row.kind === 'answered_request') return true;
   if (row.kind === 'activity') return true;
   // 缺少实时回答权限的恢复问题必须直接出现在时间线，不能折叠进普通工具过程。
-  if (isRecoveredRequestUserInputItem(row.item)) return false;
+  if (isRecoveredRequestUserInputItem(row.item) || (itemRole(row.item) === 'assistant' && classifyAssistantMessage(row.item.payload, row.item.phase) === 'question')) return false;
   // 计划和明确交付资源属于最终产物，必须独立展示，不能折叠进“已处理”过程。
   if (row.item.type === 'plan' || isAssistantDeliverableItem(row.item)) return false;
   // 只有缺少 phase 的旧 assistant 正文才走兼容兜底；明确 prework 必须留在处理过程。
@@ -1931,8 +1977,7 @@ function transcriptRowContainsItemKey(row: TranscriptRow, itemKey: string | unde
 }
 
 export function isFinalAnswerItem(item: NativeSessionItemBuffer): boolean {
-  const providerPhase = itemProviderPhase(item);
-  return itemRole(item) === 'assistant' && (providerPhase === 'final_answer' || providerPhase === 'finalAnswer');
+  return itemRole(item) === 'assistant' && classifyAssistantMessage(item.payload, item.phase) === 'final';
 }
 
 function isTurnCompletionOutputItem(item: NativeSessionItemBuffer): boolean {

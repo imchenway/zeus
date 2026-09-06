@@ -1,3 +1,4 @@
+import { classifyAssistantMessage } from '@zeus/shared';
 import { createHash } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import { dirname, extname, isAbsolute, relative, resolve } from 'node:path';
@@ -356,9 +357,10 @@ export function itemTypeFromValue(value: unknown): ConversationItemType {
 }
 
 export function phaseFromItem(item: Record<string, unknown>): ConversationItemPhase {
+  if (item.type === 'agentMessage') return classifyAssistantMessage(item) === 'final' ? 'final_answer' : 'prework';
   if (item.phase === 'final_answer' || item.phase === 'finalAnswer') return 'final_answer';
   if (typeof item.phase === 'string' && item.phase.trim().length > 0) return 'prework';
-  return item.type === 'agentMessage' ? 'final_answer' : 'prework';
+  return 'prework';
 }
 
 export function itemText(item: Record<string, unknown>): string {

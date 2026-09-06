@@ -117,7 +117,8 @@ async function verifyImportBoundaries(): Promise<void> {
     'packages/local-server/src/workManagementQueryRoutes.ts': ['fastify', './nativeQueryRouteError.js', './workManagementQueryApplication.js'],
     'packages/local-server/src/runtimeQueryApplication.ts': ['@zeus/ai-runtime', '@zeus/storage'],
     'packages/local-server/src/runtimeQueryRoutes.ts': ['fastify', './nativeQueryRouteError.js', './runtimeQueryApplication.js'],
-    'packages/local-server/src/codexSubagentQueryApplication.ts': ['@zeus/ai-runtime', '@zeus/storage', './codexSubagentRuntimeProjection.js', './conversationResources.js'],
+    // 子线程也复用共享消息分类，避免异步问题在历史详情中被误判为交付。
+    'packages/local-server/src/codexSubagentQueryApplication.ts': ['@zeus/shared', '@zeus/ai-runtime', '@zeus/storage', './codexSubagentRuntimeProjection.js', './conversationResources.js'],
     'packages/local-server/src/codexSubagentQueryRoutes.ts': ['fastify', './codexSubagentQueryApplication.js'],
     'packages/local-server/src/codexSubagentRuntimeProjection.ts': ['node:fs', 'node:fs/promises', 'node:path', '@zeus/ai-runtime', '@zeus/shared'],
     'packages/local-server/src/conversationCapabilityQueryApplication.ts': ['node:crypto', 'node:path', '@zeus/ai-runtime', '@zeus/git-core', '@zeus/storage'],

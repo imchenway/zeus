@@ -501,6 +501,10 @@ interface RequestUserInputActionsProps {
   style?: CSSProperties;
   onPrevious: () => void;
   onSkip: () => void;
+  /** 异步历史问题可明确改为新消息发送。 */
+  submitLabel?: string;
+  /** 异步提问只收起表单，不提交跳过回答。 */
+  dismissLabel?: string;
 }
 
 function RequestUserInputActions(props: RequestUserInputActionsProps) {
@@ -513,18 +517,33 @@ function RequestUserInputActions(props: RequestUserInputActionsProps) {
         </button>
       ) : null}
       <button type="button" onClick={props.onSkip}>
-        {zh ? '跳过' : 'Skip'}
+        {props.dismissLabel ?? (zh ? '跳过' : 'Skip')}
       </button>
       {props.showSubmit ? (
         <button type="submit" disabled={!props.currentComplete || (props.questionIndex === props.questionCount - 1 && !props.allComplete)}>
-          {props.responding ? (zh ? '正在提交' : 'Submitting') : props.questionIndex === props.questionCount - 1 ? (zh ? '提交' : 'Submit') : zh ? '继续' : 'Continue'}
+          {props.responding ? (zh ? '正在提交' : 'Submitting') : props.questionIndex === props.questionCount - 1 ? (props.submitLabel ?? (zh ? '提交' : 'Submit')) : zh ? '继续' : 'Continue'}
         </button>
       ) : null}
     </div>
   );
 }
 
-function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: RequestQuestion[] }) {
+/** 同步与异步询问共用的表单；不持有服务端请求或审批权限。 */
+export interface RequestUserInputPanelProps extends Omit<PendingRequestSurfaceProps, 'request'> {
+  request: Pick<NativePendingRequest, 'id' | 'expiresAt' | 'autoResolutionState'>;
+  questions: RequestQuestion[];
+  /** 异步回答在 Provider 确认前保留草稿。 */
+  retainDraft?: boolean;
+  /** 选择选项后显式提交，避免预选被误当作回答。 */
+  confirmSelection?: boolean;
+  /** 历史轮次的答复通过明确的新消息动作发送。 */
+  submitLabel?: string;
+  /** 异步面板收起只改变展示，不产生跳过请求。 */
+  onDismiss?: () => void;
+}
+
+/** 复用原问题表单、草稿、选项和自由输入，不伪造同步请求。 */
+export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
   const zh = props.language === 'zh-CN';
   const copy = labels[props.language];
   const restored = useMemo(() => restoreRuiDraft(props.request.id, props.questions), [props.questions, props.request.id]);
@@ -554,7 +573,7 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
   const otherSelected = selectedValues.includes(otherAnswerControlValue(currentQuestion));
   const answerAttachmentsEnabled = props.answerAttachmentsSupported !== false && !currentQuestion.secret && (currentQuestion.kind === 'freeform' || currentQuestion.allowOther);
   const actionsPlacement = currentQuestion.kind === 'freeform' ? 'freeform' : currentQuestion.allowOther ? 'other' : 'options';
-  const showSubmitAction = currentQuestion.kind !== 'single' || otherSelected;
+  const showSubmitAction = props.confirmSelection === true || currentQuestion.kind !== 'single' || otherSelected;
 
   useApplicationErrorDialog(resourceError, {
     language: zh ? 'zh-CN' : 'en',
@@ -640,8 +659,11 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
     try {
       await (snoozePromiseRef.current ?? Promise.resolve());
       const activeAttachments = activeRequestAnswerAttachments(props.questions, nextAnswers, nextAttachments);
-      await props.onRespond(props.request.id, buildPendingRequestResponse(props.request, nextAnswers, nextOtherAnswers, activeAttachments, props.language));
-      clearRuiDraft(props.request.id);
+      if (props.retainDraft) persistRuiDraft(props.request.id, props.questions, nextAnswers, nextOtherAnswers, activeAttachments);
+      await props.onRespond(props.request.id, buildQuestionResponse(props.questions, nextAnswers, nextOtherAnswers, activeAttachments, props.language));
+      if (!props.retainDraft) clearRuiDraft(props.request.id);
+    } catch (failure) {
+      setResourceError(failure);
     } finally {
       setLocallyResponding(false);
     }
@@ -664,7 +686,7 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
       setAnswerAttachments(nextAttachments);
       void discardAnswerAttachmentResources(currentAttachments);
     }
-    if (currentQuestion.kind === 'single' && optionLabel !== otherAnswerControlValue(currentQuestion)) advance(nextAnswers, otherAnswers, nextAttachments);
+    if (!props.confirmSelection && currentQuestion.kind === 'single' && optionLabel !== otherAnswerControlValue(currentQuestion)) advance(nextAnswers, otherAnswers, nextAttachments);
   }
 
   function removeAnswerAttachment(questionId: string, attachment: NativeConversationAttachment): void {
@@ -761,11 +783,15 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
 
   async function skip(): Promise<void> {
     if (responding) return;
+    if (props.onDismiss) {
+      props.onDismiss();
+      return;
+    }
     setLocallyResponding(true);
     try {
       await (snoozePromiseRef.current ?? Promise.resolve());
       await props.onRespond(props.request.id, { type: 'userInput', answers: {} });
-      clearRuiDraft(props.request.id);
+      if (!props.retainDraft) clearRuiDraft(props.request.id);
       await discardAnswerAttachmentResources(Object.values(answerAttachments).flat());
     } finally {
       setLocallyResponding(false);
@@ -788,6 +814,8 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
         currentComplete={currentComplete}
         allComplete={allComplete}
         showSubmit={showSubmitAction}
+        submitLabel={props.submitLabel}
+        dismissLabel={props.onDismiss ? (zh ? '稍后回答' : 'Answer later') : undefined}
         style={style}
         onPrevious={() => {
           void snooze();
@@ -1042,7 +1070,7 @@ function questionAnswerComplete(question: RequestQuestion, values: string[], oth
   return !values.includes(otherAnswerControlValue(question)) || Boolean(other?.trim()) || attachments.length > 0;
 }
 
-function requestRemainingMs(request: NativePendingRequest): number | null {
+function requestRemainingMs(request: Pick<NativePendingRequest, 'expiresAt'>): number | null {
   if (!request.expiresAt) return null;
   const deadline = Date.parse(request.expiresAt);
   return Number.isFinite(deadline) ? deadline - Date.now() : null;
@@ -1101,7 +1129,8 @@ function persistRuiDraft(requestId: string, questions: RequestQuestion[], answer
   }
 }
 
-function clearRuiDraft(requestId: string): void {
+/** 只在请求已解决或 Provider 已确认回答时清理原表单草稿。 */
+export function clearRuiDraft(requestId: string): void {
   if (typeof window === 'undefined') return;
   try {
     window.localStorage.removeItem(ruiDraftStorageKey(requestId));
@@ -1176,7 +1205,7 @@ function updateQuestionAnswers(current: Record<string, string[]>, question: Requ
   return { ...current, [question.id]: checked ? [...new Set([...currentValues, value])] : currentValues.filter((entry) => entry !== value) };
 }
 
-export function normalizeRequestQuestions(request: NativePendingRequest): RequestQuestion[] {
+export function normalizeRequestQuestions(request: Pick<NativePendingRequest, 'payload'>): RequestQuestion[] {
   const parsed = parseCanonicalRequestUserInputQuestions(request.payload);
   if (!parsed.ok) return [];
   return parsed.questions.map((question) => ({
@@ -1208,27 +1237,7 @@ export function buildPendingRequestResponse(
 ): Record<string, unknown> {
   const kind = requestKind(request);
   if (kind === 'request_user_input') {
-    const questions = normalizeRequestQuestions(request);
-    if (questions.length === 0) throw new Error('The pending request does not contain a complete canonical question set.');
-    const validationError = validateRendererRequestAnswers(questions, answers, otherAnswers, answerAttachments);
-    if (validationError) throw new Error(validationError);
-    const attachmentOnlyLabel = language === 'zh-CN' ? '见附件' : 'See attachments';
-    const normalizedAnswers = Object.fromEntries(
-      questions.map((question) => {
-        const attachments = answerAttachments[question.id] ?? [];
-        const values = answers[question.id] ?? [];
-        const normalized = (values.length > 0 ? values : ['']).map((value) => {
-          if (value === otherAnswerControlValue(question)) return otherAnswers[question.id]?.trim() || (attachments.length > 0 ? attachmentOnlyLabel : '');
-          return value.trim() || (attachments.length > 0 ? attachmentOnlyLabel : '');
-        });
-        return [question.id, { answers: normalized }];
-      }),
-    );
-    return {
-      type: 'userInput',
-      answers: normalizedAnswers,
-      ...(Object.keys(answerAttachments).length > 0 ? { answerAttachments } : {}),
-    };
+    return buildQuestionResponse(normalizeRequestQuestions(request), answers, otherAnswers, answerAttachments, language);
   }
   if (kind === 'unknown') throw new Error('Unsupported pending request type.');
   const requestedDecision = answers.decision?.[0];
@@ -1744,4 +1753,34 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 function stringValue(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null;
+}
+
+/** 将已校验的通用表单值编码为现有 userInput 响应结构。 */
+function buildQuestionResponse(
+  questions: RequestQuestion[],
+  answers: Record<string, string[]>,
+  otherAnswers: Record<string, string>,
+  answerAttachments: Record<string, NativeConversationAttachment[]>,
+  language: SessionUiLanguage,
+): Record<string, unknown> {
+  if (questions.length === 0) throw new Error('The pending request does not contain a complete canonical question set.');
+  const validationError = validateRendererRequestAnswers(questions, answers, otherAnswers, answerAttachments);
+  if (validationError) throw new Error(validationError);
+  const attachmentOnlyLabel = language === 'zh-CN' ? '见附件' : 'See attachments';
+  const normalizedAnswers = Object.fromEntries(
+    questions.map((question) => {
+      const attachments = answerAttachments[question.id] ?? [];
+      const values = answers[question.id] ?? [];
+      const normalized = (values.length > 0 ? values : ['']).map((value) => {
+        if (value === otherAnswerControlValue(question)) return otherAnswers[question.id]?.trim() || (attachments.length > 0 ? attachmentOnlyLabel : '');
+        return value.trim() || (attachments.length > 0 ? attachmentOnlyLabel : '');
+      });
+      return [question.id, { answers: normalized }];
+    }),
+  );
+  return {
+    type: 'userInput',
+    answers: normalizedAnswers,
+    ...(Object.keys(answerAttachments).length > 0 ? { answerAttachments } : {}),
+  };
 }

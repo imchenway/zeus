@@ -1,3 +1,4 @@
+import { asyncMessageQuestions, formatAsyncQuestionAnswer, validateCanonicalRequestUserInputAnswers, type AsyncQuestionAnswer } from '@zeus/shared';
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { type ConversationContextDraft, type ConversationFileIconKind, type ConversationResource, emptyConversationContextDraft, hasConversationContext, serializeConversationContext, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { createInitialSessionState, sessionReducer } from './sessionReducer.js';
@@ -32,6 +33,7 @@ import {
   type NativeQueueSnapshot,
   type NativeRealtimeEventEnvelope,
   type NativeSessionError,
+  type NativeSessionItemBuffer,
   type NativeSessionMetricsSnapshot,
   type NativeSessionState,
   type NativeSubagentListSnapshot,
@@ -291,6 +293,8 @@ export interface SessionController {
   setContextDraft(contextDraft: ConversationContextDraft): void;
 
   send(delivery: 'queue' | 'steer_now', expectedTurnId?: string, settings?: NativeTurnSettingsSelection): Promise<NativeOperationAcceptance | void>;
+  /** 回答绑定原问题，独立于 Composer 普通消息草稿。 */
+  answerAsyncQuestion(item: NativeSessionItemBuffer, answers: AsyncQuestionAnswer['answers'], asNewMessage?: boolean): Promise<NativeOperationAcceptance | void>;
   retryPendingSend(clientUserMessageId: string): Promise<NativeOperationAcceptance | void>;
   cancelPendingSend(clientUserMessageId: string): Promise<void>;
   editQueuedSubmission(submissionId: string, content: string): Promise<NativeQueueSnapshot>;
@@ -340,6 +344,8 @@ export interface SessionControllerDiagnostics {
 }
 
 interface PendingSendEnvelope {
+  /** 绑定原始异步问题，沿用现有提交及确认链路。 */
+  questionAnswer?: AsyncQuestionAnswer;
   fingerprint: string;
   content: string;
   displayText: string;
@@ -470,6 +476,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       contextDraft: pendingSend.contextDraft,
       browserComments: pendingSend.browserSubmission?.comments ?? [],
       delivery: pendingSend.delivery,
+      ...(pendingSend.questionAnswer ? { questionAnswer: pendingSend.questionAnswer } : {}),
       previousConversationState,
       startedAt,
       preserveComposer: true,
@@ -498,6 +505,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         contextDraft: envelope.contextDraft,
         browserComments: envelope.browserSubmission?.comments ?? [],
         delivery: envelope.delivery,
+        ...(envelope.questionAnswer ? { questionAnswer: envelope.questionAnswer, preserveComposer: true } : {}),
         previousConversationState: state.conversationState,
         startedAt: envelope.startedAt ?? new Date().toISOString(),
         queuedUntilHydrated: true,
@@ -644,6 +652,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
   }
 
   function clearDraftIfItStillMatches(envelope: PendingSendEnvelope): void {
+    if (envelope.questionAnswer) return;
     if (
       state.draft !== envelope.draft ||
       !sameAttachments(state.attachments, envelope.composerAttachments) ||
@@ -1146,6 +1155,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       contextDraft: envelope.contextDraft,
       browserComments: envelope.browserSubmission?.comments ?? [],
       delivery: envelope.delivery,
+      ...(envelope.questionAnswer ? { questionAnswer: envelope.questionAnswer, preserveComposer: true } : {}),
       previousConversationState: state.conversationState,
       startedAt: envelope.startedAt ?? new Date().toISOString(),
       preserveComposer: true,
@@ -1791,9 +1801,14 @@ export function createSessionController(options: CreateSessionControllerOptions)
   }
 
   function submitEnvelope(envelope: PendingSendEnvelope): Promise<NativeOperationAcceptance | void> {
+    const operation = `send:${envelope.fingerprint}`;
+    // 水合后的并发回答也先复用操作，避免覆盖另一条正在确认的提交草稿。
+    if (activeOperation) {
+      if (activeOperation.key === operation) return activeOperation.promise as Promise<NativeOperationAcceptance | void>;
+      return Promise.reject(new Error(`Session operation already in progress: ${activeOperation.key}`));
+    }
     pendingSend = envelope;
     persistDraft();
-    const operation = `send:${envelope.fingerprint}`;
     const previousConversationState = state.conversationState;
     return runOperation(
       operation,
@@ -1809,6 +1824,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
           contextDraft: envelope.contextDraft,
           browserComments: envelope.browserSubmission?.comments ?? [],
           delivery: envelope.delivery,
+          ...(envelope.questionAnswer ? { questionAnswer: envelope.questionAnswer, preserveComposer: true } : {}),
           previousConversationState,
           startedAt: envelope.startedAt ?? new Date().toISOString(),
         });
@@ -1826,6 +1842,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
             ...(envelope.browserSubmission ? { browserCommentContent: envelope.browserSubmission.content } : {}),
             ...(hasConversationContext(envelope.contextDraft) ? { conversationContext: envelope.contextDraft } : {}),
             delivery: envelope.delivery,
+            ...(envelope.questionAnswer ? { questionAnswer: envelope.questionAnswer } : {}),
             ...(envelope.expectedTurnId ? { expectedTurnId: envelope.expectedTurnId } : {}),
             ...(envelope.model ? { model: envelope.model } : {}),
             ...(envelope.agentKind ? { agentKind: envelope.agentKind } : {}),
@@ -1845,9 +1862,21 @@ export function createSessionController(options: CreateSessionControllerOptions)
           persistDraft();
           return acceptance;
         } catch (error) {
+          const failure = toSessionError(error, true);
+          // 原轮次已结束是服务端明确的未发送结果；答复草稿留在表单，允许用户另开消息。
+          if (envelope.questionAnswer && failure.code === 'ZEUS_ASYNC_QUESTION_TURN_ENDED') {
+            pendingSend = null;
+            dispatch({ type: 'send_failed', clientUserMessageId: envelope.clientUserMessageId, previousConversationState, error: failure });
+            persistDraft();
+            options.client.forgetNativeMessageCommand?.(options.projectId, options.conversationId, envelope.idempotencyKey);
+            throw error;
+          }
           const reconciliation = await reconcileFailedSend(envelope);
           if (reconciliation.kind === 'durable') return reconciliation.acceptance;
-          if (reconciliation.kind === 'terminal') return;
+          if (reconciliation.kind === 'terminal') {
+            if (envelope.questionAnswer) throw error;
+            return;
+          }
           const sessionError = toSessionError(error, true);
           pendingSend = {
             ...envelope,
@@ -2612,6 +2641,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
           contextDraft: envelope.contextDraft,
           browserComments: envelope.browserSubmission?.comments ?? [],
           delivery: envelope.delivery,
+          ...(envelope.questionAnswer ? { questionAnswer: envelope.questionAnswer, preserveComposer: true } : {}),
           previousConversationState: state.conversationState,
           startedAt: envelope.startedAt ?? new Date().toISOString(),
           queuedUntilHydrated: true,
@@ -2626,6 +2656,49 @@ export function createSessionController(options: CreateSessionControllerOptions)
         void flushDeferredSends();
         return acceptance;
       });
+    },
+    async answerAsyncQuestion(item, answers, asNewMessage = false) {
+      const questions = asyncMessageQuestions(item.payload);
+      const validation = validateCanonicalRequestUserInputAnswers({ questions }, answers);
+      if (validation || !questions.length || !Object.keys(answers).length) throw new Error(validation ?? '请完整回答原问题。');
+      const providerItemId = item.providerItemId ?? item.itemId;
+      const providerTurnId = item.turnId;
+      const questionAnswer: AsyncQuestionAnswer = { providerItemId, providerTurnId, answers, ...(asNewMessage ? { asNewMessage: true } : {}) };
+      // 同一问题在重复点击和重启后保持提交身份；明确新消息拥有独立身份。
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([options.conversationId, providerTurnId, providerItemId, asNewMessage])));
+      const identity = `question:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+      const content = formatAsyncQuestionAnswer(questions, answers);
+      const delivery = asNewMessage ? ('queue' as const) : ('steer_now' as const);
+      const fingerprint = JSON.stringify({ questionAnswer, content, delivery });
+      if (activeOperation) {
+        if (pendingSend?.fingerprint === fingerprint) return activeOperation.promise as Promise<NativeOperationAcceptance | void>;
+        throw new Error('上一条提交仍在确认中，请稍后回答。');
+      }
+      if (pendingSend?.deliveryState === 'accepted') await reconcileAcceptedSend();
+      if (pendingSend) {
+        if (pendingSend.fingerprint !== fingerprint) throw new Error('上一条消息尚未确认送达，请先重试或取消。');
+        return retryPendingSend(pendingSend.clientUserMessageId);
+      }
+      await ensureRealtimeConnection();
+      const envelope: PendingSendEnvelope = {
+        fingerprint,
+        content,
+        displayText: content,
+        draft: content,
+        attachments: [],
+        composerAttachments: [],
+        browserSubmission: null,
+        contextDraft: structuredClone(emptyConversationContextDraft),
+        delivery,
+        ...(asNewMessage ? {} : { expectedTurnId: providerTurnId }),
+        questionAnswer,
+        collaborationMode: state.snapshot?.collaborationMode ?? 'default',
+        idempotencyKey: identity,
+        clientUserMessageId: identity,
+        startedAt: new Date().toISOString(),
+        autoReplayCount: 0,
+      };
+      return submitEnvelope(envelope);
     },
     retryPendingSend,
     cancelPendingSend,
