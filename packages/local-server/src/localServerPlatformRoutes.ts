@@ -26,11 +26,7 @@ import {
 import { type ProjectGraph } from '@zeus/graph-engine';
 import { normalizeProjectConfig, normalizeProjectModelServiceTierPreference, type ProjectConfigSnapshot, type ProjectModelServiceTierPreference, type UpdateProjectConfigBody } from './projectCore.js';
 import { getSecretPresenceLabel } from './securityCore.js';
-import {
-    cloneTaskManagementStatusConfig,
-    type TaskAttachmentReference,
-    type TaskPushParentAttachmentOption
-} from '@zeus/shared';
+import { cloneTaskManagementStatusConfig, type TaskAttachmentReference, type TaskPushParentAttachmentOption } from '@zeus/shared';
 import {
   AutomationRunRepository,
   AutomationTaskRepository,
@@ -69,12 +65,7 @@ import {
   type ZeusTaskRecord,
 } from '@zeus/storage';
 import { type TaskStatus } from './taskCore.js';
-import {
-    createTelegramBotMessageClient,
-    getTelegramConfigurationState,
-    type TelegramMessageSender,
-    type TelegramPollingService
-} from './telegramAdapter.js';
+import { createTelegramBotMessageClient, getTelegramConfigurationState, type TelegramMessageSender, type TelegramPollingService } from './telegramAdapter.js';
 import { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { createHash } from 'node:crypto';
 import { existsSync, realpathSync, statSync } from 'node:fs';
@@ -172,7 +163,7 @@ import { registerTaskStageRoutes } from './taskStageRoutes.js';
 import { registerTaskWorkManagement, type TaskWorkManagementController } from './taskWorkManagement.js';
 import { telegramChildOperation, TelegramCommandApplication, telegramCommandHttpError, type TelegramCommandRequest, telegramCommandTypes } from './telegramCommandApplication.js';
 import { registerTelegramPollingApi } from './telegramPollingApi.js';
-import {registerTelegramSettingsRoutes} from './telegramSettingsRoutes.js';
+import { registerTelegramSettingsRoutes } from './telegramSettingsRoutes.js';
 import { changeSetErrorStatus, errorCode as turnChangeSetErrorCode } from './turnChangeSets.js';
 import { WorkManagementCommandApplication, workManagementCommandTypes, workManagementInputSha256 } from './workManagementCommandApplication.js';
 import { registerWorkManagementCoreCommandRoutes } from './workManagementCoreCommandRoutes.js';
@@ -186,7 +177,7 @@ import { WorkManagementTaskEffectService } from './workManagementTaskEffectServi
 import { WorkManagementTaskOperations } from './workManagementTaskOperations.js';
 import { registerWorkspaceGitCommandRoutes } from './workspaceGitCommandRoutes.js';
 import { registerZeusPluginRoutes } from './zeusPluginRoutes.js';
-import {imInternalCommandRequest} from './localServerPlatformSupport.js';
+import { imInternalCommandRequest } from './localServerPlatformSupport.js';
 
 export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, type ReadOnlyValidationApplicationIdentity } from './readOnlyValidation.js';
 
@@ -3651,25 +3642,25 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     }
   });
 
-    registerTelegramSettingsRoutes({
-        server,
-        telegramCommands,
-        assertTelegramCommandInputKeys,
-        parseTelegramNotificationSettingsInput,
-        parseTelegramSecuritySettingsInput,
-        parseTelegramDispatchPreviewInput,
-        platformMutableState,
-        settings,
-        telegramNotificationSettingsKey,
-        telegramSecuritySettingsKey,
-        appendAuditLog,
-        readTelegramToken,
-        now,
-        getTelegramPollingService,
-        redactSensitiveText,
-        isExplicitTelegramApiRejection,
-        sendTelegramCommandRouteError,
-        telegramCommandRouteError,
+  registerTelegramSettingsRoutes({
+    server,
+    telegramCommands,
+    assertTelegramCommandInputKeys,
+    parseTelegramNotificationSettingsInput,
+    parseTelegramSecuritySettingsInput,
+    parseTelegramDispatchPreviewInput,
+    platformMutableState,
+    settings,
+    telegramNotificationSettingsKey,
+    telegramSecuritySettingsKey,
+    appendAuditLog,
+    readTelegramToken,
+    now,
+    getTelegramPollingService,
+    redactSensitiveText,
+    isExplicitTelegramApiRejection,
+    sendTelegramCommandRouteError,
+    telegramCommandRouteError,
   });
 
   registerTelegramPollingApi({
