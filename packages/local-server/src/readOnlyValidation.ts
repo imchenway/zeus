@@ -438,3 +438,67 @@ function sha256Json(value: unknown): string {
 function validationError(code: string, message: string, cause?: unknown): Error {
   return Object.assign(new Error(message, cause === undefined ? undefined : { cause }), { code, statusCode: 503, failClosed: true as const });
 }
+
+/** 只读验证模式下被拦截能力的统一错误；所有写路径与受限读路径共用。 */
+export function readOnlyValidationCapabilityError(capability: string): Error {
+    return Object.assign(new Error(`只读验证模式禁止${capability}。`), {
+        code: 'ZEUS_READ_ONLY_VALIDATION_CAPABILITY_BLOCKED',
+        statusCode: 503,
+        recoveryRequired: false as const,
+    });
+}
+
+/** GET/HEAD 也可能启动 Provider、Keychain、Git、Worker 或读取真实进程；只允许明确的复制库查询面。 */
+export function isReadOnlyValidationExternalRead(path: string): boolean {
+    const blockedPatterns = [
+        /^\/api\/(?:codex|provider-runtime|runtime|telegram|model-connections|models\/catalog|zentao-instances|usage-overview|release)(?:\/|$)/u,
+        /^\/api\/security\/(?:secrets|reset)(?:\/|$)/u,
+        /^\/api\/(?:git|code-map)(?:\/|$)/u,
+        /^\/api\/skills(?:\/|$)/u,
+        /^\/api\/projects\/[^/]+\/(?:git|database\/secret|model-selection|scan-status|codex-task-push-capabilities|codex-conversation-capabilities)(?:\/|$)/u,
+        /^\/api\/tasks\/[^/]+\/(?:diff|git-workspaces|integrations)(?:\/|$)/u,
+        /^\/api\/projects\/[^/]+\/conversations\/[^/]+\/subagents(?:\/|$)/u,
+        /^\/api\/projects\/[^/]+\/conversations\/[^/]+\/resources\/[^/]+\/(?:open-intent|preview)$/u,
+        /^\/api\/projects\/[^/]+\/conversations\/[^/]+\/tool-results\/[^/]+$/u,
+        /^\/api\/projects\/[^/]+\/conversations\/[^/]+\/turns\/[^/]+\/change-set\/[^/]+\/files\/[^/]+\/(?:open-intent|preview)$/u,
+        /^\/api\/execution-host\/handoff(?:\/|$)/u,
+        /^\/api\/diagnostics\/storage\/artifacts(?:\/|$)/u,
+    ];
+    return blockedPatterns.some((pattern) => pattern.test(path));
+}
+
+/** 只读验证模式的已跳过能力清单，供诊断端点如实展示。 */
+export function readOnlyValidationSkippedCapabilities(): Array<{ id: string; reason: string }> {
+    return [
+        {
+            id: 'core_database_startup_reconciliation',
+            reason: 'query_only database; migrations, repairs, command sealing, handoff recovery and scan recovery skipped'
+        },
+        {id: 'codex_remote_control_restore', reason: 'Provider manager replaced by validation-only blocked port'},
+        {id: 'codex_legacy_thread_migration', reason: 'Codex disabled before migration branch'},
+        {id: 'codex_legacy_import_recovery', reason: 'legacy import service not constructed'},
+        {id: 'codex_native_conversation_recovery', reason: 'native recovery branch disabled'},
+        {id: 'codex_usage_background_refresh', reason: 'usage timer not installed'},
+        {id: 'task_integration_preparing_retry', reason: 'dispatch admission false; preparing attempts not traversed'},
+        {id: 'runtime_session_reconciliation', reason: 'persisted PID and PGID are not inspected'},
+        {id: 'pi_accepted_turn_recovery', reason: 'Pi Worker not constructed; copied turn state unchanged'},
+        {
+            id: 'command_center_interrupted_run_recovery',
+            reason: 'read-only Command Center skips directories and recovery'
+        },
+        {
+            id: 'digital_employee_automation_and_execution',
+            reason: 'query-only validation exposes history but does not construct the digital employee scheduler or dispatch Provider, Git, deployment and completion actions'
+        },
+        {id: 'heavy_worker_pool_activation', reason: 'worker pool remains closed'},
+        {
+            id: 'telegram_polling_and_notification',
+            reason: 'token and Keychain port unavailable; all Telegram admission blocked'
+        },
+        {id: 'release_update_scheduler', reason: 'update endpoints blocked and Main scheduler not constructed'},
+        {
+            id: 'browser_host_state_restore',
+            reason: 'static snapshot only; WebContentsView creation and navigation blocked in Main'
+        },
+    ];
+}

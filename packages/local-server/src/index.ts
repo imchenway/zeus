@@ -157,6 +157,13 @@ import {
   type TaskAgentRunStatus,
 } from './localServerSettingsNormalization.js';
 import { createLocalServerSupportOperations, normalizeTelegramNotificationSettings, normalizeTelegramSecuritySettings } from './localServerSupportOperations.js';
+import {
+    applyLocalCorsHeaders,
+    isAllowedLocalAppOrigin,
+    isPathInsideProjectRoot,
+    normalizeHeaderValue,
+    resolveRegisteredRuntimeAdapter
+} from './localServerPlatformSupport.js';
 import { ManagedPortableContextStore } from './managedPortableContextStore.js';
 import { migrateMisplacedCodexThreadRollouts } from './misplacedCodexThreadMigration.js';
 import { createModelConnectionService } from './modelConnectionService.js';
@@ -183,6 +190,11 @@ import { createZentaoCredentialService } from './zentaoCredentialService.js';
 import { createZeusDataLayoutForDatabase, type ZeusDataLayout } from './zeusDataLayout.js';
 
 export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, type ReadOnlyValidationApplicationIdentity } from './readOnlyValidation.js';
+import {
+    isReadOnlyValidationExternalRead,
+    readOnlyValidationCapabilityError,
+    readOnlyValidationSkippedCapabilities
+} from './readOnlyValidation.js';
 export { createMacOSKeychainStore, getSecretPresenceLabel, type SecretPresenceLabel, type SecretStore } from './securityCore.js';
 
 export type { GraphEdgeDetail, GraphNeighborhood, GraphSearchResult, GraphViewSnapshot } from './codeIntelligenceGraphStore.js';
@@ -3674,53 +3686,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   return server;
 }
 
-function readOnlyValidationCapabilityError(capability: string): Error {
-  return Object.assign(new Error(`只读验证模式禁止${capability}。`), {
-    code: 'ZEUS_READ_ONLY_VALIDATION_CAPABILITY_BLOCKED',
-    statusCode: 503,
-    recoveryRequired: false as const,
-  });
-}
-
-/** GET/HEAD 也可能启动 Provider、Keychain、Git、Worker 或读取真实进程；只允许明确的复制库查询面。 */
-function isReadOnlyValidationExternalRead(path: string): boolean {
-  const blockedPatterns = [
-    /^\/api\/(?:codex|provider-runtime|runtime|telegram|model-connections|models\/catalog|zentao-instances|usage-overview|release)(?:\/|$)/u,
-    /^\/api\/security\/(?:secrets|reset)(?:\/|$)/u,
-    /^\/api\/(?:git|code-map)(?:\/|$)/u,
-    /^\/api\/skills(?:\/|$)/u,
-    /^\/api\/projects\/[^/]+\/(?:git|database\/secret|model-selection|scan-status|codex-task-push-capabilities|codex-conversation-capabilities)(?:\/|$)/u,
-    /^\/api\/tasks\/[^/]+\/(?:diff|git-workspaces|integrations)(?:\/|$)/u,
-    /^\/api\/projects\/[^/]+\/conversations\/[^/]+\/subagents(?:\/|$)/u,
-    /^\/api\/projects\/[^/]+\/conversations\/[^/]+\/resources\/[^/]+\/(?:open-intent|preview)$/u,
-    /^\/api\/projects\/[^/]+\/conversations\/[^/]+\/tool-results\/[^/]+$/u,
-    /^\/api\/projects\/[^/]+\/conversations\/[^/]+\/turns\/[^/]+\/change-set\/[^/]+\/files\/[^/]+\/(?:open-intent|preview)$/u,
-    /^\/api\/execution-host\/handoff(?:\/|$)/u,
-    /^\/api\/diagnostics\/storage\/artifacts(?:\/|$)/u,
-  ];
-  return blockedPatterns.some((pattern) => pattern.test(path));
-}
-
-function readOnlyValidationSkippedCapabilities(): Array<{ id: string; reason: string }> {
-  return [
-    { id: 'core_database_startup_reconciliation', reason: 'query_only database; migrations, repairs, command sealing, handoff recovery and scan recovery skipped' },
-    { id: 'codex_remote_control_restore', reason: 'Provider manager replaced by validation-only blocked port' },
-    { id: 'codex_legacy_thread_migration', reason: 'Codex disabled before migration branch' },
-    { id: 'codex_legacy_import_recovery', reason: 'legacy import service not constructed' },
-    { id: 'codex_native_conversation_recovery', reason: 'native recovery branch disabled' },
-    { id: 'codex_usage_background_refresh', reason: 'usage timer not installed' },
-    { id: 'task_integration_preparing_retry', reason: 'dispatch admission false; preparing attempts not traversed' },
-    { id: 'runtime_session_reconciliation', reason: 'persisted PID and PGID are not inspected' },
-    { id: 'pi_accepted_turn_recovery', reason: 'Pi Worker not constructed; copied turn state unchanged' },
-    { id: 'command_center_interrupted_run_recovery', reason: 'read-only Command Center skips directories and recovery' },
-    { id: 'digital_employee_automation_and_execution', reason: 'query-only validation exposes history but does not construct the digital employee scheduler or dispatch Provider, Git, deployment and completion actions' },
-    { id: 'heavy_worker_pool_activation', reason: 'worker pool remains closed' },
-    { id: 'telegram_polling_and_notification', reason: 'token and Keychain port unavailable; all Telegram admission blocked' },
-    { id: 'release_update_scheduler', reason: 'update endpoints blocked and Main scheduler not constructed' },
-    { id: 'browser_host_state_restore', reason: 'static snapshot only; WebContentsView creation and navigation blocked in Main' },
-  ];
-}
-
 /** 启动真实本地 HTTP 服务，端口 0 交给系统选择，始终绑定 127.0.0.1。 */
 export async function startZeusLocalServer(options: CreateLocalServerOptions): Promise<RunningZeusLocalServer> {
   const server = await createLocalServer(options);
@@ -3942,48 +3907,6 @@ function toSecurityAuditLogEntry(record: ZeusAuditLogRecord): SecurityAuditLogEn
     payload: parseJsonObject(record.payloadJson),
     createdAt: record.createdAt,
   };
-}
-
-/** 仅允许 Electron/file/app 与本机开发 origin 访问本地 API，阻断任意网页带 token 调用。 */
-function isAllowedLocalAppOrigin(origin: string | undefined): boolean {
-  if (!origin || origin === 'null') return true;
-  try {
-    const parsed = new URL(origin);
-    if (parsed.protocol === 'file:' || parsed.protocol === 'app:') return true;
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
-    return ['localhost', '127.0.0.1', '[::1]', '::1'].includes(parsed.hostname);
-  } catch {
-    return false;
-  }
-}
-
-function applyLocalCorsHeaders(reply: FastifyReply, origin: string | undefined): void {
-  if (!origin || origin === 'null') return;
-  reply.header('Access-Control-Allow-Origin', origin);
-  reply.header('Access-Control-Allow-Credentials', 'false');
-  reply.header('Access-Control-Allow-Headers', 'authorization,content-type,x-zeus-snapshot-caller,x-zeus-trace-id');
-  reply.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-  reply.header('Access-Control-Expose-Headers', 'deprecation,link,server-timing,x-zeus-conversation-snapshot-generation,x-zeus-trace-id');
-  reply.header('Vary', 'Origin');
-}
-
-function normalizeHeaderValue(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
-}
-
-/** Runtime 只能启动已登记的 AI CLI adapter 命令，避免本地 API 退化成任意 shell 执行入口。 */
-function resolveRegisteredRuntimeAdapter(command: string): AiCliAdapterDescriptor | null {
-  const trimmed = command.trim();
-  if (trimmed !== command || trimmed.length === 0 || trimmed.includes('/') || trimmed.includes('\\') || trimmed.includes('\0')) return null;
-  return listAiCliAdapters().find((adapter) => adapter.command === trimmed) ?? null;
-}
-
-/** 判断 Runtime cwd 是否仍位于项目根目录内；相等也允许，避免本地 API 变成项目外 shell 入口。 */
-function isPathInsideProjectRoot(candidatePath: string, projectRoot: string): boolean {
-  const resolvedCandidate = resolve(candidatePath);
-  const resolvedRoot = resolve(projectRoot);
-  const rel = relative(resolvedRoot, resolvedCandidate);
-  return rel === '' || (!!rel && !rel.startsWith('..') && !rel.startsWith('/') && !rel.startsWith('\\'));
 }
 
 function redactSensitiveText(value: string): {
