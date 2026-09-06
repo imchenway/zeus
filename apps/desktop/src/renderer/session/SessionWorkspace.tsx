@@ -1598,6 +1598,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const [goalPanelOpen, setGoalPanelOpen] = useState(false);
   const [goalBusy, setGoalBusy] = useState(false);
   const [goalError, setGoalError] = useState<string | null>(null);
+    const [computerStopBusy, setComputerStopBusy] = useState(false);
+    const [computerStopError, setComputerStopError] = useState<unknown>(null);
   const [localSubmissionRevision, setLocalSubmissionRevision] = useState(0);
   const [serviceTierPreferences, setServiceTierPreferences] = useState<ProjectModelServiceTierPreference[]>([]);
   const [serviceTierPreferenceError, setServiceTierPreferenceError] = useState<string | null>(null);
@@ -1649,6 +1651,13 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   useApplicationErrorDialog(serviceTierPreferenceError, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
   });
+    useApplicationErrorDialog(computerStopError, {
+        language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+    });
+    const computerControlIdentity = props.conversation?.nativeSession?.id ? {
+        conversationId: props.conversation.id,
+        sessionId: props.conversation.nativeSession.id
+    } : null;
   const serviceTierPreferenceProjectId = props.conversation?.projectId ?? owner?.projectId ?? null;
   useEffect(() => {
     if (!serviceTierPreferenceProjectId || !actions.onLoadProjectConfig) {
@@ -2338,7 +2347,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
             {displayedHeader.contextLabel ? <small>{displayedHeader.contextLabel}</small> : null}
           </span>
           <div className="session-thread-header-actions">
-            {!legacy && props.conversation && window.zeus?.stopComputerUse ? (
+              {!legacy && computerControlIdentity && window.zeus?.stopComputerUse ? (
               <button
                 type="button"
                 className="session-browser-toggle session-computer-stop"
@@ -2348,7 +2357,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 onClick={() => {
                   setComputerStopBusy(true);
                   setComputerStopError(null);
-                  void window.zeus!.stopComputerUse!()
+                    void window.zeus!.stopComputerUse!(computerControlIdentity)
                     .catch((error) => setComputerStopError(error))
                     .finally(() => setComputerStopBusy(false));
                 }}

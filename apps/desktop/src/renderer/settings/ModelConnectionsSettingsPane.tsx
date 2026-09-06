@@ -16,7 +16,11 @@ import type {
 } from '../apiClient.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { Button } from '../ui/Button.js';
-import { reportApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import {
+    formatVisibleApplicationError,
+    reportApplicationError,
+    VisibleApplicationError
+} from '../ui/ApplicationErrorDialog.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 
 /** 编辑中的供应商；密钥只在当前编辑器内存中短暂保留。 */

@@ -2,7 +2,6 @@ import type { AsyncQuestionAnswer } from '@zeus/shared';
 import { userFacingErrorCause } from '@zeus/shared';
 import websocketPlugin from '@fastify/websocket';
 import {
-  type AiCliAdapterDescriptor,
   type AiRuntimeLogEntry,
   type AiRuntimeSession,
   type CodexAppServerManager,
@@ -98,10 +97,10 @@ import {
 } from '@zeus/storage';
 import { type TaskStatus } from './taskCore.js';
 import { type TelegramMessageSender, type TelegramPollingService, type TelegramUpdate } from './telegramAdapter.js';
-import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
+import Fastify, {type FastifyInstance, type FastifyRequest} from 'fastify';
 import { createHash, randomUUID } from 'node:crypto';
 import { accessSync, appendFileSync, existsSync, constants as fsConstants, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import {dirname, join, resolve} from 'node:path';
 import { performance } from 'node:perf_hooks';
 import type { BrowserAutomationPort } from './browserAutomation.js';
 import { clearPersistedGraphCache, compactProjectGraphForRuntimeCache, persistScanAndGraph } from './codeIntelligenceGraphCache.js';
