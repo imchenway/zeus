@@ -257,7 +257,8 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
         case "failed":
             progressRow.isHidden = true
             progressIndicator.isHidden = true
-            setButtons(secondary: localized("close"), primary: localized("retry"))
+            // 仅展示后台明确允许的重试，不从失败状态推断可否再次执行。
+            setButtons(secondary: localized("close"), primary: command["canRetry"] as? Bool == true ? localized("retry") : nil)
         case "installing":
             progressRow.isHidden = false
             progressIndicator.isHidden = false

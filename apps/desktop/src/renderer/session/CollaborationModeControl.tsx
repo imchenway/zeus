@@ -4,7 +4,7 @@ import type { SessionUiLanguage } from './ThreadItemView.js';
 
 export function CollaborationModeControl(props: { language: SessionUiLanguage; value: NativeCollaborationMode; disabled?: boolean; onChange: (mode: NativeCollaborationMode) => void | Promise<void> }) {
   const plan = props.value === 'plan';
-  const action = plan ? (props.language === 'zh-CN' ? '退出 PLAN 模式' : 'Exit Plan mode') : props.language === 'zh-CN' ? '创建计划' : 'Create a plan';
+  const action = plan ? (props.language === 'zh-CN' ? '退出计划模式' : 'Exit plan mode') : props.language === 'zh-CN' ? '创建计划' : 'Create a plan';
   const title = props.language === 'zh-CN' ? `计划模式：${plan ? '开启' : '关闭'}；${action}` : `Plan mode: ${plan ? 'on' : 'off'}; ${action}`;
   return (
     <button type="button" className="session-collaboration-mode" data-active={plan || undefined} aria-pressed={plan} aria-label={action} title={title} disabled={props.disabled} onClick={() => void props.onChange(plan ? 'default' : 'plan')}>

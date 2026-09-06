@@ -136,6 +136,8 @@ interface ManagedBrowserAuditEntry {
 }
 
 interface CreateBrowserHostOptions {
+  /** 内置浏览器的授权和登录窗口跟随应用语言。 */
+  language?: () => 'zh-CN' | 'en-US';
   statePath: string;
   preloadPath: string;
   attachmentRoot: string;
@@ -244,6 +246,11 @@ export class BrowserHost implements BrowserAutomationPort {
   private persistenceChain: Promise<void> = Promise.resolve();
   private closed = false;
   private ipcRegistered = false;
+
+  /** 浏览器自身的提示使用应用语言，网页与工具返回的正文不改写。 */
+  private text(zh: string, en: string): string {
+    return this.options.language?.() === 'en-US' ? en : zh;
+  }
 
   constructor(private readonly options: CreateBrowserHostOptions) {
     this.now = options.now ?? (() => new Date().toISOString());
@@ -642,8 +649,8 @@ export class BrowserHost implements BrowserAutomationPort {
         tabId: tab.snapshot.id,
         kind: 'web_permission',
         origin,
-        title: `Allow ${permission}?`,
-        detail: `${origin || 'This page'} requested the ${permission} browser permission.`,
+        title: this.text(`允许网页使用 ${permission} 权限吗？`, `Allow ${permission}?`),
+        detail: this.text(`${origin || this.text('这个网页', 'This page')} 请求浏览器权限 ${permission}。`, `${origin || 'This page'} requested the ${permission} browser permission.`),
       }).then((decision) => {
         const allowed = decision !== 'deny';
         if (allowed && origin) this.grantedWebPermissions.add(`${origin}\u0000${permission}`);
@@ -670,7 +677,7 @@ export class BrowserHost implements BrowserAutomationPort {
         item.pause();
         void dialog
           .showSaveDialog(this.preferredWindow(tab.snapshot.conversationId), {
-            title: 'Save browser download',
+            title: this.text('保存下载文件', 'Save browser download'),
             defaultPath: join(this.settings.downloadDirectory, fileName),
           })
           .then((result) => {
@@ -1188,8 +1195,8 @@ export class BrowserHost implements BrowserAutomationPort {
       tabId,
       kind: 'site',
       origin,
-      title: `Allow agent access to ${origin}?`,
-      detail: 'The agent wants to inspect or interact with this site in the Zeus built-in browser.',
+      title: this.text(`允许 AI 访问 ${origin} 吗？`, `Allow agent access to ${origin}?`),
+      detail: this.text('AI 请求在 Zeus 内置浏览器中读取或操作这个网站。', 'The agent wants to inspect or interact with this site in the Zeus built-in browser.'),
     });
     if (decision === 'deny') throw new Error(`Agent browser access was denied for ${origin}.`);
   }
@@ -1299,8 +1306,8 @@ export class BrowserHost implements BrowserAutomationPort {
         tabId: tab.snapshot.id,
         kind: 'sensitive_action',
         origin: safeOrigin(tab.snapshot.url),
-        title: 'Allow this sensitive browser action?',
-        detail: `The agent wants to click “${(info.name || info.text || info.selector).slice(0, 160)}”.`,
+        title: this.text('允许这次网页操作吗？', 'Allow this sensitive browser action?'),
+        detail: this.text(`AI 请求点击“${(info.name || info.text || info.selector).slice(0, 160)}”。请确认网页上的操作及影响。`, `The agent wants to click “${(info.name || info.text || info.selector).slice(0, 160)}”.`),
         tool: 'click',
       });
       if (decision === 'deny') return toolText('The user denied the sensitive click.', false);
@@ -1368,8 +1375,8 @@ export class BrowserHost implements BrowserAutomationPort {
         tabId: tab.snapshot.id,
         kind: 'sensitive_action',
         origin: safeOrigin(tab.snapshot.url),
-        title: 'Allow this browser key action?',
-        detail: `The agent wants to press ${keyChord}. This key can submit a form or trigger a destructive page action.`,
+        title: this.text('允许这次按键操作吗？', 'Allow this browser key action?'),
+        detail: this.text(`AI 请求按下 ${keyChord}。这可能提交表单或执行删除等操作。`, `The agent wants to press ${keyChord}. This key can submit a form or trigger a destructive page action.`),
         tool: 'press',
       });
       if (decision === 'deny') return toolText('The user denied the sensitive key action.', false);
@@ -1423,8 +1430,11 @@ export class BrowserHost implements BrowserAutomationPort {
     const decision = await this.requestApproval({
       conversationId: input.conversationId,
       kind: 'sensitive_action',
-      title: action === 'read' ? 'Allow clipboard read?' : 'Allow clipboard write?',
-      detail: `The browser agent requested a one-time clipboard ${action}.`,
+      title: action === 'read' ? this.text('允许读取剪贴板吗？', 'Allow clipboard read?') : this.text('允许修改剪贴板吗？', 'Allow clipboard write?'),
+      detail:
+        action === 'read'
+          ? this.text('AI 将读取剪贴板当前内容，其中可能包含你复制的私人信息。', 'The AI will read the current clipboard, which may contain private information you copied.')
+          : this.text('AI 将替换剪贴板当前内容。', 'The AI will replace the current clipboard contents.'),
       tool: 'clipboard',
     });
     if (decision === 'deny') return toolText('The user denied clipboard access.', false);
@@ -1451,8 +1461,8 @@ export class BrowserHost implements BrowserAutomationPort {
       tabId: tab.snapshot.id,
       kind: 'full_cdp',
       origin: safeOrigin(tab.snapshot.url),
-      title: 'Allow full browser developer access?',
-      detail: `The agent requested CDP method ${method}. This can inspect or change the current page outside normal browser tool limits.`,
+      title: this.text('允许浏览器开发者权限吗？', 'Allow full browser developer access?'),
+      detail: this.text(`AI 请求执行浏览器开发者操作 ${method}（CDP），可以超出普通工具的限制读取或修改网页。`, `The agent requested CDP method ${method}. This can inspect or change the current page outside normal browser tool limits.`),
       tool: 'developer',
     });
     if (decision === 'deny') return toolText('The user denied full CDP access.', false);
@@ -1526,8 +1536,8 @@ export class BrowserHost implements BrowserAutomationPort {
       conversationId: input.conversationId,
       ...(tab ? { tabId: tab.snapshot.id, origin: safeOrigin(tab.snapshot.url) } : {}),
       kind,
-      title: kind === 'full_cdp' ? 'Allow advanced browser developer access?' : 'Allow this sensitive browser operation?',
-      detail: `The agent requested ${contract.path} from the frozen Browser contract.`,
+      title: kind === 'full_cdp' ? this.text('允许浏览器开发者权限吗？', 'Allow advanced browser developer access?') : this.text('允许这次网页操作吗？', 'Allow this sensitive browser operation?'),
+      detail: this.text(`AI 请求执行网页操作 ${contract.path}。请确认是否允许读取或修改相关网页内容。`, `The AI requests browser action ${contract.path}. Review whether to allow access to or changes on the relevant page.`),
       tool: 'invoke',
     });
     return decision !== 'deny';
@@ -1810,8 +1820,11 @@ export class BrowserHost implements BrowserAutomationPort {
           tabId: tab.snapshot.id,
           kind: 'sensitive_action',
           origin: safeOrigin(tab.snapshot.url),
-          title: 'Allow this sensitive browser action?',
-          detail: `The agent wants to perform ${String(args.action)} on “${(info.name || info.text || info.selector).slice(0, 160)}”.`,
+          title: this.text('允许这次网页操作吗？', 'Allow this sensitive browser action?'),
+          detail: this.text(
+            `AI 请求对“${(info.name || info.text || info.selector).slice(0, 160)}”执行 ${String(args.action)}。请确认该操作的影响。`,
+            `The agent wants to perform ${String(args.action)} on “${(info.name || info.text || info.selector).slice(0, 160)}”.`,
+          ),
           tool: 'invoke',
         });
         if (decision === 'deny') return toolText('The user denied the sensitive accessibility action.', false);
@@ -1900,8 +1913,8 @@ export class BrowserHost implements BrowserAutomationPort {
           tabId: tab.snapshot.id,
           kind: 'sensitive_action',
           origin: safeOrigin(tab.snapshot.url),
-          title: 'Allow this sensitive browser action?',
-          detail: `The agent wants to activate “${(info.name || info.text || info.navigationUrl).slice(0, 160)}”.`,
+          title: this.text('允许这次网页操作吗？', 'Allow this sensitive browser action?'),
+          detail: this.text(`AI 请求操作“${(info.name || info.text || info.navigationUrl).slice(0, 160)}”。请确认网页上的操作及影响。`, `The agent wants to activate “${(info.name || info.text || info.navigationUrl).slice(0, 160)}”.`),
           tool: 'invoke',
         });
         if (decision === 'deny') return toolText('The user denied the sensitive coordinate action.', false);
@@ -2163,8 +2176,8 @@ export class BrowserHost implements BrowserAutomationPort {
           tabId: tab.snapshot.id,
           kind: 'sensitive_action',
           origin: safeOrigin(tab.snapshot.url),
-          title: 'Allow this sensitive browser action?',
-          detail: `The agent wants to activate “${(info.name || info.text || info.selector).slice(0, 160)}”.`,
+          title: this.text('允许这次网页操作吗？', 'Allow this sensitive browser action?'),
+          detail: this.text(`AI 请求操作“${(info.name || info.text || info.selector).slice(0, 160)}”。请确认网页上的操作及影响。`, `The agent wants to activate “${(info.name || info.text || info.selector).slice(0, 160)}”.`),
           tool: 'invoke',
         });
         if (decision === 'deny') return toolText('The user denied the sensitive locator action.', false);
@@ -2202,8 +2215,8 @@ export class BrowserHost implements BrowserAutomationPort {
       tabId: tab.snapshot.id,
       kind: 'sensitive_action',
       origin: safeOrigin(tab.snapshot.url),
-      title: 'Choose files for browser upload?',
-      detail: 'Zeus will open a native picker. Only files explicitly selected by the user are granted to this page.',
+      title: this.text('选择要上传到网页的文件吗？', 'Choose files for browser upload?'),
+      detail: this.text('将打开文件选择窗口，你选中的文件可被这个网页读取并上传。', 'Zeus will open a native picker. Only files explicitly selected by the user are granted to this page.'),
       tool: 'invoke',
     });
     if (decision === 'deny') return toolText('The user denied the file upload.', false);
@@ -2555,7 +2568,7 @@ export class BrowserHost implements BrowserAutomationPort {
       resizable: false,
       minimizable: false,
       maximizable: false,
-      title: 'Zeus 安全登录',
+      title: this.text('通过 Zeus 登录', 'Sign in with Zeus'),
       webPreferences: { contextIsolation: false, nodeIntegration: true, sandbox: false, devTools: false },
     });
     authWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -2563,7 +2576,7 @@ export class BrowserHost implements BrowserAutomationPort {
     const safeFields = fields.map((field) => ({ id: String(field.id ?? ''), label: String(field.label ?? field.id ?? 'Credential').slice(0, 100), type: secureHtmlInputType(field.type), required: field.required === true }));
     const safeOptions = options.map((option) => ({ id: String(option.id ?? ''), label: String(option.label ?? option.id ?? 'Option').slice(0, 100) }));
     const configuration = JSON.stringify({ origin, fields: safeFields, options: safeOptions, channel, token }).replaceAll('<', '\\u003c');
-    const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'"><style>body{font:14px -apple-system,sans-serif;margin:0;background:#11151b;color:#f5f7f6}main{padding:24px}h1{font-size:20px;margin:0 0 6px}p{color:#aeb8b5;margin:0 0 18px;word-break:break-all}label{display:block;margin:12px 0 5px}input[type=text],input[type=email],input[type=tel],input[type=password]{box-sizing:border-box;width:100%;padding:10px;border:1px solid #39433f;border-radius:8px;background:#1b2229;color:#fff}.option{display:flex;gap:8px;align-items:center}.actions{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}button{padding:9px 15px;border-radius:8px;border:1px solid #44514d;background:#252e35;color:#fff}button.primary{background:#55bda1;color:#07120f;border-color:#55bda1}</style></head><body><main><h1>Zeus 安全登录</h1><p id="origin"></p><form id="form"><div id="options"></div><div id="fields"></div><div class="actions"><button type="button" id="cancel">取消</button><button class="primary" type="submit">继续</button></div></form></main><script>const {ipcRenderer}=require('electron');const config=${configuration};document.getElementById('origin').textContent=config.origin;const options=document.getElementById('options');for(const option of config.options){const label=document.createElement('label');label.className='option';const input=document.createElement('input');input.type='radio';input.name='selectedOption';input.value=option.id;label.append(input,document.createTextNode(option.label));options.append(label)}const fields=document.getElementById('fields');for(const field of config.fields){const label=document.createElement('label');label.textContent=field.label;const input=document.createElement('input');input.type=field.type;input.name=field.id;input.required=field.required;input.autocomplete='off';label.append(input);fields.append(label)}const finish=(status)=>{const values={};for(const field of config.fields){const input=document.querySelector('[name="'+CSS.escape(field.id)+'"]');values[field.id]=input?.value||'';if(input)input.value=''}const selectedOption=document.querySelector('[name=selectedOption]:checked')?.value;ipcRenderer.send(config.channel,{token:config.token,status,values,selectedOption})};document.getElementById('cancel').onclick=()=>finish('cancelled');document.getElementById('form').onsubmit=(event)=>{event.preventDefault();finish('submitted')}</script></body></html>`;
+    const html = `<!doctype html><html lang="${this.options.language?.() ?? 'zh-CN'}"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'"><style>body{font:14px -apple-system,sans-serif;margin:0;background:#11151b;color:#f5f7f6}main{padding:24px}h1{font-size:20px;margin:0 0 6px}p{color:#aeb8b5;margin:0 0 18px;word-break:break-all}label{display:block;margin:12px 0 5px}input[type=text],input[type=email],input[type=tel],input[type=password]{box-sizing:border-box;width:100%;padding:10px;border:1px solid #39433f;border-radius:8px;background:#1b2229;color:#fff}.option{display:flex;gap:8px;align-items:center}.actions{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}button{padding:9px 15px;border-radius:8px;border:1px solid #44514d;background:#252e35;color:#fff}button.primary{background:#55bda1;color:#07120f;border-color:#55bda1}</style></head><body><main><h1>${this.text('通过 Zeus 登录', 'Sign in with Zeus')}</h1><p id="origin"></p><form id="form"><div id="options"></div><div id="fields"></div><div class="actions"><button type="button" id="cancel">${this.text('取消', 'Cancel')}</button><button class="primary" type="submit">${this.text('继续', 'Continue')}</button></div></form></main><script>const {ipcRenderer}=require('electron');const config=${configuration};document.getElementById('origin').textContent=config.origin;const options=document.getElementById('options');for(const option of config.options){const label=document.createElement('label');label.className='option';const input=document.createElement('input');input.type='radio';input.name='selectedOption';input.value=option.id;label.append(input,document.createTextNode(option.label));options.append(label)}const fields=document.getElementById('fields');for(const field of config.fields){const label=document.createElement('label');label.textContent=field.label;const input=document.createElement('input');input.type=field.type;input.name=field.id;input.required=field.required;input.autocomplete='off';label.append(input);fields.append(label)}const finish=(status)=>{const values={};for(const field of config.fields){const input=document.querySelector('[name="'+CSS.escape(field.id)+'"]');values[field.id]=input?.value||'';if(input)input.value=''}const selectedOption=document.querySelector('[name=selectedOption]:checked')?.value;ipcRenderer.send(config.channel,{token:config.token,status,values,selectedOption})};document.getElementById('cancel').onclick=()=>finish('cancelled');document.getElementById('form').onsubmit=(event)=>{event.preventDefault();finish('submitted')}</script></body></html>`;
     return new Promise((resolveCredentials) => {
       let resolved = false;
       const finish = (value: { status: 'submitted' | 'cancelled'; values: Record<string, string>; selectedOption?: string }) => {

@@ -78,10 +78,7 @@ export function RuntimeDetails(props: RuntimeDetailsProps) {
             />
           </RuntimeDetailLine>
           <RuntimeDetailLine>
-            <RuntimeUsageRow
-              label={zh ? 'MCP 启动' : 'MCP startup'}
-              value={props.mcpStartup ? runtimeValueSummary(props.mcpStartup) : unavailableValue(zh ? 'MCP 启动状态暂无数据。' : 'MCP startup status is unavailable.', props.language)}
-            />
+            <RuntimeUsageRow label={zh ? 'MCP 启动' : 'MCP startup'} value={props.mcpStartup ? runtimeValueSummary(props.mcpStartup) : unavailableValue(props.language)} />
           </RuntimeDetailLine>
         </RuntimeDetailGroup>
       </div>
@@ -90,7 +87,7 @@ export function RuntimeDetails(props: RuntimeDetailsProps) {
 }
 
 function ServiceTierValue(props: { fact: NativeRuntimeFact<string | null>; language: SessionUiLanguage }) {
-  if (props.fact.state === 'unavailable') return unavailableValue(props.fact.reason, props.language);
+  if (props.fact.state === 'unavailable') return unavailableValue(props.language);
   if (props.fact.value === 'priority' || props.fact.value?.toLowerCase() === 'fast') return props.language === 'zh-CN' ? '快速' : 'Fast';
   return props.fact.value && props.fact.value !== 'default' ? props.fact.value : props.language === 'zh-CN' ? '标准' : 'Standard';
 }
@@ -127,7 +124,7 @@ function RuntimeUsageRow(props: { label: string; value: ReactNode }) {
 }
 
 function RuntimeCode(props: { fact: NativeRuntimeFact<string>; language: SessionUiLanguage; copyLabel?: string; copiedLabel?: string }) {
-  if (props.fact.state === 'unavailable') return unavailableValue(props.fact.reason, props.language);
+  if (props.fact.state === 'unavailable') return unavailableValue(props.language);
   return (
     <span className="session-runtime-code-value">
       <code title={props.fact.value}>{props.fact.value}</code>
@@ -158,20 +155,20 @@ function RuntimeCopyButton(props: { text: string; label: string; copiedLabel: st
 }
 
 function factValue<T>(fact: NativeRuntimeFact<T>, language: SessionUiLanguage): ReactNode {
-  return fact.state === 'available' ? String(fact.value) : unavailableValue(fact.reason, language);
+  return fact.state === 'available' ? String(fact.value) : unavailableValue(language);
 }
 
-function unavailableValue(reason: string, language: SessionUiLanguage): ReactNode {
-  const accessibleLabel = language === 'zh-CN' ? `暂无数据：${reason}` : `Unavailable: ${reason}`;
+/** 无数据时无需重复提示内部采集过程；字段名称已说明缺少哪项数据。 */
+function unavailableValue(language: SessionUiLanguage): ReactNode {
   return (
-    <span className="session-runtime-unavailable" title={reason} aria-label={accessibleLabel}>
-      -
+    <span className="session-runtime-unavailable" aria-label={language === 'zh-CN' ? '暂无数据' : 'Data unavailable'}>
+      —
     </span>
   );
 }
 
 function formatTokenFact(fact: NativeRuntimeFact<number>, language: SessionUiLanguage, compact = false): ReactNode {
-  if (fact.state === 'unavailable') return unavailableValue(fact.reason, language);
+  if (fact.state === 'unavailable') return unavailableValue(language);
   const formatted = formatTokenCount(fact.value, language);
   return (
     <span title={`${formatted.exact} Token`} aria-label={`${formatted.exact} Token`}>
@@ -181,14 +178,14 @@ function formatTokenFact(fact: NativeRuntimeFact<number>, language: SessionUiLan
 }
 
 function formatPercentageFact(fact: NativeRuntimeFact<number>, language: SessionUiLanguage): ReactNode {
-  if (fact.state === 'unavailable') return unavailableValue(fact.reason, language);
+  if (fact.state === 'unavailable') return unavailableValue(language);
   return new Intl.NumberFormat(language, { style: 'percent', maximumFractionDigits: 1 }).format(Math.max(0, fact.value));
 }
 
 function formatContextUsage(tokens: NativeRuntimeFact<number>, window: NativeRuntimeFact<number>, language: SessionUiLanguage): ReactNode {
-  if (tokens.state === 'unavailable') return unavailableValue(tokens.reason, language);
-  if (window.state === 'unavailable') return unavailableValue(window.reason, language);
-  if (window.value <= 0) return unavailableValue(language === 'zh-CN' ? '上下文窗口为 0，无法计算占用率。' : 'Context window is zero.', language);
+  if (tokens.state === 'unavailable') return unavailableValue(language);
+  if (window.state === 'unavailable') return unavailableValue(language);
+  if (window.value <= 0) return unavailableValue(language);
   const percentage = new Intl.NumberFormat(language, { style: 'percent', maximumFractionDigits: 1 }).format(Math.max(0, tokens.value / window.value));
   const used = formatTokenCount(tokens.value, language);
   const total = formatTokenCount(window.value, language);
@@ -207,18 +204,18 @@ function formatUsdEstimate(value: number, language: SessionUiLanguage): string {
 function formatCostSummary(value: NativeRuntimeFact<number>, coverage: NativeRuntimeFact<number>, complete: boolean, language: SessionUiLanguage): ReactNode {
   if (complete && value.state === 'available') return formatUsdEstimate(value.value, language);
   if (value.state === 'available' && coverage.state === 'available' && coverage.value > 0) return language === 'zh-CN' ? '估算不完整' : 'Estimate incomplete';
-  return value.state === 'unavailable' ? unavailableValue(value.reason, language) : unavailableValue(language === 'zh-CN' ? '费用覆盖率不可确认。' : 'Cost coverage is unavailable.', language);
+  return value.state === 'unavailable' ? unavailableValue(language) : unavailableValue(language);
 }
 
 function formatCoveredCost(value: NativeRuntimeFact<number>, coverage: NativeRuntimeFact<number>, language: SessionUiLanguage): ReactNode {
-  if (value.state === 'unavailable') return unavailableValue(value.reason, language);
+  if (value.state === 'unavailable') return unavailableValue(language);
   const amount = formatUsdEstimate(value.value, language);
   if (coverage.state === 'available' && coverage.value < 1) return `${amount} · ${language === 'zh-CN' ? '已覆盖部分' : 'covered portion'}`;
   return amount;
 }
 
 function formatOutputRateFact(fact: NativeRuntimeFact<number>, language: SessionUiLanguage): ReactNode {
-  if (fact.state === 'unavailable') return unavailableValue(fact.reason, language);
+  if (fact.state === 'unavailable') return unavailableValue(language);
   return `${new Intl.NumberFormat(language, { maximumFractionDigits: fact.value < 100 ? 1 : 0 }).format(fact.value)} tokens / s`;
 }
 

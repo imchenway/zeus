@@ -1,3 +1,4 @@
+import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import type { GitDiffSummary, GitOperationConfirmation } from '../../apiClient.js';
 import type { GitApiClient } from './gitApiClient.js';
 import { errorMessage, ExternalStore } from '../../externalStore.js';
@@ -18,6 +19,8 @@ export interface GitQuerySnapshot {
   rollbackRef: string;
   loading: boolean;
   error: string | null;
+  /** 可选底层原因供界面生成本地化提示，原错误字符串仍保留。 */
+  errorCause?: UserFacingErrorCause | null;
   revision: number;
 }
 
@@ -41,6 +44,7 @@ export class GitQueryStore extends ExternalStore<GitQuerySnapshot> {
       rollbackRef: 'HEAD',
       loading: false,
       error: null,
+      errorCause: null,
       revision: 0,
     });
   }
@@ -53,13 +57,13 @@ export class GitQueryStore extends ExternalStore<GitQuerySnapshot> {
 
   async loadDiff(): Promise<GitDiffSummary> {
     const client = this.requireClient();
-    this.publish({ ...this.snapshot, loading: true, error: null });
+    this.publish({ ...this.snapshot, loading: true, error: null, errorCause: null });
     try {
       const diff = await client.loadGitDiff();
       this.publish({ ...this.snapshot, diff, loading: false, revision: this.snapshot.revision + 1 });
       return diff;
     } catch (error) {
-      this.publish({ ...this.snapshot, loading: false, error: errorMessage(error) });
+      this.publish({ ...this.snapshot, loading: false, error: errorMessage(error), errorCause: userFacingErrorCause(error) });
       throw error;
     }
   }

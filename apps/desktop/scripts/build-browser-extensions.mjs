@@ -33,7 +33,9 @@ for (const variant of variants) {
   const manifest = {
     manifest_version: 3,
     name: variant.name,
-    description: 'Connect an explicitly authorized browser profile to the local Zeus automation and approval layer.',
+    // 安装页由浏览器自带语言机制选择说明；扩展弹窗继续跟随 Zeus。
+    default_locale: 'en',
+    description: '__MSG_description__',
     version: '1.0.0',
     minimum_chrome_version: '120',
     ...(variant.key ? { key: variant.key } : {}),
@@ -44,6 +46,14 @@ for (const variant of variants) {
     optional_host_permissions: ['http://*/*', 'https://*/*'],
     icons: { 16: 'icons/icon-16.png', 32: 'icons/icon-32.png', 48: 'icons/icon-48.png', 128: 'icons/icon-128.png' },
   };
+  // 只生成安装说明所需的两份浏览器原生语言文件，不增加翻译依赖。
+  for (const [locale, description] of [
+    ['en', 'Let Zeus browse sites you allow. Sensitive actions still need your confirmation.'],
+    ['zh_CN', '让 Zeus 操作你允许的网站。敏感操作仍需你确认。'],
+  ]) {
+    await mkdir(resolve(target, '_locales', locale), { recursive: true });
+    await writeFile(resolve(target, '_locales', locale, 'messages.json'), JSON.stringify({ description: { message: description } }), 'utf8');
+  }
   await writeFile(resolve(target, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
   for (const size of [16, 32, 48, 128]) await run('/usr/bin/sips', ['-s', 'format', 'png', '-z', String(size), String(size), resolve(desktopRoot, 'assets/icon.svg'), '--out', resolve(target, `icons/icon-${size}.png`)]);
   await run('/usr/bin/zip', ['-q', '-r', resolve(outputRoot, variant.zip), '.'], target);

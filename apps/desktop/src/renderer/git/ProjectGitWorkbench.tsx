@@ -14,7 +14,7 @@ import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/c
 import type { DashboardClient, ProjectGitAction, ProjectGitCommitDetail, ProjectGitRepositoryWorkbenchItem, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
-import { formatVisibleApplicationError, useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { reportApplicationError, useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { SideBySideDiff } from './ProjectGitDiffViewer.js';
 
 type GitTab = 'changes' | 'shelf' | 'stash' | 'log' | 'console';
@@ -244,7 +244,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       addOperationRecord(
         repository,
         action.type,
-        response.result.outcome === 'conflict' ? (zh ? '操作停在冲突现场' : 'Operation stopped on conflicts') : label,
+        response.result.outcome === 'conflict' ? (zh ? '存在冲突，需要先处理' : 'Conflicts need to be resolved') : label,
         response.result.outcome === 'conflict' ? 'warning' : 'success',
         [response.result.stdout, response.result.stderr, ...response.result.conflictFiles].filter(Boolean).join('\n'),
         performance.now() - started,
@@ -305,8 +305,8 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
     return (
       <section className="project-git-workbench-state" aria-live="polite">
         <CircleNotch aria-hidden="true" className="project-git-spinner" />
-        <strong>{zh ? '正在读取项目 Git 现场' : 'Loading project Git state'}</strong>
-        <span>{zh ? '正在发现当前项目中的真实仓库。' : 'Discovering real repositories in this project.'}</span>
+        <strong>{zh ? '正在读取项目的 Git 状态' : 'Loading the project’s Git status'}</strong>
+        <span>{zh ? '正在查找项目中的 Git 仓库。' : 'Finding Git repositories in this project.'}</span>
       </section>
     );
   }
@@ -327,7 +327,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       <section className="project-git-workbench-state">
         <GitBranch aria-hidden="true" />
         <strong>{zh ? '这个项目中没有发现 Git 仓库' : 'No Git repository was found'}</strong>
-        <span>{zh ? 'Zeus 只展示当前项目目录内实时发现的真实 Git 根。' : 'Zeus only shows real Git roots discovered inside the current project.'}</span>
+        <span>{zh ? '请检查项目目录是否包含 Git 仓库，然后重新扫描。' : 'Check that the project folder contains a Git repository, then scan again.'}</span>
         <Button variant="secondary" onClick={() => void loadWorkbench()}>
           {zh ? '重新扫描' : 'Scan again'}
         </Button>
@@ -604,7 +604,7 @@ function BranchSwitcher(props: {
     { id: 'commit', label: props.zh ? '提交…' : 'Commit…', run: props.onOpenCommit },
     { id: 'push', label: props.zh ? '推送…' : 'Push…', run: props.onOpenPush },
     { id: 'new-branch', label: props.zh ? '新建分支…' : 'New Branch…', run: () => props.onOpenNewBranch() },
-    { id: 'revision', label: props.zh ? '签出标签或 Revision…' : 'Checkout Tag or Revision…', run: props.onOpenRevision },
+    { id: 'revision', label: props.zh ? '切换到标签或提交…' : 'Switch to a tag or commit…', run: props.onOpenRevision },
   ].filter((action) => matches(action.label));
 
   const popover = open ? (
@@ -816,8 +816,8 @@ function UpdateProjectDialog(props: {
           <strong>{props.zh ? '更新项目' : 'Update Project'}</strong>
           <small>
             {props.zh
-              ? '从全部项目仓库获取远端变化，并使用同一种策略更新各仓当前分支。脏仓会先 Smart Stash，完成后恢复。'
-              : 'Fetch every project repository and update each current branch with one strategy. Dirty repositories use Smart Stash and restore.'}
+              ? '获取所有仓库的远端变化，并按所选方式更新当前分支。未提交的文件会先备份，更新后再恢复。'
+              : 'Fetch remote changes for all repositories and update their current branches using the selected method. Uncommitted files are backed up first and restored afterward.'}
           </small>
         </header>
         <main>
@@ -981,11 +981,11 @@ function CheckoutRevisionDialog(props: {
   const repository = props.repositories.find((candidate) => candidate.id === repositoryId) ?? null;
   return (
     <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} dismissDisabled={props.busy !== null}>
-      <section className="project-git-reference-dialog" role="dialog" aria-modal="true" aria-label={props.zh ? '签出标签或 Revision' : 'Checkout tag or revision'}>
+      <section className="project-git-reference-dialog" role="dialog" aria-modal="true" aria-label={props.zh ? '切换到标签或提交' : 'Switch to a tag or commit'}>
         <header>
-          <strong>{props.zh ? '签出标签或 Revision' : 'Checkout Tag or Revision'}</strong>
+          <strong>{props.zh ? '切换到标签或提交' : 'Switch to a tag or commit'}</strong>
           <small>
-            {props.zh ? '签出后进入游离提交状态；顶部会持续显示标签或短提交号，并提供从当前位置新建分支。' : 'Checkout enters detached HEAD. The toolbar keeps the tag or short commit visible and offers branch creation from that point.'}
+            {props.zh ? '切换后会停留在所选提交，不属于任何分支。如需继续修改，可以从这里新建分支。' : 'After switching, you will be at the selected commit without being on a branch. Create a branch from there to continue making changes.'}
           </small>
         </header>
         <main>
@@ -1016,7 +1016,7 @@ function CheckoutRevisionDialog(props: {
             disabled={!repository || !revision.trim() || props.busy !== null}
             onClick={async () => {
               if (!repository) return;
-              const outcome = await props.onExecute(repository, { type: 'checkout_revision', revision: revision.trim(), smart: true }, props.zh ? '签出 Revision' : 'Checkout revision');
+              const outcome = await props.onExecute(repository, { type: 'checkout_revision', revision: revision.trim(), smart: true }, props.zh ? '切换到所选提交' : 'Switch to the selected commit');
               if (outcome) props.onClose();
             }}
           >
@@ -1586,7 +1586,7 @@ function StashSurface(props: {
               disabled={props.busy !== null || repository.snapshot.clean}
               onClick={() => void props.onExecute(repository, { type: 'stash', includeUntracked: true, message: 'Zeus stash' }, props.zh ? '创建 Stash' : 'Create stash')}
             >
-              {props.zh ? '暂存当前变更' : 'Stash current changes'}
+              {props.zh ? '备份并移出当前修改' : 'Back up and set aside current changes'}
             </Button>
           </header>
           {repository.snapshot.stashes.length === 0 ? <p>{props.zh ? '这个仓库没有 Stash。' : 'No stash in this repository.'}</p> : null}
@@ -1618,7 +1618,7 @@ function ShelfSurface(props: { zh: boolean }) {
     <section className="project-git-empty-surface">
       <Archive aria-hidden="true" />
       <strong>{props.zh ? '还没有 Shelf 条目' : 'No Shelf entries yet'}</strong>
-      <span>{props.zh ? 'Shelf 会保存 Zeus 创建的项目级补丁；真实条目创建后会按仓库显示。' : 'Shelf stores Zeus project patches and groups real entries by repository.'}</span>
+      <span>{props.zh ? '这里按仓库显示通过 Zeus 保存的修改补丁（Shelf）。' : 'Patches saved through Zeus (Shelf) appear here, grouped by repository.'}</span>
     </section>
   );
 }
@@ -1630,7 +1630,7 @@ function ConsoleSurface(props: { zh: boolean; operations: OperationRecord[] }) {
         <section className="project-git-empty-surface">
           <ArrowsClockwise aria-hidden="true" />
           <strong>{props.zh ? '还没有 Git 操作记录' : 'No Git operations yet'}</strong>
-          <span>{props.zh ? '这里只记录 Zeus 发起的受控 Git 动作，不提供命令输入。' : 'Only controlled Git actions started by Zeus appear here. There is no command input.'}</span>
+          <span>{props.zh ? '这里显示通过 Zeus 执行的 Git 操作记录。' : 'Git actions performed through Zeus appear here.'}</span>
         </section>
       ) : (
         props.operations.map((operation) => (
@@ -1844,7 +1844,7 @@ function OperationsMenu(props: { zh: boolean; onClose: () => void; onOpenCommit:
         {props.zh ? '新建分支…' : 'New Branch…'}
       </button>
       <button type="button" role="menuitem" onClick={action(props.onOpenRevision)}>
-        {props.zh ? '签出标签或 Revision…' : 'Checkout Tag or Revision…'}
+        {props.zh ? '切换到标签或提交…' : 'Switch to a tag or commit…'}
       </button>
       <hr />
       <button type="button" role="menuitem" onClick={action(() => props.onSelectTab('log'))}>
@@ -1876,7 +1876,7 @@ function CommitDialog(props: {
       <section className="project-git-commit-dialog" role="dialog" aria-modal="true" aria-label={props.zh ? '提交已暂存变更' : 'Commit staged changes'}>
         <header>
           <strong>{props.zh ? '提交已暂存变更' : 'Commit staged changes'}</strong>
-          <small>{props.zh ? '多个仓库会分别创建提交，不伪装成一个跨仓提交。' : 'Each repository creates its own commit.'}</small>
+          <small>{props.zh ? '每个仓库会分别创建提交。' : 'Each repository will receive a separate commit.'}</small>
         </header>
         <main>
           {staged.map((repository) => (
@@ -1943,8 +1943,8 @@ function PushDialog(props: {
           <small>
             {resultMode
               ? props.zh
-                ? '结果按仓库保留，成功仓库不会回滚。'
-                : 'Results stay per repository; successful pushes are not rolled back.'
+                ? '每个仓库分别显示推送结果；某个仓库失败不会撤销其他仓库已完成的推送。'
+                : 'Push results are shown for each repository. A failed push does not undo successful pushes to other repositories.'
               : props.zh
                 ? `${pushable.length} 个仓库有待推送提交`
                 : `${pushable.length} repositories have outgoing commits`}
@@ -2018,7 +2018,7 @@ function PushDialog(props: {
               </label>
               <label>
                 <input type="checkbox" checked={forceWithLease} onChange={(event) => setForceWithLease(event.currentTarget.checked)} />
-                {props.zh ? '使用 --force-with-lease' : 'Use --force-with-lease'}
+                {props.zh ? '强制推送（仅当远端未被他人更新）' : 'Force push only if the remote has not changed'}
               </label>
             </div>
           ) : null}
@@ -2060,7 +2060,7 @@ function displayStashSubject(subject: string, zh: boolean): string {
 }
 
 function errorMessage(error: unknown, zh: boolean): string {
-  return formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en');
+  return reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' });
 }
 
 function formatRelativeTime(value: string, zh: boolean): string {

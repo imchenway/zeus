@@ -1,3 +1,4 @@
+import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { cloneTaskManagementStatusConfig, type TaskManagementStatusConfig } from '@zeus/shared';
 import { notifyMainAppShellSettingsChanged, recordManualUpdateCheckInMain } from '../../appShellBridge.js';
@@ -593,7 +594,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     try {
       setCodexLegacyImportSnapshot(await props.onLoadCodexLegacyImports());
     } catch (error) {
-      setCodexLegacyImportError(error instanceof Error ? error.message : String(error));
+      setCodexLegacyImportError(reportApplicationError(error, { language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en' }));
     } finally {
       setCodexLegacyImportLoading(false);
     }
@@ -613,7 +614,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
         await new Promise<void>((resolve) => window.setTimeout(resolve, 500));
       }
     } catch (error) {
-      setCodexLegacyImportError(error instanceof Error ? error.message : String(error));
+      setCodexLegacyImportError(reportApplicationError(error, { language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en' }));
     } finally {
       setCodexLegacyImportBusy(false);
     }
@@ -626,7 +627,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     try {
       setCodexConfigImportPreview(await props.onInspectCodexConfigImport());
     } catch (error) {
-      setCodexConfigImportError(error instanceof Error ? error.message : String(error));
+      setCodexConfigImportError(reportApplicationError(error, { language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en' }));
     } finally {
       setCodexConfigImportLoading(false);
     }
@@ -642,7 +643,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
       setCodexConfigImportPreview(result);
       if (result.runtimeError) setCodexConfigImportError(result.runtimeError);
     } catch (error) {
-      setCodexConfigImportError(error instanceof Error ? error.message : String(error));
+      setCodexConfigImportError(reportApplicationError(error, { language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en' }));
     } finally {
       setCodexConfigImportLoading(false);
     }
@@ -656,7 +657,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
       const activation = await props.onActivateCodexConfig();
       setCodexConfigImportResult((current) => (current ? { ...current, ...activation, runtimeError: null } : current));
     } catch (error) {
-      setCodexConfigImportError(error instanceof Error ? error.message : String(error));
+      setCodexConfigImportError(reportApplicationError(error, { language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en' }));
     } finally {
       setCodexConfigImportLoading(false);
     }
@@ -1914,8 +1915,9 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
                   state: 'failed',
                   message: appShellSettings.appLanguage === 'zh-CN' ? '会话创建失败' : 'Conversation creation failed',
                   error: pending.error,
+                  errorCause: pending.errorCause,
                   retryLabel: pending.contextRefreshRequired ? (appShellSettings.appLanguage === 'zh-CN' ? '重新确认' : 'Review') : appShellSettings.appLanguage === 'zh-CN' ? '重试' : 'Retry',
-                  onRetry: () => retryTaskModelPush(pending.task.id),
+                  onRetry: pending.contextRefreshRequired || pending.canRetry ? () => retryTaskModelPush(pending.task.id) : undefined,
                 }
               : pending.retryProgress
                 ? {
@@ -1934,6 +1936,10 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           onStartProjectConversation={startProjectConversation}
           onLoadSkills={props.nativeConversationClient.loadSkills}
           onLoadDigitalEmployees={props.commandClient?.loadProjectDigitalEmployees}
+          onOpenAiSettings={(section) => {
+            setSettingsCategory(section);
+            handleMainNavigate('settings');
+          }}
           onOpenComputerSettings={() => {
             setSettingsCategory('browser');
             handleMainNavigate('settings');
@@ -1997,6 +2003,10 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           onStartProjectConversation={startProjectConversation}
           onLoadSkills={props.nativeConversationClient.loadSkills}
           onLoadDigitalEmployees={props.commandClient?.loadProjectDigitalEmployees}
+          onOpenAiSettings={(section) => {
+            setSettingsCategory(section);
+            handleMainNavigate('settings');
+          }}
           onOpenComputerSettings={() => {
             setSettingsCategory('browser');
             handleMainNavigate('settings');
@@ -2052,6 +2062,10 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           onLoadCapabilities: props.nativeConversationClient?.loadCodexConversationCapabilities,
           onLoadSkills: props.nativeConversationClient?.loadSkills,
           onLoadDigitalEmployees: props.commandClient?.loadProjectDigitalEmployees,
+          onOpenAiSettings: (section) => {
+            setSettingsCategory(section);
+            handleMainNavigate('settings');
+          },
           onOpenComputerSettings: () => {
             setSettingsCategory('browser');
             handleMainNavigate('settings');
@@ -2135,7 +2149,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
                 const implementation = workflow?.stages.filter((candidate) => candidate.sequence < stage.sequence && candidate.kind === 'implementation').sort((left, right) => right.sequence - left.sequence)[0];
                 const accepted = implementation?.deliverables.filter((deliverable) => deliverable.status === 'accepted').sort((left, right) => right.version - left.version)[0];
                 const sourceAttempt = accepted ? implementation?.attempts.find((attempt) => attempt.id === accepted.attemptId) : null;
-                if (!sourceAttempt?.conversationId) throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '找不到已验收实施交付物对应的真实会话。' : 'The accepted implementation deliverable has no source conversation.');
+                if (!sourceAttempt?.conversationId) throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '找不到已验收交付物所属的对话。' : 'The conversation associated with the accepted deliverable could not be found.');
                 const result = await startNativeConversation({
                   mode: 'create',
                   source: 'code_review',

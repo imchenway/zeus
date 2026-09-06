@@ -2280,6 +2280,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   const taskWorkDecisions = new TaskWorkDecisionRepository(db, () => now().toISOString());
   const imRepository = new ImRepository(db);
   const imTelegramService = new ImTelegramService({
+    language: () => platformMutableState.appShellSettings.appLanguage,
     repository: imRepository,
     secretStore,
     telegramCommands,

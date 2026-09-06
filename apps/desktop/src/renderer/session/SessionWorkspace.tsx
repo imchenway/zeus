@@ -76,7 +76,7 @@ import { resolveModelCapability } from './modelSelection.js';
 import { GoalPanel, GoalRail } from './GoalPanel.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
 import { NewConversationExecutionContext } from './NewConversationExecutionContext.js';
-import { formatVisibleApplicationError, useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { reportApplicationError, useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import { projectModelServiceTierSelection, toProjectModelServiceTierPreference, upsertProjectModelServiceTierPreference } from './projectServiceTierPreferences.js';
 import { StructuredComposerInput, type StructuredComposerSelection } from './StructuredComposerInput.js';
 
@@ -148,6 +148,8 @@ export interface SessionWorkspaceActions {
   onSaveProjectModelServiceTierPreference?: (projectId: string, input: ProjectModelServiceTierPreference) => Promise<ProjectConfig>;
   onLoadSkills?: (projectId?: string, forceReload?: boolean) => Promise<import('../features/codex/codexContracts.js').SkillCatalog>;
   onLoadDigitalEmployees?: (projectId: string) => Promise<import('../features/digital-employees/digitalEmployeeContracts.js').DigitalEmployeeRecord[]>;
+  /** 解释失败原因后可直接打开对应的现有设置页。 */
+  onOpenAiSettings?: (section: 'runtime' | 'models') => void;
   onOpenComputerSettings?: () => void;
   onSelectNewConversationProject?: (projectId: string) => void;
   onLoadNewConversationProjectGit?: (projectId: string) => Promise<ProjectGitWorkbenchSnapshot>;
@@ -318,6 +320,7 @@ export interface ConnectedSessionWorkspaceProps {
   onStartProjectConversation?: SessionWorkspaceActions['onStartProjectConversation'];
   onLoadSkills?: SessionWorkspaceActions['onLoadSkills'];
   onLoadDigitalEmployees?: SessionWorkspaceActions['onLoadDigitalEmployees'];
+  onOpenAiSettings?: SessionWorkspaceActions['onOpenAiSettings'];
   onOpenComputerSettings?: SessionWorkspaceActions['onOpenComputerSettings'];
   onLoadProjectConfig?: SessionWorkspaceActions['onLoadProjectConfig'];
   onSaveProjectModelServiceTierPreference?: SessionWorkspaceActions['onSaveProjectModelServiceTierPreference'];
@@ -636,6 +639,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       onSaveProjectModelServiceTierPreference: props.onSaveProjectModelServiceTierPreference,
       onLoadSkills: props.onLoadSkills,
       onLoadDigitalEmployees: props.onLoadDigitalEmployees,
+      onOpenAiSettings: props.onOpenAiSettings,
       onOpenComputerSettings: props.onOpenComputerSettings,
       onChooseStartAttachments: props.onChooseAttachments,
     };
@@ -655,6 +659,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     props.onSaveProjectModelServiceTierPreference,
     props.onLoadSkills,
     props.onLoadDigitalEmployees,
+    props.onOpenAiSettings,
     props.onOpenComputerSettings,
     props.onOpenProjectCommands,
     props.onOpenTaskDetail,
@@ -904,7 +909,7 @@ export function createProjectConversationStartEnvelopeManager(options: {
       try {
         options.storage.setItem(storageKey, JSON.stringify({ version: 1, fingerprint, request } satisfies PersistedProjectConversationStartEnvelope));
       } catch (error) {
-        throw Object.assign(new Error(error instanceof Error ? error.message : String(error)), { code: 'ZEUS_PROJECT_CONVERSATION_START_PERSIST_FAILED' });
+        throw Object.assign(new Error(error instanceof Error ? error.message : String(error)), { code: 'ZEUS_PROJECT_CONVERSATION_START_PERSIST_FAILED', cause: error });
       }
       return request;
     },
@@ -1149,7 +1154,7 @@ export function createNativeConversationStartEnvelopeManager(options: {
       try {
         options.storage.setItem(storageKey, JSON.stringify(envelope));
       } catch (error) {
-        throw Object.assign(new Error(error instanceof Error ? error.message : String(error)), { code: 'ZEUS_NATIVE_CONVERSATION_START_PERSIST_FAILED' });
+        throw Object.assign(new Error(error instanceof Error ? error.message : String(error)), { code: 'ZEUS_NATIVE_CONVERSATION_START_PERSIST_FAILED', cause: error });
       }
       return request;
     },
@@ -1427,7 +1432,7 @@ const labels = {
     reconnecting: '正在重新连接',
     reconnectingAttempt: (attempt: number) => `正在重新连接 · 第 ${Math.max(1, attempt)} 次`,
     failed: '连接失败',
-    failureHelp: '连接中断。请重新连接以读取最新快照。',
+    failureHelp: '连接已中断。重新连接后才能读取最新对话。',
     loadFailureHelp: '会话读取未完成。请重新加载，当前草稿会继续保留。',
     refreshFailureHelp: '后台刷新失败，当前仍显示上次成功读取的内容。',
     serverBusy: '服务繁忙',
@@ -1456,7 +1461,7 @@ const labels = {
     normalDraftPreserved: '普通消息草稿已保留',
     attach: '添加附件',
     removeAttachment: '移除附件',
-    runtimeDetails: '运行时详情',
+    runtimeDetails: '运行详情',
     model: '模型',
     cacheHitRate: '缓存 Token 命中率',
     contextUsage: '上下文占用',
@@ -1481,7 +1486,7 @@ const labels = {
     reconnecting: 'Reconnecting',
     reconnectingAttempt: (attempt: number) => `Reconnecting · attempt ${Math.max(1, attempt)}`,
     failed: 'Connection failed',
-    failureHelp: 'The connection was interrupted. Reconnect to load the latest snapshot.',
+    failureHelp: 'The connection was interrupted. Reconnect to load the latest conversation.',
     loadFailureHelp: 'The conversation did not finish loading. Reload it; the current draft remains saved.',
     refreshFailureHelp: 'Background refresh failed. The last successfully loaded content remains visible.',
     serverBusy: 'Server busy',
@@ -1510,7 +1515,7 @@ const labels = {
     normalDraftPreserved: 'Message draft preserved',
     attach: 'Add attachment',
     removeAttachment: 'Remove attachment',
-    runtimeDetails: 'Runtime details',
+    runtimeDetails: 'Run details',
     model: 'Model',
     cacheHitRate: 'Cached-token hit rate',
     contextUsage: 'Context usage',
@@ -1547,13 +1552,13 @@ export interface SessionHeaderSnapshot {
   taskManagementStatusOptions: SessionWorkspaceTask['managementStatusOptions'];
 }
 
-export function createSessionHeaderSnapshot(conversation: NativeConversationChoice | null, task: SessionWorkspaceTask | null, owner?: SessionConversationOwner): SessionHeaderSnapshot | null {
+export function createSessionHeaderSnapshot(conversation: NativeConversationChoice | null, task: SessionWorkspaceTask | null, owner?: SessionConversationOwner, language: 'zh-CN' | 'en-US' = 'zh-CN'): SessionHeaderSnapshot | null {
   if (!conversation) return null;
   const taskId = task?.id ?? (owner?.kind === 'task' ? owner.taskId : null);
   const taskTitle = task?.title ?? (owner?.kind === 'task' ? owner.taskTitle : null);
   return {
     conversationId: conversation.id,
-    title: conversationDisplayTitle(conversation.title, taskTitle),
+    title: conversationDisplayTitle(conversation.title, taskTitle, language),
     contextLabel: taskId ? null : ((owner?.kind === 'project' ? owner.projectName : null) ?? conversation.summary ?? conversation.projectId),
     taskId,
     taskManagementStatus: task?.managementStatus ?? null,
@@ -1599,7 +1604,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const planWorkspaceItem = contextWorkspace.kind === 'plan' ? contextWorkspace.item : null;
   const sessionReady = props.state != null;
   const resolvedBrowserTargetWidth = resolveBrowserTargetWidth(browserLayoutWidth, browserPaneShare, contextFullWidth);
-  const currentHeader = useMemo(() => createSessionHeaderSnapshot(props.conversation, props.task, owner), [owner, props.conversation, props.task]);
+  const currentHeader = useMemo(() => createSessionHeaderSnapshot(props.conversation, props.task, owner, props.language), [owner, props.conversation, props.task, props.language]);
   const displayedHeader = currentHeader;
   // 本地缓存只支撑会话重挂载的首帧；没有待确认用户修改时，后续以服务端快照为权威。
   const [composerRuntimeSettings, setComposerRuntimeSettings] = useState<ComposerRuntimeSettings | null>(() =>
@@ -1657,7 +1662,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         if (active) setServiceTierPreferences(config.serviceTierPreferences ?? []);
       })
       .catch((error: unknown) => {
-        if (active) setServiceTierPreferenceError(error instanceof Error ? error.message : String(error));
+        if (active) setServiceTierPreferenceError(reportApplicationError(error, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' }));
       });
     return () => {
       active = false;
@@ -1673,7 +1678,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       const saved = await actions.onSaveProjectModelServiceTierPreference(serviceTierPreferenceProjectId, preference);
       setServiceTierPreferences(saved.serviceTierPreferences ?? []);
     } catch (error) {
-      setServiceTierPreferenceError(error instanceof Error ? error.message : String(error));
+      setServiceTierPreferenceError(reportApplicationError(error, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' }));
       try {
         const refreshed = await actions.onLoadProjectConfig?.(serviceTierPreferenceProjectId);
         if (refreshed) setServiceTierPreferences(refreshed.serviceTierPreferences ?? []);
@@ -1923,7 +1928,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       if (requestId)
         setRequestErrors((current) => ({
           ...current,
-          [requestId]: props.language === 'zh-CN' ? '请先明确允许、拒绝或提交回答；Escape 不会停止被请求阻塞的轮次。' : 'Choose allow, decline, or submit an answer. Escape will not interrupt a request-blocked turn.',
+          [requestId]: props.language === 'zh-CN' ? '请先允许、拒绝或回答当前问题。按 Escape 不会停止正在等待回答的处理。' : 'Approve, decline, or answer the current request first. Escape does not stop work that is waiting for a response.',
         }));
       return;
     }
@@ -1959,7 +1964,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       await actions.onRespondToRequest(request.id, response);
     } catch (error) {
       if (workspaceIdentityRef.current !== conversationId) return;
-      setRequestErrors((current) => ({ ...current, [request.id]: formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en') }));
+      setRequestErrors((current) => ({ ...current, [request.id]: reportApplicationError(error, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' }) }));
     } finally {
       responseGuard.finish(request.id);
     }
@@ -2024,7 +2029,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       if (workspaceIdentityRef.current !== conversationId) return;
       setRequestErrors((current) => ({
         ...current,
-        [request.id]: error instanceof Error ? error.message : String(error),
+        [request.id]: reportApplicationError(error, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' }),
       }));
     } finally {
       responseGuard.finish(request.id);
@@ -2137,7 +2142,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       return true;
     } catch (error) {
       if (workspaceIdentityRef.current !== conversationId) return false;
-      setGoalError(error instanceof Error ? error.message : String(error));
+      setGoalError(reportApplicationError(error, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' }));
       return false;
     } finally {
       if (workspaceIdentityRef.current === conversationId) setGoalBusy(false);
@@ -2338,7 +2343,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 className="session-browser-toggle session-computer-stop"
                 disabled={computerStopBusy}
                 aria-busy={computerStopBusy || undefined}
-                title={props.language === 'zh-CN' ? '立即停止 Computer Use' : 'Stop Computer Use now'}
+                title={props.language === 'zh-CN' ? '立即停止电脑操作' : 'Stop computer actions now'}
                 onClick={() => {
                   setComputerStopBusy(true);
                   setComputerStopError(null);
@@ -2404,7 +2409,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                   if (!props.task || !props.conversation || !actions.onStartConversation || props.conversation.projectId !== props.task.projectId || props.conversation.taskId !== props.task.id) {
                     return {
                       state: 'failed',
-                      message: props.language === 'zh-CN' ? '当前会话没有可用于代码审查的任务 Worktree。' : 'This conversation does not have a task worktree available for code review.',
+                      message: props.language === 'zh-CN' ? '此对话没有可用于代码审查的任务工作目录。' : 'This conversation has no task working folder available for code review.',
                     };
                   }
                   return actions.onStartConversation({
@@ -2503,6 +2508,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                           }
                         : undefined
                     }
+                    onOpenAiSettings={actions.onOpenAiSettings}
                     onRecoverQueue={transcriptInteractionsEnabled ? actions.onRecoverQueue : undefined}
                     onReconnectCodex={transcriptInteractionsEnabled ? actions.onReconnectCodex : undefined}
                     onInterrupt={!props.historyOnly && actions.onInterrupt ? actions.onInterrupt : undefined}
@@ -2832,6 +2838,7 @@ function NewConversationComposer(props: {
   const [goalInputOpen, setGoalInputOpen] = useState(false);
   const [goalObjective, setGoalObjective] = useState('');
   const inputResources = useConversationInputResources({
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
     textareaRef,
     text: content,
     disabled: submitting || !props.owner || goalInputOpen,
@@ -2880,7 +2887,7 @@ function NewConversationComposer(props: {
         if (active && snapshot) setCapabilities(snapshot);
       })
       .catch((error: unknown) => {
-        if (active) setLocalError(error instanceof Error ? error.message : String(error));
+        if (active) setLocalError(reportApplicationError(error, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' }));
       })
       .finally(() => {
         if (active) setCapabilitiesLoading(false);
@@ -2946,7 +2953,7 @@ function NewConversationComposer(props: {
     const submittedGoal = (overrides.goalObjective ?? (goalInputActive ? goalObjective : '')).trim();
     if (!props.owner || submitting || executionContextBusy || capabilitiesLoading || !selectedModel || (!submittedContent.trim() && attachments.length === 0) || (goalInputActive && !submittedGoal)) return;
     if (submittedGoal && structured.expertMentions.length > 0) {
-      setLocalError(props.language === 'zh-CN' ? '同一草稿不能同时进入目标模式并点名数字员工。' : 'A draft cannot combine goal mode with digital employee mentions.');
+      setLocalError(props.language === 'zh-CN' ? '目标模式暂不支持指定数字员工。请退出目标模式后再选择。' : 'Goal mode does not support choosing a digital employee. Exit goal mode before selecting one.');
       return;
     }
     setSubmitting(true);
@@ -2999,7 +3006,7 @@ function NewConversationComposer(props: {
       }
       await props.onAccepted?.();
     } catch (error) {
-      setLocalError(error instanceof Error ? error.message : String(error));
+      setLocalError(reportApplicationError(error, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' }));
     } finally {
       setSubmitting(false);
     }
@@ -3136,7 +3143,7 @@ function NewConversationComposer(props: {
               }
               if (/^\/goal(?:\s|$)/u.test(content.trim()) && goalAvailable) {
                 if (structuredSelectionRef.current.expertMentions.length > 0) {
-                  setLocalError(props.language === 'zh-CN' ? '同一草稿不能同时进入目标模式并点名数字员工。' : 'A draft cannot combine goal mode with digital employee mentions.');
+                  setLocalError(props.language === 'zh-CN' ? '目标模式暂不支持指定数字员工。请退出目标模式后再选择。' : 'Goal mode does not support choosing a digital employee. Exit goal mode before selecting one.');
                   return;
                 }
                 const objective = content.trim().slice('/goal'.length).trim();
@@ -3171,7 +3178,7 @@ function NewConversationComposer(props: {
                       setAttachments((current) => mergeConversationAttachments(current, selected));
                     }
                   } catch (error) {
-                    setLocalError(error instanceof Error ? error.message : String(error));
+                    setLocalError(reportApplicationError(error, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' }));
                   }
                 }}
               >
@@ -3191,7 +3198,7 @@ function NewConversationComposer(props: {
                 disabled={submitting || !props.owner}
                 onClick={() => {
                   if (!goalInputActive && structuredSelectionRef.current.expertMentions.length > 0) {
-                    setLocalError(props.language === 'zh-CN' ? '同一草稿不能同时进入目标模式并点名数字员工。' : 'A draft cannot combine goal mode with digital employee mentions.');
+                    setLocalError(props.language === 'zh-CN' ? '目标模式暂不支持指定数字员工。请退出目标模式后再选择。' : 'Goal mode does not support choosing a digital employee. Exit goal mode before selecting one.');
                     return;
                   }
                   setGoalInputOpen((open) => !open);
@@ -3383,48 +3390,48 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
   const activity = metrics?.activity ?? null;
   const changes = metrics?.changeSummary ?? null;
   const runtime: NativeRuntimeDetailsSnapshot = {
-    model: runtimeFact(model, '会话尚未同步模型。'),
-    effort: runtimeFact(effort, '会话尚未同步推理强度。'),
-    serviceTier: hasServiceTier ? { state: 'available', value: serviceTier } : { state: 'unavailable', reason: '会话尚未同步服务层级。' },
+    model: runtimeFact(model, props.language === 'zh-CN' ? '尚未读取到会话使用的模型。' : 'The conversation model has not been loaded.'),
+    effort: runtimeFact(effort, props.language === 'zh-CN' ? '尚未读取到推理强度。' : 'Reasoning effort has not been loaded.'),
+    serviceTier: hasServiceTier ? { state: 'available', value: serviceTier } : { state: 'unavailable', reason: props.language === 'zh-CN' ? '尚未读取到服务速率。' : 'The service tier has not been loaded.' },
     usage: {
       serviceTier:
         usage && Object.prototype.hasOwnProperty.call(usage, 'serviceTier')
           ? { state: 'available', value: !usage.serviceTier || usage.serviceTier === 'default' ? null : usage.serviceTier }
-          : { state: 'unavailable', reason: '用量事件尚未同步实际计费档位。' },
-      totalTokens: runtimeFact(totalTokens, '会话累计 Token 暂无数据。'),
-      inputTokens: runtimeFact(inputTokens, '累计输入 Token 暂无数据。'),
-      outputTokens: runtimeFact(outputTokens, '累计输出 Token 暂无数据。'),
-      reasoningOutputTokens: runtimeFact(reasoningTokens, '累计推理 Token 暂无数据。'),
-      contextTokens: runtimeFact(latestRequest?.totalTokens ?? usage?.last.totalTokens ?? null, '最近请求上下文 Token 暂无数据。'),
-      contextWindow: runtimeFact(latestRequest?.contextWindow ?? usage?.modelContextWindow ?? null, '模型上下文窗口暂无数据。'),
-      cacheHitRate: runtimeFact(cacheHitRate, '缓存命中率暂无数据。'),
-      apiEquivalentUsd: runtimeFact(cost.apiEquivalentUsd, '当前模型没有可用的 API 等价价格。'),
-      priceCoverage: runtimeFact(cost.priceCoverage, '价格覆盖率暂无数据。'),
-      pricingCatalogDate: runtimeFact(cost.pricingCatalogDate, '价格目录日期暂无数据。'),
-      pricingSourceUrls: cost.pricingSourceUrls.length > 0 ? { state: 'available', value: cost.pricingSourceUrls } : { state: 'unavailable', reason: '价格来源暂无数据。' },
+          : { state: 'unavailable', reason: props.language === 'zh-CN' ? '服务尚未提供实际计费档位。' : 'The service has not reported the actual billing tier.' },
+      totalTokens: runtimeFact(totalTokens, props.language === 'zh-CN' ? '暂无累计用量。' : 'Total usage is unavailable.'),
+      inputTokens: runtimeFact(inputTokens, props.language === 'zh-CN' ? '暂无累计输入用量。' : 'Total input usage is unavailable.'),
+      outputTokens: runtimeFact(outputTokens, props.language === 'zh-CN' ? '暂无累计输出用量。' : 'Total output usage is unavailable.'),
+      reasoningOutputTokens: runtimeFact(reasoningTokens, props.language === 'zh-CN' ? '暂无累计推理用量。' : 'Total reasoning usage is unavailable.'),
+      contextTokens: runtimeFact(latestRequest?.totalTokens ?? usage?.last.totalTokens ?? null, props.language === 'zh-CN' ? '暂无最近请求的上下文用量。' : 'Context usage for the latest request is unavailable.'),
+      contextWindow: runtimeFact(latestRequest?.contextWindow ?? usage?.modelContextWindow ?? null, props.language === 'zh-CN' ? '尚未读取到模型可处理的最大长度。' : 'The model’s maximum context length is unavailable.'),
+      cacheHitRate: runtimeFact(cacheHitRate, props.language === 'zh-CN' ? '暂无缓存使用比例。' : 'The cache usage ratio is unavailable.'),
+      apiEquivalentUsd: runtimeFact(cost.apiEquivalentUsd, props.language === 'zh-CN' ? '当前模型没有可用于估算费用的价格。' : 'No price is available to estimate this model’s cost.'),
+      priceCoverage: runtimeFact(cost.priceCoverage, props.language === 'zh-CN' ? '尚未确定有多少用量可估算费用。' : 'The amount of usage covered by pricing is unknown.'),
+      pricingCatalogDate: runtimeFact(cost.pricingCatalogDate, props.language === 'zh-CN' ? '暂无价格更新时间。' : 'The pricing update date is unavailable.'),
+      pricingSourceUrls: cost.pricingSourceUrls.length > 0 ? { state: 'available', value: cost.pricingSourceUrls } : { state: 'unavailable', reason: props.language === 'zh-CN' ? '暂无价格来源。' : 'The pricing source is unavailable.' },
       historyComplete: { state: 'available', value: cost.historyComplete },
     },
     performance: {
-      latestOutputTokensPerSecond: runtimeFact(performance?.latestOutputTokensPerSecond ?? null, '最近请求缺少可核验的输出计时。'),
-      latestFirstVisibleResponseMs: runtimeFact(performance?.latestFirstVisibleResponseMs ?? null, '最近请求缺少首段可见响应计时。'),
-      cumulativeProcessedDurationMs: runtimeFact(performance?.cumulativeProcessedDurationMs ?? null, '累计处理耗时暂无数据。'),
+      latestOutputTokensPerSecond: runtimeFact(performance?.latestOutputTokensPerSecond ?? null, props.language === 'zh-CN' ? '最近请求没有输出计时记录。' : 'Output timing for the latest request is unavailable.'),
+      latestFirstVisibleResponseMs: runtimeFact(performance?.latestFirstVisibleResponseMs ?? null, props.language === 'zh-CN' ? '最近请求没有首段回复的计时记录。' : 'Time to first visible response is unavailable.'),
+      cumulativeProcessedDurationMs: runtimeFact(performance?.cumulativeProcessedDurationMs ?? null, props.language === 'zh-CN' ? '暂无累计处理时间。' : 'Total processing time is unavailable.'),
     },
     activity: {
-      turnCount: runtimeFact(activity?.turnCount ?? null, '轮次统计暂无数据。'),
-      modelRequestCount: runtimeFact(activity?.modelRequestCount ?? null, '模型请求统计暂无数据。'),
-      toolOrCommandCount: runtimeFact(activity?.toolOrCommandCount ?? null, '工具与命令统计暂无数据。'),
-      retryCount: runtimeFact(activity?.retryCount ?? null, '重试统计暂无数据。'),
-      failedTurnCount: runtimeFact(activity?.failedTurnCount ?? null, '失败轮次统计暂无数据。'),
+      turnCount: runtimeFact(activity?.turnCount ?? null, props.language === 'zh-CN' ? '暂无对话轮数统计。' : 'The turn count is unavailable.'),
+      modelRequestCount: runtimeFact(activity?.modelRequestCount ?? null, props.language === 'zh-CN' ? '暂无模型请求次数。' : 'The model request count is unavailable.'),
+      toolOrCommandCount: runtimeFact(activity?.toolOrCommandCount ?? null, props.language === 'zh-CN' ? '暂无工具和命令使用次数。' : 'Tool and command counts are unavailable.'),
+      retryCount: runtimeFact(activity?.retryCount ?? null, props.language === 'zh-CN' ? '暂无重试次数。' : 'The retry count is unavailable.'),
+      failedTurnCount: runtimeFact(activity?.failedTurnCount ?? null, props.language === 'zh-CN' ? '暂无失败次数。' : 'The failure count is unavailable.'),
     },
     changeSummary:
       changes?.available && changes.fileCount !== null && changes.addedLines !== null && changes.deletedLines !== null
         ? { state: 'available', value: { fileCount: changes.fileCount, addedLines: changes.addedLines, deletedLines: changes.deletedLines, complete: changes.complete } }
-        : { state: 'unavailable', reason: '代码改动统计暂无数据。' },
+        : { state: 'unavailable', reason: props.language === 'zh-CN' ? '暂无代码改动统计。' : 'Code change statistics are unavailable.' },
     environment: {
-      cwd: runtimeFact(executionContext?.cwd ?? null, '会话工作目录暂无数据。'),
-      branch: runtimeFact(executionContext?.cwd ? (executionContext.branch ?? labels[props.language].nonGitDirectory) : null, '会话分支暂无数据。'),
-      nativeSessionId: runtimeFact(nativeSession?.id ?? props.state.providerThreadId ?? props.conversation?.providerThreadId ?? null, '会话线程 ID 暂无数据。'),
-      nativeSessionPath: runtimeFact(nativeSession?.path ?? null, '会话 JSONL 路径暂无数据。'),
+      cwd: runtimeFact(executionContext?.cwd ?? null, props.language === 'zh-CN' ? '暂无会话工作目录。' : 'The conversation working folder is unavailable.'),
+      branch: runtimeFact(executionContext?.cwd ? (executionContext.branch ?? labels[props.language].nonGitDirectory) : null, props.language === 'zh-CN' ? '暂无会话分支。' : 'The conversation branch is unavailable.'),
+      nativeSessionId: runtimeFact(nativeSession?.id ?? props.state.providerThreadId ?? props.conversation?.providerThreadId ?? null, props.language === 'zh-CN' ? '暂无服务端会话编号。' : 'The provider conversation ID is unavailable.'),
+      nativeSessionPath: runtimeFact(nativeSession?.path ?? null, props.language === 'zh-CN' ? '暂无会话记录文件位置。' : 'The conversation record file location is unavailable.'),
     },
   };
   return <RuntimeDetails runtime={runtime} language={props.language} scope="session" mcpStartup={mcpStartup} />;

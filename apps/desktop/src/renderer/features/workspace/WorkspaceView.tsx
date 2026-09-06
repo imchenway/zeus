@@ -560,11 +560,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       />
       <TaskTableLayoutDecisionDialog
         open={sourceWorkspaceLeaveDialogOpen}
-        title={appShellSettings.appLanguage === 'zh-CN' ? '源码修改尚未保存' : 'Source changes are not saved'}
+        title={appShellSettings.appLanguage === 'zh-CN' ? '代码修改尚未保存' : 'Code changes have not been saved'}
         description={
-          appShellSettings.appLanguage === 'zh-CN'
-            ? '离开代码页、切换项目或退出应用前，请保存全部文件、放弃草稿，或取消本次操作。切换图谱和命令不会触发此提示。'
-            : 'Before leaving the code page, switching projects, or quitting, save all files, discard drafts, or cancel. Switching Graph or Commands keeps the drafts.'
+          appShellSettings.appLanguage === 'zh-CN' ? '离开后，未保存的代码修改会丢失。请保存全部文件、放弃修改，或取消离开。' : 'Unsaved code changes will be lost when you leave. Save all files, discard changes, or stay on this page.'
         }
         busy={sourceWorkspaceSaveBusy}
         actions={[
@@ -1076,12 +1074,21 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                         <div className="runtime-capability-state-row">
                           <strong>{runtime.aiCli.name}</strong>
                           <span>{runtime.aiCli.available ? sessionWorkspaceCopy.runtimeDrawer.detectedCommand(runtime.aiCli.command) : sessionWorkspaceCopy.runtimeDrawer.waitingForCommand(runtime.aiCli.command)}</span>
-                          <em>{runtime.aiCli.reason}</em>
                         </div>
                         <div className="runtime-capability-state-row">
                           <strong>{sessionWorkspaceCopy.runtimeDrawer.terminalBackend}</strong>
-                          <span>{runtime.terminal?.provider ?? 'child_process'}</span>
-                          <em>{runtime.terminal?.pty.reason ?? sessionWorkspaceCopy.runtimeDrawer.terminalPending}</em>
+                          <span>{runtime.terminal?.pty.available ? (appShellSettings.appLanguage === 'zh-CN' ? '交互式终端' : 'Interactive terminal') : appShellSettings.appLanguage === 'zh-CN' ? '命令输出' : 'Command output'}</span>
+                          <em>
+                            {runtime.terminal
+                              ? runtime.terminal.pty.available
+                                ? appShellSettings.appLanguage === 'zh-CN'
+                                  ? '可以输入命令并查看输出。'
+                                  : 'Enter commands and view their output.'
+                                : appShellSettings.appLanguage === 'zh-CN'
+                                  ? '可以查看命令输出，暂不支持交互式输入。'
+                                  : 'Command output is available; interactive input is not supported.'
+                              : sessionWorkspaceCopy.runtimeDrawer.terminalPending}
+                          </em>
                         </div>
                       </section>
                       {runtimeAdapters.length > 0 ? (
@@ -1783,7 +1790,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     </section>
                     <section className="settings-product-section" aria-labelledby="task-list-sort-settings-title">
                       <header className="settings-section-heading">
-                        <strong id="task-list-sort-settings-title">{appShellSettings.appLanguage === 'zh-CN' ? '其他枚举升序规则' : 'Other enum ascending order'}</strong>
+                        <strong id="task-list-sort-settings-title">{appShellSettings.appLanguage === 'zh-CN' ? '其他字段的排序规则' : 'Sort order for other fields'}</strong>
                         <span>
                           {appShellSettings.appLanguage === 'zh-CN'
                             ? '优先级和运行状态仍为系统固定值；拖动定义升序，降序会反转该顺序。此设置对所有项目生效。'
@@ -1806,7 +1813,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                         <TaskEnumOrderEditor
                           language={appShellSettings.appLanguage}
                           title={appShellSettings.appLanguage === 'zh-CN' ? '运行状态' : 'Run status'}
-                          description={appShellSettings.appLanguage === 'zh-CN' ? 'Coding Agent 运行阶段顺序' : 'Coding Agent runtime stage order'}
+                          description={appShellSettings.appLanguage === 'zh-CN' ? 'AI 工作状态的排序' : 'AI work status order'}
                           items={taskTableEnumSortOrders.runStatus.map((value) => ({ value, label: taskAgentRunStatusLabels[appShellSettings.appLanguage][value] }))}
                           onChange={(runStatus) =>
                             setAppShellSettings((current) => ({
@@ -1842,7 +1849,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                       <section className="settings-state-row settings-runtime-cli-state-row" aria-label={settingsWorkspaceCopy.runtime.cliStatusAria}>
                         <strong>{runtime.aiCli.name}</strong>
                         <span>{runtime.aiCli.available ? settingsWorkspaceCopy.runtime.detected : settingsWorkspaceCopy.runtime.waitingConfiguration}</span>
-                        <em>{runtime.aiCli.reason}</em>
                       </section>
                       <section className="settings-config-row runtime-adapter-select-row" aria-label={settingsWorkspaceCopy.runtime.defaultAdapterAria}>
                         <span className="settings-row-copy">
@@ -2334,7 +2340,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                             return (
                               <span className="settings-archived-conversation-item" key={conversation.id}>
                                 <span className="settings-archived-conversation-copy">
-                                  <strong>{conversationDisplayTitle(conversation.title, task?.title)}</strong>
+                                  <strong>{conversationDisplayTitle(conversation.title, task?.title, appShellSettings.appLanguage)}</strong>
                                   <small>
                                     {task
                                       ? settingsWorkspaceCopy.data.archivedConversationContext(project?.name ?? conversation.projectId, task.taskCode ?? task.id)

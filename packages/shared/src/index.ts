@@ -1,3 +1,4 @@
+import type { UserFacingErrorCause } from './userFacingError.js';
 /** Zeus 任务状态：只描述真实任务生命周期，不承载任何示例或 mock 业务数据。 */
 export * from './taskPush.js';
 export * from './codexUsage.js';
@@ -10,6 +11,7 @@ export * from './conversationDispatchWire.js';
 export * from './conversationSnapshotV2Wire.js';
 export * from './im.js';
 export * from './skillIdentity.js';
+export * from './userFacingError.js';
 
 export type TaskStatus = 'draft' | 'ready' | 'running' | 'paused' | 'waiting_confirmation' | 'completed' | 'failed' | 'cancelled';
 
@@ -547,6 +549,8 @@ export interface SaveZentaoInstanceRequest {
 export type ZentaoInstanceVerifyCode = 'verified' | 'password_missing' | 'auth_failed' | 'api_unavailable' | 'network_failed' | 'bad_request';
 
 export interface ZentaoInstanceVerifyResult {
+  /** 保留检查失败的实际原因，旧检查结果和错误码继续兼容。 */
+  cause?: UserFacingErrorCause;
   ok: boolean;
   code: ZentaoInstanceVerifyCode;
   checkedAt: string;

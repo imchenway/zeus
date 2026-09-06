@@ -1,3 +1,4 @@
+import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import { createHash } from 'node:crypto';
 import { canonicalCommandInputJson, CommandEnvelopeError, parseCommandEnvelope, type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
 import { ArtifactStore, CommandDeliveryRepository, CommandDeliveryStoreError, type ArtifactRef, type CommandDeliveryOutcome, type CommandDeliveryReceiptRecord, type CommandOutboxRecord, type ZeusDatabase } from '@zeus/storage';
@@ -107,6 +108,8 @@ export class IntegrationCommandApplicationError extends Error {
     message: string,
     readonly statusCode: 400 | 409 | 429 | 500,
     readonly recoveryRequired = false,
+    /** 保留底层错误原因，不改变原有操作结果和恢复限制。 */
+    override readonly cause?: UserFacingErrorCause,
   ) {
     super(message);
   }
@@ -455,7 +458,7 @@ const { requireRecord, assertExactKeys, boundedIdentity, validSha256 } = createC
 function serializeError(error: unknown, redactSensitiveText: (value: string) => { text: string }, sensitiveValues: readonly string[] = []): Record<string, unknown> {
   if (error instanceof Error) {
     const code = 'code' in error && (typeof error.code === 'string' || typeof error.code === 'number') ? boundedScalar(error.code) : null;
-    return { code, name: boundedScalar(error.name), message: boundedErrorMessage(error.message, redactSensitiveText, sensitiveValues) };
+    return { cause: userFacingErrorCause(error).cause, code, name: boundedScalar(error.name), message: boundedErrorMessage(error.message, redactSensitiveText, sensitiveValues) };
   }
   return { code: null, name: boundedScalar(typeof error), message: boundedErrorMessage(String(error), redactSensitiveText, sensitiveValues) };
 }
@@ -470,7 +473,7 @@ function missingResult(commandId: string): IntegrationCommandApplicationError {
 
 function outcomeUnknown(cause: unknown, redactSensitiveText: (value: string) => { text: string }, sensitiveValues: readonly string[] = []): IntegrationCommandApplicationError {
   const detail = boundedErrorMessage(cause instanceof Error ? cause.message : String(cause), redactSensitiveText, sensitiveValues);
-  return new IntegrationCommandApplicationError('ZEUS_INTEGRATION_COMMAND_OUTCOME_UNKNOWN', `Integration command result is unknown after write started: ${detail}`, 409, true);
+  return new IntegrationCommandApplicationError('ZEUS_INTEGRATION_COMMAND_OUTCOME_UNKNOWN', `Integration command result is unknown after write started: ${detail}`, 409, true, userFacingErrorCause(cause));
 }
 
 function boundedErrorMessage(value: string, redactSensitiveText: (value: string) => { text: string }, sensitiveValues: readonly string[] = []): string {
@@ -496,13 +499,13 @@ function isReceiptConflict(error: unknown): boolean {
   return isCommandDeliveryError(error) && error.code === 'ZEUS_COMMAND_DELIVERY_RECEIPT_CONFLICT';
 }
 
-export function integrationCommandHttpError(error: unknown): { statusCode: number; payload: { error: string; message: string; recoveryRequired?: true } } | null {
+export function integrationCommandHttpError(error: unknown): { statusCode: number; payload: { error: string; message: string; recoveryRequired?: true; cause?: UserFacingErrorCause } } | null {
   if (error instanceof IntegrationCommandApplicationError) {
-    return { statusCode: error.statusCode, payload: { error: error.code, message: error.message, ...(error.recoveryRequired ? { recoveryRequired: true as const } : {}) } };
+    return { statusCode: error.statusCode, payload: { error: error.code, message: error.message, cause: error.cause, ...(error.recoveryRequired ? { recoveryRequired: true as const } : {}) } };
   }
   if (error instanceof CommandEnvelopeError) return { statusCode: 400, payload: { error: error.code, message: error.message } };
   if (!isCommandDeliveryError(error)) return null;
   const recoveryRequired = error.code === 'ZEUS_COMMAND_DELIVERY_REPLAY_BLOCKED';
   const statusCode = error.code === 'ZEUS_COMMAND_DELIVERY_NOT_FOUND' ? 404 : error.code === 'ZEUS_COMMAND_DELIVERY_INVALID_ARGUMENT' ? 400 : error.code === 'ZEUS_COMMAND_DELIVERY_SCHEMA_CONFLICT' ? 500 : 409;
-  return { statusCode, payload: { error: error.code, message: error.message, ...(recoveryRequired ? { recoveryRequired: true as const } : {}) } };
+  return { statusCode, payload: { error: error.code, message: error.message, cause: userFacingErrorCause(error).cause, ...(recoveryRequired ? { recoveryRequired: true as const } : {}) } };
 }

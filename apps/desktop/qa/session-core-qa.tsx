@@ -1,4 +1,8 @@
-import React from 'react';
+import React, { useRef, useState } from 'react';
+import { describeUserFacingError, type UserFacingErrorCause } from '@zeus/shared';
+import { MessageDeliveryOutcomeFeedback } from '../src/renderer/session/ConversationTranscript.js';
+import { ApplicationErrorDialogHost, VisibleApplicationError } from '../src/renderer/ui/ApplicationErrorDialog.js';
+import { Button } from '../src/renderer/ui/Button.js';
 import { ConversationMarkdown } from '../src/renderer/session/ConversationMarkdown.js';
 import { SessionActivityGroup } from '../src/renderer/session/SessionActivity.js';
 import type { NativeSessionItemBuffer } from '../src/renderer/session/sessionTypes.js';
@@ -12,6 +16,7 @@ interface QaScene {
 }
 
 const scenes: QaScene[] = [
+  { query: 'copy', title: '提示语与错误操作', summary: '中英文真实消息提示组件', answer: '', activities: [] },
   {
     query: 'overview',
     title: '会话核心组件',
@@ -67,6 +72,7 @@ export function sceneFromSearch(search: string): QaScene {
 }
 
 export function SessionQaApp(props: { scene: QaScene }) {
+  if (props.scene.query === 'copy') return <CopyErrorQa />;
   const items = props.scene.activities.map((_, index) => activity(props.scene, index));
   return (
     <main className="macos-ai-app zeus-shell qa-page">
@@ -93,6 +99,145 @@ export function SessionQaApp(props: { scene: QaScene }) {
           </a>
         ))}
       </nav>
+    </main>
+  );
+}
+
+/** 人工验收使用的错误来源；合成内容不调用 AI 服务或修改任务。 */
+const copyErrorScenes: Array<{ id: string; title: string; error: UserFacingErrorCause; archive?: boolean }> = [
+  { id: 'login', title: '未登录', error: { code: 'ZEUS_UNIFIED_QUEUE_HEAD_FAILED', message: 'Queue paused', cause: { code: 'ZEUS_CODEX_LOGIN_REQUIRED', message: 'Sign-in required' } } },
+  { id: 'permission', title: '权限不足', error: { code: 'EACCES', message: 'Permission denied: /Users/example/private/data' } },
+  { id: 'connection', title: '连接中断', error: { code: 'ECONNRESET', message: 'Connection reset' } },
+  { id: 'quota', title: '用量限制', error: { code: 'insufficient_quota', message: 'Usage limit reached' } },
+  { id: 'rejected', title: '模型拒绝', error: { code: 'content_filter', message: 'Request declined by model service' } },
+  { id: 'configuration', title: '配置错误', error: { code: 'ZEUS_MODEL_API_KEY_REQUIRED', message: 'API key missing' } },
+  {
+    id: 'archive',
+    title: '归档受阻',
+    archive: true,
+    error: { code: 'ZEUS_NATIVE_CONVERSATION_IN_PROGRESS', message: 'Conversation has unfinished work', cause: { code: 'ZEUS_CONVERSATION_ARCHIVE_PENDING_REQUEST', message: 'Pending approval' } },
+  },
+  { id: 'unknown', title: '原因未知与脱敏', error: { code: 'ZEUS_UNRECOGNIZED_EXAMPLE', message: 'Unexpected failure api_key=qa-secret-value token=qa-token-value /Users/example/private-file\nBearer qa-bearer-value' } },
+  { id: 'outcome', title: '结果未确认', error: { code: 'ZEUS_CONVERSATION_DISPATCH_COMMAND_OUTCOME_UNKNOWN', message: 'Result unconfirmed', cause: { code: 'ECONNRESET', message: 'Connection interrupted after write' } } },
+  { id: 'unsent', title: '恢复未发消息', error: { code: 'ZEUS_RECOVERED_UNSENT_CONFIRMATION_REQUIRED', message: 'Recovered unsent message' } },
+];
+
+/** 切换状态并驱动生产组件，核对失败、检查、恢复和再次失败的操作语义。 */
+function CopyErrorQa() {
+  const [language, setLanguage] = useState<'zh-CN' | 'en'>(new URLSearchParams(window.location.search).get('language') === 'en' ? 'en' : 'zh-CN');
+  const [selected, setSelected] = useState(copyErrorScenes[0]!);
+  const [phase, setPhase] = useState<'failed' | 'checking' | 'waiting' | 'complete'>('failed');
+  const [action, setAction] = useState('尚未执行操作');
+  const checkCompletion = useRef<((error?: Error) => void) | null>(null);
+  const zh = language === 'zh-CN';
+  const error = selected.error;
+  const item: NativeSessionItemBuffer = {
+    key: 'copy-message',
+    conversationId: 'copy-qa',
+    threadId: '',
+    turnId: 'copy-turn',
+    itemId: 'copy-item',
+    localItemId: 'copy-submission',
+    type: 'userMessage',
+    phase: 'user',
+    text: '请继续处理这项任务。',
+    status: phase === 'waiting' ? 'queued' : 'paused',
+    optimistic: true,
+    resources: [],
+    updatedAt: '2026-09-05T00:00:00.000Z',
+    payload: {
+      pausedReason: selected.id === 'unsent' ? 'recovered_unsent' : 'recovery_required',
+      recoveryKind: phase === 'waiting' ? 'interaction_response' : undefined,
+      deliveryError: { ...error, recoveryRequired: true, retryable: false },
+    },
+  };
+  const check = () =>
+    new Promise<void>((resolve, reject) => {
+      setPhase('checking');
+      setAction('正在核对；未重发消息');
+      checkCompletion.current = (failure) => {
+        checkCompletion.current = null;
+        if (failure) reject(failure);
+        else resolve();
+      };
+    });
+  const finishCheck = (failed: boolean) => {
+    checkCompletion.current?.(failed ? Object.assign(new Error('Second attempt failed'), { code: 'ECONNRESET' }) : undefined);
+    setPhase(failed ? 'failed' : 'waiting');
+    setAction(failed ? '检查再次失败；未重发消息' : '检查完成，进入恢复等待');
+  };
+  return (
+    <main className="macos-ai-app zeus-shell qa-page">
+      <header className="qa-heading">
+        <h1>{zh ? '用户提示语验收' : 'User message review'}</h1>
+        <Button onClick={() => setLanguage(zh ? 'en' : 'zh-CN')}>{zh ? 'Switch to English' : '切换中文'}</Button>
+        <nav className="qa-scenes" aria-label="错误场景">
+          {copyErrorScenes.map((scene) => (
+            <Button
+              key={scene.id}
+              disabled={phase === 'checking'}
+              onClick={() => {
+                setSelected(scene);
+                setPhase('failed');
+                setAction('尚未执行操作');
+              }}
+            >
+              {scene.title}
+            </Button>
+          ))}
+        </nav>
+      </header>
+      <div className="qa-themes">
+        <section className="qa-theme theme-light" data-theme="light">
+          <h2>{zh ? '消息处理' : 'Message processing'}</h2>
+          {phase === 'complete' ? (
+            <p role="status">{zh ? '已完成处理。' : 'Processing complete.'}</p>
+          ) : selected.archive ? (
+            <VisibleApplicationError error={error} language={language} />
+          ) : (
+            <MessageDeliveryOutcomeFeedback
+              key={selected.id}
+              item={item}
+              submissionId="copy-submission"
+              language={language}
+              onRecoverQueue={check}
+              onOpenAiSettings={(section) => setAction(section === 'runtime' ? '导航：设置 → AI 连接' : '导航：设置 → 模型供应商')}
+              onReconnectCodex={() => setAction('请求连接 Codex；未重发消息')}
+              onRetryQueuedSubmission={() => {
+                setAction('请求发送已确认未发送的消息');
+                setPhase('waiting');
+              }}
+              onCancelQueuedSubmission={() => {
+                setAction('请求取消此消息');
+                setPhase('complete');
+              }}
+            />
+          )}
+          <p role="status" aria-label="操作记录">
+            {action}
+          </p>
+        </section>
+        <section className="qa-theme theme-dark" data-theme="dark">
+          <h2>{zh ? '相同原因的深色显示' : 'The same cause in dark appearance'}</h2>
+          <VisibleApplicationError error={error} language={language} />
+          <p>{describeUserFacingError(error, language).outcomeUnconfirmed ? (zh ? '上次操作结果未确认' : 'The previous result is unconfirmed') : ''}</p>
+        </section>
+      </div>
+      <nav className="qa-scenes" aria-label="验收状态控制">
+        <Button disabled={phase !== 'checking'} onClick={() => finishCheck(false)}>
+          完成检查：恢复
+        </Button>
+        <Button disabled={phase !== 'checking'} onClick={() => finishCheck(true)}>
+          完成检查：仍失败
+        </Button>
+        <Button disabled={phase === 'checking'} onClick={() => setPhase('complete')}>
+          显示正常完成
+        </Button>
+        <Button disabled={phase === 'checking'} onClick={() => setPhase('failed')}>
+          再次失败
+        </Button>
+      </nav>
+      <ApplicationErrorDialogHost language={language} />
     </main>
   );
 }

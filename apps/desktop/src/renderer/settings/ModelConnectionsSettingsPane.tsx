@@ -1,3 +1,4 @@
+import { redactUserFacingErrorDetails } from '@zeus/shared';
 import { useEffect, useRef, useState } from 'react';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type {
@@ -15,7 +16,7 @@ import type {
 } from '../apiClient.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { Button } from '../ui/Button.js';
-import { formatVisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { reportApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 
 /** 编辑中的供应商；密钥只在当前编辑器内存中短暂保留。 */
@@ -81,7 +82,7 @@ export function ModelConnectionsSettingsPane(props: {
       })
       .catch((error: unknown) => {
         if (!active) return;
-        setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
+        setMessage(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
         setStatus('idle');
       });
     return () => {
@@ -204,7 +205,7 @@ export function ModelConnectionsSettingsPane(props: {
     try {
       await props.onComplete(defaultModelRef);
     } catch (error) {
-      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
+      setMessage(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
     } finally {
       setStatus('idle');
     }
@@ -229,7 +230,7 @@ export function ModelConnectionsSettingsPane(props: {
       if (props.onComplete) await refreshDefaultModels(draft.id);
       setMessage(zh ? `发现 ${result.discoveredModelIds.length} 个模型，新增 ${result.addedModelIds.length} 个。` : `Discovered ${result.discoveredModelIds.length} models and added ${result.addedModelIds.length}.`);
     } catch (error) {
-      setMessage(`${formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en')} ${zh ? '模型目录未验证；可以重试获取，也可以手工添加模型并保存。' : 'The model catalog is unverified; retry or add and save a model manually.'}`);
+      setMessage(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
     } finally {
       setStatus('idle');
     }
@@ -242,7 +243,7 @@ export function ModelConnectionsSettingsPane(props: {
     try {
       setDiagnostic(await props.client.diagnoseModelConnection(draft.id));
     } catch (error) {
-      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
+      setMessage(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
     } finally {
       setStatus('idle');
     }
@@ -256,7 +257,7 @@ export function ModelConnectionsSettingsPane(props: {
       await reloadConnections(draft.id);
       setMessage(zh ? 'API Key 已从钥匙串清除。' : 'API key cleared from Keychain.');
     } catch (error) {
-      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
+      setMessage(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
     } finally {
       setStatus('idle');
     }
@@ -273,7 +274,7 @@ export function ModelConnectionsSettingsPane(props: {
       setDiagnostic(null);
       setMessage(zh ? '供应商已删除。' : 'Provider deleted.');
     } catch (error) {
-      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
+      setMessage(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
     } finally {
       setStatus('idle');
     }
@@ -320,7 +321,9 @@ export function ModelConnectionsSettingsPane(props: {
       <header className="settings-section-heading model-connections-heading">
         <span>
           <strong>{zh ? '模型供应商' : 'Model providers'}</strong>
-          <small>{zh ? '配置供应商后，各项目可选择多个可运行模型。API Key 只保存到本机钥匙串。' : 'Configure providers once, then let each project select multiple runnable models. API keys stay in the local Keychain.'}</small>
+          <small>
+            {zh ? '填写服务地址和访问密钥（API Key），即可在项目中选择该服务的模型。密钥只保存在本机钥匙串。' : 'Enter the service address and API key to use its models in projects. The key is stored only in this Mac’s Keychain.'}
+          </small>
         </span>
         <Button hidden={Boolean(props.onComplete)} variant="secondary" size="compact" onClick={() => setDraft(emptyDraft())} disabled={busy}>
           {zh ? '新建供应商' : 'New provider'}
@@ -447,8 +450,12 @@ export function ModelConnectionsSettingsPane(props: {
           <section className="model-definition-section">
             <header>
               <span>
-                <strong>{zh ? '模型路由与能力' : 'Model routing and capabilities'}</strong>
-                <small>{zh ? '每个模型独立选择真实协议与认证；能力状态仍以当前渠道的运行证据为准。' : 'Choose the actual protocol and authentication per model. Capability states still depend on runtime evidence from this channel.'}</small>
+                <strong>{zh ? '模型连接与功能' : 'Model connections and features'}</strong>
+                <small>
+                  {zh
+                    ? '为每个模型选择服务支持的请求格式和登录方式。功能是否可用以检测结果为准。'
+                    : 'Choose the request format and authentication supported by the service for each model. Feature availability is based on checks of that connection.'}
+                </small>
               </span>
               {draft.templateId === 'custom' || props.onComplete ? (
                 <span className="model-add-row">
@@ -497,7 +504,19 @@ export function ModelConnectionsSettingsPane(props: {
             </div>
           </section>
 
-          {diagnostic ? <p className={`model-connection-diagnostic ${diagnostic.ok ? 'success' : 'warning'}`}>{diagnostic.message}</p> : null}
+          {diagnostic ? (
+            <p className={`model-connection-diagnostic ${diagnostic.ok ? 'success' : 'warning'}`}>
+              {diagnostic.ok ? (
+                zh ? (
+                  `已连接并读取到 ${diagnostic.discoveredModelCount ?? 0} 个模型。模型是否支持图片或工具调用仍需分别检查。`
+                ) : (
+                  `Connected and found ${diagnostic.discoveredModelCount ?? 0} models. Image input and tool support still need to be checked separately.`
+                )
+              ) : (
+                <VisibleApplicationError error={diagnostic} language={zh ? 'zh-CN' : 'en'} />
+              )}
+            </p>
+          ) : null}
           {message ? (
             <p className="model-connection-message" role="status">
               {message}
@@ -701,17 +720,21 @@ function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: Mode
         <dl>
           <div>
             <dt>{zh ? '推理' : 'Reasoning'}</dt>
-            <dd>{model.capability.reasoning.reason}</dd>
+            <dd>{capabilityEvidenceText(model.capability.reasoning, zh)}</dd>
           </div>
           <div>
             <dt>{zh ? '工具调用' : 'Tool calling'}</dt>
-            <dd>{model.capability.tools.reason}</dd>
+            <dd>{capabilityEvidenceText(model.capability.tools, zh)}</dd>
           </div>
           <div>
             <dt>{zh ? '图片输入' : 'Image input'}</dt>
-            <dd>{model.capability.imageInput.reason}</dd>
+            <dd>{capabilityEvidenceText(model.capability.imageInput, zh)}</dd>
           </div>
         </dl>
+        <details>
+          <summary>{zh ? '检测记录（原文）' : 'Original check details'}</summary>
+          <pre>{[model.capability.reasoning.reason, model.capability.tools.reason, model.capability.imageInput.reason].map(redactUserFacingErrorDetails).join('\n')}</pre>
+        </details>
       </details>
     </article>
   );
@@ -748,22 +771,22 @@ function createModel(id: string, thinkingFormat: ModelThinkingFormat): ModelConn
         checkedAt: null,
         reason: zhModelCapabilityPendingReason,
       },
-      tools: evidence('等待真实工具闭环探针。'),
-      imageInput: evidence('等待真实图片输入探针。'),
-      streaming: evidence('等待真实流式输出探针。'),
-      usage: evidence('等待真实用量字段探针。'),
+      tools: evidence('尚未检测工具调用功能。'),
+      imageInput: evidence('尚未检测图片输入功能。'),
+      streaming: evidence('尚未检测逐步显示回复的功能。'),
+      usage: evidence('尚未检测服务是否提供用量信息。'),
     },
   };
 }
 
 function protocolDescription(protocolFamily: ModelProtocolFamily, zh: boolean): string {
   if (protocolFamily === 'anthropic_messages') {
-    return zh ? 'Claude 原生 Messages 链路 · 支持缓存断点与缓存用量' : 'Native Claude Messages route · cache breakpoints and usage';
+    return zh ? 'Anthropic Messages 请求格式 · 支持缓存设置与用量信息' : 'Anthropic Messages format · cache settings and usage';
   }
   if (protocolFamily === 'openai_responses') {
-    return zh ? 'OpenAI Responses 原生链路 · 缓存键随会话稳定' : 'Native OpenAI Responses route · stable conversation cache key';
+    return zh ? 'OpenAI Responses 请求格式 · 支持对话缓存' : 'OpenAI Responses format · conversation caching';
   }
-  return zh ? 'OpenAI Chat Completions 兼容链路' : 'OpenAI Chat Completions-compatible route';
+  return zh ? 'OpenAI Chat Completions 兼容格式' : 'OpenAI Chat Completions-compatible format';
 }
 
 function protocolLabel(protocolFamily: ModelProtocolFamily): string {
@@ -788,7 +811,7 @@ function reasoningCapabilityLabel(model: ModelConnectionModel, zh: boolean): str
   return zh ? `默认 ${reasoning.defaultLevel} · ${reasoning.levels.length} 档` : `Default ${reasoning.defaultLevel} · ${reasoning.levels.length} levels`;
 }
 
-const zhModelCapabilityPendingReason = '待 Zeus 根据渠道和模型档案自动识别。';
+const zhModelCapabilityPendingReason = '等待识别此服务中该模型支持的功能。';
 
 function capabilityStateLabel(state: ModelCapabilityEvidence['state'], zh: boolean): string {
   if (state === 'supported') return zh ? '支持' : 'Supported';
@@ -807,4 +830,12 @@ function cloneModel(model: ModelConnectionModel): ModelConnectionModel {
       usage: { ...model.capability.usage },
     },
   };
+}
+
+/** 根据已记录的检测状态解释能力来源，原始诊断不当作普通说明。 */
+function capabilityEvidenceText(evidence: Pick<ModelCapabilityEvidence, 'source' | 'state'>, zh: boolean): string {
+  if (evidence.source === 'catalog') return zh ? '来自模型资料，尚需检查当前连接是否支持。' : 'Based on model information. Support still needs to be checked for this connection.';
+  if (evidence.state === 'supported') return zh ? '当前记录显示此连接支持该功能。' : 'The current record indicates that this connection supports the feature.';
+  if (evidence.state === 'unsupported') return zh ? '当前记录显示此连接不支持该功能。' : 'The current record indicates that this connection does not support the feature.';
+  return zh ? '尚未确认此连接是否支持该功能。' : 'Support for this feature has not been confirmed on this connection.';
 }

@@ -1,3 +1,4 @@
+import { describeUserFacingError, redactUserFacingErrorDetails } from '@zeus/shared';
 import { useEffect, useRef, useState } from 'react';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { Button } from './Button.js';
@@ -10,6 +11,8 @@ export type ApplicationErrorLanguage = 'zh-CN' | 'en';
 
 export interface ApplicationErrorOptions {
   language?: ApplicationErrorLanguage;
+  /** 用户主动查看详情时直接展开，避免再次寻找入口。 */
+  showDetails?: boolean;
 }
 
 interface ApplicationErrorEntry {
@@ -21,24 +24,19 @@ interface ApplicationErrorEntry {
   dedupeKey: string;
   /** 保留可操作错误身份，不依赖翻译后的文案识别登录门禁。 */
   code: string | null;
+  /** 当前条目是否由查看详情按钮打开。 */
+  showDetails: boolean;
 }
 
 const listeners = new Set<() => void>();
 let queue: ApplicationErrorEntry[] = [];
 let nextErrorId = 1;
 
-const secretPatterns: ReadonlyArray<[RegExp, string]> = [
-  [/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [已脱敏]'],
-  [/\bsk-[A-Za-z0-9_-]{12,}\b/g, 'sk-[已脱敏]'],
-  [/\b(api[_-]?key|token|password|secret)\s*[:=]\s*([^\s,;]+)/gi, '$1=[已脱敏]'],
-  [/([?&](?:access_token|api_key|token|password|secret)=)[^&\s]+/gi, '$1[已脱敏]'],
-];
-
 const copyByLanguage = {
   'zh-CN': {
-    title: '操作未完成',
-    summary: 'Zeus 没有完成这项操作。可查看详情确认真实原因，关闭后当前工作面会保留。',
-    unavailable: '当前操作未完成，请稍后重试。',
+    title: '无法完成操作',
+    summary: 'Zeus 尚未识别这次错误的具体原因。请查看错误详情。',
+    unavailable: 'Zeus 尚未识别这次错误的具体原因。',
     unknown: '未知错误。',
     details: '查看详情',
     hideDetails: '收起详情',
@@ -48,9 +46,9 @@ const copyByLanguage = {
     originalMessage: '原始信息',
   },
   en: {
-    title: 'Operation not completed',
-    summary: 'Zeus did not complete this operation. Review the actual cause in Details; closing keeps the current workspace intact.',
-    unavailable: 'The current operation did not complete. Please try again.',
+    title: 'Unable to complete this action',
+    summary: 'Zeus has not identified the cause of this error. See the error details.',
+    unavailable: 'Zeus has not identified the cause of this error.',
     unknown: 'Unknown error.',
     details: 'View Details',
     hideDetails: 'Hide Details',
@@ -93,7 +91,7 @@ function notifyListeners(): void {
 }
 
 function redactDetails(value: string): string {
-  return secretPatterns.reduce((result, [pattern, replacement]) => result.replace(pattern, replacement), value).trim();
+  return redactUserFacingErrorDetails(value);
 }
 
 function errorMessage(error: unknown, language: ApplicationErrorLanguage): string {
@@ -111,41 +109,57 @@ function errorCode(error: unknown): string | null {
   return candidate?.trim() || null;
 }
 
+/** 只负责解释原因，不改变错误对应操作的可重试性。 */
 export function formatVisibleApplicationError(error: unknown, language: ApplicationErrorLanguage = 'zh-CN'): string {
-  const code = errorCode(error);
-  if (code && visibleCopyByCode[code]) return visibleCopyByCode[code][language];
-  return copyByLanguage[language].unavailable;
+  return describeUserFacingError(error, language).message;
 }
 
+/** 行内提示直接说明原因，用户可主动打开已有详情窗口。 */
 export function VisibleApplicationError(props: { error: unknown; language?: ApplicationErrorLanguage; className?: string }) {
-  return <span className={props.className}>{formatVisibleApplicationError(props.error, props.language)}</span>;
+  const language = props.language ?? 'zh-CN';
+  const explanation = describeUserFacingError(props.error, language);
+  return (
+    <span className={props.className}>
+      <span>{explanation.message}</span>
+      {explanation.details ? (
+        <button type="button" className="application-error-details-link" onClick={() => reportApplicationError(props.error, { language, showDetails: true })}>
+          {language === 'zh-CN' ? '错误详情' : 'Error details'}
+        </button>
+      ) : null}
+    </span>
+  );
 }
 
 /** 全应用统一错误出口：摘要保持稳定，脱敏后的真实错误码和消息进入可展开详情。 */
-export function reportApplicationError(error: unknown, options: ApplicationErrorOptions = {}): void {
+export function reportApplicationError(error: unknown, options: ApplicationErrorOptions = {}): string {
   const language = options.language ?? 'zh-CN';
   const copy = copyByLanguage[language];
   const code = errorCode(error);
   const message = errorMessage(error, language).replace(/\s+/gu, ' ').trim() || copy.unknown;
   const original = code && message !== code && !message.startsWith(`${code}:`) ? `${code}: ${message}` : message;
-  const detailsBody = `${copy.originalMessage}: ${original}`;
+  const detailsBody = `${copy.originalMessage}: ${describeUserFacingError(error, language).details || original}`;
   const details = redactDetails(`${copy.occurredAt}: ${new Date().toISOString()}\n${detailsBody}`);
   const entry: ApplicationErrorEntry = {
     id: nextErrorId++,
     language,
     title: copy.title,
-    summary: code && visibleCopyByCode[code] ? visibleCopyByCode[code][language] : copy.summary,
+    summary: formatVisibleApplicationError(error, language),
+    showDetails: options.showDetails === true,
     details,
-    dedupeKey: redactDetails(original),
+    dedupeKey: detailsBody,
     code,
   };
   const duplicate = queue.some((candidate) => candidate.language === entry.language && candidate.dedupeKey === entry.dedupeKey);
-  if (!duplicate) {
+  if (duplicate && options.showDetails) {
+    queue = [entry, ...queue.filter((candidate) => candidate.dedupeKey !== entry.dedupeKey)];
+    notifyListeners();
+  } else if (!duplicate) {
     queue = [...queue, entry];
     notifyListeners();
   }
   console.error('[Zeus runtime]', details);
   window.zeus?.reportRendererRuntimeError?.(details);
+  return entry.summary;
 }
 
 /** 同一个失败值只上报一次；清空后再次出现同样的错误仍会重新弹窗。 */
@@ -159,6 +173,8 @@ export function useApplicationErrorDialog(error: unknown, options: ApplicationEr
     }
     if (Object.is(previousErrorRef.current, error)) return;
     previousErrorRef.current = error;
+    // 已格式化的摘要没有原始详情，不重复弹出同一提示。
+    if (typeof error === 'string' && !describeUserFacingError(error, language).details) return;
     reportApplicationError(error, language ? { language } : {});
   }, [error, language]);
 }
@@ -179,7 +195,7 @@ export function ApplicationErrorDialogHost(props: { language: ApplicationErrorLa
   const [detailsOpen, setDetailsOpen] = useState(false);
   const current = queue[0];
   useEffect(() => subscribe(() => forceRender((value) => value + 1)), []);
-  useEffect(() => setDetailsOpen(false), [current?.id]);
+  useEffect(() => setDetailsOpen(current?.showDetails ?? false), [current?.id, current?.showDetails]);
   if (!current) return null;
   const copy = copyByLanguage[current.language ?? props.language];
   return (

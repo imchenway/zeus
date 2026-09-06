@@ -1,3 +1,5 @@
+import { describeUserFacingError, type UserFacingErrorLanguage } from '@zeus/shared';
+
 export interface ZeusRealtimeEvent {
   type: string;
   payload?: Record<string, unknown>;
@@ -21,6 +23,8 @@ export interface CreateSystemNotificationBridgeOptions {
   openWebSocket: (url: string, protocol: string) => ZeusSystemNotificationSocket;
   showNotification: (payload: ZeusSystemNotificationPayload) => void;
   shouldNotify?: () => boolean;
+  /** 每次通知读取当前应用语言，启动阶段默认中文。 */
+  language?: () => UserFacingErrorLanguage;
   onError?: (error: unknown) => void;
 }
 
@@ -31,90 +35,111 @@ export interface SystemNotificationBridge {
 /**
  * 将本地事件总线里的真实领域事件转换为 macOS 系统通知文案；未映射事件返回 null，避免制造噪音或假通知。
  */
-export function buildSystemNotificationFromRealtimeEvent(event: ZeusRealtimeEvent): ZeusSystemNotificationPayload | null {
+export function buildSystemNotificationFromRealtimeEvent(event: ZeusRealtimeEvent, language: UserFacingErrorLanguage = 'zh-CN'): ZeusSystemNotificationPayload | null {
+  // 通知与桌面界面使用同一种语言。
+  const zh = language === 'zh-CN';
   const payload = event.payload ?? {};
   if (event.type === 'task.created') {
     return {
-      title: 'Zeus 新任务',
-      body: joinNotificationParts(readString(payload.title, '真实任务'), readString(payload.projectId)),
+      title: zh ? 'Zeus 新任务' : 'Zeus new task',
+      body: joinNotificationParts(readString(payload.title, zh ? '新任务' : 'New task'), readString(payload.projectId)),
     };
   }
   if (event.type === 'task.status.changed') {
-    const title = taskStatusNotificationTitle(readString(payload.to));
+    const title = taskStatusNotificationTitle(readString(payload.to), language);
     if (!title) return null;
     return {
       title,
-      body: joinNotificationParts(readString(payload.title, '真实任务'), readString(payload.projectId)),
+      body: joinNotificationParts(readString(payload.title, zh ? '新任务' : 'New task'), readString(payload.projectId)),
     };
   }
   if (event.type === 'runtime.confirmation.created' || event.type === 'git.confirmation.created') {
     return {
-      title: 'Zeus 等待确认',
-      body: joinNotificationParts(readString(payload.operation, '高风险操作'), readString(payload.projectId)),
+      title: zh ? 'Zeus 等待你的授权' : 'Zeus needs your approval',
+      body: joinNotificationParts(zh ? '请打开 Zeus 查看请求的操作和影响。' : 'Open Zeus to review the requested action and its effects.'),
     };
   }
   if (event.type === 'security.confirmation.approved') {
     return {
-      title: 'Zeus 确认已通过',
-      body: joinNotificationParts(readString(payload.operation, readString(payload.action, '高风险操作')), readString(payload.riskLevel)),
+      title: zh ? 'Zeus 操作已获允许' : 'Zeus action approved',
+      body: joinNotificationParts(zh ? '请打开 Zeus 查看操作进展。' : 'Open Zeus to check the action’s progress.'),
     };
   }
   if (event.type === 'security.confirmation.rejected') {
     return {
-      title: 'Zeus 确认已拒绝',
-      body: joinNotificationParts(readString(payload.operation, readString(payload.action, '高风险操作')), readString(payload.riskLevel)),
+      title: zh ? 'Zeus 操作已被拒绝' : 'Zeus action declined',
+      body: joinNotificationParts(zh ? '请打开 Zeus 查看操作进展。' : 'Open Zeus to check the action’s progress.'),
     };
   }
   if (event.type === 'project.scan.completed') {
     return {
-      title: 'Zeus 扫描完成',
-      body: joinNotificationParts(readString(payload.projectName, '真实项目'), formatCount(payload.nodeCount, '节点'), formatCount(payload.edgeCount, '边')),
+      title: zh ? 'Zeus 项目扫描完成' : 'Zeus project scan complete',
+      body: joinNotificationParts(readString(payload.projectName, zh ? '项目' : 'Project'), formatCount(payload.nodeCount, zh ? '个项目内容' : 'items'), formatCount(payload.edgeCount, zh ? '个关联' : 'relationships')),
     };
   }
   if (event.type === 'project.scan.failed') {
     return {
-      title: 'Zeus 扫描失败',
-      body: joinNotificationParts(readString(payload.projectName, '真实项目'), readString(payload.error, '请回到 Zeus 查看详情')),
+      title: zh ? 'Zeus 无法完成项目扫描' : 'Zeus project scan failed',
+      body: joinNotificationParts(readString(payload.projectName, zh ? '项目' : 'Project'), describeUserFacingError(payload.error, language).message),
     };
   }
   if (event.type === 'runtime.session.ended') {
     return {
-      title: 'Zeus Runtime 已结束',
+      title: zh ? 'Zeus 运行已结束' : 'Zeus run ended',
       body: joinNotificationParts(readString(payload.sessionId), readString(payload.taskId)),
     };
   }
   if (event.type === 'runtime.session.error') {
     return {
-      title: 'Zeus Runtime 出错',
-      body: joinNotificationParts(readString(payload.sessionId), readString(payload.error, '请回到 Zeus 查看日志')),
+      title: zh ? 'Zeus 运行出错' : 'Zeus run failed',
+      body: joinNotificationParts(readString(payload.sessionId), describeUserFacingError(payload.error, language).message),
     };
   }
   if (event.type === 'conversation.attention.changed') {
-    return conversationNotification(payload, 'Zeus 有新回复', '模型已回复，请回到会话查看。');
+    return conversationNotification(payload, zh ? 'Zeus 有新回复' : 'Zeus has a new reply', zh ? 'AI 已回复，请打开对话查看。' : 'The AI has replied. Open the conversation to read it.');
   }
   if (event.type === 'conversation.request.created') {
     if (payload.notificationEligible === false) return null;
     const userInput = readString(payload.requestKind) === 'request_user_input';
-    return conversationNotification(payload, userInput ? 'Zeus 等待你的回答' : 'Zeus 等待审批', userInput ? '会话需要你补充信息。' : '会话需要你确认后才能继续。');
+    return conversationNotification(
+      payload,
+      userInput ? (zh ? 'Zeus 等待你的回答' : 'Zeus needs your answer') : zh ? 'Zeus 等待你的授权' : 'Zeus needs your approval',
+      userInput ? (zh ? '请打开对话回答问题。' : 'Open the conversation to answer the question.') : zh ? '请打开对话允许或拒绝 AI 的操作请求。' : 'Open the conversation to approve or decline the AI’s action request.',
+    );
   }
   if (event.type === 'conversation.turn.completed') {
     if (payload.notificationEligible !== true) return null;
     const status = readString(payload.status);
     if (status === 'failed' && payload.severity === 'warning') {
-      return conversationNotification(payload, 'Zeus 模型请求未完成', '本轮请求未完成，会话可以继续。');
+      return conversationNotification(
+        payload,
+        zh ? 'Zeus 模型请求出错' : 'Zeus model request failed',
+        zh ? 'AI 服务未能完成回复，请打开对话查看原因。' : 'The AI service could not finish its response. Open the conversation to see the cause.',
+      );
     }
-    if (status === 'failed') return conversationNotification(payload, 'Zeus 会话失败', '本轮执行失败，请回到会话查看详情。');
-    if (status === 'interrupted') return conversationNotification(payload, 'Zeus 会话已中断', '本轮执行已中断。');
-    if (status === 'completed') return conversationNotification(payload, 'Zeus 会话已完成', '本轮执行已经完成。');
+    if (status === 'failed') return conversationNotification(payload, zh ? 'Zeus 对话处理失败' : 'Zeus conversation failed', zh ? '这次处理失败，请打开对话查看原因。' : 'This request failed. Open the conversation to see the cause.');
+    if (status === 'interrupted') return conversationNotification(payload, zh ? 'Zeus 已停止处理' : 'Zeus stopped processing', zh ? '当前处理已停止。' : 'The current work has stopped.');
+    if (status === 'completed') return conversationNotification(payload, zh ? 'Zeus 已完成处理' : 'Zeus finished processing', zh ? '请打开对话查看结果。' : 'Open the conversation to view the result.');
   }
   if (event.type === 'conversation.goal.updated') {
     if (payload.notificationEligible !== true) return null;
     const goal = isRecord(payload.goal) ? payload.goal : {};
     const status = readString(goal.status);
-    if (status === 'complete') return conversationNotification(payload, 'Zeus 目标已完成', '目标已经达到停止条件。');
-    if (status === 'blocked') return conversationNotification(payload, 'Zeus 目标需要处理', '目标遇到阻塞，需要你处理。');
-    if (status === 'usageLimited') return conversationNotification(payload, 'Zeus 目标用量受限', '目标因账户用量限制暂停。');
-    if (status === 'budgetLimited') return conversationNotification(payload, 'Zeus 目标预算受限', '目标因令牌预算限制暂停。');
+    if (status === 'complete') return conversationNotification(payload, zh ? 'Zeus 目标已完成' : 'Zeus goal complete', zh ? '目标已完成，自动执行已停止。' : 'The goal is complete and automatic work has stopped.');
+    if (status === 'blocked')
+      return conversationNotification(
+        payload,
+        zh ? 'Zeus 目标需要你处理' : 'Zeus goal needs attention',
+        zh ? '目标暂时无法继续，请打开对话查看需要你处理的问题。' : 'Work toward the goal cannot continue. Open the conversation to see what needs your attention.',
+      );
+    if (status === 'usageLimited')
+      return conversationNotification(payload, zh ? 'Zeus 目标因用量限制暂停' : 'Zeus goal paused by usage limit', zh ? '账户用量已达上限，目标已暂停。' : 'The account usage limit was reached, so work toward the goal is paused.');
+    if (status === 'budgetLimited')
+      return conversationNotification(
+        payload,
+        zh ? 'Zeus 目标已达到设定用量' : 'Zeus goal reached its usage budget',
+        zh ? '已达到此目标设定的用量上限（Token），自动执行已暂停。' : 'The goal’s token budget was reached, so automatic work is paused.',
+      );
   }
   return null;
 }
@@ -134,7 +159,7 @@ export function createSystemNotificationBridge(options: CreateSystemNotification
       const notificationKey = conversationNotificationKey(event);
       if (notificationKey?.suppressBecauseOrdinary && notifiedOrdinaryTurns.has(notificationKey.turnKey)) return;
       if (notificationKey && deliveredKeys.has(notificationKey.key)) return;
-      const notification = buildSystemNotificationFromRealtimeEvent(event);
+      const notification = buildSystemNotificationFromRealtimeEvent(event, options.language?.());
       if (notification) {
         if (notificationKey) {
           deliveredKeys.add(notificationKey.key);
@@ -156,7 +181,7 @@ export function createSystemNotificationBridge(options: CreateSystemNotification
 function conversationNotification(payload: Record<string, unknown>, title: string, fallbackBody: string): ZeusSystemNotificationPayload {
   return {
     title,
-    body: readString(payload.conversationTitle, fallbackBody),
+    body: joinNotificationParts(readString(payload.conversationTitle), fallbackBody),
     ...(typeof payload.projectId === 'string' ? { projectId: payload.projectId } : {}),
     ...(typeof payload.conversationId === 'string' ? { conversationId: payload.conversationId } : {}),
   };
@@ -195,13 +220,14 @@ function buildZeusWebSocketProtocol(apiToken: string): string {
   return `zeus-token.${Buffer.from(apiToken, 'utf8').toString('base64url')}`;
 }
 
-function taskStatusNotificationTitle(status: string): string | null {
+function taskStatusNotificationTitle(status: string, language: UserFacingErrorLanguage): string | null {
+  const zh = language === 'zh-CN';
   const titles: Record<string, string> = {
-    running: 'Zeus 任务已开始',
-    waiting_confirmation: 'Zeus 任务等待确认',
-    completed: 'Zeus 任务已完成',
-    failed: 'Zeus 任务失败',
-    canceled: 'Zeus 任务已取消',
+    running: zh ? 'Zeus 任务已开始' : 'Zeus task started',
+    waiting_confirmation: zh ? 'Zeus 任务等待确认' : 'Zeus task needs confirmation',
+    completed: zh ? 'Zeus 任务已完成' : 'Zeus task complete',
+    failed: zh ? 'Zeus 任务失败' : 'Zeus task failed',
+    canceled: zh ? 'Zeus 任务已取消' : 'Zeus task cancelled',
   };
   return titles[status] ?? null;
 }
@@ -215,5 +241,5 @@ function formatCount(value: unknown, label: string): string {
 }
 
 function joinNotificationParts(...parts: string[]): string {
-  return parts.filter(Boolean).join(' · ') || '请回到 Zeus 查看详情';
+  return parts.filter(Boolean).join(' · ');
 }

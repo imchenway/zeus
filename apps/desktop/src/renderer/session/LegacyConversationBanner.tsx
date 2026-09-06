@@ -9,8 +9,7 @@ export interface LegacyConversationBannerProps {
 
 export function LegacyConversationBanner(props: LegacyConversationBannerProps) {
   const title = props.language === 'zh-CN' ? '旧会话记录为只读' : 'Legacy transcript is read-only';
-  const body =
-    props.language === 'zh-CN' ? '该记录来自旧 CLI。前往设置导入后，Codex 会生成可直接续接的原生会话。' : 'This record came from the legacy CLI. Import it in Settings to create a native Codex conversation that can be resumed directly.';
+  const body = props.language === 'zh-CN' ? '这是旧版工具的会话记录。请前往设置导入，以便继续对话。' : 'This conversation comes from an older tool. Import it in Settings to continue the conversation.';
   const action = props.language === 'zh-CN' ? '前往设置导入' : 'Import in Settings';
   return (
     <section className="session-legacy-banner" role="status" aria-label={title}>

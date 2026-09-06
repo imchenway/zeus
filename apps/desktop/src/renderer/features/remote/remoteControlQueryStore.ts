@@ -1,3 +1,4 @@
+import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import type { CodexRemoteControlPairing, CodexRemoteControlSnapshot } from '../../apiClient.js';
 import type { RemoteControlApiClient } from './remoteControlApiClient.js';
 import { errorMessage, ExternalStore } from '../../externalStore.js';
@@ -9,6 +10,8 @@ export interface RemoteControlQuerySnapshot {
   command: 'idle' | 'enabling' | 'disabling' | 'pairing' | 'revoking';
   message: string | null;
   error: string | null;
+  /** 可选底层原因供界面生成本地化提示，原错误字符串仍保留。 */
+  errorCause?: UserFacingErrorCause | null;
 }
 
 const initialSnapshot: RemoteControlQuerySnapshot = {
@@ -18,6 +21,7 @@ const initialSnapshot: RemoteControlQuerySnapshot = {
   command: 'idle',
   message: null,
   error: null,
+  errorCause: null,
 };
 
 /** Remote Control 的唯一 Renderer projection；轮询和命令不进入 App 全局 state。 */
@@ -30,14 +34,14 @@ export class RemoteControlQueryStore extends ExternalStore<RemoteControlQuerySna
 
   async load(): Promise<void> {
     const generation = ++this.generation;
-    this.publish({ ...this.snapshot, phase: 'loading', error: null });
+    this.publish({ ...this.snapshot, phase: 'loading', error: null, errorCause: null });
     try {
       const value = await this.client.loadCodexRemoteControl();
       if (generation !== this.generation) return;
-      this.publish({ ...this.snapshot, phase: 'ready', value, error: null });
+      this.publish({ ...this.snapshot, phase: 'ready', value, error: null, errorCause: null });
     } catch (error) {
       if (generation !== this.generation) return;
-      this.publish({ ...this.snapshot, phase: 'error', error: errorMessage(error) });
+      this.publish({ ...this.snapshot, phase: 'error', error: errorMessage(error), errorCause: userFacingErrorCause(error) });
     }
   }
 
@@ -51,14 +55,14 @@ export class RemoteControlQueryStore extends ExternalStore<RemoteControlQuerySna
 
   async startPairing(): Promise<void> {
     if (this.snapshot.command !== 'idle') return;
-    this.publish({ ...this.snapshot, command: 'pairing', message: null, error: null });
+    this.publish({ ...this.snapshot, command: 'pairing', message: null, error: null, errorCause: null });
     try {
       let value = this.snapshot.value;
       if (!value?.enabled || value.status.status === 'disabled') value = await this.client.enableCodexRemoteControl();
       const pairing = await this.client.startCodexRemoteControlPairing();
       this.publish({ ...this.snapshot, phase: 'ready', value, pairing, command: 'idle' });
     } catch (error) {
-      this.publish({ ...this.snapshot, command: 'idle', error: errorMessage(error) });
+      this.publish({ ...this.snapshot, command: 'idle', error: errorMessage(error), errorCause: userFacingErrorCause(error) });
     }
   }
 
@@ -86,12 +90,12 @@ export class RemoteControlQueryStore extends ExternalStore<RemoteControlQuerySna
 
   private async run(command: Exclude<RemoteControlQuerySnapshot['command'], 'idle'>, operation: () => Promise<CodexRemoteControlSnapshot>): Promise<void> {
     if (this.snapshot.command !== 'idle') return;
-    this.publish({ ...this.snapshot, command, message: null, error: null });
+    this.publish({ ...this.snapshot, command, message: null, error: null, errorCause: null });
     try {
       const value = await operation();
       this.publish({ ...this.snapshot, phase: 'ready', value, command: 'idle' });
     } catch (error) {
-      this.publish({ ...this.snapshot, phase: 'error', command: 'idle', error: errorMessage(error) });
+      this.publish({ ...this.snapshot, phase: 'error', command: 'idle', error: errorMessage(error), errorCause: userFacingErrorCause(error) });
     }
   }
 }

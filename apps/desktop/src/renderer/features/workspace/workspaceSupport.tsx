@@ -432,7 +432,7 @@ export function isRuntimeConversationOutputEvent(event: ZeusRealtimeEvent, conve
   return Boolean(sessionId && conversation && !conversation.archived && conversation.sessionId === sessionId);
 }
 
-export function appendRuntimeOutputEventsToConversation(conversation: GraphConversationHistoryItem, events: readonly ZeusRealtimeEvent[]): GraphConversationHistoryItem {
+export function appendRuntimeOutputEventsToConversation(conversation: GraphConversationHistoryItem, events: readonly ZeusRealtimeEvent[], language: 'zh-CN' | 'en-US'): GraphConversationHistoryItem {
   if (!conversation.sessionId) return conversation;
   const matchingEvents = events.filter((event) => event.payload.sessionId === conversation.sessionId);
   if (matchingEvents.length === 0) return conversation;
@@ -496,7 +496,7 @@ export function appendRuntimeOutputEventsToConversation(conversation: GraphConve
       id: `runtime_realtime_projection_${conversation.sessionId ?? conversation.id}`,
       conversationId: conversation.id,
       role: 'system',
-      content: '实时会话仅显示最近约 4MB Runtime 输出；完整历史请查看 Runtime 日志。',
+      content: language === 'zh-CN' ? '这里只显示最近约 4 MB 的运行输出。完整内容可在运行日志中查看。' : 'Showing the latest 4 MB of output. Open the run logs for the full output.',
       source: 'runtime_realtime_projection',
       metadata: { sessionId: conversation.sessionId, logsTruncated: true },
       createdAt: kept[0]?.createdAt ?? latestCreatedAt,
@@ -505,7 +505,7 @@ export function appendRuntimeOutputEventsToConversation(conversation: GraphConve
   return { ...conversation, status: 'running', updatedAt: latestCreatedAt, messages: [...persistedMessages, ...kept] };
 }
 
-export function applyRuntimeEndedEventToConversation(conversation: GraphConversationHistoryItem, event: ZeusRealtimeEvent): GraphConversationHistoryItem {
+export function applyRuntimeEndedEventToConversation(conversation: GraphConversationHistoryItem, event: ZeusRealtimeEvent, language: 'zh-CN' | 'en-US'): GraphConversationHistoryItem {
   const sessionId = typeof event.payload.sessionId === 'string' ? event.payload.sessionId : null;
   if (!sessionId || conversation.sessionId !== sessionId) return conversation;
   const status = typeof event.payload.status === 'string' ? event.payload.status : conversation.status;
@@ -514,7 +514,7 @@ export function applyRuntimeEndedEventToConversation(conversation: GraphConversa
   return {
     ...conversation,
     status,
-    summary: `Runtime 会话 ${sessionId} 已结束${exitCode === null ? '' : `，exitCode=${exitCode}`}`,
+    summary: language === 'zh-CN' ? `运行已结束${exitCode === null ? '' : `，退出码：${exitCode}`}` : `Run ended${exitCode === null ? '' : `; exit code: ${exitCode}`}`,
     updatedAt: endedAt,
   };
 }

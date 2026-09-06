@@ -47,6 +47,8 @@ interface SurfaceRuntime {
 }
 
 interface CreateExternalBrowserHostOptions {
+  /** 浏览器确认与安全登录窗口使用应用语言。 */
+  language?: () => 'zh-CN' | 'en-US';
   runtimeRoot: string;
   artifactRoot: string;
   helperExecutable: string;
@@ -419,7 +421,8 @@ export class ExternalBrowserHost implements BrowserAutomationPort {
 
   private respondNative(response: ServerResponse, value: unknown): void {
     if (response.writableEnded || response.destroyed) return;
-    const data = Buffer.from(JSON.stringify(value));
+    // 现有心跳和命令响应携带可选语言，不增加扩展请求权限。
+    const data = Buffer.from(JSON.stringify({ ...asRecord(value), language: this.options.language?.() ?? 'zh-CN' }));
     response.writeHead(200, { 'content-type': 'application/json', 'content-length': String(data.byteLength), 'cache-control': 'no-store' });
     response.end(data);
   }
@@ -452,15 +455,28 @@ export class ExternalBrowserHost implements BrowserAutomationPort {
     return Boolean(connection && Date.now() - connection.lastSeenAt <= waiterTimeoutMs + 10_000);
   }
 
+  /** 说明这次浏览器授权的能力与后果，拒绝仍为默认选择。 */
   private async confirmAdvanced(path: string, risk: 'developer' | 'sensitive'): Promise<boolean> {
+    const zh = this.options.language?.() !== 'en-US';
     return this.showConfirmation(
-      risk === 'developer' ? '允许外部浏览器开发者能力？' : '允许敏感浏览器操作？',
-      risk === 'developer' ? `Agent 请求 ${path}。该能力可绕过普通页面工具边界，读取或修改当前页面。` : `Agent 请求 ${path}。该操作可能上传文件、读取剪贴板或提交敏感页面。`,
+      zh ? '允许这次浏览器操作？' : 'Allow this browser action?',
+      risk === 'developer'
+        ? zh
+          ? `AI 请求使用高级浏览器功能 ${path}，可以读取或修改当前页面，范围超出普通页面操作。`
+          : `The AI requests advanced browser access through ${path}. This can read or change the page beyond normal page actions.`
+        : zh
+          ? `AI 请求 ${path}，可能上传文件、读取剪贴板或提交页面内容。`
+          : `The AI requests ${path}, which may upload files, read the clipboard, or submit page content.`,
     );
   }
 
+  /** 敏感操作逐次确认，语言变化不会改变授权范围。 */
   private async confirmSensitive(tool: string): Promise<boolean> {
-    return this.showConfirmation('允许外部浏览器敏感操作？', `Agent 请求 ${tool}，其参数或按键可能提交表单、发送消息或改变账户状态。`);
+    const zh = this.options.language?.() !== 'en-US';
+    return this.showConfirmation(
+      zh ? '允许这次浏览器操作？' : 'Allow this browser action?',
+      zh ? `AI 请求 ${tool}，可能提交表单、发送消息或修改账号内容。` : `The AI requests ${tool}, which may submit a form, send a message, or change account content.`,
+    );
   }
 
   private async performBrowserAuth(surface: ExternalSurface, input: BrowserAutomationToolCall): Promise<{ contentItems: BrowserAutomationContentItem[]; success: boolean }> {
@@ -505,7 +521,7 @@ export class ExternalBrowserHost implements BrowserAutomationPort {
       resizable: false,
       minimizable: false,
       maximizable: false,
-      title: 'Zeus 安全登录',
+      title: this.options.language?.() === 'en-US' ? 'Sign in with Zeus' : '通过 Zeus 登录',
       webPreferences: { contextIsolation: false, nodeIntegration: true, sandbox: false, devTools: false },
     });
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -513,7 +529,7 @@ export class ExternalBrowserHost implements BrowserAutomationPort {
     const safeFields = fields.map((field) => ({ id: String(field.id ?? ''), label: String(field.label ?? field.id ?? 'Credential').slice(0, 100), type: secureInputType(field.type), required: field.required === true }));
     const safeOptions = options.map((option) => ({ id: String(option.id ?? ''), label: String(option.label ?? option.id ?? 'Option').slice(0, 100) }));
     const configuration = JSON.stringify({ origin, fields: safeFields, options: safeOptions, channel, token }).replaceAll('<', '\\u003c');
-    const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'"><style>body{font:14px -apple-system,sans-serif;margin:0;background:#11151b;color:#f5f7f6}main{padding:24px}h1{font-size:20px;margin:0 0 6px}p{color:#aeb8b5;margin:0 0 18px;word-break:break-all}label{display:block;margin:12px 0 5px}input[type=text],input[type=email],input[type=tel],input[type=password]{box-sizing:border-box;width:100%;padding:10px;border:1px solid #39433f;border-radius:8px;background:#1b2229;color:#fff}.option{display:flex;gap:8px;align-items:center}.actions{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}button{padding:9px 15px;border-radius:8px;border:1px solid #44514d;background:#252e35;color:#fff}button.primary{background:#55bda1;color:#07120f;border-color:#55bda1}</style></head><body><main><h1>Zeus 安全登录</h1><p id="origin"></p><form id="form"><div id="options"></div><div id="fields"></div><div class="actions"><button type="button" id="cancel">取消</button><button class="primary" type="submit">继续</button></div></form></main><script>const {ipcRenderer}=require('electron');const config=${configuration};document.getElementById('origin').textContent=config.origin;const options=document.getElementById('options');for(const option of config.options){const label=document.createElement('label');label.className='option';const input=document.createElement('input');input.type='radio';input.name='selectedOption';input.value=option.id;label.append(input,document.createTextNode(option.label));options.append(label)}const fields=document.getElementById('fields');for(const field of config.fields){const label=document.createElement('label');label.textContent=field.label;const input=document.createElement('input');input.type=field.type;input.name=field.id;input.required=field.required;input.autocomplete='off';label.append(input);fields.append(label)}const finish=(status)=>{const values={};for(const field of config.fields){const input=document.querySelector('[name="'+CSS.escape(field.id)+'"]');values[field.id]=input?.value||'';if(input)input.value=''}const selectedOption=document.querySelector('[name=selectedOption]:checked')?.value;ipcRenderer.send(config.channel,{token:config.token,status,values,selectedOption})};document.getElementById('cancel').onclick=()=>finish('cancelled');document.getElementById('form').onsubmit=(event)=>{event.preventDefault();finish('submitted')}</script></body></html>`;
+    const html = `<!doctype html><html lang="${this.options.language?.() ?? 'zh-CN'}"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'"><style>body{font:14px -apple-system,sans-serif;margin:0;background:#11151b;color:#f5f7f6}main{padding:24px}h1{font-size:20px;margin:0 0 6px}p{color:#aeb8b5;margin:0 0 18px;word-break:break-all}label{display:block;margin:12px 0 5px}input[type=text],input[type=email],input[type=tel],input[type=password]{box-sizing:border-box;width:100%;padding:10px;border:1px solid #39433f;border-radius:8px;background:#1b2229;color:#fff}.option{display:flex;gap:8px;align-items:center}.actions{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}button{padding:9px 15px;border-radius:8px;border:1px solid #44514d;background:#252e35;color:#fff}button.primary{background:#55bda1;color:#07120f;border-color:#55bda1}</style></head><body><main><h1>${this.options.language?.() === 'en-US' ? 'Sign in with Zeus' : '通过 Zeus 登录'}</h1><p id="origin"></p><form id="form"><div id="options"></div><div id="fields"></div><div class="actions"><button type="button" id="cancel">${this.options.language?.() === 'en-US' ? 'Cancel' : '取消'}</button><button class="primary" type="submit">${this.options.language?.() === 'en-US' ? 'Continue' : '继续'}</button></div></form></main><script>const {ipcRenderer}=require('electron');const config=${configuration};document.getElementById('origin').textContent=config.origin;const options=document.getElementById('options');for(const option of config.options){const label=document.createElement('label');label.className='option';const input=document.createElement('input');input.type='radio';input.name='selectedOption';input.value=option.id;label.append(input,document.createTextNode(option.label));options.append(label)}const fields=document.getElementById('fields');for(const field of config.fields){const label=document.createElement('label');label.textContent=field.label;const input=document.createElement('input');input.type=field.type;input.name=field.id;input.required=field.required;input.autocomplete='off';label.append(input);fields.append(label)}const finish=(status)=>{const values={};for(const field of config.fields){const input=document.querySelector('[name="'+CSS.escape(field.id)+'"]');values[field.id]=input?.value||'';if(input)input.value=''}const selectedOption=document.querySelector('[name=selectedOption]:checked')?.value;ipcRenderer.send(config.channel,{token:config.token,status,values,selectedOption})};document.getElementById('cancel').onclick=()=>finish('cancelled');document.getElementById('form').onsubmit=(event)=>{event.preventDefault();finish('submitted')}</script></body></html>`;
     return new Promise((resolveCredentials) => {
       let resolved = false;
       const finish = (value: { status: 'submitted' | 'cancelled'; values: Record<string, string>; selectedOption?: string }) => {
@@ -538,7 +554,7 @@ export class ExternalBrowserHost implements BrowserAutomationPort {
   }
 
   private async showConfirmation(title: string, detail: string): Promise<boolean> {
-    const options = { type: 'warning' as const, title, message: title, detail, buttons: ['拒绝', '允许一次'], defaultId: 0, cancelId: 0, noLink: true };
+    const options = { type: 'warning' as const, title, message: title, detail, buttons: this.options.language?.() === 'en-US' ? ['Decline', 'Allow once'] : ['拒绝', '允许一次'], defaultId: 0, cancelId: 0, noLink: true };
     const window = BrowserWindow.getFocusedWindow();
     const result = window ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
     return result.response === 1;

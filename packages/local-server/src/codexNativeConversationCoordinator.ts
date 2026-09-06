@@ -1958,7 +1958,18 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       state.type === 'active' ||
       state.type === 'waiting'
     ) {
-      throw coordinatorError('ZEUS_NATIVE_CONVERSATION_IN_PROGRESS', 'The conversation still has an active turn, queued message, or pending request and cannot be archived.');
+      throw Object.assign(coordinatorError('ZEUS_NATIVE_CONVERSATION_IN_PROGRESS', 'The conversation still has unfinished work and cannot be archived.'), {
+        cause: {
+          code: pendingRequest
+            ? 'ZEUS_CONVERSATION_ARCHIVE_PENDING_REQUEST'
+            : unfinishedTurn || conversation.providerState === 'active' || conversation.providerState === 'binding'
+              ? 'ZEUS_CONVERSATION_ARCHIVE_ACTIVE'
+              : pendingSubmission
+                ? 'ZEUS_CONVERSATION_ARCHIVE_PENDING_MESSAGES'
+                : 'ZEUS_CONVERSATION_ARCHIVE_ACTIVE',
+          message: 'Archive blocked by current conversation state.',
+        },
+      });
     }
   }
 

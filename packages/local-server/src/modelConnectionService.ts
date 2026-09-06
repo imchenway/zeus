@@ -1,3 +1,4 @@
+import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import { randomUUID } from 'node:crypto';
 import {
   buildModelsUrl,
@@ -33,6 +34,8 @@ export interface ModelCatalogRefreshResult {
 }
 
 export interface ModelConnectionDiagnostic {
+  /** 检查失败保留底层原因，不改变检查结果或错误码。 */
+  cause?: UserFacingErrorCause;
   ok: boolean;
   stage: 'configuration' | 'credential' | 'catalog';
   code: string;
@@ -130,7 +133,8 @@ export function createModelConnectionService(options: { settings: SettingReposit
         headers: { Accept: 'application/json', Authorization: `Bearer ${apiKey}` },
         signal: controller.signal,
       });
-      if (!response.ok) throw serviceError('ZEUS_MODEL_CATALOG_REQUEST_FAILED', `模型目录请求失败，HTTP ${response.status}。`, 502);
+      if (!response.ok)
+        throw Object.assign(serviceError('ZEUS_MODEL_CATALOG_REQUEST_FAILED', `模型目录请求失败，HTTP ${response.status}。`, 502), { cause: { code: `ZEUS_MODEL_HTTP_${response.status}`, message: `HTTP ${response.status}` } });
       let payload: unknown;
       try {
         payload = await response.json();
@@ -143,7 +147,7 @@ export function createModelConnectionService(options: { settings: SettingReposit
     } catch (error) {
       if (isServiceError(error)) throw error;
       if (error instanceof Error && error.name === 'AbortError') throw serviceError('ZEUS_MODEL_CATALOG_TIMEOUT', '模型目录请求在 15 秒内没有完成。', 504);
-      throw normalizeModelCatalogFetchError(error, connection);
+      throw Object.assign(normalizeModelCatalogFetchError(error, connection), { cause: error });
     } finally {
       clearTimeout(timeout);
     }
@@ -209,14 +213,14 @@ export function createModelConnectionService(options: { settings: SettingReposit
       try {
         connection = await requireConnection(id);
       } catch (error) {
-        return { ok: false, stage: 'configuration', code: readServiceCode(error), message: error instanceof Error ? error.message : '连接配置无效。', checkedAt, discoveredModelCount: null };
+        return { ok: false, stage: 'configuration', code: readServiceCode(error), cause: userFacingErrorCause(error), message: error instanceof Error ? error.message : '连接配置无效。', checkedAt, discoveredModelCount: null };
       }
       if (!connection.apiKeyConfigured) return { ok: false, stage: 'credential', code: 'ZEUS_MODEL_API_KEY_REQUIRED', message: '连接配置有效，但尚未配置 API Key。', checkedAt, discoveredModelCount: null };
       try {
         const modelIds = await fetchModelIds(connection);
         return { ok: true, stage: 'catalog', code: 'ZEUS_MODEL_CATALOG_AVAILABLE', message: `连接成功并发现 ${modelIds.length} 个模型 ID；这不代表工具调用等能力已经通过。`, checkedAt, discoveredModelCount: modelIds.length };
       } catch (error) {
-        return { ok: false, stage: 'catalog', code: readServiceCode(error), message: error instanceof Error ? error.message : '模型目录请求失败。', checkedAt, discoveredModelCount: null };
+        return { ok: false, stage: 'catalog', code: readServiceCode(error), cause: userFacingErrorCause(error), message: error instanceof Error ? error.message : '模型目录请求失败。', checkedAt, discoveredModelCount: null };
       }
     },
     async listSelectableModels() {

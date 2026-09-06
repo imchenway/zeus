@@ -435,7 +435,7 @@ function availableAction(changeSet: TurnChangeSet): ChangeAction | null {
 
 function unavailableReason(reason: string, language: SessionUiLanguage): string {
   if (reason !== historicalTurnChangeUnavailableReason) return reason;
-  return language === 'zh-CN' ? '已保留这一轮的历史文件变更记录，但缺少可安全撤销或重新应用的文件快照。' : reason;
+  return language === 'zh-CN' ? '缺少这次修改前后的文件内容，无法撤销或重新应用这些修改。' : 'The file contents before and after these changes are unavailable. These changes cannot be undone or reapplied.';
 }
 
 function changeSetTitle(changeSet: TurnChangeSet, language: SessionUiLanguage): string {

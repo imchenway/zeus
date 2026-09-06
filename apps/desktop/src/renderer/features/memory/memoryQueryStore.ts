@@ -1,3 +1,4 @@
+import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import type { MemoryApiClient } from './memoryApiClient.js';
 import type { MemoryCandidateInput, MemoryListQuery, MemoryRecord, SupersedingMemoryCandidateInput } from './memoryContracts.js';
 import { errorMessage, ExternalStore } from '../../externalStore.js';
@@ -9,6 +10,8 @@ export interface MemoryQuerySnapshot {
   loadingMore: boolean;
   command: 'idle' | 'creating' | 'superseding' | 'tombstoning';
   error: string | null;
+  /** 可选底层原因供界面生成本地化提示，原错误字符串仍保留。 */
+  errorCause?: UserFacingErrorCause | null;
   nextCursor: MemoryListQuery['before'] | null;
 }
 
@@ -33,6 +36,7 @@ export class MemoryQueryStore extends ExternalStore<MemoryQuerySnapshot> {
       loadingMore: false,
       command: 'idle',
       error: null,
+      errorCause: null,
       nextCursor: null,
     });
   }
@@ -40,20 +44,20 @@ export class MemoryQueryStore extends ExternalStore<MemoryQuerySnapshot> {
   async setQuery(query: MemoryQuerySnapshot['query']): Promise<void> {
     if (sameQuery(this.snapshot.query, query) && this.snapshot.phase !== 'idle') return;
     this.revision += 1;
-    this.publish({ ...this.snapshot, query, items: [], nextCursor: null, phase: 'loading', loadingMore: false, error: null });
+    this.publish({ ...this.snapshot, query, items: [], nextCursor: null, phase: 'loading', loadingMore: false, error: null, errorCause: null });
     await this.loadPage(false, this.revision);
   }
 
   async reload(): Promise<void> {
     this.revision += 1;
-    this.publish({ ...this.snapshot, items: [], nextCursor: null, phase: 'loading', loadingMore: false, error: null });
+    this.publish({ ...this.snapshot, items: [], nextCursor: null, phase: 'loading', loadingMore: false, error: null, errorCause: null });
     await this.loadPage(false, this.revision);
   }
 
   async loadMore(): Promise<void> {
     if (!this.snapshot.nextCursor || this.snapshot.loadingMore || this.snapshot.phase === 'loading') return;
     const revision = this.revision;
-    this.publish({ ...this.snapshot, loadingMore: true, error: null });
+    this.publish({ ...this.snapshot, loadingMore: true, error: null, errorCause: null });
     await this.loadPage(true, revision);
   }
 
@@ -71,13 +75,13 @@ export class MemoryQueryStore extends ExternalStore<MemoryQuerySnapshot> {
 
   private async runCommand(command: Exclude<MemoryQuerySnapshot['command'], 'idle'>, operation: () => Promise<unknown>): Promise<void> {
     if (this.snapshot.command !== 'idle') return;
-    this.publish({ ...this.snapshot, command, error: null });
+    this.publish({ ...this.snapshot, command, error: null, errorCause: null });
     try {
       await operation();
       this.publish({ ...this.snapshot, command: 'idle' });
       await this.reload();
     } catch (error) {
-      this.publish({ ...this.snapshot, command: 'idle', error: errorMessage(error) });
+      this.publish({ ...this.snapshot, command: 'idle', error: errorMessage(error), errorCause: userFacingErrorCause(error) });
       throw error;
     }
   }
@@ -87,10 +91,10 @@ export class MemoryQueryStore extends ExternalStore<MemoryQuerySnapshot> {
       const page = await this.client.list({ ...this.snapshot.query, ...(append && this.snapshot.nextCursor ? { before: this.snapshot.nextCursor } : {}) });
       if (revision !== this.revision) return;
       const items = append ? mergeBoundedMemoryPages(this.snapshot.items, page.items) : page.items.slice(0, 500);
-      this.publish({ ...this.snapshot, items, phase: 'ready', loadingMore: false, error: null, nextCursor: page.hasMore ? page.nextCursor : null });
+      this.publish({ ...this.snapshot, items, phase: 'ready', loadingMore: false, error: null, errorCause: null, nextCursor: page.hasMore ? page.nextCursor : null });
     } catch (error) {
       if (revision !== this.revision) return;
-      this.publish({ ...this.snapshot, phase: 'error', loadingMore: false, error: errorMessage(error) });
+      this.publish({ ...this.snapshot, phase: 'error', loadingMore: false, error: errorMessage(error), errorCause: userFacingErrorCause(error) });
     }
   }
 }

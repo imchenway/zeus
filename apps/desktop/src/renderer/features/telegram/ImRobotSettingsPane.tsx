@@ -1,3 +1,4 @@
+import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { useCallback, useEffect, useState } from 'react';
 import { BuildingsIcon as Buildings } from '@phosphor-icons/react/dist/csr/Buildings';
 import { ChatsCircleIcon as ChatsCircle } from '@phosphor-icons/react/dist/csr/ChatsCircle';
@@ -59,7 +60,7 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
     if (!props.client) return undefined;
     setError(null);
     void refresh().catch((reason) => {
-      if (active) setError(errorMessage(reason, zh ? '无法读取 IM 连接状态。' : 'Unable to load IM connection status.'));
+      if (active) setError(errorMessage(reason, zh ? 'zh-CN' : 'en'));
     });
     return () => {
       active = false;
@@ -77,7 +78,7 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
         if (active) setQrCodeDataUrl(value);
       })
       .catch((reason) => {
-        if (active) setError(errorMessage(reason, zh ? '二维码生成失败，请使用下方链接完成配对。' : 'Unable to generate QR code. Use the link below instead.'));
+        if (active) setError(errorMessage(reason, zh ? 'zh-CN' : 'en'));
       });
     return () => {
       active = false;
@@ -160,7 +161,7 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
         const result = await operation();
         await onSuccess(result);
       } catch (reason) {
-        setError(errorMessage(reason, zh ? '操作失败，请稍后重试。' : 'The operation failed. Please try again.'));
+        setError(errorMessage(reason, zh ? 'zh-CN' : 'en'));
       } finally {
         setAction(null);
       }
@@ -178,7 +179,7 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
         setSnapshot((current) => (current ? { ...current, connections: [created.connection], legacyTelegramTokenPending: false } : current));
         setPairing(created.pairing);
         setBotToken('');
-        setNotice(zh ? 'Bot 身份已通过 Telegram getMe 校验，等待私聊配对。' : 'Bot identity verified with Telegram getMe. Waiting for private-chat pairing.');
+        setNotice(zh ? '机器人已验证。请在 Telegram 私聊中完成配对。' : 'Bot verified. Complete pairing in a Telegram private chat.');
         await refresh();
       },
     );
@@ -204,7 +205,7 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
       () => props.client!.checkTelegramImConnection(connection.id),
       (updated) => {
         replaceConnection(setSnapshot, updated);
-        setNotice(zh ? '已重新校验 Token 并刷新轮询状态。' : 'Token and polling state checked.');
+        setNotice(zh ? '已检查机器人密钥并更新连接状态。' : 'Checked the bot token and updated the connection status.');
       },
     );
   };
@@ -217,7 +218,7 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
       () => props.client!.updateTelegramImConnection(connection.id, { expectedRevision: connection.revision, agentPreset: parseAgentPresetKey(value) }),
       (updated) => {
         replaceConnection(setSnapshot, updated);
-        setNotice(zh ? 'Agent Preset 已更新，只影响之后创建的会话和任务推送。' : 'Agent Preset updated for future conversations and task pushes only.');
+        setNotice(zh ? '默认智能体配置已更新，将用于之后新建的对话和任务。' : 'The default agent settings have been updated and will apply to new conversations and tasks.');
       },
     );
   };
@@ -228,8 +229,8 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
       enabled &&
       !window.confirm(
         zh
-          ? '开启后，已绑定的 Telegram 私聊可以批准或拒绝 Provider 审批。能力令牌仍为单次且会校验连接、用户、聊天、请求和 revision。确定开启？'
-          : 'The paired Telegram private chat will be able to approve or reject provider requests. Continue?',
+          ? '开启后，已配对的 Telegram 用户可以在私聊中批准或拒绝 AI 的操作请求。请确认只有你能访问该账号。确定开启？'
+          : 'Once enabled, the paired Telegram user can approve or decline the AI’s action requests in private chat. Make sure only you can access that account. Enable remote approvals?',
       )
     )
       return;
@@ -277,7 +278,7 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
         <h2 className="settings-page-title">{zh ? 'IM 机器人' : 'IM Bots'}</h2>
         <div className="im-state-message danger" role="alert">
           <WarningCircle aria-hidden="true" />
-          {zh ? '本机服务客户端不可用，无法读取真实连接状态。' : 'The local service client is unavailable.'}
+          {zh ? '无法连接 Zeus 后台，暂时不能读取机器人状态。' : 'Zeus cannot connect to its background service to load the bot status.'}
         </div>
       </section>
     );
@@ -288,10 +289,14 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
       <header className="im-page-heading">
         <span className="im-page-kicker">{zh ? 'IM 机器人' : 'IM BOTS'}</span>
         <h2 className="settings-page-title">{zh ? '机器人接入' : 'Bot connections'}</h2>
-        <p>{zh ? '将一个 IM Bot 安全绑定到一个 Zeus 项目、一个私聊用户和一个 Agent Preset。' : 'Securely bind one IM bot to one Zeus project, one private-chat user, and one Agent Preset.'}</p>
+        <p>
+          {zh
+            ? '连接聊天机器人，将指定项目的任务交给 AI，并在私聊中查看进展。每个连接只能配对一位用户。'
+            : 'Connect a chat bot to work with AI on a selected project and follow progress in private chat. Each connection can pair with one user.'}
+        </p>
       </header>
 
-      <div className="im-safety-bar" role="status" aria-label={zh ? 'IM 安全边界' : 'IM security boundaries'}>
+      <div className="im-safety-bar" role="status" aria-label={zh ? '机器人访问范围' : 'Bot access'}>
         <SafetyFact text={zh ? '仅接受已配对私聊' : 'Paired private chats only'} />
         <SafetyFact text={connection ? `${zh ? '项目已锁定' : 'Project locked'}：${connection.projectName}` : zh ? '连接后锁定项目范围' : 'Project scope locks on connect'} />
         <SafetyFact text={connection?.remoteApprovalEnabled ? (zh ? '远程审批已明确开启' : 'Remote approvals enabled') : zh ? '远程审批默认关闭' : 'Remote approvals off by default'} />
@@ -324,14 +329,14 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
         <div className="im-channel-detail">
           {!snapshot ? (
             <div className="im-empty-state" aria-busy="true">
-              {zh ? '正在读取真实连接状态…' : 'Loading connection state…'}
+              {zh ? '正在读取连接状态…' : 'Loading connection status…'}
             </div>
           ) : null}
           {snapshot && !supported ? (
             <div className="im-empty-state">
               <ChannelIcon channelId={selectedChannel} large />
               <strong>{selectedChannelSnapshot?.name}</strong>
-              <span>{zh ? '此渠道暂未支持。首期只开放 Telegram，当前页面不会创建占位连接或虚假在线状态。' : 'This channel is not supported yet. Telegram is the only channel available in the first release.'}</span>
+              <span>{zh ? '暂不支持此渠道，请选择 Telegram。' : 'This channel is not supported yet. Select Telegram.'}</span>
             </div>
           ) : null}
           {snapshot && supported ? (
@@ -344,7 +349,7 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
                     </span>
                     <span>
                       <strong id="im-connect-title">{zh ? '接入 Telegram 机器人' : 'Connect a Telegram bot'}</strong>
-                      <small>{zh ? 'Token 只会写入此连接专属的 macOS Keychain 槽位。' : 'The token is stored only in this connection’s macOS Keychain slot.'}</small>
+                      <small>{zh ? '机器人密钥（Token）会保存在本机 macOS 钥匙串中。' : 'The bot token is stored in this Mac’s Keychain.'}</small>
                     </span>
                   </div>
                   <ol className="im-step-list">
@@ -385,7 +390,9 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
                           <input type="checkbox" checked={useLegacyToken} onChange={(event) => setUseLegacyToken(event.currentTarget.checked)} disabled={busy} />
                           <span>
                             <strong>{zh ? '迁移现有 Telegram Token' : 'Migrate existing Telegram token'}</strong>
-                            <small>{zh ? '只迁移 Token，旧 allowlist 与 chat ID 不会自动成为可信身份。' : 'Only the token is migrated. Legacy allowlists and chat IDs are not trusted automatically.'}</small>
+                            <small>
+                              {zh ? '导入密钥后仍需重新配对 Telegram 用户，之前允许的用户不会自动获得访问权限。' : 'After importing the token, pair the Telegram user again. Previously allowed users will not automatically receive access.'}
+                            </small>
                           </span>
                         </label>
                       ) : null}
@@ -468,7 +475,7 @@ function PairingPanel(props: { zh: boolean; pairing: ImPairingSessionSnapshot | 
       ) : (
         <div className="im-state-message danger">
           <WarningCircle aria-hidden="true" />
-          {props.zh ? '配对明文不在数据库中；应用重启后需要重新生成配对码。' : 'Pairing plaintext is not persisted. Regenerate the code after an app restart.'}
+          {props.zh ? '应用重启后，请重新生成配对码。' : 'Generate a new pairing code after restarting the app.'}
           <button type="button" onClick={props.onRecreate} disabled={props.busy}>
             {props.zh ? '重新生成' : 'Regenerate'}
           </button>
@@ -526,7 +533,7 @@ function ConnectionCard(props: {
             <dd>{props.connection.projectName}</dd>
           </div>
           <div>
-            <dt>{props.zh ? '可信端点' : 'Trusted endpoint'}</dt>
+            <dt>{props.zh ? '已配对用户' : 'Paired user'}</dt>
             <dd>
               {props.connection.trustedEndpoint
                 ? `${props.connection.trustedEndpoint.displayName ?? (props.zh ? 'Telegram 用户' : 'Telegram user')} · ${props.connection.trustedEndpoint.providerUserIdMasked}`
@@ -539,13 +546,13 @@ function ConnectionCard(props: {
         {props.connection.state === 'reconfiguration_required' ? (
           <div className="im-state-message danger" role="alert">
             <WarningCircle aria-hidden="true" />
-            {props.zh ? '当前 Agent Preset 已不可用。请选择新的预设；新消息在修复前会失败关闭。' : 'The current Agent Preset is unavailable. Choose another preset before new messages can run.'}
+            {props.zh ? '当前智能体配置已不可用。请选择可用配置后再发送新消息。' : 'The current agent configuration is unavailable. Select an available configuration before sending new messages.'}
           </div>
         ) : null}
         <label className="im-card-field">
           <span>
             <strong>Agent Preset</strong>
-            <small>{props.zh ? '只影响之后创建的会话和任务推送；运行中的会话保持冻结配置。' : 'Affects only future conversations and task pushes. Running conversations keep their frozen configuration.'}</small>
+            <small>{props.zh ? '更改将用于新对话和新任务，正在进行的对话继续使用原配置。' : 'Changes apply to new conversations and tasks. Ongoing conversations keep their existing settings.'}</small>
           </span>
           <select value={props.presetKey} onChange={(event) => props.onPresetChange(event.currentTarget.value)} disabled={props.busy}>
             {project?.presets.map((preset) => (
@@ -649,6 +656,7 @@ function formatDateTime(value: string): string {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString(undefined, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-function errorMessage(reason: unknown, fallback: string): string {
-  return reason instanceof Error && reason.message.trim() ? reason.message : fallback;
+/** 显示当前语言的原因，并保留可展开的原始详情。 */
+function errorMessage(error: unknown, language: 'zh-CN' | 'en'): string {
+  return reportApplicationError(error, { language });
 }

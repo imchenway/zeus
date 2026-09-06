@@ -1,3 +1,4 @@
+import { describeUserFacingError, redactUserFacingErrorDetails } from '@zeus/shared';
 import type { DesktopReleaseUpdateStatus } from './releaseUpdateService.js';
 import { type HomebrewInstalledUpdate, type HomebrewPreparedUpdate, type HomebrewUpdateProgress, type HomebrewUpdateService, isTransientHomebrewDownloadError } from './homebrewUpdateService.js';
 import { createNativeUpdateProgressHost, type NativeUpdateProgressHost, type NativeUpdateProgressState } from './nativeUpdateProgress.js';
@@ -60,7 +61,7 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
     if (host) return host;
     const created = await createNativeUpdateProgressHost({
       executablePath: options.helperPath,
-      language: options.language(),
+      language: options.language,
     });
     host = created;
     created.onAction((action) => {
@@ -360,7 +361,7 @@ function indicatorForFailed(language: 'zh-CN' | 'en-US', update: DesktopReleaseU
     phase: 'failed',
     currentVersion: update.currentVersion,
     latestVersion: update.latestVersion,
-    detail: language === 'zh-CN' ? '更新下载未能完成，点击查看原因并重试。' : 'The update download could not be completed. Open it to review the reason and retry.',
+    detail: language === 'zh-CN' ? '更新下载未能完成，点击查看原因。' : 'The update download could not be completed. Open it to review the reason.',
   };
 }
 
@@ -380,8 +381,8 @@ function copyFor(language: 'zh-CN' | 'en-US', state: 'checking' | 'available' | 
     return {
       state,
       title: zh ? '正在检查更新' : 'Checking for Updates',
-      detail: zh ? 'Zeus 正在读取公开稳定版发布清单。' : 'Zeus is reading the public stable release manifest.',
-      progressCaption: zh ? '正在读取发布清单' : 'Reading release manifest',
+      detail: zh ? '正在检查是否有可安装的新版本。' : 'Checking whether a new version is available to install.',
+      progressCaption: zh ? '正在检查最新版本' : 'Checking the latest version',
     };
   }
   if (state === 'available') {
@@ -421,7 +422,7 @@ function progressCopy(language: 'zh-CN' | 'en-US', progress: HomebrewUpdateProgr
     return {
       state: 'updating',
       title: zh ? '正在更新 Homebrew 信息' : 'Updating Homebrew Information',
-      detail: zh ? 'Zeus 正在刷新公开 Cask，不会阻止你继续工作。' : 'Zeus is refreshing the public Cask without blocking your work.',
+      detail: zh ? '正在更新安装信息，你可以继续使用 Zeus。' : 'Updating installation information. You can keep using Zeus.',
       progressCaption: zh ? '正在更新 Homebrew 信息' : 'Updating Homebrew information',
     };
   }
@@ -429,7 +430,7 @@ function progressCopy(language: 'zh-CN' | 'en-US', progress: HomebrewUpdateProgr
     return {
       state: 'verifying',
       title: zh ? '正在校验更新' : 'Verifying Update',
-      detail: zh ? `Homebrew 与 Zeus 正在复验 ${update.artifact?.fileName ?? update.latestVersion} 的大小和 SHA-256。` : `Homebrew and Zeus are verifying the size and SHA-256 of ${update.artifact?.fileName ?? update.latestVersion}.`,
+      detail: zh ? `正在检查 Zeus ${update.latestVersion} 更新包是否完整。` : `Checking that the Zeus ${update.latestVersion} update package is complete.`,
       progressCaption: zh ? '正在校验下载内容' : 'Verifying downloaded update',
     };
   }
@@ -475,25 +476,26 @@ function retryCopy(language: 'zh-CN' | 'en-US', retryAt: string): NativeUpdatePr
 
 function failedCopy(language: 'zh-CN' | 'en-US', error: unknown, step: 'check' | 'prepare' | 'install'): NativeUpdateProgressState {
   const zh = language === 'zh-CN';
-  const technicalDetail = error instanceof Error ? error.message : String(error);
+  const explanation = describeUserFacingError(error, language);
+  const technicalDetail = redactUserFacingErrorDetails(explanation.details);
+  // 下载失败只有已识别的短暂中断可以直接重试；安装失败先处理具体原因。
+  const canRetry = step !== 'install' && (explanation.action === 'retry' || isTransientHomebrewDownloadError(error));
   const copy = {
     check: {
       title: zh ? '无法检查更新' : 'Could Not Check for Updates',
-      detail: zh ? '暂时无法取得最新版本信息。Zeus 没有发生变化，你可以稍后重试。' : 'The latest version information is temporarily unavailable. Zeus was not changed; you can try again later.',
     },
     prepare: {
       title: zh ? '更新下载失败' : 'Update Download Failed',
-      detail: zh ? 'Zeus 未被替换，你可以继续工作。' : 'Zeus was not replaced. You can keep working.',
     },
     install: {
       title: zh ? '更新安装失败' : 'Update Installation Failed',
-      detail: zh ? 'Zeus 未完成替换，现有工作可以继续。' : 'Zeus was not replaced successfully. Your existing work can continue.',
     },
   }[step];
   return {
     state: 'failed',
     title: copy.title,
-    detail: copy.detail,
+    detail: explanation.message,
+    canRetry,
     ...(technicalDetail.trim() ? { technicalDetail: technicalDetail.trim() } : {}),
   };
 }

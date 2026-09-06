@@ -1957,7 +1957,18 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       .listByConversation(conversation.id)
       .find((submission) => submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active' || (submission.status === 'paused' && !submission.providerTurnId));
     if (activeRun || pendingApproval || pendingRequest || unfinishedTurn || pendingSubmission || conversation.providerState === 'binding' || conversation.providerState === 'active' || conversation.providerState === 'waiting') {
-      throw piError('ZEUS_NATIVE_CONVERSATION_IN_PROGRESS', 'The conversation still has an active turn, queued message, or pending request and cannot be archived.');
+      throw Object.assign(piError('ZEUS_NATIVE_CONVERSATION_IN_PROGRESS', 'The conversation still has unfinished work and cannot be archived.'), {
+        cause: {
+          code: pendingRequest
+            ? 'ZEUS_CONVERSATION_ARCHIVE_PENDING_REQUEST'
+            : unfinishedTurn || conversation.providerState === 'active' || conversation.providerState === 'binding'
+              ? 'ZEUS_CONVERSATION_ARCHIVE_ACTIVE'
+              : pendingSubmission
+                ? 'ZEUS_CONVERSATION_ARCHIVE_PENDING_MESSAGES'
+                : 'ZEUS_CONVERSATION_ARCHIVE_ACTIVE',
+          message: 'Archive blocked by current conversation state.',
+        },
+      });
     }
   }
 

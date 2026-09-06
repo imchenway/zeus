@@ -26,7 +26,7 @@ import { conversationDisplayTitle } from '../../session/conversationDisplayTitle
 import { type AppLanguage } from './workspaceCopy.js';
 import { Button } from '../../ui/Button.js';
 import { ModalPortal } from '../../ui/ModalPortal.js';
-import { formatVisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
+import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { SourceListRow } from '../../ui/SourceListRow.js';
 import { useNewItemMotionIds } from '../../ui/useNewItemMotion.js';
 import { type AiRuntimeAdapterDescriptor, type AiRuntimeAdapterStatus, type AiRuntimeTerminalEvent, type AppShellSettings, type CodeMapSettings, type ProjectConfig, type ProjectRecord, type RuntimeSettings } from '../../apiClient.js';
@@ -557,7 +557,7 @@ export function SidebarNav(props: {
       setProjectRenameDraft('');
       window.requestAnimationFrame(() => projectMenuButtonRefs.current.get(projectId)?.focus());
     } catch (error) {
-      setProjectRenameError(errorToLocalUiMessage(error));
+      setProjectRenameError(errorToLocalUiMessage(error, props.appLanguage));
     } finally {
       setProjectRenameBusy(false);
     }
@@ -567,7 +567,7 @@ export function SidebarNav(props: {
         const query = projectSearchQuery.trim().toLocaleLowerCase();
         const group = props.conversationGroups.find((candidate) => candidate.projectId === project.id);
         const conversationMatches = [...(group?.conversations ?? []), ...(group?.tasks.flatMap((task) => task.conversations) ?? [])].some((conversation) =>
-          conversationDisplayTitle(conversation.title, group?.tasks.find((task) => task.taskId === conversation.taskId)?.taskTitle)
+          conversationDisplayTitle(conversation.title, group?.tasks.find((task) => task.taskId === conversation.taskId)?.taskTitle, props.appLanguage)
             .toLocaleLowerCase()
             .includes(query),
         );
@@ -1174,8 +1174,8 @@ export function normalizeLocalUiError(error?: LocalUiErrorSnapshot): LocalUiErro
   };
 }
 
-export function errorToLocalUiMessage(error: unknown): string {
-  return formatVisibleApplicationError(error, 'zh-CN');
+export function errorToLocalUiMessage(error: unknown, language: AppLanguage): string {
+  return reportApplicationError(error, { language: language === 'zh-CN' ? 'zh-CN' : 'en' });
 }
 
 export function redactLocalUiErrorMessage(message: string): string {

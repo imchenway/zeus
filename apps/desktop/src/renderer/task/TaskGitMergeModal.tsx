@@ -16,7 +16,7 @@ import type {
 } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
-import { formatVisibleApplicationError, useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { reportApplicationError, useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { TaskGitConflictWorkspace } from './TaskGitConflictWorkspace.js';
 import { TaskGitDiffTable } from './TaskGitDiffTable.js';
@@ -895,11 +895,11 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
 
                   {selectedWorkspace && selectedWorkspace.activeConversationCount > 0 ? (
                     <section className="task-git-review-active-sessions">
-                      <strong>{zh ? '活动会话不阻止代码交付' : 'Active sessions do not block delivery'}</strong>
+                      <strong>{zh ? '仍有会话可能继续修改代码' : 'Conversations may still change the code'}</strong>
                       <small>
                         {zh
-                          ? `系统检测到 ${selectedWorkspace.activeConversationCount} 个会话仍可能写入此分支。该状态只作提示，不参与提交或推送门禁；只有可能回收 worktree 的合入操作需要额外确认。`
-                          : `The system detected ${selectedWorkspace.activeConversationCount} session(s) that may still write to this branch. This is informational only and never gates commit or push; only a merge that may reclaim the worktree asks for extra confirmation.`}
+                          ? `还有 ${selectedWorkspace.activeConversationCount} 个会话可能修改此分支。仍可提交和推送；合入后如果移除工作目录，后续修改可能失败。`
+                          : `Another ${selectedWorkspace.activeConversationCount} conversation(s) may modify this branch. You can still commit and push. Removing the working folder after a merge may cause later changes to fail.`}
                       </small>
                     </section>
                   ) : null}
@@ -1357,16 +1357,16 @@ function mergeWorkspaceAction(workspace: TaskWorkspaceSnapshot | undefined, inte
 function confirmActiveSessionRisk(activeConversationCount: number, zh: boolean): boolean {
   return window.confirm(
     zh
-      ? `当前仍有 ${activeConversationCount} 个活动会话可能写入此分支。合入来源分支成功后可能回收任务 worktree，后续写入可能失败或丢失工作区现场。确定继续吗？`
-      : `${activeConversationCount} active conversation(s) may still write to this branch. Merging into the source branch may reclaim the task worktree, which can interrupt later writes or remove the worktree. Continue?`,
+      ? `还有 ${activeConversationCount} 个会话可能修改此分支。合入后可能移除任务的独立工作目录，导致后续修改失败，未提交内容也可能丢失。继续合入吗？`
+      : `Another ${activeConversationCount} conversation(s) may modify this branch. The task’s separate working folder may be removed after merging, causing later changes to fail and uncommitted work to be lost. Continue merging?`,
   );
 }
 
 function confirmBatchActiveSessionRisk(activeConversationCount: number, zh: boolean): boolean {
   return window.confirm(
     zh
-      ? `已选仓库中仍有 ${activeConversationCount} 个活动会话可能继续写入。批量合入成功后可能回收对应 worktree，后续写入可能失败或丢失工作区现场。确定继续吗？`
-      : `${activeConversationCount} active conversation(s) may still write to selected repositories. Successful merges may reclaim their worktrees and interrupt later writes. Continue?`,
+      ? `还有 ${activeConversationCount} 个会话可能修改所选仓库。合入后可能移除对应的独立工作目录，导致后续修改失败，未提交内容也可能丢失。继续合入吗？`
+      : `Another ${activeConversationCount} conversation(s) may modify the selected repositories. Their separate working folders may be removed after merging, causing later changes to fail and uncommitted work to be lost. Continue merging?`,
   );
 }
 
@@ -1433,7 +1433,7 @@ function isTargetHeadChanged(error: unknown): boolean {
 }
 
 function errorMessage(error: unknown, zh: boolean): string {
-  return formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en');
+  return reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' });
 }
 
 function isTargetBranchDirty(error: unknown): boolean {

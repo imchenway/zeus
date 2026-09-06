@@ -1,3 +1,4 @@
+import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import { currentConversationNavigationTraceId, markConversationNavigationSnapshotSettled } from '../performanceTraceContext.js';
 
 /**
@@ -37,13 +38,16 @@ export class ZeusApiError extends Error {
   readonly status: number;
   readonly error: string | null;
   readonly recoveryRequired: boolean;
+  /** 服务端包装错误中的原始原因。 */
+  override readonly cause?: UserFacingErrorCause;
 
-  constructor(input: { status: number; error?: string | null; message: string; recoveryRequired?: boolean }) {
+  constructor(input: { status: number; error?: string | null; message: string; recoveryRequired?: boolean; cause?: UserFacingErrorCause }) {
     super(input.message);
     this.name = 'ZeusApiError';
     this.status = input.status;
     this.error = input.error ?? null;
     this.recoveryRequired = input.recoveryRequired ?? false;
+    if (input.cause) this.cause = userFacingErrorCause(input.cause);
   }
 }
 
@@ -185,12 +189,14 @@ async function responseError(response: Response, path: string): Promise<ZeusApiE
     error?: string;
     message?: string;
     recoveryRequired?: boolean;
+    cause?: UserFacingErrorCause;
     operation?: { status?: string };
   } | null;
   const recoveryRequired = payload?.recoveryRequired === true || payload?.error === 'ZEUS_IDEMPOTENCY_RECOVERY_REQUIRED' || payload?.operation?.status === 'recovery_required';
   return new ZeusApiError({
     status: response.status,
     error: payload?.error,
+    ...(payload?.cause ? { cause: userFacingErrorCause(payload.cause) } : {}),
     message: payload?.message ?? `Zeus local API request failed: ${path} ${response.status}`,
     recoveryRequired,
   });

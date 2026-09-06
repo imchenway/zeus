@@ -146,6 +146,8 @@ import {
 import type { WorkspacePageProps } from './workspaceContracts.js';
 
 export function useWorkspaceQueryState(props: WorkspacePageProps) {
+  /** 异步失败发生时使用最新界面语言，避免早期创建的回调固定中文。 */
+  const errorLanguageRef = useRef<'zh-CN' | 'en-US'>(props.initialAppShellSettings?.appLanguage ?? 'zh-CN');
   const [localActiveNavTarget, setLocalActiveNavTarget] = useState<MainNavTarget>(() => inferInitialMainNavTarget(props));
   const activeNavTarget = props.shellNavigation?.activeNavTarget ?? localActiveNavTarget;
   const setActiveNavTarget = props.shellNavigation?.onNavigate ?? setLocalActiveNavTarget;
@@ -345,7 +347,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
         setTaskBoardLoadState((current) => ({ ...current, [projectId]: { loading: false, error: null } }));
         return board;
       } catch (error) {
-        const message = errorToLocalUiMessage(error);
+        const message = errorToLocalUiMessage(error, errorLanguageRef.current);
         setTaskBoardLoadState((current) => ({ ...current, [projectId]: { loading: false, error: message } }));
         return null;
       }
@@ -482,7 +484,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   useApplicationErrorDialog(projectWorkspaceConfigError, {
     language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en',
   });
-  useApplicationErrorDialog(archivedConversationLoadState === 'error' ? conversationQuery.error : null, {
+  useApplicationErrorDialog(archivedConversationLoadState === 'error' ? (conversationQuery.errorCause ?? conversationQuery.error) : null, {
     language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en',
   });
   const appShellSettingsRef = useRef(appShellSettings);
@@ -523,6 +525,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
       }
     };
   }, [appShellSettings.appearance]);
+  errorLanguageRef.current = appShellSettings.appLanguage;
   const uiCopy = getLanguageCopy(appShellSettings.appLanguage);
   const taskWorkspaceCopy = uiCopy.taskWorkspace;
   const sessionWorkspaceCopy = uiCopy.sessionWorkspace;
@@ -1176,7 +1179,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
       },
       (error) => {
         if (cancelled) return;
-        const message = errorToLocalUiMessage(error);
+        const message = errorToLocalUiMessage(error, errorLanguageRef.current);
         if (nativeProjectConversationChoiceLoadCoordinator.isCurrent(projectId, projectRequestVersion)) {
           setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: failNativeConversationChoiceTaskLoad(current[projectId], message) }));
         }
