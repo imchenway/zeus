@@ -42,6 +42,7 @@ import {
   ProjectRepositoryRegistrationRepository,
   ProjectSharedPathRepository,
   RuntimeSessionRepository,
+  SettingRepository,
   TaskEnvironmentRepository,
   TaskIntegrationAttemptRepository,
   TaskIntegrationRepository,
@@ -68,6 +69,7 @@ import { isNativeApiRecord, nativeApiError } from './conversationApplicationOper
 import { isPathInsideRoot } from './conversationResourcePreview.js';
 import type { BatchTaskWorkspaceResult, WorkspaceGitExplicitRejection, WorkspaceGitPreparedOpaque } from './index.js';
 import { ProjectGitQueryApplication } from './projectGitQueryApplication.js';
+import { readProjectRepositoryDiscovery } from './projectRepositoryDiscovery.js';
 import { runtimeSessionIsConfirmedTerminal } from './runtimeQueryApplication.js';
 import { buildTaskConflictAiConversationTitle, buildTaskConflictAiPrompt } from './taskConflictAi.js';
 import { type WorkspaceGitCommandType, workspaceGitCommandTypes } from './workspaceGitCommandApplication.js';
@@ -87,6 +89,8 @@ export type GitIntegrationOperationDependencies = Record<string, any> & {
   projectSharedPaths: ProjectSharedPathRepository;
   projects: ProjectRepository;
   runtimeSessions: RuntimeSessionRepository;
+  /** 创建环境前复验当前目录是否已有完整发现结果。 */
+  settings: SettingRepository;
   taskEnvironments: TaskEnvironmentRepository;
   taskIntegrationAttempts: TaskIntegrationAttemptRepository;
   taskIntegrations: TaskIntegrationRepository;
@@ -310,6 +314,11 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     }
 
     const adoptLocalBranch = selection.mode === 'local';
+    // 首次清单尚未完整时不得创建只隔离部分仓库的任务环境；既有环境继续路径不受影响。
+    const discovery = readProjectRepositoryDiscovery(dependencies.settings, project);
+    if (!discovery.completedAt) {
+      throw nativeApiError('ZEUS_WORKTREE_DISCOVERY_REQUIRED', discovery.error ?? '项目仓库发现尚未完成，请等待发现完成或刷新本地仓库。');
+    }
     const registeredRepositories = projectRepositories.listByProject(project.id);
     if (registeredRepositories.length === 0) {
       throw nativeApiError('ZEUS_WORKTREE_REPOSITORY_REQUIRED', 'No Git repository was found in the project directory. Initialize a repository or use the project directory directly.');

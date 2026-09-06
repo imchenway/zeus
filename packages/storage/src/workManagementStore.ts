@@ -41,7 +41,7 @@ export interface ZeusProjectRecord {
   updatedAt: string;
 }
 
-/** 项目容器内由用户确认纳入的真实 Git 仓库。 */
+/** 项目容器内完整发现并登记的真实 Git 仓库。 */
 export interface ZeusProjectRepositoryRecord {
   id: string;
   projectId: string;
@@ -1559,7 +1559,7 @@ function mapTaskBoardPositionRow(row: DbTaskBoardPositionRow): TaskBoardPosition
 
 const selectProjectRepositoryFields = `id, project_id, name, relative_path, local_path, created_at, updated_at`;
 
-/** 项目仓库登记只保存用户确认后的仓库集合，扫描候选不会自动进入持久记录。 */
+/** 项目仓库登记保存完整发现结果；同一路径复用身份，失败扫描不得替换清单。 */
 export class ProjectRepositoryRegistrationRepository {
   constructor(private readonly db: ZeusDatabasePort) {}
 

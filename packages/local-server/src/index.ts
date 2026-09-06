@@ -3117,6 +3117,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   if (executionHostDispatchMayResume) await recoverExpertRounds();
   submitPluginHookContinuation = conversationOperations.submitPluginHookContinuation;
   const gitIntegrationOperations = createGitIntegrationOperations({
+    settings,
     aiRuntimeManager,
     appendAuditLog,
     codexNativeCoordinator,

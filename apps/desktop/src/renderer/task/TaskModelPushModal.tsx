@@ -46,6 +46,12 @@ export interface TaskModelPushForm {
   permissionMode: NativePermissionMode;
   skillId: string;
   workspaceMode: 'direct' | 'worktree';
+  /** 工作方式经过用户选择或来自项目记忆时，不再被后台发现覆盖。 */
+  workspaceModeSelected?: boolean;
+  /** 首次发现 Git 后固定默认方式，不因后台清单变空而静默切换成直接目录。 */
+  workspaceModeResolved?: boolean;
+  /** 已展示的仓库集合发生变化时，创建前要求用户核对新清单。 */
+  repositorySelectionNeedsReview?: boolean;
   taskBranchMode: 'create' | 'existing';
   environmentId: string;
   directConcurrencyConfirmed: boolean;
@@ -533,7 +539,7 @@ export function writeTaskModelPushPreferences(storage: Pick<Storage, 'getItem' |
     serviceTier: form.serviceTier,
     permissionMode: form.permissionMode,
     collaborationMode: form.workMode,
-    workspaceMode: form.workspaceMode,
+    ...(form.workspaceModeSelected ? { workspaceMode: form.workspaceMode } : {}),
   });
   storage.setItem(
     `${preferencesKeyPrefix}${encodeURIComponent(projectId)}`,
@@ -542,7 +548,7 @@ export function writeTaskModelPushPreferences(storage: Pick<Storage, 'getItem' |
       effort: form.effort,
       workMode: form.workMode,
       permissionMode: form.permissionMode,
-      workspaceMode: form.workspaceMode,
+      ...(form.workspaceModeSelected ? { workspaceMode: form.workspaceMode } : {}),
     }),
   );
 }
@@ -556,13 +562,14 @@ export function resolveTaskModelPushInitialForm(
   const availableModels = capabilities.models.filter((model) => model.available !== false);
   const rememberedModel = resolveModelCapability(availableModels, remembered?.model);
   const selectedModel = rememberedModel ?? resolveModelCapability(availableModels, capabilities.preferredModel) ?? availableModels[0];
-  if (!selectedModel) throw new Error('Codex app-server did not report an available model.');
-  const effort = rememberedModel && remembered && selectedModel.supportedReasoningEfforts.includes(remembered.effort) ? remembered.effort : (selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? '');
-  const requestedServiceTier = projectModelServiceTierSelection(serviceTierPreferences, selectedModel);
-  const normalizedServiceTier = normalizeServiceTierSelection(requestedServiceTier, selectedModel);
+  const effort = rememberedModel && remembered && selectedModel?.supportedReasoningEfforts.includes(remembered.effort) ? remembered.effort : (selectedModel?.defaultReasoningEffort ?? selectedModel?.supportedReasoningEfforts[0] ?? '');
+  // 模型目录未就绪不能阻断本地仓库表单，模型到达后由既有选择器补齐模型能力。
+  const normalizedServiceTier = selectedModel
+    ? normalizeServiceTierSelection(projectModelServiceTierSelection(serviceTierPreferences, selectedModel), selectedModel)
+    : { selection: remembered?.serviceTier ?? { type: 'standard' as const }, downgraded: false };
   const firstAvailableEnvironment = capabilities.existingEnvironments?.find((environment) => environment.available);
   return {
-    model: selectedModel.id,
+    model: selectedModel?.id ?? remembered?.model ?? '',
     effort,
     serviceTier: normalizedServiceTier.selection,
     serviceTierDowngraded: normalizedServiceTier.downgraded,
@@ -571,6 +578,8 @@ export function resolveTaskModelPushInitialForm(
     permissionMode: remembered?.permissionMode ?? 'read-only',
     skillId,
     workspaceMode: remembered?.workspaceMode ?? (capabilities.repositories.length > 0 ? 'worktree' : 'direct'),
+    workspaceModeSelected: Boolean(remembered?.workspaceMode),
+    workspaceModeResolved: capabilities.repositories.length > 0,
     taskBranchMode: 'create',
     environmentId: firstAvailableEnvironment?.id ?? '',
     directConcurrencyConfirmed: false,
@@ -580,7 +589,7 @@ export function resolveTaskModelPushInitialForm(
         return [
           repository.id,
           {
-            // 远端模式按当前同名远端分支选默认值；纯本地模式才使用当前本地分支。
+            // 来源默认使用真实当前本地分支，远端来源始终由用户明确选择。
             sourceRef: currentSourceRef,
             branchName: repository.suggestedBranchName,
             includeLocalChanges: false,
@@ -593,6 +602,43 @@ export function resolveTaskModelPushInitialForm(
     relatedContextSelections: {},
     supplementalInfo: '',
     supplementalAttachments: [],
+  };
+}
+
+/** 只更新仓库选择，保留整张推送草稿；仓库或来源消失时要求重新核对。 */
+export function reconcileTaskPushRepositories(form: TaskModelPushForm, capabilities: CodexTaskPushCapabilities): TaskModelPushForm {
+  /** 旧选择的键集合用于识别仓库新增或移除，首次加载不触发复核。 */
+  const previousIds = Object.keys(form.repositorySelections);
+  /** 已展示清单变化后不能静默改变本次隔离范围。 */
+  const changed = previousIds.length > 0 && (previousIds.length !== capabilities.repositories.length || capabilities.repositories.some((repository) => !previousIds.includes(repository.id)));
+  /** 已选来源消失后明确要求重选，禁止切换到其他默认分支。 */
+  const sourceMissing = capabilities.repositories.some((repository) => {
+    const sourceRef = form.repositorySelections[repository.id]?.sourceRef;
+    return Boolean(sourceRef) && !repository.sourceRefs.some((source) => source.ref === sourceRef);
+  });
+  return {
+    ...form,
+    workspaceMode: form.workspaceModeSelected || form.workspaceModeResolved ? form.workspaceMode : capabilities.repositories.length > 0 ? 'worktree' : 'direct',
+    workspaceModeResolved: form.workspaceModeResolved || capabilities.repositories.length > 0,
+    repositorySelectionNeedsReview: form.repositorySelectionNeedsReview || changed || sourceMissing,
+    repositorySelections: Object.fromEntries(
+      capabilities.repositories.map((repository) => {
+        /** 保留仍存在的来源及用户填写的新分支名，失效来源清空以要求重选。 */
+        const previous = form.repositorySelections[repository.id];
+        /** 来源失效时同时撤销带入原目录改动，避免重选来源后沿用旧勾选。 */
+        const sourceAvailable = repository.sourceRefs.some((source) => source.ref === previous?.sourceRef);
+        return [
+          repository.id,
+          previous
+            ? { ...previous, sourceRef: sourceAvailable ? previous.sourceRef : '', includeLocalChanges: sourceAvailable && previous.includeLocalChanges }
+            : {
+                sourceRef: repository.sourceRefs.find((source) => source.current)?.ref ?? '',
+                branchName: repository.suggestedBranchName,
+                includeLocalChanges: false,
+              },
+        ];
+      }),
+    ),
   };
 }
 
@@ -763,6 +809,8 @@ export function TaskModelPushModal(props: {
   onChange: Dispatch<SetStateAction<TaskModelPushForm>>;
   onServiceTierPreferenceChange: (model: CodexTaskPushModelCapability, selection: NativeServiceTierSelection) => void | Promise<void>;
   onRefreshRepository: (repositoryId: string) => void;
+  /** 本地发现与各仓远端拉取分别操作。 */
+  onRefreshLocalRepositories: () => void;
   onClose: () => void;
   onCancelAuthentication: () => void;
   onCancelCodexConfigImport: () => void;
@@ -797,7 +845,7 @@ export function TaskModelPushModal(props: {
   useEffect(() => {
     setSupplementalResourceError(null);
   }, [props.open, props.task?.id]);
-  const runtimeCapabilities = props.capabilities ?? props.runtimeCapabilities;
+  const runtimeCapabilities = props.capabilities?.models.length ? props.capabilities : props.runtimeCapabilities;
   const codexAccount = props.runtimeCapabilities?.codexAccount ?? props.capabilities?.codexAccount;
   const requestedModel = resolveModelCapability(runtimeCapabilities?.models, props.form.model);
   const modelPresentation = useMemo(() => presentModelOptions(runtimeCapabilities?.models ?? [], requestedModel?.id ?? props.form.model, props.language), [props.form.model, props.language, requestedModel?.id, runtimeCapabilities?.models]);
@@ -825,6 +873,8 @@ export function TaskModelPushModal(props: {
   const busy = inspectingConfig || importingConfig || authenticating || authenticated || props.status === 'submitting' || inputResources.processing;
   const codexLoginRequired = selectedModel?.agentKind !== 'pi' && selectedModel?.sourceId === 'codex' && codexAccount?.requiresOpenaiAuth === true && !codexAccount.signedIn;
   const repositories = props.capabilities?.repositories ?? [];
+  /** 后台扫描状态不清空上一次可用仓库，也不限制直接目录和已有环境。 */
+  const discovery = props.capabilities?.repositoryDiscovery;
   const existingEnvironments = props.capabilities?.existingEnvironments ?? [];
   const availableEnvironments = existingEnvironments.filter((environment) => environment.available);
   const selectedEnvironment = existingEnvironments.find((environment) => environment.id === props.form.environmentId);
@@ -934,7 +984,7 @@ export function TaskModelPushModal(props: {
                   name="task-workspace-mode"
                   value="direct"
                   checked={props.form.workspaceMode === 'direct'}
-                  onChange={() => props.onChange({ ...props.form, workspaceMode: 'direct', directConcurrencyConfirmed: false })}
+                  onChange={() => props.onChange({ ...props.form, workspaceMode: 'direct', workspaceModeSelected: true, directConcurrencyConfirmed: false })}
                   disabled={busy}
                 />
                 <span>
@@ -948,7 +998,7 @@ export function TaskModelPushModal(props: {
                   name="task-workspace-mode"
                   value="worktree"
                   checked={props.form.workspaceMode === 'worktree'}
-                  onChange={() => props.onChange({ ...props.form, workspaceMode: 'worktree', directConcurrencyConfirmed: false })}
+                  onChange={() => props.onChange({ ...props.form, workspaceMode: 'worktree', workspaceModeSelected: true, directConcurrencyConfirmed: false })}
                   disabled={busy}
                 />
                 <span>
@@ -957,6 +1007,32 @@ export function TaskModelPushModal(props: {
                 </span>
               </label>
             </fieldset>
+            <div className="task-model-push-section-heading">
+              <span role="status" className={discovery?.status === 'failed' ? 'task-model-push-error' : 'task-model-push-message'}>
+                {discovery?.status === 'running'
+                  ? zh
+                    ? '正在发现项目中的 Git 仓库…'
+                    : 'Discovering Git repositories in this project…'
+                  : discovery?.status === 'failed'
+                    ? discovery.error
+                    : discovery?.status === 'not_started'
+                      ? zh
+                        ? '尚未发现本地仓库，可刷新后选择分支。'
+                        : 'Local repositories have not been discovered yet. Refresh to select branches.'
+                      : zh
+                        ? '本地 Git 仓库'
+                        : 'Local Git repositories'}
+              </span>
+              <Button variant="secondary" size="compact" onClick={props.onRefreshLocalRepositories} busy={discovery?.status === 'running'} disabled={busy || discovery?.status === 'running'}>
+                {zh ? (discovery?.status === 'failed' ? '重试发现仓库' : '刷新本地仓库') : discovery?.status === 'failed' ? 'Retry discovery' : 'Refresh local repositories'}
+              </Button>
+            </div>
+            {props.form.workspaceMode === 'worktree' && props.form.taskBranchMode === 'create' && props.form.repositorySelectionNeedsReview ? (
+              <label className="task-model-push-concurrency-confirm">
+                <input type="checkbox" checked={false} disabled={busy} onChange={() => props.onChange({ ...props.form, repositorySelectionNeedsReview: false })} />
+                <span>{zh ? '仓库清单或已选来源分支已变化，请重新选择失效来源，并核对下方清单后勾选确认。' : 'Repositories or selected source branches changed. Reselect unavailable sources, review the list below, then confirm.'}</span>
+              </label>
+            ) : null}
             {props.form.workspaceMode === 'worktree' && existingEnvironments.length > 0 ? (
               <fieldset className="task-model-push-mode-choice task-model-push-branch-choice">
                 <legend>{zh ? '任务分支方式' : 'Task branch mode'}</legend>
@@ -1130,6 +1206,11 @@ export function TaskModelPushModal(props: {
                           {refreshing ? (zh ? '正在刷新…' : 'Refreshing…') : zh ? '刷新远端分支' : 'Refresh remote branches'}
                         </Button>
                       </legend>
+                      {repository.unavailableReason ? (
+                        <p className="task-model-push-error" role="alert">
+                          {repository.unavailableReason}
+                        </p>
+                      ) : null}
                       <div className="task-model-push-workspace-grid">
                         <label>
                           <span>{zh ? '来源分支（必选）' : 'Source branch (required)'}</span>
@@ -1217,11 +1298,11 @@ export function TaskModelPushModal(props: {
                   );
                 })}
               </div>
-            ) : (
+            ) : discovery?.status === 'completed' ? (
               <p className="task-model-push-error" role="alert">
                 {zh ? '项目目录下没有发现 Git 仓库。请先自行初始化仓库，或改用“直接使用项目目录”。' : 'No Git repository was found. Initialize one first, or use the project directory directly.'}
               </p>
-            )}
+            ) : null}
             {props.form.workspaceMode === 'worktree' && props.form.taskBranchMode === 'create' ? (
               <small className="task-model-push-worktree-root">
                 {zh ? '新工作区路径' : 'New workspace path'}：{props.capabilities?.git.worktreeRoot ?? '—'}/&lt;{zh ? '项目' : 'project'}&gt;/&lt;{zh ? '推送标识' : 'push-id'}&gt;/{props.task.taskCode ?? props.task.id}
@@ -1417,11 +1498,14 @@ export function TaskModelPushModal(props: {
                 !props.capabilities ||
                 props.status === 'loading' ||
                 !props.form.model ||
+                !selectedModel ||
                 (props.form.workspaceMode === 'direct'
                   ? directWorkspaceNeedsConfirmation && !props.form.directConcurrencyConfirmed
                   : props.form.taskBranchMode === 'existing'
                     ? !selectedEnvironment?.available
-                    : repositories.length === 0 ||
+                    : !discovery?.completedAt ||
+                      Boolean(props.form.repositorySelectionNeedsReview) ||
+                      repositories.length === 0 ||
                       repositories.some((repository) => {
                         const selection = props.form.repositorySelections[repository.id];
                         return !selection?.sourceRef || !selection.branchName.trim();

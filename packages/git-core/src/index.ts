@@ -381,11 +381,14 @@ export async function getGitRepositoryContext(cwd: string): Promise<GitRepositor
 }
 
 /**
- * 在项目容器内发现真实 Git 根目录；只返回候选，不替用户登记仓库。
+ * 在项目容器内完整发现真实 Git 根目录；只返回候选，不替用户登记仓库。
  * 扫描跳过依赖、构建产物和 Zeus 自己的 worktree 根，避免把缓存仓库误纳入项目。
+ * 目录或仓库不可读时抛出错误，禁止把不完整扫描伪装成空清单；退出可中止遍历。
  */
-export async function discoverGitRepositories(containerPath: string, maxDepth = 6): Promise<DiscoveredGitRepository[]> {
+export async function discoverGitRepositories(containerPath: string, maxDepth = 6, signal?: AbortSignal): Promise<DiscoveredGitRepository[]> {
+  /** 拒绝把文件系统根目录作为项目递归发现范围。 */
   const containerRoot = canonicalFilesystemPath(containerPath);
+  if (dirname(containerRoot) === containerRoot) throw new Error('请选择实际项目目录，不能在文件系统根目录发现仓库。');
   const candidates: string[] = [];
   const seen = new Set<string>();
   const skippedDirectories = new Set(['.git', '.tmp', '.zeus-worktrees', 'node_modules', 'dist', 'build', 'target', '.next', '.turbo', '.cache']);
@@ -393,8 +396,15 @@ export async function discoverGitRepositories(containerPath: string, maxDepth = 
   let currentLevel = [containerRoot];
   for (let depth = 0; depth <= maxDepth && currentLevel.length > 0; depth += 1) {
     const nested = await mapWithConcurrency(currentLevel, 8, async (directoryPath) => {
+      signal?.throwIfAborted();
       try {
-        const [gitMarker, entries] = await Promise.all([lstat(join(directoryPath, '.git')).catch(() => null), readdir(directoryPath, { withFileTypes: true })]);
+        const [gitMarker, entries] = await Promise.all([
+          lstat(join(directoryPath, '.git')).catch((error: NodeJS.ErrnoException) => {
+            if (error.code === 'ENOENT') return null;
+            throw error;
+          }),
+          readdir(directoryPath, { withFileTypes: true }),
+        ]);
         if (gitMarker?.isDirectory() || gitMarker?.isFile()) {
           const repositoryRoot = canonicalFilesystemPath(directoryPath);
           if (!seen.has(repositoryRoot)) {
@@ -404,16 +414,16 @@ export async function discoverGitRepositories(containerPath: string, maxDepth = 
         }
         if (depth === maxDepth) return [];
         return entries.filter((entry) => entry.isDirectory() && !entry.isSymbolicLink() && !skippedDirectories.has(entry.name)).map((entry) => join(directoryPath, entry.name));
-      } catch {
-        // 单个无权限或消失目录不应让整个候选扫描失败。
-        return [];
+      } catch (error) {
+        throw new Error(`无法完整读取项目目录 ${directoryPath}：${error instanceof Error ? error.message : String(error)}`, { cause: error });
       }
     });
     currentLevel = nested.flat();
   }
   const discovered = await mapWithConcurrency(candidates, 4, async (localPath) => {
+    signal?.throwIfAborted();
     const [context, clean] = await Promise.all([getGitRepositoryContext(localPath), getGitWorktreeClean(localPath)]);
-    if (!context.isRepository || canonicalFilesystemPath(context.topLevel) !== localPath) return null;
+    if (!context.isRepository || canonicalFilesystemPath(context.topLevel) !== localPath) throw new Error(`无法读取 Git 仓库 ${localPath}，请检查目录权限、仓库状态以及是否已有首次提交。`);
     const repositoryRelativePath = relative(containerRoot, localPath);
     if (repositoryRelativePath === '..' || repositoryRelativePath.startsWith(`..${sep}`) || isAbsolute(repositoryRelativePath)) return null;
     return {
@@ -666,7 +676,8 @@ export async function getTaskWorkspaceReview(cwd: string, ignoredPaths: string[]
 export async function getGitWorktreeClean(cwd: string, ignoredPaths: string[] = []): Promise<boolean> {
   const ignored = ignoredPaths.map((path) => requireSafeWorkspacePath(path));
   const pathspec = ['.', ...ignored.flatMap((path) => [`:(exclude)${path}`, `:(exclude)${path}/**`])];
-  return (await runGit(cwd, ['status', '--porcelain=v1', '-z', '-uall', '--', ...pathspec])).stdout.length === 0;
+  // 能力读取和后台发现不得让 Git 顺便刷新索引文件。
+  return (await runGit(cwd, ['--no-optional-locks', 'status', '--porcelain=v1', '-z', '-uall', '--', ...pathspec])).stdout.length === 0;
 }
 
 function gitDiffStatSummary(stdout: string, statuses: GitFileStatus[]): GitDiffSummary {

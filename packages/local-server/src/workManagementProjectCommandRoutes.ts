@@ -23,6 +23,8 @@ export function registerWorkManagementProjectCommandRoutes(options: {
   create(input: CreateProjectCommandInput, projectId: string, context: WorkManagementTaskCommandContext): unknown;
   update(projectId: string, input: UpdateProjectCommandInput, context: WorkManagementTaskCommandContext): unknown;
   updateWorkspace(projectId: string, input: UpdateProjectWorkspaceCommandInput, context: WorkManagementTaskCommandContext): unknown;
+  /** 接纳本地仓库后台发现，返回已持久保存的状态。 */
+  refreshRepositories(projectId: string, context: WorkManagementTaskCommandContext): unknown;
   remove(projectId: string, context: WorkManagementTaskCommandContext): unknown;
   archiveConfirmation(projectId: string): unknown;
   archive(projectId: string): unknown;
@@ -57,6 +59,7 @@ export function registerWorkManagementProjectCommandRoutes(options: {
   });
 
   registerProjectMutation(options, 'patch', '/api/projects/:projectId', workManagementCommandTypes.projectUpdate, (projectId, input, context) => options.update(projectId, input as UpdateProjectCommandInput, context));
+  registerProjectMutation(options, 'post', '/api/projects/:projectId/git/repositories/refresh', workManagementCommandTypes.projectRepositoriesRefresh, (projectId, _input, context) => options.refreshRepositories(projectId, context));
   registerProjectMutation(options, 'put', '/api/projects/:projectId/workspace-config', workManagementCommandTypes.projectWorkspaceUpdate, (projectId, input, context) =>
     options.updateWorkspace(projectId, input as UpdateProjectWorkspaceCommandInput, context),
   );
